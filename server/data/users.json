@@ -1,0 +1,11 @@
+{
+  "users": [
+    {
+      "id": "u_1770695626792",
+      "email": "olubible@yopmail.com",
+      "passwordHash": "$2a$10$KYC2nHKdfXc.AVDEq2pKs.u1saBEtniIFPRSivOrVv6mWNPQRvJT6",
+      "role": "owner",
+      "createdAt": "2026-02-10T03:53:46.799Z"
+    }
+  ]
+}

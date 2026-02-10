@@ -1,0 +1,5 @@
+Biblefuel Studio v7 - Quick Test Report
+
+src/routes/audio_advanced.js: exit=0 stdout=OK stderr=
+src/routes/audio.js: exit=0 stdout=OK stderr=
+src/routes/render.js: exit=0 stdout=OK stderr=

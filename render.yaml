@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: biblefuel-studio
+    env: docker
+    rootDir: server
+    plan: starter
+    autoDeploy: true
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: CORS_ORIGIN
+        value: "*"
+      - key: OUTPUT_DIR
+        value: /var/outputs
+      - key: DATA_DIR
+        value: /var/data
+    disk:
+      name: biblefuel-disk
+      mountPath: /var
+      sizeGB: 1

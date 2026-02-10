@@ -1,0 +1,33 @@
+Biblefuel Studio v12 - Import Tests (after npm install)
+{
+  "src/auth.js": {
+    "exit": 0,
+    "stdout": "OK",
+    "stderr": ""
+  },
+  "src/routes/auth.js": {
+    "exit": 0,
+    "stdout": "OK",
+    "stderr": ""
+  },
+  "src/routes/jobs.js": {
+    "exit": 0,
+    "stdout": "OK",
+    "stderr": ""
+  },
+  "src/routes/audio_advanced.js": {
+    "exit": 0,
+    "stdout": "OK",
+    "stderr": ""
+  },
+  "src/routes/render.js": {
+    "exit": 0,
+    "stdout": "OK",
+    "stderr": ""
+  },
+  "index.js": {
+    "exit": 0,
+    "stdout": "OK",
+    "stderr": ""
+  }
+}

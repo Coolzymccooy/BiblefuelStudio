@@ -1,0 +1,8 @@
+node_modules
+.env
+dist
+.cache
+.DS_Store
+*.log
+outputs
+data/queue.json
