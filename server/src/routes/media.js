@@ -15,16 +15,33 @@ const audioExtensions = new Set([".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"
 router.post("/upload-audio", async (req, res) => {
   try {
     const dataUrl = String(req.body?.dataUrl || "");
-    if (!dataUrl.startsWith("data:audio/")) {
-      return res.status(400).json({ ok: false, error: "dataUrl must be a data:audio/* base64 URL" });
+    const fileNameHint = String(req.body?.filename || "").trim();
+    let mime = "application/octet-stream";
+    let b64 = "";
+
+    if (dataUrl.startsWith("data:")) {
+      const m = dataUrl.match(/^data:([^;]+)(?:;[^,]*)?,base64,(.*)$/);
+      if (!m) return res.status(400).json({ ok:false, error:"Invalid dataUrl" });
+      mime = m[1];
+      b64 = m[2];
+    } else if (dataUrl.startsWith("base64,")) {
+      b64 = dataUrl.slice("base64,".length);
+    } else if (/^[A-Za-z0-9+/=\s]+$/.test(dataUrl) && dataUrl.length > 0) {
+      b64 = dataUrl;
+    } else {
+      return res.status(400).json({ ok: false, error: "Invalid dataUrl" });
     }
-
-    const m = dataUrl.match(/^data:(audio\/[^;]+);base64,(.*)$/);
-    if (!m) return res.status(400).json({ ok:false, error:"Invalid dataUrl" });
-
-    const mime = m[1];
-    const b64 = m[2];
-    const ext = mime.includes("webm") ? "webm" : (mime.includes("wav") ? "wav" : (mime.includes("mpeg") ? "mp3" : "bin"));
+    const extFromName = fileNameHint ? path.extname(fileNameHint).replace('.', '').toLowerCase() : "";
+    const ext =
+      mime.includes("webm") ? "webm" :
+      mime.includes("wav") ? "wav" :
+      mime.includes("mpeg") ? "mp3" :
+      mime.includes("mp3") ? "mp3" :
+      mime.includes("ogg") ? "ogg" :
+      mime.includes("flac") ? "flac" :
+      mime.includes("aac") ? "aac" :
+      mime.includes("mp4") ? "m4a" :
+      extFromName || "bin";
 
     const outDir = process.env.OUTPUT_DIR || "./outputs";
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
@@ -34,7 +51,7 @@ router.post("/upload-audio", async (req, res) => {
 
     // If already mp3 or wav, just return
     if (ext === "mp3" || ext === "wav") {
-      return res.json({ ok: true, file: rawFile, mime });
+      return res.json({ ok: true, file: rawFile.replace(/\\/g, "/"), mime });
     }
 
     // Try converting to mp3 via ffmpeg for best compatibility
@@ -50,11 +67,11 @@ router.post("/upload-audio", async (req, res) => {
     proc.on("close", (code) => {
       if (code !== 0) {
         // Return raw file even if conversion fails
-        return res.json({ ok: true, file: rawFile, mime, warning: "ffmpeg conversion failed; using raw file", details: stderr.slice(-800) });
+        return res.json({ ok: true, file: rawFile.replace(/\\/g, "/"), mime, warning: "ffmpeg conversion failed; using raw file", details: stderr.slice(-800) });
       }
       // Optionally delete raw file to reduce clutter
       try { fs.unlinkSync(rawFile); } catch {}
-      return res.json({ ok: true, file: mp3File, mime: "audio/mpeg" });
+      return res.json({ ok: true, file: mp3File.replace(/\\/g, "/"), mime: "audio/mpeg" });
     });
   } catch (e) {
     res.status(400).json({ ok:false, error: String(e?.message || e) });

@@ -6,4 +6,5 @@ dist
 *.log
 outputs
 data/queue.json
+data/social.json
 tests/selenium/

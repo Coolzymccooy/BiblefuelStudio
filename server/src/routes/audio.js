@@ -194,7 +194,7 @@ router.post("/process", async (req, res) => {
       if (code !== 0) {
         return res.status(400).json({ ok: false, error: `ffmpeg failed: ${code}`, details: stderr.slice(-2000) });
       }
-      res.json({ ok: true, file: outFile, applied: cfg, filterChain: filters });
+      res.json({ ok: true, file: outFile.replace(/\\/g, "/"), applied: cfg, filterChain: filters });
     });
   } catch (e) {
     console.error(`[AUDIO] Route error:`, e);

@@ -1,4 +1,6 @@
 import fetch from "node-fetch";
+import fs from "fs";
+import path from "path";
 
 function fallbackScripts(count, ctaStyle) {
   const ctas = {
@@ -31,6 +33,48 @@ function fallbackScripts(count, ctaStyle) {
     items.push({ ...s, cta: ctas[ctaStyle] || ctas.save, title: `Biblefuel Post #${i + 1}` });
   }
   return items;
+}
+
+function getHistoryStore() {
+  const dir = path.resolve(process.env.DATA_DIR || path.join(process.cwd(), "data"));
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  return path.join(dir, "scripts_history.json");
+}
+
+function loadHistory() {
+  try {
+    const file = getHistoryStore();
+    if (!fs.existsSync(file)) return [];
+    const raw = fs.readFileSync(file, "utf-8");
+    const list = JSON.parse(raw);
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory(items) {
+  try {
+    const file = getHistoryStore();
+    fs.writeFileSync(file, JSON.stringify(items.slice(0, 500), null, 2));
+  } catch {
+    // ignore
+  }
+}
+
+function scriptKey(s) {
+  return `${(s.hook || "").trim()}|${(s.verse || "").trim()}|${(s.reference || "").trim()}|${(s.reflection || "").trim()}|${(s.cta || "").trim()}`.toLowerCase();
+}
+
+function dedupeScripts(list, existingKeys) {
+  const out = [];
+  for (const s of list) {
+    const key = scriptKey(s);
+    if (!key || existingKeys.has(key)) continue;
+    existingKeys.add(key);
+    out.push(s);
+  }
+  return out;
 }
 
 async function openaiGenerate(prompt) {
@@ -124,7 +168,14 @@ ${JSON.stringify(schema)}
   let raw = await geminiGenerate(prompt);
   if (!raw) raw = await openaiGenerate(prompt);
 
-  if (!raw) return fallbackScripts(count, ctaStyle);
+  const history = loadHistory();
+  const historyKeys = new Set(history);
+  if (!raw) {
+    const fb = fallbackScripts(count, ctaStyle);
+    const deduped = dedupeScripts(fb, historyKeys);
+    saveHistory([...historyKeys]);
+    return deduped.slice(0, count);
+  }
 
   // Extract JSON safely
   const firstBracket = raw.indexOf("[");
@@ -134,8 +185,7 @@ ${JSON.stringify(schema)}
 
   try {
     const parsed = JSON.parse(jsonText);
-    // normalize fields
-    return parsed.map((x, i) => ({
+    const normalized = parsed.map((x, i) => ({
       title: x.title || `Biblefuel Post #${i + 1}`,
       hook: x.hook?.trim() || "",
       verse: x.verse?.trim() || "",
@@ -144,7 +194,18 @@ ${JSON.stringify(schema)}
       cta: x.cta?.trim() || "",
       hashtags: Array.isArray(x.hashtags) ? x.hashtags.map(h => h.replace(/^#?/, "#")) : []
     }));
+
+    let deduped = dedupeScripts(normalized, historyKeys);
+    if (deduped.length < count) {
+      const fallback = fallbackScripts(count * 2, ctaStyle);
+      deduped = deduped.concat(dedupeScripts(fallback, historyKeys));
+    }
+    saveHistory([...historyKeys]);
+    return deduped.slice(0, count);
   } catch {
-    return fallbackScripts(count, ctaStyle);
+    const fb = fallbackScripts(count, ctaStyle);
+    const deduped = dedupeScripts(fb, historyKeys);
+    saveHistory([...historyKeys]);
+    return deduped.slice(0, count);
   }
 }

@@ -50,6 +50,14 @@ export function RenderPage() {
     const [musicPath, setMusicPath] = useState('');
     const [musicVolume, setMusicVolume] = useState(0.3);
     const [autoDuck, setAutoDuck] = useState(true);
+    const [durationSec, setDurationSec] = useState(20);
+    const [postDestination, setPostDestination] = useState<'webhook' | 'buffer'>('webhook');
+    const [webhookOptions, setWebhookOptions] = useState<{ id: string; name: string }[]>([]);
+    const [selectedWebhook, setSelectedWebhook] = useState('');
+    const [bufferProfiles, setBufferProfiles] = useState<string[]>([]);
+    const [selectedProfile, setSelectedProfile] = useState('');
+    const [jobVideoOptions, setJobVideoOptions] = useState<{ id: string; label: string; path: string }[]>([]);
+    const [shareVideoPath, setShareVideoPath] = useState('');
 
     useEffect(() => {
         const cachedScripts = loadJson<Script[]>(STORAGE_KEYS.scripts, []);
@@ -74,6 +82,8 @@ export function RenderPage() {
         setMusicVolume(cachedMusicVol);
         const cachedAutoDuck = loadJson<boolean>(STORAGE_KEYS.renderAutoDuck, true);
         setAutoDuck(cachedAutoDuck);
+        const cachedDuration = loadJson<number>(STORAGE_KEYS.renderDurationSec, 20);
+        setDurationSec(cachedDuration);
     }, []);
 
     useEffect(() => {
@@ -112,6 +122,18 @@ export function RenderPage() {
         saveJson(STORAGE_KEYS.renderAutoDuck, autoDuck);
     }, [autoDuck]);
 
+    useEffect(() => {
+        saveJson(STORAGE_KEYS.renderDurationSec, durationSec);
+    }, [durationSec]);
+
+    const isLongRender = durationSec > 60;
+
+    useEffect(() => {
+        if (isLongRender && !renderInBackground) {
+            setRenderInBackground(true);
+        }
+    }, [isLongRender, renderInBackground]);
+
     const buildLinesFromScript = (script: Script) => {
         return [
             script.hook,
@@ -146,7 +168,7 @@ export function RenderPage() {
                         backgroundPath: backgroundItem?.id || backgroundPath,
                         audioPath,
                         lines: cleanLines,
-                        durationSec: 20,
+                        durationSec,
                         aspect,
                         captionWidthPct: captionWidth,
                         musicPath: musicPath || undefined,
@@ -158,7 +180,7 @@ export function RenderPage() {
                     backgroundPath: backgroundItem?.id || backgroundPath,
                     audioPath,
                     lines: cleanLines,
-                    durationSec: 20,
+                    durationSec,
                     aspect,
                     captionWidthPct: captionWidth,
                     musicPath: musicPath || undefined,
@@ -230,6 +252,70 @@ export function RenderPage() {
         toast.success('Background selected');
     };
 
+    const loadSocialConfig = async () => {
+        const res = await api.get('/api/social/config');
+        if (res.ok && res.data) {
+            setWebhookOptions(res.data.webhooks || []);
+            setSelectedWebhook(res.data.webhooks?.[0]?.id || '');
+            setBufferProfiles(res.data.buffer?.profileIds || []);
+            setSelectedProfile(res.data.buffer?.profileIds?.[0] || '');
+        }
+    };
+
+    useEffect(() => {
+        loadSocialConfig();
+    }, []);
+
+    const loadJobVideos = async () => {
+        const res = await api.get('/api/jobs');
+        if (!res.ok || !res.data?.jobs) return;
+        const items = (res.data.jobs as any[])
+            .filter((j) => j.status === 'done' && j.type === 'render_video' && j.result?.outFile)
+            .map((j) => ({
+                id: j.id,
+                label: `${j.id.slice(0, 8)} • ${new Date(j.createdAt).toLocaleString()}`,
+                path: j.result.outFile,
+            }));
+        setJobVideoOptions(items);
+        if (!shareVideoPath && !result?.file && items.length > 0) {
+            setShareVideoPath(items[0].path);
+        }
+    };
+
+    useEffect(() => {
+        loadJobVideos();
+    }, []);
+
+    useEffect(() => {
+        if (result?.file) setShareVideoPath(result.file);
+    }, [result?.file]);
+
+    const handleShare = async () => {
+        const effectivePath = shareVideoPath || result?.file;
+        const fileUrl = effectivePath ? toOutputUrl(effectivePath, api.baseUrl) : '';
+        if (!fileUrl) {
+            toast.error('Render a video first');
+            return;
+        }
+        const caption = lines.split('\n').filter(Boolean).join(' ');
+        if (!caption) {
+            toast.error('Caption is empty');
+            return;
+        }
+
+        const payload: any = {
+            destination: postDestination,
+            caption,
+            videoUrl: fileUrl,
+        };
+        if (postDestination === 'webhook') payload.webhookId = selectedWebhook;
+        if (postDestination === 'buffer') payload.profileIds = [selectedProfile];
+
+        const res = await api.post('/api/social/post', payload);
+        if (res.ok) toast.success('Share triggered');
+        else toast.error(res.error || 'Share failed');
+    };
+
     return (
         <div className="space-y-6 animate-fade-in">
             <h2 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-primary-200">
@@ -299,6 +385,22 @@ export function RenderPage() {
                                 <p className="text-[10px] text-gray-500 mt-1 uppercase tracking-tighter">
                                     Text auto-wrap adjusts to the selected frame
                                 </p>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-400 mb-1">
+                                    Duration
+                                </label>
+                                <Select value={String(durationSec)} onChange={(e: ChangeEvent<HTMLSelectElement>) => setDurationSec(Number(e.target.value))}>
+                                    <option value="20">20s (default)</option>
+                                    <option value="60">60s</option>
+                                    <option value="120">120s</option>
+                                    <option value="180">180s</option>
+                                </Select>
+                                {isLongRender && (
+                                    <div className="mt-2 text-[10px] uppercase tracking-widest text-yellow-300 bg-yellow-500/10 border border-yellow-500/20 rounded-md px-2 py-1 inline-block">
+                                        Long render queued only
+                                    </div>
+                                )}
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-gray-400 mb-1">
@@ -423,10 +525,14 @@ export function RenderPage() {
                             checked={renderInBackground}
                             onChange={(e) => setRenderInBackground(e.target.checked)}
                             className="rounded border-white/10 bg-black/50 checked:bg-primary-500"
+                            disabled={isLongRender}
                         />
                         <label htmlFor="background" className="text-sm text-gray-400">
                             Render in background (Jobs System)
                         </label>
+                        {isLongRender && (
+                            <span className="text-[10px] text-yellow-300">Required for 60s+</span>
+                        )}
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -434,7 +540,7 @@ export function RenderPage() {
                             onClick={() => handleRender('video')}
                             isLoading={isRendering}
                             className="w-full h-12 text-md"
-                            disabled={!renderEnabled}
+                            disabled={!renderEnabled || (isLongRender && !renderInBackground)}
                         >
                             <Video size={18} className="mr-2" />
                             {renderInBackground ? 'Queue Video Render' : 'Start Instant Render'}
@@ -444,7 +550,7 @@ export function RenderPage() {
                             isLoading={isRendering}
                             variant="secondary"
                             className="w-full h-12 text-md"
-                            disabled={!renderEnabled}
+                            disabled={!renderEnabled || (isLongRender && !renderInBackground)}
                         >
                             <AudioLines size={18} className="mr-2" />
                             {renderInBackground ? 'Queue Waveform Render' : 'Render Waveform MP4'}
@@ -470,6 +576,102 @@ export function RenderPage() {
                             <Play size={16} className="mr-2" />
                             Open Video
                         </Button>
+                    </div>
+                </Card>
+            )}
+
+            {lines && (
+                <Card title="Share Kit" className="border-white/10 bg-white/[0.03]">
+                    <div className="space-y-3">
+                        <p className="text-xs text-gray-400">
+                            Copy your caption and upload the rendered file to TikTok/IG/YouTube Shorts.
+                        </p>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                            <div>
+                                <label className="block text-[10px] uppercase tracking-widest text-gray-500 mb-1">Video to Share</label>
+                                <Select value={shareVideoPath} onChange={(e) => setShareVideoPath(e.target.value)}>
+                                    {result?.file && <option value={result.file}>Latest Instant Render</option>}
+                                    {jobVideoOptions.length > 0 && (
+                                        <optgroup label="Completed Jobs">
+                                            {jobVideoOptions.map((item) => (
+                                                <option key={item.id} value={item.path}>{item.label}</option>
+                                            ))}
+                                        </optgroup>
+                                    )}
+                                    {!result?.file && jobVideoOptions.length === 0 && (
+                                        <option value="">No rendered videos found</option>
+                                    )}
+                                </Select>
+                            </div>
+                            <div>
+                                <label className="block text-[10px] uppercase tracking-widest text-gray-500 mb-1">Or Paste Video Path</label>
+                                <Input
+                                    value={shareVideoPath}
+                                    onChange={(e) => setShareVideoPath(e.target.value)}
+                                    placeholder="outputs/video-xyz.mp4"
+                                    className="bg-black/20"
+                                />
+                            </div>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                            <Button
+                                variant="secondary"
+                                className="text-xs h-8"
+                                onClick={loadJobVideos}
+                            >
+                                Refresh Rendered Videos
+                            </Button>
+                        </div>
+                        <div className="bg-black/30 border border-white/10 rounded-lg p-3 text-xs text-gray-200 whitespace-pre-wrap">
+                            {lines.split('\n').filter(Boolean).join(' ')}
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                            <Button
+                                variant="secondary"
+                                className="text-xs h-8 w-full sm:w-auto"
+                                onClick={() => {
+                                    navigator.clipboard.writeText(lines.split('\n').filter(Boolean).join(' '));
+                                    toast.success('Caption copied');
+                                }}
+                            >
+                                Copy Caption
+                            </Button>
+                        </div>
+
+                        <div className="pt-2 border-t border-white/10 space-y-2">
+                            <div className="text-[10px] text-gray-500 uppercase tracking-widest">Auto Post</div>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                                <Select value={postDestination} onChange={(e) => setPostDestination(e.target.value as any)}>
+                                    <option value="webhook">Webhook (Zapier/Make)</option>
+                                    <option value="buffer">Buffer (Legacy)</option>
+                                    <option value="youtube">YouTube (Direct)</option>
+                                    <option value="instagram">Instagram (Direct)</option>
+                                    <option value="tiktok">TikTok (Direct)</option>
+                                </Select>
+                                {postDestination === 'webhook' ? (
+                                    <Select value={selectedWebhook} onChange={(e) => setSelectedWebhook(e.target.value)}>
+                                        <option value="">Select webhook...</option>
+                                        {webhookOptions.map((w) => (
+                                            <option key={w.id} value={w.id}>{w.name}</option>
+                                        ))}
+                                    </Select>
+                                ) : postDestination === 'buffer' ? (
+                                    <Select value={selectedProfile} onChange={(e) => setSelectedProfile(e.target.value)}>
+                                        <option value="">Select profile...</option>
+                                        {bufferProfiles.map((id) => (
+                                            <option key={id} value={id}>{id}</option>
+                                        ))}
+                                    </Select>
+                                ) : (
+                                    <div className="text-[10px] text-yellow-300 bg-yellow-500/10 border border-yellow-500/20 rounded-md px-2 py-1">
+                                        Direct API requires OAuth setup
+                                    </div>
+                                )}
+                                <Button onClick={handleShare} className="text-xs h-8">
+                                    Share Now
+                                </Button>
+                            </div>
+                        </div>
                     </div>
                 </Card>
             )}

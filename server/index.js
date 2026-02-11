@@ -20,6 +20,7 @@ import audioAdvancedRouter from "./src/routes/audio_advanced.js";
 import authRouter from "./src/routes/auth.js";
 import jobsRouter from "./src/routes/jobs.js";
 import libraryRouter from "./src/routes/library.js";
+import socialRouter from "./src/routes/social.js";
 import { requireAuth } from "./src/auth.js";
 
 // Load env from CURRENT server directory
@@ -127,6 +128,7 @@ app.use("/api/media", requireAuth, mediaRouter);
 app.use("/api/audio", requireAuth, audioRouter);
 app.use("/api/audio-adv", requireAuth, audioAdvancedRouter);
 app.use("/api/library", requireAuth, libraryRouter);
+app.use("/api/social", requireAuth, socialRouter);
 
 
 

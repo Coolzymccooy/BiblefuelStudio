@@ -94,8 +94,25 @@ class ApiClient {
 
     async download(url: string): Promise<void> {
         const token = this.getToken();
-        const fullUrl = token ? `${url}?token=${token}` : url;
-        window.open(fullUrl, '_blank');
+        try {
+            const response = await axios.get(url, {
+                headers: this.getHeaders(),
+                responseType: 'blob',
+            });
+            const blob = new Blob([response.data]);
+            const objectUrl = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = objectUrl;
+            const fallbackName = url.split('/').pop() || 'download';
+            link.download = fallbackName;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            URL.revokeObjectURL(objectUrl);
+        } catch (error) {
+            const fullUrl = token ? `${url}?token=${token}` : url;
+            window.open(fullUrl, '_blank');
+        }
     }
 
     private handleError(error: unknown): ApiResponse {

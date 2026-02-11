@@ -86,6 +86,10 @@ export function VoiceAudioPage() {
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
     const mediaStreamRef = useRef<MediaStream | null>(null);
     const chunksRef = useRef<Blob[]>([]);
+    const canvasRef = useRef<HTMLCanvasElement | null>(null);
+    const audioCtxRef = useRef<AudioContext | null>(null);
+    const analyserRef = useRef<AnalyserNode | null>(null);
+    const rafRef = useRef<number | null>(null);
 
     useEffect(() => {
         const cachedText = loadJson<string>(STORAGE_KEYS.ttsText, '');
@@ -102,7 +106,12 @@ export function VoiceAudioPage() {
         if (cachedPath) setAudioPath(cachedPath);
 
         const cachedHistory = loadJson<AudioItem[]>(STORAGE_KEYS.audioHistory, []);
-        if (cachedHistory.length) setAudioHistory(cachedHistory);
+        if (cachedHistory.length) {
+            setAudioHistory(cachedHistory.map((item) => ({
+                ...item,
+                createdAt: item.createdAt || new Date().toISOString(),
+            })));
+        }
 
         const cachedVoiceId = loadJson<string>(STORAGE_KEYS.ttsVoiceId, '');
         if (cachedVoiceId) setVoiceId(cachedVoiceId);
@@ -265,28 +274,108 @@ export function VoiceAudioPage() {
         reader.readAsDataURL(file);
     };
 
+    const startVisualizer = (stream: MediaStream) => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 2048;
+        const source = audioCtx.createMediaStreamSource(stream);
+        source.connect(analyser);
+        audioCtxRef.current = audioCtx;
+        analyserRef.current = analyser;
+
+        const bufferLength = analyser.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+
+        const draw = () => {
+            rafRef.current = requestAnimationFrame(draw);
+            analyser.getByteTimeDomainData(dataArray);
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = 'rgba(15, 23, 42, 0.8)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = '#38bdf8';
+            ctx.beginPath();
+            const sliceWidth = canvas.width / bufferLength;
+            let x = 0;
+            for (let i = 0; i < bufferLength; i++) {
+                const v = dataArray[i] / 128.0;
+                const y = (v * canvas.height) / 2;
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+                x += sliceWidth;
+            }
+            ctx.lineTo(canvas.width, canvas.height / 2);
+            ctx.stroke();
+        };
+        draw();
+    };
+
+    const stopVisualizer = () => {
+        if (rafRef.current) cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+        analyserRef.current = null;
+        if (audioCtxRef.current) {
+            audioCtxRef.current.close();
+            audioCtxRef.current = null;
+        }
+    };
+
+    const pickMimeType = () => {
+        const preferred = [
+            'audio/webm;codecs=opus',
+            'audio/webm',
+            'audio/ogg;codecs=opus',
+            'audio/ogg',
+        ];
+        for (const type of preferred) {
+            if (MediaRecorder.isTypeSupported(type)) return type;
+        }
+        return '';
+    };
+
+    const blobToDataUrl = (blob: Blob) => new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error('Failed to read audio blob'));
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.readAsDataURL(blob);
+    });
+
     const handleStartRecording = async () => {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             mediaStreamRef.current = stream;
-            const recorder = new MediaRecorder(stream);
+            const mimeType = pickMimeType();
+            const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
             chunksRef.current = [];
             recorder.ondataavailable = (e) => {
                 if (e.data.size > 0) chunksRef.current.push(e.data);
             };
             recorder.onstop = async () => {
-                const blob = new Blob(chunksRef.current, { type: recorder.mimeType });
-                const reader = new FileReader();
-                reader.onload = async () => {
-                    const dataUrl = String(reader.result || '');
+                if (chunksRef.current.length === 0) {
+                    toast.error('No audio captured');
+                    return;
+                }
+                const actualMime = recorder.mimeType || mimeType || 'audio/webm';
+                const blob = new Blob(chunksRef.current, { type: actualMime });
+                try {
+                    const dataUrl = await blobToDataUrl(blob);
+                    if (!dataUrl.startsWith('data:')) {
+                        throw new Error('Invalid dataUrl');
+                    }
                     await uploadDataUrl(dataUrl, 'recording.webm', 'record');
-                };
-                reader.readAsDataURL(blob);
+                } catch (err) {
+                    toast.error('Invalid dataUrl');
+                }
                 mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
                 mediaStreamRef.current = null;
             };
             mediaRecorderRef.current = recorder;
-            recorder.start();
+            recorder.start(250);
+            startVisualizer(stream);
             setIsRecording(true);
             toast.success('Recording started');
         } catch (error) {
@@ -296,6 +385,7 @@ export function VoiceAudioPage() {
 
     const handleStopRecording = () => {
         mediaRecorderRef.current?.stop();
+        stopVisualizer();
         setIsRecording(false);
     };
 
@@ -646,7 +736,7 @@ export function VoiceAudioPage() {
                                 Upload Audio
                                 <input
                                     type="file"
-                                    accept="audio/*"
+                                    accept="audio/*,.mp3,.wav,.webm,.m4a,.aac,.ogg,.flac"
                                     className="hidden"
                                     onChange={(e) => {
                                         const file = e.target.files?.[0];
@@ -655,6 +745,10 @@ export function VoiceAudioPage() {
                                     disabled={isUploading}
                                 />
                             </label>
+                        </div>
+                        <div className="mt-4">
+                            <p className="text-[10px] text-gray-500 uppercase tracking-widest mb-2">Live Input</p>
+                            <canvas ref={canvasRef} width={520} height={80} className="w-full rounded-lg border border-white/10 bg-black/30" />
                         </div>
                     </div>
                 </Card>
@@ -954,6 +1048,9 @@ export function VoiceAudioPage() {
                                             {item.kind}
                                         </p>
                                         <p className="text-sm font-mono text-gray-800 break-all">{item.path}</p>
+                                        <p className="text-[10px] text-gray-500 mt-1">
+                                            {new Date(item.createdAt).toLocaleString()}
+                                        </p>
                                     </div>
                                     <div className="flex items-center gap-2">
                                         <Button
@@ -1018,6 +1115,9 @@ export function VoiceAudioPage() {
                                         <div className="flex-1">
                                             <p className="text-xs text-gray-600 uppercase tracking-wider">{item.name || 'Audio'}</p>
                                             <p className="text-xs font-mono text-gray-800 break-all">{item.path}</p>
+                                            {item.mtime && (
+                                                <p className="text-[10px] text-gray-500 mt-1">{new Date(item.mtime).toLocaleString()}</p>
+                                            )}
                                         </div>
                                         <audio controls src={toOutputUrl(item.path, api.baseUrl)} className="w-full md:w-64" />
                                         <Button

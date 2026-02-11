@@ -1,6 +1,7 @@
 import fetch from "node-fetch";
 import fs from "fs";
 import path from "path";
+import { pipeline } from "stream/promises";
 
 export async function pexelsSearchVideos(query, perPage = 24) {
   const rawKey = (process.env.PEXELS_API_KEY || "");
@@ -57,7 +58,6 @@ export async function pexelsDownloadVideoById(id) {
 
   const dl = await fetch(pick.link);
   if (!dl.ok) throw new Error(`Download failed: ${dl.status}`);
-  const buf = Buffer.from(await dl.arrayBuffer());
-  fs.writeFileSync(outFile, buf);
+  await pipeline(dl.body, fs.createWriteStream(outFile));
   return outFile;
 }

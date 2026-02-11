@@ -53,6 +53,7 @@ export function TimelinePage() {
     const [showAddClipModal, setShowAddClipModal] = useState(false);
     const [manualPath, setManualPath] = useState('');
     const [currentAudioPath, setCurrentAudioPath] = useState('');
+    const [renderedAudio, setRenderedAudio] = useState<string | null>(null);
 
     // Global controls
     const [fadeIn, setFadeIn] = useState(0);
@@ -126,6 +127,10 @@ export function TimelinePage() {
 
             if (response.ok) {
                 toast.success('Audio rendered successfully!', { id: toastId });
+                if (response.data?.file) {
+                    const fileName = response.data.file.split(/[\\/]/).pop();
+                    setRenderedAudio(`${api.baseUrl}/outputs/${fileName}`);
+                }
             } else {
                 toast.error(response.error || 'Rendering failed', { id: toastId });
             }
@@ -211,6 +216,22 @@ export function TimelinePage() {
                     </Button>
                 </div>
             </div>
+
+            {renderedAudio && (
+                <Card title="Rendered Audio">
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                        <audio controls src={renderedAudio} className="w-full" />
+                        <Button
+                            variant="secondary"
+                            onClick={() => window.open(renderedAudio, '_blank')}
+                            className="text-xs h-9"
+                        >
+                            <Download size={16} className="mr-2" />
+                            Open
+                        </Button>
+                    </div>
+                </Card>
+            )}
 
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
                 <div className="lg:col-span-3 space-y-6">

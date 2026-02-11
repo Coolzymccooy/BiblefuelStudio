@@ -88,6 +88,7 @@ export function HomePage() {
                                     { step: 4, text: "Generate Voice", area: "Voice & Audio", icon: Mic },
                                     { step: 5, text: "Edit Timeline", area: "Timeline", icon: Film },
                                     { step: 6, text: "Render Video", area: "Render", icon: Video },
+                                    { step: 7, text: "Share to Socials", area: "Share", icon: Globe },
                                 ].map((item) => (
                                     <li key={item.step} className="flex gap-4 items-start p-2 rounded-lg hover:bg-white/5 transition-colors group">
                                         <span className="flex items-center justify-center w-6 h-6 rounded-full bg-primary-500/10 text-primary-400 font-bold text-xs ring-1 ring-primary-500/20 group-hover:bg-primary-500/20 group-hover:ring-primary-500/40 transition-all">

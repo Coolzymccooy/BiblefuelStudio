@@ -8,6 +8,8 @@ import { readLibrary } from "../lib/library.js";
 const router = Router();
 let ffmpegChecked = false;
 let ffmpegOk = false;
+const MAX_RENDER_SECONDS = Number(process.env.MAX_RENDER_SECONDS || 30);
+const MAX_INPUT_MB = Number(process.env.MAX_INPUT_MB || 200);
 
 function ensureFfmpegAvailable() {
   if (ffmpegChecked) return ffmpegOk;
@@ -20,6 +22,27 @@ function ensureFfmpegAvailable() {
   }
   ffmpegChecked = true;
   return ffmpegOk;
+}
+
+function clampDuration(value) {
+  const n = Number(value || 20);
+  if (Number.isNaN(n)) return 20;
+  return Math.min(Math.max(n, 1), MAX_RENDER_SECONDS);
+}
+
+function isFileTooLarge(p) {
+  if (!p || p.startsWith('http')) return false;
+  try {
+    const stat = fs.statSync(p);
+    return stat.size > MAX_INPUT_MB * 1024 * 1024;
+  } catch {
+    return false;
+  }
+}
+
+function logMemory(tag) {
+  const m = process.memoryUsage();
+  console.log(`[MEM] ${tag} rss=${Math.round(m.rss / 1024 / 1024)}MB heap=${Math.round(m.heapUsed / 1024 / 1024)}MB`);
 }
 
 function resolveAssetPath(pathOrId) {
@@ -101,9 +124,19 @@ router.post("/video", async (req, res) => {
     if (!backgroundPath || !isLocalOrRemote(backgroundPath)) {
       return res.status(400).json({ ok: false, error: "backgroundPath missing or not found" });
     }
+    if (isFileTooLarge(backgroundPath)) {
+      return res.status(400).json({ ok: false, error: `backgroundPath too large (>${MAX_INPUT_MB}MB)` });
+    }
     if (audioPath && !isLocalOrRemote(audioPath)) {
       return res.status(400).json({ ok: false, error: "audioPath not found" });
     }
+    if (audioPath && isFileTooLarge(audioPath)) {
+      return res.status(400).json({ ok: false, error: `audioPath too large (>${MAX_INPUT_MB}MB)` });
+    }
+    if (musicPath && isFileTooLarge(musicPath)) {
+      return res.status(400).json({ ok: false, error: `musicPath too large (>${MAX_INPUT_MB}MB)` });
+    }
+    logMemory("render/video:start");
     const rawLines = Array.isArray(lines) ? lines.map(s => String(s).slice(0, 140)) : [];
     const { w, h } = getDims(aspect);
     const widthPct = Math.min(100, Math.max(60, Number(captionWidthPct || 90)));
@@ -146,6 +179,7 @@ router.post("/video", async (req, res) => {
     const hasMusic = Boolean(musicPath);
     const duck = Boolean(autoDuck) && hasVoice && hasMusic;
 
+    const duration = clampDuration(req.body?.durationSec || 20);
     if (hasMusic) {
       const aIndex = hasVoice ? 1 : null;
       const mIndex = hasVoice ? 2 : 1;
@@ -156,7 +190,7 @@ router.post("/video", async (req, res) => {
           : `[${aIndex}:a]volume=1.0[a1];[${mIndex}:a]volume=${musicVol}[a2];[a1][a2]amix=inputs=2:duration=shortest:dropout_transition=2[aout]`
         : `[${mIndex}:a]volume=${musicVol}[aout]`;
       args.push(
-        "-t", "20",
+        "-t", String(duration),
         "-filter_complex", `${vFilter};${aFilter}`,
         "-map", "[vout]",
         "-map", "[aout]",
@@ -171,7 +205,7 @@ router.post("/video", async (req, res) => {
       );
     } else {
       args.push(
-        "-t", "20",
+        "-t", String(duration),
         "-vf", vf,
         "-r", "30",
         "-c:v", vcodec,
@@ -195,8 +229,11 @@ router.post("/video", async (req, res) => {
 
     proc.on("close", (code) => {
       if (code !== 0) {
+        try { if (fs.existsSync(outFile)) fs.unlinkSync(outFile); } catch {}
         return res.status(400).json({ ok: false, error: `ffmpeg failed: ${code}`, details: stderr.slice(-2000) });
       }
+      logMemory("render/video:done");
+      if (global.gc) global.gc();
       res.json({ ok: true, file: outFile.replace(/\\/g, '/') });
     });
   } catch (e) {
@@ -224,9 +261,19 @@ router.post("/waveform", async (req, res) => {
     if (!audioPath || !isLocalOrRemote(audioPath)) {
       return res.status(400).json({ ok: false, error: "audioPath missing or not found" });
     }
+    if (isFileTooLarge(audioPath)) {
+      return res.status(400).json({ ok: false, error: `audioPath too large (>${MAX_INPUT_MB}MB)` });
+    }
     if (backgroundPath && !isLocalOrRemote(backgroundPath)) {
       return res.status(400).json({ ok: false, error: "backgroundPath not found" });
     }
+    if (backgroundPath && isFileTooLarge(backgroundPath)) {
+      return res.status(400).json({ ok: false, error: `backgroundPath too large (>${MAX_INPUT_MB}MB)` });
+    }
+    if (musicPath && isFileTooLarge(musicPath)) {
+      return res.status(400).json({ ok: false, error: `musicPath too large (>${MAX_INPUT_MB}MB)` });
+    }
+    logMemory("render/waveform:start");
 
     const rawLines = Array.isArray(lines) ? lines.map(s => String(s).slice(0, 140)) : [];
     const { w, h } = getDims(aspect);
@@ -312,8 +359,9 @@ router.post("/waveform", async (req, res) => {
     const hwaccel = process.env.FFMPEG_HWACCEL;
     const vcodec = hwaccel === 'nvenc' ? 'h264_nvenc' : hwaccel === 'qsv' ? 'h264_qsv' : 'libx264';
 
+    const duration = clampDuration(req.body?.durationSec || 20);
     args.push(
-      "-t", "20",
+      "-t", String(duration),
       "-filter_complex", filterComplex,
       "-map", `[${finalLabel}]`,
       "-map", musicPath ? "[amix]" : `${backgroundPath ? 1 : 0}:a`,
@@ -333,8 +381,11 @@ router.post("/waveform", async (req, res) => {
     proc.stderr.on("data", d => stderr += d.toString());
     proc.on("close", (code) => {
       if (code !== 0) {
+        try { if (fs.existsSync(outFile)) fs.unlinkSync(outFile); } catch {}
         return res.status(400).json({ ok: false, error: `ffmpeg failed: ${code}`, details: stderr.slice(-2000) });
       }
+      logMemory("render/waveform:done");
+      if (global.gc) global.gc();
       res.json({ ok: true, file: outFile.replace(/\\/g, '/') });
     });
   } catch (e) {

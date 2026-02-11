@@ -8,6 +8,8 @@ import { readLibrary } from "../lib/library.js";
 const router = Router();
 let ffmpegChecked = false;
 let ffmpegOk = false;
+const MAX_RENDER_SECONDS = Number(process.env.MAX_RENDER_SECONDS || 30);
+const MAX_INPUT_MB = Number(process.env.MAX_INPUT_MB || 200);
 
 function ensureFfmpegAvailable() {
   if (ffmpegChecked) return ffmpegOk;
@@ -20,6 +22,27 @@ function ensureFfmpegAvailable() {
   }
   ffmpegChecked = true;
   return ffmpegOk;
+}
+
+function clampDuration(value) {
+  const n = Number(value || 20);
+  if (Number.isNaN(n)) return 20;
+  return Math.min(Math.max(n, 1), MAX_RENDER_SECONDS);
+}
+
+function isFileTooLarge(p) {
+  if (!p || p.startsWith('http')) return false;
+  try {
+    const stat = fs.statSync(p);
+    return stat.size > MAX_INPUT_MB * 1024 * 1024;
+  } catch {
+    return false;
+  }
+}
+
+function logMemory(tag) {
+  const m = process.memoryUsage();
+  console.log(`[MEM] ${tag} rss=${Math.round(m.rss / 1024 / 1024)}MB heap=${Math.round(m.heapUsed / 1024 / 1024)}MB`);
 }
 
 const outDir = process.env.OUTPUT_DIR || "./outputs";
@@ -148,6 +171,7 @@ async function executeJob(job) {
   if (!ensureFfmpegAvailable()) {
     throw new Error("FFmpeg not available on server");
   }
+  logMemory(`job:${job.type}:start`);
   if (job.type === "render_waveform") {
     const { backgroundPath, audioPath, lines, durationSec, aspect, captionWidthPct, musicPath, musicVolume, autoDuck } = job.payload || {};
     const resolvedBackground = resolveAssetPath(backgroundPath);
@@ -155,6 +179,9 @@ async function executeJob(job) {
     const resolvedMusic = resolveAssetPath(musicPath);
 
     if (!resolvedAudio || !isLocalOrRemote(resolvedAudio)) throw new Error("audioPath missing or not found");
+    if (isFileTooLarge(resolvedAudio)) throw new Error(`audioPath too large (>${MAX_INPUT_MB}MB)`);
+    if (resolvedBackground && isFileTooLarge(resolvedBackground)) throw new Error(`backgroundPath too large (>${MAX_INPUT_MB}MB)`);
+    if (resolvedMusic && isFileTooLarge(resolvedMusic)) throw new Error(`musicPath too large (>${MAX_INPUT_MB}MB)`);
 
     const rawLines = Array.isArray(lines) ? lines.map(s => String(s).slice(0, 140)) : [];
     const { w, h } = getDims(aspect);
@@ -215,7 +242,7 @@ async function executeJob(job) {
       args.push("-i", resolvedAudio);
     }
     if (resolvedMusic) args.push("-i", resolvedMusic);
-    const t = Number(durationSec || 20);
+    const t = clampDuration(durationSec || 20);
     const preset = process.env.FFMPEG_PRESET || "fast";
     const hwaccel = process.env.FFMPEG_HWACCEL; // e.g., 'nvenc' or 'qsv'
 
@@ -236,8 +263,15 @@ async function executeJob(job) {
       "-shortest",
       outFile
     );
-    await runFFmpeg(args, t, (p) => updateJob(job.id, { progress: p }));
-    return { outFile };
+    try {
+      await runFFmpeg(args, t, (p) => updateJob(job.id, { progress: p }));
+      logMemory(`job:${job.type}:done`);
+      if (global.gc) global.gc();
+      return { outFile };
+    } catch (e) {
+      try { if (fs.existsSync(outFile)) fs.unlinkSync(outFile); } catch {}
+      throw e;
+    }
   }
 
   if (job.type === "render_video") {
@@ -247,6 +281,9 @@ async function executeJob(job) {
     const resolvedMusic = resolveAssetPath(musicPath);
 
     if (!resolvedBackground || !isLocalOrRemote(resolvedBackground)) throw new Error("backgroundPath missing or not found");
+    if (isFileTooLarge(resolvedBackground)) throw new Error(`backgroundPath too large (>${MAX_INPUT_MB}MB)`);
+    if (resolvedAudio && isFileTooLarge(resolvedAudio)) throw new Error(`audioPath too large (>${MAX_INPUT_MB}MB)`);
+    if (resolvedMusic && isFileTooLarge(resolvedMusic)) throw new Error(`musicPath too large (>${MAX_INPUT_MB}MB)`);
     const rawLines = Array.isArray(lines) ? lines.map(s => String(s).slice(0, 140)) : [];
     const { w, h } = getDims(aspect);
     const widthPct = Math.min(100, Math.max(60, Number(captionWidthPct || 90)));
@@ -273,7 +310,7 @@ async function executeJob(job) {
     const preset = process.env.FFMPEG_PRESET || "fast";
     const hwaccel = process.env.FFMPEG_HWACCEL;
     const vcodec = hwaccel === 'nvenc' ? 'h264_nvenc' : hwaccel === 'qsv' ? 'h264_qsv' : 'libx264';
-    const t = Number(durationSec || 20);
+    const t = clampDuration(durationSec || 20);
 
     const musicVol = Math.min(1, Math.max(0, Number(musicVolume ?? 0.3)));
     const duck = Boolean(autoDuck) && Boolean(resolvedMusic) && Boolean(resolvedAudio);
@@ -307,8 +344,15 @@ async function executeJob(job) {
     }
     args.push(outFile);
 
-    await runFFmpeg(args, t, (p) => updateJob(job.id, { progress: p }));
-    return { outFile };
+    try {
+      await runFFmpeg(args, t, (p) => updateJob(job.id, { progress: p }));
+      logMemory(`job:${job.type}:done`);
+      if (global.gc) global.gc();
+      return { outFile };
+    } catch (e) {
+      try { if (fs.existsSync(outFile)) fs.unlinkSync(outFile); } catch {}
+      throw e;
+    }
   }
 
   throw new Error("Unknown job type");

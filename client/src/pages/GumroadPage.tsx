@@ -66,11 +66,11 @@ export function GumroadPage() {
                         />
                     </div>
 
-                    <div className="flex gap-2">
-                        <Button onClick={handleGenerate} isLoading={isGenerating}>
+                    <div className="flex flex-wrap gap-2">
+                        <Button onClick={handleGenerate} isLoading={isGenerating} className="w-full sm:w-auto">
                             Generate
                         </Button>
-                        <Button onClick={handleDownloadZip} variant="secondary">
+                        <Button onClick={handleDownloadZip} variant="secondary" className="w-full sm:w-auto">
                             Download ZIP
                         </Button>
                     </div>
@@ -81,7 +81,7 @@ export function GumroadPage() {
                 <div className="mt-6 space-y-4">
                     {result.freeMarkdown && (
                         <Card title="Free product (Markdown)">
-                            <pre className="bg-gray-100 p-4 rounded overflow-auto text-sm whitespace-pre-wrap">
+                            <pre className="bg-black/30 border border-white/10 text-gray-200 p-4 rounded overflow-auto text-sm whitespace-pre-wrap">
                                 {result.freeMarkdown}
                             </pre>
                         </Card>
@@ -89,7 +89,7 @@ export function GumroadPage() {
 
                     {result.paidMarkdown && (
                         <Card title="Paid product (Markdown)">
-                            <pre className="bg-gray-100 p-4 rounded overflow-auto text-sm whitespace-pre-wrap">
+                            <pre className="bg-black/30 border border-white/10 text-gray-200 p-4 rounded overflow-auto text-sm whitespace-pre-wrap">
                                 {result.paidMarkdown}
                             </pre>
                         </Card>
