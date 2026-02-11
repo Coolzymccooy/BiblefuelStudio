@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
@@ -7,6 +7,7 @@ import { api } from '../lib/api';
 import toast from 'react-hot-toast';
 import { Mic, Plus } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { loadJson, saveJson, STORAGE_KEYS } from '../lib/storage';
 
 interface Script {
     title: string;
@@ -26,6 +27,13 @@ export function ScriptsPage() {
     const [scripts, setScripts] = useState<Script[]>([]);
     const [isGenerating, setIsGenerating] = useState(false);
 
+    useEffect(() => {
+        const cached = loadJson<Script[]>(STORAGE_KEYS.scripts, []);
+        if (cached.length) {
+            setScripts(cached);
+        }
+    }, []);
+
     const handleGenerate = async () => {
         setIsGenerating(true);
         try {
@@ -37,6 +45,7 @@ export function ScriptsPage() {
 
             if (response.ok && response.data?.scripts) {
                 setScripts(response.data.scripts);
+                saveJson(STORAGE_KEYS.scripts, response.data.scripts);
                 toast.success(`Generated ${response.data.scripts.length} scripts!`);
             } else {
                 toast.error(response.error || 'Failed to generate scripts');
@@ -79,6 +88,7 @@ export function ScriptsPage() {
 
     const handleClear = () => {
         setScripts([]);
+        saveJson(STORAGE_KEYS.scripts, []);
     };
 
     return (

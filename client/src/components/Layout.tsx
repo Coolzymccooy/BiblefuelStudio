@@ -1,13 +1,14 @@
 import { useState } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import {
-    Menu, X, FileText, List, Briefcase, Image, Mic, Film, Video, Package, LogOut, LogIn, Shield, Settings, HelpCircle
+    Menu, X, FileText, List, Briefcase, Image, Mic, Film, Video, Package, LogOut, LogIn, Shield, Settings, HelpCircle, Wand2
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { Button } from './ui/Button';
 
 const navItems = [
     { path: '/', label: 'Home', icon: Shield },
+    { path: '/wizard', label: 'Wizard', icon: Wand2 },
     { path: '/scripts', label: 'Scripts', icon: FileText },
     { path: '/queue', label: 'Queue', icon: List },
     { path: '/jobs', label: 'Jobs', icon: Briefcase },

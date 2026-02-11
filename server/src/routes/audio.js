@@ -27,7 +27,10 @@ const router = Router();
  *   gate?: { thresholdDb?: number },          // e.g. -35
  *   eq?: { highpassHz?: number, lowpassHz?: number },
  *   compressor?: { ratio?: number, thresholdDb?: number, attackMs?: number, releaseMs?: number },
- *   silenceRemove?: { enabled?: boolean }
+ *   silenceRemove?: { enabled?: boolean },
+ *   deesser?: { amount?: number },             // 0..1
+ *   limiter?: { ceilingDb?: number },          // e.g. -1
+ *   presence?: { freqHz?: number, gainDb?: number, widthQ?: number }
  * }
  */
 router.post("/process", async (req, res) => {
@@ -81,6 +84,9 @@ router.post("/process", async (req, res) => {
       eq: (req.body?.eq ?? p.eq) || null,
       compressor: (req.body?.compressor ?? p.compressor) || null,
       silenceRemove: (req.body?.silenceRemove ?? p.silenceRemove) || null,
+      deesser: req.body?.deesser || null,
+      limiter: req.body?.limiter || null,
+      presence: req.body?.presence || null,
     };
 
     const outDir = process.env.OUTPUT_DIR || "./outputs";
@@ -132,6 +138,18 @@ router.post("/process", async (req, res) => {
       filters.push(`acompressor=threshold=${thlin.toFixed(6)}:ratio=${ratio}:attack=${attack}:release=${release}:makeup=8`);
     }
 
+    if (cfg.deesser?.amount != null) {
+      const amount = Math.min(1, Math.max(0.1, Number(cfg.deesser.amount)));
+      filters.push(`deesser=i=${amount}:f=0.5`);
+    }
+
+    if (cfg.presence?.gainDb != null && Number(cfg.presence.gainDb) !== 0) {
+      const freq = Number(cfg.presence.freqHz ?? 4000);
+      const gain = Number(cfg.presence.gainDb);
+      const q = Number(cfg.presence.widthQ ?? 1.0);
+      filters.push(`equalizer=f=${freq}:width_type=q:width=${q}:g=${gain}`);
+    }
+
     if (cfg.silenceRemove?.enabled) {
       // remove near-silence at start/end and long gaps
       filters.push(`silenceremove=start_periods=1:start_duration=0.15:start_threshold=-40dB:stop_periods=1:stop_duration=0.25:stop_threshold=-40dB`);
@@ -140,6 +158,12 @@ router.post("/process", async (req, res) => {
     if (cfg.normalize?.targetLUFS != null) {
       const lufs = Number(cfg.normalize.targetLUFS);
       filters.push(`loudnorm=I=${lufs}:TP=-1.5:LRA=11`);
+    }
+
+    if (cfg.limiter?.ceilingDb != null) {
+      const ceilingDb = Number(cfg.limiter.ceilingDb);
+      const limit = Math.min(1, Math.max(0.1, Math.pow(10, ceilingDb / 20)));
+      filters.push(`alimiter=limit=${limit.toFixed(3)}`);
     }
 
     // If no filters, still encode to mp3

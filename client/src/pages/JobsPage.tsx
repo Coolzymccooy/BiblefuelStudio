@@ -3,7 +3,8 @@ import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { api } from '../lib/api';
-import { RefreshCw, Download, Clock, Terminal } from 'lucide-react';
+import { RefreshCw, Download, Clock, Terminal, PlayCircle, ExternalLink } from 'lucide-react';
+import { loadJson, STORAGE_KEYS } from '../lib/storage';
 
 interface Job {
     id: string;
@@ -22,31 +23,35 @@ export function JobsPage() {
     const [jobs, setJobs] = useState<Job[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [selectedJob, setSelectedJob] = useState<Job | null>(null);
+    const [isTriggering, setIsTriggering] = useState(false);
 
-    const loadJobs = async () => {
+    const loadJobs = async (showLoading = false) => {
+        if (showLoading) setIsLoading(true);
         try {
             const response = await api.get('/api/jobs');
             if (response.ok && response.data?.jobs) {
-                setJobs(prev => {
-                    const isSame = JSON.stringify(prev) === JSON.stringify(response.data.jobs);
-                    return isSame ? prev : response.data.jobs;
-                });
+                setJobs(response.data.jobs);
             }
         } catch (error) {
             console.error("Failed to refresh jobs", error);
+        } finally {
+            if (showLoading) setIsLoading(false);
         }
     };
 
     useEffect(() => {
-        setIsLoading(true);
-        loadJobs().then(() => setIsLoading(false));
+        loadJobs(true);
 
         const interval = setInterval(() => {
-            loadJobs();
+            loadJobs(false);
         }, 3000);
 
         return () => clearInterval(interval);
     }, []);
+
+    const handleRefresh = async () => {
+        await loadJobs(true);
+    };
 
     const getStatusVariant = (status: string): 'default' | 'warning' | 'success' | 'danger' => {
         switch (status) {
@@ -66,6 +71,50 @@ export function JobsPage() {
         api.download(`/outputs/${fileName}`);
     };
 
+    const handleOpen = (filePath: string) => {
+        const fileName = filePath.split(/[\\/]/).pop() || filePath;
+        window.open(`${api.baseUrl}/outputs/${fileName}`, '_blank');
+    };
+
+    const triggerTestJob = async () => {
+        setIsTriggering(true);
+        try {
+            const library = await api.get('/api/library');
+            const item = library.ok ? library.data?.library?.items?.[0] : null;
+            if (!item?.id) {
+                alert('Library is empty. Add a background first.');
+                return;
+            }
+
+            const audioHistory = loadJson<any[]>(STORAGE_KEYS.audioHistory, []);
+            const audioPath = audioHistory[0]?.path || 'outputs/test.wav';
+            const payload = {
+                type: 'render_video',
+                payload: {
+                    backgroundPath: item.id,
+                    audioPath,
+                    lines: [
+                        'Test render job',
+                        'Psalm 34:18',
+                        'God is near.',
+                        'Auto-generated',
+                    ],
+                    durationSec: 20,
+                },
+            };
+
+            const res = await api.post('/api/jobs/enqueue', payload);
+            if (res.ok) {
+                alert('Test job enqueued. Check status below.');
+                await loadJobs(true);
+            } else {
+                alert(res.error || 'Failed to enqueue test job');
+            }
+        } finally {
+            setIsTriggering(false);
+        }
+    };
+
     return (
         <div className="space-y-6 animate-fade-in">
             <div className="flex items-center justify-between">
@@ -73,10 +122,16 @@ export function JobsPage() {
                     <h2 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-400 mb-2 text-white">Background Jobs</h2>
                     <p className="text-gray-400">Track rendering and background processes.</p>
                 </div>
-                <Button onClick={loadJobs} isLoading={isLoading}>
-                    <RefreshCw size={16} className="mr-2" />
-                    Refresh
-                </Button>
+                <div className="flex items-center gap-2">
+                    <Button onClick={triggerTestJob} isLoading={isTriggering} variant="secondary">
+                        <PlayCircle size={16} className="mr-2" />
+                        Trigger Test Job
+                    </Button>
+                    <Button onClick={handleRefresh} isLoading={isLoading}>
+                        <RefreshCw size={16} className="mr-2" />
+                        Refresh
+                    </Button>
+                </div>
             </div>
 
             <Card className="min-h-[500px]">
@@ -130,16 +185,28 @@ export function JobsPage() {
                                             )}
 
                                             {job.status === 'done' && job.result?.outFile && (
-                                                <Button
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        handleDownload(job.result!.outFile!);
-                                                    }}
-                                                    className="text-xs px-3 py-1 bg-primary-500/10 hover:bg-primary-500/20 text-primary-400 border-primary-500/20 h-auto"
-                                                >
-                                                    <Download size={14} className="mr-1.5" />
-                                                    Download
-                                                </Button>
+                                                <div className="flex gap-2">
+                                                    <Button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleOpen(job.result!.outFile!);
+                                                        }}
+                                                        className="text-xs px-3 py-1 bg-white/10 hover:bg-white/20 text-white border-white/10 h-auto"
+                                                    >
+                                                        <ExternalLink size={14} className="mr-1.5" />
+                                                        Play
+                                                    </Button>
+                                                    <Button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleDownload(job.result!.outFile!);
+                                                        }}
+                                                        className="text-xs px-3 py-1 bg-primary-500/10 hover:bg-primary-500/20 text-primary-400 border-primary-500/20 h-auto"
+                                                    >
+                                                        <Download size={14} className="mr-1.5" />
+                                                        Download
+                                                    </Button>
+                                                </div>
                                             )}
                                         </div>
                                         {job.status === 'running' && (

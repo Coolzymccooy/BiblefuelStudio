@@ -5,6 +5,7 @@ import { v4 as uuid } from "uuid";
 import { spawn } from "child_process";
 
 const router = Router();
+const audioExtensions = new Set([".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".webm"]);
 
 /**
  * Upload audio as dataUrl (base64) and save to outputs/.
@@ -57,6 +58,29 @@ router.post("/upload-audio", async (req, res) => {
     });
   } catch (e) {
     res.status(400).json({ ok:false, error: String(e?.message || e) });
+  }
+});
+
+router.get("/audio-list", (req, res) => {
+  try {
+    const outDir = process.env.OUTPUT_DIR || "./outputs";
+    if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+    const entries = fs.readdirSync(outDir)
+      .filter(name => audioExtensions.has(path.extname(name).toLowerCase()))
+      .map(name => {
+        const full = path.join(outDir, name);
+        const stat = fs.statSync(full);
+        return {
+          name,
+          path: full.replace(/\\/g, "/"),
+          size: stat.size,
+          mtime: stat.mtime?.toISOString?.() || null
+        };
+      })
+      .sort((a, b) => (b.mtime || "").localeCompare(a.mtime || ""));
+    res.json({ ok: true, items: entries });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: String(e?.message || e) });
   }
 });
 

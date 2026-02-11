@@ -1,7 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
-import { Badge } from '../components/ui/Badge';
 import { api } from '../lib/api';
 import toast from 'react-hot-toast';
 import {
@@ -10,23 +9,21 @@ import {
     Trash2,
     Plus,
     Music,
-    Settings2,
     Volume2,
-    Clock,
     Waves,
     Library,
     Film,
     Download,
     X,
-    CheckCircle2
 } from 'lucide-react';
+import { loadJson, saveJson, STORAGE_KEYS } from '../lib/storage';
 
 interface TimelineClip {
     id: string;
     path: string;
-    text?: string;
-    duration: number;
-    startOffset: number;
+    label?: string;
+    startSec: number | null;
+    durationSec: number | null;
 }
 
 interface LibraryItem {
@@ -37,6 +34,13 @@ interface LibraryItem {
     savedAt: string;
 }
 
+interface AudioItem {
+    id: string;
+    path: string;
+    kind: string;
+    createdAt: string;
+}
+
 export function TimelinePage() {
     const [clips, setClips] = useState<TimelineClip[]>([]);
     const [backgroundItem, setBackgroundItem] = useState<LibraryItem | null>(null);
@@ -45,6 +49,10 @@ export function TimelinePage() {
     const [isLoadingLibrary, setIsLoadingLibrary] = useState(false);
     const [isPreviewing, setIsPreviewing] = useState(false);
     const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+    const [audioHistory, setAudioHistory] = useState<AudioItem[]>([]);
+    const [showAddClipModal, setShowAddClipModal] = useState(false);
+    const [manualPath, setManualPath] = useState('');
+    const [currentAudioPath, setCurrentAudioPath] = useState('');
 
     // Global controls
     const [fadeIn, setFadeIn] = useState(0);
@@ -52,33 +60,49 @@ export function TimelinePage() {
     const [normalizeLUFS, setNormalizeLUFS] = useState(-14);
     const [deess, setDeess] = useState(true);
 
-    const loadClipsFromCache = () => {
-        const cached = localStorage.getItem('BF_TIMELINE_CLIPS');
-        if (cached) {
-            try {
-                setClips(JSON.parse(cached));
-            } catch (e) {
-                console.error('Failed to parse cached clips');
-            }
-        }
-    };
-
     useEffect(() => {
-        loadClipsFromCache();
+        const cached = loadJson<TimelineClip[]>(STORAGE_KEYS.timelineClips, []);
+        if (cached.length) setClips(cached);
+        const cachedHistory = loadJson<AudioItem[]>(STORAGE_KEYS.audioHistory, []);
+        if (cachedHistory.length) setAudioHistory(cachedHistory);
+        const cachedAudioPath = loadJson<string>(STORAGE_KEYS.audioPath, '');
+        if (cachedAudioPath) setCurrentAudioPath(cachedAudioPath);
     }, []);
 
     const saveClipsToCache = (newClips: TimelineClip[]) => {
-        localStorage.setItem('BF_TIMELINE_CLIPS', JSON.stringify(newClips));
+        saveJson(STORAGE_KEYS.timelineClips, newClips);
     };
 
-    const handleAddClip = () => {
-        toast.error('Add Clip via Library coming soon');
+    const handleAddClip = (path: string, label?: string) => {
+        if (!path.trim()) {
+            toast.error('Audio path is required');
+            return;
+        }
+        const clip: TimelineClip = {
+            id: `clip_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            path,
+            label,
+            startSec: null,
+            durationSec: null,
+        };
+        const next = [...clips, clip];
+        setClips(next);
+        saveClipsToCache(next);
+        setManualPath('');
+        setShowAddClipModal(false);
+        toast.success('Clip added');
     };
 
     const handleRemoveClip = (id: string) => {
         const newClips = clips.filter(c => c.id !== id);
         setClips(newClips);
         saveClipsToCache(newClips);
+    };
+
+    const handleUpdateClip = (id: string, patch: Partial<TimelineClip>) => {
+        const next = clips.map((c) => (c.id === id ? { ...c, ...patch } : c));
+        setClips(next);
+        saveClipsToCache(next);
     };
 
     const handleRender = async () => {
@@ -90,7 +114,11 @@ export function TimelinePage() {
         const toastId = toast.loading('Rendering timeline audio...');
         try {
             const response = await api.post('/api/audio-adv/timeline', {
-                clips,
+                clips: clips.map((c) => ({
+                    path: c.path,
+                    startSec: c.startSec != null ? c.startSec : undefined,
+                    durationSec: c.durationSec != null ? c.durationSec : undefined,
+                })),
                 normalizeLUFS,
                 fades: { inMs: fadeIn, outMs: fadeOut },
                 deess: { enabled: deess, amount: 0.55 },
@@ -119,7 +147,11 @@ export function TimelinePage() {
         setIsPreviewing(true);
         try {
             const response = await api.post('/api/audio-adv/timeline-preview', {
-                clips,
+                clips: clips.map((c) => ({
+                    path: c.path,
+                    startSec: c.startSec != null ? c.startSec : undefined,
+                    durationSec: c.durationSec != null ? c.durationSec : undefined,
+                })),
                 backgroundPath: backgroundItem.id,
                 normalizeLUFS,
                 fades: { inMs: fadeIn, outMs: fadeOut },
@@ -154,6 +186,10 @@ export function TimelinePage() {
             setIsLoadingLibrary(false);
         }
     };
+
+    const totalDuration = useMemo(() => {
+        return clips.reduce((acc, c) => acc + (c.durationSec || 0), 0);
+    }, [clips]);
 
     return (
         <div className="space-y-6 animate-fade-in">
@@ -193,7 +229,7 @@ export function TimelinePage() {
                                         <p className="text-xs text-gray-500">Auto-sequenced timeline</p>
                                     </div>
                                 </div>
-                                <Button variant="secondary" onClick={handleAddClip} className="h-9 px-4 text-xs">
+                                <Button variant="secondary" onClick={() => setShowAddClipModal(true)} className="h-9 px-4 text-xs">
                                     <Plus size={14} className="mr-2" />
                                     Add Clip
                                 </Button>
@@ -203,7 +239,7 @@ export function TimelinePage() {
                                 <div className="flex flex-col items-center justify-center py-20 text-center opacity-30">
                                     <Music size={48} className="mb-4" />
                                     <p className="text-sm">No clips in timeline.</p>
-                                    <p className="text-xs">Add clips from the library or scripts page.</p>
+                                    <p className="text-xs">Add clips from your processed audio list.</p>
                                 </div>
                             ) : (
                                 <div className="space-y-3">
@@ -212,19 +248,39 @@ export function TimelinePage() {
                                             key={clip.id}
                                             className="group relative bg-white/[0.02] border border-white/5 rounded-xl p-4 hover:border-primary-500/30 hover:bg-white/[0.04] transition-all"
                                         >
-                                            <div className="flex items-center justify-between">
-                                                <div className="flex items-center gap-4">
+                                            <div className="flex items-start justify-between gap-4">
+                                                <div className="flex items-start gap-4 flex-1">
                                                     <div className="h-8 w-8 rounded-lg bg-black/40 flex items-center justify-center text-xs font-bold text-gray-500">
                                                         {idx + 1}
                                                     </div>
-                                                    <div>
-                                                        <p className="text-sm font-medium text-gray-200 truncate max-w-[300px]">
-                                                            {clip.text || clip.path.split('/').pop()}
+                                                    <div className="flex-1 min-w-0">
+                                                        <p className="text-sm font-medium text-gray-200 truncate">
+                                                            {clip.label || clip.path.split('/').pop()}
                                                         </p>
-                                                        <div className="flex items-center gap-3 mt-1">
-                                                            <span className="text-[10px] text-gray-500 flex items-center gap-1 font-mono uppercase tracking-tighter">
-                                                                <Clock size={10} /> {clip.duration.toFixed(2)}s
-                                                            </span>
+                                                        <p className="text-[10px] text-gray-500 font-mono break-all">{clip.path}</p>
+                                                        <div className="grid grid-cols-2 gap-3 mt-3">
+                                                            <label className="text-[10px] text-gray-500 uppercase tracking-wider">
+                                                                Start (sec)
+                                                                <input
+                                                                    type="number"
+                                                                    value={clip.startSec ?? ''}
+                                                                    onChange={(e) => handleUpdateClip(clip.id, { startSec: e.target.value === '' ? null : Number(e.target.value) })}
+                                                                    className="mt-1 w-full bg-black/30 border border-white/10 rounded px-2 py-1 text-xs"
+                                                                    min={0}
+                                                                    step={0.1}
+                                                                />
+                                                            </label>
+                                                            <label className="text-[10px] text-gray-500 uppercase tracking-wider">
+                                                                Duration (sec)
+                                                                <input
+                                                                    type="number"
+                                                                    value={clip.durationSec ?? ''}
+                                                                    onChange={(e) => handleUpdateClip(clip.id, { durationSec: e.target.value === '' ? null : Number(e.target.value) })}
+                                                                    className="mt-1 w-full bg-black/30 border border-white/10 rounded px-2 py-1 text-xs"
+                                                                    min={0}
+                                                                    step={0.1}
+                                                                />
+                                                            </label>
                                                         </div>
                                                     </div>
                                                 </div>
@@ -350,7 +406,7 @@ export function TimelinePage() {
                             <div className="flex justify-between text-xs">
                                 <span className="text-gray-500">Total Duration</span>
                                 <span className="font-mono text-primary-400">
-                                    {clips.reduce((acc, c) => acc + c.duration, 0).toFixed(2)}s
+                                    {totalDuration.toFixed(2)}s
                                 </span>
                             </div>
                             <div className="flex justify-between text-xs">
@@ -359,8 +415,86 @@ export function TimelinePage() {
                             </div>
                         </div>
                     </Card>
+
+                    <Card title="Recent Audio">
+                        {audioHistory.length === 0 ? (
+                            <p className="text-xs text-gray-500">No audio history yet.</p>
+                        ) : (
+                            <div className="space-y-2">
+                                {audioHistory.slice(0, 5).map((item) => (
+                                    <div key={item.id} className="text-xs text-gray-400 break-all">
+                                        <button
+                                            onClick={() => handleAddClip(item.path, item.kind)}
+                                            className="text-primary-400 hover:text-primary-300"
+                                        >
+                                            + Add
+                                        </button>
+                                        <span className="ml-2">{item.path}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </Card>
                 </div>
             </div>
+
+            {/* Add Clip Modal */}
+            {showAddClipModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                    <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShowAddClipModal(false)} />
+                    <Card className="relative w-full max-w-3xl max-h-[80vh] overflow-hidden flex flex-col border-white/20 shadow-2xl">
+                        <div className="flex items-center justify-between p-4 border-b border-white/10">
+                            <h3 className="font-bold text-lg text-white">Add Clip</h3>
+                            <button onClick={() => setShowAddClipModal(false)} className="text-gray-500 hover:text-white">
+                                <X size={24} />
+                            </button>
+                        </div>
+                        <div className="p-4 space-y-4 overflow-y-auto">
+                            {currentAudioPath && (
+                                <div className="flex items-center justify-between bg-black/30 border border-white/10 rounded-lg p-3">
+                                    <div className="text-xs text-gray-300 break-all">{currentAudioPath}</div>
+                                    <Button onClick={() => handleAddClip(currentAudioPath, 'current')} className="text-xs h-8">
+                                        Add Current
+                                    </Button>
+                                </div>
+                            )}
+
+                            <div>
+                                <label className="block text-xs text-gray-400 mb-1">Manual audio path</label>
+                                <div className="flex gap-2">
+                                    <input
+                                        value={manualPath}
+                                        onChange={(e) => setManualPath(e.target.value)}
+                                        placeholder="e.g. server/outputs/audio.mp3"
+                                        className="flex-1 bg-black/30 border border-white/10 rounded px-3 py-2 text-sm text-gray-200"
+                                    />
+                                    <Button onClick={() => handleAddClip(manualPath, 'manual')} className="text-xs h-9">
+                                        Add
+                                    </Button>
+                                </div>
+                            </div>
+
+                            <div>
+                                <h4 className="text-xs text-gray-400 mb-2 uppercase tracking-wider">Recent Audio</h4>
+                                {audioHistory.length === 0 ? (
+                                    <p className="text-xs text-gray-500">No recent audio found.</p>
+                                ) : (
+                                    <div className="space-y-2">
+                                        {audioHistory.map((item) => (
+                                            <div key={item.id} className="flex items-center gap-2 bg-black/20 border border-white/10 rounded-lg p-2">
+                                                <div className="flex-1 text-xs text-gray-300 break-all">{item.path}</div>
+                                                <Button onClick={() => handleAddClip(item.path, item.kind)} className="text-xs h-8">
+                                                    Add
+                                                </Button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </Card>
+                </div>
+            )}
 
             {/* Library Picker Modal */}
             {showLibraryModal && (

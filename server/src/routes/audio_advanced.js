@@ -8,15 +8,25 @@ import { readLibrary } from "../lib/library.js";
 const router = Router();
 
 function resolveAssetPath(pathOrId) {
-  if (!pathOrId || typeof pathOrId !== 'string') return null;
-  if (pathOrId.startsWith('http')) return pathOrId;
-  if (fs.existsSync(pathOrId)) return pathOrId;
+  if (pathOrId == null) return null;
+  const normalized = String(pathOrId).trim();
+  if (!normalized) return null;
+  if (normalized.startsWith('http')) return normalized;
+  if (fs.existsSync(normalized)) return normalized;
 
   const lib = readLibrary();
-  const item = lib.items.find(x => x.id === pathOrId || x.id == pathOrId);
-  if (item && item.url) return item.url;
+  const item = lib.items.find(x => String(x.id) === normalized);
+  if (item) {
+    if (Array.isArray(item.files) && item.files.length > 0) {
+      const sorted = item.files.slice().sort((a, b) => (b.width || 0) - (a.width || 0));
+      const hd = sorted.find(f => f.quality === 'hd') || sorted[0];
+      if (hd?.link) return hd.link;
+    }
+    if (item.previewUrl) return item.previewUrl;
+    if (item.url) return item.url;
+  }
 
-  return pathOrId;
+  return normalized;
 }
 
 function isLocalOrRemote(p) {

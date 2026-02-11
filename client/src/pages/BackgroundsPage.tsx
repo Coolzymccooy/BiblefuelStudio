@@ -4,7 +4,7 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { api } from '../lib/api';
 import toast from 'react-hot-toast';
-import { Search, Download, Play, ExternalLink, Image as ImageIcon, Bookmark, Trash2, Library } from 'lucide-react';
+import { Search, Download, Play, ExternalLink, Image as ImageIcon, Bookmark, Trash2, Library, Sparkles, FolderUp } from 'lucide-react';
 
 interface PexelsVideo {
     id: string | number;
@@ -15,12 +15,17 @@ interface PexelsVideo {
 }
 
 export function BackgroundsPage() {
-    const [activeTab, setActiveTab] = useState<'search' | 'library'>('search');
+    const [activeTab, setActiveTab] = useState<'search' | 'animated' | 'local' | 'library'>('search');
     const [query, setQuery] = useState('sunrise clouds');
     const [videos, setVideos] = useState<PexelsVideo[]>([]);
+    const [animatedQuery, setAnimatedQuery] = useState('space nebula');
+    const [animatedVideos, setAnimatedVideos] = useState<PexelsVideo[]>([]);
+    const [isSearchingAnimated, setIsSearchingAnimated] = useState(false);
     const [libraryItems, setLibraryItems] = useState<PexelsVideo[]>([]);
     const [isSearching, setIsSearching] = useState(false);
     const [isLoadingLibrary, setIsLoadingLibrary] = useState(false);
+    const [localFolder, setLocalFolder] = useState('');
+    const [importedLocal, setImportedLocal] = useState<PexelsVideo[]>([]);
 
     const handleSearch = async () => {
         setIsSearching(true);
@@ -37,6 +42,23 @@ export function BackgroundsPage() {
             toast.error('An error occurred');
         } finally {
             setIsSearching(false);
+        }
+    };
+
+    const handleAnimatedSearch = async () => {
+        setIsSearchingAnimated(true);
+        try {
+            const response = await api.get(`/api/pixabay/search?q=${encodeURIComponent(animatedQuery)}`);
+            if (response.ok && response.data?.videos) {
+                setAnimatedVideos(response.data.videos);
+                toast.success(`Found ${response.data.videos.length} animated videos`);
+            } else {
+                toast.error(response.error || 'Search failed');
+            }
+        } catch (error) {
+            toast.error('An error occurred');
+        } finally {
+            setIsSearchingAnimated(false);
         }
     };
 
@@ -99,6 +121,38 @@ export function BackgroundsPage() {
             }
         } catch (error) {
             toast.error('An error occurred', { id: 'download' });
+        }
+    };
+
+    const handleAnimatedDownload = async (id: string | number) => {
+        try {
+            toast.loading(`Downloading ${id}...`, { id: 'download-animated' });
+            const response = await api.post('/api/pixabay/download', { id });
+            if (response.ok && response.data?.file) {
+                toast.success(`Downloaded to: ${response.data.file}`, { id: 'download-animated' });
+            } else {
+                toast.error(response.error || 'Download failed', { id: 'download-animated' });
+            }
+        } catch (error) {
+            toast.error('An error occurred', { id: 'download-animated' });
+        }
+    };
+
+    const handleImportLocal = async () => {
+        if (!localFolder.trim()) {
+            toast.error('Enter a folder path');
+            return;
+        }
+        try {
+            const response = await api.post('/api/library/import-local', { folderPath: localFolder.trim() });
+            if (response.ok && response.data?.imported) {
+                setImportedLocal(response.data.imported);
+                toast.success(`Imported ${response.data.imported.length} files`);
+            } else {
+                toast.error(response.error || 'Import failed');
+            }
+        } catch (error) {
+            toast.error('An error occurred');
         }
     };
 
@@ -190,6 +244,20 @@ export function BackgroundsPage() {
                         Search
                     </button>
                     <button
+                        onClick={() => setActiveTab('animated')}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${activeTab === 'animated' ? 'bg-primary-500 text-white shadow-lg' : 'text-gray-400 hover:text-white'}`}
+                    >
+                        <Sparkles size={14} />
+                        Animated
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('local')}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${activeTab === 'local' ? 'bg-primary-500 text-white shadow-lg' : 'text-gray-400 hover:text-white'}`}
+                    >
+                        <FolderUp size={14} />
+                        Local Packs
+                    </button>
+                    <button
                         onClick={() => setActiveTab('library')}
                         className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${activeTab === 'library' ? 'bg-primary-500 text-white shadow-lg' : 'text-gray-400 hover:text-white'}`}
                     >
@@ -233,6 +301,68 @@ export function BackgroundsPage() {
                         </div>
                     )}
                 </>
+            ) : activeTab === 'animated' ? (
+                <>
+                    <Card className="bg-white/5 border-white/10 backdrop-blur-xl">
+                        <div className="flex gap-2">
+                            <div className="relative flex-1">
+                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
+                                <Input
+                                    value={animatedQuery}
+                                    onChange={(e) => setAnimatedQuery(e.target.value)}
+                                    placeholder="e.g. space, nebula, galaxy, abstract..."
+                                    onKeyDown={(e) => e.key === 'Enter' && handleAnimatedSearch()}
+                                    className="pl-10 bg-black/20 border-white/10"
+                                />
+                            </div>
+                            <Button onClick={handleAnimatedSearch} isLoading={isSearchingAnimated} className="px-8">
+                                Search
+                            </Button>
+                        </div>
+                    </Card>
+
+                    {animatedVideos.length > 0 ? (
+                        <div className="space-y-4">
+                            <div className="flex items-center justify-between px-2">
+                                <h3 className="text-sm font-bold uppercase tracking-widest text-gray-500">Animated Results ({animatedVideos.length})</h3>
+                            </div>
+                            {renderGrid(animatedVideos, false)}
+                            <div className="text-xs text-gray-500 px-2">
+                                Downloads use Pixabay. Make sure `PIXABAY_API_KEY` is set in `server/.env`.
+                            </div>
+                        </div>
+                    ) : !isSearchingAnimated && (
+                        <div className="py-20 flex flex-col items-center justify-center opacity-30">
+                            <Sparkles size={64} className="text-gray-600 mb-4" />
+                            <p className="text-gray-400">Search for animated backgrounds to see results.</p>
+                        </div>
+                    )}
+                </>
+            ) : activeTab === 'local' ? (
+                <div className="space-y-4">
+                    <Card className="bg-white/5 border-white/10 backdrop-blur-xl">
+                        <div className="flex gap-2">
+                            <Input
+                                value={localFolder}
+                                onChange={(e) => setLocalFolder(e.target.value)}
+                                placeholder="e.g. C:\\videos\\studio-packs"
+                                className="bg-black/20 border-white/10"
+                            />
+                            <Button onClick={handleImportLocal} className="px-6">
+                                Import Folder
+                            </Button>
+                        </div>
+                        <p className="text-[10px] text-gray-500 mt-2">
+                            Imports .mp4/.mov/.webm/.m4v from the folder into the library and outputs.
+                        </p>
+                    </Card>
+                    {importedLocal.length > 0 && (
+                        <div className="space-y-4">
+                            <h3 className="text-sm font-bold uppercase tracking-widest text-gray-500">Imported ({importedLocal.length})</h3>
+                            {renderGrid(importedLocal, true)}
+                        </div>
+                    )}
+                </div>
             ) : (
                 <div className="space-y-4">
                     <div className="flex items-center justify-between px-2">

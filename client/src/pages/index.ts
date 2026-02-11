@@ -9,3 +9,4 @@ export { GumroadPage } from './GumroadPage';
 export { HomePage } from './HomePage';
 export { SettingsPage } from './SettingsPage';
 export { HelpPage } from './HelpPage';
+export { WizardPage } from './WizardPage';

@@ -13,7 +13,8 @@ import {
   RenderPage,
   GumroadPage,
   SettingsPage,
-  HelpPage
+  HelpPage,
+  WizardPage
 } from './pages';
 
 const queryClient = new QueryClient({
@@ -32,6 +33,7 @@ function App() {
         <Routes>
           <Route path="/" element={<Layout />}>
             <Route index element={<HomePage />} />
+            <Route path="wizard" element={<WizardPage />} />
             <Route path="scripts" element={<ScriptsPage />} />
             <Route path="queue" element={<QueuePage />} />
             <Route path="jobs" element={<JobsPage />} />
