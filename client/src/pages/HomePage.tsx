@@ -68,8 +68,12 @@ export function HomePage() {
             <div className="space-y-8 animate-fade-in">
                 <div className="relative">
                     <div className="absolute -top-10 -left-10 w-32 h-32 bg-primary-500/20 rounded-full blur-3xl pointer-events-none"></div>
-                    <h2 className="text-4xl font-bold mb-2 bg-clip-text text-transparent bg-gradient-to-r from-white to-primary-200">Welcome to Biblefuel</h2>
-                    <p className="text-gray-400 text-lg">Your AI-powered content creation studio.</p>
+                    <h2 className="text-3xl sm:text-4xl font-bold mb-2 bg-clip-text text-transparent bg-gradient-to-r from-white to-primary-200 leading-tight">
+                        Welcome to Biblefuel
+                    </h2>
+                    <p className="text-gray-400 text-base sm:text-lg max-w-2xl">
+                        Your AI-powered content creation studio.
+                    </p>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -140,7 +144,7 @@ export function HomePage() {
                 </div>
 
                 <Card className="mt-6 border-t font-mono text-xs">
-                    <div className="flex items-center justify-between text-gray-400">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-gray-400">
                         <div className="flex items-center gap-2">
                             <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]"></div>
                             <span>System Authenticated</span>
@@ -154,10 +158,12 @@ export function HomePage() {
 
     // Auth Views
     return (
-        <div className="min-h-[80vh] flex flex-col items-center justify-center p-4 animate-fade-in">
+        <div className="min-h-[80vh] flex flex-col items-center justify-center p-4 sm:p-6 animate-fade-in">
             <div className="lg:hidden w-full max-w-md text-center mb-8">
-                <h2 className="text-4xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-primary-400 to-indigo-400 font-display mb-2">Biblefuel Studio</h2>
-                <p className="text-gray-400">Login to access your workspace</p>
+                <h2 className="text-3xl sm:text-4xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-primary-400 to-indigo-400 font-display mb-2">
+                    Biblefuel Studio
+                </h2>
+                <p className="text-gray-400 text-sm sm:text-base">Login to access your workspace</p>
             </div>
 
             <div className="w-full max-w-md space-y-6">

@@ -117,17 +117,17 @@ export function JobsPage() {
 
     return (
         <div className="space-y-6 animate-fade-in">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div>
                     <h2 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-400 mb-2 text-white">Background Jobs</h2>
                     <p className="text-gray-400">Track rendering and background processes.</p>
                 </div>
-                <div className="flex items-center gap-2">
-                    <Button onClick={triggerTestJob} isLoading={isTriggering} variant="secondary">
+                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                    <Button onClick={triggerTestJob} isLoading={isTriggering} variant="secondary" className="w-full sm:w-auto">
                         <PlayCircle size={16} className="mr-2" />
                         Trigger Test Job
                     </Button>
-                    <Button onClick={handleRefresh} isLoading={isLoading}>
+                    <Button onClick={handleRefresh} isLoading={isLoading} className="w-full sm:w-auto">
                         <RefreshCw size={16} className="mr-2" />
                         Refresh
                     </Button>

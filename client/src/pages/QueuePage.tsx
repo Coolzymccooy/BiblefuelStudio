@@ -162,7 +162,7 @@ export function QueuePage() {
                     <h2 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-primary-200">Content Queue</h2>
                     <p className="text-gray-400 text-sm mt-1">Manage and export your generated scripts batch.</p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
                     {selectedIds.size > 0 && (
                         <div className="flex items-center gap-2 bg-primary-500/10 border border-primary-500/20 px-3 py-1 rounded-full animate-in fade-in zoom-in duration-300">
                             <span className="text-[10px] font-bold text-primary-400 uppercase tracking-widest">{selectedIds.size} Selected</span>
@@ -175,20 +175,20 @@ export function QueuePage() {
                             </button>
                         </div>
                     )}
-                    <Button onClick={loadQueue} variant="secondary" className="bg-white/5 border-white/10 h-9" disabled={isLoading}>
+                    <Button onClick={loadQueue} variant="secondary" className="bg-white/5 border-white/10 h-9 w-full sm:w-auto" disabled={isLoading}>
                         <RefreshCcw size={16} className={isLoading ? 'animate-spin' : ''} />
                     </Button>
                     <Button
                         onClick={handleClearAll}
                         variant="secondary"
-                        className="text-red-400 hover:text-red-300 bg-red-500/5 border-red-500/10 h-9"
+                        className="text-red-400 hover:text-red-300 bg-red-500/5 border-red-500/10 h-9 w-full sm:w-auto"
                         disabled={queue.length === 0 || isClearing}
                         isLoading={isClearing}
                     >
                         <Trash size={16} className="mr-2" />
                         Clear All
                     </Button>
-                    <Button onClick={handleExportCSV} disabled={queue.length === 0} className="h-9">
+                    <Button onClick={handleExportCSV} disabled={queue.length === 0} className="h-9 w-full sm:w-auto">
                         <Download size={16} className="mr-2" />
                         Export CSV
                     </Button>
@@ -203,7 +203,38 @@ export function QueuePage() {
                         <p className="text-xs text-gray-500 mt-1">Scripts you generate will appear here.</p>
                     </div>
                 ) : (
-                    <div className="overflow-x-auto">
+                    <div>
+                        <div className="sm:hidden space-y-3">
+                            {queue.slice(0, 50).map((item) => (
+                                <div key={item.id} className={`p-4 rounded-xl border border-white/10 bg-white/[0.02] ${selectedIds.has(item.id) ? 'ring-1 ring-primary-500/30' : ''}`}>
+                                    <div className="flex items-start justify-between gap-3">
+                                        <div className="flex-1">
+                                            <div className="font-semibold text-white">{item.title}</div>
+                                            <div className="text-xs text-gray-400 mt-1 line-clamp-2 italic">"{item.hook}"</div>
+                                            <div className="text-[10px] text-indigo-300 mt-2">{item.verse} - {item.reference}</div>
+                                            <div className="text-[10px] text-primary-400 mt-2 uppercase tracking-widest">{item.cta}</div>
+                                        </div>
+                                        <input
+                                            type="checkbox"
+                                            checked={selectedIds.has(item.id)}
+                                            onChange={() => toggleSelect(item.id)}
+                                            className="mt-1 rounded border-white/10 bg-black/50 checked:bg-primary-500"
+                                        />
+                                    </div>
+                                    <div className="mt-3 flex flex-wrap gap-2">
+                                        <Button onClick={() => handleSendToVoice(item)} variant="secondary" className="text-xs h-8">
+                                            <Mic size={14} className="mr-2" />
+                                            Voice
+                                        </Button>
+                                        <Button onClick={() => handleDelete(item.id)} variant="secondary" className="text-xs h-8 text-red-400">
+                                            <Trash2 size={14} className="mr-2" />
+                                            Delete
+                                        </Button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                        <div className="hidden sm:block overflow-x-auto">
                         <table className="w-full">
                             <thead>
                                 <tr className="border-b border-white/5 text-gray-400 uppercase text-[10px] tracking-widest font-bold">
@@ -268,8 +299,9 @@ export function QueuePage() {
                                 ))}
                             </tbody>
                         </table>
+                        </div>
                         <div className="px-4 py-3 border-t border-white/5 bg-white/[0.01]">
-                            <p className="text-[10px] text-gray-600 uppercase tracking-widest font-medium">Showing {Math.min(queue.length, 50)} items • Auto-persisted to database</p>
+                            <p className="text-[10px] text-gray-600 uppercase tracking-widest font-medium">Showing {Math.min(queue.length, 50)} items - Auto-persisted to database</p>
                         </div>
                     </div>
                 )}

@@ -255,7 +255,7 @@ export function BackgroundsPage() {
                     <p className="text-gray-400 text-sm mt-1">Search or browse your saved 4K/HD portrait videos.</p>
                 </div>
 
-                <div className="flex bg-white/5 border border-white/10 p-1 rounded-xl">
+                <div className="flex flex-wrap bg-white/5 border border-white/10 p-1 rounded-xl">
                     <button
                         onClick={() => setActiveTab('search')}
                         disabled={!pexelsEnabled}
@@ -297,7 +297,7 @@ export function BackgroundsPage() {
                         </Card>
                     )}
                     <Card className="bg-white/5 border-white/10 backdrop-blur-xl">
-                        <div className="flex gap-2">
+                        <div className="flex flex-col sm:flex-row gap-2">
                             <div className="relative flex-1">
                                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
                                 <Input
@@ -336,7 +336,7 @@ export function BackgroundsPage() {
                         </Card>
                     )}
                     <Card className="bg-white/5 border-white/10 backdrop-blur-xl">
-                        <div className="flex gap-2">
+                        <div className="flex flex-col sm:flex-row gap-2">
                             <div className="relative flex-1">
                                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
                                 <Input

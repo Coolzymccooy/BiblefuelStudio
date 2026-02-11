@@ -139,11 +139,11 @@ export function ScriptsPage() {
                     </div>
                 </div>
 
-                <div className="flex gap-2">
-                    <Button onClick={handleGenerate} isLoading={isGenerating} disabled={!scriptsEnabled}>
+                <div className="flex flex-wrap gap-2">
+                    <Button onClick={handleGenerate} isLoading={isGenerating} disabled={!scriptsEnabled} className="w-full sm:w-auto">
                         Generate
                     </Button>
-                    <Button onClick={handleClear} variant="secondary" disabled={scripts.length === 0}>
+                    <Button onClick={handleClear} variant="secondary" disabled={scripts.length === 0} className="w-full sm:w-auto">
                         Clear
                     </Button>
                 </div>
