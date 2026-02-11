@@ -176,7 +176,7 @@ export function BackgroundsPage() {
         }
     };
 
-    const renderGrid = (items: PexelsVideo[], isLibrary: boolean) => (
+    const renderGrid = (items: PexelsVideo[], isLibrary: boolean, onDownload: (id: string | number) => void) => (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
             {items.map((video) => (
                 <div key={video.id} className="group relative bg-white/[0.03] border border-white/10 rounded-2xl overflow-hidden hover:border-primary-500/50 transition-all duration-300">
@@ -205,7 +205,7 @@ export function BackgroundsPage() {
                         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-4 gap-2">
                             <div className="flex gap-2">
                                 <Button
-                                    onClick={() => handleDownload(video.id)}
+                                    onClick={() => onDownload(video.id)}
                                     className="flex-1 h-9 text-xs font-bold"
                                 >
                                     <Download size={14} className="mr-2" />
@@ -319,7 +319,7 @@ export function BackgroundsPage() {
                             <div className="flex items-center justify-between px-2">
                                 <h3 className="text-sm font-bold uppercase tracking-widest text-gray-500">Results ({videos.length})</h3>
                             </div>
-                            {renderGrid(videos, false)}
+                            {renderGrid(videos, false, handleDownload)}
                         </div>
                     ) : !isSearching && (
                         <div className="py-20 flex flex-col items-center justify-center opacity-30">
@@ -358,7 +358,7 @@ export function BackgroundsPage() {
                             <div className="flex items-center justify-between px-2">
                                 <h3 className="text-sm font-bold uppercase tracking-widest text-gray-500">Animated Results ({animatedVideos.length})</h3>
                             </div>
-                            {renderGrid(animatedVideos, false)}
+                            {renderGrid(animatedVideos, false, handleAnimatedDownload)}
                             <div className="text-xs text-gray-500 px-2">
                                 Downloads use Pixabay. Make sure `PIXABAY_API_KEY` is set in `server/.env`.
                             </div>
@@ -391,7 +391,7 @@ export function BackgroundsPage() {
                     {importedLocal.length > 0 && (
                         <div className="space-y-4">
                             <h3 className="text-sm font-bold uppercase tracking-widest text-gray-500">Imported ({importedLocal.length})</h3>
-                            {renderGrid(importedLocal, true)}
+                            {renderGrid(importedLocal, true, handleDownload)}
                         </div>
                     )}
                 </div>
@@ -405,7 +405,7 @@ export function BackgroundsPage() {
                     </div>
 
                     {libraryItems.length > 0 ? (
-                        renderGrid(libraryItems, true)
+                        renderGrid(libraryItems, true, handleDownload)
                     ) : !isLoadingLibrary && (
                         <Card className="py-20 flex flex-col items-center justify-center opacity-30 border-dashed">
                             <Library size={64} className="text-gray-600 mb-4" />
