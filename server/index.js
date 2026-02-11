@@ -5,6 +5,7 @@ import dotenv from "dotenv";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
+import { execSync } from "child_process";
 
 import scriptsRouter from "./src/routes/scripts.js";
 import queueRouter from "./src/routes/queue.js";
@@ -38,6 +39,23 @@ if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 
 app.use("/outputs", express.static(outputDir));
 
+const hasKey = (value) => {
+  const v = String(value || "").trim();
+  return v.length > 0 && !v.startsWith("your-");
+};
+
+const checkFfmpegAvailable = () => {
+  const ffmpegRaw = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
+  try {
+    execSync(`${ffmpegRaw} -version`, { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const ffmpegAvailable = checkFfmpegAvailable();
+
 app.get('/api/health', async (req, res) => {
   const ffmpegRaw = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
   // Simple check for ffmpeg availability
@@ -57,6 +75,37 @@ app.get('/api/health', async (req, res) => {
       platform: process.platform,
       node: process.version
     }
+  });
+});
+
+app.get('/api/config', (req, res) => {
+  const hasOpenAI = hasKey(process.env.OPENAI_API_KEY);
+  const hasGemini = hasKey(process.env.GEMINI_API_KEY);
+  const hasEleven = hasKey(process.env.ELEVENLABS_API_KEY);
+  const hasPexels = hasKey(process.env.PEXELS_API_KEY);
+  const hasPixabay = hasKey(process.env.PIXABAY_API_KEY);
+
+  const features = {
+    scripts: hasOpenAI || hasGemini,
+    tts: hasEleven,
+    pexels: hasPexels,
+    pixabay: hasPixabay,
+    render: ffmpegAvailable,
+    audioProcessing: ffmpegAvailable,
+  };
+
+  const warnings = [];
+  if (!features.scripts) warnings.push("Scripts: missing OPENAI_API_KEY or GEMINI_API_KEY");
+  if (!features.tts) warnings.push("TTS: missing ELEVENLABS_API_KEY");
+  if (!features.pexels) warnings.push("Pexels: missing PEXELS_API_KEY");
+  if (!features.pixabay) warnings.push("Pixabay: missing PIXABAY_API_KEY");
+  if (!features.render) warnings.push("FFmpeg not detected; render/audio tools disabled");
+
+  res.json({
+    ok: true,
+    env: process.env.NODE_ENV || "development",
+    features,
+    warnings,
   });
 });
 

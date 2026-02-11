@@ -8,6 +8,7 @@ import toast from 'react-hot-toast';
 import { Mic, Plus } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { loadJson, saveJson, STORAGE_KEYS } from '../lib/storage';
+import { useConfig } from '../lib/config';
 
 interface Script {
     title: string;
@@ -21,6 +22,8 @@ interface Script {
 
 export function ScriptsPage() {
     const navigate = useNavigate();
+    const { config } = useConfig();
+    const scriptsEnabled = config.features.scripts;
     const [count, setCount] = useState(10);
     const [ctaStyle, setCtaStyle] = useState('save');
     const [lengthSeconds, setLengthSeconds] = useState(20);
@@ -137,7 +140,7 @@ export function ScriptsPage() {
                 </div>
 
                 <div className="flex gap-2">
-                    <Button onClick={handleGenerate} isLoading={isGenerating}>
+                    <Button onClick={handleGenerate} isLoading={isGenerating} disabled={!scriptsEnabled}>
                         Generate
                     </Button>
                     <Button onClick={handleClear} variant="secondary" disabled={scripts.length === 0}>
@@ -146,7 +149,9 @@ export function ScriptsPage() {
                 </div>
 
                 <p className="text-sm text-gray-500 mt-4">
-                    If you didn't set keys, fallback scripts will be used.
+                    {scriptsEnabled
+                        ? "If you didn't set keys, fallback scripts will be used."
+                        : "Scripts are disabled until OPENAI_API_KEY or GEMINI_API_KEY is configured."}
                 </p>
             </Card>
 

@@ -2,10 +2,25 @@ import { Router } from "express";
 import fs from "fs";
 import path from "path";
 import { v4 as uuid } from "uuid";
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import { readLibrary } from "../lib/library.js";
 
 const router = Router();
+let ffmpegChecked = false;
+let ffmpegOk = false;
+
+function ensureFfmpegAvailable() {
+  if (ffmpegChecked) return ffmpegOk;
+  const ffmpeg = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
+  try {
+    const result = spawnSync(ffmpeg, ["-version"], { stdio: "ignore" });
+    ffmpegOk = result.status === 0;
+  } catch {
+    ffmpegOk = false;
+  }
+  ffmpegChecked = true;
+  return ffmpegOk;
+}
 
 function resolveAssetPath(pathOrId) {
   if (pathOrId == null) return null;
@@ -75,6 +90,9 @@ function wrapTextLines(lines, maxChars, maxLines) {
  */
 router.post("/video", async (req, res) => {
   try {
+    if (!ensureFfmpegAvailable()) {
+      return res.status(500).json({ ok: false, error: "FFmpeg not available on server" });
+    }
     let { backgroundPath, audioPath, lines, aspect, captionWidthPct, musicPath, musicVolume, autoDuck } = req.body || {};
     backgroundPath = resolveAssetPath(backgroundPath);
     audioPath = resolveAssetPath(audioPath);
@@ -195,6 +213,9 @@ router.post("/video", async (req, res) => {
  */
 router.post("/waveform", async (req, res) => {
   try {
+    if (!ensureFfmpegAvailable()) {
+      return res.status(500).json({ ok: false, error: "FFmpeg not available on server" });
+    }
     let { backgroundPath, audioPath, lines, aspect, captionWidthPct, musicPath, musicVolume, autoDuck } = req.body || {};
     backgroundPath = resolveAssetPath(backgroundPath);
     audioPath = resolveAssetPath(audioPath);

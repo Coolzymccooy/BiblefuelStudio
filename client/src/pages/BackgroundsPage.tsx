@@ -5,6 +5,7 @@ import { Input } from '../components/ui/Input';
 import { api } from '../lib/api';
 import toast from 'react-hot-toast';
 import { Search, Download, Play, ExternalLink, Image as ImageIcon, Bookmark, Trash2, Library, Sparkles, FolderUp } from 'lucide-react';
+import { useConfig } from '../lib/config';
 
 interface PexelsVideo {
     id: string | number;
@@ -15,6 +16,9 @@ interface PexelsVideo {
 }
 
 export function BackgroundsPage() {
+    const { config } = useConfig();
+    const pexelsEnabled = config.features.pexels;
+    const pixabayEnabled = config.features.pixabay;
     const [activeTab, setActiveTab] = useState<'search' | 'animated' | 'local' | 'library'>('search');
     const [query, setQuery] = useState('sunrise clouds');
     const [videos, setVideos] = useState<PexelsVideo[]>([]);
@@ -28,6 +32,10 @@ export function BackgroundsPage() {
     const [importedLocal, setImportedLocal] = useState<PexelsVideo[]>([]);
 
     const handleSearch = async () => {
+        if (!pexelsEnabled) {
+            toast.error('Pexels API is not configured');
+            return;
+        }
         setIsSearching(true);
         try {
             const response = await api.get(`/api/pexels/search?q=${encodeURIComponent(query)}`);
@@ -46,6 +54,10 @@ export function BackgroundsPage() {
     };
 
     const handleAnimatedSearch = async () => {
+        if (!pixabayEnabled) {
+            toast.error('Pixabay API is not configured');
+            return;
+        }
         setIsSearchingAnimated(true);
         try {
             const response = await api.get(`/api/pixabay/search?q=${encodeURIComponent(animatedQuery)}`);
@@ -110,6 +122,10 @@ export function BackgroundsPage() {
     };
 
     const handleDownload = async (id: string | number) => {
+        if (!pexelsEnabled) {
+            toast.error('Pexels API is not configured');
+            return;
+        }
         try {
             toast.loading(`Downloading ${id}...`, { id: 'download' });
             const response = await api.post('/api/pexels/download', { id });
@@ -125,6 +141,10 @@ export function BackgroundsPage() {
     };
 
     const handleAnimatedDownload = async (id: string | number) => {
+        if (!pixabayEnabled) {
+            toast.error('Pixabay API is not configured');
+            return;
+        }
         try {
             toast.loading(`Downloading ${id}...`, { id: 'download-animated' });
             const response = await api.post('/api/pixabay/download', { id });
@@ -238,14 +258,16 @@ export function BackgroundsPage() {
                 <div className="flex bg-white/5 border border-white/10 p-1 rounded-xl">
                     <button
                         onClick={() => setActiveTab('search')}
-                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${activeTab === 'search' ? 'bg-primary-500 text-white shadow-lg' : 'text-gray-400 hover:text-white'}`}
+                        disabled={!pexelsEnabled}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${activeTab === 'search' ? 'bg-primary-500 text-white shadow-lg' : 'text-gray-400 hover:text-white'} ${!pexelsEnabled ? 'opacity-40 cursor-not-allowed' : ''}`}
                     >
                         <Search size={14} />
                         Search
                     </button>
                     <button
                         onClick={() => setActiveTab('animated')}
-                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${activeTab === 'animated' ? 'bg-primary-500 text-white shadow-lg' : 'text-gray-400 hover:text-white'}`}
+                        disabled={!pixabayEnabled}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${activeTab === 'animated' ? 'bg-primary-500 text-white shadow-lg' : 'text-gray-400 hover:text-white'} ${!pixabayEnabled ? 'opacity-40 cursor-not-allowed' : ''}`}
                     >
                         <Sparkles size={14} />
                         Animated
@@ -269,6 +291,11 @@ export function BackgroundsPage() {
 
             {activeTab === 'search' ? (
                 <>
+                    {!pexelsEnabled && (
+                        <Card className="bg-yellow-500/10 border-yellow-500/20 text-yellow-200 text-xs">
+                            Pexels is disabled. Set `PEXELS_API_KEY` in `server/.env`.
+                        </Card>
+                    )}
                     <Card className="bg-white/5 border-white/10 backdrop-blur-xl">
                         <div className="flex gap-2">
                             <div className="relative flex-1">
@@ -303,6 +330,11 @@ export function BackgroundsPage() {
                 </>
             ) : activeTab === 'animated' ? (
                 <>
+                    {!pixabayEnabled && (
+                        <Card className="bg-yellow-500/10 border-yellow-500/20 text-yellow-200 text-xs">
+                            Pixabay is disabled. Set `PIXABAY_API_KEY` in `server/.env`.
+                        </Card>
+                    )}
                     <Card className="bg-white/5 border-white/10 backdrop-blur-xl">
                         <div className="flex gap-2">
                             <div className="relative flex-1">

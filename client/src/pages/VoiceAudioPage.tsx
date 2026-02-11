@@ -8,6 +8,7 @@ import { Select } from '../components/ui/Select';
 import { api } from '../lib/api';
 import toast from 'react-hot-toast';
 import { loadJson, pushUnique, saveJson, STORAGE_KEYS, toOutputUrl } from '../lib/storage';
+import { useConfig } from '../lib/config';
 import {
     Play,
     Mic,
@@ -55,6 +56,8 @@ interface ElevenVoice {
 }
 
 export function VoiceAudioPage() {
+    const { config } = useConfig();
+    const ttsEnabled = config.features.tts;
     const [ttsText, setTtsText] = useState('');
     const [audioPath, setAudioPath] = useState('');
     const [preset, setPreset] = useState('clean_voice');
@@ -517,10 +520,10 @@ export function VoiceAudioPage() {
                             </div>
                         </div>
                         <div className="flex items-center gap-2">
-                            <Button variant="secondary" className="text-xs h-8" onClick={loadVoices} isLoading={isLoadingVoices}>
-                                <RefreshCw size={14} className="mr-2" />
-                                Load Voices
-                            </Button>
+                        <Button variant="secondary" className="text-xs h-8" onClick={loadVoices} isLoading={isLoadingVoices} disabled={!ttsEnabled}>
+                            <RefreshCw size={14} className="mr-2" />
+                            Load Voices
+                        </Button>
                             {voices.length > 0 && (
                                 <Select
                                     value={voiceId}
@@ -535,9 +538,14 @@ export function VoiceAudioPage() {
                                 </Select>
                             )}
                         </div>
-                        <Button onClick={handleTTS} isLoading={isProcessing}>
+                        <Button onClick={handleTTS} isLoading={isProcessing} disabled={!ttsEnabled}>
                             Generate MP3 (ElevenLabs)
                         </Button>
+                        {!ttsEnabled && (
+                            <p className="text-xs text-yellow-600">
+                                TTS disabled. Set `ELEVENLABS_API_KEY` in `server/.env`.
+                            </p>
+                        )}
                     </div>
                 </Card>
                 )}

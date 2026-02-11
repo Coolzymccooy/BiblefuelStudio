@@ -1,8 +1,11 @@
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { AlertTriangle, Key } from 'lucide-react';
+import { useConfig } from '../lib/config';
 
 export function SettingsPage() {
+    const { config } = useConfig();
+    const { features } = config;
     return (
         <div className="max-w-4xl mx-auto space-y-8 animate-fade-in">
             <div>
@@ -24,10 +27,12 @@ export function SettingsPage() {
                         <div className="space-y-4">
                             <div className="grid gap-4">
                                 {[
-                                    { name: 'OPENAI_API_KEY', label: 'OpenAI API Key', desc: 'Required for Scripts' },
-                                    { name: 'GEMINI_API_KEY', label: 'Gemini API Key', desc: 'Alternative for Scripts' },
-                                    { name: 'ELEVENLABS_API_KEY', label: 'ElevenLabs API Key', desc: 'Required for TTS Voice' },
-                                    { name: 'PEXELS_API_KEY', label: 'Pexels API Key', desc: 'Required for Background Videos' },
+                                    { name: 'OPENAI_API_KEY', label: 'OpenAI API Key', desc: 'Required for Scripts', enabled: features.scripts },
+                                    { name: 'GEMINI_API_KEY', label: 'Gemini API Key', desc: 'Alternative for Scripts', enabled: features.scripts },
+                                    { name: 'ELEVENLABS_API_KEY', label: 'ElevenLabs API Key', desc: 'Required for TTS Voice', enabled: features.tts },
+                                    { name: 'PEXELS_API_KEY', label: 'Pexels API Key', desc: 'Required for Background Videos', enabled: features.pexels },
+                                    { name: 'PIXABAY_API_KEY', label: 'Pixabay API Key', desc: 'Required for Animated Backgrounds', enabled: features.pixabay },
+                                    { name: 'FFMPEG_PATH', label: 'FFmpeg', desc: 'Required for Render + Audio Processing', enabled: features.render },
                                 ].map((key) => (
                                     <div key={key.name} className="flex items-center justify-between p-4 bg-white/5 rounded-xl border border-white/5 hover:border-white/10 transition-colors">
                                         <div className="flex items-center gap-3">
@@ -41,6 +46,9 @@ export function SettingsPage() {
                                         </div>
                                         <div className="flex items-center gap-2">
                                             <code className="hidden sm:block text-xs text-gray-600 bg-black/20 px-2 py-1 rounded">{key.name}</code>
+                                            <Badge variant={key.enabled ? 'success' : 'warning'}>
+                                                {key.enabled ? 'Ready' : 'Missing'}
+                                            </Badge>
                                         </div>
                                     </div>
                                 ))}
@@ -57,7 +65,7 @@ export function SettingsPage() {
                         </div>
                         <div className="flex justify-between py-2 border-b border-white/5">
                             <span className="text-gray-400">Environment</span>
-                            <Badge variant="success">Development</Badge>
+                            <Badge variant="success">{config.env}</Badge>
                         </div>
                         <div className="flex justify-between py-2 border-b border-white/5">
                             <span className="text-gray-400">Backend Status</span>

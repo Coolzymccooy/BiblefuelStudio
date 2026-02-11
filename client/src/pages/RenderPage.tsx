@@ -8,6 +8,7 @@ import { api } from '../lib/api';
 import toast from 'react-hot-toast';
 import { Play, Library, Video, CheckCircle2, ClipboardList, AudioLines } from 'lucide-react';
 import { loadJson, saveJson, STORAGE_KEYS, toOutputUrl } from '../lib/storage';
+import { useConfig } from '../lib/config';
 
 interface Script {
     title: string;
@@ -26,6 +27,8 @@ interface AudioItem {
 }
 
 export function RenderPage() {
+    const { config } = useConfig();
+    const renderEnabled = config.features.render;
     const [backgroundPath, setBackgroundPath] = useState('');
     const [audioPath, setAudioPath] = useState('');
     const [lines, setLines] = useState('');
@@ -234,6 +237,11 @@ export function RenderPage() {
             </h2>
 
             <Card title="Configuration">
+                {!renderEnabled && (
+                    <div className="mb-4 text-xs text-yellow-200 bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3">
+                        Rendering is disabled because FFmpeg was not detected on the server.
+                    </div>
+                )}
                 <div className="space-y-4">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div className="space-y-4">
@@ -426,6 +434,7 @@ export function RenderPage() {
                             onClick={() => handleRender('video')}
                             isLoading={isRendering}
                             className="w-full h-12 text-md"
+                            disabled={!renderEnabled}
                         >
                             <Video size={18} className="mr-2" />
                             {renderInBackground ? 'Queue Video Render' : 'Start Instant Render'}
@@ -435,6 +444,7 @@ export function RenderPage() {
                             isLoading={isRendering}
                             variant="secondary"
                             className="w-full h-12 text-md"
+                            disabled={!renderEnabled}
                         >
                             <AudioLines size={18} className="mr-2" />
                             {renderInBackground ? 'Queue Waveform Render' : 'Render Waveform MP4'}

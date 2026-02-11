@@ -2,10 +2,25 @@ import { Router } from "express";
 import fs from "fs";
 import path from "path";
 import { v4 as uuid } from "uuid";
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import { readLibrary } from "../lib/library.js";
 
 const router = Router();
+let ffmpegChecked = false;
+let ffmpegOk = false;
+
+function ensureFfmpegAvailable() {
+  if (ffmpegChecked) return ffmpegOk;
+  const ffmpeg = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
+  try {
+    const result = spawnSync(ffmpeg, ["-version"], { stdio: "ignore" });
+    ffmpegOk = result.status === 0;
+  } catch {
+    ffmpegOk = false;
+  }
+  ffmpegChecked = true;
+  return ffmpegOk;
+}
 
 const outDir = process.env.OUTPUT_DIR || "./outputs";
 if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
@@ -130,6 +145,9 @@ function runFFmpeg(args, totalDurationSec, onProgress) {
 }
 
 async function executeJob(job) {
+  if (!ensureFfmpegAvailable()) {
+    throw new Error("FFmpeg not available on server");
+  }
   if (job.type === "render_waveform") {
     const { backgroundPath, audioPath, lines, durationSec, aspect, captionWidthPct, musicPath, musicVolume, autoDuck } = job.payload || {};
     const resolvedBackground = resolveAssetPath(backgroundPath);
