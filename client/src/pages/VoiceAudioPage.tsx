@@ -920,7 +920,7 @@ export function VoiceAudioPage() {
                         This path will be used in the Render and Timeline pages.
                     </p>
                     {currentAudioUrl && (
-                        <div className="mt-3 flex items-center gap-3">
+                        <div className="mt-3 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
                             <audio controls src={currentAudioUrl} className="w-full" />
                             <Button
                                 variant="secondary"

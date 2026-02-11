@@ -193,19 +193,19 @@ export function TimelinePage() {
 
     return (
         <div className="space-y-6 animate-fade-in">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div>
                     <h2 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-primary-200">
                         Timeline Editor
                     </h2>
                     <p className="text-gray-400">Assemble and master your audio clips with precision.</p>
                 </div>
-                <div className="flex items-center gap-3">
-                    <Button variant="secondary" onClick={() => toast.success('Saved')}>
+                <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
+                    <Button variant="secondary" onClick={() => toast.success('Saved')} className="w-full sm:w-auto">
                         <Save size={16} className="mr-2" />
                         Save Project
                     </Button>
-                    <Button onClick={handleRender}>
+                    <Button onClick={handleRender} className="w-full sm:w-auto">
                         <Play size={16} className="mr-2" />
                         Render Audio
                     </Button>
@@ -286,7 +286,7 @@ export function TimelinePage() {
                                                 </div>
                                                 <button
                                                     onClick={() => handleRemoveClip(clip.id)}
-                                                    className="p-2 text-gray-600 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"
+                                                    className="p-2 text-gray-600 hover:text-red-400 transition-colors opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
                                                 >
                                                     <Trash2 size={16} />
                                                 </button>
@@ -461,7 +461,7 @@ export function TimelinePage() {
 
                             <div>
                                 <label className="block text-xs text-gray-400 mb-1">Manual audio path</label>
-                                <div className="flex gap-2">
+                                <div className="flex flex-col sm:flex-row gap-2">
                                     <input
                                         value={manualPath}
                                         onChange={(e) => setManualPath(e.target.value)}
