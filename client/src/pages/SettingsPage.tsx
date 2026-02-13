@@ -17,7 +17,7 @@ export function SettingsPage() {
     const [bufferProfiles, setBufferProfiles] = useState<{ id: string; service: string; formatted_service: string }[]>([]);
     const [selectedProfiles, setSelectedProfiles] = useState<string[]>([]);
     const [webhooks, setWebhooks] = useState<{ id?: string; name: string; url: string; enabled: boolean }[]>([]);
-    const [selectedWebhookId, setSelectedWebhookId] = useState('');
+    const [selectedWebhookKey, setSelectedWebhookKey] = useState('');
     const [directConfig, setDirectConfig] = useState({
         youtubeClientId: '',
         youtubeClientSecret: '',
@@ -27,7 +27,6 @@ export function SettingsPage() {
         tiktokAccessToken: '',
         tiktokOpenId: '',
     });
-    const [isLoadingSocial, setIsLoadingSocial] = useState(false);
 
     const apiItems = useMemo(() => ([
         { name: 'OPENAI_API_KEY', label: 'OpenAI API Key', desc: 'Required for Scripts', enabled: features.scripts },
@@ -39,29 +38,25 @@ export function SettingsPage() {
     ]), [features]);
 
     const loadSocialConfig = async () => {
-        setIsLoadingSocial(true);
-        try {
-            const res = await api.get('/api/social/config');
-            if (res.ok && res.data) {
-                setSelectedProfiles(res.data.buffer?.profileIds || []);
-                const hooks = (res.data.webhooks || []).map((w: any) => ({ ...w }));
-                setWebhooks(hooks);
-                const firstEnabled = hooks.find((w: any) => w.enabled);
-                setSelectedWebhookId(firstEnabled?.id || hooks[0]?.id || '');
-                if (res.data.direct) {
-                    setDirectConfig({
-                        youtubeClientId: res.data.direct.youtube?.clientId || '',
-                        youtubeClientSecret: res.data.direct.youtube?.clientSecret || '',
-                        youtubeRefreshToken: res.data.direct.youtube?.refreshToken || '',
-                        instagramAccessToken: res.data.direct.instagram?.accessToken || '',
-                        instagramUserId: res.data.direct.instagram?.userId || '',
-                        tiktokAccessToken: res.data.direct.tiktok?.accessToken || '',
-                        tiktokOpenId: res.data.direct.tiktok?.openId || '',
-                    });
-                }
+        const res = await api.get('/api/social/config');
+        if (res.ok && res.data) {
+            setSelectedProfiles(res.data.buffer?.profileIds || []);
+            const hooks = (res.data.webhooks || []).map((w: any) => ({ ...w }));
+            setWebhooks(hooks);
+            const firstEnabled = hooks.find((w: any) => w.enabled);
+            const firstKey = firstEnabled?.id || firstEnabled?.url || (hooks[0]?.id || hooks[0]?.url || '');
+            setSelectedWebhookKey(firstKey);
+            if (res.data.direct) {
+                setDirectConfig({
+                    youtubeClientId: res.data.direct.youtube?.clientId || '',
+                    youtubeClientSecret: res.data.direct.youtube?.clientSecret || '',
+                    youtubeRefreshToken: res.data.direct.youtube?.refreshToken || '',
+                    instagramAccessToken: res.data.direct.instagram?.accessToken || '',
+                    instagramUserId: res.data.direct.instagram?.userId || '',
+                    tiktokAccessToken: res.data.direct.tiktok?.accessToken || '',
+                    tiktokOpenId: res.data.direct.tiktok?.openId || '',
+                });
             }
-        } finally {
-            setIsLoadingSocial(false);
         }
     };
 
@@ -92,7 +87,10 @@ export function SettingsPage() {
                 },
             },
         });
-        if (res.ok) toast.success('Social config saved');
+        if (res.ok) {
+            toast.success('Social config saved');
+            await loadSocialConfig();
+        }
         else toast.error(res.error || 'Failed to save social config');
     };
 
@@ -111,13 +109,15 @@ export function SettingsPage() {
     };
 
     const sendTestWebhook = async () => {
-        if (!selectedWebhookId) {
+        const selected = webhooks.find((w, idx) => (w.id || w.url || String(idx)) === selectedWebhookKey);
+        if (!selected?.url) {
             toast.error('Select a webhook first');
             return;
         }
         const res = await api.post('/api/social/post', {
             destination: 'webhook',
-            webhookId: selectedWebhookId,
+            webhookId: selected.id,
+            webhookUrl: selected.url,
             caption: 'Test post from Biblefuel Studio',
             videoUrl: 'https://example.com/test-video.mp4',
             meta: { event: 'test.webhook', source: 'settings' },
@@ -226,10 +226,10 @@ export function SettingsPage() {
                                 <div className="flex items-center gap-2 text-xs font-semibold text-gray-300">
                                     <Link2 size={14} /> Webhooks (Zapier/Make)
                                 </div>
-                                <Select value={selectedWebhookId} onChange={(e) => setSelectedWebhookId(e.target.value)}>
+                                <Select value={selectedWebhookKey} onChange={(e) => setSelectedWebhookKey(e.target.value)}>
                                     <option value="">Select webhook to test...</option>
                                     {webhooks.map((w, idx) => (
-                                        <option key={w.id || idx} value={w.id || ''} disabled={!w.id}>
+                                        <option key={w.id || w.url || idx} value={w.id || w.url || String(idx)}>
                                             {w.name || `Webhook ${idx + 1}`}{w.enabled ? '' : ' (disabled)'}
                                         </option>
                                     ))}

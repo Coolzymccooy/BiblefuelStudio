@@ -337,12 +337,26 @@ export function VoiceAudioPage() {
         return '';
     };
 
-    const blobToDataUrl = (blob: Blob) => new Promise<string>((resolve, reject) => {
+    const blobToDataUrl = async (blob: Blob) => {
+        if (!blob || blob.size === 0) throw new Error('Empty audio blob');
         const reader = new FileReader();
-        reader.onerror = () => reject(new Error('Failed to read audio blob'));
-        reader.onload = () => resolve(String(reader.result || ''));
-        reader.readAsDataURL(blob);
-    });
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+            reader.onerror = () => reject(new Error('Failed to read audio blob'));
+            reader.onload = () => resolve(String(reader.result || ''));
+            reader.readAsDataURL(blob);
+        });
+        if (dataUrl && dataUrl.startsWith('data:')) return dataUrl;
+
+        const buffer = await blob.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) {
+            binary += String.fromCharCode(bytes[i]);
+        }
+        const base64 = btoa(binary);
+        const mime = blob.type || 'audio/webm';
+        return `data:${mime};base64,${base64}`;
+    };
 
     const handleStartRecording = async () => {
         try {
@@ -355,26 +369,26 @@ export function VoiceAudioPage() {
                 if (e.data.size > 0) chunksRef.current.push(e.data);
             };
             recorder.onstop = async () => {
+                const actualMime = recorder.mimeType || mimeType || 'audio/webm';
                 if (chunksRef.current.length === 0) {
                     toast.error('No audio captured');
+                    mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
+                    mediaStreamRef.current = null;
                     return;
                 }
-                const actualMime = recorder.mimeType || mimeType || 'audio/webm';
                 const blob = new Blob(chunksRef.current, { type: actualMime });
                 try {
                     const dataUrl = await blobToDataUrl(blob);
-                    if (!dataUrl.startsWith('data:')) {
-                        throw new Error('Invalid dataUrl');
-                    }
                     await uploadDataUrl(dataUrl, 'recording.webm', 'record');
                 } catch (err) {
                     toast.error('Invalid dataUrl');
+                } finally {
+                    mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
+                    mediaStreamRef.current = null;
                 }
-                mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
-                mediaStreamRef.current = null;
             };
             mediaRecorderRef.current = recorder;
-            recorder.start(250);
+            recorder.start(1000);
             startVisualizer(stream);
             setIsRecording(true);
             toast.success('Recording started');
@@ -384,7 +398,13 @@ export function VoiceAudioPage() {
     };
 
     const handleStopRecording = () => {
-        mediaRecorderRef.current?.stop();
+        if (!mediaRecorderRef.current) return;
+        if (mediaRecorderRef.current.state === 'recording') {
+            try {
+                mediaRecorderRef.current.requestData();
+            } catch { }
+            mediaRecorderRef.current.stop();
+        }
         stopVisualizer();
         setIsRecording(false);
     };

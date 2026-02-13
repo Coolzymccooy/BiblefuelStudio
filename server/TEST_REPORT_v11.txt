@@ -16,3 +16,17 @@ Biblefuel Studio v11 - Import Tests
     "stderr": ""
   }
 }
+
+Session Work Log (Feb 11, 2026)
+- Social Automation: Added server-side social config + webhook posting + Buffer posting. Added client Social Automation settings UI.
+- Share Kit: Added rendered job selection, manual video path, and refresh for rendered videos in Render page.
+- Webhooks: Added Send Test Webhook button (Settings). Fixed Make/Zapier selection by reloading config and allowing URL-based test posts.
+- Music: Added soundtrack mixing and auto-ducking controls in Render.
+- Mobile: Added quick action bar and improved responsive layouts on key pages.
+- Audio: Added record/upload visualizer and expanded accepted audio formats.
+- Render limits: Added MAX_RENDER_SECONDS and MAX_INPUT_MB guards, cleanup of failed outputs, and memory logging.
+- Libraries: Added Pixabay animated backgrounds and local import support.
+- Settings: Compact tabbed Settings UI.
+
+Known Issue
+- Voice recording still returns "Invalid dataUrl" after stopping recording. Needs further debugging in record pipeline.

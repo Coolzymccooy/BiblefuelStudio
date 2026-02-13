@@ -66,14 +66,15 @@ router.post("/buffer/profiles", async (req, res) => {
 
 router.post("/post", async (req, res) => {
   try {
-    const { destination, caption, videoUrl, profileIds, webhookId } = req.body || {};
+    const { destination, caption, videoUrl, profileIds, webhookId, webhookUrl } = req.body || {};
     if (!caption || !videoUrl) return res.status(400).json({ ok: false, error: "caption and videoUrl required" });
 
     if (destination === "webhook") {
       const store = readSocialStore();
       const target = (store.webhooks || []).find((w) => w.id === webhookId && w.enabled);
-      if (!target?.url) return res.status(400).json({ ok: false, error: "Webhook not configured" });
-      const resp = await fetch(target.url, {
+      const url = String(target?.url || webhookUrl || "").trim();
+      if (!url) return res.status(400).json({ ok: false, error: "Webhook not configured" });
+      const resp = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ caption, videoUrl }),
