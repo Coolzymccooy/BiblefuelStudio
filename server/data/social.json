@@ -1,0 +1,35 @@
+{
+  "buffer": {
+    "accessToken": "",
+    "profileIds": []
+  },
+  "webhooks": [
+    {
+      "id": "wh_1770812128706_x0j5",
+      "name": "Zapier",
+      "url": "https://hooks.zapier.com/hooks/catch/26406182/uek1ztc/",
+      "enabled": false
+    },
+    {
+      "id": "wh_1770819737143_q1y5",
+      "name": "make",
+      "url": "https://hook.eu1.make.com/qnljlez2biv5dfp7bvyvkcd5rc0g4jrl",
+      "enabled": true
+    }
+  ],
+  "direct": {
+    "youtube": {
+      "clientId": "",
+      "clientSecret": "",
+      "refreshToken": ""
+    },
+    "instagram": {
+      "accessToken": "",
+      "userId": ""
+    },
+    "tiktok": {
+      "accessToken": "",
+      "openId": ""
+    }
+  }
+}
