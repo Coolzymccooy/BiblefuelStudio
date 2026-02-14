@@ -7,28 +7,28 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['Inter', 'sans-serif'],
-        display: ['Outfit', 'sans-serif'],
+        sans: ['"IBM Plex Sans"', 'ui-sans-serif', 'system-ui'],
+        display: ['Sora', 'ui-sans-serif', 'system-ui'],
       },
       colors: {
         primary: {
-          50: '#f8fafc',
-          100: '#f1f5f9',
-          200: '#e2e8f0',
-          300: '#cbd5e1',
-          400: '#94a3b8',
-          500: '#64748b', // Slate 500
-          600: '#475569',
-          700: '#334155',
-          800: '#1e293b',
-          900: '#0f172a',
-          950: '#020617',
+          50: '#fbf7ef',
+          100: '#f3ead6',
+          200: '#e3d3a8',
+          300: '#d2bb7c',
+          400: '#c1a257',
+          500: '#b08d57',
+          600: '#9a7a4b',
+          700: '#7f633d',
+          800: '#5f4a2d',
+          900: '#3f3120',
+          950: '#241b11',
         },
         dark: {
-          950: '#050505', // Almost pure black
-          900: '#09090b', // Zinc 950 base
-          800: '#18181b', // Zinc 900
-          700: '#27272a', // Zinc 800 inputs
+          950: '#050505',
+          900: '#0b0c0e',
+          800: '#121417',
+          700: '#1a1d21',
         },
         glass: {
           100: 'rgba(255, 255, 255, 0.03)',

@@ -36,12 +36,12 @@ export function Layout() {
     return (
         <div className="min-h-screen flex flex-col lg:flex-row font-sans text-gray-100">
             {/* Mobile Header */}
-            <header className="lg:hidden bg-dark-900/80 backdrop-blur-md border-b border-white/10 sticky top-0 z-50 px-4 py-3 flex items-center justify-between">
+            <header className="lg:hidden bg-dark-950/90 backdrop-blur-md border-b border-white/10 sticky top-0 z-50 px-4 py-3 flex items-center justify-between">
                 <div className="flex items-center gap-3">
                     <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="text-gray-300 hover:text-white transition-colors">
                         {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
                     </button>
-                    <span className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-primary-400 to-indigo-400 font-display">
+                    <span className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-gray-100 to-primary-300 font-display tracking-wide">
                         Biblefuel Studio
                     </span>
                 </div>
@@ -57,12 +57,12 @@ export function Layout() {
             {/* Sidebar Navigation */}
             <aside className={`
         fixed inset-y-0 left-0 z-40 w-64 transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static lg:h-screen
-        bg-dark-900/40 backdrop-blur-xl border-r border-white/5 flex flex-col
+        bg-dark-950/80 backdrop-blur-xl border-r border-white/5 flex flex-col
         ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}
       `}>
                 <div className="p-6 hidden lg:block">
-                    <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-primary-400 to-indigo-400 font-display neon-text">
-                        Biblefuel<span className="font-light text-white drop-shadow-sm">Studio</span>
+                    <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-gray-100 to-primary-300 font-display tracking-wide">
+                        Biblefuel<span className="font-light text-white/90">Studio</span>
                     </h1>
                 </div>
 
@@ -76,13 +76,13 @@ export function Layout() {
                                 to={item.path}
                                 onClick={() => setIsMobileMenuOpen(false)}
                                 className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300 group ${active
-                                    ? 'bg-primary-500/10 text-primary-400 shadow-neon shadow-primary-500/10 border border-primary-500/20'
+                                    ? 'bg-white/5 text-primary-200 border border-white/10'
                                     : 'text-gray-400 hover:bg-white/5 hover:text-gray-100 hover:pl-5'
                                     }`}
                             >
-                                <Icon size={20} className={`${active ? 'text-primary-400 drop-shadow-[0_0_8px_rgba(56,189,248,0.4)]' : 'text-gray-500 group-hover:text-gray-300'} transition-all`} />
-                                <span className={`font-medium tracking-wide ${active ? 'neon-text' : ''}`}>{item.label}</span>
-                                {active && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-primary-400 shadow-[0_0_8px_rgba(56,189,248,0.8)] animate-pulse" />}
+                                <Icon size={20} className={`${active ? 'text-primary-300' : 'text-gray-500 group-hover:text-gray-300'} transition-all`} />
+                                <span className="font-medium tracking-wide">{item.label}</span>
+                                {active && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-primary-300 animate-pulse" />}
                             </Link>
                         );
                     })}
@@ -90,7 +90,7 @@ export function Layout() {
 
                 <div className="p-4 border-t border-white/5">
                     {token ? (
-                        <div className="flex items-center justify-between px-4 py-3 bg-dark-800/50 rounded-xl border border-white/5">
+                        <div className="flex items-center justify-between px-4 py-3 bg-dark-900/60 rounded-xl border border-white/5">
                             <div className="flex items-center gap-2">
                                 <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)] animate-pulse"></div>
                                 <span className="text-xs font-medium text-gray-400">Online</span>
@@ -127,8 +127,8 @@ export function Layout() {
             {/* Main Content Area */}
             <main className="flex-1 overflow-y-auto min-h-screen lg:h-screen relative scroll-smooth selection:bg-primary-500/30">
                 {/* Background Glow Effects */}
-                <div className="fixed -top-24 -right-24 w-96 h-96 bg-primary-600/20 rounded-full blur-[128px] pointer-events-none animate-pulse-subtle" />
-                <div className="fixed bottom-0 left-0 w-64 h-64 bg-indigo-600/10 rounded-full blur-[96px] pointer-events-none" />
+                <div className="fixed -top-24 -right-24 w-96 h-96 bg-white/5 rounded-full blur-[128px] pointer-events-none animate-pulse-subtle" />
+                <div className="fixed bottom-0 left-0 w-64 h-64 bg-primary-600/10 rounded-full blur-[96px] pointer-events-none" />
 
                 <div className="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8 relative z-10 pb-36 animate-fade-in">
                     <Outlet />
@@ -144,7 +144,7 @@ export function Layout() {
             )}
 
             {/* Mobile Quick Actions */}
-            <div className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-dark-900/90 backdrop-blur-md border-t border-white/10 pb-[env(safe-area-inset-bottom)]">
+            <div className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-dark-950/95 backdrop-blur-md border-t border-white/10 pb-[env(safe-area-inset-bottom)]">
                 <div className="flex items-center justify-around px-3 py-2">
                     {quickActions.map((item) => {
                         const Icon = item.icon;
@@ -154,7 +154,7 @@ export function Layout() {
                                 key={item.path}
                                 to={item.path}
                                 className={`flex flex-col items-center gap-1 px-3 py-2 rounded-xl text-[10px] font-semibold uppercase tracking-wider ${active
-                                    ? 'text-primary-300 bg-primary-500/10'
+                                    ? 'text-primary-300 bg-white/5'
                                     : 'text-gray-400 hover:text-white'
                                     }`}
                             >

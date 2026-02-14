@@ -27,6 +27,10 @@ Session Work Log (Feb 11, 2026)
 - Render limits: Added MAX_RENDER_SECONDS and MAX_INPUT_MB guards, cleanup of failed outputs, and memory logging.
 - Libraries: Added Pixabay animated backgrounds and local import support.
 - Settings: Compact tabbed Settings UI.
+- UI Theme: Shifted to Lumina-style dark palette, brass accent, and updated typography.
+- Share Kit: Allow selecting completed job renders; manual override path.
+- Webhooks: Fixed Make option greyed out by reloading config and accepting URL-based test posts.
+- Recording: Hardened MediaRecorder dataUrl conversion and stop flow (still needs verification).
 
 Known Issue
 - Voice recording still returns "Invalid dataUrl" after stopping recording. Needs further debugging in record pipeline.
