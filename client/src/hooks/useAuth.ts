@@ -1,6 +1,12 @@
 import { create } from 'zustand';
 import { api } from '../lib/api';
 
+const readStoredToken = (): string | null => {
+    const token = localStorage.getItem('BF_TOKEN');
+    if (!token || token === 'null' || token === 'undefined') return null;
+    return token;
+};
+
 interface AuthState {
     token: string | null;
     hasUser: boolean;
@@ -13,20 +19,37 @@ interface AuthState {
     logout: () => void;
 }
 
-export const useAuth = create<AuthState>((set) => ({
-    token: localStorage.getItem('BF_TOKEN'),
+export const useAuth = create<AuthState>((set, get) => ({
+    token: readStoredToken(),
     hasUser: false,
     isLoading: false,
     error: null,
 
     checkStatus: async () => {
         set({ isLoading: true, error: null });
-        const response = await api.get('/api/auth/status');
+        const statusResponse = await api.get('/api/auth/status');
+        const hasUser = Boolean(statusResponse.ok && statusResponse.data?.hasUser);
+        const token = get().token || readStoredToken();
 
-        if (response.ok && response.data) {
-            set({ hasUser: response.data.hasUser, isLoading: false });
+        if (token) {
+            const meResponse = await api.get('/api/auth/me');
+            if (!meResponse.ok) {
+                api.setToken(null);
+                set({
+                    token: null,
+                    hasUser,
+                    isLoading: false,
+                    error: meResponse.status === 401 ? 'Session expired. Please login again.' : (meResponse.error || 'Failed to validate session'),
+                });
+                return;
+            }
+            set({ token, hasUser, isLoading: false, error: null });
         } else {
-            set({ isLoading: false, error: response.error || 'Failed to check auth status' });
+            set({
+                hasUser,
+                isLoading: false,
+                error: statusResponse.ok ? null : (statusResponse.error || 'Failed to check auth status'),
+            });
         }
     },
 

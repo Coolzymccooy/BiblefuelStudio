@@ -1,6 +1,7 @@
 import axios, { AxiosError } from 'axios';
 
 const TOKEN_KEY = 'BF_TOKEN';
+export const AUTH_INVALID_EVENT = 'BF_AUTH_INVALID';
 
 export interface ApiResponse<T = any> {
     ok: boolean;
@@ -15,12 +16,15 @@ class ApiClient {
         : '';
 
     private getToken(): string | null {
-        return localStorage.getItem(TOKEN_KEY);
+        const token = localStorage.getItem(TOKEN_KEY);
+        if (!token || token === 'null' || token === 'undefined') return null;
+        return token;
     }
 
     setToken(token: string | null) {
-        if (token) {
-            localStorage.setItem(TOKEN_KEY, token);
+        const normalized = String(token || '').trim();
+        if (normalized && normalized !== 'null' && normalized !== 'undefined') {
+            localStorage.setItem(TOKEN_KEY, normalized);
         } else {
             localStorage.removeItem(TOKEN_KEY);
         }
@@ -118,10 +122,20 @@ class ApiClient {
     private handleError(error: unknown): ApiResponse {
         if (axios.isAxiosError(error)) {
             const axiosError = error as AxiosError<any>;
+            const status = axiosError.response?.status || 500;
+            const errorMessage = axiosError.response?.data?.error || axiosError.message || 'Network error';
+            if (status === 401) {
+                this.setToken(null);
+                if (typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent(AUTH_INVALID_EVENT, {
+                        detail: { status, error: errorMessage },
+                    }));
+                }
+            }
             return {
                 ok: false,
-                status: axiosError.response?.status || 500,
-                error: axiosError.response?.data?.error || axiosError.message || 'Network error',
+                status,
+                error: status === 401 ? 'Session expired. Please login again.' : errorMessage,
             };
         }
         return {

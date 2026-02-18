@@ -1,10 +1,11 @@
-import { useState } from 'react';
-import { Link, Outlet, useLocation } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
     Menu, X, FileText, List, Briefcase, Image, Mic, Film, Video, Package, LogOut, LogIn, Shield, Settings, HelpCircle, Wand2
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { Button } from './ui/Button';
+import { AUTH_INVALID_EVENT } from '../lib/api';
 
 const navItems = [
     { path: '/', label: 'Home', icon: Shield },
@@ -28,8 +29,30 @@ const quickActions = [
 
 export function Layout() {
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-    const { token, logout } = useAuth();
+    const { token, logout, checkStatus } = useAuth();
     const location = useLocation();
+    const navigate = useNavigate();
+
+    useEffect(() => {
+        checkStatus();
+    }, [checkStatus]);
+
+    useEffect(() => {
+        const onAuthInvalid = () => {
+            logout();
+            navigate('/', { replace: true });
+        };
+        window.addEventListener(AUTH_INVALID_EVENT, onAuthInvalid as EventListener);
+        return () => {
+            window.removeEventListener(AUTH_INVALID_EVENT, onAuthInvalid as EventListener);
+        };
+    }, [logout, navigate]);
+
+    useEffect(() => {
+        if (!token && location.pathname !== '/') {
+            navigate('/', { replace: true });
+        }
+    }, [token, location.pathname, navigate]);
 
     const isActive = (path: string) => location.pathname === path;
 

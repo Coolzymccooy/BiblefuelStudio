@@ -32,7 +32,7 @@ console.log(`📂 Loaded environment from: ${path.join(__dirname, '.env')}`);
 const app = express();
 app.set("trust proxy", 1);
 app.use(helmet({ crossOriginResourcePolicy: false }));
-app.use(express.json({ limit: "15mb" }));
+app.use(express.json({ limit: "100mb" }));
 app.use(cors({ origin: process.env.CORS_ORIGIN || "*" }));
 
 const outputDir = process.env.OUTPUT_DIR || path.join(__dirname, "outputs");
@@ -140,7 +140,8 @@ app.get('*', (req, res) => {
 // Global Error Handler
 app.use((err, req, res, next) => {
   console.error("Unhandled Error:", err);
-  res.status(500).json({
+  const status = Number(err?.status || err?.statusCode || 500);
+  res.status(Number.isFinite(status) ? status : 500).json({
     ok: false,
     error: err.message || "Internal Server Error",
     stack: process.env.NODE_ENV === 'development' ? err.stack : undefined

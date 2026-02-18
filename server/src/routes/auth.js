@@ -1,7 +1,7 @@
 import { Router } from "express";
 import rateLimit from "express-rate-limit";
 import { z } from "zod";
-import { hasAnyUser, createOwner, verifyUser, signToken } from "../auth.js";
+import { hasAnyUser, createOwner, verifyUser, signToken, requireAuth } from "../auth.js";
 
 const router = Router();
 
@@ -16,6 +16,10 @@ router.use(authLimiter);
 
 router.get("/status", (req, res) => {
   res.json({ ok: true, hasUser: hasAnyUser() });
+});
+
+router.get("/me", requireAuth, (req, res) => {
+  res.json({ ok: true, user: req.user || null });
 });
 
 router.post("/setup", async (req, res) => {

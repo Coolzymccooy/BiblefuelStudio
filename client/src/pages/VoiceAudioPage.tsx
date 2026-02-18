@@ -55,6 +55,60 @@ interface ElevenVoice {
     labels?: Record<string, string>;
 }
 
+type AudioPresetValues = {
+    denoise: number;
+    gate: number;
+    highpass: number;
+    lowpass: number;
+    compRatio: number;
+    compThreshold: number;
+    lufs: number;
+    removeSilence: boolean;
+};
+
+const AUDIO_PRESET_DEFAULTS: Record<string, AudioPresetValues> = {
+    clean_voice: {
+        denoise: 0.45,
+        gate: -38,
+        highpass: 80,
+        lowpass: 12000,
+        compRatio: 3,
+        compThreshold: -18,
+        lufs: -16,
+        removeSilence: false,
+    },
+    podcast: {
+        denoise: 0.35,
+        gate: -40,
+        highpass: 70,
+        lowpass: 14000,
+        compRatio: 4,
+        compThreshold: -20,
+        lufs: -14,
+        removeSilence: false,
+    },
+    warm: {
+        denoise: 0.30,
+        gate: -42,
+        highpass: 70,
+        lowpass: 10000,
+        compRatio: 2.6,
+        compThreshold: -19,
+        lufs: -16,
+        removeSilence: false,
+    },
+    raw: {
+        denoise: 0,
+        gate: -70,
+        highpass: 0,
+        lowpass: 20000,
+        compRatio: 1,
+        compThreshold: -40,
+        lufs: -16,
+        removeSilence: false,
+    },
+};
+
 export function VoiceAudioPage() {
     const { config } = useConfig();
     const ttsEnabled = config.features.tts;
@@ -68,6 +122,7 @@ export function VoiceAudioPage() {
     const [showGuide, setShowGuide] = useState(true);
     const [showAllRecent, setShowAllRecent] = useState(false);
     const [showAdvanced, setShowAdvanced] = useState(false);
+    const [recordingDebug, setRecordingDebug] = useState('');
     const [voiceId, setVoiceId] = useState('');
     const [stability, setStability] = useState(0.5);
     const [similarity, setSimilarity] = useState(0.75);
@@ -79,6 +134,13 @@ export function VoiceAudioPage() {
     const [quickIds, setQuickIds] = useState('');
     const [voices, setVoices] = useState<ElevenVoice[]>([]);
     const [isLoadingVoices, setIsLoadingVoices] = useState(false);
+    const [isCloningVoice, setIsCloningVoice] = useState(false);
+    const [cloneVoiceName, setCloneVoiceName] = useState('');
+    const [cloneVoiceDescription, setCloneVoiceDescription] = useState('');
+    const [cloneSamplePath, setCloneSamplePath] = useState('');
+    const [cloneHasRights, setCloneHasRights] = useState(false);
+    const [cloneNoImpersonation, setCloneNoImpersonation] = useState(false);
+    const [cloneTermsAccepted, setCloneTermsAccepted] = useState(false);
     const [activeTab, setActiveTab] = useState<'all' | 'voice' | 'record' | 'treatment' | 'soundtrack'>('all');
     const [musicItems, setMusicItems] = useState<any[]>([]);
     const [isLoadingMusic, setIsLoadingMusic] = useState(false);
@@ -89,6 +151,7 @@ export function VoiceAudioPage() {
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     const audioCtxRef = useRef<AudioContext | null>(null);
     const analyserRef = useRef<AnalyserNode | null>(null);
+    const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
     const rafRef = useRef<number | null>(null);
 
     useEffect(() => {
@@ -159,6 +222,12 @@ export function VoiceAudioPage() {
         }
     }, [voicePresets]);
 
+    useEffect(() => {
+        if (!cloneSamplePath && audioPath) {
+            setCloneSamplePath(audioPath);
+        }
+    }, [audioPath, cloneSamplePath]);
+
     const addToHistory = (path: string, kind: AudioItem['kind'], label?: string) => {
         const item: AudioItem = {
             id: path,
@@ -210,24 +279,36 @@ export function VoiceAudioPage() {
 
         setIsProcessing(true);
         try {
-            const response = await api.post('/api/audio/process', {
+            const payload: Record<string, any> = {
                 inputPath: audioPath,
                 preset,
-                denoise: { strength: denoise },
-                gate: { thresholdDb: gate },
-                eq: { highpassHz: highpass, lowpassHz: lowpass },
-                compressor: {
+            };
+
+            if (preset !== 'raw') {
+                payload.denoise = { strength: denoise };
+                payload.gate = { thresholdDb: gate };
+                payload.eq = { highpassHz: highpass, lowpassHz: lowpass };
+                payload.compressor = {
                     ratio: compRatio,
                     thresholdDb: compThreshold,
                     attackMs: 12,
                     releaseMs: 150,
-                },
-                normalize: { targetLUFS: lufs },
-                silenceRemove: { enabled: removeSilence },
-                deesser: { amount: deesserAmount },
-                limiter: { ceilingDb: limiterCeiling },
-                presence: { freqHz: presenceFreq, gainDb: presenceGain, widthQ: presenceQ },
-            });
+                };
+                payload.normalize = { targetLUFS: lufs };
+                payload.silenceRemove = { enabled: removeSilence };
+            }
+
+            if (showAdvanced && deesserAmount > 0) {
+                payload.deesser = { amount: deesserAmount };
+            }
+            if (showAdvanced && limiterCeiling < 0) {
+                payload.limiter = { ceilingDb: limiterCeiling };
+            }
+            if (showAdvanced && presenceGain !== 0) {
+                payload.presence = { freqHz: presenceFreq, gainDb: presenceGain, widthQ: presenceQ };
+            }
+
+            const response = await api.post('/api/audio/process', payload);
 
             if (response.ok && response.data?.file) {
                 setAudioPath(response.data.file);
@@ -251,11 +332,16 @@ export function VoiceAudioPage() {
                 setAudioPath(response.data.file);
                 addToHistory(response.data.file, kind, filename);
                 toast.success('Audio uploaded!');
+                return { ok: true as const, file: response.data.file as string };
             } else {
-                toast.error(response.error || 'Upload failed');
+                const error = response.error || 'Upload failed';
+                toast.error(error);
+                return { ok: false as const, error };
             }
         } catch (error) {
-            toast.error('An error occurred');
+            const message = error instanceof Error ? error.message : 'An error occurred';
+            toast.error(message);
+            return { ok: false as const, error: message };
         } finally {
             setIsUploading(false);
         }
@@ -274,16 +360,29 @@ export function VoiceAudioPage() {
         reader.readAsDataURL(file);
     };
 
-    const startVisualizer = (stream: MediaStream) => {
+    const startVisualizer = async (stream: MediaStream) => {
         const canvas = canvasRef.current;
         if (!canvas) return;
+
+        const rect = canvas.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
+        const targetWidth = Math.max(520, Math.floor((rect.width || 520) * dpr));
+        const targetHeight = Math.max(80, Math.floor(96 * dpr));
+        if (canvas.width !== targetWidth) canvas.width = targetWidth;
+        if (canvas.height !== targetHeight) canvas.height = targetHeight;
+
         const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        if (audioCtx.state === 'suspended') {
+            await audioCtx.resume();
+        }
         const analyser = audioCtx.createAnalyser();
-        analyser.fftSize = 2048;
+        analyser.fftSize = 1024;
+        analyser.smoothingTimeConstant = 0.85;
         const source = audioCtx.createMediaStreamSource(stream);
         source.connect(analyser);
         audioCtxRef.current = audioCtx;
         analyserRef.current = analyser;
+        sourceNodeRef.current = source;
 
         const bufferLength = analyser.frequencyBinCount;
         const dataArray = new Uint8Array(bufferLength);
@@ -296,14 +395,23 @@ export function VoiceAudioPage() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             ctx.fillStyle = 'rgba(15, 23, 42, 0.8)';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
-            ctx.lineWidth = 2;
-            ctx.strokeStyle = '#38bdf8';
+
+            let sum = 0;
+            for (let i = 0; i < bufferLength; i++) {
+                const v = (dataArray[i] - 128) / 128;
+                sum += v * v;
+            }
+            const rms = Math.sqrt(sum / bufferLength);
+            const boost = Math.min(4, Math.max(1, 1.5 + rms * 8));
+
+            ctx.lineWidth = 2.2;
+            ctx.strokeStyle = rms > 0.02 ? '#38bdf8' : '#0ea5e9';
             ctx.beginPath();
             const sliceWidth = canvas.width / bufferLength;
             let x = 0;
             for (let i = 0; i < bufferLength; i++) {
-                const v = dataArray[i] / 128.0;
-                const y = (v * canvas.height) / 2;
+                const centered = ((dataArray[i] - 128) / 128) * boost;
+                const y = (canvas.height / 2) + centered * (canvas.height * 0.32);
                 if (i === 0) ctx.moveTo(x, y);
                 else ctx.lineTo(x, y);
                 x += sliceWidth;
@@ -318,6 +426,10 @@ export function VoiceAudioPage() {
         if (rafRef.current) cancelAnimationFrame(rafRef.current);
         rafRef.current = null;
         analyserRef.current = null;
+        if (sourceNodeRef.current) {
+            sourceNodeRef.current.disconnect();
+            sourceNodeRef.current = null;
+        }
         if (audioCtxRef.current) {
             audioCtxRef.current.close();
             audioCtxRef.current = null;
@@ -345,7 +457,7 @@ export function VoiceAudioPage() {
             reader.onload = () => resolve(String(reader.result || ''));
             reader.readAsDataURL(blob);
         });
-        if (dataUrl && dataUrl.startsWith('data:')) return dataUrl;
+        if (dataUrl && dataUrl.startsWith('data:') && dataUrl.includes(',')) return dataUrl;
 
         const buffer = await blob.arrayBuffer();
         const bytes = new Uint8Array(buffer);
@@ -355,7 +467,8 @@ export function VoiceAudioPage() {
         }
         const base64 = btoa(binary);
         const mime = blob.type || 'audio/webm';
-        return `data:${mime};base64,${base64}`;
+        const normalizedMime = mime.split(';')[0] || 'audio/webm';
+        return `data:${normalizedMime};base64,${base64}`;
     };
 
     const handleStartRecording = async () => {
@@ -364,6 +477,7 @@ export function VoiceAudioPage() {
             mediaStreamRef.current = stream;
             const mimeType = pickMimeType();
             const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+            setRecordingDebug('');
             chunksRef.current = [];
             recorder.ondataavailable = (e) => {
                 if (e.data.size > 0) chunksRef.current.push(e.data);
@@ -372,37 +486,54 @@ export function VoiceAudioPage() {
                 const actualMime = recorder.mimeType || mimeType || 'audio/webm';
                 if (chunksRef.current.length === 0) {
                     toast.error('No audio captured');
+                    setRecordingDebug('No chunks captured from MediaRecorder.');
                     mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
                     mediaStreamRef.current = null;
                     return;
                 }
                 const blob = new Blob(chunksRef.current, { type: actualMime });
+                setRecordingDebug(`Captured ${chunksRef.current.length} chunk(s), ${blob.size} bytes, mime=${actualMime}`);
                 try {
                     const dataUrl = await blobToDataUrl(blob);
-                    await uploadDataUrl(dataUrl, 'recording.webm', 'record');
+                    const ext =
+                        actualMime.includes('ogg') ? 'ogg' :
+                            actualMime.includes('wav') ? 'wav' :
+                                actualMime.includes('mp4') ? 'm4a' : 'webm';
+                    const upload = await uploadDataUrl(dataUrl, `recording-${Date.now()}.${ext}`, 'record');
+                    if (!upload.ok) {
+                        return;
+                    }
                 } catch (err) {
-                    toast.error('Invalid dataUrl');
+                    const message = err instanceof Error ? err.message : 'Recording upload failed';
+                    toast.error(message);
                 } finally {
                     mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
                     mediaStreamRef.current = null;
+                    mediaRecorderRef.current = null;
+                    chunksRef.current = [];
                 }
             };
             mediaRecorderRef.current = recorder;
-            recorder.start(1000);
-            startVisualizer(stream);
+            recorder.start(250);
+            await startVisualizer(stream);
             setIsRecording(true);
             toast.success('Recording started');
         } catch (error) {
-            toast.error('Microphone access denied');
+            if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+                try { mediaRecorderRef.current.stop(); } catch { }
+            }
+            mediaRecorderRef.current = null;
+            mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
+            mediaStreamRef.current = null;
+            stopVisualizer();
+            const message = error instanceof Error ? error.message : 'Microphone access denied';
+            toast.error(message);
         }
     };
 
     const handleStopRecording = () => {
         if (!mediaRecorderRef.current) return;
         if (mediaRecorderRef.current.state === 'recording') {
-            try {
-                mediaRecorderRef.current.requestData();
-            } catch { }
             mediaRecorderRef.current.stop();
         }
         stopVisualizer();
@@ -498,6 +629,62 @@ export function VoiceAudioPage() {
         }
     };
 
+    const handleCloneVoice = async () => {
+        if (!ttsEnabled) {
+            toast.error('TTS is disabled. Add ELEVENLABS_API_KEY first.');
+            return;
+        }
+        if (!cloneVoiceName.trim()) {
+            toast.error('Enter a clone voice name');
+            return;
+        }
+        const sample = (cloneSamplePath || audioPath || '').trim();
+        if (!sample) {
+            toast.error('Provide a sample audio path for cloning');
+            return;
+        }
+        if (!cloneHasRights || !cloneNoImpersonation || !cloneTermsAccepted) {
+            toast.error('All consent checkboxes are required');
+            return;
+        }
+
+        setIsCloningVoice(true);
+        try {
+            const res = await api.post('/api/tts/clone-voice', {
+                name: cloneVoiceName.trim(),
+                description: cloneVoiceDescription.trim() || undefined,
+                samplePaths: [sample],
+                removeBackgroundNoise: true,
+                consent: {
+                    hasRights: cloneHasRights,
+                    noImpersonation: cloneNoImpersonation,
+                    termsAccepted: cloneTermsAccepted,
+                },
+            });
+
+            if (res.ok && (res.data?.voiceId || res.data?.voice?.voice_id)) {
+                const newVoiceId = String(res.data.voiceId || res.data.voice?.voice_id || '').trim();
+                if (newVoiceId) {
+                    setVoiceId(newVoiceId);
+                }
+                toast.success('Voice cloned successfully');
+                await loadVoices();
+            } else {
+                const err = res.error || 'Voice clone failed';
+                if (err.includes('create_instant_voice_clone')) {
+                    toast.error('API key missing Instant Voice Clone permission. Update key scope in ElevenLabs Developers > API Keys.');
+                } else {
+                    toast.error(err);
+                }
+            }
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Voice clone failed';
+            toast.error(message);
+        } finally {
+            setIsCloningVoice(false);
+        }
+    };
+
     const loadMusicLibrary = async () => {
         setIsLoadingMusic(true);
         try {
@@ -521,20 +708,32 @@ export function VoiceAudioPage() {
 
     const currentAudioUrl = toOutputUrl(audioPath, api.baseUrl);
 
-    // Advanced controls
-    const [denoise, setDenoise] = useState(0.45);
-    const [gate, setGate] = useState(-38);
-    const [highpass, setHighpass] = useState(80);
-    const [lowpass, setLowpass] = useState(12000);
-    const [compRatio, setCompRatio] = useState(3);
-    const [compThreshold, setCompThreshold] = useState(-18);
-    const [lufs, setLufs] = useState(-16);
-    const [removeSilence, setRemoveSilence] = useState(true);
-    const [deesserAmount, setDeesserAmount] = useState(0.55);
+    // Audio treatment controls
+    const [denoise, setDenoise] = useState(AUDIO_PRESET_DEFAULTS.clean_voice.denoise);
+    const [gate, setGate] = useState(AUDIO_PRESET_DEFAULTS.clean_voice.gate);
+    const [highpass, setHighpass] = useState(AUDIO_PRESET_DEFAULTS.clean_voice.highpass);
+    const [lowpass, setLowpass] = useState(AUDIO_PRESET_DEFAULTS.clean_voice.lowpass);
+    const [compRatio, setCompRatio] = useState(AUDIO_PRESET_DEFAULTS.clean_voice.compRatio);
+    const [compThreshold, setCompThreshold] = useState(AUDIO_PRESET_DEFAULTS.clean_voice.compThreshold);
+    const [lufs, setLufs] = useState(AUDIO_PRESET_DEFAULTS.clean_voice.lufs);
+    const [removeSilence, setRemoveSilence] = useState(AUDIO_PRESET_DEFAULTS.clean_voice.removeSilence);
+    const [deesserAmount, setDeesserAmount] = useState(0);
     const [limiterCeiling, setLimiterCeiling] = useState(-1);
     const [presenceGain, setPresenceGain] = useState(0);
     const [presenceFreq, setPresenceFreq] = useState(4000);
     const [presenceQ, setPresenceQ] = useState(1.0);
+
+    useEffect(() => {
+        const defaults = AUDIO_PRESET_DEFAULTS[preset] || AUDIO_PRESET_DEFAULTS.clean_voice;
+        setDenoise(defaults.denoise);
+        setGate(defaults.gate);
+        setHighpass(defaults.highpass);
+        setLowpass(defaults.lowpass);
+        setCompRatio(defaults.compRatio);
+        setCompThreshold(defaults.compThreshold);
+        setLufs(defaults.lufs);
+        setRemoveSilence(defaults.removeSilence);
+    }, [preset]);
 
     return (
         <div>
@@ -661,6 +860,60 @@ export function VoiceAudioPage() {
                 )}
 
                 {(activeTab === 'all' || activeTab === 'voice') && (
+                    <Card title="Voice Clone (Consent Required)">
+                        <div className="space-y-4">
+                            <p className="text-xs text-gray-600">
+                                Clone only voices you own or have explicit permission to use. Provide at least one clear sample file path from your outputs.
+                            </p>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                <Input
+                                    value={cloneVoiceName}
+                                    onChange={(e) => setCloneVoiceName(e.target.value)}
+                                    placeholder="Clone name (e.g. Segun Narrator)"
+                                />
+                                <Input
+                                    value={cloneSamplePath}
+                                    onChange={(e) => setCloneSamplePath(e.target.value)}
+                                    placeholder="Sample audio path (e.g. server/outputs/user-audio-xxx.wav)"
+                                />
+                            </div>
+                            <Input
+                                value={cloneVoiceDescription}
+                                onChange={(e) => setCloneVoiceDescription(e.target.value)}
+                                placeholder="Optional description"
+                            />
+                            <div className="space-y-2 text-xs">
+                                <label className="flex items-center gap-2">
+                                    <input type="checkbox" checked={cloneHasRights} onChange={(e) => setCloneHasRights(e.target.checked)} />
+                                    I confirm I have rights and consent to clone this voice.
+                                </label>
+                                <label className="flex items-center gap-2">
+                                    <input type="checkbox" checked={cloneNoImpersonation} onChange={(e) => setCloneNoImpersonation(e.target.checked)} />
+                                    I will not use this to impersonate or deceive.
+                                </label>
+                                <label className="flex items-center gap-2">
+                                    <input type="checkbox" checked={cloneTermsAccepted} onChange={(e) => setCloneTermsAccepted(e.target.checked)} />
+                                    I accept ElevenLabs terms and responsibility for usage.
+                                </label>
+                            </div>
+                            <div className="flex gap-2">
+                                <Button
+                                    variant="secondary"
+                                    className="text-xs h-8"
+                                    onClick={() => setCloneSamplePath(audioPath)}
+                                    disabled={!audioPath}
+                                >
+                                    Use Current Audio Path
+                                </Button>
+                                <Button onClick={handleCloneVoice} isLoading={isCloningVoice} disabled={!ttsEnabled}>
+                                    Clone Voice
+                                </Button>
+                            </div>
+                        </div>
+                    </Card>
+                )}
+
+                {(activeTab === 'all' || activeTab === 'voice') && (
                 <Card title="Voice Presets">
                     <div className="space-y-4">
                         <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
@@ -770,6 +1023,16 @@ export function VoiceAudioPage() {
                             <p className="text-[10px] text-gray-500 uppercase tracking-widest mb-2">Live Input</p>
                             <canvas ref={canvasRef} width={520} height={80} className="w-full rounded-lg border border-white/10 bg-black/30" />
                         </div>
+                        {currentAudioUrl && (
+                            <div className="mt-3 space-y-2">
+                                <p className="text-[10px] text-gray-500 uppercase tracking-widest">Latest Recording/Upload</p>
+                                <audio controls src={currentAudioUrl} className="w-full" />
+                                <p className="text-[10px] text-gray-500 break-all">{audioPath}</p>
+                            </div>
+                        )}
+                        {recordingDebug && (
+                            <p className="text-[10px] text-gray-500 break-all">{recordingDebug}</p>
+                        )}
                     </div>
                 </Card>
                 )}
@@ -798,7 +1061,7 @@ export function VoiceAudioPage() {
                                 <p><strong>Lowpass:</strong> removes hiss (10 to 14kHz for voice).</p>
                                 <p><strong>Comp Ratio/Threshold:</strong> smooths peaks. Higher ratio = tighter dynamics.</p>
                                 <p><strong>LUFS:</strong> loudness target. -16 is good for social; -14 is punchier.</p>
-                                <p><strong>Remove Silence:</strong> trims dead air for tighter pacing.</p>
+                                <p><strong>Remove Silence:</strong> trims leading silence only (safe mode).</p>
                                 <p><strong>De-esser:</strong> reduces harsh s sounds (0.3 to 0.7 typical).</p>
                                 <p><strong>Limiter:</strong> catches peaks to avoid clipping (ceiling around -1dB).</p>
                                 <p><strong>Presence Boost:</strong> adds clarity around 3 to 5kHz if voice sounds dull.</p>

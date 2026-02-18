@@ -53,7 +53,7 @@ router.post("/process", async (req, res) => {
         gate: { thresholdDb: -38 },
         eq: { highpassHz: 80, lowpassHz: 12000 },
         compressor: { ratio: 3, thresholdDb: -18, attackMs: 8, releaseMs: 120 },
-        silenceRemove: { enabled: true }
+        silenceRemove: { enabled: false }
       },
       podcast: {
         normalize: { targetLUFS: -14 },
@@ -61,7 +61,7 @@ router.post("/process", async (req, res) => {
         gate: { thresholdDb: -40 },
         eq: { highpassHz: 70, lowpassHz: 14000 },
         compressor: { ratio: 4, thresholdDb: -20, attackMs: 6, releaseMs: 160 },
-        silenceRemove: { enabled: true }
+        silenceRemove: { enabled: false }
       },
       warm: {
         normalize: { targetLUFS: -16 },
@@ -139,8 +139,10 @@ router.post("/process", async (req, res) => {
     }
 
     if (cfg.deesser?.amount != null) {
-      const amount = Math.min(1, Math.max(0.1, Number(cfg.deesser.amount)));
-      filters.push(`deesser=i=${amount}:f=0.5`);
+      const amount = Math.min(1, Math.max(0, Number(cfg.deesser.amount)));
+      if (amount > 0) {
+        filters.push(`deesser=i=${amount}:f=0.5`);
+      }
     }
 
     if (cfg.presence?.gainDb != null && Number(cfg.presence.gainDb) !== 0) {
@@ -151,8 +153,8 @@ router.post("/process", async (req, res) => {
     }
 
     if (cfg.silenceRemove?.enabled) {
-      // remove near-silence at start/end and long gaps
-      filters.push(`silenceremove=start_periods=1:start_duration=0.15:start_threshold=-40dB:stop_periods=1:stop_duration=0.25:stop_threshold=-40dB`);
+      // Conservative start trim only. Avoids truncating speech from internal pauses.
+      filters.push(`silenceremove=start_periods=1:start_duration=0.2:start_threshold=-45dB:stop_periods=0:detection=peak`);
     }
 
     if (cfg.normalize?.targetLUFS != null) {
