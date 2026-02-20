@@ -157,6 +157,15 @@ function updateJob(id, patch) {
   return j;
 }
 
+function safeUpdateJob(id, patch) {
+  try {
+    return updateJob(id, patch);
+  } catch (err) {
+    console.warn(`[JOBS] Failed to persist update for ${id}:`, err?.message || err);
+    return null;
+  }
+}
+
 function resolveAssetPath(pathOrId) {
   if (pathOrId == null) return null;
   const normalized = String(pathOrId).trim();
@@ -219,6 +228,8 @@ function wrapTextLines(lines, maxChars, maxLines) {
 }
 
 let running = false;
+const lastProgressByJob = new Map();
+const volatileProgressByJob = new Map();
 
 function runFFmpeg(args, totalDurationSec, onProgress) {
   const ffmpeg = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
@@ -229,6 +240,9 @@ function runFFmpeg(args, totalDurationSec, onProgress) {
     proc.stderr.on("data", d => {
       const chunk = d.toString();
       stderr += chunk;
+      if (stderr.length > 64_000) {
+        stderr = stderr.slice(-64_000);
+      }
 
       if (onProgress && totalDurationSec > 0) {
         // Parse time=00:00:05.12
@@ -350,13 +364,26 @@ async function executeJob(job) {
       outFile
     );
     try {
-      await runFFmpeg(args, t, (p) => updateJob(job.id, { progress: p }));
+      await runFFmpeg(args, t, (p) => {
+        const now = Date.now();
+        const prev = lastProgressByJob.get(job.id);
+        const changedEnough = !prev || p > prev.p;
+        const intervalElapsed = !prev || now - prev.ts >= 1000;
+        if (!changedEnough || !intervalElapsed) return;
+        lastProgressByJob.set(job.id, { p, ts: now });
+        volatileProgressByJob.set(job.id, p);
+      });
       logMemory(`job:${job.type}:done`);
       if (global.gc) global.gc();
+      volatileProgressByJob.set(job.id, 100);
+      safeUpdateJob(job.id, { progress: 100 });
       return { outFile };
     } catch (e) {
       try { if (fs.existsSync(outFile)) fs.unlinkSync(outFile); } catch {}
       throw e;
+    } finally {
+      lastProgressByJob.delete(job.id);
+      volatileProgressByJob.delete(job.id);
     }
   }
 
@@ -433,13 +460,26 @@ async function executeJob(job) {
     args.push(outFile);
 
     try {
-      await runFFmpeg(args, t, (p) => updateJob(job.id, { progress: p }));
+      await runFFmpeg(args, t, (p) => {
+        const now = Date.now();
+        const prev = lastProgressByJob.get(job.id);
+        const changedEnough = !prev || p > prev.p;
+        const intervalElapsed = !prev || now - prev.ts >= 1000;
+        if (!changedEnough || !intervalElapsed) return;
+        lastProgressByJob.set(job.id, { p, ts: now });
+        volatileProgressByJob.set(job.id, p);
+      });
       logMemory(`job:${job.type}:done`);
       if (global.gc) global.gc();
+      volatileProgressByJob.set(job.id, 100);
+      safeUpdateJob(job.id, { progress: 100 });
       return { outFile };
     } catch (e) {
       try { if (fs.existsSync(outFile)) fs.unlinkSync(outFile); } catch {}
       throw e;
+    } finally {
+      lastProgressByJob.delete(job.id);
+      volatileProgressByJob.delete(job.id);
     }
   }
 
@@ -490,15 +530,33 @@ async function workerTick() {
   const next = store.jobs.find(j => j.status === "queued");
   if (!next) return;
   running = true;
-  updateJob(next.id, { status: "running", startedAt: new Date().toISOString() });
+  volatileProgressByJob.set(next.id, 0);
+  safeUpdateJob(next.id, { status: "running", startedAt: new Date().toISOString(), progress: 0 });
   try {
     const result = await executeJob(next);
-    updateJob(next.id, { status: "done", finishedAt: new Date().toISOString(), result });
+    volatileProgressByJob.set(next.id, 100);
+    safeUpdateJob(next.id, { status: "done", progress: 100, finishedAt: new Date().toISOString(), result });
   } catch (e) {
-    updateJob(next.id, { status: "failed", finishedAt: new Date().toISOString(), error: String(e?.message || e) });
+    const lastPct = volatileProgressByJob.get(next.id);
+    const failedPatch = {
+      status: "failed",
+      finishedAt: new Date().toISOString(),
+      error: String(e?.message || e)
+    };
+    if (Number.isFinite(lastPct)) failedPatch.progress = lastPct;
+    safeUpdateJob(next.id, failedPatch);
   } finally {
+    lastProgressByJob.delete(next.id);
+    volatileProgressByJob.delete(next.id);
     running = false;
   }
+}
+
+function withVolatileProgress(job) {
+  if (!job || job.status !== "running") return job;
+  const pct = volatileProgressByJob.get(job.id);
+  if (!Number.isFinite(pct)) return job;
+  return { ...job, progress: pct };
 }
 
 // poll worker every 1s
@@ -507,14 +565,15 @@ _t.unref();
 
 router.get("/", (req, res) => {
   store = loadJobs();
-  res.json({ ok: true, jobs: store.jobs.slice().reverse().slice(0, JOBS_RETENTION) });
+  const jobs = store.jobs.slice().reverse().slice(0, JOBS_RETENTION).map(withVolatileProgress);
+  res.json({ ok: true, jobs });
 });
 
 router.get("/:id", (req, res) => {
   store = loadJobs();
   const j = store.jobs.find(x => x.id === req.params.id);
   if (!j) return res.status(404).json({ ok: false, error: "Not found" });
-  res.json({ ok: true, job: j });
+  res.json({ ok: true, job: withVolatileProgress(j) });
 });
 
 router.post("/enqueue", (req, res) => {
@@ -533,6 +592,9 @@ router.post("/enqueue", (req, res) => {
   store = loadJobs();
   store.jobs.push(job);
   saveJobs(store);
+  queueMicrotask(() => {
+    workerTick().catch((err) => console.warn("[JOBS] workerTick enqueue trigger failed:", err?.message || err));
+  });
   res.json({ ok: true, job });
 });
 
