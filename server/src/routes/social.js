@@ -4,6 +4,17 @@ import { readSocialStore, writeSocialStore } from "../lib/socialStore.js";
 
 const router = Router();
 
+function toAbsolutePublicUrl(req, value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (/^https?:\/\//i.test(raw)) return raw;
+  const proto = req.headers["x-forwarded-proto"] ? String(req.headers["x-forwarded-proto"]).split(",")[0].trim() : req.protocol;
+  const host = req.headers["x-forwarded-host"] ? String(req.headers["x-forwarded-host"]).split(",")[0].trim() : req.get("host");
+  if (!host) return raw;
+  const pathOnly = raw.startsWith("/") ? raw : `/${raw}`;
+  return `${proto}://${host}${pathOnly}`;
+}
+
 router.get("/config", (req, res) => {
   const store = readSocialStore();
   res.json({
@@ -68,6 +79,10 @@ router.post("/post", async (req, res) => {
   try {
     const { destination, caption, videoUrl, profileIds, webhookId, webhookUrl } = req.body || {};
     if (!caption || !videoUrl) return res.status(400).json({ ok: false, error: "caption and videoUrl required" });
+    const mediaUrl = toAbsolutePublicUrl(req, videoUrl);
+    if (!/^https?:\/\//i.test(mediaUrl)) {
+      return res.status(400).json({ ok: false, error: `videoUrl must be absolute or resolvable: ${videoUrl}` });
+    }
 
     if (destination === "webhook") {
       const store = readSocialStore();
@@ -77,13 +92,18 @@ router.post("/post", async (req, res) => {
       const resp = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ caption, videoUrl }),
+        body: JSON.stringify({
+          caption,
+          videoUrl: mediaUrl,
+          source: "biblefuel-studio",
+          sentAt: new Date().toISOString(),
+        }),
       });
       if (!resp.ok) {
         const err = await resp.text();
         return res.status(400).json({ ok: false, error: `Webhook failed: ${resp.status} ${err}` });
       }
-      return res.json({ ok: true });
+      return res.json({ ok: true, videoUrl: mediaUrl });
     }
 
     if (destination === "buffer") {
@@ -96,7 +116,7 @@ router.post("/post", async (req, res) => {
       const form = new URLSearchParams();
       ids.forEach((id) => form.append("profile_ids[]", id));
       form.append("text", caption);
-      form.append("media[link]", videoUrl);
+      form.append("media[link]", mediaUrl);
       form.append("now", "true");
       form.append("access_token", accessToken);
 
@@ -111,13 +131,13 @@ router.post("/post", async (req, res) => {
         return res.status(400).json({ ok: false, error: `Buffer post failed: ${resp.status} ${err}` });
       }
       const data = await resp.json();
-      return res.json({ ok: true, data });
+      return res.json({ ok: true, data, videoUrl: mediaUrl });
     }
 
     if (destination === "youtube" || destination === "instagram" || destination === "tiktok") {
       return res.status(400).json({
         ok: false,
-        error: "Direct API posting requires OAuth setup. Configure in Settings → Social Automation.",
+        error: "Direct API posting is not implemented in this build. Use Webhook (Make/Zapier) or Buffer.",
       });
     }
 
@@ -128,3 +148,4 @@ router.post("/post", async (req, res) => {
 });
 
 export default router;
+

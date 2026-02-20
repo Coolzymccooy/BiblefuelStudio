@@ -53,5 +53,6 @@ export function toOutputUrl(path: string | undefined | null, baseUrl: string) {
     if (path.startsWith('http://') || path.startsWith('https://')) return path;
     const fileName = path.split(/[\\/]/).pop();
     if (!fileName) return '';
-    return `${baseUrl}/outputs/${fileName}`;
+    const root = String(baseUrl || '').trim() || (typeof window !== 'undefined' ? window.location.origin : '');
+    return `${root}/outputs/${fileName}`;
 }
