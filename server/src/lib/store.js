@@ -5,9 +5,11 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Ensure we are relative to the server root, not the current working directory
-const DATA_DIR = path.resolve(__dirname, "../../data");
+const LEGACY_DATA_DIR = path.resolve(__dirname, "../../data");
+const DATA_DIR = path.resolve(process.env.DATA_DIR || LEGACY_DATA_DIR);
 const QUEUE_FILE = path.join(DATA_DIR, "queue.json");
-const LOG_FILE = path.join(DATA_DIR, "../debug.log");
+const LOG_FILE = path.join(DATA_DIR, "debug.log");
+const LEGACY_QUEUE_FILE = path.join(LEGACY_DATA_DIR, "queue.json");
 
 function log(msg) {
   const line = `${new Date().toISOString()} - ${msg}\n`;
@@ -17,8 +19,13 @@ function log(msg) {
 function ensure() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
   if (!fs.existsSync(QUEUE_FILE)) {
-    log("Creating initial queue.json");
-    fs.writeFileSync(QUEUE_FILE, JSON.stringify({ items: [] }, null, 2));
+    if (DATA_DIR !== LEGACY_DATA_DIR && fs.existsSync(LEGACY_QUEUE_FILE)) {
+      fs.copyFileSync(LEGACY_QUEUE_FILE, QUEUE_FILE);
+      log("Migrated legacy queue.json into DATA_DIR");
+    } else {
+      log("Creating initial queue.json");
+      fs.writeFileSync(QUEUE_FILE, JSON.stringify({ items: [] }, null, 2));
+    }
   }
 }
 

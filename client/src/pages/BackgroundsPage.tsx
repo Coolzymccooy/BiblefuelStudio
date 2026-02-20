@@ -131,7 +131,13 @@ export function BackgroundsPage() {
             const response = await api.post('/api/pexels/download', { id });
 
             if (response.ok && response.data?.file) {
-                toast.success(`Downloaded to: ${response.data.file}`, { id: 'download' });
+                if (response.data?.item) {
+                    setLibraryItems(prev => {
+                        const next = [response.data.item, ...prev.filter((x) => x.id !== response.data.item.id)];
+                        return next;
+                    });
+                }
+                toast.success(`Downloaded and saved to Library`, { id: 'download' });
             } else {
                 toast.error(response.error || 'Download failed', { id: 'download' });
             }
@@ -149,7 +155,13 @@ export function BackgroundsPage() {
             toast.loading(`Downloading ${id}...`, { id: 'download-animated' });
             const response = await api.post('/api/pixabay/download', { id });
             if (response.ok && response.data?.file) {
-                toast.success(`Downloaded to: ${response.data.file}`, { id: 'download-animated' });
+                if (response.data?.item) {
+                    setLibraryItems(prev => {
+                        const next = [response.data.item, ...prev.filter((x) => x.id !== response.data.item.id)];
+                        return next;
+                    });
+                }
+                toast.success(`Downloaded and saved to Library`, { id: 'download-animated' });
             } else {
                 toast.error(response.error || 'Download failed', { id: 'download-animated' });
             }

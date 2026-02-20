@@ -1,5 +1,7 @@
 import { Router } from "express";
+import path from "path";
 import { pexelsSearchVideos, pexelsDownloadVideoById } from "../lib/pexels.js";
+import { addToLibrary } from "../lib/library.js";
 
 const router = Router();
 
@@ -29,7 +31,21 @@ router.post("/download", async (req, res) => {
     const id = String(req.body?.id || "").trim();
     if (!id) return res.status(400).json({ ok: false, error: "id required" });
     const file = await pexelsDownloadVideoById(id);
-    res.json({ ok: true, file });
+
+    const normalizedFile = String(file).replace(/\\/g, "/");
+    const item = {
+      id: `pexels_${id}`,
+      provider: "pexels",
+      sourceId: id,
+      url: normalizedFile,
+      previewUrl: `/outputs/${path.basename(normalizedFile)}`,
+      image: undefined,
+      duration: 0,
+      downloadedAt: new Date().toISOString(),
+    };
+    const saved = addToLibrary(item);
+
+    res.json({ ok: true, file: normalizedFile, item: saved });
   } catch (e) {
     res.status(400).json({ ok: false, error: String(e?.message || e) });
   }

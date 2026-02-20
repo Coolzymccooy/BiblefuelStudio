@@ -5,13 +5,20 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const DATA_DIR = path.resolve(__dirname, "../../data");
+const LEGACY_DATA_DIR = path.resolve(__dirname, "../../data");
+const DATA_DIR = path.resolve(process.env.DATA_DIR || LEGACY_DATA_DIR);
 const LIBRARY_FILE = path.join(DATA_DIR, "library.json");
+const LEGACY_LIBRARY_FILE = path.join(LEGACY_DATA_DIR, "library.json");
 
 function ensure() {
     if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
     if (!fs.existsSync(LIBRARY_FILE)) {
-        fs.writeFileSync(LIBRARY_FILE, JSON.stringify({ items: [] }, null, 2));
+        // One-time migration when DATA_DIR is customized (e.g., /var/data on Render)
+        if (DATA_DIR !== LEGACY_DATA_DIR && fs.existsSync(LEGACY_LIBRARY_FILE)) {
+            fs.copyFileSync(LEGACY_LIBRARY_FILE, LIBRARY_FILE);
+        } else {
+            fs.writeFileSync(LIBRARY_FILE, JSON.stringify({ items: [] }, null, 2));
+        }
     }
 }
 
