@@ -436,6 +436,18 @@ export function VoiceAudioPage() {
         }
     };
 
+    const cleanupRecordingResources = () => {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+            try { mediaRecorderRef.current.stop(); } catch (_err) { /* no-op */ }
+        }
+        mediaRecorderRef.current = null;
+        mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
+        mediaStreamRef.current = null;
+        chunksRef.current = [];
+        stopVisualizer();
+        setIsRecording(false);
+    };
+
     const pickMimeType = () => {
         const preferred = [
             'audio/webm;codecs=opus',
@@ -472,6 +484,9 @@ export function VoiceAudioPage() {
     };
 
     const handleStartRecording = async () => {
+        if (isRecording || (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording')) {
+            return;
+        }
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             mediaStreamRef.current = stream;
@@ -483,12 +498,12 @@ export function VoiceAudioPage() {
                 if (e.data.size > 0) chunksRef.current.push(e.data);
             };
             recorder.onstop = async () => {
+                setIsRecording(false);
                 const actualMime = recorder.mimeType || mimeType || 'audio/webm';
                 if (chunksRef.current.length === 0) {
                     toast.error('No audio captured');
                     setRecordingDebug('No chunks captured from MediaRecorder.');
-                    mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
-                    mediaStreamRef.current = null;
+                    cleanupRecordingResources();
                     return;
                 }
                 const blob = new Blob(chunksRef.current, { type: actualMime });
@@ -507,10 +522,7 @@ export function VoiceAudioPage() {
                     const message = err instanceof Error ? err.message : 'Recording upload failed';
                     toast.error(message);
                 } finally {
-                    mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
-                    mediaStreamRef.current = null;
-                    mediaRecorderRef.current = null;
-                    chunksRef.current = [];
+                    cleanupRecordingResources();
                 }
             };
             mediaRecorderRef.current = recorder;
@@ -519,22 +531,17 @@ export function VoiceAudioPage() {
             setIsRecording(true);
             toast.success('Recording started');
         } catch (error) {
-            if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-                try { mediaRecorderRef.current.stop(); } catch { }
-            }
-            mediaRecorderRef.current = null;
-            mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
-            mediaStreamRef.current = null;
-            stopVisualizer();
+            cleanupRecordingResources();
             const message = error instanceof Error ? error.message : 'Microphone access denied';
             toast.error(message);
         }
     };
 
     const handleStopRecording = () => {
-        if (!mediaRecorderRef.current) return;
-        if (mediaRecorderRef.current.state === 'recording') {
-            mediaRecorderRef.current.stop();
+        const recorder = mediaRecorderRef.current;
+        if (!recorder) return;
+        if (recorder.state === 'recording') {
+            recorder.stop();
         }
         stopVisualizer();
         setIsRecording(false);
@@ -734,6 +741,29 @@ export function VoiceAudioPage() {
         setLufs(defaults.lufs);
         setRemoveSilence(defaults.removeSilence);
     }, [preset]);
+
+    useEffect(() => {
+        return () => {
+            if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+                try { mediaRecorderRef.current.stop(); } catch (_err) { /* no-op */ }
+            }
+            mediaRecorderRef.current = null;
+            mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
+            mediaStreamRef.current = null;
+            chunksRef.current = [];
+            if (rafRef.current) cancelAnimationFrame(rafRef.current);
+            rafRef.current = null;
+            analyserRef.current = null;
+            if (sourceNodeRef.current) {
+                sourceNodeRef.current.disconnect();
+                sourceNodeRef.current = null;
+            }
+            if (audioCtxRef.current) {
+                audioCtxRef.current.close();
+                audioCtxRef.current = null;
+            }
+        };
+    }, []);
 
     return (
         <div>

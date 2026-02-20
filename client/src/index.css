@@ -18,6 +18,12 @@
     letter-spacing: 0.005em;
   }
 
+  @media (max-width: 1024px) {
+    body {
+      background-attachment: scroll;
+    }
+  }
+
   h1,
   h2,
   h3,

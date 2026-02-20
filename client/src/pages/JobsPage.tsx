@@ -43,8 +43,9 @@ export function JobsPage() {
         loadJobs(true);
 
         const interval = setInterval(() => {
+            if (document.visibilityState !== 'visible') return;
             loadJobs(false);
-        }, 3000);
+        }, 5000);
 
         return () => clearInterval(interval);
     }, []);
