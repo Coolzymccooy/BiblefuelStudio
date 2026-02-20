@@ -10,6 +10,7 @@ let ffmpegChecked = false;
 let ffmpegOk = false;
 const MAX_RENDER_SECONDS = Number(process.env.MAX_RENDER_SECONDS || 30);
 const MAX_INPUT_MB = Number(process.env.MAX_INPUT_MB || 200);
+const OUTPUT_DIR = path.resolve(process.env.OUTPUT_DIR || "./outputs");
 
 function ensureFfmpegAvailable() {
   if (ffmpegChecked) return ffmpegOk;
@@ -45,12 +46,24 @@ function logMemory(tag) {
   console.log(`[MEM] ${tag} rss=${Math.round(m.rss / 1024 / 1024)}MB heap=${Math.round(m.heapUsed / 1024 / 1024)}MB`);
 }
 
+function resolveOutputAlias(p) {
+  if (!p) return p;
+  const raw = String(p).trim().replace(/\\/g, "/");
+  if (!raw) return raw;
+  if (raw.startsWith("http://") || raw.startsWith("https://")) return raw;
+  if (raw.startsWith("/outputs/")) return path.join(OUTPUT_DIR, raw.slice("/outputs/".length));
+  if (raw.startsWith("outputs/")) return path.join(OUTPUT_DIR, raw.slice("outputs/".length));
+  if (raw.startsWith("./outputs/")) return path.join(OUTPUT_DIR, raw.slice("./outputs/".length));
+  return raw;
+}
+
 function resolveAssetPath(pathOrId) {
   if (pathOrId == null) return null;
   const normalized = String(pathOrId).trim();
   if (!normalized) return null;
-  if (normalized.startsWith('http')) return normalized;
-  if (fs.existsSync(normalized)) return normalized;
+  const direct = resolveOutputAlias(normalized);
+  if (String(direct).startsWith("http")) return direct;
+  if (fs.existsSync(direct)) return direct;
 
   const lib = readLibrary();
   const item = lib.items.find(x => String(x.id) === normalized);
@@ -60,11 +73,16 @@ function resolveAssetPath(pathOrId) {
       const hd = sorted.find(f => f.quality === 'hd') || sorted[0];
       if (hd?.link) return hd.link;
     }
-    if (item.previewUrl) return item.previewUrl;
-    if (item.url) return item.url;
+    const localUrl = resolveOutputAlias(item.url);
+    if (localUrl && !String(localUrl).startsWith("http") && fs.existsSync(localUrl)) return localUrl;
+    const preview = resolveOutputAlias(item.previewUrl);
+    if (preview && String(preview).startsWith("http")) return preview;
+    if (preview && fs.existsSync(preview)) return preview;
+    if (localUrl) return localUrl;
+    if (preview) return preview;
   }
 
-  return normalized;
+  return direct;
 }
 
 function isLocalOrRemote(p) {
@@ -145,7 +163,7 @@ router.post("/video", async (req, res) => {
     const safeLines = wrapTextLines(rawLines, maxChars, 6);
     if (safeLines.length === 0) return res.status(400).json({ ok: false, error: "lines[] required" });
 
-    const outDir = process.env.OUTPUT_DIR || "./outputs";
+    const outDir = OUTPUT_DIR;
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
     const outFile = path.join(outDir, `video-${uuid()}.mp4`);
@@ -282,7 +300,7 @@ router.post("/waveform", async (req, res) => {
     const maxChars = Math.max(18, Math.floor(baseChars * (widthPct / 100)));
     const safeLines = wrapTextLines(rawLines, maxChars, 6);
 
-    const outDir = process.env.OUTPUT_DIR || "./outputs";
+    const outDir = OUTPUT_DIR;
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
     const outFile = path.join(outDir, `waveform-${uuid()}.mp4`);
 

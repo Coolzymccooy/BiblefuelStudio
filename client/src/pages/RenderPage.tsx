@@ -59,6 +59,9 @@ export function RenderPage() {
     const [jobVideoOptions, setJobVideoOptions] = useState<{ id: string; label: string; path: string }[]>([]);
     const [shareVideoPath, setShareVideoPath] = useState('');
 
+    const toMediaUrl = (value: string | undefined | null) => toOutputUrl(value, api.baseUrl);
+    const isVideoUrl = (value: string | undefined | null) => /\.(mp4|mov|webm|m4v)(\?|#|$)/i.test(String(value || ''));
+
     useEffect(() => {
         const cachedScripts = loadJson<Script[]>(STORAGE_KEYS.scripts, []);
         if (cachedScripts.length) setScripts(cachedScripts);
@@ -344,7 +347,19 @@ export function RenderPage() {
                                                 : 'aspect-[9/16]'
                                             }`}
                                     >
-                                        <img src={backgroundItem.image} className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" alt="" />
+                                        {isVideoUrl(backgroundItem.previewUrl || backgroundItem.url) ? (
+                                            <video
+                                                src={toMediaUrl(backgroundItem.previewUrl || backgroundItem.url)}
+                                                className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity"
+                                                muted
+                                                loop
+                                                playsInline
+                                                autoPlay
+                                                poster={toMediaUrl(backgroundItem.image)}
+                                            />
+                                        ) : (
+                                            <img src={toMediaUrl(backgroundItem.image || backgroundItem.previewUrl || backgroundItem.url)} className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" alt="" />
+                                        )}
                                         <div className="absolute inset-[8%] border border-white/40 border-dashed pointer-events-none rounded-md" />
                                         <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                                             <Button onClick={() => setBackgroundItem(null)} variant="secondary" className="h-8 text-xs bg-red-500/10 text-red-400 border-red-500/20">
@@ -698,7 +713,19 @@ export function RenderPage() {
                                         className="group relative aspect-[9/16] bg-black rounded-xl overflow-hidden cursor-pointer hover:ring-2 hover:ring-primary-500 transition-all shadow-lg"
                                         onClick={() => handleSelectBackground(item)}
                                     >
-                                        <img src={item.image} className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" alt="" />
+                                        {isVideoUrl(item.previewUrl || item.url) ? (
+                                            <video
+                                                src={toMediaUrl(item.previewUrl || item.url)}
+                                                className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity"
+                                                muted
+                                                loop
+                                                playsInline
+                                                autoPlay
+                                                poster={toMediaUrl(item.image)}
+                                            />
+                                        ) : (
+                                            <img src={toMediaUrl(item.image || item.previewUrl || item.url)} className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" alt="" />
+                                        )}
                                         <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/80 to-transparent">
                                             <p className="text-[10px] font-mono text-white truncate">ID: {item.id}</p>
                                         </div>

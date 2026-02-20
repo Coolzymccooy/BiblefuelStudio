@@ -199,6 +199,9 @@ export function BackgroundsPage() {
                                 className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
                                 muted
                                 loop
+                                playsInline
+                                autoPlay
+                                preload="metadata"
                                 onMouseOver={(e) => e.currentTarget.play()}
                                 onMouseOut={(e) => {
                                     e.currentTarget.pause();
