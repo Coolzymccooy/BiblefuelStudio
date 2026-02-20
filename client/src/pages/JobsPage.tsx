@@ -88,12 +88,12 @@ export function JobsPage() {
             }
 
             const audioHistory = loadJson<any[]>(STORAGE_KEYS.audioHistory, []);
-            const audioPath = audioHistory[0]?.path || 'outputs/test.wav';
+            const audioPath = audioHistory[0]?.path || '';
             const payload = {
                 type: 'render_video',
                 payload: {
                     backgroundPath: item.id,
-                    audioPath,
+                    ...(audioPath ? { audioPath } : {}),
                     lines: [
                         'Test render job',
                         'Psalm 34:18',
@@ -169,6 +169,11 @@ export function JobsPage() {
                                                 </div>
                                             )}
                                         </div>
+                                        {job.status === 'failed' && job.error && (
+                                            <div className="mt-2 text-xs text-red-300/90 truncate" title={job.error}>
+                                                {job.error}
+                                            </div>
+                                        )}
                                     </div>
 
                                     <div className="flex flex-col items-end gap-2">

@@ -196,7 +196,9 @@ async function executeJob(job) {
     const resolvedAudio = resolveAssetPath(audioPath);
     const resolvedMusic = resolveAssetPath(musicPath);
 
-    if (!resolvedAudio || !isLocalOrRemote(resolvedAudio)) throw new Error("audioPath missing or not found");
+    if (!resolvedAudio || !isLocalOrRemote(resolvedAudio)) throw new Error(`audioPath missing or not found: ${audioPath || "<empty>"}`);
+    if (resolvedBackground && !isLocalOrRemote(resolvedBackground)) throw new Error(`backgroundPath not found: ${backgroundPath}`);
+    if (resolvedMusic && !isLocalOrRemote(resolvedMusic)) throw new Error(`musicPath not found: ${musicPath}`);
     if (isFileTooLarge(resolvedAudio)) throw new Error(`audioPath too large (>${MAX_INPUT_MB}MB)`);
     if (resolvedBackground && isFileTooLarge(resolvedBackground)) throw new Error(`backgroundPath too large (>${MAX_INPUT_MB}MB)`);
     if (resolvedMusic && isFileTooLarge(resolvedMusic)) throw new Error(`musicPath too large (>${MAX_INPUT_MB}MB)`);
@@ -298,7 +300,9 @@ async function executeJob(job) {
     const resolvedAudio = resolveAssetPath(audioPath);
     const resolvedMusic = resolveAssetPath(musicPath);
 
-    if (!resolvedBackground || !isLocalOrRemote(resolvedBackground)) throw new Error("backgroundPath missing or not found");
+    if (!resolvedBackground || !isLocalOrRemote(resolvedBackground)) throw new Error(`backgroundPath missing or not found: ${backgroundPath || "<empty>"}`);
+    if (resolvedAudio && !isLocalOrRemote(resolvedAudio)) throw new Error(`audioPath not found: ${audioPath}`);
+    if (resolvedMusic && !isLocalOrRemote(resolvedMusic)) throw new Error(`musicPath not found: ${musicPath}`);
     if (isFileTooLarge(resolvedBackground)) throw new Error(`backgroundPath too large (>${MAX_INPUT_MB}MB)`);
     if (resolvedAudio && isFileTooLarge(resolvedAudio)) throw new Error(`audioPath too large (>${MAX_INPUT_MB}MB)`);
     if (resolvedMusic && isFileTooLarge(resolvedMusic)) throw new Error(`musicPath too large (>${MAX_INPUT_MB}MB)`);

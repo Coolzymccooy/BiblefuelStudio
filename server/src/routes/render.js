@@ -151,6 +151,9 @@ router.post("/video", async (req, res) => {
     if (audioPath && isFileTooLarge(audioPath)) {
       return res.status(400).json({ ok: false, error: `audioPath too large (>${MAX_INPUT_MB}MB)` });
     }
+    if (musicPath && !isLocalOrRemote(musicPath)) {
+      return res.status(400).json({ ok: false, error: "musicPath not found" });
+    }
     if (musicPath && isFileTooLarge(musicPath)) {
       return res.status(400).json({ ok: false, error: `musicPath too large (>${MAX_INPUT_MB}MB)` });
     }
@@ -287,6 +290,9 @@ router.post("/waveform", async (req, res) => {
     }
     if (backgroundPath && isFileTooLarge(backgroundPath)) {
       return res.status(400).json({ ok: false, error: `backgroundPath too large (>${MAX_INPUT_MB}MB)` });
+    }
+    if (musicPath && !isLocalOrRemote(musicPath)) {
+      return res.status(400).json({ ok: false, error: "musicPath not found" });
     }
     if (musicPath && isFileTooLarge(musicPath)) {
       return res.status(400).json({ ok: false, error: `musicPath too large (>${MAX_INPUT_MB}MB)` });
