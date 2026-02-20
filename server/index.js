@@ -27,6 +27,12 @@ import { requireAuth } from "./src/auth.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.join(__dirname, '.env') });
+const dataDir = path.resolve(process.env.DATA_DIR || path.join(__dirname, "data"));
+const outputDir = path.resolve(process.env.OUTPUT_DIR || path.join(__dirname, "outputs"));
+const jobsFile = path.join(dataDir, "jobs.json");
+console.log(`[PATHS] DATA_DIR=${dataDir}`);
+console.log(`[PATHS] OUTPUT_DIR=${outputDir}`);
+console.log(`[PATHS] JOBS_FILE=${jobsFile}`);
 console.log(`📂 Loaded environment from: ${path.join(__dirname, '.env')}`);
 
 const app = express();
@@ -35,7 +41,6 @@ app.use(helmet({ crossOriginResourcePolicy: false }));
 app.use(express.json({ limit: "100mb" }));
 app.use(cors({ origin: process.env.CORS_ORIGIN || "*" }));
 
-const outputDir = process.env.OUTPUT_DIR || path.join(__dirname, "outputs");
 if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 
 app.use("/outputs", express.static(outputDir));

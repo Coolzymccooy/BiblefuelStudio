@@ -15,6 +15,87 @@ interface PexelsVideo {
     previewUrl?: string;
 }
 
+function normalizeSrc(value?: string) {
+    return String(value || '').replace(/\\/g, '/').trim();
+}
+
+function isVideoSrc(value?: string) {
+    return /\.(mp4|mov|webm|m4v)(\?|#|$)/i.test(String(value || ''));
+}
+
+function deriveThumb(video: PexelsVideo) {
+    const candidate = normalizeSrc(video.previewUrl || video.url);
+    if (!candidate || candidate.startsWith('http://') || candidate.startsWith('https://')) return '';
+    const fileName = candidate.split('/').pop() || '';
+    const stem = fileName.replace(/\.[^.]+$/, '');
+    if (!stem) return '';
+    return `/outputs/${stem}.jpg`;
+}
+
+function PreviewCardMedia({ video }: { video: PexelsVideo }) {
+    const sourceImage = normalizeSrc(video.image);
+    const derivedImage = deriveThumb(video);
+    const videoSrc = normalizeSrc(video.previewUrl || video.url);
+    const hasVideo = Boolean(videoSrc) && isVideoSrc(videoSrc);
+    const [imageSrc, setImageSrc] = useState(sourceImage || derivedImage);
+    const [usedFallback, setUsedFallback] = useState(false);
+    const [showVideo, setShowVideo] = useState(false);
+
+    useEffect(() => {
+        setImageSrc(sourceImage || derivedImage);
+        setUsedFallback(false);
+        setShowVideo(false);
+    }, [video.id, sourceImage, derivedImage, video.previewUrl, video.url]);
+
+    const handleImageError = () => {
+        if (!usedFallback && derivedImage && imageSrc !== derivedImage) {
+            setImageSrc(derivedImage);
+            setUsedFallback(true);
+            return;
+        }
+        setImageSrc('');
+    };
+
+    return (
+        <div
+            className="w-full h-full bg-black relative"
+            onMouseEnter={() => {
+                if (hasVideo) setShowVideo(true);
+            }}
+            onMouseLeave={() => setShowVideo(false)}
+            onClick={() => {
+                if (hasVideo) setShowVideo((v) => !v);
+            }}
+        >
+            {imageSrc ? (
+                <img
+                    src={imageSrc}
+                    className="w-full h-full object-cover opacity-85 group-hover:opacity-100 transition-opacity"
+                    alt=""
+                    loading="lazy"
+                    onError={handleImageError}
+                />
+            ) : (
+                <div className="w-full h-full flex items-center justify-center bg-gray-900">
+                    <ImageIcon className="text-gray-700" size={48} />
+                </div>
+            )}
+            {hasVideo && showVideo && (
+                <video
+                    src={videoSrc}
+                    className="absolute inset-0 w-full h-full object-cover"
+                    muted
+                    loop
+                    playsInline
+                    autoPlay
+                    preload="metadata"
+                    onError={() => setShowVideo(false)}
+                />
+            )}
+        </div>
+    );
+}
+
 export function BackgroundsPage() {
     const { config } = useConfig();
     const pexelsEnabled = config.features.pexels;
@@ -121,14 +202,20 @@ export function BackgroundsPage() {
         }
     };
 
-    const handleDownload = async (id: string | number) => {
+    const handleDownload = async (video: PexelsVideo) => {
         if (!pexelsEnabled) {
             toast.error('Pexels API is not configured');
             return;
         }
         try {
-            toast.loading(`Downloading ${id}...`, { id: 'download' });
-            const response = await api.post('/api/pexels/download', { id });
+            toast.loading(`Downloading ${video.id}...`, { id: 'download' });
+            const response = await api.post('/api/pexels/download', {
+                id: video.id,
+                image: video.image,
+                previewUrl: video.previewUrl,
+                duration: video.duration,
+                url: video.url,
+            });
 
             if (response.ok && response.data?.file) {
                 if (response.data?.item) {
@@ -146,14 +233,20 @@ export function BackgroundsPage() {
         }
     };
 
-    const handleAnimatedDownload = async (id: string | number) => {
+    const handleAnimatedDownload = async (video: PexelsVideo) => {
         if (!pixabayEnabled) {
             toast.error('Pixabay API is not configured');
             return;
         }
         try {
-            toast.loading(`Downloading ${id}...`, { id: 'download-animated' });
-            const response = await api.post('/api/pixabay/download', { id });
+            toast.loading(`Downloading ${video.id}...`, { id: 'download-animated' });
+            const response = await api.post('/api/pixabay/download', {
+                id: video.id,
+                image: video.image,
+                previewUrl: video.previewUrl,
+                duration: video.duration,
+                url: video.url,
+            });
             if (response.ok && response.data?.file) {
                 if (response.data?.item) {
                     setLibraryItems(prev => {
@@ -188,39 +281,19 @@ export function BackgroundsPage() {
         }
     };
 
-    const renderGrid = (items: PexelsVideo[], isLibrary: boolean, onDownload: (id: string | number) => void) => (
+    const renderGrid = (items: PexelsVideo[], isLibrary: boolean, onDownload: (video: PexelsVideo) => void) => (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
             {items.map((video) => (
                 <div key={video.id} className="group relative bg-white/[0.03] border border-white/10 rounded-2xl overflow-hidden hover:border-primary-500/50 transition-all duration-300">
                     <div className="aspect-[9/16] bg-black relative">
-                        {video.previewUrl ? (
-                            <video
-                                src={video.previewUrl}
-                                className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
-                                muted
-                                loop
-                                playsInline
-                                autoPlay
-                                preload="metadata"
-                                onMouseOver={(e) => e.currentTarget.play()}
-                                onMouseOut={(e) => {
-                                    e.currentTarget.pause();
-                                    e.currentTarget.currentTime = 0;
-                                }}
-                                poster={video.image}
-                            />
-                        ) : (
-                            <div className="w-full h-full flex items-center justify-center bg-gray-900">
-                                <ImageIcon className="text-gray-700" size={48} />
-                            </div>
-                        )}
+                        <PreviewCardMedia video={video} />
                         <div className="absolute top-3 right-3 px-2 py-1 bg-black/60 backdrop-blur-md rounded-md text-[10px] font-bold text-white border border-white/10">
-                            {video.duration}s
+                            {video.duration ?? 0}s
                         </div>
                         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-4 gap-2">
                             <div className="flex gap-2">
                                 <Button
-                                    onClick={() => onDownload(video.id)}
+                                    onClick={() => onDownload(video)}
                                     className="flex-1 h-9 text-xs font-bold"
                                 >
                                     <Download size={14} className="mr-2" />
@@ -247,7 +320,7 @@ export function BackgroundsPage() {
                                 )}
                             </div>
                             <a
-                                href={video.url}
+                                href={video.url || video.previewUrl}
                                 target="_blank"
                                 rel="noreferrer"
                                 className="w-full h-9 flex items-center justify-center bg-white/10 hover:bg-white/20 border border-white/10 text-white rounded-lg text-xs font-bold transition-all"

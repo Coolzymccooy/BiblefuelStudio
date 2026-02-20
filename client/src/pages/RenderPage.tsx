@@ -1,4 +1,4 @@
-import { useEffect, useState, type ChangeEvent } from 'react';
+import { useEffect, useState, type ChangeEvent, type SyntheticEvent } from 'react';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
@@ -61,6 +61,28 @@ export function RenderPage() {
 
     const toMediaUrl = (value: string | undefined | null) => toOutputUrl(value, api.baseUrl);
     const isVideoUrl = (value: string | undefined | null) => /\.(mp4|mov|webm|m4v)(\?|#|$)/i.test(String(value || ''));
+    const deriveThumbUrl = (value: string | undefined | null) => {
+        const raw = String(value || '').replace(/\\/g, '/').trim();
+        if (!raw || raw.startsWith('http://') || raw.startsWith('https://')) return '';
+        const file = raw.split('/').pop() || '';
+        const stem = file.replace(/\.[^.]+$/, '');
+        if (!stem) return '';
+        return toMediaUrl(`/outputs/${stem}.jpg`);
+    };
+    const getImageSrc = (item: any) => {
+        return toMediaUrl(item?.image) || deriveThumbUrl(item?.previewUrl || item?.url) || '';
+    };
+    const handleImageError = (event: SyntheticEvent<HTMLImageElement>, item: any) => {
+        const fallback = deriveThumbUrl(item?.previewUrl || item?.url);
+        const img = event.currentTarget;
+        const alreadyTried = img.dataset.fallbackApplied === '1';
+        if (!alreadyTried && fallback && img.src !== fallback) {
+            img.dataset.fallbackApplied = '1';
+            img.src = fallback;
+            return;
+        }
+        img.style.display = 'none';
+    };
 
     useEffect(() => {
         const cachedScripts = loadJson<Script[]>(STORAGE_KEYS.scripts, []);
@@ -347,18 +369,26 @@ export function RenderPage() {
                                                 : 'aspect-[9/16]'
                                             }`}
                                     >
-                                        {isVideoUrl(backgroundItem.previewUrl || backgroundItem.url) ? (
+                                        <img
+                                            src={getImageSrc(backgroundItem)}
+                                            className="w-full h-full object-cover opacity-70 group-hover:opacity-100 transition-opacity"
+                                            alt=""
+                                            loading="lazy"
+                                            onError={(e) => handleImageError(e, backgroundItem)}
+                                        />
+                                        {isVideoUrl(backgroundItem.previewUrl || backgroundItem.url) && (
                                             <video
                                                 src={toMediaUrl(backgroundItem.previewUrl || backgroundItem.url)}
-                                                className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity"
+                                                className="absolute inset-0 w-full h-full object-cover opacity-0 group-hover:opacity-100 transition-opacity"
                                                 muted
                                                 loop
                                                 playsInline
                                                 autoPlay
-                                                poster={toMediaUrl(backgroundItem.image)}
+                                                preload="metadata"
+                                                onError={(e) => {
+                                                    e.currentTarget.style.display = 'none';
+                                                }}
                                             />
-                                        ) : (
-                                            <img src={toMediaUrl(backgroundItem.image || backgroundItem.previewUrl || backgroundItem.url)} className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" alt="" />
                                         )}
                                         <div className="absolute inset-[8%] border border-white/40 border-dashed pointer-events-none rounded-md" />
                                         <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
@@ -713,18 +743,26 @@ export function RenderPage() {
                                         className="group relative aspect-[9/16] bg-black rounded-xl overflow-hidden cursor-pointer hover:ring-2 hover:ring-primary-500 transition-all shadow-lg"
                                         onClick={() => handleSelectBackground(item)}
                                     >
-                                        {isVideoUrl(item.previewUrl || item.url) ? (
+                                        <img
+                                            src={getImageSrc(item)}
+                                            className="w-full h-full object-cover opacity-70 group-hover:opacity-100 transition-opacity"
+                                            alt=""
+                                            loading="lazy"
+                                            onError={(e) => handleImageError(e, item)}
+                                        />
+                                        {isVideoUrl(item.previewUrl || item.url) && (
                                             <video
                                                 src={toMediaUrl(item.previewUrl || item.url)}
-                                                className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity"
+                                                className="absolute inset-0 w-full h-full object-cover opacity-0 group-hover:opacity-100 transition-opacity"
                                                 muted
                                                 loop
                                                 playsInline
                                                 autoPlay
-                                                poster={toMediaUrl(item.image)}
+                                                preload="metadata"
+                                                onError={(e) => {
+                                                    e.currentTarget.style.display = 'none';
+                                                }}
                                             />
-                                        ) : (
-                                            <img src={toMediaUrl(item.image || item.previewUrl || item.url)} className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" alt="" />
                                         )}
                                         <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/80 to-transparent">
                                             <p className="text-[10px] font-mono text-white truncate">ID: {item.id}</p>

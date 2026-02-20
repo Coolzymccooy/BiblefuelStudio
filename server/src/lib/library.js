@@ -38,15 +38,32 @@ export function writeLibrary(data) {
 
 export function addToLibrary(item) {
     const lib = readLibrary();
-    const exists = lib.items.find(x => x.id === item.id);
-    if (exists) return exists;
+    const now = new Date().toISOString();
+    const idx = lib.items.findIndex(x => x.id === item.id);
 
-    lib.items.unshift({
+    if (idx >= 0) {
+        const existing = lib.items[idx];
+        const merged = {
+            ...existing,
+            ...item,
+            id: item.id,
+            savedAt: existing.savedAt || now,
+            updatedAt: now
+        };
+        lib.items.splice(idx, 1);
+        lib.items.unshift(merged);
+        writeLibrary(lib);
+        return merged;
+    }
+
+    const created = {
         ...item,
-        savedAt: new Date().toISOString()
-    });
+        savedAt: now,
+        updatedAt: now
+    };
+    lib.items.unshift(created);
     writeLibrary(lib);
-    return item;
+    return created;
 }
 
 export function removeFromLibrary(id) {

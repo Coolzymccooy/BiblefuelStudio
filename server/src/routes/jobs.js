@@ -4,13 +4,14 @@ import path from "path";
 import { v4 as uuid } from "uuid";
 import { spawn, spawnSync } from "child_process";
 import { readLibrary } from "../lib/library.js";
+import { DATA_DIR, OUTPUT_DIR, resolveOutputAlias, isLocalOrRemote } from "../lib/mediaThumb.js";
 
 const router = Router();
 let ffmpegChecked = false;
 let ffmpegOk = false;
 const MAX_RENDER_SECONDS = Number(process.env.MAX_RENDER_SECONDS || 30);
 const MAX_INPUT_MB = Number(process.env.MAX_INPUT_MB || 200);
-const OUTPUT_DIR = path.resolve(process.env.OUTPUT_DIR || "./outputs");
+const JOBS_RETENTION = Math.max(50, Number(process.env.JOBS_RETENTION || 500));
 
 function ensureFfmpegAvailable() {
   if (ffmpegChecked) return ffmpegOk;
@@ -46,35 +47,106 @@ function logMemory(tag) {
   console.log(`[MEM] ${tag} rss=${Math.round(m.rss / 1024 / 1024)}MB heap=${Math.round(m.heapUsed / 1024 / 1024)}MB`);
 }
 
-function resolveOutputAlias(p) {
-  if (!p) return p;
-  const raw = String(p).trim().replace(/\\/g, "/");
-  if (!raw) return raw;
-  if (raw.startsWith("http://") || raw.startsWith("https://")) return raw;
-  if (raw.startsWith("/outputs/")) return path.join(OUTPUT_DIR, raw.slice("/outputs/".length));
-  if (raw.startsWith("outputs/")) return path.join(OUTPUT_DIR, raw.slice("outputs/".length));
-  if (raw.startsWith("./outputs/")) return path.join(OUTPUT_DIR, raw.slice("./outputs/".length));
-  return raw;
-}
-
 const outDir = OUTPUT_DIR;
 if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
-const jobsFile = path.join(outDir, "jobs.json");
+const jobsFile = path.join(DATA_DIR, "jobs.json");
+const jobsTmpFile = path.join(DATA_DIR, "jobs.json.tmp");
+const jobsBakFile = path.join(DATA_DIR, "jobs.json.bak");
+const legacyJobsFile = path.join(OUTPUT_DIR, "jobs.json");
 
-function loadJobs() {
-  try {
-    if (!fs.existsSync(jobsFile)) return { jobs: [] };
-    return JSON.parse(fs.readFileSync(jobsFile, "utf-8"));
-  } catch {
-    return { jobs: [] };
+function trimJobs(jobs) {
+  const list = Array.isArray(jobs) ? jobs.slice() : [];
+  if (list.length <= JOBS_RETENTION) return list;
+  const newest = list
+    .slice()
+    .sort((a, b) => new Date(b?.createdAt || 0).getTime() - new Date(a?.createdAt || 0).getTime())
+    .slice(0, JOBS_RETENTION);
+  const keep = new Set(newest.map((x) => x.id));
+  return list.filter((x) => keep.has(x.id));
+}
+
+function ensureJobsStoreReady() {
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+  if (!fs.existsSync(jobsFile)) {
+    if (fs.existsSync(legacyJobsFile)) {
+      fs.copyFileSync(legacyJobsFile, jobsFile);
+      console.warn(`[JOBS] Migrated legacy jobs store from ${legacyJobsFile} -> ${jobsFile}`);
+    } else {
+      fs.writeFileSync(jobsFile, JSON.stringify({ jobs: [] }, null, 2), "utf-8");
+      console.log(`[JOBS] Initialized jobs store at ${jobsFile}`);
+    }
   }
 }
+
+function atomicWriteJobs(data) {
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+  const payload = JSON.stringify(data, null, 2);
+  let fd;
+  try {
+    fd = fs.openSync(jobsTmpFile, "w");
+    fs.writeFileSync(fd, payload, "utf-8");
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = undefined;
+    if (fs.existsSync(jobsFile)) {
+      fs.copyFileSync(jobsFile, jobsBakFile);
+    }
+    fs.renameSync(jobsTmpFile, jobsFile);
+  } finally {
+    if (typeof fd === "number") {
+      try { fs.closeSync(fd); } catch {}
+    }
+    if (fs.existsSync(jobsTmpFile)) {
+      try { fs.unlinkSync(jobsTmpFile); } catch {}
+    }
+  }
+}
+
+function loadJobs() {
+  ensureJobsStoreReady();
+  try {
+    const parsed = JSON.parse(fs.readFileSync(jobsFile, "utf-8"));
+    const normalized = { jobs: trimJobs(parsed?.jobs || []) };
+    if ((parsed?.jobs || []).length !== normalized.jobs.length) {
+      atomicWriteJobs(normalized);
+    }
+    return normalized;
+  } catch (err) {
+    console.warn(`[JOBS] Failed to read ${jobsFile}. Attempting backup recovery.`, err?.message || err);
+    try {
+      if (fs.existsSync(jobsBakFile)) {
+        const parsedBak = JSON.parse(fs.readFileSync(jobsBakFile, "utf-8"));
+        const recovered = { jobs: trimJobs(parsedBak?.jobs || []) };
+        atomicWriteJobs(recovered);
+        console.warn(`[JOBS] Recovered jobs store from backup ${jobsBakFile}`);
+        return recovered;
+      }
+    } catch (bakErr) {
+      console.warn(`[JOBS] Backup recovery failed.`, bakErr?.message || bakErr);
+    }
+    try {
+      if (fs.existsSync(jobsFile)) {
+        const corruptPath = `${jobsFile}.corrupt-${Date.now()}`;
+        fs.renameSync(jobsFile, corruptPath);
+        console.warn(`[JOBS] Preserved corrupt jobs store at ${corruptPath}`);
+      }
+    } catch {}
+    const empty = { jobs: [] };
+    atomicWriteJobs(empty);
+    return empty;
+  }
+}
+
 function saveJobs(store) {
-  fs.writeFileSync(jobsFile, JSON.stringify(store, null, 2));
+  const normalized = { jobs: trimJobs(store?.jobs || []) };
+  atomicWriteJobs(normalized);
 }
 
 let store = loadJobs();
+console.log(`[JOBS] DATA_DIR=${DATA_DIR}`);
+console.log(`[JOBS] OUTPUT_DIR=${OUTPUT_DIR}`);
+console.log(`[JOBS] STORE_FILE=${jobsFile}`);
 
 function updateJob(id, patch) {
   const store = loadJobs(); // Reload to ensure freshness
@@ -112,12 +184,6 @@ function resolveAssetPath(pathOrId) {
   }
 
   return direct; // Return as is (might be external URL)
-}
-
-function isLocalOrRemote(p) {
-  if (!p) return false;
-  if (p.startsWith('http')) return true;
-  return fs.existsSync(p);
 }
 
 function getDims(aspect) {
@@ -380,8 +446,47 @@ async function executeJob(job) {
   throw new Error("Unknown job type");
 }
 
+function validatePayloadForEnqueue(type, payload) {
+  if (type === "render_video") {
+    const resolvedBackground = resolveAssetPath(payload?.backgroundPath);
+    const resolvedAudio = resolveAssetPath(payload?.audioPath);
+    const resolvedMusic = resolveAssetPath(payload?.musicPath);
+    if (!resolvedBackground || !isLocalOrRemote(resolvedBackground)) {
+      return { ok: false, error: `backgroundPath missing or not found: ${payload?.backgroundPath || "<empty>"}` };
+    }
+    if (payload?.audioPath && !isLocalOrRemote(resolvedAudio)) {
+      return { ok: false, error: `audioPath not found: ${payload?.audioPath}` };
+    }
+    if (payload?.musicPath && !isLocalOrRemote(resolvedMusic)) {
+      return { ok: false, error: `musicPath not found: ${payload?.musicPath}` };
+    }
+    const lines = Array.isArray(payload?.lines) ? payload.lines.map((x) => String(x).trim()).filter(Boolean) : [];
+    if (lines.length === 0) return { ok: false, error: "lines[] required for render_video" };
+    return { ok: true };
+  }
+
+  if (type === "render_waveform") {
+    const resolvedAudio = resolveAssetPath(payload?.audioPath);
+    const resolvedBackground = resolveAssetPath(payload?.backgroundPath);
+    const resolvedMusic = resolveAssetPath(payload?.musicPath);
+    if (!resolvedAudio || !isLocalOrRemote(resolvedAudio)) {
+      return { ok: false, error: `audioPath missing or not found: ${payload?.audioPath || "<empty>"}` };
+    }
+    if (payload?.backgroundPath && !isLocalOrRemote(resolvedBackground)) {
+      return { ok: false, error: `backgroundPath not found: ${payload?.backgroundPath}` };
+    }
+    if (payload?.musicPath && !isLocalOrRemote(resolvedMusic)) {
+      return { ok: false, error: `musicPath not found: ${payload?.musicPath}` };
+    }
+    return { ok: true };
+  }
+
+  return { ok: false, error: `unsupported job type: ${type}` };
+}
+
 async function workerTick() {
   if (running) return;
+  store = loadJobs();
   const next = store.jobs.find(j => j.status === "queued");
   if (!next) return;
   running = true;
@@ -402,7 +507,7 @@ _t.unref();
 
 router.get("/", (req, res) => {
   store = loadJobs();
-  res.json({ ok: true, jobs: store.jobs.slice().reverse().slice(0, 200) });
+  res.json({ ok: true, jobs: store.jobs.slice().reverse().slice(0, JOBS_RETENTION) });
 });
 
 router.get("/:id", (req, res) => {
@@ -416,6 +521,8 @@ router.post("/enqueue", (req, res) => {
   const type = String(req.body?.type || "").trim();
   const payload = req.body?.payload || {};
   if (!type) return res.status(400).json({ ok: false, error: "type required" });
+  const validation = validatePayloadForEnqueue(type, payload);
+  if (!validation.ok) return res.status(400).json({ ok: false, error: validation.error });
 
   const id = `job_${uuid()}`;
   const job = {

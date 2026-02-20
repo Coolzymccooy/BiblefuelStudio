@@ -1,7 +1,7 @@
 import { Router } from "express";
-import path from "path";
 import { pixabaySearchVideos, pixabayDownloadVideoById } from "../lib/pixabay.js";
 import { addToLibrary } from "../lib/library.js";
+import { deriveOutputJpgPathFromVideo, generateVideoThumbnail, normalizePathSlashes, toOutputPublicPath } from "../lib/mediaThumb.js";
 
 const router = Router();
 
@@ -32,15 +32,26 @@ router.post("/download", async (req, res) => {
     if (!id) return res.status(400).json({ ok: false, error: "id required" });
     const file = await pixabayDownloadVideoById(id);
 
-    const normalizedFile = String(file).replace(/\\/g, "/");
+    const normalizedFile = normalizePathSlashes(file);
+    const sourceImage = String(req.body?.image || "").trim() || undefined;
+    const sourcePreviewUrl = String(req.body?.previewUrl || "").trim() || undefined;
+    const sourceUrl = String(req.body?.url || "").trim() || undefined;
+    const parsedDuration = Number(req.body?.duration);
+    const duration = Number.isFinite(parsedDuration) && parsedDuration > 0 ? parsedDuration : 0;
+    const previewUrl = toOutputPublicPath(normalizedFile);
+    const thumb = generateVideoThumbnail(normalizedFile, { outputBaseName: `thumb-pixabay-${id}` });
+    const fallbackImage = deriveOutputJpgPathFromVideo(normalizedFile);
+
     const item = {
       id: `pixabay_${id}`,
       provider: "pixabay",
       sourceId: id,
       url: normalizedFile,
-      previewUrl: `/outputs/${path.basename(normalizedFile)}`,
-      image: undefined,
-      duration: 0,
+      previewUrl,
+      image: sourceImage || thumb || fallbackImage || undefined,
+      duration,
+      sourceUrl,
+      sourcePreviewUrl,
       downloadedAt: new Date().toISOString(),
     };
     const saved = addToLibrary(item);

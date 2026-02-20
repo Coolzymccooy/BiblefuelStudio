@@ -4,13 +4,13 @@ import path from "path";
 import { v4 as uuid } from "uuid";
 import { spawn, spawnSync } from "child_process";
 import { readLibrary } from "../lib/library.js";
+import { OUTPUT_DIR, isLocalOrRemote, resolveOutputAlias } from "../lib/mediaThumb.js";
 
 const router = Router();
 let ffmpegChecked = false;
 let ffmpegOk = false;
 const MAX_RENDER_SECONDS = Number(process.env.MAX_RENDER_SECONDS || 30);
 const MAX_INPUT_MB = Number(process.env.MAX_INPUT_MB || 200);
-const OUTPUT_DIR = path.resolve(process.env.OUTPUT_DIR || "./outputs");
 
 function ensureFfmpegAvailable() {
   if (ffmpegChecked) return ffmpegOk;
@@ -46,17 +46,6 @@ function logMemory(tag) {
   console.log(`[MEM] ${tag} rss=${Math.round(m.rss / 1024 / 1024)}MB heap=${Math.round(m.heapUsed / 1024 / 1024)}MB`);
 }
 
-function resolveOutputAlias(p) {
-  if (!p) return p;
-  const raw = String(p).trim().replace(/\\/g, "/");
-  if (!raw) return raw;
-  if (raw.startsWith("http://") || raw.startsWith("https://")) return raw;
-  if (raw.startsWith("/outputs/")) return path.join(OUTPUT_DIR, raw.slice("/outputs/".length));
-  if (raw.startsWith("outputs/")) return path.join(OUTPUT_DIR, raw.slice("outputs/".length));
-  if (raw.startsWith("./outputs/")) return path.join(OUTPUT_DIR, raw.slice("./outputs/".length));
-  return raw;
-}
-
 function resolveAssetPath(pathOrId) {
   if (pathOrId == null) return null;
   const normalized = String(pathOrId).trim();
@@ -83,12 +72,6 @@ function resolveAssetPath(pathOrId) {
   }
 
   return direct;
-}
-
-function isLocalOrRemote(p) {
-  if (!p) return false;
-  if (p.startsWith('http')) return true;
-  return fs.existsSync(p);
 }
 
 function getDims(aspect) {
@@ -134,25 +117,28 @@ router.post("/video", async (req, res) => {
     if (!ensureFfmpegAvailable()) {
       return res.status(500).json({ ok: false, error: "FFmpeg not available on server" });
     }
+    const rawBackgroundPath = req.body?.backgroundPath;
+    const rawAudioPath = req.body?.audioPath;
+    const rawMusicPath = req.body?.musicPath;
     let { backgroundPath, audioPath, lines, aspect, captionWidthPct, musicPath, musicVolume, autoDuck } = req.body || {};
-    backgroundPath = resolveAssetPath(backgroundPath);
-    audioPath = resolveAssetPath(audioPath);
-    musicPath = resolveAssetPath(musicPath);
+    backgroundPath = resolveAssetPath(rawBackgroundPath);
+    audioPath = resolveAssetPath(rawAudioPath);
+    musicPath = resolveAssetPath(rawMusicPath);
 
     if (!backgroundPath || !isLocalOrRemote(backgroundPath)) {
-      return res.status(400).json({ ok: false, error: "backgroundPath missing or not found" });
+      return res.status(400).json({ ok: false, error: `backgroundPath missing or not found: ${rawBackgroundPath || "<empty>"}` });
     }
     if (isFileTooLarge(backgroundPath)) {
       return res.status(400).json({ ok: false, error: `backgroundPath too large (>${MAX_INPUT_MB}MB)` });
     }
     if (audioPath && !isLocalOrRemote(audioPath)) {
-      return res.status(400).json({ ok: false, error: "audioPath not found" });
+      return res.status(400).json({ ok: false, error: `audioPath not found: ${rawAudioPath}` });
     }
     if (audioPath && isFileTooLarge(audioPath)) {
       return res.status(400).json({ ok: false, error: `audioPath too large (>${MAX_INPUT_MB}MB)` });
     }
     if (musicPath && !isLocalOrRemote(musicPath)) {
-      return res.status(400).json({ ok: false, error: "musicPath not found" });
+      return res.status(400).json({ ok: false, error: `musicPath not found: ${rawMusicPath}` });
     }
     if (musicPath && isFileTooLarge(musicPath)) {
       return res.status(400).json({ ok: false, error: `musicPath too large (>${MAX_INPUT_MB}MB)` });
@@ -274,25 +260,28 @@ router.post("/waveform", async (req, res) => {
     if (!ensureFfmpegAvailable()) {
       return res.status(500).json({ ok: false, error: "FFmpeg not available on server" });
     }
+    const rawBackgroundPath = req.body?.backgroundPath;
+    const rawAudioPath = req.body?.audioPath;
+    const rawMusicPath = req.body?.musicPath;
     let { backgroundPath, audioPath, lines, aspect, captionWidthPct, musicPath, musicVolume, autoDuck } = req.body || {};
-    backgroundPath = resolveAssetPath(backgroundPath);
-    audioPath = resolveAssetPath(audioPath);
-    musicPath = resolveAssetPath(musicPath);
+    backgroundPath = resolveAssetPath(rawBackgroundPath);
+    audioPath = resolveAssetPath(rawAudioPath);
+    musicPath = resolveAssetPath(rawMusicPath);
 
     if (!audioPath || !isLocalOrRemote(audioPath)) {
-      return res.status(400).json({ ok: false, error: "audioPath missing or not found" });
+      return res.status(400).json({ ok: false, error: `audioPath missing or not found: ${rawAudioPath || "<empty>"}` });
     }
     if (isFileTooLarge(audioPath)) {
       return res.status(400).json({ ok: false, error: `audioPath too large (>${MAX_INPUT_MB}MB)` });
     }
     if (backgroundPath && !isLocalOrRemote(backgroundPath)) {
-      return res.status(400).json({ ok: false, error: "backgroundPath not found" });
+      return res.status(400).json({ ok: false, error: `backgroundPath not found: ${rawBackgroundPath}` });
     }
     if (backgroundPath && isFileTooLarge(backgroundPath)) {
       return res.status(400).json({ ok: false, error: `backgroundPath too large (>${MAX_INPUT_MB}MB)` });
     }
     if (musicPath && !isLocalOrRemote(musicPath)) {
-      return res.status(400).json({ ok: false, error: "musicPath not found" });
+      return res.status(400).json({ ok: false, error: `musicPath not found: ${rawMusicPath}` });
     }
     if (musicPath && isFileTooLarge(musicPath)) {
       return res.status(400).json({ ok: false, error: `musicPath too large (>${MAX_INPUT_MB}MB)` });
