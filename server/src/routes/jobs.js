@@ -12,6 +12,8 @@ let ffmpegOk = false;
 const MAX_RENDER_SECONDS = Number(process.env.MAX_RENDER_SECONDS || 30);
 const MAX_INPUT_MB = Number(process.env.MAX_INPUT_MB || 200);
 const JOBS_RETENTION = Math.max(50, Number(process.env.JOBS_RETENTION || 500));
+const JOB_EXEC_TIMEOUT_SEC = Math.max(30, Number(process.env.JOB_EXEC_TIMEOUT_SEC || 600));
+const STALE_RUNNING_JOB_MINUTES = Math.max(1, Number(process.env.STALE_RUNNING_JOB_MINUTES || 45));
 
 function ensureFfmpegAvailable() {
   if (ffmpegChecked) return ffmpegOk;
@@ -245,6 +247,31 @@ function runFFmpeg(args, totalDurationSec, onProgress) {
   return new Promise((resolve, reject) => {
     const proc = spawn(ffmpeg, args);
     let stderr = "";
+    let settled = false;
+    let timedOut = false;
+    let killFallbackTimer;
+
+    const done = (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutTimer);
+      if (killFallbackTimer) clearTimeout(killFallbackTimer);
+      if (err) return reject(err);
+      resolve(true);
+    };
+
+    const timeoutTimer = setTimeout(() => {
+      timedOut = true;
+      const timeoutMsg = `ffmpeg timed out after ${JOB_EXEC_TIMEOUT_SEC}s`;
+      stderr += `\n${timeoutMsg}`;
+      try { proc.kill("SIGTERM"); } catch {}
+      killFallbackTimer = setTimeout(() => {
+        try { proc.kill("SIGKILL"); } catch {}
+        done(new Error(`${timeoutMsg}\n${stderr.slice(-2000)}`));
+      }, 5000);
+      if (killFallbackTimer?.unref) killFallbackTimer.unref();
+    }, JOB_EXEC_TIMEOUT_SEC * 1000);
+    if (timeoutTimer?.unref) timeoutTimer.unref();
 
     proc.stderr.on("data", d => {
       const chunk = d.toString();
@@ -267,9 +294,16 @@ function runFFmpeg(args, totalDurationSec, onProgress) {
       }
     });
 
+    proc.on("error", (err) => {
+      done(new Error(`ffmpeg spawn error: ${String(err?.message || err)}`));
+    });
+
     proc.on("close", (code) => {
-      if (code !== 0) return reject(new Error(`ffmpeg failed: ${code}\n${stderr.slice(-2000)}`));
-      resolve(true);
+      if (timedOut) {
+        return done(new Error(`ffmpeg timed out after ${JOB_EXEC_TIMEOUT_SEC}s\n${stderr.slice(-2000)}`));
+      }
+      if (code !== 0) return done(new Error(`ffmpeg failed: ${code}\n${stderr.slice(-2000)}`));
+      done(null);
     });
   });
 }
@@ -533,6 +567,31 @@ function validatePayloadForEnqueue(type, payload) {
   return { ok: false, error: `unsupported job type: ${type}` };
 }
 
+function recoverStaleRunningJobs() {
+  const now = Date.now();
+  const staleAfterMs = STALE_RUNNING_JOB_MINUTES * 60 * 1000;
+  store = loadJobs();
+  let changed = false;
+
+  for (const job of store.jobs) {
+    if (job?.status !== "running") continue;
+    const refIso = job.startedAt || job.createdAt;
+    const refTs = new Date(refIso || 0).getTime();
+    if (!Number.isFinite(refTs)) continue;
+    if (now - refTs < staleAfterMs) continue;
+
+    const lastPct = Number.isFinite(job.progress) ? job.progress : 0;
+    job.status = "failed";
+    job.finishedAt = new Date().toISOString();
+    job.progress = lastPct;
+    job.error = `Recovered stale running job after ${STALE_RUNNING_JOB_MINUTES}m (worker restart or timeout).`;
+    changed = true;
+    console.warn(`[JOBS] Recovered stale running job ${job.id}`);
+  }
+
+  if (changed) saveJobs(store);
+}
+
 async function workerTick() {
   if (running) return;
   store = loadJobs();
@@ -569,6 +628,7 @@ function withVolatileProgress(job) {
 }
 
 // poll worker every 1s
+recoverStaleRunningJobs();
 const _t = setInterval(workerTick, 1000);
 _t.unref();
 
