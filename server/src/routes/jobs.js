@@ -56,6 +56,7 @@ const jobsFile = path.join(DATA_DIR, "jobs.json");
 const jobsTmpFile = path.join(DATA_DIR, "jobs.json.tmp");
 const jobsBakFile = path.join(DATA_DIR, "jobs.json.bak");
 const legacyJobsFile = path.join(OUTPUT_DIR, "jobs.json");
+let liveStore = { jobs: [] };
 
 function trimJobs(jobs) {
   const list = Array.isArray(jobs) ? jobs.slice() : [];
@@ -113,6 +114,7 @@ function loadJobs() {
     const parsed = JSON.parse(fs.readFileSync(jobsFile, "utf-8"));
     const normalized = { jobs: trimJobs(parsed?.jobs || []) };
     lastGoodStore = normalized;
+    liveStore = normalized;
     if ((parsed?.jobs || []).length !== normalized.jobs.length) {
       atomicWriteJobs(normalized);
     }
@@ -124,6 +126,7 @@ function loadJobs() {
         const parsedBak = JSON.parse(fs.readFileSync(jobsBakFile, "utf-8"));
         const recovered = { jobs: trimJobs(parsedBak?.jobs || []) };
         lastGoodStore = recovered;
+        liveStore = recovered;
         atomicWriteJobs(recovered);
         console.warn(`[JOBS] Recovered jobs store from backup ${jobsBakFile}`);
         return recovered;
@@ -131,9 +134,13 @@ function loadJobs() {
     } catch (bakErr) {
       console.warn(`[JOBS] Backup recovery failed.`, bakErr?.message || bakErr);
     }
-    if (Array.isArray(lastGoodStore?.jobs) && lastGoodStore.jobs.length > 0) {
-      console.warn("[JOBS] Serving in-memory snapshot to avoid dropping active jobs.");
+    if (Array.isArray(lastGoodStore?.jobs)) {
+      console.warn("[JOBS] Serving last good snapshot to avoid dropping jobs.");
       return { jobs: trimJobs(lastGoodStore.jobs) };
+    }
+    if (Array.isArray(liveStore?.jobs)) {
+      console.warn("[JOBS] Serving live in-memory snapshot to avoid dropping jobs.");
+      return { jobs: trimJobs(liveStore.jobs) };
     }
     try {
       if (fs.existsSync(jobsFile)) {
@@ -142,9 +149,7 @@ function loadJobs() {
         console.warn(`[JOBS] Preserved corrupt jobs store at ${corruptPath}`);
       }
     } catch {}
-    const empty = { jobs: [] };
-    atomicWriteJobs(empty);
-    return empty;
+    return { jobs: [] };
   }
 }
 
@@ -152,6 +157,7 @@ function saveJobs(store) {
   const normalized = { jobs: trimJobs(store?.jobs || []) };
   atomicWriteJobs(normalized);
   lastGoodStore = normalized;
+  liveStore = normalized;
 }
 
 let store = loadJobs();
@@ -160,7 +166,7 @@ console.log(`[JOBS] OUTPUT_DIR=${OUTPUT_DIR}`);
 console.log(`[JOBS] STORE_FILE=${jobsFile}`);
 
 function updateJob(id, patch) {
-  const store = loadJobs(); // Reload to ensure freshness
+  store = loadJobs(); // Reload to ensure freshness
   const j = store.jobs.find(x => x.id === id);
   if (!j) return null;
   Object.assign(j, patch);

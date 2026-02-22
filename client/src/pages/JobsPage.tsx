@@ -42,9 +42,9 @@ export function JobsPage() {
 
                 if (incoming.length === 0 && hadActiveJobs) {
                     transientEmptyCountRef.current += 1;
-                    if (transientEmptyCountRef.current <= 6) {
-                        return;
-                    }
+                    // Keep current list while active jobs exist to avoid UI drops
+                    // when backend storage has a transient read issue.
+                    return;
                 } else {
                     transientEmptyCountRef.current = 0;
                 }
