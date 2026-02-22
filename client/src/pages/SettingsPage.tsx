@@ -9,6 +9,20 @@ import { api } from '../lib/api';
 import toast from 'react-hot-toast';
 import { useConfig } from '../lib/config';
 
+type SocialSchedule = {
+    id: string;
+    name: string;
+    enabled: boolean;
+    cron: string;
+    timezone: string;
+    destination: 'webhook' | 'buffer' | 'youtube';
+    caption: string;
+    videoUrl: string;
+    webhookId?: string;
+    profileId?: string;
+    privacyStatus?: 'private' | 'unlisted' | 'public';
+};
+
 export function SettingsPage() {
     const { config } = useConfig();
     const { features } = config;
@@ -18,6 +32,7 @@ export function SettingsPage() {
     const [selectedProfiles, setSelectedProfiles] = useState<string[]>([]);
     const [webhooks, setWebhooks] = useState<{ id?: string; name: string; url: string; enabled: boolean }[]>([]);
     const [selectedWebhookKey, setSelectedWebhookKey] = useState('');
+    const [schedules, setSchedules] = useState<SocialSchedule[]>([]);
     const [directConfig, setDirectConfig] = useState({
         youtubeClientId: '',
         youtubeClientSecret: '',
@@ -43,6 +58,23 @@ export function SettingsPage() {
             setSelectedProfiles(res.data.buffer?.profileIds || []);
             const hooks = (res.data.webhooks || []).map((w: any) => ({ ...w }));
             setWebhooks(hooks);
+            setSchedules((res.data.schedules || []).map((s: any) => ({
+                id: String(s.id || `sch_${Date.now()}`),
+                name: String(s.name || 'Scheduled Post'),
+                enabled: Boolean(s.enabled ?? true),
+                cron: String(s.cron || ''),
+                timezone: String(s.timezone || 'UTC'),
+                destination: (['webhook', 'buffer', 'youtube'].includes(String(s.destination))
+                    ? String(s.destination)
+                    : 'webhook') as SocialSchedule['destination'],
+                caption: String(s.caption || ''),
+                videoUrl: String(s.videoUrl || ''),
+                webhookId: String(s.webhookId || ''),
+                profileId: String(s.profileId || ''),
+                privacyStatus: (['private', 'unlisted', 'public'].includes(String(s.privacyStatus))
+                    ? String(s.privacyStatus)
+                    : 'private') as SocialSchedule['privacyStatus'],
+            })));
             const firstEnabled = hooks.find((w: any) => w.enabled);
             const firstKey = firstEnabled?.id || firstEnabled?.url || (hooks[0]?.id || hooks[0]?.url || '');
             setSelectedWebhookKey(firstKey);
@@ -71,6 +103,7 @@ export function SettingsPage() {
                 profileIds: selectedProfiles,
             },
             webhooks,
+            schedules,
             direct: {
                 youtube: {
                     clientId: directConfig.youtubeClientId,
@@ -92,6 +125,31 @@ export function SettingsPage() {
             await loadSocialConfig();
         }
         else toast.error(res.error || 'Failed to save social config');
+    };
+
+    const addSchedule = () => {
+        const next: SocialSchedule = {
+            id: `sch_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            name: 'Auto Post',
+            enabled: true,
+            cron: '0 */1 * * *',
+            timezone: 'UTC',
+            destination: 'webhook',
+            caption: '',
+            videoUrl: '',
+            webhookId: webhooks[0]?.id || '',
+            profileId: selectedProfiles[0] || '',
+            privacyStatus: 'private',
+        };
+        setSchedules((prev) => [next, ...prev]);
+    };
+
+    const updateSchedule = (id: string, patch: Partial<SocialSchedule>) => {
+        setSchedules((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));
+    };
+
+    const removeSchedule = (id: string) => {
+        setSchedules((prev) => prev.filter((s) => s.id !== id));
     };
 
     const loadBufferProfiles = async () => {
@@ -331,6 +389,111 @@ export function SettingsPage() {
                                     Save Direct Config
                                 </Button>
                             </div>
+                        </div>
+
+                        <div className="pt-2 border-t border-white/10 space-y-3">
+                            <div className="flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-2 text-xs font-semibold text-gray-300">
+                                    <Link2 size={14} /> Auto Post Schedules (Cron)
+                                </div>
+                                <div className="flex gap-2">
+                                    <Button variant="secondary" className="text-xs h-8" onClick={addSchedule}>
+                                        Add Schedule
+                                    </Button>
+                                    <Button variant="secondary" className="text-xs h-8" onClick={saveSocialConfig}>
+                                        Save Schedules
+                                    </Button>
+                                </div>
+                            </div>
+                            <p className="text-[10px] text-gray-500">
+                                Cron format: <code>m h dom mon dow</code>. Example: <code>0 */2 * * *</code> runs every 2 hours.
+                            </p>
+                            {schedules.length === 0 && (
+                                <div className="text-xs text-gray-500">No schedules yet.</div>
+                            )}
+                            {schedules.map((s) => (
+                                <div key={s.id} className="rounded-xl border border-white/10 bg-white/[0.03] p-3 space-y-2">
+                                    <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                                        <Input
+                                            value={s.name}
+                                            onChange={(e) => updateSchedule(s.id, { name: e.target.value })}
+                                            placeholder="Schedule name"
+                                        />
+                                        <Input
+                                            value={s.cron}
+                                            onChange={(e) => updateSchedule(s.id, { cron: e.target.value })}
+                                            placeholder="0 */1 * * *"
+                                        />
+                                        <Input
+                                            value={s.timezone}
+                                            onChange={(e) => updateSchedule(s.id, { timezone: e.target.value })}
+                                            placeholder="UTC"
+                                        />
+                                        <Select
+                                            value={s.enabled ? 'true' : 'false'}
+                                            onChange={(e) => updateSchedule(s.id, { enabled: e.target.value === 'true' })}
+                                        >
+                                            <option value="true">Enabled</option>
+                                            <option value="false">Disabled</option>
+                                        </Select>
+                                    </div>
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                                        <Select
+                                            value={s.destination}
+                                            onChange={(e) => updateSchedule(s.id, { destination: e.target.value as SocialSchedule['destination'] })}
+                                        >
+                                            <option value="webhook">Webhook</option>
+                                            <option value="buffer">Buffer</option>
+                                            <option value="youtube">YouTube</option>
+                                        </Select>
+                                        {s.destination === 'webhook' && (
+                                            <Select
+                                                value={s.webhookId || ''}
+                                                onChange={(e) => updateSchedule(s.id, { webhookId: e.target.value })}
+                                            >
+                                                <option value="">Select webhook...</option>
+                                                {webhooks.map((w, idx) => (
+                                                    <option key={w.id || idx} value={w.id || ''}>{w.name || `Webhook ${idx + 1}`}</option>
+                                                ))}
+                                            </Select>
+                                        )}
+                                        {s.destination === 'buffer' && (
+                                            <Select
+                                                value={s.profileId || ''}
+                                                onChange={(e) => updateSchedule(s.id, { profileId: e.target.value })}
+                                            >
+                                                <option value="">Select profile...</option>
+                                                {selectedProfiles.map((pid) => (
+                                                    <option key={pid} value={pid}>{pid}</option>
+                                                ))}
+                                            </Select>
+                                        )}
+                                        {s.destination === 'youtube' && (
+                                            <Select
+                                                value={s.privacyStatus || 'private'}
+                                                onChange={(e) => updateSchedule(s.id, { privacyStatus: e.target.value as SocialSchedule['privacyStatus'] })}
+                                            >
+                                                <option value="private">YouTube Private</option>
+                                                <option value="unlisted">YouTube Unlisted</option>
+                                                <option value="public">YouTube Public</option>
+                                            </Select>
+                                        )}
+                                        <Button variant="secondary" className="text-xs h-10" onClick={() => removeSchedule(s.id)}>
+                                            Remove
+                                        </Button>
+                                    </div>
+                                    <Input
+                                        value={s.videoUrl}
+                                        onChange={(e) => updateSchedule(s.id, { videoUrl: e.target.value })}
+                                        placeholder="Video URL or /outputs/video-xxx.mp4"
+                                    />
+                                    <Input
+                                        value={s.caption}
+                                        onChange={(e) => updateSchedule(s.id, { caption: e.target.value })}
+                                        placeholder="Caption for scheduled post"
+                                    />
+                                </div>
+                            ))}
                         </div>
                     </div>
                 </Card>

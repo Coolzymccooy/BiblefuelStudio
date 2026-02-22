@@ -3,6 +3,7 @@ import fetch, { File, FormData } from "node-fetch";
 import fs from "fs";
 import path from "path";
 import { v4 as uuid } from "uuid";
+import { OUTPUT_DIR } from "../lib/paths.js";
 
 const router = Router();
 const allowedAudioExt = new Set([".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".webm"]);
@@ -186,7 +187,7 @@ router.post("/elevenlabs", async (req, res) => {
     const resolvedVoiceId = String(voiceId || defaultVoiceId).trim();
     if (!resolvedVoiceId) return res.status(400).json({ ok: false, error: "voiceId missing" });
 
-    const outDir = process.env.OUTPUT_DIR || "./outputs";
+    const outDir = OUTPUT_DIR;
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
     const outFile = path.join(outDir, `tts-${uuid()}.mp3`);

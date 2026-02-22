@@ -1,7 +1,8 @@
 import { Router } from "express";
 import rateLimit from "express-rate-limit";
 import { z } from "zod";
-import { hasAnyUser, createOwner, verifyUser, signToken, requireAuth } from "../auth.js";
+import { hasAnyUser, createOwner, verifyUser, signToken, requireAuth, upsertFirebaseUser } from "../auth.js";
+import { isFirebaseAdminEnabled, verifyFirebaseIdToken } from "../lib/firebaseAdmin.js";
 
 const router = Router();
 
@@ -15,7 +16,7 @@ const authLimiter = rateLimit({
 router.use(authLimiter);
 
 router.get("/status", (req, res) => {
-  res.json({ ok: true, hasUser: hasAnyUser() });
+  res.json({ ok: true, hasUser: hasAnyUser(), firebaseEnabled: isFirebaseAdminEnabled() });
 });
 
 router.get("/me", requireAuth, (req, res) => {
@@ -58,6 +59,23 @@ router.post("/login", async (req, res) => {
     res.json({ ok: true, user, token });
   } catch (e) {
     res.status(400).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+router.post("/firebase", async (req, res) => {
+  try {
+    if (!isFirebaseAdminEnabled()) {
+      return res.status(400).json({ ok: false, error: "Firebase auth not configured on server" });
+    }
+    const idToken = String(req.body?.idToken || "").trim();
+    if (!idToken) return res.status(400).json({ ok: false, error: "idToken required" });
+
+    const decoded = await verifyFirebaseIdToken(idToken);
+    const user = upsertFirebaseUser(decoded);
+    const token = signToken(user);
+    res.json({ ok: true, user, token });
+  } catch (e) {
+    res.status(401).json({ ok: false, error: String(e?.message || e) });
   }
 });
 

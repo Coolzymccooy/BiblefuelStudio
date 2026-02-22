@@ -4,6 +4,7 @@ import path from "path";
 import { v4 as uuid } from "uuid";
 import { readLibrary, addToLibrary, removeFromLibrary, writeLibrary } from "../lib/library.js";
 import { deriveOutputJpgPathFromVideo, generateVideoThumbnail, normalizePathSlashes, resolveOutputAlias, toOutputPublicPath } from "../lib/mediaThumb.js";
+import { OUTPUT_DIR } from "../lib/paths.js";
 
 const router = Router();
 
@@ -107,7 +108,7 @@ router.post("/import-local", (req, res) => {
             .filter(f => exts.includes(path.extname(f).toLowerCase()))
             .map(f => path.join(folderPath, f));
 
-        const outDir = process.env.OUTPUT_DIR || "./outputs";
+        const outDir = OUTPUT_DIR;
         if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
         const imported = [];

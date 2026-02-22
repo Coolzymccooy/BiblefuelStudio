@@ -1,6 +1,7 @@
 import fetch from "node-fetch";
 import fs from "fs";
 import path from "path";
+import { DATA_DIR } from "./paths.js";
 
 const CTA_MAP = {
   save: "Save this verse.",
@@ -49,7 +50,7 @@ function fallbackScripts(count, ctaStyle, startOffset = 0) {
 }
 
 function getHistoryStore() {
-  const dir = path.resolve(process.env.DATA_DIR || path.join(process.cwd(), "data"));
+  const dir = DATA_DIR;
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return path.join(dir, "scripts_history.json");
 }

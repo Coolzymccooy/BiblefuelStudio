@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
@@ -24,13 +24,32 @@ export function JobsPage() {
     const [isLoading, setIsLoading] = useState(false);
     const [selectedJob, setSelectedJob] = useState<Job | null>(null);
     const [isTriggering, setIsTriggering] = useState(false);
+    const transientEmptyCountRef = useRef(0);
+    const jobsRef = useRef<Job[]>([]);
+
+    useEffect(() => {
+        jobsRef.current = jobs;
+    }, [jobs]);
 
     const loadJobs = async (showLoading = false) => {
         if (showLoading) setIsLoading(true);
         try {
             const response = await api.get('/api/jobs');
             if (response.ok && response.data?.jobs) {
-                setJobs(response.data.jobs);
+                const incoming = response.data.jobs as Job[];
+                const previous = jobsRef.current;
+                const hadActiveJobs = previous.some((j) => j.status === 'queued' || j.status === 'running');
+
+                if (incoming.length === 0 && hadActiveJobs) {
+                    transientEmptyCountRef.current += 1;
+                    if (transientEmptyCountRef.current <= 6) {
+                        return;
+                    }
+                } else {
+                    transientEmptyCountRef.current = 0;
+                }
+
+                setJobs(incoming);
             }
         } catch (error) {
             console.error("Failed to refresh jobs", error);

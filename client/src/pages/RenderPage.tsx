@@ -1,4 +1,4 @@
-import { useEffect, useState, type ChangeEvent, type SyntheticEvent } from 'react';
+﻿import { useEffect, useState, type ChangeEvent, type SyntheticEvent } from 'react';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
@@ -51,7 +51,8 @@ export function RenderPage() {
     const [musicVolume, setMusicVolume] = useState(0.3);
     const [autoDuck, setAutoDuck] = useState(true);
     const [durationSec, setDurationSec] = useState(20);
-    const [postDestination, setPostDestination] = useState<'webhook' | 'buffer'>('webhook');
+    const [postDestination, setPostDestination] = useState<'webhook' | 'buffer' | 'youtube' | 'instagram' | 'tiktok'>('webhook');
+    const [youtubePrivacy, setYoutubePrivacy] = useState<'private' | 'unlisted' | 'public'>('private');
     const [webhookOptions, setWebhookOptions] = useState<{ id: string; name: string }[]>([]);
     const [selectedWebhook, setSelectedWebhook] = useState('');
     const [bufferProfiles, setBufferProfiles] = useState<string[]>([]);
@@ -292,15 +293,40 @@ export function RenderPage() {
     }, []);
 
     const loadJobVideos = async () => {
+        const items: { id: string; label: string; path: string }[] = [];
+        const seen = new Set<string>();
+
         const res = await api.get('/api/jobs');
-        if (!res.ok || !res.data?.jobs) return;
-        const items = (res.data.jobs as any[])
-            .filter((j) => j.status === 'done' && j.type === 'render_video' && j.result?.outFile)
-            .map((j) => ({
-                id: j.id,
-                label: `${j.id.slice(0, 8)} • ${new Date(j.createdAt).toLocaleString()}`,
-                path: j.result.outFile,
-            }));
+        if (res.ok && res.data?.jobs) {
+            (res.data.jobs as any[])
+                .filter((j) => j.status === 'done' && j.type === 'render_video' && j.result?.outFile)
+                .map((j) => ({
+                    id: j.id,
+                    label: `${j.id.slice(0, 8)} • ${new Date(j.createdAt).toLocaleString()}`,
+                    path: j.result.outFile,
+                }))
+                .forEach((item) => {
+                    const key = String(item.path || '');
+                    if (!key || seen.has(key)) return;
+                    seen.add(key);
+                    items.push(item);
+                });
+        }
+
+        const media = await api.get('/api/media/video-list');
+        if (media.ok && media.data?.items) {
+            (media.data.items as any[]).forEach((entry) => {
+                const mediaPath = String(entry?.path || '').trim();
+                if (!mediaPath || seen.has(mediaPath)) return;
+                seen.add(mediaPath);
+                items.push({
+                    id: `media_${entry?.name || mediaPath}`,
+                    label: `media • ${entry?.name || mediaPath.split(/[\\/]/).pop()}`,
+                    path: mediaPath,
+                });
+            });
+        }
+
         setJobVideoOptions(items);
         if (!shareVideoPath && !result?.file && items.length > 0) {
             setShareVideoPath(items[0].path);
@@ -335,6 +361,7 @@ export function RenderPage() {
         };
         if (postDestination === 'webhook') payload.webhookId = selectedWebhook;
         if (postDestination === 'buffer') payload.profileIds = [selectedProfile];
+        if (postDestination === 'youtube') payload.privacyStatus = youtubePrivacy;
 
         const res = await api.post('/api/social/post', payload);
         if (res.ok) toast.success('Share triggered');
@@ -707,6 +734,12 @@ export function RenderPage() {
                                             <option key={id} value={id}>{id}</option>
                                         ))}
                                     </Select>
+                                ) : postDestination === 'youtube' ? (
+                                    <Select value={youtubePrivacy} onChange={(e) => setYoutubePrivacy(e.target.value as any)}>
+                                        <option value="private">YouTube Private</option>
+                                        <option value="unlisted">YouTube Unlisted</option>
+                                        <option value="public">YouTube Public</option>
+                                    </Select>
                                 ) : (
                                     <div className="text-[10px] text-yellow-300 bg-yellow-500/10 border border-yellow-500/20 rounded-md px-2 py-1">
                                         Direct API requires OAuth setup
@@ -891,3 +924,4 @@ export function RenderPage() {
         </div>
     );
 }
+

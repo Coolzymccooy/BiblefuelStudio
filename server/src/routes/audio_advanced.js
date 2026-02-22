@@ -4,6 +4,7 @@ import path from "path";
 import { v4 as uuid } from "uuid";
 import { spawn } from "child_process";
 import { readLibrary } from "../lib/library.js";
+import { OUTPUT_DIR } from "../lib/paths.js";
 
 const router = Router();
 
@@ -60,7 +61,7 @@ router.get("/waveform.png", async (req, res) => {
     const w = Math.min(2000, Math.max(400, Number(req.query?.w || 1200)));
     const h = Math.min(800, Math.max(200, Number(req.query?.h || 300)));
 
-    const outDir = process.env.OUTPUT_DIR || "./outputs";
+    const outDir = OUTPUT_DIR;
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
     const outFile = path.join(outDir, `waveform-${uuid()}.png`);
@@ -89,7 +90,7 @@ router.post("/merge", async (req, res) => {
       if (!isLocalOrRemote(p)) return res.status(400).json({ ok: false, error: `file not found: ${p}` });
     }
 
-    const outDir = process.env.OUTPUT_DIR || "./outputs";
+    const outDir = OUTPUT_DIR;
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
     const listFile = path.join(outDir, `concat-${uuid()}.txt`);
     fs.writeFileSync(listFile, resolvedInputs.map(p => {
@@ -157,7 +158,7 @@ router.post("/timeline", async (req, res) => {
       if (!isLocalOrRemote(c.path)) return res.status(400).json({ ok: false, error: `file not found: ${c.path}` });
     }
 
-    const outDir = process.env.OUTPUT_DIR || "./outputs";
+    const outDir = OUTPUT_DIR;
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
     const ffmpeg = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
     const outFile = path.join(outDir, `audio-timeline-${uuid()}.mp3`);
@@ -263,7 +264,7 @@ router.post("/timeline-preview", async (req, res) => {
       if (!isLocalOrRemote(c.path)) return res.status(400).json({ ok: false, error: `file not found: ${c.path}` });
     }
 
-    const outDir = process.env.OUTPUT_DIR || "./outputs";
+    const outDir = OUTPUT_DIR;
     const ffmpeg = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
     const outFile = path.join(outDir, `timeline-preview-${uuid()}.mp4`);
 

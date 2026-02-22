@@ -2,6 +2,7 @@ import fetch from "node-fetch";
 import fs from "fs";
 import path from "path";
 import { pipeline } from "stream/promises";
+import { OUTPUT_DIR } from "./paths.js";
 
 export async function pexelsSearchVideos(query, perPage = 24) {
   const rawKey = (process.env.PEXELS_API_KEY || "");
@@ -52,7 +53,7 @@ export async function pexelsDownloadVideoById(id) {
   const pick = sorted.find(f => (f.width || 0) <= 1080) || sorted[0];
   if (!pick?.link) throw new Error("No downloadable link found");
 
-  const outDir = process.env.OUTPUT_DIR || "./outputs";
+  const outDir = OUTPUT_DIR;
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
   const outFile = path.join(outDir, `pexels-${id}.mp4`);
 

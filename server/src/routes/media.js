@@ -3,9 +3,11 @@ import fs from "fs";
 import path from "path";
 import { v4 as uuid } from "uuid";
 import { spawn, spawnSync } from "child_process";
+import { OUTPUT_DIR } from "../lib/paths.js";
 
 const router = Router();
 const audioExtensions = new Set([".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".webm"]);
+const videoExtensions = new Set([".mp4", ".mov", ".webm", ".m4v"]);
 
 function parseDataUrlPayload(dataUrl) {
   const value = String(dataUrl || "");
@@ -15,7 +17,7 @@ function parseDataUrlPayload(dataUrl) {
     const comma = value.indexOf(",");
     if (comma < 0) return { ok: false, error: "Invalid dataUrl" };
 
-    const meta = value.slice(5, comma); // after "data:"
+    const meta = value.slice(5, comma);
     const payload = value.slice(comma + 1);
     const isBase64 = /;base64/i.test(meta);
     const mime = (meta.split(";")[0] || "application/octet-stream").trim() || "application/octet-stream";
@@ -72,11 +74,6 @@ function isPlayableAudio(filePath) {
   }
 }
 
-/**
- * Upload audio as dataUrl (base64) and save to outputs/.
- * Optionally converts to mp3 if ffmpeg is available.
- * Body: { dataUrl: "data:audio/webm;base64,...", filename?: "recording.webm" }
- */
 router.post("/upload-audio", async (req, res) => {
   try {
     const dataUrl = String(req.body?.dataUrl || "");
@@ -91,7 +88,7 @@ router.post("/upload-audio", async (req, res) => {
       return res.status(400).json({ ok: false, error: "Audio payload is empty or too small" });
     }
 
-    const extFromName = fileNameHint ? path.extname(fileNameHint).replace('.', '').toLowerCase() : "";
+    const extFromName = fileNameHint ? path.extname(fileNameHint).replace(".", "").toLowerCase() : "";
     const ext =
       mime.includes("webm") ? "webm" :
       mime.includes("wav") ? "wav" :
@@ -103,13 +100,12 @@ router.post("/upload-audio", async (req, res) => {
       mime.includes("mp4") ? "m4a" :
       extFromName || "bin";
 
-    const outDir = process.env.OUTPUT_DIR || "./outputs";
+    const outDir = OUTPUT_DIR;
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
     const rawFile = path.join(outDir, `user-audio-${uuid()}.${ext}`);
     fs.writeFileSync(rawFile, decodedBuffer);
 
-    // If already mp3 or wav, just return
     if (ext === "mp3" || ext === "wav") {
       if (!isPlayableAudio(rawFile)) {
         return res.status(400).json({ ok: false, error: "Uploaded audio is invalid or too short" });
@@ -117,33 +113,29 @@ router.post("/upload-audio", async (req, res) => {
       return res.json({ ok: true, file: rawFile.replace(/\\/g, "/"), mime });
     }
 
-    // Try converting to mp3 via ffmpeg for best compatibility
     const ffmpeg = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
     const mp3File = rawFile.replace(/\.[^.]+$/, ".mp3");
-
     const args = ["-y", "-i", rawFile, "-vn", "-acodec", "libmp3lame", "-ar", "44100", "-ac", "2", mp3File];
 
     const proc = spawn(ffmpeg, args);
     let stderr = "";
     proc.stderr.on("data", d => stderr += d.toString());
     proc.on("error", () => {
-      if (!res.headersSent) {
-        if (isPlayableAudio(rawFile)) {
-          return res.json({
-            ok: true,
-            file: rawFile.replace(/\\/g, "/"),
-            mime,
-            warning: "ffmpeg unavailable; using raw file",
-          });
-        }
-        return res.status(400).json({ ok: false, error: "Failed to convert/upload audio" });
+      if (res.headersSent) return;
+      if (isPlayableAudio(rawFile)) {
+        return res.json({
+          ok: true,
+          file: rawFile.replace(/\\/g, "/"),
+          mime,
+          warning: "ffmpeg unavailable; using raw file",
+        });
       }
+      return res.status(400).json({ ok: false, error: "Failed to convert/upload audio" });
     });
 
     proc.on("close", (code) => {
       if (res.headersSent) return;
       if (code !== 0) {
-        // Return raw file only if it's playable
         if (isPlayableAudio(rawFile)) {
           return res.json({
             ok: true,
@@ -172,18 +164,17 @@ router.post("/upload-audio", async (req, res) => {
         return res.status(400).json({ ok: false, error: "Converted audio is invalid" });
       }
 
-      // Optionally delete raw file to reduce clutter
       try { fs.unlinkSync(rawFile); } catch {}
       return res.json({ ok: true, file: mp3File.replace(/\\/g, "/"), mime: "audio/mpeg" });
     });
   } catch (e) {
-    res.status(400).json({ ok:false, error: String(e?.message || e) });
+    res.status(400).json({ ok: false, error: String(e?.message || e) });
   }
 });
 
 router.get("/audio-list", (req, res) => {
   try {
-    const outDir = process.env.OUTPUT_DIR || "./outputs";
+    const outDir = OUTPUT_DIR;
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
     const entries = fs.readdirSync(outDir)
       .filter(name => audioExtensions.has(path.extname(name).toLowerCase()))
@@ -204,4 +195,28 @@ router.get("/audio-list", (req, res) => {
   }
 });
 
+router.get("/video-list", (req, res) => {
+  try {
+    const outDir = OUTPUT_DIR;
+    if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+    const entries = fs.readdirSync(outDir)
+      .filter(name => videoExtensions.has(path.extname(name).toLowerCase()))
+      .map(name => {
+        const full = path.join(outDir, name);
+        const stat = fs.statSync(full);
+        return {
+          name,
+          path: full.replace(/\\/g, "/"),
+          size: stat.size,
+          mtime: stat.mtime?.toISOString?.() || null
+        };
+      })
+      .sort((a, b) => (b.mtime || "").localeCompare(a.mtime || ""));
+    res.json({ ok: true, items: entries });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
 export default router;
+

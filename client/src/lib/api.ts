@@ -11,9 +11,14 @@ export interface ApiResponse<T = any> {
 }
 
 class ApiClient {
-    public readonly baseUrl = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-        ? `http://${window.location.hostname}:10000`
-        : '';
+    public readonly baseUrl = (() => {
+        const envBase = String(import.meta.env.VITE_API_BASE_URL || '').trim().replace(/\/+$/, '');
+        if (envBase) return envBase;
+        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+            return `http://${window.location.hostname}:5051`;
+        }
+        return '';
+    })();
 
     private getToken(): string | null {
         const token = localStorage.getItem(TOKEN_KEY);

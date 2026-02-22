@@ -1,9 +1,9 @@
 import fs from "fs";
 import path from "path";
 import { spawnSync } from "child_process";
+import { DATA_DIR, OUTPUT_DIR } from "./paths.js";
 
-export const OUTPUT_DIR = path.resolve(process.env.OUTPUT_DIR || "./outputs");
-export const DATA_DIR = path.resolve(process.env.DATA_DIR || "./data");
+export { DATA_DIR, OUTPUT_DIR };
 
 let ffmpegChecked = false;
 let ffmpegAvailable = false;

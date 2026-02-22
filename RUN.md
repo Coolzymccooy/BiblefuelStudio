@@ -7,7 +7,52 @@
 - Environment variables in `server/.env`:
   - `ADMIN_SETUP_KEY` - One-time setup key
   - `JWT_SECRET` - Secret for JWT tokens
-  - Optional: `OPENAI_API_KEY`, `GEMINI_API_KEY`, `PEXELS_API_KEY`, `ELEVENLABS_API_KEY`
+  - Optional: `OPENAI_API_KEY`, `GEMINI_API_KEY`, `PEXELS_API_KEY`, `PIXABAY_API_KEY`, `ELEVENLABS_API_KEY`
+  - Recommended for production durability:
+    - `DATA_DIR` (e.g. `/var/data`)
+    - `OUTPUT_DIR` (e.g. `/var/outputs`)
+
+### Optional Firebase (Auth + Storage)
+
+1. Copy env templates:
+
+```bash
+copy client\\.env.example client\\.env
+copy server\\.env.example server\\.env
+```
+
+2. Fill client Firebase keys in `client/.env`:
+- `VITE_FIREBASE_API_KEY`
+- `VITE_FIREBASE_AUTH_DOMAIN`
+- `VITE_FIREBASE_PROJECT_ID`
+- `VITE_FIREBASE_STORAGE_BUCKET`
+- `VITE_FIREBASE_MESSAGING_SENDER_ID`
+- `VITE_FIREBASE_APP_ID`
+
+3. Fill server Firebase admin keys in `server/.env`:
+- `FIREBASE_PROJECT_ID`
+- `FIREBASE_CLIENT_EMAIL`
+- `FIREBASE_PRIVATE_KEY` (escaped with `\\n` in env value)
+- `FIREBASE_STORAGE_BUCKET`
+- Optional: `FIREBASE_MIRROR_OUTPUTS=true` (auto-mirror downloaded backgrounds to Firebase Storage)
+
+4. Firebase Console toggles:
+- Enable **Authentication**: Email/Password and Google provider.
+- Add your domain(s) to **Authentication > Settings > Authorized domains**.
+
+5. Deploy security rules from repo root:
+
+```bash
+npm i -g firebase-tools
+firebase login
+firebase use <your-project-id>
+firebase deploy --only firestore:rules,storage
+```
+
+Rules files included:
+- `firestore.rules`
+- `storage.rules`
+- `firebase.json`
 
 ## Local Development
 
@@ -46,9 +91,8 @@ The Vite dev server proxies `/api` and `/outputs` requests to the backend automa
 Open `http://localhost:5173` in your browser.
 
 **First-time authentication:**
-1. Enter your `ADMIN_SETUP_KEY` from the `.env` file
-2. Create an admin account (email + password)
-3. Login with your credentials
+1. If Firebase is configured, use Firebase email/password or Google login.
+2. If Firebase is not configured, enter your `ADMIN_SETUP_KEY` from `.env` and create an admin account.
 
 All subsequent API calls will automatically include your JWT token.
 
@@ -93,8 +137,10 @@ docker run -p 5051:5051 --env-file server/.env biblefuel-studio
    - `ADMIN_SETUP_KEY`
    - `JWT_SECRET`
    - `CORS_ORIGIN` (your Render URL)
-   - Optional: API keys for  OpenAI, Gemini, Pexels, ElevenLabs
+   - Optional: API keys for OpenAI, Gemini, Pexels, Pixabay, ElevenLabs
+   - Recommended: `DATA_DIR=/var/data` and `OUTPUT_DIR=/var/outputs`
    - Optional: `FFMPEG_PATH`, `FFPROBE_PATH` if custom paths needed
+   - Optional Firebase variables (see section above)
 
 ## Features
 

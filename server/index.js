@@ -21,14 +21,16 @@ import authRouter from "./src/routes/auth.js";
 import jobsRouter from "./src/routes/jobs.js";
 import libraryRouter from "./src/routes/library.js";
 import socialRouter from "./src/routes/social.js";
+import firebaseRouter from "./src/routes/firebase.js";
 import { requireAuth } from "./src/auth.js";
+import { DATA_DIR, OUTPUT_DIR } from "./src/lib/paths.js";
 
 // Load env from CURRENT server directory
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.join(__dirname, '.env') });
-const dataDir = path.resolve(process.env.DATA_DIR || path.join(__dirname, "data"));
-const outputDir = path.resolve(process.env.OUTPUT_DIR || path.join(__dirname, "outputs"));
+const dataDir = DATA_DIR;
+const outputDir = OUTPUT_DIR;
 const jobsFile = path.join(dataDir, "jobs.json");
 console.log(`[PATHS] DATA_DIR=${dataDir}`);
 console.log(`[PATHS] OUTPUT_DIR=${outputDir}`);
@@ -134,6 +136,7 @@ app.use("/api/audio", requireAuth, audioRouter);
 app.use("/api/audio-adv", requireAuth, audioAdvancedRouter);
 app.use("/api/library", requireAuth, libraryRouter);
 app.use("/api/social", requireAuth, socialRouter);
+app.use("/api/firebase", requireAuth, firebaseRouter);
 
 
 

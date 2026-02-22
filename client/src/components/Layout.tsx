@@ -65,6 +65,17 @@ export function Layout() {
     }, [isMobileMenuOpen]);
 
     const isActive = (path: string) => location.pathname === path;
+    const isStandaloneAuth = !token && location.pathname === '/';
+
+    if (isStandaloneAuth) {
+        return (
+            <main className="min-h-screen relative">
+                <div className="relative z-10">
+                    <Outlet />
+                </div>
+            </main>
+        );
+    }
 
     return (
         <div className="min-h-screen flex flex-col lg:flex-row font-sans text-gray-100">

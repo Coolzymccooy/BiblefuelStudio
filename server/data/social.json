@@ -31,5 +31,6 @@
       "accessToken": "",
       "openId": ""
     }
-  }
+  },
+  "schedules": []
 }

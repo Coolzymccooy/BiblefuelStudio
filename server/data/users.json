@@ -5,7 +5,9 @@
       "email": "olubible@yopmail.com",
       "passwordHash": "$2a$10$KYC2nHKdfXc.AVDEq2pKs.u1saBEtniIFPRSivOrVv6mWNPQRvJT6",
       "role": "owner",
-      "createdAt": "2026-02-10T03:53:46.799Z"
+      "createdAt": "2026-02-10T03:53:46.799Z",
+      "firebaseUid": "Z4Ehn9HbmZQ4KG8SBym1BYKuXLk1",
+      "provider": "firebase"
     }
   ]
 }

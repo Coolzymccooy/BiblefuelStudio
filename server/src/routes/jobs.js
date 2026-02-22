@@ -103,11 +103,14 @@ function atomicWriteJobs(data) {
   }
 }
 
+let lastGoodStore = { jobs: [] };
+
 function loadJobs() {
   ensureJobsStoreReady();
   try {
     const parsed = JSON.parse(fs.readFileSync(jobsFile, "utf-8"));
     const normalized = { jobs: trimJobs(parsed?.jobs || []) };
+    lastGoodStore = normalized;
     if ((parsed?.jobs || []).length !== normalized.jobs.length) {
       atomicWriteJobs(normalized);
     }
@@ -118,12 +121,17 @@ function loadJobs() {
       if (fs.existsSync(jobsBakFile)) {
         const parsedBak = JSON.parse(fs.readFileSync(jobsBakFile, "utf-8"));
         const recovered = { jobs: trimJobs(parsedBak?.jobs || []) };
+        lastGoodStore = recovered;
         atomicWriteJobs(recovered);
         console.warn(`[JOBS] Recovered jobs store from backup ${jobsBakFile}`);
         return recovered;
       }
     } catch (bakErr) {
       console.warn(`[JOBS] Backup recovery failed.`, bakErr?.message || bakErr);
+    }
+    if (Array.isArray(lastGoodStore?.jobs) && lastGoodStore.jobs.length > 0) {
+      console.warn("[JOBS] Serving in-memory snapshot to avoid dropping active jobs.");
+      return { jobs: trimJobs(lastGoodStore.jobs) };
     }
     try {
       if (fs.existsSync(jobsFile)) {
@@ -141,6 +149,7 @@ function loadJobs() {
 function saveJobs(store) {
   const normalized = { jobs: trimJobs(store?.jobs || []) };
   atomicWriteJobs(normalized);
+  lastGoodStore = normalized;
 }
 
 let store = loadJobs();

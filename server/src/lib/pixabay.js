@@ -2,6 +2,7 @@ import fetch from "node-fetch";
 import fs from "fs";
 import path from "path";
 import { pipeline } from "stream/promises";
+import { OUTPUT_DIR } from "./paths.js";
 
 export async function pixabaySearchVideos(query, perPage = 24) {
   const rawKey = (process.env.PIXABAY_API_KEY || "");
@@ -55,7 +56,7 @@ export async function pixabayDownloadVideoById(id) {
   const pick = files.large || files.medium || files.small || files.tiny;
   if (!pick?.url) throw new Error("No downloadable link found");
 
-  const outDir = process.env.OUTPUT_DIR || "./outputs";
+  const outDir = OUTPUT_DIR;
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
   const outFile = path.join(outDir, `pixabay-${id}.mp4`);
 

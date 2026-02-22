@@ -2,10 +2,11 @@ import fs from "fs";
 import path from "path";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
+import { DATA_DIR } from "./lib/paths.js";
 
 const getDataPaths = () => {
-  const dataDir = path.resolve(process.env.DATA_DIR || "./data");
-  const usersFile = path.join(dataDir, "users.json");
+  const dataDir = DATA_DIR;
+  const usersFile = path.join(DATA_DIR, "users.json");
   return { dataDir, usersFile };
 };
 
@@ -38,6 +39,51 @@ export async function createOwner(email, password) {
   if (exists) throw new Error("User already exists");
   const passwordHash = await bcrypt.hash(password, 10);
   const user = { id: `u_${Date.now()}`, email, passwordHash, role: "owner", createdAt: new Date().toISOString() };
+  store.users.push(user);
+  saveUsersStore(store);
+  return { id: user.id, email: user.email, role: user.role };
+}
+
+export function upsertFirebaseUser(decodedToken) {
+  const uid = String(decodedToken?.uid || "").trim();
+  if (!uid) throw new Error("Firebase token missing uid");
+
+  const rawEmail = String(decodedToken?.email || "").trim();
+  const email = rawEmail || `${uid}@firebase.local`;
+
+  const store = getUsersStore();
+  const existing = store.users.find((u) =>
+    String(u?.firebaseUid || "") === uid ||
+    String(u?.email || "").toLowerCase() === email.toLowerCase()
+  );
+
+  if (existing) {
+    let changed = false;
+    if (!existing.firebaseUid) {
+      existing.firebaseUid = uid;
+      changed = true;
+    }
+    if (!existing.provider) {
+      existing.provider = "firebase";
+      changed = true;
+    }
+    if (!existing.email && email) {
+      existing.email = email;
+      changed = true;
+    }
+    if (changed) saveUsersStore(store);
+    return { id: existing.id, email: existing.email, role: existing.role || "owner" };
+  }
+
+  const user = {
+    id: `u_${Date.now()}`,
+    email,
+    passwordHash: "",
+    role: "owner",
+    provider: "firebase",
+    firebaseUid: uid,
+    createdAt: new Date().toISOString()
+  };
   store.users.push(user);
   saveUsersStore(store);
   return { id: user.id, email: user.email, role: user.role };

@@ -1,7 +1,9 @@
 import { Router } from "express";
+import fs from "fs";
 import { pixabaySearchVideos, pixabayDownloadVideoById } from "../lib/pixabay.js";
 import { addToLibrary } from "../lib/library.js";
-import { deriveOutputJpgPathFromVideo, generateVideoThumbnail, normalizePathSlashes, toOutputPublicPath } from "../lib/mediaThumb.js";
+import { deriveOutputJpgPathFromVideo, generateVideoThumbnail, normalizePathSlashes, resolveOutputAlias, toOutputPublicPath } from "../lib/mediaThumb.js";
+import { mirrorOutputToFirebaseIfEnabled } from "../lib/firebaseAdmin.js";
 
 const router = Router();
 
@@ -54,6 +56,18 @@ router.post("/download", async (req, res) => {
       sourcePreviewUrl,
       downloadedAt: new Date().toISOString(),
     };
+
+    const mirroredVideo = await mirrorOutputToFirebaseIfEnabled(normalizedFile, { prefix: "backgrounds/videos" });
+    if (mirroredVideo?.signedUrl) item.cloudUrl = mirroredVideo.signedUrl;
+
+    if (item.image && String(item.image).startsWith("/outputs/")) {
+      const localImage = resolveOutputAlias(item.image);
+      if (localImage && fs.existsSync(localImage)) {
+        const mirroredImage = await mirrorOutputToFirebaseIfEnabled(localImage, { prefix: "backgrounds/images" });
+        if (mirroredImage?.signedUrl) item.cloudImage = mirroredImage.signedUrl;
+      }
+    }
+
     const saved = addToLibrary(item);
 
     res.json({ ok: true, file: normalizedFile, item: saved });

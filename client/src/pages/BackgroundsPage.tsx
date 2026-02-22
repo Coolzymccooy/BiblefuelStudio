@@ -109,6 +109,8 @@ export function BackgroundsPage() {
     const [libraryItems, setLibraryItems] = useState<PexelsVideo[]>([]);
     const [isSearching, setIsSearching] = useState(false);
     const [isLoadingLibrary, setIsLoadingLibrary] = useState(false);
+    const [isBulkDownloadingSearch, setIsBulkDownloadingSearch] = useState(false);
+    const [isBulkDownloadingAnimated, setIsBulkDownloadingAnimated] = useState(false);
     const [localFolder, setLocalFolder] = useState('');
     const [importedLocal, setImportedLocal] = useState<PexelsVideo[]>([]);
 
@@ -281,6 +283,64 @@ export function BackgroundsPage() {
         }
     };
 
+    const handleBulkDownload = async (
+        items: PexelsVideo[],
+        kind: 'pexels' | 'pixabay'
+    ) => {
+        if (items.length === 0) {
+            toast.error('No results to download');
+            return;
+        }
+        const enabled = kind === 'pexels' ? pexelsEnabled : pixabayEnabled;
+        if (!enabled) {
+            toast.error(`${kind === 'pexels' ? 'Pexels' : 'Pixabay'} API is not configured`);
+            return;
+        }
+
+        const endpoint = kind === 'pexels' ? '/api/pexels/download' : '/api/pixabay/download';
+        const toastId = kind === 'pexels' ? 'download-all-pexels' : 'download-all-pixabay';
+        if (kind === 'pexels') setIsBulkDownloadingSearch(true);
+        if (kind === 'pixabay') setIsBulkDownloadingAnimated(true);
+
+        let okCount = 0;
+        let failCount = 0;
+        try {
+            for (let i = 0; i < items.length; i++) {
+                const video = items[i];
+                toast.loading(`Downloading ${i + 1}/${items.length}...`, { id: toastId });
+                const response = await api.post(endpoint, {
+                    id: video.id,
+                    image: video.image,
+                    previewUrl: video.previewUrl,
+                    duration: video.duration,
+                    url: video.url,
+                });
+
+                if (response.ok && response.data?.file) {
+                    okCount += 1;
+                    if (response.data?.item) {
+                        setLibraryItems(prev => [response.data.item, ...prev.filter((x) => x.id !== response.data.item.id)]);
+                    }
+                } else {
+                    failCount += 1;
+                }
+            }
+
+            if (failCount === 0) {
+                toast.success(`Downloaded ${okCount}/${items.length} and saved to Library`, { id: toastId });
+            } else if (okCount > 0) {
+                toast.success(`Downloaded ${okCount}/${items.length}. Failed: ${failCount}`, { id: toastId });
+            } else {
+                toast.error('Bulk download failed', { id: toastId });
+            }
+        } catch {
+            toast.error('Bulk download failed', { id: toastId });
+        } finally {
+            if (kind === 'pexels') setIsBulkDownloadingSearch(false);
+            if (kind === 'pixabay') setIsBulkDownloadingAnimated(false);
+        }
+    };
+
     const renderGrid = (items: PexelsVideo[], isLibrary: boolean, onDownload: (video: PexelsVideo) => void) => (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
             {items.map((video) => (
@@ -406,6 +466,14 @@ export function BackgroundsPage() {
                         <div className="space-y-4">
                             <div className="flex items-center justify-between px-2">
                                 <h3 className="text-sm font-bold uppercase tracking-widest text-gray-500">Results ({videos.length})</h3>
+                                <Button
+                                    onClick={() => handleBulkDownload(videos, 'pexels')}
+                                    isLoading={isBulkDownloadingSearch}
+                                    className="h-8 text-[10px] uppercase tracking-tighter"
+                                >
+                                    <Download size={12} className="mr-1" />
+                                    Download All
+                                </Button>
                             </div>
                             {renderGrid(videos, false, handleDownload)}
                         </div>
@@ -445,6 +513,14 @@ export function BackgroundsPage() {
                         <div className="space-y-4">
                             <div className="flex items-center justify-between px-2">
                                 <h3 className="text-sm font-bold uppercase tracking-widest text-gray-500">Animated Results ({animatedVideos.length})</h3>
+                                <Button
+                                    onClick={() => handleBulkDownload(animatedVideos, 'pixabay')}
+                                    isLoading={isBulkDownloadingAnimated}
+                                    className="h-8 text-[10px] uppercase tracking-tighter"
+                                >
+                                    <Download size={12} className="mr-1" />
+                                    Download All
+                                </Button>
                             </div>
                             {renderGrid(animatedVideos, false, handleAnimatedDownload)}
                             <div className="text-xs text-gray-500 px-2">
