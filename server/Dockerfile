@@ -1,9 +1,12 @@
 # Biblefuel Studio (server) - Render Docker deploy
-FROM node:22-bookworm-slim
+FROM node:22-bookworm
 
-# Install ffmpeg + ffprobe
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+# Install ffmpeg + ffprobe with all codec dependencies
+RUN apt-get update && apt-get install -y \
+    ffmpeg \
+    ca-certificates \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 WORKDIR /app
 
