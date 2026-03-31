@@ -4,6 +4,7 @@ import path from "path";
 import { v4 as uuid } from "uuid";
 import { spawn } from "child_process";
 import { OUTPUT_DIR } from "../lib/paths.js";
+import { resolveOutputAlias } from "../lib/mediaThumb.js";
 
 const router = Router();
 
@@ -36,7 +37,7 @@ const router = Router();
  */
 router.post("/process", async (req, res) => {
   try {
-    const inputPath = String(req.body?.inputPath || "").trim();
+    const inputPath = resolveOutputAlias(String(req.body?.inputPath || "").trim());
     if (!inputPath || !fs.existsSync(inputPath)) {
       return res.status(400).json({ ok: false, error: "inputPath missing or not found" });
     }
