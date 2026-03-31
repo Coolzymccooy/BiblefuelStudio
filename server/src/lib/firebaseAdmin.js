@@ -7,7 +7,7 @@ import { getStorage } from "firebase-admin/storage";
 function getPrivateKey() {
   const raw = String(process.env.FIREBASE_PRIVATE_KEY || "").trim();
   if (!raw) return "";
-  return raw.replace(/\\n/g, "\n");
+  return raw.replace(/\\\\n/g, "\n").replace(/\\n/g, "\n");
 }
 
 function getServiceAccount() {
