@@ -39,7 +39,26 @@ console.log(`📂 Loaded environment from: ${path.join(__dirname, '.env')}`);
 
 const app = express();
 app.set("trust proxy", 1);
-app.use(helmet({ crossOriginResourcePolicy: false }));
+app.use(
+  helmet({
+    crossOriginResourcePolicy: false,
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+        fontSrc: ["'self'", "https://fonts.gstatic.com"],
+        imgSrc: ["'self'", "data:", "blob:", "https:"],
+        // Allow audio/video from same origin, blob: (client-side objects) and any https: URL
+        mediaSrc: ["'self'", "blob:", "https:"],
+        connectSrc: ["'self'", "https:"],
+        workerSrc: ["'self'", "blob:"],
+        frameSrc: ["'none'"],
+        objectSrc: ["'none'"],
+      },
+    },
+  })
+);
 app.use(express.json({ limit: "100mb" }));
 app.use(cors({ origin: process.env.CORS_ORIGIN || "*" }));
 
