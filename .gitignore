@@ -1,5 +1,7 @@
 node_modules
 .env
+.env.local
+.env.*.local
 dist
 .cache
 .DS_Store
@@ -8,3 +10,5 @@ outputs
 data/queue.json
 data/social.json
 tests/selenium/
+.playwright-mcp/
+make-*.png

@@ -115,7 +115,27 @@ function titleFromCaption(title, caption) {
   return fromCaption.slice(0, 100);
 }
 
-async function postToWebhook({ caption, videoUrl, webhookId, webhookUrl }, req, store) {
+const BIBLE_REFERENCE_REGEX = /\b(?:[1-3]\s+)?[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\s+\d+:\d+(?:[-–]\d+)?\b/;
+
+function deriveCleanTitle(caption) {
+  const text = String(caption || "").trim();
+  if (!text) return "Biblefuel Studio";
+
+  const firstChunk = text.split(/[\n.!?]/).find((s) => s.trim().length > 0) || text;
+  const hook = firstChunk.trim().replace(/[\s\-,;:]+$/, "");
+
+  const referenceMatch = text.match(BIBLE_REFERENCE_REGEX);
+  const reference = referenceMatch ? referenceMatch[0].trim() : "";
+
+  const combined = reference && !hook.includes(reference)
+    ? `${hook} - ${reference}`
+    : hook;
+
+  const cleaned = combined.slice(0, 100).trim();
+  return cleaned || "Biblefuel Studio";
+}
+
+async function postToWebhook({ caption, videoUrl, title, webhookId, webhookUrl }, req, store) {
   const mediaUrl = toAbsolutePublicUrl(req, videoUrl);
   if (!/^https?:\/\//i.test(mediaUrl)) {
     throw new Error(`videoUrl must be absolute or resolvable: ${videoUrl}`);
@@ -125,10 +145,13 @@ async function postToWebhook({ caption, videoUrl, webhookId, webhookUrl }, req, 
   const url = String(target?.url || webhookUrl || "").trim();
   if (!url) throw new Error("Webhook not configured");
 
+  const resolvedTitle = String(title || "").trim().slice(0, 100) || deriveCleanTitle(caption);
+
   const resp = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
+      title: resolvedTitle,
       caption,
       videoUrl: mediaUrl,
       source: "biblefuel-studio",
@@ -140,7 +163,7 @@ async function postToWebhook({ caption, videoUrl, webhookId, webhookUrl }, req, 
     throw new Error(`Webhook failed: ${resp.status} ${err}`);
   }
 
-  return { videoUrl: mediaUrl };
+  return { videoUrl: mediaUrl, title: resolvedTitle };
 }
 
 async function postToBuffer({ caption, videoUrl, profileIds }, req, store) {
@@ -226,7 +249,7 @@ async function dispatchPost(payload, req) {
   const store = readSocialStore();
 
   if (destination === "webhook") {
-    return postToWebhook({ caption, videoUrl, webhookId, webhookUrl }, req, store);
+    return postToWebhook({ caption, videoUrl, title, webhookId, webhookUrl }, req, store);
   }
 
   if (destination === "buffer") {
