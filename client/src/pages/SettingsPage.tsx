@@ -172,12 +172,13 @@ export function SettingsPage() {
             toast.error('Select a webhook first');
             return;
         }
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
         const res = await api.post('/api/social/post', {
             destination: 'webhook',
             webhookId: selected.id,
             webhookUrl: selected.url,
-            caption: 'Test post from Biblefuel Studio',
-            videoUrl: 'https://example.com/test-video.mp4',
+            caption: `Webhook smoke test - ${stamp}. Psalm 23:1`,
+            videoUrl: 'https://download.samplelib.com/mp4/sample-5s.mp4',
             meta: { event: 'test.webhook', source: 'settings' },
         });
         if (res.ok) toast.success('Test webhook sent');
