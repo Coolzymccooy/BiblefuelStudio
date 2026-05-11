@@ -135,6 +135,38 @@ function deriveCleanTitle(caption) {
   return cleaned || "Biblefuel Studio";
 }
 
+async function publishToZernioTikTok({ caption, videoUrl, title }) {
+  const apiKey = String(process.env.ZERNIO_API_KEY || "").trim();
+  const accountId = String(process.env.ZERNIO_TIKTOK_ACCOUNT_ID || "").trim();
+  if (!apiKey || !accountId) {
+    return { skipped: true, reason: "ZERNIO_API_KEY or ZERNIO_TIKTOK_ACCOUNT_ID not set" };
+  }
+
+  const resp = await fetch("https://zernio.com/api/v1/posts", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      content: caption,
+      title,
+      publishNow: true,
+      isDraft: false,
+      platforms: [{ platform: "tiktok", accountId }],
+      mediaItems: [{ type: "video", url: videoUrl }],
+    }),
+  });
+
+  const text = await resp.text();
+  if (!resp.ok) {
+    throw new Error(`Zernio publish failed: ${resp.status} ${text.slice(0, 500)}`);
+  }
+  let data = null;
+  try { data = JSON.parse(text); } catch {}
+  return { ok: true, data };
+}
+
 async function postToWebhook({ caption, videoUrl, title, webhookId, webhookUrl }, req, store) {
   const mediaUrl = toAbsolutePublicUrl(req, videoUrl);
   if (!/^https?:\/\//i.test(mediaUrl)) {
@@ -163,7 +195,15 @@ async function postToWebhook({ caption, videoUrl, title, webhookId, webhookUrl }
     throw new Error(`Webhook failed: ${resp.status} ${err}`);
   }
 
-  return { videoUrl: mediaUrl, title: resolvedTitle };
+  let zernio = null;
+  try {
+    zernio = await publishToZernioTikTok({ caption, videoUrl: mediaUrl, title: resolvedTitle });
+  } catch (e) {
+    // Fire-and-forget: do not fail the whole post if TikTok publish errors.
+    zernio = { ok: false, error: e?.message || String(e) };
+  }
+
+  return { videoUrl: mediaUrl, title: resolvedTitle, zernio };
 }
 
 async function postToBuffer({ caption, videoUrl, profileIds }, req, store) {
