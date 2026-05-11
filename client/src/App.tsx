@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Layout } from './components/Layout';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { ConfigProvider } from './lib/config';
 
 const HomePage = lazy(() => import('./pages/HomePage').then((m) => ({ default: m.HomePage })));
@@ -32,30 +33,32 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <ConfigProvider>
         <BrowserRouter>
-          <Suspense
-            fallback={
-              <div className="min-h-screen flex items-center justify-center text-sm text-gray-400">
-                Loading...
-              </div>
-            }
-          >
-            <Routes>
-              <Route path="/" element={<Layout />}>
-                <Route index element={<HomePage />} />
-                <Route path="wizard" element={<WizardPage />} />
-                <Route path="scripts" element={<ScriptsPage />} />
-                <Route path="queue" element={<QueuePage />} />
-                <Route path="jobs" element={<JobsPage />} />
-                <Route path="backgrounds" element={<BackgroundsPage />} />
-                <Route path="voice-audio" element={<VoiceAudioPage />} />
-                <Route path="timeline" element={<TimelinePage />} />
-                <Route path="render" element={<RenderPage />} />
-                <Route path="gumroad" element={<GumroadPage />} />
-                <Route path="settings" element={<SettingsPage />} />
-                <Route path="help" element={<HelpPage />} />
-              </Route>
-            </Routes>
-          </Suspense>
+          <ErrorBoundary>
+            <Suspense
+              fallback={
+                <div className="min-h-screen flex items-center justify-center text-sm text-gray-400">
+                  Loading...
+                </div>
+              }
+            >
+              <Routes>
+                <Route path="/" element={<Layout />}>
+                  <Route index element={<HomePage />} />
+                  <Route path="wizard" element={<WizardPage />} />
+                  <Route path="scripts" element={<ScriptsPage />} />
+                  <Route path="queue" element={<QueuePage />} />
+                  <Route path="jobs" element={<JobsPage />} />
+                  <Route path="backgrounds" element={<BackgroundsPage />} />
+                  <Route path="voice-audio" element={<VoiceAudioPage />} />
+                  <Route path="timeline" element={<TimelinePage />} />
+                  <Route path="render" element={<RenderPage />} />
+                  <Route path="gumroad" element={<GumroadPage />} />
+                  <Route path="settings" element={<SettingsPage />} />
+                  <Route path="help" element={<HelpPage />} />
+                </Route>
+              </Routes>
+            </Suspense>
+          </ErrorBoundary>
         </BrowserRouter>
       </ConfigProvider>
       <Toaster position="top-right" />

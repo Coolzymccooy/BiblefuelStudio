@@ -16,6 +16,13 @@ export default defineConfig(({ mode }) => {
           enabled: true
         },
         includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'masked-icon.svg'],
+        workbox: {
+          cleanupOutdatedCaches: true,
+          skipWaiting: true,
+          clientsClaim: true,
+          navigateFallback: '/index.html',
+          navigateFallbackDenylist: [/^\/api/, /^\/outputs/, /^\/assets\/.+\.(js|css)$/],
+        },
         manifest: {
           name: 'Biblefuel Studio',
           short_name: 'Biblefuel',
