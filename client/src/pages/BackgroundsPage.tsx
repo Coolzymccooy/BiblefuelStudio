@@ -342,7 +342,7 @@ export function BackgroundsPage() {
     };
 
     const renderGrid = (items: PexelsVideo[], isLibrary: boolean, onDownload: (video: PexelsVideo) => void) => (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
             {items.map((video) => (
                 <div key={video.id} className="group relative bg-white/[0.03] border border-white/10 rounded-2xl overflow-hidden hover:border-primary-500/50 transition-all duration-300">
                     <div className="aspect-[9/16] bg-black relative">

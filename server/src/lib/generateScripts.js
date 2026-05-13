@@ -125,6 +125,107 @@ function finalizeScripts({ preferred, count, ctaStyle, historyKeys }) {
   }));
 }
 
+async function opencodeGenerate(prompt) {
+  // Feature flag — opencode integration is parked until the free-tier story
+  // is settled (MiniMax direct = paid; opencode Zen / OpenRouter free require
+  // a switch). Flip OPENCODE_ENABLED=true once the provider has been chosen
+  // in deploy/opencode/opencode.json.
+  if (String(process.env.OPENCODE_ENABLED || "").toLowerCase() !== "true") return null;
+  const base = String(process.env.OPENCODE_BASE_URL || "").trim().replace(/\/+$/, "");
+  if (!base) return null;
+  const password = process.env.OPENCODE_SERVER_PASSWORD || "";
+  const username = process.env.OPENCODE_SERVER_USERNAME || "opencode";
+  const model = process.env.OPENCODE_MODEL || undefined;
+  const agent = process.env.OPENCODE_AGENT || undefined;
+  const pollMs = Number(process.env.OPENCODE_POLL_MS || 1500);
+  const maxWaitMs = Number(process.env.OPENCODE_MAX_WAIT_MS || 60000);
+
+  const headers = { "Content-Type": "application/json" };
+  if (password) {
+    const token = Buffer.from(`${username}:${password}`).toString("base64");
+    headers.Authorization = `Basic ${token}`;
+  }
+
+  const extractAssistantText = (payload) => {
+    // Accept several shapes: { parts }, { info, parts }, or a list of messages
+    const collect = (parts) => Array.isArray(parts)
+      ? parts
+        .filter((p) => p && p.type === "text" && typeof p.text === "string")
+        .map((p) => p.text)
+        .join("")
+      : "";
+    if (Array.isArray(payload)) {
+      // Assume a list of messages — pick the most recent assistant reply
+      for (let i = payload.length - 1; i >= 0; i--) {
+        const m = payload[i];
+        const role = m?.info?.role || m?.role;
+        if (role === "assistant") {
+          const text = collect(m?.parts);
+          if (text) return text;
+        }
+      }
+      return "";
+    }
+    return collect(payload?.parts);
+  };
+
+  try {
+    const sessionResp = await fetch(`${base}/session`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ title: "biblefuel-script" }),
+    });
+    if (!sessionResp.ok) {
+      console.error(`OpenCode session error: ${sessionResp.status} ${await sessionResp.text()}`);
+      return null;
+    }
+    const session = await sessionResp.json();
+    const sessionId = session?.id || session?.info?.id;
+    if (!sessionId) {
+      console.error("OpenCode session response missing id", session);
+      return null;
+    }
+
+    const messageBody = { parts: [{ type: "text", text: prompt }] };
+    if (model) messageBody.model = model;
+    if (agent) messageBody.agent = agent;
+
+    const msgResp = await fetch(`${base}/session/${encodeURIComponent(sessionId)}/message`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(messageBody),
+    });
+    if (!msgResp.ok) {
+      console.error(`OpenCode message error: ${msgResp.status} ${await msgResp.text()}`);
+      return null;
+    }
+
+    // Fast path: synchronous response already contains the assistant reply
+    const data = await msgResp.json();
+    const inline = extractAssistantText(data);
+    if (inline) return inline;
+
+    // Slow path: opencode may stream the reply over SSE while POST returns
+    // immediately. Poll the session messages until a non-empty assistant
+    // text appears or we hit maxWaitMs.
+    const deadline = Date.now() + Math.max(0, maxWaitMs);
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, pollMs));
+      const pollResp = await fetch(`${base}/session/${encodeURIComponent(sessionId)}/message`, { headers });
+      if (!pollResp.ok) continue;
+      const polled = await pollResp.json();
+      const text = extractAssistantText(polled);
+      if (text) return text;
+    }
+
+    console.error("OpenCode timed out waiting for assistant reply");
+    return null;
+  } catch (err) {
+    console.error("OpenCode Fetch Error:", err);
+    return null;
+  }
+}
+
 async function openaiGenerate(prompt) {
   const key = process.env.OPENAI_API_KEY;
   if (!key || key.startsWith("your-")) return null;
@@ -216,7 +317,8 @@ ${JSON.stringify(schema)}
   const history = loadHistory();
   const historyKeys = new Set(history);
 
-  let raw = await geminiGenerate(prompt);
+  let raw = await opencodeGenerate(prompt);
+  if (!raw) raw = await geminiGenerate(prompt);
   if (!raw) raw = await openaiGenerate(prompt);
 
   if (!raw) {

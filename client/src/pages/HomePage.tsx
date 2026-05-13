@@ -5,7 +5,7 @@ import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import toast from 'react-hot-toast';
-import { Sparkles, Play, Archive, Mail, ArrowLeft, Globe, Mic, Film, Video, HelpCircle, Cpu, List, Zap, ShieldCheck, CirclePlus, Search, BarChart3, Heart, MessageCircle } from 'lucide-react';
+import { Sparkles, Play, Archive, Mail, ArrowLeft, Globe, Mic, Film, Video, HelpCircle, Cpu, List, Zap, ShieldCheck } from 'lucide-react';
 import { api } from '../lib/api';
 import { firebaseRequestPasswordReset, getFirebaseAuthErrorMessage, isFirebaseClientEnabled } from '../lib/firebase';
 
@@ -200,44 +200,15 @@ export function HomePage() {
                 <div className="pointer-events-none absolute right-[-110px] top-[20%] h-[380px] w-[380px] rounded-full bg-sky-200/20 blur-[130px]" />
                 <div className="pointer-events-none absolute left-1/2 top-[56%] h-[360px] w-[780px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[radial-gradient(circle,rgba(139,151,172,0.42)_0%,rgba(130,143,165,0.16)_48%,rgba(130,143,165,0)_78%)] blur-[32px]" />
 
-                <div className="relative z-10 flex w-full max-w-[1160px] flex-col items-center justify-center gap-8 px-4 py-8 md:flex-row md:gap-14 md:px-8 md:py-12">
-                    <div className="order-2 w-full max-w-[368px] md:order-1 md:[transform:perspective(1650px)_rotateY(16deg)_rotateZ(-8deg)]">
-                        <div className="flex h-[640px] w-full flex-col rounded-[2rem] border border-white/10 bg-[#10131d] p-5 shadow-[0_34px_110px_rgba(0,0,0,0.62)]">
-                            <div className="grid grid-cols-2 gap-3">
-                                {[
-                                    { icon: Heart, className: 'text-pink-400' },
-                                    { icon: CirclePlus, className: 'text-indigo-300' },
-                                    { icon: Sparkles, className: 'text-amber-300' },
-                                    { icon: MessageCircle, className: 'text-sky-300' },
-                                    { icon: BarChart3, className: 'text-rose-400' },
-                                    { icon: Search, className: 'text-violet-300' },
-                                ].map((item, idx) => (
-                                    <div key={idx} className="group relative flex h-[88px] items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-[#0c1019]">
-                                        <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_18%,rgba(106,117,255,0.45),rgba(12,16,25,0.96)_62%)] opacity-95 transition-opacity duration-300 group-hover:opacity-100" />
-                                        <item.icon size={30} className={`relative z-10 ${item.className}`} />
-                                    </div>
-                                ))}
-                            </div>
-
-                            <div className="mt-auto px-1 pb-2 text-center">
-                                <h2 className="text-[60px] leading-none text-white drop-shadow-[0_10px_26px_rgba(0,0,0,0.55)]" style={{ fontFamily: 'Georgia, "Times New Roman", serif' }}>
-                                    Biblefuel
-                                </h2>
-                                <p className="mx-auto mt-4 max-w-[270px] text-sm leading-5 text-gray-400">
-                                    Create faith-driven content, render, and publish in one flow.
-                                </p>
-                                <Button
-                                    className="mt-7 h-12 w-full border-none bg-[#3f6dff] text-white shadow-[0_16px_34px_rgba(44,94,255,0.35)] hover:bg-[#4a75ff]"
-                                    onClick={() => setView(view === 'login' ? 'setup' : 'login')}
-                                >
-                                    {view === 'login' ? 'Create account' : 'Back to login'}
-                                </Button>
-                            </div>
-                        </div>
+                <div className="relative z-10 flex w-full max-w-[460px] flex-col items-center justify-center gap-6 px-4 py-10 md:py-14">
+                    <div className="flex items-center gap-3 text-white">
+                        <span className="text-[42px] leading-none drop-shadow-[0_10px_26px_rgba(0,0,0,0.5)]" style={{ fontFamily: 'Georgia, "Times New Roman", serif' }}>
+                            Biblefuel
+                        </span>
                     </div>
 
-                    <div className="order-1 w-full max-w-[390px] md:order-2 md:[transform:perspective(1650px)_rotateY(-14deg)_rotateZ(6deg)]">
-                        <div className="flex min-h-[640px] w-full flex-col rounded-[2rem] border border-white/10 bg-[#10131d] p-5 shadow-[0_34px_110px_rgba(0,0,0,0.64)] sm:p-6">
+                    <div className="w-full">
+                        <div className="flex w-full flex-col rounded-[2rem] border border-white/10 bg-[#10131d] p-5 shadow-[0_34px_110px_rgba(0,0,0,0.64)] sm:p-6">
                             <div className="mb-5 flex items-center gap-3">
                                 <div className="rounded-2xl border border-indigo-500/30 bg-indigo-500/12 p-2.5">
                                     <ShieldCheck className="text-indigo-300" size={18} />

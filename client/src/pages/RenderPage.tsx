@@ -1,4 +1,5 @@
-﻿import { useEffect, useState, type ChangeEvent, type SyntheticEvent } from 'react';
+﻿import { useEffect, useRef, useState, type ChangeEvent, type SyntheticEvent } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
@@ -6,9 +7,10 @@ import { Textarea } from '../components/ui/Textarea';
 import { Select } from '../components/ui/Select';
 import { api } from '../lib/api';
 import toast from 'react-hot-toast';
-import { Play, Library, Video, CheckCircle2, ClipboardList, AudioLines } from 'lucide-react';
+import { Play, Library, Video, CheckCircle2, ClipboardList, AudioLines, ChevronDown, Share2, X as XIcon } from 'lucide-react';
 import { loadJson, saveJson, STORAGE_KEYS, toOutputUrl } from '../lib/storage';
 import { useConfig } from '../lib/config';
+import { useNotifications } from '../lib/notifications';
 
 interface Script {
     title: string;
@@ -24,6 +26,41 @@ interface AudioItem {
     path: string;
     kind: string;
     createdAt: string;
+}
+
+interface SectionProps {
+    title: string;
+    defaultOpen?: boolean;
+    hint?: string;
+    children: React.ReactNode;
+}
+
+function Section({ title, defaultOpen = false, hint, children }: SectionProps) {
+    const [open, setOpen] = useState(defaultOpen);
+    return (
+        <div className="rounded-xl border border-white/10 bg-white/[0.02] overflow-hidden">
+            <button
+                type="button"
+                onClick={() => setOpen((v) => !v)}
+                className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/[0.04] transition-colors"
+                aria-expanded={open}
+            >
+                <div className="flex flex-col items-start text-left">
+                    <span className="text-sm font-semibold text-white">{title}</span>
+                    {hint && <span className="text-[10px] uppercase tracking-widest text-gray-500 mt-0.5">{hint}</span>}
+                </div>
+                <ChevronDown
+                    size={16}
+                    className={`text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`}
+                />
+            </button>
+            {open && (
+                <div className="px-4 pb-4 pt-2 border-t border-white/5 space-y-4">
+                    {children}
+                </div>
+            )}
+        </div>
+    );
 }
 
 export function RenderPage() {
@@ -59,6 +96,11 @@ export function RenderPage() {
     const [selectedProfile, setSelectedProfile] = useState('');
     const [jobVideoOptions, setJobVideoOptions] = useState<{ id: string; label: string; path: string }[]>([]);
     const [shareVideoPath, setShareVideoPath] = useState('');
+    const [completedRender, setCompletedRender] = useState<{ jobId: string; file: string; jobType?: string } | null>(null);
+    const myEnqueuedJobsRef = useRef<Set<string>>(new Set());
+    const notifications = useNotifications();
+    const location = useLocation();
+    const navigate = useNavigate();
 
     const toMediaUrl = (value: string | undefined | null) => toOutputUrl(value, api.baseUrl);
     const isVideoUrl = (value: string | undefined | null) => /\.(mp4|mov|webm|m4v)(\?|#|$)/i.test(String(value || ''));
@@ -160,6 +202,44 @@ export function RenderPage() {
         }
     }, [isLongRender, renderInBackground]);
 
+    // Handle deep-link: /render?share=<jobId> — fetch that job and surface the banner
+    useEffect(() => {
+        const params = new URLSearchParams(location.search);
+        const jobId = params.get('share');
+        if (!jobId) return;
+        let cancelled = false;
+        (async () => {
+            const res = await api.get(`/api/jobs/${encodeURIComponent(jobId)}`);
+            if (cancelled) return;
+            const job = res.ok ? (res.data?.job || res.data) : null;
+            if (job && (job.status === 'done' || job.status === 'failed')) {
+                const file = job.result?.outFile || job.result?.file || '';
+                setCompletedRender({ jobId, file, jobType: job.type });
+                if (file) setShareVideoPath(file);
+            }
+        })();
+        // strip the query param once consumed so banner doesn't reappear on back/forward
+        navigate(location.pathname, { replace: true });
+        return () => { cancelled = true; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // React to notifications for jobs enqueued from this page
+    useEffect(() => {
+        if (completedRender) return;
+        const match = notifications.find((n) => {
+            if (n.kind !== 'job_done') return false;
+            const jobId = (n.meta?.jobId as string | undefined) || '';
+            return jobId && myEnqueuedJobsRef.current.has(jobId);
+        });
+        if (match) {
+            const jobId = (match.meta?.jobId as string) || '';
+            const file = (match.meta?.file as string | undefined) || '';
+            setCompletedRender({ jobId, file, jobType: match.meta?.jobType as string | undefined });
+            if (file) setShareVideoPath(file);
+        }
+    }, [notifications, completedRender]);
+
     const buildLinesFromScript = (script: Script) => {
         return [
             script.hook,
@@ -218,7 +298,9 @@ export function RenderPage() {
 
             if (response.ok) {
                 if (renderInBackground) {
-                    toast.success('Job enqueued successfully!');
+                    const newJobId: string | undefined = response.data?.id || response.data?.job?.id;
+                    if (newJobId) myEnqueuedJobsRef.current.add(newJobId);
+                    toast.success('Job enqueued — you\'ll be notified when it\'s ready');
                 } else {
                     toast.success('Video rendered successfully!');
                     setResult(response.data);
@@ -374,6 +456,54 @@ export function RenderPage() {
                 Video Renderer
             </h2>
 
+            {completedRender && (
+                <div className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 shadow-[0_10px_40px_rgba(16,185,129,0.15)] animate-fade-in">
+                    <div className="flex items-start gap-3 flex-1 min-w-0">
+                        <CheckCircle2 size={20} className="text-emerald-400 flex-shrink-0 mt-0.5" />
+                        <div className="min-w-0">
+                            <p className="text-sm font-semibold text-white">Render complete</p>
+                            {completedRender.file && (
+                                <p className="text-[10px] font-mono text-emerald-200/80 truncate">{completedRender.file}</p>
+                            )}
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                        {completedRender.file && (
+                            <Button
+                                variant="secondary"
+                                className="h-9 text-xs border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20"
+                                onClick={() => {
+                                    const url = toOutputUrl(completedRender.file, api.baseUrl);
+                                    window.open(url, '_blank');
+                                }}
+                            >
+                                <Play size={14} className="mr-1.5" />
+                                Open
+                            </Button>
+                        )}
+                        {completedRender.file && (
+                            <Button
+                                className="h-9 text-xs"
+                                onClick={() => {
+                                    setShareVideoPath(completedRender.file);
+                                    document.getElementById('share-kit')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                }}
+                            >
+                                <Share2 size={14} className="mr-1.5" />
+                                Share
+                            </Button>
+                        )}
+                        <button
+                            onClick={() => setCompletedRender(null)}
+                            className="p-2 text-gray-400 hover:text-white transition-colors"
+                            aria-label="Dismiss"
+                        >
+                            <XIcon size={16} />
+                        </button>
+                    </div>
+                </div>
+            )}
+
             <Card title="Configuration">
                 {!renderEnabled && (
                     <div className="mb-4 text-xs text-yellow-200 bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3">
@@ -381,13 +511,11 @@ export function RenderPage() {
                     </div>
                 )}
                 <div className="space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div className="space-y-4">
-                            <div>
-                                <label className="block text-sm font-medium text-gray-400 mb-1">
-                                    Background Asset
-                                </label>
-                                {backgroundItem ? (
+                    <div>
+                        <label className="block text-sm font-medium text-gray-400 mb-1">
+                            Background Asset
+                        </label>
+                        {backgroundItem ? (
                                     <div
                                         className={`relative bg-black rounded-xl overflow-hidden group ${aspect === 'landscape'
                                             ? 'aspect-[16/9]'
@@ -441,154 +569,157 @@ export function RenderPage() {
                                         </Button>
                                     </div>
                                 )}
-                            </div>
-                        </div>
+                    </div>
 
-                        <div className="space-y-4">
-                            <div>
-                                <label className="block text-sm font-medium text-gray-400 mb-1">
-                                    Output Frame
-                                </label>
-                                <Select value={aspect} onChange={(e: ChangeEvent<HTMLSelectElement>) => setAspect(e.target.value as any)}>
-                                    <option value="portrait">Portrait (9:16)</option>
-                                    <option value="landscape">Landscape (16:9)</option>
-                                    <option value="square">Square (1:1)</option>
-                                </Select>
-                                <p className="text-[10px] text-gray-500 mt-1 uppercase tracking-tighter">
-                                    Text auto-wrap adjusts to the selected frame
-                                </p>
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-400 mb-1">
-                                    Duration
-                                </label>
-                                <Select value={String(durationSec)} onChange={(e: ChangeEvent<HTMLSelectElement>) => setDurationSec(Number(e.target.value))}>
-                                    <option value="20">20s (default)</option>
-                                    <option value="60">60s</option>
-                                    <option value="120">120s</option>
-                                    <option value="180">180s</option>
-                                </Select>
-                                {isLongRender && (
-                                    <div className="mt-2 text-[10px] uppercase tracking-widest text-yellow-300 bg-yellow-500/10 border border-yellow-500/20 rounded-md px-2 py-1 inline-block">
-                                        Long render queued only
-                                    </div>
-                                )}
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-400 mb-1">
-                                    Caption Width ({captionWidth}%)
-                                </label>
-                                <input
-                                    type="range"
-                                    min="60"
-                                    max="100"
-                                    step="2"
-                                    value={captionWidth}
-                                    onChange={(e) => setCaptionWidth(Number(e.target.value))}
-                                    className="w-full accent-primary-500"
-                                />
-                                <p className="text-[10px] text-gray-500 mt-1 uppercase tracking-tighter">
-                                    Lower value = more padding and tighter line wrapping
-                                </p>
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-400 mb-1">
-                                    Audio Source (required for waveform)
-                                </label>
-                                <Input
-                                    value={audioPath}
-                                    onChange={(e) => setAudioPath(e.target.value)}
-                                    placeholder="e.g. server/outputs/tts-xyz.mp3"
-                                    className="bg-black/20"
-                                />
-                                {audioHistory.length > 0 && (
-                                    <div className="mt-2 flex flex-wrap gap-2">
-                                        {audioHistory.slice(0, 4).map((item) => (
-                                            <button
-                                                key={item.id}
-                                                onClick={() => setAudioPath(item.path)}
-                                                className="text-[10px] px-2 py-1 rounded-full bg-white/10 text-gray-200 hover:bg-white/20"
-                                            >
-                                                {item.kind}
-                                            </button>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-400 mb-1">
-                                    Soundtrack (optional)
-                                </label>
-                                <Input
-                                    value={musicPath}
-                                    onChange={(e) => setMusicPath(e.target.value)}
-                                    placeholder="e.g. server/outputs/music.mp3"
-                                    className="bg-black/20"
-                                />
+                    <Section title="Captions" defaultOpen={true} hint="Overlay text shown on the video">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-400 mb-1">
+                                Overlay Text (max 6 lines)
+                            </label>
+                            <Textarea
+                                value={lines}
+                                onChange={(e) => setLines(e.target.value)}
+                                placeholder="Enter your script lines here..."
+                                className="bg-black/20 h-32"
+                            />
+                            <div className="mt-2 flex flex-wrap gap-2">
                                 <Button
-                                    onClick={openMusicLibrary}
                                     variant="secondary"
-                                    className="mt-2 h-9 text-xs border-dashed border-white/10"
+                                    className="h-8 text-xs"
+                                    onClick={() => setShowScriptsModal(true)}
                                 >
-                                    <Library size={14} className="mr-2" />
-                                    Select from Music Library
+                                    <ClipboardList size={14} className="mr-2" />
+                                    Pick From Scripts
                                 </Button>
-                                <label className="block text-xs text-gray-500 mt-2">
-                                    Music Volume ({musicVolume})
-                                </label>
-                                <input
-                                    type="range"
-                                    min="0"
-                                    max="1"
-                                    step="0.05"
-                                    value={musicVolume}
-                                    onChange={(e) => setMusicVolume(Number(e.target.value))}
-                                    className="w-full accent-primary-500"
-                                />
-                                <label className="mt-3 flex items-center gap-2 text-xs text-gray-400">
-                                    <input
-                                        type="checkbox"
-                                        checked={autoDuck}
-                                        onChange={(e) => setAutoDuck(e.target.checked)}
-                                        className="rounded border-white/10 bg-black/50 checked:bg-primary-500"
-                                    />
-                                    Auto-duck music under voice
-                                </label>
-                            </div>
-
-                            <div>
-                                <label className="block text-sm font-medium text-gray-400 mb-1">
-                                    Overlay Text (max 6 lines)
-                                </label>
-                                <Textarea
-                                    value={lines}
-                                    onChange={(e) => setLines(e.target.value)}
-                                    placeholder="Enter your script lines here..."
-                                    className="bg-black/20 h-32"
-                                />
-                                <div className="mt-2 flex flex-wrap gap-2">
+                                {scripts.length > 0 && (
                                     <Button
                                         variant="secondary"
                                         className="h-8 text-xs"
-                                        onClick={() => setShowScriptsModal(true)}
+                                        onClick={() => setLines(buildLinesFromScript(scripts[0]))}
                                     >
-                                        <ClipboardList size={14} className="mr-2" />
-                                        Pick From Scripts
+                                        Use Latest Script
                                     </Button>
-                                    {scripts.length > 0 && (
-                                        <Button
-                                            variant="secondary"
-                                            className="h-8 text-xs"
-                                            onClick={() => setLines(buildLinesFromScript(scripts[0]))}
-                                        >
-                                            Use Latest Script
-                                        </Button>
-                                    )}
-                                </div>
-                                <p className="text-[10px] text-gray-500 mt-1 uppercase tracking-tighter">One line per caption slide (auto-sliced)</p>
+                                )}
                             </div>
+                            <p className="text-[10px] text-gray-500 mt-1 uppercase tracking-tighter">One line per caption slide (auto-sliced)</p>
                         </div>
-                    </div>
+                    </Section>
+
+                    <Section title="Output & Timing" hint="Frame, duration, caption width">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-400 mb-1">
+                                Output Frame
+                            </label>
+                            <Select value={aspect} onChange={(e: ChangeEvent<HTMLSelectElement>) => setAspect(e.target.value as any)}>
+                                <option value="portrait">Portrait (9:16)</option>
+                                <option value="landscape">Landscape (16:9)</option>
+                                <option value="square">Square (1:1)</option>
+                            </Select>
+                            <p className="text-[10px] text-gray-500 mt-1 uppercase tracking-tighter">
+                                Text auto-wrap adjusts to the selected frame
+                            </p>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-400 mb-1">
+                                Duration
+                            </label>
+                            <Select value={String(durationSec)} onChange={(e: ChangeEvent<HTMLSelectElement>) => setDurationSec(Number(e.target.value))}>
+                                <option value="20">20s (default)</option>
+                                <option value="60">60s</option>
+                                <option value="120">120s</option>
+                                <option value="180">180s</option>
+                            </Select>
+                            {isLongRender && (
+                                <div className="mt-2 text-[10px] uppercase tracking-widest text-yellow-300 bg-yellow-500/10 border border-yellow-500/20 rounded-md px-2 py-1 inline-block">
+                                    Long render queued only
+                                </div>
+                            )}
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-400 mb-1">
+                                Caption Width ({captionWidth}%)
+                            </label>
+                            <input
+                                type="range"
+                                min="60"
+                                max="100"
+                                step="2"
+                                value={captionWidth}
+                                onChange={(e) => setCaptionWidth(Number(e.target.value))}
+                                className="w-full accent-primary-500"
+                            />
+                            <p className="text-[10px] text-gray-500 mt-1 uppercase tracking-tighter">
+                                Lower value = more padding and tighter line wrapping
+                            </p>
+                        </div>
+                    </Section>
+
+                    <Section title="Audio" hint="Voice source, soundtrack, ducking">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-400 mb-1">
+                                Audio Source (required for waveform)
+                            </label>
+                            <Input
+                                value={audioPath}
+                                onChange={(e) => setAudioPath(e.target.value)}
+                                placeholder="e.g. server/outputs/tts-xyz.mp3"
+                                className="bg-black/20"
+                            />
+                            {audioHistory.length > 0 && (
+                                <div className="mt-2 flex flex-wrap gap-2">
+                                    {audioHistory.slice(0, 4).map((item) => (
+                                        <button
+                                            key={item.id}
+                                            onClick={() => setAudioPath(item.path)}
+                                            className="text-[10px] px-2 py-1 rounded-full bg-white/10 text-gray-200 hover:bg-white/20"
+                                        >
+                                            {item.kind}
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-400 mb-1">
+                                Soundtrack (optional)
+                            </label>
+                            <Input
+                                value={musicPath}
+                                onChange={(e) => setMusicPath(e.target.value)}
+                                placeholder="e.g. server/outputs/music.mp3"
+                                className="bg-black/20"
+                            />
+                            <Button
+                                onClick={openMusicLibrary}
+                                variant="secondary"
+                                className="mt-2 h-9 text-xs border-dashed border-white/10"
+                            >
+                                <Library size={14} className="mr-2" />
+                                Select from Music Library
+                            </Button>
+                            <label className="block text-xs text-gray-500 mt-2">
+                                Music Volume ({musicVolume})
+                            </label>
+                            <input
+                                type="range"
+                                min="0"
+                                max="1"
+                                step="0.05"
+                                value={musicVolume}
+                                onChange={(e) => setMusicVolume(Number(e.target.value))}
+                                className="w-full accent-primary-500"
+                            />
+                            <label className="mt-3 flex items-center gap-2 text-xs text-gray-400">
+                                <input
+                                    type="checkbox"
+                                    checked={autoDuck}
+                                    onChange={(e) => setAutoDuck(e.target.checked)}
+                                    className="rounded border-white/10 bg-black/50 checked:bg-primary-500"
+                                />
+                                Auto-duck music under voice
+                            </label>
+                        </div>
+                    </Section>
 
                     <div className="flex items-center gap-2">
                         <input
@@ -653,6 +784,7 @@ export function RenderPage() {
             )}
 
             {lines && (
+                <div id="share-kit">
                 <Card title="Share Kit" className="border-white/10 bg-white/[0.03]">
                     <div className="space-y-3">
                         <p className="text-xs text-gray-400">
@@ -752,19 +884,20 @@ export function RenderPage() {
                         </div>
                     </div>
                 </Card>
+                </div>
             )}
 
             {showLibraryModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
                     <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShowLibraryModal(false)} />
-                    <Card className="relative w-full max-w-4xl max-h-[80vh] overflow-hidden flex flex-col border-white/20 shadow-2xl">
+                    <Card className="relative w-full max-w-[min(1280px,95vw)] max-h-[88vh] overflow-hidden flex flex-col border-white/20 shadow-2xl">
                         <div className="flex items-center justify-between p-4 border-b border-white/10">
                             <h3 className="font-bold text-lg text-white">Select Background</h3>
                             <button onClick={() => setShowLibraryModal(false)} className="text-gray-500 hover:text-white">
                                 <CheckCircle2 size={24} />
                             </button>
                         </div>
-                        <div className="flex-1 overflow-y-auto p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+                        <div className="flex-1 min-h-0 overflow-y-auto p-4 grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3">
                             {isLoadingLibrary ? (
                                 <div className="col-span-full py-20 flex justify-center">
                                     <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-primary-500" />

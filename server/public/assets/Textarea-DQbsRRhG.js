@@ -1,0 +1,1 @@
+import{c as o,j as t}from"./index-CMhQxaB9.js";const a=[["path",{d:"m6 9 6 6 6-6",key:"qrunsl"}]],s=o("chevron-down",a);function c({className:e="",...n}){return t.jsx("textarea",{className:`input min-h-[92px] ${e}`,...n})}export{s as C,c as T};
