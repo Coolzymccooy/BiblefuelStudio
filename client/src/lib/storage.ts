@@ -17,6 +17,8 @@ export const STORAGE_KEYS = {
     ttsStability: 'BF_TTS_STABILITY',
     ttsSimilarity: 'BF_TTS_SIMILARITY',
     ttsVoicePresets: 'BF_TTS_VOICE_PRESETS',
+    ttsProvider: 'BF_TTS_PROVIDER',
+    ttsEdgeVoiceId: 'BF_TTS_EDGE_VOICE_ID',
 };
 
 export function loadJson<T>(key: string, fallback: T): T {

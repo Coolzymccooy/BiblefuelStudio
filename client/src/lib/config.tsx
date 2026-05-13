@@ -4,6 +4,10 @@ import { api } from './api';
 export type AppFeatures = {
     scripts: boolean;
     tts: boolean;
+    /** ElevenLabs key present — premium voices + cloning available. */
+    elevenlabs?: boolean;
+    /** Edge-TTS enabled — free Microsoft neural voices. */
+    edgeTts?: boolean;
     pexels: boolean;
     pixabay: boolean;
     render: boolean;
@@ -21,6 +25,8 @@ const defaultConfig: AppConfig = {
     features: {
         scripts: true,
         tts: true,
+        elevenlabs: true,
+        edgeTts: true,
         pexels: true,
         pixabay: true,
         render: true,

@@ -19,6 +19,7 @@
     "googleapis": "^171.4.0",
     "helmet": "^7.1.0",
     "jsonwebtoken": "^9.0.2",
+    "msedge-tts": "^2.0.5",
     "node-cron": "^4.2.1",
     "node-fetch": "^3.3.2",
     "uuid": "^9.0.1",

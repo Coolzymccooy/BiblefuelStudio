@@ -109,12 +109,18 @@ app.get('/api/config', (req, res) => {
   const hasOpenAI = hasKey(process.env.OPENAI_API_KEY);
   const hasGemini = hasKey(process.env.GEMINI_API_KEY);
   const hasEleven = hasKey(process.env.ELEVENLABS_API_KEY);
+  const edgeEnabled = (process.env.EDGE_TTS_ENABLED ?? "true").toLowerCase() !== "false";
   const hasPexels = hasKey(process.env.PEXELS_API_KEY);
   const hasPixabay = hasKey(process.env.PIXABAY_API_KEY);
 
   const features = {
     scripts: hasOpenAI || hasGemini,
-    tts: hasEleven,
+    // tts lights up if ANY provider is available — ElevenLabs (paid premium)
+    // or Edge-TTS (free Microsoft neural). Voice cloning still requires
+    // ElevenLabs specifically; see features.elevenlabs.
+    tts: hasEleven || edgeEnabled,
+    elevenlabs: hasEleven,
+    edgeTts: edgeEnabled,
     pexels: hasPexels,
     pixabay: hasPixabay,
     render: ffmpegAvailable,
@@ -123,7 +129,8 @@ app.get('/api/config', (req, res) => {
 
   const warnings = [];
   if (!features.scripts) warnings.push("Scripts: missing OPENAI_API_KEY or GEMINI_API_KEY");
-  if (!features.tts) warnings.push("TTS: missing ELEVENLABS_API_KEY");
+  if (!features.tts) warnings.push("TTS: no provider available (need ELEVENLABS_API_KEY or EDGE_TTS_ENABLED)");
+  if (!features.elevenlabs) warnings.push("ElevenLabs: missing ELEVENLABS_API_KEY (voice cloning + premium voices unavailable)");
   if (!features.pexels) warnings.push("Pexels: missing PEXELS_API_KEY");
   if (!features.pixabay) warnings.push("Pixabay: missing PIXABAY_API_KEY");
   if (!features.render) warnings.push("FFmpeg not detected; render/audio tools disabled");

@@ -3,10 +3,23 @@ import fetch, { File, FormData } from "node-fetch";
 import fs from "fs";
 import path from "path";
 import { v4 as uuid } from "uuid";
+import { MsEdgeTTS, OUTPUT_FORMAT } from "msedge-tts";
 import { OUTPUT_DIR } from "../lib/paths.js";
 
 const router = Router();
 const allowedAudioExt = new Set([".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".webm"]);
+
+const DEFAULT_EDGE_VOICE = "en-US-AriaNeural";
+const EDGE_TTS_TIMEOUT_MS = 20_000;
+
+function isEdgeEnabled() {
+  return (process.env.EDGE_TTS_ENABLED ?? "true").toLowerCase() !== "false";
+}
+
+function defaultEdgeVoice() {
+  const v = (process.env.EDGE_TTS_VOICE || DEFAULT_EDGE_VOICE).trim();
+  return v.length > 0 ? v : DEFAULT_EDGE_VOICE;
+}
 
 function getElevenLabsApiKey() {
   const rawKey = (process.env.ELEVENLABS_API_KEY || "");
@@ -50,6 +63,33 @@ function resolveSampleAudioPath(inputPath) {
 }
 
 router.get("/voices", async (req, res) => {
+  const provider = String(req.query?.provider || "elevenlabs").toLowerCase();
+
+  if (provider === "edge") {
+    if (!isEdgeEnabled()) {
+      return res.status(400).json({ ok: false, error: "Edge-TTS disabled (EDGE_TTS_ENABLED=false)" });
+    }
+    const tts = new MsEdgeTTS();
+    try {
+      const voices = await tts.getVoices();
+      // Normalise to a shape close to ElevenLabs's so the UI doesn't branch
+      // heavily — voice_id, name, locale, gender, friendly metadata.
+      const normalised = (voices || []).map((v) => ({
+        voice_id: v.ShortName,
+        name: v.FriendlyName || v.ShortName,
+        locale: v.Locale,
+        gender: v.Gender,
+        labels: { provider: "edge", status: v.Status, codec: v.SuggestedCodec },
+      }));
+      return res.json({ ok: true, provider: "edge", voices: normalised });
+    } catch (e) {
+      return res.status(502).json({ ok: false, error: `Edge-TTS voices fetch failed: ${e?.message || e}` });
+    } finally {
+      try { tts.close(); } catch { /* best-effort */ }
+    }
+  }
+
+  // Default: ElevenLabs
   try {
     const apiKey = getElevenLabsApiKey();
     if (!apiKey || apiKey.startsWith("your-")) {
@@ -69,7 +109,7 @@ router.get("/voices", async (req, res) => {
     }
 
     const data = await resp.json();
-    res.json({ ok: true, voices: data?.voices || [] });
+    res.json({ ok: true, provider: "elevenlabs", voices: data?.voices || [] });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
@@ -223,6 +263,81 @@ router.post("/elevenlabs", async (req, res) => {
   } catch (e) {
     console.error(`[TTS] Route error:`, e);
     res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// ─── Edge-TTS (free Microsoft "Read Aloud" service) ───────────────────────
+// Writes a 24kHz/48kbps mono MP3 to OUTPUT_DIR. Same return shape as the
+// ElevenLabs route ({ ok, file }) so the render pipeline doesn't branch.
+// Unofficial API — flip EDGE_TTS_ENABLED=false to disable instantly if MS
+// tightens the screws.
+
+function collectStream(stream, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    const timer = setTimeout(() => {
+      stream.removeAllListeners();
+      reject(new Error(`edge-tts stream timeout after ${timeoutMs}ms`));
+    }, timeoutMs);
+    stream.on("data", (chunk) => chunks.push(chunk));
+    stream.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    stream.on("end", () => {
+      clearTimeout(timer);
+      resolve(Buffer.concat(chunks));
+    });
+    stream.on("close", () => {
+      clearTimeout(timer);
+      resolve(Buffer.concat(chunks));
+    });
+  });
+}
+
+router.post("/edge", async (req, res) => {
+  if (!isEdgeEnabled()) {
+    return res.status(400).json({ ok: false, error: "Edge-TTS disabled (EDGE_TTS_ENABLED=false)" });
+  }
+
+  const { text, voiceId, rate, pitch, volume } = req.body || {};
+  if (!text || String(text).trim().length < 3) {
+    return res.status(400).json({ ok: false, error: "text required (min 3 chars)" });
+  }
+  const voice = String(voiceId || defaultEdgeVoice()).trim();
+
+  const outDir = OUTPUT_DIR;
+  if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+  const outFile = path.join(outDir, `tts-edge-${uuid()}.mp3`);
+
+  const tts = new MsEdgeTTS();
+  try {
+    await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+
+    // Optional prosody knobs — Edge supports rate / pitch / volume but NOT
+    // emotion or stability. We pass them only when defined; otherwise stay
+    // with the engine defaults.
+    const prosody = {};
+    if (rate !== undefined && rate !== null && rate !== "") prosody.rate = rate;
+    if (pitch !== undefined && pitch !== null && pitch !== "") prosody.pitch = pitch;
+    if (volume !== undefined && volume !== null && volume !== "") prosody.volume = volume;
+
+    const { audioStream } = Object.keys(prosody).length > 0
+      ? tts.toStream(String(text), prosody)
+      : tts.toStream(String(text));
+
+    const buffer = await collectStream(audioStream, EDGE_TTS_TIMEOUT_MS);
+    if (!buffer || buffer.byteLength === 0) {
+      throw new Error("Edge-TTS returned empty audio");
+    }
+    fs.writeFileSync(outFile, buffer);
+    console.log(`[TTS] Edge MP3 saved to ${outFile} (${buffer.byteLength} bytes, voice=${voice})`);
+    res.json({ ok: true, file: outFile.replace(/\\/g, "/"), provider: "edge", voice });
+  } catch (e) {
+    console.error("[TTS] Edge route error:", e);
+    res.status(502).json({ ok: false, error: String(e?.message || e) });
+  } finally {
+    try { tts.close(); } catch { /* best-effort */ }
   }
 });
 

@@ -109,9 +109,13 @@ const AUDIO_PRESET_DEFAULTS: Record<string, AudioPresetValues> = {
     },
 };
 
+type TTSProvider = 'elevenlabs' | 'edge';
+
 export function VoiceAudioPage() {
     const { config } = useConfig();
     const ttsEnabled = config.features.tts;
+    const elevenlabsAvailable = config.features.elevenlabs !== false;
+    const edgeAvailable = config.features.edgeTts !== false;
     const [ttsText, setTtsText] = useState('');
     const [audioPath, setAudioPath] = useState('');
     const [preset, setPreset] = useState('clean_voice');
@@ -123,7 +127,12 @@ export function VoiceAudioPage() {
     const [showAllRecent, setShowAllRecent] = useState(false);
     const [showAdvanced, setShowAdvanced] = useState(false);
     const [recordingDebug, setRecordingDebug] = useState('');
+    // Provider — ElevenLabs (premium, paid, voice cloning) or Edge-TTS (free
+    // Microsoft neural voices, no key required). Per-provider voiceId so
+    // switching providers doesn't clobber the other one's choice.
+    const [provider, setProvider] = useState<TTSProvider>('elevenlabs');
     const [voiceId, setVoiceId] = useState('');
+    const [edgeVoiceId, setEdgeVoiceId] = useState('');
     const [stability, setStability] = useState(0.5);
     const [similarity, setSimilarity] = useState(0.75);
     const [voicePresets, setVoicePresets] = useState<VoicePreset[]>([]);
@@ -178,6 +187,12 @@ export function VoiceAudioPage() {
 
         const cachedVoiceId = loadJson<string>(STORAGE_KEYS.ttsVoiceId, '');
         if (cachedVoiceId) setVoiceId(cachedVoiceId);
+        const cachedEdgeVoiceId = loadJson<string>(STORAGE_KEYS.ttsEdgeVoiceId, '');
+        if (cachedEdgeVoiceId) setEdgeVoiceId(cachedEdgeVoiceId);
+        const cachedProvider = loadJson<TTSProvider>(STORAGE_KEYS.ttsProvider, 'elevenlabs');
+        if (cachedProvider === 'edge' || cachedProvider === 'elevenlabs') {
+            setProvider(cachedProvider);
+        }
         const cachedStability = loadJson<number>(STORAGE_KEYS.ttsStability, 0.5);
         setStability(cachedStability);
         const cachedSimilarity = loadJson<number>(STORAGE_KEYS.ttsSimilarity, 0.75);
@@ -207,6 +222,20 @@ export function VoiceAudioPage() {
     useEffect(() => {
         saveJson(STORAGE_KEYS.ttsVoiceId, voiceId);
     }, [voiceId]);
+
+    useEffect(() => {
+        saveJson(STORAGE_KEYS.ttsEdgeVoiceId, edgeVoiceId);
+    }, [edgeVoiceId]);
+
+    useEffect(() => {
+        saveJson(STORAGE_KEYS.ttsProvider, provider);
+    }, [provider]);
+
+    // Reset the loaded voices list whenever provider changes so the picker
+    // doesn't show stale entries from the other provider.
+    useEffect(() => {
+        setVoices([]);
+    }, [provider]);
 
     useEffect(() => {
         saveJson(STORAGE_KEYS.ttsStability, stability);
@@ -248,19 +277,25 @@ export function VoiceAudioPage() {
 
         setIsProcessing(true);
         try {
-            const response = await api.post('/api/tts/elevenlabs', {
-                text: ttsText,
-                voiceId: voiceId || undefined,
-                voiceSettings: {
-                    stability,
-                    similarity_boost: similarity,
-                },
-            });
+            const isEdge = provider === 'edge';
+            const url = isEdge ? '/api/tts/edge' : '/api/tts/elevenlabs';
+            const payload = isEdge
+                ? { text: ttsText, voiceId: edgeVoiceId || undefined }
+                : {
+                      text: ttsText,
+                      voiceId: voiceId || undefined,
+                      voiceSettings: { stability, similarity_boost: similarity },
+                  };
+            const response = await api.post(url, payload);
 
             if (response.ok && response.data?.file) {
                 setAudioPath(response.data.file);
-                addToHistory(response.data.file, 'tts', 'ElevenLabs');
-                toast.success('MP3 generated!');
+                addToHistory(
+                    response.data.file,
+                    'tts',
+                    isEdge ? 'Edge-TTS' : 'ElevenLabs',
+                );
+                toast.success(isEdge ? 'MP3 generated via Edge-TTS!' : 'MP3 generated!');
             } else {
                 toast.error(response.error || 'TTS generation failed');
             }
@@ -624,10 +659,10 @@ export function VoiceAudioPage() {
     const loadVoices = async () => {
         setIsLoadingVoices(true);
         try {
-            const res = await api.get('/api/tts/voices');
+            const res = await api.get(`/api/tts/voices?provider=${provider}`);
             if (res.ok && res.data?.voices) {
                 setVoices(res.data.voices);
-                toast.success('Voices loaded');
+                toast.success(`Loaded ${res.data.voices.length} ${provider === 'edge' ? 'Edge' : 'ElevenLabs'} voices`);
             } else {
                 toast.error(res.error || 'Failed to load voices');
             }
@@ -789,7 +824,7 @@ export function VoiceAudioPage() {
                     ))}
                 </div>
                 {(activeTab === 'all' || activeTab === 'voice') && (
-                <Card title="1. TTS (ElevenLabs)">
+                <Card title="1. TTS (voice generation)">
                     <div className="space-y-4">
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -815,18 +850,62 @@ export function VoiceAudioPage() {
                                 You can paste any text here: hook, verse, short reflection/prayer, and CTA. Keep it under about 6 short lines for best captions.
                             </p>
                         </div>
+                        <div>
+                            <label className="block text-xs font-medium text-gray-600 mb-2">
+                                Provider
+                            </label>
+                            <div className="inline-flex rounded-lg border border-white/10 overflow-hidden">
+                                <button
+                                    type="button"
+                                    onClick={() => setProvider('elevenlabs')}
+                                    disabled={!elevenlabsAvailable}
+                                    className={`px-3 py-1.5 text-xs font-medium transition ${
+                                        provider === 'elevenlabs'
+                                            ? 'bg-primary-500 text-white'
+                                            : 'bg-transparent text-gray-300 hover:bg-white/5'
+                                    } disabled:opacity-40 disabled:cursor-not-allowed`}
+                                >
+                                    ElevenLabs <span className="opacity-60">· premium</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setProvider('edge')}
+                                    disabled={!edgeAvailable}
+                                    className={`px-3 py-1.5 text-xs font-medium transition border-l border-white/10 ${
+                                        provider === 'edge'
+                                            ? 'bg-primary-500 text-white'
+                                            : 'bg-transparent text-gray-300 hover:bg-white/5'
+                                    } disabled:opacity-40 disabled:cursor-not-allowed`}
+                                >
+                                    Edge-TTS <span className="opacity-60">· free</span>
+                                </button>
+                            </div>
+                            <p className="text-[10px] text-gray-500 mt-1">
+                                {provider === 'edge'
+                                    ? 'Free Microsoft neural voices via the Edge "Read Aloud" service. ~400 voices, no key. Use for your own channel narration.'
+                                    : 'Premium voices + cloning. Requires ELEVENLABS_API_KEY and counts against your monthly character quota.'}
+                            </p>
+                        </div>
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                             <div>
                                 <label className="block text-xs font-medium text-gray-600 mb-1">
                                     Voice ID (optional)
                                 </label>
                                 <Input
-                                    value={voiceId}
-                                    onChange={(e) => setVoiceId(e.target.value)}
-                                    placeholder="Leave empty to use default voice"
+                                    value={provider === 'edge' ? edgeVoiceId : voiceId}
+                                    onChange={(e) =>
+                                        provider === 'edge'
+                                            ? setEdgeVoiceId(e.target.value)
+                                            : setVoiceId(e.target.value)
+                                    }
+                                    placeholder={
+                                        provider === 'edge'
+                                            ? 'e.g. en-US-AriaNeural'
+                                            : 'Leave empty to use default voice'
+                                    }
                                 />
                                 <p className="text-[10px] text-gray-500 mt-1">
-                                    Paste a voice ID or load your voices below.
+                                    Paste a voice ID or load voices below.
                                 </p>
                             </div>
                             <div>
@@ -840,8 +919,12 @@ export function VoiceAudioPage() {
                                     step="0.05"
                                     value={stability}
                                     onChange={(e) => setStability(Number(e.target.value))}
-                                    className="w-full accent-primary-500"
+                                    disabled={provider === 'edge'}
+                                    className="w-full accent-primary-500 disabled:opacity-40"
                                 />
+                                {provider === 'edge' && (
+                                    <p className="text-[10px] text-gray-500 mt-1">ElevenLabs-only knob.</p>
+                                )}
                             </div>
                             <div>
                                 <label className="block text-xs font-medium text-gray-600 mb-1">
@@ -854,8 +937,12 @@ export function VoiceAudioPage() {
                                     step="0.05"
                                     value={similarity}
                                     onChange={(e) => setSimilarity(Number(e.target.value))}
-                                    className="w-full accent-primary-500"
+                                    disabled={provider === 'edge'}
+                                    className="w-full accent-primary-500 disabled:opacity-40"
                                 />
+                                {provider === 'edge' && (
+                                    <p className="text-[10px] text-gray-500 mt-1">ElevenLabs-only knob.</p>
+                                )}
                             </div>
                         </div>
                         <div className="flex items-center gap-2">
@@ -865,8 +952,12 @@ export function VoiceAudioPage() {
                         </Button>
                             {voices.length > 0 && (
                                 <Select
-                                    value={voiceId}
-                                    onChange={(e) => setVoiceId(e.target.value)}
+                                    value={provider === 'edge' ? edgeVoiceId : voiceId}
+                                    onChange={(e) =>
+                                        provider === 'edge'
+                                            ? setEdgeVoiceId(e.target.value)
+                                            : setVoiceId(e.target.value)
+                                    }
                                 >
                                     <option value="">Select a voice...</option>
                                     {voices.map((v) => (
@@ -878,11 +969,11 @@ export function VoiceAudioPage() {
                             )}
                         </div>
                         <Button onClick={handleTTS} isLoading={isProcessing} disabled={!ttsEnabled}>
-                            Generate MP3 (ElevenLabs)
+                            Generate MP3 ({provider === 'edge' ? 'Edge-TTS' : 'ElevenLabs'})
                         </Button>
                         {!ttsEnabled && (
                             <p className="text-xs text-yellow-600">
-                                TTS disabled. Set `ELEVENLABS_API_KEY` in `server/.env`.
+                                TTS disabled. Set `ELEVENLABS_API_KEY` or `EDGE_TTS_ENABLED=true` in `server/.env`.
                             </p>
                         )}
                     </div>
