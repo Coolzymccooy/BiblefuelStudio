@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { api } from './api';
 
-export type NotificationKind = 'job_done' | 'job_failed' | 'info';
+export type NotificationKind = 'job_done' | 'job_failed' | 'info' | 'campaign_done' | 'campaign_failed';
 
 export interface Notification {
     id: string;
@@ -107,6 +107,7 @@ export function useUnreadCount(): number {
 function prettyType(type: string): string {
     if (type === 'render_video') return 'Video render';
     if (type === 'render_waveform') return 'Waveform render';
+    if (type === 'campaign_auto_post') return 'Auto-Publish campaign';
     return type;
 }
 
@@ -125,13 +126,17 @@ async function pollJobs(): Promise<void> {
                 seenJobs.add(job.id);
                 if (firstPollDone) {
                     const file = (job.result?.outFile as string | undefined) || (job.result?.file as string | undefined);
+                    const isCampaign = job.type === 'campaign_auto_post';
+                    const kind: NotificationKind = isCampaign
+                        ? (job.status === 'done' ? 'campaign_done' : 'campaign_failed')
+                        : (job.status === 'done' ? 'job_done' : 'job_failed');
                     pushNotification({
-                        kind: job.status === 'done' ? 'job_done' : 'job_failed',
+                        kind,
                         title: job.status === 'done'
-                            ? `${prettyType(job.type)} ready`
+                            ? (isCampaign ? 'Auto-Publish posted ✓' : `${prettyType(job.type)} ready`)
                             : `${prettyType(job.type)} failed`,
                         body: job.status === 'done' ? (file || '') : (job.error || 'Job failed'),
-                        href: job.type.startsWith('render_')
+                        href: job.type.startsWith('render_') || isCampaign
                             ? `/render?share=${encodeURIComponent(job.id)}`
                             : '/jobs',
                         meta: { jobId: job.id, file: file || null, jobType: job.type },

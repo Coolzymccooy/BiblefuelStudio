@@ -23,6 +23,34 @@ const FALLBACK_POOL = [
   { hook: "God sees what nobody else sees.", verse: "Your Father who sees in secret will reward you.", reference: "Matthew 6:6", reflection: "Hidden faithfulness is never wasted." },
   { hook: "You can breathe again.", verse: "Come to me, all who are weary and burdened.", reference: "Matthew 11:28", reflection: "Jesus invites tired hearts to rest, not perform." },
   { hook: "This is your strength verse today.", verse: "Those who hope in the Lord will renew their strength.", reference: "Isaiah 40:31", reflection: "God renews what life drains." },
+  // Expanded set so the dedup pool doesn't exhaust after a few weeks of daily auto-publish.
+  { hook: "Joy is on the way.", verse: "Weeping may stay for the night, but rejoicing comes in the morning.", reference: "Psalm 30:5", reflection: "The dark season is a chapter, not the whole story." },
+  { hook: "He is fighting for you right now.", verse: "The Lord will fight for you; you need only to be still.", reference: "Exodus 14:14", reflection: "Some battles you win by trusting, not striving." },
+  { hook: "Your prayers are not wasted.", verse: "The prayer of a righteous person is powerful and effective.", reference: "James 5:16", reflection: "Heaven hears every whispered word." },
+  { hook: "Grace meets you exactly here.", verse: "Let us approach God's throne of grace with confidence.", reference: "Hebrews 4:16", reflection: "Come as you are. Mercy is already waiting." },
+  { hook: "You are deeply loved.", verse: "I have loved you with an everlasting love.", reference: "Jeremiah 31:3", reflection: "Nothing you did earned it. Nothing you do can lose it." },
+  { hook: "Hold on. He is not done.", verse: "He who began a good work in you will carry it on to completion.", reference: "Philippians 1:6", reflection: "Your unfinished story is still in faithful hands." },
+  { hook: "You were chosen on purpose.", verse: "You are a chosen people, a royal priesthood, a holy nation.", reference: "1 Peter 2:9", reflection: "Walk in the identity God already gave you." },
+  { hook: "Stop carrying what was never yours.", verse: "Take my yoke upon you, for my yoke is easy and my burden is light.", reference: "Matthew 11:29-30", reflection: "Surrender is strength, not defeat." },
+  { hook: "God's plan is better than your plan.", verse: "For my thoughts are not your thoughts, neither are your ways my ways.", reference: "Isaiah 55:8", reflection: "Detours from heaven are still going somewhere good." },
+  { hook: "You are stronger than you feel today.", verse: "I can do all this through him who gives me strength.", reference: "Philippians 4:13", reflection: "Strength shows up the moment you take the next step." },
+  { hook: "He is making something new.", verse: "See, I am doing a new thing! Now it springs up; do you not perceive it?", reference: "Isaiah 43:19", reflection: "What feels like an ending is often a beginning." },
+  { hook: "Trust the One who never moves.", verse: "Jesus Christ is the same yesterday and today and forever.", reference: "Hebrews 13:8", reflection: "When everything shifts, He doesn't." },
+  { hook: "Stop apologizing for needing rest.", verse: "He makes me lie down in green pastures, he leads me beside quiet waters.", reference: "Psalm 23:2", reflection: "Rest is part of the assignment." },
+  { hook: "Run to Him before you run anywhere else.", verse: "Seek first the kingdom of God and his righteousness.", reference: "Matthew 6:33", reflection: "Order matters. Put God first and the rest sorts itself out." },
+  { hook: "God remembers what you forgot.", verse: "He remembers his covenant forever.", reference: "Psalm 105:8", reflection: "Heaven keeps a longer memory of your faith than you do." },
+  { hook: "Your worship moves Heaven.", verse: "The Father is seeking such people to worship him.", reference: "John 4:23", reflection: "Worship isn't a performance. It's a posture." },
+  { hook: "You are not invisible to God.", verse: "You are the God who sees me.", reference: "Genesis 16:13", reflection: "He sees you, names you, and stays with you." },
+  { hook: "He is closer than your next breath.", verse: "The Lord is near to all who call on him.", reference: "Psalm 145:18", reflection: "No journey required. He's already here." },
+  { hook: "Even on your worst day, He is faithful.", verse: "If we are faithless, he remains faithful.", reference: "2 Timothy 2:13", reflection: "Your shaky faith doesn't shake His." },
+  { hook: "His mercy is brand new today.", verse: "His mercies are new every morning.", reference: "Lamentations 3:23", reflection: "Yesterday's failure is not today's identity." },
+  { hook: "You are walking with purpose.", verse: "In all things God works for the good of those who love him.", reference: "Romans 8:28", reflection: "Even the hard chapters are working for you." },
+  { hook: "Lay it down. He's strong enough.", verse: "Humble yourselves under God's mighty hand, that he may lift you up.", reference: "1 Peter 5:6", reflection: "Surrender is the doorway to elevation." },
+  { hook: "Speak life over your situation.", verse: "Death and life are in the power of the tongue.", reference: "Proverbs 18:21", reflection: "Stop rehearsing what scares you. Rehearse what He said." },
+  { hook: "God is in the waiting room with you.", verse: "Wait for the Lord; be strong and take heart.", reference: "Psalm 27:14", reflection: "Waiting is not wasted when He is the company." },
+  { hook: "The Spirit is praying for you.", verse: "The Spirit himself intercedes for us through wordless groans.", reference: "Romans 8:26", reflection: "When you have no words, Heaven still has voice." },
+  { hook: "He is preparing room for you.", verse: "I am going there to prepare a place for you.", reference: "John 14:2", reflection: "Your future is already being built." },
+  { hook: "You don't have to figure it all out.", verse: "Trust in the Lord with all your heart and lean not on your own understanding.", reference: "Proverbs 3:5", reflection: "Confusion isn't disqualification. Trust still gets you there." },
 ];
 
 const REFLECTION_VARIANTS = [
@@ -32,6 +60,12 @@ const REFLECTION_VARIANTS = [
   "Carry this into the next part of your day.",
   "Read this again before you sleep.",
   "Share this with one person who needs hope.",
+  "Write this on a sticky note where you'll see it.",
+  "Whisper it back to God in your own words.",
+  "Let this be your anchor when the day shifts.",
+  "Receive it. You don't have to earn it.",
+  "Rest in this for thirty seconds before moving on.",
+  "Speak this out loud the next time fear knocks.",
 ];
 
 function fallbackScripts(count, ctaStyle, startOffset = 0) {
@@ -122,6 +156,13 @@ function finalizeScripts({ preferred, count, ctaStyle, historyKeys }) {
   // Force-yield raw fallback templates with timestamped titles so the API
   // never returns 0 scripts when the user explicitly asked for >= 1.
   if (out.length < count) {
+    const totalCombos = FALLBACK_POOL.length * REFLECTION_VARIANTS.length;
+    console.warn(
+      `[SCRIPTS] dedup exhausted — history has ${historyKeys.size} keys; ` +
+      `pool exposes ~${totalCombos} unique combinations. Forcing safety-net ` +
+      `fallback yield to satisfy count=${count}. ` +
+      `Set a real LLM key (OPENAI_API_KEY / GEMINI_API_KEY) or clear data/scripts_history.json to reset.`
+    );
     const cta = CTA_MAP[ctaStyle] || CTA_MAP.save;
     const ts = Date.now();
     let i = 0;

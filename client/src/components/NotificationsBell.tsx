@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { Bell, CheckCircle2, XCircle, ExternalLink } from 'lucide-react';
+import { Bell, CheckCircle2, XCircle, ExternalLink, Rocket } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import {
     useNotifications,
@@ -86,13 +86,19 @@ export function NotificationsBell() {
                             </div>
                         ) : (
                             <ul className="divide-y divide-white/5">
-                                {notifications.map((n) => (
+                                {notifications.map((n) => {
+                                    const isCampaign = n.kind === 'campaign_done' || n.kind === 'campaign_failed';
+                                    return (
                                     <li key={n.id}>
                                         <button
                                             onClick={() => handleClick(n)}
-                                            className="w-full text-left p-3 hover:bg-white/5 transition-colors flex items-start gap-2"
+                                            className={`w-full text-left p-3 transition-colors flex items-start gap-2 ${isCampaign ? 'bg-amber-500/[0.04] hover:bg-amber-500/[0.08]' : 'hover:bg-white/5'}`}
                                         >
-                                            {n.kind === 'job_done' ? (
+                                            {n.kind === 'campaign_done' ? (
+                                                <Rocket size={16} className="text-amber-300 flex-shrink-0 mt-0.5" />
+                                            ) : n.kind === 'campaign_failed' ? (
+                                                <XCircle size={16} className="text-amber-400 flex-shrink-0 mt-0.5" />
+                                            ) : n.kind === 'job_done' ? (
                                                 <CheckCircle2 size={16} className="text-emerald-400 flex-shrink-0 mt-0.5" />
                                             ) : n.kind === 'job_failed' ? (
                                                 <XCircle size={16} className="text-rose-400 flex-shrink-0 mt-0.5" />
@@ -115,7 +121,8 @@ export function NotificationsBell() {
                                             </div>
                                         </button>
                                     </li>
-                                ))}
+                                    );
+                                })}
                             </ul>
                         )}
                     </div>

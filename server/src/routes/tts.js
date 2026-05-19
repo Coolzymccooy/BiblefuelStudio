@@ -6,6 +6,8 @@ import { v4 as uuid } from "uuid";
 import { MsEdgeTTS, OUTPUT_FORMAT } from "msedge-tts";
 import { OUTPUT_DIR } from "../lib/paths.js";
 import { synthesizeEdgeTts } from "../lib/edgeTts.js";
+import { synthesizeElevenLabs } from "../lib/elevenLabsTts.js";
+import { synthesizeTts } from "../lib/ttsOrchestrator.js";
 
 const router = Router();
 const allowedAudioExt = new Set([".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".webm"]);
@@ -213,57 +215,27 @@ router.post("/clone-voice", async (req, res) => {
 });
 
 router.post("/elevenlabs", async (req, res) => {
+  const { text, voiceId, voiceSettings, modelId } = req.body || {};
   try {
-    const apiKey = getElevenLabsApiKey();
-    const defaultVoiceId = process.env.ELEVENLABS_VOICE_ID || "EXAVITQu4vr4xnSDxMaL";
-
-    if (!apiKey || apiKey.startsWith("your-")) {
-      return res.status(400).json({ ok: false, error: "ELEVENLABS_API_KEY missing or invalid" });
-    }
-
-    console.log(`[TTS] Using ElevenLabs Key: ${apiKey.substring(0, 4)}... (Len: ${apiKey.length})`);
-
-    const { text, voiceId, voiceSettings, modelId } = req.body || {};
-    if (!text || String(text).trim().length < 3) return res.status(400).json({ ok: false, error: "text required" });
-    const resolvedVoiceId = String(voiceId || defaultVoiceId).trim();
-    if (!resolvedVoiceId) return res.status(400).json({ ok: false, error: "voiceId missing" });
-
-    const outDir = OUTPUT_DIR;
-    if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
-
-    const outFile = path.join(outDir, `tts-${uuid()}.mp3`);
-
-    const resp = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${resolvedVoiceId}`, {
-      method: "POST",
-      headers: {
-        "xi-api-key": apiKey,
-        "Content-Type": "application/json",
-        "Accept": "audio/mpeg"
-      },
-      body: JSON.stringify({
-        text,
-        model_id: modelId || "eleven_multilingual_v2",
-        voice_settings: {
-          stability: voiceSettings?.stability ?? 0.5,
-          similarity_boost: voiceSettings?.similarity_boost ?? 0.75
-        }
-      })
-    });
-
-    if (!resp.ok) {
-      const errText = await resp.text();
-      console.error(`[TTS] ElevenLabs error: ${resp.status}`, errText);
-      throw new Error(`ElevenLabs error: ${resp.status} ${errText}`);
-    }
-
-    const buffer = Buffer.from(await resp.arrayBuffer());
-    fs.writeFileSync(outFile, buffer);
-    console.log(`[TTS] MP3 saved to ${outFile}`);
-
-    res.json({ ok: true, file: outFile });
+    const result = await synthesizeElevenLabs({ text, voiceId, voiceSettings, modelId });
+    res.json(result);
   } catch (e) {
-    console.error(`[TTS] Route error:`, e);
-    res.status(500).json({ ok: false, error: String(e?.message || e) });
+    console.error(`[TTS] ElevenLabs route error:`, e);
+    const message = String(e?.message || e);
+    const status = message.toLowerCase().includes("missing") || message.toLowerCase().includes("required") ? 400 : 502;
+    res.status(status).json({ ok: false, error: message });
+  }
+});
+
+// Convenience route: ElevenLabs first, Edge-TTS automatic fallback.
+router.post("/auto", async (req, res) => {
+  const { text, voiceId } = req.body || {};
+  try {
+    const result = await synthesizeTts({ text, voiceId });
+    res.json(result);
+  } catch (e) {
+    console.error(`[TTS] auto route error:`, e);
+    res.status(502).json({ ok: false, error: String(e?.message || e) });
   }
 });
 

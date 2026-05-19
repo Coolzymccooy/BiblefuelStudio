@@ -5,6 +5,7 @@ import { v4 as uuid } from "uuid";
 import { readLibrary, addToLibrary, removeFromLibrary, writeLibrary } from "../lib/library.js";
 import { deriveOutputJpgPathFromVideo, generateVideoThumbnail, normalizePathSlashes, resolveOutputAlias, toOutputPublicPath } from "../lib/mediaThumb.js";
 import { OUTPUT_DIR } from "../lib/paths.js";
+import { CATEGORIES, classifySearchQuery, normalizeCategories } from "../lib/categorize.js";
 
 const router = Router();
 
@@ -95,6 +96,44 @@ router.post("/add", (req, res) => {
 router.delete("/:id", (req, res) => {
     removeFromLibrary(req.params.id);
     res.json({ ok: true });
+});
+
+router.get("/categories", (req, res) => {
+    res.json({ ok: true, categories: CATEGORIES });
+});
+
+router.patch("/:id/categories", (req, res) => {
+    const id = String(req.params?.id || "").trim();
+    if (!id) return res.status(400).json({ ok: false, error: "id required" });
+    const lib = readLibrary();
+    const idx = (lib.items || []).findIndex((x) => String(x.id) === id);
+    if (idx < 0) return res.status(404).json({ ok: false, error: "library item not found" });
+
+    const incoming = Array.isArray(req.body?.categories) ? req.body.categories : [];
+    const next = normalizeCategories(incoming);
+    lib.items[idx] = { ...lib.items[idx], categories: next, updatedAt: new Date().toISOString() };
+    writeLibrary(lib);
+    res.json({ ok: true, item: lib.items[idx] });
+});
+
+// Bulk auto-tag any items missing categories — best-effort, infers from
+// existing item metadata (searchQuery, sourceUrl, id, etc.).
+router.post("/auto-tag", (req, res) => {
+    const lib = readLibrary();
+    let tagged = 0;
+    for (const item of lib.items || []) {
+        if (Array.isArray(item.categories) && item.categories.length > 0) continue;
+        const hint = [item.searchQuery, item.title, item.sourceUrl, item.id]
+            .filter(Boolean).join(" ");
+        const auto = classifySearchQuery(hint);
+        if (auto.length > 0) {
+            item.categories = auto;
+            item.updatedAt = new Date().toISOString();
+            tagged += 1;
+        }
+    }
+    if (tagged > 0) writeLibrary(lib);
+    res.json({ ok: true, tagged, total: (lib.items || []).length });
 });
 
 router.post("/import-local", (req, res) => {

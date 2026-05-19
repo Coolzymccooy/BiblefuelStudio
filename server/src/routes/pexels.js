@@ -2,6 +2,7 @@ import { Router } from "express";
 import fs from "fs";
 import { pexelsSearchVideos, pexelsDownloadVideoById } from "../lib/pexels.js";
 import { addToLibrary } from "../lib/library.js";
+import { classifySearchQuery, normalizeCategories } from "../lib/categorize.js";
 import { deriveOutputJpgPathFromVideo, generateVideoThumbnail, normalizePathSlashes, resolveOutputAlias, toOutputPublicPath } from "../lib/mediaThumb.js";
 import { mirrorOutputToFirebaseIfEnabled } from "../lib/firebaseAdmin.js";
 
@@ -44,6 +45,14 @@ router.post("/download", async (req, res) => {
     const thumb = generateVideoThumbnail(normalizedFile, { outputBaseName: `thumb-pexels-${id}` });
     const fallbackImage = deriveOutputJpgPathFromVideo(normalizedFile);
 
+    // Auto-tag by the search query so the smart picker can route this background
+    // to mood-appropriate scripts later. Caller may also pass categories[] to
+    // override or extend the auto-detection.
+    const searchQuery = String(req.body?.searchQuery || req.body?.query || "").trim();
+    const callerCategories = Array.isArray(req.body?.categories) ? req.body.categories : [];
+    const autoCategories = searchQuery ? classifySearchQuery(searchQuery) : [];
+    const categories = normalizeCategories([...callerCategories, ...autoCategories]);
+
     const item = {
       id: `pexels_${id}`,
       provider: "pexels",
@@ -54,6 +63,8 @@ router.post("/download", async (req, res) => {
       duration,
       sourceUrl,
       sourcePreviewUrl,
+      categories,
+      searchQuery: searchQuery || undefined,
       downloadedAt: new Date().toISOString(),
     };
 

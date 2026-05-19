@@ -6,8 +6,9 @@ import { spawn, spawnSync } from "child_process";
 import { readLibrary } from "../lib/library.js";
 import { DATA_DIR, OUTPUT_DIR, resolveOutputAlias, isLocalOrRemote } from "../lib/mediaThumb.js";
 import { generateScripts } from "../lib/generateScripts.js";
-import { synthesizeEdgeTts } from "../lib/edgeTts.js";
+import { synthesizeTts } from "../lib/ttsOrchestrator.js";
 import { dispatchPost } from "./social.js";
+import { pickBestBackground } from "../lib/categorize.js";
 
 const router = Router();
 let ffmpegChecked = false;
@@ -587,22 +588,21 @@ async function runCampaignAutoPost(payload, jobId) {
   const lines = [script.hook, script.reference ? `${script.verse} (${script.reference})` : script.verse, script.reflection, script.cta].filter(Boolean);
   safeUpdateJob(jobId, { progress: 12 });
 
-  // 2. Pick a background from the Library
+  // 2. Pick a background — category-aware: classify script keywords, prefer
+  // Library items tagged with matching categories, fall back to any item.
   const lib = readLibrary();
   const pool = Array.isArray(lib?.items) ? lib.items : [];
   if (pool.length === 0) throw new Error("campaign: library is empty — add at least one background before running auto-post");
-  const filtered = backgroundQuery
-    ? pool.filter((x) => JSON.stringify(x).toLowerCase().includes(String(backgroundQuery).toLowerCase()))
-    : pool;
-  const eligible = filtered.length > 0 ? filtered : pool;
-  const pickedBackground = eligible[Math.floor(Math.random() * eligible.length)];
+  const pickedBackground = pickBestBackground(pool, { script, backgroundQuery });
   if (!pickedBackground?.id) throw new Error("campaign: picked library item has no id");
   safeUpdateJob(jobId, { progress: 22 });
 
-  // 3. Generate voice via Edge-TTS (free)
+  // 3. Generate voice. Orchestrator tries ElevenLabs first (paid, high quality)
+  // and falls back to Edge-TTS (free) on any failure. Same return shape.
   const ttsText = `${script.hook} ${script.verse} ${script.reflection} ${script.cta}`.trim();
-  const tts = await synthesizeEdgeTts({ text: ttsText, voiceId });
+  const tts = await synthesizeTts({ text: ttsText, voiceId });
   const audioPath = tts.file;
+  console.log(`[CAMPAIGN] tts provider=${tts.provider} voice=${tts.voice}`);
   safeUpdateJob(jobId, { progress: 45 });
 
   // 4. Render the video

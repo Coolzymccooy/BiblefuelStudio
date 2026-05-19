@@ -9,6 +9,85 @@ import { Sparkles, Play, Archive, Mail, ArrowLeft, Globe, Mic, Film, Video, Help
 import { api } from '../lib/api';
 import { firebaseRequestPasswordReset, getFirebaseAuthErrorMessage, isFirebaseClientEnabled } from '../lib/firebase';
 
+interface JobRow {
+    id: string;
+    type: string;
+    status: string;
+    createdAt: string;
+    finishedAt?: string;
+    error?: string;
+}
+
+function DailyStatsCard() {
+    const [stats, setStats] = useState({
+        campaignsToday: 0,
+        campaignsSuccessToday: 0,
+        campaignsFailedToday: 0,
+        rendersThisWeek: 0,
+        totalJobs: 0,
+    });
+    const [loading, setLoading] = useState(true);
+    const navigate = useNavigate();
+
+    useEffect(() => {
+        const load = async () => {
+            try {
+                const res = await api.get('/api/jobs');
+                if (res.ok && Array.isArray(res.data?.jobs)) {
+                    const jobs: JobRow[] = res.data.jobs;
+                    const now = Date.now();
+                    const startOfDay = new Date();
+                    startOfDay.setHours(0, 0, 0, 0);
+                    const dayMs = startOfDay.getTime();
+                    const weekMs = now - 7 * 24 * 60 * 60 * 1000;
+
+                    const campaigns = jobs.filter((j) => j.type === 'campaign_auto_post');
+                    const campaignsTodayList = campaigns.filter((j) => new Date(j.createdAt).getTime() >= dayMs);
+                    const renders = jobs.filter((j) => j.type === 'render_video' || j.type === 'render_waveform');
+                    const rendersThisWeek = renders.filter((j) => new Date(j.createdAt).getTime() >= weekMs);
+
+                    setStats({
+                        campaignsToday: campaignsTodayList.length,
+                        campaignsSuccessToday: campaignsTodayList.filter((j) => j.status === 'done').length,
+                        campaignsFailedToday: campaignsTodayList.filter((j) => j.status === 'failed').length,
+                        rendersThisWeek: rendersThisWeek.length,
+                        totalJobs: jobs.length,
+                    });
+                }
+            } finally {
+                setLoading(false);
+            }
+        };
+        load();
+        const t = setInterval(load, 30_000); // refresh every 30s
+        return () => clearInterval(t);
+    }, []);
+
+    const Stat = ({ value, label, accent }: { value: number; label: string; accent?: string }) => (
+        <div className="flex-1 min-w-[120px] p-3 rounded-xl bg-white/[0.03] border border-white/10">
+            <div className={`text-2xl font-bold ${accent || 'text-white'}`}>{loading ? '…' : value}</div>
+            <div className="text-[10px] text-gray-400 uppercase tracking-wider mt-1">{label}</div>
+        </div>
+    );
+
+    return (
+        <Card title="Today" className="border-white/10">
+            <div className="flex flex-wrap gap-3">
+                <Stat value={stats.campaignsToday} label="Campaigns today" accent="text-amber-300" />
+                <Stat value={stats.campaignsSuccessToday} label="Published ✓" accent="text-emerald-300" />
+                <Stat value={stats.campaignsFailedToday} label="Failed" accent={stats.campaignsFailedToday > 0 ? 'text-rose-300' : 'text-gray-400'} />
+                <Stat value={stats.rendersThisWeek} label="Renders (7d)" />
+                <Stat value={stats.totalJobs} label="All-time jobs" />
+            </div>
+            <div className="mt-3 flex justify-end">
+                <button onClick={() => navigate('/jobs')} className="text-[10px] uppercase tracking-widest text-primary-300 hover:text-primary-200">
+                    View all jobs →
+                </button>
+            </div>
+        </Card>
+    );
+}
+
 function AutoPublishCard() {
     const [isLaunching, setIsLaunching] = useState(false);
     const [recentJobId, setRecentJobId] = useState<string | null>(null);
@@ -182,6 +261,8 @@ export function HomePage() {
                 </div>
 
                 <AutoPublishCard />
+
+                <DailyStatsCard />
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <Card title="Quick Start & Workflow">

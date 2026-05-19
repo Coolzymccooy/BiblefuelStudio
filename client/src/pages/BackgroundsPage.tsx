@@ -4,7 +4,7 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { api } from '../lib/api';
 import toast from 'react-hot-toast';
-import { Search, Download, Play, ExternalLink, Image as ImageIcon, Bookmark, Trash2, Library, Sparkles, FolderUp } from 'lucide-react';
+import { Search, Download, Play, ExternalLink, Image as ImageIcon, Bookmark, Trash2, Library, Sparkles, FolderUp, Tag, X } from 'lucide-react';
 import { useConfig } from '../lib/config';
 
 interface PexelsVideo {
@@ -13,7 +13,15 @@ interface PexelsVideo {
     duration?: number;
     image?: string;
     previewUrl?: string;
+    categories?: string[];
+    searchQuery?: string;
 }
+
+const CANONICAL_CATEGORIES = [
+    'celebration', 'sunshine', 'faith', 'worship', 'prayer', 'sermon',
+    'nature', 'abstract', 'peace', 'hope', 'sky', 'ocean', 'mountain',
+    'candle', 'light', 'stars', 'urban',
+];
 
 function normalizeSrc(value?: string) {
     return String(value || '').replace(/\\/g, '/').trim();
@@ -113,6 +121,43 @@ export function BackgroundsPage() {
     const [isBulkDownloadingAnimated, setIsBulkDownloadingAnimated] = useState(false);
     const [localFolder, setLocalFolder] = useState('');
     const [importedLocal, setImportedLocal] = useState<PexelsVideo[]>([]);
+    const [categoryFilter, setCategoryFilter] = useState<string>('');
+    const [editingCategoriesFor, setEditingCategoriesFor] = useState<string | number | null>(null);
+
+    const allCategoriesInLibrary = Array.from(new Set(
+        libraryItems.flatMap((it) => Array.isArray(it.categories) ? it.categories : [])
+    )).sort();
+    const filteredLibrary = categoryFilter
+        ? libraryItems.filter((item) => (item.categories || []).includes(categoryFilter))
+        : libraryItems;
+
+    const handleUpdateCategories = async (id: string | number, categories: string[]) => {
+        try {
+            const res = await api.patch(`/api/library/${encodeURIComponent(String(id))}/categories`, { categories });
+            if (res.ok && res.data?.item) {
+                setLibraryItems((prev) => prev.map((it) => it.id === id ? { ...it, categories: res.data.item.categories } : it));
+                toast.success('Categories updated');
+            } else {
+                toast.error(res.error || 'Failed to update categories');
+            }
+        } catch {
+            toast.error('Failed to update categories');
+        }
+    };
+
+    const handleAutoTagAll = async () => {
+        try {
+            const res = await api.post('/api/library/auto-tag', {});
+            if (res.ok) {
+                toast.success(`Auto-tagged ${res.data?.tagged || 0} items`);
+                await loadLibrary();
+            } else {
+                toast.error(res.error || 'Auto-tag failed');
+            }
+        } catch {
+            toast.error('Auto-tag failed');
+        }
+    };
 
     const handleSearch = async () => {
         if (!pexelsEnabled) {
@@ -217,6 +262,7 @@ export function BackgroundsPage() {
                 previewUrl: video.previewUrl,
                 duration: video.duration,
                 url: video.url,
+                searchQuery: query, // auto-tag the new Library item with this search term
             });
 
             if (response.ok && response.data?.file) {
@@ -248,6 +294,7 @@ export function BackgroundsPage() {
                 previewUrl: video.previewUrl,
                 duration: video.duration,
                 url: video.url,
+                searchQuery: animatedQuery, // auto-tag the new Library item
             });
             if (response.ok && response.data?.file) {
                 if (response.data?.item) {
@@ -350,6 +397,20 @@ export function BackgroundsPage() {
                         <div className="absolute top-3 right-3 px-2 py-1 bg-black/60 backdrop-blur-md rounded-md text-[10px] font-bold text-white border border-white/10">
                             {video.duration ?? 0}s
                         </div>
+                        {isLibrary && Array.isArray(video.categories) && video.categories.length > 0 && (
+                            <div className="absolute top-2 left-2 flex flex-wrap gap-1 max-w-[70%]">
+                                {video.categories.slice(0, 3).map((cat) => (
+                                    <span key={cat} className="text-[9px] px-1.5 py-0.5 bg-amber-500/80 text-black font-bold rounded-full backdrop-blur-sm">
+                                        {cat}
+                                    </span>
+                                ))}
+                                {video.categories.length > 3 && (
+                                    <span className="text-[9px] px-1.5 py-0.5 bg-black/60 text-white rounded-full backdrop-blur-sm">
+                                        +{video.categories.length - 3}
+                                    </span>
+                                )}
+                            </div>
+                        )}
                         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-4 gap-2">
                             <div className="flex gap-2">
                                 <Button
@@ -360,14 +421,24 @@ export function BackgroundsPage() {
                                     Download
                                 </Button>
                                 {isLibrary ? (
-                                    <Button
-                                        onClick={() => handleRemoveFromLibrary(video.id)}
-                                        variant="secondary"
-                                        className="h-9 px-3 bg-red-500/10 border-red-500/20 hover:bg-red-500/20 text-red-400"
-                                        title="Remove from Library"
-                                    >
-                                        <Trash2 size={14} />
-                                    </Button>
+                                    <>
+                                        <Button
+                                            onClick={() => setEditingCategoriesFor(video.id)}
+                                            variant="secondary"
+                                            className="h-9 px-3 bg-amber-500/10 border-amber-500/20 hover:bg-amber-500/20 text-amber-300"
+                                            title="Edit categories"
+                                        >
+                                            <Tag size={14} />
+                                        </Button>
+                                        <Button
+                                            onClick={() => handleRemoveFromLibrary(video.id)}
+                                            variant="secondary"
+                                            className="h-9 px-3 bg-red-500/10 border-red-500/20 hover:bg-red-500/20 text-red-400"
+                                            title="Remove from Library"
+                                        >
+                                            <Trash2 size={14} />
+                                        </Button>
+                                    </>
                                 ) : (
                                     <Button
                                         onClick={() => handleSaveToLibrary(video)}
@@ -394,6 +465,10 @@ export function BackgroundsPage() {
             ))}
         </div>
     );
+
+    const editingItem = editingCategoriesFor != null
+        ? libraryItems.find((it) => it.id === editingCategoriesFor) || null
+        : null;
 
     return (
         <div className="space-y-6 animate-fade-in">
@@ -561,22 +636,94 @@ export function BackgroundsPage() {
                 </div>
             ) : (
                 <div className="space-y-4">
-                    <div className="flex items-center justify-between px-2">
-                        <h3 className="text-sm font-bold uppercase tracking-widest text-gray-500">Saved Library ({libraryItems.length})</h3>
-                        <Button onClick={loadLibrary} variant="secondary" className="h-8 text-[10px] uppercase tracking-tighter" disabled={isLoadingLibrary}>
-                            Refresh
-                        </Button>
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 px-2">
+                        <h3 className="text-sm font-bold uppercase tracking-widest text-gray-500">
+                            Saved Library ({categoryFilter ? `${filteredLibrary.length} of ${libraryItems.length}` : libraryItems.length})
+                        </h3>
+                        <div className="flex items-center gap-2">
+                            <Button onClick={handleAutoTagAll} variant="secondary" className="h-8 text-[10px] uppercase tracking-tighter" disabled={isLoadingLibrary || libraryItems.length === 0}>
+                                <Tag size={12} className="mr-1" />
+                                Auto-Tag All
+                            </Button>
+                            <Button onClick={loadLibrary} variant="secondary" className="h-8 text-[10px] uppercase tracking-tighter" disabled={isLoadingLibrary}>
+                                Refresh
+                            </Button>
+                        </div>
                     </div>
 
-                    {libraryItems.length > 0 ? (
-                        renderGrid(libraryItems, true, handleDownload)
+                    {allCategoriesInLibrary.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 px-2">
+                            <button
+                                onClick={() => setCategoryFilter('')}
+                                className={`text-[10px] px-2.5 py-1 rounded-full transition-all ${categoryFilter === '' ? 'bg-primary-500 text-white' : 'bg-white/5 text-gray-400 hover:bg-white/10'}`}
+                            >
+                                All
+                            </button>
+                            {allCategoriesInLibrary.map((cat) => (
+                                <button
+                                    key={cat}
+                                    onClick={() => setCategoryFilter(cat === categoryFilter ? '' : cat)}
+                                    className={`text-[10px] px-2.5 py-1 rounded-full transition-all ${cat === categoryFilter ? 'bg-amber-500 text-black font-bold' : 'bg-white/5 text-gray-400 hover:bg-white/10'}`}
+                                >
+                                    {cat}
+                                </button>
+                            ))}
+                        </div>
+                    )}
+
+                    {filteredLibrary.length > 0 ? (
+                        renderGrid(filteredLibrary, true, handleDownload)
                     ) : !isLoadingLibrary && (
                         <Card className="py-20 flex flex-col items-center justify-center opacity-30 border-dashed">
                             <Library size={64} className="text-gray-600 mb-4" />
-                            <p className="text-gray-400 font-bold uppercase tracking-widest text-xs">Library is empty</p>
-                            <p className="text-[10px] text-gray-500 mt-2">Save videos from search to build your library.</p>
+                            <p className="text-gray-400 font-bold uppercase tracking-widest text-xs">
+                                {libraryItems.length === 0 ? 'Library is empty' : `No items in category "${categoryFilter}"`}
+                            </p>
+                            <p className="text-[10px] text-gray-500 mt-2">
+                                {libraryItems.length === 0 ? 'Save videos from search to build your library.' : 'Try a different category or clear the filter.'}
+                            </p>
                         </Card>
                     )}
+                </div>
+            )}
+
+            {editingItem && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                    <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setEditingCategoriesFor(null)} />
+                    <Card className="relative w-full max-w-md border-white/20 shadow-2xl">
+                        <div className="flex items-center justify-between mb-3">
+                            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                                <Tag size={14} className="text-amber-300" /> Edit categories
+                            </h3>
+                            <button onClick={() => setEditingCategoriesFor(null)} className="text-gray-500 hover:text-white">
+                                <X size={18} />
+                            </button>
+                        </div>
+                        <p className="text-[10px] text-gray-500 mb-3 font-mono">ID: {editingItem.id}</p>
+                        <div className="flex flex-wrap gap-1.5 mb-4">
+                            {CANONICAL_CATEGORIES.map((cat) => {
+                                const active = (editingItem.categories || []).includes(cat);
+                                return (
+                                    <button
+                                        key={cat}
+                                        onClick={() => {
+                                            const current = editingItem.categories || [];
+                                            const next = active ? current.filter((c) => c !== cat) : [...current, cat];
+                                            handleUpdateCategories(editingItem.id, next);
+                                        }}
+                                        className={`text-[11px] px-3 py-1 rounded-full transition-all ${active
+                                            ? 'bg-amber-500 text-black font-bold'
+                                            : 'bg-white/5 text-gray-400 hover:bg-white/10'}`}
+                                    >
+                                        {cat}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                        <p className="text-[10px] text-gray-500">
+                            Tags drive the smart background picker in Auto-Publish. Scripts about peace get peace-tagged backgrounds, etc.
+                        </p>
+                    </Card>
                 </div>
             )}
         </div>

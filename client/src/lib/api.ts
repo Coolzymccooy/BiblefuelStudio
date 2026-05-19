@@ -101,6 +101,25 @@ class ApiClient {
         }
     }
 
+    async patch<T = any>(
+        url: string,
+        body?: any,
+        customHeaders?: Record<string, string>
+    ): Promise<ApiResponse<T>> {
+        try {
+            const response = await axios.patch(url, body, {
+                headers: this.getHeaders(customHeaders),
+            });
+            return {
+                ok: true,
+                status: response.status,
+                data: response.data,
+            };
+        } catch (error) {
+            return this.handleError(error);
+        }
+    }
+
     async download(url: string): Promise<void> {
         const token = this.getToken();
         try {
