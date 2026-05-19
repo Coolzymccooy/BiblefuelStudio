@@ -570,21 +570,38 @@ async function runCampaignAutoPost(payload, jobId) {
     profileIds,
     privacyStatus = "private",
     title,
+    // Series Mode hooks: when present, skip AI script generation and use
+    // the authoritative verse-based script the series builder produced.
+    prebuiltScript,
+    captionOverride,
+    series,
   } = payload || {};
 
   safeUpdateJob(jobId, { progress: 2 });
 
-  // 1. Generate a single script
-  const scripts = await generateScripts({
-    niche: niche || "Christian / Bible encouragement",
-    tone: tone || "warm, encouraging, simple",
-    count: 1,
-    lengthSeconds: Math.max(8, Math.min(90, Number(lengthSeconds) || 20)),
-    includeVerseReference: Boolean(includeVerseReference),
-    ctaStyle,
-  });
-  const script = Array.isArray(scripts) ? scripts[0] : null;
-  if (!script) throw new Error("campaign: script generation produced 0 results");
+  // 1. Get a script — either prebuilt (Series Mode) or AI-generated.
+  let script;
+  if (prebuiltScript && (prebuiltScript.verse || prebuiltScript.hook)) {
+    script = {
+      hook: String(prebuiltScript.hook || "").trim(),
+      verse: String(prebuiltScript.verse || "").trim(),
+      reference: String(prebuiltScript.reference || "").trim(),
+      reflection: String(prebuiltScript.reflection || "").trim(),
+      cta: String(prebuiltScript.cta || "").trim(),
+      title: String(prebuiltScript.title || "").trim(),
+    };
+  } else {
+    const scripts = await generateScripts({
+      niche: niche || "Christian / Bible encouragement",
+      tone: tone || "warm, encouraging, simple",
+      count: 1,
+      lengthSeconds: Math.max(8, Math.min(90, Number(lengthSeconds) || 20)),
+      includeVerseReference: Boolean(includeVerseReference),
+      ctaStyle,
+    });
+    script = Array.isArray(scripts) ? scripts[0] : null;
+    if (!script) throw new Error("campaign: script generation produced 0 results");
+  }
   const lines = [script.hook, script.reference ? `${script.verse} (${script.reference})` : script.verse, script.reflection, script.cta].filter(Boolean);
   safeUpdateJob(jobId, { progress: 12 });
 
@@ -617,11 +634,15 @@ async function runCampaignAutoPost(payload, jobId) {
   const outFile = renderResult.outFile;
   safeUpdateJob(jobId, { progress: 90 });
 
-  // 5. Fire Make webhook (or other destination) so TikTok/YouTube auto-publish
-  const caption = [script.hook, script.verse, script.reference ? `(${script.reference})` : "", script.reflection, script.cta]
-    .filter(Boolean)
-    .join(" ")
-    .slice(0, 1900);
+  // 5. Fire Make webhook (or other destination) so TikTok/YouTube auto-publish.
+  // Series Mode supplies its own caption (with verse + YouVersion link); for
+  // AI-generated campaigns we synthesize a caption from the script fields.
+  const caption = (typeof captionOverride === "string" && captionOverride.trim().length > 0)
+    ? captionOverride.trim().slice(0, 1900)
+    : [script.hook, script.verse, script.reference ? `(${script.reference})` : "", script.reflection, script.cta]
+        .filter(Boolean)
+        .join(" ")
+        .slice(0, 1900);
   const videoFile = path.basename(outFile);
   const videoUrl = `/outputs/${videoFile}`;
   let shareResult = null;
@@ -650,6 +671,7 @@ async function runCampaignAutoPost(payload, jobId) {
     script,
     backgroundId: pickedBackground.id,
     share: shareResult,
+    series: series || null,
   };
 }
 

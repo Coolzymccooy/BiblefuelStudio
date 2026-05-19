@@ -22,6 +22,8 @@ import jobsRouter from "./src/routes/jobs.js";
 import libraryRouter from "./src/routes/library.js";
 import socialRouter from "./src/routes/social.js";
 import firebaseRouter from "./src/routes/firebase.js";
+import bibleRouter from "./src/routes/bible.js";
+import seriesRouter from "./src/routes/series.js";
 import { requireAuth } from "./src/auth.js";
 import { DATA_DIR, OUTPUT_DIR } from "./src/lib/paths.js";
 
@@ -163,6 +165,8 @@ app.use("/api/audio-adv", requireAuth, audioAdvancedRouter);
 app.use("/api/library", requireAuth, libraryRouter);
 app.use("/api/social", requireAuth, socialRouter);
 app.use("/api/firebase", requireAuth, firebaseRouter);
+app.use("/api/bible", requireAuth, bibleRouter);
+app.use("/api/series", requireAuth, seriesRouter);
 
 
 
