@@ -189,7 +189,10 @@ export function JobsPage() {
                                             )}
                                         </div>
                                         {job.status === 'failed' && job.error && (
-                                            <div className="mt-2 text-xs text-red-300/90 truncate" title={job.error}>
+                                            <div
+                                                className="mt-2 text-xs text-red-300/90 whitespace-pre-wrap break-words line-clamp-3 leading-snug"
+                                                title={job.error}
+                                            >
                                                 {job.error}
                                             </div>
                                         )}

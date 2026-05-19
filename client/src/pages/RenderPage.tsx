@@ -88,6 +88,8 @@ export function RenderPage() {
     const [musicVolume, setMusicVolume] = useState(0.3);
     const [autoDuck, setAutoDuck] = useState(true);
     const [durationSec, setDurationSec] = useState(20);
+    const [kineticCaptions, setKineticCaptions] = useState(false);
+    const [ttsVoiceId, setTtsVoiceId] = useState('');
     const [postDestination, setPostDestination] = useState<'webhook' | 'buffer' | 'youtube' | 'instagram' | 'tiktok'>('webhook');
     const [youtubePrivacy, setYoutubePrivacy] = useState<'private' | 'unlisted' | 'public'>('private');
     const [webhookOptions, setWebhookOptions] = useState<{ id: string; name: string }[]>([]);
@@ -152,7 +154,13 @@ export function RenderPage() {
         setAutoDuck(cachedAutoDuck);
         const cachedDuration = loadJson<number>(STORAGE_KEYS.renderDurationSec, 20);
         setDurationSec(cachedDuration);
+        const cachedTtsVoice = loadJson<string>(STORAGE_KEYS.ttsVoiceId, '');
+        if (cachedTtsVoice) setTtsVoiceId(cachedTtsVoice);
     }, []);
+
+    useEffect(() => {
+        if (ttsVoiceId) saveJson(STORAGE_KEYS.ttsVoiceId, ttsVoiceId);
+    }, [ttsVoiceId]);
 
     useEffect(() => {
         saveJson(STORAGE_KEYS.audioPath, audioPath);
@@ -263,44 +271,41 @@ export function RenderPage() {
             toast.error('Audio Path is required for waveform mode');
             return;
         }
+        if (kineticCaptions && mode === 'video' && !ttsVoiceId.trim()) {
+            toast.error('Kinetic captions need an ElevenLabs voice — set one on Voice / Audio or pick one below');
+            return;
+        }
+
+        // Kinetic captions require the async worker path (it does TTS-with-timestamps
+        // server-side, which can take several seconds before render even starts).
+        const useBackground = renderInBackground || (kineticCaptions && mode === 'video');
 
         setIsRendering(true);
         try {
-            const endpoint = renderInBackground ? '/api/jobs/enqueue' : `/api/render/${mode}`;
-            const payload = renderInBackground
-                ? {
-                    type: mode === 'video' ? 'render_video' : 'render_waveform',
-                    payload: {
-                        backgroundPath: backgroundItem?.id || backgroundPath,
-                        audioPath,
-                        lines: cleanLines,
-                        durationSec,
-                        aspect,
-                        captionWidthPct: captionWidth,
-                        musicPath: musicPath || undefined,
-                        musicVolume,
-                        autoDuck,
-                    },
-                }
-                : {
-                    backgroundPath: backgroundItem?.id || backgroundPath,
-                    audioPath,
-                    lines: cleanLines,
-                    durationSec,
-                    aspect,
-                    captionWidthPct: captionWidth,
-                    musicPath: musicPath || undefined,
-                    musicVolume,
-                    autoDuck,
-                };
+            const endpoint = useBackground ? '/api/jobs/enqueue' : `/api/render/${mode}`;
+            const corePayload = {
+                backgroundPath: backgroundItem?.id || backgroundPath,
+                audioPath,
+                lines: cleanLines,
+                durationSec,
+                aspect,
+                captionWidthPct: captionWidth,
+                musicPath: musicPath || undefined,
+                musicVolume,
+                autoDuck,
+                ...(kineticCaptions && mode === 'video' ? { kineticCaptions: true, voiceId: ttsVoiceId } : {}),
+            };
+            const payload = useBackground
+                ? { type: mode === 'video' ? 'render_video' : 'render_waveform', payload: corePayload }
+                : corePayload;
 
             const response = await api.post(endpoint, payload);
 
             if (response.ok) {
-                if (renderInBackground) {
+                if (useBackground) {
                     const newJobId: string | undefined = response.data?.id || response.data?.job?.id;
                     if (newJobId) myEnqueuedJobsRef.current.add(newJobId);
-                    toast.success('Job enqueued — you\'ll be notified when it\'s ready');
+                    toast.success(kineticCaptions ? 'Kinetic render queued — voice + word captions in progress' : 'Job enqueued — you\'ll be notified when it\'s ready');
                 } else {
                     toast.success('Video rendered successfully!');
                     setResult(response.data);
@@ -728,13 +733,47 @@ export function RenderPage() {
                             checked={renderInBackground}
                             onChange={(e) => setRenderInBackground(e.target.checked)}
                             className="rounded border-white/10 bg-black/50 checked:bg-primary-500"
-                            disabled={isLongRender}
+                            disabled={isLongRender || kineticCaptions}
                         />
                         <label htmlFor="background" className="text-sm text-gray-400">
                             Render in background (Jobs System)
                         </label>
                         {isLongRender && (
                             <span className="text-[10px] text-yellow-300">Required for 60s+</span>
+                        )}
+                        {kineticCaptions && (
+                            <span className="text-[10px] text-amber-300">Forced on by Kinetic captions</span>
+                        )}
+                    </div>
+
+                    <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.04] p-3 space-y-2">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={kineticCaptions}
+                                onChange={(e) => setKineticCaptions(e.target.checked)}
+                                className="rounded border-white/10 bg-black/50 checked:bg-amber-500"
+                            />
+                            <span className="text-sm font-semibold text-white">Kinetic captions (word-by-word, synced to voice)</span>
+                        </label>
+                        <p className="text-[11px] text-gray-400 pl-6">
+                            Generates the voice from your script via ElevenLabs and lights up each word
+                            as it's spoken. Keyword in each line renders larger in amber.
+                            Overrides the Audio field above.
+                        </p>
+                        {kineticCaptions && (
+                            <div className="pl-6 space-y-1">
+                                <label className="text-[10px] uppercase tracking-wider text-gray-500">ElevenLabs voice ID</label>
+                                <Input
+                                    value={ttsVoiceId}
+                                    onChange={(e) => setTtsVoiceId(e.target.value)}
+                                    placeholder="e.g. EXAVITQu4vr4xnSDxMaL"
+                                    className="text-xs font-mono"
+                                />
+                                <p className="text-[10px] text-gray-500">
+                                    Pick one on the Voice / Audio page — it auto-fills here.
+                                </p>
+                            </div>
                         )}
                     </div>
 

@@ -8,7 +8,10 @@ import { DATA_DIR, OUTPUT_DIR, resolveOutputAlias, isLocalOrRemote } from "../li
 import { generateScripts } from "../lib/generateScripts.js";
 import { synthesizeTts } from "../lib/ttsOrchestrator.js";
 import { dispatchPost } from "./social.js";
-import { pickBestBackground } from "../lib/categorize.js";
+import { pickBestBackground, classifyText } from "../lib/categorize.js";
+import { charsToWords, annotateEmphasis, groupWordsByBeat } from "../lib/captions.js";
+import { buildWordDrawtext, buildLineDrawtext, buildSceneGraph } from "../lib/videoFilters.js";
+import { buildSocialCaption } from "../lib/socialCaption.js";
 
 const router = Router();
 let ffmpegChecked = false;
@@ -30,6 +33,29 @@ function ensureFfmpegAvailable() {
   }
   ffmpegChecked = true;
   return ffmpegOk;
+}
+
+function probeAudioDuration(filePath) {
+  return new Promise((resolve, reject) => {
+    const ffprobe = process.env.FFPROBE_PATH?.trim() || "ffprobe";
+    const proc = spawn(ffprobe, [
+      "-v", "error",
+      "-show_entries", "format=duration",
+      "-of", "default=noprint_wrappers=1:nokey=1",
+      filePath,
+    ]);
+    let out = "";
+    let err = "";
+    proc.stdout.on("data", (d) => { out += d.toString(); });
+    proc.stderr.on("data", (d) => { err += d.toString(); });
+    proc.on("error", reject);
+    proc.on("close", (code) => {
+      if (code !== 0) return reject(new Error(`ffprobe failed: ${err.slice(-200) || code}`));
+      const dur = parseFloat(out.trim());
+      if (!Number.isFinite(dur) || dur <= 0) return reject(new Error(`ffprobe returned invalid duration: ${out.trim()}`));
+      resolve(dur);
+    });
+  });
 }
 
 function clampDuration(value) {
@@ -453,7 +479,19 @@ async function executeJob(job) {
 
 // Core renderer extracted so both render_video jobs and campaign_auto_post
 // can produce a video without spinning up a sub-job (worker concurrency = 1).
+// When payload.words[] or payload.scenes[] is present, routes through the
+// new word-level / scene-splitter pipeline. Otherwise uses the legacy
+// single-background + line-captions path.
 async function renderVideoCore(payload, jobId) {
+  const hasWords = Array.isArray(payload?.words) && payload.words.length > 0;
+  const hasScenes = Array.isArray(payload?.scenes) && payload.scenes.length > 0;
+  if (hasWords || hasScenes) {
+    return await renderAdvancedVideo(payload, jobId);
+  }
+  if (payload?.kineticCaptions) {
+    const augmented = await augmentPayloadWithKineticCaptions(payload, jobId);
+    return await renderAdvancedVideo(augmented, jobId);
+  }
   const { backgroundPath, audioPath, lines, durationSec, aspect, captionWidthPct, musicPath, musicVolume, autoDuck } = payload || {};
   const resolvedBackground = resolveAssetPath(backgroundPath);
   const resolvedAudio = resolveAssetPath(audioPath);
@@ -549,6 +587,196 @@ async function renderVideoCore(payload, jobId) {
   }
 }
 
+// Generate TTS-with-timestamps for the supplied script lines, then build a
+// words[] array (with keyword emphasis) so the manual Render flow can opt
+// into the same word-level captions the campaign uses. Falls back to the
+// user-provided audio + line captions if ElevenLabs can't supply alignment
+// (e.g. only Edge-TTS is available).
+async function augmentPayloadWithKineticCaptions(payload, jobId) {
+  const rawLines = Array.isArray(payload?.lines) ? payload.lines.map((s) => String(s).slice(0, 280)) : [];
+  const cleanLines = rawLines.map((s) => s.trim()).filter(Boolean);
+  if (cleanLines.length === 0) throw new Error("kineticCaptions: lines[] required");
+  const ttsText = cleanLines.join(" ").trim();
+  const tts = await synthesizeTts({ text: ttsText, voiceId: payload?.voiceId, withTimestamps: true });
+  safeUpdateJob(jobId, { progress: 35 });
+  if (!tts?.alignment || !Array.isArray(tts.alignment.characters) || tts.alignment.characters.length === 0) {
+    console.warn("[RENDER] kineticCaptions requested but TTS returned no alignment — falling back to line captions");
+    return { ...payload, kineticCaptions: false, audioPath: tts.file };
+  }
+  const rawWords = charsToWords(tts.alignment);
+  const words = annotateEmphasis(rawWords, cleanLines);
+  return { ...payload, audioPath: tts.file, words };
+}
+
+// Advanced renderer used when the caller provides word-level captions
+// (`words: [{text,start,end,emphasize?}]`) and/or a scene split
+// (`scenes: [{ backgroundPath, duration }]`). Both inputs are optional —
+// `words` without `scenes` falls back to a single background, and `scenes`
+// without `words` falls back to legacy line captions.
+async function renderAdvancedVideo(payload, jobId) {
+  const {
+    audioPath,
+    musicPath,
+    musicVolume,
+    autoDuck,
+    aspect,
+    durationSec,
+    lines,
+    words,
+    scenes,
+    backgroundPath,
+  } = payload || {};
+  const resolvedAudio = resolveAssetPath(audioPath);
+  const resolvedMusic = resolveAssetPath(musicPath);
+
+  if (resolvedAudio && !isLocalOrRemote(resolvedAudio)) throw new Error(`audioPath not found: ${audioPath}`);
+  if (resolvedMusic && !isLocalOrRemote(resolvedMusic)) throw new Error(`musicPath not found: ${musicPath}`);
+  if (resolvedAudio && isFileTooLarge(resolvedAudio)) throw new Error(`audioPath too large (>${MAX_INPUT_MB}MB)`);
+  if (resolvedMusic && isFileTooLarge(resolvedMusic)) throw new Error(`musicPath too large (>${MAX_INPUT_MB}MB)`);
+
+  // Probe audio length so the output video spans the full TTS audio — never
+  // cuts off mid-sentence (the previous bug) and never trails silence past
+  // the last word. When audio is absent we fall back to the user's
+  // durationSec.
+  let audioDur = null;
+  if (resolvedAudio) {
+    try {
+      audioDur = await probeAudioDuration(resolvedAudio);
+    } catch (err) {
+      console.warn(`[RENDER] probe audio duration failed (${err?.message || err}); using durationSec fallback`);
+    }
+  }
+
+  const sceneList = Array.isArray(scenes) && scenes.length > 0
+    ? scenes
+    : [{ backgroundPath, duration: audioDur ?? clampDuration(durationSec || 20) }];
+
+  const resolvedScenes = sceneList.map((s, i) => {
+    const resolved = resolveAssetPath(s?.backgroundPath);
+    if (!resolved || !isLocalOrRemote(resolved)) throw new Error(`scene[${i}] backgroundPath missing or not found: ${s?.backgroundPath || "<empty>"}`);
+    if (isFileTooLarge(resolved)) throw new Error(`scene[${i}] backgroundPath too large (>${MAX_INPUT_MB}MB)`);
+    return { backgroundPath: resolved, duration: Math.max(0.5, Number(s?.duration) || 0) };
+  });
+
+  // Final safety: if the audio is longer than what the scene graph emits
+  // (after the xfade overlap math), grow the last scene so -shortest doesn't
+  // truncate the audio.
+  const XFADE = 0.5;
+  if (audioDur != null && audioDur > 0 && resolvedScenes.length > 0) {
+    const sceneN = resolvedScenes.length;
+    const currentOutputDur = resolvedScenes.reduce((s, sc) => s + sc.duration, 0) - (sceneN - 1) * XFADE;
+    const shortfall = audioDur - currentOutputDur;
+    if (shortfall > 0.05) {
+      resolvedScenes[sceneN - 1].duration += shortfall + 0.1;
+    }
+  }
+
+  const { w, h } = getDims(aspect);
+  const graph = buildSceneGraph({ scenes: resolvedScenes, w, h });
+  const totalDuration = Math.min(
+    MAX_RENDER_SECONDS,
+    audioDur != null ? audioDur : Math.max(1, Number(durationSec) || graph.totalDuration),
+  );
+
+  const drawtextChain = Array.isArray(words) && words.length > 0
+    ? buildWordDrawtext({ words, w, h })
+    : buildLineDrawtext({ lines: Array.isArray(lines) ? lines : [], w, h });
+
+  const filterParts = graph.filterParts.slice();
+  let videoLabel = graph.videoLabel;
+  if (drawtextChain) {
+    filterParts.push(`[${videoLabel}]${drawtextChain}[vout]`);
+    videoLabel = "vout";
+  }
+
+  const sceneCount = resolvedScenes.length;
+  const args = ["-y"];
+  for (const s of resolvedScenes) {
+    args.push("-stream_loop", "-1", "-i", s.backgroundPath);
+  }
+  let audioInputIdx = null;
+  let musicInputIdx = null;
+  if (resolvedAudio) {
+    audioInputIdx = sceneCount + 0;
+    args.push("-i", resolvedAudio);
+  }
+  if (resolvedMusic) {
+    musicInputIdx = (resolvedAudio ? sceneCount + 1 : sceneCount);
+    args.push("-i", resolvedMusic);
+  }
+
+  const musicVol = Math.min(1, Math.max(0, Number(musicVolume ?? 0.3)));
+  const duck = Boolean(autoDuck) && resolvedAudio != null && resolvedMusic != null;
+  let audioMapTarget = null;
+  if (resolvedAudio && resolvedMusic) {
+    if (duck) {
+      filterParts.push(`[${audioInputIdx}:a]volume=1.0[a1]`);
+      filterParts.push(`[${musicInputIdx}:a]volume=${musicVol}[m1]`);
+      filterParts.push(`[m1][a1]sidechaincompress=threshold=0.01:ratio=12:attack=5:release=350:makeup=2[ducked]`);
+      filterParts.push(`[a1][ducked]amix=inputs=2:duration=shortest:dropout_transition=2[aout]`);
+    } else {
+      filterParts.push(`[${audioInputIdx}:a]volume=1.0[a1]`);
+      filterParts.push(`[${musicInputIdx}:a]volume=${musicVol}[a2]`);
+      filterParts.push(`[a1][a2]amix=inputs=2:duration=shortest:dropout_transition=2[aout]`);
+    }
+    audioMapTarget = "[aout]";
+  } else if (resolvedAudio) {
+    audioMapTarget = `${audioInputIdx}:a`;
+  } else if (resolvedMusic) {
+    filterParts.push(`[${musicInputIdx}:a]volume=${musicVol}[aout]`);
+    audioMapTarget = "[aout]";
+  }
+
+  const filterComplex = filterParts.join(";");
+  const preset = process.env.FFMPEG_PRESET || "fast";
+  const hwaccel = process.env.FFMPEG_HWACCEL;
+  const vcodec = hwaccel === "nvenc" ? "h264_nvenc" : hwaccel === "qsv" ? "h264_qsv" : "libx264";
+
+  const outFile = path.join(outDir, `video-${uuid()}.mp4`);
+  args.push(
+    "-t", String(totalDuration),
+    "-filter_complex", filterComplex,
+    "-map", `[${videoLabel}]`,
+  );
+  if (audioMapTarget) args.push("-map", audioMapTarget);
+  args.push(
+    "-r", "30",
+    "-c:v", vcodec,
+    "-preset", preset,
+    "-crf", "22",
+    "-pix_fmt", "yuv420p",
+  );
+  if (audioMapTarget) {
+    args.push("-c:a", "aac", "-b:a", "192k", "-shortest");
+  } else {
+    args.push("-an");
+  }
+  args.push(outFile);
+
+  try {
+    await runFFmpeg(args, totalDuration, (p) => {
+      const now = Date.now();
+      const prev = lastProgressByJob.get(jobId);
+      const changedEnough = !prev || p > prev.p;
+      const intervalElapsed = !prev || now - prev.ts >= 1000;
+      if (!changedEnough || !intervalElapsed) return;
+      lastProgressByJob.set(jobId, { p, ts: now });
+      volatileProgressByJob.set(jobId, p);
+    });
+    logMemory(`job:render_video_advanced:done scenes=${sceneCount} words=${Array.isArray(words) ? words.length : 0}`);
+    if (global.gc) global.gc();
+    volatileProgressByJob.set(jobId, 100);
+    safeUpdateJob(jobId, { progress: 100 });
+    return { outFile };
+  } catch (e) {
+    try { if (fs.existsSync(outFile)) fs.unlinkSync(outFile); } catch {}
+    throw e;
+  } finally {
+    lastProgressByJob.delete(jobId);
+    volatileProgressByJob.delete(jobId);
+  }
+}
+
 // Orchestrates the full content-creation pipeline in one job:
 // generate script -> pick library bg -> generate Edge-TTS -> render video ->
 // fire Make webhook (or other destination) so TikTok/YouTube auto-publishes.
@@ -605,44 +833,112 @@ async function runCampaignAutoPost(payload, jobId) {
   const lines = [script.hook, script.reference ? `${script.verse} (${script.reference})` : script.verse, script.reflection, script.cta].filter(Boolean);
   safeUpdateJob(jobId, { progress: 12 });
 
-  // 2. Pick a background — category-aware: classify script keywords, prefer
-  // Library items tagged with matching categories, fall back to any item.
+  // 2. Library check — we'll pick backgrounds per beat after TTS so each
+  // scene matches its own text mood.
   const lib = readLibrary();
   const pool = Array.isArray(lib?.items) ? lib.items : [];
   if (pool.length === 0) throw new Error("campaign: library is empty — add at least one background before running auto-post");
-  const pickedBackground = pickBestBackground(pool, { script, backgroundQuery });
-  if (!pickedBackground?.id) throw new Error("campaign: picked library item has no id");
-  safeUpdateJob(jobId, { progress: 22 });
+  safeUpdateJob(jobId, { progress: 18 });
 
-  // 3. Generate voice. Orchestrator tries ElevenLabs first (paid, high quality)
-  // and falls back to Edge-TTS (free) on any failure. Same return shape.
+  // 3. Generate voice. Request timestamps so we can do word-level captions.
+  // ElevenLabs supplies them; Edge-TTS fallback does not (alignment absent).
   const ttsText = `${script.hook} ${script.verse} ${script.reflection} ${script.cta}`.trim();
-  const tts = await synthesizeTts({ text: ttsText, voiceId });
+  const tts = await synthesizeTts({ text: ttsText, voiceId, withTimestamps: true });
   const audioPath = tts.file;
-  console.log(`[CAMPAIGN] tts provider=${tts.provider} voice=${tts.voice}`);
+  console.log(`[CAMPAIGN] tts provider=${tts.provider} voice=${tts.voice} aligned=${tts.alignment?.characters?.length || 0}chars`);
   safeUpdateJob(jobId, { progress: 45 });
 
-  // 4. Render the video
-  const renderResult = await renderVideoCore({
-    backgroundPath: pickedBackground.id,
-    audioPath,
-    lines,
-    durationSec,
-    aspect,
-    captionWidthPct,
-  }, jobId);
+  // 4. If we have alignment, build word-level captions + per-beat scenes.
+  // Otherwise fall back to the legacy single-bg + line-captions path.
+  const ttsLines = [script.hook, script.verse, script.reflection, script.cta].filter(Boolean);
+  const beatTexts = [
+    script.hook,
+    script.reference ? `${script.verse} (${script.reference})` : script.verse,
+    [script.reflection, script.cta].filter(Boolean).join(" "),
+  ].filter(Boolean);
+
+  let renderResult;
+  let pickedBackground;
+  if (tts.alignment && Array.isArray(tts.alignment.characters) && tts.alignment.characters.length > 0) {
+    const rawWords = charsToWords(tts.alignment);
+    const words = annotateEmphasis(rawWords, ttsLines);
+    const beats = groupWordsByBeat(words, beatTexts);
+    const sceneCount = beats.length >= 2 ? beats.length : 1;
+
+    // Probe the actual audio so the scene boundaries tile the WHOLE clip —
+    // including leading silence before the first word and trailing silence
+    // after the last word. Without this the campaign was clipping the tail
+    // of the TTS (audio cut off at the last beat-end, not the audio end).
+    let audioDurForBoundaries = 0;
+    try { audioDurForBoundaries = await probeAudioDuration(audioPath); } catch { /* fall through */ }
+    if (!Number.isFinite(audioDurForBoundaries) || audioDurForBoundaries <= 0) {
+      audioDurForBoundaries = words.length > 0 ? words[words.length - 1].end + 0.5 : Number(durationSec) || 20;
+    }
+
+    // boundaries[i] = start time of scene i. boundaries[sceneCount] = audio end.
+    // Scene 0 always starts at t=0 so any leading silence is covered.
+    const boundaries = [0];
+    for (let i = 1; i < sceneCount; i++) {
+      const beatStart = beats[i] ? Math.max(0, Number(beats[i].start) || 0) : null;
+      boundaries.push(beatStart != null ? beatStart : (audioDurForBoundaries * i) / sceneCount);
+    }
+    boundaries.push(audioDurForBoundaries);
+
+    const XFADE = 0.5;
+    const scenes = [];
+    const usedIds = new Set();
+    for (let i = 0; i < sceneCount; i++) {
+      const beat = beats[i];
+      const beatCats = beat ? classifyText(beat.line) : [];
+      const candidatePool = pool.filter((it) => !usedIds.has(String(it?.id)));
+      const fallbackPool = candidatePool.length > 0 ? candidatePool : pool;
+      const matched = beatCats.length > 0
+        ? fallbackPool.filter((it) => Array.isArray(it?.categories) && it.categories.some((c) => beatCats.includes(String(c).toLowerCase())))
+        : [];
+      const tier = matched.length > 0 ? matched : fallbackPool;
+      const pick = tier[Math.floor(Math.random() * tier.length)] || pool[0];
+      usedIds.add(String(pick.id));
+      const naturalSpan = Math.max(0.5, boundaries[i + 1] - boundaries[i]);
+      // Each scene except the last gets +XFADE so the crossfade overlap
+      // doesn't shorten the visible portion of that beat.
+      const duration = i < sceneCount - 1 ? naturalSpan + XFADE : naturalSpan;
+      scenes.push({ backgroundPath: pick.id, duration, _libItem: pick });
+    }
+
+    pickedBackground = scenes[0]._libItem;
+
+    renderResult = await renderVideoCore({
+      audioPath,
+      words,
+      scenes: scenes.map((s) => ({ backgroundPath: s.backgroundPath, duration: s.duration })),
+      durationSec: audioDurForBoundaries,
+      aspect,
+      captionWidthPct,
+    }, jobId);
+  } else {
+    console.warn("[CAMPAIGN] no alignment from TTS (Edge-TTS fallback?) — using legacy line captions");
+    pickedBackground = pickBestBackground(pool, { script, backgroundQuery });
+    if (!pickedBackground?.id) throw new Error("campaign: picked library item has no id");
+    renderResult = await renderVideoCore({
+      backgroundPath: pickedBackground.id,
+      audioPath,
+      lines: ttsLines,
+      durationSec,
+      aspect,
+      captionWidthPct,
+    }, jobId);
+  }
   const outFile = renderResult.outFile;
   safeUpdateJob(jobId, { progress: 90 });
 
   // 5. Fire Make webhook (or other destination) so TikTok/YouTube auto-publish.
-  // Series Mode supplies its own caption (with verse + YouVersion link); for
-  // AI-generated campaigns we synthesize a caption from the script fields.
+  // Series Mode supplies its own pre-formatted caption (verse text +
+  // YouVersion link + cliffhanger); regular AI campaigns use the structured
+  // social-caption builder (hook on top, hashtags at the end, word-safe
+  // truncation).
   const caption = (typeof captionOverride === "string" && captionOverride.trim().length > 0)
     ? captionOverride.trim().slice(0, 1900)
-    : [script.hook, script.verse, script.reference ? `(${script.reference})` : "", script.reflection, script.cta]
-        .filter(Boolean)
-        .join(" ")
-        .slice(0, 1900);
+    : buildSocialCaption(script);
   const videoFile = path.basename(outFile);
   const videoUrl = `/outputs/${videoFile}`;
   let shareResult = null;

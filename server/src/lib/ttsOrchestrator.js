@@ -1,4 +1,4 @@
-import { synthesizeElevenLabs, isElevenLabsConfigured } from "./elevenLabsTts.js";
+import { synthesizeElevenLabs, synthesizeElevenLabsWithTimestamps, isElevenLabsConfigured } from "./elevenLabsTts.js";
 import { synthesizeEdgeTts, isEdgeTtsEnabled } from "./edgeTts.js";
 
 /**
@@ -7,16 +7,18 @@ import { synthesizeEdgeTts, isEdgeTtsEnabled } from "./edgeTts.js";
  * 2. Edge-TTS   — free Microsoft "Read Aloud", used as automatic fallback.
  *
  * Returns the same shape as both providers: { ok, file, provider, voice }.
+ * When `withTimestamps: true` is requested AND ElevenLabs answers, an extra
+ * `alignment: { characters, starts, ends }` field is included.
  *
  * Falls back automatically on provider errors (rate limit, billing failure,
  * invalid voice, network blip). If both providers fail, the original error
  * from the FIRST provider is thrown so logs make it clear where the chain
  * started failing.
  *
- * @param {{ text: string, voiceId?: string, elevenLabsVoiceId?: string, edgeVoiceId?: string, voiceSettings?: any, modelId?: string }} opts
+ * @param {{ text: string, voiceId?: string, elevenLabsVoiceId?: string, edgeVoiceId?: string, voiceSettings?: any, modelId?: string, withTimestamps?: boolean }} opts
  */
 export async function synthesizeTts(opts = {}) {
-  const { text, voiceId } = opts;
+  const { text, voiceId, withTimestamps } = opts;
   if (!text || String(text).trim().length < 3) {
     throw new Error("text required (min 3 chars)");
   }
@@ -25,7 +27,8 @@ export async function synthesizeTts(opts = {}) {
 
   if (isElevenLabsConfigured()) {
     try {
-      return await synthesizeElevenLabs({
+      const fn = withTimestamps ? synthesizeElevenLabsWithTimestamps : synthesizeElevenLabs;
+      return await fn({
         text,
         voiceId: opts.elevenLabsVoiceId || voiceId,
         voiceSettings: opts.voiceSettings,
