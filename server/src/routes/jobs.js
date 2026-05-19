@@ -11,6 +11,7 @@ import { dispatchPost } from "./social.js";
 import { pickBestBackground, classifyText } from "../lib/categorize.js";
 import { charsToWords, annotateEmphasis, groupWordsByBeat } from "../lib/captions.js";
 import { buildWordDrawtext, buildLineDrawtext, buildSceneGraph } from "../lib/videoFilters.js";
+import { buildSocialCaption } from "../lib/socialCaption.js";
 
 const router = Router();
 let ffmpegChecked = false;
@@ -913,11 +914,11 @@ async function runCampaignAutoPost(payload, jobId) {
   const outFile = renderResult.outFile;
   safeUpdateJob(jobId, { progress: 90 });
 
-  // 5. Fire Make webhook (or other destination) so TikTok/YouTube auto-publish
-  const caption = [script.hook, script.verse, script.reference ? `(${script.reference})` : "", script.reflection, script.cta]
-    .filter(Boolean)
-    .join(" ")
-    .slice(0, 1900);
+  // 5. Fire Make webhook (or other destination) so TikTok/YouTube auto-publish.
+  // Caption is built section-by-section with line breaks so the hook lands
+  // above-the-fold on every platform, hashtags sit at the end for reach, and
+  // any over-budget trim happens at a word boundary (never mid-word).
+  const caption = buildSocialCaption(script);
   const videoFile = path.basename(outFile);
   const videoUrl = `/outputs/${videoFile}`;
   let shareResult = null;
