@@ -13,6 +13,7 @@ type SocialSchedule = {
     id: string;
     name: string;
     enabled: boolean;
+    type: 'replay' | 'auto_generate';
     cron: string;
     timezone: string;
     destination: 'webhook' | 'buffer' | 'youtube';
@@ -21,6 +22,14 @@ type SocialSchedule = {
     webhookId?: string;
     profileId?: string;
     privacyStatus?: 'private' | 'unlisted' | 'public';
+    // auto_generate knobs
+    niche?: string;
+    tone?: string;
+    ctaStyle?: string;
+    aspect?: string;
+    durationSec?: number;
+    voiceId?: string;
+    backgroundQuery?: string;
 };
 
 export function SettingsPage() {
@@ -62,6 +71,7 @@ export function SettingsPage() {
                 id: String(s.id || `sch_${Date.now()}`),
                 name: String(s.name || 'Scheduled Post'),
                 enabled: Boolean(s.enabled ?? true),
+                type: (s.type === 'auto_generate' ? 'auto_generate' : 'replay') as SocialSchedule['type'],
                 cron: String(s.cron || ''),
                 timezone: String(s.timezone || 'UTC'),
                 destination: (['webhook', 'buffer', 'youtube'].includes(String(s.destination))
@@ -74,6 +84,13 @@ export function SettingsPage() {
                 privacyStatus: (['private', 'unlisted', 'public'].includes(String(s.privacyStatus))
                     ? String(s.privacyStatus)
                     : 'private') as SocialSchedule['privacyStatus'],
+                niche: s.niche ? String(s.niche) : undefined,
+                tone: s.tone ? String(s.tone) : undefined,
+                ctaStyle: s.ctaStyle ? String(s.ctaStyle) : undefined,
+                aspect: s.aspect ? String(s.aspect) : undefined,
+                durationSec: Number.isFinite(Number(s.durationSec)) ? Number(s.durationSec) : undefined,
+                voiceId: s.voiceId ? String(s.voiceId) : undefined,
+                backgroundQuery: s.backgroundQuery ? String(s.backgroundQuery) : undefined,
             })));
             const firstEnabled = hooks.find((w: any) => w.enabled);
             const firstKey = firstEnabled?.id || firstEnabled?.url || (hooks[0]?.id || hooks[0]?.url || '');
@@ -132,6 +149,7 @@ export function SettingsPage() {
             id: `sch_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
             name: 'Auto Post',
             enabled: true,
+            type: 'replay',
             cron: '0 */1 * * *',
             timezone: 'UTC',
             destination: 'webhook',
@@ -413,13 +431,21 @@ export function SettingsPage() {
                                 <div className="text-xs text-gray-500">No schedules yet.</div>
                             )}
                             {schedules.map((s) => (
-                                <div key={s.id} className="rounded-xl border border-white/10 bg-white/[0.03] p-3 space-y-2">
-                                    <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                                <div key={s.id} className={`rounded-xl border p-3 space-y-2 ${s.type === 'auto_generate' ? 'border-amber-500/30 bg-amber-500/[0.04]' : 'border-white/10 bg-white/[0.03]'}`}>
+                                    <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
                                         <Input
                                             value={s.name}
                                             onChange={(e) => updateSchedule(s.id, { name: e.target.value })}
                                             placeholder="Schedule name"
                                         />
+                                        <Select
+                                            value={s.type}
+                                            onChange={(e) => updateSchedule(s.id, { type: e.target.value as SocialSchedule['type'] })}
+                                            title="Replay reposts a fixed URL. Auto-Generate creates a brand new video every tick."
+                                        >
+                                            <option value="replay">Replay URL</option>
+                                            <option value="auto_generate">Auto-Generate</option>
+                                        </Select>
                                         <Input
                                             value={s.cron}
                                             onChange={(e) => updateSchedule(s.id, { cron: e.target.value })}
@@ -483,16 +509,56 @@ export function SettingsPage() {
                                             Remove
                                         </Button>
                                     </div>
-                                    <Input
-                                        value={s.videoUrl}
-                                        onChange={(e) => updateSchedule(s.id, { videoUrl: e.target.value })}
-                                        placeholder="Video URL or /outputs/video-xxx.mp4"
-                                    />
-                                    <Input
-                                        value={s.caption}
-                                        onChange={(e) => updateSchedule(s.id, { caption: e.target.value })}
-                                        placeholder="Caption for scheduled post"
-                                    />
+                                    {s.type === 'replay' ? (
+                                        <>
+                                            <Input
+                                                value={s.videoUrl}
+                                                onChange={(e) => updateSchedule(s.id, { videoUrl: e.target.value })}
+                                                placeholder="Video URL or /outputs/video-xxx.mp4"
+                                            />
+                                            <Input
+                                                value={s.caption}
+                                                onChange={(e) => updateSchedule(s.id, { caption: e.target.value })}
+                                                placeholder="Caption for scheduled post"
+                                            />
+                                        </>
+                                    ) : (
+                                        <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                                            <Input
+                                                value={s.backgroundQuery || ''}
+                                                onChange={(e) => updateSchedule(s.id, { backgroundQuery: e.target.value })}
+                                                placeholder="Background filter (optional, e.g. 'sunset')"
+                                            />
+                                            <Select
+                                                value={s.aspect || 'portrait'}
+                                                onChange={(e) => updateSchedule(s.id, { aspect: e.target.value })}
+                                            >
+                                                <option value="portrait">Portrait (9:16)</option>
+                                                <option value="landscape">Landscape (16:9)</option>
+                                                <option value="square">Square (1:1)</option>
+                                            </Select>
+                                            <Input
+                                                type="number"
+                                                value={s.durationSec ?? 20}
+                                                onChange={(e) => updateSchedule(s.id, { durationSec: Number(e.target.value) || 20 })}
+                                                placeholder="Duration (s)"
+                                            />
+                                            <Select
+                                                value={s.ctaStyle || 'save'}
+                                                onChange={(e) => updateSchedule(s.id, { ctaStyle: e.target.value })}
+                                            >
+                                                <option value="save">CTA: save</option>
+                                                <option value="follow">CTA: follow</option>
+                                                <option value="share">CTA: share</option>
+                                                <option value="comment">CTA: comment</option>
+                                            </Select>
+                                        </div>
+                                    )}
+                                    {s.type === 'auto_generate' && (
+                                        <p className="text-[10px] text-amber-200/80">
+                                            On each cron tick this generates a NEW script + voice + video and posts via the destination above. Requires at least one background in your Library.
+                                        </p>
+                                    )}
                                 </div>
                             ))}
                         </div>

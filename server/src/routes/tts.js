@@ -5,6 +5,7 @@ import path from "path";
 import { v4 as uuid } from "uuid";
 import { MsEdgeTTS, OUTPUT_FORMAT } from "msedge-tts";
 import { OUTPUT_DIR } from "../lib/paths.js";
+import { synthesizeEdgeTts } from "../lib/edgeTts.js";
 
 const router = Router();
 const allowedAudioExt = new Set([".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".webm"]);
@@ -296,48 +297,15 @@ function collectStream(stream, timeoutMs) {
 }
 
 router.post("/edge", async (req, res) => {
-  if (!isEdgeEnabled()) {
-    return res.status(400).json({ ok: false, error: "Edge-TTS disabled (EDGE_TTS_ENABLED=false)" });
-  }
-
   const { text, voiceId, rate, pitch, volume } = req.body || {};
-  if (!text || String(text).trim().length < 3) {
-    return res.status(400).json({ ok: false, error: "text required (min 3 chars)" });
-  }
-  const voice = String(voiceId || defaultEdgeVoice()).trim();
-
-  const outDir = OUTPUT_DIR;
-  if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
-  const outFile = path.join(outDir, `tts-edge-${uuid()}.mp3`);
-
-  const tts = new MsEdgeTTS();
   try {
-    await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
-
-    // Optional prosody knobs — Edge supports rate / pitch / volume but NOT
-    // emotion or stability. We pass them only when defined; otherwise stay
-    // with the engine defaults.
-    const prosody = {};
-    if (rate !== undefined && rate !== null && rate !== "") prosody.rate = rate;
-    if (pitch !== undefined && pitch !== null && pitch !== "") prosody.pitch = pitch;
-    if (volume !== undefined && volume !== null && volume !== "") prosody.volume = volume;
-
-    const { audioStream } = Object.keys(prosody).length > 0
-      ? tts.toStream(String(text), prosody)
-      : tts.toStream(String(text));
-
-    const buffer = await collectStream(audioStream, EDGE_TTS_TIMEOUT_MS);
-    if (!buffer || buffer.byteLength === 0) {
-      throw new Error("Edge-TTS returned empty audio");
-    }
-    fs.writeFileSync(outFile, buffer);
-    console.log(`[TTS] Edge MP3 saved to ${outFile} (${buffer.byteLength} bytes, voice=${voice})`);
-    res.json({ ok: true, file: outFile.replace(/\\/g, "/"), provider: "edge", voice });
+    const result = await synthesizeEdgeTts({ text, voiceId, rate, pitch, volume });
+    res.json(result);
   } catch (e) {
     console.error("[TTS] Edge route error:", e);
-    res.status(502).json({ ok: false, error: String(e?.message || e) });
-  } finally {
-    try { tts.close(); } catch { /* best-effort */ }
+    const message = String(e?.message || e);
+    const status = message.toLowerCase().includes("disabled") || message.toLowerCase().includes("required") ? 400 : 502;
+    res.status(status).json({ ok: false, error: message });
   }
 });
 

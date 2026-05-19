@@ -118,11 +118,34 @@ function finalizeScripts({ preferred, count, ctaStyle, historyKeys }) {
     }
   }
 
-  return out.slice(0, count).map((s, i) => ({
-    ...s,
-    title: s.title || `Biblefuel Post #${i + 1}`,
-    hashtags: Array.isArray(s.hashtags) && s.hashtags.length ? s.hashtags : ["#faith", "#bible", "#jesus", "#christian", "#encouragement", "#hope"],
-  }));
+  // Final safety net: history may have absorbed every remix combination too.
+  // Force-yield raw fallback templates with timestamped titles so the API
+  // never returns 0 scripts when the user explicitly asked for >= 1.
+  if (out.length < count) {
+    const cta = CTA_MAP[ctaStyle] || CTA_MAP.save;
+    const ts = Date.now();
+    let i = 0;
+    while (out.length < count) {
+      const base = FALLBACK_POOL[(out.length + i) % FALLBACK_POOL.length];
+      out.push({
+        ...base,
+        cta,
+        title: `Biblefuel Post #${out.length + 1}`,
+        hashtags: ["#faith", "#bible", "#jesus", "#christian", "#encouragement", "#hope"],
+        _stamp: ts + i,
+      });
+      i += 1;
+    }
+  }
+
+  return out.slice(0, count).map((s, i) => {
+    const { _stamp, ...clean } = s;
+    return {
+      ...clean,
+      title: clean.title || `Biblefuel Post #${i + 1}`,
+      hashtags: Array.isArray(clean.hashtags) && clean.hashtags.length ? clean.hashtags : ["#faith", "#bible", "#jesus", "#christian", "#encouragement", "#hope"],
+    };
+  });
 }
 
 async function opencodeGenerate(prompt) {

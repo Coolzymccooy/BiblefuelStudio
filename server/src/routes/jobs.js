@@ -5,6 +5,9 @@ import { v4 as uuid } from "uuid";
 import { spawn, spawnSync } from "child_process";
 import { readLibrary } from "../lib/library.js";
 import { DATA_DIR, OUTPUT_DIR, resolveOutputAlias, isLocalOrRemote } from "../lib/mediaThumb.js";
+import { generateScripts } from "../lib/generateScripts.js";
+import { synthesizeEdgeTts } from "../lib/edgeTts.js";
+import { dispatchPost } from "./social.js";
 
 const router = Router();
 let ffmpegChecked = false;
@@ -437,102 +440,217 @@ async function executeJob(job) {
   }
 
   if (job.type === "render_video") {
-    const { backgroundPath, audioPath, lines, durationSec, aspect, captionWidthPct, musicPath, musicVolume, autoDuck } = job.payload || {};
-    const resolvedBackground = resolveAssetPath(backgroundPath);
-    const resolvedAudio = resolveAssetPath(audioPath);
-    const resolvedMusic = resolveAssetPath(musicPath);
+    return await renderVideoCore(job.payload || {}, job.id);
+  }
 
-    if (!resolvedBackground || !isLocalOrRemote(resolvedBackground)) throw new Error(`backgroundPath missing or not found: ${backgroundPath || "<empty>"}`);
-    if (resolvedAudio && !isLocalOrRemote(resolvedAudio)) throw new Error(`audioPath not found: ${audioPath}`);
-    if (resolvedMusic && !isLocalOrRemote(resolvedMusic)) throw new Error(`musicPath not found: ${musicPath}`);
-    if (isFileTooLarge(resolvedBackground)) throw new Error(`backgroundPath too large (>${MAX_INPUT_MB}MB)`);
-    if (resolvedAudio && isFileTooLarge(resolvedAudio)) throw new Error(`audioPath too large (>${MAX_INPUT_MB}MB)`);
-    if (resolvedMusic && isFileTooLarge(resolvedMusic)) throw new Error(`musicPath too large (>${MAX_INPUT_MB}MB)`);
-    const rawLines = Array.isArray(lines) ? lines.map(s => String(s).slice(0, 140)) : [];
-    const { w, h } = getDims(aspect);
-    const widthPct = Math.min(100, Math.max(60, Number(captionWidthPct || 90)));
-    const baseChars = w >= 1800 ? 42 : w >= 1200 ? 34 : 28;
-    const maxChars = Math.max(18, Math.floor(baseChars * (widthPct / 100)));
-    const safeLines = wrapTextLines(rawLines, maxChars, 6);
-    if (safeLines.length === 0) throw new Error("lines[] required");
-
-    const outFile = path.join(outDir, `video-${uuid()}.mp4`);
-    const startY = Math.round(h * 0.22);
-    const lineGap = Math.round(h * 0.06);
-    const fontSize = Math.max(28, Math.round(h * 0.033));
-    const filters = safeLines.map((t, i) => {
-      const y = startY + i * lineGap;
-      const escaped = t.replace(/[:\\'\[\]]/g, "\\$&").replace(/\n/g, " ");
-      return `drawtext=text='${escaped}':x=(w-text_w)/2:y=${y}:fontsize=${fontSize}:fontcolor=white:box=1:boxcolor=black@0.35:boxborderw=18`;
-    }).join(",");
-
-    const args = ["-y", "-stream_loop", "-1", "-i", resolvedBackground];
-    if (resolvedAudio) args.push("-i", resolvedAudio);
-    if (resolvedMusic) args.push("-i", resolvedMusic);
-
-    const vf = `scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},${filters}`;
-    const preset = process.env.FFMPEG_PRESET || "fast";
-    const hwaccel = process.env.FFMPEG_HWACCEL;
-    const vcodec = hwaccel === 'nvenc' ? 'h264_nvenc' : hwaccel === 'qsv' ? 'h264_qsv' : 'libx264';
-    const t = clampDuration(durationSec || 20);
-
-    const musicVol = Math.min(1, Math.max(0, Number(musicVolume ?? 0.3)));
-    const duck = Boolean(autoDuck) && Boolean(resolvedMusic) && Boolean(resolvedAudio);
-
-    if (resolvedMusic) {
-      const aIndex = resolvedAudio ? 1 : null;
-      const mIndex = resolvedAudio ? 2 : 1;
-      const vFilter = `[0:v]${vf}[vout]`;
-      const aFilter = resolvedAudio
-        ? duck
-          ? `[${aIndex}:a]volume=1.0[a1];[${mIndex}:a]volume=${musicVol}[m1];[m1][a1]sidechaincompress=threshold=0.01:ratio=12:attack=5:release=350:makeup=2[ducked];[a1][ducked]amix=inputs=2:duration=shortest:dropout_transition=2[aout]`
-          : `[${aIndex}:a]volume=1.0[a1];[${mIndex}:a]volume=${musicVol}[a2];[a1][a2]amix=inputs=2:duration=shortest:dropout_transition=2[aout]`
-        : `[${mIndex}:a]volume=${musicVol}[aout]`;
-      args.push(
-        "-t", String(t),
-        "-filter_complex", `${vFilter};${aFilter}`,
-        "-map", "[vout]",
-        "-map", "[aout]",
-        "-r", "30",
-        "-c:v", vcodec,
-        "-preset", preset,
-        "-crf", "22",
-        "-pix_fmt", "yuv420p",
-        "-c:a", "aac",
-        "-b:a", "192k",
-        "-shortest"
-      );
-    } else {
-      args.push("-t", String(t), "-vf", vf, "-r", "30", "-c:v", vcodec, "-preset", preset, "-crf", "22", "-pix_fmt", "yuv420p");
-      if (resolvedAudio) args.push("-c:a", "aac", "-b:a", "192k", "-shortest"); else args.push("-an");
-    }
-    args.push(outFile);
-
-    try {
-      await runFFmpeg(args, t, (p) => {
-        const now = Date.now();
-        const prev = lastProgressByJob.get(job.id);
-        const changedEnough = !prev || p > prev.p;
-        const intervalElapsed = !prev || now - prev.ts >= 1000;
-        if (!changedEnough || !intervalElapsed) return;
-        lastProgressByJob.set(job.id, { p, ts: now });
-        volatileProgressByJob.set(job.id, p);
-      });
-      logMemory(`job:${job.type}:done`);
-      if (global.gc) global.gc();
-      volatileProgressByJob.set(job.id, 100);
-      safeUpdateJob(job.id, { progress: 100 });
-      return { outFile };
-    } catch (e) {
-      try { if (fs.existsSync(outFile)) fs.unlinkSync(outFile); } catch {}
-      throw e;
-    } finally {
-      lastProgressByJob.delete(job.id);
-      volatileProgressByJob.delete(job.id);
-    }
+  if (job.type === "campaign_auto_post") {
+    return await runCampaignAutoPost(job.payload || {}, job.id);
   }
 
   throw new Error("Unknown job type");
+}
+
+// Core renderer extracted so both render_video jobs and campaign_auto_post
+// can produce a video without spinning up a sub-job (worker concurrency = 1).
+async function renderVideoCore(payload, jobId) {
+  const { backgroundPath, audioPath, lines, durationSec, aspect, captionWidthPct, musicPath, musicVolume, autoDuck } = payload || {};
+  const resolvedBackground = resolveAssetPath(backgroundPath);
+  const resolvedAudio = resolveAssetPath(audioPath);
+  const resolvedMusic = resolveAssetPath(musicPath);
+
+  if (!resolvedBackground || !isLocalOrRemote(resolvedBackground)) throw new Error(`backgroundPath missing or not found: ${backgroundPath || "<empty>"}`);
+  if (resolvedAudio && !isLocalOrRemote(resolvedAudio)) throw new Error(`audioPath not found: ${audioPath}`);
+  if (resolvedMusic && !isLocalOrRemote(resolvedMusic)) throw new Error(`musicPath not found: ${musicPath}`);
+  if (isFileTooLarge(resolvedBackground)) throw new Error(`backgroundPath too large (>${MAX_INPUT_MB}MB)`);
+  if (resolvedAudio && isFileTooLarge(resolvedAudio)) throw new Error(`audioPath too large (>${MAX_INPUT_MB}MB)`);
+  if (resolvedMusic && isFileTooLarge(resolvedMusic)) throw new Error(`musicPath too large (>${MAX_INPUT_MB}MB)`);
+  const rawLines = Array.isArray(lines) ? lines.map(s => String(s).slice(0, 140)) : [];
+  const { w, h } = getDims(aspect);
+  const widthPct = Math.min(100, Math.max(60, Number(captionWidthPct || 90)));
+  const baseChars = w >= 1800 ? 42 : w >= 1200 ? 34 : 28;
+  const maxChars = Math.max(18, Math.floor(baseChars * (widthPct / 100)));
+  const safeLines = wrapTextLines(rawLines, maxChars, 6);
+  if (safeLines.length === 0) throw new Error("lines[] required");
+
+  const outFile = path.join(outDir, `video-${uuid()}.mp4`);
+  const startY = Math.round(h * 0.22);
+  const lineGap = Math.round(h * 0.06);
+  const fontSize = Math.max(28, Math.round(h * 0.033));
+  const filters = safeLines.map((t, i) => {
+    const y = startY + i * lineGap;
+    const escaped = t.replace(/[:\\'\[\]]/g, "\\$&").replace(/\n/g, " ");
+    return `drawtext=text='${escaped}':x=(w-text_w)/2:y=${y}:fontsize=${fontSize}:fontcolor=white:box=1:boxcolor=black@0.35:boxborderw=18`;
+  }).join(",");
+
+  const args = ["-y", "-stream_loop", "-1", "-i", resolvedBackground];
+  if (resolvedAudio) args.push("-i", resolvedAudio);
+  if (resolvedMusic) args.push("-i", resolvedMusic);
+
+  const vf = `scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},${filters}`;
+  const preset = process.env.FFMPEG_PRESET || "fast";
+  const hwaccel = process.env.FFMPEG_HWACCEL;
+  const vcodec = hwaccel === 'nvenc' ? 'h264_nvenc' : hwaccel === 'qsv' ? 'h264_qsv' : 'libx264';
+  const t = clampDuration(durationSec || 20);
+
+  const musicVol = Math.min(1, Math.max(0, Number(musicVolume ?? 0.3)));
+  const duck = Boolean(autoDuck) && Boolean(resolvedMusic) && Boolean(resolvedAudio);
+
+  if (resolvedMusic) {
+    const aIndex = resolvedAudio ? 1 : null;
+    const mIndex = resolvedAudio ? 2 : 1;
+    const vFilter = `[0:v]${vf}[vout]`;
+    const aFilter = resolvedAudio
+      ? duck
+        ? `[${aIndex}:a]volume=1.0[a1];[${mIndex}:a]volume=${musicVol}[m1];[m1][a1]sidechaincompress=threshold=0.01:ratio=12:attack=5:release=350:makeup=2[ducked];[a1][ducked]amix=inputs=2:duration=shortest:dropout_transition=2[aout]`
+        : `[${aIndex}:a]volume=1.0[a1];[${mIndex}:a]volume=${musicVol}[a2];[a1][a2]amix=inputs=2:duration=shortest:dropout_transition=2[aout]`
+      : `[${mIndex}:a]volume=${musicVol}[aout]`;
+    args.push(
+      "-t", String(t),
+      "-filter_complex", `${vFilter};${aFilter}`,
+      "-map", "[vout]",
+      "-map", "[aout]",
+      "-r", "30",
+      "-c:v", vcodec,
+      "-preset", preset,
+      "-crf", "22",
+      "-pix_fmt", "yuv420p",
+      "-c:a", "aac",
+      "-b:a", "192k",
+      "-shortest"
+    );
+  } else {
+    args.push("-t", String(t), "-vf", vf, "-r", "30", "-c:v", vcodec, "-preset", preset, "-crf", "22", "-pix_fmt", "yuv420p");
+    if (resolvedAudio) args.push("-c:a", "aac", "-b:a", "192k", "-shortest"); else args.push("-an");
+  }
+  args.push(outFile);
+
+  try {
+    await runFFmpeg(args, t, (p) => {
+      const now = Date.now();
+      const prev = lastProgressByJob.get(jobId);
+      const changedEnough = !prev || p > prev.p;
+      const intervalElapsed = !prev || now - prev.ts >= 1000;
+      if (!changedEnough || !intervalElapsed) return;
+      lastProgressByJob.set(jobId, { p, ts: now });
+      volatileProgressByJob.set(jobId, p);
+    });
+    logMemory(`job:render_video:done`);
+    if (global.gc) global.gc();
+    volatileProgressByJob.set(jobId, 100);
+    safeUpdateJob(jobId, { progress: 100 });
+    return { outFile };
+  } catch (e) {
+    try { if (fs.existsSync(outFile)) fs.unlinkSync(outFile); } catch {}
+    throw e;
+  } finally {
+    lastProgressByJob.delete(jobId);
+    volatileProgressByJob.delete(jobId);
+  }
+}
+
+// Orchestrates the full content-creation pipeline in one job:
+// generate script -> pick library bg -> generate Edge-TTS -> render video ->
+// fire Make webhook (or other destination) so TikTok/YouTube auto-publishes.
+async function runCampaignAutoPost(payload, jobId) {
+  const {
+    aspect = "portrait",
+    durationSec = 20,
+    captionWidthPct = 90,
+    voiceId,
+    backgroundQuery,
+    niche,
+    tone,
+    ctaStyle = "save",
+    lengthSeconds = 20,
+    includeVerseReference = true,
+    destination = "webhook",
+    webhookId,
+    webhookUrl,
+    profileIds,
+    privacyStatus = "private",
+    title,
+  } = payload || {};
+
+  safeUpdateJob(jobId, { progress: 2 });
+
+  // 1. Generate a single script
+  const scripts = await generateScripts({
+    niche: niche || "Christian / Bible encouragement",
+    tone: tone || "warm, encouraging, simple",
+    count: 1,
+    lengthSeconds: Math.max(8, Math.min(90, Number(lengthSeconds) || 20)),
+    includeVerseReference: Boolean(includeVerseReference),
+    ctaStyle,
+  });
+  const script = Array.isArray(scripts) ? scripts[0] : null;
+  if (!script) throw new Error("campaign: script generation produced 0 results");
+  const lines = [script.hook, script.reference ? `${script.verse} (${script.reference})` : script.verse, script.reflection, script.cta].filter(Boolean);
+  safeUpdateJob(jobId, { progress: 12 });
+
+  // 2. Pick a background from the Library
+  const lib = readLibrary();
+  const pool = Array.isArray(lib?.items) ? lib.items : [];
+  if (pool.length === 0) throw new Error("campaign: library is empty — add at least one background before running auto-post");
+  const filtered = backgroundQuery
+    ? pool.filter((x) => JSON.stringify(x).toLowerCase().includes(String(backgroundQuery).toLowerCase()))
+    : pool;
+  const eligible = filtered.length > 0 ? filtered : pool;
+  const pickedBackground = eligible[Math.floor(Math.random() * eligible.length)];
+  if (!pickedBackground?.id) throw new Error("campaign: picked library item has no id");
+  safeUpdateJob(jobId, { progress: 22 });
+
+  // 3. Generate voice via Edge-TTS (free)
+  const ttsText = `${script.hook} ${script.verse} ${script.reflection} ${script.cta}`.trim();
+  const tts = await synthesizeEdgeTts({ text: ttsText, voiceId });
+  const audioPath = tts.file;
+  safeUpdateJob(jobId, { progress: 45 });
+
+  // 4. Render the video
+  const renderResult = await renderVideoCore({
+    backgroundPath: pickedBackground.id,
+    audioPath,
+    lines,
+    durationSec,
+    aspect,
+    captionWidthPct,
+  }, jobId);
+  const outFile = renderResult.outFile;
+  safeUpdateJob(jobId, { progress: 90 });
+
+  // 5. Fire Make webhook (or other destination) so TikTok/YouTube auto-publish
+  const caption = [script.hook, script.verse, script.reference ? `(${script.reference})` : "", script.reflection, script.cta]
+    .filter(Boolean)
+    .join(" ")
+    .slice(0, 1900);
+  const videoFile = path.basename(outFile);
+  const videoUrl = `/outputs/${videoFile}`;
+  let shareResult = null;
+  try {
+    const reqLike = { headers: {}, protocol: "https", get: () => "" };
+    shareResult = await dispatchPost({
+      destination,
+      caption,
+      videoUrl,
+      title: title || script.title || "Biblefuel Post",
+      webhookId,
+      webhookUrl,
+      profileIds,
+      privacyStatus,
+    }, reqLike);
+  } catch (err) {
+    console.warn("[CAMPAIGN] share dispatch failed:", err?.message || err);
+    shareResult = { ok: false, error: String(err?.message || err) };
+  }
+
+  return {
+    outFile,
+    file: outFile,
+    videoUrl,
+    caption,
+    script,
+    backgroundId: pickedBackground.id,
+    share: shareResult,
+  };
 }
 
 function validatePayloadForEnqueue(type, payload) {
@@ -566,6 +684,15 @@ function validatePayloadForEnqueue(type, payload) {
     }
     if (payload?.musicPath && !isLocalOrRemote(resolvedMusic)) {
       return { ok: false, error: `musicPath not found: ${payload?.musicPath}` };
+    }
+    return { ok: true };
+  }
+
+  if (type === "campaign_auto_post") {
+    // Library is the only hard precondition — everything else has defaults.
+    const lib = readLibrary();
+    if (!Array.isArray(lib?.items) || lib.items.length === 0) {
+      return { ok: false, error: "campaign_auto_post requires at least one background in the Library" };
     }
     return { ok: true };
   }
@@ -672,5 +799,27 @@ router.post("/enqueue", (req, res) => {
   });
   res.json({ ok: true, job });
 });
+
+// Programmatic enqueue helper for in-process callers (e.g. cron-driven
+// schedules in social.js). Skips HTTP/auth, performs the same validation.
+export async function enqueueCampaignAutoPost(payload) {
+  const validation = validatePayloadForEnqueue("campaign_auto_post", payload || {});
+  if (!validation.ok) throw new Error(validation.error);
+  const id = `job_${uuid()}`;
+  const job = {
+    id,
+    type: "campaign_auto_post",
+    payload: payload || {},
+    status: "queued",
+    createdAt: new Date().toISOString(),
+  };
+  store = loadJobs();
+  store.jobs.push(job);
+  saveJobs(store);
+  queueMicrotask(() => {
+    workerTick().catch((err) => console.warn("[JOBS] workerTick enqueue trigger failed:", err?.message || err));
+  });
+  return job;
+}
 
 export default router;

@@ -1,13 +1,85 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import toast from 'react-hot-toast';
-import { Sparkles, Play, Archive, Mail, ArrowLeft, Globe, Mic, Film, Video, HelpCircle, Cpu, List, Zap, ShieldCheck } from 'lucide-react';
+import { Sparkles, Play, Archive, Mail, ArrowLeft, Globe, Mic, Film, Video, HelpCircle, Cpu, List, Zap, ShieldCheck, Rocket, Briefcase } from 'lucide-react';
 import { api } from '../lib/api';
 import { firebaseRequestPasswordReset, getFirebaseAuthErrorMessage, isFirebaseClientEnabled } from '../lib/firebase';
+
+function AutoPublishCard() {
+    const [isLaunching, setIsLaunching] = useState(false);
+    const [recentJobId, setRecentJobId] = useState<string | null>(null);
+    const navigate = useNavigate();
+
+    const handleAutoPublish = async () => {
+        setIsLaunching(true);
+        try {
+            const res = await api.post('/api/jobs/enqueue', {
+                type: 'campaign_auto_post',
+                payload: {
+                    aspect: 'portrait',
+                    durationSec: 20,
+                    destination: 'webhook',
+                },
+            });
+            if (res.ok && res.data?.job?.id) {
+                setRecentJobId(res.data.job.id);
+                toast.success('Auto-Publish started — you\'ll be notified when the video is live');
+            } else {
+                toast.error(res.error || 'Failed to start auto-publish');
+            }
+        } catch {
+            toast.error('Failed to start auto-publish');
+        } finally {
+            setIsLaunching(false);
+        }
+    };
+
+    return (
+        <Card className="border-amber-500/30 bg-gradient-to-br from-amber-500/10 via-primary-500/5 to-transparent">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-4 p-1">
+                <div className="flex items-start gap-3 flex-1 min-w-0">
+                    <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3 flex-shrink-0">
+                        <Rocket size={22} className="text-amber-300" />
+                    </div>
+                    <div className="min-w-0">
+                        <h3 className="text-lg font-bold text-white">Auto-Publish a fresh post</h3>
+                        <p className="text-sm text-gray-400 mt-1">
+                            One click chains: <span className="text-amber-200">script</span> → background → voice → render → Make webhook → TikTok / YouTube.
+                            Requires at least one background in your Library.
+                        </p>
+                        {recentJobId && (
+                            <p className="text-[11px] font-mono text-emerald-300 mt-2">
+                                Last job: {recentJobId} — watch the bell, or check Jobs.
+                            </p>
+                        )}
+                    </div>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-2 flex-shrink-0">
+                    <Button
+                        className="h-11 px-6 bg-amber-500 hover:bg-amber-400 text-black font-bold border-amber-500/40"
+                        onClick={handleAutoPublish}
+                        isLoading={isLaunching}
+                    >
+                        <Rocket size={16} className="mr-2" />
+                        Auto-Publish Now
+                    </Button>
+                    <Button
+                        variant="secondary"
+                        className="h-11 px-4 bg-white/5 border-white/10"
+                        onClick={() => navigate('/jobs')}
+                    >
+                        <Briefcase size={14} className="mr-2" />
+                        Jobs
+                    </Button>
+                </div>
+            </div>
+        </Card>
+    );
+}
 
 export function HomePage() {
     const {
@@ -108,6 +180,8 @@ export function HomePage() {
                         Your AI-powered content creation studio.
                     </p>
                 </div>
+
+                <AutoPublishCard />
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <Card title="Quick Start & Workflow">

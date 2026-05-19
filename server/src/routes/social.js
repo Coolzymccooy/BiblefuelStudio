@@ -282,7 +282,7 @@ async function postToYoutube({ caption, videoUrl, title, privacyStatus }, req, s
   }
 }
 
-async function dispatchPost(payload, req) {
+export async function dispatchPost(payload, req) {
   const { destination, caption, videoUrl, profileIds, webhookId, webhookUrl, title, privacyStatus } = payload || {};
   if (!caption || !videoUrl) throw new Error("caption and videoUrl required");
 
@@ -310,6 +310,7 @@ async function dispatchPost(payload, req) {
 function scheduleSignature(s) {
   return JSON.stringify({
     enabled: Boolean(s.enabled),
+    type: String(s.type || "replay"),
     cron: String(s.cron || ""),
     timezone: String(s.timezone || "UTC"),
     destination: String(s.destination || "webhook"),
@@ -324,6 +325,31 @@ function scheduleSignature(s) {
 async function runScheduledPost(schedule) {
   try {
     if (!schedule?.enabled) return;
+
+    // Type "auto_generate": enqueue a campaign_auto_post job that produces a
+    // fresh video (script + bg + voice + render) and fires the webhook.
+    if (String(schedule.type || "replay") === "auto_generate") {
+      const { enqueueCampaignAutoPost } = await import("./jobs.js");
+      const job = await enqueueCampaignAutoPost({
+        destination: schedule.destination || "webhook",
+        webhookId: schedule.webhookId || undefined,
+        profileIds: schedule.profileId ? [schedule.profileId] : undefined,
+        title: schedule.name,
+        privacyStatus: schedule.privacyStatus,
+        // Optional content knobs piggy-backed on the schedule row.
+        niche: schedule.niche,
+        tone: schedule.tone,
+        ctaStyle: schedule.ctaStyle,
+        aspect: schedule.aspect,
+        durationSec: schedule.durationSec,
+        voiceId: schedule.voiceId,
+        backgroundQuery: schedule.backgroundQuery,
+      });
+      console.log(`[SOCIAL][CRON] Schedule ${schedule.id} enqueued auto_generate job ${job?.id}`);
+      return;
+    }
+
+    // Default "replay": post an existing videoUrl through the configured destination.
     const payload = {
       destination: schedule.destination,
       caption: schedule.caption,
@@ -450,10 +476,12 @@ router.get("/schedules", (req, res) => {
 router.post("/schedules", (req, res) => {
   try {
     const incoming = req.body?.schedule || req.body || {};
+    const type = String(incoming.type || "replay").trim() === "auto_generate" ? "auto_generate" : "replay";
     const schedule = {
       id: String(incoming.id || `sch_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`),
-      name: String(incoming.name || "Scheduled Post").trim() || "Scheduled Post",
+      name: String(incoming.name || (type === "auto_generate" ? "Auto-Generate Post" : "Scheduled Post")).trim() || "Scheduled Post",
       enabled: Boolean(incoming.enabled ?? true),
+      type,
       cron: String(incoming.cron || "").trim(),
       timezone: String(incoming.timezone || "").trim() || "UTC",
       destination: String(incoming.destination || "webhook").trim(),
@@ -462,13 +490,21 @@ router.post("/schedules", (req, res) => {
       webhookId: String(incoming.webhookId || "").trim(),
       profileId: String(incoming.profileId || "").trim(),
       privacyStatus: String(incoming.privacyStatus || "private").trim() || "private",
+      // Auto-generate content knobs (optional, used only when type === auto_generate)
+      niche: String(incoming.niche || "").trim() || undefined,
+      tone: String(incoming.tone || "").trim() || undefined,
+      ctaStyle: String(incoming.ctaStyle || "").trim() || undefined,
+      aspect: String(incoming.aspect || "").trim() || undefined,
+      durationSec: Number.isFinite(Number(incoming.durationSec)) ? Number(incoming.durationSec) : undefined,
+      voiceId: String(incoming.voiceId || "").trim() || undefined,
+      backgroundQuery: String(incoming.backgroundQuery || "").trim() || undefined,
     };
 
     if (!schedule.cron || !cron.validate(schedule.cron)) {
       return res.status(400).json({ ok: false, error: "Invalid cron expression" });
     }
-    if (!schedule.caption || !schedule.videoUrl) {
-      return res.status(400).json({ ok: false, error: "caption and videoUrl are required for schedules" });
+    if (schedule.type === "replay" && (!schedule.caption || !schedule.videoUrl)) {
+      return res.status(400).json({ ok: false, error: "caption and videoUrl are required for replay schedules" });
     }
 
     const store = readSocialStore();
