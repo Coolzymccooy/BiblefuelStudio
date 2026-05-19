@@ -271,13 +271,9 @@ export function RenderPage() {
             toast.error('Audio Path is required for waveform mode');
             return;
         }
-        if (kineticCaptions && mode === 'video' && !ttsVoiceId.trim()) {
-            toast.error('Kinetic captions need an ElevenLabs voice — set one on Voice / Audio or pick one below');
-            return;
-        }
-
         // Kinetic captions require the async worker path (it does TTS-with-timestamps
         // server-side, which can take several seconds before render even starts).
+        // voiceId is optional — server falls back to ELEVENLABS_VOICE_ID env / Sarah.
         const useBackground = renderInBackground || (kineticCaptions && mode === 'video');
 
         setIsRendering(true);
@@ -293,7 +289,9 @@ export function RenderPage() {
                 musicPath: musicPath || undefined,
                 musicVolume,
                 autoDuck,
-                ...(kineticCaptions && mode === 'video' ? { kineticCaptions: true, voiceId: ttsVoiceId } : {}),
+                ...(kineticCaptions && mode === 'video'
+                    ? { kineticCaptions: true, ...(ttsVoiceId.trim() ? { voiceId: ttsVoiceId.trim() } : {}) }
+                    : {}),
             };
             const payload = useBackground
                 ? { type: mode === 'video' ? 'render_video' : 'render_waveform', payload: corePayload }
@@ -763,15 +761,19 @@ export function RenderPage() {
                         </p>
                         {kineticCaptions && (
                             <div className="pl-6 space-y-1">
-                                <label className="text-[10px] uppercase tracking-wider text-gray-500">ElevenLabs voice ID</label>
+                                <label className="text-[10px] uppercase tracking-wider text-gray-500">
+                                    ElevenLabs voice ID <span className="normal-case tracking-normal text-gray-600">(optional)</span>
+                                </label>
                                 <Input
                                     value={ttsVoiceId}
                                     onChange={(e) => setTtsVoiceId(e.target.value)}
-                                    placeholder="e.g. EXAVITQu4vr4xnSDxMaL"
+                                    placeholder="Leave blank to use the server default (Sarah)"
                                     className="text-xs font-mono"
                                 />
                                 <p className="text-[10px] text-gray-500">
-                                    Pick one on the Voice / Audio page — it auto-fills here.
+                                    Auto-fills from the voice you saved on the Voice / Audio page.
+                                    Leave blank and the server falls back to <code className="text-gray-400">ELEVENLABS_VOICE_ID</code> in <code className="text-gray-400">.env</code>,
+                                    then to ElevenLabs' default voice.
                                 </p>
                             </div>
                         )}
