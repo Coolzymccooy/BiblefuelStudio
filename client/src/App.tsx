@@ -16,6 +16,7 @@ const VoiceAudioPage = lazy(() => import('./pages/VoiceAudioPage').then((m) => (
 const TimelinePage = lazy(() => import('./pages/TimelinePage').then((m) => ({ default: m.TimelinePage })));
 const RenderPage = lazy(() => import('./pages/RenderPage').then((m) => ({ default: m.RenderPage })));
 const GumroadPage = lazy(() => import('./pages/GumroadPage').then((m) => ({ default: m.GumroadPage })));
+const SeriesPage = lazy(() => import('./pages/SeriesPage').then((m) => ({ default: m.SeriesPage })));
 const SettingsPage = lazy(() => import('./pages/SettingsPage').then((m) => ({ default: m.SettingsPage })));
 const HelpPage = lazy(() => import('./pages/HelpPage').then((m) => ({ default: m.HelpPage })));
 
@@ -53,6 +54,7 @@ function App() {
                   <Route path="timeline" element={<TimelinePage />} />
                   <Route path="render" element={<RenderPage />} />
                   <Route path="gumroad" element={<GumroadPage />} />
+                  <Route path="series" element={<SeriesPage />} />
                   <Route path="settings" element={<SettingsPage />} />
                   <Route path="help" element={<HelpPage />} />
                 </Route>

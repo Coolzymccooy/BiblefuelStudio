@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
-    Menu, X, FileText, List, Briefcase, Image, Mic, Film, Video, Package, LogOut, LogIn, Shield, Settings, HelpCircle, Wand2
+    Menu, X, FileText, List, Briefcase, Image, Mic, Film, Video, Package, LogOut, LogIn, Shield, Settings, HelpCircle, Wand2, BookOpen
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { Button } from './ui/Button';
@@ -11,6 +11,7 @@ import { NotificationsBell } from './NotificationsBell';
 const navItems = [
     { path: '/', label: 'Home', icon: Shield },
     { path: '/wizard', label: 'Wizard', icon: Wand2 },
+    { path: '/series', label: 'Series', icon: BookOpen },
     { path: '/scripts', label: 'Scripts', icon: FileText },
     { path: '/queue', label: 'Queue', icon: List },
     { path: '/jobs', label: 'Jobs', icon: Briefcase },
