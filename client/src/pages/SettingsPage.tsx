@@ -8,6 +8,7 @@ import { Select } from '../components/ui/Select';
 import { api } from '../lib/api';
 import toast from 'react-hot-toast';
 import { useConfig } from '../lib/config';
+import { VoiceSynthesisPanel } from '../components/VoiceSynthesisPanel';
 
 type SocialSchedule = {
     id: string;
@@ -35,7 +36,7 @@ type SocialSchedule = {
 export function SettingsPage() {
     const { config } = useConfig();
     const { features } = config;
-    const [activeSection, setActiveSection] = useState<'api' | 'social' | 'app'>('api');
+    const [activeSection, setActiveSection] = useState<'api' | 'voice' | 'social' | 'app'>('api');
     const [bufferToken, setBufferToken] = useState('');
     const [bufferProfiles, setBufferProfiles] = useState<{ id: string; service: string; formatted_service: string }[]>([]);
     const [selectedProfiles, setSelectedProfiles] = useState<string[]>([]);
@@ -214,6 +215,9 @@ export function SettingsPage() {
                 <Button variant={activeSection === 'api' ? 'primary' : 'secondary'} className="text-xs h-8" onClick={() => setActiveSection('api')}>
                     API Keys
                 </Button>
+                <Button variant={activeSection === 'voice' ? 'primary' : 'secondary'} className="text-xs h-8" onClick={() => setActiveSection('voice')}>
+                    Voice Synthesis
+                </Button>
                 <Button variant={activeSection === 'social' ? 'primary' : 'secondary'} className="text-xs h-8" onClick={() => setActiveSection('social')}>
                     Social Automation
                 </Button>
@@ -256,6 +260,10 @@ export function SettingsPage() {
                         </div>
                     </div>
                 </Card>
+            )}
+
+            {activeSection === 'voice' && (
+                <VoiceSynthesisPanel />
             )}
 
             {activeSection === 'social' && (
