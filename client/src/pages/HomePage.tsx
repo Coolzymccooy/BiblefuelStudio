@@ -16,6 +16,13 @@ interface JobRow {
     createdAt: string;
     finishedAt?: string;
     error?: string;
+    result?: {
+        share?: {
+            ok?: boolean;
+            make?: { ok?: boolean };
+            zernio?: { ok?: boolean };
+        };
+    };
 }
 
 function DailyStatsCard() {
@@ -46,10 +53,22 @@ function DailyStatsCard() {
                     const renders = jobs.filter((j) => j.type === 'render_video' || j.type === 'render_waveform');
                     const rendersThisWeek = renders.filter((j) => new Date(j.createdAt).getTime() >= weekMs);
 
+                    // "Published" = the post actually reached a social destination.
+                    // A campaign whose render finished but whose dispatch failed
+                    // (no webhook configured, Zernio not set, etc.) counts as
+                    // failed-to-publish, not published — otherwise the dashboard
+                    // lies about real reach.
+                    const isPublished = (j: JobRow) => {
+                        const share = j.result?.share;
+                        if (!share) return false;
+                        return Boolean(share.ok || share.zernio?.ok || share.make?.ok);
+                    };
+                    const publishedToday = campaignsTodayList.filter((j) => j.status === 'done' && isPublished(j));
+                    const failedTodayList = campaignsTodayList.filter((j) => j.status === 'failed' || (j.status === 'done' && !isPublished(j)));
                     setStats({
                         campaignsToday: campaignsTodayList.length,
-                        campaignsSuccessToday: campaignsTodayList.filter((j) => j.status === 'done').length,
-                        campaignsFailedToday: campaignsTodayList.filter((j) => j.status === 'failed').length,
+                        campaignsSuccessToday: publishedToday.length,
+                        campaignsFailedToday: failedTodayList.length,
                         rendersThisWeek: rendersThisWeek.length,
                         totalJobs: jobs.length,
                     });
