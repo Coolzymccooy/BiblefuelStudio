@@ -173,37 +173,62 @@ async function postToWebhook({ caption, videoUrl, title, webhookId, webhookUrl }
     throw new Error(`videoUrl must be absolute or resolvable: ${videoUrl}`);
   }
 
-  const target = (store.webhooks || []).find((w) => w.id === webhookId && w.enabled);
+  // Resolve webhook in this order:
+  //   1. Explicit webhookId match in the store (and enabled).
+  //   2. Caller-supplied webhookUrl.
+  //   3. The first enabled webhook in the store (so one-click Auto-Publish
+  //      Just Works without the caller having to know which webhook ID to pass).
+  const webhooks = Array.isArray(store.webhooks) ? store.webhooks : [];
+  const exact = webhookId ? webhooks.find((w) => w.id === webhookId && w.enabled) : null;
+  const firstEnabled = !exact && !webhookUrl ? webhooks.find((w) => w.enabled && String(w.url || "").trim()) : null;
+  const target = exact || firstEnabled;
   const url = String(target?.url || webhookUrl || "").trim();
-  if (!url) throw new Error("Webhook not configured");
+  const zernioConfigured = Boolean(
+    String(process.env.ZERNIO_API_KEY || "").trim() &&
+    String(process.env.ZERNIO_TIKTOK_ACCOUNT_ID || "").trim()
+  );
+  if (!url && !zernioConfigured) {
+    throw new Error("No destination configured. Set a Make/Zapier webhook in Settings, or configure ZERNIO_API_KEY + ZERNIO_TIKTOK_ACCOUNT_ID in server/.env.");
+  }
 
   const resolvedTitle = String(title || "").trim().slice(0, 100) || deriveCleanTitle(caption);
 
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      title: resolvedTitle,
-      caption,
-      videoUrl: mediaUrl,
-      source: "biblefuel-studio",
-      sentAt: new Date().toISOString(),
-    }),
-  });
-  if (!resp.ok) {
-    const err = await resp.text();
-    throw new Error(`Webhook failed: ${resp.status} ${err}`);
+  let make = null;
+  if (url) {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: resolvedTitle,
+        caption,
+        videoUrl: mediaUrl,
+        source: "biblefuel-studio",
+        sentAt: new Date().toISOString(),
+      }),
+    });
+    if (!resp.ok) {
+      const err = await resp.text();
+      // If Zernio is also configured, treat Make's failure as soft so we
+      // still attempt TikTok directly.
+      const msg = `Webhook failed: ${resp.status} ${err.slice(0, 300)}`;
+      if (!zernioConfigured) throw new Error(msg);
+      make = { ok: false, error: msg };
+    } else {
+      make = { ok: true };
+    }
   }
 
   let zernio = null;
-  try {
-    zernio = await publishToZernioTikTok({ caption, videoUrl: mediaUrl, title: resolvedTitle });
-  } catch (e) {
-    // Fire-and-forget: do not fail the whole post if TikTok publish errors.
-    zernio = { ok: false, error: e?.message || String(e) };
+  if (zernioConfigured) {
+    try {
+      zernio = await publishToZernioTikTok({ caption, videoUrl: mediaUrl, title: resolvedTitle });
+    } catch (e) {
+      zernio = { ok: false, error: e?.message || String(e) };
+    }
   }
 
-  return { videoUrl: mediaUrl, title: resolvedTitle, zernio };
+  const success = (make?.ok === true) || (zernio?.ok === true);
+  return { ok: success, videoUrl: mediaUrl, title: resolvedTitle, make, zernio };
 }
 
 async function postToBuffer({ caption, videoUrl, profileIds }, req, store) {
