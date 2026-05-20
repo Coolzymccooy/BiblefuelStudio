@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
+import type { ComponentType } from 'react';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { api } from '../lib/api';
-import { RefreshCw, Download, Clock, Terminal, PlayCircle, ExternalLink } from 'lucide-react';
+import { RefreshCw, Download, Clock, Terminal, PlayCircle, ExternalLink, BookOpen, Wand2, Film, AudioLines } from 'lucide-react';
 import { loadJson, STORAGE_KEYS } from '../lib/storage';
 
 interface Job {
@@ -17,6 +18,86 @@ interface Job {
     startedAt?: string;
     finishedAt?: string;
     progress?: number;
+}
+
+interface JobIdentifier {
+    primary: string;
+    kind: 'series' | 'campaign' | 'render' | 'waveform' | 'other';
+    kindLabel: string;
+    chips: Array<{ text: string; tone: 'primary' | 'neutral' }>;
+    KindIcon: ComponentType<{ size?: number; className?: string }>;
+}
+
+/**
+ * The job's `type` field (e.g. `campaign_auto_post`) is the engine that ran,
+ * not WHAT was rendered. This helper extracts the meaningful payload bits
+ * so the Jobs list can show "John 3 — Part 1/3" instead of opaque type names.
+ *
+ * Order of precedence per job kind:
+ *   - Series:   `payload.series.{partNumber,totalParts,reference}` + `payload.title`
+ *   - Campaign: `payload.title` → script hook → niche → fallback
+ *   - Render:   `payload.title` → first caption line → fallback
+ */
+function getJobIdentifier(job: Job): JobIdentifier {
+    const p = (job.payload || {}) as Record<string, any>;
+    const title = String(p.title || '').trim();
+
+    if (p.series && typeof p.series === 'object') {
+        const s = p.series as { partNumber?: number; totalParts?: number; reference?: string; chapterReference?: string };
+        const partChip = `Part ${s.partNumber ?? '?'}/${s.totalParts ?? '?'}`;
+        const ref = s.reference || s.chapterReference || 'Series';
+        return {
+            primary: title || `${ref} — ${partChip}`,
+            kind: 'series',
+            kindLabel: 'Series',
+            chips: [
+                { text: partChip, tone: 'primary' },
+                { text: ref, tone: 'neutral' },
+            ],
+            KindIcon: BookOpen,
+        };
+    }
+
+    if (job.type === 'campaign_auto_post') {
+        const niche = String(p.niche || '').trim();
+        const hook = String(p.prebuiltScript?.hook || '').trim();
+        return {
+            primary: title || hook || niche || 'Auto-generated post',
+            kind: 'campaign',
+            kindLabel: 'Auto-Post',
+            chips: niche ? [{ text: niche, tone: 'neutral' }] : [],
+            KindIcon: Wand2,
+        };
+    }
+
+    if (job.type === 'render_video') {
+        const firstLine = Array.isArray(p.lines) ? String(p.lines[0] || '').trim() : '';
+        return {
+            primary: title || firstLine || 'Manual render',
+            kind: 'render',
+            kindLabel: 'Manual',
+            chips: p.aspect ? [{ text: String(p.aspect), tone: 'neutral' }] : [],
+            KindIcon: Film,
+        };
+    }
+
+    if (job.type === 'render_waveform') {
+        return {
+            primary: title || 'Audio waveform',
+            kind: 'waveform',
+            kindLabel: 'Waveform',
+            chips: [],
+            KindIcon: AudioLines,
+        };
+    }
+
+    return {
+        primary: title || job.type,
+        kind: 'other',
+        kindLabel: job.type,
+        chips: [],
+        KindIcon: Terminal,
+    };
 }
 
 export function JobsPage() {
@@ -162,19 +243,47 @@ export function JobsPage() {
                     </div>
                 ) : (
                     <div className="space-y-3">
-                        {jobs.map((job) => (
+                        {jobs.map((job) => {
+                            const ident = getJobIdentifier(job);
+                            const KindIcon = ident.KindIcon;
+                            return (
                             <div
                                 key={job.id}
                                 className="bg-dark-900/40 border border-white/5 rounded-xl p-4 hover:border-white/10 hover:bg-dark-900/60 transition-all cursor-pointer group"
                                 onClick={() => setSelectedJob(selectedJob?.id === job.id ? null : job)}
                             >
                                 <div className="flex items-start justify-between">
-                                    <div className="flex-1">
-                                        <div className="flex items-center gap-3 mb-2">
+                                    <div className="flex-1 min-w-0">
+                                        {/* Primary identifier — what was rendered (e.g. "John 3 — Part 1/3") */}
+                                        <div className="flex items-center gap-2 mb-1.5">
+                                            <KindIcon size={16} className="text-primary-300 shrink-0" />
+                                            <span
+                                                className="font-semibold text-gray-100 truncate"
+                                                title={ident.primary}
+                                            >
+                                                {ident.primary}
+                                            </span>
+                                        </div>
+                                        {/* Secondary row — status, engine type, content chips */}
+                                        <div className="flex items-center gap-2 flex-wrap mb-2">
                                             <Badge variant={getStatusVariant(job.status)} className="uppercase text-[10px] tracking-wider font-bold">
                                                 {job.status}
                                             </Badge>
-                                            <span className="font-semibold text-gray-200">{job.type}</span>
+                                            <span className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold">
+                                                {ident.kindLabel}
+                                            </span>
+                                            {ident.chips.map((chip, idx) => (
+                                                <span
+                                                    key={`${chip.text}-${idx}`}
+                                                    className={`text-[10px] px-2 py-0.5 rounded-full border ${
+                                                        chip.tone === 'primary'
+                                                            ? 'bg-primary-500/10 text-primary-300 border-primary-500/20'
+                                                            : 'bg-white/5 text-gray-300 border-white/10'
+                                                    }`}
+                                                >
+                                                    {chip.text}
+                                                </span>
+                                            ))}
                                             <span className="text-xs text-gray-500 font-mono">#{job.id.slice(0, 8)}</span>
                                         </div>
                                         <div className="flex items-center gap-4 text-xs text-gray-400">
@@ -271,7 +380,8 @@ export function JobsPage() {
                                     </div>
                                 )}
                             </div>
-                        ))}
+                            );
+                        })}
                     </div>
                 )}
             </Card>
