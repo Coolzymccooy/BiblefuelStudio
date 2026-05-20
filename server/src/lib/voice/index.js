@@ -30,3 +30,10 @@ export {
   SpeechResultSchema,
   ProviderCapabilitiesSchema,
 } from "./schemas.js";
+export {
+  PROFILES,
+  DEFAULT_CATEGORY,
+  listCategories,
+  resolveProfile,
+} from "./profiles.js";
+export { synthesizeForCategory } from "./categorySynthesis.js";

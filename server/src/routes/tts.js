@@ -8,6 +8,12 @@ import { OUTPUT_DIR } from "../lib/paths.js";
 import { synthesizeEdgeTts } from "../lib/edgeTts.js";
 import { synthesizeElevenLabs } from "../lib/elevenLabsTts.js";
 import { synthesizeTts } from "../lib/ttsOrchestrator.js";
+import {
+  PROFILES,
+  listCategories,
+  resolveProfile,
+  synthesizeForCategory,
+} from "../lib/voice/index.js";
 
 const router = Router();
 const allowedAudioExt = new Set([".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".webm"]);
@@ -267,6 +273,45 @@ function collectStream(stream, timeoutMs) {
     });
   });
 }
+
+// ─── Voice profiles + category-aware synthesis ────────────────────────────
+// Project 2 of the voice synthesis engine. These routes power the upcoming
+// settings panel UI and let the render pipeline request "read this prayer"
+// or "read this scripture" without having to know provider parameters.
+
+router.get("/profiles", (_req, res) => {
+  const categories = listCategories();
+  const profiles = categories.map((c) => {
+    const p = PROFILES[c];
+    return {
+      category: p.category,
+      label: p.label,
+      description: p.description,
+      providerPreference: p.providerPreference,
+      recommendedTypographyPreset: p.recommendedTypographyPreset,
+    };
+  });
+  res.json({ ok: true, profiles });
+});
+
+router.post("/synthesize-category", async (req, res) => {
+  const { text, category, withTimestamps, preferredProvider, overrides } = req.body || {};
+  try {
+    const result = await synthesizeForCategory({
+      text,
+      category,
+      withTimestamps: Boolean(withTimestamps),
+      preferredProvider,
+      overrides: overrides && typeof overrides === "object" ? overrides : undefined,
+    });
+    res.json(result);
+  } catch (e) {
+    console.error("[TTS] synthesize-category route error:", e);
+    const message = String(e?.message || e);
+    const status = /required|invalid|missing/i.test(message) ? 400 : 502;
+    res.status(status).json({ ok: false, error: message });
+  }
+});
 
 router.post("/edge", async (req, res) => {
   const { text, voiceId, rate, pitch, volume } = req.body || {};
