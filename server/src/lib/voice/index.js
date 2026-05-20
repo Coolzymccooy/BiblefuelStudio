@@ -13,9 +13,11 @@
 import { register } from "./registry.js";
 import { elevenLabsProvider } from "./providers/elevenLabsProvider.js";
 import { edgeProvider } from "./providers/edgeProvider.js";
+import { chatterboxProvider } from "./providers/chatterboxProvider.js";
 
 register(elevenLabsProvider);
 register(edgeProvider);
+register(chatterboxProvider);
 
 export { synthesize, describeProviders } from "./orchestrator.js";
 export {
