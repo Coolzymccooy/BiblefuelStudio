@@ -18,24 +18,41 @@
  */
 
 /**
- * Curated style anchors. One is picked deterministically per series so the
- * artwork of every part shares a visual language. Each entry intentionally
- * avoids any reference to people or faces.
+ * Curated style anchors — all pure landscape / pure-object, deliberately
+ * chosen so the training data has no strong "human figure present" prior.
+ *
+ * Banned (tested 2026-05-20 against Flux-1-schnell; leaked figures):
+ *  - "Renaissance sacred-art oil painting" → produced kneeling priest + worshipper
+ *  - "cathedral arches" / "stained-glass illustration" → produced crowd of figures
+ *  - "candlelit altar" / "chiaroscuro" → strong "person at altar" prior
+ *  - "illuminated manuscript" → leaks monk silhouettes
+ *
+ * Each remaining anchor is empty-by-construction (a wide vista, an object,
+ * or weather) so even when Flux ignores the negative directive the scene
+ * has no plausible "where would a person stand" to fill.
  */
 const STYLE_ANCHORS = Object.freeze([
   "cinematic golden hour, soft volumetric light, ancient olive grove, warm amber tones, painterly diffusion, shallow depth of field",
-  "Renaissance sacred-art oil painting, deep chiaroscuro, warm candlelight, parchment textures, ornate gold leaf, baroque composition",
-  "luminous stained-glass illustration, cobalt and crimson panels, leaded glass linework, sunbeams through cathedral arches, sacred geometry",
   "majestic Middle-Eastern desert sunrise, vast dunes, distant rocky outcrops, soft haze, biblical landscape painting, cinematic widescreen",
   "moody storm-lit sky over ancient stone ruins, dramatic god-rays piercing clouds, deep azure and burnt sienna palette, oil painting, epic scale",
   "serene mountain dawn with morning mist, distant cedar trees, soft pastel sky, watercolor and ink wash, contemplative atmosphere",
-  "antique illuminated manuscript style, hand-lettered borders, gold ink ornament, deep wine and forest green, vellum texture, sacred geometry",
-  "quiet starfield over Galilee at night, lantern-warm glow on a distant shore, oil painting, contemplative, deep indigo and ember tones",
+  "quiet starfield over still Galilean waters at night, far horizon, oil painting, deep indigo and ember tones",
+  "vast wheat field rippling under wind, golden sunset, cinematic, warm tones, painterly, no path",
+  "ancient parchment scroll laid open on weathered stone, soft candleless dawn light, still life, no hands, deep amber tones",
+  "deserted wilderness canyon at sunrise, layered sandstone cliffs, lone cypress in the distance, painterly, warm earth tones",
 ]);
 
-const NEGATIVE_PROMPT = "people, faces, human figures, portrait, jesus, modern objects, cars, phones, contemporary clothing, signage, watermark, text, logo, signature, ai artifacts, deformed, low quality";
+// Flux ignores negative prompts entirely — keep this string for SDXL-class
+// models the user might wire in later (and for documentation of intent).
+const NEGATIVE_PROMPT = "people, faces, human figures, portrait, jesus, priest, monk, worshipper, congregation, hands, crowd, silhouette, modern objects, cars, phones, contemporary clothing, signage, watermark, text, logo, signature, ai artifacts, deformed, low quality";
 
 const UNIVERSAL_QUALITY_TAGS = "masterpiece, highly detailed, 8k, sharp focus, cinematic composition";
+
+// Stronger anti-figure directive baked into the POSITIVE prompt because
+// that's what Flux actually reads. Empirically Flux respects concrete
+// scene-state words ("uninhabited", "empty") far better than the abstract
+// negation "no people".
+const ANTI_FIGURE_PREFIX = "uninhabited landscape, empty scene, no humans, no figures, no faces, no people, no silhouettes";
 
 /**
  * Themes derived loosely from beat type. Hook = curiosity/atmosphere,
@@ -103,12 +120,17 @@ export function buildBiblePrompt({ beatType = "verse", verseText = "", styleAnch
   const anchor = String(styleAnchor || (seriesSeed != null ? chooseStyleAnchor(seriesSeed) : STYLE_ANCHORS[0])).trim();
   const beat = BEAT_HINTS[beatType] || BEAT_HINTS.verse;
   const atmosphere = distillAtmosphere(verseText);
+  // Order matters for Flux — it weights earlier tokens higher. Lead with the
+  // anti-figure directive, then atmosphere/beat, then the style anchor, then
+  // quality tags. Closing with the directive AGAIN gives Flux a second
+  // chance to honor it.
   const parts = [
+    ANTI_FIGURE_PREFIX,
     beat,
     atmosphere,
     anchor,
     UNIVERSAL_QUALITY_TAGS,
-    "no people, no faces",
+    "no people, no faces, no figures",
   ].filter(Boolean);
   return parts.join(", ").replace(/\s+/g, " ").trim();
 }
