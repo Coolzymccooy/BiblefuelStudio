@@ -107,12 +107,24 @@ export interface SeriesGenerateInput {
     durationSec?: number;
     backgroundQuery?: string;
     titlePrefix?: string;
+    useGenImage?: boolean;
+}
+
+export interface ImageGenSegmentResult {
+    partNumber: number;
+    ok: boolean;
+    provider?: string;
+    error?: string;
 }
 
 export interface SeriesGenerateResponse {
     series: SeriesRecord;
     plan: SeriesPlan;
     jobIds: string[];
+    imageGen?: {
+        requested: boolean;
+        results?: ImageGenSegmentResult[];
+    };
 }
 
 function unwrap<T>(response: { ok: boolean; data?: any; error?: string }): T {

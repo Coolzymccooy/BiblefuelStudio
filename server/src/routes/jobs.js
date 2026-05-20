@@ -655,7 +655,15 @@ async function renderAdvancedVideo(payload, jobId) {
     const resolved = resolveAssetPath(s?.backgroundPath);
     if (!resolved || !isLocalOrRemote(resolved)) throw new Error(`scene[${i}] backgroundPath missing or not found: ${s?.backgroundPath || "<empty>"}`);
     if (isFileTooLarge(resolved)) throw new Error(`scene[${i}] backgroundPath too large (>${MAX_INPUT_MB}MB)`);
-    return { backgroundPath: resolved, duration: Math.max(0.5, Number(s?.duration) || 0) };
+    // `kind` distinguishes still images (generated artwork) from video clips
+    // (Pexels library). Image scenes need `-loop 1` instead of
+    // `-stream_loop -1` on the ffmpeg input. Default to caller's hint, fall
+    // back to extension sniffing so payloads from old clients still work.
+    const explicit = String(s?.kind || "").toLowerCase();
+    const ext = String(resolved || "").toLowerCase().split(".").pop();
+    const sniffed = ["png", "jpg", "jpeg", "webp", "gif", "bmp"].includes(ext) ? "image" : "video";
+    const kind = explicit === "image" || explicit === "video" ? explicit : sniffed;
+    return { backgroundPath: resolved, duration: Math.max(0.5, Number(s?.duration) || 0), kind };
   });
 
   // Final safety: if the audio is longer than what the scene graph emits
@@ -692,7 +700,15 @@ async function renderAdvancedVideo(payload, jobId) {
   const sceneCount = resolvedScenes.length;
   const args = ["-y"];
   for (const s of resolvedScenes) {
-    args.push("-stream_loop", "-1", "-i", s.backgroundPath);
+    // `-loop 1` is image-only (ffmpeg loops a still demuxer); `-stream_loop -1`
+    // is the video equivalent. Mixing them up errors out (`-loop` on a video
+    // ignores; `-stream_loop` on an image errors). Sniff via the `kind`
+    // populated above.
+    if (s.kind === "image") {
+      args.push("-loop", "1", "-i", s.backgroundPath);
+    } else {
+      args.push("-stream_loop", "-1", "-i", s.backgroundPath);
+    }
   }
   let audioInputIdx = null;
   let musicInputIdx = null;
@@ -816,6 +832,10 @@ async function runCampaignAutoPost(payload, jobId) {
     prebuiltScript,
     captionOverride,
     series,
+    // Optional pre-generated AI artwork (Cloudflare Workers AI / Imagen).
+    // When supplied it becomes the hook-beat scene; subsequent scenes still
+    // come from the Pexels library so the overall video stays varied.
+    generatedImage,
   } = payload || {};
 
   safeUpdateJob(jobId, { progress: 2 });
@@ -900,8 +920,22 @@ async function runCampaignAutoPost(payload, jobId) {
     const XFADE = 0.5;
     const scenes = [];
     const usedIds = new Set();
+    // If a generative-image was supplied for this segment, it claims scene 0
+    // (the "hook" beat). The remaining beats keep using Pexels picks so the
+    // overall video still has motion. The generated still loops via
+    // `-loop 1` (handled in renderAdvancedVideo's scene loop).
+    const hasGenImage = typeof generatedImage === "string" && generatedImage.trim().length > 0;
+
     for (let i = 0; i < sceneCount; i++) {
       const beat = beats[i];
+      const naturalSpan = Math.max(0.5, boundaries[i + 1] - boundaries[i]);
+      const duration = i < sceneCount - 1 ? naturalSpan + XFADE : naturalSpan;
+
+      if (i === 0 && hasGenImage) {
+        scenes.push({ backgroundPath: generatedImage, duration, kind: "image", _libItem: null });
+        continue;
+      }
+
       const beatCats = beat ? classifyText(beat.line) : [];
       const candidatePool = pool.filter((it) => !usedIds.has(String(it?.id)));
       const fallbackPool = candidatePool.length > 0 ? candidatePool : pool;
@@ -911,35 +945,47 @@ async function runCampaignAutoPost(payload, jobId) {
       const tier = matched.length > 0 ? matched : fallbackPool;
       const pick = tier[Math.floor(Math.random() * tier.length)] || pool[0];
       usedIds.add(String(pick.id));
-      const naturalSpan = Math.max(0.5, boundaries[i + 1] - boundaries[i]);
-      // Each scene except the last gets +XFADE so the crossfade overlap
-      // doesn't shorten the visible portion of that beat.
-      const duration = i < sceneCount - 1 ? naturalSpan + XFADE : naturalSpan;
-      scenes.push({ backgroundPath: pick.id, duration, _libItem: pick });
+      scenes.push({ backgroundPath: pick.id, duration, kind: "video", _libItem: pick });
     }
 
-    pickedBackground = scenes[0]._libItem;
+    pickedBackground = scenes.find((s) => s._libItem)?._libItem || { id: hasGenImage ? generatedImage : null };
 
     renderResult = await renderVideoCore({
       audioPath,
       words,
-      scenes: scenes.map((s) => ({ backgroundPath: s.backgroundPath, duration: s.duration })),
+      scenes: scenes.map((s) => ({ backgroundPath: s.backgroundPath, duration: s.duration, kind: s.kind })),
       durationSec: audioDurForBoundaries,
       aspect,
       captionWidthPct,
     }, jobId);
   } else {
     console.warn("[CAMPAIGN] no alignment from TTS (Edge-TTS fallback?) — using legacy line captions");
-    pickedBackground = pickBestBackground(pool, { script, backgroundQuery });
-    if (!pickedBackground?.id) throw new Error("campaign: picked library item has no id");
-    renderResult = await renderVideoCore({
-      backgroundPath: pickedBackground.id,
-      audioPath,
-      lines: ttsLines,
-      durationSec,
-      aspect,
-      captionWidthPct,
-    }, jobId);
+    const hasGenImage = typeof generatedImage === "string" && generatedImage.trim().length > 0;
+    if (hasGenImage) {
+      // Route through the advanced renderer (scenes[]) so the image gets
+      // `-loop 1` instead of the legacy single-bg `-stream_loop -1` (which
+      // is video-only and breaks on PNG inputs).
+      renderResult = await renderVideoCore({
+        scenes: [{ backgroundPath: generatedImage, duration: clampDuration(durationSec || 20), kind: "image" }],
+        audioPath,
+        lines: ttsLines,
+        durationSec,
+        aspect,
+        captionWidthPct,
+      }, jobId);
+      pickedBackground = { id: generatedImage };
+    } else {
+      pickedBackground = pickBestBackground(pool, { script, backgroundQuery });
+      if (!pickedBackground?.id) throw new Error("campaign: picked library item has no id");
+      renderResult = await renderVideoCore({
+        backgroundPath: pickedBackground.id,
+        audioPath,
+        lines: ttsLines,
+        durationSec,
+        aspect,
+        captionWidthPct,
+      }, jobId);
+    }
   }
   const outFile = renderResult.outFile;
   safeUpdateJob(jobId, { progress: 90 });
