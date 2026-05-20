@@ -732,10 +732,17 @@ async function renderAdvancedVideo(payload, jobId) {
   const hwaccel = process.env.FFMPEG_HWACCEL;
   const vcodec = hwaccel === "nvenc" ? "h264_nvenc" : hwaccel === "qsv" ? "h264_qsv" : "libx264";
 
+  // Word-level captions + scene splits produce a filter graph that can easily
+  // exceed Windows' ~32KB command-line limit (spawn ENAMETOOLONG). Write the
+  // graph to a temp file and pass it via -filter_complex_script — same syntax,
+  // no length cap.
   const outFile = path.join(outDir, `video-${uuid()}.mp4`);
+  const filterScriptFile = path.join(outDir, `filter-${path.basename(outFile, ".mp4")}.txt`);
+  fs.writeFileSync(filterScriptFile, filterComplex, "utf-8");
+
   args.push(
     "-t", String(totalDuration),
-    "-filter_complex", filterComplex,
+    "-filter_complex_script", filterScriptFile,
     "-map", `[${videoLabel}]`,
   );
   if (audioMapTarget) args.push("-map", audioMapTarget);
@@ -753,6 +760,10 @@ async function renderAdvancedVideo(payload, jobId) {
   }
   args.push(outFile);
 
+  const cleanupFilterScript = () => {
+    try { if (fs.existsSync(filterScriptFile)) fs.unlinkSync(filterScriptFile); } catch {}
+  };
+
   try {
     await runFFmpeg(args, totalDuration, (p) => {
       const now = Date.now();
@@ -767,9 +778,11 @@ async function renderAdvancedVideo(payload, jobId) {
     if (global.gc) global.gc();
     volatileProgressByJob.set(jobId, 100);
     safeUpdateJob(jobId, { progress: 100 });
+    cleanupFilterScript();
     return { outFile };
   } catch (e) {
     try { if (fs.existsSync(outFile)) fs.unlinkSync(outFile); } catch {}
+    cleanupFilterScript();
     throw e;
   } finally {
     lastProgressByJob.delete(jobId);
@@ -943,7 +956,30 @@ async function runCampaignAutoPost(payload, jobId) {
   const videoUrl = `/outputs/${videoFile}`;
   let shareResult = null;
   try {
-    const reqLike = { headers: {}, protocol: "https", get: () => "" };
+    // Build a stub req object so social.js's URL-resolution logic can derive
+    // an absolute public URL for the rendered video. Order of preference:
+    //   PUBLIC_BASE_URL / APP_BASE_URL / RENDER_EXTERNAL_URL > localhost:PORT
+    // The campaign worker has no HTTP context of its own, so we synthesize one.
+    const configuredBase = String(
+      process.env.PUBLIC_BASE_URL ||
+      process.env.APP_BASE_URL ||
+      process.env.RENDER_EXTERNAL_URL ||
+      ""
+    ).trim().replace(/\/+$/, "");
+    let stubProto = "http";
+    let stubHost = `localhost:${process.env.PORT || 5051}`;
+    if (configuredBase) {
+      try {
+        const u = new URL(configuredBase);
+        stubProto = u.protocol.replace(":", "") || stubProto;
+        stubHost = u.host || stubHost;
+      } catch { /* keep defaults */ }
+    }
+    const reqLike = {
+      headers: { host: stubHost, "x-forwarded-proto": stubProto },
+      protocol: stubProto,
+      get: (name) => (String(name).toLowerCase() === "host" ? stubHost : ""),
+    };
     shareResult = await dispatchPost({
       destination,
       caption,
