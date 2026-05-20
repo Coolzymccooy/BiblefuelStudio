@@ -28,7 +28,12 @@
 // Uses Node 18+ global fetch — same rationale as the Cloudflare adapter.
 
 const ENDPOINT_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
-const DEFAULT_MODEL = "imagen-3.0-generate-002";
+// Imagen 3.x was retired May 2026 in favor of Imagen 4. The "fast" variant
+// has the cheapest cost per image — appropriate for SaaS volume rendering.
+// NOTE (verified 2026-05-20): Imagen models on the Gemini API require a
+// PAID Google AI Studio plan. The free tier explicitly lists image-gen
+// quota as 0 — only call this provider when the user has billing enabled.
+const DEFAULT_MODEL = "imagen-4.0-fast-generate-001";
 const REQUEST_TIMEOUT_MS = 45_000;
 
 /**
