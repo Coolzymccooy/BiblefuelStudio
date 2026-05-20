@@ -70,6 +70,11 @@ export async function synthesizeForCategory(req) {
     prosody: Object.keys(prosody).length > 0 ? prosody : undefined,
     preferredProvider,
     withTimestamps: req?.withTimestamps,
+    // Category-aware synthesis is intended for cinematic content where word
+    // timings drive the typography renderer. Default to ON; caller can flip
+    // it off explicitly via overrides.forcedAlignmentFallback = false.
+    forcedAlignmentFallback:
+      overrides.forcedAlignmentFallback ?? req?.forcedAlignmentFallback ?? true,
   };
 
   const result = await synthesize(speechReq);

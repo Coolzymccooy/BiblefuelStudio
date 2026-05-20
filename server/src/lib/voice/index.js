@@ -37,3 +37,8 @@ export {
   resolveProfile,
 } from "./profiles.js";
 export { synthesizeForCategory } from "./categorySynthesis.js";
+export {
+  alignAudioWithText,
+  isForcedAlignmentAvailable,
+  wordsToCharAlignment,
+} from "./alignment.js";
