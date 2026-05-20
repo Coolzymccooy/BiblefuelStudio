@@ -1,5 +1,24 @@
 import { list, listAvailable, get as getProvider } from "./registry.js";
 import { SpeechRequestSchema } from "./schemas.js";
+import { alignAudioWithText, isForcedAlignmentAvailable } from "./alignment.js";
+
+// Indirection so tests can substitute the alignment implementation without
+// touching the public synthesize() signature. Production code path is
+// unchanged — the default impl is the real Whisper-backed function.
+let _alignImpl = alignAudioWithText;
+let _isAlignmentAvailableImpl = isForcedAlignmentAvailable;
+
+/** Test-only. */
+export function _setAlignmentImpl(fn, isAvailableFn) {
+  _alignImpl = typeof fn === "function" ? fn : alignAudioWithText;
+  _isAlignmentAvailableImpl = typeof isAvailableFn === "function" ? isAvailableFn : isForcedAlignmentAvailable;
+}
+
+/** Test-only. */
+export function _resetAlignmentImpl() {
+  _alignImpl = alignAudioWithText;
+  _isAlignmentAvailableImpl = isForcedAlignmentAvailable;
+}
 
 /**
  * Capability-aware provider selection.
@@ -68,9 +87,13 @@ export async function synthesize(req) {
   /** @type {Array<{ provider: string, error: string }>} */
   const errors = [];
 
+  /** @type {import("./types.js").SpeechResult | null} */
+  let result = null;
+
   for (const provider of candidates) {
     try {
-      return await provider.synthesize(parsed);
+      result = await provider.synthesize(parsed);
+      break;
     } catch (err) {
       const msg = String(err?.message || err);
       console.warn(`[TTS] ${provider.id} failed: ${msg}`);
@@ -78,10 +101,30 @@ export async function synthesize(req) {
     }
   }
 
-  const first = errors[0];
-  throw new Error(
-    `TTS pipeline failed. First failure (${first.provider}): ${first.error}`,
-  );
+  if (!result) {
+    const first = errors[0];
+    throw new Error(
+      `TTS pipeline failed. First failure (${first.provider}): ${first.error}`,
+    );
+  }
+
+  // Forced-alignment post-processor. Opt-in via forcedAlignmentFallback.
+  // Only runs when the caller wants timestamps AND the chosen provider
+  // didn't supply any. Failure is non-fatal — audio still ships.
+  if (parsed.withTimestamps && parsed.forcedAlignmentFallback && !result.alignment) {
+    if (!_isAlignmentAvailableImpl()) {
+      console.warn(
+        `[TTS] forcedAlignmentFallback requested but OPENAI_API_KEY not configured — skipping`,
+      );
+    } else {
+      const alignment = await _alignImpl(result.file, parsed.text);
+      if (alignment) {
+        result = { ...result, alignment, alignmentSource: "whisper" };
+      }
+    }
+  }
+
+  return result;
 }
 
 /**

@@ -29,6 +29,7 @@ export const SpeechRequestSchema = z
     voiceId: z.string().optional(),
     voiceIds: z.record(z.string(), z.string()).optional(),
     withTimestamps: z.boolean().optional(),
+    forcedAlignmentFallback: z.boolean().optional(),
     voiceSettings: VoiceSettingsSchema.optional(),
     modelId: z.string().optional(),
     prosody: ProsodyHintSchema.optional(),
