@@ -17,11 +17,21 @@
 import { Router } from "express";
 import { z } from "zod";
 import { buildSeriesPlan } from "../lib/series/seriesBuilder.js";
+import { extractSpeakableVerseText } from "../lib/series/speakable.js";
 import { lookupVerses, isKnownTranslation } from "../lib/bible/scriptureApi.js";
 import { enqueueCampaignAutoPost } from "./jobs.js";
 import { appendSeries, listSeriesForUser } from "../lib/series/seriesStore.js";
 
 const router = Router();
+
+// Hard cap on the spoken/on-screen excerpt. A 22-second short can only
+// narrate ~60-90 words (~300-400 chars); the full verse passage lives in
+// the social caption + YouVersion link. This cap also keeps the ffmpeg
+// filter_complex arg below the Windows command-line limit (~32 KB), which
+// the previous unbounded version was hitting (`spawn ENAMETOOLONG`) when a
+// long verse range produced word-level alignment with hundreds of drawtext
+// filters.
+const SPEAKABLE_VERSE_MAX_CHARS = 280;
 
 const PreviewSchema = z.object({
   reference: z.string().min(1).max(60),
@@ -98,15 +108,19 @@ router.post("/generate", async (req, res) => {
     /** @type {string[]} */
     const jobIds = [];
     for (const segment of plan.segments) {
-      const verseText = segment.verses.map((v) => String(v.text || "").trim()).join(" ");
-      const verseTextForTts = verseText.replace(/\s+/g, " ").slice(0, 1500);
+      // Spoken / on-screen text is capped to fit a short-form video duration
+      // AND to keep the ffmpeg filter graph well under the OS command-line
+      // limit (Windows: ~32 KB). The full passage is preserved in the
+      // social caption via captionOverride, so nothing is lost — only the
+      // narration is shortened.
+      const speakable = extractSpeakableVerseText(segment.verses, SPEAKABLE_VERSE_MAX_CHARS);
 
       const prebuiltScript = {
-        hook: `Part ${segment.partNumber} of ${segment.totalParts}`,
-        verse: verseTextForTts,
-        reference: segment.reference,
+        hook: `Part ${segment.partNumber} of ${segment.totalParts} — ${segment.reference}`,
+        verse: speakable,
+        reference: "",
         reflection: "",
-        cta: "Read more on YouVersion",
+        cta: "Read on YouVersion",
       };
 
       const title = input.titlePrefix

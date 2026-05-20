@@ -8,7 +8,18 @@ const EMPHASIS_COLOR = "#F59E0B";
 const BASE_TEXT_COLOR = "white";
 
 export function escapeDrawText(s) {
-  return String(s || "").replace(/[:\\'\[\]]/g, "\\$&").replace(/\n/g, " ");
+  // ffmpeg's drawtext `text='...'` form CANNOT contain an ASCII apostrophe
+  // (`'`) — even backslash-escaped (`\'`) inside the single-quoted string
+  // breaks the chain lexer's quote tracking, which then mis-parses every
+  // downstream filter ("No such filter: '<float>'" mid-chain). Real-world
+  // Bible text (`John's`, `can't`) hits this constantly. Normalizing to
+  // U+2019 RIGHT SINGLE QUOTATION MARK gives visually identical output
+  // and sidesteps the lexer entirely. Same treatment for double-quote.
+  return String(s || "")
+    .replace(/'/g, "’")
+    .replace(/"/g, "”")
+    .replace(/\n/g, " ")
+    .replace(/[:\\\[\]]/g, "\\$&");
 }
 
 /**
