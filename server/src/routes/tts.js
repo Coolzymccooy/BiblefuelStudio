@@ -13,6 +13,7 @@ import {
   listCategories,
   resolveProfile,
   synthesizeForCategory,
+  describeProviders,
 } from "../lib/voice/index.js";
 
 const router = Router();
@@ -278,6 +279,10 @@ function collectStream(stream, timeoutMs) {
 // Project 2 of the voice synthesis engine. These routes power the upcoming
 // settings panel UI and let the render pipeline request "read this prayer"
 // or "read this scripture" without having to know provider parameters.
+
+router.get("/providers", (_req, res) => {
+  res.json({ ok: true, providers: describeProviders() });
+});
 
 router.get("/profiles", (_req, res) => {
   const categories = listCategories();
