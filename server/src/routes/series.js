@@ -21,6 +21,7 @@ import { extractSpeakableVerseText } from "../lib/series/speakable.js";
 import { lookupVerses, isKnownTranslation } from "../lib/bible/scriptureApi.js";
 import { enqueueCampaignAutoPost } from "./jobs.js";
 import { appendSeries, listSeriesForUser } from "../lib/series/seriesStore.js";
+import { generateBibleImage, isImageGenEnabled } from "../lib/imageGen/index.js";
 
 const router = Router();
 
@@ -53,6 +54,11 @@ const GenerateSchema = PreviewSchema.extend({
   durationSec: z.number().int().min(8).max(60).optional().default(22),
   backgroundQuery: z.string().optional(),
   titlePrefix: z.string().max(60).optional(),
+  // £0 generative artwork (Cloudflare Workers AI → Imagen failover). Off by
+  // default so the render path stays identical to today unless the user opts
+  // in. When true, one image per segment is generated up-front and spliced
+  // in as the opening scene of that part's video.
+  useGenImage: z.boolean().optional().default(false),
 });
 
 /**
@@ -105,9 +111,33 @@ router.post("/generate", async (req, res) => {
       fetchVerses,
     });
 
+    // Image gen runs synchronously here (before enqueue) so a provider
+    // failure surfaces to the user as a 400 rather than a half-broken series
+    // of jobs. We only block on it when the user opted in AND we have at
+    // least one configured provider.
+    const wantImageGen = Boolean(input.useGenImage) && isImageGenEnabled();
+    /** @type {Array<{ ok: boolean, publicUrl?: string, provider?: string, error?: string }>} */
+    const imagesBySegment = [];
+    if (wantImageGen) {
+      for (const segment of plan.segments) {
+        const img = await generateBibleImage({
+          seriesId: plan.seriesId,
+          partNumber: segment.partNumber,
+          beatType: "verse",
+          verseText: segment.verses?.[0]?.text || "",
+          aspect: input.aspect,
+        });
+        if (!img.ok) {
+          console.warn(`[SERIES] gen image failed for ${plan.seriesId} part ${segment.partNumber}: ${img.error}`);
+        }
+        imagesBySegment.push(img);
+      }
+    }
+
     /** @type {string[]} */
     const jobIds = [];
-    for (const segment of plan.segments) {
+    for (let i = 0; i < plan.segments.length; i += 1) {
+      const segment = plan.segments[i];
       // Spoken / on-screen text is capped to fit a short-form video duration
       // AND to keep the ffmpeg filter graph well under the OS command-line
       // limit (Windows: ~32 KB). The full passage is preserved in the
@@ -127,6 +157,9 @@ router.post("/generate", async (req, res) => {
         ? `${input.titlePrefix} — Part ${segment.partNumber}/${segment.totalParts}`
         : `${plan.book} ${plan.chapter} — Part ${segment.partNumber}/${segment.totalParts}`;
 
+      const img = imagesBySegment[i];
+      const generatedImage = img && img.ok && img.publicUrl ? img.publicUrl : null;
+
       const job = await enqueueCampaignAutoPost({
         destination: input.destination,
         webhookId: input.webhookId,
@@ -142,6 +175,7 @@ router.post("/generate", async (req, res) => {
         title,
         prebuiltScript,
         captionOverride: segment.caption,
+        generatedImage,
         series: {
           seriesId: plan.seriesId,
           partNumber: segment.partNumber,
@@ -165,7 +199,23 @@ router.post("/generate", async (req, res) => {
       createdAt: new Date().toISOString(),
     });
 
-    res.json({ ok: true, series: record, plan, jobIds });
+    res.json({
+      ok: true,
+      series: record,
+      plan,
+      jobIds,
+      imageGen: wantImageGen
+        ? {
+            requested: true,
+            results: imagesBySegment.map((r, idx) => ({
+              partNumber: idx + 1,
+              ok: Boolean(r?.ok),
+              provider: r?.provider,
+              error: r?.ok ? undefined : r?.error,
+            })),
+          }
+        : { requested: false },
+    });
   } catch (err) {
     res.status(400).json({ ok: false, error: String(err?.message || err) });
   }

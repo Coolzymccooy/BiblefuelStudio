@@ -11,7 +11,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { Sparkles, Play, Hash, ListOrdered, BookOpen, RefreshCw } from 'lucide-react';
+import { Sparkles, Play, Hash, ListOrdered, BookOpen, RefreshCw, Image as ImageIcon } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 import { Card } from '../components/ui/Card';
@@ -40,6 +40,7 @@ export function SeriesPage() {
     const [tone, setTone] = useState('');
     const [aspect, setAspect] = useState<'portrait' | 'square' | 'landscape'>('portrait');
     const [durationSec, setDurationSec] = useState(22);
+    const [useGenImage, setUseGenImage] = useState(false);
 
     const [catalog, setCatalog] = useState<TranslationsResponse | null>(null);
     const [plan, setPlan] = useState<SeriesPlan | null>(null);
@@ -99,8 +100,20 @@ export function SeriesPage() {
                 tone: tone.trim() || undefined,
                 aspect,
                 durationSec,
+                useGenImage,
             });
             toast.success(`Series queued — ${result.jobIds.length} videos`);
+            if (result.imageGen?.requested && Array.isArray(result.imageGen.results)) {
+                const failed = result.imageGen.results.filter((r) => !r.ok);
+                if (failed.length === 0) {
+                    toast.success(`AI artwork: ${result.imageGen.results.length} images generated`);
+                } else {
+                    toast(
+                        `AI artwork: ${result.imageGen.results.length - failed.length}/${result.imageGen.results.length} generated; ${failed.length} fell back to Pexels`,
+                        { icon: '⚠️' },
+                    );
+                }
+            }
             setHistory((prev) => [result.series, ...prev]);
             setTimeout(() => navigate('/jobs'), 1200);
         } catch (err) {
@@ -217,6 +230,27 @@ export function SeriesPage() {
                                 onChange={(e) => setNiche(e.target.value)}
                                 placeholder="Christian / Bible encouragement"
                             />
+                        </label>
+
+                        <label className="lg:col-span-3 flex items-start gap-3 rounded-lg border border-white/5 bg-dark-900/40 p-3 cursor-pointer hover:bg-dark-900/60 transition-colors">
+                            <input
+                                type="checkbox"
+                                checked={useGenImage}
+                                onChange={(e) => setUseGenImage(e.target.checked)}
+                                className="mt-1 accent-primary-500"
+                            />
+                            <div className="flex-1">
+                                <div className="flex items-center gap-2 text-sm text-gray-200">
+                                    <ImageIcon size={14} className="text-primary-400" />
+                                    Add AI-generated artwork (free)
+                                </div>
+                                <p className="text-xs text-gray-500 mt-1">
+                                    Generates one painterly Bible landscape per part using Cloudflare Workers AI
+                                    (free tier) with Google Imagen as fallback. Same visual style across every part
+                                    of the series. No biblical figures are depicted — landscapes and symbolic
+                                    imagery only. Adds ~5–15s per part during generate.
+                                </p>
+                            </div>
                         </label>
                     </div>
                 </details>
