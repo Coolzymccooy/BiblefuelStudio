@@ -109,13 +109,14 @@ const AUDIO_PRESET_DEFAULTS: Record<string, AudioPresetValues> = {
     },
 };
 
-type TTSProvider = 'elevenlabs' | 'edge';
+type TTSProvider = 'elevenlabs' | 'edge' | 'chatterbox';
 
 export function VoiceAudioPage() {
     const { config } = useConfig();
     const ttsEnabled = config.features.tts;
     const elevenlabsAvailable = config.features.elevenlabs !== false;
     const edgeAvailable = config.features.edgeTts !== false;
+    const [chatterboxAvailable, setChatterboxAvailable] = useState(false);
     const [ttsText, setTtsText] = useState('');
     const [audioPath, setAudioPath] = useState('');
     const [preset, setPreset] = useState('clean_voice');
@@ -135,6 +136,11 @@ export function VoiceAudioPage() {
     const [edgeVoiceId, setEdgeVoiceId] = useState('');
     const [stability, setStability] = useState(0.5);
     const [similarity, setSimilarity] = useState(0.75);
+    // Chatterbox controls. audio_prompt_path is sent through the generic
+    // voiceId field; exaggeration/cfg_weight are forwarded as voiceSettings.
+    const [chatterboxAudioPrompt, setChatterboxAudioPrompt] = useState('');
+    const [chatterboxStyle, setChatterboxStyle] = useState(0.5);
+    const [chatterboxCfg, setChatterboxCfg] = useState(0.5);
     const [voicePresets, setVoicePresets] = useState<VoicePreset[]>([]);
     const [presetLabel, setPresetLabel] = useState('');
     const [presetVoiceId, setPresetVoiceId] = useState('');
@@ -190,7 +196,7 @@ export function VoiceAudioPage() {
         const cachedEdgeVoiceId = loadJson<string>(STORAGE_KEYS.ttsEdgeVoiceId, '');
         if (cachedEdgeVoiceId) setEdgeVoiceId(cachedEdgeVoiceId);
         const cachedProvider = loadJson<TTSProvider>(STORAGE_KEYS.ttsProvider, 'elevenlabs');
-        if (cachedProvider === 'edge' || cachedProvider === 'elevenlabs') {
+        if (cachedProvider === 'edge' || cachedProvider === 'elevenlabs' || cachedProvider === 'chatterbox') {
             setProvider(cachedProvider);
         }
         const cachedStability = loadJson<number>(STORAGE_KEYS.ttsStability, 0.5);
@@ -230,6 +236,24 @@ export function VoiceAudioPage() {
     useEffect(() => {
         saveJson(STORAGE_KEYS.ttsProvider, provider);
     }, [provider]);
+
+    // Probe the voice engine once for Chatterbox availability — gates the
+    // third provider button. If the bridge server isn't running this stays
+    // false and the button shows a 'needs CHATTERBOX_URL' tooltip.
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            const res = await api.get<{ ok: boolean; providers: Record<string, { available: boolean }> }>(
+                '/api/tts/providers',
+            );
+            if (cancelled) return;
+            const isUp = Boolean(res.ok && res.data?.providers?.chatterbox?.available);
+            setChatterboxAvailable(isUp);
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, []);
 
     // Reset the loaded voices list whenever provider changes so the picker
     // doesn't show stale entries from the other provider.
@@ -277,25 +301,39 @@ export function VoiceAudioPage() {
 
         setIsProcessing(true);
         try {
-            const isEdge = provider === 'edge';
-            const url = isEdge ? '/api/tts/edge' : '/api/tts/elevenlabs';
-            const payload = isEdge
-                ? { text: ttsText, voiceId: edgeVoiceId || undefined }
-                : {
-                      text: ttsText,
-                      voiceId: voiceId || undefined,
-                      voiceSettings: { stability, similarity_boost: similarity },
-                  };
+            let url: string;
+            let payload: Record<string, unknown>;
+            let providerLabel: string;
+
+            if (provider === 'edge') {
+                url = '/api/tts/edge';
+                payload = { text: ttsText, voiceId: edgeVoiceId || undefined };
+                providerLabel = 'Edge-TTS';
+            } else if (provider === 'chatterbox') {
+                url = '/api/tts/chatterbox';
+                payload = {
+                    text: ttsText,
+                    voiceId: chatterboxAudioPrompt.trim() || undefined,
+                    exaggeration: typeof chatterboxStyle === 'number' ? chatterboxStyle : undefined,
+                    cfgWeight: typeof chatterboxCfg === 'number' ? chatterboxCfg : undefined,
+                };
+                providerLabel = 'Chatterbox';
+            } else {
+                url = '/api/tts/elevenlabs';
+                payload = {
+                    text: ttsText,
+                    voiceId: voiceId || undefined,
+                    voiceSettings: { stability, similarity_boost: similarity },
+                };
+                providerLabel = 'ElevenLabs';
+            }
+
             const response = await api.post(url, payload);
 
             if (response.ok && response.data?.file) {
                 setAudioPath(response.data.file);
-                addToHistory(
-                    response.data.file,
-                    'tts',
-                    isEdge ? 'Edge-TTS' : 'ElevenLabs',
-                );
-                toast.success(isEdge ? 'MP3 generated via Edge-TTS!' : 'MP3 generated!');
+                addToHistory(response.data.file, 'tts', providerLabel);
+                toast.success(`Generated via ${providerLabel}`);
             } else {
                 toast.error(response.error || 'TTS generation failed');
             }
@@ -869,6 +907,19 @@ export function VoiceAudioPage() {
                                 </button>
                                 <button
                                     type="button"
+                                    onClick={() => setProvider('chatterbox')}
+                                    disabled={!chatterboxAvailable}
+                                    title={chatterboxAvailable ? '' : 'CHATTERBOX_URL not set (tools/chatterbox-server)'}
+                                    className={`px-3 py-1.5 text-xs font-medium transition border-l border-white/10 ${
+                                        provider === 'chatterbox'
+                                            ? 'bg-emerald-500/15 text-emerald-200'
+                                            : 'text-gray-300 hover:bg-white/5'
+                                    } disabled:opacity-40 disabled:cursor-not-allowed`}
+                                >
+                                    Chatterbox <span className="opacity-60">· local</span>
+                                </button>
+                                <button
+                                    type="button"
                                     onClick={() => setProvider('edge')}
                                     disabled={!edgeAvailable}
                                     className={`px-3 py-1.5 text-xs font-medium transition border-l border-white/10 ${
@@ -883,68 +934,118 @@ export function VoiceAudioPage() {
                             <p className="text-[10px] text-gray-500 mt-1">
                                 {provider === 'edge'
                                     ? 'Free Microsoft neural voices via the Edge "Read Aloud" service. ~400 voices, no key. Use for your own channel narration.'
-                                    : 'Premium voices + cloning. Requires ELEVENLABS_API_KEY and counts against your monthly character quota.'}
+                                    : provider === 'chatterbox'
+                                      ? 'Local open-source TTS (Resemble AI). Runs on your machine — free, private, supports voice cloning from a reference WAV. CPU inference is slow (~30–60 s per short sentence); plan accordingly.'
+                                      : 'Premium voices + cloning. Requires ELEVENLABS_API_KEY and counts against your monthly character quota.'}
                             </p>
                         </div>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                            <div>
-                                <label className="block text-xs font-medium text-gray-600 mb-1">
-                                    Voice ID (optional)
-                                </label>
-                                <Input
-                                    value={provider === 'edge' ? edgeVoiceId : voiceId}
-                                    onChange={(e) =>
-                                        provider === 'edge'
-                                            ? setEdgeVoiceId(e.target.value)
-                                            : setVoiceId(e.target.value)
-                                    }
-                                    placeholder={
-                                        provider === 'edge'
-                                            ? 'e.g. en-US-AriaNeural'
-                                            : 'Leave empty to use default voice'
-                                    }
-                                />
-                                <p className="text-[10px] text-gray-500 mt-1">
-                                    Paste a voice ID or load voices below.
-                                </p>
+                        {provider === 'chatterbox' ? (
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div>
+                                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                                        Reference voice path (optional)
+                                    </label>
+                                    <Input
+                                        value={chatterboxAudioPrompt}
+                                        onChange={(e) => setChatterboxAudioPrompt(e.target.value)}
+                                        placeholder="Absolute path to a WAV on the Chatterbox host"
+                                    />
+                                    <p className="text-[10px] text-gray-500 mt-1">
+                                        Leave empty to use the model's default voice. Path is resolved by the chatterbox server, not biblefuel.
+                                    </p>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                                        Exaggeration ({chatterboxStyle})
+                                    </label>
+                                    <input
+                                        type="range"
+                                        min="0"
+                                        max="1"
+                                        step="0.05"
+                                        value={chatterboxStyle}
+                                        onChange={(e) => setChatterboxStyle(Number(e.target.value))}
+                                        className="w-full accent-primary-500"
+                                    />
+                                    <p className="text-[10px] text-gray-500 mt-1">Higher = more expressive.</p>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                                        CFG weight ({chatterboxCfg})
+                                    </label>
+                                    <input
+                                        type="range"
+                                        min="0"
+                                        max="1"
+                                        step="0.05"
+                                        value={chatterboxCfg}
+                                        onChange={(e) => setChatterboxCfg(Number(e.target.value))}
+                                        className="w-full accent-primary-500"
+                                    />
+                                    <p className="text-[10px] text-gray-500 mt-1">Lower = more faithful to reference voice; higher = more creative.</p>
+                                </div>
                             </div>
-                            <div>
-                                <label className="block text-xs font-medium text-gray-600 mb-1">
-                                    Stability ({stability})
-                                </label>
-                                <input
-                                    type="range"
-                                    min="0"
-                                    max="1"
-                                    step="0.05"
-                                    value={stability}
-                                    onChange={(e) => setStability(Number(e.target.value))}
-                                    disabled={provider === 'edge'}
-                                    className="w-full accent-primary-500 disabled:opacity-40"
-                                />
-                                {provider === 'edge' && (
-                                    <p className="text-[10px] text-gray-500 mt-1">ElevenLabs-only knob.</p>
-                                )}
+                        ) : (
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div>
+                                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                                        Voice ID (optional)
+                                    </label>
+                                    <Input
+                                        value={provider === 'edge' ? edgeVoiceId : voiceId}
+                                        onChange={(e) =>
+                                            provider === 'edge'
+                                                ? setEdgeVoiceId(e.target.value)
+                                                : setVoiceId(e.target.value)
+                                        }
+                                        placeholder={
+                                            provider === 'edge'
+                                                ? 'e.g. en-US-AriaNeural'
+                                                : 'Leave empty to use default voice'
+                                        }
+                                    />
+                                    <p className="text-[10px] text-gray-500 mt-1">
+                                        Paste a voice ID or load voices below.
+                                    </p>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                                        Stability ({stability})
+                                    </label>
+                                    <input
+                                        type="range"
+                                        min="0"
+                                        max="1"
+                                        step="0.05"
+                                        value={stability}
+                                        onChange={(e) => setStability(Number(e.target.value))}
+                                        disabled={provider === 'edge'}
+                                        className="w-full accent-primary-500 disabled:opacity-40"
+                                    />
+                                    {provider === 'edge' && (
+                                        <p className="text-[10px] text-gray-500 mt-1">ElevenLabs-only knob.</p>
+                                    )}
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                                        Similarity Boost ({similarity})
+                                    </label>
+                                    <input
+                                        type="range"
+                                        min="0"
+                                        max="1"
+                                        step="0.05"
+                                        value={similarity}
+                                        onChange={(e) => setSimilarity(Number(e.target.value))}
+                                        disabled={provider === 'edge'}
+                                        className="w-full accent-primary-500 disabled:opacity-40"
+                                    />
+                                    {provider === 'edge' && (
+                                        <p className="text-[10px] text-gray-500 mt-1">ElevenLabs-only knob.</p>
+                                    )}
+                                </div>
                             </div>
-                            <div>
-                                <label className="block text-xs font-medium text-gray-600 mb-1">
-                                    Similarity Boost ({similarity})
-                                </label>
-                                <input
-                                    type="range"
-                                    min="0"
-                                    max="1"
-                                    step="0.05"
-                                    value={similarity}
-                                    onChange={(e) => setSimilarity(Number(e.target.value))}
-                                    disabled={provider === 'edge'}
-                                    className="w-full accent-primary-500 disabled:opacity-40"
-                                />
-                                {provider === 'edge' && (
-                                    <p className="text-[10px] text-gray-500 mt-1">ElevenLabs-only knob.</p>
-                                )}
-                            </div>
-                        </div>
+                        )}
                         <div className="flex items-center gap-2">
                         <Button variant="secondary" className="text-xs h-8" onClick={loadVoices} isLoading={isLoadingVoices} disabled={!ttsEnabled}>
                             <RefreshCw size={14} className="mr-2" />
@@ -969,7 +1070,7 @@ export function VoiceAudioPage() {
                             )}
                         </div>
                         <Button onClick={handleTTS} isLoading={isProcessing} disabled={!ttsEnabled}>
-                            Generate MP3 ({provider === 'edge' ? 'Edge-TTS' : 'ElevenLabs'})
+                            Generate ({provider === 'edge' ? 'Edge-TTS' : provider === 'chatterbox' ? 'Chatterbox' : 'ElevenLabs'})
                         </Button>
                         {!ttsEnabled && (
                             <p className="text-xs text-yellow-600">
