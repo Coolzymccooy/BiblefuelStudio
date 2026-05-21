@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
-    Menu, X, FileText, List, Briefcase, Image, Mic, Film, Video, Package, LogOut, LogIn, Shield, Settings, HelpCircle, Wand2, BookOpen
+    Menu, X, FileText, List, Briefcase, Image, Mic, Film, Video, Package, LogOut, LogIn, Shield, Settings, HelpCircle, Wand2, BookOpen, Home
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { Button } from './ui/Button';
@@ -22,7 +22,11 @@ const navItems = [
     { path: '/gumroad', label: 'Gumroad', icon: Package },
 ];
 
+// Mobile bottom-bar shortcuts. Home is included so users can always reach
+// the welcome screen / auto-publish CTA — the sidebar's Home entry can be
+// occluded by the sticky mobile header on small screens.
 const quickActions = [
+    { path: '/', label: 'Home', icon: Home },
     { path: '/scripts', label: 'Scripts', icon: FileText },
     { path: '/voice-audio', label: 'Voice', icon: Mic },
     { path: '/render', label: 'Render', icon: Video },
@@ -87,9 +91,15 @@ export function Layout() {
                     <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="text-gray-300 hover:text-white transition-colors">
                         {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
                     </button>
-                    <span className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-gray-100 to-primary-300 font-display tracking-wide">
+                    {/* Tap-to-home wordmark — standard mobile UX so users
+                        don't depend on the sidebar Home entry. */}
+                    <Link
+                        to="/"
+                        onClick={() => setIsMobileMenuOpen(false)}
+                        className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-gray-100 to-primary-300 font-display tracking-wide"
+                    >
                         Biblefuel Studio
-                    </span>
+                    </Link>
                 </div>
 
                 {/* Mobile actions */}
@@ -103,10 +113,15 @@ export function Layout() {
                 )}
             </header>
 
-            {/* Sidebar Navigation */}
+            {/* Sidebar Navigation
+                pt-16 on mobile clears the 60px sticky mobile header that
+                sits on top with z-50; without it the first nav item (Home)
+                is hidden behind the header. lg:pt-0 removes the spacer on
+                desktop where the header doesn't exist. */}
             <aside className={`
         fixed inset-y-0 left-0 z-40 w-64 transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static lg:h-screen
         bg-dark-950/80 backdrop-blur-xl border-r border-white/5 flex flex-col
+        pt-16 lg:pt-0
         ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}
       `}>
                 <div className="p-6 hidden lg:block">
