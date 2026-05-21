@@ -331,4 +331,34 @@ router.post("/edge", async (req, res) => {
   }
 });
 
+// Direct Chatterbox route — mirrors the /edge and /elevenlabs shape so the
+// existing VoiceAudioPage can pick a provider without going through the
+// category/profile system. Forces preferredProvider:"chatterbox" so the
+// orchestrator routes there directly; falls back if Chatterbox is offline.
+router.post("/chatterbox", async (req, res) => {
+  const { text, voiceId, exaggeration, cfgWeight } = req.body || {};
+  try {
+    const voiceSettings = {};
+    if (typeof exaggeration === "number") voiceSettings.style = exaggeration;
+    if (typeof cfgWeight === "number") voiceSettings.cfg_weight = cfgWeight;
+
+    const result = await synthesizeForCategory({
+      text,
+      category: "devotional",
+      preferredProvider: "chatterbox",
+      overrides: {
+        voiceIds: voiceId ? { chatterbox: voiceId } : undefined,
+        voiceSettings: Object.keys(voiceSettings).length > 0 ? voiceSettings : undefined,
+        forcedAlignmentFallback: false,
+      },
+    });
+    res.json(result);
+  } catch (e) {
+    console.error("[TTS] Chatterbox route error:", e);
+    const message = String(e?.message || e);
+    const status = /required|invalid|missing/i.test(message) ? 400 : 502;
+    res.status(status).json({ ok: false, error: message });
+  }
+});
+
 export default router;
