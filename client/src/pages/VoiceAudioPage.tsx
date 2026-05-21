@@ -909,14 +909,14 @@ export function VoiceAudioPage() {
                                     type="button"
                                     onClick={() => setProvider('chatterbox')}
                                     disabled={!chatterboxAvailable}
-                                    title={chatterboxAvailable ? '' : 'CHATTERBOX_URL not set (tools/chatterbox-server)'}
+                                    title={chatterboxAvailable ? '' : 'CHATTERBOX_URL not set — point it at a Chatterbox HTTP server (self-hosted bridge, e.g. https://chatterbox.tiwaton.co.uk).'}
                                     className={`px-3 py-1.5 text-xs font-medium transition border-l border-white/10 ${
                                         provider === 'chatterbox'
                                             ? 'bg-emerald-500/15 text-emerald-200'
                                             : 'text-gray-300 hover:bg-white/5'
                                     } disabled:opacity-40 disabled:cursor-not-allowed`}
                                 >
-                                    Chatterbox <span className="opacity-60">· local</span>
+                                    Chatterbox <span className="opacity-60">· self-hosted</span>
                                 </button>
                                 <button
                                     type="button"
@@ -935,7 +935,7 @@ export function VoiceAudioPage() {
                                 {provider === 'edge'
                                     ? 'Free Microsoft neural voices via the Edge "Read Aloud" service. ~400 voices, no key. Use for your own channel narration.'
                                     : provider === 'chatterbox'
-                                      ? 'Local open-source TTS (Resemble AI). Runs on your machine — free, private, supports voice cloning from a reference WAV. CPU inference is slow (~30–60 s per short sentence); plan accordingly.'
+                                      ? 'Self-hosted open-source TTS (Resemble AI). Calls a Chatterbox HTTP bridge over the network — free, supports voice cloning via a reference WAV path on the bridge host. Inference is slower than ElevenLabs but expressive.'
                                       : 'Premium voices + cloning. Requires ELEVENLABS_API_KEY and counts against your monthly character quota.'}
                             </p>
                         </div>
