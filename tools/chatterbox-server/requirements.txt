@@ -1,0 +1,10 @@
+# chatterbox-tts pulls its own torch (CPU wheel by default on machines
+# without CUDA). Don't pre-pin torch — older chatterbox releases pin
+# numpy<1.26 which fails to build from source on Python 3.12.
+#
+# Verified install: Python 3.12 + chatterbox-tts 0.1.7 + torch 2.6.0+cpu
+# + numpy 1.26.4. See README.md for the full setup recipe.
+chatterbox-tts>=0.1.7,<0.2
+fastapi>=0.115
+uvicorn[standard]>=0.32
+soundfile>=0.12
