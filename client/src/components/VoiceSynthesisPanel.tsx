@@ -6,6 +6,7 @@ import { Button } from './ui/Button';
 import { Select } from './ui/Select';
 import { Textarea } from './ui/Textarea';
 import { api } from '../lib/api';
+import { toOutputUrl } from '../lib/storage';
 import toast from 'react-hot-toast';
 
 type ProviderInfo = { available: boolean; priority: number };
@@ -77,12 +78,10 @@ export function VoiceSynthesisPanel() {
         return ['', ...ids];
     }, [providers]);
 
-    const audioSrc = useMemo(() => {
-        if (!result?.file) return '';
-        const base = (api as { baseUrl?: string }).baseUrl || '';
-        const rel = String(result.file).replace(/^.*?(server\/outputs\/.*)$/, '/$1');
-        return `${base}${rel.startsWith('/') ? rel : `/${rel}`}`;
-    }, [result]);
+    const audioSrc = useMemo(
+        () => toOutputUrl(result?.file, api.baseUrl),
+        [result],
+    );
 
     const handleGenerate = async () => {
         if (sampleText.trim().length < 3) {
@@ -280,10 +279,19 @@ export function VoiceSynthesisPanel() {
                             <audio
                                 ref={audioRef}
                                 src={audioSrc}
+                                controls
+                                preload="auto"
+                                className="w-full"
                                 onPlay={() => setPlaying(true)}
                                 onPause={() => setPlaying(false)}
                                 onEnded={() => setPlaying(false)}
+                                onError={() => toast.error('Audio failed to load — check console for the requested URL')}
                             />
+                            <div className="text-[10px] text-gray-500 truncate">
+                                <a href={audioSrc} target="_blank" rel="noreferrer" className="hover:text-gray-300 underline">
+                                    {audioSrc}
+                                </a>
+                            </div>
                         </div>
                     )}
                 </div>

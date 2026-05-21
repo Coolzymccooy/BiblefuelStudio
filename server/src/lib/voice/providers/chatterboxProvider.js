@@ -122,9 +122,19 @@ export const chatterboxProvider = {
       throw new Error("Chatterbox returned empty audio");
     }
 
+    // Pick the extension from the actual response Content-Type. The default
+    // chatterbox-server emits WAV; treating it as .mp3 produces files with
+    // the wrong MIME, which browsers refuse to play.
+    const contentType = (resp.headers.get("content-type") || "").toLowerCase();
+    const ext = contentType.includes("wav") || contentType.includes("x-wav")
+      ? "wav"
+      : contentType.includes("mp3") || contentType.includes("mpeg")
+        ? "mp3"
+        : "wav"; // safe default for chatterbox; ffmpeg will read it either way
+
     const outDir = OUTPUT_DIR;
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
-    const outFile = path.join(outDir, `tts-chatterbox-${uuid()}.mp3`);
+    const outFile = path.join(outDir, `tts-chatterbox-${uuid()}.${ext}`);
     fs.writeFileSync(outFile, buffer);
 
     return {
