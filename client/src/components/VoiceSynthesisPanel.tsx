@@ -7,6 +7,7 @@ import { Select } from './ui/Select';
 import { Textarea } from './ui/Textarea';
 import { api } from '../lib/api';
 import { toOutputUrl } from '../lib/storage';
+import { useVoiceSynthesisDefaults } from '../lib/voiceSynthesisDefaults';
 import toast from 'react-hot-toast';
 
 type ProviderInfo = { available: boolean; reachable?: boolean; priority: number };
@@ -42,9 +43,13 @@ export function VoiceSynthesisPanel() {
     const [profiles, setProfiles] = useState<Profile[]>([]);
     const [loading, setLoading] = useState(true);
 
-    const [category, setCategory] = useState('devotional');
-    const [providerOverride, setProviderOverride] = useState<string>('');
-    const [cinematicMode, setCinematicMode] = useState(true);
+    const [defaults, updateDefaults] = useVoiceSynthesisDefaults();
+    const { enabled, category, providerOverride, cinematicMode } = defaults;
+    const setCategory = (next: string) => updateDefaults({ category: next });
+    const setProviderOverride = (next: string) => updateDefaults({ providerOverride: next });
+    const setCinematicMode = (updater: (prev: boolean) => boolean) =>
+        updateDefaults({ cinematicMode: updater(cinematicMode) });
+    const setEnabled = (next: boolean) => updateDefaults({ enabled: next });
     const [sampleText, setSampleText] = useState(SAMPLE_TEXT);
     const [busy, setBusy] = useState(false);
     const [result, setResult] = useState<SynthesisResult | null>(null);
@@ -270,6 +275,32 @@ export function VoiceSynthesisPanel() {
                                 Profile preference: {activeProfile.providerPreference.join(' → ')}
                             </span>
                         )}
+                    </div>
+
+                    <div
+                        className={`mt-2 rounded-xl border p-3 flex flex-wrap items-center gap-3 transition-colors ${
+                            enabled
+                                ? 'bg-emerald-500/10 border-emerald-500/30'
+                                : 'bg-white/5 border-white/10'
+                        }`}
+                    >
+                        <button
+                            type="button"
+                            onClick={() => setEnabled(!enabled)}
+                            className={`h-8 px-3 rounded-lg text-xs font-medium border transition-colors ${
+                                enabled
+                                    ? 'bg-emerald-500 text-black border-emerald-500'
+                                    : 'bg-white/5 text-gray-300 border-white/10 hover:border-white/20'
+                            }`}
+                        >
+                            {enabled ? 'Enabled across the app' : 'Apply across the app'}
+                        </button>
+                        <div className="text-[11px] text-gray-400 leading-snug">
+                            When enabled, Voice &amp; Audio and Auto-Publish use{' '}
+                            <span className="text-gray-200 font-medium">{activeProfile?.label || category}</span>
+                            {providerOverride ? ` via ${providerOverride}` : ' via the profile preference'}
+                            {cinematicMode ? ' with forced word timings' : ''}.
+                        </div>
                     </div>
 
                     {result?.ok && result.file && (

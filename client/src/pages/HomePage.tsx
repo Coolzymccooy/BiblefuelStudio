@@ -5,9 +5,10 @@ import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import toast from 'react-hot-toast';
-import { Sparkles, Play, Archive, Mail, ArrowLeft, Globe, Mic, Film, Video, HelpCircle, Cpu, List, Zap, ShieldCheck, Rocket, Briefcase } from 'lucide-react';
+import { Sparkles, Play, Archive, Mail, ArrowLeft, Globe, Mic, Film, Video, HelpCircle, Cpu, List, Zap, ShieldCheck, Rocket, Briefcase, Wand2 } from 'lucide-react';
 import { api } from '../lib/api';
 import { firebaseRequestPasswordReset, getFirebaseAuthErrorMessage, isFirebaseClientEnabled } from '../lib/firebase';
+import { useVoiceSynthesisDefaults } from '../lib/voiceSynthesisDefaults';
 
 interface JobRow {
     id: string;
@@ -111,16 +112,25 @@ function AutoPublishCard() {
     const [isLaunching, setIsLaunching] = useState(false);
     const [recentJobId, setRecentJobId] = useState<string | null>(null);
     const navigate = useNavigate();
+    const [voiceDefaults] = useVoiceSynthesisDefaults();
 
     const handleAutoPublish = async () => {
         setIsLaunching(true);
         try {
+            const voicePayload = voiceDefaults.enabled
+                ? {
+                      narrationCategory: voiceDefaults.category,
+                      preferredProvider: voiceDefaults.providerOverride || undefined,
+                      forcedAlignmentFallback: voiceDefaults.cinematicMode,
+                  }
+                : {};
             const res = await api.post('/api/jobs/enqueue', {
                 type: 'campaign_auto_post',
                 payload: {
                     aspect: 'portrait',
                     durationSec: 20,
                     destination: 'webhook',
+                    ...voicePayload,
                 },
             });
             if (res.ok && res.data?.job?.id) {
@@ -149,6 +159,18 @@ function AutoPublishCard() {
                             One click chains: <span className="text-amber-200">script</span> → background → voice → render → Make webhook → TikTok / YouTube.
                             Requires at least one background in your Library.
                         </p>
+                        <div className="mt-2 text-[11px] flex flex-wrap items-center gap-2">
+                            {voiceDefaults.enabled ? (
+                                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-200">
+                                    <Wand2 size={11} /> Voice Synthesis: {voiceDefaults.category}
+                                    {voiceDefaults.cinematicMode ? ' · cinematic' : ''}
+                                </span>
+                            ) : (
+                                <Link to="/settings" className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-gray-400 hover:text-gray-200">
+                                    <Wand2 size={11} /> Voice Synthesis off · enable in Settings
+                                </Link>
+                            )}
+                        </div>
                         {recentJobId && (
                             <p className="text-[11px] font-mono text-emerald-300 mt-2">
                                 Last job: {recentJobId} — watch the bell, or check Jobs.

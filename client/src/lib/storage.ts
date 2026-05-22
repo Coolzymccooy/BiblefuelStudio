@@ -19,6 +19,7 @@ export const STORAGE_KEYS = {
     ttsVoicePresets: 'BF_TTS_VOICE_PRESETS',
     ttsProvider: 'BF_TTS_PROVIDER',
     ttsEdgeVoiceId: 'BF_TTS_EDGE_VOICE_ID',
+    voiceSynthesisDefaults: 'BF_VOICE_SYNTHESIS_DEFAULTS',
 };
 
 export function loadJson<T>(key: string, fallback: T): T {
