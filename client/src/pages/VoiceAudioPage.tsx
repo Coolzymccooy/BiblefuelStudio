@@ -9,6 +9,8 @@ import { api } from '../lib/api';
 import toast from 'react-hot-toast';
 import { loadJson, pushUnique, saveJson, STORAGE_KEYS, toOutputUrl } from '../lib/storage';
 import { useConfig } from '../lib/config';
+import { useVoiceSynthesisDefaults } from '../lib/voiceSynthesisDefaults';
+import { Link } from 'react-router-dom';
 import {
     Play,
     Mic,
@@ -117,6 +119,7 @@ export function VoiceAudioPage() {
     const elevenlabsAvailable = config.features.elevenlabs !== false;
     const edgeAvailable = config.features.edgeTts !== false;
     const [chatterboxAvailable, setChatterboxAvailable] = useState(false);
+    const [voiceDefaults] = useVoiceSynthesisDefaults();
     const [ttsText, setTtsText] = useState('');
     const [audioPath, setAudioPath] = useState('');
     const [preset, setPreset] = useState('clean_voice');
@@ -310,7 +313,22 @@ export function VoiceAudioPage() {
             let payload: Record<string, unknown>;
             let providerLabel: string;
 
-            if (provider === 'edge') {
+            if (voiceDefaults.enabled) {
+                // Voice Synthesis defaults are enabled → route through the
+                // category orchestrator so the profile picks the voice,
+                // settings, and forced-alignment fallback automatically.
+                url = '/api/tts/synthesize-category';
+                payload = {
+                    text: ttsText,
+                    category: voiceDefaults.category,
+                    preferredProvider: voiceDefaults.providerOverride || undefined,
+                    withTimestamps: true,
+                    overrides: {
+                        forcedAlignmentFallback: voiceDefaults.cinematicMode,
+                    },
+                };
+                providerLabel = `Voice Synthesis · ${voiceDefaults.category}`;
+            } else if (provider === 'edge') {
                 url = '/api/tts/edge';
                 payload = { text: ttsText, voiceId: edgeVoiceId || undefined };
                 providerLabel = 'Edge-TTS';
@@ -893,6 +911,20 @@ export function VoiceAudioPage() {
                                 You can paste any text here: hook, verse, short reflection/prayer, and CTA. Keep it under about 6 short lines for best captions.
                             </p>
                         </div>
+                        {voiceDefaults.enabled && (
+                            <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 flex flex-wrap items-center gap-3 text-xs">
+                                <Wand2 size={14} className="text-emerald-300 shrink-0" />
+                                <span className="text-emerald-200">
+                                    Voice Synthesis defaults active —{' '}
+                                    <span className="font-semibold">{voiceDefaults.category}</span>
+                                    {voiceDefaults.providerOverride ? ` · ${voiceDefaults.providerOverride}` : ' · auto-provider'}
+                                    {voiceDefaults.cinematicMode ? ' · cinematic timings' : ''}.
+                                </span>
+                                <Link to="/settings" className="ml-auto text-[10px] text-emerald-300 hover:text-emerald-200 underline">
+                                    Edit in Settings
+                                </Link>
+                            </div>
+                        )}
                         <div>
                             <label className="block text-xs font-medium text-gray-600 mb-2">
                                 Provider

@@ -7,6 +7,8 @@ import { readLibrary } from "../lib/library.js";
 import { DATA_DIR, OUTPUT_DIR, resolveOutputAlias, isLocalOrRemote } from "../lib/mediaThumb.js";
 import { generateScripts } from "../lib/generateScripts.js";
 import { synthesizeTts } from "../lib/ttsOrchestrator.js";
+import { synthesizeForCategory } from "../lib/voice/categorySynthesis.js";
+import { resolveProfile, listCategories } from "../lib/voice/profiles.js";
 import { dispatchPost } from "./social.js";
 import { pickBestBackground, classifyText } from "../lib/categorize.js";
 import { charsToWords, annotateEmphasis, groupWordsByBeat } from "../lib/captions.js";
@@ -492,7 +494,7 @@ async function renderVideoCore(payload, jobId) {
     const augmented = await augmentPayloadWithKineticCaptions(payload, jobId);
     return await renderAdvancedVideo(augmented, jobId);
   }
-  const { backgroundPath, audioPath, lines, durationSec, aspect, captionWidthPct, musicPath, musicVolume, autoDuck } = payload || {};
+  const { backgroundPath, audioPath, lines, durationSec, aspect, captionWidthPct, musicPath, musicVolume, autoDuck, typographyPreset } = payload || {};
   const resolvedBackground = resolveAssetPath(backgroundPath);
   const resolvedAudio = resolveAssetPath(audioPath);
   const resolvedMusic = resolveAssetPath(musicPath);
@@ -512,14 +514,8 @@ async function renderVideoCore(payload, jobId) {
   if (safeLines.length === 0) throw new Error("lines[] required");
 
   const outFile = path.join(outDir, `video-${uuid()}.mp4`);
-  const startY = Math.round(h * 0.22);
-  const lineGap = Math.round(h * 0.06);
-  const fontSize = Math.max(28, Math.round(h * 0.033));
-  const filters = safeLines.map((t, i) => {
-    const y = startY + i * lineGap;
-    const escaped = t.replace(/[:\\'\[\]]/g, "\\$&").replace(/\n/g, " ");
-    return `drawtext=text='${escaped}':x=(w-text_w)/2:y=${y}:fontsize=${fontSize}:fontcolor=white:box=1:boxcolor=black@0.35:boxborderw=18`;
-  }).join(",");
+  const filters = buildLineDrawtext({ lines: safeLines, w, h, preset: typographyPreset });
+  if (!filters) throw new Error("lines[] required");
 
   const args = ["-y", "-stream_loop", "-1", "-i", resolvedBackground];
   if (resolvedAudio) args.push("-i", resolvedAudio);
@@ -625,6 +621,7 @@ async function renderAdvancedVideo(payload, jobId) {
     words,
     scenes,
     backgroundPath,
+    typographyPreset,
   } = payload || {};
   const resolvedAudio = resolveAssetPath(audioPath);
   const resolvedMusic = resolveAssetPath(musicPath);
@@ -687,8 +684,8 @@ async function renderAdvancedVideo(payload, jobId) {
   );
 
   const drawtextChain = Array.isArray(words) && words.length > 0
-    ? buildWordDrawtext({ words, w, h })
-    : buildLineDrawtext({ lines: Array.isArray(lines) ? lines : [], w, h });
+    ? buildWordDrawtext({ words, w, h, preset: typographyPreset })
+    : buildLineDrawtext({ lines: Array.isArray(lines) ? lines : [], w, h, preset: typographyPreset });
 
   const filterParts = graph.filterParts.slice();
   let videoLabel = graph.videoLabel;
@@ -836,6 +833,14 @@ async function runCampaignAutoPost(payload, jobId) {
     // When supplied it becomes the hook-beat scene; subsequent scenes still
     // come from the Pexels library so the overall video stays varied.
     generatedImage,
+    // Voice Synthesis settings — when narrationCategory is provided we route
+    // through synthesizeForCategory so profile defaults (voice settings,
+    // prosody, forced-alignment fallback) and the recommended typography
+    // preset all apply automatically. Without it we keep the legacy path.
+    narrationCategory,
+    preferredProvider,
+    forcedAlignmentFallback,
+    typographyPreset: typographyPresetOverride,
   } = payload || {};
 
   safeUpdateJob(jobId, { progress: 2 });
@@ -874,11 +879,31 @@ async function runCampaignAutoPost(payload, jobId) {
   safeUpdateJob(jobId, { progress: 18 });
 
   // 3. Generate voice. Request timestamps so we can do word-level captions.
-  // ElevenLabs supplies them; Edge-TTS fallback does not (alignment absent).
+  // ElevenLabs supplies them natively; for Edge-TTS / Chatterbox we lean on
+  // the category orchestrator's forced-alignment fallback (Whisper) when the
+  // caller opted into Voice Synthesis defaults.
   const ttsText = `${script.hook} ${script.verse} ${script.reflection} ${script.cta}`.trim();
-  const tts = await synthesizeTts({ text: ttsText, voiceId, withTimestamps: true });
+  const useCategory = typeof narrationCategory === "string" && narrationCategory.trim().length > 0;
+  const tts = useCategory
+    ? await synthesizeForCategory({
+        text: ttsText,
+        category: narrationCategory,
+        preferredProvider,
+        withTimestamps: true,
+        overrides: {
+          voiceId,
+          forcedAlignmentFallback:
+            forcedAlignmentFallback === undefined ? true : Boolean(forcedAlignmentFallback),
+        },
+      })
+    : await synthesizeTts({ text: ttsText, voiceId, withTimestamps: true });
   const audioPath = tts.file;
-  console.log(`[CAMPAIGN] tts provider=${tts.provider} voice=${tts.voice} aligned=${tts.alignment?.characters?.length || 0}chars`);
+  // Pick the typography preset: explicit override > category profile recommendation > undefined
+  const typographyPreset =
+    (typeof typographyPresetOverride === "string" && typographyPresetOverride.trim().length > 0)
+      ? typographyPresetOverride.trim()
+      : (useCategory ? resolveProfile(narrationCategory).recommendedTypographyPreset : undefined);
+  console.log(`[CAMPAIGN] tts provider=${tts.provider} voice=${tts.voice} aligned=${tts.alignment?.characters?.length || 0}chars category=${narrationCategory || "<none>"} preset=${typographyPreset || "<none>"}`);
   safeUpdateJob(jobId, { progress: 45 });
 
   // 4. If we have alignment, build word-level captions + per-beat scenes.
@@ -957,6 +982,7 @@ async function runCampaignAutoPost(payload, jobId) {
       durationSec: audioDurForBoundaries,
       aspect,
       captionWidthPct,
+      typographyPreset,
     }, jobId);
   } else {
     console.warn("[CAMPAIGN] no alignment from TTS (Edge-TTS fallback?) — using legacy line captions");
@@ -972,6 +998,7 @@ async function runCampaignAutoPost(payload, jobId) {
         durationSec,
         aspect,
         captionWidthPct,
+        typographyPreset,
       }, jobId);
       pickedBackground = { id: generatedImage };
     } else {
@@ -984,6 +1011,7 @@ async function runCampaignAutoPost(payload, jobId) {
         durationSec,
         aspect,
         captionWidthPct,
+        typographyPreset,
       }, jobId);
     }
   }

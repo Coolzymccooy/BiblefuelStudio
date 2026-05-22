@@ -7,6 +7,82 @@ const DEFAULT_XFADE_SECONDS = 0.5;
 const EMPHASIS_COLOR = "#F59E0B";
 const BASE_TEXT_COLOR = "white";
 
+// Typography presets map a narration category (from voice/profiles.js) to a
+// concrete drawtext styling. Keep the structure simple — multipliers against
+// the frame height so presets scale cleanly across aspects, plus a colour
+// pair. `wordBox` controls whether word captions get a translucent backdrop,
+// useful when busy backgrounds wash out plain text.
+const TYPOGRAPHY_PRESETS = Object.freeze({
+  "cinematic-default": {
+    baseSizeMult: 0.07,
+    emphasisSizeMult: 0.085,
+    baseColor: "white",
+    emphasisColor: "#F59E0B",
+    borderWidth: 5,
+    wordBox: false,
+    lineBoxOpacity: 0.35,
+    lineSizeMult: 0.033,
+  },
+  "intimate-fade": {
+    baseSizeMult: 0.058,
+    emphasisSizeMult: 0.068,
+    baseColor: "#F5F1E6",
+    emphasisColor: "#FBBF24",
+    borderWidth: 3,
+    wordBox: false,
+    lineBoxOpacity: 0.45,
+    lineSizeMult: 0.030,
+  },
+  "scripture-emphasis": {
+    baseSizeMult: 0.065,
+    emphasisSizeMult: 0.085,
+    baseColor: "white",
+    emphasisColor: "#FCD34D",
+    borderWidth: 6,
+    wordBox: true,
+    lineBoxOpacity: 0.5,
+    lineSizeMult: 0.036,
+  },
+  "playful-pop": {
+    baseSizeMult: 0.075,
+    emphasisSizeMult: 0.095,
+    baseColor: "white",
+    emphasisColor: "#FB7185",
+    borderWidth: 6,
+    wordBox: false,
+    lineBoxOpacity: 0.4,
+    lineSizeMult: 0.035,
+  },
+  "worship-cinematic": {
+    baseSizeMult: 0.07,
+    emphasisSizeMult: 0.09,
+    baseColor: "#FFF7ED",
+    emphasisColor: "#FCD34D",
+    borderWidth: 5,
+    wordBox: false,
+    lineBoxOpacity: 0.4,
+    lineSizeMult: 0.034,
+  },
+});
+
+const DEFAULT_TYPOGRAPHY = TYPOGRAPHY_PRESETS["cinematic-default"];
+
+/**
+ * Resolve a preset name to a concrete style object. Unknown / missing names
+ * fall back to `cinematic-default` so callers never crash on a typo.
+ *
+ * @param {string | null | undefined} name
+ */
+export function resolveTypographyPreset(name) {
+  if (!name) return DEFAULT_TYPOGRAPHY;
+  const key = String(name).trim().toLowerCase();
+  return TYPOGRAPHY_PRESETS[key] || DEFAULT_TYPOGRAPHY;
+}
+
+export function listTypographyPresets() {
+  return Object.keys(TYPOGRAPHY_PRESETS);
+}
+
 export function escapeDrawText(s) {
   // ffmpeg's drawtext `text='...'` form CANNOT contain an ASCII apostrophe
   // (`'`) — even backslash-escaped (`\'`) inside the single-quoted string
@@ -30,13 +106,18 @@ export function escapeDrawText(s) {
  * @param {{ words: Array<{ text: string, start: number, end: number, emphasize?: boolean }>, w: number, h: number }} opts
  * @returns {string | null}
  */
-export function buildWordDrawtext({ words, w, h }) {
+export function buildWordDrawtext({ words, w, h, preset }) {
   if (!Array.isArray(words) || words.length === 0) return null;
-  const baseSize = Math.max(48, Math.round(h * 0.07));
-  const emphSize = Math.round(baseSize * 1.25);
+  const style = resolveTypographyPreset(preset);
+  const baseSize = Math.max(48, Math.round(h * style.baseSizeMult));
+  const emphSize = Math.max(baseSize, Math.round(h * style.emphasisSizeMult));
   // Default-font glyphs occupy ~0.55× their fontsize in width on average.
   // Clamp per-word so the longest token never overflows 85% of frame width.
   const maxWidthPx = w * 0.85;
+  const baseColor = style.baseColor || BASE_TEXT_COLOR;
+  const emphasisColor = style.emphasisColor || EMPHASIS_COLOR;
+  const borderWidth = Number.isFinite(style.borderWidth) ? style.borderWidth : 5;
+  const wordBox = style.wordBox ? ":box=1:boxcolor=black@0.35:boxborderw=12" : "";
   const filters = [];
   for (const word of words) {
     const text = escapeDrawText(word.text);
@@ -47,9 +128,9 @@ export function buildWordDrawtext({ words, w, h }) {
     const requested = word.emphasize ? emphSize : baseSize;
     const fitSize = Math.floor(maxWidthPx / Math.max(1, text.length) / 0.55);
     const size = Math.max(40, Math.min(requested, fitSize));
-    const color = word.emphasize ? EMPHASIS_COLOR : BASE_TEXT_COLOR;
+    const color = word.emphasize ? emphasisColor : baseColor;
     filters.push(
-      `drawtext=text='${text}':x=(w-text_w)/2:y=(h-text_h)/2:fontsize=${size}:fontcolor=${color}:borderw=5:bordercolor=black@0.85:enable='between(t,${start.toFixed(3)},${end.toFixed(3)})'`
+      `drawtext=text='${text}':x=(w-text_w)/2:y=(h-text_h)/2:fontsize=${size}:fontcolor=${color}:borderw=${borderWidth}:bordercolor=black@0.85${wordBox}:enable='between(t,${start.toFixed(3)},${end.toFixed(3)})'`
     );
   }
   if (filters.length === 0) return null;
@@ -64,16 +145,19 @@ export function buildWordDrawtext({ words, w, h }) {
  * @param {{ lines: string[], w: number, h: number }} opts
  * @returns {string | null}
  */
-export function buildLineDrawtext({ lines, w, h }) {
+export function buildLineDrawtext({ lines, w, h, preset }) {
   const safeLines = Array.isArray(lines) ? lines.filter(Boolean) : [];
   if (safeLines.length === 0) return null;
+  const style = resolveTypographyPreset(preset);
   const startY = Math.round(h * 0.22);
   const lineGap = Math.round(h * 0.06);
-  const fontSize = Math.max(28, Math.round(h * 0.033));
+  const fontSize = Math.max(28, Math.round(h * (style.lineSizeMult || 0.033)));
+  const boxOpacity = Number.isFinite(style.lineBoxOpacity) ? style.lineBoxOpacity : 0.35;
+  const color = style.baseColor || BASE_TEXT_COLOR;
   return safeLines.map((t, i) => {
     const y = startY + i * lineGap;
     const escaped = escapeDrawText(t);
-    return `drawtext=text='${escaped}':x=(w-text_w)/2:y=${y}:fontsize=${fontSize}:fontcolor=white:box=1:boxcolor=black@0.35:boxborderw=18`;
+    return `drawtext=text='${escaped}':x=(w-text_w)/2:y=${y}:fontsize=${fontSize}:fontcolor=${color}:box=1:boxcolor=black@${boxOpacity.toFixed(2)}:boxborderw=18`;
   }).join(",");
 }
 
