@@ -238,16 +238,21 @@ export function VoiceAudioPage() {
     }, [provider]);
 
     // Probe the voice engine once for Chatterbox availability — gates the
-    // third provider button. If the bridge server isn't running this stays
-    // false and the button shows a 'needs CHATTERBOX_URL' tooltip.
+    // third provider button. With ?probe=1 the server actually pings the
+    // bridge's /health endpoint (TTL-cached), so a self-hosted Chatterbox
+    // that's down right now shows as unreachable instead of just
+    // "configured". Chatterbox is on iff configured AND reachable.
     useEffect(() => {
         let cancelled = false;
         (async () => {
-            const res = await api.get<{ ok: boolean; providers: Record<string, { available: boolean }> }>(
-                '/api/tts/providers',
+            const res = await api.get<{ ok: boolean; providers: Record<string, { available: boolean; reachable?: boolean }> }>(
+                '/api/tts/providers?probe=1',
             );
             if (cancelled) return;
-            const isUp = Boolean(res.ok && res.data?.providers?.chatterbox?.available);
+            const chatterbox = res.data?.providers?.chatterbox;
+            const isUp = Boolean(
+                res.ok && chatterbox?.available && (chatterbox?.reachable !== false),
+            );
             setChatterboxAvailable(isUp);
         })();
         return () => {

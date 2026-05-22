@@ -14,6 +14,7 @@ import {
   resolveProfile,
   synthesizeForCategory,
   describeProviders,
+  describeProvidersAsync,
 } from "../lib/voice/index.js";
 
 const router = Router();
@@ -280,8 +281,28 @@ function collectStream(stream, timeoutMs) {
 // settings panel UI and let the render pipeline request "read this prayer"
 // or "read this scripture" without having to know provider parameters.
 
-router.get("/providers", (_req, res) => {
-  res.json({ ok: true, providers: describeProviders() });
+// Two modes:
+//   default       — fast: env-only check (every provider's isAvailable()),
+//                   no network. Existing UI behavior unchanged.
+//   ?probe=1      — async: also awaits each provider's optional
+//                   isReachable() so a self-hosted bridge that's
+//                   temporarily offline shows as configured-but-unreachable.
+//                   Costs an extra ~5s when chatterbox can't be reached
+//                   (probe timeout); cached for ~30s thereafter.
+router.get("/providers", async (req, res) => {
+  const wantsProbe = String(req.query?.probe || "").toLowerCase() === "1"
+    || String(req.query?.probe || "").toLowerCase() === "true";
+  if (!wantsProbe) {
+    return res.json({ ok: true, providers: describeProviders() });
+  }
+  try {
+    const providers = await describeProvidersAsync();
+    return res.json({ ok: true, providers, probed: true });
+  } catch (e) {
+    console.warn("[TTS] /providers async probe failed:", e?.message || e);
+    // Fall back to the sync answer so the UI still has something to render.
+    return res.json({ ok: true, providers: describeProviders(), probed: false, probeError: String(e?.message || e) });
+  }
 });
 
 router.get("/profiles", (_req, res) => {

@@ -9,8 +9,8 @@ import { api } from '../lib/api';
 import { toOutputUrl } from '../lib/storage';
 import toast from 'react-hot-toast';
 
-type ProviderInfo = { available: boolean; priority: number };
-type ProvidersResponse = { ok: boolean; providers: Record<string, ProviderInfo> };
+type ProviderInfo = { available: boolean; reachable?: boolean; priority: number };
+type ProvidersResponse = { ok: boolean; providers: Record<string, ProviderInfo>; probed?: boolean };
 
 type Profile = {
     category: string;
@@ -55,7 +55,7 @@ export function VoiceSynthesisPanel() {
         let cancelled = false;
         (async () => {
             const [providersRes, profilesRes] = await Promise.all([
-                api.get<ProvidersResponse>('/api/tts/providers'),
+                api.get<ProvidersResponse>('/api/tts/providers?probe=1'),
                 api.get<ProfilesResponse>('/api/tts/profiles'),
             ]);
             if (cancelled) return;
@@ -148,13 +148,31 @@ export function VoiceSynthesisPanel() {
                                     <div className="text-[10px] text-gray-500">Priority {info.priority}</div>
                                 </div>
                             </div>
-                            <Badge variant={info.available ? 'success' : 'warning'}>
-                                {info.available ? (
-                                    <span className="flex items-center gap-1"><CheckCircle2 size={11} /> Ready</span>
-                                ) : (
-                                    <span className="flex items-center gap-1"><AlertTriangle size={11} /> Missing</span>
-                                )}
-                            </Badge>
+                            {(() => {
+                                // Three distinct states for self-hosted bridges:
+                                //   configured + reachable  → "Ready"   (green)
+                                //   configured + unreachable → "Offline" (warning)
+                                //   not configured           → "Missing" (warning)
+                                if (!info.available) {
+                                    return (
+                                        <Badge variant="warning">
+                                            <span className="flex items-center gap-1"><AlertTriangle size={11} /> Missing</span>
+                                        </Badge>
+                                    );
+                                }
+                                if (info.reachable === false) {
+                                    return (
+                                        <Badge variant="warning">
+                                            <span className="flex items-center gap-1"><AlertTriangle size={11} /> Offline</span>
+                                        </Badge>
+                                    );
+                                }
+                                return (
+                                    <Badge variant="success">
+                                        <span className="flex items-center gap-1"><CheckCircle2 size={11} /> Ready</span>
+                                    </Badge>
+                                );
+                            })()}
                         </div>
                     ))}
                 </div>

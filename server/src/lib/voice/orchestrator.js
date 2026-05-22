@@ -131,6 +131,11 @@ export async function synthesize(req) {
  * Mirror of the legacy describeTtsProviders() — walks the registry and
  * reports `available` plus a `priority` derived from registration order.
  *
+ * `available` here = "configured to attempt synthesis" (env vars set,
+ * library installed). For self-hosted bridges that may be temporarily
+ * unreachable, callers should use describeProvidersAsync() which awaits an
+ * optional `isReachable()` per provider for a real liveness check.
+ *
  * @returns {Record<string, { available: boolean, priority: number }>}
  */
 export function describeProviders() {
@@ -144,6 +149,48 @@ export function describeProviders() {
           return false;
         }
       })(),
+      priority: i + 1,
+    };
+  });
+  return out;
+}
+
+/**
+ * Like describeProviders(), but awaits each provider's optional
+ * `isReachable()` so the UI can distinguish "configured" from "actually
+ * responding right now". Providers without `isReachable()` fall through to
+ * `isAvailable()` (same answer as describeProviders).
+ *
+ * Each provider's `isReachable()` is responsible for its own caching (a
+ * cold HEAD/GET on every UI poll would amplify load on a self-hosted
+ * bridge). The orchestrator just awaits whatever the provider returns.
+ *
+ * @returns {Promise<Record<string, { available: boolean, reachable?: boolean, priority: number }>>}
+ */
+export async function describeProvidersAsync() {
+  const providers = list();
+  const results = await Promise.all(providers.map(async (p) => {
+    let available = false;
+    try {
+      available = Boolean(p.isAvailable());
+    } catch {
+      available = false;
+    }
+    let reachable;
+    if (available && typeof p.isReachable === "function") {
+      try {
+        reachable = Boolean(await p.isReachable());
+      } catch {
+        reachable = false;
+      }
+    }
+    return { id: p.id, available, reachable };
+  }));
+  const out = {};
+  results.forEach((r, i) => {
+    out[r.id] = {
+      available: r.available,
+      ...(r.reachable === undefined ? {} : { reachable: r.reachable }),
       priority: i + 1,
     };
   });

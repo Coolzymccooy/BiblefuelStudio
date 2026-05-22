@@ -30,6 +30,16 @@ import { OUTPUT_DIR } from "../../paths.js";
  */
 
 const DEFAULT_TIMEOUT_MS = 90_000;
+// How long the result of the /health probe is cached. The provider list
+// endpoint is hit on every UI mount + provider-switch, so probing on every
+// call would amplify traffic to the self-hosted bridge. 30s is short
+// enough that a tunnel that just came back online is reported reachable
+// within half a minute, and long enough that a chatty UI doesn't DoS the
+// bridge.
+const HEALTH_TTL_MS = Number(process.env.CHATTERBOX_HEALTH_TTL_MS) > 0
+  ? Number(process.env.CHATTERBOX_HEALTH_TTL_MS)
+  : 30_000;
+const HEALTH_PROBE_TIMEOUT_MS = 5_000;
 
 function getChatterboxUrl() {
   const raw = (process.env.CHATTERBOX_URL || "").trim();
@@ -59,11 +69,61 @@ async function readBodyAsAudio(resp) {
   return Buffer.from(await resp.arrayBuffer());
 }
 
+// Single shared probe cache so concurrent /api/tts/providers callers
+// collapse onto one in-flight HEAD/GET request instead of stampeding the
+// bridge. Cache invalidates whenever the URL env var changes.
+/** @type {{ url: string, until: number, result: boolean } | null} */
+let healthCacheEntry = null;
+/** @type {Promise<boolean> | null} */
+let healthInFlight = null;
+
+async function probeChatterboxHealth(url) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), HEALTH_PROBE_TIMEOUT_MS);
+  try {
+    // GET /health is what the persona-overseer bridge exposes today; some
+    // older builds only respond on POST /tts, so we accept either a 200
+    // /health OR a 405/200 on a no-body HEAD /tts as proof of life.
+    const resp = await fetch(`${url}/health`, { method: "GET", signal: ctrl.signal });
+    return resp.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export const chatterboxProvider = {
   id: "chatterbox",
 
   isAvailable() {
     return Boolean(getChatterboxUrl());
+  },
+
+  /**
+   * Real liveness check — async, TTL-cached. Returns false if the URL is
+   * not configured (so the route can distinguish "configured but down"
+   * from "not set up").
+   *
+   * @returns {Promise<boolean>}
+   */
+  async isReachable() {
+    const url = getChatterboxUrl();
+    if (!url) return false;
+    const now = Date.now();
+    if (healthCacheEntry && healthCacheEntry.url === url && healthCacheEntry.until > now) {
+      return healthCacheEntry.result;
+    }
+    if (healthInFlight) {
+      return healthInFlight;
+    }
+    healthInFlight = (async () => {
+      const result = await probeChatterboxHealth(url);
+      healthCacheEntry = { url, until: Date.now() + HEALTH_TTL_MS, result };
+      healthInFlight = null;
+      return result;
+    })();
+    return healthInFlight;
   },
 
   capabilities() {

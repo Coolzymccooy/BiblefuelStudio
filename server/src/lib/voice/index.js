@@ -19,7 +19,7 @@ register(elevenLabsProvider);
 register(edgeProvider);
 register(chatterboxProvider);
 
-export { synthesize, describeProviders } from "./orchestrator.js";
+export { synthesize, describeProviders, describeProvidersAsync } from "./orchestrator.js";
 export {
   register,
   get,

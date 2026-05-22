@@ -181,3 +181,64 @@ test("synthesize() rejects too-short text", async () => {
     /min 3 chars/,
   );
 });
+
+test("isReachable() returns false when CHATTERBOX_URL is unset", async () => {
+  delete process.env.CHATTERBOX_URL;
+  const reachable = await chatterboxProvider.isReachable();
+  assert.equal(reachable, false);
+});
+
+test("isReachable() returns true when /health responds 200", async () => {
+  await startServer(async (req) => {
+    if (req.url === "/health") {
+      return { contentType: "application/json", body: { ok: true } };
+    }
+    return { status: 404, contentType: "text/plain", body: "not found" };
+  });
+  process.env.CHATTERBOX_URL = baseUrl;
+  const reachable = await chatterboxProvider.isReachable();
+  assert.equal(reachable, true);
+  assert.equal(lastRequest.url, "/health");
+  assert.equal(lastRequest.method, "GET");
+});
+
+test("isReachable() returns false when /health responds 500", async () => {
+  await startServer(async () => ({ status: 500, contentType: "text/plain", body: "boom" }));
+  process.env.CHATTERBOX_URL = baseUrl;
+  const reachable = await chatterboxProvider.isReachable();
+  assert.equal(reachable, false);
+});
+
+test("isReachable() caches the probe — subsequent calls do not re-hit the bridge", async () => {
+  let healthHits = 0;
+  await startServer(async (req) => {
+    if (req.url === "/health") {
+      healthHits += 1;
+      return { contentType: "application/json", body: { ok: true } };
+    }
+    return { status: 404, body: "" };
+  });
+  process.env.CHATTERBOX_URL = baseUrl;
+
+  assert.equal(await chatterboxProvider.isReachable(), true);
+  assert.equal(await chatterboxProvider.isReachable(), true);
+  assert.equal(await chatterboxProvider.isReachable(), true);
+  assert.equal(healthHits, 1);
+});
+
+test("isReachable() invalidates cache when CHATTERBOX_URL changes", async () => {
+  // First server: /health 200
+  await startServer(async (req) => {
+    if (req.url === "/health") return { contentType: "application/json", body: { ok: true } };
+    return { status: 404, body: "" };
+  });
+  process.env.CHATTERBOX_URL = baseUrl;
+  assert.equal(await chatterboxProvider.isReachable(), true);
+  await new Promise((r) => server.close(() => { server = null; r(); }));
+
+  // Second server (different port): /health 500
+  await startServer(async () => ({ status: 500, body: "" }));
+  process.env.CHATTERBOX_URL = baseUrl;
+  // URL changed → cache must miss and re-probe.
+  assert.equal(await chatterboxProvider.isReachable(), false);
+});
