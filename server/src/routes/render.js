@@ -4,7 +4,7 @@ import path from "path";
 import { v4 as uuid } from "uuid";
 import { spawn, spawnSync } from "child_process";
 import { readLibrary } from "../lib/library.js";
-import { OUTPUT_DIR, isLocalOrRemote, resolveOutputAlias } from "../lib/mediaThumb.js";
+import { isLocalOrRemote, resolveOutputAlias } from "../lib/mediaThumb.js";
 
 const router = Router();
 let ffmpegChecked = false;
@@ -46,7 +46,7 @@ function logMemory(tag) {
   console.log(`[MEM] ${tag} rss=${Math.round(m.rss / 1024 / 1024)}MB heap=${Math.round(m.heapUsed / 1024 / 1024)}MB`);
 }
 
-function resolveAssetPath(pathOrId) {
+function resolveAssetPath(dataDir, pathOrId) {
   if (pathOrId == null) return null;
   const normalized = String(pathOrId).trim();
   if (!normalized) return null;
@@ -54,7 +54,7 @@ function resolveAssetPath(pathOrId) {
   if (String(direct).startsWith("http")) return direct;
   if (fs.existsSync(direct)) return direct;
 
-  const lib = readLibrary();
+  const lib = readLibrary(dataDir);
   const item = lib.items.find(x => String(x.id) === normalized);
   if (item) {
     if (Array.isArray(item.files) && item.files.length > 0) {
@@ -121,9 +121,9 @@ router.post("/video", async (req, res) => {
     const rawAudioPath = req.body?.audioPath;
     const rawMusicPath = req.body?.musicPath;
     let { backgroundPath, audioPath, lines, aspect, captionWidthPct, musicPath, musicVolume, autoDuck } = req.body || {};
-    backgroundPath = resolveAssetPath(rawBackgroundPath);
-    audioPath = resolveAssetPath(rawAudioPath);
-    musicPath = resolveAssetPath(rawMusicPath);
+    backgroundPath = resolveAssetPath(req.ctx.dataDir, rawBackgroundPath);
+    audioPath = resolveAssetPath(req.ctx.dataDir, rawAudioPath);
+    musicPath = resolveAssetPath(req.ctx.dataDir, rawMusicPath);
 
     if (!backgroundPath || !isLocalOrRemote(backgroundPath)) {
       return res.status(400).json({ ok: false, error: `backgroundPath missing or not found: ${rawBackgroundPath || "<empty>"}` });
@@ -152,7 +152,7 @@ router.post("/video", async (req, res) => {
     const safeLines = wrapTextLines(rawLines, maxChars, 6);
     if (safeLines.length === 0) return res.status(400).json({ ok: false, error: "lines[] required" });
 
-    const outDir = OUTPUT_DIR;
+    const outDir = req.ctx.outputDir;
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
     const outFile = path.join(outDir, `video-${uuid()}.mp4`);
@@ -264,9 +264,9 @@ router.post("/waveform", async (req, res) => {
     const rawAudioPath = req.body?.audioPath;
     const rawMusicPath = req.body?.musicPath;
     let { backgroundPath, audioPath, lines, aspect, captionWidthPct, musicPath, musicVolume, autoDuck } = req.body || {};
-    backgroundPath = resolveAssetPath(rawBackgroundPath);
-    audioPath = resolveAssetPath(rawAudioPath);
-    musicPath = resolveAssetPath(rawMusicPath);
+    backgroundPath = resolveAssetPath(req.ctx.dataDir, rawBackgroundPath);
+    audioPath = resolveAssetPath(req.ctx.dataDir, rawAudioPath);
+    musicPath = resolveAssetPath(req.ctx.dataDir, rawMusicPath);
 
     if (!audioPath || !isLocalOrRemote(audioPath)) {
       return res.status(400).json({ ok: false, error: `audioPath missing or not found: ${rawAudioPath || "<empty>"}` });
@@ -295,7 +295,7 @@ router.post("/waveform", async (req, res) => {
     const maxChars = Math.max(18, Math.floor(baseChars * (widthPct / 100)));
     const safeLines = wrapTextLines(rawLines, maxChars, 6);
 
-    const outDir = OUTPUT_DIR;
+    const outDir = req.ctx.outputDir;
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
     const outFile = path.join(outDir, `waveform-${uuid()}.mp4`);
 

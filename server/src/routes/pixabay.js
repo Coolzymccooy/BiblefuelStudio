@@ -68,7 +68,7 @@ router.post("/download", async (req, res) => {
       }
     }
 
-    const saved = addToLibrary(item);
+    const saved = addToLibrary(req.ctx.dataDir, item);
 
     res.json({ ok: true, file: normalizedFile, item: saved });
   } catch (e) {

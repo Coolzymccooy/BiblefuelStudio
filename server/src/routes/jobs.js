@@ -81,8 +81,15 @@ function logMemory(tag) {
   console.log(`[MEM] ${tag} rss=${Math.round(m.rss / 1024 / 1024)}MB heap=${Math.round(m.heapUsed / 1024 / 1024)}MB`);
 }
 
-const outDir = OUTPUT_DIR;
-if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+// Phase 1 multi-tenancy: the worker is serialized (workerTick runs one job
+// at a time, awaited), so a module-level "current job ctx" is safe and avoids
+// threading dataDir/outputDir through every render helper signature. Set by
+// executeJob, reset in the finally block. See specs/2026-05-26-public-multitenancy-design.md.
+let currentJobCtx = null;
+function currentOutDir() { return currentJobCtx?.outputDir || OUTPUT_DIR; }
+function currentDataDir() { return currentJobCtx?.dataDir || DATA_DIR; }
+
+if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
 const jobsFile = path.join(DATA_DIR, "jobs.json");
 const jobsTmpFile = path.join(DATA_DIR, "jobs.json.tmp");
@@ -224,7 +231,7 @@ function resolveAssetPath(pathOrId) {
   if (fs.existsSync(direct)) return direct;
 
   // Try to find in library
-  const lib = readLibrary();
+  const lib = readLibrary(currentDataDir());
   const item = lib.items.find(x => String(x.id) === normalized);
   if (item) {
     if (Array.isArray(item.files) && item.files.length > 0) {
@@ -370,7 +377,7 @@ async function executeJob(job) {
     const baseChars = w >= 1800 ? 42 : w >= 1200 ? 34 : 28;
     const maxChars = Math.max(18, Math.floor(baseChars * (widthPct / 100)));
     const safeLines = wrapTextLines(rawLines, maxChars, 6);
-    const outFile = path.join(outDir, `waveform-${uuid()}.mp4`);
+    const outFile = path.join(currentOutDir(), `waveform-${uuid()}.mp4`);
 
     const startY = Math.round(h * 0.2);
     const lineGap = Math.round(h * 0.055);
@@ -513,7 +520,7 @@ async function renderVideoCore(payload, jobId) {
   const safeLines = wrapTextLines(rawLines, maxChars, 6);
   if (safeLines.length === 0) throw new Error("lines[] required");
 
-  const outFile = path.join(outDir, `video-${uuid()}.mp4`);
+  const outFile = path.join(currentOutDir(), `video-${uuid()}.mp4`);
   const filters = buildLineDrawtext({ lines: safeLines, w, h, preset: typographyPreset });
   if (!filters) throw new Error("lines[] required");
 
@@ -749,8 +756,8 @@ async function renderAdvancedVideo(payload, jobId) {
   // exceed Windows' ~32KB command-line limit (spawn ENAMETOOLONG). Write the
   // graph to a temp file and pass it via -filter_complex_script — same syntax,
   // no length cap.
-  const outFile = path.join(outDir, `video-${uuid()}.mp4`);
-  const filterScriptFile = path.join(outDir, `filter-${path.basename(outFile, ".mp4")}.txt`);
+  const outFile = path.join(currentOutDir(), `video-${uuid()}.mp4`);
+  const filterScriptFile = path.join(currentOutDir(), `filter-${path.basename(outFile, ".mp4")}.txt`);
   fs.writeFileSync(filterScriptFile, filterComplex, "utf-8");
 
   args.push(
@@ -873,7 +880,7 @@ async function runCampaignAutoPost(payload, jobId) {
 
   // 2. Library check — we'll pick backgrounds per beat after TTS so each
   // scene matches its own text mood.
-  const lib = readLibrary();
+  const lib = readLibrary(currentDataDir());
   const pool = Array.isArray(lib?.items) ? lib.items : [];
   if (pool.length === 0) throw new Error("campaign: library is empty — add at least one background before running auto-post");
   safeUpdateJob(jobId, { progress: 18 });
@@ -1118,7 +1125,7 @@ function validatePayloadForEnqueue(type, payload) {
 
   if (type === "campaign_auto_post") {
     // Library is the only hard precondition — everything else has defaults.
-    const lib = readLibrary();
+    const lib = readLibrary(currentDataDir());
     if (!Array.isArray(lib?.items) || lib.items.length === 0) {
       return { ok: false, error: "campaign_auto_post requires at least one background in the Library" };
     }
@@ -1161,6 +1168,7 @@ async function workerTick() {
   running = true;
   volatileProgressByJob.set(next.id, 0);
   safeUpdateJob(next.id, { status: "running", startedAt: new Date().toISOString(), progress: 0 });
+  currentJobCtx = next.ctx || null;
   try {
     const result = await executeJob(next);
     volatileProgressByJob.set(next.id, 100);
@@ -1178,6 +1186,7 @@ async function workerTick() {
     lastProgressByJob.delete(next.id);
     volatileProgressByJob.delete(next.id);
     running = false;
+    currentJobCtx = null;
   }
 }
 
@@ -1210,12 +1219,19 @@ router.post("/enqueue", (req, res) => {
   const type = String(req.body?.type || "").trim();
   const payload = req.body?.payload || {};
   if (!type) return res.status(400).json({ ok: false, error: "type required" });
-  const validation = validatePayloadForEnqueue(type, payload);
+  // Set currentJobCtx synchronously for validation that reads the library,
+  // then restore it. The actual job-execution ctx is set in workerTick.
+  const prevCtx = currentJobCtx;
+  currentJobCtx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir, userId: req.ctx.userId };
+  let validation;
+  try { validation = validatePayloadForEnqueue(type, payload); }
+  finally { currentJobCtx = prevCtx; }
   if (!validation.ok) return res.status(400).json({ ok: false, error: validation.error });
 
   const id = `job_${uuid()}`;
   const job = {
     id, type, payload,
+    ctx: { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir, userId: req.ctx.userId },
     status: "queued",
     createdAt: new Date().toISOString()
   };
@@ -1230,14 +1246,23 @@ router.post("/enqueue", (req, res) => {
 
 // Programmatic enqueue helper for in-process callers (e.g. cron-driven
 // schedules in social.js). Skips HTTP/auth, performs the same validation.
-export async function enqueueCampaignAutoPost(payload) {
-  const validation = validatePayloadForEnqueue("campaign_auto_post", payload || {});
+export async function enqueueCampaignAutoPost(payload, ctx) {
+  // ctx (required for non-super-admin under MULTITENANT=true):
+  //   { dataDir, outputDir, userId }
+  // Callers that don't pass ctx (legacy cron in social.js pre-refactor) get
+  // the global super-admin paths, matching pre-multi-tenant behaviour.
+  const prevCtx = currentJobCtx;
+  currentJobCtx = ctx || null;
+  let validation;
+  try { validation = validatePayloadForEnqueue("campaign_auto_post", payload || {}); }
+  finally { currentJobCtx = prevCtx; }
   if (!validation.ok) throw new Error(validation.error);
   const id = `job_${uuid()}`;
   const job = {
     id,
     type: "campaign_auto_post",
     payload: payload || {},
+    ctx: ctx || null,
     status: "queued",
     createdAt: new Date().toISOString(),
   };

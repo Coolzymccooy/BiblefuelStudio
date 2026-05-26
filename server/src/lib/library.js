@@ -1,73 +1,59 @@
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-const LEGACY_DATA_DIR = path.resolve(__dirname, "../../data");
-const DATA_DIR = path.resolve(process.env.DATA_DIR || LEGACY_DATA_DIR);
-const LIBRARY_FILE = path.join(DATA_DIR, "library.json");
-const LEGACY_LIBRARY_FILE = path.join(LEGACY_DATA_DIR, "library.json");
-
-function ensure() {
-    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-    if (!fs.existsSync(LIBRARY_FILE)) {
-        // One-time migration when DATA_DIR is customized (e.g., /var/data on Render)
-        if (DATA_DIR !== LEGACY_DATA_DIR && fs.existsSync(LEGACY_LIBRARY_FILE)) {
-            fs.copyFileSync(LEGACY_LIBRARY_FILE, LIBRARY_FILE);
-        } else {
-            fs.writeFileSync(LIBRARY_FILE, JSON.stringify({ items: [] }, null, 2));
-        }
-    }
+function libraryFilePath(dataDir) {
+  if (!dataDir) throw new Error("library: dataDir required");
+  return path.join(dataDir, "library.json");
 }
 
-export function readLibrary() {
-    ensure();
-    try {
-        return JSON.parse(fs.readFileSync(LIBRARY_FILE, "utf-8"));
-    } catch (e) {
-        return { items: [] };
-    }
+function ensure(dataDir) {
+  if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+  const f = libraryFilePath(dataDir);
+  if (!fs.existsSync(f)) fs.writeFileSync(f, JSON.stringify({ items: [] }, null, 2));
 }
 
-export function writeLibrary(data) {
-    ensure();
-    fs.writeFileSync(LIBRARY_FILE, JSON.stringify(data, null, 2));
+export function readLibrary(dataDir) {
+  ensure(dataDir);
+  try {
+    return JSON.parse(fs.readFileSync(libraryFilePath(dataDir), "utf-8"));
+  } catch {
+    return { items: [] };
+  }
 }
 
-export function addToLibrary(item) {
-    const lib = readLibrary();
-    const now = new Date().toISOString();
-    const idx = lib.items.findIndex(x => x.id === item.id);
+export function writeLibrary(dataDir, data) {
+  ensure(dataDir);
+  fs.writeFileSync(libraryFilePath(dataDir), JSON.stringify(data, null, 2));
+}
 
-    if (idx >= 0) {
-        const existing = lib.items[idx];
-        const merged = {
-            ...existing,
-            ...item,
-            id: item.id,
-            savedAt: existing.savedAt || now,
-            updatedAt: now
-        };
-        lib.items.splice(idx, 1);
-        lib.items.unshift(merged);
-        writeLibrary(lib);
-        return merged;
-    }
+export function addToLibrary(dataDir, item) {
+  const lib = readLibrary(dataDir);
+  const now = new Date().toISOString();
+  const idx = lib.items.findIndex((x) => x.id === item.id);
 
-    const created = {
-        ...item,
-        savedAt: now,
-        updatedAt: now
+  if (idx >= 0) {
+    const existing = lib.items[idx];
+    const merged = {
+      ...existing,
+      ...item,
+      id: item.id,
+      savedAt: existing.savedAt || now,
+      updatedAt: now,
     };
-    lib.items.unshift(created);
-    writeLibrary(lib);
-    return created;
+    lib.items.splice(idx, 1);
+    lib.items.unshift(merged);
+    writeLibrary(dataDir, lib);
+    return merged;
+  }
+
+  const created = { ...item, savedAt: now, updatedAt: now };
+  lib.items.unshift(created);
+  writeLibrary(dataDir, lib);
+  return created;
 }
 
-export function removeFromLibrary(id) {
-    const lib = readLibrary();
-    lib.items = lib.items.filter(x => x.id !== id);
-    writeLibrary(lib);
+export function removeFromLibrary(dataDir, id) {
+  const lib = readLibrary(dataDir);
+  lib.items = lib.items.filter((x) => x.id !== id);
+  writeLibrary(dataDir, lib);
 }
