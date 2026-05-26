@@ -1,60 +1,54 @@
 # Postiz Deployment Status (Phase 4 infra)
 
-**Date:** 2026-05-26
+**Date:** 2026-05-26 (updated 2026-05-27 after FQDN fix)
 **Branch:** `worktree-multitenant-public-launch`
 
-## Live state (after re-deploy)
+## Live state
 
 | Resource | Value |
 |---|---|
-| Coolify service UUID | `q7o8e8gdc94gzgq4x8m6kh6w` (recreated; old `vdzu...` deleted) |
+| Coolify service UUID | `q7o8e8gdc94gzgq4x8m6kh6w` |
 | Coolify project | Biblefuel (`vos8co8cow8w8wgcwkkwg4w8`) |
 | Coolify server | localhost / 167.235.141.118 |
-| Public FQDN (target) | `postiz.tiwaton.co.uk` |
+| Public FQDN | `https://postiz.tiwaton.co.uk` — **set via UI, no port** ✅ |
 | Cloudflare DNS record | CNAME `postiz` → `coolify.tiwaton.co.uk` (DNS-only) — verified live |
-| Postiz container status | **exited / crash-loop** (likely DB migration timing on cold boot) |
-| Postgres, Redis | running, healthy |
-| Sub-app FQDN | `https://postiz-q7o8e8gdc94gzgq4x8m6kh6w.tiwaton.co.uk:5000` — baked at create time, NOT updatable via public API. SERVICE_FQDN env vars were updated but they don't retroactively patch the sub-app's stored fqdn. |
-| Public HTTP status | 503 (Traefik can't reach a healthy backend) |
+| Postiz containers | **never deployed yet** — Docker has no record of them (`No such container` in logs). Earlier diagnosis of "crash-loop" was wrong — service was configured but Deploy was never pressed. |
+| Postgres, Redis | also never deployed (same as above) |
 
-## What's been done automatically
+## What's been done
 
 1. ✅ Cloudflare CNAME `postiz` → `coolify.tiwaton.co.uk` (grey-cloud, so Coolify can issue Let's Encrypt)
-2. ✅ Coolify service created via `POST /api/v1/services` with base64-encoded compose
-3. ✅ Three containers deployed (Postiz app + Postgres 17 + Redis 7), all running
-4. ✅ `SERVICE_FQDN_POSTIZ_5000=https://postiz.tiwaton.co.uk` env var set
-5. ❌ The Postiz sub-application's `fqdn` field is `null` — Coolify v4's **public REST API does not expose FQDN binding on service sub-applications**. This must be done in the UI.
+2. ✅ Coolify service created via API with base64-encoded compose (Postiz + Postgres 17 + Redis 7)
+3. ✅ Auto-generated secrets baked in (JWT_SECRET, POSTGRES_PASSWORD — visible in Coolify env tab)
+4. ✅ Sub-app FQDN bound to `https://postiz.tiwaton.co.uk` (no port) via Coolify UI — Coolify popped a "Remove Required Port?" CYA dialog; confirming was correct
+5. ⏳ **Pending:** click **Deploy** in Coolify UI to actually start the containers for the first time
 
-## ⚠️ Two manual steps required in Coolify UI
+## ⚠️ Coolify v4 API limit (for future reference)
 
-Coolify v4's public API has two limits that block end-to-end automation:
-1. **Sub-application FQDN** is baked into the DB at service-create time. Updating `SERVICE_FQDN_POSTIZ_5000` via the envs API later doesn't propagate.
-2. **Container logs / shell** aren't exposed in the public API, so I can't debug the crash-loop without UI access.
+Sub-application FQDN binding can NOT be set via the public REST API on service sub-applications. The `SERVICE_FQDN_<NAME>_<PORT>` env var only seeds the value at service-*creation* time and doesn't propagate to the sub-app's stored fqdn afterwards. The only way to change it later is the UI. This is what cost the previous session ~2 hours of API attempts before I documented it.
 
-### Step 1: Set the FQDN (30 seconds)
+## The "Remove Required Port?" dialog (gotcha)
 
-1. Open https://coolify.tiwaton.co.uk
-2. Navigate: **Biblefuel** → **production** → service `postiz` (uuid starts `q7o8e8`)
-3. Click the **postiz** sub-application
-4. In the **Domains** field, replace the wildcard URL with: `https://postiz.tiwaton.co.uk`
-5. Click **Save**
+When you set the FQDN to `https://postiz.tiwaton.co.uk` (no `:5000`), Coolify shows a stern warning saying the service "may become unreachable". **Ignore it.** That warning refers to the container's *internal* port — Traefik handles the 443→5000 mapping silently. Putting `:5000` in the public URL would have made the URL ugly and broken Let's Encrypt (which prefers standard 443).
 
-### Step 2: Debug the crash-loop
+## Next step (~30 seconds)
 
-The Postiz container exits shortly after start. Most likely causes (ranked):
+1. Open the Coolify service page: https://coolify.tiwaton.co.uk/project/vos8co8cow8w8wgcwkkwg4w8/environment/yo0kcwsg04gkk4ko4ok488c8/service/q7o8e8gdc94gzgq4x8m6kh6w
+2. Click **Deploy** (top right)
+3. Wait 60-90 seconds (initial container pulls + DB migrations + Let's Encrypt cert issuance)
+4. Watch the logs on the `postiz` sub-app — first deploy may briefly show ECONNREFUSED to postgres before the healthcheck passes; that's fine
+5. Verify:
+   ```bash
+   curl -I https://postiz.tiwaton.co.uk/
+   # Expect HTTP/2 200 or 302 to /auth/login
+   ```
 
-1. **Database migration race** — Postiz tries to connect to Postgres before it's ready despite `depends_on: condition: service_healthy`. Fix: open the Postiz service in Coolify UI, click **Logs** on the `postiz` sub-app to confirm. If it shows "ECONNREFUSED postiz-postgres:5432" early, just **Restart** once Postgres is healthy.
-2. **JWT_SECRET malformed** — unlikely (96 random hex chars), but check the env values match in Coolify UI → Environment Variables.
-3. **Missing temporal/other dep** — `IS_GENERAL=true` should bypass Temporal in current Postiz, but if logs mention "TEMPORAL_ADDRESS required" you'd need to add it back to the compose.
+If the post-deploy logs show actual errors (vs. the temporary DB race), the usual culprits are:
+- **ECONNREFUSED postiz-postgres:5432** — retry once Postgres healthcheck passes (~30s after first start)
+- **JWT_SECRET malformed** — unlikely (96 random hex chars), but cross-check Coolify env tab
+- **TEMPORAL_ADDRESS required** — would mean `IS_GENERAL=true` isn't being honoured; add temporal back to the compose
 
-After Postiz is up, click **Restart** to pick up the new FQDN. Wait ~90s for Let's Encrypt cert provisioning.
-
-### Verify
-
-```bash
-curl -I https://postiz.tiwaton.co.uk/
-# Expect HTTP/2 200 (or 302 to /auth/login)
-```
+If the public URL 404s or 502s after Deploy completes, only then revert FQDN to `:5000` as a fallback (and update `POSTIZ_URL` accordingly in Biblefuel's env).
 
 ## After the manual step — Postiz first-time setup
 
