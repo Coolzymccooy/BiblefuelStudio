@@ -71,18 +71,19 @@ Phase 1 ships the **gate plumbing** (`featureGate('tts.elevenlabs')`, `featureGa
 
 ---
 
-## 2. Roadmap (6 phases)
+## 2. Roadmap (normie-first, 5 phases)
 
-> Each phase = its own spec + plan + implementation cycle. **This spec covers Phase 1 only.**
+> Revised after user clarified target audience: **all users are normies / non-technical**. BYOK is dead — normies can't paste API keys. Billing moves earlier so the free tier is cost-bounded from day one.
 
-| # | Phase | What ships | Risk to live workflow |
+| # | Phase | What ships | External dependencies |
 |---|---|---|---|
-| **1** | **Tenant isolation** (this spec) | `withUserScope` middleware, per-user JSON dir overlay, capability gates, feature flag | None — super-admin path unchanged |
-| 2 | Public signup (invite-gated) | Signup form, invite codes, email verification, role assignment | Low — new code path only |
-| 3 | BYOK + per-user config | UI for users to paste their own OpenAI / ElevenLabs / Pexels keys; per-user Zernio webhook field | Low |
-| 4 | Social auto-trigger (the big UX win) | One-click "Connect TikTok / YouTube / Instagram" per user. Recommendation: **integrate Postiz as a self-hosted bridge**, see Appendix A. | Medium — touches social.js |
-| 5 | Quotas + billing | Per-plan limits, Stripe (or extend Gumroad), upgrade flow | Medium |
-| 6 | Public launch | Remove invite gate, landing page, pricing page, legal pages | n/a |
+| **1** | **Tenant isolation** (✅ shipped) | `withUserScope`, per-user JSON dir overlay, capability gates, feature flag | None |
+| **2** | **Open public signup** | Default-to-signup UX, Firebase email verification enforcement, default-plan assignment, account deletion endpoint, "verify email" gate | Firebase email/password + magic-link providers enabled in Firebase Console (operator already has Firebase wired) |
+| **3** | **Managed keys + quotas + Stripe billing** | Per-user plan record (`plan.json`), usage counters (`usage.json`), quota middleware on expensive ops, Stripe Checkout endpoint, webhook handler, Customer Portal link, "Upgrade" CTA in Settings | Stripe account (live + test keys), one monthly product/price, webhook URL configured in Stripe dashboard |
+| **4** | **Postiz auto-publish** | Postiz REST adapter, "Connect TikTok / YouTube / Instagram" deep links, auto-publish hook on render completion, disconnect endpoint | Self-hosted Postiz instance (e.g. `postiz.tiwaton.co.uk`) with OAuth apps registered for each social platform |
+| **5** | **Landing + pricing + onboarding** | Landing page (unauthenticated `/`), pricing page (`/pricing`), terms (`/terms`) + privacy (`/privacy`) placeholders, 3-step onboarding wizard for first-time users | Domain/DNS, marketing copy/imagery, legal review |
+
+---
 
 ---
 
