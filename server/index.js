@@ -25,6 +25,10 @@ import firebaseRouter from "./src/routes/firebase.js";
 import bibleRouter from "./src/routes/bible.js";
 import seriesRouter from "./src/routes/series.js";
 import { requireAuth } from "./src/auth.js";
+import { createAccessRequestsRouter } from "./src/routes/accessRequests.js";
+import { createAccessRequestsStore } from "./src/lib/accessRequestsStore.js";
+import { createEmailTransport } from "./services/email/transport.js";
+import { sendEmail as sendEmailViaTransport } from "./services/email/send.js";
 import { DATA_DIR, OUTPUT_DIR } from "./src/lib/paths.js";
 
 // Load env from CURRENT server directory
@@ -67,6 +71,21 @@ app.use(cors({ origin: process.env.CORS_ORIGIN || "*" }));
 if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 
 app.use("/outputs", express.static(outputDir));
+
+// --- Landing page: public access-request endpoint ---------------------------
+// Mounted BEFORE any auth-guarded /api/* route so it stays publicly callable.
+const emailTransport = createEmailTransport({
+  apiKey: process.env.RESEND_API_KEY || '',
+  from: process.env.MAIL_FROM || '',
+  replyTo: process.env.MAIL_REPLY_TO || '',
+});
+const sendEmail = (req) => sendEmailViaTransport(emailTransport, req);
+const accessRequestsStore = createAccessRequestsStore({ dir: dataDir });
+app.use('/api/access-requests', createAccessRequestsRouter({
+  store: accessRequestsStore,
+  sendEmail,
+  notifyTo: process.env.ACCESS_REQUEST_NOTIFY_TO || process.env.MAIL_REPLY_TO || '',
+}));
 
 const hasKey = (value) => {
   const v = String(value || "").trim();
