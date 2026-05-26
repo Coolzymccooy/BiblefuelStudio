@@ -25,6 +25,8 @@ import firebaseRouter from "./src/routes/firebase.js";
 import bibleRouter from "./src/routes/bible.js";
 import seriesRouter from "./src/routes/series.js";
 import { requireAuth } from "./src/auth.js";
+import { withUserScope } from "./src/middleware/userScope.js";
+import { featureGate } from "./src/middleware/featureGate.js";
 import { DATA_DIR, OUTPUT_DIR } from "./src/lib/paths.js";
 
 // Load env from CURRENT server directory
@@ -62,7 +64,18 @@ app.use(
   })
 );
 app.use(express.json({ limit: "100mb" }));
-app.use(cors({ origin: process.env.CORS_ORIGIN || "*" }));
+
+// CORS: when CORS_ORIGIN is set, treat it as a comma-separated allowlist and
+// enable credentialed requests. Default to "*" only when explicitly unset (dev
+// convenience). Public multi-tenant deploys MUST set CORS_ORIGIN to a real
+// origin list to keep cookies/JWT-bearing requests safe.
+const corsOrigin = process.env.CORS_ORIGIN;
+app.use(cors({
+  origin: corsOrigin && corsOrigin !== "*"
+    ? corsOrigin.split(",").map((s) => s.trim()).filter(Boolean)
+    : "*",
+  credentials: !!corsOrigin && corsOrigin !== "*",
+}));
 
 if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 
@@ -149,24 +162,26 @@ const publicDir = path.join(__dirname, "public");
 app.use("/", express.static(publicDir));
 
 app.use("/api/auth", authRouter);
-app.use("/api/jobs", requireAuth, jobsRouter);
+app.use("/api/jobs", requireAuth, withUserScope, jobsRouter);
 
-// Protected API routes
-app.use("/api/scripts", requireAuth, scriptsRouter);
-app.use("/api/queue", requireAuth, queueRouter);
-app.use("/api/tts", requireAuth, ttsRouter);
-app.use("/api/render", requireAuth, renderRouter);
-app.use("/api/pexels", requireAuth, pexelsRouter);
-app.use("/api/pixabay", requireAuth, pixabayRouter);
-app.use("/api/gumroad", requireAuth, gumroadRouter);
-app.use("/api/media", requireAuth, mediaRouter);
-app.use("/api/audio", requireAuth, audioRouter);
-app.use("/api/audio-adv", requireAuth, audioAdvancedRouter);
-app.use("/api/library", requireAuth, libraryRouter);
-app.use("/api/social", requireAuth, socialRouter);
-app.use("/api/firebase", requireAuth, firebaseRouter);
-app.use("/api/bible", requireAuth, bibleRouter);
-app.use("/api/series", requireAuth, seriesRouter);
+// Protected API routes — all use withUserScope (resolves req.ctx) and pass
+// dataDir/outputDir down to the stores. featureGate is applied per route where
+// non-default plans need to be blocked. See specs/2026-05-26-public-multitenancy-design.md.
+app.use("/api/scripts",   requireAuth, withUserScope,                          scriptsRouter);
+app.use("/api/queue",     requireAuth, withUserScope,                          queueRouter);
+app.use("/api/tts",       requireAuth, withUserScope,                          ttsRouter);
+app.use("/api/render",    requireAuth, withUserScope,                          renderRouter);
+app.use("/api/pexels",    requireAuth, withUserScope,                          pexelsRouter);
+app.use("/api/pixabay",   requireAuth, withUserScope,                          pixabayRouter);
+app.use("/api/gumroad",   requireAuth, withUserScope, featureGate("gumroad"), gumroadRouter);
+app.use("/api/media",     requireAuth, withUserScope,                          mediaRouter);
+app.use("/api/audio",     requireAuth, withUserScope,                          audioRouter);
+app.use("/api/audio-adv", requireAuth, withUserScope,                          audioAdvancedRouter);
+app.use("/api/library",   requireAuth, withUserScope,                          libraryRouter);
+app.use("/api/social",    requireAuth, withUserScope,                          socialRouter);
+app.use("/api/firebase",  requireAuth, withUserScope,                          firebaseRouter);
+app.use("/api/bible",     requireAuth, withUserScope,                          bibleRouter);
+app.use("/api/series",    requireAuth, withUserScope,                          seriesRouter);
 
 
 
