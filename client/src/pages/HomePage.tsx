@@ -226,12 +226,30 @@ export function HomePage() {
         checkStatus();
     }, [checkStatus]);
 
-    // Reset view based on hasUser status if we are in default state
+    // Phase 2: public signup is OPEN. New visitors land on the signup form
+    // by default; they explicitly switch to login if they already have an
+    // account. The legacy hasUser logic only applies to the non-Firebase
+    // setup-key flow (operator's first-user bootstrap).
     useEffect(() => {
-        if (useFirebaseAuth) return;
+        if (useFirebaseAuth) {
+            // Firebase mode: default to signup; let the user toggle to login.
+            // We only run this on initial mount, not on every render — the
+            // dependency on `view` would trap users on signup.
+            return;
+        }
         if (!hasUser && view === 'login') setView('setup');
         if (hasUser && view === 'setup') setView('login');
     }, [hasUser, useFirebaseAuth, view]);
+
+    // One-shot initial view selection for Firebase mode.
+    useEffect(() => {
+        if (!useFirebaseAuth) return;
+        // Default new visitors to signup; if they came back with no token but
+        // localStorage suggests they've signed up before, route to login.
+        const hasSignedUpBefore = localStorage.getItem('BF_HAS_ACCOUNT') === '1';
+        setView(hasSignedUpBefore ? 'login' : 'setup');
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     const handleSetup = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -239,7 +257,10 @@ export function HomePage() {
         const success = useFirebaseAuth
             ? await signupWithFirebaseEmail(email, password)
             : await setup(email, password, setupKey);
-        if (success) toast.success('Account created successfully!');
+        if (success) {
+            localStorage.setItem('BF_HAS_ACCOUNT', '1');
+            toast.success('Account created — check your inbox to verify your email');
+        }
     };
 
     const handleLogin = async (e: React.FormEvent) => {

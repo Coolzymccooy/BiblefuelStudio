@@ -1,3 +1,5 @@
+import { readUserPlan } from "./userPlanStore.js";
+
 /**
  * @typedef {Object} JwtUser
  * @property {string} sub
@@ -22,13 +24,29 @@ export function isSuperAdmin(user) {
 }
 
 /**
- * Hard-coded plan resolution for Phase 1.
- * Phase 5 (billing) will replace this with a lookup against a per-user record.
+ * Plan tier resolution.
+ *
+ * Source order:
+ *   1. Super-admin shortcut (env match) → always "super_admin"
+ *   2. Per-user plan.json record (Phase 3: set by Stripe webhook)
+ *   3. Default: "free"
+ *
+ * The dataDir parameter is the per-user dir from withUserScope. When the
+ * caller doesn't have a dataDir (e.g. boot-time code, tests), pass undefined
+ * — the function falls back to super-admin shortcut + "free".
  *
  * @param {JwtUser} user
+ * @param {string} [dataDir]
  * @returns {'super_admin'|'free'|'premium'}
  */
-export function getPlanForUser(user) {
+export function getPlanForUser(user, dataDir) {
   if (isSuperAdmin(user)) return "super_admin";
+  if (!dataDir) return "free";
+  const record = readUserPlan(dataDir);
+  // Only honour an active or trialing premium subscription; past_due /
+  // canceled lapse back to free until the user pays again.
+  if (record.plan === "premium" && (record.status === "active" || record.status === "trialing")) {
+    return "premium";
+  }
   return "free";
 }

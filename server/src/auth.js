@@ -50,12 +50,19 @@ export function upsertFirebaseUser(decodedToken) {
 
   const rawEmail = String(decodedToken?.email || "").trim();
   const email = rawEmail || `${uid}@firebase.local`;
+  const emailVerified = Boolean(decodedToken?.email_verified);
 
   const store = getUsersStore();
   const existing = store.users.find((u) =>
     String(u?.firebaseUid || "") === uid ||
     String(u?.email || "").toLowerCase() === email.toLowerCase()
   );
+
+  // Default role for NEW signups in the multi-tenant world is "user".
+  // The super-admin is identified by SUPER_ADMIN_EMAIL/SUPER_ADMIN_USER_ID
+  // env (src/lib/userPlan.js). Role here is documentation; capability
+  // gating runs on plan tier.
+  const defaultRoleForNewUser = "user";
 
   if (existing) {
     let changed = false;
@@ -71,22 +78,45 @@ export function upsertFirebaseUser(decodedToken) {
       existing.email = email;
       changed = true;
     }
+    if (Boolean(existing.emailVerified) !== emailVerified) {
+      existing.emailVerified = emailVerified;
+      changed = true;
+    }
     if (changed) saveUsersStore(store);
-    return { id: existing.id, email: existing.email, role: existing.role || "owner" };
+    return {
+      id: existing.id,
+      email: existing.email,
+      role: existing.role || defaultRoleForNewUser,
+      emailVerified,
+    };
   }
 
   const user = {
     id: `u_${Date.now()}`,
     email,
     passwordHash: "",
-    role: "owner",
+    role: defaultRoleForNewUser,
     provider: "firebase",
     firebaseUid: uid,
+    emailVerified,
     createdAt: new Date().toISOString()
   };
   store.users.push(user);
   saveUsersStore(store);
-  return { id: user.id, email: user.email, role: user.role };
+  return { id: user.id, email: user.email, role: user.role, emailVerified };
+}
+
+/**
+ * Permanently delete a user record. The caller is responsible for cleaning
+ * up the per-user dir under DATA_DIR/users/<userId>/.
+ */
+export function deleteUserById(userId) {
+  const store = getUsersStore();
+  const idx = store.users.findIndex((u) => String(u?.id || "") === String(userId || ""));
+  if (idx < 0) return false;
+  store.users.splice(idx, 1);
+  saveUsersStore(store);
+  return true;
 }
 
 export async function verifyUser(email, password) {
@@ -101,7 +131,15 @@ export async function verifyUser(email, password) {
 export function signToken(user) {
   const secret = process.env.JWT_SECRET || "dev_secret_change_me";
   const expiresIn = process.env.JWT_EXPIRES_IN || "7d";
-  return jwt.sign({ sub: user.id, email: user.email, role: user.role }, secret, { expiresIn });
+  const claims = {
+    sub: user.id,
+    email: user.email,
+    role: user.role,
+  };
+  if (user.emailVerified !== undefined) {
+    claims.emailVerified = Boolean(user.emailVerified);
+  }
+  return jwt.sign(claims, secret, { expiresIn });
 }
 
 export function requireAuth(req, res, next) {

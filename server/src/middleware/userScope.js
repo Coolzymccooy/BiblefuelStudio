@@ -45,7 +45,7 @@ export function withUserScope(req, res, next) {
     userId: user.sub,
     email: user.email || "",
     role: admin ? "super_admin" : "user",
-    plan: getPlanForUser(user),
+    plan: getPlanForUser(user, dataDir),
     dataDir,
     outputDir,
     isSuperAdmin: admin,

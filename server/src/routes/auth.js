@@ -1,8 +1,12 @@
 import { Router } from "express";
+import fs from "fs";
 import rateLimit from "express-rate-limit";
 import { z } from "zod";
-import { hasAnyUser, createOwner, verifyUser, signToken, requireAuth, upsertFirebaseUser } from "../auth.js";
+import { hasAnyUser, createOwner, verifyUser, signToken, requireAuth, upsertFirebaseUser, deleteUserById } from "../auth.js";
 import { isFirebaseAdminEnabled, verifyFirebaseIdToken } from "../lib/firebaseAdmin.js";
+import { writeUserPlan } from "../lib/userPlanStore.js";
+import { dataDirFor, ensureUserDirs } from "../lib/paths.js";
+import { isSuperAdmin } from "../lib/userPlan.js";
 
 const router = Router();
 
@@ -16,7 +20,16 @@ const authLimiter = rateLimit({
 router.use(authLimiter);
 
 router.get("/status", (req, res) => {
-  res.json({ ok: true, hasUser: hasAnyUser(), firebaseEnabled: isFirebaseAdminEnabled() });
+  // Phase 2: signup is OPEN. The legacy "first user does setup" path is kept
+  // for the operator's existing super-admin account, but new visitors land on
+  // the signup form regardless of hasUser.
+  res.json({
+    ok: true,
+    hasUser: hasAnyUser(),
+    firebaseEnabled: isFirebaseAdminEnabled(),
+    publicSignup: true,
+    requireEmailVerified: String(process.env.REQUIRE_EMAIL_VERIFIED || "").toLowerCase() === "true",
+  });
 });
 
 router.get("/me", requireAuth, (req, res) => {
@@ -72,10 +85,60 @@ router.post("/firebase", async (req, res) => {
 
     const decoded = await verifyFirebaseIdToken(idToken);
     const user = upsertFirebaseUser(decoded);
+
+    // Bootstrap the per-user dir + plan record on first sign-in. Super-admin
+    // continues to read/write the legacy global files (see withUserScope).
+    if (!isSuperAdmin({ sub: user.id, email: user.email })) {
+      try {
+        ensureUserDirs({ sub: user.id, email: user.email });
+        const userDir = dataDirFor({ sub: user.id, email: user.email });
+        // Idempotent: writeUserPlan merges over the existing record.
+        writeUserPlan(userDir, { plan: "free", status: "active" });
+      } catch (initErr) {
+        console.warn("[AUTH] Failed to bootstrap user dir/plan:", initErr?.message || initErr);
+        // Don't block sign-in on bootstrap failure — middleware will recreate
+        // on the next request.
+      }
+    }
+
     const token = signToken(user);
     res.json({ ok: true, user, token });
   } catch (e) {
     res.status(401).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+router.delete("/me", requireAuth, (req, res) => {
+  // Account deletion: removes the user record and their per-user data dir.
+  // Firebase account itself is NOT deleted from here — the client should
+  // separately call firebase.auth().currentUser.delete() so the Firebase
+  // record disappears too. (Doing both atomically requires Admin SDK ops
+  // that need elevated perms — kept out of scope to avoid coupling.)
+  try {
+    const userId = String(req.user?.sub || "").trim();
+    if (!userId) return res.status(400).json({ ok: false, error: "User context missing" });
+
+    // Don't allow super-admin to delete themselves through this endpoint.
+    if (isSuperAdmin(req.user)) {
+      return res.status(400).json({ ok: false, error: "Super-admin account cannot be self-deleted via this endpoint" });
+    }
+
+    // Remove the per-user data dir (best-effort).
+    try {
+      const userDir = dataDirFor({ sub: userId, email: req.user.email || "" });
+      if (fs.existsSync(userDir)) {
+        fs.rmSync(userDir, { recursive: true, force: true });
+      }
+    } catch (rmErr) {
+      console.warn("[AUTH] Failed to remove user dir:", rmErr?.message || rmErr);
+    }
+
+    const removed = deleteUserById(userId);
+    if (!removed) return res.status(404).json({ ok: false, error: "User not found" });
+
+    res.json({ ok: true, deleted: userId });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: String(e?.message || e) });
   }
 });
 
