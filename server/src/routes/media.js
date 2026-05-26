@@ -3,7 +3,6 @@ import fs from "fs";
 import path from "path";
 import { v4 as uuid } from "uuid";
 import { spawn, spawnSync } from "child_process";
-import { OUTPUT_DIR } from "../lib/paths.js";
 
 const router = Router();
 const audioExtensions = new Set([".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".webm"]);
@@ -100,7 +99,7 @@ router.post("/upload-audio", async (req, res) => {
       mime.includes("mp4") ? "m4a" :
       extFromName || "bin";
 
-    const outDir = OUTPUT_DIR;
+    const outDir = req.ctx.outputDir;
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
     const rawFile = path.join(outDir, `user-audio-${uuid()}.${ext}`);
@@ -174,7 +173,7 @@ router.post("/upload-audio", async (req, res) => {
 
 router.get("/audio-list", (req, res) => {
   try {
-    const outDir = OUTPUT_DIR;
+    const outDir = req.ctx.outputDir;
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
     const entries = fs.readdirSync(outDir)
       .filter(name => audioExtensions.has(path.extname(name).toLowerCase()))
@@ -197,7 +196,7 @@ router.get("/audio-list", (req, res) => {
 
 router.get("/video-list", (req, res) => {
   try {
-    const outDir = OUTPUT_DIR;
+    const outDir = req.ctx.outputDir;
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
     const entries = fs.readdirSync(outDir)
       .filter(name => videoExtensions.has(path.extname(name).toLowerCase()))
