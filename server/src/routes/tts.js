@@ -4,7 +4,6 @@ import fs from "fs";
 import path from "path";
 import { v4 as uuid } from "uuid";
 import { MsEdgeTTS, OUTPUT_FORMAT } from "msedge-tts";
-import { OUTPUT_DIR } from "../lib/paths.js";
 import { synthesizeEdgeTts } from "../lib/edgeTts.js";
 import { synthesizeElevenLabs } from "../lib/elevenLabsTts.js";
 import { synthesizeTts } from "../lib/ttsOrchestrator.js";
@@ -22,6 +21,27 @@ const allowedAudioExt = new Set([".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"
 
 const DEFAULT_EDGE_VOICE = "en-US-AriaNeural";
 const EDGE_TTS_TIMEOUT_MS = 20_000;
+
+// Phase 1 multi-tenancy: ElevenLabs (paid premium) is gated to super-admin
+// and premium plans. Free users can use Edge-TTS and Chatterbox (self-hosted)
+// without restriction. See specs/2026-05-26-public-multitenancy-design.md §3.
+function elevenLabsAllowed(req) {
+  const plan = req?.ctx?.plan;
+  return plan === "super_admin" || plan === "premium";
+}
+function denyElevenLabs(req, res) {
+  return res.status(403).json({
+    ok: false,
+    error: "FEATURE_LOCKED",
+    capability: "tts.elevenlabs",
+    plan: req?.ctx?.plan || "unknown",
+    hint: "ElevenLabs is a premium feature. Use /api/tts/edge or /api/tts/chatterbox instead.",
+  });
+}
+function voiceCloneAllowed(req) {
+  const plan = req?.ctx?.plan;
+  return plan === "super_admin" || plan === "premium";
+}
 
 function isEdgeEnabled() {
   return (process.env.EDGE_TTS_ENABLED ?? "true").toLowerCase() !== "false";
@@ -76,6 +96,10 @@ function resolveSampleAudioPath(inputPath) {
 router.get("/voices", async (req, res) => {
   const provider = String(req.query?.provider || "elevenlabs").toLowerCase();
 
+  if (provider === "elevenlabs" && !elevenLabsAllowed(req)) {
+    return denyElevenLabs(req, res);
+  }
+
   if (provider === "edge") {
     if (!isEdgeEnabled()) {
       return res.status(400).json({ ok: false, error: "Edge-TTS disabled (EDGE_TTS_ENABLED=false)" });
@@ -127,6 +151,15 @@ router.get("/voices", async (req, res) => {
 });
 
 router.post("/clone-voice", async (req, res) => {
+  if (!voiceCloneAllowed(req)) {
+    return res.status(403).json({
+      ok: false,
+      error: "FEATURE_LOCKED",
+      capability: "voice.clone",
+      plan: req?.ctx?.plan || "unknown",
+      hint: "Voice cloning is a premium feature.",
+    });
+  }
   try {
     const apiKey = getElevenLabsApiKey();
     if (!apiKey || apiKey.startsWith("your-")) {
@@ -223,6 +256,7 @@ router.post("/clone-voice", async (req, res) => {
 });
 
 router.post("/elevenlabs", async (req, res) => {
+  if (!elevenLabsAllowed(req)) return denyElevenLabs(req, res);
   const { text, voiceId, voiceSettings, modelId } = req.body || {};
   try {
     const result = await synthesizeElevenLabs({ text, voiceId, voiceSettings, modelId });
@@ -236,9 +270,16 @@ router.post("/elevenlabs", async (req, res) => {
 });
 
 // Convenience route: ElevenLabs first, Edge-TTS automatic fallback.
+// Free users hit /auto and get Edge-TTS directly (orchestrator's ElevenLabs
+// branch is bypassed via the plan check).
 router.post("/auto", async (req, res) => {
   const { text, voiceId } = req.body || {};
   try {
+    if (!elevenLabsAllowed(req)) {
+      // Free plan: skip ElevenLabs entirely, go straight to Edge-TTS.
+      const result = await synthesizeEdgeTts({ text, voiceId });
+      return res.json(result);
+    }
     const result = await synthesizeTts({ text, voiceId });
     res.json(result);
   } catch (e) {
@@ -323,11 +364,19 @@ router.get("/profiles", (_req, res) => {
 router.post("/synthesize-category", async (req, res) => {
   const { text, category, withTimestamps, preferredProvider, overrides } = req.body || {};
   try {
+    if (String(preferredProvider || "").toLowerCase() === "elevenlabs" && !elevenLabsAllowed(req)) {
+      return denyElevenLabs(req, res);
+    }
+    // Free users have ElevenLabs masked from the orchestrator's preference
+    // chain so categories that prefer ElevenLabs silently downgrade to Edge.
+    const effectivePreferred = elevenLabsAllowed(req)
+      ? preferredProvider
+      : (String(preferredProvider || "").toLowerCase() === "elevenlabs" ? "edge" : preferredProvider);
     const result = await synthesizeForCategory({
       text,
       category,
       withTimestamps: Boolean(withTimestamps),
-      preferredProvider,
+      preferredProvider: effectivePreferred,
       overrides: overrides && typeof overrides === "object" ? overrides : undefined,
     });
     res.json(result);
