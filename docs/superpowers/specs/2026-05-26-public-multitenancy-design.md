@@ -401,8 +401,37 @@ Phase 4 spec will pick one and design the integration in detail.
 
 ---
 
-## Approval
+## Phase 1 Implementation Status (post-merge note)
 
-Phase 1 design is ready for review. Once approved, the next step is to invoke the `writing-plans` skill to produce a detailed implementation plan (file-by-file changes, test order, rollout sequence).
+Shipped in `worktree-multitenant-public-launch`:
 
-**The implementation plan will NOT be written, and no code will be touched, until the user explicitly approves this design.**
+- ✅ `withUserScope` middleware + `featureGate` middleware (with tests, all 89 tests pass)
+- ✅ `userPlan.js` super-admin detection + `paths.js` per-user dir helpers
+- ✅ Stores accept `dataDir` parameter: `library.js`, `store.js` (queue), `seriesStore.js`, `socialStore.js`
+- ✅ Routes pass `req.ctx.dataDir` and write to `req.ctx.outputDir`: library, queue, series, social, render, audio, media, audio_advanced, pexels, pixabay
+- ✅ Jobs worker captures `req.ctx` into `job.ctx` and restores it during execution via module-level `currentJobCtx` (worker is serialized — safe by inspection)
+- ✅ ElevenLabs + voice cloning gated to super-admin/premium; Gumroad gated to super-admin via `featureGate("gumroad")`
+- ✅ CORS tightened for credentialed multi-tenant safety
+- ✅ `MULTITENANT` + `SUPER_ADMIN_EMAIL` documented in `.env.example`
+
+**Intentionally deferred to Phase 2** (these are documented with inline comments referencing this spec):
+
+- Deep TTS-library writes (`edgeTts.js`, `elevenLabsTts.js`, `chatterboxProvider.js`): still write to global `OUTPUT_DIR`. For Phase 1 super-admin (or `MULTITENANT=false`) this is correct. With `MULTITENANT=true` and a non-super-admin user the file would land in the global dir — a Phase 2 concern when per-user output serving is built.
+- Search-and-download utilities (`pexels.js`, `pixabay.js`) and `imageGen/index.js`: same — global writes.
+- `mediaThumb.js` URL-alias resolution (`/outputs/...` → file path): always resolves against global `OUTPUT_DIR`. Phase 2 will add per-user URL-routing (`/outputs/<userId>/...`).
+- `social.js` cron rehydration: walks ONLY super-admin's `DATA_DIR/social.json`. Per-user schedule rehydration is Phase 4 work.
+- `jobs.json` queue: stays global (one queue per server). Each job's `ctx` carries the user's `dataDir`/`outputDir` so the worker writes to the right place. Splitting the queue per user is Phase 5 (quotas/billing) territory.
+- `bibleCache/`: intentionally shared (read-only cache, no PII).
+- `scripts_history.json`: still global (super-admin only).
+
+**Verification commands** (for the operator before deploying):
+
+```bash
+cd server
+npm test                                    # 89 tests pass
+MULTITENANT=false npm start                 # legacy behaviour — super-admin paths only
+MULTITENANT=true SUPER_ADMIN_EMAIL=coolshegz@gmail.com npm start
+# log in as the operator → see existing library/series/social
+```
+
+Rollback: set `MULTITENANT=false` (or unset). The middleware short-circuits to legacy ctx and every store call resolves to `DATA_DIR` / `OUTPUT_DIR`.
