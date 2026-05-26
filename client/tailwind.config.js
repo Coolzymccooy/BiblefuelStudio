@@ -9,6 +9,8 @@ export default {
       fontFamily: {
         sans: ['"IBM Plex Sans"', 'ui-sans-serif', 'system-ui'],
         display: ['Sora', 'ui-sans-serif', 'system-ui'],
+        displaySerif: ['"Cormorant Garamond"', 'Georgia', 'serif'],
+        bodyserif: ['Georgia', 'serif'],
       },
       colors: {
         primary: {
@@ -35,7 +37,21 @@ export default {
           200: 'rgba(255, 255, 255, 0.05)',
           300: 'rgba(255, 255, 255, 0.08)',
           dark: 'rgba(0, 0, 0, 0.8)',
-        }
+        },
+        editorial: {
+          paper: '#faf6ee',
+          parchment: '#f1e9d6',
+          dark: '#2a2620',
+          canvas: '#0e0a06',
+          ink: '#1a1610',
+          body: '#4a4239',
+          muted: '#5a5147',
+          gold: '#a08760',
+          goldDeep: '#6b4f1f',
+          goldLite: '#d4af6e',
+          cream: '#f4ead8',
+          hairline: '#e8ddc4',
+        },
       },
       backgroundImage: {
         'space-gradient': 'linear-gradient(to bottom right, #000000, #09090b)', // Pure Black to Micaceous Iron Oxide
