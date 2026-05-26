@@ -1,6 +1,5 @@
 import fs from "fs";
 import path from "path";
-import { DATA_DIR } from "./paths.js";
 
 function firstNonEmpty(...values) {
   for (const value of values) {
@@ -27,10 +26,10 @@ function mergeYouTubeConfig(stored = {}) {
   };
 }
 
-function getStorePath() {
-  const dir = DATA_DIR;
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  return path.join(dir, "social.json");
+function getStorePath(dataDir) {
+  if (!dataDir) throw new Error("social: dataDir required");
+  if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+  return path.join(dataDir, "social.json");
 }
 
 function normalizeSchedule(raw = {}) {
@@ -49,9 +48,9 @@ function normalizeSchedule(raw = {}) {
   };
 }
 
-export function readSocialStore() {
+export function readSocialStore(dataDir) {
   try {
-    const file = getStorePath();
+    const file = getStorePath(dataDir);
     const youtubeFallback = mergeYouTubeConfig({});
     if (!fs.existsSync(file)) {
       return {
@@ -86,8 +85,8 @@ export function readSocialStore() {
   }
 }
 
-export function writeSocialStore(next) {
-  const file = getStorePath();
+export function writeSocialStore(dataDir, next) {
+  const file = getStorePath(dataDir);
   const payload = {
     buffer: {
       accessToken: String(next?.buffer?.accessToken || "").trim(),
