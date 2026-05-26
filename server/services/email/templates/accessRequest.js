@@ -4,8 +4,12 @@
 
 import { escapeHtml } from '../escape.js';
 
+// Email subjects must never contain CR/LF — a malicious value could
+// otherwise inject fake headers (Bcc, Reply-To, etc.) on the wire.
+const oneLine = (value) => String(value ?? '').replace(/[\r\n]+/g, ' ').trim();
+
 export function renderAccessRequestEmail({ name, email, org, pitch, ip, createdAt }) {
-  const subject = `New access request — ${name} (${org})`;
+  const subject = `New access request — ${oneLine(name)} (${oneLine(org)})`;
 
   const safeName = escapeHtml(name);
   const safeEmail = escapeHtml(email);

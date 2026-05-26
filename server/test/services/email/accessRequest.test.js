@@ -44,3 +44,13 @@ test('accessRequest: text body has plain-text version of all fields', () => {
   assert.match(text, /ada@example.com/);
   assert.match(text, /Difference Engine Ministries/);
 });
+
+test('accessRequest: subject strips CR/LF to prevent header injection', () => {
+  const malicious = { ...sample, name: 'Ada\r\nBcc: attacker@evil.com', org: 'A\nB' };
+  const { subject } = renderAccessRequestEmail(malicious);
+  assert.ok(!subject.includes('\n'), 'subject should not contain LF');
+  assert.ok(!subject.includes('\r'), 'subject should not contain CR');
+  // Header injection attempt is neutered: the CRLF is stripped, so the fake header becomes part of the name text
+  assert.match(subject, /Ada Bcc: attacker@evil.com/); // newline collapsed to space
+  assert.match(subject, /A B/); // newline in org also collapsed
+});
