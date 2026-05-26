@@ -10,6 +10,7 @@ import toast from 'react-hot-toast';
 import { useConfig } from '../lib/config';
 import { VoiceSynthesisPanel } from '../components/VoiceSynthesisPanel';
 import { PlanAndUsageCard } from '../components/PlanAndUsageCard';
+import { PostizConnectCard } from '../components/PostizConnectCard';
 
 type SocialSchedule = {
     id: string;
@@ -213,6 +214,7 @@ export function SettingsPage() {
             </div>
 
             <PlanAndUsageCard />
+            <PostizConnectCard />
 
             <div className="flex flex-wrap gap-2">
                 <Button variant={activeSection === 'api' ? 'primary' : 'secondary'} className="text-xs h-8" onClick={() => setActiveSection('api')}>

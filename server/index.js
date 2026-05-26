@@ -30,6 +30,7 @@ import { featureGate } from "./src/middleware/featureGate.js";
 import { requireVerifiedEmail } from "./src/middleware/requireVerifiedEmail.js";
 import { quota } from "./src/middleware/quota.js";
 import billingRouter, { stripeWebhookHandler } from "./src/routes/billing.js";
+import postizRouter from "./src/routes/postiz.js";
 import { DATA_DIR, OUTPUT_DIR } from "./src/lib/paths.js";
 
 // Load env from CURRENT server directory
@@ -200,6 +201,7 @@ app.use("/api/social",    requireAuth, withUserScope, requireVerifiedEmail,     
 app.use("/api/firebase",  requireAuth, withUserScope,                                              firebaseRouter);
 app.use("/api/bible",     requireAuth, withUserScope,                                              bibleRouter);
 app.use("/api/series",    requireAuth, withUserScope, requireVerifiedEmail, quota("render"),     seriesRouter);
+app.use("/api/postiz",    requireAuth, withUserScope, requireVerifiedEmail,                       postizRouter);
 
 
 
