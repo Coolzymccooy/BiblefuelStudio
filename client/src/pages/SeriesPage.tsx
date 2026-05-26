@@ -115,7 +115,7 @@ export function SeriesPage() {
                 }
             }
             setHistory((prev) => [result.series, ...prev]);
-            setTimeout(() => navigate('/jobs'), 1200);
+            setTimeout(() => navigate('/app/jobs'), 1200);
         } catch (err) {
             toast.error(err instanceof Error ? err.message : 'Generate failed');
         } finally {
@@ -328,7 +328,7 @@ export function SeriesPage() {
                                 </div>
                                 <button
                                     type="button"
-                                    onClick={() => navigate('/jobs')}
+                                    onClick={() => navigate('/app/jobs')}
                                     className="text-xs text-primary-400 hover:text-primary-300"
                                 >
                                     View jobs →

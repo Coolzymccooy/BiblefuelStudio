@@ -100,7 +100,7 @@ function DailyStatsCard() {
                 <Stat value={stats.totalJobs} label="All-time jobs" />
             </div>
             <div className="mt-3 flex justify-end">
-                <button onClick={() => navigate('/jobs')} className="text-[10px] uppercase tracking-widest text-primary-300 hover:text-primary-200">
+                <button onClick={() => navigate('/app/jobs')} className="text-[10px] uppercase tracking-widest text-primary-300 hover:text-primary-200">
                     View all jobs →
                 </button>
             </div>
@@ -166,7 +166,7 @@ function AutoPublishCard() {
                                     {voiceDefaults.cinematicMode ? ' · cinematic' : ''}
                                 </span>
                             ) : (
-                                <Link to="/settings" className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-gray-400 hover:text-gray-200">
+                                <Link to="/app/settings" className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-gray-400 hover:text-gray-200">
                                     <Wand2 size={11} /> Voice Synthesis off · enable in Settings
                                 </Link>
                             )}
@@ -190,7 +190,7 @@ function AutoPublishCard() {
                     <Button
                         variant="secondary"
                         className="h-11 px-4 bg-white/5 border-white/10"
-                        onClick={() => navigate('/jobs')}
+                        onClick={() => navigate('/app/jobs')}
                     >
                         <Briefcase size={14} className="mr-2" />
                         Jobs
@@ -331,7 +331,7 @@ export function HomePage() {
                                     </li>
                                 ))}
                             </ol>
-                            <Link to="/help" className="block w-full">
+                            <Link to="/app/help" className="block w-full">
                                 <Button
                                     variant="secondary"
                                     className="w-full mt-4 text-xs h-9 justify-center bg-white/5 border-white/10"

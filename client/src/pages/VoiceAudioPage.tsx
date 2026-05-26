@@ -920,7 +920,7 @@ export function VoiceAudioPage() {
                                     {voiceDefaults.providerOverride ? ` · ${voiceDefaults.providerOverride}` : ' · auto-provider'}
                                     {voiceDefaults.cinematicMode ? ' · cinematic timings' : ''}.
                                 </span>
-                                <Link to="/settings" className="ml-auto text-[10px] text-emerald-300 hover:text-emerald-200 underline">
+                                <Link to="/app/settings" className="ml-auto text-[10px] text-emerald-300 hover:text-emerald-200 underline">
                                     Edit in Settings
                                 </Link>
                             </div>

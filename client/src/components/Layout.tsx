@@ -9,28 +9,28 @@ import { AUTH_INVALID_EVENT } from '../lib/api';
 import { NotificationsBell } from './NotificationsBell';
 
 const navItems = [
-    { path: '/', label: 'Home', icon: Shield },
-    { path: '/wizard', label: 'Wizard', icon: Wand2 },
-    { path: '/series', label: 'Series', icon: BookOpen },
-    { path: '/scripts', label: 'Scripts', icon: FileText },
-    { path: '/queue', label: 'Queue', icon: List },
-    { path: '/jobs', label: 'Jobs', icon: Briefcase },
-    { path: '/backgrounds', label: 'Backgrounds', icon: Image },
-    { path: '/voice-audio', label: 'Voice & Audio', icon: Mic },
-    { path: '/timeline', label: 'Timeline', icon: Film },
-    { path: '/render', label: 'Render', icon: Video },
-    { path: '/gumroad', label: 'Gumroad', icon: Package },
+    { path: '/app', label: 'Home', icon: Shield },
+    { path: '/app/wizard', label: 'Wizard', icon: Wand2 },
+    { path: '/app/series', label: 'Series', icon: BookOpen },
+    { path: '/app/scripts', label: 'Scripts', icon: FileText },
+    { path: '/app/queue', label: 'Queue', icon: List },
+    { path: '/app/jobs', label: 'Jobs', icon: Briefcase },
+    { path: '/app/backgrounds', label: 'Backgrounds', icon: Image },
+    { path: '/app/voice-audio', label: 'Voice & Audio', icon: Mic },
+    { path: '/app/timeline', label: 'Timeline', icon: Film },
+    { path: '/app/render', label: 'Render', icon: Video },
+    { path: '/app/gumroad', label: 'Gumroad', icon: Package },
 ];
 
 // Mobile bottom-bar shortcuts. Home is included so users can always reach
 // the welcome screen / auto-publish CTA — the sidebar's Home entry can be
 // occluded by the sticky mobile header on small screens.
 const quickActions = [
-    { path: '/', label: 'Home', icon: Home },
-    { path: '/scripts', label: 'Scripts', icon: FileText },
-    { path: '/voice-audio', label: 'Voice', icon: Mic },
-    { path: '/render', label: 'Render', icon: Video },
-    { path: '/jobs', label: 'Jobs', icon: Briefcase },
+    { path: '/app', label: 'Home', icon: Home },
+    { path: '/app/scripts', label: 'Scripts', icon: FileText },
+    { path: '/app/voice-audio', label: 'Voice', icon: Mic },
+    { path: '/app/render', label: 'Render', icon: Video },
+    { path: '/app/jobs', label: 'Jobs', icon: Briefcase },
 ];
 
 export function Layout() {
@@ -55,7 +55,7 @@ export function Layout() {
     }, [logout, navigate]);
 
     useEffect(() => {
-        if (!token && location.pathname !== '/') {
+        if (!token && !location.pathname.startsWith('/app')) {
             navigate('/', { replace: true });
         }
     }, [token, location.pathname, navigate]);
@@ -94,7 +94,7 @@ export function Layout() {
                     {/* Tap-to-home wordmark — standard mobile UX so users
                         don't depend on the sidebar Home entry. */}
                     <Link
-                        to="/"
+                        to="/app"
                         onClick={() => setIsMobileMenuOpen(false)}
                         className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-gray-100 to-primary-300 font-display tracking-wide"
                     >
@@ -168,7 +168,7 @@ export function Layout() {
                             </button>
                         </div>
                     ) : (
-                        <Link to="/">
+                        <Link to="/app">
                             <Button className="w-full justify-center">
                                 <LogIn size={16} className="mr-2" />
                                 Login
@@ -178,10 +178,10 @@ export function Layout() {
 
                     <div className="mt-4 flex justify-between text-xs text-gray-600 px-2">
                         <span>v3.0.0</span>
-                        <Link to="/settings" className="hover:text-primary-400 transition-colors flex items-center gap-1">
+                        <Link to="/app/settings" className="hover:text-primary-400 transition-colors flex items-center gap-1">
                             <Settings size={12} /> Settings
                         </Link>
-                        <Link to="/help" className="hover:text-primary-400 transition-colors flex items-center gap-1">
+                        <Link to="/app/help" className="hover:text-primary-400 transition-colors flex items-center gap-1">
                             <HelpCircle size={12} /> Help
                         </Link>
                     </div>

@@ -69,7 +69,7 @@ export function QueuePage() {
         const fullText = `${item.hook}\n\n${item.verse} (${item.reference})\n\n${item.reflection}\n\n${item.cta}`;
         localStorage.setItem('bf_tts_text', fullText);
         toast.success('Script sent to Voice page!');
-        navigate('/voice-audio');
+        navigate('/app/voice-audio');
     };
 
     const handleClearAll = async () => {

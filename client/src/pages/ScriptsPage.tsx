@@ -86,7 +86,7 @@ export function ScriptsPage() {
         const fullText = `${script.hook}\n\n${script.verse} (${script.reference})\n\n${script.reflection}\n\n${script.cta}`;
         localStorage.setItem('bf_tts_text', fullText);
         toast.success('Script sent to Voice page!');
-        navigate('/voice-audio');
+        navigate('/app/voice-audio');
     };
 
     const handleClear = () => {

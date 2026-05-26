@@ -5,6 +5,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Layout } from './components/Layout';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ConfigProvider } from './lib/config';
+import { LandingPage } from './pages/LandingPage';
+import { UnauthedOnly } from './components/landing/UnauthedOnly';
 
 const HomePage = lazy(() => import('./pages/HomePage').then((m) => ({ default: m.HomePage })));
 const WizardPage = lazy(() => import('./pages/WizardPage').then((m) => ({ default: m.WizardPage })));
@@ -43,7 +45,15 @@ function App() {
               }
             >
               <Routes>
-                <Route path="/" element={<Layout />}>
+                <Route
+                  path="/"
+                  element={
+                    <UnauthedOnly redirect="/app">
+                      <LandingPage />
+                    </UnauthedOnly>
+                  }
+                />
+                <Route path="/app" element={<Layout />}>
                   <Route index element={<HomePage />} />
                   <Route path="wizard" element={<WizardPage />} />
                   <Route path="scripts" element={<ScriptsPage />} />
