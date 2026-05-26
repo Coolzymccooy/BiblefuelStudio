@@ -1,67 +1,59 @@
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
-// Ensure we are relative to the server root, not the current working directory
-const LEGACY_DATA_DIR = path.resolve(__dirname, "../../data");
-const DATA_DIR = path.resolve(process.env.DATA_DIR || LEGACY_DATA_DIR);
-const QUEUE_FILE = path.join(DATA_DIR, "queue.json");
-const LOG_FILE = path.join(DATA_DIR, "debug.log");
-const LEGACY_QUEUE_FILE = path.join(LEGACY_DATA_DIR, "queue.json");
-
-function log(msg) {
-  const line = `${new Date().toISOString()} - ${msg}\n`;
-  fs.appendFileSync(LOG_FILE, line);
+function queuePath(dataDir) {
+  if (!dataDir) throw new Error("queue: dataDir required");
+  return path.join(dataDir, "queue.json");
+}
+function logPath(dataDir) {
+  return path.join(dataDir, "debug.log");
 }
 
-function ensure() {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-  if (!fs.existsSync(QUEUE_FILE)) {
-    if (DATA_DIR !== LEGACY_DATA_DIR && fs.existsSync(LEGACY_QUEUE_FILE)) {
-      fs.copyFileSync(LEGACY_QUEUE_FILE, QUEUE_FILE);
-      log("Migrated legacy queue.json into DATA_DIR");
-    } else {
-      log("Creating initial queue.json");
-      fs.writeFileSync(QUEUE_FILE, JSON.stringify({ items: [] }, null, 2));
-    }
+function log(dataDir, msg) {
+  try {
+    fs.appendFileSync(logPath(dataDir), `${new Date().toISOString()} - ${msg}\n`);
+  } catch { /* best-effort */ }
+}
+
+function ensure(dataDir) {
+  if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+  const f = queuePath(dataDir);
+  if (!fs.existsSync(f)) {
+    fs.writeFileSync(f, JSON.stringify({ items: [] }, null, 2));
+    log(dataDir, "Created queue.json");
   }
 }
 
-export function readQueue() {
-  ensure();
-  const data = JSON.parse(fs.readFileSync(QUEUE_FILE, "utf-8"));
-  log(`Read Queue: ${data.items?.length || 0} items`);
+export function readQueue(dataDir) {
+  ensure(dataDir);
+  const data = JSON.parse(fs.readFileSync(queuePath(dataDir), "utf-8"));
   return data;
 }
 
-export function writeQueue(data) {
-  ensure();
-  log(`Writing Queue: ${data.items?.length || 0} items`);
-  fs.writeFileSync(QUEUE_FILE, JSON.stringify(data, null, 2));
+export function writeQueue(dataDir, data) {
+  ensure(dataDir);
+  fs.writeFileSync(queuePath(dataDir), JSON.stringify(data, null, 2));
 }
 
-export function appendQueueItem(item) {
-  const q = readQueue();
-  log(`Appending item: ${item.title || item.id}`);
+export function appendQueueItem(dataDir, item) {
+  const q = readQueue(dataDir);
   q.items.unshift(item);
-  writeQueue(q);
+  writeQueue(dataDir, q);
   return item;
 }
 
-export function deleteQueueItem(id) {
-  const q = readQueue();
-  const initialLen = q.items.length;
-  q.items = q.items.filter(item => item.id !== id);
-  if (q.items.length !== initialLen) {
-    writeQueue(q);
+export function deleteQueueItem(dataDir, id) {
+  const q = readQueue(dataDir);
+  const before = q.items.length;
+  q.items = q.items.filter((it) => it.id !== id);
+  if (q.items.length !== before) {
+    writeQueue(dataDir, q);
     return true;
   }
   return false;
 }
 
-export function clearQueue() {
-  writeQueue({ items: [] });
+export function clearQueue(dataDir) {
+  writeQueue(dataDir, { items: [] });
   return true;
 }
