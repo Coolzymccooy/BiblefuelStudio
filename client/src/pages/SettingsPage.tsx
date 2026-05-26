@@ -9,6 +9,7 @@ import { api } from '../lib/api';
 import toast from 'react-hot-toast';
 import { useConfig } from '../lib/config';
 import { VoiceSynthesisPanel } from '../components/VoiceSynthesisPanel';
+import { PlanAndUsageCard } from '../components/PlanAndUsageCard';
 
 type SocialSchedule = {
     id: string;
@@ -208,8 +209,10 @@ export function SettingsPage() {
         <div className="max-w-5xl mx-auto space-y-6 animate-fade-in">
             <div>
                 <h2 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-400 mb-2">Settings</h2>
-                <p className="text-gray-400">Manage keys, social automation, and app info.</p>
+                <p className="text-gray-400">Plan, integrations, and app info.</p>
             </div>
+
+            <PlanAndUsageCard />
 
             <div className="flex flex-wrap gap-2">
                 <Button variant={activeSection === 'api' ? 'primary' : 'secondary'} className="text-xs h-8" onClick={() => setActiveSection('api')}>
