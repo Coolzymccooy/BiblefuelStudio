@@ -1,0 +1,95 @@
+/* client/src/styles/landing.css
+   ----------------------------------------------------------------
+   Only styles that Tailwind can't express cleanly:
+   - the KineticVerse canvas (custom radial gradients + SVG grain)
+   - the off-screen honeypot helper
+*/
+
+.bf-kinetic {
+  position: relative;
+  background: #0e0a06;
+  border-radius: 4px;
+  aspect-ratio: 4 / 5;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+}
+.bf-kinetic::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    radial-gradient(circle at 30% 20%, rgba(212, 175, 110, 0.10), transparent 55%),
+    radial-gradient(circle at 80% 80%, rgba(160, 80, 40, 0.08), transparent 55%);
+}
+.bf-kinetic__grain {
+  position: absolute;
+  inset: 0;
+  opacity: 0.18;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.5 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  pointer-events: none;
+}
+.bf-kinetic__vbox {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 0 36px;
+}
+.bf-kinetic__kicker {
+  position: absolute;
+  top: 22px;
+  left: 36px;
+  color: #d4af6e;
+  font-family: 'Inter', sans-serif;
+  font-size: 9px;
+  letter-spacing: 2.5px;
+}
+.bf-kinetic__line {
+  font-family: 'Cormorant Garamond', Georgia, serif;
+  color: #f4ead8;
+  font-size: 30px;
+  line-height: 1.18;
+  letter-spacing: -0.3px;
+  font-weight: 400;
+}
+.bf-kinetic__line + .bf-kinetic__line { margin-top: 8px; }
+.bf-kinetic__word { display: inline-block; }
+.bf-kinetic__word--em { font-style: italic; color: #d4af6e; }
+.bf-kinetic__ref {
+  position: absolute;
+  bottom: 24px;
+  left: 36px;
+  right: 36px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: #a08760;
+  font-family: 'Inter', sans-serif;
+  font-size: 10px;
+  letter-spacing: 2px;
+}
+.bf-kinetic__progress { display: flex; gap: 6px; }
+.bf-kinetic__progress span {
+  width: 22px;
+  height: 2px;
+  background: rgba(212, 175, 110, 0.25);
+}
+.bf-kinetic__progress span.is-active { background: #d4af6e; }
+
+@media (max-width: 768px) {
+  .bf-kinetic__line { font-size: 22px; }
+  .bf-kinetic__vbox { padding: 0 24px; }
+}
+
+/* Honeypot field — off-screen for sighted users, still focusable so bots
+   that auto-fill *every* input get caught. */
+.bf-honeypot {
+  position: absolute;
+  left: -9999px;
+  top: -9999px;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
