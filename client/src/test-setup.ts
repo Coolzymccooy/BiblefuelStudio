@@ -1,5 +1,7 @@
 import '@testing-library/jest-dom/vitest';
 
+declare const global: any;
+
 // jsdom doesn't implement matchMedia — Framer Motion's useReducedMotion needs it.
 Object.defineProperty(window, 'matchMedia', {
   writable: true,

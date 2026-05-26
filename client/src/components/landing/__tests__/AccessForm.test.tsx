@@ -3,6 +3,8 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AccessForm } from '../AccessForm';
 
+declare const global: any;
+
 describe('AccessForm', () => {
   beforeEach(() => {
     global.fetch = vi.fn().mockResolvedValue({
