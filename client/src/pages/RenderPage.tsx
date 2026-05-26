@@ -11,6 +11,7 @@ import { Play, Library, Video, CheckCircle2, ClipboardList, AudioLines, ChevronD
 import { loadJson, saveJson, STORAGE_KEYS, toOutputUrl } from '../lib/storage';
 import { useConfig } from '../lib/config';
 import { useNotifications } from '../lib/notifications';
+import { ShareSheet } from '../components/ShareSheet';
 
 interface Script {
     title: string;
@@ -507,6 +508,17 @@ export function RenderPage() {
                 </div>
             )}
 
+            {completedRender?.file && !result?.file && (
+                <Card title="Share your video" className="border-emerald-500/20 bg-emerald-500/[0.03]">
+                    <ShareSheet
+                        videoUrl={toOutputUrl(completedRender.file, api.baseUrl)}
+                        caption={lines.split('\n').filter(Boolean).join(' ')}
+                        title={lines.split('\n').filter(Boolean)[0]}
+                        filename={`biblefuel-${new Date().toISOString().slice(0, 10)}`}
+                    />
+                </Card>
+            )}
+
             <Card title="Configuration">
                 {!renderEnabled && (
                     <div className="mb-4 text-xs text-yellow-200 bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3">
@@ -803,24 +815,14 @@ export function RenderPage() {
                 </div>
             </Card>
 
-            {result && (
+            {result?.file && (
                 <Card title="Render Result" className="border-green-500/20 bg-green-500/5">
-                    <div className="space-y-4">
-                        <div className="p-3 bg-black/40 rounded-lg font-mono text-xs text-green-400 break-all">
-                            {result.file || JSON.stringify(result)}
-                        </div>
-                        <Button
-                            onClick={() => {
-                                const fileUrl = toOutputUrl(result.file, api.baseUrl);
-                                window.open(fileUrl, '_blank');
-                            }}
-                            variant="secondary"
-                            className="w-full"
-                        >
-                            <Play size={16} className="mr-2" />
-                            Open Video
-                        </Button>
-                    </div>
+                    <ShareSheet
+                        videoUrl={toOutputUrl(result.file, api.baseUrl)}
+                        caption={lines.split('\n').filter(Boolean).join(' ')}
+                        title={lines.split('\n').filter(Boolean)[0]}
+                        filename={`biblefuel-${new Date().toISOString().slice(0, 10)}`}
+                    />
                 </Card>
             )}
 

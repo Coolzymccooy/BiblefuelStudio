@@ -48,18 +48,32 @@ function normalizeSchedule(raw = {}) {
   };
 }
 
+function normalizePostiz(raw = {}) {
+  return {
+    postizUserId: String(raw?.postizUserId || "").trim(),
+    lastSync: raw?.lastSync ? String(raw.lastSync) : null,
+    integrations: Array.isArray(raw?.integrations) ? raw.integrations : [],
+    autoPublish: Boolean(raw?.autoPublish),
+    autoPublishPlatforms: Array.isArray(raw?.autoPublishPlatforms)
+      ? raw.autoPublishPlatforms.map((p) => String(p || "").toLowerCase()).filter(Boolean)
+      : [],
+  };
+}
+
+function emptyStore() {
+  return {
+    buffer: { accessToken: "", profileIds: [] },
+    webhooks: [],
+    direct: { youtube: mergeYouTubeConfig({}), instagram: {}, tiktok: {} },
+    schedules: [],
+    postiz: normalizePostiz({}),
+  };
+}
+
 export function readSocialStore(dataDir) {
   try {
     const file = getStorePath(dataDir);
-    const youtubeFallback = mergeYouTubeConfig({});
-    if (!fs.existsSync(file)) {
-      return {
-        buffer: { accessToken: "", profileIds: [] },
-        webhooks: [],
-        direct: { youtube: youtubeFallback, instagram: {}, tiktok: {} },
-        schedules: [],
-      };
-    }
+    if (!fs.existsSync(file)) return emptyStore();
     const raw = fs.readFileSync(file, "utf-8");
     const data = JSON.parse(raw);
     return {
@@ -74,14 +88,10 @@ export function readSocialStore(dataDir) {
         tiktok: data?.direct?.tiktok || {},
       },
       schedules: Array.isArray(data?.schedules) ? data.schedules.map(normalizeSchedule) : [],
+      postiz: normalizePostiz(data?.postiz || {}),
     };
   } catch {
-    return {
-      buffer: { accessToken: "", profileIds: [] },
-      webhooks: [],
-      direct: { youtube: mergeYouTubeConfig({}), instagram: {}, tiktok: {} },
-      schedules: [],
-    };
+    return emptyStore();
   }
 }
 
@@ -108,6 +118,7 @@ export function writeSocialStore(dataDir, next) {
       tiktok: next?.direct?.tiktok || {},
     },
     schedules: Array.isArray(next?.schedules) ? next.schedules.map(normalizeSchedule) : [],
+    postiz: normalizePostiz(next?.postiz || {}),
   };
   fs.writeFileSync(file, JSON.stringify(payload, null, 2));
 }

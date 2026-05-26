@@ -120,6 +120,25 @@ class ApiClient {
         }
     }
 
+    async put<T = any>(
+        url: string,
+        body?: any,
+        customHeaders?: Record<string, string>
+    ): Promise<ApiResponse<T>> {
+        try {
+            const response = await axios.put(url, body, {
+                headers: this.getHeaders(customHeaders),
+            });
+            return {
+                ok: true,
+                status: response.status,
+                data: response.data,
+            };
+        } catch (error) {
+            return this.handleError(error);
+        }
+    }
+
     async download(url: string): Promise<void> {
         const token = this.getToken();
         try {

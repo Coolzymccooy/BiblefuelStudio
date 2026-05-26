@@ -11,6 +11,7 @@ import { useConfig } from '../lib/config';
 import { VoiceSynthesisPanel } from '../components/VoiceSynthesisPanel';
 import { PlanAndUsageCard } from '../components/PlanAndUsageCard';
 import { PostizConnectCard } from '../components/PostizConnectCard';
+import { AutoPublishCard } from '../components/AutoPublishCard';
 
 type SocialSchedule = {
     id: string;
@@ -215,6 +216,7 @@ export function SettingsPage() {
 
             <PlanAndUsageCard />
             <PostizConnectCard />
+            <AutoPublishCard />
 
             <div className="flex flex-wrap gap-2">
                 <Button variant={activeSection === 'api' ? 'primary' : 'secondary'} className="text-xs h-8" onClick={() => setActiveSection('api')}>

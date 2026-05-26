@@ -2,7 +2,7 @@ import type { ButtonHTMLAttributes, ReactNode } from 'react';
 import { Loader2 } from 'lucide-react';
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-    variant?: 'primary' | 'secondary' | 'danger';
+    variant?: 'primary' | 'secondary' | 'danger' | 'ghost';
     isLoading?: boolean;
     children: ReactNode;
 }
@@ -21,6 +21,7 @@ export function Button({
         primary: 'bg-primary-500 text-black hover:bg-primary-400 border border-primary-400/40 shadow-lg shadow-black/30',
         secondary: 'bg-dark-900/70 text-gray-200 border border-white/10 hover:bg-dark-900/90 hover:border-white/20',
         danger: 'bg-red-500/15 text-red-300 border border-red-500/30 hover:bg-red-500/25',
+        ghost: 'bg-transparent text-gray-300 border border-transparent hover:bg-white/5 hover:text-white',
     };
 
     return (

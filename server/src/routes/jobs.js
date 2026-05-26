@@ -10,6 +10,8 @@ import { synthesizeTts } from "../lib/ttsOrchestrator.js";
 import { synthesizeForCategory } from "../lib/voice/categorySynthesis.js";
 import { resolveProfile, listCategories } from "../lib/voice/profiles.js";
 import { dispatchPost } from "./social.js";
+import { readSocialStore } from "../lib/socialStore.js";
+import { isPostizConfigured, postVideo as postizPostVideo } from "../lib/postizClient.js";
 import { pickBestBackground, classifyText } from "../lib/categorize.js";
 import { charsToWords, annotateEmphasis, groupWordsByBeat } from "../lib/captions.js";
 import { buildWordDrawtext, buildLineDrawtext, buildSceneGraph } from "../lib/videoFilters.js";
@@ -1160,6 +1162,61 @@ function recoverStaleRunningJobs() {
   if (changed) saveJobs(store);
 }
 
+function publicVideoUrlFromOutFile(outFile) {
+  if (!outFile) return "";
+  const base = String(
+    process.env.PUBLIC_BASE_URL ||
+    process.env.APP_BASE_URL ||
+    process.env.RENDER_EXTERNAL_URL ||
+    `http://localhost:${process.env.PORT || 5051}`
+  ).trim().replace(/\/+$/, "");
+  const fileName = path.basename(String(outFile));
+  if (!fileName) return "";
+  return `${base}/outputs/${fileName}`;
+}
+
+function buildAutoPublishCaption(job) {
+  const p = (job?.payload || {});
+  if (typeof p.caption === "string" && p.caption.trim()) return p.caption.trim().slice(0, 1900);
+  if (Array.isArray(p.lines)) return p.lines.filter(Boolean).join(" ").slice(0, 1900);
+  if (typeof p.title === "string" && p.title.trim()) return p.title.trim().slice(0, 1900);
+  return "";
+}
+
+async function maybeAutoPublish(job, result) {
+  try {
+    if (!isPostizConfigured()) return;
+    const outFile = result?.outFile || result?.file;
+    if (!outFile) return;
+    const dataDir = job?.ctx?.dataDir;
+    if (!dataDir) return;
+    const store = readSocialStore(dataDir);
+    const postiz = store?.postiz || {};
+    if (!postiz.autoPublish) return;
+    if (!postiz.postizUserId) return;
+    const platforms = Array.isArray(postiz.autoPublishPlatforms) ? postiz.autoPublishPlatforms : [];
+    if (platforms.length === 0) return;
+
+    const videoUrl = publicVideoUrlFromOutFile(outFile);
+    if (!videoUrl || /localhost|127\.0\.0\.1/.test(videoUrl)) {
+      console.warn("[AUTO-PUBLISH] skipped — no public URL for", outFile);
+      return;
+    }
+    const caption = buildAutoPublishCaption(job);
+    const title = String(job?.payload?.title || "").trim() || undefined;
+    console.log(`[AUTO-PUBLISH] posting job ${job.id} to ${platforms.join(",")}`);
+    await postizPostVideo({
+      postizUserId: postiz.postizUserId,
+      videoUrl,
+      caption,
+      platforms,
+      title,
+    });
+  } catch (err) {
+    console.warn("[AUTO-PUBLISH] failed:", err?.message || err);
+  }
+}
+
 async function workerTick() {
   if (running) return;
   store = loadJobs();
@@ -1173,6 +1230,9 @@ async function workerTick() {
     const result = await executeJob(next);
     volatileProgressByJob.set(next.id, 100);
     safeUpdateJob(next.id, { status: "done", progress: 100, finishedAt: new Date().toISOString(), result });
+    if (next.type === "render_video" || next.type === "render_waveform") {
+      await maybeAutoPublish(next, result);
+    }
   } catch (e) {
     const lastPct = volatileProgressByJob.get(next.id);
     const failedPatch = {

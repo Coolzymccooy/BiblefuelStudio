@@ -133,6 +133,26 @@ router.delete("/disconnect/:integrationId", async (req, res) => {
   }
 });
 
+router.get("/auto-publish", async (req, res) => {
+  const section = readPostizSection(req.ctx.dataDir);
+  res.json({
+    ok: true,
+    enabled: Boolean(section.autoPublish),
+    platforms: Array.isArray(section.autoPublishPlatforms) ? section.autoPublishPlatforms : [],
+  });
+});
+
+router.put("/auto-publish", async (req, res) => {
+  const enabled = Boolean(req.body?.enabled);
+  const rawPlatforms = Array.isArray(req.body?.platforms) ? req.body.platforms : [];
+  const platforms = rawPlatforms.map((p) => String(p || "").toLowerCase()).filter(Boolean);
+  const updated = writePostizSection(req.ctx.dataDir, {
+    autoPublish: enabled,
+    autoPublishPlatforms: platforms,
+  });
+  res.json({ ok: true, enabled: Boolean(updated.autoPublish), platforms: updated.autoPublishPlatforms || [] });
+});
+
 router.post("/post", async (req, res) => {
   if (!isPostizConfigured()) {
     return res.status(503).json({ ok: false, error: "POSTIZ_NOT_CONFIGURED" });

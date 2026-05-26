@@ -4,8 +4,9 @@ import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { api } from '../lib/api';
-import { RefreshCw, Download, Clock, Terminal, PlayCircle, ExternalLink, BookOpen, Wand2, Film, AudioLines } from 'lucide-react';
-import { loadJson, STORAGE_KEYS } from '../lib/storage';
+import { RefreshCw, Download, Clock, Terminal, PlayCircle, ExternalLink, BookOpen, Wand2, Film, AudioLines, Share2, X as XIcon } from 'lucide-react';
+import { loadJson, STORAGE_KEYS, toOutputUrl } from '../lib/storage';
+import { ShareSheet } from '../components/ShareSheet';
 
 interface Job {
     id: string;
@@ -105,6 +106,7 @@ export function JobsPage() {
     const [isLoading, setIsLoading] = useState(false);
     const [selectedJob, setSelectedJob] = useState<Job | null>(null);
     const [isTriggering, setIsTriggering] = useState(false);
+    const [shareJob, setShareJob] = useState<Job | null>(null);
     const transientEmptyCountRef = useRef(0);
     const jobsRef = useRef<Job[]>([]);
 
@@ -343,6 +345,16 @@ export function JobsPage() {
                                                         <Download size={14} className="mr-1.5" />
                                                         Download
                                                     </Button>
+                                                    <Button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setShareJob(job);
+                                                        }}
+                                                        className="text-xs px-3 py-1 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border-emerald-500/20 h-auto"
+                                                    >
+                                                        <Share2 size={14} className="mr-1.5" />
+                                                        Share
+                                                    </Button>
                                                 </div>
                                             )}
                                         </div>
@@ -385,6 +397,34 @@ export function JobsPage() {
                     </div>
                 )}
             </Card>
+
+            {shareJob?.result?.outFile && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                    <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShareJob(null)} />
+                    <div className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+                        <div className="flex items-center justify-between mb-3 px-1">
+                            <h3 className="font-bold text-lg text-white">Share your video</h3>
+                            <button onClick={() => setShareJob(null)} className="text-gray-400 hover:text-white p-1" aria-label="Close">
+                                <XIcon size={20} />
+                            </button>
+                        </div>
+                        <ShareSheet
+                            videoUrl={toOutputUrl(shareJob.result.outFile, api.baseUrl)}
+                            caption={(() => {
+                                const p = (shareJob.payload || {}) as Record<string, any>;
+                                if (Array.isArray(p.lines)) return p.lines.filter(Boolean).join(' ');
+                                if (typeof p.caption === 'string') return p.caption;
+                                return '';
+                            })()}
+                            title={(() => {
+                                const p = (shareJob.payload || {}) as Record<string, any>;
+                                return String(p.title || '') || (Array.isArray(p.lines) ? String(p.lines[0] || '') : '');
+                            })()}
+                            filename={`biblefuel-${shareJob.id.slice(0, 8)}`}
+                        />
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
