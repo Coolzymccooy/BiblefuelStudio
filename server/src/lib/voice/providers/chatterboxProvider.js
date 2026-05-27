@@ -4,6 +4,7 @@ import { v4 as uuid } from "uuid";
 import fetch from "node-fetch";
 
 import { OUTPUT_DIR } from "../../paths.js";
+import { addMp3HeaderInPlace } from "../../mp3Header.js";
 
 /**
  * Chatterbox TTS provider.
@@ -196,6 +197,14 @@ export const chatterboxProvider = {
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
     const outFile = path.join(outDir, `tts-chatterbox-${uuid()}.${ext}`);
     fs.writeFileSync(outFile, buffer);
+
+    // Bridges that emit raw MP3 frames (no Xing/Info header) cause browsers
+    // to report 0:00 duration even though there's audio inside. Remux in
+    // place so the <audio> element and ffmpeg get a duration immediately.
+    // WAV already carries duration in its RIFF header — skip.
+    if (ext === "mp3") {
+      addMp3HeaderInPlace(outFile);
+    }
 
     return {
       ok: true,

@@ -2,8 +2,8 @@
  * Voice synthesis engine — public barrel.
  *
  * Importing this module has a SIDE EFFECT: it registers the built-in
- * providers (ElevenLabs first, Edge second) with the registry. Order
- * matters — it sets default priority.
+ * providers (ElevenLabs, Fish Audio, Edge, Chatterbox — in that order) with
+ * the registry. Order matters — it sets default fallback priority.
  *
  * Consumers should import { synthesize, describeProviders } from here.
  * The TTSProvider interface and SpeechRequest/Result types are exposed
@@ -12,10 +12,16 @@
 
 import { register } from "./registry.js";
 import { elevenLabsProvider } from "./providers/elevenLabsProvider.js";
+import { fishAudioProvider } from "./providers/fishAudioProvider.js";
 import { edgeProvider } from "./providers/edgeProvider.js";
 import { chatterboxProvider } from "./providers/chatterboxProvider.js";
 
+// Registration order = default fallback priority. ElevenLabs (flagship
+// premium) first, Fish Audio (premium alternative) second, then the free /
+// self-hosted tail (Edge, Chatterbox). Unavailable providers self-filter via
+// isAvailable(), so registering Fish before its key is set is harmless.
 register(elevenLabsProvider);
+register(fishAudioProvider);
 register(edgeProvider);
 register(chatterboxProvider);
 

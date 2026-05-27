@@ -4,6 +4,7 @@ import path from "path";
 import { v4 as uuid } from "uuid";
 import { spawn } from "child_process";
 import { resolveOutputAlias } from "../lib/mediaThumb.js";
+import { addMp3HeaderInPlace } from "../lib/mp3Header.js";
 
 const router = Router();
 
@@ -212,7 +213,28 @@ router.post("/process", async (req, res) => {
     // limiter as the very last stage.
     const finalFilters = [...preFilters];
     if (lufs != null) {
-      if (measured && measured.input_i != null) {
+      // loudnorm's two-pass `measured_*` params accept narrow ranges:
+      //   measured_I       ∈ [-99,   0]
+      //   measured_LRA     ∈ [  0,  99]
+      //   measured_TP      ∈ [-99,  99]
+      //   measured_thresh  ∈ [-99,   0]
+      //   offset           ∈ [-99,  99]
+      // Chatterbox in particular can ship audio that's clipped above 0 dBFS,
+      // which makes input_i come back POSITIVE (e.g. +7 LUFS). Feeding that
+      // straight into pass 2 makes ffmpeg error out with "Result too large"
+      // and the whole route fails. Validate before trusting the measurement.
+      const inRange = (val, lo, hi) => {
+        const n = Number(val);
+        return Number.isFinite(n) && n >= lo && n <= hi;
+      };
+      const measurementUsable = measured
+        && inRange(measured.input_i, -99, 0)
+        && inRange(measured.input_lra, 0, 99)
+        && inRange(measured.input_tp, -99, 99)
+        && inRange(measured.input_thresh, -99, 0)
+        && inRange(measured.target_offset, -99, 99);
+
+      if (measurementUsable) {
         // Two-pass: feed the measured values back so loudnorm applies the
         // correct fixed gain instead of drifting via lookahead.
         finalFilters.push(
@@ -225,8 +247,16 @@ router.post("/process", async (req, res) => {
           `:linear=true:print_format=summary`
         );
       } else {
-        // Measurement failed (file too short, ffmpeg quirk, etc.). Fall
-        // back to single-pass loudnorm — still better than no normalisation.
+        if (measured && measured.input_i != null) {
+          console.warn(
+            `[AUDIO] measurement out of loudnorm range (input_i=${measured.input_i}, ` +
+            `input_tp=${measured.input_tp}) — falling back to single-pass`,
+          );
+        }
+        // Either measurement failed (file too short, ffmpeg quirk) OR values
+        // are out of loudnorm's acceptable range (e.g. chatterbox clipping
+        // above 0 dBFS). Single-pass handles both: it applies a sane gain
+        // without trusting upstream stats.
         finalFilters.push(`loudnorm=I=${lufs}:TP=-1.5:LRA=11`);
       }
     }
@@ -263,6 +293,17 @@ router.post("/process", async (req, res) => {
       if (res.headersSent) return;
       if (code !== 0) {
         return res.status(400).json({ ok: false, error: `ffmpeg failed: ${code}`, details: stderr.slice(-2000) });
+      }
+      // libmp3lame writes raw MP3 frames without a Xing/Info header. The
+      // browser's <audio> element then reports 0:00 duration even though
+      // the file plays back fine — same root cause as the chatterbox MP3
+      // bug we already fixed. Remux in place so the duration header lands.
+      try {
+        addMp3HeaderInPlace(outFile);
+      } catch (remuxErr) {
+        // Non-fatal: the file still plays even without the header. Log so
+        // we know if this regresses in production.
+        console.warn(`[AUDIO] mp3 header remux failed for ${path.basename(outFile)}:`, remuxErr?.message || remuxErr);
       }
       res.json({
         ok: true,

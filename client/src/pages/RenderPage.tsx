@@ -91,6 +91,7 @@ export function RenderPage() {
     const [durationSec, setDurationSec] = useState(20);
     const [kineticCaptions, setKineticCaptions] = useState(false);
     const [ttsVoiceId, setTtsVoiceId] = useState('');
+    const [typographyPreset, setTypographyPreset] = useState<string>('cinematic-default');
     const [postDestination, setPostDestination] = useState<'webhook' | 'buffer' | 'youtube' | 'instagram' | 'tiktok'>('webhook');
     const [youtubePrivacy, setYoutubePrivacy] = useState<'private' | 'unlisted' | 'public'>('private');
     const [webhookOptions, setWebhookOptions] = useState<{ id: string; name: string }[]>([]);
@@ -157,7 +158,13 @@ export function RenderPage() {
         setDurationSec(cachedDuration);
         const cachedTtsVoice = loadJson<string>(STORAGE_KEYS.ttsVoiceId, '');
         if (cachedTtsVoice) setTtsVoiceId(cachedTtsVoice);
+        const cachedTypography = loadJson<string>(STORAGE_KEYS.renderTypographyPreset, 'cinematic-default');
+        setTypographyPreset(cachedTypography);
     }, []);
+
+    useEffect(() => {
+        saveJson(STORAGE_KEYS.renderTypographyPreset, typographyPreset);
+    }, [typographyPreset]);
 
     useEffect(() => {
         if (ttsVoiceId) saveJson(STORAGE_KEYS.ttsVoiceId, ttsVoiceId);
@@ -290,6 +297,7 @@ export function RenderPage() {
                 musicPath: musicPath || undefined,
                 musicVolume,
                 autoDuck,
+                typographyPreset,
                 ...(kineticCaptions && mode === 'video'
                     ? { kineticCaptions: true, ...(ttsVoiceId.trim() ? { voiceId: ttsVoiceId.trim() } : {}) }
                     : {}),
@@ -665,6 +673,21 @@ export function RenderPage() {
                             />
                             <p className="text-[10px] text-gray-500 mt-1 uppercase tracking-tighter">
                                 Lower value = more padding and tighter line wrapping
+                            </p>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-400 mb-1">
+                                Typography Preset
+                            </label>
+                            <Select value={typographyPreset} onChange={(e: ChangeEvent<HTMLSelectElement>) => setTypographyPreset(e.target.value)}>
+                                <option value="cinematic-default">Cinematic (default)</option>
+                                <option value="intimate-fade">Intimate fade</option>
+                                <option value="scripture-emphasis">Scripture emphasis</option>
+                                <option value="playful-pop">Playful pop</option>
+                                <option value="worship-cinematic">Worship cinematic</option>
+                            </Select>
+                            <p className="text-[10px] text-gray-500 mt-1 uppercase tracking-tighter">
+                                Controls caption font size, colour, and box opacity
                             </p>
                         </div>
                     </Section>

@@ -14,6 +14,7 @@ import { readSocialStore } from "../lib/socialStore.js";
 import { isPostizConfigured, postVideo as postizPostVideo } from "../lib/postizClient.js";
 import { pickBestBackground, classifyText } from "../lib/categorize.js";
 import { charsToWords, annotateEmphasis, groupWordsByBeat } from "../lib/captions.js";
+import { alignAudioWithText, isForcedAlignmentAvailable } from "../lib/voice/alignment.js";
 import { buildWordDrawtext, buildLineDrawtext, buildSceneGraph } from "../lib/videoFilters.js";
 import { buildSocialCaption } from "../lib/socialCaption.js";
 
@@ -37,6 +38,30 @@ function ensureFfmpegAvailable() {
   }
   ffmpegChecked = true;
   return ffmpegOk;
+}
+
+function probeAudioMaxVolume(filePath) {
+  return new Promise((resolve) => {
+    const ffmpeg = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
+    // `volumedetect` writes its stats at log level info, so we must NOT
+    // pass `-v error` here — that filters out exactly the lines we want.
+    // We do silence the banner/stats lines to keep stderr small.
+    const proc = spawn(ffmpeg, [
+      "-hide_banner", "-nostats",
+      "-i", filePath,
+      "-af", "volumedetect",
+      "-vn", "-f", "null", "-",
+    ]);
+    let err = "";
+    proc.stderr.on("data", (d) => { err += d.toString(); });
+    proc.on("error", () => resolve(null));
+    proc.on("close", () => {
+      const m = err.match(/max_volume:\s*(-?[\d.]+)\s*dB/);
+      if (!m) return resolve(null);
+      const v = parseFloat(m[1]);
+      resolve(Number.isFinite(v) ? v : null);
+    });
+  });
 }
 
 function probeAudioDuration(filePath) {
@@ -581,7 +606,16 @@ async function renderVideoCore(payload, jobId) {
     );
   } else {
     args.push("-t", String(t), "-vf", vf, "-r", "30", "-c:v", vcodec, "-preset", preset, "-crf", "22", "-pix_fmt", "yuv420p");
-    if (resolvedAudio) args.push("-c:a", "aac", "-b:a", "192k", "-shortest"); else args.push("-an");
+    if (resolvedAudio) {
+      // Explicit -map so ffmpeg doesn't auto-pick the background clip's audio
+      // track over our narration. Pexels b-roll commonly ships with a silent
+      // stereo AAC track; default auto-mapping prefers stereo over the
+      // Edge-TTS mono MP3 and the final render ends up dead silent.
+      // Drop the background's audio explicitly and route only the TTS file in.
+      args.push("-map", "0:v:0", "-map", "1:a:0", "-c:a", "aac", "-b:a", "192k", "-shortest");
+    } else {
+      args.push("-an");
+    }
   }
   args.push(outFile);
 
@@ -609,20 +643,57 @@ async function renderVideoCore(payload, jobId) {
   }
 }
 
-// Generate TTS-with-timestamps for the supplied script lines, then build a
-// words[] array (with keyword emphasis) so the manual Render flow can opt
-// into the same word-level captions the campaign uses. Falls back to the
-// user-provided audio + line captions if ElevenLabs can't supply alignment
-// (e.g. only Edge-TTS is available).
+// Generate word-level captions for kinetic rendering.
+//
+// Two paths:
+//   1) Caller already supplied `audioPath` — they generated audio with their
+//      preferred provider (Chatterbox/ElevenLabs) and probably ran it through
+//      Process Audio. We MUST keep their file. Use Whisper forced alignment
+//      against it to extract word timings.
+//   2) No audioPath — synthesize fresh TTS with timestamps and use the
+//      provider's alignment (ElevenLabs has it natively; Edge-TTS does not,
+//      so kinetic will gracefully fall back to line captions).
+//
+// In both paths, if we can't get word-level alignment we strip
+// `kineticCaptions` and let renderVideoCore fall through to the legacy line
+// renderer — WITHOUT discarding the user's audio. The previous behaviour
+// (always re-synthesize, then overwrite audioPath) silently replaced
+// hand-tuned Chatterbox audio with whatever Edge-TTS produced.
 async function augmentPayloadWithKineticCaptions(payload, jobId) {
   const rawLines = Array.isArray(payload?.lines) ? payload.lines.map((s) => String(s).slice(0, 280)) : [];
   const cleanLines = rawLines.map((s) => s.trim()).filter(Boolean);
   if (cleanLines.length === 0) throw new Error("kineticCaptions: lines[] required");
   const ttsText = cleanLines.join(" ").trim();
+
+  const userSuppliedAudio = resolveAssetPath(payload?.audioPath);
+  if (userSuppliedAudio && isLocalOrRemote(userSuppliedAudio)) {
+    if (!isForcedAlignmentAvailable()) {
+      console.warn(
+        "[RENDER] kineticCaptions requested with user audio but OPENAI_API_KEY missing — " +
+        "falling back to line captions on the user's audio (no resynth)",
+      );
+      return { ...payload, kineticCaptions: false };
+    }
+    safeUpdateJob(jobId, { progress: 25 });
+    const alignment = await alignAudioWithText(userSuppliedAudio, ttsText);
+    safeUpdateJob(jobId, { progress: 45 });
+    if (!alignment || !Array.isArray(alignment.characters) || alignment.characters.length === 0) {
+      console.warn(
+        "[RENDER] Whisper alignment returned no timings for the user-supplied audio — " +
+        "falling back to line captions (audio preserved)",
+      );
+      return { ...payload, kineticCaptions: false };
+    }
+    const rawWords = charsToWords(alignment);
+    const words = annotateEmphasis(rawWords, cleanLines);
+    return { ...payload, words };
+  }
+
+  // Caller didn't provide audio — synthesize fresh with timestamps.
   const tts = await synthesizeTts({ text: ttsText, voiceId: payload?.voiceId, withTimestamps: true });
   safeUpdateJob(jobId, { progress: 35 });
   if (!tts?.alignment || !Array.isArray(tts.alignment.characters) || tts.alignment.characters.length === 0) {
-    console.warn("[RENDER] kineticCaptions requested but TTS returned no alignment — falling back to line captions");
+    console.warn("[RENDER] kineticCaptions: TTS returned no alignment — falling back to line captions");
     return { ...payload, kineticCaptions: false, audioPath: tts.file };
   }
   const rawWords = charsToWords(tts.alignment);
@@ -929,7 +1000,39 @@ async function runCampaignAutoPost(payload, jobId) {
     (typeof typographyPresetOverride === "string" && typographyPresetOverride.trim().length > 0)
       ? typographyPresetOverride.trim()
       : (useCategory ? resolveProfile(narrationCategory).recommendedTypographyPreset : undefined);
-  console.log(`[CAMPAIGN] tts provider=${tts.provider} voice=${tts.voice} aligned=${tts.alignment?.characters?.length || 0}chars category=${narrationCategory || "<none>"} preset=${typographyPreset || "<none>"}`);
+
+  // Defensive probe: confirm the TTS provider actually returned a playable
+  // audible file. We've seen renders ship with -91 dB silence — symptom of
+  // a provider returning a non-empty but inaudible file, or a swap/race we
+  // can't see in static code. Fail the job loudly here so the next run
+  // produces a real diagnostic instead of silently shipping a muted video.
+  let ttsAudioStats = { size: 0, duration: null, maxVolumeDb: null };
+  try {
+    ttsAudioStats.size = fs.existsSync(audioPath) ? fs.statSync(audioPath).size : 0;
+  } catch { /* keep zero */ }
+  try { ttsAudioStats.duration = await probeAudioDuration(audioPath); } catch { /* keep null */ }
+  ttsAudioStats.maxVolumeDb = await probeAudioMaxVolume(audioPath);
+  console.log(
+    `[CAMPAIGN] tts provider=${tts.provider} voice=${tts.voice} ` +
+    `aligned=${tts.alignment?.characters?.length || 0}chars ` +
+    `category=${narrationCategory || "<none>"} preset=${typographyPreset || "<none>"} ` +
+    `file=${audioPath} size=${ttsAudioStats.size}B ` +
+    `duration=${ttsAudioStats.duration == null ? "?" : ttsAudioStats.duration.toFixed(2) + "s"} ` +
+    `max_volume=${ttsAudioStats.maxVolumeDb == null ? "?" : ttsAudioStats.maxVolumeDb.toFixed(1) + "dB"}`
+  );
+  if (ttsAudioStats.size < 1024) {
+    throw new Error(
+      `TTS file too small (${ttsAudioStats.size}B) from provider=${tts.provider}, path=${audioPath}. ` +
+      `Likely the provider returned an empty buffer that was still considered a success.`
+    );
+  }
+  if (ttsAudioStats.maxVolumeDb != null && ttsAudioStats.maxVolumeDb <= -60) {
+    throw new Error(
+      `TTS file is silent (max_volume=${ttsAudioStats.maxVolumeDb.toFixed(1)}dB) ` +
+      `from provider=${tts.provider}, path=${audioPath}. ` +
+      `Rendering would ship a muted video — failing the job so the user can retry.`
+    );
+  }
   safeUpdateJob(jobId, { progress: 45 });
 
   // 4. If we have alignment, build word-level captions + per-beat scenes.

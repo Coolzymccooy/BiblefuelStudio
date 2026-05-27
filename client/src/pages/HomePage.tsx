@@ -689,6 +689,38 @@ export function HomePage() {
                                     lower.includes('too many') ||
                                     lower.includes('rate limit') ||
                                     lower.includes('429');
+                                // Approval gate gets a distinct, louder banner —
+                                // a generic warning blends in with "wrong password"
+                                // and users miss the actual action required (request
+                                // access from the landing page first).
+                                const isApprovalBlocked =
+                                    lower.includes("hasn't been approved") ||
+                                    lower.includes('not approved');
+                                if (isApprovalBlocked) {
+                                    return (
+                                        <div className="mt-4 rounded-xl border-2 border-amber-400/60 bg-amber-400/[0.15] p-4 backdrop-blur-sm">
+                                            <div className="flex items-start gap-3">
+                                                <div className="w-8 h-8 rounded-full bg-amber-400/30 flex items-center justify-center flex-shrink-0 mt-0.5">
+                                                    <span className="text-amber-100 font-bold text-lg leading-none">!</span>
+                                                </div>
+                                                <div className="text-left">
+                                                    <div className="text-amber-100 font-semibold text-sm mb-1">
+                                                        Account not approved yet
+                                                    </div>
+                                                    <div className="text-amber-100/90 text-[13px] leading-relaxed mb-3">
+                                                        {error}
+                                                    </div>
+                                                    <a
+                                                        href="/#request-access"
+                                                        className="inline-flex items-center gap-1.5 text-amber-200 hover:text-amber-100 text-[13px] font-medium underline underline-offset-2"
+                                                    >
+                                                        Go to request access form →
+                                                    </a>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                }
                                 const message = isRateLimited
                                     ? 'Too many attempts in a short window. Please wait a minute and try again.'
                                     : error;

@@ -76,12 +76,41 @@ test('validation: oversize pitch returns 400', async () => {
 
 test('rate limit: 4th submission in window returns 429', async () => {
   const { app } = mkApp();
+  // Use distinct emails per submission so the dedupe gate (which now
+  // rejects same-email re-submits with 409 ALREADY_PENDING) doesn't fire
+  // before the rate limiter has a chance to.
   for (let i = 0; i < 3; i++) {
-    const r = await post(app, valid);
+    const r = await post(app, { ...valid, email: `ada${i}@example.com` });
     assert.equal(r.status, 200);
   }
-  const fourth = await post(app, valid);
+  const fourth = await post(app, { ...valid, email: 'ada3@example.com' });
   assert.equal(fourth.status, 429);
+});
+
+test('dedupe: second submission with same email while first is pending returns 409', async () => {
+  const { app } = mkApp();
+  const first = await post(app, valid);
+  assert.equal(first.status, 200);
+
+  const second = await post(app, { ...valid, pitch: 'Same email again with a new pitch.' });
+  assert.equal(second.status, 409);
+  assert.equal(second.body.code, 'ALREADY_PENDING');
+});
+
+test('dedupe: re-submission allowed after a request is marked denied', async () => {
+  const { app, dir } = mkApp();
+  const first = await post(app, valid);
+  assert.equal(first.status, 200);
+
+  // Mutate the on-disk record to simulate the operator denying it.
+  const filePath = path.join(dir, 'access-requests.json');
+  const records = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  records[0].status = 'denied';
+  records[0].reviewedAt = new Date().toISOString();
+  fs.writeFileSync(filePath, JSON.stringify(records, null, 2), 'utf8');
+
+  const retry = await post(app, valid);
+  assert.equal(retry.status, 200);
 });
 
 test('email failure does not break the response', async () => {

@@ -127,6 +127,11 @@ export function VoiceAudioPage() {
     const [preset, setPreset] = useState('clean_voice');
     const [audioHistory, setAudioHistory] = useState<AudioItem[]>([]);
     const [isProcessing, setIsProcessing] = useState(false);
+    // Tracks when the current TTS call started so the chatterbox progress
+    // indicator can show elapsed/projected time. null when no call is in
+    // flight.
+    const [ttsStartedAt, setTtsStartedAt] = useState<number | null>(null);
+    const [elapsedTick, setElapsedTick] = useState(0);
     const [isUploading, setIsUploading] = useState(false);
     const [isRecording, setIsRecording] = useState(false);
     const [showGuide, setShowGuide] = useState(true);
@@ -303,6 +308,17 @@ export function VoiceAudioPage() {
         setAudioHistory(next);
     };
 
+    // Tick the elapsed counter once a second while a TTS call is in flight.
+    // Used by the chatterbox ETA indicator — chatterbox inference is slow
+    // (10-90s typical) and a static spinner with no time feedback feels
+    // broken. Edge-TTS / ElevenLabs finish in 1-3s so the indicator never
+    // gets a chance to render for them.
+    useEffect(() => {
+        if (!ttsStartedAt) return;
+        const id = setInterval(() => setElapsedTick((t) => t + 1), 1000);
+        return () => clearInterval(id);
+    }, [ttsStartedAt]);
+
     const handleTTS = async () => {
         if (!ttsText.trim()) {
             toast.error('Enter some text first');
@@ -310,6 +326,8 @@ export function VoiceAudioPage() {
         }
 
         setIsProcessing(true);
+        setTtsStartedAt(Date.now());
+        setElapsedTick(0);
         try {
             let url: string;
             let payload: Record<string, unknown>;
@@ -381,6 +399,7 @@ export function VoiceAudioPage() {
             toast.error('An error occurred');
         } finally {
             setIsProcessing(false);
+            setTtsStartedAt(null);
         }
     };
 
@@ -1131,6 +1150,45 @@ export function VoiceAudioPage() {
                         <Button onClick={handleTTS} isLoading={isProcessing} disabled={!ttsEnabled}>
                             Generate ({provider === 'edge' ? 'Edge-TTS' : provider === 'chatterbox' ? 'Chatterbox' : 'ElevenLabs'})
                         </Button>
+                        {/* Chatterbox progress indicator. Local inference can
+                            take 10-90s depending on the bridge's hardware, and
+                            the static spinner makes the UI feel stuck. Estimate
+                            from text length at ~8 chars/sec which lines up with
+                            CPU-only inference on the persona-overseer bridge;
+                            the real-time elapsed counter is what reassures the
+                            user that something is happening even when our
+                            estimate is wrong.
+                            We do NOT show this for Edge/ElevenLabs because they
+                            complete in 1-3s and the indicator would flash and
+                            disappear, which feels worse than no indicator. */}
+                        {isProcessing && provider === 'chatterbox' && ttsStartedAt && (() => {
+                            const elapsedSec = Math.max(0, Math.floor((Date.now() - ttsStartedAt) / 1000));
+                            const charsPerSec = 8;
+                            const estimatedSec = Math.max(5, Math.ceil(ttsText.length / charsPerSec));
+                            const progress = Math.min(100, Math.round((elapsedSec / estimatedSec) * 100));
+                            const overrun = elapsedSec > estimatedSec;
+                            // Keep referencing elapsedTick so the closure
+                            // re-evaluates each second even though we don't
+                            // read it directly.
+                            void elapsedTick;
+                            return (
+                                <div className="mt-2 text-xs text-gray-400">
+                                    <div className="flex items-center justify-between mb-1">
+                                        <span>
+                                            {overrun
+                                                ? `Still working — ${elapsedSec}s elapsed (estimate was ~${estimatedSec}s)`
+                                                : `Generating — ~${Math.max(0, estimatedSec - elapsedSec)}s left (${elapsedSec}/${estimatedSec}s)`}
+                                        </span>
+                                    </div>
+                                    <div className="w-full h-1 bg-white/10 rounded overflow-hidden">
+                                        <div
+                                            className={`h-full transition-all duration-1000 ${overrun ? 'bg-amber-400/70' : 'bg-primary-500/70'}`}
+                                            style={{ width: `${progress}%` }}
+                                        />
+                                    </div>
+                                </div>
+                            );
+                        })()}
                         {!ttsEnabled && (
                             <p className="text-xs text-yellow-600">
                                 TTS disabled. Set `ELEVENLABS_API_KEY` or `EDGE_TTS_ENABLED=true` in `server/.env`.
@@ -1611,14 +1669,14 @@ export function VoiceAudioPage() {
                             {(showAllRecent ? audioHistory : audioHistory.slice(0, 6)).map((item) => (
                                 <div
                                     key={item.id}
-                                    className="flex flex-col md:flex-row md:items-center gap-3 bg-gray-50 rounded-lg p-3"
+                                    className="flex flex-col md:flex-row md:items-center gap-3 bg-dark-900/60 border border-white/5 rounded-lg p-3"
                                 >
-                                    <div className="flex-1">
-                                        <p className="text-xs text-primary-300 uppercase tracking-wider">
+                                    <div className="flex-1 min-w-0">
+                                        <p className="text-[10px] text-primary-300 uppercase tracking-wider font-semibold">
                                             {item.kind}
                                         </p>
-                                        <p className="text-sm font-mono text-gray-100 break-all">{item.path}</p>
-                                        <p className="text-[10px] text-gray-300 mt-1">
+                                        <p className="text-xs font-mono text-gray-200 break-all">{item.path}</p>
+                                        <p className="text-[10px] text-gray-500 mt-1">
                                             {new Date(item.createdAt).toLocaleString()}
                                         </p>
                                     </div>

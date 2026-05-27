@@ -14,6 +14,8 @@
  * @property {boolean} emotionControls     Provider accepts emotion/style parameters.
  * @property {boolean} ssml                Provider accepts SSML markup as input.
  * @property {boolean} streaming           Provider supports streaming audio output.
+ * @property {boolean} [voiceClone]        Provider supports voice cloning (optional; cloud/local expansion).
+ * @property {boolean} [multilingual]      Provider supports multiple languages (optional; cloud/local expansion).
  */
 
 /**

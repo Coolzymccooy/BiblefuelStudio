@@ -59,4 +59,9 @@ export const ProviderCapabilitiesSchema = z.object({
   emotionControls: z.boolean(),
   ssml: z.boolean(),
   streaming: z.boolean(),
+  // Optional descriptive flags added for the cloud/local provider expansion
+  // (Fish/Coqui/Piper). Legacy five-flag providers omit them, so they stay
+  // optional and existing providers validate unchanged.
+  voiceClone: z.boolean().optional(),
+  multilingual: z.boolean().optional(),
 });

@@ -24,7 +24,10 @@ export function ScriptsPage() {
     const navigate = useNavigate();
     const { config } = useConfig();
     const scriptsEnabled = config.features.scripts;
-    const [count, setCount] = useState(10);
+    // Default to 1 so a single ignorant click can't burn the daily script
+    // quota all at once. Users on premium can still raise this before
+    // hitting Generate. Daily ceiling stays at 10.
+    const [count, setCount] = useState(1);
     const [ctaStyle, setCtaStyle] = useState('save');
     const [lengthSeconds, setLengthSeconds] = useState(20);
     const [scripts, setScripts] = useState<Script[]>([]);

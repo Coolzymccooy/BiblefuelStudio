@@ -2,11 +2,12 @@ import { Router } from "express";
 import fs from "fs";
 import rateLimit from "express-rate-limit";
 import { z } from "zod";
-import { hasAnyUser, createOwner, verifyUser, signToken, requireAuth, upsertFirebaseUser, deleteUserById, getUsersStore } from "../auth.js";
-import { isFirebaseAdminEnabled, verifyFirebaseIdToken } from "../lib/firebaseAdmin.js";
+import { hasAnyUser, createOwner, verifyUser, signToken, requireAuth, upsertFirebaseUser, deleteUserById, getUsersStore, saveUsersStore } from "../auth.js";
+import { isFirebaseAdminEnabled, verifyFirebaseIdToken, getFirebaseUserVerificationState } from "../lib/firebaseAdmin.js";
 import { writeUserPlan } from "../lib/userPlanStore.js";
 import { dataDirFor, ensureUserDirs } from "../lib/paths.js";
 import { isSuperAdmin as isSuperAdminUser } from "../lib/userPlan.js";
+import { getAccessRequestsStore } from "../lib/accessRequestsStore.js";
 
 const router = Router();
 
@@ -18,6 +19,60 @@ const authLimiter = rateLimit({
   limit: 25,
   standardHeaders: "draft-7",
   legacyHeaders: false
+});
+
+/**
+ * POST /api/auth/check-signup-eligibility
+ *
+ * Public, rate-limited eligibility probe. The client calls this BEFORE
+ * invoking Firebase createUserWithEmailAndPassword — otherwise Firebase
+ * silently creates an orphan account and ships a verification email even
+ * when our gate would reject the user, leaving a confusing trail.
+ *
+ * Returns 200 in BOTH cases with `eligible: true|false` so the client can
+ * branch without parsing status codes. Reasons are kept generic so an
+ * unauthenticated probe can't fully enumerate the user list — anyone
+ * determined enough can still hit it, which is why we rate-limit.
+ */
+router.post("/check-signup-eligibility", authLimiter, async (req, res) => {
+  try {
+    const schema = z.object({ email: z.string().trim().email().max(254) });
+    const parsed = schema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.json({ ok: true, eligible: false, reason: "INVALID_EMAIL" });
+    }
+    const email = parsed.data.email.toLowerCase();
+
+    // Super-admin always passes — they may be creating the very first user.
+    if (isSuperAdminUser({ sub: "", email })) {
+      return res.json({ ok: true, eligible: true, reason: "SUPER_ADMIN" });
+    }
+
+    // Already a registered user → tell them to sign in instead.
+    try {
+      const store = getUsersStore();
+      const exists = (store.users || []).some(
+        (u) => String(u?.email || "").trim().toLowerCase() === email,
+      );
+      if (exists) {
+        return res.json({ ok: true, eligible: false, reason: "ALREADY_REGISTERED" });
+      }
+    } catch { /* fall through */ }
+
+    let approved = false;
+    try {
+      approved = Boolean(await getAccessRequestsStore().findApprovedByEmail(email));
+    } catch { /* fall through */ }
+
+    return res.json({
+      ok: true,
+      eligible: approved,
+      reason: approved ? "APPROVED" : "NOT_APPROVED",
+    });
+  } catch (e) {
+    console.error("[AUTH] check-signup-eligibility failed:", e);
+    res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
 });
 
 router.get("/status", (req, res) => {
@@ -129,6 +184,38 @@ router.post("/firebase", authLimiter, async (req, res) => {
     if (!idToken) return res.status(400).json({ ok: false, error: "idToken required" });
 
     const decoded = await verifyFirebaseIdToken(idToken);
+
+    // Signup gate: only known users (already in users.json) OR emails that
+    // a super-admin approved via the admin panel can complete sign-in.
+    // Super-admin themselves always pass — they're identified by env match
+    // before users.json has any record of them. Without this gate any
+    // Firebase account with a verified email could sign up to the studio.
+    const tokenEmail = String(decoded?.email || "").trim().toLowerCase();
+    const tokenUid = String(decoded?.uid || "").trim();
+    const store = getUsersStore();
+    const existing = (store.users || []).find((u) =>
+      String(u?.firebaseUid || "") === tokenUid ||
+      String(u?.email || "").trim().toLowerCase() === tokenEmail,
+    );
+    if (!existing) {
+      const isSuper = isSuperAdminUser({ sub: tokenUid, email: tokenEmail });
+      let approved = false;
+      if (!isSuper && tokenEmail) {
+        try {
+          approved = Boolean(await getAccessRequestsStore().findApprovedByEmail(tokenEmail));
+        } catch (lookupErr) {
+          console.warn("[AUTH] access-request lookup failed:", lookupErr?.message || lookupErr);
+        }
+      }
+      if (!isSuper && !approved) {
+        return res.status(403).json({
+          ok: false,
+          code: "SIGNUP_NOT_APPROVED",
+          error: "This email hasn't been approved for Biblefuel Studio yet. Request access from the landing page and wait for an approval reply.",
+        });
+      }
+    }
+
     const user = upsertFirebaseUser(decoded);
 
     // Bootstrap the per-user dir + plan record on first sign-in. Super-admin
@@ -150,6 +237,54 @@ router.post("/firebase", authLimiter, async (req, res) => {
     res.json({ ok: true, user, token });
   } catch (e) {
     res.status(401).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+/**
+ * POST /api/auth/refresh-verify
+ *
+ * Server-side fallback for the verify-email gate. The client first tries
+ * firebaseRefreshIdTokenAfterVerify() (user.reload + getIdToken) — but
+ * Firebase occasionally returns stale verification state on the client even
+ * after the link was clicked. This endpoint asks Firebase Admin directly,
+ * updates users.json if the user is now verified, and returns the live
+ * flag. Eliminates the "Still unverified" trap when the link was actually
+ * clicked.
+ */
+router.post("/refresh-verify", requireAuth, async (req, res) => {
+  try {
+    const uid = String(req.user?.firebase_uid || req.user?.firebaseUid || req.user?.uid || "").trim();
+    const userId = String(req.user?.sub || "").trim();
+    const email = String(req.user?.email || "").trim().toLowerCase();
+
+    // Resolve the firebase uid from the local user record if the JWT didn't carry it.
+    const store = getUsersStore();
+    const localUser = (store.users || []).find((u) =>
+      (uid && String(u?.firebaseUid || "") === uid) ||
+      (userId && String(u?.id || "") === userId) ||
+      (email && String(u?.email || "").toLowerCase() === email),
+    );
+    const resolvedUid = uid || String(localUser?.firebaseUid || "").trim();
+    if (!resolvedUid) {
+      return res.status(400).json({ ok: false, error: "Firebase uid not on this account" });
+    }
+
+    const live = await getFirebaseUserVerificationState(resolvedUid);
+    if (!live) {
+      return res.status(502).json({ ok: false, error: "Could not reach Firebase to refresh verification state." });
+    }
+
+    // Persist the live state into users.json so /me + middleware can read
+    // it on the next request without a separate Firebase round-trip.
+    if (localUser && Boolean(localUser.emailVerified) !== live.emailVerified) {
+      localUser.emailVerified = live.emailVerified;
+      saveUsersStore(store);
+    }
+
+    res.json({ ok: true, emailVerified: live.emailVerified });
+  } catch (e) {
+    console.error("[AUTH] /refresh-verify failed:", e);
+    res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
 

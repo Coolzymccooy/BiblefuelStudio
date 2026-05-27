@@ -68,3 +68,17 @@ export function incrementUsage(dataDir, bucket, by = 1) {
   fs.writeFileSync(usageFilePath(dataDir), JSON.stringify(current, null, 2));
   return current.counts[bucket];
 }
+
+/**
+ * Zero out every bucket for the current day. Used by super-admin to grant a
+ * user a fresh allotment without waiting for the midnight-UTC rollover.
+ * Returns the new (all-zero) usage record.
+ *
+ * @param {string} dataDir
+ */
+export function resetUsage(dataDir) {
+  if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+  const fresh = { day: todayUtc(), counts: emptyCounts() };
+  fs.writeFileSync(usageFilePath(dataDir), JSON.stringify(fresh, null, 2));
+  return fresh;
+}

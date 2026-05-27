@@ -1,15 +1,23 @@
 import { useState } from 'react';
+import { Navigate } from 'react-router-dom';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { api } from '../lib/api';
+import { useAuth } from '../hooks/useAuth';
 import toast from 'react-hot-toast';
 
 export function GumroadPage() {
+    const { isSuperAdmin, isLoading } = useAuth();
     const [freeTitle, setFreeTitle] = useState('7 Bible Verses for Anxiety & Fear (With Reflections & Prayers)');
     const [paidTitle, setPaidTitle] = useState('Biblefuel: 30 Days of Strength, Peace & Faith');
     const [result, setResult] = useState<{ freeMarkdown?: string; paidMarkdown?: string } | null>(null);
     const [isGenerating, setIsGenerating] = useState(false);
+
+    // Server-side gate (featureGate('gumroad')) already 403s non-super-admin
+    // calls. Mirror that here so a direct URL hit doesn't show a broken page.
+    if (isLoading) return <div className="text-gray-400 text-sm">Checking access…</div>;
+    if (!isSuperAdmin) return <Navigate to="/app" replace />;
 
     const handleGenerate = async () => {
         setIsGenerating(true);

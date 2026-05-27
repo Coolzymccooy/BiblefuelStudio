@@ -1,43 +1,9 @@
 import fs from "fs";
 import path from "path";
-import { spawnSync } from "child_process";
 import { v4 as uuid } from "uuid";
 import { MsEdgeTTS, OUTPUT_FORMAT } from "msedge-tts";
 import { OUTPUT_DIR } from "./paths.js";
-
-/**
- * msedge-tts writes raw concatenated MP3 frames with no Xing/Info header.
- * Browsers and most ffmpeg consumers can decode the audio but cannot
- * compute duration without scrubbing the whole file, so the HTML5 <audio>
- * element shows 0:00 even though there's real audio inside. We remux the
- * file in place (`-c copy`, no re-encode) which makes ffmpeg insert a
- * proper Xing header — fast (~50ms) and lossless.
- *
- * No-op if ffmpeg is missing or the remux fails; the user still gets the
- * original file rather than losing their generation.
- */
-function addMp3HeaderInPlace(filePath) {
-  const ffmpeg = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
-  const tmp = `${filePath}.fixed.mp3`;
-  try {
-    const result = spawnSync(
-      ffmpeg,
-      ["-y", "-loglevel", "error", "-i", filePath, "-c", "copy", tmp],
-      { stdio: "ignore" }
-    );
-    if (result.status === 0 && fs.existsSync(tmp) && fs.statSync(tmp).size > 0) {
-      fs.renameSync(tmp, filePath);
-      return true;
-    }
-  } catch (err) {
-    console.warn(`[TTS] Edge MP3 header remux failed (non-fatal): ${err?.message || err}`);
-  } finally {
-    if (fs.existsSync(tmp)) {
-      try { fs.unlinkSync(tmp); } catch { /* ignore */ }
-    }
-  }
-  return false;
-}
+import { addMp3HeaderInPlace } from "./mp3Header.js";
 
 const DEFAULT_EDGE_VOICE = "en-US-AriaNeural";
 const EDGE_TTS_TIMEOUT_MS = 20_000;

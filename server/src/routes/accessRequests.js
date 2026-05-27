@@ -5,6 +5,7 @@
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
+import { getUsersStore } from '../auth.js';
 
 const submissionSchema = z.object({
   name: z.string().trim().min(1).max(120),
@@ -13,6 +14,60 @@ const submissionSchema = z.object({
   pitch: z.string().trim().min(1).max(500),
   hp_url: z.string().max(2000).default(''),
 });
+
+/**
+ * Inspect history for `email` and return a reason to reject the submission,
+ * or null when the request should go through. Rules:
+ *
+ *   - Email is already a registered user        → ALREADY_REGISTERED
+ *   - Email has an APPROVED request on file      → ALREADY_APPROVED
+ *   - Email has a PENDING request on file        → ALREADY_PENDING
+ *
+ * Denied applicants ARE allowed to re-submit — the operator may have
+ * changed their mind, and forcing them to email manually is hostile UX.
+ */
+async function classifyDuplicate(store, email) {
+  const target = String(email || '').trim().toLowerCase();
+  if (!target) return null;
+
+  try {
+    const users = getUsersStore();
+    const isRegistered = (users.users || []).some(
+      (u) => String(u?.email || '').trim().toLowerCase() === target,
+    );
+    if (isRegistered) {
+      return {
+        code: 'ALREADY_REGISTERED',
+        message: 'This email already has a Biblefuel Studio account. Try signing in instead.',
+      };
+    }
+  } catch {
+    // Non-fatal: if users.json read fails we let the duplicate check fall
+    // through to the access-request side rather than 500ing the public form.
+  }
+
+  if (typeof store?.list === 'function') {
+    const all = await store.list();
+    const priorApproved = all
+      .filter((r) => String(r?.email || '').trim().toLowerCase() === target && r.status === 'approved')
+      .sort((a, b) => (Date.parse(b?.reviewedAt || b?.createdAt || '') || 0) - (Date.parse(a?.reviewedAt || a?.createdAt || '') || 0))[0];
+    if (priorApproved) {
+      return {
+        code: 'ALREADY_APPROVED',
+        message: 'You\'re already approved for Biblefuel Studio — head to the studio and sign up with this email.',
+      };
+    }
+    const priorPending = all.find((r) => String(r?.email || '').trim().toLowerCase() === target && r.status === 'pending');
+    if (priorPending) {
+      return {
+        code: 'ALREADY_PENDING',
+        message: 'We\'ve already received a request for this email and it\'s waiting for review.',
+      };
+    }
+  }
+
+  return null;
+}
 
 export function createAccessRequestsRouter({ store, sendEmail, notifyTo, log = console }) {
   const router = Router();
@@ -42,6 +97,19 @@ export function createAccessRequestsRouter({ store, sendEmail, notifyTo, log = c
     }
 
     try {
+      // Block obvious duplicates BEFORE we write a new record or send the
+      // notification email. Saves the operator inbox spam from people
+      // re-submitting after they've already been approved/are pending.
+      const duplicate = await classifyDuplicate(store, data.email);
+      if (duplicate) {
+        log.info?.('[access-requests] duplicate blocked', { email: data.email, code: duplicate.code });
+        return res.status(409).json({
+          ok: false,
+          code: duplicate.code,
+          error: duplicate.message,
+        });
+      }
+
       const ip = req.ip || req.headers['x-forwarded-for'] || 'unknown';
       const userAgent = String(req.headers['user-agent'] || '').slice(0, 500);
       const record = await store.append({

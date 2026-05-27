@@ -11,6 +11,7 @@ import {
   PROFILES,
   listCategories,
   resolveProfile,
+  synthesize,
   synthesizeForCategory,
   describeProviders,
   describeProvidersAsync,
@@ -41,6 +42,23 @@ function denyElevenLabs(req, res) {
 function voiceCloneAllowed(req) {
   const plan = req?.ctx?.plan;
   return plan === "super_admin" || plan === "premium";
+}
+
+// Fish Audio is a paid cloud provider (like ElevenLabs) — gated to the same
+// premium/super-admin plans so free users can't burn Fish credits. Free users
+// fall back to Edge-TTS / Chatterbox.
+function fishAllowed(req) {
+  const plan = req?.ctx?.plan;
+  return plan === "super_admin" || plan === "premium";
+}
+function denyFish(req, res) {
+  return res.status(403).json({
+    ok: false,
+    error: "FEATURE_LOCKED",
+    capability: "tts.fish",
+    plan: req?.ctx?.plan || "unknown",
+    hint: "Fish Audio is a premium feature. Use /api/tts/edge or /api/tts/chatterbox instead.",
+  });
 }
 
 function isEdgeEnabled() {
@@ -262,8 +280,33 @@ router.post("/elevenlabs", async (req, res) => {
     const result = await synthesizeElevenLabs({ text, voiceId, voiceSettings, modelId });
     res.json(result);
   } catch (e) {
-    console.error(`[TTS] ElevenLabs route error:`, e);
     const message = String(e?.message || e);
+
+    // ElevenLabs monthly free quota is small (~30k chars) and recoverable
+    // by falling back to Edge-TTS — the user still gets audio, just from a
+    // free provider. Other 4xx/5xx errors (bad key, voice not found,
+    // upstream timeout) should surface so the operator notices.
+    if (/quota_exceeded|quota exceeded/i.test(message)) {
+      console.warn("[TTS] ElevenLabs quota exceeded — falling back to Edge-TTS");
+      try {
+        const fallback = await synthesizeEdgeTts({ text, voiceId });
+        return res.json({
+          ...fallback,
+          fallbackProvider: "edge",
+          primaryProvider: "elevenlabs",
+          primaryReason: "quota_exceeded",
+          primaryError: message,
+        });
+      } catch (fallbackErr) {
+        console.error("[TTS] Edge-TTS fallback after ElevenLabs quota failed:", fallbackErr);
+        return res.status(502).json({
+          ok: false,
+          error: `ElevenLabs quota exceeded and Edge-TTS fallback failed: ${String(fallbackErr?.message || fallbackErr)}`,
+        });
+      }
+    }
+
+    console.error(`[TTS] ElevenLabs route error:`, e);
     const status = message.toLowerCase().includes("missing") || message.toLowerCase().includes("required") ? 400 : 502;
     res.status(status).json({ ok: false, error: message });
   }
@@ -456,6 +499,36 @@ router.post("/chatterbox", async (req, res) => {
         error: `Both Chatterbox and Edge-TTS failed. Chatterbox: ${message}. Edge-TTS: ${String(fallbackErr?.message || fallbackErr)}`,
       });
     }
+  }
+});
+
+// Fish Audio route — premium cloud provider, mirrors the /elevenlabs and
+// /chatterbox shape. Forces preferredProvider:"fish" so the orchestrator tries
+// Fish first; if Fish is down it transparently chains through the remaining
+// available providers (the result.provider field reports what actually ran).
+// `speed` (0.5–2.0) maps to Fish's prosody.speed via voiceSettings.
+router.post("/fish", async (req, res) => {
+  if (!fishAllowed(req)) return denyFish(req, res);
+
+  const { text, voiceId, voiceSettings, modelId, speed, withTimestamps } = req.body || {};
+  try {
+    const mergedSettings = { ...(voiceSettings && typeof voiceSettings === "object" ? voiceSettings : {}) };
+    if (typeof speed === "number") mergedSettings.speed = speed;
+
+    const result = await synthesize({
+      text,
+      voiceIds: voiceId ? { fish: voiceId } : undefined,
+      voiceSettings: Object.keys(mergedSettings).length > 0 ? mergedSettings : undefined,
+      modelId,
+      preferredProvider: "fish",
+      withTimestamps: Boolean(withTimestamps),
+    });
+    return res.json(result);
+  } catch (e) {
+    console.error("[TTS] Fish route error:", e);
+    const message = String(e?.message || e);
+    const status = /required|invalid|missing|min 3 chars/i.test(message) ? 400 : 502;
+    return res.status(status).json({ ok: false, error: message });
   }
 });
 

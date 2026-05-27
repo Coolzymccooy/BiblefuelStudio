@@ -11,12 +11,14 @@ export interface ApiResponse<T = any> {
 }
 
 class ApiClient {
+    // Always use relative URLs so requests target the same origin that served
+    // the page. In single-process mode Express serves both the bundle and the
+    // API on one port; in dual-process dev mode Vite proxies /api and /outputs
+    // through to Express. Setting VITE_API_BASE_URL at build time still wins
+    // when the API genuinely lives on a different origin.
     public readonly baseUrl = (() => {
         const envBase = String(import.meta.env.VITE_API_BASE_URL || '').trim().replace(/\/+$/, '');
         if (envBase) return envBase;
-        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-            return `http://${window.location.hostname}:5051`;
-        }
         return '';
     })();
 

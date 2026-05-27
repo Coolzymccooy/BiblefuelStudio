@@ -13,6 +13,7 @@ export const STORAGE_KEYS = {
     renderMusicVolume: 'BF_RENDER_MUSIC_VOL',
     renderAutoDuck: 'BF_RENDER_AUTO_DUCK',
     renderDurationSec: 'BF_RENDER_DURATION_SEC',
+    renderTypographyPreset: 'BF_RENDER_TYPOGRAPHY_PRESET',
     ttsVoiceId: 'BF_TTS_VOICE_ID',
     ttsStability: 'BF_TTS_STABILITY',
     ttsSimilarity: 'BF_TTS_SIMILARITY',

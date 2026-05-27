@@ -1,14 +1,18 @@
 import { useEffect, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
-    Menu, X, FileText, List, Briefcase, Image, Mic, Film, Video, Package, LogOut, LogIn, Shield, Settings, HelpCircle, Wand2, BookOpen, Home
+    Menu, X, FileText, List, Briefcase, Image, Mic, Film, Video, Package, LogOut, LogIn, Shield, Settings, HelpCircle, Wand2, BookOpen, Home, ShieldCheck
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { Button } from './ui/Button';
 import { AUTH_INVALID_EVENT } from '../lib/api';
 import { NotificationsBell } from './NotificationsBell';
 import { VerifyEmailGate } from './VerifyEmailGate';
+import { ReportIssueWidget } from './ReportIssueWidget';
 
+// `superOnly` items are hidden for non-super-admin users. The server still
+// enforces the gate (featureGate("gumroad") returns 403) — hiding the link
+// just prevents non-admins from landing on a 403'd page and looking lost.
 const navItems = [
     { path: '/app', label: 'Home', icon: Shield },
     { path: '/app/wizard', label: 'Wizard', icon: Wand2 },
@@ -20,7 +24,7 @@ const navItems = [
     { path: '/app/voice-audio', label: 'Voice & Audio', icon: Mic },
     { path: '/app/timeline', label: 'Timeline', icon: Film },
     { path: '/app/render', label: 'Render', icon: Video },
-    { path: '/app/gumroad', label: 'Gumroad', icon: Package },
+    { path: '/app/gumroad', label: 'Gumroad', icon: Package, superOnly: true },
 ];
 
 // Mobile bottom-bar shortcuts. Home is included so users can always reach
@@ -36,7 +40,7 @@ const quickActions = [
 
 export function Layout() {
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-    const { token, emailVerified, logout, checkStatus } = useAuth();
+    const { token, emailVerified, isSuperAdmin, logout, checkStatus } = useAuth();
     const location = useLocation();
     const navigate = useNavigate();
 
@@ -157,25 +161,41 @@ export function Layout() {
 
                 <nav className="flex-1 px-4 py-2 space-y-1 overflow-y-auto custom-scrollbar">
                     {token ? (
-                        navItems.map((item) => {
-                            const Icon = item.icon;
-                            const active = isActive(item.path);
-                            return (
+                        <>
+                            {navItems.filter((item) => !item.superOnly || isSuperAdmin).map((item) => {
+                                const Icon = item.icon;
+                                const active = isActive(item.path);
+                                return (
+                                    <Link
+                                        key={item.path}
+                                        to={item.path}
+                                        onClick={() => setIsMobileMenuOpen(false)}
+                                        className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300 group ${active
+                                            ? 'bg-white/5 text-primary-200 border border-white/10'
+                                            : 'text-gray-400 hover:bg-white/5 hover:text-gray-100 hover:pl-5'
+                                            }`}
+                                    >
+                                        <Icon size={20} className={`${active ? 'text-primary-300' : 'text-gray-500 group-hover:text-gray-300'} transition-all`} />
+                                        <span className="font-medium tracking-wide">{item.label}</span>
+                                        {active && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-primary-300 animate-pulse" />}
+                                    </Link>
+                                );
+                            })}
+                            {isSuperAdmin && (
                                 <Link
-                                    key={item.path}
-                                    to={item.path}
+                                    to="/app/admin"
                                     onClick={() => setIsMobileMenuOpen(false)}
-                                    className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300 group ${active
-                                        ? 'bg-white/5 text-primary-200 border border-white/10'
-                                        : 'text-gray-400 hover:bg-white/5 hover:text-gray-100 hover:pl-5'
+                                    className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300 group mt-2 border-t border-white/5 pt-4 ${isActive('/app/admin')
+                                        ? 'bg-amber-500/10 text-amber-200 border-amber-500/30'
+                                        : 'text-amber-400/80 hover:bg-amber-500/5 hover:text-amber-200 hover:pl-5'
                                         }`}
                                 >
-                                    <Icon size={20} className={`${active ? 'text-primary-300' : 'text-gray-500 group-hover:text-gray-300'} transition-all`} />
-                                    <span className="font-medium tracking-wide">{item.label}</span>
-                                    {active && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-primary-300 animate-pulse" />}
+                                    <ShieldCheck size={20} className={`${isActive('/app/admin') ? 'text-amber-300' : 'text-amber-500/80 group-hover:text-amber-300'} transition-all`} />
+                                    <span className="font-medium tracking-wide">Admin</span>
+                                    {isActive('/app/admin') && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-amber-300 animate-pulse" />}
                                 </Link>
-                            );
-                        })
+                            )}
+                        </>
                     ) : (
                         // Locked sidebar prompt for unauthed visitors. The
                         // auth fence above redirects them to /app, but if
@@ -247,6 +267,9 @@ export function Layout() {
                     onClick={() => setIsMobileMenuOpen(false)}
                 />
             )}
+
+            {/* Floating "Report an issue" button — only when signed in. */}
+            <ReportIssueWidget />
 
             {/* Mobile Quick Actions — only rendered when authenticated. */}
             {token && (

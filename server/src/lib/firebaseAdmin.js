@@ -43,6 +43,30 @@ export async function verifyFirebaseIdToken(idToken) {
   return getAuth(app).verifyIdToken(String(idToken || "").trim());
 }
 
+/**
+ * Look up a Firebase user by uid and return the live `emailVerified` flag.
+ * The JWT/users.json copy is whatever was true at sign-in time; this hits
+ * Firebase directly so a user who verified their email AFTER the last sign-in
+ * can have their gate cleared without a sign-out/sign-in dance.
+ *
+ * Returns null if the uid isn't found or Firebase Admin isn't configured —
+ * callers should treat null as "couldn't confirm" rather than "not verified".
+ *
+ * @param {string} uid
+ * @returns {Promise<{ emailVerified: boolean, email?: string } | null>}
+ */
+export async function getFirebaseUserVerificationState(uid) {
+  const app = getFirebaseApp();
+  if (!app || !uid) return null;
+  try {
+    const user = await getAuth(app).getUser(String(uid));
+    return { emailVerified: Boolean(user?.emailVerified), email: user?.email || "" };
+  } catch (err) {
+    console.warn("[FIREBASE] getUser failed for", uid, "—", err?.message || err);
+    return null;
+  }
+}
+
 export async function uploadLocalFileToFirebase(localPath, options = {}) {
   const app = getFirebaseApp();
   if (!app) throw new Error("Firebase Storage not configured");

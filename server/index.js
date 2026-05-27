@@ -26,15 +26,18 @@ import bibleRouter from "./src/routes/bible.js";
 import seriesRouter from "./src/routes/series.js";
 import { requireAuth } from "./src/auth.js";
 import { createAccessRequestsRouter } from "./src/routes/accessRequests.js";
-import { createAccessRequestsStore } from "./src/lib/accessRequestsStore.js";
+import { getAccessRequestsStore } from "./src/lib/accessRequestsStore.js";
 import { createEmailTransport } from "./services/email/transport.js";
 import { sendEmail as sendEmailViaTransport } from "./services/email/send.js";
 import { withUserScope } from "./src/middleware/userScope.js";
 import { featureGate } from "./src/middleware/featureGate.js";
 import { requireVerifiedEmail } from "./src/middleware/requireVerifiedEmail.js";
+import { requireSuperAdmin } from "./src/middleware/requireSuperAdmin.js";
 import { quota } from "./src/middleware/quota.js";
 import billingRouter, { stripeWebhookHandler } from "./src/routes/billing.js";
 import postizRouter from "./src/routes/postiz.js";
+import { createAdminRouter } from "./src/routes/admin.js";
+import issuesRouter from "./src/routes/issues.js";
 import { DATA_DIR, OUTPUT_DIR } from "./src/lib/paths.js";
 
 // Load env from CURRENT server directory
@@ -104,7 +107,7 @@ const emailTransport = createEmailTransport({
   replyTo: process.env.MAIL_REPLY_TO || '',
 });
 const sendEmail = (req) => sendEmailViaTransport(emailTransport, req);
-const accessRequestsStore = createAccessRequestsStore({ dir: dataDir });
+const accessRequestsStore = getAccessRequestsStore();
 app.use('/api/access-requests', createAccessRequestsRouter({
   store: accessRequestsStore,
   sendEmail,
@@ -221,6 +224,14 @@ app.use("/api/firebase",  requireAuth, withUserScope,                           
 app.use("/api/bible",     requireAuth, withUserScope,                                              bibleRouter);
 app.use("/api/series",    requireAuth, withUserScope, requireVerifiedEmail, quota("render"),     seriesRouter);
 app.use("/api/postiz",    requireAuth, withUserScope, requireVerifiedEmail,                       postizRouter);
+app.use("/api/issues",    requireAuth, withUserScope,                                              issuesRouter);
+const publicSignupUrl = String(
+  process.env.PUBLIC_BASE_URL ||
+  process.env.APP_BASE_URL ||
+  ''
+).trim().replace(/\/+$/, '');
+const adminSignupUrl = publicSignupUrl ? `${publicSignupUrl}/app` : 'https://biblefuel.tiwaton.co.uk/app';
+app.use("/api/admin",     requireAuth, withUserScope, requireSuperAdmin,                          createAdminRouter({ accessRequestsStore, sendEmail, signupUrl: adminSignupUrl }));
 
 
 

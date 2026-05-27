@@ -67,3 +67,31 @@ test("ProviderCapabilities requires all five flags", () => {
   });
   assert.equal(parsed.charTimestamps, true);
 });
+
+test("ProviderCapabilities preserves optional voiceClone/multilingual flags", () => {
+  const parsed = ProviderCapabilitiesSchema.parse({
+    wordTimestamps: false,
+    charTimestamps: false,
+    emotionControls: true,
+    ssml: false,
+    streaming: true,
+    voiceClone: true,
+    multilingual: true,
+  });
+  assert.equal(parsed.voiceClone, true);
+  assert.equal(parsed.multilingual, true);
+});
+
+test("ProviderCapabilities keeps voiceClone/multilingual optional", () => {
+  // The legacy five-flag providers (edge/elevenlabs) must still validate
+  // without declaring the new optional fields.
+  const parsed = ProviderCapabilitiesSchema.parse({
+    wordTimestamps: false,
+    charTimestamps: true,
+    emotionControls: true,
+    ssml: false,
+    streaming: false,
+  });
+  assert.equal(parsed.voiceClone, undefined);
+  assert.equal(parsed.multilingual, undefined);
+});

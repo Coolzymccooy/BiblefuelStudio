@@ -9,7 +9,7 @@ import { readUsage, incrementUsage } from "../lib/usageStore.js";
 export const QUOTAS = Object.freeze({
   super_admin: { scripts: -1, tts: -1, render: -1, imageGen: -1 },
   premium:     { scripts: -1, tts: -1, render: -1, imageGen: -1 },
-  free:        { scripts: 10, tts: 10, render: 3,  imageGen: 5  },
+  free:        { scripts: 10, tts: 10, render: 5,  imageGen: 5  },
 });
 
 /**

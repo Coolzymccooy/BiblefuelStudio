@@ -138,6 +138,24 @@ export const useAuth = create<AuthState>((set, get) => ({
     signupWithFirebaseEmail: async (email: string, password: string) => {
         set({ isLoading: true, error: null });
         try {
+            // Pre-check approval BEFORE invoking Firebase. Without this,
+            // Firebase silently creates an orphan account and ships a
+            // verification email even when our server gate would reject —
+            // user ends up confused, holding a verification link for an
+            // account that can never actually sign in.
+            const probe = await api.post<{ eligible: boolean; reason?: string }>(
+                '/api/auth/check-signup-eligibility',
+                { email },
+            );
+            if (probe.ok && probe.data && probe.data.eligible === false) {
+                const reason = probe.data.reason || 'NOT_APPROVED';
+                const message = reason === 'ALREADY_REGISTERED'
+                    ? 'This email already has a Biblefuel Studio account. Sign in or reset your password.'
+                    : "This email hasn't been approved for Biblefuel Studio yet. Request access from the landing page and wait for an approval reply.";
+                set({ isLoading: false, error: message });
+                return false;
+            }
+
             const idToken = await firebaseEmailSignup(email, password);
             const response = await api.post('/api/auth/firebase', { idToken });
             if (response.ok && response.data?.token) {
@@ -230,19 +248,29 @@ export const useAuth = create<AuthState>((set, get) => ({
         set({ isLoading: true, error: null });
         try {
             const { idToken, emailVerified } = await firebaseRefreshIdTokenAfterVerify();
-            if (!emailVerified) {
-                set({ isLoading: false, error: 'Still unverified. Open the link in the email we sent, then try again.' });
+            if (emailVerified) {
+                // Exchange the fresh Firebase id token (now carrying email_verified=true)
+                // for a new Biblefuel JWT so server-side claims line up.
+                const response = await api.post('/api/auth/firebase', { idToken });
+                if (response.ok && response.data?.token) {
+                    api.setToken(response.data.token);
+                    set({ token: response.data.token, hasUser: true, emailVerified: true, isLoading: false, error: null });
+                    return true;
+                }
+                set({ isLoading: false, error: response.error || 'Verified, but could not refresh your session. Try logging out and back in.' });
                 return false;
             }
-            // Exchange the fresh Firebase id token (now carrying email_verified=true)
-            // for a new Biblefuel JWT so server-side claims line up.
-            const response = await api.post('/api/auth/firebase', { idToken });
-            if (response.ok && response.data?.token) {
-                api.setToken(response.data.token);
-                set({ token: response.data.token, hasUser: true, emailVerified: true, isLoading: false, error: null });
+            // Firebase client-side reload sometimes returns stale state even
+            // after the user clicked the verify link. Ask the server to check
+            // Firebase Admin directly — if it confirms verification, refresh
+            // /me so the gate clears without forcing a sign-out/sign-in.
+            const serverCheck = await api.post<{ emailVerified: boolean }>('/api/auth/refresh-verify');
+            if (serverCheck.ok && serverCheck.data?.emailVerified) {
+                await get().checkStatus();
+                set({ isLoading: false, error: null });
                 return true;
             }
-            set({ isLoading: false, error: response.error || 'Verified, but could not refresh your session. Try logging out and back in.' });
+            set({ isLoading: false, error: 'Still unverified. Open the link in the email we sent, then try again.' });
             return false;
         } catch (err) {
             set({

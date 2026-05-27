@@ -3,6 +3,7 @@
 // renderer. Callers don't construct HTML themselves — they call sendEmail.
 
 import { renderAccessRequestEmail } from './templates/accessRequest.js';
+import { renderAccessApprovedEmail, renderAccessDeniedEmail } from './templates/accessDecision.js';
 
 export function renderEmailRequest(req) {
   if (!req || typeof req !== 'object') throw new Error('renderEmailRequest: missing request');
@@ -10,6 +11,16 @@ export function renderEmailRequest(req) {
     case 'access-request': {
       const { to, ...fields } = req;
       const rendered = renderAccessRequestEmail(fields);
+      return { ...rendered, to };
+    }
+    case 'access-approved': {
+      const { to, ...fields } = req;
+      const rendered = renderAccessApprovedEmail(fields);
+      return { ...rendered, to };
+    }
+    case 'access-denied': {
+      const { to, ...fields } = req;
+      const rendered = renderAccessDeniedEmail(fields);
       return { ...rendered, to };
     }
     default:
