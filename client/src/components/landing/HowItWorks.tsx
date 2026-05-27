@@ -14,16 +14,16 @@ export function HowItWorks() {
   const m = useEditorialMotion();
 
   return (
-    <section id="who" className="bg-editorial-dark px-10 py-20 text-editorial-paper">
+    <section id="who" className="bg-editorial-dark px-5 py-14 text-editorial-paper sm:px-8 sm:py-20 md:px-10">
       <div className="mx-auto max-w-6xl">
         <motion.h2
           initial="hidden"
           whileInView="visible"
           viewport={{ once: true, amount: 0.4 }}
           variants={m.fadeUp}
-          className="font-displaySerif text-[40px] leading-[1.05] tracking-[-0.6px]"
+          className="font-displaySerif text-[30px] leading-[1.08] tracking-[-0.4px] sm:text-[40px] sm:leading-[1.05] sm:tracking-[-0.6px]"
         >
-          From a verse to the world,<br />in three movements.
+          From a verse to the world,<br className="hidden sm:inline" /> in three movements.
         </motion.h2>
 
         <motion.p
@@ -31,7 +31,7 @@ export function HowItWorks() {
           whileInView="visible"
           viewport={{ once: true, amount: 0.4 }}
           variants={m.fadeUp}
-          className="mb-12 max-w-[600px] font-bodyserif text-[15px] leading-[1.55] text-[#a8a098]"
+          className="mb-10 mt-3 max-w-[600px] font-bodyserif text-[14px] leading-[1.55] text-[#a8a098] sm:mb-12 sm:text-[15px]"
         >
           The studio was built around a simple liturgy of making.
         </motion.p>
@@ -41,12 +41,12 @@ export function HowItWorks() {
           whileInView="visible"
           viewport={{ once: true, amount: 0.3 }}
           variants={m.staggerSlow}
-          className="grid grid-cols-1 gap-9 md:grid-cols-3"
+          className="grid grid-cols-1 gap-7 sm:gap-9 md:grid-cols-3"
         >
           {steps.map((s) => (
-            <motion.div key={s.num} variants={m.fadeUp} className="border-t border-editorial-goldLite/20 pt-6">
+            <motion.div key={s.num} variants={m.fadeUp} className="border-t border-editorial-goldLite/20 pt-5 sm:pt-6">
               <div className="font-sans text-[11px] uppercase tracking-[2px] text-editorial-goldLite">{s.num}</div>
-              <h3 className="mt-2 font-displaySerif text-[26px]">{s.title}</h3>
+              <h3 className="mt-2 font-displaySerif text-[22px] sm:text-[26px]">{s.title}</h3>
               <p className="mt-3 font-bodyserif text-[14px] leading-[1.6] text-[#a8a098]">{s.body}</p>
             </motion.div>
           ))}

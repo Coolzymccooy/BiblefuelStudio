@@ -26,9 +26,9 @@ export function WhatsInside() {
   const m = useEditorialMotion();
 
   return (
-    <section id="studio" className="bg-editorial-paper px-10 py-20">
+    <section id="studio" className="bg-editorial-paper px-5 py-14 sm:px-8 sm:py-20 md:px-10">
       <div className="mx-auto max-w-6xl">
-        <div className="mb-8 text-center font-sans text-[12px] tracking-[12px] text-editorial-gold">
+        <div className="mb-6 text-center font-sans text-[11px] tracking-[8px] text-editorial-gold sm:mb-8 sm:text-[12px] sm:tracking-[12px]">
           ✦  ✦  ✦
         </div>
 
@@ -37,7 +37,7 @@ export function WhatsInside() {
           whileInView="visible"
           viewport={{ once: true, amount: 0.4 }}
           variants={m.fadeUp}
-          className="font-displaySerif text-[40px] leading-[1.05] tracking-[-0.6px] text-editorial-ink"
+          className="font-displaySerif text-[32px] leading-[1.05] tracking-[-0.4px] text-editorial-ink sm:text-[40px] sm:tracking-[-0.6px]"
         >
           What's inside the studio.
         </motion.h2>
@@ -47,7 +47,7 @@ export function WhatsInside() {
           whileInView="visible"
           viewport={{ once: true, amount: 0.4 }}
           variants={m.fadeUp}
-          className="mb-12 max-w-[600px] font-bodyserif text-[15px] leading-[1.55] text-editorial-muted"
+          className="mb-10 mt-3 max-w-[600px] font-bodyserif text-[14px] leading-[1.55] text-editorial-muted sm:mb-12 sm:text-[15px]"
         >
           Three crafts, one tab. No agencies, no installs — just the tools the work actually needs.
         </motion.p>
@@ -57,12 +57,12 @@ export function WhatsInside() {
           whileInView="visible"
           viewport={{ once: true, amount: 0.3 }}
           variants={m.staggerChildren}
-          className="grid grid-cols-1 gap-9 md:grid-cols-3"
+          className="grid grid-cols-1 gap-7 sm:gap-9 md:grid-cols-3"
         >
           {features.map((f) => (
             <motion.div key={f.title} variants={m.fadeUp}>
-              <div className="font-displaySerif text-[26px] italic text-editorial-gold">{f.numeral}</div>
-              <h3 className="mt-3 font-displaySerif text-[22px] text-editorial-ink">{f.title}</h3>
+              <div className="font-displaySerif text-[24px] italic text-editorial-gold sm:text-[26px]">{f.numeral}</div>
+              <h3 className="mt-2 font-displaySerif text-[20px] text-editorial-ink sm:mt-3 sm:text-[22px]">{f.title}</h3>
               <p className="mt-2 font-bodyserif text-[14px] leading-[1.6] text-editorial-muted">{f.body}</p>
             </motion.div>
           ))}

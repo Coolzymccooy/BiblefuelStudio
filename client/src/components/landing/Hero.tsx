@@ -10,8 +10,8 @@ export function Hero() {
   const headlineWords = ['A', 'quiet', 'studio', 'for', '*louder*', 'witness.'];
 
   return (
-    <section className="bg-gradient-to-b from-editorial-paper to-editorial-parchment px-10 py-24">
-      <div className="mx-auto grid max-w-6xl grid-cols-1 items-center gap-12 md:grid-cols-[1.1fr_1fr]">
+    <section className="bg-gradient-to-b from-editorial-paper to-editorial-parchment px-5 py-16 sm:px-8 sm:py-20 md:px-10 md:py-24">
+      <div className="mx-auto grid max-w-6xl grid-cols-1 items-center gap-10 sm:gap-12 md:grid-cols-[1.1fr_1fr]">
         <motion.div
           initial="hidden"
           animate="visible"
@@ -19,14 +19,14 @@ export function Hero() {
         >
           <motion.div
             variants={m.fadeUpFast}
-            className="mb-4 font-sans text-[10px] uppercase tracking-[2.5px] text-editorial-gold"
+            className="mb-3 font-sans text-[10px] uppercase tracking-[2.2px] text-editorial-gold sm:mb-4 sm:tracking-[2.5px]"
           >
             — For those who carry the Word
           </motion.div>
 
           <motion.h1
             variants={m.wordStagger}
-            className="font-displaySerif text-[44px] leading-[0.98] tracking-[-1.2px] text-editorial-ink md:text-[62px]"
+            className="font-displaySerif text-[36px] leading-[1.02] tracking-[-0.8px] text-editorial-ink sm:text-[44px] sm:leading-[0.98] sm:tracking-[-1.2px] md:text-[62px]"
           >
             {headlineWords.map((w, i) => {
               const em = w.startsWith('*') && w.endsWith('*');
@@ -49,15 +49,15 @@ export function Hero() {
 
           <motion.p
             variants={m.fadeUp}
-            className="mt-6 max-w-[90%] font-bodyserif text-[16px] leading-[1.55] text-editorial-body"
+            className="mt-5 font-bodyserif text-[15px] leading-[1.55] text-editorial-body sm:mt-6 sm:max-w-[90%] sm:text-[16px]"
           >
             For ministries, teachers, and faithful makers — write, voice, and publish stories worthy of the gospel.
           </motion.p>
 
-          <motion.div variants={m.fadeUp} className="mt-8 flex flex-wrap items-center gap-4">
+          <motion.div variants={m.fadeUp} className="mt-7 flex flex-wrap items-center gap-4 sm:mt-8">
             <a
               href="#access"
-              className="inline-block rounded-sm bg-editorial-ink px-6 py-3.5 font-sans text-[11px] font-medium uppercase tracking-[1.8px] text-editorial-paper"
+              className="inline-block rounded-sm bg-editorial-ink px-5 py-3 font-sans text-[11px] font-medium uppercase tracking-[1.6px] text-editorial-paper sm:px-6 sm:py-3.5 sm:tracking-[1.8px]"
             >
               Request access →
             </a>

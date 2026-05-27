@@ -415,33 +415,36 @@ export function HomePage() {
         );
     }
 
-    // Auth Views
+    // Auth Views — split layout: scripture stage on the left (lg+), form on
+    // the right. Below lg, only the form is shown so mobile users land on
+    // the action immediately without scrolling past a verse.
     return (
-        <div className="relative min-h-screen overflow-hidden bg-[#070504] px-2 py-2 sm:px-5 sm:py-5 animate-fade-in">
-            {/* Outer canvas ambience — deep editorial ink with a faint
-                upper-warmth that hints at the gold accent on the inner pane. */}
-            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(212,175,110,0.10),transparent_55%),radial-gradient(circle_at_15%_92%,rgba(107,79,31,0.16),transparent_46%),radial-gradient(circle_at_88%_85%,rgba(26,22,16,0.55),transparent_42%)]" />
+        <div className="relative min-h-screen overflow-hidden bg-[#070504] animate-fade-in">
+            {/* Ambient depth — same warm halos behind both panels so the
+                seam between them doesn't read as a hard divider. */}
+            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_15%_15%,rgba(212,175,110,0.10),transparent_50%),radial-gradient(circle_at_90%_88%,rgba(107,79,31,0.16),transparent_50%)]" />
 
-            {/*  Inner panel — deep editorial canvas hosts a living scripture
-                 backdrop (LoginBackdrop) so the page communicates what the
-                 product is about the moment a user sees it, instead of
-                 sitting as a static gold wallpaper. */}
-            <div className="relative mx-auto flex min-h-[calc(100vh-1rem)] w-full max-w-[1640px] items-center justify-center overflow-hidden rounded-[2.1rem] border border-editorial-gold/15 bg-[linear-gradient(165deg,#15110a_0%,#0c0805_55%,#070504_100%)] shadow-[0_45px_130px_rgba(0,0,0,0.75),inset_0_1px_0_rgba(212,175,110,0.12)]">
-                {/* Animated scripture wallpaper. aria-hidden inside the
-                    component; cycles via Framer Motion; respects
-                    prefers-reduced-motion. */}
-                <LoginBackdrop />
+            <div className="relative grid min-h-screen lg:grid-cols-[1.05fr_minmax(420px,0.85fr)]">
+                {/* LEFT — scripture stage. Hidden below lg. */}
+                <div className="relative hidden border-r border-editorial-gold/10 bg-[linear-gradient(165deg,#1a1610_0%,#0c0805_60%,#070504_100%)] lg:block">
+                    <LoginBackdrop />
+                </div>
 
-                <div className="relative z-10 flex w-full max-w-[460px] flex-col items-center justify-center gap-6 px-4 py-10 md:py-14">
-                    <div className="flex items-center gap-3">
-                        <span
-                            className="font-displaySerif italic text-[44px] leading-none tracking-tight bg-clip-text text-transparent bg-gradient-to-b from-editorial-cream via-editorial-goldLite to-editorial-gold drop-shadow-[0_12px_30px_rgba(212,175,110,0.25)]"
-                        >
-                            Biblefuel
-                        </span>
-                    </div>
+                {/* RIGHT — form column. Holds the full sign-in flow on every
+                    breakpoint. On mobile this column is the whole page. */}
+                <div className="relative z-10 flex items-center justify-center px-5 py-10 sm:px-8 sm:py-14 lg:px-12">
+                    <div className="flex w-full max-w-[440px] flex-col items-center gap-6">
+                        {/* Wordmark only appears on mobile/tablet — on lg the
+                            left panel already carries the brand. */}
+                        <div className="flex items-center gap-3 lg:hidden">
+                            <span
+                                className="font-displaySerif italic text-[40px] leading-none tracking-tight bg-clip-text text-transparent bg-gradient-to-b from-editorial-cream via-editorial-goldLite to-editorial-gold drop-shadow-[0_12px_30px_rgba(212,175,110,0.25)] sm:text-[44px]"
+                            >
+                                Biblefuel
+                            </span>
+                        </div>
 
-                    <div className="w-full">
+                        <div className="w-full">
                         <div className="flex w-full flex-col rounded-[2rem] border border-editorial-gold/15 bg-[#15110a] p-5 shadow-[0_34px_110px_rgba(0,0,0,0.7),inset_0_1px_0_rgba(212,175,110,0.10)] sm:p-6">
                             <div className="mb-5 flex items-center gap-3">
                                 <div className="rounded-2xl border border-editorial-gold/30 bg-editorial-gold/10 p-2.5">
@@ -652,6 +655,7 @@ export function HomePage() {
                         </div>
                     </div>
                 </div>
+            </div>
             </div>
         </div>
     );

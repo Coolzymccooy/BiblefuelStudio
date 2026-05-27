@@ -4,11 +4,12 @@ import { EDITORIAL_EASE } from './motion';
 import { DEFAULT_VERSES } from './KineticVerse';
 
 /**
- * Animated scripture backdrop for the auth pane. Cycles through the same
+ * Scripture stage for the login page's left panel. Cycles through the same
  * verses used on the marketing page so the brand voice carries through to
- * sign-in. Sits behind the form card at low opacity — felt, not loud.
+ * sign-in. Confident — no longer hiding behind the form card. The right
+ * panel hosts the form; this side just breathes the message of the product.
  *
- * Disabled gracefully under prefers-reduced-motion.
+ * Respects prefers-reduced-motion.
  */
 export function LoginBackdrop() {
   const reduce = useReducedMotion();
@@ -19,10 +20,10 @@ export function LoginBackdrop() {
     () => verse.lines.reduce((n, line) => n + line.length, 0),
     [verse],
   );
-  const wordDurationMs = 900;
-  const staggerMs = 260;
+  const wordDurationMs = 850;
+  const staggerMs = 240;
   const revealMs = wordCount * staggerMs + wordDurationMs;
-  const holdMs = 6000;
+  const holdMs = 5500;
 
   useEffect(() => {
     if (reduce) return;
@@ -35,74 +36,87 @@ export function LoginBackdrop() {
 
   return (
     <div
-      className="pointer-events-none absolute inset-0 flex items-center justify-center overflow-hidden select-none"
-      aria-hidden="true"
+      className="relative flex h-full w-full flex-col justify-between overflow-hidden p-8 sm:p-12 lg:p-16"
+      aria-label="Scripture from the studio"
     >
-      {/* Underlying ambient glows. Two off-axis halos plus a vertical
-          beam create depth without competing with the form card. */}
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_22%_28%,rgba(212,175,110,0.10),transparent_55%),radial-gradient(circle_at_78%_82%,rgba(107,79,31,0.16),transparent_50%)]" />
-      <div className="absolute left-1/2 top-0 h-full w-[640px] -translate-x-1/2 bg-[radial-gradient(ellipse_at_top,rgba(212,175,110,0.08),transparent_70%)]" />
+      {/* Ambient depth — warm halos, no competing structure. */}
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(212,175,110,0.12),transparent_55%),radial-gradient(circle_at_85%_85%,rgba(107,79,31,0.18),transparent_55%)]" />
+      <div className="pointer-events-none absolute -left-32 top-1/3 h-[480px] w-[480px] rounded-full bg-editorial-goldLite/8 blur-[140px]" />
 
-      <AnimatePresence mode="wait">
-        <motion.div
-          key={verse.ref}
-          className="relative max-w-6xl px-8 text-center"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: reduce ? 0 : 0.9, ease: EDITORIAL_EASE }}
-        >
-          {verse.lines.map((line, lineIdx) => (
-            <div
-              key={lineIdx}
-              className="font-displaySerif text-[56px] sm:text-[84px] md:text-[112px] lg:text-[132px] leading-[1.04] tracking-[-0.015em]"
-            >
-              {line.map((tok, wordIdx) => {
-                const em = tok.startsWith('*');
-                const text = em ? tok.slice(1) : tok;
-                const order =
-                  verse.lines.slice(0, lineIdx).reduce((n, l) => n + l.length, 0) +
-                  wordIdx;
-                return (
-                  <motion.span
-                    key={`${verse.ref}-${lineIdx}-${wordIdx}`}
-                    className={
-                      em
-                        ? 'inline-block italic text-editorial-goldLite/55 px-2'
-                        : 'inline-block text-editorial-cream/30 px-2'
-                    }
-                    initial={
-                      reduce
-                        ? { opacity: 1 }
-                        : { opacity: 0, y: 14, scale: 0.985, filter: 'blur(10px)' }
-                    }
-                    animate={{
-                      opacity: 1,
-                      y: 0,
-                      scale: 1,
-                      filter: 'blur(0px)',
-                    }}
-                    transition={{
-                      duration: reduce ? 0 : wordDurationMs / 1000,
-                      delay: reduce ? 0 : (order * staggerMs) / 1000,
-                      ease: EDITORIAL_EASE,
-                    }}
-                  >
-                    {text}
-                  </motion.span>
-                );
-              })}
-            </div>
+      {/* Kicker — top-left, anchors the panel to the brand. */}
+      <div className="relative z-10 font-sans text-[10px] uppercase tracking-[3px] text-editorial-gold/80">
+        <span className="hidden sm:inline">Biblefuel · </span>
+        Rendered live
+      </div>
+
+      {/* Scripture body — vertically centred, word-by-word reveal. */}
+      <div className="relative z-10 flex flex-1 items-center py-8">
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={verse.ref}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: reduce ? 0 : 0.7, ease: EDITORIAL_EASE }}
+            className="w-full"
+          >
+            {verse.lines.map((line, lineIdx) => (
+              <div
+                key={lineIdx}
+                className="font-displaySerif leading-[1.1] tracking-[-0.4px] text-editorial-cream text-[34px] sm:text-[44px] md:text-[52px] lg:text-[60px] xl:text-[68px]"
+              >
+                {line.map((tok, wordIdx) => {
+                  const em = tok.startsWith('*');
+                  const text = em ? tok.slice(1) : tok;
+                  const order =
+                    verse.lines.slice(0, lineIdx).reduce((n, l) => n + l.length, 0) +
+                    wordIdx;
+                  return (
+                    <motion.span
+                      key={`${verse.ref}-${lineIdx}-${wordIdx}`}
+                      className={
+                        em
+                          ? 'mr-[0.22em] inline-block italic text-editorial-goldLite'
+                          : 'mr-[0.22em] inline-block'
+                      }
+                      initial={
+                        reduce
+                          ? { opacity: 1 }
+                          : { opacity: 0, y: 12, filter: 'blur(8px)' }
+                      }
+                      animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+                      transition={{
+                        duration: reduce ? 0 : wordDurationMs / 1000,
+                        delay: reduce ? 0 : (order * staggerMs) / 1000,
+                        ease: EDITORIAL_EASE,
+                      }}
+                    >
+                      {text}
+                    </motion.span>
+                  );
+                })}
+              </div>
+            ))}
+          </motion.div>
+        </AnimatePresence>
+      </div>
+
+      {/* Verse reference + progress dots — bottom-left. */}
+      <div className="relative z-10 flex items-center justify-between font-sans text-[10px] tracking-[2.5px] text-editorial-gold/70 sm:text-[11px]">
+        <span>{verse.ref}</span>
+        <div className="flex gap-1.5" aria-hidden="true">
+          {DEFAULT_VERSES.map((_, idx) => (
+            <span
+              key={idx}
+              className={`h-[2px] w-5 transition-colors ${
+                idx === i % DEFAULT_VERSES.length
+                  ? 'bg-editorial-goldLite'
+                  : 'bg-editorial-gold/25'
+              }`}
+            />
           ))}
-          <div className="mt-10 font-sans text-[11px] tracking-[3.4px] text-editorial-gold/70">
-            {verse.ref}
-          </div>
-        </motion.div>
-      </AnimatePresence>
-
-      {/* Vignette so the verse text fades at the edges and the form card
-          sits in the brightest patch of the page. */}
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_30%,rgba(10,7,4,0.45)_72%,rgba(10,7,4,0.85)_100%)]" />
+        </div>
+      </div>
     </div>
   );
 }

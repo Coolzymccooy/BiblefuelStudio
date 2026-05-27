@@ -61,7 +61,7 @@ export function AccessForm() {
   };
 
   return (
-    <section id="access" className="bg-editorial-parchment px-10 py-20 text-center">
+    <section id="access" className="bg-editorial-parchment px-5 py-14 text-center sm:px-8 sm:py-20 md:px-10">
       <motion.div
         initial="hidden"
         whileInView="visible"
@@ -71,15 +71,15 @@ export function AccessForm() {
       >
         {submitted ? (
           <div>
-            <h2 className="font-displaySerif text-[44px] leading-tight text-editorial-ink">Received.</h2>
-            <p className="mt-3 font-bodyserif text-[15px] text-editorial-muted">
+            <h2 className="font-displaySerif text-[34px] leading-tight text-editorial-ink sm:text-[44px]">Received.</h2>
+            <p className="mt-3 font-bodyserif text-[14px] text-editorial-muted sm:text-[15px]">
               We'll be in touch soon — usually within a few days.
             </p>
           </div>
         ) : (
           <>
-            <h2 className="font-displaySerif text-[44px] leading-tight text-editorial-ink">Request access.</h2>
-            <p className="mt-3 mb-9 font-bodyserif text-[15px] text-editorial-muted">
+            <h2 className="font-displaySerif text-[34px] leading-tight text-editorial-ink sm:text-[44px]">Request access.</h2>
+            <p className="mt-3 mb-8 font-bodyserif text-[14px] text-editorial-muted sm:mb-9 sm:text-[15px]">
               The studio is opening in waves to a small number of ministries and creators.
               Tell us a little about your work — we'll be in touch.
             </p>
