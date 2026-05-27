@@ -3,6 +3,7 @@ import { Wand2, Loader2 } from 'lucide-react';
 import { Card } from '../ui/Card';
 import { Badge } from '../ui/Badge';
 import { api } from '../../lib/api';
+import { STORAGE_KEYS, loadJson, saveJson } from '../../lib/storage';
 
 /** One entry of the kinetic caption animation catalog (GET /api/tts/animations). */
 export interface KineticAnimation {
@@ -13,8 +14,6 @@ export interface KineticAnimation {
   renderable: boolean;
   unsupported: string[];
 }
-
-const STORAGE_KEY = 'bf_kinetic_animation';
 
 interface AnimationPickerProps {
   /** Controlled selection (animation id). Falls back to localStorage, then a default. */
@@ -35,7 +34,8 @@ export function AnimationPicker({ value, onChange, className = '' }: AnimationPi
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string>(
-    () => value || localStorage.getItem(STORAGE_KEY) || 'cinematic-worship',
+    // Shares RenderPage's storage key so a pick here becomes the render default.
+    () => value || loadJson<string>(STORAGE_KEYS.renderTypographyPreset, 'cinematic-worship'),
   );
 
   useEffect(() => {
@@ -64,11 +64,7 @@ export function AnimationPicker({ value, onChange, className = '' }: AnimationPi
 
   const pick = (a: KineticAnimation) => {
     setSelected(a.id);
-    try {
-      localStorage.setItem(STORAGE_KEY, a.id);
-    } catch {
-      /* ignore quota / privacy-mode failures */
-    }
+    saveJson(STORAGE_KEYS.renderTypographyPreset, a.id);
     onChange?.(a.id, a);
   };
 

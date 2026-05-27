@@ -92,6 +92,7 @@ export function RenderPage() {
     const [kineticCaptions, setKineticCaptions] = useState(false);
     const [ttsVoiceId, setTtsVoiceId] = useState('');
     const [typographyPreset, setTypographyPreset] = useState<string>('cinematic-default');
+    const [animations, setAnimations] = useState<Array<{ id: string; label: string; renderable: boolean }>>([]);
     const [postDestination, setPostDestination] = useState<'webhook' | 'buffer' | 'youtube' | 'instagram' | 'tiktok'>('webhook');
     const [youtubePrivacy, setYoutubePrivacy] = useState<'private' | 'unlisted' | 'public'>('private');
     const [webhookOptions, setWebhookOptions] = useState<{ id: string; name: string }[]>([]);
@@ -165,6 +166,22 @@ export function RenderPage() {
     useEffect(() => {
         saveJson(STORAGE_KEYS.renderTypographyPreset, typographyPreset);
     }, [typographyPreset]);
+
+    // Load the kinetic caption-animation catalog so the dropdown lists the
+    // word-synced animations (cinematic-worship, word-boxes, hero-bold, …) in
+    // addition to the classic presets. Falls back to classic-only if it fails.
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            const res = await api.get<{ ok: boolean; animations: Array<{ id: string; label: string; renderable: boolean }> }>(
+                '/api/tts/animations',
+            );
+            if (!cancelled && res.ok && res.data?.animations) setAnimations(res.data.animations);
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, []);
 
     useEffect(() => {
         if (ttsVoiceId) saveJson(STORAGE_KEYS.ttsVoiceId, ttsVoiceId);
@@ -626,6 +643,32 @@ export function RenderPage() {
                             </div>
                             <p className="text-[10px] text-gray-500 mt-1 uppercase tracking-tighter">One line per caption slide (auto-sliced)</p>
                         </div>
+                        <div className="mt-4">
+                            <label className="block text-sm font-medium text-gray-400 mb-1">
+                                Caption Animation
+                            </label>
+                            <Select value={typographyPreset} onChange={(e: ChangeEvent<HTMLSelectElement>) => setTypographyPreset(e.target.value)}>
+                                {animations.length > 0 && (
+                                    <optgroup label="Caption Animations (word-synced)">
+                                        {animations.map((a) => (
+                                            <option key={a.id} value={a.id}>
+                                                {a.label}{a.renderable ? '' : ' (preview-only)'}
+                                            </option>
+                                        ))}
+                                    </optgroup>
+                                )}
+                                <optgroup label="Classic presets (no motion)">
+                                    <option value="cinematic-default">Cinematic (default)</option>
+                                    <option value="intimate-fade">Intimate fade</option>
+                                    <option value="scripture-emphasis">Scripture emphasis</option>
+                                    <option value="playful-pop">Playful pop</option>
+                                    <option value="worship-cinematic">Worship cinematic</option>
+                                </optgroup>
+                            </Select>
+                            <p className="text-[10px] text-gray-500 mt-1 uppercase tracking-tighter">
+                                Word-synced motion (fade / rise) applies on Kinetic captions. Same list as the Voice Lab picker.
+                            </p>
+                        </div>
                     </Section>
 
                     <Section title="Output & Timing" hint="Frame, duration, caption width">
@@ -673,21 +716,6 @@ export function RenderPage() {
                             />
                             <p className="text-[10px] text-gray-500 mt-1 uppercase tracking-tighter">
                                 Lower value = more padding and tighter line wrapping
-                            </p>
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-400 mb-1">
-                                Typography Preset
-                            </label>
-                            <Select value={typographyPreset} onChange={(e: ChangeEvent<HTMLSelectElement>) => setTypographyPreset(e.target.value)}>
-                                <option value="cinematic-default">Cinematic (default)</option>
-                                <option value="intimate-fade">Intimate fade</option>
-                                <option value="scripture-emphasis">Scripture emphasis</option>
-                                <option value="playful-pop">Playful pop</option>
-                                <option value="worship-cinematic">Worship cinematic</option>
-                            </Select>
-                            <p className="text-[10px] text-gray-500 mt-1 uppercase tracking-tighter">
-                                Controls caption font size, colour, and box opacity
                             </p>
                         </div>
                     </Section>
