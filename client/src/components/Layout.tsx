@@ -54,9 +54,14 @@ export function Layout() {
         };
     }, [logout, navigate]);
 
+    // Auth fence for the studio. Unauthed visitors trying to reach any
+    // /app/* sub-route (Wizard, Scripts, Series, etc.) are bounced back
+    // to the /app sign-in screen. Previously this effect short-circuited
+    // for any path starting with /app, which left the sidebar clickable
+    // for logged-out users.
     useEffect(() => {
-        if (!token && !location.pathname.startsWith('/app')) {
-            navigate('/', { replace: true });
+        if (!token && location.pathname.startsWith('/app') && location.pathname !== '/app') {
+            navigate('/app', { replace: true });
         }
     }, [token, location.pathname, navigate]);
 
@@ -71,7 +76,7 @@ export function Layout() {
     }, [isMobileMenuOpen]);
 
     const isActive = (path: string) => location.pathname === path;
-    const isStandaloneAuth = !token && location.pathname === '/';
+    const isStandaloneAuth = !token && location.pathname === '/app';
 
     if (isStandaloneAuth) {
         return (
@@ -91,10 +96,10 @@ export function Layout() {
                     <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="text-gray-300 hover:text-white transition-colors">
                         {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
                     </button>
-                    {/* Tap-to-home wordmark — standard mobile UX so users
-                        don't depend on the sidebar Home entry. */}
+                    {/* Wordmark routes to the public landing. From there
+                        authed users get a "Resume in Studio" CTA. */}
                     <Link
-                        to="/app"
+                        to="/"
                         onClick={() => setIsMobileMenuOpen(false)}
                         className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-gray-100 to-primary-300 font-display tracking-wide"
                     >
@@ -125,31 +130,44 @@ export function Layout() {
         ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}
       `}>
                 <div className="p-6 hidden lg:block">
-                    <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-gray-100 to-primary-300 font-display tracking-wide">
+                    <Link
+                        to="/"
+                        className="block text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-gray-100 to-primary-300 font-display tracking-wide hover:opacity-90 transition-opacity"
+                        title="Back to landing page"
+                    >
                         Biblefuel<span className="font-light text-white/90">Studio</span>
-                    </h1>
+                    </Link>
                 </div>
 
                 <nav className="flex-1 px-4 py-2 space-y-1 overflow-y-auto custom-scrollbar">
-                    {navItems.map((item) => {
-                        const Icon = item.icon;
-                        const active = isActive(item.path);
-                        return (
-                            <Link
-                                key={item.path}
-                                to={item.path}
-                                onClick={() => setIsMobileMenuOpen(false)}
-                                className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300 group ${active
-                                    ? 'bg-white/5 text-primary-200 border border-white/10'
-                                    : 'text-gray-400 hover:bg-white/5 hover:text-gray-100 hover:pl-5'
-                                    }`}
-                            >
-                                <Icon size={20} className={`${active ? 'text-primary-300' : 'text-gray-500 group-hover:text-gray-300'} transition-all`} />
-                                <span className="font-medium tracking-wide">{item.label}</span>
-                                {active && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-primary-300 animate-pulse" />}
-                            </Link>
-                        );
-                    })}
+                    {token ? (
+                        navItems.map((item) => {
+                            const Icon = item.icon;
+                            const active = isActive(item.path);
+                            return (
+                                <Link
+                                    key={item.path}
+                                    to={item.path}
+                                    onClick={() => setIsMobileMenuOpen(false)}
+                                    className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300 group ${active
+                                        ? 'bg-white/5 text-primary-200 border border-white/10'
+                                        : 'text-gray-400 hover:bg-white/5 hover:text-gray-100 hover:pl-5'
+                                        }`}
+                                >
+                                    <Icon size={20} className={`${active ? 'text-primary-300' : 'text-gray-500 group-hover:text-gray-300'} transition-all`} />
+                                    <span className="font-medium tracking-wide">{item.label}</span>
+                                    {active && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-primary-300 animate-pulse" />}
+                                </Link>
+                            );
+                        })
+                    ) : (
+                        // Locked sidebar prompt for unauthed visitors. The
+                        // auth fence above redirects them to /app, but if
+                        // they ever land here the nav stays disabled.
+                        <div className="px-4 py-6 text-xs text-gray-500 leading-relaxed">
+                            Sign in to unlock the studio — Scripts, Voice, Timeline, Render, and the rest of the workflow.
+                        </div>
+                    )}
                 </nav>
 
                 <div className="p-4 border-t border-white/5">
@@ -214,7 +232,8 @@ export function Layout() {
                 />
             )}
 
-            {/* Mobile Quick Actions */}
+            {/* Mobile Quick Actions — only rendered when authenticated. */}
+            {token && (
             <div className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-dark-950/95 backdrop-blur-md border-t border-white/10 pb-[env(safe-area-inset-bottom)]">
                 <div className="flex items-center justify-around px-3 py-2">
                     {quickActions.map((item) => {
@@ -237,6 +256,7 @@ export function Layout() {
                     })}
                 </div>
             </div>
+            )}
         </div>
     );
 }

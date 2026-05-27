@@ -394,6 +394,10 @@ export function HomePage() {
             <div className="relative mx-auto flex min-h-[calc(100vh-1rem)] w-full max-w-[1640px] items-center justify-center overflow-hidden rounded-[2.1rem] border border-[#e1e8f3]/25 bg-[linear-gradient(155deg,#cdd4df_0%,#bcc7d7_45%,#b3c0d3_100%)] shadow-[0_45px_130px_rgba(0,0,0,0.5)]">
                 <div className="pointer-events-none absolute -left-24 -top-24 h-[340px] w-[340px] rounded-full bg-white/35 blur-[110px]" />
                 <div className="pointer-events-none absolute right-[-110px] top-[20%] h-[380px] w-[380px] rounded-full bg-sky-200/20 blur-[130px]" />
+                {/* Warm accent — keeps the login pane from reading purely
+                    cold, ties the surface to the landing page palette. */}
+                <div className="pointer-events-none absolute -bottom-32 -left-16 h-[420px] w-[420px] rounded-full bg-amber-200/15 blur-[140px]" />
+                <div className="pointer-events-none absolute top-[8%] left-1/2 h-[260px] w-[260px] -translate-x-1/2 rounded-full bg-rose-100/20 blur-[120px]" />
                 <div className="pointer-events-none absolute left-1/2 top-[56%] h-[360px] w-[780px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[radial-gradient(circle,rgba(139,151,172,0.42)_0%,rgba(130,143,165,0.16)_48%,rgba(130,143,165,0)_78%)] blur-[32px]" />
 
                 <div className="relative z-10 flex w-full max-w-[460px] flex-col items-center justify-center gap-6 px-4 py-10 md:py-14">
@@ -554,11 +558,21 @@ export function HomePage() {
                                 </form>
                             )}
 
-                            {error && (
-                                <div className="mt-4 rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-200 text-center">
-                                    {error}
-                                </div>
-                            )}
+                            {error && (() => {
+                                const lower = String(error).toLowerCase();
+                                const isRateLimited =
+                                    lower.includes('too many') ||
+                                    lower.includes('rate limit') ||
+                                    lower.includes('429');
+                                const message = isRateLimited
+                                    ? 'Too many attempts in a short window. Please wait a minute and try again.'
+                                    : error;
+                                return (
+                                    <div className="mt-4 rounded-xl border border-amber-300/30 bg-amber-300/[0.07] p-3 text-sm text-amber-100 text-center backdrop-blur-sm">
+                                        {message}
+                                    </div>
+                                );
+                            })()}
                         </div>
                     </div>
                 </div>

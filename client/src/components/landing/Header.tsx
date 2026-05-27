@@ -1,7 +1,17 @@
 import { motion } from 'framer-motion';
+import { Link } from 'react-router-dom';
+import { ArrowRight } from 'lucide-react';
 import { EDITORIAL_EASE } from './motion';
 
+function hasSession(): boolean {
+  if (typeof window === 'undefined') return false;
+  const t = window.localStorage.getItem('BF_TOKEN');
+  return Boolean(t && t !== 'null' && t !== 'undefined');
+}
+
 export function Header() {
+  const authed = hasSession();
+
   return (
     <header className="border-b border-editorial-hairline bg-editorial-paper">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-10 py-5">
@@ -13,10 +23,22 @@ export function Header() {
         >
           Biblefuel
         </motion.span>
-        <nav className="flex gap-6 font-sans text-[11px] uppercase tracking-[1.5px] text-editorial-muted">
+        <nav className="flex items-center gap-6 font-sans text-[11px] uppercase tracking-[1.5px] text-editorial-muted">
           <a href="#studio">Studio</a>
           <a href="#who">Who it's for</a>
-          <a href="#access" className="text-editorial-ink hover:underline">Request access</a>
+          {authed ? (
+            <Link
+              to="/app"
+              className="flex items-center gap-1.5 rounded-full bg-editorial-ink px-4 py-2 text-[10.5px] font-semibold tracking-[1.8px] text-editorial-paper hover:bg-editorial-dark transition-colors"
+            >
+              Resume in Studio
+              <ArrowRight size={12} />
+            </Link>
+          ) : (
+            <a href="#access" className="text-editorial-ink hover:underline">
+              Request access
+            </a>
+          )}
         </nav>
       </div>
     </header>

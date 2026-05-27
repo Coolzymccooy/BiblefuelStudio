@@ -6,14 +6,15 @@ import { isFirebaseAdminEnabled, verifyFirebaseIdToken } from "../lib/firebaseAd
 
 const router = Router();
 
+// Limit only the credential-bearing POST endpoints. /status and /me are
+// polled on every page load — including them in the limiter caused users
+// to see spurious 429s on first sign-in.
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 25,
   standardHeaders: "draft-7",
   legacyHeaders: false
 });
-
-router.use(authLimiter);
 
 router.get("/status", (req, res) => {
   res.json({ ok: true, hasUser: hasAnyUser(), firebaseEnabled: isFirebaseAdminEnabled() });
@@ -23,7 +24,7 @@ router.get("/me", requireAuth, (req, res) => {
   res.json({ ok: true, user: req.user || null });
 });
 
-router.post("/setup", async (req, res) => {
+router.post("/setup", authLimiter, async (req, res) => {
   try {
     const setupKey = String(process.env.ADMIN_SETUP_KEY || "").trim();
     if (!setupKey) return res.status(400).json({ ok: false, error: "ADMIN_SETUP_KEY not set on server" });
@@ -46,7 +47,7 @@ router.post("/setup", async (req, res) => {
   }
 });
 
-router.post("/login", async (req, res) => {
+router.post("/login", authLimiter, async (req, res) => {
   try {
     const schema = z.object({
       email: z.string().email(),
@@ -62,7 +63,7 @@ router.post("/login", async (req, res) => {
   }
 });
 
-router.post("/firebase", async (req, res) => {
+router.post("/firebase", authLimiter, async (req, res) => {
   try {
     if (!isFirebaseAdminEnabled()) {
       return res.status(400).json({ ok: false, error: "Firebase auth not configured on server" });
@@ -79,7 +80,7 @@ router.post("/firebase", async (req, res) => {
   }
 });
 
-router.post("/forgot-password", (req, res) => {
+router.post("/forgot-password", authLimiter, (req, res) => {
   // In a real app, integrate with SendGrid/Mailgun here
   // For now, checks if user exists and logs the reset request
   const { email } = req.body;

@@ -6,7 +6,6 @@ import { Layout } from './components/Layout';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ConfigProvider } from './lib/config';
 import { LandingPage } from './pages/LandingPage';
-import { UnauthedOnly } from './components/landing/UnauthedOnly';
 
 const HomePage = lazy(() => import('./pages/HomePage').then((m) => ({ default: m.HomePage })));
 const WizardPage = lazy(() => import('./pages/WizardPage').then((m) => ({ default: m.WizardPage })));
@@ -45,14 +44,10 @@ function App() {
               }
             >
               <Routes>
-                <Route
-                  path="/"
-                  element={
-                    <UnauthedOnly redirect="/app">
-                      <LandingPage />
-                    </UnauthedOnly>
-                  }
-                />
+                {/* Public landing route. Both authed and unauthed users
+                    can view it; the Header surfaces a "Resume in Studio"
+                    CTA when a session token is present. */}
+                <Route path="/" element={<LandingPage />} />
                 <Route path="/app" element={<Layout />}>
                   <Route index element={<HomePage />} />
                   <Route path="wizard" element={<WizardPage />} />
