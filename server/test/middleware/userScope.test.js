@@ -74,6 +74,29 @@ test("withUserScope: MULTITENANT=true, regular user => per-user dir", () => {
   });
 });
 
+test("withUserScope: MULTITENANT UNSET => defaults to multi-tenant (regular user isolated)", () => {
+  // The data-leak fix: a fresh deploy with no MULTITENANT env var must
+  // isolate users by default. Operator-only single-tenant is opt-out.
+  withEnv({ MULTITENANT: undefined, SUPER_ADMIN_EMAIL: "admin@example.com" }, () => {
+    const ctx = makeReqRes({ sub: "u_bob", email: "bob@example.com" });
+    withUserScope(ctx.req, ctx.res, ctx.next);
+    assert.equal(ctx.nextCalled, true);
+    assert.equal(ctx.req.ctx.dataDir, path.join(DATA_DIR, "users", "u_bob"));
+    assert.equal(ctx.req.ctx.isSuperAdmin, false);
+    assert.equal(ctx.req.ctx.plan, "free");
+  });
+});
+
+test("withUserScope: MULTITENANT UNSET, super-admin email match => legacy paths", () => {
+  withEnv({ MULTITENANT: undefined, SUPER_ADMIN_EMAIL: "admin@example.com" }, () => {
+    const ctx = makeReqRes({ sub: "u_admin", email: "admin@example.com" });
+    withUserScope(ctx.req, ctx.res, ctx.next);
+    assert.equal(ctx.nextCalled, true);
+    assert.equal(ctx.req.ctx.dataDir, DATA_DIR);
+    assert.equal(ctx.req.ctx.isSuperAdmin, true);
+  });
+});
+
 test("withUserScope: no req.user => 401", () => {
   const ctx = makeReqRes(undefined);
   withUserScope(ctx.req, ctx.res, ctx.next);

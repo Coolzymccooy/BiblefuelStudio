@@ -7,13 +7,18 @@ import { isSuperAdmin, getPlanForUser } from "../lib/userPlan.js";
  * Attaches:
  *   req.ctx = { userId, email, role, plan, dataDir, outputDir, isSuperAdmin }
  *
- * When MULTITENANT !== "true", everyone (including any signed-in user) is
- * treated as super-admin and reads/writes the legacy DATA_DIR / OUTPUT_DIR.
- * This is the rollback lever — flip the env var, behaviour reverts.
+ * Multi-tenancy is ON by default — a fresh deploy must isolate user data,
+ * or every new sign-up sees every other account's jobs and library. The
+ * single-tenant escape hatch (MULTITENANT=false) is for the original
+ * operator-only deployment shape and must be opted into explicitly.
  *
- * When MULTITENANT === "true", super-admin (matched by SUPER_ADMIN_EMAIL or
- * SUPER_ADMIN_USER_ID) still hits legacy paths; everyone else resolves to a
- * per-user dir under DATA_DIR/users/<userId>/, lazily created on first hit.
+ * When MULTITENANT === "false", everyone (including any signed-in user) is
+ * treated as super-admin and reads/writes the legacy DATA_DIR / OUTPUT_DIR.
+ *
+ * When MULTITENANT is unset or "true", super-admin (matched by
+ * SUPER_ADMIN_EMAIL or SUPER_ADMIN_USER_ID) still hits the legacy paths so
+ * the operator's existing global library/jobs aren't orphaned. Everyone
+ * else resolves to a per-user dir under DATA_DIR/users/<userId>/.
  */
 export function withUserScope(req, res, next) {
   const user = req.user;
@@ -21,9 +26,11 @@ export function withUserScope(req, res, next) {
     return res.status(401).json({ ok: false, error: "Missing user context" });
   }
 
-  const multitenant = String(process.env.MULTITENANT || "").toLowerCase() === "true";
+  const flag = String(process.env.MULTITENANT || "").toLowerCase().trim();
+  // Single-tenant only when the operator explicitly opts out.
+  const singleTenant = flag === "false" || flag === "0" || flag === "off";
 
-  if (!multitenant) {
+  if (singleTenant) {
     req.ctx = {
       userId: user.sub,
       email: user.email || "",

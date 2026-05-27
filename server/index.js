@@ -243,4 +243,21 @@ app.use((err, req, res, next) => {
 const PORT = Number(process.env.PORT || 5051);
 app.listen(PORT, () => {
   console.log(`✅ Biblefuel Studio v2 running at http://localhost:${PORT}`);
+
+  // Multi-tenancy posture diagnostics — surface the data-isolation mode
+  // so operators don't accidentally ship in single-tenant where every
+  // signed-in user reads the same global jobs.json / library.json.
+  const mtFlag = String(process.env.MULTITENANT || "").toLowerCase().trim();
+  const singleTenant = mtFlag === "false" || mtFlag === "0" || mtFlag === "off";
+  if (singleTenant) {
+    console.warn("⚠️  MULTITENANT=false — every signed-in user shares the global data dir. Public deploys MUST set MULTITENANT=true.");
+  } else {
+    const adminEmail = String(process.env.SUPER_ADMIN_EMAIL || "").trim();
+    const adminId = String(process.env.SUPER_ADMIN_USER_ID || "").trim();
+    if (!adminEmail && !adminId) {
+      console.warn("⚠️  Multi-tenant mode is ON but neither SUPER_ADMIN_EMAIL nor SUPER_ADMIN_USER_ID is set. The original operator account will be treated as a regular user and will NOT see the legacy global library/jobs. Set SUPER_ADMIN_EMAIL in server/.env before signing in.");
+    } else {
+      console.log(`🔐 Multi-tenant: super-admin = ${adminEmail || adminId}; other users isolated under DATA_DIR/users/<id>/`);
+    }
+  }
 });
