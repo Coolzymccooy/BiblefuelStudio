@@ -5,10 +5,11 @@ import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import toast from 'react-hot-toast';
-import { Sparkles, Play, Archive, Mail, ArrowLeft, Globe, Mic, Film, Video, HelpCircle, Cpu, List, Zap, ShieldCheck, Rocket, Briefcase, Wand2 } from 'lucide-react';
+import { Sparkles, Play, Archive, Mail, ArrowLeft, Globe, Mic, Film, Video, HelpCircle, Cpu, List, Zap, ShieldCheck, Rocket, Briefcase, Wand2, Eye, EyeOff } from 'lucide-react';
 import { api } from '../lib/api';
 import { firebaseRequestPasswordReset, getFirebaseAuthErrorMessage, isFirebaseClientEnabled } from '../lib/firebase';
 import { useVoiceSynthesisDefaults } from '../lib/voiceSynthesisDefaults';
+import { LoginBackdrop } from '../components/landing/LoginBackdrop';
 
 interface JobRow {
     id: string;
@@ -217,6 +218,9 @@ export function HomePage() {
     } = useAuth();
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
+    const [passwordConfirm, setPasswordConfirm] = useState('');
+    const [showPassword, setShowPassword] = useState(false);
+    const [showPasswordConfirm, setShowPasswordConfirm] = useState(false);
     const [setupKey, setSetupKey] = useState('');
     const [view, setView] = useState<'login' | 'setup' | 'forgot-password'>('login');
     const [localError, setLocalError] = useState<string | null>(null);
@@ -254,6 +258,10 @@ export function HomePage() {
     const handleSetup = async (e: React.FormEvent) => {
         e.preventDefault();
         setLocalError(null);
+        if (password !== passwordConfirm) {
+            setLocalError("Passwords don't match. Please re-enter them.");
+            return;
+        }
         const success = useFirebaseAuth
             ? await signupWithFirebaseEmail(email, password)
             : await setup(email, password, setupKey);
@@ -414,23 +422,15 @@ export function HomePage() {
                 upper-warmth that hints at the gold accent on the inner pane. */}
             <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(212,175,110,0.10),transparent_55%),radial-gradient(circle_at_15%_92%,rgba(107,79,31,0.16),transparent_46%),radial-gradient(circle_at_88%_85%,rgba(26,22,16,0.55),transparent_42%)]" />
 
-            {/*  Inner panel — a luminous editorial backdrop instead of the
-                 cool grey iridescence. Layered radial glows form a single
-                 candle-like gold gleam centred behind the form card. */}
-            <div className="relative mx-auto flex min-h-[calc(100vh-1rem)] w-full max-w-[1640px] items-center justify-center overflow-hidden rounded-[2.1rem] border border-editorial-gold/20 bg-[linear-gradient(155deg,#1a1610_0%,#120e08_45%,#0a0704_100%)] shadow-[0_45px_130px_rgba(0,0,0,0.7),inset_0_1px_0_rgba(212,175,110,0.18)]">
-                {/* Central gold gleam — the dominant light source. Sits
-                    directly behind the form card so it reads as light
-                    spilling through dark glass. */}
-                <div className="pointer-events-none absolute left-1/2 top-1/2 h-[760px] w-[760px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[radial-gradient(circle,rgba(212,175,110,0.32)_0%,rgba(160,135,96,0.18)_28%,rgba(107,79,31,0.10)_55%,rgba(0,0,0,0)_78%)] blur-[24px]" />
-
-                {/* Off-axis warm halos add depth without breaking the central focus. */}
-                <div className="pointer-events-none absolute -left-32 -top-24 h-[420px] w-[420px] rounded-full bg-editorial-goldLite/15 blur-[140px]" />
-                <div className="pointer-events-none absolute -right-32 top-[24%] h-[460px] w-[460px] rounded-full bg-editorial-goldDeep/25 blur-[150px]" />
-                <div className="pointer-events-none absolute -bottom-40 left-[20%] h-[420px] w-[420px] rounded-full bg-editorial-cream/[0.06] blur-[160px]" />
-
-                {/* Subtle paper grain — barely visible, but adds the editorial
-                    parchment quality without competing with the form card. */}
-                <div className="pointer-events-none absolute inset-0 opacity-[0.07] mix-blend-overlay bg-[radial-gradient(rgba(212,175,110,0.4)_1px,transparent_1px)] bg-[length:3px_3px]" />
+            {/*  Inner panel — deep editorial canvas hosts a living scripture
+                 backdrop (LoginBackdrop) so the page communicates what the
+                 product is about the moment a user sees it, instead of
+                 sitting as a static gold wallpaper. */}
+            <div className="relative mx-auto flex min-h-[calc(100vh-1rem)] w-full max-w-[1640px] items-center justify-center overflow-hidden rounded-[2.1rem] border border-editorial-gold/15 bg-[linear-gradient(165deg,#15110a_0%,#0c0805_55%,#070504_100%)] shadow-[0_45px_130px_rgba(0,0,0,0.75),inset_0_1px_0_rgba(212,175,110,0.12)]">
+                {/* Animated scripture wallpaper. aria-hidden inside the
+                    component; cycles via Framer Motion; respects
+                    prefers-reduced-motion. */}
+                <LoginBackdrop />
 
                 <div className="relative z-10 flex w-full max-w-[460px] flex-col items-center justify-center gap-6 px-4 py-10 md:py-14">
                     <div className="flex items-center gap-3">
@@ -489,15 +489,46 @@ export function HomePage() {
                                         required
                                         className="h-11 rounded-xl border-white/10 bg-[#1a1f2d] text-gray-100 placeholder:text-gray-500"
                                     />
-                                    <Input
-                                        type="password"
-                                        value={password}
-                                        onChange={(e) => setPassword(e.target.value)}
-                                        placeholder="Password"
-                                        required
-                                        minLength={8}
-                                        className="h-11 rounded-xl border-white/10 bg-[#1a1f2d] text-gray-100 placeholder:text-gray-500"
-                                    />
+                                    <div className="relative">
+                                        <Input
+                                            type={showPassword ? 'text' : 'password'}
+                                            value={password}
+                                            onChange={(e) => setPassword(e.target.value)}
+                                            placeholder="Password"
+                                            required
+                                            minLength={8}
+                                            className="h-11 rounded-xl border-white/10 bg-[#1a1f2d] pr-11 text-gray-100 placeholder:text-gray-500"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowPassword((v) => !v)}
+                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-100 transition-colors"
+                                            aria-label={showPassword ? 'Hide password' : 'Show password'}
+                                            tabIndex={-1}
+                                        >
+                                            {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                                        </button>
+                                    </div>
+                                    <div className="relative">
+                                        <Input
+                                            type={showPasswordConfirm ? 'text' : 'password'}
+                                            value={passwordConfirm}
+                                            onChange={(e) => setPasswordConfirm(e.target.value)}
+                                            placeholder="Confirm password"
+                                            required
+                                            minLength={8}
+                                            className="h-11 rounded-xl border-white/10 bg-[#1a1f2d] pr-11 text-gray-100 placeholder:text-gray-500"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowPasswordConfirm((v) => !v)}
+                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-100 transition-colors"
+                                            aria-label={showPasswordConfirm ? 'Hide password' : 'Show password'}
+                                            tabIndex={-1}
+                                        >
+                                            {showPasswordConfirm ? <EyeOff size={16} /> : <Eye size={16} />}
+                                        </button>
+                                    </div>
                                     <Button type="submit" className="mt-1 h-11 w-full border-none bg-[#3f6dff] text-white shadow-[0_10px_22px_rgba(44,94,255,0.3)] hover:bg-[#4a75ff]" isLoading={isLoading}>
                                         Create account
                                     </Button>
@@ -530,14 +561,25 @@ export function HomePage() {
                                         required
                                         className="h-11 rounded-xl border-white/10 bg-[#1a1f2d] text-gray-100 placeholder:text-gray-500"
                                     />
-                                    <Input
-                                        type="password"
-                                        value={password}
-                                        onChange={(e) => setPassword(e.target.value)}
-                                        placeholder="Password"
-                                        required
-                                        className="h-11 rounded-xl border-white/10 bg-[#1a1f2d] text-gray-100 placeholder:text-gray-500"
-                                    />
+                                    <div className="relative">
+                                        <Input
+                                            type={showPassword ? 'text' : 'password'}
+                                            value={password}
+                                            onChange={(e) => setPassword(e.target.value)}
+                                            placeholder="Password"
+                                            required
+                                            className="h-11 rounded-xl border-white/10 bg-[#1a1f2d] pr-11 text-gray-100 placeholder:text-gray-500"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowPassword((v) => !v)}
+                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-100 transition-colors"
+                                            aria-label={showPassword ? 'Hide password' : 'Show password'}
+                                            tabIndex={-1}
+                                        >
+                                            {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                                        </button>
+                                    </div>
                                     <button
                                         type="button"
                                         onClick={() => setView('forgot-password')}
