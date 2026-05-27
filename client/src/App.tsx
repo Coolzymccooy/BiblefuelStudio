@@ -6,6 +6,8 @@ import { Layout } from './components/Layout';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ConfigProvider } from './lib/config';
 import { LandingPage } from './pages/LandingPage';
+import { PrivacyPage } from './pages/PrivacyPage';
+import { CookieBanner } from './components/CookieBanner';
 
 const HomePage = lazy(() => import('./pages/HomePage').then((m) => ({ default: m.HomePage })));
 const WizardPage = lazy(() => import('./pages/WizardPage').then((m) => ({ default: m.WizardPage })));
@@ -48,6 +50,7 @@ function App() {
                     can view it; the Header surfaces a "Resume in Studio"
                     CTA when a session token is present. */}
                 <Route path="/" element={<LandingPage />} />
+                <Route path="/privacy" element={<PrivacyPage />} />
                 <Route path="/app" element={<Layout />}>
                   <Route index element={<HomePage />} />
                   <Route path="wizard" element={<WizardPage />} />
@@ -71,6 +74,9 @@ function App() {
               have access to the Router context. Without this, the toast
               throws and ErrorBoundary blanks the page. */}
           <Toaster position="top-right" />
+          {/* Cookie/privacy notice — mounts on every route, dismisses once
+              and stores acknowledgement in localStorage. UK PECR baseline. */}
+          <CookieBanner />
         </BrowserRouter>
       </ConfigProvider>
     </QueryClientProvider>

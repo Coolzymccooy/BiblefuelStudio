@@ -7,6 +7,7 @@ import { useAuth } from '../hooks/useAuth';
 import { Button } from './ui/Button';
 import { AUTH_INVALID_EVENT } from '../lib/api';
 import { NotificationsBell } from './NotificationsBell';
+import { VerifyEmailGate } from './VerifyEmailGate';
 
 const navItems = [
     { path: '/app', label: 'Home', icon: Shield },
@@ -35,7 +36,7 @@ const quickActions = [
 
 export function Layout() {
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-    const { token, logout, checkStatus } = useAuth();
+    const { token, emailVerified, logout, checkStatus } = useAuth();
     const location = useLocation();
     const navigate = useNavigate();
 
@@ -86,6 +87,14 @@ export function Layout() {
                 </div>
             </main>
         );
+    }
+
+    // Signed in but Firebase email not verified → block the whole studio
+    // shell until they click the verify link. Super-admin and role
+    // bypass is handled inside useAuth.checkStatus so the operator can't
+    // be locked out of their own deploy.
+    if (token && !emailVerified) {
+        return <VerifyEmailGate />;
     }
 
     return (

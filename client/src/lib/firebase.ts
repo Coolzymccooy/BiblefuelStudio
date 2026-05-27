@@ -56,6 +56,19 @@ export async function firebaseResendEmailVerification() {
     await sendEmailVerification(user);
 }
 
+// After the user clicks the Firebase verify link, the next Firebase id token
+// will carry `email_verified: true`. Call this from the verify-gate to force
+// Firebase to re-fetch the user record, then return a fresh id token that the
+// backend can exchange for a new Biblefuel JWT.
+export async function firebaseRefreshIdTokenAfterVerify(): Promise<{ idToken: string; emailVerified: boolean }> {
+    const auth = getFirebaseAuth();
+    const user = auth.currentUser;
+    if (!user) throw new Error('Not signed in');
+    await user.reload();
+    const idToken = await user.getIdToken(true);
+    return { idToken, emailVerified: Boolean(user.emailVerified) };
+}
+
 export async function firebaseGoogleLogin() {
     const auth = getFirebaseAuth();
     const provider = new GoogleAuthProvider();

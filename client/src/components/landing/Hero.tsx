@@ -63,11 +63,9 @@ export function Hero() {
             </a>
             <a
               href="/app"
-              target="_blank"
-              rel="noopener"
-              className="font-sans text-[12px] text-editorial-muted underline underline-offset-4"
+              className="font-sans text-[12px] text-editorial-muted underline underline-offset-4 hover:text-editorial-ink transition-colors"
             >
-              See the studio
+              Already have an account? Sign in
             </a>
           </motion.div>
         </motion.div>
