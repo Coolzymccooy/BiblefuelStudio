@@ -255,7 +255,7 @@ export function SeriesPage() {
                     </div>
                 </details>
 
-                <div className="flex flex-col sm:flex-row gap-2 mt-4">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2 mt-4">
                     <Button onClick={handlePreview} isLoading={isPreviewLoading} variant="secondary">
                         Preview segments
                     </Button>
@@ -263,6 +263,14 @@ export function SeriesPage() {
                         <Play size={16} />
                         Generate {plan ? `${plan.totalParts} videos` : 'series'}
                     </Button>
+                    {/* Tells users that series videos now get the same
+                        word-by-word kinetic captions + scripture-emphasis
+                        typography as the manual Render flow. Removes
+                        confusion about why series videos used to look
+                        plainer than manually-rendered ones. */}
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary-500/15 border border-primary-500/30 text-primary-200 text-[11px]">
+                        <Sparkles size={11} /> Kinetic captions · scripture preset
+                    </span>
                 </div>
             </Card>
 

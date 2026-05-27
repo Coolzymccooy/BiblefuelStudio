@@ -118,13 +118,23 @@ function AutoPublishCard() {
     const handleAutoPublish = async () => {
         setIsLaunching(true);
         try {
+            // When the user hasn't opened Voice Synthesis Defaults yet we
+            // still want kinetic captions, not the legacy 6-line fallback.
+            // 'general' resolves to cinematic-default preset; Whisper-based
+            // forced-alignment kicks in if the TTS provider doesn't supply
+            // word timestamps natively.
             const voicePayload = voiceDefaults.enabled
                 ? {
                       narrationCategory: voiceDefaults.category,
                       preferredProvider: voiceDefaults.providerOverride || undefined,
                       forcedAlignmentFallback: voiceDefaults.cinematicMode,
+                      kineticCaptions: true,
                   }
-                : {};
+                : {
+                      narrationCategory: 'general',
+                      forcedAlignmentFallback: true,
+                      kineticCaptions: true,
+                  };
             const res = await api.post('/api/jobs/enqueue', {
                 type: 'campaign_auto_post',
                 payload: {
@@ -171,6 +181,12 @@ function AutoPublishCard() {
                                     <Wand2 size={11} /> Voice Synthesis off · enable in Settings
                                 </Link>
                             )}
+                            {/* Always present — auto-publish now ships kinetic
+                                captions by default, with Whisper alignment as
+                                fallback. Tells the user what they're getting. */}
+                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-primary-500/15 border border-primary-500/30 text-primary-200">
+                                <Sparkles size={11} /> Kinetic captions on
+                            </span>
                         </div>
                         {recentJobId && (
                             <p className="text-[11px] font-mono text-emerald-300 mt-2">

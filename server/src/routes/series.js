@@ -59,6 +59,14 @@ const GenerateSchema = PreviewSchema.extend({
   // in. When true, one image per segment is generated up-front and spliced
   // in as the opening scene of that part's video.
   useGenImage: z.boolean().optional().default(false),
+  // Kinetic-typography knobs. All three default to the scripture path inside
+  // the route handler (see narrationCategory: input.narrationCategory ||
+  // "scripture" below). Exposed here so power users can override per series
+  // without needing a separate endpoint.
+  narrationCategory: z.string().optional(),
+  forcedAlignmentFallback: z.boolean().optional(),
+  kineticCaptions: z.boolean().optional(),
+  typographyPreset: z.string().optional(),
 });
 
 /**
@@ -176,6 +184,18 @@ router.post("/generate", async (req, res) => {
         prebuiltScript,
         captionOverride: segment.caption,
         generatedImage,
+        // Every series part IS scripture, so default to the scripture
+        // narration category — that routes through an aligned TTS provider
+        // and resolves the scripture-emphasis typography preset (gold
+        // emphasised words, boxed verse backdrop). forcedAlignmentFallback
+        // means Whisper transcribes the rendered audio for word
+        // timestamps if the TTS provider doesn't return them, so series
+        // videos never silently downgrade to the legacy 6-line renderer.
+        // Caller can override any of these explicitly via the request body.
+        narrationCategory: input.narrationCategory || "scripture",
+        forcedAlignmentFallback: input.forcedAlignmentFallback !== false,
+        kineticCaptions: input.kineticCaptions !== false,
+        typographyPreset: input.typographyPreset || undefined,
         series: {
           seriesId: plan.seriesId,
           partNumber: segment.partNumber,

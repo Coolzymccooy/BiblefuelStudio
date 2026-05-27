@@ -519,7 +519,11 @@ async function renderVideoCore(payload, jobId) {
   const widthPct = Math.min(100, Math.max(60, Number(captionWidthPct || 90)));
   const baseChars = w >= 1800 ? 42 : w >= 1200 ? 34 : 28;
   const maxChars = Math.max(18, Math.floor(baseChars * (widthPct / 100)));
-  const safeLines = wrapTextLines(rawLines, maxChars, 6);
+  // Cap raised from 6 → 12 so longer verses (e.g. a Psalm 23 part) don't
+  // get cut mid-sentence when this fallback path is taken. The kinetic
+  // renderer is now the default for series + auto-publish, but if it
+  // can't get alignment we shouldn't silently truncate.
+  const safeLines = wrapTextLines(rawLines, maxChars, 12);
   if (safeLines.length === 0) throw new Error("lines[] required");
 
   const outFile = path.join(currentOutDir(), `video-${uuid()}.mp4`);
@@ -534,7 +538,20 @@ async function renderVideoCore(payload, jobId) {
   const preset = process.env.FFMPEG_PRESET || "fast";
   const hwaccel = process.env.FFMPEG_HWACCEL;
   const vcodec = hwaccel === 'nvenc' ? 'h264_nvenc' : hwaccel === 'qsv' ? 'h264_qsv' : 'libx264';
-  const t = clampDuration(durationSec || 20);
+  // Honour the audio's full length when it's longer than the requested
+  // durationSec — otherwise -shortest truncates the narration mid-sentence.
+  // Padding is harmless; truncation is the bug we're fixing.
+  let t = clampDuration(durationSec || 20);
+  if (resolvedAudio) {
+    try {
+      const audioDur = await probeAudioDuration(resolvedAudio);
+      if (Number.isFinite(audioDur) && audioDur > t) {
+        t = clampDuration(Math.ceil(audioDur) + 1);
+      }
+    } catch {
+      // probe failure isn't fatal; fall back to requested duration.
+    }
+  }
 
   const musicVol = Math.min(1, Math.max(0, Number(musicVolume ?? 0.3)));
   const duck = Boolean(autoDuck) && Boolean(resolvedMusic) && Boolean(resolvedAudio);
