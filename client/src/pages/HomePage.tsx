@@ -409,33 +409,46 @@ export function HomePage() {
 
     // Auth Views
     return (
-        <div className="relative min-h-screen overflow-hidden bg-[#070b14] px-2 py-2 sm:px-5 sm:py-5 animate-fade-in">
-            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_18%,rgba(128,145,176,0.2),transparent_48%),radial-gradient(circle_at_15%_85%,rgba(45,60,96,0.3),transparent_46%),radial-gradient(circle_at_85%_83%,rgba(27,43,70,0.28),transparent_42%)]" />
+        <div className="relative min-h-screen overflow-hidden bg-[#070504] px-2 py-2 sm:px-5 sm:py-5 animate-fade-in">
+            {/* Outer canvas ambience — deep editorial ink with a faint
+                upper-warmth that hints at the gold accent on the inner pane. */}
+            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(212,175,110,0.10),transparent_55%),radial-gradient(circle_at_15%_92%,rgba(107,79,31,0.16),transparent_46%),radial-gradient(circle_at_88%_85%,rgba(26,22,16,0.55),transparent_42%)]" />
 
-            <div className="relative mx-auto flex min-h-[calc(100vh-1rem)] w-full max-w-[1640px] items-center justify-center overflow-hidden rounded-[2.1rem] border border-[#e1e8f3]/25 bg-[linear-gradient(155deg,#cdd4df_0%,#bcc7d7_45%,#b3c0d3_100%)] shadow-[0_45px_130px_rgba(0,0,0,0.5)]">
-                <div className="pointer-events-none absolute -left-24 -top-24 h-[340px] w-[340px] rounded-full bg-white/35 blur-[110px]" />
-                <div className="pointer-events-none absolute right-[-110px] top-[20%] h-[380px] w-[380px] rounded-full bg-sky-200/20 blur-[130px]" />
-                {/* Warm accent — keeps the login pane from reading purely
-                    cold, ties the surface to the landing page palette. */}
-                <div className="pointer-events-none absolute -bottom-32 -left-16 h-[420px] w-[420px] rounded-full bg-amber-200/15 blur-[140px]" />
-                <div className="pointer-events-none absolute top-[8%] left-1/2 h-[260px] w-[260px] -translate-x-1/2 rounded-full bg-rose-100/20 blur-[120px]" />
-                <div className="pointer-events-none absolute left-1/2 top-[56%] h-[360px] w-[780px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[radial-gradient(circle,rgba(139,151,172,0.42)_0%,rgba(130,143,165,0.16)_48%,rgba(130,143,165,0)_78%)] blur-[32px]" />
+            {/*  Inner panel — a luminous editorial backdrop instead of the
+                 cool grey iridescence. Layered radial glows form a single
+                 candle-like gold gleam centred behind the form card. */}
+            <div className="relative mx-auto flex min-h-[calc(100vh-1rem)] w-full max-w-[1640px] items-center justify-center overflow-hidden rounded-[2.1rem] border border-editorial-gold/20 bg-[linear-gradient(155deg,#1a1610_0%,#120e08_45%,#0a0704_100%)] shadow-[0_45px_130px_rgba(0,0,0,0.7),inset_0_1px_0_rgba(212,175,110,0.18)]">
+                {/* Central gold gleam — the dominant light source. Sits
+                    directly behind the form card so it reads as light
+                    spilling through dark glass. */}
+                <div className="pointer-events-none absolute left-1/2 top-1/2 h-[760px] w-[760px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[radial-gradient(circle,rgba(212,175,110,0.32)_0%,rgba(160,135,96,0.18)_28%,rgba(107,79,31,0.10)_55%,rgba(0,0,0,0)_78%)] blur-[24px]" />
+
+                {/* Off-axis warm halos add depth without breaking the central focus. */}
+                <div className="pointer-events-none absolute -left-32 -top-24 h-[420px] w-[420px] rounded-full bg-editorial-goldLite/15 blur-[140px]" />
+                <div className="pointer-events-none absolute -right-32 top-[24%] h-[460px] w-[460px] rounded-full bg-editorial-goldDeep/25 blur-[150px]" />
+                <div className="pointer-events-none absolute -bottom-40 left-[20%] h-[420px] w-[420px] rounded-full bg-editorial-cream/[0.06] blur-[160px]" />
+
+                {/* Subtle paper grain — barely visible, but adds the editorial
+                    parchment quality without competing with the form card. */}
+                <div className="pointer-events-none absolute inset-0 opacity-[0.07] mix-blend-overlay bg-[radial-gradient(rgba(212,175,110,0.4)_1px,transparent_1px)] bg-[length:3px_3px]" />
 
                 <div className="relative z-10 flex w-full max-w-[460px] flex-col items-center justify-center gap-6 px-4 py-10 md:py-14">
-                    <div className="flex items-center gap-3 text-white">
-                        <span className="text-[42px] leading-none drop-shadow-[0_10px_26px_rgba(0,0,0,0.5)]" style={{ fontFamily: 'Georgia, "Times New Roman", serif' }}>
+                    <div className="flex items-center gap-3">
+                        <span
+                            className="font-displaySerif italic text-[44px] leading-none tracking-tight bg-clip-text text-transparent bg-gradient-to-b from-editorial-cream via-editorial-goldLite to-editorial-gold drop-shadow-[0_12px_30px_rgba(212,175,110,0.25)]"
+                        >
                             Biblefuel
                         </span>
                     </div>
 
                     <div className="w-full">
-                        <div className="flex w-full flex-col rounded-[2rem] border border-white/10 bg-[#10131d] p-5 shadow-[0_34px_110px_rgba(0,0,0,0.64)] sm:p-6">
+                        <div className="flex w-full flex-col rounded-[2rem] border border-editorial-gold/15 bg-[#15110a] p-5 shadow-[0_34px_110px_rgba(0,0,0,0.7),inset_0_1px_0_rgba(212,175,110,0.10)] sm:p-6">
                             <div className="mb-5 flex items-center gap-3">
-                                <div className="rounded-2xl border border-indigo-500/30 bg-indigo-500/12 p-2.5">
-                                    <ShieldCheck className="text-indigo-300" size={18} />
+                                <div className="rounded-2xl border border-editorial-gold/30 bg-editorial-gold/10 p-2.5">
+                                    <ShieldCheck className="text-editorial-goldLite" size={18} />
                                 </div>
-                                <div className="rounded-2xl border border-blue-500/30 bg-blue-500/12 p-2.5">
-                                    <Globe className="text-blue-300" size={18} />
+                                <div className="rounded-2xl border border-editorial-cream/20 bg-editorial-cream/[0.06] p-2.5">
+                                    <Globe className="text-editorial-cream" size={18} />
                                 </div>
                             </div>
 

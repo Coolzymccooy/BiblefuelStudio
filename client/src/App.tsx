@@ -66,9 +66,13 @@ function App() {
               </Routes>
             </Suspense>
           </ErrorBoundary>
+          {/* Toaster lives inside BrowserRouter so toast bodies that
+              render <Link> (e.g. Voice & Audio "Use → Open Render →")
+              have access to the Router context. Without this, the toast
+              throws and ErrorBoundary blanks the page. */}
+          <Toaster position="top-right" />
         </BrowserRouter>
       </ConfigProvider>
-      <Toaster position="top-right" />
     </QueryClientProvider>
   );
 }

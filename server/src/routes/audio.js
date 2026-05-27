@@ -96,25 +96,22 @@ router.post("/process", async (req, res) => {
     const outFile = path.join(outDir, `audio-processed-${uuid()}.mp3`);
     const ffmpeg = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
 
-    const args = ["-y"];
-
-    // Trim via -ss/-t for speed (optional)
-    if (cfg.trim?.startSec != null) args.push("-ss", String(Number(cfg.trim.startSec) || 0));
-    args.push("-i", inputPath);
-    if (cfg.trim?.durationSec != null) args.push("-t", String(Number(cfg.trim.durationSec) || 0));
-
-    const filters = [];
+    // Filter chain is split into PRE-loudnorm and POST-loudnorm so we can
+    // run a two-pass loudnorm. Single-pass loudnorm uses a lookahead window
+    // and produces a creeping volume drop on short clips — the very fade-out
+    // operators were reporting on processed Voice & Audio files.
+    const preFilters = [];
 
     // Basic cleanup chain
-    if (cfg.eq?.highpassHz) filters.push(`highpass=f=${Number(cfg.eq.highpassHz)}`);
-    if (cfg.eq?.lowpassHz) filters.push(`lowpass=f=${Number(cfg.eq.lowpassHz)}`);
+    if (cfg.eq?.highpassHz) preFilters.push(`highpass=f=${Number(cfg.eq.highpassHz)}`);
+    if (cfg.eq?.lowpassHz) preFilters.push(`lowpass=f=${Number(cfg.eq.lowpassHz)}`);
 
     if (cfg.denoise?.strength != null) {
       const s = Math.min(1, Math.max(0, Number(cfg.denoise.strength)));
       // afftdn: stronger values reduce more noise but can sound "watery"
       // We map 0..1 -> nr 6..24
       const nr = 6 + s * 18;
-      filters.push(`afftdn=nr=${nr.toFixed(1)}`);
+      preFilters.push(`afftdn=nr=${nr.toFixed(1)}`);
     }
 
     if (cfg.gate?.thresholdDb != null) {
@@ -123,7 +120,7 @@ router.post("/process", async (req, res) => {
       // Convert dBFS to linear amplitude: 10^(dB/20)
       const lin = Math.pow(10, th / 20);
       // attack/release tuned for speech
-      filters.push(`agate=threshold=${lin.toFixed(6)}:attack=10:release=200`);
+      preFilters.push(`agate=threshold=${lin.toFixed(6)}:attack=10:release=200`);
     }
 
     if (cfg.compressor?.ratio != null || cfg.compressor?.thresholdDb != null) {
@@ -136,13 +133,13 @@ router.post("/process", async (req, res) => {
       if (release < 0.05) release = 0.05;
       // acompressor threshold is linear
       const thlin = Math.pow(10, thdb / 20);
-      filters.push(`acompressor=threshold=${thlin.toFixed(6)}:ratio=${ratio}:attack=${attack}:release=${release}:makeup=8`);
+      preFilters.push(`acompressor=threshold=${thlin.toFixed(6)}:ratio=${ratio}:attack=${attack}:release=${release}:makeup=8`);
     }
 
     if (cfg.deesser?.amount != null) {
       const amount = Math.min(1, Math.max(0, Number(cfg.deesser.amount)));
       if (amount > 0) {
-        filters.push(`deesser=i=${amount}:f=0.5`);
+        preFilters.push(`deesser=i=${amount}:f=0.5`);
       }
     }
 
@@ -150,30 +147,100 @@ router.post("/process", async (req, res) => {
       const freq = Number(cfg.presence.freqHz ?? 4000);
       const gain = Number(cfg.presence.gainDb);
       const q = Number(cfg.presence.widthQ ?? 1.0);
-      filters.push(`equalizer=f=${freq}:width_type=q:width=${q}:g=${gain}`);
+      preFilters.push(`equalizer=f=${freq}:width_type=q:width=${q}:g=${gain}`);
     }
 
     if (cfg.silenceRemove?.enabled) {
       // Conservative start trim only. Avoids truncating speech from internal pauses.
-      filters.push(`silenceremove=start_periods=1:start_duration=0.2:start_threshold=-45dB:stop_periods=0:detection=peak`);
+      preFilters.push(`silenceremove=start_periods=1:start_duration=0.2:start_threshold=-45dB:stop_periods=0:detection=peak`);
     }
 
-    if (cfg.normalize?.targetLUFS != null) {
-      const lufs = Number(cfg.normalize.targetLUFS);
-      filters.push(`loudnorm=I=${lufs}:TP=-1.5:LRA=11`);
+    const lufs = cfg.normalize?.targetLUFS != null ? Number(cfg.normalize.targetLUFS) : null;
+
+    // Helper: spawn ffmpeg, accumulate stderr, resolve on close.
+    const runFfmpeg = (args) => new Promise((resolve, reject) => {
+      const p = spawn(ffmpeg, args);
+      let err = "";
+      p.stderr.on("data", (d) => { err += d.toString(); });
+      p.on("error", reject);
+      p.on("close", (code) => resolve({ code, stderr: err }));
+    });
+
+    // Helper: extract the loudnorm JSON block from stderr. ffmpeg prints it
+    // after the "[Parsed_loudnorm_0 @ ...]" header. We take the LAST {...}
+    // block in stderr to avoid picking up unrelated JSON from other filters.
+    const parseLoudnormJson = (stderrText) => {
+      if (!stderrText) return null;
+      const start = stderrText.lastIndexOf("{");
+      const end = stderrText.lastIndexOf("}");
+      if (start === -1 || end === -1 || end < start) return null;
+      try {
+        return JSON.parse(stderrText.slice(start, end + 1));
+      } catch {
+        return null;
+      }
+    };
+
+    // First pass: measure loudness (only when normalize is requested).
+    let measured = null;
+    if (lufs != null) {
+      const measureArgs = ["-y"];
+      if (cfg.trim?.startSec != null) measureArgs.push("-ss", String(Number(cfg.trim.startSec) || 0));
+      measureArgs.push("-i", inputPath);
+      if (cfg.trim?.durationSec != null) measureArgs.push("-t", String(Number(cfg.trim.durationSec) || 0));
+
+      const measureChain = [
+        ...preFilters,
+        `loudnorm=I=${lufs}:TP=-1.5:LRA=11:print_format=json`,
+      ];
+      measureArgs.push("-af", measureChain.join(","));
+      // Discard output — we only need the JSON stats on stderr.
+      measureArgs.push("-f", "null", "-");
+
+      try {
+        const result = await runFfmpeg(measureArgs);
+        if (result.code === 0) {
+          measured = parseLoudnormJson(result.stderr);
+        }
+      } catch (measureErr) {
+        console.warn(`[AUDIO] loudnorm measure pass failed, falling back to single-pass:`, measureErr?.message || measureErr);
+      }
     }
 
+    // Build the final filter chain — pre-filters, then loudnorm (two-pass
+    // if measurement succeeded, single-pass as graceful fallback), then
+    // limiter as the very last stage.
+    const finalFilters = [...preFilters];
+    if (lufs != null) {
+      if (measured && measured.input_i != null) {
+        // Two-pass: feed the measured values back so loudnorm applies the
+        // correct fixed gain instead of drifting via lookahead.
+        finalFilters.push(
+          `loudnorm=I=${lufs}:TP=-1.5:LRA=11` +
+          `:measured_I=${measured.input_i}` +
+          `:measured_LRA=${measured.input_lra}` +
+          `:measured_TP=${measured.input_tp}` +
+          `:measured_thresh=${measured.input_thresh}` +
+          `:offset=${measured.target_offset}` +
+          `:linear=true:print_format=summary`
+        );
+      } else {
+        // Measurement failed (file too short, ffmpeg quirk, etc.). Fall
+        // back to single-pass loudnorm — still better than no normalisation.
+        finalFilters.push(`loudnorm=I=${lufs}:TP=-1.5:LRA=11`);
+      }
+    }
     if (cfg.limiter?.ceilingDb != null) {
       const ceilingDb = Number(cfg.limiter.ceilingDb);
       const limit = Math.min(1, Math.max(0.1, Math.pow(10, ceilingDb / 20)));
-      filters.push(`alimiter=limit=${limit.toFixed(3)}`);
+      finalFilters.push(`alimiter=limit=${limit.toFixed(3)}`);
     }
 
-    // If no filters, still encode to mp3
-    if (filters.length > 0) {
-      args.push("-af", filters.join(","));
-    }
-
+    const args = ["-y"];
+    if (cfg.trim?.startSec != null) args.push("-ss", String(Number(cfg.trim.startSec) || 0));
+    args.push("-i", inputPath);
+    if (cfg.trim?.durationSec != null) args.push("-t", String(Number(cfg.trim.durationSec) || 0));
+    if (finalFilters.length > 0) args.push("-af", finalFilters.join(","));
     args.push("-vn", "-c:a", "libmp3lame", "-b:a", "192k", outFile);
 
     const proc = spawn(ffmpeg, args);
@@ -197,7 +264,13 @@ router.post("/process", async (req, res) => {
       if (code !== 0) {
         return res.status(400).json({ ok: false, error: `ffmpeg failed: ${code}`, details: stderr.slice(-2000) });
       }
-      res.json({ ok: true, file: outFile.replace(/\\/g, "/"), applied: cfg, filterChain: filters });
+      res.json({
+        ok: true,
+        file: outFile.replace(/\\/g, "/"),
+        applied: cfg,
+        filterChain: finalFilters,
+        loudnormMode: lufs == null ? null : (measured ? "two-pass" : "single-pass-fallback"),
+      });
     });
   } catch (e) {
     console.error(`[AUDIO] Route error:`, e);
