@@ -38,7 +38,11 @@ export const useAuth = create<AuthState>((set, get) => ({
     email: null,
     role: null,
     isSuperAdmin: false,
-    isLoading: false,
+    // Truthful initial state: checkStatus() hasn't run yet, so consumers
+    // that gate behavior on isLoading (e.g. HomePage's default-view picker)
+    // hold off until /auth/status resolves instead of firing with stale
+    // false defaults.
+    isLoading: true,
     error: null,
 
     checkStatus: async () => {
@@ -65,10 +69,16 @@ export const useAuth = create<AuthState>((set, get) => ({
                 });
                 return;
             }
-            const me = (meResponse.data as { user?: { email?: string; emailVerified?: boolean; role?: string } })?.user || {};
-            // Super-admin role implicitly bypasses verification gate so the
-            // operator can never lock themselves out of their own deploy.
-            const verified = Boolean(me.emailVerified) || me.role === 'super_admin';
+            const me = (meResponse.data as { user?: { email?: string; emailVerified?: boolean; role?: string; isSuperAdmin?: boolean } })?.user || {};
+            // Super-admin (identified by SUPER_ADMIN_EMAIL env match on the
+            // server) bypasses the verify-email gate so the operator can
+            // never lock themselves out of their own deploy. /me returns an
+            // explicit `isSuperAdmin` flag derived from env, so we don't
+            // have to infer it from the `role` column in users.json
+            // (which is purely informational and stays "user" for
+            // Firebase-created accounts even when they match the env).
+            const admin = Boolean(me.isSuperAdmin) || me.role === 'super_admin';
+            const verified = Boolean(me.emailVerified) || admin;
             set({
                 token,
                 hasUser,
@@ -76,7 +86,7 @@ export const useAuth = create<AuthState>((set, get) => ({
                 emailVerified: verified,
                 email: me.email || null,
                 role: me.role || null,
-                isSuperAdmin: me.role === 'super_admin',
+                isSuperAdmin: admin,
                 isLoading: false,
                 error: null,
             });
@@ -132,7 +142,13 @@ export const useAuth = create<AuthState>((set, get) => ({
             const response = await api.post('/api/auth/firebase', { idToken });
             if (response.ok && response.data?.token) {
                 api.setToken(response.data.token);
-                set({ token: response.data.token, hasUser: true, isLoading: false });
+                // Re-sync the full auth state (email, role, emailVerified,
+                // isSuperAdmin) from /api/auth/me so the verify-email gate
+                // and other UI affordances respect the freshly signed-in
+                // identity. Without this, emailVerified stays at the
+                // default `false` and verified users are stuck on the gate.
+                set({ token: response.data.token, hasUser: true });
+                await get().checkStatus();
                 return true;
             }
             set({ isLoading: false, error: response.error || 'Unable to create your account right now.' });
@@ -153,7 +169,13 @@ export const useAuth = create<AuthState>((set, get) => ({
             const response = await api.post('/api/auth/firebase', { idToken });
             if (response.ok && response.data?.token) {
                 api.setToken(response.data.token);
-                set({ token: response.data.token, hasUser: true, isLoading: false });
+                // Re-sync the full auth state (email, role, emailVerified,
+                // isSuperAdmin) from /api/auth/me so the verify-email gate
+                // and other UI affordances respect the freshly signed-in
+                // identity. Without this, emailVerified stays at the
+                // default `false` and verified users are stuck on the gate.
+                set({ token: response.data.token, hasUser: true });
+                await get().checkStatus();
                 return true;
             }
             set({ isLoading: false, error: response.error || 'Unable to sign in right now.' });
@@ -174,7 +196,13 @@ export const useAuth = create<AuthState>((set, get) => ({
             const response = await api.post('/api/auth/firebase', { idToken });
             if (response.ok && response.data?.token) {
                 api.setToken(response.data.token);
-                set({ token: response.data.token, hasUser: true, isLoading: false });
+                // Re-sync the full auth state (email, role, emailVerified,
+                // isSuperAdmin) from /api/auth/me so the verify-email gate
+                // and other UI affordances respect the freshly signed-in
+                // identity. Without this, emailVerified stays at the
+                // default `false` and verified users are stuck on the gate.
+                set({ token: response.data.token, hasUser: true });
+                await get().checkStatus();
                 return true;
             }
             set({ isLoading: false, error: response.error || 'Google sign-in failed. Please try again.' });

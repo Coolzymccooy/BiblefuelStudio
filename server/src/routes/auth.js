@@ -6,7 +6,7 @@ import { hasAnyUser, createOwner, verifyUser, signToken, requireAuth, upsertFire
 import { isFirebaseAdminEnabled, verifyFirebaseIdToken } from "../lib/firebaseAdmin.js";
 import { writeUserPlan } from "../lib/userPlanStore.js";
 import { dataDirFor, ensureUserDirs } from "../lib/paths.js";
-import { isSuperAdmin } from "../lib/userPlan.js";
+import { isSuperAdmin as isSuperAdminUser } from "../lib/userPlan.js";
 
 const router = Router();
 
@@ -39,7 +39,14 @@ router.get("/me", requireAuth, (req, res) => {
   // the verify link. Enrich from the live users.json so the verify-gate
   // unblocks as soon as the user is marked verified server-side, without
   // requiring a sign-out/sign-in dance.
+  //
+  // We also surface `isSuperAdmin` derived from SUPER_ADMIN_EMAIL /
+  // SUPER_ADMIN_USER_ID, since the users.json `role` column is purely
+  // informational — the operator is identified by env match, not by a
+  // string in the store. UI gating (e.g. Settings → Social Automation)
+  // depends on this flag.
   const claims = req.user || {};
+  const adminFlag = isSuperAdminUser(claims);
   try {
     const store = getUsersStore();
     const uid = String(claims.sub || "").trim();
@@ -54,8 +61,9 @@ router.get("/me", requireAuth, (req, res) => {
         user: {
           ...claims,
           email: live.email || claims.email,
-          role: live.role || claims.role,
+          role: adminFlag ? "super_admin" : (live.role || claims.role),
           emailVerified: Boolean(live.emailVerified),
+          isSuperAdmin: adminFlag,
         },
       });
     }
@@ -63,7 +71,14 @@ router.get("/me", requireAuth, (req, res) => {
     // Fall through to claims-only response on store read failure.
     console.warn("[AUTH] /me enrichment failed:", err?.message || err);
   }
-  res.json({ ok: true, user: claims });
+  res.json({
+    ok: true,
+    user: {
+      ...claims,
+      role: adminFlag ? "super_admin" : claims.role,
+      isSuperAdmin: adminFlag,
+    },
+  });
 });
 
 router.post("/setup", authLimiter, async (req, res) => {
@@ -118,7 +133,7 @@ router.post("/firebase", authLimiter, async (req, res) => {
 
     // Bootstrap the per-user dir + plan record on first sign-in. Super-admin
     // continues to read/write the legacy global files (see withUserScope).
-    if (!isSuperAdmin({ sub: user.id, email: user.email })) {
+    if (!isSuperAdminUser({ sub: user.id, email: user.email })) {
       try {
         ensureUserDirs({ sub: user.id, email: user.email });
         const userDir = dataDirFor({ sub: user.id, email: user.email });
@@ -149,7 +164,7 @@ router.delete("/me", requireAuth, (req, res) => {
     if (!userId) return res.status(400).json({ ok: false, error: "User context missing" });
 
     // Don't allow super-admin to delete themselves through this endpoint.
-    if (isSuperAdmin(req.user)) {
+    if (isSuperAdminUser(req.user)) {
       return res.status(400).json({ ok: false, error: "Super-admin account cannot be self-deleted via this endpoint" });
     }
 

@@ -404,7 +404,15 @@ router.post("/edge", async (req, res) => {
 // Direct Chatterbox route — mirrors the /edge and /elevenlabs shape so the
 // existing VoiceAudioPage can pick a provider without going through the
 // category/profile system. Forces preferredProvider:"chatterbox" so the
-// orchestrator routes there directly; falls back if Chatterbox is offline.
+// orchestrator routes there directly. The orchestrator already chains
+// through other providers if chatterbox throws, but operators have hit
+// edge cases (every provider failing in lockstep, schema errors at the
+// boundary) where the chain gives up before reaching Edge-TTS. As a
+// belt-and-braces, we catch any orchestrator failure here and call
+// Edge-TTS directly — the user always gets audio out, with a
+// `fallbackProvider` field flagging what really happened so the toast
+// can show "delivered via Edge-TTS — Chatterbox was offline" instead of
+// a raw pipeline error.
 router.post("/chatterbox", async (req, res) => {
   const { text, voiceId, exaggeration, cfgWeight } = req.body || {};
   try {
@@ -422,12 +430,32 @@ router.post("/chatterbox", async (req, res) => {
         forcedAlignmentFallback: false,
       },
     });
-    res.json(result);
+    return res.json(result);
   } catch (e) {
-    console.error("[TTS] Chatterbox route error:", e);
     const message = String(e?.message || e);
-    const status = /required|invalid|missing/i.test(message) ? 400 : 502;
-    res.status(status).json({ ok: false, error: message });
+    console.warn("[TTS] Chatterbox pipeline failed, attempting Edge-TTS fallback:", message);
+
+    // 400-class errors (bad input — text too short, missing field) shouldn't
+    // be silently masked by Edge-TTS; surface them as-is.
+    if (/required|invalid|missing/i.test(message) && !/chatterbox/i.test(message)) {
+      return res.status(400).json({ ok: false, error: message });
+    }
+
+    try {
+      const fallback = await synthesizeEdgeTts({ text });
+      return res.json({
+        ...fallback,
+        fallbackProvider: "edge",
+        primaryProvider: "chatterbox",
+        primaryError: message,
+      });
+    } catch (fallbackErr) {
+      console.error("[TTS] Edge-TTS fallback also failed:", fallbackErr);
+      return res.status(502).json({
+        ok: false,
+        error: `Both Chatterbox and Edge-TTS failed. Chatterbox: ${message}. Edge-TTS: ${String(fallbackErr?.message || fallbackErr)}`,
+      });
+    }
   }
 });
 

@@ -357,8 +357,23 @@ export function VoiceAudioPage() {
 
             if (response.ok && response.data?.file) {
                 setAudioPath(response.data.file);
-                addToHistory(response.data.file, 'tts', providerLabel);
-                toast.success(`Generated via ${providerLabel}`);
+                // When the server falls back (e.g. Chatterbox 500 → Edge-TTS),
+                // it returns `fallbackProvider` so we can show what actually
+                // produced the audio instead of misleading the user.
+                const actualProvider = response.data.fallbackProvider as string | undefined;
+                const actualLabel = actualProvider === 'edge'
+                    ? 'Edge-TTS'
+                    : actualProvider === 'elevenlabs'
+                        ? 'ElevenLabs'
+                        : actualProvider === 'chatterbox'
+                            ? 'Chatterbox'
+                            : providerLabel;
+                addToHistory(response.data.file, 'tts', actualLabel);
+                if (actualProvider && actualProvider !== provider) {
+                    toast.success(`${providerLabel} was unavailable — delivered via ${actualLabel}`);
+                } else {
+                    toast.success(`Generated via ${providerLabel}`);
+                }
             } else {
                 toast.error(response.error || 'TTS generation failed');
             }

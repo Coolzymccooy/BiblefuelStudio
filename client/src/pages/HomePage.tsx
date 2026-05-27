@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { Card } from '../components/ui/Card';
@@ -254,25 +254,30 @@ export function HomePage() {
     }, [checkStatus]);
 
     // Default view selection. The landing page's primary auth CTA is "Sign
-    // in" (the "Request Access" button leads to a separate access-request
-    // form, not the sign-up here), so visitors who reach /app are returning
-    // users much more often than not — default to login. They can toggle
-    // to Register via the link under the form.
+    // in" — visitors who reach /app are overwhelmingly returning users, so
+    // we land on login and let them tap Register to switch.
     //
-    // Legacy non-Firebase setup-key flow is the one exception: a brand-new
-    // operator deploy with zero users has to bootstrap the first account.
+    // The legacy non-Firebase setup-key flow (operator's first-boot
+    // bootstrap with zero users) is the one case where we auto-route to
+    // setup. We have to wait for /auth/status to resolve before deciding,
+    // otherwise the initial render fires with stale defaults and flips
+    // everyone to signup before Firebase mode is known.
+    const initialViewPicked = useRef(false);
     useEffect(() => {
-        if (useFirebaseAuth) return; // handled by the one-shot init below
-        if (!hasUser && view === 'login') setView('setup');
-        if (hasUser && view === 'setup') setView('login');
-    }, [hasUser, useFirebaseAuth, view]);
-
-    // One-shot initial view selection for Firebase mode. Default to login.
-    useEffect(() => {
-        if (!useFirebaseAuth) return;
+        if (initialViewPicked.current) return;
+        if (isLoading) return;
+        // /auth/status returned: firebaseEnabled and hasUser are now truthful.
+        initialViewPicked.current = true;
+        if (useFirebaseAuth) {
+            setView('login');
+            return;
+        }
+        if (!hasUser) {
+            setView('setup');
+            return;
+        }
         setView('login');
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    }, [useFirebaseAuth, hasUser, isLoading]);
 
     const handleSetup = async (e: React.FormEvent) => {
         e.preventDefault();
