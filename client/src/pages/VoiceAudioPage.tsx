@@ -114,7 +114,7 @@ const AUDIO_PRESET_DEFAULTS: Record<string, AudioPresetValues> = {
     },
 };
 
-type TTSProvider = 'elevenlabs' | 'edge' | 'chatterbox';
+type TTSProvider = 'elevenlabs' | 'azure' | 'fish' | 'edge' | 'chatterbox';
 
 export function VoiceAudioPage() {
     const { config } = useConfig();
@@ -122,6 +122,8 @@ export function VoiceAudioPage() {
     const elevenlabsAvailable = config.features.elevenlabs !== false;
     const edgeAvailable = config.features.edgeTts !== false;
     const [chatterboxAvailable, setChatterboxAvailable] = useState(false);
+    const [azureAvailable, setAzureAvailable] = useState(false);
+    const [fishAvailable, setFishAvailable] = useState(false);
     const [voiceDefaults] = useVoiceSynthesisDefaults();
     const [ttsText, setTtsText] = useState('');
     const [audioPath, setAudioPath] = useState('');
@@ -207,7 +209,7 @@ export function VoiceAudioPage() {
         const cachedEdgeVoiceId = loadJson<string>(STORAGE_KEYS.ttsEdgeVoiceId, '');
         if (cachedEdgeVoiceId) setEdgeVoiceId(cachedEdgeVoiceId);
         const cachedProvider = loadJson<TTSProvider>(STORAGE_KEYS.ttsProvider, 'elevenlabs');
-        if (cachedProvider === 'edge' || cachedProvider === 'elevenlabs' || cachedProvider === 'chatterbox') {
+        if (['edge', 'elevenlabs', 'chatterbox', 'azure', 'fish'].includes(cachedProvider)) {
             setProvider(cachedProvider);
         }
         const cachedStability = loadJson<number>(STORAGE_KEYS.ttsStability, 0.5);
@@ -260,11 +262,16 @@ export function VoiceAudioPage() {
                 '/api/tts/providers?probe=1',
             );
             if (cancelled) return;
-            const chatterbox = res.data?.providers?.chatterbox;
+            const providers = res.data?.providers || {};
+            const chatterbox = providers.chatterbox;
             const isUp = Boolean(
                 res.ok && chatterbox?.available && (chatterbox?.reachable !== false),
             );
             setChatterboxAvailable(isUp);
+            // Azure / Fish are cloud key-based — "available" (env configured) is
+            // enough; no reachability probe needed.
+            setAzureAvailable(Boolean(res.ok && providers.azure?.available));
+            setFishAvailable(Boolean(res.ok && providers.fish?.available));
         })();
         return () => {
             cancelled = true;
@@ -362,6 +369,18 @@ export function VoiceAudioPage() {
                     cfgWeight: typeof chatterboxCfg === 'number' ? chatterboxCfg : undefined,
                 };
                 providerLabel = 'Chatterbox';
+            } else if (provider === 'azure') {
+                // Azure voice id is an Azure voice name (e.g. en-US-GuyNeural);
+                // blank → server default (AZURE_SPEECH_VOICE). withTimestamps gives
+                // the word-alignment contract back for kinetic captions.
+                url = '/api/tts/azure';
+                payload = { text: ttsText, voiceId: voiceId || undefined, withTimestamps: true };
+                providerLabel = 'Azure Speech';
+            } else if (provider === 'fish') {
+                // Fish voice id is a reference_id; blank → FISH_DEFAULT_REFERENCE_ID.
+                url = '/api/tts/fish';
+                payload = { text: ttsText, voiceId: voiceId || undefined };
+                providerLabel = 'Fish Audio';
             } else {
                 url = '/api/tts/elevenlabs';
                 payload = {
@@ -386,7 +405,11 @@ export function VoiceAudioPage() {
                         ? 'ElevenLabs'
                         : actualProvider === 'chatterbox'
                             ? 'Chatterbox'
-                            : providerLabel;
+                            : actualProvider === 'azure'
+                                ? 'Azure Speech'
+                                : actualProvider === 'fish'
+                                    ? 'Fish Audio'
+                                    : providerLabel;
                 addToHistory(response.data.file, 'tts', actualLabel);
                 if (actualProvider && actualProvider !== provider) {
                     toast.success(`${providerLabel} was unavailable — delivered via ${actualLabel}`);
@@ -986,6 +1009,32 @@ export function VoiceAudioPage() {
                                 </button>
                                 <button
                                     type="button"
+                                    onClick={() => setProvider('azure')}
+                                    disabled={!azureAvailable}
+                                    title={azureAvailable ? '' : 'AZURE_SPEECH_KEY / AZURE_SPEECH_REGION not set — see docs/AZURE_SPEECH_SETUP.md'}
+                                    className={`px-3 py-1.5 text-xs font-medium transition border-l border-white/10 ${
+                                        provider === 'azure'
+                                            ? 'bg-primary-500 text-white'
+                                            : 'bg-transparent text-gray-300 hover:bg-white/5'
+                                    } disabled:opacity-40 disabled:cursor-not-allowed`}
+                                >
+                                    Azure <span className="opacity-60">· word-sync</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setProvider('fish')}
+                                    disabled={!fishAvailable}
+                                    title={fishAvailable ? '' : 'FISH_API_KEY not set — see docs/FISH_AUDIO_SETUP.md'}
+                                    className={`px-3 py-1.5 text-xs font-medium transition border-l border-white/10 ${
+                                        provider === 'fish'
+                                            ? 'bg-primary-500 text-white'
+                                            : 'bg-transparent text-gray-300 hover:bg-white/5'
+                                    } disabled:opacity-40 disabled:cursor-not-allowed`}
+                                >
+                                    Fish <span className="opacity-60">· premium</span>
+                                </button>
+                                <button
+                                    type="button"
                                     onClick={() => setProvider('chatterbox')}
                                     disabled={!chatterboxAvailable}
                                     title={chatterboxAvailable ? '' : 'CHATTERBOX_URL not set — point it at a Chatterbox HTTP server (self-hosted bridge, e.g. https://chatterbox.tiwaton.co.uk).'}
@@ -1015,7 +1064,11 @@ export function VoiceAudioPage() {
                                     ? 'Free Microsoft neural voices via the Edge "Read Aloud" service. ~400 voices, no key. Use for your own channel narration.'
                                     : provider === 'chatterbox'
                                       ? 'Self-hosted open-source TTS (Resemble AI). Calls a Chatterbox HTTP bridge over the network — free, supports voice cloning via a reference WAV path on the bridge host. Inference is slower than ElevenLabs but expressive.'
-                                      : 'Premium voices + cloning. Requires ELEVENLABS_API_KEY and counts against your monthly character quota.'}
+                                      : provider === 'azure'
+                                        ? 'Microsoft Azure Speech — commercial-safe, returns reliable word-level timestamps (the kinetic-caption primary). Voice id is an Azure voice name (e.g. en-US-GuyNeural); leave blank for the server default.'
+                                        : provider === 'fish'
+                                          ? 'Fish Audio — premium multilingual cloud voices with cloning. Voice id is a Fish reference_id; leave blank for the server default. Counts against your Fish credits.'
+                                          : 'Premium voices + cloning. Requires ELEVENLABS_API_KEY and counts against your monthly character quota.'}
                             </p>
                         </div>
                         {provider === 'chatterbox' ? (
