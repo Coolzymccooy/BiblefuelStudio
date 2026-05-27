@@ -11,16 +11,31 @@ import { readUserPlan } from "./userPlanStore.js";
  * Returns true when the user matches the configured super-admin via
  * SUPER_ADMIN_USER_ID or SUPER_ADMIN_EMAIL (case-insensitive).
  *
+ * SUPER_ADMIN_EMAIL accepts EITHER a single email OR a comma/semicolon-
+ * separated list — operators with multiple accounts (e.g. an admin email
+ * and a personal Google account) can grant super-admin to both without
+ * needing a code change.
+ *
+ * SUPER_ADMIN_USER_ID is single-value only; the user.sub claim is one id
+ * per JWT, so a list would just complicate matching.
+ *
  * @param {JwtUser|undefined} user
  * @returns {boolean}
  */
 export function isSuperAdmin(user) {
   if (!user) return false;
-  const adminEmail = String(process.env.SUPER_ADMIN_EMAIL || "").toLowerCase().trim();
-  const adminId    = String(process.env.SUPER_ADMIN_USER_ID || "").trim();
+  const adminId = String(process.env.SUPER_ADMIN_USER_ID || "").trim();
   if (adminId && String(user.sub || "") === adminId) return true;
-  if (adminEmail && String(user.email || "").toLowerCase() === adminEmail) return true;
-  return false;
+
+  const adminEmailRaw = String(process.env.SUPER_ADMIN_EMAIL || "").trim();
+  if (!adminEmailRaw) return false;
+  const userEmail = String(user.email || "").toLowerCase().trim();
+  if (!userEmail) return false;
+  const allowed = adminEmailRaw
+    .split(/[,;]/)
+    .map((s) => s.toLowerCase().trim())
+    .filter(Boolean);
+  return allowed.includes(userEmail);
 }
 
 /**
