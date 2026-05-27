@@ -7,13 +7,13 @@ import { stringify } from "csv-stringify/sync";
 const router = Router();
 
 router.get("/", (req, res) => {
-  res.json({ ok: true, ...readQueue() });
+  res.json({ ok: true, ...readQueue(req.ctx.dataDir) });
 });
 
 router.post("/add", (req, res) => {
   try {
     const item = QueueAddSchema.parse(req.body || {});
-    const saved = appendQueueItem({
+    const saved = appendQueueItem(req.ctx.dataDir, {
       id: uuid(),
       createdAt: new Date().toISOString(),
       status: "draft",
@@ -28,7 +28,7 @@ router.post("/add", (req, res) => {
 
 router.delete("/:id", (req, res) => {
   const { id } = req.params;
-  const success = deleteQueueItem(id);
+  const success = deleteQueueItem(req.ctx.dataDir, id);
   if (success) {
     res.json({ ok: true });
   } else {
@@ -37,12 +37,12 @@ router.delete("/:id", (req, res) => {
 });
 
 router.post("/clear", (req, res) => {
-  clearQueue();
+  clearQueue(req.ctx.dataDir);
   res.json({ ok: true });
 });
 
 router.get("/export.csv", (req, res) => {
-  const q = readQueue();
+  const q = readQueue(req.ctx.dataDir);
   const rows = q.items.map(x => ({
     title: x.title,
     hook: x.hook,

@@ -187,7 +187,7 @@ router.post("/generate", async (req, res) => {
       jobIds.push(job.id);
     }
 
-    const record = appendSeries({
+    const record = appendSeries(req.ctx.dataDir, {
       seriesId: plan.seriesId,
       userId: String(req.user?.sub || req.user?.id || "owner"),
       chapterReference: plan.chapterReference,
@@ -224,7 +224,7 @@ router.post("/generate", async (req, res) => {
 router.get("/", (req, res) => {
   const userId = String(req.user?.sub || req.user?.id || "");
   const limit = Math.min(200, Math.max(1, Number(req.query?.limit || 50)));
-  const series = listSeriesForUser(userId, limit);
+  const series = listSeriesForUser(req.ctx.dataDir, userId, limit);
   res.json({ ok: true, series });
 });
 

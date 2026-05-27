@@ -4,18 +4,17 @@ import path from "path";
 import { v4 as uuid } from "uuid";
 import { spawn } from "child_process";
 import { readLibrary } from "../lib/library.js";
-import { OUTPUT_DIR } from "../lib/paths.js";
 
 const router = Router();
 
-function resolveAssetPath(pathOrId) {
+function resolveAssetPath(dataDir, pathOrId) {
   if (pathOrId == null) return null;
   const normalized = String(pathOrId).trim();
   if (!normalized) return null;
   if (normalized.startsWith('http')) return normalized;
   if (fs.existsSync(normalized)) return normalized;
 
-  const lib = readLibrary();
+  const lib = readLibrary(dataDir);
   const item = lib.items.find(x => String(x.id) === normalized);
   if (item) {
     if (Array.isArray(item.files) && item.files.length > 0) {
@@ -61,7 +60,7 @@ router.get("/waveform.png", async (req, res) => {
     const w = Math.min(2000, Math.max(400, Number(req.query?.w || 1200)));
     const h = Math.min(800, Math.max(200, Number(req.query?.h || 300)));
 
-    const outDir = OUTPUT_DIR;
+    const outDir = req.ctx.outputDir;
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
     const outFile = path.join(outDir, `waveform-${uuid()}.png`);
@@ -85,12 +84,12 @@ router.post("/merge", async (req, res) => {
   try {
     const inputs = Array.isArray(req.body?.inputs) ? req.body.inputs.map(String).map(s => s.trim()).filter(Boolean) : [];
     if (inputs.length < 2) return res.status(400).json({ ok: false, error: "inputs[] needs at least 2 paths" });
-    const resolvedInputs = inputs.map(resolveAssetPath);
+    const resolvedInputs = inputs.map((p) => resolveAssetPath(req.ctx.dataDir, p));
     for (const p of resolvedInputs) {
       if (!isLocalOrRemote(p)) return res.status(400).json({ ok: false, error: `file not found: ${p}` });
     }
 
-    const outDir = OUTPUT_DIR;
+    const outDir = req.ctx.outputDir;
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
     const listFile = path.join(outDir, `concat-${uuid()}.txt`);
     fs.writeFileSync(listFile, resolvedInputs.map(p => {
@@ -148,7 +147,7 @@ router.post("/timeline", async (req, res) => {
     if (clips.length < 1) return res.status(400).json({ ok: false, error: "clips[] required" });
 
     const cleaned = clips.map((c) => ({
-      path: resolveAssetPath(String(c?.path || "").trim()),
+      path: resolveAssetPath(req.ctx.dataDir, String(c?.path || "").trim()),
       startSec: c?.startSec != null ? Number(c.startSec) : null,
       durationSec: c?.durationSec != null ? Number(c.durationSec) : null,
     })).filter(c => c.path);
@@ -158,7 +157,7 @@ router.post("/timeline", async (req, res) => {
       if (!isLocalOrRemote(c.path)) return res.status(400).json({ ok: false, error: `file not found: ${c.path}` });
     }
 
-    const outDir = OUTPUT_DIR;
+    const outDir = req.ctx.outputDir;
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
     const ffmpeg = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
     const outFile = path.join(outDir, `audio-timeline-${uuid()}.mp3`);
@@ -251,11 +250,11 @@ router.post("/timeline-preview", async (req, res) => {
     const clips = Array.isArray(req.body?.clips) ? req.body.clips : [];
     if (clips.length < 1) return res.status(400).json({ ok: false, error: "clips[] required" });
 
-    const bg = resolveAssetPath(String(req.body?.backgroundPath || "").trim());
+    const bg = resolveAssetPath(req.ctx.dataDir, String(req.body?.backgroundPath || "").trim());
     if (!bg || !isLocalOrRemote(bg)) return res.status(400).json({ ok: false, error: "backgroundPath missing or invalid" });
 
     const cleaned = clips.map((c) => ({
-      path: resolveAssetPath(String(c?.path || "").trim()),
+      path: resolveAssetPath(req.ctx.dataDir, String(c?.path || "").trim()),
       startSec: c?.startSec != null ? Number(c.startSec) : null,
       durationSec: c?.durationSec != null ? Number(c.durationSec) : null,
     })).filter(c => c.path);
@@ -264,7 +263,7 @@ router.post("/timeline-preview", async (req, res) => {
       if (!isLocalOrRemote(c.path)) return res.status(400).json({ ok: false, error: `file not found: ${c.path}` });
     }
 
-    const outDir = OUTPUT_DIR;
+    const outDir = req.ctx.outputDir;
     const ffmpeg = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
     const outFile = path.join(outDir, `timeline-preview-${uuid()}.mp4`);
 

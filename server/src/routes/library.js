@@ -4,7 +4,6 @@ import path from "path";
 import { v4 as uuid } from "uuid";
 import { readLibrary, addToLibrary, removeFromLibrary, writeLibrary } from "../lib/library.js";
 import { deriveOutputJpgPathFromVideo, generateVideoThumbnail, normalizePathSlashes, resolveOutputAlias, toOutputPublicPath } from "../lib/mediaThumb.js";
-import { OUTPUT_DIR } from "../lib/paths.js";
 import { CATEGORIES, classifySearchQuery, normalizeCategories } from "../lib/categorize.js";
 
 const router = Router();
@@ -72,7 +71,7 @@ function normalizeLibraryItem(item) {
 }
 
 router.get("/", (req, res) => {
-    const library = readLibrary();
+    const library = readLibrary(req.ctx.dataDir);
     const normalizedItems = [];
     let changed = false;
     for (const item of library.items || []) {
@@ -81,7 +80,7 @@ router.get("/", (req, res) => {
         if (out.changed) changed = true;
     }
     if (changed) {
-        writeLibrary({ ...library, items: normalizedItems });
+        writeLibrary(req.ctx.dataDir, { ...library, items: normalizedItems });
     }
     res.json({ ok: true, library: { ...library, items: normalizedItems } });
 });
@@ -89,12 +88,12 @@ router.get("/", (req, res) => {
 router.post("/add", (req, res) => {
     const item = req.body || {};
     if (!item.id) return res.status(400).json({ ok: false, error: "id required" });
-    addToLibrary(item);
+    addToLibrary(req.ctx.dataDir, item);
     res.json({ ok: true });
 });
 
 router.delete("/:id", (req, res) => {
-    removeFromLibrary(req.params.id);
+    removeFromLibrary(req.ctx.dataDir, req.params.id);
     res.json({ ok: true });
 });
 
@@ -105,21 +104,21 @@ router.get("/categories", (req, res) => {
 router.patch("/:id/categories", (req, res) => {
     const id = String(req.params?.id || "").trim();
     if (!id) return res.status(400).json({ ok: false, error: "id required" });
-    const lib = readLibrary();
+    const lib = readLibrary(req.ctx.dataDir);
     const idx = (lib.items || []).findIndex((x) => String(x.id) === id);
     if (idx < 0) return res.status(404).json({ ok: false, error: "library item not found" });
 
     const incoming = Array.isArray(req.body?.categories) ? req.body.categories : [];
     const next = normalizeCategories(incoming);
     lib.items[idx] = { ...lib.items[idx], categories: next, updatedAt: new Date().toISOString() };
-    writeLibrary(lib);
+    writeLibrary(req.ctx.dataDir, lib);
     res.json({ ok: true, item: lib.items[idx] });
 });
 
 // Bulk auto-tag any items missing categories — best-effort, infers from
 // existing item metadata (searchQuery, sourceUrl, id, etc.).
 router.post("/auto-tag", (req, res) => {
-    const lib = readLibrary();
+    const lib = readLibrary(req.ctx.dataDir);
     let tagged = 0;
     for (const item of lib.items || []) {
         if (Array.isArray(item.categories) && item.categories.length > 0) continue;
@@ -132,7 +131,7 @@ router.post("/auto-tag", (req, res) => {
             tagged += 1;
         }
     }
-    if (tagged > 0) writeLibrary(lib);
+    if (tagged > 0) writeLibrary(req.ctx.dataDir, lib);
     res.json({ ok: true, tagged, total: (lib.items || []).length });
 });
 
@@ -147,7 +146,7 @@ router.post("/import-local", (req, res) => {
             .filter(f => exts.includes(path.extname(f).toLowerCase()))
             .map(f => path.join(folderPath, f));
 
-        const outDir = OUTPUT_DIR;
+        const outDir = req.ctx.outputDir;
         if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
         const imported = [];
@@ -168,7 +167,7 @@ router.post("/import-local", (req, res) => {
                 image: thumb || (derivedExists ? derived : undefined),
                 duration: 0
             };
-            addToLibrary(item);
+            addToLibrary(req.ctx.dataDir, item);
             imported.push(item);
         }
 

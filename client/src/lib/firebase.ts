@@ -3,6 +3,7 @@ import {
     GoogleAuthProvider,
     createUserWithEmailAndPassword,
     getAuth,
+    sendEmailVerification,
     sendPasswordResetEmail,
     signInWithEmailAndPassword,
     signInWithPopup,
@@ -38,7 +39,21 @@ export async function firebaseEmailLogin(email: string, password: string) {
 export async function firebaseEmailSignup(email: string, password: string) {
     const auth = getFirebaseAuth();
     const cred = await createUserWithEmailAndPassword(auth, email, password);
+    // Best-effort verification email — surface a console warning rather than
+    // blocking signup if the send fails (e.g. rate-limited).
+    try {
+        await sendEmailVerification(cred.user);
+    } catch (err) {
+        console.warn('[firebase] sendEmailVerification failed:', err);
+    }
     return cred.user.getIdToken();
+}
+
+export async function firebaseResendEmailVerification() {
+    const auth = getFirebaseAuth();
+    const user = auth.currentUser;
+    if (!user) throw new Error('Not signed in');
+    await sendEmailVerification(user);
 }
 
 export async function firebaseGoogleLogin() {

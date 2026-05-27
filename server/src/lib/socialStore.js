@@ -1,6 +1,5 @@
 import fs from "fs";
 import path from "path";
-import { DATA_DIR } from "./paths.js";
 
 function firstNonEmpty(...values) {
   for (const value of values) {
@@ -27,10 +26,10 @@ function mergeYouTubeConfig(stored = {}) {
   };
 }
 
-function getStorePath() {
-  const dir = DATA_DIR;
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  return path.join(dir, "social.json");
+function getStorePath(dataDir) {
+  if (!dataDir) throw new Error("social: dataDir required");
+  if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+  return path.join(dataDir, "social.json");
 }
 
 function normalizeSchedule(raw = {}) {
@@ -49,18 +48,32 @@ function normalizeSchedule(raw = {}) {
   };
 }
 
-export function readSocialStore() {
+function normalizePostiz(raw = {}) {
+  return {
+    postizUserId: String(raw?.postizUserId || "").trim(),
+    lastSync: raw?.lastSync ? String(raw.lastSync) : null,
+    integrations: Array.isArray(raw?.integrations) ? raw.integrations : [],
+    autoPublish: Boolean(raw?.autoPublish),
+    autoPublishPlatforms: Array.isArray(raw?.autoPublishPlatforms)
+      ? raw.autoPublishPlatforms.map((p) => String(p || "").toLowerCase()).filter(Boolean)
+      : [],
+  };
+}
+
+function emptyStore() {
+  return {
+    buffer: { accessToken: "", profileIds: [] },
+    webhooks: [],
+    direct: { youtube: mergeYouTubeConfig({}), instagram: {}, tiktok: {} },
+    schedules: [],
+    postiz: normalizePostiz({}),
+  };
+}
+
+export function readSocialStore(dataDir) {
   try {
-    const file = getStorePath();
-    const youtubeFallback = mergeYouTubeConfig({});
-    if (!fs.existsSync(file)) {
-      return {
-        buffer: { accessToken: "", profileIds: [] },
-        webhooks: [],
-        direct: { youtube: youtubeFallback, instagram: {}, tiktok: {} },
-        schedules: [],
-      };
-    }
+    const file = getStorePath(dataDir);
+    if (!fs.existsSync(file)) return emptyStore();
     const raw = fs.readFileSync(file, "utf-8");
     const data = JSON.parse(raw);
     return {
@@ -75,19 +88,15 @@ export function readSocialStore() {
         tiktok: data?.direct?.tiktok || {},
       },
       schedules: Array.isArray(data?.schedules) ? data.schedules.map(normalizeSchedule) : [],
+      postiz: normalizePostiz(data?.postiz || {}),
     };
   } catch {
-    return {
-      buffer: { accessToken: "", profileIds: [] },
-      webhooks: [],
-      direct: { youtube: mergeYouTubeConfig({}), instagram: {}, tiktok: {} },
-      schedules: [],
-    };
+    return emptyStore();
   }
 }
 
-export function writeSocialStore(next) {
-  const file = getStorePath();
+export function writeSocialStore(dataDir, next) {
+  const file = getStorePath(dataDir);
   const payload = {
     buffer: {
       accessToken: String(next?.buffer?.accessToken || "").trim(),
@@ -109,6 +118,7 @@ export function writeSocialStore(next) {
       tiktok: next?.direct?.tiktok || {},
     },
     schedules: Array.isArray(next?.schedules) ? next.schedules.map(normalizeSchedule) : [],
+    postiz: normalizePostiz(next?.postiz || {}),
   };
   fs.writeFileSync(file, JSON.stringify(payload, null, 2));
 }

@@ -1,27 +1,28 @@
 /**
- * Series history store.
+ * Series history store — multi-tenant.
  *
- * Tracks every series the user has generated so the UI can show "Your series"
- * with status (queued, rendering, published, failed) derived from the job
- * records. Each series row keeps:
- *   - seriesId, userId, chapterReference, translation, totalParts
- *   - jobIds: one per part, in order
- *   - createdAt
- *
- * Stored as a single JSON file under DATA_DIR. Series records are small
- * (kilobytes), so a flat file is fine until we migrate to SQLite.
- *
- * Concurrency: writes are atomic via temp-file + rename. Reads are tolerant
- * of corruption (return empty list).
+ * Each call takes the per-user dataDir; the legacy single-file format is
+ * preserved, just relocated under per-user dirs when MULTITENANT=true.
+ * Concurrency: writes are atomic via temp-file + rename. Reads tolerate
+ * corruption (return empty list).
  */
 
 import fs from "fs";
 import path from "path";
-import { DATA_DIR } from "../paths.js";
 
-const FILE = path.join(DATA_DIR, "series.json");
-const TMP = path.join(DATA_DIR, "series.json.tmp");
 const MAX_RECENT = 200;
+
+function filePath(dataDir) {
+  if (!dataDir) throw new Error("series: dataDir required");
+  return path.join(dataDir, "series.json");
+}
+function tmpPath(dataDir) {
+  return path.join(dataDir, "series.json.tmp");
+}
+
+function ensureDir(dataDir) {
+  if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+}
 
 /**
  * @typedef {object} SeriesRecord
@@ -36,16 +37,13 @@ const MAX_RECENT = 200;
  * @property {string} createdAt   ISO timestamp
  */
 
-function ensureDir() {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-}
-
 /** @returns {SeriesRecord[]} */
-export function readSeries() {
-  ensureDir();
-  if (!fs.existsSync(FILE)) return [];
+export function readSeries(dataDir) {
+  ensureDir(dataDir);
+  const f = filePath(dataDir);
+  if (!fs.existsSync(f)) return [];
   try {
-    const parsed = JSON.parse(fs.readFileSync(FILE, "utf-8"));
+    const parsed = JSON.parse(fs.readFileSync(f, "utf-8"));
     return Array.isArray(parsed?.series) ? parsed.series : [];
   } catch {
     return [];
@@ -53,24 +51,25 @@ export function readSeries() {
 }
 
 /** @param {SeriesRecord} record */
-export function appendSeries(record) {
-  ensureDir();
-  const current = readSeries();
+export function appendSeries(dataDir, record) {
+  ensureDir(dataDir);
+  const current = readSeries(dataDir);
   const next = [record, ...current].slice(0, MAX_RECENT);
-  fs.writeFileSync(TMP, JSON.stringify({ series: next }, null, 2), "utf-8");
-  fs.renameSync(TMP, FILE);
+  fs.writeFileSync(tmpPath(dataDir), JSON.stringify({ series: next }, null, 2), "utf-8");
+  fs.renameSync(tmpPath(dataDir), filePath(dataDir));
   return record;
 }
 
 /**
+ * @param {string} dataDir
  * @param {string} userId
  * @param {number} [limit=50]
  * @returns {SeriesRecord[]}
  */
-export function listSeriesForUser(userId, limit = 50) {
+export function listSeriesForUser(dataDir, userId, limit = 50) {
   const safeUserId = String(userId || "").trim();
   if (!safeUserId) return [];
-  return readSeries()
+  return readSeries(dataDir)
     .filter((s) => String(s?.userId || "") === safeUserId)
     .slice(0, limit);
 }

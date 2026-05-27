@@ -3,7 +3,6 @@ import fs from "fs";
 import path from "path";
 import { v4 as uuid } from "uuid";
 import { spawn } from "child_process";
-import { OUTPUT_DIR } from "../lib/paths.js";
 import { resolveOutputAlias } from "../lib/mediaThumb.js";
 
 const router = Router();
@@ -91,7 +90,7 @@ router.post("/process", async (req, res) => {
       presence: req.body?.presence || null,
     };
 
-    const outDir = OUTPUT_DIR;
+    const outDir = req.ctx.outputDir;
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
     const outFile = path.join(outDir, `audio-processed-${uuid()}.mp3`);

@@ -6,7 +6,10 @@ import { v4 as uuid } from "uuid";
 import cron from "node-cron";
 import { google } from "googleapis";
 import { readSocialStore, writeSocialStore } from "../lib/socialStore.js";
-import { OUTPUT_DIR } from "../lib/paths.js";
+// DATA_DIR is used ONLY by the boot-time cron rehydrator below, which operates
+// on the super-admin's global social.json. Per-user schedule rehydration is
+// Phase 4 work; see specs/2026-05-26-public-multitenancy-design.md §6.
+import { DATA_DIR, OUTPUT_DIR } from "../lib/paths.js";
 
 const router = Router();
 const scheduleTasks = new Map();
@@ -311,7 +314,10 @@ export async function dispatchPost(payload, req) {
   const { destination, caption, videoUrl, profileIds, webhookId, webhookUrl, title, privacyStatus } = payload || {};
   if (!caption || !videoUrl) throw new Error("caption and videoUrl required");
 
-  const store = readSocialStore();
+  // Cron-triggered calls pass a reqLike without ctx — fall back to DATA_DIR
+  // (super-admin's store). Phase 4 will switch this to per-schedule ctx.
+  const storeDir = req?.ctx?.dataDir || DATA_DIR;
+  const store = readSocialStore(storeDir);
 
   if (destination === "webhook") {
     return postToWebhook({ caption, videoUrl, title, webhookId, webhookUrl }, req, store);
@@ -407,7 +413,10 @@ function stopScheduleTask(id) {
 }
 
 function refreshScheduleTasks() {
-  const store = readSocialStore();
+  // Phase 1: super-admin only. Per-user schedule rehydration is Phase 4 work.
+  // See specs/2026-05-26-public-multitenancy-design.md §6 — when MULTITENANT
+  // ships, walk users/*/social.json and key tasks by `${userId}::${schedule.id}`.
+  const store = readSocialStore(DATA_DIR);
   const schedules = Array.isArray(store.schedules) ? store.schedules : [];
   const activeIds = new Set();
 
@@ -448,7 +457,7 @@ setTimeout(() => {
 
 
 router.get("/config", (req, res) => {
-  const store = readSocialStore();
+  const store = readSocialStore(req.ctx.dataDir);
   res.json({
     ok: true,
     buffer: {
@@ -463,7 +472,7 @@ router.get("/config", (req, res) => {
 
 router.post("/config", (req, res) => {
   const payload = req.body || {};
-  const store = readSocialStore();
+  const store = readSocialStore(req.ctx.dataDir);
   const buffer = payload.buffer || store.buffer || {};
   const webhooks = Array.isArray(payload.webhooks) ? payload.webhooks : store.webhooks || [];
   const direct = payload.direct || store.direct || {};
@@ -488,13 +497,13 @@ router.post("/config", (req, res) => {
     schedules,
   };
 
-  writeSocialStore(next);
-  refreshScheduleTasks();
+  writeSocialStore(req.ctx.dataDir, next);
+  if (req.ctx.isSuperAdmin) refreshScheduleTasks();
   res.json({ ok: true });
 });
 
 router.get("/schedules", (req, res) => {
-  const store = readSocialStore();
+  const store = readSocialStore(req.ctx.dataDir);
   res.json({ ok: true, schedules: store.schedules || [] });
 });
 
@@ -532,14 +541,14 @@ router.post("/schedules", (req, res) => {
       return res.status(400).json({ ok: false, error: "caption and videoUrl are required for replay schedules" });
     }
 
-    const store = readSocialStore();
+    const store = readSocialStore(req.ctx.dataDir);
     const list = Array.isArray(store.schedules) ? store.schedules : [];
     const index = list.findIndex((x) => String(x.id) === schedule.id);
     if (index >= 0) list[index] = schedule;
     else list.unshift(schedule);
 
-    writeSocialStore({ ...store, schedules: list });
-    refreshScheduleTasks();
+    writeSocialStore(req.ctx.dataDir, { ...store, schedules: list });
+    if (req.ctx.isSuperAdmin) refreshScheduleTasks();
     res.json({ ok: true, schedule });
   } catch (e) {
     res.status(400).json({ ok: false, error: String(e?.message || e) });
@@ -549,16 +558,16 @@ router.post("/schedules", (req, res) => {
 router.delete("/schedules/:id", (req, res) => {
   const id = String(req.params?.id || "").trim();
   if (!id) return res.status(400).json({ ok: false, error: "schedule id required" });
-  const store = readSocialStore();
+  const store = readSocialStore(req.ctx.dataDir);
   const list = (store.schedules || []).filter((s) => String(s.id) !== id);
-  writeSocialStore({ ...store, schedules: list });
-  refreshScheduleTasks();
+  writeSocialStore(req.ctx.dataDir, { ...store, schedules: list });
+  if (req.ctx.isSuperAdmin) refreshScheduleTasks();
   res.json({ ok: true });
 });
 
 router.post("/buffer/profiles", async (req, res) => {
   try {
-    const store = readSocialStore();
+    const store = readSocialStore(req.ctx.dataDir);
     const accessToken = String(req.body?.accessToken || store.buffer?.accessToken || "").trim();
     if (!accessToken) return res.status(400).json({ ok: false, error: "Buffer access token missing" });
 

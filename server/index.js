@@ -29,6 +29,12 @@ import { createAccessRequestsRouter } from "./src/routes/accessRequests.js";
 import { createAccessRequestsStore } from "./src/lib/accessRequestsStore.js";
 import { createEmailTransport } from "./services/email/transport.js";
 import { sendEmail as sendEmailViaTransport } from "./services/email/send.js";
+import { withUserScope } from "./src/middleware/userScope.js";
+import { featureGate } from "./src/middleware/featureGate.js";
+import { requireVerifiedEmail } from "./src/middleware/requireVerifiedEmail.js";
+import { quota } from "./src/middleware/quota.js";
+import billingRouter, { stripeWebhookHandler } from "./src/routes/billing.js";
+import postizRouter from "./src/routes/postiz.js";
 import { DATA_DIR, OUTPUT_DIR } from "./src/lib/paths.js";
 
 // Load env from CURRENT server directory
@@ -65,8 +71,26 @@ app.use(
     },
   })
 );
+// Stripe webhook MUST be mounted before express.json so the raw body is
+// available for signature verification. The handler reads req.body as a
+// Buffer and verifies via the official SDK.
+app.post("/api/billing/webhook", express.raw({ type: "application/json" }), (req, res, next) => {
+  stripeWebhookHandler(req, res).catch(next);
+});
+
 app.use(express.json({ limit: "100mb" }));
-app.use(cors({ origin: process.env.CORS_ORIGIN || "*" }));
+
+// CORS: when CORS_ORIGIN is set, treat it as a comma-separated allowlist and
+// enable credentialed requests. Default to "*" only when explicitly unset (dev
+// convenience). Public multi-tenant deploys MUST set CORS_ORIGIN to a real
+// origin list to keep cookies/JWT-bearing requests safe.
+const corsOrigin = process.env.CORS_ORIGIN;
+app.use(cors({
+  origin: corsOrigin && corsOrigin !== "*"
+    ? corsOrigin.split(",").map((s) => s.trim()).filter(Boolean)
+    : "*",
+  credentials: !!corsOrigin && corsOrigin !== "*",
+}));
 
 if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 
@@ -168,24 +192,35 @@ const publicDir = path.join(__dirname, "public");
 app.use("/", express.static(publicDir));
 
 app.use("/api/auth", authRouter);
-app.use("/api/jobs", requireAuth, jobsRouter);
+app.use("/api/jobs", requireAuth, withUserScope, jobsRouter);
 
-// Protected API routes
-app.use("/api/scripts", requireAuth, scriptsRouter);
-app.use("/api/queue", requireAuth, queueRouter);
-app.use("/api/tts", requireAuth, ttsRouter);
-app.use("/api/render", requireAuth, renderRouter);
-app.use("/api/pexels", requireAuth, pexelsRouter);
-app.use("/api/pixabay", requireAuth, pixabayRouter);
-app.use("/api/gumroad", requireAuth, gumroadRouter);
-app.use("/api/media", requireAuth, mediaRouter);
-app.use("/api/audio", requireAuth, audioRouter);
-app.use("/api/audio-adv", requireAuth, audioAdvancedRouter);
-app.use("/api/library", requireAuth, libraryRouter);
-app.use("/api/social", requireAuth, socialRouter);
-app.use("/api/firebase", requireAuth, firebaseRouter);
-app.use("/api/bible", requireAuth, bibleRouter);
-app.use("/api/series", requireAuth, seriesRouter);
+// Protected API routes — all use withUserScope (resolves req.ctx) and pass
+// dataDir/outputDir down to the stores. featureGate is applied per route where
+// non-default plans need to be blocked. See specs/2026-05-26-public-multitenancy-design.md.
+// Billing — NOTE: webhook is mounted ABOVE express.json (see top of file).
+app.use("/api/billing",   billingRouter);
+
+// Phase 3 cost gates:
+//   - requireVerifiedEmail: only enforced when REQUIRE_EMAIL_VERIFIED=true.
+//     Mounted on expensive routes only (login + signup themselves aren't gated).
+//   - quota(bucket): per-day per-user counter for free tier; premium/admin
+//     are uncapped. Mount on routes that consume API budget or compute.
+app.use("/api/scripts",   requireAuth, withUserScope, requireVerifiedEmail, quota("scripts"),    scriptsRouter);
+app.use("/api/queue",     requireAuth, withUserScope,                                              queueRouter);
+app.use("/api/tts",       requireAuth, withUserScope, requireVerifiedEmail, quota("tts"),        ttsRouter);
+app.use("/api/render",    requireAuth, withUserScope, requireVerifiedEmail, quota("render"),     renderRouter);
+app.use("/api/pexels",    requireAuth, withUserScope, requireVerifiedEmail,                       pexelsRouter);
+app.use("/api/pixabay",   requireAuth, withUserScope, requireVerifiedEmail,                       pixabayRouter);
+app.use("/api/gumroad",   requireAuth, withUserScope, featureGate("gumroad"),                     gumroadRouter);
+app.use("/api/media",     requireAuth, withUserScope,                                              mediaRouter);
+app.use("/api/audio",     requireAuth, withUserScope, requireVerifiedEmail,                       audioRouter);
+app.use("/api/audio-adv", requireAuth, withUserScope, requireVerifiedEmail,                       audioAdvancedRouter);
+app.use("/api/library",   requireAuth, withUserScope,                                              libraryRouter);
+app.use("/api/social",    requireAuth, withUserScope, requireVerifiedEmail,                       socialRouter);
+app.use("/api/firebase",  requireAuth, withUserScope,                                              firebaseRouter);
+app.use("/api/bible",     requireAuth, withUserScope,                                              bibleRouter);
+app.use("/api/series",    requireAuth, withUserScope, requireVerifiedEmail, quota("render"),     seriesRouter);
+app.use("/api/postiz",    requireAuth, withUserScope, requireVerifiedEmail,                       postizRouter);
 
 
 

@@ -10,6 +10,8 @@ import { synthesizeTts } from "../lib/ttsOrchestrator.js";
 import { synthesizeForCategory } from "../lib/voice/categorySynthesis.js";
 import { resolveProfile, listCategories } from "../lib/voice/profiles.js";
 import { dispatchPost } from "./social.js";
+import { readSocialStore } from "../lib/socialStore.js";
+import { isPostizConfigured, postVideo as postizPostVideo } from "../lib/postizClient.js";
 import { pickBestBackground, classifyText } from "../lib/categorize.js";
 import { charsToWords, annotateEmphasis, groupWordsByBeat } from "../lib/captions.js";
 import { buildWordDrawtext, buildLineDrawtext, buildSceneGraph } from "../lib/videoFilters.js";
@@ -81,8 +83,15 @@ function logMemory(tag) {
   console.log(`[MEM] ${tag} rss=${Math.round(m.rss / 1024 / 1024)}MB heap=${Math.round(m.heapUsed / 1024 / 1024)}MB`);
 }
 
-const outDir = OUTPUT_DIR;
-if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+// Phase 1 multi-tenancy: the worker is serialized (workerTick runs one job
+// at a time, awaited), so a module-level "current job ctx" is safe and avoids
+// threading dataDir/outputDir through every render helper signature. Set by
+// executeJob, reset in the finally block. See specs/2026-05-26-public-multitenancy-design.md.
+let currentJobCtx = null;
+function currentOutDir() { return currentJobCtx?.outputDir || OUTPUT_DIR; }
+function currentDataDir() { return currentJobCtx?.dataDir || DATA_DIR; }
+
+if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
 const jobsFile = path.join(DATA_DIR, "jobs.json");
 const jobsTmpFile = path.join(DATA_DIR, "jobs.json.tmp");
@@ -224,7 +233,7 @@ function resolveAssetPath(pathOrId) {
   if (fs.existsSync(direct)) return direct;
 
   // Try to find in library
-  const lib = readLibrary();
+  const lib = readLibrary(currentDataDir());
   const item = lib.items.find(x => String(x.id) === normalized);
   if (item) {
     if (Array.isArray(item.files) && item.files.length > 0) {
@@ -370,7 +379,7 @@ async function executeJob(job) {
     const baseChars = w >= 1800 ? 42 : w >= 1200 ? 34 : 28;
     const maxChars = Math.max(18, Math.floor(baseChars * (widthPct / 100)));
     const safeLines = wrapTextLines(rawLines, maxChars, 6);
-    const outFile = path.join(outDir, `waveform-${uuid()}.mp4`);
+    const outFile = path.join(currentOutDir(), `waveform-${uuid()}.mp4`);
 
     const startY = Math.round(h * 0.2);
     const lineGap = Math.round(h * 0.055);
@@ -513,7 +522,7 @@ async function renderVideoCore(payload, jobId) {
   const safeLines = wrapTextLines(rawLines, maxChars, 6);
   if (safeLines.length === 0) throw new Error("lines[] required");
 
-  const outFile = path.join(outDir, `video-${uuid()}.mp4`);
+  const outFile = path.join(currentOutDir(), `video-${uuid()}.mp4`);
   const filters = buildLineDrawtext({ lines: safeLines, w, h, preset: typographyPreset });
   if (!filters) throw new Error("lines[] required");
 
@@ -749,8 +758,8 @@ async function renderAdvancedVideo(payload, jobId) {
   // exceed Windows' ~32KB command-line limit (spawn ENAMETOOLONG). Write the
   // graph to a temp file and pass it via -filter_complex_script — same syntax,
   // no length cap.
-  const outFile = path.join(outDir, `video-${uuid()}.mp4`);
-  const filterScriptFile = path.join(outDir, `filter-${path.basename(outFile, ".mp4")}.txt`);
+  const outFile = path.join(currentOutDir(), `video-${uuid()}.mp4`);
+  const filterScriptFile = path.join(currentOutDir(), `filter-${path.basename(outFile, ".mp4")}.txt`);
   fs.writeFileSync(filterScriptFile, filterComplex, "utf-8");
 
   args.push(
@@ -873,7 +882,7 @@ async function runCampaignAutoPost(payload, jobId) {
 
   // 2. Library check — we'll pick backgrounds per beat after TTS so each
   // scene matches its own text mood.
-  const lib = readLibrary();
+  const lib = readLibrary(currentDataDir());
   const pool = Array.isArray(lib?.items) ? lib.items : [];
   if (pool.length === 0) throw new Error("campaign: library is empty — add at least one background before running auto-post");
   safeUpdateJob(jobId, { progress: 18 });
@@ -1118,7 +1127,7 @@ function validatePayloadForEnqueue(type, payload) {
 
   if (type === "campaign_auto_post") {
     // Library is the only hard precondition — everything else has defaults.
-    const lib = readLibrary();
+    const lib = readLibrary(currentDataDir());
     if (!Array.isArray(lib?.items) || lib.items.length === 0) {
       return { ok: false, error: "campaign_auto_post requires at least one background in the Library" };
     }
@@ -1153,6 +1162,61 @@ function recoverStaleRunningJobs() {
   if (changed) saveJobs(store);
 }
 
+function publicVideoUrlFromOutFile(outFile) {
+  if (!outFile) return "";
+  const base = String(
+    process.env.PUBLIC_BASE_URL ||
+    process.env.APP_BASE_URL ||
+    process.env.RENDER_EXTERNAL_URL ||
+    `http://localhost:${process.env.PORT || 5051}`
+  ).trim().replace(/\/+$/, "");
+  const fileName = path.basename(String(outFile));
+  if (!fileName) return "";
+  return `${base}/outputs/${fileName}`;
+}
+
+function buildAutoPublishCaption(job) {
+  const p = (job?.payload || {});
+  if (typeof p.caption === "string" && p.caption.trim()) return p.caption.trim().slice(0, 1900);
+  if (Array.isArray(p.lines)) return p.lines.filter(Boolean).join(" ").slice(0, 1900);
+  if (typeof p.title === "string" && p.title.trim()) return p.title.trim().slice(0, 1900);
+  return "";
+}
+
+async function maybeAutoPublish(job, result) {
+  try {
+    if (!isPostizConfigured()) return;
+    const outFile = result?.outFile || result?.file;
+    if (!outFile) return;
+    const dataDir = job?.ctx?.dataDir;
+    if (!dataDir) return;
+    const store = readSocialStore(dataDir);
+    const postiz = store?.postiz || {};
+    if (!postiz.autoPublish) return;
+    if (!postiz.postizUserId) return;
+    const platforms = Array.isArray(postiz.autoPublishPlatforms) ? postiz.autoPublishPlatforms : [];
+    if (platforms.length === 0) return;
+
+    const videoUrl = publicVideoUrlFromOutFile(outFile);
+    if (!videoUrl || /localhost|127\.0\.0\.1/.test(videoUrl)) {
+      console.warn("[AUTO-PUBLISH] skipped — no public URL for", outFile);
+      return;
+    }
+    const caption = buildAutoPublishCaption(job);
+    const title = String(job?.payload?.title || "").trim() || undefined;
+    console.log(`[AUTO-PUBLISH] posting job ${job.id} to ${platforms.join(",")}`);
+    await postizPostVideo({
+      postizUserId: postiz.postizUserId,
+      videoUrl,
+      caption,
+      platforms,
+      title,
+    });
+  } catch (err) {
+    console.warn("[AUTO-PUBLISH] failed:", err?.message || err);
+  }
+}
+
 async function workerTick() {
   if (running) return;
   store = loadJobs();
@@ -1161,10 +1225,14 @@ async function workerTick() {
   running = true;
   volatileProgressByJob.set(next.id, 0);
   safeUpdateJob(next.id, { status: "running", startedAt: new Date().toISOString(), progress: 0 });
+  currentJobCtx = next.ctx || null;
   try {
     const result = await executeJob(next);
     volatileProgressByJob.set(next.id, 100);
     safeUpdateJob(next.id, { status: "done", progress: 100, finishedAt: new Date().toISOString(), result });
+    if (next.type === "render_video" || next.type === "render_waveform") {
+      await maybeAutoPublish(next, result);
+    }
   } catch (e) {
     const lastPct = volatileProgressByJob.get(next.id);
     const failedPatch = {
@@ -1178,6 +1246,7 @@ async function workerTick() {
     lastProgressByJob.delete(next.id);
     volatileProgressByJob.delete(next.id);
     running = false;
+    currentJobCtx = null;
   }
 }
 
@@ -1210,12 +1279,19 @@ router.post("/enqueue", (req, res) => {
   const type = String(req.body?.type || "").trim();
   const payload = req.body?.payload || {};
   if (!type) return res.status(400).json({ ok: false, error: "type required" });
-  const validation = validatePayloadForEnqueue(type, payload);
+  // Set currentJobCtx synchronously for validation that reads the library,
+  // then restore it. The actual job-execution ctx is set in workerTick.
+  const prevCtx = currentJobCtx;
+  currentJobCtx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir, userId: req.ctx.userId };
+  let validation;
+  try { validation = validatePayloadForEnqueue(type, payload); }
+  finally { currentJobCtx = prevCtx; }
   if (!validation.ok) return res.status(400).json({ ok: false, error: validation.error });
 
   const id = `job_${uuid()}`;
   const job = {
     id, type, payload,
+    ctx: { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir, userId: req.ctx.userId },
     status: "queued",
     createdAt: new Date().toISOString()
   };
@@ -1230,14 +1306,23 @@ router.post("/enqueue", (req, res) => {
 
 // Programmatic enqueue helper for in-process callers (e.g. cron-driven
 // schedules in social.js). Skips HTTP/auth, performs the same validation.
-export async function enqueueCampaignAutoPost(payload) {
-  const validation = validatePayloadForEnqueue("campaign_auto_post", payload || {});
+export async function enqueueCampaignAutoPost(payload, ctx) {
+  // ctx (required for non-super-admin under MULTITENANT=true):
+  //   { dataDir, outputDir, userId }
+  // Callers that don't pass ctx (legacy cron in social.js pre-refactor) get
+  // the global super-admin paths, matching pre-multi-tenant behaviour.
+  const prevCtx = currentJobCtx;
+  currentJobCtx = ctx || null;
+  let validation;
+  try { validation = validatePayloadForEnqueue("campaign_auto_post", payload || {}); }
+  finally { currentJobCtx = prevCtx; }
   if (!validation.ok) throw new Error(validation.error);
   const id = `job_${uuid()}`;
   const job = {
     id,
     type: "campaign_auto_post",
     payload: payload || {},
+    ctx: ctx || null,
     status: "queued",
     createdAt: new Date().toISOString(),
   };
