@@ -101,7 +101,7 @@ export function ScriptsPage() {
             <Card title="Configuration">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                        <label className="block text-sm font-medium text-gray-200 mb-1">
                             Count
                         </label>
                         <Input
@@ -114,7 +114,7 @@ export function ScriptsPage() {
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                        <label className="block text-sm font-medium text-gray-200 mb-1">
                             CTA Style
                         </label>
                         <Select value={ctaStyle} onChange={(e) => setCtaStyle(e.target.value)}>
@@ -126,7 +126,7 @@ export function ScriptsPage() {
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                        <label className="block text-sm font-medium text-gray-200 mb-1">
                             Length (seconds)
                         </label>
                         <Input
@@ -166,26 +166,26 @@ export function ScriptsPage() {
                                 </div>
 
                                 <div>
-                                    <p className="text-sm text-gray-600 font-medium">Hook:</p>
-                                    <p className="text-gray-800">{script.hook}</p>
+                                    <p className="text-[11px] text-primary-300 font-medium uppercase tracking-wider">Hook:</p>
+                                    <p className="text-gray-100">{script.hook}</p>
                                 </div>
 
                                 <div>
-                                    <p className="text-sm text-gray-600 font-medium">Verse:</p>
-                                    <p className="text-gray-800">
+                                    <p className="text-[11px] text-primary-300 font-medium uppercase tracking-wider">Verse:</p>
+                                    <p className="text-gray-100">
                                         {script.verse}{' '}
-                                        <span className="text-gray-500 text-sm italic">{script.reference}</span>
+                                        <span className="text-gray-300 text-sm italic">{script.reference}</span>
                                     </p>
                                 </div>
 
                                 <div>
-                                    <p className="text-sm text-gray-600 font-medium">Reflection:</p>
-                                    <p className="text-gray-800">{script.reflection}</p>
+                                    <p className="text-[11px] text-primary-300 font-medium uppercase tracking-wider">Reflection:</p>
+                                    <p className="text-gray-100">{script.reflection}</p>
                                 </div>
 
                                 <div>
-                                    <p className="text-sm text-gray-600 font-medium">CTA:</p>
-                                    <p className="text-gray-800">{script.cta}</p>
+                                    <p className="text-[11px] text-primary-300 font-medium uppercase tracking-wider">CTA:</p>
+                                    <p className="text-gray-100">{script.cta}</p>
                                 </div>
 
                                 {script.hashtags && script.hashtags.length > 0 && (

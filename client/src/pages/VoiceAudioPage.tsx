@@ -1159,7 +1159,10 @@ export function VoiceAudioPage() {
                                 <Button
                                     variant="secondary"
                                     className="text-xs h-8"
-                                    onClick={() => setCloneSamplePath(audioPath)}
+                                    onClick={() => {
+                                        setCloneSamplePath(audioPath);
+                                        toast.success('Sample path loaded from current audio. Click Clone Voice to proceed.');
+                                    }}
                                     disabled={!audioPath}
                                 >
                                     Use Current Audio Path
@@ -1228,12 +1231,15 @@ export function VoiceAudioPage() {
                             {voicePresets.map((p) => (
                                 <div key={p.id} className="border border-gray-200 rounded-lg p-3 flex items-center justify-between">
                                     <div>
-                                        <div className="text-sm font-semibold text-gray-800">{p.label}</div>
-                                        <div className="text-[10px] text-gray-500">Voice ID: {p.voiceId || 'not set'}</div>
-                                        <div className="text-[10px] text-gray-500">Stability {p.stability} • Similarity {p.similarity}</div>
+                                        <div className="text-sm font-semibold text-white">{p.label}</div>
+                                        <div className="text-[10px] text-gray-300">Voice ID: {p.voiceId || 'not set'}</div>
+                                        <div className="text-[10px] text-gray-300">Stability {p.stability} • Similarity {p.similarity}</div>
                                     </div>
                                     <div className="flex items-center gap-2">
-                                        <Button variant="secondary" className="text-xs h-8" onClick={() => applyPreset(p)}>
+                                        <Button variant="secondary" className="text-xs h-8" onClick={() => {
+                                            applyPreset(p);
+                                            toast.success(`Applied preset: ${p.label}`);
+                                        }}>
                                             Use
                                         </Button>
                                         <Button variant="secondary" className="text-xs h-8" onClick={() => removePreset(p.id)}>
@@ -1249,7 +1255,7 @@ export function VoiceAudioPage() {
                 {(activeTab === 'all' || activeTab === 'record') && (
                 <Card title="2. Record / Upload">
                     <div className="space-y-4">
-                        <p className="text-sm text-gray-600">
+                        <p className="text-sm text-gray-200">
                             Record directly in the browser or upload an audio file. The result is saved to outputs and becomes selectable across Render and Timeline.
                         </p>
                         <div className="flex flex-wrap gap-2">
@@ -1298,7 +1304,7 @@ export function VoiceAudioPage() {
 
                 {(activeTab === 'all' || activeTab === 'treatment') && (
                 <Card title="3. Audio Treatment">
-                    <p className="text-sm text-gray-600 mb-4">
+                    <p className="text-sm text-gray-200 mb-4">
                         Choose a preset, then tweak controls. Click <strong>Process Audio</strong> to generate a
                         cleaned MP3 and auto-fill Audio Path.
                     </p>
@@ -1312,19 +1318,19 @@ export function VoiceAudioPage() {
                             Audio Treatment Guide
                         </button>
                         {showGuide && (
-                            <div className="mt-3 text-xs text-gray-600 space-y-2">
-                                <p><strong>Preset:</strong> quick starting point. Use Clean Voice for most narration.</p>
-                                <p><strong>Denoise:</strong> reduces background noise. 0.2 to 0.6 is typical.</p>
-                                <p><strong>Gate (dB):</strong> mutes low-level noise between phrases. More negative = gentler.</p>
-                                <p><strong>Highpass:</strong> removes rumble (60 to 120Hz for voice).</p>
-                                <p><strong>Lowpass:</strong> removes hiss (10 to 14kHz for voice).</p>
-                                <p><strong>Comp Ratio/Threshold:</strong> smooths peaks. Higher ratio = tighter dynamics.</p>
-                                <p><strong>LUFS:</strong> loudness target. -16 is good for social; -14 is punchier.</p>
-                                <p><strong>Remove Silence:</strong> trims leading silence only (safe mode).</p>
-                                <p><strong>De-esser:</strong> reduces harsh s sounds (0.3 to 0.7 typical).</p>
-                                <p><strong>Limiter:</strong> catches peaks to avoid clipping (ceiling around -1dB).</p>
-                                <p><strong>Presence Boost:</strong> adds clarity around 3 to 5kHz if voice sounds dull.</p>
-                                <p className="text-[10px] text-gray-500">
+                            <div className="mt-3 text-xs text-gray-200 space-y-2">
+                                <p><strong className="text-primary-300">Preset:</strong> quick starting point. Use Clean Voice for most narration.</p>
+                                <p><strong className="text-primary-300">Denoise:</strong> reduces background noise. 0.2 to 0.6 is typical.</p>
+                                <p><strong className="text-primary-300">Gate (dB):</strong> mutes low-level noise between phrases. More negative = gentler.</p>
+                                <p><strong className="text-primary-300">Highpass:</strong> removes rumble (60 to 120Hz for voice).</p>
+                                <p><strong className="text-primary-300">Lowpass:</strong> removes hiss (10 to 14kHz for voice).</p>
+                                <p><strong className="text-primary-300">Comp Ratio/Threshold:</strong> smooths peaks. Higher ratio = tighter dynamics.</p>
+                                <p><strong className="text-primary-300">LUFS:</strong> loudness target. -16 is good for social; -14 is punchier.</p>
+                                <p><strong className="text-primary-300">Remove Silence:</strong> trims leading silence only (safe mode).</p>
+                                <p><strong className="text-primary-300">De-esser:</strong> reduces harsh s sounds (0.3 to 0.7 typical).</p>
+                                <p><strong className="text-primary-300">Limiter:</strong> catches peaks to avoid clipping (ceiling around -1dB).</p>
+                                <p><strong className="text-primary-300">Presence Boost:</strong> adds clarity around 3 to 5kHz if voice sounds dull.</p>
+                                <p className="text-[10px] text-gray-400">
                                     Pro effects we can add next: multiband EQ, expander, saturation, room removal, and breath control.
                                 </p>
                             </div>
@@ -1333,7 +1339,7 @@ export function VoiceAudioPage() {
 
                     <div className="space-y-4">
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Preset</label>
+                            <label className="block text-sm font-medium text-gray-200 mb-1">Preset</label>
                             <Select value={preset} onChange={(e) => setPreset(e.target.value)}>
                                 <option value="clean_voice">Clean voice (recommended)</option>
                                 <option value="podcast">Podcast (louder)</option>
@@ -1344,7 +1350,7 @@ export function VoiceAudioPage() {
 
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                             <div>
-                                <label className="block text-xs font-medium text-gray-600 mb-1">
+                                <label className="block text-xs font-medium text-gray-200 mb-1">
                                     Denoise (0-1)
                                 </label>
                                 <Input
@@ -1358,7 +1364,7 @@ export function VoiceAudioPage() {
                             </div>
 
                             <div>
-                                <label className="block text-xs font-medium text-gray-600 mb-1">
+                                <label className="block text-xs font-medium text-gray-200 mb-1">
                                     Gate (dB)
                                 </label>
                                 <Input
@@ -1372,7 +1378,7 @@ export function VoiceAudioPage() {
                             </div>
 
                             <div>
-                                <label className="block text-xs font-medium text-gray-600 mb-1">
+                                <label className="block text-xs font-medium text-gray-200 mb-1">
                                     Highpass (Hz)
                                 </label>
                                 <Input
@@ -1386,7 +1392,7 @@ export function VoiceAudioPage() {
                             </div>
 
                             <div>
-                                <label className="block text-xs font-medium text-gray-600 mb-1">
+                                <label className="block text-xs font-medium text-gray-200 mb-1">
                                     Lowpass (Hz)
                                 </label>
                                 <Input
@@ -1400,7 +1406,7 @@ export function VoiceAudioPage() {
                             </div>
 
                             <div>
-                                <label className="block text-xs font-medium text-gray-600 mb-1">
+                                <label className="block text-xs font-medium text-gray-200 mb-1">
                                     Comp Ratio
                                 </label>
                                 <Input
@@ -1414,7 +1420,7 @@ export function VoiceAudioPage() {
                             </div>
 
                             <div>
-                                <label className="block text-xs font-medium text-gray-600 mb-1">
+                                <label className="block text-xs font-medium text-gray-200 mb-1">
                                     Comp Threshold (dB)
                                 </label>
                                 <Input
@@ -1428,7 +1434,7 @@ export function VoiceAudioPage() {
                             </div>
 
                             <div>
-                                <label className="block text-xs font-medium text-gray-600 mb-1">
+                                <label className="block text-xs font-medium text-gray-200 mb-1">
                                     LUFS Target
                                 </label>
                                 <Input
@@ -1442,7 +1448,7 @@ export function VoiceAudioPage() {
                             </div>
 
                             <div>
-                                <label className="block text-xs font-medium text-gray-600 mb-1">
+                                <label className="block text-xs font-medium text-gray-200 mb-1">
                                     Remove Silence
                                 </label>
                                 <Select
@@ -1466,7 +1472,7 @@ export function VoiceAudioPage() {
                             {showAdvanced && (
                                 <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-4">
                                     <div>
-                                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                                        <label className="block text-xs font-medium text-gray-200 mb-1">
                                             De-esser (0-1)
                                         </label>
                                         <Input
@@ -1480,7 +1486,7 @@ export function VoiceAudioPage() {
                                     </div>
 
                                     <div>
-                                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                                        <label className="block text-xs font-medium text-gray-200 mb-1">
                                             Limiter Ceiling (dB)
                                         </label>
                                         <Input
@@ -1494,7 +1500,7 @@ export function VoiceAudioPage() {
                                     </div>
 
                                     <div>
-                                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                                        <label className="block text-xs font-medium text-gray-200 mb-1">
                                             Presence Boost (dB)
                                         </label>
                                         <Input
@@ -1508,7 +1514,7 @@ export function VoiceAudioPage() {
                                     </div>
 
                                     <div>
-                                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                                        <label className="block text-xs font-medium text-gray-200 mb-1">
                                             Presence Freq (Hz)
                                         </label>
                                         <Input
@@ -1522,7 +1528,7 @@ export function VoiceAudioPage() {
                                     </div>
 
                                     <div>
-                                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                                        <label className="block text-xs font-medium text-gray-200 mb-1">
                                             Presence Q
                                         </label>
                                         <Input
@@ -1577,7 +1583,7 @@ export function VoiceAudioPage() {
                 {(activeTab === 'all' || activeTab === 'treatment') && (
                 <Card title="Recent Audio (Saved)">
                     {audioHistory.length === 0 ? (
-                        <p className="text-sm text-gray-500">No processed or uploaded audio yet.</p>
+                        <p className="text-sm text-gray-300">No processed or uploaded audio yet.</p>
                     ) : (
                         <div className="space-y-3">
                             {(showAllRecent ? audioHistory : audioHistory.slice(0, 6)).map((item) => (
@@ -1586,11 +1592,11 @@ export function VoiceAudioPage() {
                                     className="flex flex-col md:flex-row md:items-center gap-3 bg-gray-50 rounded-lg p-3"
                                 >
                                     <div className="flex-1">
-                                        <p className="text-xs text-gray-600 uppercase tracking-wider">
+                                        <p className="text-xs text-primary-300 uppercase tracking-wider">
                                             {item.kind}
                                         </p>
-                                        <p className="text-sm font-mono text-gray-800 break-all">{item.path}</p>
-                                        <p className="text-[10px] text-gray-500 mt-1">
+                                        <p className="text-sm font-mono text-gray-100 break-all">{item.path}</p>
+                                        <p className="text-[10px] text-gray-300 mt-1">
                                             {new Date(item.createdAt).toLocaleString()}
                                         </p>
                                     </div>
@@ -1598,7 +1604,24 @@ export function VoiceAudioPage() {
                                         <Button
                                             variant="secondary"
                                             className="text-xs h-8"
-                                            onClick={() => setAudioPath(item.path)}
+                                            onClick={() => {
+                                                setAudioPath(item.path);
+                                                toast.success(
+                                                    (t) => (
+                                                        <span>
+                                                            Audio path set as current.{' '}
+                                                            <Link
+                                                                to="/app/render"
+                                                                className="underline text-primary-300 font-semibold"
+                                                                onClick={() => toast.dismiss(t.id)}
+                                                            >
+                                                                Open Render →
+                                                            </Link>
+                                                        </span>
+                                                    ),
+                                                    { duration: 6000 },
+                                                );
+                                            }}
                                         >
                                             <Play size={14} className="mr-2" />
                                             Use
@@ -1645,7 +1668,7 @@ export function VoiceAudioPage() {
                                 <Music size={14} className="mr-2" />
                                 Load Music Library
                             </Button>
-                            <span className="text-[10px] text-gray-500">
+                            <span className="text-[10px] text-gray-300">
                                 Use any audio file from outputs as a soundtrack for Render.
                             </span>
                         </div>
@@ -1655,10 +1678,10 @@ export function VoiceAudioPage() {
                                 {musicItems.slice(0, 20).map((item: any) => (
                                     <div key={item.path || item.name} className="flex flex-col md:flex-row md:items-center gap-3 bg-gray-50 rounded-lg p-3">
                                         <div className="flex-1">
-                                            <p className="text-xs text-gray-600 uppercase tracking-wider">{item.name || 'Audio'}</p>
-                                            <p className="text-xs font-mono text-gray-800 break-all">{item.path}</p>
+                                            <p className="text-xs text-primary-300 uppercase tracking-wider">{item.name || 'Audio'}</p>
+                                            <p className="text-xs font-mono text-gray-100 break-all">{item.path}</p>
                                             {item.mtime && (
-                                                <p className="text-[10px] text-gray-500 mt-1">{new Date(item.mtime).toLocaleString()}</p>
+                                                <p className="text-[10px] text-gray-300 mt-1">{new Date(item.mtime).toLocaleString()}</p>
                                             )}
                                         </div>
                                         <audio controls src={toOutputUrl(item.path, api.baseUrl)} className="w-full md:w-64" />
@@ -1672,11 +1695,11 @@ export function VoiceAudioPage() {
                                     </div>
                                 ))}
                                 {musicItems.length > 20 && (
-                                    <p className="text-[10px] text-gray-500">Showing latest 20 items.</p>
+                                    <p className="text-[10px] text-gray-300">Showing latest 20 items.</p>
                                 )}
                             </div>
                         ) : (
-                            <p className="text-sm text-gray-500">No audio files found. Upload or process audio first.</p>
+                            <p className="text-sm text-gray-300">No audio files found. Upload or process audio first.</p>
                         )}
                     </div>
                 </Card>
