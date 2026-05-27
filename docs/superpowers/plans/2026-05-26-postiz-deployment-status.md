@@ -31,24 +31,54 @@ Sub-application FQDN binding can NOT be set via the public REST API on service s
 
 When you set the FQDN to `https://postiz.tiwaton.co.uk` (no `:5000`), Coolify shows a stern warning saying the service "may become unreachable". **Ignore it.** That warning refers to the container's *internal* port — Traefik handles the 443→5000 mapping silently. Putting `:5000` in the public URL would have made the URL ugly and broken Let's Encrypt (which prefers standard 443).
 
-## Next step (~30 seconds)
+## Gotcha #2 — Bare-hostname URL bug (post-first-deploy)
 
-1. Open the Coolify service page: https://coolify.tiwaton.co.uk/project/vos8co8cow8w8wgcwkkwg4w8/environment/yo0kcwsg04gkk4ko4ok488c8/service/q7o8e8gdc94gzgq4x8m6kh6w
-2. Click **Deploy** (top right)
-3. Wait 60-90 seconds (initial container pulls + DB migrations + Let's Encrypt cert issuance)
-4. Watch the logs on the `postiz` sub-app — first deploy may briefly show ECONNREFUSED to postgres before the healthcheck passes; that's fine
-5. Verify:
-   ```bash
-   curl -I https://postiz.tiwaton.co.uk/
-   # Expect HTTP/2 200 or 302 to /auth/login
-   ```
+After the first successful Deploy on 2026-05-27, the Postiz container crash-looped with:
 
-If the post-deploy logs show actual errors (vs. the temporary DB race), the usual culprits are:
-- **ECONNREFUSED postiz-postgres:5432** — retry once Postgres healthcheck passes (~30s after first start)
-- **JWT_SECRET malformed** — unlikely (96 random hex chars), but cross-check Coolify env tab
-- **TEMPORAL_ADDRESS required** — would mean `IS_GENERAL=true` isn't being honoured; add temporal back to the compose
+```
+TypeError: Invalid URL
+  at new URL (node:internal/url:825:25)
+  at startMcp (/app/.../start.mcp.js:47:23)
+  base: "postiz.tiwaton.co.uk:5000/api"
+```
 
-If the public URL 404s or 502s after Deploy completes, only then revert FQDN to `:5000` as a fallback (and update `POSTIZ_URL` accordingly in Biblefuel's env).
+**Root cause:** the magic env vars `SERVICE_FQDN_POSTIZ` and `SERVICE_FQDN_POSTIZ_5000` are auto-populated by Coolify based on the sub-app FQDN, but they store the value **without the `https://` prefix**. The compose interpolates them directly into `MAIN_URL` / `FRONTEND_URL` / `NEXT_PUBLIC_BACKEND_URL`, so those container env vars end up as bare hostnames like `postiz.tiwaton.co.uk:5000` — which Node's `URL` constructor rejects.
+
+**Fix (already applied via API):**
+```
+SERVICE_FQDN_POSTIZ      = https://postiz.tiwaton.co.uk
+SERVICE_FQDN_POSTIZ_5000 = https://postiz.tiwaton.co.uk
+```
+
+PATCHed both via `PATCH /api/v1/services/{uuid}/envs` then `POST /restart`. The Coolify-managed flag on those vars meant a manual UI edit would have worked too; the API path saved a click.
+
+## Gotcha #3 — Postiz needs Temporal (parked)
+
+Logs after the URL-fix deploy showed:
+
+```
+ERROR Backend failed to start on port 3000
+Error: 14 UNAVAILABLE: No connection established.
+  Last error: Error: connect ECONNREFUSED ::1:7233.
+  at TemporalRegister.onModuleInit (temporal.register.js:17:71)
+```
+
+`IS_GENERAL=true` was supposed to skip Temporal but doesn't — Postiz still calls `TemporalRegister.onModuleInit` unconditionally. The compose was patched to add a `postiz-temporal` service (`temporalio/auto-setup:1.22` with `DB=postgres12` pointing at the shared postiz-postgres). Even after that, the public URL stayed at 503 — likely Temporal first-boot DB migration takes 5+ min and we ran out of patience.
+
+## Status: parked
+
+**Containers left running in Coolify**, no further deploy attempts. The compose currently in place is the v5 with Temporal added (`c:/tmp/postiz-compose-v5.yml`).
+
+**Biblefuel side:** `POSTIZ_URL` is unset in `server/.env`, so `/api/postiz/status` returns 503, the Postiz/AutoPublish cards in Settings render `null`, and the ShareSheet hides the per-platform buttons. Users still get Download / Copy / Web Share / intent URLs — zero impact on the app.
+
+**Why we stopped:** even if Postiz were fully up, none of the OAuth apps (TikTok / Meta / X / LinkedIn / YouTube) are registered yet. Without those, the Postiz connect buttons return `oauth_app_not_configured`. The OAuth audits take days-to-weeks of paperwork; revisit when there's energy for that.
+
+## To resume later
+
+1. Check container status in Coolify UI — is `postiz-temporal` showing "Running (healthy)"?
+2. If yes: hit the public URL; if still 503, grab fresh `postiz` (main app) logs
+3. If Temporal is the blocker, easiest path is to delete the service and recreate from Postiz's official compose at https://github.com/gitroomhq/postiz-app/blob/main/var/docker/docker-compose.dev.yaml — that one is known-good with their current backend
+4. Once URL loads, follow the original "first-time setup" flow: sign up admin → generate API key → add `POSTIZ_URL=https://postiz.tiwaton.co.uk` + `POSTIZ_API_KEY=<key>` to `server/.env` → restart Biblefuel
 
 ## After the manual step — Postiz first-time setup
 
