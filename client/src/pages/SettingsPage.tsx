@@ -40,8 +40,17 @@ type SocialSchedule = {
 export function SettingsPage() {
     const { config } = useConfig();
     const { features } = config;
-    const { email: authEmail, emailVerified, logout } = useAuth();
+    const { email: authEmail, emailVerified, isSuperAdmin, logout } = useAuth();
     const [activeSection, setActiveSection] = useState<'api' | 'voice' | 'social' | 'app'>('api');
+
+    // Defensive: if a non-admin somehow lands on the social section (e.g.
+    // returning from a stale URL after losing admin), bounce them back to
+    // a safe tab they're allowed to see.
+    useEffect(() => {
+        if (!isSuperAdmin && activeSection === 'social') {
+            setActiveSection('api');
+        }
+    }, [isSuperAdmin, activeSection]);
     const [bufferToken, setBufferToken] = useState('');
     const [bufferProfiles, setBufferProfiles] = useState<{ id: string; service: string; formatted_service: string }[]>([]);
     const [selectedProfiles, setSelectedProfiles] = useState<string[]>([]);
@@ -270,9 +279,17 @@ export function SettingsPage() {
                 <Button variant={activeSection === 'voice' ? 'primary' : 'secondary'} className="text-xs h-8" onClick={() => setActiveSection('voice')}>
                     Voice Synthesis
                 </Button>
-                <Button variant={activeSection === 'social' ? 'primary' : 'secondary'} className="text-xs h-8" onClick={() => setActiveSection('social')}>
-                    Social Automation
-                </Button>
+                {/* Social Automation hides per-user OAuth keys (Buffer, Zapier,
+                    YouTube, TikTok…) that only the operator should manage
+                    centrally for now. Regular users still get the auto-publish
+                    scheduling UI above; what's hidden here is the credential
+                    wiring. Re-enable once we ship a normie-friendly auto-share
+                    onboarding flow. */}
+                {isSuperAdmin && (
+                    <Button variant={activeSection === 'social' ? 'primary' : 'secondary'} className="text-xs h-8" onClick={() => setActiveSection('social')}>
+                        Social Automation
+                    </Button>
+                )}
                 <Button variant={activeSection === 'app' ? 'primary' : 'secondary'} className="text-xs h-8" onClick={() => setActiveSection('app')}>
                     App Info
                 </Button>
@@ -318,7 +335,7 @@ export function SettingsPage() {
                 <VoiceSynthesisPanel />
             )}
 
-            {activeSection === 'social' && (
+            {activeSection === 'social' && isSuperAdmin && (
                 <Card title="Social Automation">
                     <div className="space-y-4">
                         <div className="text-xs text-gray-500">

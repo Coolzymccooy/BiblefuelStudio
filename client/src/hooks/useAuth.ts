@@ -14,6 +14,8 @@ interface AuthState {
     firebaseEnabled: boolean;
     emailVerified: boolean;
     email: string | null;
+    role: string | null;
+    isSuperAdmin: boolean;
     isLoading: boolean;
     error: string | null;
 
@@ -34,6 +36,8 @@ export const useAuth = create<AuthState>((set, get) => ({
     firebaseEnabled: false,
     emailVerified: false,
     email: null,
+    role: null,
+    isSuperAdmin: false,
     isLoading: false,
     error: null,
 
@@ -54,6 +58,8 @@ export const useAuth = create<AuthState>((set, get) => ({
                     firebaseEnabled,
                     emailVerified: false,
                     email: null,
+                    role: null,
+                    isSuperAdmin: false,
                     isLoading: false,
                     error: meResponse.status === 401 ? 'Session expired. Please login again.' : (meResponse.error || 'Failed to validate session'),
                 });
@@ -69,6 +75,8 @@ export const useAuth = create<AuthState>((set, get) => ({
                 firebaseEnabled,
                 emailVerified: verified,
                 email: me.email || null,
+                role: me.role || null,
+                isSuperAdmin: me.role === 'super_admin',
                 isLoading: false,
                 error: null,
             });
@@ -78,6 +86,8 @@ export const useAuth = create<AuthState>((set, get) => ({
                 firebaseEnabled,
                 emailVerified: false,
                 email: null,
+                role: null,
+                isSuperAdmin: false,
                 isLoading: false,
                 error: statusResponse.ok ? null : (statusResponse.error || 'Failed to check auth status'),
             });
@@ -217,6 +227,6 @@ export const useAuth = create<AuthState>((set, get) => ({
 
     logout: () => {
         api.setToken(null);
-        set({ token: null, hasUser: false, emailVerified: false, email: null, error: null });
+        set({ token: null, hasUser: false, emailVerified: false, email: null, role: null, isSuperAdmin: false, error: null });
     },
 }));
