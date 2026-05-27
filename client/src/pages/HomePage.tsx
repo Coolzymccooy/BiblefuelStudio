@@ -433,16 +433,29 @@ export function HomePage() {
                 {/* RIGHT — form column. Holds the full sign-in flow on every
                     breakpoint. On mobile this column is the whole page. */}
                 <div className="relative z-10 flex items-center justify-center px-5 py-10 sm:px-8 sm:py-14 lg:px-12">
+                    {/* Back-to-home affordance. Top-left on lg+, top-right on
+                        mobile (where the wordmark sits below it). Always
+                        present so users can exit the auth flow. */}
+                    <Link
+                        to="/"
+                        className="absolute left-5 top-5 z-20 inline-flex items-center gap-1.5 font-sans text-[10px] uppercase tracking-[2px] text-editorial-gold/70 hover:text-editorial-goldLite transition-colors sm:left-8 sm:top-8 lg:left-12 lg:top-10"
+                        title="Back to home"
+                    >
+                        <span aria-hidden="true">←</span>
+                        Back to home
+                    </Link>
+
                     <div className="flex w-full max-w-[440px] flex-col items-center gap-6">
                         {/* Wordmark only appears on mobile/tablet — on lg the
-                            left panel already carries the brand. */}
-                        <div className="flex items-center gap-3 lg:hidden">
+                            left panel already carries the brand. Clickable so
+                            tapping the brand returns to the landing page. */}
+                        <Link to="/" className="flex items-center gap-3 lg:hidden" title="Back to home">
                             <span
                                 className="font-displaySerif italic text-[40px] leading-none tracking-tight bg-clip-text text-transparent bg-gradient-to-b from-editorial-cream via-editorial-goldLite to-editorial-gold drop-shadow-[0_12px_30px_rgba(212,175,110,0.25)] sm:text-[44px]"
                             >
                                 Biblefuel
                             </span>
-                        </div>
+                        </Link>
 
                         <div className="w-full">
                         <div className="flex w-full flex-col rounded-[2rem] border border-editorial-gold/15 bg-[#15110a] p-5 shadow-[0_34px_110px_rgba(0,0,0,0.7),inset_0_1px_0_rgba(212,175,110,0.10)] sm:p-6">
@@ -544,13 +557,22 @@ export function HomePage() {
                                         <Globe size={16} className="mr-2" />
                                         Sign up with Google
                                     </Button>
-                                    <button
-                                        type="button"
-                                        onClick={() => setView('login')}
-                                        className="w-full text-sm text-gray-400 hover:text-white transition-colors"
-                                    >
-                                        Already have an account? <span className="font-semibold text-blue-300">Sign in</span>
-                                    </button>
+                                    <div className="flex flex-col items-center gap-2 pt-1">
+                                        <button
+                                            type="button"
+                                            onClick={() => setView('login')}
+                                            className="text-sm text-gray-400 hover:text-white transition-colors"
+                                        >
+                                            Already have an account? <span className="font-semibold text-blue-300">Sign in</span>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setView('forgot-password')}
+                                            className="text-xs text-gray-500 hover:text-blue-300 transition-colors"
+                                        >
+                                            Forgot password?
+                                        </button>
+                                    </div>
                                 </form>
                             )}
 

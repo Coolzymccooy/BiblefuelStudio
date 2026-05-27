@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import { Link } from 'react-router-dom';
 import { EDITORIAL_EASE } from './motion';
 import { DEFAULT_VERSES } from './KineticVerse';
 
@@ -43,11 +44,16 @@ export function LoginBackdrop() {
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(212,175,110,0.12),transparent_55%),radial-gradient(circle_at_85%_85%,rgba(107,79,31,0.18),transparent_55%)]" />
       <div className="pointer-events-none absolute -left-32 top-1/3 h-[480px] w-[480px] rounded-full bg-editorial-goldLite/8 blur-[140px]" />
 
-      {/* Kicker — top-left, anchors the panel to the brand. */}
-      <div className="relative z-10 font-sans text-[10px] uppercase tracking-[3px] text-editorial-gold/80">
+      {/* Kicker — top-left. Also the way back to the public landing page. */}
+      <Link
+        to="/"
+        className="relative z-10 inline-flex w-fit items-center gap-2 font-sans text-[10px] uppercase tracking-[3px] text-editorial-gold/80 hover:text-editorial-goldLite transition-colors"
+        title="Back to home"
+      >
+        <span aria-hidden="true">←</span>
         <span className="hidden sm:inline">Biblefuel · </span>
         Rendered live
-      </div>
+      </Link>
 
       {/* Scripture body — vertically centred, word-by-word reveal. */}
       <div className="relative z-10 flex flex-1 items-center py-8">
