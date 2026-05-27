@@ -4,30 +4,32 @@
 
 ## 0. Boot the test environment
 
-From this worktree root in PowerShell:
+From this worktree root in **one** PowerShell window:
 
 ```powershell
 .\start-test.ps1
 ```
 
-That spawns two windows:
-- **Server** — Express + jobs worker on `http://localhost:5051`
-- **Client** — Vite dev (HMR) on `http://localhost:5174`
+Runs Biblefuel in production-style mode: the Express server serves the prebuilt client bundle from `server/public/` at **http://localhost:5174**. No vite dev server, no proxy, no second terminal. This is the same shape Coolify deploys in production, so what you smoke-test here is what ships.
 
 Open `http://localhost:5174` in **incognito**. The first time you sign up, you get a fresh per-user data dir under `server/data/users/<uid>/`.
 
 ### Test env baseline (already set in `server/.env`)
 
+Production-aligned: every gate is at its real production value so you actually exercise the feature, not a dev bypass.
+
 | Key | Value | Why |
 |---|---|---|
-| `MULTITENANT` | `true` | Isolates per-user data — required for tests 13/14 |
-| `SUPER_ADMIN_EMAIL` | `coolshegz@gmail.com` | YOUR admin email keeps unlimited quotas; non-admin emails hit free-tier limits |
-| `REQUIRE_EMAIL_VERIFIED` | `false` | Skips the verify-email gate so signup flows straight through. Flip to `true` to exercise the gate (test 4b) |
-| `RESEND_API_KEY` | _empty_ | Email transport runs in stub mode (logs to console, no real send) |
-| `STRIPE_SECRET_KEY` | _unset_ | Billing returns 503; upgrade buttons hide |
-| `POSTIZ_URL` | _unset_ | Postiz/AutoPublish cards hide |
+| `PORT` | `5174` | Single URL: http://localhost:5174 |
+| `MULTITENANT` | `true` | Per-user data isolation (required for tests 23/24) |
+| `SUPER_ADMIN_EMAIL` | `coolshegz@gmail.com` | YOUR admin email — gets unlimited quotas. **Don't sign up with this email for tests that check free-tier behaviour or multi-tenancy isolation.** |
+| `REQUIRE_EMAIL_VERIFIED` | `true` | Email-verification gate is ON. Signup → "check your email" interstitial → click verify link in the Firebase email → gated routes unlock |
+| `RESEND_API_KEY` | _empty_ | Email transport runs in stub mode — logs the email body to the server window console instead of delivering. Drop a real Resend key in `server/.env` to switch to live delivery. |
+| `ACCESS_REQUEST_NOTIFY_TO` | `coolshegz@gmail.com` | Recipient when Resend goes live |
+| `STRIPE_SECRET_KEY` | _unset_ | Billing routes return 503; upgrade buttons hide. Add a `sk_test_…` key + `STRIPE_PREMIUM_PRICE_ID` + `STRIPE_WEBHOOK_SECRET` to exercise checkout |
+| `POSTIZ_URL` | _unset_ | Postiz/AutoPublish cards hide (Postiz containers exist but are parked — see `docs/superpowers/plans/2026-05-26-postiz-deployment-status.md`) |
 
-> **Pin your test account.** Use one normal email (e.g. `test+<timestamp>@gmail.com`) for the quota/multitenancy tests. Don't use `coolshegz@gmail.com` for those — super-admin bypasses every quota and isolation check.
+> **Pin your test account.** Use a non-super-admin email (e.g. `test+<timestamp>@gmail.com`) for quota/multitenancy tests. `coolshegz@gmail.com` bypasses every quota and isolation check by design.
 
 ### Reset state between full runs
 
@@ -99,25 +101,29 @@ Don't delete `server/data/library.json` or `server/data/jobs.json` — those are
 
 ## C. Signup + login flow *(both agents — UI meets server)*
 
-10. **Signup flow (REQUIRE_EMAIL_VERIFIED=false)**
+10. **Signup creates account and triggers verification email**
     - From landing → Login/Signup → switch to "Signup" → use `test+<timestamp>@gmail.com` + a password → submit
-    - ✅ Logged in, dashboard at `/app` visible, sidebar now shows nav links
-    - ❌ FAIL: signup throws, or stays on sign-in form
+    - ✅ Toast says "check your email" (or equivalent); user is signed in BUT in "unverified" state
+    - ✅ A Firebase verification email lands at that address (check inbox; may be in Promotions/Spam)
+    - ❌ FAIL: signup throws, or no email is queued
 
-11. **Signup flow with email verification (set `REQUIRE_EMAIL_VERIFIED=true`, restart server)**
-    - Repeat step 10 with a fresh email
-    - Before clicking the verify-email link: try to generate a script
-    - ✅ Server returns 403 `EMAIL_NOT_VERIFIED`, UI shows "verify your email" notice
-    - Click the Firebase verify link (or call `firebase.auth().currentUser.reload()` in DevTools console after manual verification)
-    - ✅ Gated routes now work
-    - Revert to `REQUIRE_EMAIL_VERIFIED=false` before continuing
+11. **Gated routes blocked before verification**
+    - Without clicking the verify link yet, try to generate a script (or any expensive route)
+    - ✅ Server returns 403 `EMAIL_NOT_VERIFIED`, UI shows a "verify your email" notice
+    - ❌ FAIL: request goes through without the email being verified
 
-12. **Login rate-limit shows amber-toned friendly 429**
+12. **Verification unlocks gated routes**
+    - Click the verify link in the email → it opens a Firebase page confirming success
+    - Back in the app, reload (or click anywhere that re-fetches `/api/auth/status`)
+    - ✅ Sidebar nav now includes all routes; generate-script call succeeds
+    - ❌ FAIL: still 403 after verification — check server window for `EMAIL_NOT_VERIFIED` and confirm the Firebase token was refreshed
+
+13. **Login rate-limit shows amber-toned friendly 429**
     - Sign out → on login screen, click "Sign in" 6+ times rapidly with a wrong password
     - ✅ Eventually shows amber banner with copy like "Too many attempts in a short window — try again in a minute"
     - ❌ FAIL: raw `429` text, red error styling, or app crash
 
-13. **`/api/auth/status` NOT rate-limited**
+14. **`/api/auth/status` NOT rate-limited**
     - With DevTools Network tab open, sign in successfully, then run in console:
       ```js
       for (let i=0;i<30;i++) fetch('/api/auth/status').then(r => console.log(i, r.status))
@@ -129,17 +135,17 @@ Don't delete `server/data/library.json` or `server/data/jobs.json` — those are
 
 ## D. App shell + per-user data *(both — multitenancy meets new shell)*
 
-14. **New user starts with empty data**
-    - As the user from test 10 (a non-super-admin email), look at Library, Scripts, Jobs, Queue, Series, Settings → Voice Presets
+15. **New user starts with empty data**
+    - As the verified user from tests 10-12 (a non-super-admin email), look at Library, Scripts, Jobs, Queue, Series, Settings → Voice Presets
     - ✅ All empty / no items
     - ❌ FAIL: any prior user's content visible — multitenancy is broken
 
-15. **Toast `<Link>` inside body navigates correctly**
+16. **Toast `<Link>` inside body navigates correctly**
     - Go to Voice / Audio page → click the **Use** button on any item in Recent Audio
     - ✅ Toast appears with copy ending in "Open Render →"; clicking "Open Render →" navigates to `/app/render` with the audio path applied — **no white screen**
     - ❌ FAIL: blank screen after clicking the toast link
 
-16. **Service-worker freshness**
+17. **Service-worker freshness**
     - With DevTools Network tab open, hard-refresh (Ctrl+Shift+R) on any `/app/*` page
     - ✅ `index.html` returns 200 (not 304 from a stale SW); fresh asset hashes load
     - ❌ FAIL: old bundle continues to serve from SW
@@ -148,12 +154,12 @@ Don't delete `server/data/library.json` or `server/data/jobs.json` — those are
 
 ## E. Render + ShareSheet *(my work)*
 
-17. **Render a short video**
+18. **Render a short video**
     - `/app/render` → pick a Library background → enter 1-2 caption lines → "Start Instant Render"
     - ✅ Video renders, "Render Result" card appears with inline player
     - ❌ FAIL: FFmpeg error, infinite spinner, no result card
 
-18. **ShareSheet inside the render result**
+19. **ShareSheet inside the render result**
     - In the result card, verify these are present:
       - [ ] Download MP4 button
       - [ ] Copy link button
@@ -164,36 +170,36 @@ Don't delete `server/data/library.json` or `server/data/jobs.json` — those are
     - Click Copy link → paste somewhere → confirm URL
     - ❌ FAIL: missing buttons, download 404s, clipboard empty, or Postiz section appears
 
-19. **Share button on completed background jobs**
+20. **Share button on completed background jobs**
     - `/app/jobs` → find a "done" render → click the green **Share** button
-    - ✅ ShareSheet opens in a modal with the same options as test 18
+    - ✅ ShareSheet opens in a modal with the same options as test 19
     - ❌ FAIL: modal doesn't open, or video URL is wrong
 
 ---
 
 ## F. Settings *(my work)*
 
-20. **Plan and Usage card visible**
+21. **Plan and Usage card visible**
     - `/app/settings` → top of page
     - ✅ Card shows your plan (`free` for non-admin email) and 4 progress bars (scripts/tts/render/imageGen)
     - ❌ FAIL: card missing, or wrong plan tier
 
-21. **Postiz + AutoPublish cards hidden**
+22. **Postiz + AutoPublish cards hidden**
     - Same settings page
     - ✅ No "Connect social accounts" or "Auto-publish on render" sections rendered
     - ❌ FAIL: broken/empty cards visible
 
-22. **Quota enforcement (free-tier)**
+23. **Quota enforcement (free-tier)**
     - Free-tier render limit = 3/day. As your non-admin test user, queue 4 short renders (durationSec=20)
     - ✅ 4th attempt returns 429 `QUOTA_EXCEEDED`, UI shows an upgrade message
-    - ❌ FAIL: all 4 render with no quota check (would only happen if user is super-admin — confirm with test 14 user)
+    - ❌ FAIL: all 4 render with no quota check (would only happen if user is super-admin — confirm with test 15 user)
 
 ---
 
 ## G. Multi-tenancy isolation *(my work — CRITICAL)*
 
-23. **Two users, two universes (expanded)** *(SHIP BLOCKER)*
-    - Sign out of user 1 → open incognito window 2 → sign up as `test2+<timestamp>@gmail.com`
+24. **Two users, two universes (expanded)** *(SHIP BLOCKER)*
+    - Sign out of user 1 → open incognito window 2 → sign up as `test2+<timestamp>@gmail.com` → verify email so they're fully active
     - As user 2, check **all** of these pages:
       - [ ] Library — empty
       - [ ] Scripts — empty
@@ -205,7 +211,7 @@ Don't delete `server/data/library.json` or `server/data/jobs.json` — those are
     - ✅ All seven empty/clean
     - ❌ FAIL on ANY of them: **DO NOT SHIP** until fixed
 
-24. **Cross-user file URL is gated** *(SHIP BLOCKER)*
+25. **Cross-user file URL is gated** *(SHIP BLOCKER)*
     - As user 2, copy a video URL you saw user 1 generate (e.g. `/outputs/video-<uuid>.mp4` where the uuid was from user 1's render)
     - Paste into a new tab while signed in as user 2
     - ✅ 403 or 404 — file is not served
@@ -215,7 +221,7 @@ Don't delete `server/data/library.json` or `server/data/jobs.json` — those are
 
 ## H. Account self-delete *(my work)*
 
-25. **User can delete their own account end-to-end**
+26. **User can delete their own account end-to-end**
     - As user 2 → Settings → "Danger zone" / Delete account → confirm
     - ✅ Redirected to landing page (`/`), toast confirms deletion
     - In server shell: `ls server/data/users/<user2-uid>/` → no longer exists
@@ -258,6 +264,7 @@ Record results here so the next pass picks up cleanly. Add a new section per run
 | 23 |  |  |
 | 24 |  |  |
 | 25 |  |  |
+| 26 |  |  |
 
 Mark **PASS** / **FAIL** / **SKIP** with a one-line reason for any FAIL or SKIP. Screenshot or curl-output is welcome for FAILs.
 
@@ -266,7 +273,7 @@ Mark **PASS** / **FAIL** / **SKIP** with a one-line reason for any FAIL or SKIP.
 ## What "ship-ready" means
 
 - All A-H pass → safe to fast-forward `master` to `dev` and deploy
-- Test **23** or **24** fail → **HOLD — multitenancy isolation is non-negotiable**
+- Test **24** or **25** fail → **HOLD — multitenancy isolation is non-negotiable**
 - Anything else → file bug, fix on `dev`, re-run failing section only
 
 ## Notes for Coolify side
