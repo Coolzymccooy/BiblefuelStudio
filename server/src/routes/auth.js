@@ -2,7 +2,7 @@ import { Router } from "express";
 import fs from "fs";
 import rateLimit from "express-rate-limit";
 import { z } from "zod";
-import { hasAnyUser, createOwner, verifyUser, signToken, requireAuth, upsertFirebaseUser, deleteUserById } from "../auth.js";
+import { hasAnyUser, createOwner, verifyUser, signToken, requireAuth, upsertFirebaseUser, deleteUserById, getUsersStore } from "../auth.js";
 import { isFirebaseAdminEnabled, verifyFirebaseIdToken } from "../lib/firebaseAdmin.js";
 import { writeUserPlan } from "../lib/userPlanStore.js";
 import { dataDirFor, ensureUserDirs } from "../lib/paths.js";
@@ -34,7 +34,36 @@ router.get("/status", (req, res) => {
 });
 
 router.get("/me", requireAuth, (req, res) => {
-  res.json({ ok: true, user: req.user || null });
+  // The JWT bakes in `emailVerified` at sign-in time, so a user who logs in
+  // before verifying their email gets a stale `false` even after clicking
+  // the verify link. Enrich from the live users.json so the verify-gate
+  // unblocks as soon as the user is marked verified server-side, without
+  // requiring a sign-out/sign-in dance.
+  const claims = req.user || {};
+  try {
+    const store = getUsersStore();
+    const uid = String(claims.sub || "").trim();
+    const email = String(claims.email || "").trim().toLowerCase();
+    const live = (store.users || []).find((u) =>
+      String(u?.id || "") === uid ||
+      String(u?.email || "").toLowerCase() === email
+    );
+    if (live) {
+      return res.json({
+        ok: true,
+        user: {
+          ...claims,
+          email: live.email || claims.email,
+          role: live.role || claims.role,
+          emailVerified: Boolean(live.emailVerified),
+        },
+      });
+    }
+  } catch (err) {
+    // Fall through to claims-only response on store read failure.
+    console.warn("[AUTH] /me enrichment failed:", err?.message || err);
+  }
+  res.json({ ok: true, user: claims });
 });
 
 router.post("/setup", authLimiter, async (req, res) => {

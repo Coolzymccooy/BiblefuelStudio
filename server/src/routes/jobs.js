@@ -1279,9 +1279,23 @@ recoverStaleRunningJobs();
 const _t = setInterval(workerTick, 1000);
 _t.unref();
 
+// Data isolation: jobs.json is a single global store, but each job carries
+// an `ownerId` (the userId that enqueued it). Regular users only see their
+// own jobs; super-admin sees everything (including pre-multitenancy jobs
+// that have no ownerId yet — these were created by the original operator
+// and belong implicitly to the super-admin).
+export function isJobVisibleTo(job, ctx) {
+  if (!job) return false;
+  if (ctx?.isSuperAdmin) return true;
+  const owner = String(job.ownerId || job.ctx?.userId || "").trim();
+  if (!owner) return false; // legacy untagged jobs: super-admin only
+  return owner === String(ctx?.userId || "").trim();
+}
+
 router.get("/", (req, res) => {
   store = loadJobs();
-  const jobs = store.jobs.slice().reverse().slice(0, JOBS_RETENTION).map(withVolatileProgress);
+  const visible = store.jobs.filter((j) => isJobVisibleTo(j, req.ctx));
+  const jobs = visible.slice().reverse().slice(0, JOBS_RETENTION).map(withVolatileProgress);
   res.json({ ok: true, jobs });
 });
 
@@ -1289,6 +1303,7 @@ router.get("/:id", (req, res) => {
   store = loadJobs();
   const j = store.jobs.find(x => x.id === req.params.id);
   if (!j) return res.status(404).json({ ok: false, error: "Not found" });
+  if (!isJobVisibleTo(j, req.ctx)) return res.status(404).json({ ok: false, error: "Not found" });
   res.json({ ok: true, job: withVolatileProgress(j) });
 });
 
@@ -1308,6 +1323,7 @@ router.post("/enqueue", (req, res) => {
   const id = `job_${uuid()}`;
   const job = {
     id, type, payload,
+    ownerId: req.ctx.userId,
     ctx: { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir, userId: req.ctx.userId },
     status: "queued",
     createdAt: new Date().toISOString()
@@ -1339,6 +1355,7 @@ export async function enqueueCampaignAutoPost(payload, ctx) {
     id,
     type: "campaign_auto_post",
     payload: payload || {},
+    ownerId: ctx?.userId || null,
     ctx: ctx || null,
     status: "queued",
     createdAt: new Date().toISOString(),

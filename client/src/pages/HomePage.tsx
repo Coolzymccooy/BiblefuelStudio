@@ -253,28 +253,24 @@ export function HomePage() {
         checkStatus();
     }, [checkStatus]);
 
-    // Phase 2: public signup is OPEN. New visitors land on the signup form
-    // by default; they explicitly switch to login if they already have an
-    // account. The legacy hasUser logic only applies to the non-Firebase
-    // setup-key flow (operator's first-user bootstrap).
+    // Default view selection. The landing page's primary auth CTA is "Sign
+    // in" (the "Request Access" button leads to a separate access-request
+    // form, not the sign-up here), so visitors who reach /app are returning
+    // users much more often than not — default to login. They can toggle
+    // to Register via the link under the form.
+    //
+    // Legacy non-Firebase setup-key flow is the one exception: a brand-new
+    // operator deploy with zero users has to bootstrap the first account.
     useEffect(() => {
-        if (useFirebaseAuth) {
-            // Firebase mode: default to signup; let the user toggle to login.
-            // We only run this on initial mount, not on every render — the
-            // dependency on `view` would trap users on signup.
-            return;
-        }
+        if (useFirebaseAuth) return; // handled by the one-shot init below
         if (!hasUser && view === 'login') setView('setup');
         if (hasUser && view === 'setup') setView('login');
     }, [hasUser, useFirebaseAuth, view]);
 
-    // One-shot initial view selection for Firebase mode.
+    // One-shot initial view selection for Firebase mode. Default to login.
     useEffect(() => {
         if (!useFirebaseAuth) return;
-        // Default new visitors to signup; if they came back with no token but
-        // localStorage suggests they've signed up before, route to login.
-        const hasSignedUpBefore = localStorage.getItem('BF_HAS_ACCOUNT') === '1';
-        setView(hasSignedUpBefore ? 'login' : 'setup');
+        setView('login');
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 

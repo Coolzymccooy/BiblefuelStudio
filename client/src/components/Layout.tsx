@@ -47,13 +47,20 @@ export function Layout() {
     useEffect(() => {
         const onAuthInvalid = () => {
             logout();
-            navigate('/', { replace: true });
+            // Only bounce to the public landing if we're inside the studio
+            // shell. If the user is already on the /app sign-in screen (or any
+            // unauth flow under /app), keep them there — sending them back to
+            // / forces a second navigation just to retry signing in, which
+            // looks like the page is "kicking them out" mid-attempt.
+            if (location.pathname.startsWith('/app') && location.pathname !== '/app') {
+                navigate('/app', { replace: true });
+            }
         };
         window.addEventListener(AUTH_INVALID_EVENT, onAuthInvalid as EventListener);
         return () => {
             window.removeEventListener(AUTH_INVALID_EVENT, onAuthInvalid as EventListener);
         };
-    }, [logout, navigate]);
+    }, [logout, navigate, location.pathname]);
 
     // Auth fence for the studio. Unauthed visitors trying to reach any
     // /app/* sub-route (Wizard, Scripts, Series, etc.) are bounced back
