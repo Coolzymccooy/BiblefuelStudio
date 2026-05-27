@@ -15,7 +15,7 @@ import { isPostizConfigured, postVideo as postizPostVideo } from "../lib/postizC
 import { pickBestBackground, classifyText } from "../lib/categorize.js";
 import { charsToWords, captionWordsFromNativeWords, annotateEmphasis, groupWordsByBeat } from "../lib/captions.js";
 import { alignAudioWithText, isForcedAlignmentAvailable } from "../lib/voice/alignment.js";
-import { buildWordDrawtext, buildLineDrawtext, buildSceneGraph } from "../lib/videoFilters.js";
+import { buildWordDrawtext, buildLineDrawtext, buildSceneGraph, resolveKineticAnimation } from "../lib/videoFilters.js";
 import { buildSocialCaption } from "../lib/socialCaption.js";
 
 const router = Router();
@@ -847,9 +847,13 @@ async function renderAdvancedVideo(payload, jobId) {
     audioDur != null ? audioDur : Math.max(1, Number(durationSec) || graph.totalDuration),
   );
 
+  // Map a kinetic-animation id (lumina catalog) to its concrete preset. Non-
+  // renderable picks degrade to their fallback presetId; existing preset and
+  // category names pass through unchanged.
+  const resolvedPreset = resolveKineticAnimation(typographyPreset)?.presetId || typographyPreset;
   const drawtextChain = Array.isArray(words) && words.length > 0
-    ? buildWordDrawtext({ words, w, h, preset: typographyPreset })
-    : buildLineDrawtext({ lines: Array.isArray(lines) ? lines : [], w, h, preset: typographyPreset });
+    ? buildWordDrawtext({ words, w, h, preset: resolvedPreset })
+    : buildLineDrawtext({ lines: Array.isArray(lines) ? lines : [], w, h, preset: resolvedPreset });
 
   const filterParts = graph.filterParts.slice();
   let videoLabel = graph.videoLabel;

@@ -16,6 +16,7 @@ import {
   describeProviders,
   describeProvidersAsync,
 } from "../lib/voice/index.js";
+import { listKineticAnimations } from "../lib/videoFilters.js";
 
 const router = Router();
 const allowedAudioExt = new Set([".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".webm"]);
@@ -402,6 +403,13 @@ router.get("/profiles", (_req, res) => {
     };
   });
   res.json({ ok: true, profiles });
+});
+
+// Kinetic caption animation catalog (ported from lumina-presenter). Read-only;
+// powers the animation picker. `renderable` flags which entries fully render in
+// the ffmpeg pipeline vs. degrade (browser-only effects listed in `unsupported`).
+router.get("/animations", (_req, res) => {
+  res.json({ ok: true, animations: listKineticAnimations() });
 });
 
 router.post("/synthesize-category", async (req, res) => {

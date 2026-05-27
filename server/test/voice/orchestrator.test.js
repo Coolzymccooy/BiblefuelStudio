@@ -81,6 +81,31 @@ test("withTimestamps prefers timestamp-capable provider over registration order"
   assert.equal(a.calls.length, 0);
 });
 
+test("withTimestamps prefers wordTimestamps over charTimestamps regardless of registration order", async () => {
+  _reset();
+  const a = fake("a", { caps: { charTimestamps: true } }); // char-only, registered FIRST
+  const b = fake("b", { caps: { wordTimestamps: true } }); // word-level, registered SECOND
+  register(a.provider);
+  register(b.provider);
+
+  // Kinetic captions want reliable word boundaries → the word-level provider
+  // (Azure) should win even though a char-level provider registered first.
+  const result = await synthesize({ text: "hello world", withTimestamps: true });
+  assert.equal(result.provider, "b");
+  assert.equal(a.calls.length, 0);
+});
+
+test("withTimestamps falls back from word to char provider when the word provider fails", async () => {
+  _reset();
+  const a = fake("a", { caps: { charTimestamps: true } });
+  const b = fake("b", { caps: { wordTimestamps: true }, fail: "azure down" });
+  register(a.provider);
+  register(b.provider);
+
+  const result = await synthesize({ text: "hello world", withTimestamps: true });
+  assert.equal(result.provider, "a");
+});
+
 test("withTimestamps falls back to non-capable provider if timestamp-capable one fails", async () => {
   _reset();
   const a = fake("a", { caps: { charTimestamps: false } });

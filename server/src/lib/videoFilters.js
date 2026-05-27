@@ -63,7 +63,70 @@ const TYPOGRAPHY_PRESETS = Object.freeze({
     lineBoxOpacity: 0.4,
     lineSizeMult: 0.034,
   },
+
+  // ── Kinetic animation presets (ported from lumina-presenter) ──
+  // These add MOTION fields on top of the size/colour fields above:
+  //   lineEnter   "fade" | "rise-fade"            (line captions)
+  //   wordReveal  "fade" | "rise-fade" | "scale-fade"  (per-word; scale-fade
+  //               is approximated as fade — drawtext fontsize can't animate)
+  //   wordRevealMs  reveal/ease duration in ms
+  //   uppercase   render words uppercase
+  //   shadow      { color, x, y } — static glow approximation
+  // The legacy presets above omit these and keep the hard-cut behaviour.
+  "cinematic-worship": {
+    baseSizeMult: 0.072, emphasisSizeMult: 0.09, baseColor: "white", emphasisColor: "#FCD34D",
+    borderWidth: 5, wordBox: false, lineBoxOpacity: 0.4, lineSizeMult: 0.034,
+    lineEnter: "rise-fade", wordReveal: "fade", wordRevealMs: 380, uppercase: false,
+    shadow: { color: "black@0.6", x: 0, y: 2 },
+  },
+  "cinematic-reactive": {
+    baseSizeMult: 0.073, emphasisSizeMult: 0.092, baseColor: "white", emphasisColor: "#BFD4FF",
+    borderWidth: 5, wordBox: false, lineBoxOpacity: 0.4, lineSizeMult: 0.034,
+    lineEnter: "rise-fade", wordReveal: "fade", wordRevealMs: 380, uppercase: false,
+    shadow: { color: "black@0.6", x: 0, y: 2 },
+  },
+  "scripture-reveal": {
+    baseSizeMult: 0.062, emphasisSizeMult: 0.078, baseColor: "#FCF7E9", emphasisColor: "#FCD34D",
+    borderWidth: 4, wordBox: false, lineBoxOpacity: 0.45, lineSizeMult: 0.032,
+    lineEnter: "fade", wordReveal: "fade", wordRevealMs: 460, uppercase: false,
+    shadow: { color: "black@0.7", x: 0, y: 3 },
+  },
+  "word-boxes": {
+    baseSizeMult: 0.088, emphasisSizeMult: 0.1, baseColor: "white", emphasisColor: "#FFD166",
+    borderWidth: 4, wordBox: true, lineBoxOpacity: 0.5, lineSizeMult: 0.036,
+    lineEnter: "rise-fade", wordReveal: "scale-fade", wordRevealMs: 380, uppercase: true,
+  },
+  "hero-bold": {
+    baseSizeMult: 0.092, emphasisSizeMult: 0.11, baseColor: "white", emphasisColor: "#F59E0B",
+    borderWidth: 6, wordBox: false, lineBoxOpacity: 0.4, lineSizeMult: 0.04,
+    lineEnter: "rise-fade", wordReveal: "rise-fade", wordRevealMs: 300, uppercase: true,
+  },
+  "music-video": {
+    baseSizeMult: 0.08, emphasisSizeMult: 0.098, baseColor: "white", emphasisColor: "#FB7185",
+    borderWidth: 5, wordBox: false, lineBoxOpacity: 0.4, lineSizeMult: 0.035,
+    lineEnter: "rise-fade", wordReveal: "fade", wordRevealMs: 240, uppercase: false,
+  },
 });
+
+// The lumina-presenter design-animation catalog, ported. Browser-only effects
+// (particles, WebGL bloom, 3D extrude, metal/glass/video fill, audio-reactive
+// pulsing) can't render in ffmpeg drawtext, so each entry declares whether it
+// is `renderable` server-side and lists the `unsupported` effects. Every entry
+// maps to a real `presetId` so non-renderable picks degrade to a close style
+// instead of crashing.
+const KINETIC_ANIMATIONS = Object.freeze([
+  { id: "cinematic-worship", label: "Cinematic Worship", description: "Centered large worship typography; lines rise in, words fade one at a time.", presetId: "cinematic-worship", renderable: true, unsupported: [] },
+  { id: "cinematic-reactive", label: "Cinematic Reactive", description: "Cinematic worship type that glows/pulses to audio with drifting particles (audio-reactivity is browser-only).", presetId: "cinematic-reactive", renderable: true, unsupported: ["audio-reactive", "particles"] },
+  { id: "scripture-reveal", label: "Scripture Reveal", description: "Slow, reverent verse reveal; long dwell, gentle fade.", presetId: "scripture-reveal", renderable: true, unsupported: [] },
+  { id: "word-boxes", label: "Word Boxes", description: "Bold uppercase words on backdrop panels (per-word colour grid + 3D extrude are browser-only).", presetId: "word-boxes", renderable: true, unsupported: ["per-word-colour-grid", "3d-extrude"] },
+  { id: "hero-bold", label: "Hero Bold", description: "Huge bold uppercase words that rise and fade in.", presetId: "hero-bold", renderable: true, unsupported: [] },
+  { id: "music-video", label: "Music Video", description: "Snappy, fast-paced word reveals.", presetId: "music-video", renderable: true, unsupported: [] },
+  { id: "minimal-lower-third", label: "Minimal Lower Third", description: "Small lower-third captions (bottom-anchor layout is not yet ported).", presetId: "cinematic-worship", renderable: false, unsupported: ["bottom-anchor-layout"] },
+  { id: "tiled-repeat", label: "Tiled Repeat", description: "Repeated tiled text grid (tiled layout is browser-only).", presetId: "hero-bold", renderable: false, unsupported: ["tiled-layout"] },
+  { id: "glass-chrome", label: "Glass Chrome", description: "Glass/metal material text (material fills are browser-only).", presetId: "cinematic-worship", renderable: false, unsupported: ["glass-fill", "metal-fill"] },
+  { id: "webgl-bloom", label: "WebGL Bloom", description: "WebGL particle bloom scene (GPU/WebGL is browser-only).", presetId: "cinematic-reactive", renderable: false, unsupported: ["webgl", "bloom", "particles"] },
+  { id: "video-text", label: "Video Text", description: "Video-filled text (video fill is browser-only).", presetId: "hero-bold", renderable: false, unsupported: ["video-fill"] },
+]);
 
 const DEFAULT_TYPOGRAPHY = TYPOGRAPHY_PRESETS["cinematic-default"];
 
@@ -81,6 +144,27 @@ export function resolveTypographyPreset(name) {
 
 export function listTypographyPresets() {
   return Object.keys(TYPOGRAPHY_PRESETS);
+}
+
+/**
+ * The ported lumina-presenter design-animation catalog. Each entry carries a
+ * `renderable` flag and `unsupported[]` effects, plus a `presetId` that always
+ * resolves via resolveTypographyPreset (non-renderable picks degrade to a close
+ * style). UI surfaces (Voice Lab / builder) list these; the render pipeline
+ * passes `presetId` to buildWordDrawtext.
+ */
+export function listKineticAnimations() {
+  return KINETIC_ANIMATIONS;
+}
+
+/**
+ * @param {string | null | undefined} id
+ * @returns {(typeof KINETIC_ANIMATIONS)[number] | null}
+ */
+export function resolveKineticAnimation(id) {
+  if (!id) return null;
+  const key = String(id).trim().toLowerCase();
+  return KINETIC_ANIMATIONS.find((a) => a.id === key) || null;
 }
 
 export function escapeDrawText(s) {
@@ -118,9 +202,24 @@ export function buildWordDrawtext({ words, w, h, preset }) {
   const emphasisColor = style.emphasisColor || EMPHASIS_COLOR;
   const borderWidth = Number.isFinite(style.borderWidth) ? style.borderWidth : 5;
   const wordBox = style.wordBox ? ":box=1:boxcolor=black@0.35:boxborderw=12" : "";
+
+  // Motion model ported from lumina: per-word reveal animation synced to the
+  // word's real start time. Legacy presets omit wordReveal → hard-cut (no alpha).
+  // Commas inside the clip()/between() expressions are safe because the value is
+  // single-quoted (same as the existing enable='between(...)').
+  const wordReveal = style.wordReveal; // "fade" | "rise-fade" | "scale-fade" | undefined
+  const revealMs = Number.isFinite(style.wordRevealMs) ? style.wordRevealMs : 0;
+  const uppercase = Boolean(style.uppercase);
+  const shadow = style.shadow;
+  const shadowClause = shadow
+    ? `:shadowcolor=${shadow.color}:shadowx=${shadow.x ?? 0}:shadowy=${shadow.y ?? 0}`
+    : "";
+  const riseOffset = Math.round(h * 0.045);
+
   const filters = [];
   for (const word of words) {
-    const text = escapeDrawText(word.text);
+    const rawText = uppercase ? String(word.text ?? "").toUpperCase() : word.text;
+    const text = escapeDrawText(rawText);
     if (!text) continue;
     const start = Number(word.start);
     const end = Number(word.end);
@@ -129,8 +228,28 @@ export function buildWordDrawtext({ words, w, h, preset }) {
     const fitSize = Math.floor(maxWidthPx / Math.max(1, text.length) / 0.55);
     const size = Math.max(40, Math.min(requested, fitSize));
     const color = word.emphasize ? emphasisColor : baseColor;
+
+    // Reveal easing: clamp the ease so it always completes inside the word's
+    // visible window (a long preset reveal on a short word would otherwise
+    // never reach full opacity). scale-fade falls back to fade (drawtext can't
+    // animate fontsize).
+    let alphaClause = "";
+    let yClause = "y=(h-text_h)/2";
+    if (wordReveal && revealMs > 0) {
+      const reveal = Math.min(revealMs / 1000, (end - start) * 0.9);
+      if (reveal > 0) {
+        const s = start.toFixed(3);
+        const r = reveal.toFixed(3);
+        const ease = `clip((t-${s})/${r},0,1)`;
+        alphaClause = `:alpha='${ease}'`;
+        if (wordReveal === "rise-fade") {
+          yClause = `y='(h-text_h)/2+${riseOffset}*(1-${ease})'`;
+        }
+      }
+    }
+
     filters.push(
-      `drawtext=text='${text}':x=(w-text_w)/2:y=(h-text_h)/2:fontsize=${size}:fontcolor=${color}:borderw=${borderWidth}:bordercolor=black@0.85${wordBox}:enable='between(t,${start.toFixed(3)},${end.toFixed(3)})'`
+      `drawtext=text='${text}':x=(w-text_w)/2:${yClause}:fontsize=${size}:fontcolor=${color}:borderw=${borderWidth}:bordercolor=black@0.85${shadowClause}${wordBox}${alphaClause}:enable='between(t,${start.toFixed(3)},${end.toFixed(3)})'`
     );
   }
   if (filters.length === 0) return null;

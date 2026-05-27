@@ -5,6 +5,7 @@ import {
   SpeechRequestSchema,
   SpeechResultSchema,
   ProviderCapabilitiesSchema,
+  WordTimingSchema,
 } from "../../src/lib/voice/schemas.js";
 
 test("SpeechRequest accepts minimal input", () => {
@@ -54,6 +55,44 @@ test("SpeechResult accepts optional alignment", () => {
     alignment: { characters: ["a"], starts: [0], ends: [0.1] },
   });
   assert.equal(parsed.alignment.characters[0], "a");
+});
+
+test("WordTiming validates the normalized kinetic-caption shape", () => {
+  const parsed = WordTimingSchema.parse({ text: "For", startMs: 0, endMs: 180 });
+  assert.equal(parsed.text, "For");
+  assert.equal(parsed.endMs, 180);
+});
+
+test("WordTiming rejects malformed timings", () => {
+  assert.throws(() => WordTimingSchema.parse({ text: "x", startMs: "nope", endMs: 1 }));
+  assert.throws(() => WordTimingSchema.parse({ text: "x", startMs: 0 })); // missing endMs
+  assert.throws(() => WordTimingSchema.parse({ startMs: 0, endMs: 1 })); // missing text
+});
+
+test("SpeechResult validates optional normalized words[] (kinetic-caption contract)", () => {
+  const parsed = SpeechResultSchema.parse({
+    ok: true,
+    file: "/tmp/x.mp3",
+    provider: "azure",
+    voice: "en-US-GuyNeural",
+    words: [
+      { text: "For", startMs: 0, endMs: 180 },
+      { text: "God", startMs: 180, endMs: 420 },
+    ],
+  });
+  assert.equal(parsed.words.length, 2);
+  assert.equal(parsed.words[0].text, "For");
+
+  // A malformed words entry is now rejected (not silently passed through).
+  assert.throws(() =>
+    SpeechResultSchema.parse({
+      ok: true,
+      file: "/tmp/x.mp3",
+      provider: "azure",
+      voice: "v",
+      words: [{ text: "bad", startMs: "x", endMs: 1 }],
+    }),
+  );
 });
 
 test("ProviderCapabilities requires all five flags", () => {
