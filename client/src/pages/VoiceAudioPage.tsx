@@ -5,6 +5,7 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Textarea } from '../components/ui/Textarea';
 import { Select } from '../components/ui/Select';
+import { AnimationPicker } from '../components/voicelab/AnimationPicker';
 import { api } from '../lib/api';
 import toast from 'react-hot-toast';
 import { loadJson, pushUnique, saveJson, STORAGE_KEYS, toOutputUrl } from '../lib/storage';
@@ -1332,6 +1333,9 @@ export function VoiceAudioPage() {
                     </div>
                 </Card>
                 )}
+                {/* Caption animation picker — kinetic typography styles ported from lumina,
+                    synced to the word timings the TTS pipeline produces. */}
+                <AnimationPicker />
                 {(activeTab === 'all' || activeTab === 'record') && (
                 <Card title="2. Record / Upload">
                     <div className="space-y-4">

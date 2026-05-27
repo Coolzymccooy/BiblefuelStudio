@@ -1,11 +1,13 @@
 import { synthesize } from "./orchestrator.js";
 import { resolveProfile, DEFAULT_CATEGORY } from "./profiles.js";
+import { prepareScriptureForSpeech } from "./scripture.js";
 
 /**
  * @typedef {Object} CategorySynthesisRequest
  * @property {string} text
  * @property {string} [category]                 Narration category. Defaults to "devotional".
  * @property {boolean} [withTimestamps]
+ * @property {boolean} [scriptureMode]           Expand Bible references + pacing for spoken narration.
  * @property {string} [preferredProvider]        Hard override for provider selection.
  * @property {Object} [overrides]                Overrides applied on top of profile.
  * @property {string} [overrides.voiceId]
@@ -61,8 +63,12 @@ export async function synthesizeForCategory(req) {
     ...(overrides.prosody || {}),
   };
 
+  // Opt-in scripture preparation (reference expansion + pacing). Default OFF so
+  // existing renders are byte-for-byte unchanged; callers pass scriptureMode:true.
+  const text = req?.scriptureMode ? prepareScriptureForSpeech(req.text) : req.text;
+
   const speechReq = {
-    text: req.text,
+    text,
     voiceId: overrides.voiceId,
     voiceIds: Object.keys(voiceIds).length > 0 ? voiceIds : undefined,
     voiceSettings: Object.keys(voiceSettings).length > 0 ? voiceSettings : undefined,

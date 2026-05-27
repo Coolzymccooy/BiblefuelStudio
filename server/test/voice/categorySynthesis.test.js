@@ -113,6 +113,26 @@ test("synthesizeForCategory: preferredProvider hint overrides profile preference
   assert.equal(eleven.calls.length, 0);
 });
 
+test("synthesizeForCategory expands scripture references when scriptureMode is set", async () => {
+  _reset();
+  const eleven = spy("elevenlabs");
+  register(eleven.provider);
+
+  await synthesizeForCategory({ text: "Psalm 91:1", category: "scripture", scriptureMode: true });
+
+  assert.equal(eleven.calls[0].text, "Psalm chapter ninety-one, verse one.");
+});
+
+test("synthesizeForCategory leaves text raw when scriptureMode is off (default)", async () => {
+  _reset();
+  const eleven = spy("elevenlabs");
+  register(eleven.provider);
+
+  await synthesizeForCategory({ text: "Psalm 91:1", category: "scripture" });
+
+  assert.equal(eleven.calls[0].text, "Psalm 91:1");
+});
+
 test("synthesizeForCategory: result enriched with category + typography preset", async () => {
   _reset();
   register(spy("elevenlabs").provider);

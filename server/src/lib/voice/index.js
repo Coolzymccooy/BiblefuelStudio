@@ -54,6 +54,7 @@ export {
   resolveProfile,
 } from "./profiles.js";
 export { synthesizeForCategory } from "./categorySynthesis.js";
+export { prepareScriptureForSpeech, numberToWords } from "./scripture.js";
 export {
   alignAudioWithText,
   isForcedAlignmentAvailable,
