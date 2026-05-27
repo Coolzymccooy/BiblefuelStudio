@@ -127,9 +127,20 @@ export interface SeriesGenerateResponse {
     };
 }
 
+import { ApiError } from './apiError';
+
 function unwrap<T>(response: { ok: boolean; data?: any; error?: string }): T {
-    if (!response.ok) throw new Error(response.error || 'Request failed');
-    if (!response.data?.ok) throw new Error(response.data?.error || 'Request failed');
+    if (!response.ok) {
+        // HTTP error — server may still have returned a JSON body with
+        // structured fields (bucket, used, limit, hint). Preserve them.
+        const payload = (response as { data?: Record<string, unknown> }).data || {};
+        const code = String(payload.error || response.error || 'REQUEST_FAILED');
+        throw new ApiError(String(response.error || payload.error || 'Request failed'), code, payload);
+    }
+    if (!response.data?.ok) {
+        const code = String(response.data?.error || 'UNKNOWN');
+        throw new ApiError(code, code, response.data || {});
+    }
     return response.data as T;
 }
 

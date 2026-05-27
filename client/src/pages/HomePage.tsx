@@ -10,6 +10,8 @@ import { api } from '../lib/api';
 import { firebaseRequestPasswordReset, getFirebaseAuthErrorMessage, isFirebaseClientEnabled } from '../lib/firebase';
 import { useVoiceSynthesisDefaults } from '../lib/voiceSynthesisDefaults';
 import { LoginBackdrop } from '../components/landing/LoginBackdrop';
+import { ApiError } from '../lib/apiError';
+import { toastError } from '../lib/errors';
 
 interface JobRow {
     id: string;
@@ -148,10 +150,15 @@ function AutoPublishCard() {
                 setRecentJobId(res.data.job.id);
                 toast.success('Auto-Publish started — you\'ll be notified when the video is live');
             } else {
-                toast.error(res.error || 'Failed to start auto-publish');
+                // Surface the rich payload (bucket/used/limit/hint for quota,
+                // structured codes for everything else) via the friendly
+                // toast translator instead of dumping the raw error string.
+                const payload = (res.data as Record<string, unknown>) || {};
+                const code = String(payload.error || res.error || 'AUTO_PUBLISH_FAILED');
+                toastError(new ApiError(code, code, payload));
             }
-        } catch {
-            toast.error('Failed to start auto-publish');
+        } catch (err) {
+            toastError(err);
         } finally {
             setIsLaunching(false);
         }

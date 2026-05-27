@@ -166,7 +166,8 @@ class ApiClient {
         if (axios.isAxiosError(error)) {
             const axiosError = error as AxiosError<any>;
             const status = axiosError.response?.status || 500;
-            const errorMessage = axiosError.response?.data?.error || axiosError.message || 'Network error';
+            const responseBody = axiosError.response?.data;
+            const errorMessage = responseBody?.error || axiosError.message || 'Network error';
             if (status === 401) {
                 this.setToken(null);
                 if (typeof window !== 'undefined') {
@@ -179,6 +180,10 @@ class ApiClient {
                 ok: false,
                 status,
                 error: status === 401 ? 'Session expired. Please login again.' : errorMessage,
+                // Preserve the full server payload so callers can read
+                // structured fields (bucket, used, limit, hint, etc.)
+                // instead of just the top-level error code.
+                data: responseBody,
             };
         }
         return {

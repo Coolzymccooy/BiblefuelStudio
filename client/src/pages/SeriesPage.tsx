@@ -26,6 +26,7 @@ import {
     type SeriesPlan,
     type SeriesRecord,
 } from '../lib/bibleApi';
+import { toastError } from '../lib/errors';
 
 const PART_COUNT_OPTIONS = [3, 4, 5, 6, 7, 8, 10, 12];
 
@@ -76,7 +77,7 @@ export function SeriesPage() {
             setPlan(result.plan);
             toast.success(`Previewing ${result.plan.totalParts} segments`);
         } catch (err) {
-            toast.error(err instanceof Error ? err.message : 'Preview failed');
+            toastError(err);
             setPlan(null);
         } finally {
             setIsPreviewLoading(false);
@@ -117,7 +118,7 @@ export function SeriesPage() {
             setHistory((prev) => [result.series, ...prev]);
             setTimeout(() => navigate('/app/jobs'), 1200);
         } catch (err) {
-            toast.error(err instanceof Error ? err.message : 'Generate failed');
+            toastError(err);
         } finally {
             setIsGenerating(false);
         }
