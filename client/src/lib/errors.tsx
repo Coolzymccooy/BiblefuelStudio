@@ -94,6 +94,41 @@ function mapApiError(err: ApiError): FriendlyError {
     };
   }
 
+  // FFmpeg pipeline failed (audio process, render, treatment). The raw
+  // exit codes (4294967262 = Windows -34, 1 = generic, 8 = invalid arg)
+  // don't help end users — translate to something actionable. Specific
+  // exit-code hints help when we recognise them; otherwise we point the
+  // user at the most common root causes.
+  if (/^ffmpeg failed/i.test(code) || code === 'FFMPEG_FAILED') {
+    const exitCode = String(p.exitCode || code.match(/\d+/)?.[0] || '');
+    let hint = 'The audio/video pipeline failed mid-process. ';
+    if (exitCode === '4294967262' || exitCode === '-34') {
+      hint += 'This often means the input file was moved, locked, or has an unsupported codec.';
+    } else if (exitCode === '1') {
+      hint += 'Usually a malformed input or an FFmpeg filter mismatch.';
+    } else {
+      hint += 'Try again with a different source clip; if it persists the operator should check ffmpeg logs.';
+    }
+    return {
+      title: "Audio processing didn't complete",
+      detail: hint,
+      actionLabel: 'Try Voice & Audio again',
+      actionTo: '/app/voice-audio',
+    };
+  }
+
+  // TTS providers exhausted — all fallback paths failed. Distinct from
+  // QUOTA_EXCEEDED (which is the local app's per-day cap, not the upstream
+  // provider's billing wall).
+  if (/no alignment|tts (failed|unavailable)|elevenlabs.*quota|edge.?tts.*fail/i.test(code)) {
+    return {
+      title: 'Voice generation unavailable right now',
+      detail: 'All configured TTS providers failed (provider quota or network). Try uploading or recording audio instead.',
+      actionLabel: 'Voice & Audio',
+      actionTo: '/app/voice-audio',
+    };
+  }
+
   // Fallback — show the raw code rather than blank-toasting.
   return {
     title: err.message || code || 'Something went wrong.',

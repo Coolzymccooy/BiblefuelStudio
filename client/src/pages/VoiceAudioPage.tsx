@@ -10,6 +10,8 @@ import toast from 'react-hot-toast';
 import { loadJson, pushUnique, saveJson, STORAGE_KEYS, toOutputUrl } from '../lib/storage';
 import { useConfig } from '../lib/config';
 import { useVoiceSynthesisDefaults } from '../lib/voiceSynthesisDefaults';
+import { ApiError } from '../lib/apiError';
+import { toastError } from '../lib/errors';
 import { Link } from 'react-router-dom';
 import {
     Play,
@@ -411,10 +413,15 @@ export function VoiceAudioPage() {
                 addToHistory(response.data.file, 'processed', 'Processed');
                 toast.success('Audio processed!');
             } else {
-                toast.error(response.error || 'Processing failed');
+                // Surface ffmpeg + audio pipeline failures through the friendly
+                // translator so users don't see raw exit codes like
+                // "ffmpeg failed: 4294967262".
+                const payload = (response.data as Record<string, unknown>) || {};
+                const code = String(payload.error || response.error || 'FFMPEG_FAILED');
+                toastError(new ApiError(code, code, payload));
             }
         } catch (error) {
-            toast.error('An error occurred');
+            toastError(error);
         } finally {
             setIsProcessing(false);
         }

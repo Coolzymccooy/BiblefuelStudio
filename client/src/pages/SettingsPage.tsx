@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Key, Link2, RefreshCw } from 'lucide-react';
+import { AlertTriangle, Key, Link2, RefreshCw, User as UserIcon, LogOut, BadgeCheck, Mail } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
@@ -8,6 +8,7 @@ import { Select } from '../components/ui/Select';
 import { api } from '../lib/api';
 import toast from 'react-hot-toast';
 import { useConfig } from '../lib/config';
+import { useAuth } from '../hooks/useAuth';
 import { VoiceSynthesisPanel } from '../components/VoiceSynthesisPanel';
 import { PlanAndUsageCard } from '../components/PlanAndUsageCard';
 import { PostizConnectCard } from '../components/PostizConnectCard';
@@ -39,6 +40,7 @@ type SocialSchedule = {
 export function SettingsPage() {
     const { config } = useConfig();
     const { features } = config;
+    const { email: authEmail, emailVerified, logout } = useAuth();
     const [activeSection, setActiveSection] = useState<'api' | 'voice' | 'social' | 'app'>('api');
     const [bufferToken, setBufferToken] = useState('');
     const [bufferProfiles, setBufferProfiles] = useState<{ id: string; service: string; formatted_service: string }[]>([]);
@@ -213,6 +215,49 @@ export function SettingsPage() {
                 <h2 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-400 mb-2">Settings</h2>
                 <p className="text-gray-400">Plan, integrations, and app info.</p>
             </div>
+
+            {/* Signed-in account — shows the email of the active session so
+                operators using multiple test accounts can immediately see
+                which one they're acting against. */}
+            <Card>
+                <div className="flex flex-col sm:flex-row sm:items-center gap-4 p-1">
+                    <div className="rounded-2xl border border-primary-500/30 bg-primary-500/10 p-3 flex-shrink-0">
+                        <UserIcon size={20} className="text-primary-300" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                        <div className="text-[10px] uppercase tracking-[1.5px] text-gray-500 mb-1">Signed in as</div>
+                        <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-sm font-mono text-gray-100 break-all">
+                                {authEmail || <span className="italic text-gray-500">not signed in</span>}
+                            </span>
+                            {authEmail && (
+                                emailVerified ? (
+                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-200 text-[10px]">
+                                        <BadgeCheck size={10} /> Verified
+                                    </span>
+                                ) : (
+                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-200 text-[10px]">
+                                        <Mail size={10} /> Unverified
+                                    </span>
+                                )
+                            )}
+                        </div>
+                    </div>
+                    {authEmail && (
+                        <Button
+                            variant="secondary"
+                            className="h-9 text-xs border-white/10 hover:border-rose-500/40 hover:text-rose-300"
+                            onClick={() => {
+                                logout();
+                                toast.success('Signed out');
+                            }}
+                        >
+                            <LogOut size={14} className="mr-1.5" />
+                            Sign out
+                        </Button>
+                    )}
+                </div>
+            </Card>
 
             <PlanAndUsageCard />
             <PostizConnectCard />
