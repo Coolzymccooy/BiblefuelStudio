@@ -48,14 +48,20 @@ function orderCandidates(req) {
     return preferredAvailable ? [preferredAvailable, ...rest] : rest;
   }
 
-  // Partition rest into timestamp-capable vs not, preserving registration order
-  // within each partition.
-  const timed = [];
+  // Partition rest by timestamp capability, preserving registration order
+  // within each partition. Word-level boundaries beat char-level for kinetic
+  // typography (cleaner per-word reveal), so word-capable providers (Azure)
+  // rank ahead of char-only providers (ElevenLabs/Whisper), which in turn
+  // rank ahead of providers with no native timestamps.
+  const wordTimed = [];
+  const charTimed = [];
   const untimed = [];
   for (const p of rest) {
     const caps = p.capabilities();
-    if (caps.charTimestamps || caps.wordTimestamps) {
-      timed.push(p);
+    if (caps.wordTimestamps) {
+      wordTimed.push(p);
+    } else if (caps.charTimestamps) {
+      charTimed.push(p);
     } else {
       untimed.push(p);
     }
@@ -63,7 +69,7 @@ function orderCandidates(req) {
 
   const ordered = [];
   if (preferredAvailable) ordered.push(preferredAvailable);
-  ordered.push(...timed, ...untimed);
+  ordered.push(...wordTimed, ...charTimed, ...untimed);
   return ordered;
 }
 

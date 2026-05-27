@@ -13,7 +13,7 @@ import { dispatchPost } from "./social.js";
 import { readSocialStore } from "../lib/socialStore.js";
 import { isPostizConfigured, postVideo as postizPostVideo } from "../lib/postizClient.js";
 import { pickBestBackground, classifyText } from "../lib/categorize.js";
-import { charsToWords, annotateEmphasis, groupWordsByBeat } from "../lib/captions.js";
+import { charsToWords, captionWordsFromNativeWords, annotateEmphasis, groupWordsByBeat } from "../lib/captions.js";
 import { alignAudioWithText, isForcedAlignmentAvailable } from "../lib/voice/alignment.js";
 import { buildWordDrawtext, buildLineDrawtext, buildSceneGraph } from "../lib/videoFilters.js";
 import { buildSocialCaption } from "../lib/socialCaption.js";
@@ -314,10 +314,43 @@ let running = false;
 const lastProgressByJob = new Map();
 const volatileProgressByJob = new Map();
 
+// Extract the actually useful part of ffmpeg's stderr after a failure. The
+// banner (version + library versions + config) eats the first ~30 lines and
+// pushed the real error out of any small UI clamp. Walk backwards looking
+// for known-error patterns; fall back to the last 8 lines.
+function summarizeFfmpegError(stderr) {
+  if (!stderr) return "(ffmpeg produced no stderr output)";
+  const lines = stderr.split(/\r?\n/).map((l) => l.trimEnd()).filter(Boolean);
+  if (lines.length === 0) return "(empty stderr)";
+  const errorRx = [
+    /\bError\b/i,
+    /\[Parsed_/,
+    /Conversion failed/i,
+    /Invalid argument/i,
+    /No such filter/i,
+    /Cannot find/i,
+    /Unable to/i,
+    /Output file does not contain any stream/i,
+    /Filter .* has an unconnected output/i,
+  ];
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (errorRx.some((rx) => rx.test(lines[i]))) {
+      // Include a few surrounding lines for context.
+      return lines.slice(Math.max(0, i - 2), Math.min(lines.length, i + 3)).join("\n");
+    }
+  }
+  return lines.slice(-8).join("\n");
+}
+
 function runFFmpeg(args, totalDurationSec, onProgress) {
   const ffmpeg = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
+  // Prepend -hide_banner so the version dump doesn't crowd out the real
+  // error message in the captured stderr. We still need info-level output
+  // so the progress parser (matching `time=HH:MM:SS.xx`) can read the
+  // running encoder stats — so we don't touch -loglevel.
+  const fullArgs = args.includes("-hide_banner") ? args : ["-hide_banner", ...args];
   return new Promise((resolve, reject) => {
-    const proc = spawn(ffmpeg, args);
+    const proc = spawn(ffmpeg, fullArgs);
     let stderr = "";
     let settled = false;
     let timedOut = false;
@@ -372,9 +405,9 @@ function runFFmpeg(args, totalDurationSec, onProgress) {
 
     proc.on("close", (code) => {
       if (timedOut) {
-        return done(new Error(`ffmpeg timed out after ${JOB_EXEC_TIMEOUT_SEC}s\n${stderr.slice(-2000)}`));
+        return done(new Error(`ffmpeg timed out after ${JOB_EXEC_TIMEOUT_SEC}s\n${summarizeFfmpegError(stderr)}`));
       }
-      if (code !== 0) return done(new Error(`ffmpeg failed: ${code}\n${stderr.slice(-2000)}`));
+      if (code !== 0) return done(new Error(`ffmpeg failed: ${code}\n${summarizeFfmpegError(stderr)}`));
       done(null);
     });
   });
@@ -437,7 +470,12 @@ async function executeJob(job) {
       } else {
         filterComplexParts.push(`[a1][m1]amix=inputs=2:duration=shortest:dropout_transition=2[amix]`);
       }
-      audioLabel = "amix";
+      // Split the mixed audio so the showwaves filter can consume one copy
+      // while the muxer keeps the other for output. Without this both the
+      // visualizer AND `-map [amix]` try to claim the same label and ffmpeg
+      // dies before the first frame.
+      filterComplexParts.push(`[amix]asplit=2[awave][aout]`);
+      audioLabel = "awave";
     }
     filterComplexParts.push(`[${audioLabel}]aformat=channel_layouts=stereo,showwaves=s=${w}x${waveH}:mode=line:rate=30:colors=White,format=rgba[wave]`);
     filterComplexParts.push(`[wave]colorchannelmixer=aa=0.75[wavea]`);
@@ -467,7 +505,7 @@ async function executeJob(job) {
       "-t", String(t),
       "-filter_complex", filterComplex,
       "-map", `[${finalLabel}]`,
-      "-map", resolvedMusic ? "[amix]" : `${resolvedBackground ? 1 : 0}:a`,
+      "-map", resolvedMusic ? "[aout]" : `${resolvedBackground ? 1 : 0}:a`,
       "-r", "30",
       "-c:v", vcodec,
       "-preset", preset,
@@ -526,7 +564,18 @@ async function renderVideoCore(payload, jobId) {
   }
   if (payload?.kineticCaptions) {
     const augmented = await augmentPayloadWithKineticCaptions(payload, jobId);
-    return await renderAdvancedVideo(augmented, jobId);
+    // If the augment produced word-level timings, take the advanced path.
+    // If it stripped kineticCaptions (alignment unavailable/failed), recurse
+    // back through renderVideoCore so the LEGACY path picks it up — that's
+    // the one that calls wrapTextLines() on the captions. Without this,
+    // raw long lines flow straight into buildLineDrawtext and render off
+    // the side of the frame (the "od's plan is better than your plan"
+    // clipping that comes from x=(w-text_w)/2 going negative).
+    const augmentedHasWords = Array.isArray(augmented?.words) && augmented.words.length > 0;
+    if (augmentedHasWords) {
+      return await renderAdvancedVideo(augmented, jobId);
+    }
+    return await renderVideoCore({ ...augmented, kineticCaptions: false }, jobId);
   }
   const { backgroundPath, audioPath, lines, durationSec, aspect, captionWidthPct, musicPath, musicVolume, autoDuck, typographyPreset } = payload || {};
   const resolvedBackground = resolveAssetPath(backgroundPath);
@@ -666,6 +715,11 @@ async function augmentPayloadWithKineticCaptions(payload, jobId) {
   const ttsText = cleanLines.join(" ").trim();
 
   const userSuppliedAudio = resolveAssetPath(payload?.audioPath);
+  console.log(
+    `[RENDER] kineticCaptions: audioPath=${payload?.audioPath ? "supplied" : "none"} ` +
+    `resolved=${userSuppliedAudio ? "ok" : "missing"} ` +
+    `alignmentAvailable=${isForcedAlignmentAvailable()}`,
+  );
   if (userSuppliedAudio && isLocalOrRemote(userSuppliedAudio)) {
     if (!isForcedAlignmentAvailable()) {
       console.warn(
@@ -675,15 +729,19 @@ async function augmentPayloadWithKineticCaptions(payload, jobId) {
       return { ...payload, kineticCaptions: false };
     }
     safeUpdateJob(jobId, { progress: 25 });
+    const alignStart = Date.now();
     const alignment = await alignAudioWithText(userSuppliedAudio, ttsText);
+    const alignMs = Date.now() - alignStart;
     safeUpdateJob(jobId, { progress: 45 });
     if (!alignment || !Array.isArray(alignment.characters) || alignment.characters.length === 0) {
       console.warn(
-        "[RENDER] Whisper alignment returned no timings for the user-supplied audio — " +
-        "falling back to line captions (audio preserved)",
+        `[RENDER] Whisper alignment failed after ${alignMs}ms — check earlier ` +
+        `"[alignment] whisper error <code>" log. Falling back to line captions ` +
+        `(audio preserved).`,
       );
       return { ...payload, kineticCaptions: false };
     }
+    console.log(`[RENDER] Whisper alignment succeeded in ${alignMs}ms — ${alignment.characters.length} chars`);
     const rawWords = charsToWords(alignment);
     const words = annotateEmphasis(rawWords, cleanLines);
     return { ...payload, words };
@@ -692,11 +750,20 @@ async function augmentPayloadWithKineticCaptions(payload, jobId) {
   // Caller didn't provide audio — synthesize fresh with timestamps.
   const tts = await synthesizeTts({ text: ttsText, voiceId: payload?.voiceId, withTimestamps: true });
   safeUpdateJob(jobId, { progress: 35 });
-  if (!tts?.alignment || !Array.isArray(tts.alignment.characters) || tts.alignment.characters.length === 0) {
-    console.warn("[RENDER] kineticCaptions: TTS returned no alignment — falling back to line captions");
+  // Prefer the provider's native word boundaries (Azure — the kinetic-caption
+  // primary, registered word-timestamp provider). Fall back to char-level
+  // alignment (ElevenLabs). Edge/Chatterbox supply neither, so kinetic
+  // gracefully degrades to line captions.
+  let rawWords = [];
+  if (Array.isArray(tts?.words) && tts.words.length > 0) {
+    rawWords = captionWordsFromNativeWords(tts.words);
+  } else if (tts?.alignment && Array.isArray(tts.alignment.characters) && tts.alignment.characters.length > 0) {
+    rawWords = charsToWords(tts.alignment);
+  }
+  if (rawWords.length === 0) {
+    console.warn("[RENDER] kineticCaptions: TTS returned no word timings — falling back to line captions");
     return { ...payload, kineticCaptions: false, audioPath: tts.file };
   }
-  const rawWords = charsToWords(tts.alignment);
   const words = annotateEmphasis(rawWords, cleanLines);
   return { ...payload, audioPath: tts.file, words };
 }

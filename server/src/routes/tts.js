@@ -532,4 +532,27 @@ router.post("/fish", async (req, res) => {
   }
 });
 
+// Azure Speech route — the primary kinetic-caption / word-timestamp provider.
+// Production-safe commercial usage; not premium-gated (it's the caption engine)
+// — abuse is bounded by the shared quota("tts") gate on /api/tts. Forces
+// preferredProvider:"azure". Pass withTimestamps:true to get the normalized
+// word-alignment contract back in result.words for kinetic typography.
+router.post("/azure", async (req, res) => {
+  const { text, voiceId, withTimestamps } = req.body || {};
+  try {
+    const result = await synthesize({
+      text,
+      voiceIds: voiceId ? { azure: voiceId } : undefined,
+      preferredProvider: "azure",
+      withTimestamps: withTimestamps === undefined ? true : Boolean(withTimestamps),
+    });
+    return res.json(result);
+  } catch (e) {
+    console.error("[TTS] Azure route error:", e);
+    const message = String(e?.message || e);
+    const status = /required|invalid|missing|min 3 chars/i.test(message) ? 400 : 502;
+    return res.status(status).json({ ok: false, error: message });
+  }
+});
+
 export default router;

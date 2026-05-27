@@ -58,6 +58,35 @@ export function charsToWords(alignment) {
 }
 
 /**
+ * Bridge the unified word-alignment contract into the caption word shape.
+ *
+ * The contract (e.g. Azure WordBoundary, via voice/alignmentContract.js) carries
+ * `{ text, startMs, endMs }` in milliseconds. The caption pipeline downstream
+ * (annotateEmphasis / groupWordsByBeat / ffmpeg drawtext) consumes
+ * `{ text, start, end }` in seconds. Empty/whitespace tokens are dropped and a
+ * minimum 50ms duration is enforced (mirrors charsToWords) so drawtext enable
+ * windows never collapse.
+ *
+ * @param {Array<{ text: string, startMs: number, endMs: number }>} words
+ * @returns {Array<{ text: string, start: number, end: number }>}
+ */
+export function captionWordsFromNativeWords(words) {
+  if (!Array.isArray(words)) return [];
+  const out = [];
+  for (const w of words) {
+    const text = String(w?.text ?? "").trim();
+    if (!text) continue;
+    const start = Number(w?.startMs);
+    const endRaw = Number(w?.endMs);
+    if (!Number.isFinite(start)) continue;
+    const startSec = start / 1000;
+    const endSec = Number.isFinite(endRaw) ? endRaw / 1000 : startSec;
+    out.push({ text, start: startSec, end: Math.max(endSec, startSec + 0.05) });
+  }
+  return out;
+}
+
+/**
  * Pick the most "emphasizable" word from a line. Heuristic: longest
  * non-stopword (≥4 chars). Falls back to the longest word, then to the first.
  *

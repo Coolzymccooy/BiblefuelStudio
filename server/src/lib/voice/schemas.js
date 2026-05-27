@@ -43,6 +43,15 @@ export const CharAlignmentSchema = z.object({
   ends: z.array(z.number()),
 });
 
+// Normalized word timing — the unit of the unified kinetic-caption contract
+// ({ audioPath, words: WordTiming[] }). Millisecond offsets; Azure populates
+// these natively, other providers map in via alignmentContract.js.
+export const WordTimingSchema = z.object({
+  text: z.string(),
+  startMs: z.number(),
+  endMs: z.number(),
+});
+
 export const SpeechResultSchema = z
   .object({
     ok: z.literal(true),
@@ -50,6 +59,7 @@ export const SpeechResultSchema = z
     provider: z.string().min(1),
     voice: z.string().min(1),
     alignment: CharAlignmentSchema.optional(),
+    words: z.array(WordTimingSchema).optional(),
   })
   .passthrough();
 

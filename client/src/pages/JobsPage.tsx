@@ -300,12 +300,15 @@ export function JobsPage() {
                                             )}
                                         </div>
                                         {job.status === 'failed' && job.error && (
-                                            <div
-                                                className="mt-2 text-xs text-red-300/90 whitespace-pre-wrap break-words line-clamp-3 leading-snug"
-                                                title={job.error}
-                                            >
-                                                {job.error}
-                                            </div>
+                                            <details className="mt-2 text-xs text-red-300/90 leading-snug">
+                                                <summary className="cursor-pointer hover:text-red-200 whitespace-pre-wrap break-words line-clamp-2 list-none">
+                                                    {job.error.split('\n')[0]}
+                                                    {job.error.includes('\n') && <span className="text-red-300/60 ml-1">(click to expand)</span>}
+                                                </summary>
+                                                <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-[11px] bg-black/30 border border-red-500/10 rounded p-2 max-h-48 overflow-y-auto">
+                                                    {job.error}
+                                                </pre>
+                                            </details>
                                         )}
                                     </div>
 
