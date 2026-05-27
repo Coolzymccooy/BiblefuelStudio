@@ -99,6 +99,66 @@ if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 
 app.use("/outputs", express.static(outputDir));
 
+// Per-user outputs fallback. With multi-tenant on, renders + processed audio
+// land in DATA_DIR/users/<userId>/outputs/, NOT the global outputDir served
+// above. Browsers play <video src="/outputs/foo.mp4"> with no auth headers,
+// so we can't guard this with requireAuth — instead we rely on filenames
+// being 128-bit UUIDs (effectively unguessable), the same model as Google
+// Drive's unlisted-share links.
+//
+// Without this fallback, every per-user MP3/MP4/JPG hits the SPA catch-all
+// and the browser receives HTML instead of media — the symptom users see is
+// "0:00 audio" or "video won't play".
+//
+// In-memory cache (filename -> abs path) lets us serve hot files in O(1)
+// after the first hit; we still O(users) scan on cache miss but UUID
+// filenames mean lookups are unambiguous.
+const perUserOutputCache = new Map();
+const PER_USER_OUTPUT_CACHE_MAX = 2000;
+
+function findInPerUserOutputs(filename) {
+  const cached = perUserOutputCache.get(filename);
+  if (cached && fs.existsSync(cached)) return cached;
+
+  const usersRoot = path.join(DATA_DIR, "users");
+  if (!fs.existsSync(usersRoot)) return null;
+  let userIds;
+  try {
+    userIds = fs.readdirSync(usersRoot);
+  } catch {
+    return null;
+  }
+  for (const uid of userIds) {
+    const candidate = path.join(usersRoot, uid, "outputs", filename);
+    if (fs.existsSync(candidate)) {
+      if (perUserOutputCache.size >= PER_USER_OUTPUT_CACHE_MAX) {
+        // Drop oldest entry to bound memory.
+        const firstKey = perUserOutputCache.keys().next().value;
+        if (firstKey) perUserOutputCache.delete(firstKey);
+      }
+      perUserOutputCache.set(filename, candidate);
+      return candidate;
+    }
+  }
+  return null;
+}
+
+app.get("/outputs/:filename", (req, res, next) => {
+  const raw = String(req.params.filename || "").trim();
+  // Defence-in-depth — Express's :filename matcher already excludes "/" but
+  // we still reject NUL, traversal segments, and absurd lengths to keep the
+  // fallback narrow.
+  if (!raw || raw.length > 256 || raw.includes("\0") || raw.includes("..") || raw.includes("/") || raw.includes("\\")) {
+    return next();
+  }
+  const hit = findInPerUserOutputs(raw);
+  if (hit) return res.sendFile(hit);
+  // Genuine miss: return a real 404 instead of letting the SPA catch-all
+  // hand back text/html, which the browser then tries to play as video and
+  // shows as "0:00" / "broken link". Audio/video tags handle 404 cleanly.
+  return res.status(404).type("text/plain").send("output not found");
+});
+
 // --- Landing page: public access-request endpoint ---------------------------
 // Mounted BEFORE any auth-guarded /api/* route so it stays publicly callable.
 const emailTransport = createEmailTransport({

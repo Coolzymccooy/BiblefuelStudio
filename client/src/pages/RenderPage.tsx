@@ -540,11 +540,11 @@ export function RenderPage() {
                         </label>
                         {backgroundItem ? (
                                     <div
-                                        className={`relative bg-black rounded-xl overflow-hidden group ${aspect === 'landscape'
-                                            ? 'aspect-[16/9]'
+                                        className={`relative bg-black rounded-xl overflow-hidden group mx-auto sm:mx-0 ${aspect === 'landscape'
+                                            ? 'aspect-[16/9] max-w-md'
                                             : aspect === 'square'
-                                                ? 'aspect-square'
-                                                : 'aspect-[9/16]'
+                                                ? 'aspect-square max-w-xs'
+                                                : 'aspect-[9/16] max-w-[220px]'
                                             }`}
                                     >
                                         <img
