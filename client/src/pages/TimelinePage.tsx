@@ -137,6 +137,23 @@ export function TimelinePage() {
             setSourceMediaKind(isVideo ? 'video' : 'audio');
             setTranscript(null);
             setEditedLines([]);
+            // Audio uploads feed the legacy "Main Assembly" clip list so the
+            // existing Render Audio path Just Works — without this, users hit
+            // a "Timeline is empty" toast even though they just uploaded a
+            // sermon. Video uploads skip this because the Main Assembly is
+            // audio-only mastering; they use the Render Captioned Video path.
+            if (!isVideo) {
+                const clip: TimelineClip = {
+                    id: `clip_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                    path: response.data.file,
+                    label: file.name,
+                    startSec: null,
+                    durationSec: null,
+                };
+                const next = [...clips, clip];
+                setClips(next);
+                saveClipsToCache(next);
+            }
             toast.success(`${isVideo ? 'Video' : 'Audio'} uploaded`);
         } catch {
             toast.error('Upload failed');
@@ -387,7 +404,10 @@ export function TimelinePage() {
                 </div>
             </div>
 
-            <Card title="Source Media">
+            <Card
+                title="Source Media"
+                tooltip="Drop a finished sermon recording here. Audio (mp3/wav/m4a) flows into the Main Assembly so you can master and Render Audio. Video (mp4/mov/webm) keeps its frames intact for the Render Captioned Video path."
+            >
                 <p className="text-xs text-gray-400 mb-3">
                     Upload an audio sermon (mp3, wav, m4a) or a recorded video (mp4, mov, webm).
                 </p>
@@ -413,7 +433,10 @@ export function TimelinePage() {
                 )}
             </Card>
 
-            <Card title="Transcribe & Caption">
+            <Card
+                title="Transcribe & Caption"
+                tooltip="Sends the uploaded sermon through Whisper to extract a word-level transcript with timings. Long sermons are auto-chunked. Edit the lines below — word timings redistribute uniformly across edited spans, so fix transcription errors freely. Pick a kinetic style to control how each word animates on screen."
+            >
                 <div className="flex items-center justify-between gap-4 mb-4">
                     <p className="text-xs text-gray-400">
                         Pull a word-level transcript with timings, then edit the lines below.
@@ -454,7 +477,10 @@ export function TimelinePage() {
                 )}
             </Card>
 
-            <Card title="Music Bed">
+            <Card
+                title="Music Bed"
+                tooltip="Optional soundtrack mixed under the sermon. Auto-duck (sidechain compression) drops the music volume when speech is present, then ramps it back up between phrases — keeps speech intelligible without manual ducking."
+            >
                 <div className="space-y-4">
                     <label className="inline-flex items-center gap-3 px-4 py-2 rounded-lg bg-primary-500/10 border border-primary-500/30 text-primary-200 cursor-pointer hover:bg-primary-500/20">
                         <Music size={16} />
@@ -500,7 +526,10 @@ export function TimelinePage() {
             </Card>
 
             {renderedVideo && (
-                <Card title="Rendered Captioned Video">
+                <Card
+                    title="Rendered Captioned Video"
+                    tooltip="The final sermon with kinetic captions burned onto the original video frames. Click Open to download or share."
+                >
                     <video controls src={renderedVideo} className="w-full rounded-lg" />
                     <Button
                         variant="secondary"
