@@ -563,4 +563,27 @@ router.post("/azure", async (req, res) => {
   }
 });
 
+// Piper route — free local fallback (rhasspy/piper). Ungated: it costs
+// nothing and runs on the operator's own machine via a small HTTP wrapper
+// (PIPER_URL). Bare TTS — no native timestamps; caption sync falls back to
+// the orchestrator's forced-alignment pass when withTimestamps is true.
+// See docs/PIPER_SETUP.md.
+router.post("/piper", async (req, res) => {
+  const { text, voiceId, withTimestamps } = req.body || {};
+  try {
+    const result = await synthesize({
+      text,
+      voiceIds: voiceId ? { piper: voiceId } : undefined,
+      preferredProvider: "piper",
+      withTimestamps: Boolean(withTimestamps),
+    });
+    return res.json(result);
+  } catch (e) {
+    console.error("[TTS] Piper route error:", e);
+    const message = String(e?.message || e);
+    const status = /required|invalid|missing|min 3 chars|PIPER_URL/i.test(message) ? 400 : 502;
+    return res.status(status).json({ ok: false, error: message });
+  }
+});
+
 export default router;
