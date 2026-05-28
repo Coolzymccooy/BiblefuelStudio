@@ -8,6 +8,7 @@ import { Select } from '../components/ui/Select';
 import { Field } from '../components/ui/Field';
 import { InfoTooltip } from '../components/ui/InfoTooltip';
 import { AnimationPicker } from '../components/voicelab/AnimationPicker';
+import { CompareVoices } from '../components/voicelab/CompareVoices';
 import { api } from '../lib/api';
 import toast from 'react-hot-toast';
 import { loadJson, pushUnique, saveJson, STORAGE_KEYS, toOutputUrl } from '../lib/storage';
@@ -1388,6 +1389,9 @@ export function VoiceAudioPage() {
                 {/* Caption animation picker — kinetic typography styles ported from lumina,
                     synced to the word timings the TTS pipeline produces. */}
                 <AnimationPicker />
+                {/* Side-by-side Voice Lab compare — synth the same line across 2-4
+                    providers in parallel, rate them, and persist the rating. */}
+                <CompareVoices />
                 {(activeTab === 'all' || activeTab === 'record') && (
                 <Card title="2. Record / Upload">
                     <div className="space-y-4">
