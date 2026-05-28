@@ -5,6 +5,7 @@ import { v4 as uuid } from "uuid";
 import { spawn, spawnSync } from "child_process";
 import { readLibrary } from "../lib/library.js";
 import { isLocalOrRemote, resolveOutputAlias } from "../lib/mediaThumb.js";
+import { buildWordDrawtext, resolveKineticAnimation } from "../lib/videoFilters.js";
 
 const router = Router();
 let ffmpegChecked = false;
@@ -405,6 +406,169 @@ router.post("/waveform", async (req, res) => {
     });
   } catch (e) {
     res.status(400).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// Probe duration + dimensions of a media file via ffprobe. Resolves to
+// `{ durationSec, width, height }` or `null` on any failure (missing ffprobe,
+// unreadable file). Used by the captioned-video render route to drive both
+// the FFmpeg pipeline and the drawtext positioning math from the source video
+// itself rather than a hardcoded aspect.
+function probeMediaInfo(filePath) {
+  return new Promise((resolve) => {
+    const ffprobe = process.env.FFPROBE_PATH?.trim() || "ffprobe";
+    const proc = spawn(ffprobe, [
+      "-v", "error",
+      "-select_streams", "v:0",
+      "-show_entries", "stream=width,height:format=duration",
+      "-of", "default=noprint_wrappers=1",
+      filePath,
+    ]);
+    let out = "";
+    proc.stdout.on("data", (d) => { out += d.toString(); });
+    proc.on("error", () => resolve(null));
+    proc.on("close", () => {
+      const widthMatch = out.match(/width=(\d+)/);
+      const heightMatch = out.match(/height=(\d+)/);
+      const durMatch = out.match(/duration=([\d.]+)/);
+      const width = widthMatch ? Number(widthMatch[1]) : null;
+      const height = heightMatch ? Number(heightMatch[1]) : null;
+      const durationSec = durMatch ? Number(durMatch[1]) : null;
+      if (!Number.isFinite(width) || !Number.isFinite(height) || !Number.isFinite(durationSec)) {
+        return resolve(null);
+      }
+      resolve({ width, height, durationSec });
+    });
+  });
+}
+
+/**
+ * Burn kinetic-typography captions onto an uploaded sermon video.
+ *
+ * Sibling of POST /video — but where /video treats backgroundPath as a looped
+ * background and stamps text on top, this route uses the input video as the
+ * primary visual layer (no -stream_loop) and drives total duration from the
+ * source. Same music-bed + auto-duck filter chain as /video.
+ *
+ * Body: { videoPath, words: [{text, startMs, endMs}], typographyPreset?,
+ *         musicPath?, musicVolume?, autoDuck? }
+ */
+router.post("/captioned-video", async (req, res) => {
+  try {
+    if (!ensureFfmpegAvailable()) {
+      return res.status(500).json({ ok: false, error: "FFmpeg not available on server" });
+    }
+
+    const rawVideoPath = req.body?.videoPath;
+    const rawMusicPath = req.body?.musicPath;
+    const words = Array.isArray(req.body?.words) ? req.body.words : [];
+    const typographyPreset = String(req.body?.typographyPreset || "default");
+    const musicVolume = req.body?.musicVolume;
+    const autoDuck = Boolean(req.body?.autoDuck);
+
+    if (!rawVideoPath) {
+      return res.status(400).json({ ok: false, error: "videoPath is required" });
+    }
+    if (!words.length) {
+      return res.status(400).json({ ok: false, error: "words[] is required and must be non-empty" });
+    }
+
+    const videoPath = resolveAssetPath(req.ctx.dataDir, rawVideoPath);
+    const musicPath = rawMusicPath ? resolveAssetPath(req.ctx.dataDir, rawMusicPath) : null;
+
+    if (!videoPath || !isLocalOrRemote(videoPath)) {
+      return res.status(400).json({ ok: false, error: `videoPath not found: ${rawVideoPath}` });
+    }
+    if (isFileTooLarge(videoPath)) {
+      return res.status(400).json({ ok: false, error: `videoPath too large (>${MAX_INPUT_MB}MB)` });
+    }
+    if (musicPath && !isLocalOrRemote(musicPath)) {
+      return res.status(400).json({ ok: false, error: `musicPath not found: ${rawMusicPath}` });
+    }
+
+    const info = await probeMediaInfo(videoPath);
+    if (!info || info.durationSec <= 0) {
+      return res.status(400).json({ ok: false, error: "Could not probe video duration / dimensions" });
+    }
+
+    // buildWordDrawtext expects { text, start, end } in seconds; the
+    // /api/transcribe contract emits { text, startMs, endMs } in milliseconds.
+    // Convert here so the captions/render pipelines stay millisecond-native.
+    const drawWords = words
+      .map((w) => ({
+        text: w?.text,
+        start: Number(w?.startMs) / 1000,
+        end: Number(w?.endMs) / 1000,
+        emphasize: Boolean(w?.emphasize),
+      }))
+      .filter((w) => w.text && Number.isFinite(w.start) && Number.isFinite(w.end) && w.end > w.start);
+
+    if (drawWords.length === 0) {
+      return res.status(400).json({ ok: false, error: "words[] contained no usable entries (need text + startMs + endMs)" });
+    }
+
+    const resolvedPreset = resolveKineticAnimation(typographyPreset)?.presetId || typographyPreset;
+    const drawtextChain = buildWordDrawtext({
+      words: drawWords,
+      w: info.width,
+      h: info.height,
+      preset: resolvedPreset,
+    });
+    if (!drawtextChain) {
+      return res.status(400).json({ ok: false, error: "buildWordDrawtext returned empty filter chain" });
+    }
+
+    const outDir = req.ctx.outputDir;
+    if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+    const outFile = path.join(outDir, `captioned-${uuid()}.mp4`);
+
+    const ffmpeg = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
+    const args = ["-y", "-i", videoPath];
+    if (musicPath) args.push("-i", musicPath);
+
+    const musicVol = Math.min(1, Math.max(0, Number(musicVolume ?? 0.25)));
+    const vFilter = `[0:v]${drawtextChain}[vout]`;
+    const aFilter = musicPath
+      ? autoDuck
+        ? `[0:a]volume=1.0[a1];[1:a]volume=${musicVol}[m1];[m1][a1]sidechaincompress=threshold=0.01:ratio=12:attack=5:release=350:makeup=2[ducked];[a1][ducked]amix=inputs=2:duration=shortest:dropout_transition=2[aout]`
+        : `[0:a]volume=1.0[a1];[1:a]volume=${musicVol}[a2];[a1][a2]amix=inputs=2:duration=shortest:dropout_transition=2[aout]`
+      : `[0:a]anull[aout]`;
+
+    const preset = process.env.FFMPEG_PRESET || "fast";
+    const hwaccel = process.env.FFMPEG_HWACCEL;
+    const vcodec = hwaccel === "nvenc" ? "h264_nvenc" : hwaccel === "qsv" ? "h264_qsv" : "libx264";
+
+    args.push(
+      "-filter_complex", `${vFilter};${aFilter}`,
+      "-map", "[vout]",
+      "-map", "[aout]",
+      "-c:v", vcodec,
+      "-preset", preset,
+      "-crf", "22",
+      "-pix_fmt", "yuv420p",
+      "-c:a", "aac",
+      "-b:a", "192k",
+      "-movflags", "+faststart",
+      "-shortest",
+      outFile,
+    );
+
+    await new Promise((resolve, reject) => {
+      const proc = spawn(ffmpeg, args);
+      let stderr = "";
+      proc.stderr.on("data", (d) => { stderr += d.toString(); });
+      proc.on("error", reject);
+      proc.on("close", (code) => {
+        if (code === 0) return resolve();
+        try { if (fs.existsSync(outFile)) fs.unlinkSync(outFile); } catch {}
+        reject(new Error(`ffmpeg exited ${code}: ${stderr.slice(-600)}`));
+      });
+    });
+
+    logMemory("render/captioned-video:done");
+    return res.json({ ok: true, file: outFile.replace(/\\/g, "/"), durationSec: info.durationSec });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
 

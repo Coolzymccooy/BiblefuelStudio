@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { spawn } from "child_process";
 import fetch, { File, FormData } from "node-fetch";
 
 /**
@@ -155,4 +156,151 @@ export async function alignAudioWithText(audioPath, _text) {
     console.warn(`[alignment] forced alignment failed: ${err?.message || err}`);
     return null;
   }
+}
+
+/**
+ * Public transcription entry point. Same Whisper call as `alignAudioWithText`,
+ * but returns the normalised word contract used by captions/render
+ * (`{ words: [{ text, startMs, endMs }] }`) instead of the char-level
+ * forced-alignment shape.
+ *
+ * Returns null when OPENAI_API_KEY is unset or Whisper returns no words —
+ * callers must treat null as "transcription unavailable", never as an error.
+ *
+ * `_fetchImpl` is a unit-test seam; in production it falls back to the
+ * runtime's `fetch`.
+ *
+ * @param {string} audioPath
+ * @param {{ _fetchImpl?: typeof fetch }} [options]
+ * @returns {Promise<{ words: Array<{ text: string, startMs: number, endMs: number }> } | null>}
+ */
+export async function transcribeAudio(audioPath, options = {}) {
+  const apiKey = getOpenAIApiKey();
+  if (!apiKey) return null;
+
+  const fetchImpl = options._fetchImpl || fetch;
+
+  if (!audioPath || !fs.existsSync(audioPath)) {
+    console.warn(`[transcribe] audio file not found: ${audioPath}`);
+    return null;
+  }
+
+  try {
+    const bytes = fs.readFileSync(audioPath);
+    const form = new FormData();
+    form.set("model", "whisper-1");
+    form.set("response_format", "verbose_json");
+    form.append("timestamp_granularities[]", "word");
+    form.set(
+      "file",
+      new File([bytes], path.basename(audioPath), { type: mimeFromPath(audioPath) }),
+    );
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), WHISPER_TIMEOUT_MS);
+    let resp;
+    try {
+      resp = await fetchImpl(WHISPER_API_URL, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}` },
+        body: form,
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => "");
+      console.warn(`[transcribe] whisper error ${resp.status}: ${errText.slice(0, 200)}`);
+      return null;
+    }
+
+    const payload = await resp.json();
+    const raw = Array.isArray(payload?.words) ? payload.words : [];
+    if (raw.length === 0) return null;
+
+    const words = raw
+      .map((w) => ({
+        text: String(w?.word ?? "").trim(),
+        startMs: Math.round(Number(w?.start ?? 0) * 1000),
+        endMs: Math.round(Number(w?.end ?? 0) * 1000),
+      }))
+      .filter((w) => w.text && Number.isFinite(w.startMs) && Number.isFinite(w.endMs) && w.endMs > w.startMs);
+
+    return words.length ? { words } : null;
+  } catch (err) {
+    console.warn(`[transcribe] failed: ${err?.message || err}`);
+    return null;
+  }
+}
+
+export const CHUNK_DURATION_MS = 40 * 60 * 1000;
+
+/**
+ * Split an audio file into ≤CHUNK_DURATION_MS chunks. Returns the list of
+ * { path, offsetMs }, suitable for parallel transcription + stitching.
+ *
+ * Files at or below the chunk threshold are returned as a single entry with
+ * offsetMs=0 so callers don't need to special-case short sermons.
+ *
+ * @param {string} audioPath
+ * @param {string} outDir
+ * @param {number} durationMs   Actual duration of the source (caller probes it).
+ * @returns {Promise<Array<{ path: string, offsetMs: number }>>}
+ */
+export async function chunkAudioForTranscription(audioPath, outDir, durationMs) {
+  if (durationMs <= CHUNK_DURATION_MS) {
+    return [{ path: audioPath, offsetMs: 0 }];
+  }
+  if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+
+  const ffmpeg = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
+  const chunkSec = CHUNK_DURATION_MS / 1000;
+  const base = path.basename(audioPath, path.extname(audioPath));
+  const pattern = path.join(outDir, `${base}-chunk-%03d.mp3`);
+
+  await new Promise((resolve, reject) => {
+    const proc = spawn(ffmpeg, [
+      "-y", "-i", audioPath,
+      "-f", "segment",
+      "-segment_time", String(chunkSec),
+      "-c", "copy",
+      pattern,
+    ]);
+    let stderr = "";
+    proc.stderr.on("data", (d) => { stderr += d.toString(); });
+    proc.on("error", reject);
+    proc.on("close", (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg segment exited ${code}: ${stderr.slice(-400)}`)));
+  });
+
+  return fs.readdirSync(outDir)
+    .filter((name) => name.startsWith(`${base}-chunk-`) && name.endsWith(".mp3"))
+    .sort()
+    .map((name, idx) => ({
+      path: path.join(outDir, name),
+      offsetMs: idx * CHUNK_DURATION_MS,
+    }));
+}
+
+/**
+ * Stitch the per-chunk transcription results back together, offsetting each
+ * word by its chunk's start time.
+ *
+ * @param {Array<{ offsetMs: number, transcription: { words: Array<{ text: string, startMs: number, endMs: number }> } | null }>} chunks
+ * @returns {{ words: Array<{ text: string, startMs: number, endMs: number }> }}
+ */
+export function stitchTranscriptions(chunks) {
+  const words = [];
+  for (const c of chunks) {
+    if (!c?.transcription?.words) continue;
+    for (const w of c.transcription.words) {
+      words.push({
+        text: w.text,
+        startMs: w.startMs + c.offsetMs,
+        endMs: w.endMs + c.offsetMs,
+      });
+    }
+  }
+  return { words };
 }
