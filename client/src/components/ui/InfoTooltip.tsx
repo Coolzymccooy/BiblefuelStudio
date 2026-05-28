@@ -1,56 +1,112 @@
-import { useState, useRef, useEffect, type ReactNode } from 'react';
+import { useState, useRef, useEffect, useCallback, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { Info } from 'lucide-react';
 
 interface InfoTooltipProps {
     content: ReactNode;
     side?: 'top' | 'bottom';
-    align?: 'start' | 'center' | 'end';
     iconClassName?: string;
     width?: 'sm' | 'md' | 'lg';
 }
 
+const WIDTH_PX: Record<NonNullable<InfoTooltipProps['width']>, number> = {
+    sm: 220,
+    md: 280,
+    lg: 340,
+};
+
 /**
  * Compact info icon that reveals helper text on hover, focus, or tap.
  *
- * Replaces the previous "wall of gray subtitle text under every label"
- * pattern. On desktop the popover follows hover/focus; on touch it toggles
- * on click and dismisses on outside-tap. Aim for one short sentence per
- * tooltip - if you need a paragraph, the content probably belongs as inline
- * `hint` text instead.
+ * The popover is rendered via a portal to document.body so it can't be
+ * clipped by ancestor overflow-hidden (the .card class uses overflow-hidden
+ * to crop the glow effect, which previously hid the top half of tooltips).
+ * Position is computed with getBoundingClientRect on each open + viewport
+ * scroll/resize, so it follows the trigger as the page moves.
  */
 export function InfoTooltip({
     content,
     side = 'top',
-    align = 'start',
     iconClassName = '',
     width = 'md',
 }: InfoTooltipProps) {
     const [open, setOpen] = useState(false);
-    const ref = useRef<HTMLSpanElement>(null);
+    const [coords, setCoords] = useState<{ top: number; left: number; placed: 'top' | 'bottom' }>({
+        top: 0,
+        left: 0,
+        placed: side,
+    });
+    const triggerRef = useRef<HTMLButtonElement>(null);
+    const tooltipRef = useRef<HTMLDivElement>(null);
+
+    const updateCoords = useCallback(() => {
+        const trigger = triggerRef.current;
+        if (!trigger) return;
+        const r = trigger.getBoundingClientRect();
+        const tooltipWidth = WIDTH_PX[width];
+        const tooltipHeight = tooltipRef.current?.offsetHeight ?? 96;
+        const margin = 8;
+        const viewportPad = 8;
+
+        let placed: 'top' | 'bottom' = side;
+        let top: number;
+        if (placed === 'top') {
+            top = r.top - tooltipHeight - margin;
+            if (top < viewportPad) {
+                placed = 'bottom';
+                top = r.bottom + margin;
+            }
+        } else {
+            top = r.bottom + margin;
+            if (top + tooltipHeight > window.innerHeight - viewportPad) {
+                placed = 'top';
+                top = r.top - tooltipHeight - margin;
+            }
+        }
+
+        let left = r.left;
+        const maxLeft = window.innerWidth - tooltipWidth - viewportPad;
+        if (left > maxLeft) left = maxLeft;
+        if (left < viewportPad) left = viewportPad;
+
+        setCoords({ top, left, placed });
+    }, [side, width]);
 
     useEffect(() => {
         if (!open) return;
-        function onDocClick(e: MouseEvent) {
-            if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-        }
-        function onKey(e: KeyboardEvent) {
+        updateCoords();
+        const raf = requestAnimationFrame(updateCoords);
+
+        const onScroll = () => updateCoords();
+        const onDocClick = (e: MouseEvent) => {
+            const target = e.target as Node;
+            if (triggerRef.current?.contains(target)) return;
+            if (tooltipRef.current?.contains(target)) return;
+            setOpen(false);
+        };
+        const onKey = (e: KeyboardEvent) => {
             if (e.key === 'Escape') setOpen(false);
-        }
+        };
+
+        window.addEventListener('scroll', onScroll, true);
+        window.addEventListener('resize', onScroll);
         document.addEventListener('mousedown', onDocClick);
         document.addEventListener('keydown', onKey);
         return () => {
+            cancelAnimationFrame(raf);
+            window.removeEventListener('scroll', onScroll, true);
+            window.removeEventListener('resize', onScroll);
             document.removeEventListener('mousedown', onDocClick);
             document.removeEventListener('keydown', onKey);
         };
-    }, [open]);
+    }, [open, updateCoords]);
 
-    const widthClass = width === 'sm' ? 'min-w-[180px] max-w-[220px]' : width === 'lg' ? 'min-w-[260px] max-w-[340px]' : 'min-w-[220px] max-w-[280px]';
-    const sideClass = side === 'top' ? 'bottom-full mb-2' : 'top-full mt-2';
-    const alignClass = align === 'start' ? 'left-0' : align === 'center' ? 'left-1/2 -translate-x-1/2' : 'right-0';
+    const tooltipWidth = WIDTH_PX[width];
 
     return (
-        <span ref={ref} className="relative inline-flex">
+        <>
             <button
+                ref={triggerRef}
                 type="button"
                 aria-label="More info"
                 aria-expanded={open}
@@ -67,20 +123,24 @@ export function InfoTooltip({
             >
                 <Info size={13} strokeWidth={2} />
             </button>
-            {open && (
-                <span
+            {open && typeof document !== 'undefined' && createPortal(
+                <div
+                    ref={tooltipRef}
                     role="tooltip"
-                    className={`
-                        absolute z-50 ${widthClass} ${sideClass} ${alignClass}
-                        px-3 py-2 rounded-lg
-                        bg-dark-900/[0.98] backdrop-blur-xl border border-white/[0.10] shadow-2xl shadow-black/40
-                        text-[0.8125rem] text-gray-200 leading-relaxed font-normal normal-case tracking-normal
-                        animate-fade-in pointer-events-none
-                    `}
+                    style={{
+                        position: 'fixed',
+                        top: coords.top,
+                        left: coords.left,
+                        width: tooltipWidth,
+                        maxWidth: tooltipWidth,
+                    }}
+                    className="z-[1000] px-3 py-2 rounded-lg bg-dark-900/[0.98] backdrop-blur-xl border border-white/[0.10] shadow-2xl shadow-black/40 text-[0.8125rem] text-gray-200 leading-relaxed font-normal normal-case tracking-normal pointer-events-none animate-fade-in"
+                    data-side={coords.placed}
                 >
                     {content}
-                </span>
+                </div>,
+                document.body,
             )}
-        </span>
+        </>
     );
 }
