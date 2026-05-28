@@ -101,11 +101,16 @@ if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 // Always advertise byte-range support on /outputs/* responses. iOS Safari
 // and QuickTime refuse to play MP4/MP3 without `Accept-Ranges: bytes` in the
 // HEAD response — they fall back to the "play arrow with slash" broken icon.
-// express.static + res.sendFile do honour Range requests, but neither emits
-// Accept-Ranges in the HEAD/200 path, only on the 206 response. Adding it
-// here on every /outputs response makes iOS happy on first probe.
+//
+// `no-transform` is critical: Cloudflare (and any intermediate reverse proxy
+// e.g. Caddy/nginx) will otherwise gzip-encode the body for compressible
+// content types, which forces `Transfer-Encoding: chunked` and silently
+// strips Range-request support. The MP4 then arrives as a single 200 OK
+// stream instead of a 206 partial, and iOS shows the broken-play icon.
+// See: https://www.rfc-editor.org/rfc/rfc7234#section-5.2.1.6
 app.use("/outputs", (req, res, next) => {
   res.setHeader("Accept-Ranges", "bytes");
+  res.setHeader("Cache-Control", "public, max-age=86400, no-transform");
   next();
 });
 
@@ -114,9 +119,9 @@ app.use("/outputs", express.static(outputDir, {
   // Cache aggressively — outputs are content-addressed by UUID and never
   // mutate. Cloudflare's CDN caches public, max-age responses and serves
   // most repeat plays without hitting origin.
-  maxAge: "1d",
   setHeaders: (res) => {
     res.setHeader("Accept-Ranges", "bytes");
+    res.setHeader("Cache-Control", "public, max-age=86400, no-transform");
   },
 }));
 
@@ -175,10 +180,13 @@ app.get("/outputs/:filename", (req, res, next) => {
   const hit = findInPerUserOutputs(raw);
   if (hit) {
     // res.sendFile honours Range requests internally; Accept-Ranges header
-    // was already set by the /outputs middleware above. We add Cache-Control
-    // here because Express's sendFile doesn't pass through the .static
-    // options when called directly.
-    res.setHeader("Cache-Control", "public, max-age=86400");
+    // was already set by the /outputs middleware above. We re-apply
+    // Cache-Control here (with no-transform) because Express's sendFile
+    // doesn't pass through .static options when called directly, and the
+    // no-transform directive is what keeps Cloudflare/Caddy/nginx from
+    // gzipping the response and breaking iOS Range requests.
+    res.setHeader("Cache-Control", "public, max-age=86400, no-transform");
+    res.setHeader("Accept-Ranges", "bytes");
     return res.sendFile(hit);
   }
   // Genuine miss: return a real 404 instead of letting the SPA catch-all
@@ -280,6 +288,19 @@ app.get('/api/config', (req, res) => {
 });
 
 const publicDir = path.join(__dirname, "public");
+
+// Service worker + manifest MUST NOT be cached by intermediaries — iOS
+// Chrome (and to a lesser extent Safari) will otherwise keep an old SW
+// running indefinitely, which serves a stale precache of index.html that
+// references chunk hashes that no longer exist on disk → blank white page
+// on next deploy. By spec, browsers re-fetch sw.js on a 24h schedule
+// regardless of Cache-Control, but Cloudflare/Caddy will happily serve the
+// last cached copy for hours unless we tell them not to.
+app.use(["/sw.js", "/registerSW.js", "/manifest.webmanifest"], (req, res, next) => {
+  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  next();
+});
+
 app.use("/", express.static(publicDir));
 
 app.use("/api/auth", authRouter);
