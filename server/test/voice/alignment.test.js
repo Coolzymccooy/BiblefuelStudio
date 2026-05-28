@@ -1,7 +1,10 @@
-import { test } from "node:test";
+import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import fs from "fs";
+import os from "os";
+import path from "path";
 
-import { wordsToCharAlignment } from "../../src/lib/voice/alignment.js";
+import { wordsToCharAlignment, transcribeAudio } from "../../src/lib/voice/alignment.js";
 
 test("wordsToCharAlignment: empty input → empty arrays", () => {
   const a = wordsToCharAlignment([]);
@@ -47,4 +50,46 @@ test("wordsToCharAlignment: skips empty word strings but still inserts separator
   ]);
   // a, <space after a>, <space after empty>, b
   assert.deepEqual(a.characters, ["a", " ", " ", "b"]);
+});
+
+describe("transcribeAudio", () => {
+  test("returns null when OPENAI_API_KEY is absent", async () => {
+    const prev = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    try {
+      const result = await transcribeAudio("/nonexistent.mp3");
+      assert.equal(result, null);
+    } finally {
+      if (prev !== undefined) process.env.OPENAI_API_KEY = prev;
+    }
+  });
+
+  test("maps Whisper words to { text, startMs, endMs } when fetch is stubbed", async (t) => {
+    process.env.OPENAI_API_KEY = "sk-test";
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tx-"));
+    const audioPath = path.join(dir, "fake.mp3");
+    fs.writeFileSync(audioPath, Buffer.from("not-real-mp3-bytes"));
+    t.after(() => {
+      delete process.env.OPENAI_API_KEY;
+      fs.rmSync(dir, { recursive: true, force: true });
+    });
+
+    const fakeFetch = async () => ({
+      ok: true,
+      json: async () => ({
+        words: [
+          { word: "Grace", start: 0.0, end: 0.42 },
+          { word: "abounds", start: 0.42, end: 1.10 },
+        ],
+      }),
+    });
+
+    const result = await transcribeAudio(audioPath, { _fetchImpl: fakeFetch });
+    assert.deepEqual(result, {
+      words: [
+        { text: "Grace", startMs: 0, endMs: 420 },
+        { text: "abounds", startMs: 420, endMs: 1100 },
+      ],
+    });
+  });
 });

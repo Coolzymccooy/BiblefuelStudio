@@ -156,3 +156,80 @@ export async function alignAudioWithText(audioPath, _text) {
     return null;
   }
 }
+
+/**
+ * Public transcription entry point. Same Whisper call as `alignAudioWithText`,
+ * but returns the normalised word contract used by captions/render
+ * (`{ words: [{ text, startMs, endMs }] }`) instead of the char-level
+ * forced-alignment shape.
+ *
+ * Returns null when OPENAI_API_KEY is unset or Whisper returns no words —
+ * callers must treat null as "transcription unavailable", never as an error.
+ *
+ * `_fetchImpl` is a unit-test seam; in production it falls back to the
+ * runtime's `fetch`.
+ *
+ * @param {string} audioPath
+ * @param {{ _fetchImpl?: typeof fetch }} [options]
+ * @returns {Promise<{ words: Array<{ text: string, startMs: number, endMs: number }> } | null>}
+ */
+export async function transcribeAudio(audioPath, options = {}) {
+  const apiKey = getOpenAIApiKey();
+  if (!apiKey) return null;
+
+  const fetchImpl = options._fetchImpl || fetch;
+
+  if (!audioPath || !fs.existsSync(audioPath)) {
+    console.warn(`[transcribe] audio file not found: ${audioPath}`);
+    return null;
+  }
+
+  try {
+    const bytes = fs.readFileSync(audioPath);
+    const form = new FormData();
+    form.set("model", "whisper-1");
+    form.set("response_format", "verbose_json");
+    form.append("timestamp_granularities[]", "word");
+    form.set(
+      "file",
+      new File([bytes], path.basename(audioPath), { type: mimeFromPath(audioPath) }),
+    );
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), WHISPER_TIMEOUT_MS);
+    let resp;
+    try {
+      resp = await fetchImpl(WHISPER_API_URL, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}` },
+        body: form,
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (!resp.ok) {
+      const errText = await resp.text?.().catch?.(() => "") || "";
+      console.warn(`[transcribe] whisper error ${resp.status}: ${String(errText).slice(0, 200)}`);
+      return null;
+    }
+
+    const payload = await resp.json();
+    const raw = Array.isArray(payload?.words) ? payload.words : [];
+    if (raw.length === 0) return null;
+
+    const words = raw
+      .map((w) => ({
+        text: String(w?.word ?? "").trim(),
+        startMs: Math.round(Number(w?.start ?? 0) * 1000),
+        endMs: Math.round(Number(w?.end ?? 0) * 1000),
+      }))
+      .filter((w) => w.text && Number.isFinite(w.startMs) && Number.isFinite(w.endMs) && w.endMs > w.startMs);
+
+    return words.length ? { words } : null;
+  } catch (err) {
+    console.warn(`[transcribe] failed: ${err?.message || err}`);
+    return null;
+  }
+}
