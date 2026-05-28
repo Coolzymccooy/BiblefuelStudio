@@ -4,7 +4,12 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 
-import { wordsToCharAlignment, transcribeAudio } from "../../src/lib/voice/alignment.js";
+import {
+  wordsToCharAlignment,
+  transcribeAudio,
+  stitchTranscriptions,
+  CHUNK_DURATION_MS,
+} from "../../src/lib/voice/alignment.js";
 
 test("wordsToCharAlignment: empty input → empty arrays", () => {
   const a = wordsToCharAlignment([]);
@@ -91,5 +96,34 @@ describe("transcribeAudio", () => {
         { text: "abounds", startMs: 420, endMs: 1100 },
       ],
     });
+  });
+});
+
+describe("stitchTranscriptions", () => {
+  test("offsets word timings by chunk start and concatenates", () => {
+    const chunks = [
+      { offsetMs: 0,    transcription: { words: [{ text: "Grace",   startMs:   0, endMs: 400 }] } },
+      { offsetMs: 60_000, transcription: { words: [{ text: "abounds", startMs: 100, endMs: 500 }] } },
+    ];
+    const stitched = stitchTranscriptions(chunks);
+    assert.deepEqual(stitched.words, [
+      { text: "Grace",   startMs:        0, endMs:      400 },
+      { text: "abounds", startMs:   60_100, endMs:   60_500 },
+    ]);
+  });
+
+  test("skips chunks with null transcription (whisper failure)", () => {
+    const chunks = [
+      { offsetMs: 0,    transcription: { words: [{ text: "Hi", startMs: 0, endMs: 100 }] } },
+      { offsetMs: 1000, transcription: null },
+    ];
+    const stitched = stitchTranscriptions(chunks);
+    assert.equal(stitched.words.length, 1);
+  });
+
+  test("CHUNK_DURATION_MS leaves headroom under Whisper 25MB limit", () => {
+    // 40 minutes at 64 kbps mono = ~19.2 MB. Sanity-check the constant.
+    assert.ok(CHUNK_DURATION_MS <= 40 * 60 * 1000, "chunk must be ≤ 40 minutes");
+    assert.ok(CHUNK_DURATION_MS >= 5 * 60 * 1000, "chunk must be at least 5 minutes");
   });
 });
