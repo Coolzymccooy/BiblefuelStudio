@@ -21,6 +21,11 @@ export const STORAGE_KEYS = {
     ttsProvider: 'BF_TTS_PROVIDER',
     ttsEdgeVoiceId: 'BF_TTS_EDGE_VOICE_ID',
     voiceSynthesisDefaults: 'BF_VOICE_SYNTHESIS_DEFAULTS',
+    // Voice Lab "Compare voices": last text + persisted star ratings/notes
+    // keyed by `${textHash}:${provider}:${voiceId||'default'}` so revisiting
+    // the same combo restores the prior rating.
+    compareText: 'BF_COMPARE_TEXT',
+    compareRatings: 'BF_COMPARE_RATINGS',
 };
 
 export function loadJson<T>(key: string, fallback: T): T {
