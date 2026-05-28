@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { spawn } from "child_process";
 import fetch, { File, FormData } from "node-fetch";
 
 /**
@@ -232,4 +233,113 @@ export async function transcribeAudio(audioPath, options = {}) {
     console.warn(`[transcribe] failed: ${err?.message || err}`);
     return null;
   }
+}
+
+/**
+ * Chunk duration: 40 minutes at 64 kbps mono ≈ 19.2 MB (well under Whisper's 25 MB limit).
+ * This constant is exported for testing and validation.
+ *
+ * @type {number}
+ */
+export const CHUNK_DURATION_MS = 40 * 60 * 1000;
+
+/**
+ * Segment a long audio file into chunks for transcription via Whisper
+ * (which has a 25 MB upload limit). Uses ffmpeg's segment muxer with
+ * stream copy (no re-encoding) for speed.
+ *
+ * @param {string} audioPath   Absolute path to the input audio file
+ * @param {string} outDir      Directory to write chunk files to (created if needed)
+ * @param {number} durationMs  Duration per chunk in milliseconds (default: CHUNK_DURATION_MS)
+ * @returns {Promise<Array<{ offsetMs: number, chunkPath: string }>>} List of chunk info
+ */
+export async function chunkAudioForTranscription(
+  audioPath,
+  outDir,
+  durationMs = CHUNK_DURATION_MS,
+) {
+  if (!fs.existsSync(audioPath)) {
+    throw new Error(`Audio file not found: ${audioPath}`);
+  }
+
+  if (!fs.existsSync(outDir)) {
+    fs.mkdirSync(outDir, { recursive: true });
+  }
+
+  const durationSec = durationMs / 1000;
+  const outPattern = path.join(outDir, "chunk-%03d.mp3");
+
+  return new Promise((resolve, reject) => {
+    const proc = spawn("ffmpeg", [
+      "-i", audioPath,
+      "-c", "copy",
+      "-f", "segment",
+      "-segment_time", String(durationSec),
+      outPattern,
+    ]);
+
+    let errorOutput = "";
+
+    proc.stderr.on("data", (data) => {
+      errorOutput += data.toString();
+    });
+
+    proc.on("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(`ffmpeg exited with code ${code}: ${errorOutput}`));
+        return;
+      }
+
+      // Glob for all chunk files and sort them numerically
+      const chunks = [];
+      let chunkIdx = 0;
+      while (true) {
+        const chunkPath = path.join(outDir, `chunk-${String(chunkIdx).padStart(3, "0")}.mp3`);
+        if (!fs.existsSync(chunkPath)) break;
+        chunks.push({
+          offsetMs: chunkIdx * durationMs,
+          chunkPath,
+        });
+        chunkIdx++;
+      }
+
+      resolve(chunks);
+    });
+
+    proc.on("error", (err) => {
+      reject(err);
+    });
+  });
+}
+
+/**
+ * Merge transcriptions from multiple audio chunks back into a single
+ * continuous timeline. Word timings from each chunk are offset by
+ * chunk.offsetMs to produce absolute timings relative to the full audio.
+ *
+ * Chunks with null transcription (e.g. from Whisper failures) are skipped.
+ *
+ * @param {Array<{ offsetMs: number, transcription: { words: Array<{ text: string, startMs: number, endMs: number }> } | null }>} chunks
+ * @returns {{ words: Array<{ text: string, startMs: number, endMs: number }> }}
+ */
+export function stitchTranscriptions(chunks) {
+  const words = [];
+
+  for (const chunk of chunks) {
+    if (!chunk.transcription) continue;
+
+    const chunkWords = Array.isArray(chunk.transcription.words)
+      ? chunk.transcription.words
+      : [];
+
+    for (const w of chunkWords) {
+      words.push({
+        text: w.text,
+        startMs: w.startMs + chunk.offsetMs,
+        endMs: w.endMs + chunk.offsetMs,
+      });
+    }
+  }
+
+  return { words };
 }
