@@ -217,5 +217,40 @@ router.get("/video-list", (req, res) => {
   }
 });
 
+const videoMimeToExt = (mime, hint) => {
+  const m = String(mime || "").toLowerCase();
+  if (m.includes("mp4")) return "mp4";
+  if (m.includes("quicktime")) return "mov";
+  if (m.includes("webm")) return "webm";
+  return videoExtensions.has(`.${hint}`) ? hint : "mp4";
+};
+
+router.post("/upload-source-video", async (req, res) => {
+  try {
+    const dataUrl = String(req.body?.dataUrl || "");
+    const fileNameHint = String(req.body?.filename || "").trim();
+    const parsed = parseDataUrlPayload(dataUrl);
+    if (!parsed.ok) return res.status(400).json({ ok: false, error: parsed.error || "Invalid dataUrl" });
+
+    const decoded = Buffer.from(parsed.b64 || "", "base64");
+    if (!decoded.length || decoded.length < 128) {
+      return res.status(400).json({ ok: false, error: "Video payload is empty or too small" });
+    }
+
+    const extHint = fileNameHint ? path.extname(fileNameHint).replace(".", "").toLowerCase() : "";
+    const ext = videoMimeToExt(parsed.mime, extHint);
+
+    const outDir = req.ctx.outputDir;
+    if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+
+    const outFile = path.join(outDir, `source-video-${uuid()}.${ext}`);
+    fs.writeFileSync(outFile, decoded);
+
+    return res.json({ ok: true, file: outFile.replace(/\\/g, "/"), mime: parsed.mime || `video/${ext}` });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
 export default router;
 
