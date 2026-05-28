@@ -225,6 +225,11 @@ const videoMimeToExt = (mime, hint) => {
   return videoExtensions.has(`.${hint}`) ? hint : "mp4";
 };
 
+// Sibling of /upload-audio that preserves the original video tracks for the
+// "Render Captioned Video" mode. Skips the ffprobe playability check that
+// /upload-audio runs — video probing is expensive and the file goes through
+// FFmpeg downstream during the render anyway. Trust here means authenticated
+// upload, not absence of validation.
 router.post("/upload-source-video", async (req, res) => {
   try {
     const dataUrl = String(req.body?.dataUrl || "");
