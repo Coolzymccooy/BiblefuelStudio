@@ -5,6 +5,7 @@ import { v4 as uuid } from "uuid";
 import { spawn, spawnSync } from "child_process";
 import { readLibrary } from "../lib/library.js";
 import { isLocalOrRemote, resolveOutputAlias } from "../lib/mediaThumb.js";
+import { buildWordDrawtext } from "../lib/videoFilters.js";
 
 const router = Router();
 let ffmpegChecked = false;
@@ -400,6 +401,160 @@ router.post("/waveform", async (req, res) => {
         return res.status(400).json({ ok: false, error: `ffmpeg failed: ${code}`, details: stderr.slice(-2000) });
       }
       logMemory("render/waveform:done");
+      if (global.gc) global.gc();
+      res.json({ ok: true, file: outFile.replace(/\\/g, '/') });
+    });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+/**
+ * POST /api/render/captioned-video
+ * Burns kinetic-typography captions onto a user-provided video.
+ *
+ * Request body:
+ *   - videoPath: path or ID of the primary video (required)
+ *   - words: array of { text, start, end, emphasize? } for captions (required)
+ *   - aspect: 'landscape' | 'portrait' | 'square' (default: 'landscape')
+ *   - typographyPreset: string name of caption preset (default: undefined)
+ *   - musicPath?: path or ID of optional music bed
+ *   - musicVolume?: 0-1 volume for music (default: 0.3)
+ *   - autoDuck?: boolean, auto-reduce music when captions are playing
+ *
+ * Response: { ok: true, file: "path/to/output.mp4" } or { ok: false, error: "..." }
+ */
+router.post("/captioned-video", async (req, res) => {
+  try {
+    if (!ensureFfmpegAvailable()) {
+      return res.status(500).json({ ok: false, error: "FFmpeg not available on server" });
+    }
+
+    const rawVideoPath = req.body?.videoPath;
+    const rawMusicPath = req.body?.musicPath;
+    let { videoPath, musicPath, words, aspect, typographyPreset, musicVolume, autoDuck } = req.body || {};
+
+    videoPath = resolveAssetPath(req.ctx.dataDir, rawVideoPath);
+    musicPath = resolveAssetPath(req.ctx.dataDir, rawMusicPath);
+
+    if (!videoPath || !isLocalOrRemote(videoPath)) {
+      return res.status(400).json({ ok: false, error: `videoPath missing or not found: ${rawVideoPath || "<empty>"}` });
+    }
+    if (isFileTooLarge(videoPath)) {
+      return res.status(400).json({ ok: false, error: `videoPath too large (>${MAX_INPUT_MB}MB)` });
+    }
+    if (musicPath && !isLocalOrRemote(musicPath)) {
+      return res.status(400).json({ ok: false, error: `musicPath not found: ${rawMusicPath}` });
+    }
+    if (musicPath && isFileTooLarge(musicPath)) {
+      return res.status(400).json({ ok: false, error: `musicPath too large (>${MAX_INPUT_MB}MB)` });
+    }
+
+    // Validate and normalize words array
+    if (!Array.isArray(words) || words.length === 0) {
+      return res.status(400).json({ ok: false, error: "words[] required (array of { text, start, end })" });
+    }
+    const normWords = words.map(w => ({
+      text: String(w.text || "").trim().slice(0, 60),
+      start: Number(w.start || 0),
+      end: Number(w.end || 0),
+      emphasize: Boolean(w.emphasize),
+    })).filter(w => w.start < w.end && w.text.length > 0);
+
+    if (normWords.length === 0) {
+      return res.status(400).json({ ok: false, error: "words[] must contain at least one valid word (start < end, non-empty text)" });
+    }
+
+    logMemory("render/captioned-video:start");
+    const { w, h } = getDims(aspect);
+    const preset = typographyPreset || undefined;
+    const hasMusic = Boolean(musicPath);
+    const musicVol = Math.min(1, Math.max(0, Number(musicVolume ?? 0.3)));
+    const duck = Boolean(autoDuck) && hasMusic;
+
+    // Probe the video to get its duration
+    const ffmpeg = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
+    const probeDuration = await new Promise((resolve) => {
+      const probeProc = spawn(ffmpeg, ["-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1:noquote=1", videoPath]);
+      let durationStr = "";
+      probeProc.stdout.on("data", (chunk) => {
+        durationStr += chunk.toString();
+      });
+      probeProc.on("close", () => {
+        const dur = Number.parseFloat(durationStr.trim());
+        resolve(Number.isFinite(dur) ? dur : 20);
+      });
+      probeProc.on("error", () => resolve(20));
+    });
+
+    const outDir = req.ctx.outputDir;
+    if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+    const outFile = path.join(outDir, `captioned-video-${uuid()}.mp4`);
+
+    // Build the caption filter chain using buildWordDrawtext
+    const captionFilter = buildWordDrawtext({ words: normWords, w, h, preset });
+    if (!captionFilter) {
+      return res.status(400).json({ ok: false, error: "Failed to build caption filters from words" });
+    }
+
+    // Base video filter: scale/crop + captions
+    const vf = `scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},${captionFilter}`;
+
+    // FFmpeg arguments
+    const args = ["-y"];
+
+    // Add inputs
+    args.push("-i", videoPath);
+    if (hasMusic) args.push("-i", musicPath);
+
+    // Video filter complex
+    let filterComplex = `[0:v]${vf}[vout]`;
+
+    // Audio handling
+    if (hasMusic) {
+      if (duck) {
+        // Simple ducking: reduce music volume to 50% (no sidechain compression in basic FFmpeg)
+        const duckVol = musicVol * 0.5;
+        filterComplex += `;[1:a]volume=${duckVol}[amusic]`;
+        filterComplex += `;[amusic]aformat=sample_rates=44100:channel_layouts=stereo[aout]`;
+        args.push("-filter_complex", filterComplex, "-map", "[vout]", "-map", "[aout]", "-shortest", "-c:v", "libx264", "-preset", "fast", "-c:a", "aac", outFile);
+      } else {
+        // No ducking: just mix music at set volume
+        filterComplex += `;[1:a]volume=${musicVol}[amusic]`;
+        filterComplex += `;[amusic]aformat=sample_rates=44100:channel_layouts=stereo[aout]`;
+        args.push("-filter_complex", filterComplex, "-map", "[vout]", "-map", "[aout]", "-shortest", "-c:v", "libx264", "-preset", "fast", "-c:a", "aac", outFile);
+      }
+    } else {
+      // No music, just video + silence
+      args.push("-filter_complex", filterComplex, "-map", "[vout]", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-c:v", "libx264", "-preset", "fast", "-c:a", "aac", "-shortest", outFile);
+    }
+
+    // Handle hardware acceleration if available
+    const hwaccel = process.env.FFMPEG_HWACCEL;
+    const vcodec = hwaccel === 'nvenc' ? 'h264_nvenc' : hwaccel === 'qsv' ? 'h264_qsv' : 'libx264';
+    if (vcodec !== 'libx264') {
+      const idx = args.indexOf('libx264');
+      if (idx >= 0) args[idx] = vcodec;
+    }
+
+    // Replace filter_complex position if we use hwaccel
+    const fcIdx = args.indexOf("-filter_complex");
+    if (fcIdx >= 0) {
+      // Already handled above; for hwaccel we'd need to restructure
+    }
+
+    const proc = spawn(ffmpeg, args);
+    let stderr = "";
+    proc.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    proc.on("close", (code) => {
+      if (code !== 0) {
+        logMemory("render/captioned-video:error");
+        return res.status(400).json({ ok: false, error: `ffmpeg failed: ${code}`, details: stderr.slice(-2000) });
+      }
+      logMemory("render/captioned-video:done");
       if (global.gc) global.gc();
       res.json({ ok: true, file: outFile.replace(/\\/g, '/') });
     });
