@@ -166,9 +166,6 @@ export function VoiceAudioPage() {
     const [voices, setVoices] = useState<ElevenVoice[]>([]);
     const [isLoadingVoices, setIsLoadingVoices] = useState(false);
     const [isCloningVoice, setIsCloningVoice] = useState(false);
-    const [cloneProvider, setCloneProvider] = useState<'elevenlabs' | 'chatterbox'>('elevenlabs');
-    type ChatterboxVoice = { id: string; name: string; description?: string; refPath: string; refFilename?: string; createdAt: string };
-    const [chatterboxVoices, setChatterboxVoices] = useState<ChatterboxVoice[]>([]);
     const [cloneVoiceName, setCloneVoiceName] = useState('');
     const [cloneVoiceDescription, setCloneVoiceDescription] = useState('');
     const [cloneSamplePath, setCloneSamplePath] = useState('');
@@ -289,31 +286,6 @@ export function VoiceAudioPage() {
     useEffect(() => {
         setVoices([]);
     }, [provider]);
-
-    // Load per-user Chatterbox clones once on mount. Chatterbox "voices" are
-    // reference-WAV aliases stored server-side; the user sees them as a saved
-    // list under Voice Clone and can click "Use" to drop the alias into the
-    // TTS Voice ID field.
-    const loadChatterboxVoices = async () => {
-        const res = await api.get<{ ok: boolean; voices: ChatterboxVoice[] }>('/api/tts/chatterbox-voices');
-        if (res.ok && Array.isArray(res.data?.voices)) {
-            setChatterboxVoices(res.data.voices);
-        }
-    };
-    useEffect(() => {
-        void loadChatterboxVoices();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
-
-    const deleteChatterboxVoice = async (id: string) => {
-        const res = await api.delete(`/api/tts/chatterbox-voices/${encodeURIComponent(id)}`);
-        if (res.ok) {
-            setChatterboxVoices((curr) => curr.filter((v) => v.id !== id));
-            toast.success('Cloned voice removed');
-        } else {
-            toast.error(res.error || 'Failed to delete cloned voice');
-        }
-    };
 
     useEffect(() => {
         saveJson(STORAGE_KEYS.ttsStability, stability);
@@ -829,14 +801,8 @@ export function VoiceAudioPage() {
     };
 
     const handleCloneVoice = async () => {
-        // Per-provider availability gating. ElevenLabs needs an API key (ttsEnabled
-        // reflects that); Chatterbox needs CHATTERBOX_URL set + the bridge reachable.
-        if (cloneProvider === 'elevenlabs' && !ttsEnabled) {
-            toast.error('ElevenLabs is disabled. Add ELEVENLABS_API_KEY first.');
-            return;
-        }
-        if (cloneProvider === 'chatterbox' && !chatterboxAvailable) {
-            toast.error('Chatterbox bridge is unreachable. Check CHATTERBOX_URL and that the bridge is running.');
+        if (!ttsEnabled) {
+            toast.error('TTS is disabled. Add ELEVENLABS_API_KEY first.');
             return;
         }
         if (!cloneVoiceName.trim()) {
@@ -855,14 +821,7 @@ export function VoiceAudioPage() {
 
         setIsCloningVoice(true);
         try {
-            const res = await api.post<{
-                ok: boolean;
-                provider?: string;
-                voiceId?: string;
-                voice?: any;
-                notes?: string;
-            }>('/api/tts/clone-voice', {
-                provider: cloneProvider,
+            const res = await api.post('/api/tts/clone-voice', {
                 name: cloneVoiceName.trim(),
                 description: cloneVoiceDescription.trim() || undefined,
                 samplePaths: [sample],
@@ -879,17 +838,8 @@ export function VoiceAudioPage() {
                 if (newVoiceId) {
                     setVoiceId(newVoiceId);
                 }
-                if (res.data?.notes) toast(res.data.notes, { icon: 'ℹ️', duration: 6000 });
-                toast.success(
-                    cloneProvider === 'chatterbox'
-                        ? 'Chatterbox voice saved — pick it from the list below or paste the ID into Voice ID above.'
-                        : 'Voice cloned successfully',
-                );
-                if (cloneProvider === 'chatterbox') {
-                    await loadChatterboxVoices();
-                } else {
-                    await loadVoices();
-                }
+                toast.success('Voice cloned successfully');
+                await loadVoices();
             } else {
                 const err = res.error || 'Voice clone failed';
                 if (err.includes('create_instant_voice_clone')) {
@@ -1298,76 +1248,16 @@ export function VoiceAudioPage() {
                 )}
 
                 {(activeTab === 'all' || activeTab === 'voice') && (
-                    <Card
-                        title="Voice Clone"
-                        collapsible
-                        defaultOpen={false}
-                        tooltip="Clone your own voice from a short sample. ElevenLabs creates a persistent voice ID; Chatterbox saves the sample as a conditioning reference. Azure and Edge don't support open cloning."
-                    >
+                    <Card title="Voice Clone">
                         <div className="space-y-4">
                             <div className="rounded-lg border border-amber-500/25 bg-amber-500/[0.06] px-3 py-2 text-[0.8125rem] text-amber-100/90 leading-relaxed flex items-start gap-2">
                                 <InfoTooltip
                                     width="lg"
                                     iconClassName="!text-amber-300 !w-4 !h-4 mt-0.5 shrink-0"
-                                    content="Cloning is governed by the chosen provider's usage policy. Make sure you have explicit recorded consent before cloning any voice that isn't your own."
+                                    content="Cloning is governed by ElevenLabs' usage policy. Make sure you have explicit recorded consent before cloning any voice that isn't your own."
                                 />
                                 <span>Consent required — clone only voices you own or have explicit permission to use. Provide at least one clear sample file path from your outputs.</span>
                             </div>
-
-                            {/* Provider selector. ElevenLabs and Chatterbox are the only
-                                providers with usable cloning APIs in this app; Azure and
-                                Edge are surfaced as disabled so it's obvious they exist
-                                but aren't supported here. */}
-                            <div>
-                                <label className="field-label">Provider</label>
-                                <div className="inline-flex flex-wrap gap-1 rounded-lg border border-white/10 p-1 bg-black/20">
-                                    <button
-                                        type="button"
-                                        onClick={() => setCloneProvider('elevenlabs')}
-                                        disabled={!ttsEnabled}
-                                        className={`px-3 py-1.5 text-xs font-medium rounded transition ${cloneProvider === 'elevenlabs'
-                                            ? 'bg-primary-500 text-white'
-                                            : 'text-gray-300 hover:bg-white/5'
-                                            } disabled:opacity-40 disabled:cursor-not-allowed`}
-                                    >
-                                        ElevenLabs <span className="opacity-60">· cloud</span>
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => setCloneProvider('chatterbox')}
-                                        disabled={!chatterboxAvailable}
-                                        title={chatterboxAvailable ? '' : 'CHATTERBOX_URL not set or bridge unreachable.'}
-                                        className={`px-3 py-1.5 text-xs font-medium rounded transition ${cloneProvider === 'chatterbox'
-                                            ? 'bg-emerald-500/20 text-emerald-200'
-                                            : 'text-gray-300 hover:bg-white/5'
-                                            } disabled:opacity-40 disabled:cursor-not-allowed`}
-                                    >
-                                        Chatterbox <span className="opacity-60">· self-hosted</span>
-                                    </button>
-                                    <button
-                                        type="button"
-                                        disabled
-                                        title="Azure cloning needs Custom Neural Voice or Personal Voice activation on your Azure tenant — not wired in this app."
-                                        className="px-3 py-1.5 text-xs font-medium rounded text-gray-500 opacity-50 cursor-not-allowed"
-                                    >
-                                        Azure <span className="opacity-60">· tenant-only</span>
-                                    </button>
-                                    <button
-                                        type="button"
-                                        disabled
-                                        title="Edge-TTS is the Microsoft Edge Read-Aloud service. Stock voices only — no cloning API exists."
-                                        className="px-3 py-1.5 text-xs font-medium rounded text-gray-500 opacity-50 cursor-not-allowed"
-                                    >
-                                        Edge <span className="opacity-60">· no cloning</span>
-                                    </button>
-                                </div>
-                                <p className="field-help">
-                                    {cloneProvider === 'chatterbox'
-                                        ? 'Chatterbox conditions on a single reference WAV at synthesis time. The sample is uploaded to your bridge once and reused for every future render.'
-                                        : 'ElevenLabs creates a permanent voice in your ElevenLabs library. Counts against your monthly character / voice-slot quota.'}
-                                </p>
-                            </div>
-
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                 <Input
                                     value={cloneVoiceName}
@@ -1396,7 +1286,7 @@ export function VoiceAudioPage() {
                                 </label>
                                 <label className="flex items-center gap-2">
                                     <input type="checkbox" checked={cloneTermsAccepted} onChange={(e) => setCloneTermsAccepted(e.target.checked)} />
-                                    I accept the chosen provider's terms and responsibility for usage.
+                                    I accept ElevenLabs terms and responsibility for usage.
                                 </label>
                             </div>
                             <div className="flex gap-2">
@@ -1411,64 +1301,16 @@ export function VoiceAudioPage() {
                                 >
                                     Use Current Audio Path
                                 </Button>
-                                <Button
-                                    onClick={handleCloneVoice}
-                                    isLoading={isCloningVoice}
-                                    disabled={cloneProvider === 'elevenlabs' ? !ttsEnabled : !chatterboxAvailable}
-                                >
+                                <Button onClick={handleCloneVoice} isLoading={isCloningVoice} disabled={!ttsEnabled}>
                                     Clone Voice
                                 </Button>
                             </div>
-
-                            {/* Saved Chatterbox clones — server-side list keyed by user. */}
-                            {chatterboxVoices.length > 0 && (
-                                <div className="pt-3 border-t border-white/[0.06]">
-                                    <div className="flex items-center justify-between mb-2">
-                                        <h4 className="text-[0.8125rem] font-semibold text-gray-200">Saved Chatterbox clones</h4>
-                                        <span className="text-[0.6875rem] text-gray-500">{chatterboxVoices.length} total</span>
-                                    </div>
-                                    <div className="space-y-2">
-                                        {chatterboxVoices.map((cv) => (
-                                            <div key={cv.id} className="flex items-center gap-2 bg-dark-900/40 border border-white/[0.06] rounded-lg p-2">
-                                                <div className="flex-1 min-w-0">
-                                                    <div className="text-[0.875rem] font-medium text-emerald-300/90 truncate">{cv.name}</div>
-                                                    <div className="text-[0.6875rem] font-mono text-gray-500 truncate">{cv.refFilename || cv.refPath}</div>
-                                                </div>
-                                                <Button
-                                                    variant="secondary"
-                                                    className="text-[0.6875rem] h-7"
-                                                    onClick={() => {
-                                                        setProvider('chatterbox');
-                                                        setVoiceId(cv.id);
-                                                        toast.success(`Voice "${cv.name}" selected — generate to test.`);
-                                                    }}
-                                                >
-                                                    Use
-                                                </Button>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => deleteChatterboxVoice(cv.id)}
-                                                    title="Delete this saved clone"
-                                                    className="p-1.5 rounded text-gray-500 hover:text-red-300 hover:bg-red-500/10 transition-colors"
-                                                >
-                                                    <Trash2 size={14} />
-                                                </button>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
                         </div>
                     </Card>
                 )}
 
                 {(activeTab === 'all' || activeTab === 'voice') && (
-                <Card
-                    title="Voice Presets"
-                    collapsible
-                    defaultOpen={false}
-                    tooltip="Save commonly-used voice + provider combos so you can recall them in one click — handy for series narrators, scripture voices, or B-roll narration styles."
-                >
+                <Card title="Voice Presets">
                     <div className="space-y-4">
                         <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                             <Input
@@ -1551,12 +1393,7 @@ export function VoiceAudioPage() {
                     providers in parallel, rate them, and persist the rating. */}
                 <CompareVoices />
                 {(activeTab === 'all' || activeTab === 'record') && (
-                <Card
-                    title="2. Record / Upload"
-                    collapsible
-                    defaultOpen={false}
-                    tooltip="Bring your own voice — record from the browser mic or upload an MP3/WAV. Saved to your outputs and picked up automatically by Render and Timeline."
-                >
+                <Card title="2. Record / Upload">
                     <div className="space-y-4">
                         <p className="text-sm text-gray-200">
                             Record directly in the browser or upload an audio file. The result is saved to outputs and becomes selectable across Render and Timeline.
@@ -1606,12 +1443,7 @@ export function VoiceAudioPage() {
                 )}
 
                 {(activeTab === 'all' || activeTab === 'treatment') && (
-                <Card
-                    title="3. Audio Treatment"
-                    collapsible
-                    defaultOpen={false}
-                    tooltip="Mastering chain — loudness normalisation, EQ, de-noise, and compression. Pick a preset for fast results, or open advanced to fine-tune each stage."
-                >
+                <Card title="3. Audio Treatment">
                     <p className="text-sm text-gray-200 mb-4">
                         Choose a preset, then tweak controls. Click <strong>Process Audio</strong> to generate a
                         cleaned MP3 and auto-fill Audio Path.
@@ -1964,12 +1796,7 @@ export function VoiceAudioPage() {
                 )}
 
                 {(activeTab === 'all' || activeTab === 'soundtrack') && (
-                <Card
-                    title="Soundtrack Library"
-                    collapsible
-                    defaultOpen={false}
-                    tooltip="Royalty-free background beds organised by mood. Click any track to set it as the Render soundtrack, or preview before committing."
-                >
+                <Card title="Soundtrack Library">
                     <div className="space-y-3">
                         <div className="flex flex-wrap items-center gap-2">
                             <Button

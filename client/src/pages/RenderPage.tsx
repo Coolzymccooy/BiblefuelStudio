@@ -14,7 +14,6 @@ import { loadJson, saveJson, STORAGE_KEYS, toOutputUrl } from '../lib/storage';
 import { useConfig } from '../lib/config';
 import { useNotifications } from '../lib/notifications';
 import { ShareSheet } from '../components/ShareSheet';
-import { RenderProgressOverlay } from '../components/RenderProgressOverlay';
 
 interface Script {
     title: string;
@@ -70,9 +69,7 @@ export function RenderPage() {
     const [jobVideoOptions, setJobVideoOptions] = useState<{ id: string; label: string; path: string }[]>([]);
     const [shareVideoPath, setShareVideoPath] = useState('');
     const [completedRender, setCompletedRender] = useState<{ jobId: string; file: string; jobType?: string } | null>(null);
-    const [activeBackgroundJob, setActiveBackgroundJob] = useState<{ id: string; kind: 'video' | 'waveform'; progress: number } | null>(null);
     const myEnqueuedJobsRef = useRef<Set<string>>(new Set());
-    const lastRenderKindRef = useRef<'video' | 'waveform'>('video');
     const notifications = useNotifications();
     const location = useLocation();
     const navigate = useNavigate();
@@ -231,49 +228,17 @@ export function RenderPage() {
     useEffect(() => {
         if (completedRender) return;
         const match = notifications.find((n) => {
-            if (n.kind !== 'job_done' && n.kind !== 'job_failed') return false;
+            if (n.kind !== 'job_done') return false;
             const jobId = (n.meta?.jobId as string | undefined) || '';
             return jobId && myEnqueuedJobsRef.current.has(jobId);
         });
         if (match) {
             const jobId = (match.meta?.jobId as string) || '';
             const file = (match.meta?.file as string | undefined) || '';
-            // Clear the in-flight overlay regardless of done/failed.
-            setActiveBackgroundJob((curr) => (curr && curr.id === jobId ? null : curr));
-            if (match.kind === 'job_done') {
-                setCompletedRender({ jobId, file, jobType: match.meta?.jobType as string | undefined });
-                if (file) setShareVideoPath(file);
-            }
+            setCompletedRender({ jobId, file, jobType: match.meta?.jobType as string | undefined });
+            if (file) setShareVideoPath(file);
         }
     }, [notifications, completedRender]);
-
-    // Poll progress for the active background job so the overlay's progress
-    // bar reflects what ffmpeg is actually doing. The global notification
-    // poller runs every 8s and only fires on terminal states; we need
-    // finer-grained progress here, hence a separate 2s poll while the overlay
-    // is up.
-    useEffect(() => {
-        if (!activeBackgroundJob) return;
-        let cancelled = false;
-        const pollOne = async () => {
-            try {
-                const res = await api.get(`/api/jobs/${activeBackgroundJob.id}`);
-                if (cancelled) return;
-                const job = res.ok ? (res.data?.job || res.data) : null;
-                if (!job) return;
-                if (job.status === 'done' || job.status === 'failed') {
-                    setActiveBackgroundJob(null);
-                    return;
-                }
-                if (typeof job.progress === 'number') {
-                    setActiveBackgroundJob((curr) => curr ? { ...curr, progress: job.progress } : curr);
-                }
-            } catch { /* swallow — next tick retries */ }
-        };
-        void pollOne();
-        const id = setInterval(pollOne, 2000);
-        return () => { cancelled = true; clearInterval(id); };
-    }, [activeBackgroundJob?.id]);
 
     const buildLinesFromScript = (script: Script) => {
         return [
@@ -304,11 +269,6 @@ export function RenderPage() {
         const useBackground = renderInBackground || (kineticCaptions && mode === 'video');
 
         setIsRendering(true);
-        lastRenderKindRef.current = mode;
-        // Clear any previous completion banner so the overlay isn't competing
-        // with a stale "Render complete" card from the last job.
-        setCompletedRender(null);
-        setResult(null);
         try {
             const endpoint = useBackground ? '/api/jobs/enqueue' : `/api/render/${mode}`;
             const corePayload = {
@@ -335,10 +295,7 @@ export function RenderPage() {
             if (response.ok) {
                 if (useBackground) {
                     const newJobId: string | undefined = response.data?.id || response.data?.job?.id;
-                    if (newJobId) {
-                        myEnqueuedJobsRef.current.add(newJobId);
-                        setActiveBackgroundJob({ id: newJobId, kind: mode, progress: 0 });
-                    }
+                    if (newJobId) myEnqueuedJobsRef.current.add(newJobId);
                     toast.success(kineticCaptions ? 'Kinetic render queued — voice + word captions in progress' : 'Job enqueued — you\'ll be notified when it\'s ready');
                 } else {
                     toast.success('Video rendered successfully!');
@@ -489,23 +446,11 @@ export function RenderPage() {
         else toast.error(res.error || 'Share failed');
     };
 
-    const isRenderInFlight = isRendering || !!activeBackgroundJob;
-    const overlayKind: 'video' | 'waveform' = activeBackgroundJob?.kind ?? lastRenderKindRef.current;
-    const overlayMode: 'instant' | 'queued' = activeBackgroundJob ? 'queued' : 'instant';
-    const overlayProgress = activeBackgroundJob?.progress;
-
     return (
         <div className="space-y-6 animate-fade-in">
             <h2 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-primary-200">
                 Video Renderer
             </h2>
-
-            <RenderProgressOverlay
-                active={isRenderInFlight && !completedRender && !result?.file}
-                progress={overlayProgress}
-                kind={overlayKind}
-                mode={overlayMode}
-            />
 
             {completedRender && (
                 <div className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 shadow-[0_10px_40px_rgba(16,185,129,0.15)] animate-fade-in">
@@ -730,7 +675,7 @@ export function RenderPage() {
                         <Field
                             label="Voice track"
                             badge="Required for waveform"
-                            tooltip="Absolute path to the narration MP3/WAV produced in the Voice & Audio tab. Required for waveform renders; optional for video renders."
+                            hint={audioHistory.length > 0 ? 'Recent files appear below.' : undefined}
                         >
                             <Input
                                 value={audioPath}
@@ -885,13 +830,7 @@ export function RenderPage() {
 
             {lines && (
                 <div id="share-kit">
-                <Card
-                    title="Share Kit"
-                    className="border-white/10 bg-white/[0.03]"
-                    collapsible
-                    defaultOpen={false}
-                    tooltip="One-click captions + downloads for TikTok, IG Reels and YouTube Shorts. Pick a rendered video above, then copy/paste straight into your scheduler."
-                >
+                <Card title="Share Kit" className="border-white/10 bg-white/[0.03]">
                     <div className="space-y-3">
                         <p className="text-xs text-gray-400">
                             Copy your caption and upload the rendered file to TikTok/IG/YouTube Shorts.

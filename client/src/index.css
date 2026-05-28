@@ -197,24 +197,6 @@
   }
 }
 
-@keyframes shimmer-x {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(400%); }
-}
-
-@keyframes indeterminate {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(400%); }
-}
-
-.animate-shimmer-x {
-  animation: shimmer-x 2.4s linear infinite;
-}
-
-.animate-indeterminate {
-  animation: indeterminate 1.4s cubic-bezier(0.65, 0.05, 0.36, 1) infinite;
-}
-
 .animate-pulse-subtle {
   animation: pulse-subtle 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }

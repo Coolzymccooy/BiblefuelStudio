@@ -69,14 +69,7 @@ export function AnimationPicker({ value, onChange, className = '' }: AnimationPi
   };
 
   return (
-    <Card
-      title="Caption Animation"
-      icon={Wand2}
-      className={className}
-      collapsible
-      defaultOpen={false}
-      tooltip="Word-synced motion styles applied to kinetic captions. Renderable presets bake into the final MP4 via ffmpeg; preview-only ones are browser previews while the renderer support catches up."
-    >
+    <Card title="Caption Animation" icon={Wand2} className={className}>
       {loading ? (
         <div className="flex items-center gap-2 text-gray-400 text-sm">
           <Loader2 size={16} className="animate-spin" /> Loading animations…

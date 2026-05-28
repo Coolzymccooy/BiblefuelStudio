@@ -17,40 +17,6 @@ import {
   describeProvidersAsync,
 } from "../lib/voice/index.js";
 import { listKineticAnimations } from "../lib/videoFilters.js";
-import {
-  addChatterboxVoice,
-  getChatterboxVoiceById,
-  listChatterboxVoices,
-  removeChatterboxVoice,
-} from "../lib/chatterboxVoicesStore.js";
-
-/**
- * If `voiceId` is a saved-clone alias (`cb:<uuid>`), translate it to the
- * absolute reference-path the Chatterbox bridge stored at /upload time.
- * Returns the original value unchanged for non-alias inputs.
- *
- * @returns {{ ok: true, voiceId: string } | { ok: false, status: number, error: string }}
- */
-function resolveChatterboxVoiceId(req, voiceId) {
-  const raw = String(voiceId || "").trim();
-  if (!raw) return { ok: true, voiceId: "" };
-  if (!raw.startsWith("cb:")) return { ok: true, voiceId: raw };
-  const dataDir = req?.ctx?.dataDir;
-  if (!dataDir) return { ok: false, status: 500, error: "User scope unavailable" };
-  const entry = getChatterboxVoiceById(dataDir, raw);
-  if (!entry) return { ok: false, status: 404, error: "Cloned voice not found" };
-  return { ok: true, voiceId: entry.refPath };
-}
-
-// Supported voice-cloning providers. Azure (Custom Neural Voice / Personal
-// Voice) needs a tenant-side activation we can't assume; Edge-TTS has no
-// cloning API. The UI greys those out — the server rejects them defensively.
-const CLONE_PROVIDERS = new Set(["elevenlabs", "chatterbox"]);
-
-function getChatterboxBridgeUrl() {
-  const raw = (process.env.CHATTERBOX_URL || "").trim();
-  return raw.replace(/\/$/, "");
-}
 
 const router = Router();
 const allowedAudioExt = new Set([".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".webm"]);
@@ -214,23 +180,11 @@ router.post("/clone-voice", async (req, res) => {
     });
   }
   try {
-    const rawProvider = String(req.body?.provider || "elevenlabs").toLowerCase().trim();
-    if (rawProvider === "azure" || rawProvider === "edge" || rawProvider === "fish") {
-      return res.status(400).json({
-        ok: false,
-        error: `Cloning is not available via ${rawProvider}.`,
-        hint: rawProvider === "edge"
-          ? "Edge-TTS only exposes stock voices."
-          : rawProvider === "azure"
-            ? "Azure cloning requires Custom Neural Voice or Personal Voice activation on your tenant."
-            : "Fish Audio cloning is not wired in this app yet.",
-      });
-    }
-    if (!CLONE_PROVIDERS.has(rawProvider)) {
-      return res.status(400).json({ ok: false, error: `Unsupported clone provider: ${rawProvider}` });
+    const apiKey = getElevenLabsApiKey();
+    if (!apiKey || apiKey.startsWith("your-")) {
+      return res.status(400).json({ ok: false, error: "ELEVENLABS_API_KEY missing or invalid" });
     }
 
-    // ---- Shared validation (name + samples + consent) ----
     const name = String(req.body?.name || "").trim();
     const description = String(req.body?.description || "").trim();
     const samplePaths = Array.isArray(req.body?.samplePaths)
@@ -254,7 +208,7 @@ router.post("/clone-voice", async (req, res) => {
     if (!hasRights || !noImpersonation || !termsAccepted) {
       return res.status(400).json({
         ok: false,
-        error: "Consent required: confirm rights/permission, no impersonation, and provider terms."
+        error: "Consent required: confirm rights/permission, no impersonation, and ElevenLabs terms."
       });
     }
 
@@ -277,73 +231,6 @@ router.post("/clone-voice", async (req, res) => {
         name: path.basename(resolved),
         mime: mimeFromExt(ext),
       });
-    }
-
-    // ---- Chatterbox branch ----
-    if (rawProvider === "chatterbox") {
-      const chatterboxUrl = getChatterboxBridgeUrl();
-      if (!chatterboxUrl) {
-        return res.status(400).json({
-          ok: false,
-          error: "CHATTERBOX_URL not configured. Point it at a Chatterbox bridge before cloning.",
-        });
-      }
-      // Chatterbox conditions on a single reference WAV at synth time. If
-      // the user uploaded multiple, the first wins; the response includes a
-      // note so they're not surprised.
-      const primary = files[0];
-      const bytes = fs.readFileSync(primary.path);
-      const form = new FormData();
-      form.append("file", new File([bytes], primary.name, { type: primary.mime }));
-
-      let resp;
-      try {
-        resp = await fetch(`${chatterboxUrl}/upload`, { method: "POST", body: form });
-      } catch (err) {
-        return res.status(502).json({
-          ok: false,
-          error: `Failed to reach Chatterbox bridge at ${chatterboxUrl}/upload: ${String(err?.message || err)}`,
-        });
-      }
-      if (!resp.ok) {
-        const errText = await resp.text().catch(() => "");
-        return res.status(resp.status === 413 ? 413 : 502).json({
-          ok: false,
-          error: `Chatterbox /upload failed: ${resp.status} ${errText.slice(0, 200)}`,
-        });
-      }
-      const uploaded = await resp.json().catch(() => null);
-      const refPath = uploaded?.path && String(uploaded.path).trim();
-      if (!refPath) {
-        return res.status(502).json({ ok: false, error: "Chatterbox /upload returned no path" });
-      }
-
-      const dataDir = req?.ctx?.dataDir;
-      if (!dataDir) {
-        return res.status(500).json({ ok: false, error: "User scope unavailable; cannot persist voice" });
-      }
-      const entry = await addChatterboxVoice(dataDir, {
-        name,
-        description,
-        refPath,
-        refFilename: uploaded?.filename || primary.name,
-      });
-
-      return res.json({
-        ok: true,
-        provider: "chatterbox",
-        voiceId: entry.id,
-        voice: entry,
-        notes: files.length > 1
-          ? `Chatterbox conditions on a single reference; used ${primary.name} (${files.length - 1} sample${files.length === 2 ? "" : "s"} ignored).`
-          : undefined,
-      });
-    }
-
-    // ---- ElevenLabs branch (default) ----
-    const apiKey = getElevenLabsApiKey();
-    if (!apiKey || apiKey.startsWith("your-")) {
-      return res.status(400).json({ ok: false, error: "ELEVENLABS_API_KEY missing or invalid" });
     }
 
     const form = new FormData();
@@ -377,7 +264,6 @@ router.post("/clone-voice", async (req, res) => {
     const data = await resp.json();
     res.json({
       ok: true,
-      provider: "elevenlabs",
       voiceId: data?.voice_id || "",
       voice: data || null,
     });
@@ -386,25 +272,6 @@ router.post("/clone-voice", async (req, res) => {
     const status = Number(e?.status || e?.statusCode || 500);
     res.status(Number.isFinite(status) ? status : 500).json({ ok: false, error: String(e?.message || e) });
   }
-});
-
-// List the Chatterbox cloned voices saved for the current user.
-router.get("/chatterbox-voices", (req, res) => {
-  const dataDir = req?.ctx?.dataDir;
-  if (!dataDir) return res.status(500).json({ ok: false, error: "User scope unavailable" });
-  res.json({ ok: true, voices: listChatterboxVoices(dataDir) });
-});
-
-router.delete("/chatterbox-voices/:id", async (req, res) => {
-  const dataDir = req?.ctx?.dataDir;
-  if (!dataDir) return res.status(500).json({ ok: false, error: "User scope unavailable" });
-  const id = String(req.params?.id || "").trim();
-  if (!id.startsWith("cb:")) {
-    return res.status(400).json({ ok: false, error: "Invalid Chatterbox voice id" });
-  }
-  const removed = await removeChatterboxVoice(dataDir, id);
-  if (!removed) return res.status(404).json({ ok: false, error: "Voice not found" });
-  res.json({ ok: true });
 });
 
 router.post("/elevenlabs", async (req, res) => {
@@ -599,11 +466,6 @@ router.post("/edge", async (req, res) => {
 // a raw pipeline error.
 router.post("/chatterbox", async (req, res) => {
   const { text, voiceId, exaggeration, cfgWeight } = req.body || {};
-  // Resolve `cb:<uuid>` aliases to the bridge-side reference path before
-  // handing off to the orchestrator/provider.
-  const resolved = resolveChatterboxVoiceId(req, voiceId);
-  if (!resolved.ok) return res.status(resolved.status).json({ ok: false, error: resolved.error });
-  const effectiveVoiceId = resolved.voiceId;
   try {
     const voiceSettings = {};
     if (typeof exaggeration === "number") voiceSettings.style = exaggeration;
@@ -614,7 +476,7 @@ router.post("/chatterbox", async (req, res) => {
       category: "devotional",
       preferredProvider: "chatterbox",
       overrides: {
-        voiceIds: effectiveVoiceId ? { chatterbox: effectiveVoiceId } : undefined,
+        voiceIds: voiceId ? { chatterbox: voiceId } : undefined,
         voiceSettings: Object.keys(voiceSettings).length > 0 ? voiceSettings : undefined,
         forcedAlignmentFallback: false,
       },
