@@ -153,7 +153,14 @@ export function CompareVoices({ className = '' }: { className?: string }) {
   };
 
   return (
-    <Card title="Compare voices (Voice Lab A/B)" icon={GitCompare} className={className}>
+    <Card
+      title="Compare voices (Voice Lab A/B)"
+      icon={GitCompare}
+      className={className}
+      collapsible
+      defaultOpen={false}
+      tooltip="Synthesise the same line across 2–4 voice candidates in parallel, listen back, and pick the keeper. Your ratings persist so the best-rated voice surfaces first next time."
+    >
       <div className="space-y-4">
         <div>
           <label className="block text-sm text-gray-300 mb-1">Text to synthesize</label>

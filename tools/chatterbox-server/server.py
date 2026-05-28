@@ -31,12 +31,15 @@ from __future__ import annotations
 import io
 import logging
 import os
+import re
+import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Optional
 
 import soundfile as sf
 import torch
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, File, HTTPException, Response, UploadFile
 from pydantic import BaseModel
 
 logger = logging.getLogger("chatterbox-server")
@@ -83,6 +86,24 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="BibleFuel Chatterbox bridge", lifespan=lifespan)
 
 
+# Storage dir for uploaded reference voices. Defaults to ./voices/ relative
+# to the server's cwd. Override via env so containerised deploys can write
+# to a persistent volume (e.g. /data/voices).
+VOICES_DIR = Path(os.environ.get("CHATTERBOX_VOICES_DIR", "voices")).resolve()
+ALLOWED_AUDIO_EXT = {".wav", ".mp3", ".m4a", ".aac", ".ogg", ".flac", ".webm"}
+MAX_UPLOAD_BYTES = int(os.environ.get("CHATTERBOX_MAX_UPLOAD_BYTES", str(50 * 1024 * 1024)))
+
+
+def _safe_voice_filename(original: str) -> str:
+    """Strip path traversal, keep the extension, prepend a uuid."""
+    base = os.path.basename(original or "voice.wav")
+    ext = os.path.splitext(base)[1].lower()
+    if ext not in ALLOWED_AUDIO_EXT:
+        ext = ".wav"
+    stem = re.sub(r"[^A-Za-z0-9._-]", "_", os.path.splitext(base)[0]).strip("._-") or "voice"
+    return f"{stem[:48]}-{uuid.uuid4().hex[:12]}{ext}"
+
+
 @app.get("/health")
 def health():
     return {
@@ -120,6 +141,63 @@ def tts(req: TTSRequest):
     buf = io.BytesIO()
     sf.write(buf, audio, sample_rate, format="WAV", subtype="PCM_16")
     return Response(content=buf.getvalue(), media_type="audio/wav")
+
+
+@app.post("/upload")
+async def upload_voice(file: UploadFile = File(...)):
+    """
+    Accept a reference voice sample and persist it on this host.
+
+    Returns the absolute path the caller can later pass back to /tts as
+    `audio_prompt_path`. Biblefuel uses this for voice-cloning via Chatterbox:
+    Biblefuel POSTs the sample once, stores the returned path as the cloned
+    voice's "id", then sends that id with every synth request.
+    """
+    if not file or not file.filename:
+        raise HTTPException(status_code=400, detail="file is required")
+
+    VOICES_DIR.mkdir(parents=True, exist_ok=True)
+    safe_name = _safe_voice_filename(file.filename)
+    dest = VOICES_DIR / safe_name
+
+    # Stream the upload to disk in chunks so we don't blow memory on large WAVs.
+    bytes_written = 0
+    chunk_size = 1024 * 1024
+    try:
+        with dest.open("wb") as fh:
+            while True:
+                chunk = await file.read(chunk_size)
+                if not chunk:
+                    break
+                bytes_written += len(chunk)
+                if bytes_written > MAX_UPLOAD_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"upload exceeds {MAX_UPLOAD_BYTES} bytes",
+                    )
+                fh.write(chunk)
+    except HTTPException:
+        try:
+            dest.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise
+    finally:
+        await file.close()
+
+    if bytes_written < 2048:
+        try:
+            dest.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise HTTPException(status_code=400, detail="upload too small (need >= 2KB of audio)")
+
+    return {
+        "ok": True,
+        "path": str(dest),
+        "filename": safe_name,
+        "bytes": bytes_written,
+    }
 
 
 if __name__ == "__main__":
