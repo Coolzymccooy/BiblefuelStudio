@@ -17,6 +17,45 @@ import {
     X,
 } from 'lucide-react';
 import { loadJson, saveJson, STORAGE_KEYS } from '../lib/storage';
+import { AnimationPicker } from '../components/voicelab/AnimationPicker';
+
+interface TranscriptWord {
+    text: string;
+    startMs: number;
+    endMs: number;
+}
+
+function groupWordsIntoLines(words: TranscriptWord[], wordsPerLine: number): string[] {
+    const out: string[] = [];
+    for (let i = 0; i < words.length; i += wordsPerLine) {
+        out.push(words.slice(i, i + wordsPerLine).map((w) => w.text).join(' '));
+    }
+    return out;
+}
+
+// Re-flow edited caption lines back into a TranscriptWord[] for the render
+// route. Word-level timing precision is lost (we redistribute uniformly across
+// the original span) but editability beats perfect alignment for sermon
+// recaptioning — users care more about fixing transcription errors than
+// keeping sub-second sync on every token.
+function reflowWordsFromEditedLines(
+    originalWords: TranscriptWord[],
+    lines: string[],
+): TranscriptWord[] {
+    const lineWords = lines.flatMap((l) => l.split(/\s+/).filter(Boolean));
+    if (!originalWords.length || !lineWords.length) return [];
+
+    const totalStart = originalWords[0].startMs;
+    const totalEnd = originalWords[originalWords.length - 1].endMs;
+    const span = Math.max(1, totalEnd - totalStart);
+    const step = span / lineWords.length;
+
+    return lineWords.map((text, idx) => ({
+        text,
+        startMs: Math.round(totalStart + idx * step),
+        endMs: Math.round(totalStart + (idx + 1) * step),
+    }));
+}
 
 interface TimelineClip {
     id: string;
@@ -60,6 +99,129 @@ export function TimelinePage() {
     const [fadeOut, setFadeOut] = useState(0);
     const [normalizeLUFS, setNormalizeLUFS] = useState(-14);
     const [deess, setDeess] = useState(true);
+
+    // Sermon Clip Studio state
+    const [sourceMediaPath, setSourceMediaPath] = useState<string | null>(null);
+    const [sourceMediaKind, setSourceMediaKind] = useState<'audio' | 'video' | null>(null);
+    const [isUploading, setIsUploading] = useState(false);
+    const [transcript, setTranscript] = useState<TranscriptWord[] | null>(null);
+    const [isTranscribing, setIsTranscribing] = useState(false);
+    const [editedLines, setEditedLines] = useState<string[]>([]);
+    const [musicPath, setMusicPath] = useState<string | null>(null);
+    const [musicVolume, setMusicVolume] = useState(0.25);
+    const [autoDuck, setAutoDuck] = useState(true);
+    const [typographyPreset, setTypographyPreset] = useState<string>('cinematic-worship');
+    const [renderedVideo, setRenderedVideo] = useState<string | null>(null);
+    const [isRenderingVideo, setIsRenderingVideo] = useState(false);
+
+    const readFileAsDataUrl = (file: File): Promise<string> =>
+        new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result));
+            reader.onerror = () => reject(reader.error);
+            reader.readAsDataURL(file);
+        });
+
+    const handleSourceUpload = async (file: File) => {
+        const isVideo = /\.(mp4|mov|webm|m4v)$/i.test(file.name);
+        setIsUploading(true);
+        try {
+            const dataUrl = await readFileAsDataUrl(file);
+            const endpoint = isVideo ? '/api/media/upload-source-video' : '/api/media/upload-audio';
+            const response = await api.post(endpoint, { dataUrl, filename: file.name });
+            if (!response.ok || !response.data?.file) {
+                toast.error(response.error || 'Upload failed');
+                return;
+            }
+            setSourceMediaPath(response.data.file);
+            setSourceMediaKind(isVideo ? 'video' : 'audio');
+            setTranscript(null);
+            setEditedLines([]);
+            toast.success(`${isVideo ? 'Video' : 'Audio'} uploaded`);
+        } catch {
+            toast.error('Upload failed');
+        } finally {
+            setIsUploading(false);
+        }
+    };
+
+    const handleTranscribe = async () => {
+        if (!sourceMediaPath) {
+            toast.error('Upload a sermon first');
+            return;
+        }
+        setIsTranscribing(true);
+        const toastId = toast.loading('Transcribing — this can take a minute...');
+        try {
+            const response = await api.post('/api/transcribe', { mediaPath: sourceMediaPath });
+            if (!response.ok || !Array.isArray(response.data?.words)) {
+                toast.error(response.error || 'Transcription failed', { id: toastId });
+                return;
+            }
+            const words: TranscriptWord[] = response.data.words;
+            setTranscript(words);
+            setEditedLines(groupWordsIntoLines(words, 8));
+            toast.success(`Transcribed ${words.length} words`, { id: toastId });
+        } catch {
+            toast.error('Transcription failed', { id: toastId });
+        } finally {
+            setIsTranscribing(false);
+        }
+    };
+
+    const handleMusicUpload = async (file: File) => {
+        setIsUploading(true);
+        try {
+            const dataUrl = await readFileAsDataUrl(file);
+            const response = await api.post('/api/media/upload-audio', { dataUrl, filename: file.name });
+            if (!response.ok || !response.data?.file) {
+                toast.error(response.error || 'Music upload failed');
+                return;
+            }
+            setMusicPath(response.data.file);
+            toast.success('Music uploaded');
+        } catch {
+            toast.error('Music upload failed');
+        } finally {
+            setIsUploading(false);
+        }
+    };
+
+    const handleRenderCaptionedVideo = async () => {
+        if (!sourceMediaPath || sourceMediaKind !== 'video') {
+            toast.error('Captioned video render requires an uploaded video source');
+            return;
+        }
+        if (!transcript || !transcript.length) {
+            toast.error('Transcribe the sermon first');
+            return;
+        }
+
+        const words = reflowWordsFromEditedLines(transcript, editedLines);
+        setIsRenderingVideo(true);
+        const toastId = toast.loading('Rendering captioned video...');
+        try {
+            const response = await api.post('/api/render/captioned-video', {
+                videoPath: sourceMediaPath,
+                words,
+                typographyPreset,
+                musicPath: musicPath || undefined,
+                musicVolume,
+                autoDuck,
+            });
+            if (response.ok && response.data?.file) {
+                const fileName = response.data.file.split(/[\\/]/).pop();
+                setRenderedVideo(`${api.baseUrl}/outputs/${fileName}`);
+                toast.success('Captioned video ready', { id: toastId });
+            } else {
+                toast.error(response.error || 'Render failed', { id: toastId });
+            }
+        } catch {
+            toast.error('Render failed', { id: toastId });
+        } finally {
+            setIsRenderingVideo(false);
+        }
+    };
 
     useEffect(() => {
         const cached = loadJson<TimelineClip[]>(STORAGE_KEYS.timelineClips, []);
@@ -214,8 +376,142 @@ export function TimelinePage() {
                         <Play size={16} className="mr-2" />
                         Render Audio
                     </Button>
+                    <Button
+                        onClick={handleRenderCaptionedVideo}
+                        disabled={isRenderingVideo || !sourceMediaPath || sourceMediaKind !== 'video' || !transcript}
+                        className="w-full sm:w-auto"
+                    >
+                        <Film size={16} className="mr-2" />
+                        {isRenderingVideo ? 'Rendering...' : 'Render Captioned Video'}
+                    </Button>
                 </div>
             </div>
+
+            <Card title="Source Media">
+                <p className="text-xs text-gray-400 mb-3">
+                    Upload an audio sermon (mp3, wav, m4a) or a recorded video (mp4, mov, webm).
+                </p>
+                <label className="inline-flex items-center gap-3 px-4 py-2 rounded-lg bg-primary-500/10 border border-primary-500/30 text-primary-200 cursor-pointer hover:bg-primary-500/20">
+                    <Film size={16} />
+                    <span className="text-sm">{isUploading ? 'Uploading...' : 'Choose file'}</span>
+                    <input
+                        type="file"
+                        className="hidden"
+                        accept=".mp3,.wav,.m4a,.mp4,.mov,.webm,.m4v"
+                        disabled={isUploading}
+                        onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (f) handleSourceUpload(f);
+                        }}
+                    />
+                </label>
+                {sourceMediaPath && (
+                    <div className="mt-3 text-xs text-gray-300">
+                        <span className="text-gray-500">Loaded ({sourceMediaKind}):</span>{' '}
+                        <span className="font-mono break-all">{sourceMediaPath.split(/[\\/]/).pop()}</span>
+                    </div>
+                )}
+            </Card>
+
+            <Card title="Transcribe & Caption">
+                <div className="flex items-center justify-between gap-4 mb-4">
+                    <p className="text-xs text-gray-400">
+                        Pull a word-level transcript with timings, then edit the lines below.
+                    </p>
+                    <Button
+                        variant="secondary"
+                        onClick={handleTranscribe}
+                        disabled={!sourceMediaPath || isTranscribing}
+                        className="h-9 text-xs"
+                    >
+                        <Waves size={14} className="mr-2" />
+                        {isTranscribing ? 'Transcribing...' : 'Transcribe'}
+                    </Button>
+                </div>
+                <div className="mb-4">
+                    <p className="text-xs text-gray-400 mb-2">Kinetic typography style</p>
+                    <AnimationPicker
+                        value={typographyPreset}
+                        onChange={(id) => setTypographyPreset(id)}
+                    />
+                </div>
+                {editedLines.length > 0 && (
+                    <div className="space-y-2 max-h-96 overflow-y-auto pr-2">
+                        {editedLines.map((line, idx) => (
+                            <input
+                                key={idx}
+                                type="text"
+                                value={line}
+                                onChange={(e) => {
+                                    const next = [...editedLines];
+                                    next[idx] = e.target.value;
+                                    setEditedLines(next);
+                                }}
+                                className="w-full bg-white/[0.03] border border-white/10 rounded-lg px-3 py-2 text-sm text-gray-200 focus:border-primary-500/40 focus:outline-none"
+                            />
+                        ))}
+                    </div>
+                )}
+            </Card>
+
+            <Card title="Music Bed">
+                <div className="space-y-4">
+                    <label className="inline-flex items-center gap-3 px-4 py-2 rounded-lg bg-primary-500/10 border border-primary-500/30 text-primary-200 cursor-pointer hover:bg-primary-500/20">
+                        <Music size={16} />
+                        <span className="text-sm">{musicPath ? 'Replace music' : 'Choose music file'}</span>
+                        <input
+                            type="file"
+                            className="hidden"
+                            accept=".mp3,.wav,.m4a"
+                            onChange={(e) => {
+                                const f = e.target.files?.[0];
+                                if (f) handleMusicUpload(f);
+                            }}
+                        />
+                    </label>
+                    {musicPath && (
+                        <p className="text-xs text-gray-300 font-mono break-all">
+                            {musicPath.split(/[\\/]/).pop()}
+                        </p>
+                    )}
+                    <div>
+                        <label className="block text-xs text-gray-400 mb-1">
+                            Music volume: {Math.round(musicVolume * 100)}%
+                        </label>
+                        <input
+                            type="range"
+                            min={0}
+                            max={1}
+                            step={0.05}
+                            value={musicVolume}
+                            onChange={(e) => setMusicVolume(Number(e.target.value))}
+                            className="w-full"
+                        />
+                    </div>
+                    <label className="flex items-center gap-2 text-xs text-gray-300">
+                        <input
+                            type="checkbox"
+                            checked={autoDuck}
+                            onChange={(e) => setAutoDuck(e.target.checked)}
+                        />
+                        Auto-duck music under speech (sidechain compression)
+                    </label>
+                </div>
+            </Card>
+
+            {renderedVideo && (
+                <Card title="Rendered Captioned Video">
+                    <video controls src={renderedVideo} className="w-full rounded-lg" />
+                    <Button
+                        variant="secondary"
+                        onClick={() => window.open(renderedVideo, '_blank')}
+                        className="text-xs h-9 mt-3"
+                    >
+                        <Download size={16} className="mr-2" />
+                        Open
+                    </Button>
+                </Card>
+            )}
 
             {renderedAudio && (
                 <Card title="Rendered Audio">
