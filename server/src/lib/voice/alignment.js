@@ -210,8 +210,8 @@ export async function transcribeAudio(audioPath, options = {}) {
     }
 
     if (!resp.ok) {
-      const errText = await resp.text?.().catch?.(() => "") || "";
-      console.warn(`[transcribe] whisper error ${resp.status}: ${String(errText).slice(0, 200)}`);
+      const errText = await resp.text().catch(() => "");
+      console.warn(`[transcribe] whisper error ${resp.status}: ${errText.slice(0, 200)}`);
       return null;
     }
 
