@@ -563,4 +563,101 @@ router.post("/azure", async (req, res) => {
   }
 });
 
+// ──────────────────────────────────────────────────────────────────────────
+// POST /api/tts/compare — Voice Lab side-by-side compare.
+//
+// Synthesises the same text across 2–4 candidate providers in parallel so
+// the UI can play them back-to-back and rate them. Each candidate is run
+// through the existing voice/index synthesize() orchestrator with
+// preferredProvider forced — same code path the per-provider routes use.
+//
+// Per-candidate failures do NOT fail the whole request: each task catches
+// its own error and returns a {status:'error', error} result, so a slow
+// or down provider can't poison an A/B against the others.
+//
+// Premium gating (fish, elevenlabs) is applied per-candidate up-front —
+// free-plan callers get those entries marked forbidden while non-premium
+// candidates (azure/edge/chatterbox) still synthesise normally.
+//
+// Test seam: the synthesise function is read from _compareSynthImpl so
+// route tests can inject a fake without exercising real providers / keys.
+// ──────────────────────────────────────────────────────────────────────────
+const COMPARE_MAX_CANDIDATES = 4;
+const COMPARE_PREMIUM_PROVIDERS = new Set(["fish", "elevenlabs"]);
+
+let _compareSynthImpl = synthesize;
+export function _setCompareSynthImpl(fn) {
+  _compareSynthImpl = typeof fn === "function" ? fn : synthesize;
+}
+
+router.post("/compare", async (req, res) => {
+  const { text, candidates, withTimestamps } = req.body || {};
+
+  if (typeof text !== "string" || text.trim().length === 0) {
+    return res.status(400).json({ ok: false, error: "text is required" });
+  }
+  if (!Array.isArray(candidates) || candidates.length === 0) {
+    return res.status(400).json({ ok: false, error: "candidates (1-4) is required" });
+  }
+  if (candidates.length > COMPARE_MAX_CANDIDATES) {
+    return res.status(400).json({ ok: false, error: `at most ${COMPARE_MAX_CANDIDATES} candidates` });
+  }
+  for (const c of candidates) {
+    if (!c || typeof c.provider !== "string" || c.provider.trim() === "") {
+      return res.status(400).json({ ok: false, error: "each candidate must specify a provider" });
+    }
+  }
+
+  const plan = req?.ctx?.plan;
+  const hasPremium = plan === "premium" || plan === "super_admin";
+
+  const tasks = candidates.map(async (c, idx) => {
+    const id = `${idx}-${c.provider}`;
+    const t0 = Date.now();
+    try {
+      if (COMPARE_PREMIUM_PROVIDERS.has(c.provider) && !hasPremium) {
+        return {
+          id,
+          provider: c.provider,
+          voiceId: c.voiceId,
+          label: c.label,
+          status: "error",
+          error: `${c.provider} is a premium feature (forbidden on plan "${plan || "unknown"}")`,
+          latencyMs: 0,
+        };
+      }
+      const result = await _compareSynthImpl({
+        text,
+        voiceIds: c.voiceId ? { [c.provider]: c.voiceId } : undefined,
+        preferredProvider: c.provider,
+        withTimestamps: withTimestamps === undefined ? true : Boolean(withTimestamps),
+      });
+      return {
+        id,
+        provider: c.provider,
+        voiceId: c.voiceId,
+        label: c.label,
+        status: "ok",
+        file: result.file,
+        voice: result.voice,
+        words: result.words,
+        latencyMs: Date.now() - t0,
+      };
+    } catch (e) {
+      return {
+        id,
+        provider: c.provider,
+        voiceId: c.voiceId,
+        label: c.label,
+        status: "error",
+        error: String(e?.message || e),
+        latencyMs: Date.now() - t0,
+      };
+    }
+  });
+
+  const results = await Promise.all(tasks);
+  return res.json({ ok: true, results });
+});
+
 export default router;
