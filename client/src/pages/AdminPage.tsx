@@ -452,9 +452,9 @@ export function AdminPage() {
                                                     <div className="mt-3 space-y-2 border-l-2 border-white/5 pl-3">
                                                         {issue.replies!.map((r) => (
                                                             <div key={r.id} className={`p-2 rounded ${r.isAdmin ? 'bg-primary-500/10 border border-primary-500/20' : 'bg-white/5'}`}>
-                                                                <div className="text-[10px] text-gray-500 mb-1 flex items-center gap-2">
+                                                                <div className="text-[0.75rem] text-gray-500 mb-1 flex items-center gap-2">
                                                                     <span className={r.isAdmin ? 'text-primary-300 font-semibold' : ''}>{r.byEmail || '(unknown)'}</span>
-                                                                    {r.isAdmin && <span className="text-[9px] uppercase bg-primary-500/20 text-primary-300 px-1 py-0.5 rounded">Admin</span>}
+                                                                    {r.isAdmin && <span className="text-[0.625rem] font-medium bg-primary-500/20 text-primary-300 px-1.5 py-0.5 rounded">Admin</span>}
                                                                     <span>{new Date(r.at).toLocaleString()}</span>
                                                                 </div>
                                                                 <p className="text-sm text-gray-200 whitespace-pre-wrap break-words">{r.body}</p>
@@ -526,7 +526,7 @@ export function AdminPage() {
                         <div className="overflow-x-auto">
                             <table className="w-full text-sm">
                                 <thead>
-                                    <tr className="text-left text-[11px] uppercase tracking-wider text-gray-500 border-b border-white/5">
+                                    <tr className="text-left text-[0.75rem] font-medium text-gray-400 border-b border-white/[0.06]">
                                         <th className="py-3 px-2 font-semibold">User</th>
                                         <th className="py-3 px-2 font-semibold">Plan</th>
                                         <th className="py-3 px-2 font-semibold">Today&apos;s usage (scripts / tts / renders / images)</th>
@@ -542,7 +542,7 @@ export function AdminPage() {
                                                     <span className="font-medium break-all">{u.email}</span>
                                                     {u.isSuperAdmin && <Badge variant="warning" className="text-[10px]">SUPER</Badge>}
                                                 </div>
-                                                <div className="flex items-center gap-3 mt-1 text-[11px] text-gray-500">
+                                                <div className="flex items-center gap-3 mt-1 text-[0.75rem] text-gray-500">
                                                     {u.emailVerified ? (
                                                         <span className="flex items-center gap-1 text-emerald-400/80">
                                                             <CheckCircle2 size={11} /> verified
@@ -570,7 +570,7 @@ export function AdminPage() {
                                                 <span className="text-gray-600"> / </span>
                                                 <span className="text-primary-300">{u.usage.counts.imageGen}</span>
                                                 {u.usage.day && (
-                                                    <span className="text-[10px] text-gray-600 ml-2">({u.usage.day})</span>
+                                                    <span className="text-[0.6875rem] text-gray-500 ml-2">({u.usage.day})</span>
                                                 )}
                                             </td>
                                             <td className="py-3 px-2 text-right">

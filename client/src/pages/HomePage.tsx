@@ -362,25 +362,29 @@ export function HomePage() {
                     <Card title="Quick Start & Workflow">
                         <div className="space-y-4">
                             <p className="text-sm text-gray-400">Follow this order to build your content:</p>
-                            <ol className="space-y-3 text-gray-300">
+                            <ol className="space-y-2 text-gray-300">
                                 {[
-                                    { step: 1, text: "Generate scripts", area: "Scripts", icon: Sparkles },
-                                    { step: 2, text: "Add to Queue & Export", area: "Queue", icon: Archive },
-                                    { step: 3, text: "Get Backgrounds", area: "Pexels", icon: Play },
-                                    { step: 4, text: "Generate Voice", area: "Voice & Audio", icon: Mic },
-                                    { step: 5, text: "Edit Timeline", area: "Timeline", icon: Film },
-                                    { step: 6, text: "Render Video", area: "Render", icon: Video },
-                                    { step: 7, text: "Share to Socials", area: "Share", icon: Globe },
+                                    { step: 1, text: "Generate scripts", area: "Scripts", to: "/app/scripts", icon: Sparkles },
+                                    { step: 2, text: "Add to queue & export", area: "Queue", to: "/app/queue", icon: Archive },
+                                    { step: 3, text: "Get backgrounds", area: "Backgrounds", to: "/app/backgrounds", icon: Play },
+                                    { step: 4, text: "Generate voice", area: "Voice & Audio", to: "/app/voice-audio", icon: Mic },
+                                    { step: 5, text: "Edit timeline", area: "Timeline", to: "/app/timeline", icon: Film },
+                                    { step: 6, text: "Render video", area: "Render", to: "/app/render", icon: Video },
+                                    { step: 7, text: "Share to socials", area: "Share", to: "/app/render#share-kit", icon: Globe },
                                 ].map((item) => (
-                                    <li key={item.step} className="flex gap-4 items-start p-2 rounded-lg hover:bg-white/5 transition-colors group">
-                                        <span className="flex items-center justify-center w-6 h-6 rounded-full bg-primary-500/10 text-primary-400 font-bold text-xs ring-1 ring-primary-500/20 group-hover:bg-primary-500/20 group-hover:ring-primary-500/40 transition-all">
+                                    <li key={item.step} className="flex gap-3 items-center p-2 rounded-lg hover:bg-white/[0.04] transition-colors group">
+                                        <span className="flex items-center justify-center w-6 h-6 shrink-0 rounded-full bg-primary-500/10 text-primary-400 font-semibold text-[0.75rem] ring-1 ring-primary-500/20 group-hover:bg-primary-500/20 group-hover:ring-primary-500/40 transition-all tabular-nums">
                                             {item.step}
                                         </span>
-                                        <span className="text-sm">
-                                            {item.text.replace(item.area, '')}
-                                            <strong className="text-primary-300 font-medium border-b border-primary-500/10 pb-0.5">{item.area}</strong>
-                                            {item.text.split(item.area)[1] || ''}
+                                        <span className="flex-1 min-w-0 text-[0.875rem] text-gray-200 truncate">
+                                            {item.text}
                                         </span>
+                                        <Link
+                                            to={item.to}
+                                            className="shrink-0 text-[0.6875rem] font-medium text-primary-300/90 hover:text-primary-200 bg-primary-500/[0.08] hover:bg-primary-500/[0.16] border border-primary-500/15 hover:border-primary-500/30 rounded-full px-2 py-0.5 transition-colors"
+                                        >
+                                            {item.area}
+                                        </Link>
                                     </li>
                                 ))}
                             </ol>

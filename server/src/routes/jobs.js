@@ -513,6 +513,7 @@ async function executeJob(job) {
       "-pix_fmt", "yuv420p",
       "-c:a", "aac",
       "-b:a", "192k",
+      "-movflags", "+faststart",
       "-shortest",
       outFile
     );
@@ -651,6 +652,7 @@ async function renderVideoCore(payload, jobId) {
       "-pix_fmt", "yuv420p",
       "-c:a", "aac",
       "-b:a", "192k",
+      "-movflags", "+faststart",
       "-shortest"
     );
   } else {
@@ -661,9 +663,9 @@ async function renderVideoCore(payload, jobId) {
       // stereo AAC track; default auto-mapping prefers stereo over the
       // Edge-TTS mono MP3 and the final render ends up dead silent.
       // Drop the background's audio explicitly and route only the TTS file in.
-      args.push("-map", "0:v:0", "-map", "1:a:0", "-c:a", "aac", "-b:a", "192k", "-shortest");
+      args.push("-map", "0:v:0", "-map", "1:a:0", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-shortest");
     } else {
-      args.push("-an");
+      args.push("-an", "-movflags", "+faststart");
     }
   }
   args.push(outFile);
@@ -939,7 +941,7 @@ async function renderAdvancedVideo(payload, jobId) {
   } else {
     args.push("-an");
   }
-  args.push(outFile);
+  args.push("-movflags", "+faststart", outFile);
 
   const cleanupFilterScript = () => {
     try { if (fs.existsSync(filterScriptFile)) fs.unlinkSync(filterScriptFile); } catch {}

@@ -169,12 +169,12 @@ export function ScriptsPage() {
                                 </div>
 
                                 <div>
-                                    <p className="text-[11px] text-primary-300 font-medium uppercase tracking-wider">Hook:</p>
+                                    <p className="text-[0.75rem] font-medium text-primary-300">Hook</p>
                                     <p className="text-gray-100">{script.hook}</p>
                                 </div>
 
                                 <div>
-                                    <p className="text-[11px] text-primary-300 font-medium uppercase tracking-wider">Verse:</p>
+                                    <p className="text-[0.75rem] font-medium text-primary-300">Verse</p>
                                     <p className="text-gray-100">
                                         {script.verse}{' '}
                                         <span className="text-gray-300 text-sm italic">{script.reference}</span>
@@ -182,12 +182,12 @@ export function ScriptsPage() {
                                 </div>
 
                                 <div>
-                                    <p className="text-[11px] text-primary-300 font-medium uppercase tracking-wider">Reflection:</p>
+                                    <p className="text-[0.75rem] font-medium text-primary-300">Reflection</p>
                                     <p className="text-gray-100">{script.reflection}</p>
                                 </div>
 
                                 <div>
-                                    <p className="text-[11px] text-primary-300 font-medium uppercase tracking-wider">CTA:</p>
+                                    <p className="text-[0.75rem] font-medium text-primary-300">CTA</p>
                                     <p className="text-gray-100">{script.cta}</p>
                                 </div>
 
@@ -196,7 +196,7 @@ export function ScriptsPage() {
                                         {script.hashtags.slice(0, 10).map((tag, i) => (
                                             <span
                                                 key={i}
-                                                className="inline-block px-2 py-1 bg-gray-100 text-gray-700 text-xs rounded-full"
+                                                className="inline-block px-2 py-0.5 bg-white/[0.06] text-gray-300 text-[0.75rem] rounded-full"
                                             >
                                                 {tag}
                                             </span>

@@ -208,6 +208,7 @@ router.post("/video", async (req, res) => {
         "-pix_fmt", "yuv420p",
         "-c:a", "aac",
         "-b:a", "192k",
+        "-movflags", "+faststart",
         "-shortest"
       );
     } else {
@@ -228,7 +229,7 @@ router.post("/video", async (req, res) => {
       }
     }
 
-    args.push(outFile);
+    args.push("-movflags", "+faststart", outFile);
 
     const proc = spawn(ffmpeg, args);
     let stderr = "";
@@ -385,6 +386,7 @@ router.post("/waveform", async (req, res) => {
       "-pix_fmt", "yuv420p",
       "-c:a", "aac",
       "-b:a", "192k",
+      "-movflags", "+faststart",
       "-shortest",
       outFile
     );

@@ -143,12 +143,16 @@ export function Layout() {
                 sits on top with z-50; without it the first nav item (Home)
                 is hidden behind the header. lg:pt-0 removes the spacer on
                 desktop where the header doesn't exist. */}
-            <aside className={`
-        fixed inset-y-0 left-0 z-40 w-64 transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static lg:h-screen
+            <aside
+                className={`
+        fixed top-0 left-0 z-40 w-64 transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static lg:h-screen
+        h-[100dvh]
         bg-dark-950/80 backdrop-blur-xl border-r border-white/5 flex flex-col
         pt-16 lg:pt-0
         ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}
-      `}>
+      `}
+                style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+            >
                 <div className="p-6 hidden lg:block">
                     <Link
                         to="/"
@@ -271,8 +275,10 @@ export function Layout() {
             {/* Floating "Report an issue" button — only when signed in. */}
             <ReportIssueWidget />
 
-            {/* Mobile Quick Actions — only rendered when authenticated. */}
-            {token && (
+            {/* Mobile Quick Actions — only when authenticated AND the side
+                drawer is closed. Otherwise this bar overlays the sidebar's
+                Settings/Help/Online footer (z-40 collision). */}
+            {token && !isMobileMenuOpen && (
             <div className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-dark-950/95 backdrop-blur-md border-t border-white/10 pb-[env(safe-area-inset-bottom)]">
                 <div className="flex items-center justify-around px-3 py-2">
                     {quickActions.map((item) => {
@@ -283,7 +289,7 @@ export function Layout() {
                                 key={item.path}
                                 to={item.path}
                                 onClick={() => setIsMobileMenuOpen(false)}
-                                className={`flex flex-col items-center gap-1 px-3 py-2 rounded-xl text-[10px] font-semibold uppercase tracking-wider ${active
+                                className={`flex flex-col items-center gap-1 px-3 py-2 rounded-xl text-[0.6875rem] font-medium ${active
                                     ? 'text-primary-300 bg-white/5'
                                     : 'text-gray-400 hover:text-white'
                                     }`}

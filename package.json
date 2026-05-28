@@ -3,7 +3,8 @@
     "version": "3.0.0",
     "private": true,
     "scripts": {
-        "dev": "concurrently \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
+        "dev": "concurrently --names server,client -c blue,magenta --prefix \"[{name}]\" \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
+        "dev:all": "npm run dev",
         "build": "npm run install:all && npm run build --prefix client",
         "start": "npm start --prefix server",
         "install:all": "npm install --include=dev --prefix server && npm install --include=dev --prefix client"

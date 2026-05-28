@@ -97,7 +97,27 @@ app.use(cors({
 
 if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 
-app.use("/outputs", express.static(outputDir));
+// Always advertise byte-range support on /outputs/* responses. iOS Safari
+// and QuickTime refuse to play MP4/MP3 without `Accept-Ranges: bytes` in the
+// HEAD response — they fall back to the "play arrow with slash" broken icon.
+// express.static + res.sendFile do honour Range requests, but neither emits
+// Accept-Ranges in the HEAD/200 path, only on the 206 response. Adding it
+// here on every /outputs response makes iOS happy on first probe.
+app.use("/outputs", (req, res, next) => {
+  res.setHeader("Accept-Ranges", "bytes");
+  next();
+});
+
+app.use("/outputs", express.static(outputDir, {
+  acceptRanges: true,
+  // Cache aggressively — outputs are content-addressed by UUID and never
+  // mutate. Cloudflare's CDN caches public, max-age responses and serves
+  // most repeat plays without hitting origin.
+  maxAge: "1d",
+  setHeaders: (res) => {
+    res.setHeader("Accept-Ranges", "bytes");
+  },
+}));
 
 // Per-user outputs fallback. With multi-tenant on, renders + processed audio
 // land in DATA_DIR/users/<userId>/outputs/, NOT the global outputDir served
@@ -152,7 +172,14 @@ app.get("/outputs/:filename", (req, res, next) => {
     return next();
   }
   const hit = findInPerUserOutputs(raw);
-  if (hit) return res.sendFile(hit);
+  if (hit) {
+    // res.sendFile honours Range requests internally; Accept-Ranges header
+    // was already set by the /outputs middleware above. We add Cache-Control
+    // here because Express's sendFile doesn't pass through the .static
+    // options when called directly.
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    return res.sendFile(hit);
+  }
   // Genuine miss: return a real 404 instead of letting the SPA catch-all
   // hand back text/html, which the browser then tries to play as video and
   // shows as "0:00" / "broken link". Audio/video tags handle 404 cleanly.

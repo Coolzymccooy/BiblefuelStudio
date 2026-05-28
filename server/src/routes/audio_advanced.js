@@ -299,7 +299,7 @@ router.post("/timeline-preview", async (req, res) => {
     const filterComplex = parts.join(";");
     args.push("-filter_complex", filterComplex);
     args.push("-map", "0:v", "-map", "[afinal]");
-    args.push("-shortest", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", outFile);
+    args.push("-shortest", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", outFile);
 
     await run(ffmpeg, args);
     res.json({ ok: true, file: outFile });

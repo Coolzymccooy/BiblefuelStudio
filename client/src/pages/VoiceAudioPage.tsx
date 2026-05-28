@@ -5,6 +5,8 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Textarea } from '../components/ui/Textarea';
 import { Select } from '../components/ui/Select';
+import { Field } from '../components/ui/Field';
+import { InfoTooltip } from '../components/ui/InfoTooltip';
 import { AnimationPicker } from '../components/voicelab/AnimationPicker';
 import { api } from '../lib/api';
 import toast from 'react-hot-toast';
@@ -952,10 +954,10 @@ export function VoiceAudioPage() {
                 {(activeTab === 'all' || activeTab === 'voice') && (
                 <Card title="1. TTS (voice generation)">
                     <div className="space-y-4">
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                                Text for voice
-                            </label>
+                        <Field
+                            label="Text for voice"
+                            tooltip="Paste any combination of hook, verse, short reflection or prayer, and CTA. Keep it under about 6 short lines for the best caption rhythm."
+                        >
                             <Textarea
                                 value={ttsText}
                                 onChange={(e) => setTtsText(e.target.value)}
@@ -972,10 +974,7 @@ export function VoiceAudioPage() {
                                     Insert Template
                                 </Button>
                             </div>
-                            <p className="text-xs text-gray-500 mt-2">
-                                You can paste any text here: hook, verse, short reflection/prayer, and CTA. Keep it under about 6 short lines for best captions.
-                            </p>
-                        </div>
+                        </Field>
                         {voiceDefaults.enabled && (
                             <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 flex flex-wrap items-center gap-3 text-xs">
                                 <Wand2 size={14} className="text-emerald-300 shrink-0" />
@@ -985,16 +984,30 @@ export function VoiceAudioPage() {
                                     {voiceDefaults.providerOverride ? ` · ${voiceDefaults.providerOverride}` : ' · auto-provider'}
                                     {voiceDefaults.cinematicMode ? ' · cinematic timings' : ''}.
                                 </span>
-                                <Link to="/app/settings" className="ml-auto text-[10px] text-emerald-300 hover:text-emerald-200 underline">
+                                <Link to="/app/settings" className="ml-auto text-[0.75rem] text-emerald-300 hover:text-emerald-200 underline">
                                     Edit in Settings
                                 </Link>
                             </div>
                         )}
                         <div>
-                            <label className="block text-xs font-medium text-gray-600 mb-2">
-                                Provider
+                            <label className="field-label inline-flex items-center gap-1.5">
+                                <span>Provider</span>
+                                <InfoTooltip
+                                    width="lg"
+                                    content={
+                                        provider === 'edge'
+                                            ? 'Free Microsoft neural voices via the Edge "Read Aloud" service. ~400 voices, no key required.'
+                                            : provider === 'chatterbox'
+                                                ? 'Self-hosted open-source TTS (Resemble AI). Calls a Chatterbox HTTP bridge — free, supports voice cloning via a reference WAV. Slower than ElevenLabs but expressive.'
+                                                : provider === 'azure'
+                                                    ? 'Microsoft Azure Speech — commercial-safe, returns reliable word-level timestamps (primary kinetic-caption engine). Voice id is an Azure voice name (e.g. en-US-GuyNeural).'
+                                                    : provider === 'fish'
+                                                        ? 'Fish Audio — premium multilingual cloud voices with cloning. Voice id is a Fish reference_id. Counts against your Fish credits.'
+                                                        : 'Premium voices + cloning. Requires ELEVENLABS_API_KEY and counts against your monthly character quota.'
+                                    }
+                                />
                             </label>
-                            <div className="inline-flex rounded-lg border border-white/10 overflow-hidden">
+                            <div className="inline-flex rounded-lg border border-white/10 overflow-hidden mt-0">
                                 <button
                                     type="button"
                                     onClick={() => setProvider('elevenlabs')}
@@ -1059,37 +1072,24 @@ export function VoiceAudioPage() {
                                     Edge-TTS <span className="opacity-60">· free</span>
                                 </button>
                             </div>
-                            <p className="text-[10px] text-gray-500 mt-1">
-                                {provider === 'edge'
-                                    ? 'Free Microsoft neural voices via the Edge "Read Aloud" service. ~400 voices, no key. Use for your own channel narration.'
-                                    : provider === 'chatterbox'
-                                      ? 'Self-hosted open-source TTS (Resemble AI). Calls a Chatterbox HTTP bridge over the network — free, supports voice cloning via a reference WAV path on the bridge host. Inference is slower than ElevenLabs but expressive.'
-                                      : provider === 'azure'
-                                        ? 'Microsoft Azure Speech — commercial-safe, returns reliable word-level timestamps (the kinetic-caption primary). Voice id is an Azure voice name (e.g. en-US-GuyNeural); leave blank for the server default.'
-                                        : provider === 'fish'
-                                          ? 'Fish Audio — premium multilingual cloud voices with cloning. Voice id is a Fish reference_id; leave blank for the server default. Counts against your Fish credits.'
-                                          : 'Premium voices + cloning. Requires ELEVENLABS_API_KEY and counts against your monthly character quota.'}
-                            </p>
                         </div>
                         {provider === 'chatterbox' ? (
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                <div>
-                                    <label className="block text-xs font-medium text-gray-600 mb-1">
-                                        Reference voice path (optional)
-                                    </label>
+                                <Field
+                                    label="Reference voice"
+                                    badge="Optional"
+                                    tooltip="Absolute path to a WAV file on the Chatterbox host. Leave empty to use the model's default voice. The path is resolved by the Chatterbox server, not Biblefuel."
+                                >
                                     <Input
                                         value={chatterboxAudioPrompt}
                                         onChange={(e) => setChatterboxAudioPrompt(e.target.value)}
-                                        placeholder="Absolute path to a WAV on the Chatterbox host"
+                                        placeholder="/path/to/reference.wav"
                                     />
-                                    <p className="text-[10px] text-gray-500 mt-1">
-                                        Leave empty to use the model's default voice. Path is resolved by the chatterbox server, not biblefuel.
-                                    </p>
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-medium text-gray-600 mb-1">
-                                        Exaggeration ({chatterboxStyle})
-                                    </label>
+                                </Field>
+                                <Field
+                                    label={`Exaggeration (${chatterboxStyle})`}
+                                    tooltip="Controls expressive intensity. Higher values yield more dramatic delivery; lower values stay closer to neutral."
+                                >
                                     <input
                                         type="range"
                                         min="0"
@@ -1099,12 +1099,11 @@ export function VoiceAudioPage() {
                                         onChange={(e) => setChatterboxStyle(Number(e.target.value))}
                                         className="w-full accent-primary-500"
                                     />
-                                    <p className="text-[10px] text-gray-500 mt-1">Higher = more expressive.</p>
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-medium text-gray-600 mb-1">
-                                        CFG weight ({chatterboxCfg})
-                                    </label>
+                                </Field>
+                                <Field
+                                    label={`CFG weight (${chatterboxCfg})`}
+                                    tooltip="Classifier-free guidance weight. Lower stays more faithful to the reference voice; higher gives the model more creative freedom."
+                                >
                                     <input
                                         type="range"
                                         min="0"
@@ -1114,15 +1113,15 @@ export function VoiceAudioPage() {
                                         onChange={(e) => setChatterboxCfg(Number(e.target.value))}
                                         className="w-full accent-primary-500"
                                     />
-                                    <p className="text-[10px] text-gray-500 mt-1">Lower = more faithful to reference voice; higher = more creative.</p>
-                                </div>
+                                </Field>
                             </div>
                         ) : (
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                <div>
-                                    <label className="block text-xs font-medium text-gray-600 mb-1">
-                                        Voice ID (optional)
-                                    </label>
+                                <Field
+                                    label="Voice ID"
+                                    badge="Optional"
+                                    tooltip="Paste a voice ID or use Load Voices below to browse. Leave empty for the server default voice."
+                                >
                                     <Input
                                         value={provider === 'edge' ? edgeVoiceId : voiceId}
                                         onChange={(e) =>
@@ -1136,14 +1135,13 @@ export function VoiceAudioPage() {
                                                 : 'Leave empty to use default voice'
                                         }
                                     />
-                                    <p className="text-[10px] text-gray-500 mt-1">
-                                        Paste a voice ID or load voices below.
-                                    </p>
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-medium text-gray-600 mb-1">
-                                        Stability ({stability})
-                                    </label>
+                                </Field>
+                                <Field
+                                    label={`Stability (${stability})`}
+                                    tooltip={provider === 'edge'
+                                        ? 'ElevenLabs-only — not used by Edge TTS.'
+                                        : 'How consistent the voice is between generations. Higher = more uniform; lower = more variation between takes.'}
+                                >
                                     <input
                                         type="range"
                                         min="0"
@@ -1154,14 +1152,13 @@ export function VoiceAudioPage() {
                                         disabled={provider === 'edge'}
                                         className="w-full accent-primary-500 disabled:opacity-40"
                                     />
-                                    {provider === 'edge' && (
-                                        <p className="text-[10px] text-gray-500 mt-1">ElevenLabs-only knob.</p>
-                                    )}
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-medium text-gray-600 mb-1">
-                                        Similarity Boost ({similarity})
-                                    </label>
+                                </Field>
+                                <Field
+                                    label={`Similarity Boost (${similarity})`}
+                                    tooltip={provider === 'edge'
+                                        ? 'ElevenLabs-only — not used by Edge TTS.'
+                                        : 'How closely the output matches the cloned voice. Higher = more faithful; may amplify recording artifacts.'}
+                                >
                                     <input
                                         type="range"
                                         min="0"
@@ -1172,10 +1169,7 @@ export function VoiceAudioPage() {
                                         disabled={provider === 'edge'}
                                         className="w-full accent-primary-500 disabled:opacity-40"
                                     />
-                                    {provider === 'edge' && (
-                                        <p className="text-[10px] text-gray-500 mt-1">ElevenLabs-only knob.</p>
-                                    )}
-                                </div>
+                                </Field>
                             </div>
                         )}
                         <div className="flex items-center gap-2">
@@ -1253,11 +1247,16 @@ export function VoiceAudioPage() {
                 )}
 
                 {(activeTab === 'all' || activeTab === 'voice') && (
-                    <Card title="Voice Clone (Consent Required)">
+                    <Card title="Voice Clone">
                         <div className="space-y-4">
-                            <p className="text-xs text-gray-600">
-                                Clone only voices you own or have explicit permission to use. Provide at least one clear sample file path from your outputs.
-                            </p>
+                            <div className="rounded-lg border border-amber-500/25 bg-amber-500/[0.06] px-3 py-2 text-[0.8125rem] text-amber-100/90 leading-relaxed flex items-start gap-2">
+                                <InfoTooltip
+                                    width="lg"
+                                    iconClassName="!text-amber-300 !w-4 !h-4 mt-0.5 shrink-0"
+                                    content="Cloning is governed by ElevenLabs' usage policy. Make sure you have explicit recorded consent before cloning any voice that isn't your own."
+                                />
+                                <span>Consent required — clone only voices you own or have explicit permission to use. Provide at least one clear sample file path from your outputs.</span>
+                            </div>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                 <Input
                                     value={cloneVoiceName}
@@ -1363,11 +1362,11 @@ export function VoiceAudioPage() {
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                             {voicePresets.map((p) => (
-                                <div key={p.id} className="border border-gray-200 rounded-lg p-3 flex items-center justify-between">
+                                <div key={p.id} className="border border-white/[0.08] bg-dark-900/40 rounded-lg p-3 flex items-center justify-between">
                                     <div>
-                                        <div className="text-sm font-semibold text-white">{p.label}</div>
-                                        <div className="text-[10px] text-gray-300">Voice ID: {p.voiceId || 'not set'}</div>
-                                        <div className="text-[10px] text-gray-300">Stability {p.stability} • Similarity {p.similarity}</div>
+                                        <div className="text-[0.9375rem] font-semibold text-white">{p.label}</div>
+                                        <div className="text-[0.75rem] text-gray-400 mt-0.5">Voice ID: {p.voiceId || 'not set'}</div>
+                                        <div className="text-[0.75rem] text-gray-400">Stability {p.stability} • Similarity {p.similarity}</div>
                                     </div>
                                     <div className="flex items-center gap-2">
                                         <Button variant="secondary" className="text-xs h-8" onClick={() => {
@@ -1422,18 +1421,18 @@ export function VoiceAudioPage() {
                             </label>
                         </div>
                         <div className="mt-4">
-                            <p className="text-[10px] text-gray-500 uppercase tracking-widest mb-2">Live Input</p>
+                            <p className="field-label">Live input</p>
                             <canvas ref={canvasRef} width={520} height={80} className="w-full rounded-lg border border-white/10 bg-black/30" />
                         </div>
                         {currentAudioUrl && (
                             <div className="mt-3 space-y-2">
-                                <p className="text-[10px] text-gray-500 uppercase tracking-widest">Latest Recording/Upload</p>
+                                <p className="field-label">Latest recording / upload</p>
                                 <audio controls src={currentAudioUrl} className="w-full" />
-                                <p className="text-[10px] text-gray-500 break-all">{audioPath}</p>
+                                <p className="text-[0.6875rem] text-gray-500 break-all font-mono">{audioPath}</p>
                             </div>
                         )}
                         {recordingDebug && (
-                            <p className="text-[10px] text-gray-500 break-all">{recordingDebug}</p>
+                            <p className="text-[0.6875rem] text-gray-500 break-all font-mono">{recordingDebug}</p>
                         )}
                     </div>
                 </Card>
@@ -1476,7 +1475,7 @@ export function VoiceAudioPage() {
 
                     <div className="space-y-4">
                         <div>
-                            <label className="block text-sm font-medium text-gray-200 mb-1">Preset</label>
+                            <label className="field-label">Preset</label>
                             <Select value={preset} onChange={(e) => setPreset(e.target.value)}>
                                 <option value="clean_voice">Clean voice (recommended)</option>
                                 <option value="podcast">Podcast (louder)</option>
@@ -1487,7 +1486,7 @@ export function VoiceAudioPage() {
 
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                             <div>
-                                <label className="block text-xs font-medium text-gray-200 mb-1">
+                                <label className="field-label">
                                     Denoise (0-1)
                                 </label>
                                 <Input
@@ -1501,7 +1500,7 @@ export function VoiceAudioPage() {
                             </div>
 
                             <div>
-                                <label className="block text-xs font-medium text-gray-200 mb-1">
+                                <label className="field-label">
                                     Gate (dB)
                                 </label>
                                 <Input
@@ -1515,7 +1514,7 @@ export function VoiceAudioPage() {
                             </div>
 
                             <div>
-                                <label className="block text-xs font-medium text-gray-200 mb-1">
+                                <label className="field-label">
                                     Highpass (Hz)
                                 </label>
                                 <Input
@@ -1529,7 +1528,7 @@ export function VoiceAudioPage() {
                             </div>
 
                             <div>
-                                <label className="block text-xs font-medium text-gray-200 mb-1">
+                                <label className="field-label">
                                     Lowpass (Hz)
                                 </label>
                                 <Input
@@ -1543,7 +1542,7 @@ export function VoiceAudioPage() {
                             </div>
 
                             <div>
-                                <label className="block text-xs font-medium text-gray-200 mb-1">
+                                <label className="field-label">
                                     Comp Ratio
                                 </label>
                                 <Input
@@ -1557,7 +1556,7 @@ export function VoiceAudioPage() {
                             </div>
 
                             <div>
-                                <label className="block text-xs font-medium text-gray-200 mb-1">
+                                <label className="field-label">
                                     Comp Threshold (dB)
                                 </label>
                                 <Input
@@ -1571,7 +1570,7 @@ export function VoiceAudioPage() {
                             </div>
 
                             <div>
-                                <label className="block text-xs font-medium text-gray-200 mb-1">
+                                <label className="field-label">
                                     LUFS Target
                                 </label>
                                 <Input
@@ -1585,7 +1584,7 @@ export function VoiceAudioPage() {
                             </div>
 
                             <div>
-                                <label className="block text-xs font-medium text-gray-200 mb-1">
+                                <label className="field-label">
                                     Remove Silence
                                 </label>
                                 <Select
@@ -1609,7 +1608,7 @@ export function VoiceAudioPage() {
                             {showAdvanced && (
                                 <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-4">
                                     <div>
-                                        <label className="block text-xs font-medium text-gray-200 mb-1">
+                                        <label className="field-label">
                                             De-esser (0-1)
                                         </label>
                                         <Input
@@ -1623,7 +1622,7 @@ export function VoiceAudioPage() {
                                     </div>
 
                                     <div>
-                                        <label className="block text-xs font-medium text-gray-200 mb-1">
+                                        <label className="field-label">
                                             Limiter Ceiling (dB)
                                         </label>
                                         <Input
@@ -1637,7 +1636,7 @@ export function VoiceAudioPage() {
                                     </div>
 
                                     <div>
-                                        <label className="block text-xs font-medium text-gray-200 mb-1">
+                                        <label className="field-label">
                                             Presence Boost (dB)
                                         </label>
                                         <Input
@@ -1651,7 +1650,7 @@ export function VoiceAudioPage() {
                                     </div>
 
                                     <div>
-                                        <label className="block text-xs font-medium text-gray-200 mb-1">
+                                        <label className="field-label">
                                             Presence Freq (Hz)
                                         </label>
                                         <Input
@@ -1665,7 +1664,7 @@ export function VoiceAudioPage() {
                                     </div>
 
                                     <div>
-                                        <label className="block text-xs font-medium text-gray-200 mb-1">
+                                        <label className="field-label">
                                             Presence Q
                                         </label>
                                         <Input
@@ -1729,11 +1728,11 @@ export function VoiceAudioPage() {
                                     className="flex flex-col md:flex-row md:items-center gap-3 bg-dark-900/60 border border-white/5 rounded-lg p-3"
                                 >
                                     <div className="flex-1 min-w-0">
-                                        <p className="text-[10px] text-primary-300 uppercase tracking-wider font-semibold">
+                                        <p className="text-[0.8125rem] font-medium text-primary-300">
                                             {item.kind}
                                         </p>
-                                        <p className="text-xs font-mono text-gray-200 break-all">{item.path}</p>
-                                        <p className="text-[10px] text-gray-500 mt-1">
+                                        <p className="text-[0.75rem] font-mono text-gray-300 break-all mt-0.5">{item.path}</p>
+                                        <p className="field-help">
                                             {new Date(item.createdAt).toLocaleString()}
                                         </p>
                                     </div>
@@ -1805,7 +1804,7 @@ export function VoiceAudioPage() {
                                 <Music size={14} className="mr-2" />
                                 Load Music Library
                             </Button>
-                            <span className="text-[10px] text-gray-300">
+                            <span className="text-[0.8125rem] text-gray-400">
                                 Use any audio file from outputs as a soundtrack for Render.
                             </span>
                         </div>
@@ -1813,12 +1812,12 @@ export function VoiceAudioPage() {
                         {musicItems.length > 0 ? (
                             <div className="space-y-3">
                                 {musicItems.slice(0, 20).map((item: any) => (
-                                    <div key={item.path || item.name} className="flex flex-col md:flex-row md:items-center gap-3 bg-gray-50 rounded-lg p-3">
-                                        <div className="flex-1">
-                                            <p className="text-xs text-primary-300 uppercase tracking-wider">{item.name || 'Audio'}</p>
-                                            <p className="text-xs font-mono text-gray-100 break-all">{item.path}</p>
+                                    <div key={item.path || item.name} className="flex flex-col md:flex-row md:items-center gap-3 bg-dark-900/60 border border-white/[0.06] rounded-lg p-3">
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-[0.8125rem] font-medium text-primary-300">{item.name || 'Audio'}</p>
+                                            <p className="text-[0.75rem] font-mono text-gray-300 break-all mt-0.5">{item.path}</p>
                                             {item.mtime && (
-                                                <p className="text-[10px] text-gray-300 mt-1">{new Date(item.mtime).toLocaleString()}</p>
+                                                <p className="field-help">{new Date(item.mtime).toLocaleString()}</p>
                                             )}
                                         </div>
                                         <audio controls src={toOutputUrl(item.path, api.baseUrl)} className="w-full md:w-64" />
@@ -1832,7 +1831,7 @@ export function VoiceAudioPage() {
                                     </div>
                                 ))}
                                 {musicItems.length > 20 && (
-                                    <p className="text-[10px] text-gray-300">Showing latest 20 items.</p>
+                                    <p className="field-help">Showing latest 20 items.</p>
                                 )}
                             </div>
                         ) : (

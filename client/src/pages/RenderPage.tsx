@@ -5,9 +5,11 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Textarea } from '../components/ui/Textarea';
 import { Select } from '../components/ui/Select';
+import { Field } from '../components/ui/Field';
+import { Section } from '../components/ui/Section';
 import { api } from '../lib/api';
 import toast from 'react-hot-toast';
-import { Play, Library, Video, CheckCircle2, ClipboardList, AudioLines, ChevronDown, Share2, X as XIcon } from 'lucide-react';
+import { Play, Library, Video, CheckCircle2, ClipboardList, AudioLines, Share2, X as XIcon } from 'lucide-react';
 import { loadJson, saveJson, STORAGE_KEYS, toOutputUrl } from '../lib/storage';
 import { useConfig } from '../lib/config';
 import { useNotifications } from '../lib/notifications';
@@ -27,41 +29,6 @@ interface AudioItem {
     path: string;
     kind: string;
     createdAt: string;
-}
-
-interface SectionProps {
-    title: string;
-    defaultOpen?: boolean;
-    hint?: string;
-    children: React.ReactNode;
-}
-
-function Section({ title, defaultOpen = false, hint, children }: SectionProps) {
-    const [open, setOpen] = useState(defaultOpen);
-    return (
-        <div className="rounded-xl border border-white/10 bg-white/[0.02] overflow-hidden">
-            <button
-                type="button"
-                onClick={() => setOpen((v) => !v)}
-                className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/[0.04] transition-colors"
-                aria-expanded={open}
-            >
-                <div className="flex flex-col items-start text-left">
-                    <span className="text-sm font-semibold text-white">{title}</span>
-                    {hint && <span className="text-[10px] uppercase tracking-widest text-gray-500 mt-0.5">{hint}</span>}
-                </div>
-                <ChevronDown
-                    size={16}
-                    className={`text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`}
-                />
-            </button>
-            {open && (
-                <div className="px-4 pb-4 pt-2 border-t border-white/5 space-y-4">
-                    {children}
-                </div>
-            )}
-        </div>
-    );
 }
 
 export function RenderPage() {
@@ -551,10 +518,7 @@ export function RenderPage() {
                     </div>
                 )}
                 <div className="space-y-4">
-                    <div>
-                        <label className="block text-sm font-medium text-gray-400 mb-1">
-                            Background Asset
-                        </label>
+                    <Field label="Background">
                         {backgroundItem ? (
                                     <div
                                         className={`relative bg-black rounded-xl overflow-hidden group mx-auto sm:mx-0 ${aspect === 'landscape'
@@ -609,13 +573,14 @@ export function RenderPage() {
                                         </Button>
                                     </div>
                                 )}
-                    </div>
+                    </Field>
 
-                    <Section title="Captions" defaultOpen={true} hint="Overlay text shown on the video">
-                        <div>
-                            <label className="block text-sm font-medium text-gray-400 mb-1">
-                                Overlay Text (max 6 lines)
-                            </label>
+                    <Section title="Captions" defaultOpen={true} collapsible={false}>
+                        <Field
+                            label="Overlay text"
+                            badge="Max 6 lines"
+                            tooltip="One line per caption slide. Lines are auto-sliced to fit the frame and the chosen animation rhythm."
+                        >
                             <Textarea
                                 value={lines}
                                 onChange={(e) => setLines(e.target.value)}
@@ -641,15 +606,14 @@ export function RenderPage() {
                                     </Button>
                                 )}
                             </div>
-                            <p className="text-[10px] text-gray-500 mt-1 uppercase tracking-tighter">One line per caption slide (auto-sliced)</p>
-                        </div>
-                        <div className="mt-4">
-                            <label className="block text-sm font-medium text-gray-400 mb-1">
-                                Caption Animation
-                            </label>
+                        </Field>
+                        <Field
+                            label="Caption animation"
+                            tooltip="Word-synced motion applies when Kinetic captions are on. The list matches the Voice Lab picker."
+                        >
                             <Select value={typographyPreset} onChange={(e: ChangeEvent<HTMLSelectElement>) => setTypographyPreset(e.target.value)}>
                                 {animations.length > 0 && (
-                                    <optgroup label="Caption Animations (word-synced)">
+                                    <optgroup label="Caption animations (word-synced)">
                                         {animations.map((a) => (
                                             <option key={a.id} value={a.id}>
                                                 {a.label}{a.renderable ? '' : ' (preview-only)'}
@@ -665,46 +629,36 @@ export function RenderPage() {
                                     <option value="worship-cinematic">Worship cinematic</option>
                                 </optgroup>
                             </Select>
-                            <p className="text-[10px] text-gray-500 mt-1 uppercase tracking-tighter">
-                                Word-synced motion (fade / rise) applies on Kinetic captions. Same list as the Voice Lab picker.
-                            </p>
-                        </div>
+                        </Field>
                     </Section>
 
-                    <Section title="Output & Timing" hint="Frame, duration, caption width">
-                        <div>
-                            <label className="block text-sm font-medium text-gray-400 mb-1">
-                                Output Frame
-                            </label>
-                            <Select value={aspect} onChange={(e: ChangeEvent<HTMLSelectElement>) => setAspect(e.target.value as any)}>
-                                <option value="portrait">Portrait (9:16)</option>
-                                <option value="landscape">Landscape (16:9)</option>
-                                <option value="square">Square (1:1)</option>
-                            </Select>
-                            <p className="text-[10px] text-gray-500 mt-1 uppercase tracking-tighter">
-                                Text auto-wrap adjusts to the selected frame
-                            </p>
+                    <Section title="Output & Timing">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <Field label="Output frame" tooltip="Aspect ratio of the output video. Captions auto-wrap to the selected frame.">
+                                <Select value={aspect} onChange={(e: ChangeEvent<HTMLSelectElement>) => setAspect(e.target.value as any)}>
+                                    <option value="portrait">Portrait (9:16)</option>
+                                    <option value="landscape">Landscape (16:9)</option>
+                                    <option value="square">Square (1:1)</option>
+                                </Select>
+                            </Field>
+                            <Field label="Duration">
+                                <Select value={String(durationSec)} onChange={(e: ChangeEvent<HTMLSelectElement>) => setDurationSec(Number(e.target.value))}>
+                                    <option value="20">20s (default)</option>
+                                    <option value="60">60s</option>
+                                    <option value="120">120s</option>
+                                    <option value="180">180s</option>
+                                </Select>
+                                {isLongRender && (
+                                    <div className="mt-2 text-[0.6875rem] text-yellow-300 bg-yellow-500/10 border border-yellow-500/20 rounded-md px-2 py-1 inline-block">
+                                        Long renders run in the background
+                                    </div>
+                                )}
+                            </Field>
                         </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-400 mb-1">
-                                Duration
-                            </label>
-                            <Select value={String(durationSec)} onChange={(e: ChangeEvent<HTMLSelectElement>) => setDurationSec(Number(e.target.value))}>
-                                <option value="20">20s (default)</option>
-                                <option value="60">60s</option>
-                                <option value="120">120s</option>
-                                <option value="180">180s</option>
-                            </Select>
-                            {isLongRender && (
-                                <div className="mt-2 text-[10px] uppercase tracking-widest text-yellow-300 bg-yellow-500/10 border border-yellow-500/20 rounded-md px-2 py-1 inline-block">
-                                    Long render queued only
-                                </div>
-                            )}
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-400 mb-1">
-                                Caption Width ({captionWidth}%)
-                            </label>
+                        <Field
+                            label={`Caption width (${captionWidth}%)`}
+                            tooltip="Width of the caption block relative to the frame. Lower values add more padding around the text and force tighter line wrapping."
+                        >
                             <input
                                 type="range"
                                 min="60"
@@ -714,17 +668,15 @@ export function RenderPage() {
                                 onChange={(e) => setCaptionWidth(Number(e.target.value))}
                                 className="w-full accent-primary-500"
                             />
-                            <p className="text-[10px] text-gray-500 mt-1 uppercase tracking-tighter">
-                                Lower value = more padding and tighter line wrapping
-                            </p>
-                        </div>
+                        </Field>
                     </Section>
 
-                    <Section title="Audio" hint="Voice source, soundtrack, ducking">
-                        <div>
-                            <label className="block text-sm font-medium text-gray-400 mb-1">
-                                Audio Source (required for waveform)
-                            </label>
+                    <Section title="Audio">
+                        <Field
+                            label="Voice track"
+                            badge="Required for waveform"
+                            hint={audioHistory.length > 0 ? 'Recent files appear below.' : undefined}
+                        >
                             <Input
                                 value={audioPath}
                                 onChange={(e) => setAudioPath(e.target.value)}
@@ -732,23 +684,20 @@ export function RenderPage() {
                                 className="bg-black/20"
                             />
                             {audioHistory.length > 0 && (
-                                <div className="mt-2 flex flex-wrap gap-2">
+                                <div className="mt-2 flex flex-wrap gap-1.5">
                                     {audioHistory.slice(0, 4).map((item) => (
                                         <button
                                             key={item.id}
                                             onClick={() => setAudioPath(item.path)}
-                                            className="text-[10px] px-2 py-1 rounded-full bg-white/10 text-gray-200 hover:bg-white/20"
+                                            className="text-[0.6875rem] px-2 py-0.5 rounded-full bg-white/[0.06] text-gray-300 hover:bg-white/[0.12] hover:text-white transition-colors"
                                         >
                                             {item.kind}
                                         </button>
                                     ))}
                                 </div>
                             )}
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-400 mb-1">
-                                Soundtrack (optional)
-                            </label>
+                        </Field>
+                        <Field label="Soundtrack" badge="Optional">
                             <Input
                                 value={musicPath}
                                 onChange={(e) => setMusicPath(e.target.value)}
@@ -763,19 +712,20 @@ export function RenderPage() {
                                 <Library size={14} className="mr-2" />
                                 Select from Music Library
                             </Button>
-                            <label className="block text-xs text-gray-500 mt-2">
-                                Music Volume ({musicVolume})
-                            </label>
-                            <input
-                                type="range"
-                                min="0"
-                                max="1"
-                                step="0.05"
-                                value={musicVolume}
-                                onChange={(e) => setMusicVolume(Number(e.target.value))}
-                                className="w-full accent-primary-500"
-                            />
-                            <label className="mt-3 flex items-center gap-2 text-xs text-gray-400">
+                        </Field>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-start">
+                            <Field label={`Music volume (${musicVolume.toFixed(2)})`}>
+                                <input
+                                    type="range"
+                                    min="0"
+                                    max="1"
+                                    step="0.05"
+                                    value={musicVolume}
+                                    onChange={(e) => setMusicVolume(Number(e.target.value))}
+                                    className="w-full accent-primary-500"
+                                />
+                            </Field>
+                            <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer pt-7">
                                 <input
                                     type="checkbox"
                                     checked={autoDuck}
@@ -796,47 +746,48 @@ export function RenderPage() {
                             className="rounded border-white/10 bg-black/50 checked:bg-primary-500"
                             disabled={isLongRender || kineticCaptions}
                         />
-                        <label htmlFor="background" className="text-sm text-gray-400">
-                            Render in background (Jobs System)
+                        <label htmlFor="background" className="text-[0.875rem] text-gray-300">
+                            Render in background
                         </label>
                         {isLongRender && (
-                            <span className="text-[10px] text-yellow-300">Required for 60s+</span>
+                            <span className="text-[0.6875rem] text-yellow-300/90">Required for 60s+</span>
                         )}
                         {kineticCaptions && (
-                            <span className="text-[10px] text-amber-300">Forced on by Kinetic captions</span>
+                            <span className="text-[0.6875rem] text-amber-300/90">Forced on by kinetic captions</span>
                         )}
                     </div>
 
-                    <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.04] p-3 space-y-2">
-                        <label className="flex items-center gap-2 cursor-pointer">
+                    <div className="rounded-xl border border-amber-500/25 bg-amber-500/[0.05] p-4 space-y-3">
+                        <label className="flex items-start gap-2.5 cursor-pointer">
                             <input
                                 type="checkbox"
                                 checked={kineticCaptions}
                                 onChange={(e) => setKineticCaptions(e.target.checked)}
-                                className="rounded border-white/10 bg-black/50 checked:bg-amber-500"
+                                className="mt-0.5 rounded border-white/10 bg-black/50 checked:bg-amber-500"
                             />
-                            <span className="text-sm font-semibold text-white">Kinetic captions (word-by-word, synced to voice)</span>
+                            <div className="flex-1 min-w-0">
+                                <div className="text-[0.9375rem] font-semibold text-white">Kinetic captions</div>
+                                <p className="text-[0.8125rem] text-gray-400 mt-0.5 leading-relaxed">
+                                    Word-by-word reveal synced to voice. Generates audio from your script
+                                    via ElevenLabs and highlights each word as it's spoken. Overrides the
+                                    voice track above.
+                                </p>
+                            </div>
                         </label>
-                        <p className="text-[11px] text-gray-400 pl-6">
-                            Generates the voice from your script via ElevenLabs and lights up each word
-                            as it's spoken. Keyword in each line renders larger in amber.
-                            Overrides the Audio field above.
-                        </p>
                         {kineticCaptions && (
-                            <div className="pl-6 space-y-1">
-                                <label className="text-[10px] uppercase tracking-wider text-gray-500">
-                                    ElevenLabs voice ID <span className="normal-case tracking-normal text-gray-600">(optional)</span>
-                                </label>
-                                <Input
-                                    value={ttsVoiceId}
-                                    onChange={(e) => setTtsVoiceId(e.target.value)}
-                                    placeholder="Leave blank to use the server default (Sarah)"
-                                    className="text-xs font-mono"
-                                />
-                                <p className="text-[10px] text-gray-500">
-                                    Auto-fills from the voice you saved on the Voice / Audio page.
-                                    Leave blank and the server falls back to <code className="text-gray-400">ELEVENLABS_VOICE_ID</code> in <code className="text-gray-400">.env</code>,
-                                    then to ElevenLabs' default voice.
+                            <div className="pl-6">
+                                <Field label="ElevenLabs voice ID" badge="Optional">
+                                    <Input
+                                        value={ttsVoiceId}
+                                        onChange={(e) => setTtsVoiceId(e.target.value)}
+                                        placeholder="Leave blank to use the server default (Sarah)"
+                                        className="font-mono text-[0.8125rem]"
+                                    />
+                                </Field>
+                                <p className="field-help">
+                                    Auto-fills from the voice saved on the Voice & Audio page. If blank,
+                                    falls back to <code className="text-gray-400 bg-white/[0.04] px-1 py-0.5 rounded">ELEVENLABS_VOICE_ID</code> in
+                                    <code className="text-gray-400 bg-white/[0.04] px-1 py-0.5 rounded ml-1">.env</code>, then to ElevenLabs' default.
                                 </p>
                             </div>
                         )}
@@ -886,7 +837,7 @@ export function RenderPage() {
                         </p>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                             <div>
-                                <label className="block text-[10px] uppercase tracking-widest text-gray-500 mb-1">Video to Share</label>
+                                <label className="field-label">Video to share</label>
                                 <Select value={shareVideoPath} onChange={(e) => setShareVideoPath(e.target.value)}>
                                     {result?.file && <option value={result.file}>Latest Instant Render</option>}
                                     {jobVideoOptions.length > 0 && (
@@ -902,7 +853,7 @@ export function RenderPage() {
                                 </Select>
                             </div>
                             <div>
-                                <label className="block text-[10px] uppercase tracking-widest text-gray-500 mb-1">Or Paste Video Path</label>
+                                <label className="field-label">Or paste a path</label>
                                 <Input
                                     value={shareVideoPath}
                                     onChange={(e) => setShareVideoPath(e.target.value)}
@@ -937,7 +888,7 @@ export function RenderPage() {
                         </div>
 
                         <div className="pt-2 border-t border-white/10 space-y-2">
-                            <div className="text-[10px] text-gray-500 uppercase tracking-widest">Auto Post</div>
+                            <div className="text-[0.8125rem] font-medium text-gray-300">Auto-post</div>
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                                 <Select value={postDestination} onChange={(e) => setPostDestination(e.target.value as any)}>
                                     <option value="webhook">Webhook (Zapier/Make)</option>

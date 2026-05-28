@@ -254,66 +254,74 @@ export function JobsPage() {
                                 className="bg-dark-900/40 border border-white/5 rounded-xl p-4 hover:border-white/10 hover:bg-dark-900/60 transition-all cursor-pointer group"
                                 onClick={() => setSelectedJob(selectedJob?.id === job.id ? null : job)}
                             >
-                                <div className="flex items-start justify-between">
-                                    <div className="flex-1 min-w-0">
-                                        {/* Primary identifier — what was rendered (e.g. "John 3 — Part 1/3") */}
-                                        <div className="flex items-center gap-2 mb-1.5">
-                                            <KindIcon size={16} className="text-primary-300 shrink-0" />
-                                            <span
-                                                className="font-semibold text-gray-100 truncate"
-                                                title={ident.primary}
-                                            >
-                                                {ident.primary}
-                                            </span>
-                                        </div>
-                                        {/* Secondary row — status, engine type, content chips */}
-                                        <div className="flex items-center gap-2 flex-wrap mb-2">
-                                            <Badge variant={getStatusVariant(job.status)} className="uppercase text-[10px] tracking-wider font-bold">
-                                                {job.status}
-                                            </Badge>
-                                            <span className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold">
-                                                {ident.kindLabel}
-                                            </span>
-                                            {ident.chips.map((chip, idx) => (
-                                                <span
-                                                    key={`${chip.text}-${idx}`}
-                                                    className={`text-[10px] px-2 py-0.5 rounded-full border ${
-                                                        chip.tone === 'primary'
-                                                            ? 'bg-primary-500/10 text-primary-300 border-primary-500/20'
-                                                            : 'bg-white/5 text-gray-300 border-white/10'
-                                                    }`}
-                                                >
-                                                    {chip.text}
-                                                </span>
-                                            ))}
-                                            <span className="text-xs text-gray-500 font-mono">#{job.id.slice(0, 8)}</span>
-                                        </div>
-                                        <div className="flex items-center gap-4 text-xs text-gray-400">
-                                            <div className="flex items-center gap-1">
-                                                <Clock size={12} />
-                                                {new Date(job.createdAt).toLocaleString()}
-                                            </div>
-                                            {job.finishedAt && (
-                                                <div className="text-emerald-400/80 font-medium">
-                                                    Duration: {Math.round((new Date(job.finishedAt).getTime() - (job.startedAt ? new Date(job.startedAt).getTime() : new Date(job.createdAt).getTime())) / 1000)}s
-                                                </div>
-                                            )}
-                                        </div>
-                                        {job.status === 'failed' && job.error && (
-                                            <details className="mt-2 text-xs text-red-300/90 leading-snug">
-                                                <summary className="cursor-pointer hover:text-red-200 whitespace-pre-wrap break-words line-clamp-2 list-none">
-                                                    {job.error.split('\n')[0]}
-                                                    {job.error.includes('\n') && <span className="text-red-300/60 ml-1">(click to expand)</span>}
-                                                </summary>
-                                                <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-[11px] bg-black/30 border border-red-500/10 rounded p-2 max-h-48 overflow-y-auto">
-                                                    {job.error}
-                                                </pre>
-                                            </details>
-                                        )}
+                                {/* Title always gets its own full-width row so it
+                                    can wrap properly on mobile. On lg+ the
+                                    actions row sits beside the metadata block;
+                                    on mobile actions stack underneath. */}
+                                <div className="space-y-2">
+                                    {/* Title */}
+                                    <div className="flex items-start gap-2">
+                                        <KindIcon size={16} className="text-primary-300 shrink-0 mt-0.5" />
+                                        <span
+                                            className="font-semibold text-gray-100 break-words flex-1 min-w-0"
+                                            title={ident.primary}
+                                        >
+                                            {ident.primary}
+                                        </span>
                                     </div>
 
-                                    <div className="flex flex-col items-end gap-2">
-                                        <div className="flex items-center gap-3">
+                                    {/* Metadata block + Actions — side-by-side on lg+, stacked on mobile */}
+                                    <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
+                                        <div className="flex-1 min-w-0 space-y-2">
+                                            {/* Status, kind, chips */}
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                                <Badge variant={getStatusVariant(job.status)} className="text-[0.6875rem] font-semibold uppercase">
+                                                    {job.status}
+                                                </Badge>
+                                                <span className="text-[0.75rem] font-medium text-gray-400">
+                                                    {ident.kindLabel}
+                                                </span>
+                                                {ident.chips.map((chip, idx) => (
+                                                    <span
+                                                        key={`${chip.text}-${idx}`}
+                                                        className={`text-[0.6875rem] px-2 py-0.5 rounded-full border ${
+                                                            chip.tone === 'primary'
+                                                                ? 'bg-primary-500/10 text-primary-300 border-primary-500/20'
+                                                                : 'bg-white/5 text-gray-300 border-white/10'
+                                                        }`}
+                                                    >
+                                                        {chip.text}
+                                                    </span>
+                                                ))}
+                                                <span className="text-xs text-gray-500 font-mono">#{job.id.slice(0, 8)}</span>
+                                            </div>
+                                            {/* Created + duration */}
+                                            <div className="flex items-center gap-x-4 gap-y-1 flex-wrap text-xs text-gray-400">
+                                                <div className="flex items-center gap-1">
+                                                    <Clock size={12} />
+                                                    {new Date(job.createdAt).toLocaleString()}
+                                                </div>
+                                                {job.finishedAt && (
+                                                    <div className="text-emerald-400/80 font-medium">
+                                                        Duration: {Math.round((new Date(job.finishedAt).getTime() - (job.startedAt ? new Date(job.startedAt).getTime() : new Date(job.createdAt).getTime())) / 1000)}s
+                                                    </div>
+                                                )}
+                                            </div>
+                                            {job.status === 'failed' && job.error && (
+                                                <details className="text-xs text-red-300/90 leading-snug">
+                                                    <summary className="cursor-pointer hover:text-red-200 whitespace-pre-wrap break-words line-clamp-2 list-none">
+                                                        {job.error.split('\n')[0]}
+                                                        {job.error.includes('\n') && <span className="text-red-300/60 ml-1">(click to expand)</span>}
+                                                    </summary>
+                                                    <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-[11px] bg-black/30 border border-red-500/10 rounded p-2 max-h-48 overflow-y-auto">
+                                                        {job.error}
+                                                    </pre>
+                                                </details>
+                                            )}
+                                        </div>
+
+                                        {/* Actions column — full-width row on mobile, right-aligned column on lg+ */}
+                                        <div className="flex flex-col lg:items-end gap-2 lg:shrink-0">
                                             {job.status === 'running' && (
                                                 <div className="flex items-center gap-2">
                                                     <div className="w-24 h-1.5 bg-white/5 rounded-full overflow-hidden border border-white/5">
@@ -322,18 +330,18 @@ export function JobsPage() {
                                                             style={{ width: `${job.progress || 0}%` }}
                                                         />
                                                     </div>
-                                                    <span className="text-[10px] font-bold text-primary-400 font-mono">{job.progress || 0}%</span>
+                                                    <span className="text-[0.75rem] font-semibold text-primary-400 font-mono tabular-nums">{job.progress || 0}%</span>
                                                 </div>
                                             )}
 
                                             {job.status === 'done' && job.result?.outFile && (
-                                                <div className="flex gap-2">
+                                                <div className="grid grid-cols-3 gap-2 w-full lg:flex lg:w-auto">
                                                     <Button
                                                         onClick={(e) => {
                                                             e.stopPropagation();
                                                             handleOpen(job.result!.outFile!);
                                                         }}
-                                                        className="text-xs px-3 py-1 bg-white/10 hover:bg-white/20 text-white border-white/10 h-auto"
+                                                        className="text-xs px-3 py-1 bg-white/10 hover:bg-white/20 text-white border-white/10 h-auto justify-center"
                                                     >
                                                         <ExternalLink size={14} className="mr-1.5" />
                                                         Play
@@ -343,7 +351,7 @@ export function JobsPage() {
                                                             e.stopPropagation();
                                                             handleDownload(job.result!.outFile!);
                                                         }}
-                                                        className="text-xs px-3 py-1 bg-primary-500/10 hover:bg-primary-500/20 text-primary-400 border-primary-500/20 h-auto"
+                                                        className="text-xs px-3 py-1 bg-primary-500/10 hover:bg-primary-500/20 text-primary-400 border-primary-500/20 h-auto justify-center"
                                                     >
                                                         <Download size={14} className="mr-1.5" />
                                                         Download
@@ -353,17 +361,17 @@ export function JobsPage() {
                                                             e.stopPropagation();
                                                             setShareJob(job);
                                                         }}
-                                                        className="text-xs px-3 py-1 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border-emerald-500/20 h-auto"
+                                                        className="text-xs px-3 py-1 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border-emerald-500/20 h-auto justify-center"
                                                     >
                                                         <Share2 size={14} className="mr-1.5" />
                                                         Share
                                                     </Button>
                                                 </div>
                                             )}
+                                            {job.status === 'running' && (
+                                                <span className="text-[0.75rem] text-primary-400/70 font-medium animate-pulse">Processing…</span>
+                                            )}
                                         </div>
-                                        {job.status === 'running' && (
-                                            <span className="text-[10px] text-primary-400/50 uppercase tracking-widest font-bold animate-pulse">Processing...</span>
-                                        )}
                                     </div>
                                 </div>
 

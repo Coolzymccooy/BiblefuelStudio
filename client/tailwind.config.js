@@ -7,10 +7,11 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['"IBM Plex Sans"', 'ui-sans-serif', 'system-ui'],
-        display: ['Sora', 'ui-sans-serif', 'system-ui'],
+        sans: ['"Inter Variable"', 'Inter', '"IBM Plex Sans"', 'ui-sans-serif', 'system-ui'],
+        display: ['"Inter Variable"', 'Inter', 'Sora', 'ui-sans-serif', 'system-ui'],
         displaySerif: ['"Cormorant Garamond"', 'Georgia', 'serif'],
         bodyserif: ['Georgia', 'serif'],
+        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
       },
       colors: {
         primary: {
