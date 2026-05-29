@@ -1247,7 +1247,13 @@ export function VoiceAudioPage() {
                             )}
                         </div>
                         <Button onClick={handleTTS} isLoading={isProcessing} disabled={!ttsEnabled}>
-                            Generate ({provider === 'edge' ? 'Edge-TTS' : provider === 'chatterbox' ? 'Chatterbox' : 'ElevenLabs'})
+                            Generate ({
+                                provider === 'edge' ? 'Edge-TTS'
+                                    : provider === 'chatterbox' ? 'Chatterbox'
+                                        : provider === 'azure' ? 'Azure'
+                                            : provider === 'fish' ? 'Fish'
+                                                : 'ElevenLabs'
+                            })
                         </Button>
                         {/* Chatterbox progress indicator. Local inference can
                             take 10-90s depending on the bridge's hardware, and

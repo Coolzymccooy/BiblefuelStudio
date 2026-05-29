@@ -1,6 +1,5 @@
 import { synthesize } from "./orchestrator.js";
 import { resolveProfile, DEFAULT_CATEGORY } from "./profiles.js";
-import { prepareScriptureForSpeech } from "./scripture.js";
 
 /**
  * @typedef {Object} CategorySynthesisRequest
@@ -63,12 +62,10 @@ export async function synthesizeForCategory(req) {
     ...(overrides.prosody || {}),
   };
 
-  // Opt-in scripture preparation (reference expansion + pacing). Default OFF so
-  // existing renders are byte-for-byte unchanged; callers pass scriptureMode:true.
-  const text = req?.scriptureMode ? prepareScriptureForSpeech(req.text) : req.text;
-
+  // Scripture-aware preparation is now handled in the orchestrator (default
+  // ON unless scriptureMode:false). We just propagate the caller's intent.
   const speechReq = {
-    text,
+    text: req.text,
     voiceId: overrides.voiceId,
     voiceIds: Object.keys(voiceIds).length > 0 ? voiceIds : undefined,
     voiceSettings: Object.keys(voiceSettings).length > 0 ? voiceSettings : undefined,
@@ -76,6 +73,7 @@ export async function synthesizeForCategory(req) {
     prosody: Object.keys(prosody).length > 0 ? prosody : undefined,
     preferredProvider,
     withTimestamps: req?.withTimestamps,
+    scriptureMode: req?.scriptureMode,
     // Category-aware synthesis is intended for cinematic content where word
     // timings drive the typography renderer. Default to ON; caller can flip
     // it off explicitly via overrides.forcedAlignmentFallback = false.

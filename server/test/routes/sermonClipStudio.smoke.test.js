@@ -23,7 +23,10 @@ function ffmpegAvailable() {
 function makeApp(outDir) {
   const app = express();
   app.use(express.json({ limit: "50mb" }));
-  app.use((req, _res, next) => { req.ctx = { outputDir: outDir, dataDir: outDir }; next(); });
+  app.use((req, _res, next) => {
+    req.ctx = { outputDir: outDir, dataDir: outDir, userId: "test-user" };
+    next();
+  });
   app.use("/api/media", mediaRouter);
   app.use("/api/transcribe", transcribeRouter);
   app.use("/api/render", renderRouter);
@@ -74,11 +77,15 @@ describe("Sermon Clip Studio — end-to-end (Whisper stubbed)", () => {
     assert.ok(Array.isArray(tx.body.words) && tx.body.words.length > 0);
 
     // 4. Render captioned video — burns the transcribe-shaped words onto the
-    //    source video's own frames via buildWordDrawtext.
+    //    source video's own frames via buildWordDrawtext. The route is async
+    //    by default (returns a jobId); `?wait=true` opts into the legacy
+    //    synchronous shape so the smoke test can assert on the final file
+    //    without polling.
     const render = await request(app)
-      .post("/api/render/captioned-video")
+      .post("/api/render/captioned-video?wait=true")
       .send({ videoPath: upload.body.file, words: tx.body.words });
     assert.equal(render.status, 200, JSON.stringify(render.body));
+    assert.ok(render.body.jobId, "wait=true response still carries jobId");
     assert.ok(fs.existsSync(render.body.file), "rendered file must exist on disk");
     assert.ok(fs.statSync(render.body.file).size > 0, "rendered file must be non-empty");
   });

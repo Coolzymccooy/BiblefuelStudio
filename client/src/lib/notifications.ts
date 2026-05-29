@@ -163,3 +163,15 @@ export function stopJobPoller(): void {
     pollerInterval = null;
     pollerStarted = false;
 }
+
+// Vite HMR cleanup. Without this, every save of this file (or any module
+// that imports it) leaves the OLD setInterval running while a NEW one is
+// started by the freshly-evaluated module. Over an hour of dev the browser
+// accumulates dozens of orphan timers, each firing /api/jobs every 8s,
+// which floods the Vite proxy and causes the "blank page + hundreds of
+// pending requests" symptom.
+if (import.meta.hot) {
+    import.meta.hot.dispose(() => {
+        stopJobPoller();
+    });
+}

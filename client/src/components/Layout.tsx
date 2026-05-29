@@ -40,9 +40,19 @@ const quickActions = [
 
 export function Layout() {
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-    const { token, emailVerified, isSuperAdmin, logout, checkStatus } = useAuth();
+    const { token, emailVerified, isSuperAdmin, isLoading, logout, checkStatus } = useAuth();
     const location = useLocation();
     const navigate = useNavigate();
+    // Safety valve for the loading shell below. If /auth/me hangs (e.g. the
+    // Vite proxy is backed up from a flood of in-flight requests), we don't
+    // want the user staring at a black void forever — render the shell
+    // optimistically after 2.5s and let the request resolve in the
+    // background. Real auth failures will still kick in via the 401 path.
+    const [loadingExpired, setLoadingExpired] = useState(false);
+    useEffect(() => {
+        const t = setTimeout(() => setLoadingExpired(true), 2500);
+        return () => clearTimeout(t);
+    }, []);
 
     useEffect(() => {
         checkStatus();
@@ -98,6 +108,17 @@ export function Layout() {
                 </div>
             </main>
         );
+    }
+
+    // Initial auth check on first paint: useAuth hydrates `token` from
+    // localStorage synchronously but `emailVerified` defaults to false until
+    // checkStatus() round-trips /auth/status + /auth/me. Without this guard,
+    // every authenticated user sees the VerifyEmailGate flash for a few
+    // hundred ms before the dashboard renders. Hold the shell until the
+    // first check resolves OR the safety timer expires — we'd rather show a
+    // stale shell than a black void on a flaky network.
+    if (token && isLoading && !loadingExpired) {
+        return <div className="min-h-screen bg-editorial-ink" />;
     }
 
     // Signed in but Firebase email not verified → block the whole studio

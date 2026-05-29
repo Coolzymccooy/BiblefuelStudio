@@ -6,6 +6,12 @@ export const STORAGE_KEYS = {
     ttsText: 'BF_TTS_TEXT',
     renderLines: 'BF_RENDER_LINES',
     renderBackgroundPath: 'BF_RENDER_BG',
+    // Multi-bg picker on the Render page — ordered array of up to 4
+    // LibraryItems (Pexels picks + local uploads). When length > 1 the render
+    // request transparently switches to the queued scenes[] path on the
+    // server, which hard-cuts between segments. Single-item case stays on
+    // the legacy instant path.
+    renderBackgrounds: 'BF_RENDER_BGS',
     renderInBackground: 'BF_RENDER_BG_MODE',
     renderAspect: 'BF_RENDER_ASPECT',
     renderCaptionWidth: 'BF_RENDER_CAPTION_WIDTH',
@@ -26,6 +32,22 @@ export const STORAGE_KEYS = {
     // the same combo restores the prior rating.
     compareText: 'BF_COMPARE_TEXT',
     compareRatings: 'BF_COMPARE_RATINGS',
+    // Sermon Clip Studio (Timeline page): persist the entire captioned-video
+    // flow so a browser refresh doesn't wipe the uploaded audio, transcript,
+    // edited lines, music, background, preset, or last render. Keyed `scl*`
+    // to stay isolated from the legacy /render page's `render*` keys, which
+    // a different surface area may write to.
+    sclSourcePath: 'BF_SCL_SOURCE_PATH',
+    sclSourceKind: 'BF_SCL_SOURCE_KIND',
+    sclTranscript: 'BF_SCL_TRANSCRIPT',
+    sclEditedLines: 'BF_SCL_EDITED_LINES',
+    sclMusicPath: 'BF_SCL_MUSIC_PATH',
+    sclMusicVolume: 'BF_SCL_MUSIC_VOLUME',
+    sclAutoDuck: 'BF_SCL_AUTO_DUCK',
+    sclBackground: 'BF_SCL_BACKGROUND', // legacy single-bg key, kept for back-compat reads
+    sclBackgrounds: 'BF_SCL_BACKGROUNDS', // new: array of up to 4 LibraryItems
+    sclTypographyPreset: 'BF_SCL_TYPOGRAPHY_PRESET',
+    sclRenderedVideo: 'BF_SCL_RENDERED_VIDEO',
 };
 
 export function loadJson<T>(key: string, fallback: T): T {

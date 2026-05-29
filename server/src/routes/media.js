@@ -7,6 +7,7 @@ import { spawn, spawnSync } from "child_process";
 const router = Router();
 const audioExtensions = new Set([".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".webm"]);
 const videoExtensions = new Set([".mp4", ".mov", ".webm", ".m4v"]);
+const imageExtensions = new Set([".jpg", ".jpeg", ".png", ".webp"]);
 
 function parseDataUrlPayload(dataUrl) {
   const value = String(dataUrl || "");
@@ -225,6 +226,17 @@ const videoMimeToExt = (mime, hint) => {
   return videoExtensions.has(`.${hint}`) ? hint : "mp4";
 };
 
+// Image counterpart for the captioned-video background path. Falls back to
+// the filename hint when the dataUrl carried a generic mime; defaults to jpg
+// because that's the highest-survivability bet for an unknown bitmap.
+const imageMimeToExt = (mime, hint) => {
+  const m = String(mime || "").toLowerCase();
+  if (m.includes("jpeg") || m.includes("jpg")) return "jpg";
+  if (m.includes("png")) return "png";
+  if (m.includes("webp")) return "webp";
+  return imageExtensions.has(`.${hint}`) ? hint : "jpg";
+};
+
 // Sibling of /upload-audio that preserves the original video tracks for the
 // "Render Captioned Video" mode. Skips the ffprobe playability check that
 // /upload-audio runs — video probing is expensive and the file goes through
@@ -252,6 +264,59 @@ router.post("/upload-source-video", async (req, res) => {
     fs.writeFileSync(outFile, decoded);
 
     return res.json({ ok: true, file: outFile.replace(/\\/g, "/"), mime: parsed.mime || `video/${ext}` });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// Background-clip upload — accepts video (mp4/mov/webm) OR image (jpg/png/webp).
+// Both land in outputDir and are referenced by their local path from the
+// captioned-video render route. The render route detects images by file
+// extension and switches FFmpeg's input flags accordingly (-loop 1 -t SEG vs
+// -stream_loop -1). `kind` is returned so the client can render a still
+// preview instead of a <video> for images.
+router.post("/upload-background", async (req, res) => {
+  try {
+    const dataUrl = String(req.body?.dataUrl || "");
+    const fileNameHint = String(req.body?.filename || "").trim();
+    const parsed = parseDataUrlPayload(dataUrl);
+    if (!parsed.ok) return res.status(400).json({ ok: false, error: parsed.error || "Invalid dataUrl" });
+
+    const decoded = Buffer.from(parsed.b64 || "", "base64");
+    if (!decoded.length || decoded.length < 128) {
+      return res.status(400).json({ ok: false, error: "Background payload is empty or too small" });
+    }
+
+    const mime = String(parsed.mime || "").toLowerCase();
+    const extHint = fileNameHint ? path.extname(fileNameHint).replace(".", "").toLowerCase() : "";
+    const isImage =
+      mime.startsWith("image/") ||
+      imageExtensions.has(`.${extHint}`);
+    const isVideo =
+      mime.startsWith("video/") ||
+      videoExtensions.has(`.${extHint}`);
+
+    if (!isImage && !isVideo) {
+      return res.status(400).json({
+        ok: false,
+        error: `Background must be an image (jpg/png/webp) or video (mp4/mov/webm); got mime=${mime || "unknown"}`,
+      });
+    }
+
+    const ext = isImage ? imageMimeToExt(mime, extHint) : videoMimeToExt(mime, extHint);
+    const kind = isImage ? "image" : "video";
+
+    const outDir = req.ctx.outputDir;
+    if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+    const outFile = path.join(outDir, `bg-${kind}-${uuid()}.${ext}`);
+    fs.writeFileSync(outFile, decoded);
+
+    return res.json({
+      ok: true,
+      file: outFile.replace(/\\/g, "/"),
+      kind,
+      mime: parsed.mime || (isImage ? `image/${ext}` : `video/${ext}`),
+    });
   } catch (e) {
     res.status(400).json({ ok: false, error: String(e?.message || e) });
   }

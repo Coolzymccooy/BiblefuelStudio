@@ -9,12 +9,32 @@ import { Field } from '../components/ui/Field';
 import { Section } from '../components/ui/Section';
 import { api } from '../lib/api';
 import toast from 'react-hot-toast';
-import { Play, Library, Video, CheckCircle2, ClipboardList, AudioLines, Share2, X as XIcon } from 'lucide-react';
+import { Play, Library, Video, CheckCircle2, ClipboardList, AudioLines, Share2, X as XIcon, Plus, ChevronUp, ChevronDown, Trash2 } from 'lucide-react';
 import { loadJson, saveJson, STORAGE_KEYS, toOutputUrl } from '../lib/storage';
+import { usePersistedState } from '../lib/usePersistedState';
 import { useConfig } from '../lib/config';
 import { useNotifications } from '../lib/notifications';
 import { ShareSheet } from '../components/ShareSheet';
 import { RenderProgressOverlay } from '../components/RenderProgressOverlay';
+
+/** Mirrors the server's MAX_BACKGROUNDS — keep in sync with render.js. */
+const MAX_BACKGROUNDS = 4;
+/** Mirrors the server's MAX_INPUT_MB so big uploads fail client-side first. */
+const MAX_UPLOAD_MB = 200;
+
+interface LibraryItem {
+    id: string;
+    url: string;
+    previewUrl?: string;
+    image: string;
+    savedAt?: string;
+    /**
+     * Optional discriminator for local-file uploads. Library/Pexels entries
+     * omit this (treated as video). Set to 'image' for stills so the server
+     * uses `-loop 1 -t SEG` instead of `-stream_loop -1`.
+     */
+    kind?: 'image' | 'video';
+}
 
 interface Script {
     title: string;
@@ -47,7 +67,14 @@ export function RenderPage() {
     const [showMusicModal, setShowMusicModal] = useState(false);
     const [musicItems, setMusicItems] = useState<any[]>([]);
     const [isLoadingMusic, setIsLoadingMusic] = useState(false);
-    const [backgroundItem, setBackgroundItem] = useState<any>(null);
+    // Ordered list of backgrounds — Pexels picks + local uploads. When > 1
+    // the render switches to the queued scenes[] path on the server (hard
+    // cuts at equal slots). Persisted so a refresh keeps the picks.
+    const [backgroundItems, setBackgroundItems] = usePersistedState<LibraryItem[]>(
+        STORAGE_KEYS.renderBackgrounds,
+        [],
+    );
+    const [isUploadingBackground, setIsUploadingBackground] = useState(false);
     const [showScriptsModal, setShowScriptsModal] = useState(false);
     const [scripts, setScripts] = useState<Script[]>([]);
     const [audioHistory, setAudioHistory] = useState<AudioItem[]>([]);
@@ -285,7 +312,8 @@ export function RenderPage() {
     };
 
     const handleRender = async (mode: 'video' | 'waveform') => {
-        if (!backgroundPath && !backgroundItem) {
+        const hasMultiBg = backgroundItems.length > 0;
+        if (!backgroundPath && !hasMultiBg) {
             toast.error('Background is required');
             return;
         }
@@ -298,10 +326,17 @@ export function RenderPage() {
             toast.error('Audio Path is required for waveform mode');
             return;
         }
+        if (mode === 'waveform' && backgroundItems.length > 1) {
+            toast.error('Waveform render uses a single background. Remove extras or use Video Render.');
+            return;
+        }
         // Kinetic captions require the async worker path (it does TTS-with-timestamps
         // server-side, which can take several seconds before render even starts).
         // voiceId is optional — server falls back to ELEVENLABS_VOICE_ID env / Sarah.
-        const useBackground = renderInBackground || (kineticCaptions && mode === 'video');
+        // Multi-bg (scenes[]) also forces background mode — only the queued
+        // renderAdvancedVideo path knows how to splice scenes.
+        const isMultiBg = mode === 'video' && backgroundItems.length > 1;
+        const useBackground = renderInBackground || (kineticCaptions && mode === 'video') || isMultiBg;
 
         setIsRendering(true);
         lastRenderKindRef.current = mode;
@@ -311,8 +346,24 @@ export function RenderPage() {
         setResult(null);
         try {
             const endpoint = useBackground ? '/api/jobs/enqueue' : `/api/render/${mode}`;
+            // Single-bg path uses `backgroundPath`; multi-bg path uses
+            // `scenes[]` with equal slots and explicit kind so the server
+            // picks `-loop 1` for images vs `-stream_loop -1` for videos.
+            const primaryBg = backgroundItems[0]?.id || backgroundPath;
+            const perSlotSec = isMultiBg
+                ? Math.max(0.5, durationSec / backgroundItems.length)
+                : 0;
+            const scenesPayload = isMultiBg
+                ? {
+                    scenes: backgroundItems.map((b) => ({
+                        backgroundPath: String(b.id),
+                        duration: perSlotSec,
+                        kind: b.kind || 'video',
+                    })),
+                }
+                : { backgroundPath: primaryBg };
             const corePayload = {
-                backgroundPath: backgroundItem?.id || backgroundPath,
+                ...scenesPayload,
                 audioPath,
                 lines: cleanLines,
                 durationSec,
@@ -392,11 +443,103 @@ export function RenderPage() {
         toast.success('Soundtrack selected');
     };
 
-    const handleSelectBackground = (item: any) => {
-        setBackgroundItem(item);
-        setBackgroundPath(item.id);
-        setShowLibraryModal(false);
-        toast.success('Background selected');
+    /**
+     * Toggle a library item in the ordered backgroundItems list. First click
+     * adds it; clicking an already-selected item removes it. Order = render
+     * sequence. Modal stays open so the user can build a multi-bg list.
+     */
+    const toggleBackgroundItem = (item: any) => {
+        const exists = backgroundItems.some((b) => b.id === item.id);
+        if (exists) {
+            setBackgroundItems(backgroundItems.filter((b) => b.id !== item.id));
+            return;
+        }
+        if (backgroundItems.length >= MAX_BACKGROUNDS) {
+            toast.error(`Max ${MAX_BACKGROUNDS} backgrounds. Remove one to add another.`);
+            return;
+        }
+        const normalized: LibraryItem = {
+            id: item.id,
+            url: item.url,
+            previewUrl: item.previewUrl,
+            image: item.image,
+            savedAt: item.savedAt,
+            kind: item.kind,
+        };
+        setBackgroundItems([...backgroundItems, normalized]);
+        // Keep the legacy single-bg field aligned so the instant path (which
+        // reads backgroundPath) still works when only one is picked.
+        if (backgroundItems.length === 0) setBackgroundPath(String(item.id));
+    };
+
+    /**
+     * Upload a local video or image as a background. Slots into the same
+     * backgroundItems list as Pexels picks — order matters; new uploads
+     * append. Server `/upload-background` returns `{file, kind}` where kind
+     * discriminates image vs video for the scenes[] payload.
+     */
+    const handleLocalBackgroundUpload = async (file: File) => {
+        if (backgroundItems.length >= MAX_BACKGROUNDS) {
+            toast.error(`Max ${MAX_BACKGROUNDS} backgrounds. Remove one to add another.`);
+            return;
+        }
+        if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
+            toast.error(`File is ${(file.size / 1024 / 1024).toFixed(1)} MB. Max upload is ${MAX_UPLOAD_MB} MB.`);
+            return;
+        }
+        setIsUploadingBackground(true);
+        try {
+            const dataUrl: string = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(String(reader.result));
+                reader.onerror = () => reject(reader.error);
+                reader.readAsDataURL(file);
+            });
+            const response = await api.post<{ file: string; kind: 'image' | 'video' }>(
+                '/api/media/upload-background',
+                { dataUrl, filename: file.name },
+            );
+            if (!response.ok || !response.data?.file) {
+                toast.error(response.error || 'Background upload failed');
+                return;
+            }
+            const filePath = response.data.file;
+            const publicUrl = `${api.baseUrl}/outputs/${filePath.split(/[\\/]/).pop()}`;
+            const item: LibraryItem = {
+                id: filePath,
+                url: publicUrl,
+                previewUrl: publicUrl,
+                image: publicUrl,
+                savedAt: new Date().toISOString(),
+                kind: response.data.kind,
+            };
+            const next = [...backgroundItems, item];
+            setBackgroundItems(next);
+            if (next.length === 1) setBackgroundPath(filePath);
+            toast.success(`${response.data.kind === 'image' ? 'Image' : 'Video'} added as background`);
+        } catch {
+            toast.error('Background upload failed');
+        } finally {
+            setIsUploadingBackground(false);
+        }
+    };
+
+    const moveBackgroundUp = (idx: number) => {
+        if (idx <= 0) return;
+        const next = [...backgroundItems];
+        [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
+        setBackgroundItems(next);
+    };
+
+    const moveBackgroundDown = (idx: number) => {
+        if (idx >= backgroundItems.length - 1) return;
+        const next = [...backgroundItems];
+        [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
+        setBackgroundItems(next);
+    };
+
+    const removeBackground = (idx: number) => {
+        setBackgroundItems(backgroundItems.filter((_, i) => i !== idx));
     };
 
     const loadSocialConfig = async () => {
@@ -573,61 +716,146 @@ export function RenderPage() {
                     </div>
                 )}
                 <div className="space-y-4">
-                    <Field label="Background">
-                        {backgroundItem ? (
-                                    <div
-                                        className={`relative bg-black rounded-xl overflow-hidden group mx-auto sm:mx-0 ${aspect === 'landscape'
-                                            ? 'aspect-[16/9] max-w-md'
-                                            : aspect === 'square'
-                                                ? 'aspect-square max-w-xs'
-                                                : 'aspect-[9/16] max-w-[220px]'
-                                            }`}
-                                    >
-                                        <img
-                                            src={getImageSrc(backgroundItem)}
-                                            className="w-full h-full object-cover opacity-70 group-hover:opacity-100 transition-opacity"
-                                            alt=""
-                                            loading="lazy"
-                                            onError={(e) => handleImageError(e, backgroundItem)}
-                                        />
-                                        {isVideoUrl(backgroundItem.previewUrl || backgroundItem.url) && (
-                                            <video
-                                                src={toMediaUrl(backgroundItem.previewUrl || backgroundItem.url)}
-                                                className="absolute inset-0 w-full h-full object-cover opacity-0 group-hover:opacity-100 transition-opacity"
-                                                muted
-                                                loop
-                                                playsInline
-                                                autoPlay
-                                                preload="metadata"
-                                                onError={(e) => {
-                                                    e.currentTarget.style.display = 'none';
-                                                }}
-                                            />
-                                        )}
-                                        <div className="absolute inset-[8%] border border-white/40 border-dashed pointer-events-none rounded-md" />
-                                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                            <Button onClick={() => setBackgroundItem(null)} variant="secondary" className="h-8 text-xs bg-red-500/10 text-red-400 border-red-500/20">
-                                                Change
-                                            </Button>
-                                        </div>
-                                        <div className="absolute bottom-0 inset-x-0 p-2 bg-gradient-to-t from-black/80 text-[10px] text-white font-mono truncate">
-                                            ID: {backgroundItem.id}
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <div className="flex flex-col gap-2">
-                                        <Input
-                                            value={backgroundPath}
-                                            onChange={(e) => setBackgroundPath(e.target.value)}
-                                            placeholder="Manual path (e.g. server/outputs/xyz.mp4)"
-                                            className="bg-black/20"
-                                        />
-                                        <Button onClick={openLibrary} variant="secondary" className="h-10 border-dashed border-white/10 text-xs">
-                                            <Library size={14} className="mr-2" />
-                                            Select from Library
-                                        </Button>
-                                    </div>
+                    <Field
+                        label="Background"
+                        tooltip={`Pick 1–${MAX_BACKGROUNDS} clips or images. With more than one, the render hard-cuts between them at equal slots (durationSec/N each) and automatically queues as a background job. Use the arrows to reorder.`}
+                    >
+                        {backgroundItems.length > 0 ? (
+                            <div className="space-y-2">
+                                <ul className="space-y-2">
+                                    {backgroundItems.map((item, idx) => {
+                                        const isImage = item.kind === 'image';
+                                        return (
+                                            <li
+                                                key={`${item.id}-${idx}`}
+                                                className="flex items-center gap-2 p-2 rounded-lg border border-white/10 bg-white/[0.03]"
+                                            >
+                                                <div className="relative w-12 h-16 bg-black rounded overflow-hidden flex-shrink-0">
+                                                    <img
+                                                        src={getImageSrc(item)}
+                                                        className="w-full h-full object-cover"
+                                                        alt=""
+                                                        loading="lazy"
+                                                        onError={(e) => handleImageError(e, item)}
+                                                    />
+                                                </div>
+                                                <div className="flex-1 min-w-0">
+                                                    <div className="flex items-center gap-1.5">
+                                                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary-500/20 text-primary-200 font-semibold">
+                                                            {idx + 1}/{backgroundItems.length}
+                                                        </span>
+                                                        {isImage && (
+                                                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-200">
+                                                                img
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <p className="text-[10px] font-mono text-gray-400 truncate mt-0.5">
+                                                        {String(item.id).split(/[\\/]/).pop()}
+                                                    </p>
+                                                </div>
+                                                <div className="flex items-center gap-1 flex-shrink-0">
+                                                    <button
+                                                        onClick={() => moveBackgroundUp(idx)}
+                                                        disabled={idx === 0}
+                                                        className="p-1.5 rounded hover:bg-white/10 text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+                                                        aria-label="Move up"
+                                                    >
+                                                        <ChevronUp size={14} />
+                                                    </button>
+                                                    <button
+                                                        onClick={() => moveBackgroundDown(idx)}
+                                                        disabled={idx === backgroundItems.length - 1}
+                                                        className="p-1.5 rounded hover:bg-white/10 text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+                                                        aria-label="Move down"
+                                                    >
+                                                        <ChevronDown size={14} />
+                                                    </button>
+                                                    <button
+                                                        onClick={() => removeBackground(idx)}
+                                                        className="p-1.5 rounded hover:bg-red-500/20 text-gray-400 hover:text-red-300"
+                                                        aria-label="Remove"
+                                                    >
+                                                        <Trash2 size={14} />
+                                                    </button>
+                                                </div>
+                                            </li>
+                                        );
+                                    })}
+                                </ul>
+                                {backgroundItems.length > 1 && (
+                                    <p className="text-[10px] text-amber-300/80">
+                                        Hard cuts between {backgroundItems.length} clips, ~{(durationSec / backgroundItems.length).toFixed(1)}s each. Auto-queues as background job.
+                                    </p>
                                 )}
+                                <div className="grid grid-cols-2 gap-2">
+                                    <Button
+                                        onClick={openLibrary}
+                                        variant="secondary"
+                                        className="h-9 text-xs border-dashed border-white/10"
+                                        disabled={backgroundItems.length >= MAX_BACKGROUNDS}
+                                    >
+                                        <Library size={14} className="mr-1.5" />
+                                        {backgroundItems.length >= MAX_BACKGROUNDS ? 'Library' : 'Add from library'}
+                                    </Button>
+                                    <label
+                                        className={`inline-flex items-center justify-center gap-1.5 h-9 text-xs rounded-md border cursor-pointer border-primary-500/30 bg-primary-500/10 text-primary-200 hover:bg-primary-500/20 ${backgroundItems.length >= MAX_BACKGROUNDS || isUploadingBackground ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                    >
+                                        <Plus size={14} />
+                                        {isUploadingBackground ? 'Uploading…' : 'Upload from device'}
+                                        <input
+                                            type="file"
+                                            className="hidden"
+                                            accept=".mp4,.mov,.webm,.m4v,.jpg,.jpeg,.png,.webp"
+                                            disabled={backgroundItems.length >= MAX_BACKGROUNDS || isUploadingBackground}
+                                            onChange={(e) => {
+                                                const f = e.target.files?.[0];
+                                                if (f) handleLocalBackgroundUpload(f);
+                                                e.target.value = '';
+                                            }}
+                                        />
+                                    </label>
+                                </div>
+                                <p className="text-[10px] text-gray-500">
+                                    Up to {MAX_UPLOAD_MB} MB per file. Video (mp4/mov/webm) or image (jpg/png/webp).
+                                </p>
+                            </div>
+                        ) : (
+                            <div className="flex flex-col gap-2">
+                                <Input
+                                    value={backgroundPath}
+                                    onChange={(e) => setBackgroundPath(e.target.value)}
+                                    placeholder="Manual path (e.g. server/outputs/xyz.mp4)"
+                                    className="bg-black/20"
+                                />
+                                <div className="grid grid-cols-2 gap-2">
+                                    <Button onClick={openLibrary} variant="secondary" className="h-10 border-dashed border-white/10 text-xs">
+                                        <Library size={14} className="mr-1.5" />
+                                        From library
+                                    </Button>
+                                    <label
+                                        className={`inline-flex items-center justify-center gap-1.5 h-10 text-xs rounded-md border cursor-pointer border-primary-500/30 bg-primary-500/10 text-primary-200 hover:bg-primary-500/20 ${isUploadingBackground ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                    >
+                                        <Plus size={14} />
+                                        {isUploadingBackground ? 'Uploading…' : 'Upload from device'}
+                                        <input
+                                            type="file"
+                                            className="hidden"
+                                            accept=".mp4,.mov,.webm,.m4v,.jpg,.jpeg,.png,.webp"
+                                            disabled={isUploadingBackground}
+                                            onChange={(e) => {
+                                                const f = e.target.files?.[0];
+                                                if (f) handleLocalBackgroundUpload(f);
+                                                e.target.value = '';
+                                            }}
+                                        />
+                                    </label>
+                                </div>
+                                <p className="text-[10px] text-gray-500">
+                                    Pick up to {MAX_BACKGROUNDS}. Video (mp4/mov/webm) or image (jpg/png/webp). Up to {MAX_UPLOAD_MB} MB each.
+                                </p>
+                            </div>
+                        )}
                     </Field>
 
                     <Section title="Captions" defaultOpen={true} collapsible={false}>
@@ -996,51 +1224,82 @@ export function RenderPage() {
             {showLibraryModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
                     <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShowLibraryModal(false)} />
-                    <Card className="relative w-full max-w-[min(1280px,95vw)] max-h-[88vh] overflow-hidden flex flex-col border-white/20 shadow-2xl">
-                        <div className="flex items-center justify-between p-4 border-b border-white/10">
-                            <h3 className="font-bold text-lg text-white">Select Background</h3>
-                            <button onClick={() => setShowLibraryModal(false)} className="text-gray-500 hover:text-white">
-                                <CheckCircle2 size={24} />
+                    {/* Plain div (not <Card>) — Card wraps children in an extra
+                        <div> that breaks `flex flex-col`, so the inner
+                        overflow-y-auto grid has no flex parent to constrain
+                        its height against and content overflows below the
+                        viewport with no scrollbar. Bug was reported by the
+                        user as "hard to scroll the background picker". */}
+                    <div className="relative w-full max-w-[min(1280px,95vw)] max-h-[88vh] flex flex-col rounded-xl bg-dark-900/95 backdrop-blur-xl border border-white/20 shadow-2xl overflow-hidden">
+                        <div className="flex items-center justify-between p-4 border-b border-white/10 shrink-0">
+                            <div>
+                                <h3 className="font-bold text-lg text-white">Select Backgrounds</h3>
+                                <p className="text-[11px] text-gray-400 mt-0.5">
+                                    {backgroundItems.length} of {MAX_BACKGROUNDS} selected · click to toggle, order = render sequence
+                                </p>
+                            </div>
+                            <button onClick={() => setShowLibraryModal(false)} className="text-gray-500 hover:text-white" aria-label="Close">
+                                <XIcon size={20} />
                             </button>
                         </div>
-                        <div className="flex-1 min-h-0 overflow-y-auto p-4 grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3">
+                        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3">
                             {isLoadingLibrary ? (
                                 <div className="col-span-full py-20 flex justify-center">
                                     <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-primary-500" />
                                 </div>
                             ) : libraryItems.length > 0 ? (
-                                libraryItems.map((item) => (
-                                    <div
-                                        key={item.id}
-                                        className="group relative aspect-[9/16] bg-black rounded-xl overflow-hidden cursor-pointer hover:ring-2 hover:ring-primary-500 transition-all shadow-lg"
-                                        onClick={() => handleSelectBackground(item)}
-                                    >
-                                        <img
-                                            src={getImageSrc(item)}
-                                            className="w-full h-full object-cover opacity-70 group-hover:opacity-100 transition-opacity"
-                                            alt=""
-                                            loading="lazy"
-                                            onError={(e) => handleImageError(e, item)}
-                                        />
-                                        {isVideoUrl(item.previewUrl || item.url) && (
-                                            <video
-                                                src={toMediaUrl(item.previewUrl || item.url)}
-                                                className="absolute inset-0 w-full h-full object-cover opacity-0 group-hover:opacity-100 transition-opacity"
-                                                muted
-                                                loop
-                                                playsInline
-                                                autoPlay
-                                                preload="metadata"
-                                                onError={(e) => {
-                                                    e.currentTarget.style.display = 'none';
-                                                }}
+                                libraryItems.map((item) => {
+                                    const selectedIdx = backgroundItems.findIndex((b) => b.id === item.id);
+                                    const isSelected = selectedIdx !== -1;
+                                    const atCap = backgroundItems.length >= MAX_BACKGROUNDS;
+                                    const disabled = !isSelected && atCap;
+                                    return (
+                                        <div
+                                            key={item.id}
+                                            className={`group relative aspect-[9/16] bg-black rounded-xl overflow-hidden transition-all shadow-lg ${
+                                                disabled
+                                                    ? 'opacity-30 cursor-not-allowed'
+                                                    : isSelected
+                                                        ? 'ring-2 ring-primary-400 cursor-pointer'
+                                                        : 'cursor-pointer hover:ring-2 hover:ring-primary-500'
+                                            }`}
+                                            onClick={() => {
+                                                if (disabled) return;
+                                                toggleBackgroundItem(item);
+                                            }}
+                                        >
+                                            <img
+                                                src={getImageSrc(item)}
+                                                className="w-full h-full object-cover opacity-70 group-hover:opacity-100 transition-opacity"
+                                                alt=""
+                                                loading="lazy"
+                                                onError={(e) => handleImageError(e, item)}
                                             />
-                                        )}
-                                        <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/80 to-transparent">
-                                            <p className="text-[10px] font-mono text-white truncate">ID: {item.id}</p>
+                                            {isVideoUrl(item.previewUrl || item.url) && (
+                                                <video
+                                                    src={toMediaUrl(item.previewUrl || item.url)}
+                                                    className="absolute inset-0 w-full h-full object-cover opacity-0 group-hover:opacity-100 transition-opacity"
+                                                    muted
+                                                    loop
+                                                    playsInline
+                                                    autoPlay
+                                                    preload="metadata"
+                                                    onError={(e) => {
+                                                        e.currentTarget.style.display = 'none';
+                                                    }}
+                                                />
+                                            )}
+                                            {isSelected && (
+                                                <div className="absolute top-2 right-2 w-6 h-6 rounded-full bg-primary-500 text-white text-[11px] font-bold flex items-center justify-center shadow-lg">
+                                                    {selectedIdx + 1}
+                                                </div>
+                                            )}
+                                            <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/80 to-transparent">
+                                                <p className="text-[10px] font-mono text-white truncate">ID: {item.id}</p>
+                                            </div>
                                         </div>
-                                    </div>
-                                ))
+                                    );
+                                })
                             ) : (
                                 <div className="col-span-full py-20 text-center opacity-30 text-white">
                                     <Library size={48} className="mx-auto mb-4" />
@@ -1048,21 +1307,43 @@ export function RenderPage() {
                                 </div>
                             )}
                         </div>
-                    </Card>
+                        <div className="flex items-center justify-between p-3 border-t border-white/10 bg-black/30 shrink-0">
+                            <Button
+                                variant="secondary"
+                                className="text-xs h-9"
+                                onClick={() => setBackgroundItems([])}
+                                disabled={backgroundItems.length === 0}
+                            >
+                                Clear all
+                            </Button>
+                            <Button
+                                className="text-xs h-9"
+                                onClick={() => {
+                                    setShowLibraryModal(false);
+                                    if (backgroundItems.length > 0) {
+                                        toast.success(`${backgroundItems.length} background${backgroundItems.length === 1 ? '' : 's'} selected`);
+                                    }
+                                }}
+                            >
+                                <CheckCircle2 size={14} className="mr-1.5" />
+                                Done
+                            </Button>
+                        </div>
+                    </div>
                 </div>
             )}
 
             {showScriptsModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
                     <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShowScriptsModal(false)} />
-                    <Card className="relative w-full max-w-4xl max-h-[80vh] overflow-hidden flex flex-col border-white/20 shadow-2xl">
-                        <div className="flex items-center justify-between p-4 border-b border-white/10">
+                    <div className="relative w-full max-w-4xl max-h-[80vh] flex flex-col rounded-xl bg-dark-900/95 backdrop-blur-xl border border-white/20 shadow-2xl overflow-hidden">
+                        <div className="flex items-center justify-between p-4 border-b border-white/10 shrink-0">
                             <h3 className="font-bold text-lg text-white">Scripts Library</h3>
                             <button onClick={() => setShowScriptsModal(false)} className="text-gray-500 hover:text-white">
                                 <CheckCircle2 size={24} />
                             </button>
                         </div>
-                        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 space-y-4">
                             {scripts.length === 0 ? (
                                 <div className="text-center opacity-50 text-white py-12">
                                     <ClipboardList size={48} className="mx-auto mb-4" />
@@ -1112,21 +1393,21 @@ export function RenderPage() {
                                 ))
                             )}
                         </div>
-                    </Card>
+                    </div>
                 </div>
             )}
 
             {showMusicModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
                     <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShowMusicModal(false)} />
-                    <Card className="relative w-full max-w-3xl max-h-[80vh] overflow-hidden flex flex-col border-white/20 shadow-2xl">
-                        <div className="flex items-center justify-between p-4 border-b border-white/10">
+                    <div className="relative w-full max-w-3xl max-h-[80vh] flex flex-col rounded-xl bg-dark-900/95 backdrop-blur-xl border border-white/20 shadow-2xl overflow-hidden">
+                        <div className="flex items-center justify-between p-4 border-b border-white/10 shrink-0">
                             <h3 className="font-bold text-lg text-white">Music Library</h3>
                             <button onClick={() => setShowMusicModal(false)} className="text-gray-500 hover:text-white">
                                 <CheckCircle2 size={24} />
                             </button>
                         </div>
-                        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 space-y-3">
                             {isLoadingMusic ? (
                                 <div className="py-20 flex justify-center">
                                     <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-primary-500" />
@@ -1157,7 +1438,7 @@ export function RenderPage() {
                                 </div>
                             )}
                         </div>
-                    </Card>
+                    </div>
                 </div>
             )}
         </div>

@@ -8,6 +8,31 @@ const readStoredToken = (): string | null => {
     return token;
 };
 
+const FIREBASE_ENABLED_CACHE_KEY = 'BF_FIREBASE_ENABLED';
+const HAS_USER_CACHE_KEY = 'BF_HAS_USER';
+
+const readCachedBool = (key: string, fallback: boolean): boolean => {
+    if (typeof window === 'undefined') return fallback;
+    try {
+        const raw = localStorage.getItem(key);
+        if (raw === null) return fallback;
+        return raw === 'true';
+    } catch {
+        return fallback;
+    }
+};
+
+const writeCachedBool = (key: string, value: boolean): void => {
+    if (typeof window === 'undefined') return;
+    try { localStorage.setItem(key, String(value)); } catch { /* localStorage full / disabled */ }
+};
+
+// Single-flight guard. Without this, every Layout / HomePage mount cycle
+// (including StrictMode double-mounts in dev) and every transient re-render
+// fires a new checkStatus, which can stack 20+ in-flight /auth/me requests
+// against a busy proxy and leave the UI stuck on "isLoading=true" forever.
+let inflightCheckStatus: Promise<void> | null = null;
+
 interface AuthState {
     token: string | null;
     hasUser: boolean;
@@ -32,8 +57,12 @@ interface AuthState {
 
 export const useAuth = create<AuthState>((set, get) => ({
     token: readStoredToken(),
-    hasUser: false,
-    firebaseEnabled: false,
+    // Hydrate from the last-known-good cache instead of defaulting to false.
+    // Without this, every fresh page load shows the setup-key screen until
+    // /auth/status resolves — and if the proxy is hung, that "until" is
+    // forever, which is exactly the bug we hit.
+    hasUser: readCachedBool(HAS_USER_CACHE_KEY, false),
+    firebaseEnabled: readCachedBool(FIREBASE_ENABLED_CACHE_KEY, false),
     emailVerified: false,
     email: null,
     role: null,
@@ -46,27 +75,61 @@ export const useAuth = create<AuthState>((set, get) => ({
     error: null,
 
     checkStatus: async () => {
+        // Coalesce concurrent calls. Layout + HomePage both fire checkStatus
+        // on mount; StrictMode double-mounts double that; any HMR cycle
+        // re-fires. Without coalescing, a slow first request can have a
+        // dozen siblings stacked behind it that all eventually time out
+        // and clear the auth state to the same "logged out" view 12 times
+        // in a row.
+        if (inflightCheckStatus) return inflightCheckStatus;
+        inflightCheckStatus = (async () => {
         set({ isLoading: true, error: null });
         const statusResponse = await api.get('/api/auth/status');
-        const firebaseEnabled = Boolean(statusResponse.ok && statusResponse.data?.firebaseEnabled);
-        const hasUser = Boolean(statusResponse.ok && statusResponse.data?.hasUser);
+        // Preserve last-known-good when the request fails (network blip,
+        // proxy backed up). Flipping firebaseEnabled to `false` on a
+        // transient failure is what drops the user into the setup-key
+        // screen — we'd rather show a stale-but-useful login form.
+        const prev = get();
+        const firebaseEnabled = statusResponse.ok
+            ? Boolean(statusResponse.data?.firebaseEnabled)
+            : prev.firebaseEnabled;
+        const hasUser = statusResponse.ok
+            ? Boolean(statusResponse.data?.hasUser)
+            : prev.hasUser;
+        if (statusResponse.ok) {
+            writeCachedBool(FIREBASE_ENABLED_CACHE_KEY, firebaseEnabled);
+            writeCachedBool(HAS_USER_CACHE_KEY, hasUser);
+        }
         const token = get().token || readStoredToken();
 
         if (token) {
             const meResponse = await api.get('/api/auth/me');
+            // 401 = real auth failure → clear token. Any other failure
+            // (network error, 5xx, timeout) is transient — keep the token
+            // and surface an error so the user can retry, instead of
+            // logging them out on a flaky connection.
             if (!meResponse.ok) {
-                api.setToken(null);
-                set({
-                    token: null,
-                    hasUser,
-                    firebaseEnabled,
-                    emailVerified: false,
-                    email: null,
-                    role: null,
-                    isSuperAdmin: false,
-                    isLoading: false,
-                    error: meResponse.status === 401 ? 'Session expired. Please login again.' : (meResponse.error || 'Failed to validate session'),
-                });
+                if (meResponse.status === 401) {
+                    api.setToken(null);
+                    set({
+                        token: null,
+                        hasUser,
+                        firebaseEnabled,
+                        emailVerified: false,
+                        email: null,
+                        role: null,
+                        isSuperAdmin: false,
+                        isLoading: false,
+                        error: 'Session expired. Please login again.',
+                    });
+                } else {
+                    set({
+                        hasUser,
+                        firebaseEnabled,
+                        isLoading: false,
+                        error: meResponse.error || 'Failed to validate session',
+                    });
+                }
                 return;
             }
             const me = (meResponse.data as { user?: { email?: string; emailVerified?: boolean; role?: string; isSuperAdmin?: boolean } })?.user || {};
@@ -102,6 +165,8 @@ export const useAuth = create<AuthState>((set, get) => ({
                 error: statusResponse.ok ? null : (statusResponse.error || 'Failed to check auth status'),
             });
         }
+        })();
+        try { await inflightCheckStatus; } finally { inflightCheckStatus = null; }
     },
 
     setup: async (email: string, password: string, setupKey: string) => {

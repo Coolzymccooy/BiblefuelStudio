@@ -17,6 +17,7 @@ import { charsToWords, captionWordsFromNativeWords, annotateEmphasis, groupWords
 import { alignAudioWithText, isForcedAlignmentAvailable } from "../lib/voice/alignment.js";
 import { buildWordDrawtext, buildLineDrawtext, buildSceneGraph, resolveKineticAnimation } from "../lib/videoFilters.js";
 import { buildSocialCaption } from "../lib/socialCaption.js";
+import { ensureLocalPath } from "../lib/remoteCache.js";
 
 const router = Router();
 let ffmpegChecked = false;
@@ -579,7 +580,7 @@ async function renderVideoCore(payload, jobId) {
     return await renderVideoCore({ ...augmented, kineticCaptions: false }, jobId);
   }
   const { backgroundPath, audioPath, lines, durationSec, aspect, captionWidthPct, musicPath, musicVolume, autoDuck, typographyPreset } = payload || {};
-  const resolvedBackground = resolveAssetPath(backgroundPath);
+  let resolvedBackground = resolveAssetPath(backgroundPath);
   const resolvedAudio = resolveAssetPath(audioPath);
   const resolvedMusic = resolveAssetPath(musicPath);
 
@@ -589,6 +590,16 @@ async function renderVideoCore(payload, jobId) {
   if (isFileTooLarge(resolvedBackground)) throw new Error(`backgroundPath too large (>${MAX_INPUT_MB}MB)`);
   if (resolvedAudio && isFileTooLarge(resolvedAudio)) throw new Error(`audioPath too large (>${MAX_INPUT_MB}MB)`);
   if (resolvedMusic && isFileTooLarge(resolvedMusic)) throw new Error(`musicPath too large (>${MAX_INPUT_MB}MB)`);
+  // Cache remote bg locally — see ensureLocalPath rationale (Pexels CDN
+  // resets connections under `-stream_loop -1`, which the legacy single-bg
+  // ffmpeg invocation also uses below).
+  if (/^https?:\/\//i.test(resolvedBackground)) {
+    try {
+      resolvedBackground = await ensureLocalPath(resolvedBackground);
+    } catch (err) {
+      throw new Error(`background download failed: ${err?.message || err}`);
+    }
+  }
   const rawLines = Array.isArray(lines) ? lines.map(s => String(s).slice(0, 140)) : [];
   const { w, h } = getDims(aspect);
   const widthPct = Math.min(100, Math.max(60, Number(captionWidthPct || 90)));
@@ -829,6 +840,21 @@ async function renderAdvancedVideo(payload, jobId) {
     return { backgroundPath: resolved, duration: Math.max(0.5, Number(s?.duration) || 0), kind };
   });
 
+  // Materialize any remote (http(s)) backgrounds to local cache files BEFORE
+  // ffmpeg sees them. Streaming Pexels CDN directly is flaky on Windows —
+  // WSAECONNRESET (-10054) tears down the input mid-render, especially under
+  // -stream_loop -1 where every wraparound re-fetches the file. Local copies
+  // are bulletproof; subsequent renders re-use the cache for free.
+  for (const s of resolvedScenes) {
+    if (/^https?:\/\//i.test(s.backgroundPath)) {
+      try {
+        s.backgroundPath = await ensureLocalPath(s.backgroundPath);
+      } catch (err) {
+        throw new Error(`scene background download failed: ${err?.message || err}`);
+      }
+    }
+  }
+
   // Final safety: if the audio is longer than what the scene graph emits
   // (after the xfade overlap math), grow the last scene so -shortest doesn't
   // truncate the audio.
@@ -853,9 +879,20 @@ async function renderAdvancedVideo(payload, jobId) {
   // renderable picks degrade to their fallback presetId; existing preset and
   // category names pass through unchanged.
   const resolvedPreset = resolveKineticAnimation(typographyPreset)?.presetId || typographyPreset;
+  // Line captions (no kinetic) need their lines wrapped to fit the canvas
+  // width — without this, drawtext's `x=(w-text_w)/2` goes negative and the
+  // line scrolls off both edges (the "lready ... gave you. Take 10 secon..."
+  // clipping seen on multi-bg renders). The legacy renderVideoCore path
+  // already wraps; this advanced path was passing lines through raw.
+  const captionWidthPct = Math.min(100, Math.max(60, Number(payload?.captionWidthPct || 90)));
+  const baseChars = w >= 1800 ? 42 : w >= 1200 ? 34 : 28;
+  const maxChars = Math.max(18, Math.floor(baseChars * (captionWidthPct / 100)));
+  const wrappedLines = Array.isArray(lines)
+    ? wrapTextLines(lines.map((s) => String(s).slice(0, 140)), maxChars, 12)
+    : [];
   const drawtextChain = Array.isArray(words) && words.length > 0
     ? buildWordDrawtext({ words, w, h, preset: resolvedPreset })
-    : buildLineDrawtext({ lines: Array.isArray(lines) ? lines : [], w, h, preset: resolvedPreset });
+    : buildLineDrawtext({ lines: wrappedLines, w, h, preset: resolvedPreset });
 
   const filterParts = graph.filterParts.slice();
   let videoLabel = graph.videoLabel;
@@ -866,7 +903,17 @@ async function renderAdvancedVideo(payload, jobId) {
 
   const sceneCount = resolvedScenes.length;
   const args = ["-y"];
+  // Remote URLs (Pexels CDN, generated artwork hosts) drop intermittently —
+  // the default ffmpeg HTTP demuxer just dies with WSAECONNRESET (-10054 on
+  // Windows). Push reconnect flags BEFORE each remote `-i` so ffmpeg
+  // re-establishes the connection and resumes at the last byte offset.
+  // `-reconnect_streamed 1` is needed for non-seekable streams; the delay
+  // cap prevents hammering when the source is genuinely down.
+  const httpReconnect = (p) => (String(p || "").startsWith("http")
+    ? ["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5"]
+    : []);
   for (const s of resolvedScenes) {
+    args.push(...httpReconnect(s.backgroundPath));
     // `-loop 1` is image-only (ffmpeg loops a still demuxer); `-stream_loop -1`
     // is the video equivalent. Mixing them up errors out (`-loop` on a video
     // ignores; `-stream_loop` on an image errors). Sniff via the `kind`
@@ -881,11 +928,11 @@ async function renderAdvancedVideo(payload, jobId) {
   let musicInputIdx = null;
   if (resolvedAudio) {
     audioInputIdx = sceneCount + 0;
-    args.push("-i", resolvedAudio);
+    args.push(...httpReconnect(resolvedAudio), "-i", resolvedAudio);
   }
   if (resolvedMusic) {
     musicInputIdx = (resolvedAudio ? sceneCount + 1 : sceneCount);
-    args.push("-i", resolvedMusic);
+    args.push(...httpReconnect(resolvedMusic), "-i", resolvedMusic);
   }
 
   const musicVol = Math.min(1, Math.max(0, Number(musicVolume ?? 0.3)));
@@ -1285,11 +1332,26 @@ async function runCampaignAutoPost(payload, jobId) {
 
 function validatePayloadForEnqueue(type, payload) {
   if (type === "render_video") {
-    const resolvedBackground = resolveAssetPath(payload?.backgroundPath);
+    // Accept either a single `backgroundPath` (legacy) or a `scenes[]` array
+    // (multi-bg). Both shapes flow through renderVideoCore → renderAdvancedVideo,
+    // which detects the array form and hard-cuts between segments. The Render
+    // page sends scenes[] when the user picks more than one background.
+    const hasScenes = Array.isArray(payload?.scenes) && payload.scenes.length > 0;
     const resolvedAudio = resolveAssetPath(payload?.audioPath);
     const resolvedMusic = resolveAssetPath(payload?.musicPath);
-    if (!resolvedBackground || !isLocalOrRemote(resolvedBackground)) {
-      return { ok: false, error: `backgroundPath missing or not found: ${payload?.backgroundPath || "<empty>"}` };
+    if (hasScenes) {
+      for (let i = 0; i < payload.scenes.length; i++) {
+        const s = payload.scenes[i];
+        const resolved = resolveAssetPath(s?.backgroundPath);
+        if (!resolved || !isLocalOrRemote(resolved)) {
+          return { ok: false, error: `scenes[${i}].backgroundPath missing or not found: ${s?.backgroundPath || "<empty>"}` };
+        }
+      }
+    } else {
+      const resolvedBackground = resolveAssetPath(payload?.backgroundPath);
+      if (!resolvedBackground || !isLocalOrRemote(resolvedBackground)) {
+        return { ok: false, error: `backgroundPath missing or not found: ${payload?.backgroundPath || "<empty>"}` };
+      }
     }
     if (payload?.audioPath && !isLocalOrRemote(resolvedAudio)) {
       return { ok: false, error: `audioPath not found: ${payload?.audioPath}` };
@@ -1509,6 +1571,61 @@ router.post("/enqueue", (req, res) => {
   saveJobs(store);
   queueMicrotask(() => {
     workerTick().catch((err) => console.warn("[JOBS] workerTick enqueue trigger failed:", err?.message || err));
+  });
+  res.json({ ok: true, job });
+});
+
+/**
+ * Re-enqueue a failed or done job's payload as a fresh queued job. Used by
+ * the Jobs page "Retry" button so a user doesn't have to manually rebuild
+ * the form to re-run a Pexels-CDN failure or a transient ffmpeg crash.
+ *
+ * Returns the NEW job (different id) — the original job's row is left
+ * untouched in history so the user can compare attempts.
+ *
+ * Ownership: only the job's owner (or super-admin) can retry. Anything
+ * else returns 404 to avoid leaking job existence across tenants.
+ */
+router.post("/:id/retry", (req, res) => {
+  store = loadJobs();
+  const original = store.jobs.find((j) => j.id === req.params.id);
+  if (!original) return res.status(404).json({ ok: false, error: "Not found" });
+  if (!isJobVisibleTo(original, req.ctx)) return res.status(404).json({ ok: false, error: "Not found" });
+  if (original.status === "queued" || original.status === "running") {
+    return res.status(409).json({
+      ok: false,
+      error: `Job is already ${original.status}; nothing to retry`,
+    });
+  }
+  const type = original.type;
+  // Deep-clone the payload so we don't mutate the original job's stored
+  // copy if the worker mutates fields during validation/normalization.
+  const payload = JSON.parse(JSON.stringify(original.payload || {}));
+
+  const prevCtx = currentJobCtx;
+  currentJobCtx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir, userId: req.ctx.userId };
+  let validation;
+  try { validation = validatePayloadForEnqueue(type, payload); }
+  finally { currentJobCtx = prevCtx; }
+  if (!validation.ok) return res.status(400).json({ ok: false, error: validation.error });
+
+  const id = `job_${uuid()}`;
+  const job = {
+    id,
+    type,
+    payload,
+    ownerId: req.ctx.userId,
+    ctx: { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir, userId: req.ctx.userId },
+    status: "queued",
+    createdAt: new Date().toISOString(),
+    // Provenance — links the retry back to its source so we can show
+    // "Retried from #abc12345" in the UI later if useful.
+    retryOf: original.id,
+  };
+  store.jobs.push(job);
+  saveJobs(store);
+  queueMicrotask(() => {
+    workerTick().catch((err) => console.warn("[JOBS] workerTick retry trigger failed:", err?.message || err));
   });
   res.json({ ok: true, job });
 });

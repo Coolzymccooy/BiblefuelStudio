@@ -1,6 +1,7 @@
 import { list, listAvailable, get as getProvider } from "./registry.js";
 import { SpeechRequestSchema } from "./schemas.js";
 import { alignAudioWithText, isForcedAlignmentAvailable } from "./alignment.js";
+import { prepareScriptureForSpeech } from "./scripture.js";
 
 // Indirection so tests can substitute the alignment implementation without
 // touching the public synthesize() signature. Production code path is
@@ -82,6 +83,17 @@ function orderCandidates(req) {
  */
 export async function synthesize(req) {
   const parsed = SpeechRequestSchema.parse(req);
+  // Expand Bible references and chapter:verse digits BEFORE handing the
+  // text to providers. Without this, TTS engines speak "Mark 10:10" as
+  // "ten thousand and ten" and "Isaiah 40:31" as "Isaiah forty thousand
+  // and thirty-one" — the colon gets parsed as a number-format separator.
+  // Caller can opt out with `scriptureMode: false` if they're synthesizing
+  // text that genuinely contains numeric ratios / times. Word-level
+  // alignment lines up against the expanded form, which is what we want
+  // for kinetic captions over scripture videos.
+  if (parsed.scriptureMode !== false) {
+    parsed.text = prepareScriptureForSpeech(parsed.text);
+  }
   const candidates = orderCandidates(parsed);
 
   if (candidates.length === 0) {

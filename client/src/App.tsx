@@ -74,8 +74,22 @@ function App() {
           {/* Toaster lives inside BrowserRouter so toast bodies that
               render <Link> (e.g. Voice & Audio "Use → Open Render →")
               have access to the Router context. Without this, the toast
-              throws and ErrorBoundary blanks the page. */}
-          <Toaster position="top-right" />
+              throws and ErrorBoundary blanks the page.
+
+              Default error duration is bumped to 10s (vs react-hot-toast's
+              default 4s) because the rendering pipeline emits long ffmpeg
+              stderr messages that users can't read in 4s. Errors also get a
+              wider max-width so the full message fits without truncation. */}
+          <Toaster
+            position="top-right"
+            toastOptions={{
+              error: {
+                duration: 10000,
+                style: { maxWidth: '480px', wordBreak: 'break-word' },
+              },
+              success: { duration: 3500 },
+            }}
+          />
           {/* Cookie/privacy notice — mounts on every route, dismisses once
               and stores acknowledgement in localStorage. UK PECR baseline. */}
           <CookieBanner />

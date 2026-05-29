@@ -17,6 +17,7 @@ import {
     X,
 } from 'lucide-react';
 import { loadJson, saveJson, STORAGE_KEYS } from '../lib/storage';
+import { usePersistedState } from '../lib/usePersistedState';
 import { AnimationPicker } from '../components/voicelab/AnimationPicker';
 
 interface TranscriptWord {
@@ -38,6 +39,26 @@ function groupWordsIntoLines(words: TranscriptWord[], wordsPerLine: number): str
 // the original span) but editability beats perfect alignment for sermon
 // recaptioning — users care more about fixing transcription errors than
 // keeping sub-second sync on every token.
+/** "m:ss" for under-an-hour render runs (which is all of them at our caps). */
+function formatElapsed(ms: number): string {
+    const totalSec = Math.max(0, Math.round(ms / 1000));
+    const m = Math.floor(totalSec / 60);
+    const s = totalSec % 60;
+    return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+/**
+ * Linear ETA: if percent% finished after elapsed ms, total≈elapsed/(percent/100).
+ * Subtract elapsed to get remaining. Clamps to ≥0 so a slightly-over-100 percent
+ * (rounding artifact) doesn't render as a negative time. Caller should only
+ * invoke this when percent > 1 to avoid wild estimates at the start.
+ */
+function estimateEtaMs(elapsedMs: number, percent: number): number {
+    const fraction = Math.min(0.999, Math.max(0.01, percent / 100));
+    const totalMs = elapsedMs / fraction;
+    return Math.max(0, totalMs - elapsedMs);
+}
+
 function reflowWordsFromEditedLines(
     originalWords: TranscriptWord[],
     lines: string[],
@@ -45,16 +66,30 @@ function reflowWordsFromEditedLines(
     const lineWords = lines.flatMap((l) => l.split(/\s+/).filter(Boolean));
     if (!originalWords.length || !lineWords.length) return [];
 
-    const totalStart = originalWords[0].startMs;
-    const totalEnd = originalWords[originalWords.length - 1].endMs;
-    const span = Math.max(1, totalEnd - totalStart);
-    const step = span / lineWords.length;
+    // Pair each edited word positionally with its original Whisper word so
+    // each caption inherits the REAL spoken timing. Even-distribution (the
+    // previous approach) collapses pauses and uneven speech into a uniform
+    // metronome — captions then race ahead of the audio. If the edited list
+    // runs past the original (user added words), interpolate the overrun
+    // from the original's average word duration.
+    const last = originalWords[originalWords.length - 1];
+    const avgWordMs = Math.max(
+        1,
+        (last.endMs - originalWords[0].startMs) / originalWords.length,
+    );
 
-    return lineWords.map((text, idx) => ({
-        text,
-        startMs: Math.round(totalStart + idx * step),
-        endMs: Math.round(totalStart + (idx + 1) * step),
-    }));
+    return lineWords.map((text, idx) => {
+        const original = originalWords[idx];
+        if (original) {
+            return { text, startMs: original.startMs, endMs: original.endMs };
+        }
+        const overrun = idx - originalWords.length + 1;
+        return {
+            text,
+            startMs: Math.round(last.endMs + (overrun - 1) * avgWordMs),
+            endMs: Math.round(last.endMs + overrun * avgWordMs),
+        };
+    });
 }
 
 interface TimelineClip {
@@ -71,6 +106,14 @@ interface LibraryItem {
     previewUrl?: string;
     image: string;
     savedAt: string;
+    /**
+     * Optional discriminator for local-file uploads. Pexels library entries
+     * are always videos and omit this field. Set to 'image' when the user
+     * uploaded a still — UI then renders <img> previews instead of <video>,
+     * and the server route detects the .jpg/.png/.webp extension on the
+     * resolved path and switches FFmpeg's input flags to -loop 1 -t SEG.
+     */
+    kind?: 'image' | 'video';
 }
 
 interface AudioItem {
@@ -80,9 +123,38 @@ interface AudioItem {
     createdAt: string;
 }
 
+/** Cap matched to the server's MAX_BACKGROUNDS — keep these in sync. */
+const MAX_BACKGROUNDS = 4;
+
+/**
+ * Mirrors the server's MAX_INPUT_MB (default 200). Surfaced in the UI as
+ * pre-upload hints + enforced client-side so a 300 MB upload fails fast
+ * with a friendly toast instead of after a long base64 round-trip ending
+ * in a generic server 413/400.
+ */
+const MAX_UPLOAD_MB = 200;
+
+/** Server-recorded captioned-video render — shape mirrors renderHistory.js. */
+interface RenderHistoryItem {
+    jobId: string;
+    file: string;
+    createdAt: number;
+    durationSec: number;
+    sourceMediaPath?: string | null;
+    backgroundId?: string | number | null;
+    mode: 'video' | 'audio+bg';
+}
+
 export function TimelinePage() {
     const [clips, setClips] = useState<TimelineClip[]>([]);
-    const [backgroundItem, setBackgroundItem] = useState<LibraryItem | null>(null);
+    // Backgrounds are part of the captioned-video flow (Sermon Clip Studio).
+    // Persisted as an ORDERED array of up to MAX_BACKGROUNDS items — the
+    // render route hard-cuts between them at durationSec/N each. See the
+    // server's MAX_BACKGROUNDS constant for the matching cap.
+    const [backgroundItems, setBackgroundItems] = usePersistedState<LibraryItem[]>(
+        STORAGE_KEYS.sclBackgrounds,
+        [],
+    );
     const [showLibraryModal, setShowLibraryModal] = useState(false);
     const [libraryItems, setLibraryItems] = useState<LibraryItem[]>([]);
     const [isLoadingLibrary, setIsLoadingLibrary] = useState(false);
@@ -100,19 +172,58 @@ export function TimelinePage() {
     const [normalizeLUFS, setNormalizeLUFS] = useState(-14);
     const [deess, setDeess] = useState(true);
 
-    // Sermon Clip Studio state
-    const [sourceMediaPath, setSourceMediaPath] = useState<string | null>(null);
-    const [sourceMediaKind, setSourceMediaKind] = useState<'audio' | 'video' | null>(null);
+    // Sermon Clip Studio state — every field persisted so a browser refresh
+    // doesn't wipe an in-progress sermon. Ephemeral flags (isUploading,
+    // isTranscribing, isRenderingVideo) stay on plain useState because their
+    // value across refreshes is meaningless.
+    const [sourceMediaPath, setSourceMediaPath] = usePersistedState<string | null>(
+        STORAGE_KEYS.sclSourcePath,
+        null,
+    );
+    const [sourceMediaKind, setSourceMediaKind] = usePersistedState<'audio' | 'video' | null>(
+        STORAGE_KEYS.sclSourceKind,
+        null,
+    );
     const [isUploading, setIsUploading] = useState(false);
-    const [transcript, setTranscript] = useState<TranscriptWord[] | null>(null);
+    const [transcript, setTranscript] = usePersistedState<TranscriptWord[] | null>(
+        STORAGE_KEYS.sclTranscript,
+        null,
+    );
     const [isTranscribing, setIsTranscribing] = useState(false);
-    const [editedLines, setEditedLines] = useState<string[]>([]);
-    const [musicPath, setMusicPath] = useState<string | null>(null);
-    const [musicVolume, setMusicVolume] = useState(0.25);
-    const [autoDuck, setAutoDuck] = useState(true);
-    const [typographyPreset, setTypographyPreset] = useState<string>('cinematic-worship');
-    const [renderedVideo, setRenderedVideo] = useState<string | null>(null);
+    const [editedLines, setEditedLines] = usePersistedState<string[]>(
+        STORAGE_KEYS.sclEditedLines,
+        [],
+    );
+    const [musicPath, setMusicPath] = usePersistedState<string | null>(
+        STORAGE_KEYS.sclMusicPath,
+        null,
+    );
+    const [musicVolume, setMusicVolume] = usePersistedState<number>(
+        STORAGE_KEYS.sclMusicVolume,
+        0.25,
+    );
+    const [autoDuck, setAutoDuck] = usePersistedState<boolean>(
+        STORAGE_KEYS.sclAutoDuck,
+        true,
+    );
+    const [typographyPreset, setTypographyPreset] = usePersistedState<string>(
+        STORAGE_KEYS.sclTypographyPreset,
+        'cinematic-worship',
+    );
+    const [renderedVideo, setRenderedVideo] = usePersistedState<string | null>(
+        STORAGE_KEYS.sclRenderedVideo,
+        null,
+    );
     const [isRenderingVideo, setIsRenderingVideo] = useState(false);
+    // Determinate progress for the captioned-video render. Fed by the server's
+    // SSE stream of ffmpeg `time=` parses; runs 0..100 and freezes at 100 once
+    // the `done` event arrives. Drives the inline progress card below.
+    const [renderProgress, setRenderProgress] = useState(0);
+    const [renderElapsedMs, setRenderElapsedMs] = useState(0);
+    // Recent Renders — the user's last N captioned-video renders, fetched
+    // from the server on mount and refetched after each successful render so
+    // the panel stays in sync without manual refresh.
+    const [renderHistory, setRenderHistory] = useState<RenderHistoryItem[]>([]);
 
     const readFileAsDataUrl = (file: File): Promise<string> =>
         new Promise((resolve, reject) => {
@@ -123,6 +234,13 @@ export function TimelinePage() {
         });
 
     const handleSourceUpload = async (file: File) => {
+        // Client-side gate matches the server's MAX_INPUT_MB so a 300 MB
+        // upload fails up front instead of after a long base64 → HTTP round
+        // trip that ends in a generic 413.
+        if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
+            toast.error(`File is ${(file.size / 1024 / 1024).toFixed(1)} MB. Max upload is ${MAX_UPLOAD_MB} MB.`);
+            return;
+        }
         const isVideo = /\.(mp4|mov|webm|m4v)$/i.test(file.name);
         setIsUploading(true);
         try {
@@ -142,6 +260,12 @@ export function TimelinePage() {
             // a "Timeline is empty" toast even though they just uploaded a
             // sermon. Video uploads skip this because the Main Assembly is
             // audio-only mastering; they use the Render Captioned Video path.
+            //
+            // Uploading a *second* source REPLACES the assembly's clip list
+            // instead of appending. Without this, the legacy Render Audio
+            // path tries to concat both the old (possibly stale) clip and
+            // the new one, throws an ffmpeg validation error, and the user
+            // has to manually delete the duplicate to recover.
             if (!isVideo) {
                 const clip: TimelineClip = {
                     id: `clip_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -150,7 +274,7 @@ export function TimelinePage() {
                     startSec: null,
                     durationSec: null,
                 };
-                const next = [...clips, clip];
+                const next = [clip];
                 setClips(next);
                 saveClipsToCache(next);
             }
@@ -186,7 +310,59 @@ export function TimelinePage() {
         }
     };
 
+    /**
+     * Upload a local video or image to use as a background clip. Slots into
+     * the same backgroundItems list as Pexels picks — order matters; this
+     * becomes the next segment in the sequence.
+     */
+    const handleLocalBackgroundUpload = async (file: File) => {
+        if (backgroundItems.length >= MAX_BACKGROUNDS) {
+            toast.error(`Max ${MAX_BACKGROUNDS} backgrounds reached. Remove one to add another.`);
+            return;
+        }
+        if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
+            toast.error(`File is ${(file.size / 1024 / 1024).toFixed(1)} MB. Max upload is ${MAX_UPLOAD_MB} MB.`);
+            return;
+        }
+        setIsUploading(true);
+        try {
+            const dataUrl = await readFileAsDataUrl(file);
+            const response = await api.post<{ file: string; kind: 'image' | 'video' }>(
+                '/api/media/upload-background',
+                { dataUrl, filename: file.name },
+            );
+            if (!response.ok || !response.data?.file) {
+                toast.error(response.error || 'Background upload failed');
+                return;
+            }
+            // Build a synthetic LibraryItem so the rest of the multi-bg flow
+            // treats local uploads identically to Pexels picks. id is the
+            // server file path — resolveAssetPath returns it directly without
+            // going through library.json.
+            const filePath = response.data.file;
+            const publicUrl = `${api.baseUrl}/outputs/${filePath.split(/[\\/]/).pop()}`;
+            const item: LibraryItem = {
+                id: filePath,
+                url: publicUrl,
+                previewUrl: publicUrl,
+                image: publicUrl,
+                savedAt: new Date().toISOString(),
+                kind: response.data.kind,
+            };
+            setBackgroundItems([...backgroundItems, item]);
+            toast.success(`${response.data.kind === 'image' ? 'Image' : 'Video'} added as background`);
+        } catch {
+            toast.error('Background upload failed');
+        } finally {
+            setIsUploading(false);
+        }
+    };
+
     const handleMusicUpload = async (file: File) => {
+        if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
+            toast.error(`File is ${(file.size / 1024 / 1024).toFixed(1)} MB. Max upload is ${MAX_UPLOAD_MB} MB.`);
+            return;
+        }
         setIsUploading(true);
         try {
             const dataUrl = await readFileAsDataUrl(file);
@@ -205,46 +381,137 @@ export function TimelinePage() {
     };
 
     const handleRenderCaptionedVideo = async () => {
-        if (!sourceMediaPath || sourceMediaKind !== 'video') {
-            toast.error('Captioned video render requires an uploaded video source');
+        if (!sourceMediaPath) {
+            toast.error('Upload a sermon audio or video first');
             return;
         }
         if (!transcript || !transcript.length) {
             toast.error('Transcribe the sermon first');
             return;
         }
+        // Audio sources need at least one background picked; video sources bring their own visual layer.
+        if (sourceMediaKind === 'audio' && backgroundItems.length === 0) {
+            toast.error('Pick a video background to render captions over your audio');
+            return;
+        }
 
         const words = reflowWordsFromEditedLines(transcript, editedLines);
         setIsRenderingVideo(true);
-        const toastId = toast.loading('Rendering captioned video...');
+        setRenderProgress(0);
+        setRenderElapsedMs(0);
+        const startedAt = Date.now();
+        const elapsedTimer = setInterval(() => {
+            setRenderElapsedMs(Date.now() - startedAt);
+        }, 250);
+
         try {
-            const response = await api.post('/api/render/captioned-video', {
-                videoPath: sourceMediaPath,
-                words,
-                typographyPreset,
-                musicPath: musicPath || undefined,
-                musicVolume,
-                autoDuck,
-            });
-            if (response.ok && response.data?.file) {
-                const fileName = response.data.file.split(/[\\/]/).pop();
-                setRenderedVideo(`${api.baseUrl}/outputs/${fileName}`);
-                toast.success('Captioned video ready', { id: toastId });
-            } else {
-                toast.error(response.error || 'Render failed', { id: toastId });
+            // Multi-bg: send the full ORDERED list as backgroundPaths[]. Server
+            // hard-cuts at durationSec/N. Falls back to single-bg when only
+            // one is selected (server treats N=1 as the legacy lean path).
+            const payload = sourceMediaKind === 'video'
+                ? { videoPath: sourceMediaPath }
+                : {
+                    audioPath: sourceMediaPath,
+                    backgroundPaths: backgroundItems.map((b) => String(b.id)),
+                };
+            // POST returns immediately with a jobId; the heavy lifting runs in
+            // the background. We track real ffmpeg progress via SSE on the
+            // returned jobId so the inline card shows a determinate bar.
+            const response = await api.post<{ jobId: string; durationSec: number }>(
+                '/api/render/captioned-video',
+                {
+                    ...payload,
+                    words,
+                    typographyPreset,
+                    musicPath: musicPath || undefined,
+                    musicVolume,
+                    autoDuck,
+                },
+            );
+            if (!response.ok || !response.data?.jobId) {
+                clearInterval(elapsedTimer);
+                setIsRenderingVideo(false);
+                toast.error(response.error || 'Render failed to start');
+                return;
             }
+
+            // Open SSE. Token goes on the query string because EventSource
+            // can't set Authorization headers — server's requireAuth accepts
+            // ?token= as a documented fallback.
+            const token = api.getToken();
+            const sseUrl = `${api.baseUrl}/api/render/captioned-video-progress/${response.data.jobId}${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+            const sse = new EventSource(sseUrl);
+
+            const finish = () => {
+                clearInterval(elapsedTimer);
+                sse.close();
+                setIsRenderingVideo(false);
+            };
+
+            sse.addEventListener('progress', (e) => {
+                const data = JSON.parse((e as MessageEvent).data);
+                if (typeof data.percent === 'number') setRenderProgress(data.percent);
+            });
+            sse.addEventListener('done', (e) => {
+                const data = JSON.parse((e as MessageEvent).data);
+                setRenderProgress(100);
+                if (data.file) {
+                    const fileName = String(data.file).split(/[\\/]/).pop();
+                    setRenderedVideo(`${api.baseUrl}/outputs/${fileName}`);
+                    toast.success('Captioned video ready');
+                }
+                finish();
+            });
+            sse.addEventListener('error', (e) => {
+                // Two shapes hit this handler: a real 'error' SSE event from
+                // the server (carries a parseable data payload) and a transport
+                // error (no data). Treat the latter as a transient blip and let
+                // EventSource auto-reconnect — only finalize on the typed
+                // server event.
+                const raw = (e as MessageEvent).data;
+                if (!raw) return;
+                try {
+                    const data = JSON.parse(raw);
+                    toast.error(data.error || 'Render failed');
+                } catch {
+                    toast.error('Render failed');
+                }
+                finish();
+            });
         } catch {
-            toast.error('Render failed', { id: toastId });
-        } finally {
+            clearInterval(elapsedTimer);
             setIsRenderingVideo(false);
+            toast.error('Render failed');
+        }
+        // No finally — completion is owned by the SSE event handlers above
+        // (each calls finish() which clears the timer + flips isRendering).
+    };
+
+    const fetchRenderHistory = async () => {
+        const res = await api.get<{ items: RenderHistoryItem[] }>(
+            '/api/render/captioned-video-history?limit=20',
+        );
+        if (res.ok && Array.isArray(res.data?.items)) {
+            setRenderHistory(res.data.items);
         }
     };
+
+    // Refetch history whenever a render completes successfully. Tracking on
+    // renderedVideo (set by the SSE 'done' handler) keeps this decoupled from
+    // the render handler itself, so any future producer that flips
+    // renderedVideo will also refresh the panel.
+    useEffect(() => {
+        if (renderedVideo) fetchRenderHistory();
+    }, [renderedVideo]);
 
     useEffect(() => {
         const cached = loadJson<TimelineClip[]>(STORAGE_KEYS.timelineClips, []);
         if (cached.length) setClips(cached);
         const cachedHistory = loadJson<AudioItem[]>(STORAGE_KEYS.audioHistory, []);
         if (cachedHistory.length) setAudioHistory(cachedHistory);
+        // Fetch on mount so the panel shows past renders even before any new
+        // render fires (covers the post-refresh case).
+        fetchRenderHistory();
         const cachedAudioPath = loadJson<string>(STORAGE_KEYS.audioPath, '');
         if (cachedAudioPath) setCurrentAudioPath(cachedAudioPath);
     }, []);
@@ -323,20 +590,23 @@ export function TimelinePage() {
             toast.error('Timeline is empty');
             return;
         }
-        if (!backgroundItem) {
+        if (backgroundItems.length === 0) {
             toast.error('Please select a background first');
             return;
         }
 
         setIsPreviewing(true);
         try {
+            // The legacy /timeline-preview endpoint is single-background only.
+            // Use the FIRST selection so this quick-preview UI keeps working
+            // even when the captioned-video flow has 4 backgrounds queued.
             const response = await api.post('/api/audio-adv/timeline-preview', {
                 clips: clips.map((c) => ({
                     path: c.path,
                     startSec: c.startSec != null ? c.startSec : undefined,
                     durationSec: c.durationSec != null ? c.durationSec : undefined,
                 })),
-                backgroundPath: backgroundItem.id,
+                backgroundPath: backgroundItems[0].id,
                 normalizeLUFS,
                 fades: { inMs: fadeIn, outMs: fadeOut },
                 deess: { enabled: deess, amount: 0.55 },
@@ -395,7 +665,12 @@ export function TimelinePage() {
                     </Button>
                     <Button
                         onClick={handleRenderCaptionedVideo}
-                        disabled={isRenderingVideo || !sourceMediaPath || sourceMediaKind !== 'video' || !transcript}
+                        disabled={
+                            isRenderingVideo
+                            || !sourceMediaPath
+                            || !transcript
+                            || (sourceMediaKind === 'audio' && backgroundItems.length === 0)
+                        }
                         className="w-full sm:w-auto"
                     >
                         <Film size={16} className="mr-2" />
@@ -410,6 +685,7 @@ export function TimelinePage() {
             >
                 <p className="text-xs text-gray-400 mb-3">
                     Upload an audio sermon (mp3, wav, m4a) or a recorded video (mp4, mov, webm).
+                    <span className="text-gray-500"> Up to {MAX_UPLOAD_MB} MB.</span>
                 </p>
                 <label className="inline-flex items-center gap-3 px-4 py-2 rounded-lg bg-primary-500/10 border border-primary-500/30 text-primary-200 cursor-pointer hover:bg-primary-500/20">
                     <Film size={16} />
@@ -482,6 +758,9 @@ export function TimelinePage() {
                 tooltip="Optional soundtrack mixed under the sermon. Auto-duck (sidechain compression) drops the music volume when speech is present, then ramps it back up between phrases — keeps speech intelligible without manual ducking."
             >
                 <div className="space-y-4">
+                    <p className="text-xs text-gray-400">
+                        Optional. mp3, wav, m4a. <span className="text-gray-500">Up to {MAX_UPLOAD_MB} MB.</span>
+                    </p>
                     <label className="inline-flex items-center gap-3 px-4 py-2 rounded-lg bg-primary-500/10 border border-primary-500/30 text-primary-200 cursor-pointer hover:bg-primary-500/20">
                         <Music size={16} />
                         <span className="text-sm">{musicPath ? 'Replace music' : 'Choose music file'}</span>
@@ -525,12 +804,52 @@ export function TimelinePage() {
                 </div>
             </Card>
 
-            {renderedVideo && (
+            {isRenderingVideo && (
+                <Card
+                    title="Rendering captioned video"
+                    tooltip="Live progress from the FFmpeg encoder. Percent is computed from the encoder's processed time against the sermon duration, so the bar reflects real work — not a fake animation."
+                >
+                    <div className="space-y-3">
+                        <div className="flex items-baseline justify-between gap-4">
+                            <span className="text-sm text-gray-300">
+                                {renderProgress < 100 ? 'Encoding...' : 'Finalizing...'}
+                            </span>
+                            <span className="text-xl font-semibold tabular-nums text-primary-300">
+                                {Math.round(renderProgress)}%
+                            </span>
+                        </div>
+                        <div className="h-2 w-full overflow-hidden rounded-full bg-white/5">
+                            <div
+                                className="h-full rounded-full bg-gradient-to-r from-primary-500 to-primary-300 transition-[width] duration-300 ease-out"
+                                style={{ width: `${Math.max(2, renderProgress)}%` }}
+                            />
+                        </div>
+                        <div className="flex items-center justify-between text-xs text-gray-400 tabular-nums">
+                            <span>Elapsed {formatElapsed(renderElapsedMs)}</span>
+                            <span>
+                                {renderProgress > 1
+                                    ? `ETA ~${formatElapsed(estimateEtaMs(renderElapsedMs, renderProgress))}`
+                                    : 'Estimating...'}
+                            </span>
+                        </div>
+                    </div>
+                </Card>
+            )}
+
+            {renderedVideo && !isRenderingVideo && (
                 <Card
                     title="Rendered Captioned Video"
                     tooltip="The final sermon with kinetic captions burned onto the original video frames. Click Open to download or share."
                 >
-                    <video controls src={renderedVideo} className="w-full rounded-lg" />
+                    {/* Vertical (1080x1920) sermons render full-width-by-default would
+                        push the page well past the viewport on a wide column. Cap by
+                        viewport height instead and center horizontally so the whole
+                        frame is always visible without scrolling. */}
+                    <video
+                        controls
+                        src={renderedVideo}
+                        className="block mx-auto rounded-lg max-h-[70vh] w-auto max-w-full bg-black"
+                    />
                     <Button
                         variant="secondary"
                         onClick={() => window.open(renderedVideo, '_blank')}
@@ -539,6 +858,54 @@ export function TimelinePage() {
                         <Download size={16} className="mr-2" />
                         Open
                     </Button>
+                </Card>
+            )}
+
+            {renderHistory.length > 0 && (
+                <Card
+                    title="Recent Renders"
+                    tooltip="Your last 20 captioned-video renders. Click any thumbnail to load it back into the preview above. Renders persist server-side per account."
+                >
+                    <div className="-mx-2 flex gap-3 overflow-x-auto px-2 pb-2">
+                        {renderHistory.map((item) => {
+                            const fileName = item.file.split(/[\\/]/).pop() || '';
+                            const url = `${api.baseUrl}/outputs/${fileName}`;
+                            const isActive = renderedVideo === url;
+                            return (
+                                <button
+                                    key={item.jobId}
+                                    type="button"
+                                    onClick={() => setRenderedVideo(url)}
+                                    className={`group relative shrink-0 w-32 aspect-[9/16] rounded-lg overflow-hidden bg-black/60 border ${isActive ? 'border-primary-400' : 'border-white/10 hover:border-white/30'} transition-colors`}
+                                    title={fileName}
+                                >
+                                    {/* Browser-decoded video poster — gives us a real thumbnail
+                                        without a separate server-side ffmpeg pass. preload="metadata"
+                                        keeps the network cost small (header bytes only). */}
+                                    <video
+                                        src={url}
+                                        preload="metadata"
+                                        muted
+                                        playsInline
+                                        className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
+                                    />
+                                    <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/90 to-transparent">
+                                        <p className="text-[10px] font-mono text-white/90 truncate">
+                                            {new Date(item.createdAt).toLocaleString(undefined, {
+                                                month: 'short',
+                                                day: 'numeric',
+                                                hour: '2-digit',
+                                                minute: '2-digit',
+                                            })}
+                                        </p>
+                                        <p className="text-[9px] text-white/60 truncate">
+                                            {item.mode === 'video' ? 'video' : 'audio + bg'} · {Math.round(item.durationSec)}s
+                                        </p>
+                                    </div>
+                                </button>
+                            );
+                        })}
+                    </div>
                 </Card>
             )}
 
@@ -703,28 +1070,135 @@ export function TimelinePage() {
                 </div>
 
                 <div className="space-y-6">
-                    {/* Video Selection */}
-                    <Card title="Video Background">
+                    {/* Video Selection — ordered list of up to MAX_BACKGROUNDS
+                        clips. Render hard-cuts between them at durationSec/N each. */}
+                    <Card
+                        title="Video Background"
+                        tooltip={`Pick 1–${MAX_BACKGROUNDS} background clips. With more than one, the render hard-cuts between them at equal slots (1/N of the sermon duration each). Use the arrows to reorder.`}
+                    >
                         <div className="p-2">
-                            {backgroundItem ? (
-                                <div className="space-y-4">
-                                    <div className="aspect-[9/16] bg-black rounded-xl overflow-hidden relative group">
-                                        <video
-                                            src={backgroundItem.previewUrl || backgroundItem.url}
-                                            autoPlay
-                                            muted
-                                            loop
-                                            className="w-full h-full object-cover"
-                                        />
-                                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                                            <Button onClick={() => setBackgroundItem(null)} variant="secondary" className="bg-red-500/20 text-red-400 border-red-500/20 hover:bg-red-500/40 h-8 text-[10px]">
-                                                Change
-                                            </Button>
+                            {backgroundItems.length > 0 ? (
+                                <div className="space-y-3">
+                                    {backgroundItems.map((item, idx) => (
+                                        <div
+                                            key={`${item.id}-${idx}`}
+                                            className="flex gap-3 bg-black/30 rounded-xl p-2 border border-white/5"
+                                        >
+                                            <div className="relative w-20 aspect-[9/16] bg-black rounded-lg overflow-hidden shrink-0">
+                                                {item.kind === 'image' ? (
+                                                    <img
+                                                        src={item.previewUrl || item.url}
+                                                        alt=""
+                                                        className="w-full h-full object-cover"
+                                                    />
+                                                ) : (
+                                                    <video
+                                                        src={item.previewUrl || item.url}
+                                                        muted
+                                                        loop
+                                                        autoPlay
+                                                        playsInline
+                                                        className="w-full h-full object-cover"
+                                                    />
+                                                )}
+                                                <span className="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-primary-500/80 text-[10px] font-bold text-white">
+                                                    {idx + 1}
+                                                </span>
+                                                {item.kind === 'image' && (
+                                                    <span className="absolute top-1 right-1 px-1 py-0.5 rounded bg-black/70 text-[8px] uppercase tracking-wider text-gray-300">
+                                                        img
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <div className="flex-1 min-w-0 flex flex-col justify-between">
+                                                <p className="text-[10px] font-mono text-gray-400 break-all line-clamp-2">
+                                                    ID: {item.id}
+                                                </p>
+                                                <div className="flex items-center gap-1">
+                                                    <Button
+                                                        variant="secondary"
+                                                        onClick={() => {
+                                                            if (idx === 0) return;
+                                                            const next = [...backgroundItems];
+                                                            [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
+                                                            setBackgroundItems(next);
+                                                        }}
+                                                        disabled={idx === 0}
+                                                        className="h-7 px-2 text-xs"
+                                                        aria-label="Move up"
+                                                    >
+                                                        ↑
+                                                    </Button>
+                                                    <Button
+                                                        variant="secondary"
+                                                        onClick={() => {
+                                                            if (idx === backgroundItems.length - 1) return;
+                                                            const next = [...backgroundItems];
+                                                            [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
+                                                            setBackgroundItems(next);
+                                                        }}
+                                                        disabled={idx === backgroundItems.length - 1}
+                                                        className="h-7 px-2 text-xs"
+                                                        aria-label="Move down"
+                                                    >
+                                                        ↓
+                                                    </Button>
+                                                    <Button
+                                                        variant="secondary"
+                                                        onClick={() =>
+                                                            setBackgroundItems(
+                                                                backgroundItems.filter((_, i) => i !== idx),
+                                                            )
+                                                        }
+                                                        className="h-7 px-2 text-xs bg-red-500/10 text-red-300 border-red-500/20 hover:bg-red-500/30"
+                                                        aria-label="Remove"
+                                                    >
+                                                        <Trash2 size={12} />
+                                                    </Button>
+                                                </div>
+                                            </div>
                                         </div>
+                                    ))}
+                                    {backgroundItems.length > 1 && (
+                                        <p className="text-[10px] text-gray-500 px-1">
+                                            Hard cuts between {backgroundItems.length} clips, ~equal slots.
+                                        </p>
+                                    )}
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <Button
+                                            onClick={openLibrary}
+                                            disabled={backgroundItems.length >= MAX_BACKGROUNDS}
+                                            variant="secondary"
+                                            className="h-9 text-[10px]"
+                                        >
+                                            <Library size={14} className="mr-1" />
+                                            {backgroundItems.length >= MAX_BACKGROUNDS ? 'Library' : 'From library'}
+                                        </Button>
+                                        <label
+                                            className={`inline-flex items-center justify-center gap-1 h-9 text-[10px] rounded-md border ${
+                                                backgroundItems.length >= MAX_BACKGROUNDS
+                                                    ? 'opacity-40 cursor-not-allowed border-white/10 text-gray-500'
+                                                    : 'cursor-pointer border-white/10 text-gray-200 hover:bg-white/5'
+                                            }`}
+                                        >
+                                            <Plus size={14} />
+                                            Upload from device
+                                            <input
+                                                type="file"
+                                                className="hidden"
+                                                accept=".mp4,.mov,.webm,.m4v,.jpg,.jpeg,.png,.webp"
+                                                disabled={backgroundItems.length >= MAX_BACKGROUNDS || isUploading}
+                                                onChange={(e) => {
+                                                    const f = e.target.files?.[0];
+                                                    if (f) handleLocalBackgroundUpload(f);
+                                                    e.target.value = ''; // allow re-picking the same file
+                                                }}
+                                            />
+                                        </label>
                                     </div>
-                                    <div className="text-[10px] font-mono text-gray-500 break-all bg-black/20 p-2 rounded">
-                                        ID: {backgroundItem.id}
-                                    </div>
+                                    <p className="text-[10px] text-gray-500 px-1">
+                                        Up to {MAX_UPLOAD_MB} MB per file. Video (mp4, mov, webm) or image (jpg, png, webp).
+                                    </p>
                                     <Button
                                         onClick={handlePreview}
                                         isLoading={isPreviewing}
@@ -732,16 +1206,39 @@ export function TimelinePage() {
                                         className="w-full h-9 text-[10px] border-primary-500/20 text-primary-400"
                                     >
                                         <Film size={14} className="mr-2" />
-                                        Preview with Background
+                                        Preview with First Background
                                     </Button>
                                 </div>
                             ) : (
-                                <div className="py-12 border-2 border-dashed border-white/10 rounded-xl flex flex-col items-center justify-center text-center px-4">
-                                    <Library size={32} className="text-gray-600 mb-3" />
-                                    <p className="text-xs text-gray-500 mb-4">No background selected</p>
-                                    <Button onClick={openLibrary} className="w-full h-9 text-[10px]">
-                                        Open Library Picker
-                                    </Button>
+                                <div className="py-10 border-2 border-dashed border-white/10 rounded-xl flex flex-col items-center justify-center text-center px-4 space-y-3">
+                                    <Library size={32} className="text-gray-600" />
+                                    <p className="text-xs text-gray-500">No backgrounds selected</p>
+                                    <div className="grid grid-cols-2 gap-2 w-full">
+                                        <Button onClick={openLibrary} className="h-9 text-[10px]">
+                                            <Library size={14} className="mr-1" />
+                                            From library
+                                        </Button>
+                                        <label
+                                            className={`inline-flex items-center justify-center gap-1 h-9 text-[10px] rounded-md border cursor-pointer border-primary-500/30 bg-primary-500/10 text-primary-200 hover:bg-primary-500/20 ${isUploading ? 'opacity-50' : ''}`}
+                                        >
+                                            <Plus size={14} />
+                                            Upload from device
+                                            <input
+                                                type="file"
+                                                className="hidden"
+                                                accept=".mp4,.mov,.webm,.m4v,.jpg,.jpeg,.png,.webp"
+                                                disabled={isUploading}
+                                                onChange={(e) => {
+                                                    const f = e.target.files?.[0];
+                                                    if (f) handleLocalBackgroundUpload(f);
+                                                    e.target.value = '';
+                                                }}
+                                            />
+                                        </label>
+                                    </div>
+                                    <p className="text-[10px] text-gray-500 px-1">
+                                        Up to {MAX_UPLOAD_MB} MB. Video (mp4/mov/webm) or image (jpg/png/webp).
+                                    </p>
                                 </div>
                             )}
                         </div>
@@ -788,14 +1285,18 @@ export function TimelinePage() {
             {showAddClipModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
                     <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShowAddClipModal(false)} />
-                    <Card className="relative w-full max-w-3xl max-h-[80vh] overflow-hidden flex flex-col border-white/20 shadow-2xl">
-                        <div className="flex items-center justify-between p-4 border-b border-white/10">
+                    {/* Plain div (not <Card>) — Card wraps children in an extra
+                        <div> that breaks flex flex-col, leaving the inner
+                        overflow-y-auto section with no flex parent. Same fix
+                        applied to all modals on this page + RenderPage. */}
+                    <div className="relative w-full max-w-3xl max-h-[80vh] flex flex-col rounded-xl bg-dark-900/95 backdrop-blur-xl border border-white/20 shadow-2xl overflow-hidden">
+                        <div className="flex items-center justify-between p-4 border-b border-white/10 shrink-0">
                             <h3 className="font-bold text-lg text-white">Add Clip</h3>
                             <button onClick={() => setShowAddClipModal(false)} className="text-gray-500 hover:text-white">
                                 <X size={24} />
                             </button>
                         </div>
-                        <div className="p-4 space-y-4 overflow-y-auto">
+                        <div className="flex-1 min-h-0 p-4 space-y-4 overflow-y-auto overscroll-contain">
                             {currentAudioPath && (
                                 <div className="flex items-center justify-between bg-black/30 border border-white/10 rounded-lg p-3">
                                     <div className="text-xs text-gray-300 break-all">{currentAudioPath}</div>
@@ -838,43 +1339,71 @@ export function TimelinePage() {
                                 )}
                             </div>
                         </div>
-                    </Card>
+                    </div>
                 </div>
             )}
 
-            {/* Library Picker Modal */}
+            {/* Library Picker Modal — multi-select up to MAX_BACKGROUNDS.
+                Clicking a tile toggles its inclusion in the ordered list;
+                selection order = render sequence. Done closes the modal. */}
             {showLibraryModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
                     <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShowLibraryModal(false)} />
-                    <Card className="relative w-full max-w-4xl max-h-[80vh] overflow-hidden flex flex-col border-white/20 shadow-2xl">
-                        <div className="flex items-center justify-between p-4 border-b border-white/10">
-                            <h3 className="font-bold text-lg text-white">Select Background</h3>
+                    <div className="relative w-full max-w-4xl max-h-[80vh] flex flex-col rounded-xl bg-dark-900/95 backdrop-blur-xl border border-white/20 shadow-2xl overflow-hidden">
+                        <div className="flex items-center justify-between p-4 border-b border-white/10 shrink-0">
+                            <div>
+                                <h3 className="font-bold text-lg text-white">Select Backgrounds</h3>
+                                <p className="text-xs text-gray-400 mt-1">
+                                    {backgroundItems.length} of {MAX_BACKGROUNDS} selected · click to toggle, order = render sequence
+                                </p>
+                            </div>
                             <button onClick={() => setShowLibraryModal(false)} className="text-gray-500 hover:text-white">
                                 <X size={24} />
                             </button>
                         </div>
-                        <div className="flex-1 overflow-y-auto p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+                        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
                             {isLoadingLibrary ? (
                                 <div className="col-span-full py-20 flex justify-center">
                                     <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-primary-500" />
                                 </div>
                             ) : libraryItems.length > 0 ? (
-                                libraryItems.map((item) => (
-                                    <div
-                                        key={item.id}
-                                        className="group relative aspect-[9/16] bg-black rounded-xl overflow-hidden cursor-pointer hover:ring-2 hover:ring-primary-500 transition-all shadow-lg"
-                                        onClick={() => {
-                                            setBackgroundItem(item);
-                                            setShowLibraryModal(false);
-                                            toast.success('Background selected');
-                                        }}
-                                    >
-                                        <img src={item.image} className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" alt="" />
-                                        <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/80 to-transparent">
-                                            <p className="text-[10px] font-mono text-white truncate">ID: {item.id}</p>
+                                libraryItems.map((item) => {
+                                    const selectedIdx = backgroundItems.findIndex((b) => b.id === item.id);
+                                    const isSelected = selectedIdx >= 0;
+                                    const atCap = backgroundItems.length >= MAX_BACKGROUNDS;
+                                    const disabled = !isSelected && atCap;
+                                    return (
+                                        <div
+                                            key={item.id}
+                                            className={`group relative aspect-[9/16] bg-black rounded-xl overflow-hidden shadow-lg transition-all ${
+                                                isSelected
+                                                    ? 'ring-2 ring-primary-400'
+                                                    : disabled
+                                                        ? 'opacity-40 cursor-not-allowed'
+                                                        : 'cursor-pointer hover:ring-2 hover:ring-primary-500'
+                                            }`}
+                                            onClick={() => {
+                                                if (isSelected) {
+                                                    // Toggle off
+                                                    setBackgroundItems(backgroundItems.filter((b) => b.id !== item.id));
+                                                } else if (!atCap) {
+                                                    // Toggle on — append so order matches the click sequence.
+                                                    setBackgroundItems([...backgroundItems, item]);
+                                                }
+                                            }}
+                                        >
+                                            <img src={item.image} className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" alt="" />
+                                            {isSelected && (
+                                                <span className="absolute top-2 left-2 w-7 h-7 rounded-full bg-primary-500 text-white text-sm font-bold flex items-center justify-center shadow-lg">
+                                                    {selectedIdx + 1}
+                                                </span>
+                                            )}
+                                            <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/80 to-transparent">
+                                                <p className="text-[10px] font-mono text-white truncate">ID: {item.id}</p>
+                                            </div>
                                         </div>
-                                    </div>
-                                ))
+                                    );
+                                })
                             ) : (
                                 <div className="col-span-full py-20 text-center opacity-30 text-white">
                                     <Library size={48} className="mx-auto mb-4" />
@@ -882,7 +1411,28 @@ export function TimelinePage() {
                                 </div>
                             )}
                         </div>
-                    </Card>
+                        <div className="border-t border-white/10 p-3 flex items-center justify-between gap-3 shrink-0">
+                            <Button
+                                variant="secondary"
+                                onClick={() => setBackgroundItems([])}
+                                disabled={backgroundItems.length === 0}
+                                className="h-9 text-xs"
+                            >
+                                Clear all
+                            </Button>
+                            <Button
+                                onClick={() => {
+                                    setShowLibraryModal(false);
+                                    if (backgroundItems.length > 0) {
+                                        toast.success(`${backgroundItems.length} background${backgroundItems.length === 1 ? '' : 's'} selected`);
+                                    }
+                                }}
+                                className="h-9 text-xs"
+                            >
+                                Done
+                            </Button>
+                        </div>
+                    </div>
                 </div>
             )}
 

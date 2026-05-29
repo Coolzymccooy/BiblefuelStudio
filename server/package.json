@@ -4,6 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
+    "predev": "node scripts/free-port.mjs 5051",
     "dev": "cross-env PORT=5051 CORS_ORIGIN=http://localhost:5174 node --watch index.js",
     "start": "node index.js",
     "test": "node --test \"test/**/*.test.js\""

@@ -123,12 +123,26 @@ test("synthesizeForCategory expands scripture references when scriptureMode is s
   assert.equal(eleven.calls[0].text, "Psalm chapter ninety-one, verse one.");
 });
 
-test("synthesizeForCategory leaves text raw when scriptureMode is off (default)", async () => {
+test("synthesizeForCategory expands scripture refs by default (orchestrator pass)", async () => {
+  // Behavior changed: the orchestrator now expands Bible refs by default so
+  // TTS doesn't speak "Mark 10:10" as "ten thousand ten". Callers can opt
+  // out with scriptureMode:false if their text genuinely contains
+  // colon-separated numerics (e.g. timestamps, ratios).
   _reset();
   const eleven = spy("elevenlabs");
   register(eleven.provider);
 
   await synthesizeForCategory({ text: "Psalm 91:1", category: "scripture" });
+
+  assert.equal(eleven.calls[0].text, "Psalm chapter ninety-one, verse one.");
+});
+
+test("synthesizeForCategory leaves text raw when scriptureMode is false", async () => {
+  _reset();
+  const eleven = spy("elevenlabs");
+  register(eleven.provider);
+
+  await synthesizeForCategory({ text: "Psalm 91:1", category: "scripture", scriptureMode: false });
 
   assert.equal(eleven.calls[0].text, "Psalm 91:1");
 });

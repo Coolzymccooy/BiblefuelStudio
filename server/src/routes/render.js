@@ -6,6 +6,8 @@ import { spawn, spawnSync } from "child_process";
 import { readLibrary } from "../lib/library.js";
 import { isLocalOrRemote, resolveOutputAlias } from "../lib/mediaThumb.js";
 import { buildWordDrawtext, resolveKineticAnimation } from "../lib/videoFilters.js";
+import { createJob, getJob, gcJobs, markRunning, markProgress, markDone, markError } from "../lib/renderJobs.js";
+import { appendRender, listRenders } from "../lib/renderHistory.js";
 
 const router = Router();
 let ffmpegChecked = false;
@@ -442,16 +444,45 @@ function probeMediaInfo(filePath) {
   });
 }
 
+// Audio-only sibling of probeMediaInfo. /captioned-video's audio+background
+// mode needs the sermon duration from a .wav/.mp3 (no video stream), which
+// probeMediaInfo returns null for because it selects v:0.
+function probeAudioDuration(filePath) {
+  return new Promise((resolve) => {
+    const ffprobe = process.env.FFPROBE_PATH?.trim() || "ffprobe";
+    const proc = spawn(ffprobe, [
+      "-v", "error",
+      "-show_entries", "format=duration",
+      "-of", "default=noprint_wrappers=1:nokey=1",
+      filePath,
+    ]);
+    let out = "";
+    proc.stdout.on("data", (d) => { out += d.toString(); });
+    proc.on("error", () => resolve(null));
+    proc.on("close", () => {
+      const d = Number(String(out).trim());
+      resolve(Number.isFinite(d) && d > 0 ? d : null);
+    });
+  });
+}
+
 /**
- * Burn kinetic-typography captions onto an uploaded sermon video.
+ * Burn kinetic-typography captions onto a sermon. Two input modes:
  *
- * Sibling of POST /video — but where /video treats backgroundPath as a looped
- * background and stamps text on top, this route uses the input video as the
- * primary visual layer (no -stream_loop) and drives total duration from the
- * source. Same music-bed + auto-duck filter chain as /video.
+ *   (a) videoPath          — uploaded sermon video; drives duration + canvas
+ *                            from the source clip itself.
+ *   (b) audioPath +        — sermon audio with a looped background video as the
+ *       backgroundPath       canvas. Duration comes from the audio (-shortest);
+ *                            canvas dimensions come from the background. The
+ *                            background can be a local file or a Pexels library
+ *                            ID (resolved to a remote URL FFmpeg streams).
  *
- * Body: { videoPath, words: [{text, startMs, endMs}], typographyPreset?,
- *         musicPath?, musicVolume?, autoDuck? }
+ * Both modes share the same music-bed + auto-duck filter chain. The combined
+ * filter complex is written to a sidecar file and passed via `-/filter_complex`
+ * so a long sermon doesn't blow past Windows' ~32 KB CreateProcess cmdline cap.
+ *
+ * Body: { videoPath?, audioPath?, backgroundPath?, words: [{text, startMs, endMs}],
+ *         typographyPreset?, musicPath?, musicVolume?, autoDuck? }
  */
 router.post("/captioned-video", async (req, res) => {
   try {
@@ -460,36 +491,131 @@ router.post("/captioned-video", async (req, res) => {
     }
 
     const rawVideoPath = req.body?.videoPath;
+    const rawAudioPath = req.body?.audioPath;
+    // Accept both shapes: single `backgroundPath` (legacy) and
+    // `backgroundPaths[]` (new multi-background sequence). The plural form
+    // wins when both are present; the singular collapses into a 1-element
+    // array so the rest of the pipeline only sees one shape.
+    const rawBackgroundPath = req.body?.backgroundPath;
+    const rawBackgroundPathsInput = Array.isArray(req.body?.backgroundPaths)
+      ? req.body.backgroundPaths
+      : rawBackgroundPath
+        ? [rawBackgroundPath]
+        : [];
+    const rawBackgroundPaths = rawBackgroundPathsInput
+      .map((p) => (p == null ? "" : String(p).trim()))
+      .filter(Boolean);
     const rawMusicPath = req.body?.musicPath;
     const words = Array.isArray(req.body?.words) ? req.body.words : [];
     const typographyPreset = String(req.body?.typographyPreset || "default");
     const musicVolume = req.body?.musicVolume;
     const autoDuck = Boolean(req.body?.autoDuck);
 
-    if (!rawVideoPath) {
-      return res.status(400).json({ ok: false, error: "videoPath is required" });
-    }
     if (!words.length) {
       return res.status(400).json({ ok: false, error: "words[] is required and must be non-empty" });
     }
 
-    const videoPath = resolveAssetPath(req.ctx.dataDir, rawVideoPath);
-    const musicPath = rawMusicPath ? resolveAssetPath(req.ctx.dataDir, rawMusicPath) : null;
+    const MAX_BACKGROUNDS = 4;
+    if (rawBackgroundPaths.length > MAX_BACKGROUNDS) {
+      return res.status(400).json({
+        ok: false,
+        error: `at most ${MAX_BACKGROUNDS} backgrounds supported (got ${rawBackgroundPaths.length})`,
+      });
+    }
 
-    if (!videoPath || !isLocalOrRemote(videoPath)) {
-      return res.status(400).json({ ok: false, error: `videoPath not found: ${rawVideoPath}` });
+    const hasVideoMode = Boolean(rawVideoPath);
+    const hasAudioMode = Boolean(rawAudioPath) && rawBackgroundPaths.length > 0;
+    if (!hasVideoMode && !hasAudioMode) {
+      return res.status(400).json({
+        ok: false,
+        error: "Provide either videoPath OR (audioPath + backgroundPath)",
+      });
     }
-    if (isFileTooLarge(videoPath)) {
-      return res.status(400).json({ ok: false, error: `videoPath too large (>${MAX_INPUT_MB}MB)` });
+
+    let videoPath = null;
+    let audioPath = null;
+    /** @type {string[]} resolved background paths (1..MAX_BACKGROUNDS, audio mode only). */
+    let backgroundPaths = [];
+    let canvasWidth = 0;
+    let canvasHeight = 0;
+    let durationSec = 0;
+
+    if (hasVideoMode) {
+      videoPath = resolveAssetPath(req.ctx.dataDir, rawVideoPath);
+      if (!videoPath || !isLocalOrRemote(videoPath)) {
+        return res.status(400).json({ ok: false, error: `videoPath not found: ${rawVideoPath}` });
+      }
+      if (isFileTooLarge(videoPath)) {
+        return res.status(400).json({ ok: false, error: `videoPath too large (>${MAX_INPUT_MB}MB)` });
+      }
+      const info = await probeMediaInfo(videoPath);
+      if (!info || info.durationSec <= 0) {
+        return res.status(400).json({ ok: false, error: "Could not probe video duration / dimensions" });
+      }
+      canvasWidth = info.width;
+      canvasHeight = info.height;
+      durationSec = info.durationSec;
+    } else {
+      audioPath = resolveAssetPath(req.ctx.dataDir, rawAudioPath);
+      if (!audioPath || !isLocalOrRemote(audioPath)) {
+        return res.status(400).json({ ok: false, error: `audioPath not found: ${rawAudioPath}` });
+      }
+      if (isFileTooLarge(audioPath)) {
+        return res.status(400).json({ ok: false, error: `audioPath too large (>${MAX_INPUT_MB}MB)` });
+      }
+
+      // Resolve + validate every requested background. Each may be a local
+      // path or a Pexels library id (resolveAssetPath handles both). We
+      // surface the failing index in the error so a user with 4 backgrounds
+      // can tell which one is busted.
+      for (let i = 0; i < rawBackgroundPaths.length; i++) {
+        const resolved = resolveAssetPath(req.ctx.dataDir, rawBackgroundPaths[i]);
+        if (!resolved || !isLocalOrRemote(resolved)) {
+          return res.status(400).json({
+            ok: false,
+            error: `backgroundPaths[${i}] not found: ${rawBackgroundPaths[i]}`,
+          });
+        }
+        if (isFileTooLarge(resolved)) {
+          return res.status(400).json({
+            ok: false,
+            error: `backgroundPaths[${i}] too large (>${MAX_INPUT_MB}MB)`,
+          });
+        }
+        backgroundPaths.push(resolved);
+      }
+
+      // Canvas dims come from the FIRST background; concat requires every
+      // input to be the same size, so we'll scale the others to match below.
+      const firstBgInfo = await probeMediaInfo(backgroundPaths[0]);
+      if (!firstBgInfo || !firstBgInfo.width || !firstBgInfo.height) {
+        return res.status(400).json({ ok: false, error: "Could not probe background dimensions" });
+      }
+      const audDur = await probeAudioDuration(audioPath);
+      if (!audDur) {
+        return res.status(400).json({ ok: false, error: "Could not probe audio duration" });
+      }
+      canvasWidth = firstBgInfo.width;
+      canvasHeight = firstBgInfo.height;
+      durationSec = audDur;
     }
+
+    const musicPath = rawMusicPath ? resolveAssetPath(req.ctx.dataDir, rawMusicPath) : null;
     if (musicPath && !isLocalOrRemote(musicPath)) {
       return res.status(400).json({ ok: false, error: `musicPath not found: ${rawMusicPath}` });
     }
 
-    const info = await probeMediaInfo(videoPath);
-    if (!info || info.durationSec <= 0) {
-      return res.status(400).json({ ok: false, error: "Could not probe video duration / dimensions" });
-    }
+    // Cap the render canvas at 1080p-equivalent. 4K Pexels backgrounds (2160x3840)
+    // are common in the library but blow up x264 memory on long sermons
+    // ("malloc of size N failed"). Vertical-1080 is plenty for social video and
+    // keeps allocations sane. Aspect ratio is preserved; both dims rounded to
+    // an even number because libx264 requires that for yuv420p.
+    const MAX_OUTPUT_DIM = 1920;
+    const longestSide = Math.max(canvasWidth, canvasHeight);
+    const scaleFactor = longestSide > MAX_OUTPUT_DIM ? MAX_OUTPUT_DIM / longestSide : 1;
+    const renderWidth = scaleFactor < 1 ? Math.round(canvasWidth * scaleFactor / 2) * 2 : canvasWidth;
+    const renderHeight = scaleFactor < 1 ? Math.round(canvasHeight * scaleFactor / 2) * 2 : canvasHeight;
+    const needsScale = scaleFactor < 1;
 
     // buildWordDrawtext expects { text, start, end } in seconds; the
     // /api/transcribe contract emits { text, startMs, endMs } in milliseconds.
@@ -510,8 +636,8 @@ router.post("/captioned-video", async (req, res) => {
     const resolvedPreset = resolveKineticAnimation(typographyPreset)?.presetId || typographyPreset;
     const drawtextChain = buildWordDrawtext({
       words: drawWords,
-      w: info.width,
-      h: info.height,
+      w: renderWidth,
+      h: renderHeight,
       preset: resolvedPreset,
     });
     if (!drawtextChain) {
@@ -523,23 +649,103 @@ router.post("/captioned-video", async (req, res) => {
     const outFile = path.join(outDir, `captioned-${uuid()}.mp4`);
 
     const ffmpeg = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
-    const args = ["-y", "-i", videoPath];
-    if (musicPath) args.push("-i", musicPath);
+
+    // Input order is mode-dependent. In video mode: [0]=video, [1?]=music.
+    // In audio mode with N backgrounds: [0..N-1]=backgrounds, [N]=audio,
+    // [N+1?]=music. Each background gets -stream_loop -1 so a Pexels clip
+    // shorter than its segment slot fills the slot via wraparound instead of
+    // freezing on the last frame.
+    const args = ["-y"];
+    let voiceIdx, musicIdx;
+    // Pre-drawtext video chain — emits [vbg]. For video mode this is just
+    // [0:v]; for audio mode it's a single scaled bg, or a concat of N scaled
+    // bgs hard-cut at durationSec/N each.
+    let preDrawChain = "";
+
+    if (hasVideoMode) {
+      args.push("-i", videoPath);
+      if (musicPath) args.push("-i", musicPath);
+      voiceIdx = 0;
+      musicIdx = musicPath ? 1 : -1;
+      preDrawChain = needsScale
+        ? `[0:v]scale=${renderWidth}:${renderHeight}[vbg];`
+        : `[0:v]null[vbg];`;
+    } else {
+      const N = backgroundPaths.length;
+      // Per-background input flags depend on whether the file is an image or
+      // a video. Images need `-loop 1 -framerate 30 -t <dur>` so FFmpeg
+      // produces a fixed-duration stream of repeated frames; videos need
+      // `-stream_loop -1` so a short Pexels clip wraps to fill its slot.
+      // Slot duration: for N=1 we just need the full audio length; for N>=2
+      // each input fills its 1/N segment.
+      const perSlotSec = N >= 2 ? durationSec / N : durationSec;
+      for (const bg of backgroundPaths) {
+        const isImage = /\.(jpg|jpeg|png|webp)$/i.test(String(bg));
+        if (isImage) {
+          args.push("-loop", "1", "-framerate", "30", "-t", perSlotSec.toFixed(3), "-i", bg);
+        } else {
+          args.push("-stream_loop", "-1", "-i", bg);
+        }
+      }
+      args.push("-i", audioPath);
+      if (musicPath) args.push("-i", musicPath);
+      voiceIdx = N;
+      musicIdx = musicPath ? N + 1 : -1;
+
+      // For multi-bg we MUST scale every input to the same dims (concat
+      // requirement) AND trim each to its slot duration so concat doesn't
+      // splice in extra frames. For single-bg we keep the legacy lean chain:
+      // scale-on-demand only, no trim (`-shortest` handles termination).
+      if (N === 1) {
+        preDrawChain = needsScale
+          ? `[0:v]scale=${renderWidth}:${renderHeight}[vbg];`
+          : `[0:v]null[vbg];`;
+      } else {
+        const segSec = durationSec / N;
+        const segParts = backgroundPaths.map((_, i) =>
+          // setsar=1 normalizes pixel aspect across mixed sources so concat
+          // doesn't reject the inputs as "incompatible". setpts=PTS-STARTPTS
+          // rebases each trimmed segment to t=0 so concat re-times them
+          // sequentially on the output timeline.
+          `[${i}:v]trim=duration=${segSec.toFixed(3)},scale=${renderWidth}:${renderHeight},setsar=1,setpts=PTS-STARTPTS[seg${i}]`,
+        );
+        const concatInputs = backgroundPaths.map((_, i) => `[seg${i}]`).join("");
+        preDrawChain = `${segParts.join(";")};${concatInputs}concat=n=${N}:v=1:a=0[vbg];`;
+      }
+    }
 
     const musicVol = Math.min(1, Math.max(0, Number(musicVolume ?? 0.25)));
-    const vFilter = `[0:v]${drawtextChain}[vout]`;
+    // drawtext consumes [vbg] (whatever the pre-chain produced) and emits
+    // [vout]. Coordinates were built against renderWidth/renderHeight upstream,
+    // so the pre-scale + drawtext stay in lockstep regardless of source size.
+    const vFilter = `${preDrawChain}[vbg]${drawtextChain}[vout]`;
+    // The autoDuck path needs the voice signal twice: once as the sidechain
+    // trigger for the compressor, and again as one of the two amix inputs.
+    // FFmpeg requires every filter label to have exactly one consumer, so we
+    // use asplit to fan the voice signal out into two distinct labels. Without
+    // this, the parser falls through to interpreting the second `[a1]` as a
+    // stream specifier ("Stream specifier 'a1' matches no streams") and the
+    // whole filtergraph fails to bind. The bug is undefined-behavior-shaped:
+    // shorter chains sometimes work, larger ones (e.g. 4K + long sermon)
+    // surface it consistently.
     const aFilter = musicPath
       ? autoDuck
-        ? `[0:a]volume=1.0[a1];[1:a]volume=${musicVol}[m1];[m1][a1]sidechaincompress=threshold=0.01:ratio=12:attack=5:release=350:makeup=2[ducked];[a1][ducked]amix=inputs=2:duration=shortest:dropout_transition=2[aout]`
-        : `[0:a]volume=1.0[a1];[1:a]volume=${musicVol}[a2];[a1][a2]amix=inputs=2:duration=shortest:dropout_transition=2[aout]`
-      : `[0:a]anull[aout]`;
+        ? `[${voiceIdx}:a]volume=1.0,asplit=2[voice1][voice2];[${musicIdx}:a]volume=${musicVol}[m1];[m1][voice1]sidechaincompress=threshold=0.01:ratio=12:attack=5:release=350:makeup=2[ducked];[voice2][ducked]amix=inputs=2:duration=shortest:dropout_transition=2[aout]`
+        : `[${voiceIdx}:a]volume=1.0[a1];[${musicIdx}:a]volume=${musicVol}[a2];[a1][a2]amix=inputs=2:duration=shortest:dropout_transition=2[aout]`
+      : `[${voiceIdx}:a]anull[aout]`;
 
     const preset = process.env.FFMPEG_PRESET || "fast";
     const hwaccel = process.env.FFMPEG_HWACCEL;
     const vcodec = hwaccel === "nvenc" ? "h264_nvenc" : hwaccel === "qsv" ? "h264_qsv" : "libx264";
 
+    // The drawtext chain alone can blow past Windows' ~32 KB CreateProcess
+    // cmdline limit on anything beyond a ~30 s sermon. Ship the filter via
+    // FFmpeg's `-/filter_complex <file>` form so cmdline length stays bounded.
+    const filterFile = path.join(outDir, `filter-${uuid()}.txt`);
+    fs.writeFileSync(filterFile, `${vFilter};${aFilter}`);
+
     args.push(
-      "-filter_complex", `${vFilter};${aFilter}`,
+      "-/filter_complex", filterFile,
       "-map", "[vout]",
       "-map", "[aout]",
       "-c:v", vcodec,
@@ -553,23 +759,202 @@ router.post("/captioned-video", async (req, res) => {
       outFile,
     );
 
-    await new Promise((resolve, reject) => {
-      const proc = spawn(ffmpeg, args);
-      let stderr = "";
-      proc.stderr.on("data", (d) => { stderr += d.toString(); });
-      proc.on("error", reject);
-      proc.on("close", (code) => {
-        if (code === 0) return resolve();
-        try { if (fs.existsSync(outFile)) fs.unlinkSync(outFile); } catch {}
-        reject(new Error(`ffmpeg exited ${code}: ${stderr.slice(-600)}`));
-      });
-    });
+    // Diagnostic dump: log the full ffmpeg command on every attempt so we can
+    // see exactly which arg vector failed. The .args.txt sidecar lets us
+    // re-run the exact invocation from a shell when triaging.
+    const argsDump = path.join(outDir, `captioned-args-${path.basename(outFile, ".mp4")}.txt`);
+    fs.writeFileSync(argsDump, args.map(a => /\s/.test(String(a)) ? `"${a}"` : String(a)).join(" "));
+    console.log(`[captioned-video] ffmpeg args dumped to ${argsDump}`);
 
-    logMemory("render/captioned-video:done");
-    return res.json({ ok: true, file: outFile.replace(/\\/g, "/"), durationSec: info.durationSec });
+    // Async pivot: create a job, return jobId immediately, run ffmpeg in the
+    // background. The client streams progress via GET /captioned-video-progress/:jobId
+    // (SSE) so the UI can render a determinate progress bar instead of an
+    // indeterminate spinner. A `wait=true` query param preserves the legacy
+    // synchronous response for tests + curl smoke checks.
+    const job = createJob(req.ctx.userId, { durationSec });
+    const waitForCompletion = String(req.query?.wait || "").toLowerCase() === "true";
+
+    const runRender = () =>
+      new Promise((resolve, reject) => {
+        markRunning(job.jobId);
+        const proc = spawn(ffmpeg, args);
+        let stderr = "";
+        // FFmpeg emits `time=HH:MM:SS.MS` on stderr during encoding. Parse it
+        // to a percentage of the target duration so SSE clients see a
+        // monotonic 0-100 bar.
+        const progressRegex = /time=(\d+):(\d+):(\d+\.\d+)/g;
+        proc.stderr.on("data", (d) => {
+          const chunk = d.toString();
+          stderr += chunk;
+          let m;
+          let last = null;
+          while ((m = progressRegex.exec(chunk)) !== null) last = m;
+          if (last && durationSec > 0) {
+            const sec = Number(last[1]) * 3600 + Number(last[2]) * 60 + Number(last[3]);
+            markProgress(job.jobId, (sec / durationSec) * 100);
+          }
+        });
+        proc.on("error", (err) => {
+          markError(job.jobId, `ffmpeg launch failed: ${err?.message || err}`);
+          reject(err);
+        });
+        proc.on("close", (code) => {
+          if (code === 0) {
+            const finalFile = outFile.replace(/\\/g, "/");
+            markDone(job.jobId, finalFile);
+            // Persist into the user's history so the Recent Renders panel can
+            // surface this render later. Best-effort: failure here must not
+            // hide the success from the client.
+            try {
+              appendRender(req.ctx.dataDir, {
+                jobId: job.jobId,
+                file: finalFile,
+                createdAt: Date.now(),
+                durationSec,
+                sourceMediaPath: hasVideoMode ? rawVideoPath : rawAudioPath,
+                // backgroundIds is the full sequence (1..N) used to render;
+                // backgroundId stays for backward-compat with older history
+                // entries the client may still display.
+                backgroundIds: hasVideoMode ? [] : rawBackgroundPaths,
+                backgroundId: hasVideoMode ? null : rawBackgroundPaths[0] || null,
+                mode: hasVideoMode ? "video" : "audio+bg",
+              });
+            } catch {}
+            try { fs.unlinkSync(filterFile); } catch {}
+            logMemory("render/captioned-video:done");
+            return resolve(outFile);
+          }
+          try { if (fs.existsSync(outFile)) fs.unlinkSync(outFile); } catch {}
+          const stderrDump = path.join(outDir, `captioned-stderr-${path.basename(outFile, ".mp4")}.txt`);
+          try { fs.writeFileSync(stderrDump, stderr); } catch {}
+          console.log(`[captioned-video] FAILED job ${job.jobId} — kept filter at ${filterFile}`);
+          const err = new Error(`ffmpeg exited ${code}: ${stderr.slice(-600)}`);
+          markError(job.jobId, err.message);
+          reject(err);
+        });
+      });
+
+    if (waitForCompletion) {
+      try {
+        await runRender();
+        return res.json({
+          ok: true,
+          jobId: job.jobId,
+          file: outFile.replace(/\\/g, "/"),
+          durationSec,
+        });
+      } catch (e) {
+        return res.status(500).json({ ok: false, error: String(e?.message || e) });
+      }
+    }
+
+    // Default: fire-and-forget. Surface launch errors via the job record; the
+    // SSE/status endpoints expose them to the client.
+    runRender().catch(() => {
+      // Already marked on the job record; swallow so the unhandled rejection
+      // doesn't crash the process.
+    });
+    return res.json({ ok: true, jobId: job.jobId, durationSec });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
+});
+
+/**
+ * Live progress feed for a captioned-video render. Server-Sent Events stream:
+ *   - `progress` { jobId, status, percent }   — emitted on every 500ms tick while running
+ *   - `done`     { jobId, file, percent: 100 } — emitted once when ffmpeg exits 0
+ *   - `error`    { jobId, error }              — emitted once on failure
+ * The stream auto-closes after a terminal event so the client doesn't need to
+ * track an explicit disconnect.
+ *
+ * Auth note: EventSource can't set Authorization headers, so the client passes
+ * the token via `?token=...`; auth.js's requireAuth already accepts that.
+ */
+router.get("/captioned-video-progress/:jobId", (req, res) => {
+  gcJobs();
+  const job = getJob(req.params.jobId);
+  if (!job) return res.status(404).json({ ok: false, error: "job not found" });
+  if (job.userId !== req.ctx.userId) {
+    return res.status(403).json({ ok: false, error: "job belongs to another user" });
+  }
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  // Disable nginx-style buffering so events flush immediately even behind a
+  // proxy that defaults to buffering response bodies.
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders?.();
+
+  const send = (event, data) => {
+    res.write(`event: ${event}\n`);
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  // Emit current state immediately so a late subscriber doesn't sit at 0%.
+  const initialEvent = job.status === "done" ? "done" : job.status === "error" ? "error" : "progress";
+  send(initialEvent, summarizeJob(job));
+  if (job.status === "done" || job.status === "error") {
+    return res.end();
+  }
+
+  const tick = setInterval(() => {
+    const current = getJob(req.params.jobId);
+    if (!current) {
+      clearInterval(tick);
+      return res.end();
+    }
+    if (current.status === "done") {
+      send("done", summarizeJob(current));
+      clearInterval(tick);
+      return res.end();
+    }
+    if (current.status === "error") {
+      send("error", summarizeJob(current));
+      clearInterval(tick);
+      return res.end();
+    }
+    send("progress", summarizeJob(current));
+  }, 500);
+
+  req.on("close", () => clearInterval(tick));
+});
+
+/**
+ * JSON status snapshot for the same job. Useful when SSE isn't available
+ * (e.g. tests) — clients can poll this every 1s as a fallback.
+ */
+router.get("/captioned-video-status/:jobId", (req, res) => {
+  gcJobs();
+  const job = getJob(req.params.jobId);
+  if (!job) return res.status(404).json({ ok: false, error: "job not found" });
+  if (job.userId !== req.ctx.userId) {
+    return res.status(403).json({ ok: false, error: "job belongs to another user" });
+  }
+  return res.json({ ok: true, ...summarizeJob(job) });
+});
+
+function summarizeJob(job) {
+  return {
+    jobId: job.jobId,
+    status: job.status,
+    percent: job.percent,
+    durationSec: job.durationSec,
+    file: job.file,
+    error: job.error,
+  };
+}
+
+/**
+ * Return the requesting user's recent captioned-video renders, newest-first.
+ * Backed by a JSON file inside the user's dataDir — see renderHistory.js for
+ * the file shape and the MAX_ENTRIES cap.
+ */
+router.get("/captioned-video-history", (req, res) => {
+  const limit = Math.min(50, Math.max(1, Number(req.query?.limit) || 20));
+  const items = listRenders(req.ctx.dataDir, limit);
+  res.json({ ok: true, items });
 });
 
 export default router;

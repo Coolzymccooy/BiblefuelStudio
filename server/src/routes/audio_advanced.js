@@ -199,14 +199,33 @@ router.post("/timeline", async (req, res) => {
     args.push("-map", post.length ? "[afinal]" : "[aout]");
     args.push("-vn", "-c:a", "libmp3lame", "-b:a", "192k", outFile);
 
+    let settled = false;
+    const reply = (status, body) => {
+      if (settled) return;
+      settled = true;
+      res.status(status).json(body);
+    };
+
     const proc = spawn(ffmpeg, args);
     let stderr = "";
     proc.stderr.on("data", d => stderr += d.toString());
+    // Without this, a spawn launch failure (e.g. ffmpeg missing from PATH) emits
+    // an 'error' event that Node treats as an uncaught exception and Express
+    // surfaces as an empty-body 500. Convert it into a JSON 400 instead.
+    proc.on("error", (err) => {
+      reply(400, { ok: false, error: `ffmpeg launch failed: ${err?.message || err}` });
+    });
     proc.on("close", (code) => {
-      if (code !== 0) {
-        return res.status(400).json({ ok: false, error: `ffmpeg failed: ${code}`, details: stderr.slice(-2000), filterComplex });
+      try {
+        if (code !== 0) {
+          return reply(400, { ok: false, error: `ffmpeg failed: ${code}`, details: stderr.slice(-2000), filterComplex });
+        }
+        reply(200, { ok: true, file: outFile, clips: cleaned, filterComplex });
+      } catch (e) {
+        // Defensive: a throw inside the close handler runs outside the route's
+        // try/catch and would also surface as an empty 500.
+        reply(400, { ok: false, error: `response failed: ${e?.message || e}` });
       }
-      res.json({ ok: true, file: outFile, clips: cleaned, filterComplex });
     });
   } catch (e) {
     res.status(400).json({ ok: false, error: String(e?.message || e) });

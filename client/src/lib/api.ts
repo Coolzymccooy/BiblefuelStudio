@@ -3,6 +3,15 @@ import axios, { AxiosError } from 'axios';
 const TOKEN_KEY = 'BF_TOKEN';
 export const AUTH_INVALID_EVENT = 'BF_AUTH_INVALID';
 
+// Hard ceiling on any single request. Without this, a hung Vite proxy
+// (server still booting, network blip) leaves axios calls pending forever.
+// Pages that gate render on `isLoading` then stay blank, and any polling
+// hook can pile up hundreds of in-flight requests against an unreachable
+// backend. 15s is comfortably above ffmpeg-render endpoints which return
+// fast (the heavy work is queued); long-running jobs go through SSE which
+// uses EventSource, not axios.
+const DEFAULT_TIMEOUT_MS = 15_000;
+
 export interface ApiResponse<T = any> {
     ok: boolean;
     status: number;
@@ -22,7 +31,10 @@ class ApiClient {
         return '';
     })();
 
-    private getToken(): string | null {
+    // Exposed (not private) because EventSource can't send custom headers, so
+    // SSE consumers need to append the token as a query string. Server's
+    // requireAuth accepts both `Authorization: Bearer` and `?token=`.
+    getToken(): string | null {
         const token = localStorage.getItem(TOKEN_KEY);
         if (!token || token === 'null' || token === 'undefined') return null;
         return token;
@@ -55,6 +67,7 @@ class ApiClient {
         try {
             const response = await axios.get(url, {
                 headers: this.getHeaders(customHeaders),
+                timeout: DEFAULT_TIMEOUT_MS,
             });
             return {
                 ok: true,
@@ -74,6 +87,7 @@ class ApiClient {
         try {
             const response = await axios.post(url, body, {
                 headers: this.getHeaders(customHeaders),
+                timeout: DEFAULT_TIMEOUT_MS,
             });
             return {
                 ok: true,
@@ -92,6 +106,7 @@ class ApiClient {
         try {
             const response = await axios.delete(url, {
                 headers: this.getHeaders(customHeaders),
+                timeout: DEFAULT_TIMEOUT_MS,
             });
             return {
                 ok: true,
@@ -111,6 +126,7 @@ class ApiClient {
         try {
             const response = await axios.patch(url, body, {
                 headers: this.getHeaders(customHeaders),
+                timeout: DEFAULT_TIMEOUT_MS,
             });
             return {
                 ok: true,
@@ -130,6 +146,7 @@ class ApiClient {
         try {
             const response = await axios.put(url, body, {
                 headers: this.getHeaders(customHeaders),
+                timeout: DEFAULT_TIMEOUT_MS,
             });
             return {
                 ok: true,

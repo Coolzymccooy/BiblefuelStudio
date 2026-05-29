@@ -12,8 +12,12 @@ export default defineConfig(({ mode }) => {
       react(),
       VitePWA({
         registerType: 'autoUpdate',
+        // Disabled in dev: the service worker caches index.html + bundle
+        // hashes, and any HMR change ships new hashes that the cached HTML
+        // doesn't know about, leaving you on a blank page with the SW
+        // serving stale bytes. PWA still bundles for prod builds.
         devOptions: {
-          enabled: true
+          enabled: false
         },
         includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'masked-icon.svg'],
         workbox: {

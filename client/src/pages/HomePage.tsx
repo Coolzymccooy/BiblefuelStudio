@@ -232,7 +232,6 @@ export function HomePage() {
         firebaseEnabled,
         isLoading,
         error: authError,
-        checkStatus,
         setup,
         login,
         signupWithFirebaseEmail,
@@ -249,9 +248,8 @@ export function HomePage() {
     const [localError, setLocalError] = useState<string | null>(null);
     const useFirebaseAuth = firebaseEnabled && isFirebaseClientEnabled();
 
-    useEffect(() => {
-        checkStatus();
-    }, [checkStatus]);
+    // Layout already fires checkStatus on mount, and the store now coalesces
+    // concurrent calls. No need to double-fire from here.
 
     // Default view selection. The landing page's primary auth CTA is "Sign
     // in" — visitors who reach /app are overwhelmingly returning users, so

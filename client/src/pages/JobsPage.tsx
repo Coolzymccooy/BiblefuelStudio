@@ -4,7 +4,8 @@ import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { api } from '../lib/api';
-import { RefreshCw, Download, Clock, Terminal, PlayCircle, ExternalLink, BookOpen, Wand2, Film, AudioLines, Share2, X as XIcon } from 'lucide-react';
+import { RefreshCw, Download, Clock, Terminal, PlayCircle, ExternalLink, BookOpen, Wand2, Film, AudioLines, Share2, X as XIcon, RotateCw } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { loadJson, STORAGE_KEYS, toOutputUrl } from '../lib/storage';
 import { ShareSheet } from '../components/ShareSheet';
 
@@ -107,6 +108,11 @@ export function JobsPage() {
     const [selectedJob, setSelectedJob] = useState<Job | null>(null);
     const [isTriggering, setIsTriggering] = useState(false);
     const [shareJob, setShareJob] = useState<Job | null>(null);
+    // Per-job retry-in-flight gate. Clicking Retry posts to /:id/retry
+    // which creates a new queued job; we lock the source row's button
+    // while the request is in-flight so a frantic double-click doesn't
+    // enqueue the same payload twice.
+    const [retryingJobIds, setRetryingJobIds] = useState<Set<string>>(new Set());
     const transientEmptyCountRef = useRef(0);
     const jobsRef = useRef<Job[]>([]);
 
@@ -177,6 +183,32 @@ export function JobsPage() {
     const handleOpen = (filePath: string) => {
         const fileName = filePath.split(/[\\/]/).pop() || filePath;
         window.open(`${api.baseUrl}/outputs/${fileName}`, '_blank');
+    };
+
+    const handleRetry = async (jobId: string) => {
+        if (retryingJobIds.has(jobId)) return;
+        setRetryingJobIds((prev) => {
+            const next = new Set(prev);
+            next.add(jobId);
+            return next;
+        });
+        try {
+            const res = await api.post(`/api/jobs/${encodeURIComponent(jobId)}/retry`);
+            if (res.ok && res.data?.job?.id) {
+                toast.success(`Retry queued: #${String(res.data.job.id).slice(4, 12)}`);
+                await loadJobs(false);
+            } else {
+                toast.error(res.error || 'Failed to enqueue retry');
+            }
+        } catch (err) {
+            toast.error('Retry request failed');
+        } finally {
+            setRetryingJobIds((prev) => {
+                const next = new Set(prev);
+                next.delete(jobId);
+                return next;
+            });
+        }
     };
 
     const triggerTestJob = async () => {
@@ -370,6 +402,25 @@ export function JobsPage() {
                                             )}
                                             {job.status === 'running' && (
                                                 <span className="text-[0.75rem] text-primary-400/70 font-medium animate-pulse">Processing…</span>
+                                            )}
+
+                                            {(job.status === 'failed' || job.status === 'done') && (
+                                                <Button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleRetry(job.id);
+                                                    }}
+                                                    isLoading={retryingJobIds.has(job.id)}
+                                                    className={`text-xs px-3 py-1 h-auto justify-center ${
+                                                        job.status === 'failed'
+                                                            ? 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border-amber-500/20'
+                                                            : 'bg-white/5 hover:bg-white/10 text-gray-300 border-white/10'
+                                                    }`}
+                                                    title={job.status === 'failed' ? 'Re-enqueue this failed job' : 'Re-run this job with the same payload'}
+                                                >
+                                                    <RotateCw size={14} className="mr-1.5" />
+                                                    {job.status === 'failed' ? 'Retry' : 'Re-run'}
+                                                </Button>
                                             )}
                                         </div>
                                     </div>
