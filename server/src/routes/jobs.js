@@ -116,6 +116,42 @@ function logMemory(tag) {
 let currentJobCtx = null;
 function currentOutDir() { return currentJobCtx?.outputDir || OUTPUT_DIR; }
 function currentDataDir() { return currentJobCtx?.dataDir || DATA_DIR; }
+function currentIsSuperAdmin() { return Boolean(currentJobCtx?.isSuperAdmin); }
+
+/**
+ * Tier-aware "does this user have anywhere their video could go?" check.
+ *
+ * - Super-admin: env Zernio counts (their env IS the operator's env), plus
+ *   any of their stored webhooks.
+ * - Regular user: ONLY their own stored webhooks. Env Zernio is deliberately
+ *   off-limits — falling back to it would post regular users' content to
+ *   the operator's TikTok account, which is a multi-tenant safety bug.
+ *
+ * Returns { canAutoPublish, destinations: string[] } so callers can both
+ * gate the dispatch and tell the UI which destinations are live.
+ *
+ * @param {{dataDir:string, isSuperAdmin?:boolean}} ctx
+ * @returns {{ canAutoPublish: boolean, destinations: string[] }}
+ */
+function describeConfiguredDestinations(ctx) {
+  const destinations = [];
+  let store = { webhooks: [] };
+  try { store = readSocialStore(ctx?.dataDir || DATA_DIR); } catch { /* missing file → empty */ }
+  const enabledWebhooks = Array.isArray(store?.webhooks)
+    ? store.webhooks.filter((w) => w?.enabled && String(w?.url || "").trim())
+    : [];
+  if (enabledWebhooks.length > 0) destinations.push("webhook");
+
+  if (ctx?.isSuperAdmin) {
+    const zernioOn = Boolean(
+      String(process.env.ZERNIO_API_KEY || "").trim() &&
+      String(process.env.ZERNIO_TIKTOK_ACCOUNT_ID || "").trim(),
+    );
+    if (zernioOn) destinations.push("zernio");
+  }
+
+  return { canAutoPublish: destinations.length > 0, destinations };
+}
 
 if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
@@ -1278,44 +1314,73 @@ async function runCampaignAutoPost(payload, jobId) {
   const videoFile = path.basename(outFile);
   const videoUrl = `/outputs/${videoFile}`;
   let shareResult = null;
-  try {
-    // Build a stub req object so social.js's URL-resolution logic can derive
-    // an absolute public URL for the rendered video. Order of preference:
-    //   PUBLIC_BASE_URL / APP_BASE_URL / RENDER_EXTERNAL_URL > localhost:PORT
-    // The campaign worker has no HTTP context of its own, so we synthesize one.
-    const configuredBase = String(
-      process.env.PUBLIC_BASE_URL ||
-      process.env.APP_BASE_URL ||
-      process.env.RENDER_EXTERNAL_URL ||
-      ""
-    ).trim().replace(/\/+$/, "");
-    let stubProto = "http";
-    let stubHost = `localhost:${process.env.PORT || 5051}`;
-    if (configuredBase) {
-      try {
-        const u = new URL(configuredBase);
-        stubProto = u.protocol.replace(":", "") || stubProto;
-        stubHost = u.host || stubHost;
-      } catch { /* keep defaults */ }
-    }
-    const reqLike = {
-      headers: { host: stubHost, "x-forwarded-proto": stubProto },
-      protocol: stubProto,
-      get: (name) => (String(name).toLowerCase() === "host" ? stubHost : ""),
+
+  // Pre-flight tier-aware destination check. For users without any
+  // configured destination (regular user with no webhooks, or super-admin
+  // who hasn't set anything up), skip dispatch entirely instead of
+  // letting it fail with "No destination configured" — the video DID
+  // render fine, that's the value, sharing is optional.
+  //
+  // The skipped result still ends the job as DONE (not failed) so the
+  // UI can show a green "Video ready" with a render-only badge and a
+  // nudge to set up a destination, rather than a misleading red toast.
+  const configured = describeConfiguredDestinations(currentJobCtx);
+  if (!configured.canAutoPublish) {
+    shareResult = {
+      ok: false,
+      skipped: true,
+      reason: currentIsSuperAdmin()
+        ? "no_destination_configured"
+        : "no_destination_configured_user_tier",
+      message: currentIsSuperAdmin()
+        ? "No destination configured. Add a webhook in Settings or set ZERNIO_API_KEY in .env."
+        : "Auto-publish needs a destination connected to your account. Connect a webhook (Make / Zapier) in Settings to start posting automatically.",
     };
-    shareResult = await dispatchPost({
-      destination,
-      caption,
-      videoUrl,
-      title: title || script.title || "Biblefuel Post",
-      webhookId,
-      webhookUrl,
-      profileIds,
-      privacyStatus,
-    }, reqLike);
-  } catch (err) {
-    console.warn("[CAMPAIGN] share dispatch failed:", err?.message || err);
-    shareResult = { ok: false, error: String(err?.message || err) };
+  } else {
+    try {
+      // Build a stub req object so social.js's URL-resolution logic can derive
+      // an absolute public URL for the rendered video. Order of preference:
+      //   PUBLIC_BASE_URL / APP_BASE_URL / RENDER_EXTERNAL_URL > localhost:PORT
+      // The campaign worker has no HTTP context of its own, so we synthesize one.
+      const configuredBase = String(
+        process.env.PUBLIC_BASE_URL ||
+        process.env.APP_BASE_URL ||
+        process.env.RENDER_EXTERNAL_URL ||
+        ""
+      ).trim().replace(/\/+$/, "");
+      let stubProto = "http";
+      let stubHost = `localhost:${process.env.PORT || 5051}`;
+      if (configuredBase) {
+        try {
+          const u = new URL(configuredBase);
+          stubProto = u.protocol.replace(":", "") || stubProto;
+          stubHost = u.host || stubHost;
+        } catch { /* keep defaults */ }
+      }
+      const reqLike = {
+        headers: { host: stubHost, "x-forwarded-proto": stubProto },
+        protocol: stubProto,
+        // ctx is THE key plumbing here — social.js's tier-aware Zernio
+        // gate reads ctx.isSuperAdmin to decide whether falling back to
+        // env Zernio is allowed. Without this, a regular user's
+        // campaign could leak to the operator's TikTok.
+        ctx: currentJobCtx,
+        get: (name) => (String(name).toLowerCase() === "host" ? stubHost : ""),
+      };
+      shareResult = await dispatchPost({
+        destination,
+        caption,
+        videoUrl,
+        title: title || script.title || "Biblefuel Post",
+        webhookId,
+        webhookUrl,
+        profileIds,
+        privacyStatus,
+      }, reqLike);
+    } catch (err) {
+      console.warn("[CAMPAIGN] share dispatch failed:", err?.message || err);
+      shareResult = { ok: false, error: String(err?.message || err) };
+    }
   }
 
   return {
@@ -1552,7 +1617,7 @@ router.post("/enqueue", (req, res) => {
   // Set currentJobCtx synchronously for validation that reads the library,
   // then restore it. The actual job-execution ctx is set in workerTick.
   const prevCtx = currentJobCtx;
-  currentJobCtx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir, userId: req.ctx.userId };
+  currentJobCtx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir, userId: req.ctx.userId, isSuperAdmin: Boolean(req.ctx.isSuperAdmin) };
   let validation;
   try { validation = validatePayloadForEnqueue(type, payload); }
   finally { currentJobCtx = prevCtx; }
@@ -1562,7 +1627,10 @@ router.post("/enqueue", (req, res) => {
   const job = {
     id, type, payload,
     ownerId: req.ctx.userId,
-    ctx: { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir, userId: req.ctx.userId },
+    // isSuperAdmin persisted on the job so the worker can apply
+    // tier-aware rules (e.g. only super-admins fall back to env Zernio
+    // when no per-user webhook is configured).
+    ctx: { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir, userId: req.ctx.userId, isSuperAdmin: Boolean(req.ctx.isSuperAdmin) },
     status: "queued",
     createdAt: new Date().toISOString()
   };
@@ -1603,7 +1671,7 @@ router.post("/:id/retry", (req, res) => {
   const payload = JSON.parse(JSON.stringify(original.payload || {}));
 
   const prevCtx = currentJobCtx;
-  currentJobCtx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir, userId: req.ctx.userId };
+  currentJobCtx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir, userId: req.ctx.userId, isSuperAdmin: Boolean(req.ctx.isSuperAdmin) };
   let validation;
   try { validation = validatePayloadForEnqueue(type, payload); }
   finally { currentJobCtx = prevCtx; }
@@ -1615,7 +1683,7 @@ router.post("/:id/retry", (req, res) => {
     type,
     payload,
     ownerId: req.ctx.userId,
-    ctx: { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir, userId: req.ctx.userId },
+    ctx: { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir, userId: req.ctx.userId, isSuperAdmin: Boolean(req.ctx.isSuperAdmin) },
     status: "queued",
     createdAt: new Date().toISOString(),
     // Provenance — links the retry back to its source so we can show
@@ -1634,11 +1702,16 @@ router.post("/:id/retry", (req, res) => {
 // schedules in social.js). Skips HTTP/auth, performs the same validation.
 export async function enqueueCampaignAutoPost(payload, ctx) {
   // ctx (required for non-super-admin under MULTITENANT=true):
-  //   { dataDir, outputDir, userId }
+  //   { dataDir, outputDir, userId, isSuperAdmin }
   // Callers that don't pass ctx (legacy cron in social.js pre-refactor) get
   // the global super-admin paths, matching pre-multi-tenant behaviour.
+  // A missing isSuperAdmin defaults to false (safer — treat unknown ctx
+  // as a regular user so we never accidentally leak to env Zernio).
+  const normalizedCtx = ctx
+    ? { ...ctx, isSuperAdmin: Boolean(ctx.isSuperAdmin) }
+    : null;
   const prevCtx = currentJobCtx;
-  currentJobCtx = ctx || null;
+  currentJobCtx = normalizedCtx;
   let validation;
   try { validation = validatePayloadForEnqueue("campaign_auto_post", payload || {}); }
   finally { currentJobCtx = prevCtx; }
@@ -1648,8 +1721,8 @@ export async function enqueueCampaignAutoPost(payload, ctx) {
     id,
     type: "campaign_auto_post",
     payload: payload || {},
-    ownerId: ctx?.userId || null,
-    ctx: ctx || null,
+    ownerId: normalizedCtx?.userId || null,
+    ctx: normalizedCtx,
     status: "queued",
     createdAt: new Date().toISOString(),
   };

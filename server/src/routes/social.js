@@ -186,12 +186,21 @@ async function postToWebhook({ caption, videoUrl, title, webhookId, webhookUrl }
   const firstEnabled = !exact && !webhookUrl ? webhooks.find((w) => w.enabled && String(w.url || "").trim()) : null;
   const target = exact || firstEnabled;
   const url = String(target?.url || webhookUrl || "").trim();
-  const zernioConfigured = Boolean(
+  // Env Zernio is operator-only. For regular users, falling back to env
+  // Zernio would post THEIR campaign to the OPERATOR'S TikTok account,
+  // which is a multi-tenant cross-tenant leak. Gate on req.ctx.isSuperAdmin
+  // (set in jobs.js when persisting the job ctx, or by the userScope
+  // middleware on direct HTTP calls).
+  const callerIsSuperAdmin = Boolean(req?.ctx?.isSuperAdmin);
+  const zernioConfigured = callerIsSuperAdmin && Boolean(
     String(process.env.ZERNIO_API_KEY || "").trim() &&
     String(process.env.ZERNIO_TIKTOK_ACCOUNT_ID || "").trim()
   );
   if (!url && !zernioConfigured) {
-    throw new Error("No destination configured. Set a Make/Zapier webhook in Settings, or configure ZERNIO_API_KEY + ZERNIO_TIKTOK_ACCOUNT_ID in server/.env.");
+    throw new Error(callerIsSuperAdmin
+      ? "No destination configured. Set a Make/Zapier webhook in Settings, or configure ZERNIO_API_KEY + ZERNIO_TIKTOK_ACCOUNT_ID in server/.env."
+      : "No destination configured for your account. Connect a Make / Zapier webhook in Settings to enable auto-publish.",
+    );
   }
 
   const resolvedTitle = String(title || "").trim().slice(0, 100) || deriveCleanTitle(caption);
@@ -455,6 +464,47 @@ setTimeout(() => {
   try { refreshScheduleTasks(); } catch (e) { console.warn("[SOCIAL][CRON] init failed:", e?.message || e); }
 }, 1200);
 
+
+/**
+ * Pre-flight status for the AutoPublishCard / any "Auto-Publish Now" button.
+ * Tells the caller whether the user has any destination connected and what
+ * kinds. Drives the render-only-mode badge in the UI.
+ *
+ * Returns shape:
+ *   {
+ *     ok: true,
+ *     canAutoPublish: boolean,        // any destination connected?
+ *     destinations: string[],         // ["webhook"], ["webhook","zernio"], etc.
+ *     isSuperAdmin: boolean,          // UI uses this for "configure in .env" vs "Settings" hint
+ *   }
+ *
+ * Tier rules:
+ *   - super-admin: env Zernio counts
+ *   - regular user: only their own webhooks count (env Zernio off-limits)
+ */
+router.get("/auto-publish-status", (req, res) => {
+  const store = readSocialStore(req.ctx.dataDir);
+  const enabledWebhooks = Array.isArray(store?.webhooks)
+    ? store.webhooks.filter((w) => w?.enabled && String(w?.url || "").trim())
+    : [];
+  const destinations = [];
+  if (enabledWebhooks.length > 0) destinations.push("webhook");
+
+  if (req.ctx.isSuperAdmin) {
+    const zernioOn = Boolean(
+      String(process.env.ZERNIO_API_KEY || "").trim() &&
+      String(process.env.ZERNIO_TIKTOK_ACCOUNT_ID || "").trim(),
+    );
+    if (zernioOn) destinations.push("zernio");
+  }
+
+  res.json({
+    ok: true,
+    canAutoPublish: destinations.length > 0,
+    destinations,
+    isSuperAdmin: Boolean(req.ctx.isSuperAdmin),
+  });
+});
 
 router.get("/config", (req, res) => {
   const store = readSocialStore(req.ctx.dataDir);

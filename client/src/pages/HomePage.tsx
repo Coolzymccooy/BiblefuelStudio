@@ -111,11 +111,36 @@ function DailyStatsCard() {
     );
 }
 
+interface AutoPublishStatus {
+    canAutoPublish: boolean;
+    destinations: string[];
+    isSuperAdmin: boolean;
+}
+
 function AutoPublishCard() {
     const [isLaunching, setIsLaunching] = useState(false);
     const [recentJobId, setRecentJobId] = useState<string | null>(null);
+    const [status, setStatus] = useState<AutoPublishStatus | null>(null);
     const navigate = useNavigate();
     const [voiceDefaults] = useVoiceSynthesisDefaults();
+
+    // Pre-flight: ask the server whether this user has any destination
+    // connected. If not, the card switches to "render-only" mode — the
+    // button still works (generates the video) but the wording and toast
+    // make it clear nothing will be auto-posted. Avoids the misleading
+    // "Auto-Publish failed" red toast users used to get when the video
+    // actually rendered fine — there was just nowhere to post it.
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            const res = await api.get<AutoPublishStatus>('/api/social/auto-publish-status');
+            if (cancelled) return;
+            if (res.ok && res.data) setStatus(res.data);
+        })();
+        return () => { cancelled = true; };
+    }, []);
+
+    const renderOnly = status !== null && !status.canAutoPublish;
 
     const handleAutoPublish = async () => {
         setIsLaunching(true);
@@ -148,7 +173,9 @@ function AutoPublishCard() {
             });
             if (res.ok && res.data?.job?.id) {
                 setRecentJobId(res.data.job.id);
-                toast.success('Auto-Publish started — you\'ll be notified when the video is live');
+                toast.success(renderOnly
+                    ? "Generating your video — you'll be notified when it's ready (not auto-posted, see Settings)"
+                    : "Auto-Publish started — you'll be notified when the video is live");
             } else {
                 // Surface the rich payload (bucket/used/limit/hint for quota,
                 // structured codes for everything else) via the friendly
@@ -165,18 +192,41 @@ function AutoPublishCard() {
     };
 
     return (
-        <Card className="border-amber-500/30 bg-gradient-to-br from-amber-500/10 via-primary-500/5 to-transparent">
+        <Card className={renderOnly
+            ? 'border-emerald-500/30 bg-gradient-to-br from-emerald-500/10 via-primary-500/5 to-transparent'
+            : 'border-amber-500/30 bg-gradient-to-br from-amber-500/10 via-primary-500/5 to-transparent'}>
             <div className="flex flex-col sm:flex-row sm:items-center gap-4 p-1">
                 <div className="flex items-start gap-3 flex-1 min-w-0">
-                    <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3 flex-shrink-0">
-                        <Rocket size={22} className="text-amber-300" />
+                    <div className={renderOnly
+                        ? 'rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-3 flex-shrink-0'
+                        : 'rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3 flex-shrink-0'}>
+                        <Rocket size={22} className={renderOnly ? 'text-emerald-300' : 'text-amber-300'} />
                     </div>
                     <div className="min-w-0">
-                        <h3 className="text-lg font-bold text-white">Auto-Publish a fresh post</h3>
+                        <h3 className="text-lg font-bold text-white">
+                            {renderOnly ? 'Generate a fresh video' : 'Auto-Publish a fresh post'}
+                        </h3>
                         <p className="text-sm text-gray-400 mt-1">
-                            One click chains: <span className="text-amber-200">script</span> → background → voice → render → Make webhook → TikTok / YouTube.
-                            Requires at least one background in your Library.
+                            {renderOnly
+                                ? 'One click chains: script → background → voice → render. Your video will be ready to download or share manually.'
+                                : <>One click chains: <span className="text-amber-200">script</span> → background → voice → render → Make webhook → TikTok / YouTube.</>}
+                            {' '}Requires at least one background in your Library.
                         </p>
+                        {/* Render-only banner. Surfaces the same information
+                            we wrote into the job's share.skipped reason — but
+                            BEFORE the user even clicks the button, so they
+                            don't waste 2 minutes wondering why their video
+                            didn't post. */}
+                        {renderOnly && (
+                            <div className="mt-3 text-[12px] flex items-start gap-2 px-3 py-2 rounded-lg border border-amber-400/30 bg-amber-500/[0.08] text-amber-100">
+                                <span aria-hidden className="shrink-0">⚠️</span>
+                                <div className="flex-1">
+                                    <strong className="font-semibold text-amber-200">Render-only mode.</strong>{' '}
+                                    Your video will be generated but won't auto-post — you have no destination connected yet.{' '}
+                                    <Link to="/app/settings" className="underline decoration-amber-300/60 hover:text-amber-50">Set up Auto-Publish →</Link>
+                                </div>
+                            </div>
+                        )}
                         <div className="mt-2 text-[11px] flex flex-wrap items-center gap-2">
                             {voiceDefaults.enabled ? (
                                 <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-200">
@@ -194,6 +244,14 @@ function AutoPublishCard() {
                             <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-primary-500/15 border border-primary-500/30 text-primary-200">
                                 <Sparkles size={11} /> Kinetic captions on
                             </span>
+                            {/* Show which destinations are live (super-admin
+                                with env Zernio sees "TikTok via Zernio" so
+                                they can confirm at a glance things are wired). */}
+                            {status?.destinations?.map((d) => (
+                                <span key={d} className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-200">
+                                    ✓ {d === 'zernio' ? 'TikTok (Zernio)' : d === 'webhook' ? 'Webhook' : d}
+                                </span>
+                            ))}
                         </div>
                         {recentJobId && (
                             <p className="text-[11px] font-mono text-emerald-300 mt-2">
@@ -204,12 +262,14 @@ function AutoPublishCard() {
                 </div>
                 <div className="flex flex-col sm:flex-row gap-2 flex-shrink-0">
                     <Button
-                        className="h-11 px-6 bg-amber-500 hover:bg-amber-400 text-black font-bold border-amber-500/40"
+                        className={renderOnly
+                            ? 'h-11 px-6 bg-emerald-500 hover:bg-emerald-400 text-black font-bold border-emerald-500/40'
+                            : 'h-11 px-6 bg-amber-500 hover:bg-amber-400 text-black font-bold border-amber-500/40'}
                         onClick={handleAutoPublish}
                         isLoading={isLaunching}
                     >
                         <Rocket size={16} className="mr-2" />
-                        Auto-Publish Now
+                        {renderOnly ? 'Generate Video' : 'Auto-Publish Now'}
                     </Button>
                     <Button
                         variant="secondary"

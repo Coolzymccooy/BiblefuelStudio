@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { api } from './api';
 
-export type NotificationKind = 'job_done' | 'job_failed' | 'info' | 'campaign_done' | 'campaign_failed';
+export type NotificationKind = 'job_done' | 'job_failed' | 'info' | 'campaign_done' | 'campaign_failed' | 'campaign_render_only';
 
 export interface Notification {
     id: string;
@@ -18,7 +18,24 @@ interface JobLike {
     id: string;
     type: string;
     status: 'queued' | 'running' | 'done' | 'failed';
-    result?: { outFile?: string; file?: string;[key: string]: unknown };
+    result?: {
+        outFile?: string;
+        file?: string;
+        /**
+         * For campaign_auto_post: tells us whether the share step actually
+         * posted ({ ok: true }), failed ({ ok: false, error }), or was
+         * deliberately skipped because the user has no destination
+         * configured ({ ok: false, skipped: true, reason, message }).
+         */
+        share?: {
+            ok?: boolean;
+            skipped?: boolean;
+            reason?: string;
+            message?: string;
+            error?: string;
+        };
+        [key: string]: unknown;
+    };
     error?: string;
 }
 
@@ -127,19 +144,38 @@ async function pollJobs(): Promise<void> {
                 if (firstPollDone) {
                     const file = (job.result?.outFile as string | undefined) || (job.result?.file as string | undefined);
                     const isCampaign = job.type === 'campaign_auto_post';
-                    const kind: NotificationKind = isCampaign
-                        ? (job.status === 'done' ? 'campaign_done' : 'campaign_failed')
-                        : (job.status === 'done' ? 'job_done' : 'job_failed');
+                    // Render-only: campaign finished, video is ready, but the
+                    // share step was deliberately skipped because the user has
+                    // no destination configured. Different toast than a true
+                    // "posted ✓" — green still (the work succeeded) but the
+                    // message nudges toward Settings instead of celebrating
+                    // a publish that never happened.
+                    const isRenderOnly = isCampaign
+                        && job.status === 'done'
+                        && Boolean(job.result?.share?.skipped);
+                    const kind: NotificationKind = isRenderOnly
+                        ? 'campaign_render_only'
+                        : isCampaign
+                            ? (job.status === 'done' ? 'campaign_done' : 'campaign_failed')
+                            : (job.status === 'done' ? 'job_done' : 'job_failed');
+                    const title = isRenderOnly
+                        ? 'Video ready (not posted)'
+                        : job.status === 'done'
+                            ? (isCampaign ? 'Auto-Publish posted ✓' : `${prettyType(job.type)} ready`)
+                            : `${prettyType(job.type)} failed`;
+                    const body = isRenderOnly
+                        ? (job.result?.share?.message || 'Connect a destination in Settings to auto-publish next time.')
+                        : job.status === 'done'
+                            ? (file || '')
+                            : (job.error || 'Job failed');
                     pushNotification({
                         kind,
-                        title: job.status === 'done'
-                            ? (isCampaign ? 'Auto-Publish posted ✓' : `${prettyType(job.type)} ready`)
-                            : `${prettyType(job.type)} failed`,
-                        body: job.status === 'done' ? (file || '') : (job.error || 'Job failed'),
+                        title,
+                        body,
                         href: job.type.startsWith('render_') || isCampaign
                             ? `/render?share=${encodeURIComponent(job.id)}`
                             : '/jobs',
-                        meta: { jobId: job.id, file: file || null, jobType: job.type },
+                        meta: { jobId: job.id, file: file || null, jobType: job.type, renderOnly: isRenderOnly },
                     });
                 }
             }

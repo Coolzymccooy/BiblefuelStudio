@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { Bell, CheckCircle2, XCircle, ExternalLink, Rocket } from 'lucide-react';
+import { Bell, CheckCircle2, XCircle, ExternalLink, Rocket, Film } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import {
     useNotifications,
@@ -87,7 +87,7 @@ export function NotificationsBell() {
                         ) : (
                             <ul className="divide-y divide-white/5">
                                 {notifications.map((n) => {
-                                    const isCampaign = n.kind === 'campaign_done' || n.kind === 'campaign_failed';
+                                    const isCampaign = n.kind === 'campaign_done' || n.kind === 'campaign_failed' || n.kind === 'campaign_render_only';
                                     return (
                                     <li key={n.id}>
                                         <button
@@ -96,6 +96,8 @@ export function NotificationsBell() {
                                         >
                                             {n.kind === 'campaign_done' ? (
                                                 <Rocket size={16} className="text-amber-300 flex-shrink-0 mt-0.5" />
+                                            ) : n.kind === 'campaign_render_only' ? (
+                                                <Film size={16} className="text-emerald-300 flex-shrink-0 mt-0.5" />
                                             ) : n.kind === 'campaign_failed' ? (
                                                 <XCircle size={16} className="text-amber-400 flex-shrink-0 mt-0.5" />
                                             ) : n.kind === 'job_done' ? (
