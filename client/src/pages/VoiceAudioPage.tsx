@@ -127,6 +127,12 @@ export function VoiceAudioPage() {
     const [chatterboxAvailable, setChatterboxAvailable] = useState(false);
     const [azureAvailable, setAzureAvailable] = useState(false);
     const [fishAvailable, setFishAvailable] = useState(false);
+    // Server-provided diagnostic for greyed-out providers ("AZURE_SPEECH_KEY
+    // env var not set", "FISH_API_KEY still placeholder", …). Drives the
+    // tooltip on disabled buttons so users see EXACTLY what's missing
+    // instead of just an opaque disabled state.
+    const [azureReason, setAzureReason] = useState<string>('');
+    const [fishReason, setFishReason] = useState<string>('');
     const [voiceDefaults] = useVoiceSynthesisDefaults();
     const [ttsText, setTtsText] = useState('');
     const [audioPath, setAudioPath] = useState('');
@@ -264,7 +270,7 @@ export function VoiceAudioPage() {
     useEffect(() => {
         let cancelled = false;
         (async () => {
-            const res = await api.get<{ ok: boolean; providers: Record<string, { available: boolean; reachable?: boolean }> }>(
+            const res = await api.get<{ ok: boolean; providers: Record<string, { available: boolean; reachable?: boolean; reason?: string }> }>(
                 '/api/tts/providers?probe=1',
             );
             if (cancelled) return;
@@ -278,6 +284,10 @@ export function VoiceAudioPage() {
             // enough; no reachability probe needed.
             setAzureAvailable(Boolean(res.ok && providers.azure?.available));
             setFishAvailable(Boolean(res.ok && providers.fish?.available));
+            // Capture the reason for unavailability so disabled buttons can
+            // tell the user what's missing on hover. Cleared when available.
+            setAzureReason(providers.azure?.available ? '' : (providers.azure?.reason || ''));
+            setFishReason(providers.fish?.available ? '' : (providers.fish?.reason || ''));
         })();
         return () => {
             cancelled = true;
@@ -1075,7 +1085,9 @@ export function VoiceAudioPage() {
                                     type="button"
                                     onClick={() => setProvider('azure')}
                                     disabled={!azureAvailable}
-                                    title={azureAvailable ? '' : 'AZURE_SPEECH_KEY / AZURE_SPEECH_REGION not set — see docs/AZURE_SPEECH_SETUP.md'}
+                                    title={azureAvailable
+                                        ? ''
+                                        : (azureReason || 'AZURE_SPEECH_KEY / AZURE_SPEECH_REGION not set — see docs/AZURE_SPEECH_SETUP.md')}
                                     className={`px-3 py-1.5 text-xs font-medium transition border-l border-white/10 ${
                                         provider === 'azure'
                                             ? 'bg-primary-500 text-white'
@@ -1088,7 +1100,9 @@ export function VoiceAudioPage() {
                                     type="button"
                                     onClick={() => setProvider('fish')}
                                     disabled={!fishAvailable}
-                                    title={fishAvailable ? '' : 'FISH_API_KEY not set — see docs/FISH_AUDIO_SETUP.md'}
+                                    title={fishAvailable
+                                        ? ''
+                                        : (fishReason || 'FISH_API_KEY not set — see docs/FISH_AUDIO_SETUP.md')}
                                     className={`px-3 py-1.5 text-xs font-medium transition border-l border-white/10 ${
                                         provider === 'fish'
                                             ? 'bg-primary-500 text-white'
@@ -1123,6 +1137,21 @@ export function VoiceAudioPage() {
                                     Edge-TTS <span className="opacity-60">· free</span>
                                 </button>
                             </div>
+                            {/* Touch-device friendly diagnostic: surface the
+                                reason for any greyed-out provider so users
+                                without hover can still see what's missing.
+                                Only renders when a provider is unavailable
+                                AND the server returned a reason. */}
+                            {(!azureAvailable && azureReason) || (!fishAvailable && fishReason) ? (
+                                <ul className="mt-2 space-y-1 text-[0.6875rem] text-amber-300/90">
+                                    {!azureAvailable && azureReason && (
+                                        <li><span className="font-semibold">Azure disabled:</span> {azureReason}</li>
+                                    )}
+                                    {!fishAvailable && fishReason && (
+                                        <li><span className="font-semibold">Fish disabled:</span> {fishReason}</li>
+                                    )}
+                                </ul>
+                            ) : null}
                         </div>
                         {provider === 'chatterbox' ? (
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

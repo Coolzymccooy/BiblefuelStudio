@@ -71,6 +71,21 @@ export const azureSpeechProvider = {
     return isKeyConfigured(getKey()) && getRegion().length > 0;
   },
 
+  /**
+   * Diagnostic reason surfaced when isAvailable() returns false. Lets the
+   * UI tell the user exactly which env var is missing instead of a generic
+   * "not configured" — turns a 20-minute support ticket into a self-serve
+   * fix. Returns null when the provider IS available.
+   */
+  whyUnavailable() {
+    const key = getKey();
+    const region = getRegion();
+    if (!key) return "AZURE_SPEECH_KEY env var not set";
+    if (key.startsWith("your-")) return "AZURE_SPEECH_KEY still has the placeholder value (starts with 'your-')";
+    if (!region) return "AZURE_SPEECH_REGION env var not set (e.g. 'eastus')";
+    return null;
+  },
+
   capabilities() {
     return {
       wordTimestamps: true,

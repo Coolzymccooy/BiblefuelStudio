@@ -80,6 +80,27 @@ export const fishAudioProvider = {
     return isKeyConfigured(getApiKey());
   },
 
+  /**
+   * Diagnostic reason for the UI when isAvailable() returns false. For
+   * self-hosted Fish setups (FISH_API_BASE_URL pointing at a local
+   * instance), the local server may not require a real API key — but
+   * isAvailable() still gates on FISH_API_KEY because the bearer header
+   * is always sent. Setting FISH_API_KEY to any non-placeholder string
+   * (e.g. "local") satisfies the check.
+   */
+  whyUnavailable() {
+    const key = getApiKey();
+    if (!key) {
+      const base = getBaseUrl();
+      const isLocal = /^https?:\/\/(localhost|127\.|0\.0\.0\.0|192\.168\.|10\.)/i.test(base);
+      return isLocal
+        ? `FISH_API_KEY env var not set (local instance at ${base} — set FISH_API_KEY to any value, e.g. "local", to enable)`
+        : "FISH_API_KEY env var not set";
+    }
+    if (key.startsWith("your-")) return "FISH_API_KEY still has the placeholder value (starts with 'your-')";
+    return null;
+  },
+
   capabilities() {
     return {
       wordTimestamps: false,

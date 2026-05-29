@@ -159,15 +159,20 @@ export async function synthesize(req) {
 export function describeProviders() {
   const out = {};
   list().forEach((p, i) => {
+    const available = (() => {
+      try { return Boolean(p.isAvailable()); } catch { return false; }
+    })();
+    // When a provider is unavailable, surface why. Lets the UI render
+    // "AZURE_SPEECH_KEY env var not set" under a greyed-out button
+    // instead of a generic disabled state.
+    let reason = null;
+    if (!available && typeof p.whyUnavailable === "function") {
+      try { reason = p.whyUnavailable() || null; } catch { reason = null; }
+    }
     out[p.id] = {
-      available: (() => {
-        try {
-          return Boolean(p.isAvailable());
-        } catch {
-          return false;
-        }
-      })(),
+      available,
       priority: i + 1,
+      ...(reason ? { reason } : {}),
     };
   });
   return out;
@@ -202,13 +207,18 @@ export async function describeProvidersAsync() {
         reachable = false;
       }
     }
-    return { id: p.id, available, reachable };
+    let reason = null;
+    if (!available && typeof p.whyUnavailable === "function") {
+      try { reason = p.whyUnavailable() || null; } catch { reason = null; }
+    }
+    return { id: p.id, available, reachable, reason };
   }));
   const out = {};
   results.forEach((r, i) => {
     out[r.id] = {
       available: r.available,
       ...(r.reachable === undefined ? {} : { reachable: r.reachable }),
+      ...(r.reason ? { reason: r.reason } : {}),
       priority: i + 1,
     };
   });
