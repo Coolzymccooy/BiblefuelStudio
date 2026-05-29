@@ -5,6 +5,7 @@ import path from "path";
 import { v4 as uuid } from "uuid";
 import cron from "node-cron";
 import { google } from "googleapis";
+import jwt from "jsonwebtoken";
 import { readSocialStore, writeSocialStore } from "../lib/socialStore.js";
 // DATA_DIR is used ONLY by the boot-time cron rehydrator below, which operates
 // on the super-admin's global social.json. Per-user schedule rehydration is
@@ -490,6 +491,11 @@ router.get("/auto-publish-status", (req, res) => {
   const destinations = [];
   if (enabledWebhooks.length > 0) destinations.push("webhook");
 
+  // Per-user YouTube refresh token (set by the OAuth consent flow).
+  if (String(store?.direct?.youtube?.refreshToken || "").trim()) {
+    destinations.push("youtube");
+  }
+
   if (req.ctx.isSuperAdmin) {
     const zernioOn = Boolean(
       String(process.env.ZERNIO_API_KEY || "").trim() &&
@@ -643,6 +649,258 @@ router.post("/post", async (req, res) => {
     res.status(status).json({ ok: false, error: message });
   }
 });
+
+// =====================================================================
+// YouTube OAuth — per-user one-click connect.
+//
+// Architecture: the operator registers ONE Google OAuth client (its
+// clientId / clientSecret live in Coolify env as YOUTUBE_CLIENT_ID /
+// YOUTUBE_CLIENT_SECRET). Every regular user authenticates against the
+// same OAuth client — same pattern Buffer/Hootsuite use. Each user
+// gets their own refresh_token after consent, stored in their
+// per-user social.json. Posting then uses THEIR token, so videos go
+// to THEIR YouTube channel — never the operator's.
+//
+// Endpoints:
+//   GET  /api/social/youtube/status      auth=yes  → connection state
+//   GET  /api/social/youtube/connect     auth=yes  → returns { authUrl }
+//   GET  /api/social/youtube/callback    auth=NO   → google redirects here
+//   POST /api/social/youtube/disconnect  auth=yes  → clears tokens
+//
+// The callback is mounted separately on `app` (not under requireAuth) in
+// index.js — Google's redirect arrives with just `?code=...&state=...`
+// and no JWT; we recover the user from the signed `state` payload.
+// =====================================================================
+
+const YOUTUBE_SCOPES = [
+  "https://www.googleapis.com/auth/youtube.upload",
+  "https://www.googleapis.com/auth/youtube.readonly",
+];
+const YOUTUBE_OAUTH_STATE_TTL = "10m";
+
+function getOperatorYouTubeClient() {
+  const clientId = String(process.env.YOUTUBE_CLIENT_ID || process.env.SOCIAL_YOUTUBE_CLIENT_ID || "").trim();
+  const clientSecret = String(process.env.YOUTUBE_CLIENT_SECRET || process.env.SOCIAL_YOUTUBE_CLIENT_SECRET || "").trim();
+  return { clientId, clientSecret };
+}
+
+function getOauthRedirectUri() {
+  // Must match EXACTLY one of the "Authorized redirect URIs" registered
+  // for the operator's OAuth client in Google Cloud Console. We derive
+  // from PUBLIC_BASE_URL so dev/prod stay aligned without code changes.
+  const base = String(
+    process.env.PUBLIC_BASE_URL
+    || process.env.APP_BASE_URL
+    || process.env.RENDER_EXTERNAL_URL
+    || `http://localhost:${process.env.PORT || 5051}`
+  ).trim().replace(/\/+$/, "");
+  return `${base}/api/social/youtube/callback`;
+}
+
+function youtubeOauthClient() {
+  const { clientId, clientSecret } = getOperatorYouTubeClient();
+  if (!clientId || !clientSecret) {
+    throw new Error("YouTube OAuth not configured on this server. Operator must set YOUTUBE_CLIENT_ID + YOUTUBE_CLIENT_SECRET.");
+  }
+  return new google.auth.OAuth2(clientId, clientSecret, getOauthRedirectUri());
+}
+
+router.get("/youtube/status", (req, res) => {
+  const store = readSocialStore(req.ctx.dataDir);
+  const yt = store?.direct?.youtube || {};
+  const { clientId, clientSecret } = getOperatorYouTubeClient();
+  res.json({
+    ok: true,
+    // serverConfigured = the operator's OAuth credentials are set. Without
+    // this, no user can connect; the UI should hide the Connect button.
+    serverConfigured: Boolean(clientId && clientSecret),
+    connected: Boolean(yt?.refreshToken),
+    channelTitle: yt?.channelTitle || "",
+    channelId: yt?.channelId || "",
+    connectedAt: yt?.connectedAt || "",
+  });
+});
+
+router.get("/youtube/connect", (req, res) => {
+  let oauth;
+  try { oauth = youtubeOauthClient(); }
+  catch (e) { return res.status(503).json({ ok: false, error: String(e?.message || e) }); }
+
+  // Sign userId into the OAuth `state` param so the callback can recover
+  // which user is connecting WITHOUT trusting query params blindly.
+  // 10-minute TTL — plenty for a user clicking through Google's consent.
+  const secret = process.env.JWT_SECRET || "dev_secret_change_me";
+  const state = jwt.sign(
+    { sub: req.ctx.userId, purpose: "yt_oauth_connect" },
+    secret,
+    { expiresIn: YOUTUBE_OAUTH_STATE_TTL },
+  );
+
+  const authUrl = oauth.generateAuthUrl({
+    access_type: "offline",        // required to receive a refresh_token
+    prompt: "consent",             // force the refresh_token even on re-auth
+    scope: YOUTUBE_SCOPES,
+    state,
+    include_granted_scopes: true,
+  });
+
+  res.json({ ok: true, authUrl });
+});
+
+router.post("/youtube/disconnect", (req, res) => {
+  const store = readSocialStore(req.ctx.dataDir);
+  const yt = store.direct?.youtube || {};
+  const next = {
+    ...store,
+    direct: {
+      ...store.direct,
+      youtube: {
+        ...yt,
+        refreshToken: "",
+        channelId: "",
+        channelTitle: "",
+        connectedAt: "",
+      },
+    },
+  };
+  writeSocialStore(req.ctx.dataDir, next);
+  res.json({ ok: true });
+});
+
+/**
+ * Public OAuth callback handler — Google redirects here after consent.
+ * Mounted in index.js OUTSIDE the requireAuth chain because the request
+ * arrives from Google with no JWT (just `?code=` and `?state=`).
+ *
+ * Recovers the user from the signed `state`, exchanges the auth code
+ * for refresh_token + access_token, fetches the channel title, and
+ * persists everything into THAT user's social.json. Then returns a
+ * tiny HTML page that closes itself (popup flow) — or redirects back
+ * to /app/settings if the user opened the link in a regular tab.
+ *
+ * Exported separately so index.js can mount it without the auth middleware.
+ */
+export async function youtubeOauthCallback(req, res) {
+  const code = String(req.query?.code || "").trim();
+  const stateRaw = String(req.query?.state || "").trim();
+  const errParam = String(req.query?.error || "").trim();
+
+  // Render a small status page either way — popups and regular tabs both
+  // get something useful instead of a JSON dump.
+  const renderResultPage = (titleText, bodyHtml, isError = false) => {
+    res.status(isError ? 400 : 200).set("Content-Type", "text/html").send(`<!doctype html>
+<html><head><meta charset="utf-8"><title>${titleText}</title>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; background: #0b0c0e; color: #e5e7eb; margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+  .card { max-width: 480px; padding: 32px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1); border-radius: 16px; text-align: center; }
+  h1 { font-size: 18px; margin: 0 0 12px; color: ${isError ? '#fca5a5' : '#86efac'}; }
+  p { font-size: 14px; color: #9ca3af; margin: 0 0 16px; line-height: 1.5; }
+  .ok { font-size: 32px; }
+  a { color: #93c5fd; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+</style></head>
+<body>
+  <div class="card">
+    <div class="ok">${isError ? '⚠️' : '✓'}</div>
+    <h1>${titleText}</h1>
+    ${bodyHtml}
+  </div>
+  <script>
+    // If this was opened from a popup (window.opener exists and matches our
+    // origin), tell the opener and self-close after a beat. The opener's
+    // settings page reloads the YouTube status panel on receipt.
+    try {
+      if (window.opener && !window.opener.closed) {
+        window.opener.postMessage(
+          { type: 'biblefuel:youtube-oauth', ok: ${!isError} },
+          window.location.origin,
+        );
+        setTimeout(() => window.close(), 1500);
+      }
+    } catch {}
+  </script>
+</body></html>`);
+  };
+
+  if (errParam) {
+    return renderResultPage("YouTube connection cancelled", `<p>Google reported: <code>${errParam}</code></p><p><a href="/app/settings">Back to Settings</a></p>`, true);
+  }
+  if (!code || !stateRaw) {
+    return renderResultPage("Missing parameters", `<p>Google's callback didn't include the expected code/state.</p><p><a href="/app/settings">Try again</a></p>`, true);
+  }
+
+  let decoded;
+  try {
+    const secret = process.env.JWT_SECRET || "dev_secret_change_me";
+    decoded = jwt.verify(stateRaw, secret);
+  } catch {
+    return renderResultPage("Session expired", `<p>This connection link has expired (10-minute window). Start the connect flow again from Settings.</p><p><a href="/app/settings">Back to Settings</a></p>`, true);
+  }
+  if (!decoded || decoded.purpose !== "yt_oauth_connect" || !decoded.sub) {
+    return renderResultPage("Invalid state", `<p>The OAuth state didn't match what we issued. For your safety the connection was rejected.</p>`, true);
+  }
+
+  const userId = String(decoded.sub);
+
+  // We need the user's dataDir to write their social.json. The userScope
+  // middleware normally derives this from req.user.sub, but here there's
+  // no JWT on the request — so we call the path helpers directly with
+  // the recovered userId.
+  const { dataDirFor } = await import("../lib/paths.js");
+  const dataDir = dataDirFor({ sub: userId, email: decoded.email });
+
+  let tokens;
+  try {
+    const oauth = youtubeOauthClient();
+    const exchange = await oauth.getToken(code);
+    tokens = exchange.tokens;
+  } catch (e) {
+    return renderResultPage("Couldn't complete connection", `<p>Google rejected the authorization code. This usually means the redirect URI registered in Google Cloud Console doesn't match the one this server uses (<code>${getOauthRedirectUri()}</code>). Tell your operator.</p>`, true);
+  }
+  if (!tokens?.refresh_token) {
+    // Google only issues refresh_token on FIRST consent. If the user
+    // already authorized this OAuth app before, they need to revoke
+    // access at https://myaccount.google.com/permissions and re-connect.
+    return renderResultPage("Connection incomplete", `<p>Google didn't return a refresh token — this usually means you've previously authorized this app and Google won't re-issue one.</p><p>Revoke access at <a href="https://myaccount.google.com/permissions" target="_blank">myaccount.google.com/permissions</a> (look for Biblefuel), then come back and click Connect again.</p>`, true);
+  }
+
+  // Fetch channel title so we can show "Connected to Sarah's Channel"
+  // instead of just "Connected". Non-fatal if it fails.
+  let channelId = "";
+  let channelTitle = "";
+  try {
+    const oauth = youtubeOauthClient();
+    oauth.setCredentials({ refresh_token: tokens.refresh_token, access_token: tokens.access_token });
+    const youtube = google.youtube({ version: "v3", auth: oauth });
+    const ch = await youtube.channels.list({ part: ["snippet"], mine: true });
+    const first = ch?.data?.items?.[0];
+    channelId = String(first?.id || "");
+    channelTitle = String(first?.snippet?.title || "");
+  } catch (e) {
+    console.warn("[YT] channel lookup failed (non-fatal):", e?.message || e);
+  }
+
+  const store = readSocialStore(dataDir);
+  const next = {
+    ...store,
+    direct: {
+      ...store.direct,
+      youtube: {
+        ...(store.direct?.youtube || {}),
+        refreshToken: String(tokens.refresh_token),
+        channelId,
+        channelTitle,
+        connectedAt: new Date().toISOString(),
+      },
+    },
+  };
+  writeSocialStore(dataDir, next);
+
+  renderResultPage(
+    channelTitle ? `Connected to ${channelTitle}` : "YouTube connected",
+    `<p>${channelTitle ? `Your videos will now post to <strong>${channelTitle}</strong> on YouTube.` : "Your YouTube account is connected. Videos will post to your channel."}</p><p><a href="/app/settings">Back to Settings</a></p>`,
+  );
+}
 
 export default router;
 

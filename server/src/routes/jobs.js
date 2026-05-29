@@ -142,6 +142,13 @@ function describeConfiguredDestinations(ctx) {
     : [];
   if (enabledWebhooks.length > 0) destinations.push("webhook");
 
+  // YouTube — per-user OAuth refreshToken counts for everyone (super-admin
+  // and regular user alike). Operator clientId/clientSecret comes from env;
+  // each user gets their own refresh_token via the consent flow, posting
+  // to THEIR channel. No cross-tenant risk like env Zernio.
+  const ytRefresh = String(store?.direct?.youtube?.refreshToken || "").trim();
+  if (ytRefresh) destinations.push("youtube");
+
   if (ctx?.isSuperAdmin) {
     const zernioOn = Boolean(
       String(process.env.ZERNIO_API_KEY || "").trim() &&

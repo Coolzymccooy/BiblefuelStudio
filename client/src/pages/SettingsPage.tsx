@@ -13,6 +13,7 @@ import { VoiceSynthesisPanel } from '../components/VoiceSynthesisPanel';
 import { PlanAndUsageCard } from '../components/PlanAndUsageCard';
 import { PostizConnectCard } from '../components/PostizConnectCard';
 import { AutoPublishCard } from '../components/AutoPublishCard';
+import { YouTubeConnectCard } from '../components/YouTubeConnectCard';
 
 type SocialSchedule = {
     id: string;
@@ -269,6 +270,7 @@ export function SettingsPage() {
             </Card>
 
             <PlanAndUsageCard />
+            <YouTubeConnectCard />
             <PostizConnectCard />
             <AutoPublishCard />
 

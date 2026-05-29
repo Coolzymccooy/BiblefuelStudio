@@ -20,7 +20,7 @@ import audioAdvancedRouter from "./src/routes/audio_advanced.js";
 import authRouter from "./src/routes/auth.js";
 import jobsRouter from "./src/routes/jobs.js";
 import libraryRouter from "./src/routes/library.js";
-import socialRouter from "./src/routes/social.js";
+import socialRouter, { youtubeOauthCallback } from "./src/routes/social.js";
 import firebaseRouter from "./src/routes/firebase.js";
 import bibleRouter from "./src/routes/bible.js";
 import seriesRouter from "./src/routes/series.js";
@@ -329,6 +329,11 @@ app.use("/api/transcribe", requireAuth, withUserScope, requireVerifiedEmail, quo
 app.use("/api/audio",     requireAuth, withUserScope, requireVerifiedEmail,                       audioRouter);
 app.use("/api/audio-adv", requireAuth, withUserScope, requireVerifiedEmail,                       audioAdvancedRouter);
 app.use("/api/library",   requireAuth, withUserScope,                                              libraryRouter);
+// YouTube OAuth callback — Google redirects here after a user consents,
+// arriving with no JWT (just ?code and ?state). Mount BEFORE the
+// auth-gated /api/social router so it isn't blocked by requireAuth.
+// The handler recovers the user from the signed `state` itself.
+app.get("/api/social/youtube/callback", youtubeOauthCallback);
 app.use("/api/social",    requireAuth, withUserScope, requireVerifiedEmail,                       socialRouter);
 app.use("/api/firebase",  requireAuth, withUserScope,                                              firebaseRouter);
 app.use("/api/bible",     requireAuth, withUserScope,                                              bibleRouter);

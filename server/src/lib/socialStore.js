@@ -19,10 +19,20 @@ function getYouTubeEnvDefaults() {
 
 function mergeYouTubeConfig(stored = {}) {
   const env = getYouTubeEnvDefaults();
+  // Per-user values WIN over env. Env is the operator fallback (super-admin
+  // shares ops-level YouTube creds via env vars). Regular users get their
+  // own refreshToken set by the OAuth callback after they click "Connect
+  // YouTube" — that's what enables per-user posting.
   return {
     clientId: firstNonEmpty(stored?.clientId, env.clientId),
     clientSecret: firstNonEmpty(stored?.clientSecret, env.clientSecret),
     refreshToken: firstNonEmpty(stored?.refreshToken, env.refreshToken),
+    // Channel metadata captured during OAuth callback so the UI can
+    // display "Connected to Sarah's Channel" instead of just "Connected".
+    // Optional — older stores without these fields just show "Connected".
+    channelId: String(stored?.channelId || "").trim(),
+    channelTitle: String(stored?.channelTitle || "").trim(),
+    connectedAt: stored?.connectedAt ? String(stored.connectedAt) : "",
   };
 }
 
@@ -113,6 +123,9 @@ export function writeSocialStore(dataDir, next) {
         clientId: String(next?.direct?.youtube?.clientId || "").trim(),
         clientSecret: String(next?.direct?.youtube?.clientSecret || "").trim(),
         refreshToken: String(next?.direct?.youtube?.refreshToken || "").trim(),
+        channelId: String(next?.direct?.youtube?.channelId || "").trim(),
+        channelTitle: String(next?.direct?.youtube?.channelTitle || "").trim(),
+        connectedAt: next?.direct?.youtube?.connectedAt ? String(next.direct.youtube.connectedAt) : "",
       },
       instagram: next?.direct?.instagram || {},
       tiktok: next?.direct?.tiktok || {},
