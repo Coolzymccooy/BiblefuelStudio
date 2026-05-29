@@ -651,6 +651,119 @@ router.post("/post", async (req, res) => {
 });
 
 // =====================================================================
+// Per-user Make / Zapier / generic webhook destinations.
+//
+// Storage already exists in socialStore.webhooks (per-user, multi-tenant
+// safe). These focused endpoints exist so the Settings UI doesn't have to
+// PUT the whole config blob just to add/test/remove one webhook —
+// previously the only way was POST /config with the full payload, which
+// is brittle in a UI form context.
+//
+// Endpoints:
+//   GET    /api/social/webhooks            list user's webhooks
+//   POST   /api/social/webhooks            add (or replace by id)
+//   POST   /api/social/webhooks/:id/test   POST a sample payload to the URL
+//   DELETE /api/social/webhooks/:id
+// =====================================================================
+
+router.get("/webhooks", (req, res) => {
+  const store = readSocialStore(req.ctx.dataDir);
+  res.json({
+    ok: true,
+    webhooks: (store.webhooks || []).map((w) => ({
+      id: w.id, name: w.name, url: w.url, enabled: w.enabled,
+    })),
+  });
+});
+
+router.post("/webhooks", (req, res) => {
+  const name = String(req.body?.name || "").trim();
+  const url = String(req.body?.url || "").trim();
+  if (!name) return res.status(400).json({ ok: false, error: "name required" });
+  if (!url) return res.status(400).json({ ok: false, error: "url required" });
+  if (!/^https?:\/\//i.test(url)) {
+    return res.status(400).json({ ok: false, error: "url must start with http:// or https://" });
+  }
+  const enabled = req.body?.enabled !== false;
+  const incomingId = String(req.body?.id || "").trim();
+
+  const store = readSocialStore(req.ctx.dataDir);
+  const existing = Array.isArray(store.webhooks) ? [...store.webhooks] : [];
+  const entry = {
+    id: incomingId || `wh_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    name,
+    url,
+    enabled,
+  };
+  const idx = existing.findIndex((w) => w.id === entry.id);
+  if (idx >= 0) existing[idx] = entry; else existing.push(entry);
+
+  writeSocialStore(req.ctx.dataDir, { ...store, webhooks: existing });
+  res.json({ ok: true, webhook: entry });
+});
+
+router.delete("/webhooks/:id", (req, res) => {
+  const id = String(req.params.id || "").trim();
+  if (!id) return res.status(400).json({ ok: false, error: "id required" });
+  const store = readSocialStore(req.ctx.dataDir);
+  const next = (store.webhooks || []).filter((w) => w.id !== id);
+  writeSocialStore(req.ctx.dataDir, { ...store, webhooks: next });
+  res.json({ ok: true });
+});
+
+router.post("/webhooks/:id/test", async (req, res) => {
+  const id = String(req.params.id || "").trim();
+  const store = readSocialStore(req.ctx.dataDir);
+  const hook = (store.webhooks || []).find((w) => w.id === id);
+  if (!hook?.url) return res.status(404).json({ ok: false, error: "webhook not found" });
+
+  // Sample payload mirrors what the campaign worker actually sends so the
+  // user's Make/Zapier scenario can be designed against it. The `__test`
+  // flag lets the scenario distinguish a probe from a real post — Make
+  // can branch on it to skip actually publishing to TikTok.
+  const sample = {
+    __test: true,
+    title: "Biblefuel test post",
+    caption: "If you can see this in your Make/Zapier history, your webhook is wired up correctly.",
+    videoUrl: "https://biblefuel.tiwaton.co.uk/outputs/sample.mp4",
+    source: "biblefuel-studio",
+    sentAt: new Date().toISOString(),
+  };
+
+  // Tight 10s timeout — Make/Zapier respond in milliseconds; anything slow
+  // is the user's own scenario doing work, not the webhook accepting the
+  // payload. We're only verifying the URL accepts a POST.
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 10_000);
+  try {
+    const resp = await fetch(hook.url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(sample),
+      signal: ctrl.signal,
+    });
+    clearTimeout(timer);
+    const bodyText = await resp.text().catch(() => "");
+    if (resp.ok) {
+      return res.json({ ok: true, status: resp.status, sample });
+    }
+    return res.json({
+      ok: false,
+      status: resp.status,
+      error: `Webhook returned HTTP ${resp.status}. ${bodyText.slice(0, 200)}`,
+      sample,
+    });
+  } catch (err) {
+    clearTimeout(timer);
+    const msg = String(err?.message || err);
+    const friendly = msg.includes("abort")
+      ? "Webhook took longer than 10 seconds to respond. Your Make/Zapier scenario may be doing too much work synchronously — make it asynchronous."
+      : `Couldn't reach the webhook URL. ${msg}`;
+    return res.json({ ok: false, error: friendly });
+  }
+});
+
+// =====================================================================
 // YouTube OAuth — per-user one-click connect.
 //
 // Architecture: the operator registers ONE Google OAuth client (its
