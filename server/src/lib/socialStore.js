@@ -117,6 +117,15 @@ export function writeSocialStore(dataDir, next) {
       name: String(w?.name || "Webhook").trim() || "Webhook",
       url: String(w?.url || "").trim(),
       enabled: Boolean(w?.enabled ?? true),
+      // Delivery history surfaced in the UI as "Last delivery: 2 days ago"
+      // + failure indicators. Touched by every dispatch (test or
+      // production) so users see proof their scenario is reachable AND
+      // catch silent breakages (e.g. user deleted the Make scenario after
+      // saving it here) without needing to wait for a real render to fail.
+      lastSuccessAt: w?.lastSuccessAt ? String(w.lastSuccessAt) : "",
+      lastFailureAt: w?.lastFailureAt ? String(w.lastFailureAt) : "",
+      lastFailureMessage: w?.lastFailureMessage ? String(w.lastFailureMessage).slice(0, 300) : "",
+      failureCount: Number.isFinite(Number(w?.failureCount)) ? Math.max(0, Number(w.failureCount)) : 0,
     })) : [],
     direct: {
       youtube: {

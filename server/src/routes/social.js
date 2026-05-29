@@ -171,6 +171,50 @@ async function publishToZernioTikTok({ caption, videoUrl, title }) {
   return { ok: true, data };
 }
 
+// Webhook delivery timeout. The webhook itself should ACCEPT the payload
+// in milliseconds (Make/Zapier return 200 the moment they queue the
+// trigger). The downstream platform work — actually posting to TikTok,
+// upload to IG, etc. — happens ASYNC inside Make's worker. We must not
+// wait for that downstream work or every campaign would hang.
+const WEBHOOK_DISPATCH_TIMEOUT_MS = 15_000;
+
+/**
+ * Persist delivery-history fields on a webhook so the UI can show
+ * "Last delivery: 2 days ago" + failure indicators. Touched by both
+ * the production campaign dispatch and the manual /test endpoint so
+ * users see proof their scenario is reachable AND catch silent
+ * breakages (e.g. scenario deleted in Make after saving here) without
+ * waiting for a real render to fail.
+ *
+ * Best-effort: a write failure here must never break the dispatch
+ * itself — that's why we swallow.
+ *
+ * @param {string} dataDir
+ * @param {string} webhookId
+ * @param {{ ok: boolean, error?: string }} outcome
+ */
+function recordWebhookDelivery(dataDir, webhookId, outcome) {
+  if (!dataDir || !webhookId) return;
+  try {
+    const s = readSocialStore(dataDir);
+    const list = Array.isArray(s.webhooks) ? [...s.webhooks] : [];
+    const idx = list.findIndex((w) => w.id === webhookId);
+    if (idx < 0) return;
+    const now = new Date().toISOString();
+    list[idx] = outcome.ok
+      ? { ...list[idx], lastSuccessAt: now, failureCount: 0, lastFailureMessage: "" }
+      : {
+          ...list[idx],
+          lastFailureAt: now,
+          failureCount: (Number(list[idx].failureCount) || 0) + 1,
+          lastFailureMessage: String(outcome.error || "").slice(0, 300),
+        };
+    writeSocialStore(dataDir, { ...s, webhooks: list });
+  } catch (e) {
+    console.warn("[SOCIAL] recordWebhookDelivery failed (non-fatal):", e?.message || e);
+  }
+}
+
 async function postToWebhook({ caption, videoUrl, title, webhookId, webhookUrl }, req, store) {
   const mediaUrl = toAbsolutePublicUrl(req, videoUrl);
   if (!/^https?:\/\//i.test(mediaUrl)) {
@@ -208,26 +252,46 @@ async function postToWebhook({ caption, videoUrl, title, webhookId, webhookUrl }
 
   let make = null;
   if (url) {
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        title: resolvedTitle,
-        caption,
-        videoUrl: mediaUrl,
-        source: "biblefuel-studio",
-        sentAt: new Date().toISOString(),
-      }),
-    });
-    if (!resp.ok) {
-      const err = await resp.text();
-      // If Zernio is also configured, treat Make's failure as soft so we
-      // still attempt TikTok directly.
-      const msg = `Webhook failed: ${resp.status} ${err.slice(0, 300)}`;
+    // Fire-and-forget downstream: we only wait long enough for Make/Zapier
+    // to acknowledge the trigger (the 2xx). We do NOT wait for the
+    // downstream platform work (TikTok upload, IG processing, etc.) —
+    // those happen inside Make's own worker. Without the timeout, a slow
+    // Make scenario doing too much synchronously would hang every campaign.
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), WEBHOOK_DISPATCH_TIMEOUT_MS);
+    try {
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: resolvedTitle,
+          caption,
+          videoUrl: mediaUrl,
+          source: "biblefuel-studio",
+          sentAt: new Date().toISOString(),
+        }),
+        signal: ctrl.signal,
+      });
+      clearTimeout(timer);
+      if (!resp.ok) {
+        const err = await resp.text().catch(() => "");
+        const msg = `Webhook failed: ${resp.status} ${err.slice(0, 300)}`;
+        recordWebhookDelivery(req?.ctx?.dataDir, target?.id, { ok: false, error: msg });
+        if (!zernioConfigured) throw new Error(msg);
+        make = { ok: false, error: msg };
+      } else {
+        recordWebhookDelivery(req?.ctx?.dataDir, target?.id, { ok: true });
+        make = { ok: true };
+      }
+    } catch (err) {
+      clearTimeout(timer);
+      const aborted = String(err?.message || "").toLowerCase().includes("abort");
+      const msg = aborted
+        ? `Webhook took longer than ${WEBHOOK_DISPATCH_TIMEOUT_MS / 1000}s to acknowledge — your Make/Zapier scenario may be doing too much work synchronously`
+        : `Webhook dispatch error: ${String(err?.message || err).slice(0, 300)}`;
+      recordWebhookDelivery(req?.ctx?.dataDir, target?.id, { ok: false, error: msg });
       if (!zernioConfigured) throw new Error(msg);
       make = { ok: false, error: msg };
-    } else {
-      make = { ok: true };
     }
   }
 
@@ -671,7 +735,14 @@ router.get("/webhooks", (req, res) => {
   res.json({
     ok: true,
     webhooks: (store.webhooks || []).map((w) => ({
-      id: w.id, name: w.name, url: w.url, enabled: w.enabled,
+      id: w.id,
+      name: w.name,
+      url: w.url,
+      enabled: w.enabled,
+      lastSuccessAt: w.lastSuccessAt || "",
+      lastFailureAt: w.lastFailureAt || "",
+      lastFailureMessage: w.lastFailureMessage || "",
+      failureCount: Number(w.failureCount) || 0,
     })),
   });
 });
@@ -745,20 +816,19 @@ router.post("/webhooks/:id/test", async (req, res) => {
     clearTimeout(timer);
     const bodyText = await resp.text().catch(() => "");
     if (resp.ok) {
+      recordWebhookDelivery(req.ctx.dataDir, id, { ok: true });
       return res.json({ ok: true, status: resp.status, sample });
     }
-    return res.json({
-      ok: false,
-      status: resp.status,
-      error: `Webhook returned HTTP ${resp.status}. ${bodyText.slice(0, 200)}`,
-      sample,
-    });
+    const errMsg = `Webhook returned HTTP ${resp.status}. ${bodyText.slice(0, 200)}`;
+    recordWebhookDelivery(req.ctx.dataDir, id, { ok: false, error: errMsg });
+    return res.json({ ok: false, status: resp.status, error: errMsg, sample });
   } catch (err) {
     clearTimeout(timer);
     const msg = String(err?.message || err);
     const friendly = msg.includes("abort")
       ? "Webhook took longer than 10 seconds to respond. Your Make/Zapier scenario may be doing too much work synchronously — make it asynchronous."
       : `Couldn't reach the webhook URL. ${msg}`;
+    recordWebhookDelivery(req.ctx.dataDir, id, { ok: false, error: friendly });
     return res.json({ ok: false, error: friendly });
   }
 });

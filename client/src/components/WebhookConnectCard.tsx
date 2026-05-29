@@ -11,12 +11,31 @@ interface Webhook {
     name: string;
     url: string;
     enabled: boolean;
+    lastSuccessAt?: string;
+    lastFailureAt?: string;
+    lastFailureMessage?: string;
+    failureCount?: number;
 }
 
 interface TestResult {
     ok: boolean;
     status?: number;
     error?: string;
+}
+
+/**
+ * Human relative-time formatter for delivery history ("2 days ago",
+ * "just now"). Keeps the format tight; no library dependency.
+ */
+function timeAgo(iso: string): string {
+    if (!iso) return '';
+    const t = Date.parse(iso);
+    if (!Number.isFinite(t)) return '';
+    const diffSec = Math.max(0, Math.round((Date.now() - t) / 1000));
+    if (diffSec < 60) return 'just now';
+    if (diffSec < 3600) return `${Math.floor(diffSec / 60)} min ago`;
+    if (diffSec < 86400) return `${Math.floor(diffSec / 3600)} h ago`;
+    return `${Math.floor(diffSec / 86400)} d ago`;
 }
 
 /**
@@ -74,7 +93,10 @@ export function WebhookConnectCard() {
             const result: TestResult = { ok: Boolean(body.ok), status: body.status, error: body.error };
             setTestResults((r) => ({ ...r, [id]: result }));
             if (result.ok) {
-                toast.success('Webhook responded ✓ — your scenario received the test payload');
+                toast.success(
+                    'Test sent ✓ — confirm it appears in your Make/Zapier run history. (Webhook reachable ≠ scenario turned on.)',
+                    { duration: 8000 },
+                );
             } else {
                 toast.error(result.error || 'Webhook test failed', { duration: 10000 });
             }
@@ -99,10 +121,10 @@ export function WebhookConnectCard() {
 
     return (
         <>
-            <Card title="Make / Zapier webhook" className="border-white/10">
+            <Card title="TikTok + Instagram Auto-Publish" className="border-white/10">
                 <p className="text-xs text-gray-400 mb-4">
-                    Send your rendered videos to Make, Zapier, n8n, or any tool that accepts a webhook.
-                    Your scenario then posts to TikTok, Instagram, X, LinkedIn — wherever you've connected it.
+                    <span className="text-gray-300">Powered by Make or Zapier</span> — connect your account once, and your rendered videos
+                    auto-post to TikTok, Instagram, X, LinkedIn, anywhere your scenario is wired up.
                 </p>
 
                 {loading ? (
@@ -114,22 +136,34 @@ export function WebhookConnectCard() {
                         <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3 inline-flex">
                             <Zap size={22} className="text-amber-300" />
                         </div>
-                        <p className="text-sm font-semibold text-white mt-3">No webhook connected yet</p>
+                        <p className="text-sm font-semibold text-white mt-3">Not connected yet</p>
                         <p className="text-xs text-gray-400 mt-1 mb-4 max-w-md mx-auto">
-                            One webhook can handle TikTok + Instagram + X + LinkedIn all at once via Make/Zapier.
-                            Takes about 5 minutes to set up.
+                            One connection handles TikTok + Instagram + X + LinkedIn — all at once. Takes about 5 minutes to set up, and Make &amp; Zapier both offer free tiers for testing.
                         </p>
                         <Button
                             className="text-xs h-9 px-4 bg-amber-500 hover:bg-amber-400 text-black font-semibold border-amber-500/40"
                             onClick={() => setShowAddModal(true)}
                         >
-                            <Plug size={14} className="mr-1.5" /> Connect a webhook
+                            <Plug size={14} className="mr-1.5" /> Connect now
                         </Button>
                     </div>
                 ) : (
                     <div className="space-y-2">
                         {webhooks.map((w) => {
                             const result = testResults[w.id];
+                            // Server-side delivery history. Most-recent action
+                            // wins for the badge — if a real campaign just
+                            // succeeded after a prior failure, we want the
+                            // green badge, not a stale red one. Falls back to
+                            // the in-memory test result when no server-side
+                            // delivery has happened yet (e.g. just-added
+                            // webhook before first Test click).
+                            const lastSuccessTs = w.lastSuccessAt ? Date.parse(w.lastSuccessAt) : 0;
+                            const lastFailureTs = w.lastFailureAt ? Date.parse(w.lastFailureAt) : 0;
+                            const recentFailure = lastFailureTs > lastSuccessTs && (w.failureCount || 0) > 0;
+                            const everSucceeded = lastSuccessTs > 0;
+                            const showOkBadge = (result?.ok === true) || (!result && everSucceeded && !recentFailure);
+                            const showFailBadge = (result && !result.ok) || (!result && recentFailure);
                             return (
                                 <div
                                     key={w.id}
@@ -141,20 +175,42 @@ export function WebhookConnectCard() {
                                     <div className="flex-1 min-w-0">
                                         <div className="flex items-center gap-2 flex-wrap">
                                             <span className="text-sm font-semibold text-white">{w.name}</span>
-                                            {result?.ok && (
+                                            {showOkBadge && (
                                                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-200 text-[10px] font-semibold">
-                                                    <CheckCircle2 size={10} /> Tested OK
+                                                    <CheckCircle2 size={10} /> Healthy
                                                 </span>
                                             )}
-                                            {result && !result.ok && (
+                                            {showFailBadge && (
                                                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-500/15 border border-rose-500/30 text-rose-200 text-[10px] font-semibold">
-                                                    <AlertCircle size={10} /> Test failed
+                                                    <AlertCircle size={10} /> {recentFailure && (w.failureCount || 0) > 1 ? `${w.failureCount} failures` : 'Delivery failed'}
                                                 </span>
                                             )}
                                         </div>
                                         <p className="text-[10px] font-mono text-gray-400 truncate mt-0.5">{w.url}</p>
-                                        {result && !result.ok && result.error && (
+                                        {/* Delivery history line — "Last delivery: 2 h ago" /
+                                            "Last failure: 1 d ago". Catches silent breakage
+                                            (e.g. user deleted their Make scenario after
+                                            connecting it here). */}
+                                        {(everSucceeded || lastFailureTs > 0) && (
+                                            <p className="text-[10px] text-gray-500 mt-1">
+                                                {everSucceeded && (
+                                                    <>
+                                                        Last delivery: <span className={recentFailure ? 'text-gray-400' : 'text-emerald-300/90'}>{timeAgo(w.lastSuccessAt || '')}</span>
+                                                    </>
+                                                )}
+                                                {recentFailure && (
+                                                    <>
+                                                        {everSucceeded ? ' · ' : ''}
+                                                        Last failure: <span className="text-rose-300/90">{timeAgo(w.lastFailureAt || '')}</span>
+                                                    </>
+                                                )}
+                                            </p>
+                                        )}
+                                        {(result && !result.ok && result.error) && (
                                             <p className="text-[11px] text-rose-300 mt-1">{result.error}</p>
+                                        )}
+                                        {(!result && recentFailure && w.lastFailureMessage) && (
+                                            <p className="text-[11px] text-rose-300 mt-1 line-clamp-2">{w.lastFailureMessage}</p>
                                         )}
                                     </div>
                                     <div className="flex items-center gap-2 flex-shrink-0">
@@ -293,7 +349,7 @@ function AddWebhookModal({ onClose, onSaved }: AddWebhookModalProps) {
                                             <strong className="text-white">Make.com</strong>
                                             <ExternalLink size={14} className="text-purple-300 group-hover:translate-x-0.5 transition-transform" />
                                         </div>
-                                        <p className="text-[11px] text-gray-400">More flexible. Free tier = 1,000 ops/month.</p>
+                                        <p className="text-[11px] text-gray-400">More flexible. Free tier available for testing and light usage.</p>
                                     </a>
                                     <a
                                         href="https://zapier.com/sign-up"
@@ -305,7 +361,7 @@ function AddWebhookModal({ onClose, onSaved }: AddWebhookModalProps) {
                                             <strong className="text-white">Zapier</strong>
                                             <ExternalLink size={14} className="text-orange-300 group-hover:translate-x-0.5 transition-transform" />
                                         </div>
-                                        <p className="text-[11px] text-gray-400">Simpler interface. Free tier = 100 tasks/month.</p>
+                                        <p className="text-[11px] text-gray-400">Simpler interface. Free tier available for testing.</p>
                                     </a>
                                 </div>
                                 <p className="text-[11px] text-gray-500 mt-2">
@@ -383,7 +439,7 @@ function AddWebhookModal({ onClose, onSaved }: AddWebhookModalProps) {
                             )}
                             {testResult?.ok && (
                                 <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/[0.08] p-3 text-xs text-emerald-200">
-                                    <strong>✓ Test ping received!</strong> Your Make / Zapier scenario got the test payload. Check the scenario's run history if you want to see it.
+                                    <strong>✓ Test ping accepted.</strong> Now open your Make / Zapier <strong>scenario run history</strong> and confirm the test event appears there. If it doesn't, your scenario isn't turned on — that's the most common gotcha.
                                 </div>
                             )}
                         </>
