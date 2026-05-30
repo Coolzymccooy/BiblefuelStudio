@@ -14,6 +14,7 @@ import {
     Library,
     Film,
     Download,
+    Sparkles,
     X,
 } from 'lucide-react';
 import { loadJson, saveJson, STORAGE_KEYS } from '../lib/storage';
@@ -154,6 +155,13 @@ export function TimelinePage() {
     const [backgroundItems, setBackgroundItems] = usePersistedState<LibraryItem[]>(
         STORAGE_KEYS.sclBackgrounds,
         [],
+    );
+    // Auto mode: when on (default), BibleFuel picks a mood-matched background per
+    // beat from the user's own library — and AI-generates one if the pool is
+    // empty. Manually selecting clips overrides auto for that render.
+    const [autoBackground, setAutoBackground] = usePersistedState<boolean>(
+        STORAGE_KEYS.sclAutoBackground,
+        true,
     );
     const [showLibraryModal, setShowLibraryModal] = useState(false);
     const [libraryItems, setLibraryItems] = useState<LibraryItem[]>([]);
@@ -410,9 +418,11 @@ export function TimelinePage() {
             toast.error('Transcribe the sermon first');
             return;
         }
-        // Audio sources need at least one background picked; video sources bring their own visual layer.
-        if (sourceMediaKind === 'audio' && backgroundItems.length === 0) {
-            toast.error('Pick a video background to render captions over your audio');
+        // Audio sources need a background. In Auto mode BibleFuel supplies one
+        // from the user's library (or AI-generates it), so a manual pick is only
+        // required when Auto is off. Video sources bring their own visual layer.
+        if (sourceMediaKind === 'audio' && backgroundItems.length === 0 && !autoBackground) {
+            toast.error('Pick a video background, or turn on Auto to let BibleFuel choose');
             return;
         }
 
@@ -429,12 +439,17 @@ export function TimelinePage() {
             // Multi-bg: send the full ORDERED list as backgroundPaths[]. Server
             // hard-cuts at durationSec/N. Falls back to single-bg when only
             // one is selected (server treats N=1 as the legacy lean path).
+            // Manual picks always win; otherwise Auto mode asks the server to
+            // choose per-beat from the user's library (and AI-generate if empty).
+            const useAuto = autoBackground && backgroundItems.length === 0;
             const payload = sourceMediaKind === 'video'
                 ? { videoPath: sourceMediaPath }
-                : {
-                    audioPath: sourceMediaPath,
-                    backgroundPaths: backgroundItems.map((b) => String(b.id)),
-                };
+                : useAuto
+                    ? { audioPath: sourceMediaPath, autoBackground: true }
+                    : {
+                        audioPath: sourceMediaPath,
+                        backgroundPaths: backgroundItems.map((b) => String(b.id)),
+                    };
             // POST returns immediately with a jobId; the heavy lifting runs in
             // the background. We track real ffmpeg progress via SSE on the
             // returned jobId so the inline card shows a determinate bar.
@@ -690,7 +705,7 @@ export function TimelinePage() {
                             isRenderingVideo
                             || !sourceMediaPath
                             || !transcript
-                            || (sourceMediaKind === 'audio' && backgroundItems.length === 0)
+                            || (sourceMediaKind === 'audio' && backgroundItems.length === 0 && !autoBackground)
                         }
                         className="w-full sm:w-auto"
                     >
@@ -1098,6 +1113,29 @@ export function TimelinePage() {
                         tooltip={`Pick 1–${MAX_BACKGROUNDS} background clips. With more than one, the render hard-cuts between them at equal slots (1/N of the sermon duration each). Use the arrows to reorder.`}
                     >
                         <div className="p-2">
+                            {/* Auto background: default on. BibleFuel picks a
+                                mood-matched clip per beat from the user's library
+                                (AI-generates one if the pool is empty). Picking
+                                clips manually below overrides Auto. */}
+                            <label className="flex items-start gap-2 mb-3 p-2 rounded-xl border border-primary-500/20 bg-primary-500/5 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={autoBackground}
+                                    onChange={(e) => setAutoBackground(e.target.checked)}
+                                    className="mt-0.5 accent-primary-500"
+                                />
+                                <span className="flex-1">
+                                    <span className="flex items-center gap-1.5 text-xs font-semibold text-primary-200">
+                                        <Sparkles size={13} />
+                                        Auto — let BibleFuel choose
+                                    </span>
+                                    <span className="block text-[10px] text-gray-400 mt-0.5">
+                                        {backgroundItems.length > 0
+                                            ? 'Overridden — your selected clips below will be used.'
+                                            : 'Picks a mood-matched background per beat from your library. Generates one if your library is empty.'}
+                                    </span>
+                                </span>
+                            </label>
                             {backgroundItems.length > 0 ? (
                                 <div className="space-y-3">
                                     {backgroundItems.map((item, idx) => (
