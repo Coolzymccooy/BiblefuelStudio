@@ -8,6 +8,7 @@ import { isLocalOrRemote, resolveOutputAlias } from "../lib/mediaThumb.js";
 import { buildWordDrawtext, resolveKineticAnimation } from "../lib/videoFilters.js";
 import { createJob, getJob, gcJobs, markRunning, markProgress, markDone, markError } from "../lib/renderJobs.js";
 import { appendRender, listRenders } from "../lib/renderHistory.js";
+import { friendlyRenderError } from "../lib/renderErrors.js";
 
 const router = Router();
 let ffmpegChecked = false;
@@ -478,8 +479,9 @@ function probeAudioDuration(filePath) {
  *                            ID (resolved to a remote URL FFmpeg streams).
  *
  * Both modes share the same music-bed + auto-duck filter chain. The combined
- * filter complex is written to a sidecar file and passed via `-/filter_complex`
- * so a long sermon doesn't blow past Windows' ~32 KB CreateProcess cmdline cap.
+ * filter complex is written to a sidecar file and passed via
+ * `-filter_complex_script` so a long sermon doesn't blow past Windows' ~32 KB
+ * CreateProcess cmdline cap.
  *
  * Body: { videoPath?, audioPath?, backgroundPath?, words: [{text, startMs, endMs}],
  *         typographyPreset?, musicPath?, musicVolume?, autoDuck? }
@@ -740,12 +742,17 @@ router.post("/captioned-video", async (req, res) => {
 
     // The drawtext chain alone can blow past Windows' ~32 KB CreateProcess
     // cmdline limit on anything beyond a ~30 s sermon. Ship the filter via
-    // FFmpeg's `-/filter_complex <file>` form so cmdline length stays bounded.
+    // FFmpeg's `-filter_complex_script <file>` form so cmdline length stays
+    // bounded. NOTE: use `-filter_complex_script` (supported since FFmpeg ~2.x),
+    // NOT the `-/filter_complex` "read option from file" form — that only exists
+    // on FFmpeg 7.x+, so it explodes on the FFmpeg 5.1 in production with
+    // "Unrecognized option '/filter_complex'". The sibling renderer in jobs.js
+    // uses the same `-filter_complex_script` form.
     const filterFile = path.join(outDir, `filter-${uuid()}.txt`);
     fs.writeFileSync(filterFile, `${vFilter};${aFilter}`);
 
     args.push(
-      "-/filter_complex", filterFile,
+      "-filter_complex_script", filterFile,
       "-map", "[vout]",
       "-map", "[aout]",
       "-c:v", vcodec,
@@ -827,9 +834,15 @@ router.post("/captioned-video", async (req, res) => {
           try { if (fs.existsSync(outFile)) fs.unlinkSync(outFile); } catch {}
           const stderrDump = path.join(outDir, `captioned-stderr-${path.basename(outFile, ".mp4")}.txt`);
           try { fs.writeFileSync(stderrDump, stderr); } catch {}
-          console.log(`[captioned-video] FAILED job ${job.jobId} — kept filter at ${filterFile}`);
-          const err = new Error(`ffmpeg exited ${code}: ${stderr.slice(-600)}`);
-          markError(job.jobId, err.message);
+          // The user sees a plain-language message; the raw ffmpeg stderr stays
+          // server-side (this log + the sidecar dump above) for triage. We
+          // attach `technical` to the Error for the `wait=true` callers/tests.
+          const technical = `ffmpeg exited ${code}: ${stderr.slice(-600)}`;
+          const friendly = friendlyRenderError(code, stderr);
+          console.error(`[captioned-video] FAILED job ${job.jobId} — ${friendly}\n  filter kept at ${filterFile}\n  ${technical}`);
+          const err = new Error(friendly);
+          err.technical = technical;
+          markError(job.jobId, friendly);
           reject(err);
         });
       });

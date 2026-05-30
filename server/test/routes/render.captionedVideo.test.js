@@ -108,6 +108,41 @@ describe("POST /api/render/captioned-video — validation", () => {
   });
 });
 
+describe("POST /api/render/captioned-video — filter graph delivery", () => {
+  // Regression: the filtergraph file MUST be passed via `-filter_complex_script`
+  // (supported since FFmpeg ~2.x), NOT the `-/filter_complex` "read option from
+  // file" form which only exists in FFmpeg 7.x+. Production runs FFmpeg 5.1, so
+  // `-/filter_complex` fails with "Unrecognized option '/filter_complex'". We
+  // assert on the dumped arg vector so this is independent of the local FFmpeg
+  // version (which may be new enough to accept the broken form).
+  test("passes the filtergraph via -filter_complex_script, not -/filter_complex", async (t) => {
+    const { spawnSync } = await import("child_process");
+    const bin = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
+    const probeOk = spawnSync(bin, ["-version"], { stdio: "ignore" }).status === 0;
+    if (!probeOk) return t.skip("ffmpeg not available");
+
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "render-"));
+    t.after(() => fs.rmSync(outDir, { recursive: true, force: true }));
+
+    // Real tiny fixtures so the route gets past probing to where it dumps args.
+    const realAud = path.join(outDir, "real.wav");
+    const realBg = path.join(outDir, "real.mp4");
+    spawnSync(bin, ["-y", "-f", "lavfi", "-i", "anullsrc=r=22050:cl=mono", "-t", "1", realAud], { stdio: "ignore" });
+    spawnSync(bin, ["-y", "-f", "lavfi", "-i", "color=size=64x64:rate=10:color=black", "-t", "1", "-pix_fmt", "yuv420p", realBg], { stdio: "ignore" });
+
+    const res = await request(makeApp(outDir))
+      .post("/api/render/captioned-video")
+      .send({ audioPath: realAud, backgroundPath: realBg, words: [{ text: "Hi", startMs: 0, endMs: 500 }] });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+
+    const dumpName = fs.readdirSync(outDir).find((f) => /^captioned-args-.*\.txt$/.test(f));
+    assert.ok(dumpName, "expected a captioned-args-*.txt dump to be written");
+    const dump = fs.readFileSync(path.join(outDir, dumpName), "utf-8");
+    assert.doesNotMatch(dump, /-\/filter_complex(\b|\s)/, "must NOT use the FFmpeg-7-only -/filter_complex form");
+    assert.match(dump, /-filter_complex_script(\b|\s)/, "must use -filter_complex_script (works on FFmpeg 5.1)");
+  });
+});
+
 describe("GET /api/render/captioned-video-history — listing + isolation", () => {
   test("returns empty list when no renders exist", async (t) => {
     const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "render-"));
