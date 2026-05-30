@@ -114,20 +114,36 @@ if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 // strips Range-request support. The MP4 then arrives as a single 200 OK
 // stream instead of a 206 partial, and iOS shows the broken-play icon.
 // See: https://www.rfc-editor.org/rfc/rfc7234#section-5.2.1.6
+// Cache-Control depends on whether the file needs byte-range playback.
+//
+// Video/audio MUST be range-served (esp. iOS Safari + QuickTime, which refuse
+// to play without a 206 and show the broken-play icon). The origin honours
+// Range correctly (res.sendFile / express.static both emit 206), but
+// Cloudflare's shared cache stores these as chunked 200s and then answers
+// Range requests with a full 200 — so iOS breaks while desktop/Android (which
+// tolerate a plain 200) still play. Marking range-sensitive media `private`
+// keeps Cloudflare's SHARED cache from storing them, so it proxies the request
+// through and the origin's 206 reaches the device. Browsers still cache
+// (private allows the local cache). Images don't need ranges, so they stay
+// `public` and edge-cacheable.
+function cacheControlForOutput(name) {
+  const isRangeMedia = /\.(mp4|mov|webm|m4v|mp3|wav|m4a|aac|ogg)$/i.test(String(name || ""));
+  return isRangeMedia
+    ? "private, max-age=86400, no-transform"
+    : "public, max-age=86400, no-transform";
+}
+
 app.use("/outputs", (req, res, next) => {
   res.setHeader("Accept-Ranges", "bytes");
-  res.setHeader("Cache-Control", "public, max-age=86400, no-transform");
+  res.setHeader("Cache-Control", cacheControlForOutput(req.path));
   next();
 });
 
 app.use("/outputs", express.static(outputDir, {
   acceptRanges: true,
-  // Cache aggressively — outputs are content-addressed by UUID and never
-  // mutate. Cloudflare's CDN caches public, max-age responses and serves
-  // most repeat plays without hitting origin.
-  setHeaders: (res) => {
+  setHeaders: (res, filePath) => {
     res.setHeader("Accept-Ranges", "bytes");
-    res.setHeader("Cache-Control", "public, max-age=86400, no-transform");
+    res.setHeader("Cache-Control", cacheControlForOutput(filePath));
   },
 }));
 
@@ -191,7 +207,7 @@ app.get("/outputs/:filename", (req, res, next) => {
     // doesn't pass through .static options when called directly, and the
     // no-transform directive is what keeps Cloudflare/Caddy/nginx from
     // gzipping the response and breaking iOS Range requests.
-    res.setHeader("Cache-Control", "public, max-age=86400, no-transform");
+    res.setHeader("Cache-Control", cacheControlForOutput(raw));
     res.setHeader("Accept-Ranges", "bytes");
     return res.sendFile(hit);
   }
