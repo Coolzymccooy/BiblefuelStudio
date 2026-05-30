@@ -9,7 +9,7 @@ import { Field } from '../components/ui/Field';
 import { Section } from '../components/ui/Section';
 import { api } from '../lib/api';
 import toast from 'react-hot-toast';
-import { Play, Library, Video, CheckCircle2, ClipboardList, AudioLines, Share2, X as XIcon, Plus, ChevronUp, ChevronDown, Trash2 } from 'lucide-react';
+import { Play, Library, Video, CheckCircle2, ClipboardList, AudioLines, Share2, X as XIcon, Plus, ChevronUp, ChevronDown, Trash2, Sparkles, Music } from 'lucide-react';
 import { loadJson, saveJson, STORAGE_KEYS, toOutputUrl } from '../lib/storage';
 import { usePersistedState } from '../lib/usePersistedState';
 import { useConfig } from '../lib/config';
@@ -60,6 +60,10 @@ export function RenderPage() {
     const [lines, setLines] = useState('');
     const [isRendering, setIsRendering] = useState(false);
     const [renderInBackground, setRenderInBackground] = useState(false);
+    // Auto background (default on): when no clip is picked, BibleFuel chooses one
+    // per overlay line from the user's library (AI-generates if the pool is
+    // empty). Picking clips manually overrides it. Video mode only.
+    const [autoBackground, setAutoBackground] = useState(true);
     const [result, setResult] = useState<any>(null);
     const [showLibraryModal, setShowLibraryModal] = useState(false);
     const [libraryItems, setLibraryItems] = useState<any[]>([]);
@@ -75,6 +79,7 @@ export function RenderPage() {
         [],
     );
     const [isUploadingBackground, setIsUploadingBackground] = useState(false);
+    const [isUploadingMusic, setIsUploadingMusic] = useState(false);
     const [showScriptsModal, setShowScriptsModal] = useState(false);
     const [scripts, setScripts] = useState<Script[]>([]);
     const [audioHistory, setAudioHistory] = useState<AudioItem[]>([]);
@@ -313,8 +318,11 @@ export function RenderPage() {
 
     const handleRender = async (mode: 'video' | 'waveform') => {
         const hasMultiBg = backgroundItems.length > 0;
-        if (!backgroundPath && !hasMultiBg) {
-            toast.error('Background is required');
+        // Auto mode (video only) lets the server source a background, so a manual
+        // pick isn't required. Waveform still needs an explicit background.
+        const useAuto = autoBackground && mode === 'video' && !backgroundPath && !hasMultiBg;
+        if (!backgroundPath && !hasMultiBg && !useAuto) {
+            toast.error('Background is required (or turn on Auto for video)');
             return;
         }
         const cleanLines = lines.split('\n').map((l) => l.trim()).filter(Boolean).slice(0, 6);
@@ -336,7 +344,9 @@ export function RenderPage() {
         // Multi-bg (scenes[]) also forces background mode — only the queued
         // renderAdvancedVideo path knows how to splice scenes.
         const isMultiBg = mode === 'video' && backgroundItems.length > 1;
-        const useBackground = renderInBackground || (kineticCaptions && mode === 'video') || isMultiBg;
+        // Auto must run on the async path: the server picks per-beat scenes from
+        // the user's library (or AI-generates), which only renderVideoCore does.
+        const useBackground = renderInBackground || (kineticCaptions && mode === 'video') || isMultiBg || useAuto;
 
         setIsRendering(true);
         lastRenderKindRef.current = mode;
@@ -361,7 +371,9 @@ export function RenderPage() {
                         kind: b.kind || 'video',
                     })),
                 }
-                : { backgroundPath: primaryBg };
+                : useAuto
+                    ? { autoBackground: true }
+                    : { backgroundPath: primaryBg };
             const corePayload = {
                 ...scenesPayload,
                 audioPath,
@@ -521,6 +533,40 @@ export function RenderPage() {
             toast.error('Background upload failed');
         } finally {
             setIsUploadingBackground(false);
+        }
+    };
+
+    // Upload a music bed from the user's device. Mirrors the Sermon Clip Studio
+    // flow: the file is sent to /api/media/upload-audio and the returned server
+    // path is set as the soundtrack, which the render pipeline mixes (with the
+    // volume + auto-duck controls below).
+    const handleLocalMusicUpload = async (file: File) => {
+        if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
+            toast.error(`File is ${(file.size / 1024 / 1024).toFixed(1)} MB. Max upload is ${MAX_UPLOAD_MB} MB.`);
+            return;
+        }
+        setIsUploadingMusic(true);
+        try {
+            const dataUrl: string = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(String(reader.result));
+                reader.onerror = () => reject(reader.error);
+                reader.readAsDataURL(file);
+            });
+            const response = await api.post<{ file: string }>(
+                '/api/media/upload-audio',
+                { dataUrl, filename: file.name },
+            );
+            if (!response.ok || !response.data?.file) {
+                toast.error(response.error || 'Music upload failed');
+                return;
+            }
+            setMusicPath(response.data.file);
+            toast.success('Music uploaded');
+        } catch {
+            toast.error('Music upload failed');
+        } finally {
+            setIsUploadingMusic(false);
         }
     };
 
@@ -720,6 +766,28 @@ export function RenderPage() {
                         label="Background"
                         tooltip={`Pick 1–${MAX_BACKGROUNDS} clips or images. With more than one, the render hard-cuts between them at equal slots (durationSec/N each) and automatically queues as a background job. Use the arrows to reorder.`}
                     >
+                        {/* Auto background (video): default on. BibleFuel picks one
+                            clip per overlay line from your library, generating one if
+                            the library is empty. Picking clips below overrides it. */}
+                        <label className="flex items-start gap-2 mb-3 p-2 rounded-xl border border-primary-500/20 bg-primary-500/5 cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={autoBackground}
+                                onChange={(e) => setAutoBackground(e.target.checked)}
+                                className="mt-0.5 accent-primary-500"
+                            />
+                            <span className="flex-1">
+                                <span className="flex items-center gap-1.5 text-xs font-semibold text-primary-200">
+                                    <Sparkles size={13} />
+                                    Auto — let BibleFuel choose (video)
+                                </span>
+                                <span className="block text-[10px] text-gray-400 mt-0.5">
+                                    {backgroundItems.length > 0 || backgroundPath
+                                        ? 'Overridden — your selected background will be used.'
+                                        : 'Picks a mood-matched clip per line from your library. Generates one if it’s empty.'}
+                                </span>
+                            </span>
+                        </label>
                         {backgroundItems.length > 0 ? (
                             <div className="space-y-2">
                                 <ul className="space-y-2">
@@ -987,14 +1055,41 @@ export function RenderPage() {
                                 placeholder="e.g. server/outputs/music.mp3"
                                 className="bg-black/20"
                             />
-                            <Button
-                                onClick={openMusicLibrary}
-                                variant="secondary"
-                                className="mt-2 h-9 text-xs border-dashed border-white/10"
-                            >
-                                <Library size={14} className="mr-2" />
-                                Select from Music Library
-                            </Button>
+                            <div className="grid grid-cols-2 gap-2 mt-2">
+                                <Button
+                                    onClick={openMusicLibrary}
+                                    variant="secondary"
+                                    className="h-9 text-xs border-dashed border-white/10"
+                                >
+                                    <Library size={14} className="mr-1.5" />
+                                    Music Library
+                                </Button>
+                                <label
+                                    className={`inline-flex items-center justify-center gap-1.5 h-9 text-xs rounded-md border cursor-pointer border-primary-500/30 bg-primary-500/10 text-primary-200 hover:bg-primary-500/20 ${isUploadingMusic ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                >
+                                    <Music size={14} />
+                                    {isUploadingMusic ? 'Uploading…' : (musicPath ? 'Replace music' : 'Upload from device')}
+                                    <input
+                                        type="file"
+                                        className="hidden"
+                                        accept=".mp3,.wav,.m4a,.aac,.ogg"
+                                        disabled={isUploadingMusic}
+                                        onChange={(e) => {
+                                            const f = e.target.files?.[0];
+                                            if (f) handleLocalMusicUpload(f);
+                                            e.target.value = '';
+                                        }}
+                                    />
+                                </label>
+                            </div>
+                            {musicPath && (
+                                <p className="mt-2 text-[10px] text-gray-400 font-mono break-all">
+                                    {musicPath.split(/[\\/]/).pop()}
+                                </p>
+                            )}
+                            <p className="mt-1 text-[10px] text-gray-500">
+                                mp3, wav, m4a, aac, ogg. Up to {MAX_UPLOAD_MB} MB. Layered under your video.
+                            </p>
                         </Field>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-start">
                             <Field label={`Music volume (${musicVolume.toFixed(2)})`}>

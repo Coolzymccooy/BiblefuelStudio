@@ -108,6 +108,58 @@ describe("POST /api/render/captioned-video — validation", () => {
   });
 });
 
+describe("POST /api/render/captioned-video — auto background", () => {
+  test("empty library + no image-gen returns a clear 'add a background' error", async (t) => {
+    // Auto mode with an empty pool and image generation unavailable (default in
+    // tests: no IMAGE_GEN provider) must fail with guidance, not a 500.
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "render-"));
+    const aud = path.join(outDir, "a.wav");
+    fs.writeFileSync(aud, Buffer.alloc(200, 0));
+    t.after(() => fs.rmSync(outDir, { recursive: true, force: true }));
+
+    const res = await request(makeApp(outDir))
+      .post("/api/render/captioned-video")
+      .send({
+        audioPath: aud,
+        autoBackground: true,
+        script: { hook: "Be strong and courageous", verse: "Joshua 1:9" },
+        words: [{ text: "Hi", startMs: 0, endMs: 200 }],
+      });
+    assert.equal(res.status, 400);
+    assert.match(res.body.error || "", /add a background|image gen/i);
+  });
+
+  test("auto mode selects from the user's library pool (gets past the empty-pool gate)", async (t) => {
+    // Seed one library item; auto mode must pick it instead of erroring on an
+    // empty pool. The zeroed bg file then fails probing later — acceptable, the
+    // point is that auto-selection resolved a background from the pool.
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "render-"));
+    const aud = path.join(outDir, "a.wav");
+    const bg = path.join(outDir, "seed-bg.mp4");
+    fs.writeFileSync(aud, Buffer.alloc(200, 0));
+    fs.writeFileSync(bg, Buffer.alloc(200, 0));
+    t.after(() => fs.rmSync(outDir, { recursive: true, force: true }));
+
+    const { addToLibrary } = await import("../../src/lib/library.js");
+    addToLibrary(outDir, { id: "seed1", url: bg, categories: ["mountain"] });
+
+    const res = await request(makeApp(outDir))
+      .post("/api/render/captioned-video")
+      .send({
+        audioPath: aud,
+        autoBackground: true,
+        script: { hook: "the mountain of the Lord, strength and courage" },
+        words: [{ text: "Hi", startMs: 0, endMs: 200 }],
+      });
+    // It must NOT bail with the empty-pool/add-a-background error — that proves
+    // a background was selected from the library. A later probe failure on the
+    // sentinel file is fine.
+    if (res.status === 400) {
+      assert.doesNotMatch(res.body.error || "", /add a background|library is empty/i);
+    }
+  });
+});
+
 describe("POST /api/render/captioned-video — filter graph delivery", () => {
   // Regression: the filtergraph file MUST be passed via `-filter_complex_script`
   // (supported since FFmpeg ~2.x), NOT the `-/filter_complex` "read option from

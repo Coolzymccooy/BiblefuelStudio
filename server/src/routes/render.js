@@ -4,6 +4,8 @@ import path from "path";
 import { v4 as uuid } from "uuid";
 import { spawn, spawnSync } from "child_process";
 import { readLibrary } from "../lib/library.js";
+import { resolveAutoBackgrounds } from "../lib/autoBackground.js";
+import { generateBibleImage } from "../lib/imageGen/index.js";
 import { isLocalOrRemote, resolveOutputAlias } from "../lib/mediaThumb.js";
 import { buildWordDrawtext, resolveKineticAnimation } from "../lib/videoFilters.js";
 import { createJob, getJob, gcJobs, markRunning, markProgress, markDone, markError } from "../lib/renderJobs.js";
@@ -523,6 +525,39 @@ router.post("/captioned-video", async (req, res) => {
     }
 
     const MAX_BACKGROUNDS = 4;
+
+    // Auto background mode: when the caller opts in (`autoBackground: true`) and
+    // hasn't picked any background explicitly, let BibleFuel choose one clip per
+    // script beat from the user's own library — falling back to AI generation
+    // when their pool is empty. Explicit picks always win (manual override).
+    let autoBackgroundSource = null;
+    const wantsAuto =
+      req.body?.autoBackground === true || String(req.body?.background || "").toLowerCase() === "auto";
+    if (wantsAuto && rawBackgroundPaths.length === 0 && rawAudioPath) {
+      const script = req.body?.script && typeof req.body.script === "object" ? req.body.script : undefined;
+      const transcript = words.map((w) => w?.text).filter(Boolean).join(" ");
+      const lib = readLibrary(req.ctx.dataDir);
+      const pool = Array.isArray(lib?.items) ? lib.items : [];
+      const aspect = String(req.body?.aspect || "portrait");
+      const auto = await resolveAutoBackgrounds({
+        pool,
+        script,
+        text: transcript,
+        maxBackgrounds: MAX_BACKGROUNDS,
+        generateImage: (genArgs) =>
+          generateBibleImage({
+            seriesId: `auto-${req.ctx.userId || "anon"}`,
+            partNumber: 1,
+            aspect,
+            ...genArgs,
+          }),
+      });
+      if (auto.backgroundIds.length === 0) {
+        return res.status(400).json({ ok: false, error: auto.error || "Could not auto-select a background" });
+      }
+      rawBackgroundPaths.push(...auto.backgroundIds);
+      autoBackgroundSource = auto.source;
+    }
     if (rawBackgroundPaths.length > MAX_BACKGROUNDS) {
       return res.status(400).json({
         ok: false,
@@ -880,6 +915,7 @@ router.post("/captioned-video", async (req, res) => {
                 backgroundIds: hasVideoMode ? [] : rawBackgroundPaths,
                 backgroundId: hasVideoMode ? null : rawBackgroundPaths[0] || null,
                 mode: hasVideoMode ? "video" : "audio+bg",
+                autoBackground: autoBackgroundSource,
               });
             } catch {}
             try { fs.unlinkSync(filterFile); } catch {}
@@ -910,6 +946,8 @@ router.post("/captioned-video", async (req, res) => {
           jobId: job.jobId,
           file: outFile.replace(/\\/g, "/"),
           durationSec,
+          autoBackground: autoBackgroundSource,
+          backgroundIds: hasVideoMode ? [] : rawBackgroundPaths,
         });
       } catch (e) {
         return res.status(500).json({ ok: false, error: String(e?.message || e) });
@@ -922,7 +960,13 @@ router.post("/captioned-video", async (req, res) => {
       // Already marked on the job record; swallow so the unhandled rejection
       // doesn't crash the process.
     });
-    return res.json({ ok: true, jobId: job.jobId, durationSec });
+    return res.json({
+      ok: true,
+      jobId: job.jobId,
+      durationSec,
+      autoBackground: autoBackgroundSource,
+      backgroundIds: hasVideoMode ? [] : rawBackgroundPaths,
+    });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
