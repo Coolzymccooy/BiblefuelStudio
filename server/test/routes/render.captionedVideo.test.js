@@ -143,6 +143,85 @@ describe("POST /api/render/captioned-video — filter graph delivery", () => {
   });
 });
 
+describe("POST /api/render/captioned-video — Timeline trim", () => {
+  async function makeFixtures(outDir, seconds) {
+    const { spawnSync } = await import("child_process");
+    const bin = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
+    if (spawnSync(bin, ["-version"], { stdio: "ignore" }).status !== 0) return null;
+    const aud = path.join(outDir, "voice.wav");
+    const bg = path.join(outDir, "bg.mp4");
+    spawnSync(bin, ["-y", "-f", "lavfi", "-i", "anullsrc=r=22050:cl=mono", "-t", String(seconds), aud], { stdio: "ignore" });
+    spawnSync(bin, ["-y", "-f", "lavfi", "-i", `color=size=64x64:rate=10:color=black`, "-t", String(seconds), "-pix_fmt", "yuv420p", bg], { stdio: "ignore" });
+    return { aud, bg };
+  }
+
+  test("applies startSec/durationSec as -ss and -t in the arg vector", async (t) => {
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "render-"));
+    t.after(() => fs.rmSync(outDir, { recursive: true, force: true }));
+    const fx = await makeFixtures(outDir, 5);
+    if (!fx) return t.skip("ffmpeg not available");
+
+    const res = await request(makeApp(outDir))
+      .post("/api/render/captioned-video")
+      .send({
+        audioPath: fx.aud,
+        backgroundPath: fx.bg,
+        startSec: 1,
+        durationSec: 2,
+        words: [{ text: "Hi", startMs: 1200, endMs: 1600 }],
+      });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+
+    const dumpName = fs.readdirSync(outDir).find((f) => /^captioned-args-.*\.txt$/.test(f));
+    assert.ok(dumpName, "expected a captioned-args dump");
+    const dump = fs.readFileSync(path.join(outDir, dumpName), "utf-8");
+    assert.match(dump, /-ss 1\.000/, "voice input must be seeked to startSec");
+    assert.match(dump, /-t 2\.000/, "output must be capped at durationSec");
+  });
+
+  test("omitting the trim renders the full audio (no -ss seek)", async (t) => {
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "render-"));
+    t.after(() => fs.rmSync(outDir, { recursive: true, force: true }));
+    const fx = await makeFixtures(outDir, 3);
+    if (!fx) return t.skip("ffmpeg not available");
+
+    const res = await request(makeApp(outDir))
+      .post("/api/render/captioned-video")
+      .send({
+        audioPath: fx.aud,
+        backgroundPath: fx.bg,
+        words: [{ text: "Hi", startMs: 200, endMs: 600 }],
+      });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+
+    const dumpName = fs.readdirSync(outDir).find((f) => /^captioned-args-.*\.txt$/.test(f));
+    const dump = fs.readFileSync(path.join(outDir, dumpName), "utf-8");
+    assert.doesNotMatch(dump, /-ss /, "no seek when start is unset");
+    assert.match(dump, /-t \d/, "output still capped at the full duration");
+  });
+
+  test("a short music bed uses amix duration=longest (does not truncate voice)", async (t) => {
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "render-"));
+    t.after(() => fs.rmSync(outDir, { recursive: true, force: true }));
+    const fx = await makeFixtures(outDir, 4);
+    if (!fx) return t.skip("ffmpeg not available");
+    const { spawnSync } = await import("child_process");
+    const bin = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
+    const music = path.join(outDir, "music.wav");
+    spawnSync(bin, ["-y", "-f", "lavfi", "-i", "anullsrc=r=22050:cl=mono", "-t", "1", music], { stdio: "ignore" });
+
+    const res = await request(makeApp(outDir))
+      .post("/api/render/captioned-video")
+      .send({ audioPath: fx.aud, backgroundPath: fx.bg, musicPath: music, words: [{ text: "Hi", startMs: 200, endMs: 600 }] });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+
+    const filterName = fs.readdirSync(outDir).find((f) => /^filter-.*\.txt$/.test(f));
+    assert.ok(filterName, "expected a filter script to be written");
+    const graph = fs.readFileSync(path.join(outDir, filterName), "utf-8");
+    assert.match(graph, /amix=inputs=2:duration=longest/, "music mix must not be shortest-bound");
+  });
+});
+
 describe("GET /api/render/captioned-video-history — listing + isolation", () => {
   test("returns empty list when no renders exist", async (t) => {
     const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "render-"));

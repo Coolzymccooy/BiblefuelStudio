@@ -512,6 +512,11 @@ router.post("/captioned-video", async (req, res) => {
     const typographyPreset = String(req.body?.typographyPreset || "default");
     const musicVolume = req.body?.musicVolume;
     const autoDuck = Boolean(req.body?.autoDuck);
+    // Timeline trim window (the Main Assembly clip's START / DURATION). Both are
+    // optional: startSec seeks into the source, durationSec caps the output.
+    // Clamped against the real media length below once it's been probed.
+    const rawStartSec = req.body?.startSec;
+    const rawDurationSec = req.body?.durationSec;
 
     if (!words.length) {
       return res.status(400).json({ ok: false, error: "words[] is required and must be non-empty" });
@@ -607,6 +612,25 @@ router.post("/captioned-video", async (req, res) => {
       return res.status(400).json({ ok: false, error: `musicPath not found: ${rawMusicPath}` });
     }
 
+    // Apply the Timeline trim window. `durationSec` so far holds the FULL source
+    // length; reinterpret it through the requested start/duration so the render
+    // honours the user's START/DURATION instead of always encoding the whole
+    // sermon. Clamped so a bad value can't produce a zero-length or over-long
+    // render. trimStart seeks the voice/video input; trimDuration caps output.
+    const fullDuration = durationSec;
+    const trimStart = Math.min(
+      Math.max(Number(rawStartSec) || 0, 0),
+      Math.max(0, fullDuration - 0.5),
+    );
+    const requestedDuration = Number(rawDurationSec);
+    const trimDuration =
+      Number.isFinite(requestedDuration) && requestedDuration > 0
+        ? Math.min(requestedDuration, fullDuration - trimStart)
+        : fullDuration - trimStart;
+    // Everything downstream (bg slot math, caption window, output cap) renders
+    // the trimmed window, so collapse durationSec to it.
+    durationSec = trimDuration;
+
     // Cap the render canvas at 1080p-equivalent. 4K Pexels backgrounds (2160x3840)
     // are common in the library but blow up x264 memory on long sermons
     // ("malloc of size N failed"). Vertical-1080 is plenty for social video and
@@ -622,14 +646,31 @@ router.post("/captioned-video", async (req, res) => {
     // buildWordDrawtext expects { text, start, end } in seconds; the
     // /api/transcribe contract emits { text, startMs, endMs } in milliseconds.
     // Convert here so the captions/render pipelines stay millisecond-native.
+    // Word times are absolute against the full source. Shift them by trimStart
+    // (the trimmed voice is rebased to t=0) and keep only words overlapping the
+    // [0, trimDuration] window, clamping partial words to the edges so a caption
+    // never renders before t=0 or past the output end.
     const drawWords = words
       .map((w) => ({
         text: w?.text,
-        start: Number(w?.startMs) / 1000,
-        end: Number(w?.endMs) / 1000,
+        start: Number(w?.startMs) / 1000 - trimStart,
+        end: Number(w?.endMs) / 1000 - trimStart,
         emphasize: Boolean(w?.emphasize),
       }))
-      .filter((w) => w.text && Number.isFinite(w.start) && Number.isFinite(w.end) && w.end > w.start);
+      .filter(
+        (w) =>
+          w.text &&
+          Number.isFinite(w.start) &&
+          Number.isFinite(w.end) &&
+          w.end > 0 &&
+          w.start < durationSec &&
+          w.end > w.start,
+      )
+      .map((w) => ({
+        ...w,
+        start: Math.max(0, w.start),
+        end: Math.min(durationSec, w.end),
+      }));
 
     if (drawWords.length === 0) {
       return res.status(400).json({ ok: false, error: "words[] contained no usable entries (need text + startMs + endMs)" });
@@ -665,6 +706,9 @@ router.post("/captioned-video", async (req, res) => {
     let preDrawChain = "";
 
     if (hasVideoMode) {
+      // Input-level seek so the trimmed sermon video starts at trimStart,
+      // rebased to t=0 (captions were shifted to match above).
+      if (trimStart > 0) args.push("-ss", trimStart.toFixed(3));
       args.push("-i", videoPath);
       if (musicPath) args.push("-i", musicPath);
       voiceIdx = 0;
@@ -689,6 +733,10 @@ router.post("/captioned-video", async (req, res) => {
           args.push("-stream_loop", "-1", "-i", bg);
         }
       }
+      // Input-level seek so the trimmed sermon audio starts at trimStart,
+      // rebased to t=0 (captions were shifted to match above). Backgrounds are
+      // not seeked — they just fill the trimmed duration.
+      if (trimStart > 0) args.push("-ss", trimStart.toFixed(3));
       args.push("-i", audioPath);
       if (musicPath) args.push("-i", musicPath);
       voiceIdx = N;
@@ -730,10 +778,14 @@ router.post("/captioned-video", async (req, res) => {
     // whole filtergraph fails to bind. The bug is undefined-behavior-shaped:
     // shorter chains sometimes work, larger ones (e.g. 4K + long sermon)
     // surface it consistently.
+    // amix uses duration=longest (not shortest) so a music bed SHORTER than the
+    // sermon can't truncate the voice — the mix lasts as long as the voice, and
+    // the explicit `-t durationSec` on the output caps a LONGER music bed. This
+    // is what makes the render end when the sermon audio ends.
     const aFilter = musicPath
       ? autoDuck
-        ? `[${voiceIdx}:a]volume=1.0,asplit=2[voice1][voice2];[${musicIdx}:a]volume=${musicVol}[m1];[m1][voice1]sidechaincompress=threshold=0.01:ratio=12:attack=5:release=350:makeup=2[ducked];[voice2][ducked]amix=inputs=2:duration=shortest:dropout_transition=2[aout]`
-        : `[${voiceIdx}:a]volume=1.0[a1];[${musicIdx}:a]volume=${musicVol}[a2];[a1][a2]amix=inputs=2:duration=shortest:dropout_transition=2[aout]`
+        ? `[${voiceIdx}:a]volume=1.0,asplit=2[voice1][voice2];[${musicIdx}:a]volume=${musicVol}[m1];[m1][voice1]sidechaincompress=threshold=0.01:ratio=12:attack=5:release=350:makeup=2[ducked];[voice2][ducked]amix=inputs=2:duration=longest:dropout_transition=2[aout]`
+        : `[${voiceIdx}:a]volume=1.0[a1];[${musicIdx}:a]volume=${musicVol}[a2];[a1][a2]amix=inputs=2:duration=longest:dropout_transition=2[aout]`
       : `[${voiceIdx}:a]anull[aout]`;
 
     const preset = process.env.FFMPEG_PRESET || "fast";
@@ -755,6 +807,9 @@ router.post("/captioned-video", async (req, res) => {
       "-filter_complex_script", filterFile,
       "-map", "[vout]",
       "-map", "[aout]",
+      // Hard cap the output at the trimmed window. With duration=longest on the
+      // audio mix this is what actually ends the render at the sermon's end.
+      "-t", durationSec.toFixed(3),
       "-c:v", vcodec,
       "-preset", preset,
       "-crf", "22",
@@ -952,6 +1007,7 @@ function summarizeJob(job) {
   return {
     jobId: job.jobId,
     status: job.status,
+    phase: job.phase,
     percent: job.percent,
     durationSec: job.durationSec,
     file: job.file,

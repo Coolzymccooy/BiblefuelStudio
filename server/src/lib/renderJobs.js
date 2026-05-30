@@ -19,6 +19,7 @@ const JOB_TTL_MS = 60 * 60 * 1000; // 1 hour
  * @property {string} jobId
  * @property {string} userId            owner — only this user can poll/stream
  * @property {JobStatus} status
+ * @property {'preparing'|'encoding'} [phase]  sub-state while status==='running'
  * @property {number} percent           0..100; running-mode progress estimate
  * @property {number} durationSec       total duration the render targets; used to compute percent
  * @property {string} [file]            output path on success
@@ -59,7 +60,11 @@ export function updateJob(jobId, patch) {
 }
 
 export function markRunning(jobId) {
-  return updateJob(jobId, { status: "running", percent: 0 });
+  // phase 'preparing' covers everything before ffmpeg emits its first `time=`
+  // (opening inputs, downloading remote backgrounds, building the filtergraph).
+  // The client shows an indeterminate "Preparing…" state for this so the bar
+  // doesn't sit at a stale 0% with a bogus ETA.
+  return updateJob(jobId, { status: "running", percent: 0, phase: "preparing" });
 }
 
 export function markProgress(jobId, percent) {
@@ -69,7 +74,9 @@ export function markProgress(jobId, percent) {
   // Monotonic: ffmpeg's `time=` parser can briefly stutter on the first few
   // frames; never let percent regress so the UI bar doesn't twitch backwards.
   if (clamped < record.percent) return record;
-  return updateJob(jobId, { status: "running", percent: clamped });
+  // First real progress means encoding has started — flip the phase so the UI
+  // switches from "Preparing…" to a determinate percentage bar.
+  return updateJob(jobId, { status: "running", percent: clamped, phase: "encoding" });
 }
 
 export function markDone(jobId, file) {
