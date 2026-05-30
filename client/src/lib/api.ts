@@ -17,6 +17,12 @@ const DEFAULT_TIMEOUT_MS = 15_000;
 // onUploadProgress so a stalled upload is still visible to the user.
 export const UPLOAD_TIMEOUT_MS = 10 * 60_000;
 
+// Server-side generation (TTS synthesis, audio mastering, voice compare) runs
+// far longer than the 15s default — a self-hosted Chatterbox synth of a full
+// sermon can take minutes. Without this, those POSTs abort at 15s with a
+// "timeout of 15000ms exceeded" and the user can't generate audio at all.
+export const GENERATE_TIMEOUT_MS = 15 * 60_000;
+
 export interface PostOptions {
     /** Override the default 15s request timeout (e.g. UPLOAD_TIMEOUT_MS). */
     timeout?: number;

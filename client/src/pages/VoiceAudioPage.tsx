@@ -9,7 +9,7 @@ import { Field } from '../components/ui/Field';
 import { InfoTooltip } from '../components/ui/InfoTooltip';
 import { AnimationPicker } from '../components/voicelab/AnimationPicker';
 import { CompareVoices } from '../components/voicelab/CompareVoices';
-import { api } from '../lib/api';
+import { api, GENERATE_TIMEOUT_MS } from '../lib/api';
 import toast from 'react-hot-toast';
 import { loadJson, pushUnique, saveJson, STORAGE_KEYS, toOutputUrl } from '../lib/storage';
 import { useConfig } from '../lib/config';
@@ -432,7 +432,7 @@ export function VoiceAudioPage() {
                 providerLabel = 'ElevenLabs';
             }
 
-            const response = await api.post(url, payload);
+            const response = await api.post(url, payload, undefined, { timeout: GENERATE_TIMEOUT_MS });
 
             if (response.ok && response.data?.file) {
                 setAudioPath(response.data.file);
@@ -505,7 +505,7 @@ export function VoiceAudioPage() {
                 payload.presence = { freqHz: presenceFreq, gainDb: presenceGain, widthQ: presenceQ };
             }
 
-            const response = await api.post('/api/audio/process', payload);
+            const response = await api.post('/api/audio/process', payload, undefined, { timeout: GENERATE_TIMEOUT_MS });
 
             if (response.ok && response.data?.file) {
                 setAudioPath(response.data.file);

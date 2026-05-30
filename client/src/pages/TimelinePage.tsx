@@ -16,10 +16,12 @@ import {
     Download,
     Sparkles,
     X,
+    Share2,
 } from 'lucide-react';
 import { loadJson, saveJson, STORAGE_KEYS } from '../lib/storage';
 import { usePersistedState } from '../lib/usePersistedState';
 import { AnimationPicker } from '../components/voicelab/AnimationPicker';
+import { ShareSheet } from '../components/ShareSheet';
 
 interface TranscriptWord {
     text: string;
@@ -240,6 +242,10 @@ export function TimelinePage() {
     // from the server on mount and refetched after each successful render so
     // the panel stays in sync without manual refresh.
     const [renderHistory, setRenderHistory] = useState<RenderHistoryItem[]>([]);
+    // The render currently open in the Share sheet (a media URL), or null. Lets
+    // any completed render — the latest one or any item in Recent Renders — be
+    // shared straight from the Timeline page.
+    const [shareUrl, setShareUrl] = useState<string | null>(null);
 
     const readFileAsDataUrl = (file: File): Promise<string> =>
         new Promise((resolve, reject) => {
@@ -915,14 +921,23 @@ export function TimelinePage() {
                         src={renderedVideo}
                         className="block mx-auto rounded-lg max-h-[70vh] w-auto max-w-full bg-black"
                     />
-                    <Button
-                        variant="secondary"
-                        onClick={() => window.open(renderedVideo, '_blank')}
-                        className="text-xs h-9 mt-3"
-                    >
-                        <Download size={16} className="mr-2" />
-                        Open
-                    </Button>
+                    <div className="mt-3 flex gap-2">
+                        <Button
+                            onClick={() => setShareUrl(renderedVideo)}
+                            className="text-xs h-9"
+                        >
+                            <Share2 size={16} className="mr-2" />
+                            Share
+                        </Button>
+                        <Button
+                            variant="secondary"
+                            onClick={() => window.open(renderedVideo, '_blank')}
+                            className="text-xs h-9"
+                        >
+                            <Download size={16} className="mr-2" />
+                            Open
+                        </Button>
+                    </div>
                 </Card>
             )}
 
@@ -937,37 +952,52 @@ export function TimelinePage() {
                             const url = api.mediaUrl(fileName);
                             const isActive = renderedVideo === url;
                             return (
-                                <button
+                                <div
                                     key={item.jobId}
-                                    type="button"
-                                    onClick={() => setRenderedVideo(url)}
                                     className={`group relative shrink-0 w-32 aspect-[9/16] rounded-lg overflow-hidden bg-black/60 border ${isActive ? 'border-primary-400' : 'border-white/10 hover:border-white/30'} transition-colors`}
-                                    title={fileName}
                                 >
-                                    {/* Browser-decoded video poster — gives us a real thumbnail
-                                        without a separate server-side ffmpeg pass. preload="metadata"
-                                        keeps the network cost small (header bytes only). */}
-                                    <video
-                                        src={url}
-                                        preload="metadata"
-                                        muted
-                                        playsInline
-                                        className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
-                                    />
-                                    <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/90 to-transparent">
-                                        <p className="text-[10px] font-mono text-white/90 truncate">
-                                            {new Date(item.createdAt).toLocaleString(undefined, {
-                                                month: 'short',
-                                                day: 'numeric',
-                                                hour: '2-digit',
-                                                minute: '2-digit',
-                                            })}
-                                        </p>
-                                        <p className="text-[9px] text-white/60 truncate">
-                                            {item.mode === 'video' ? 'video' : 'audio + bg'} · {Math.round(item.durationSec)}s
-                                        </p>
-                                    </div>
-                                </button>
+                                    {/* Full-area button loads this render back into the preview. */}
+                                    <button
+                                        type="button"
+                                        onClick={() => setRenderedVideo(url)}
+                                        className="absolute inset-0 h-full w-full"
+                                        title={fileName}
+                                    >
+                                        {/* Browser-decoded video poster — gives us a real thumbnail
+                                            without a separate server-side ffmpeg pass. preload="metadata"
+                                            keeps the network cost small (header bytes only). */}
+                                        <video
+                                            src={url}
+                                            preload="metadata"
+                                            muted
+                                            playsInline
+                                            className="h-full w-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
+                                        />
+                                        <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/90 to-transparent text-left">
+                                            <p className="text-[10px] font-mono text-white/90 truncate">
+                                                {new Date(item.createdAt).toLocaleString(undefined, {
+                                                    month: 'short',
+                                                    day: 'numeric',
+                                                    hour: '2-digit',
+                                                    minute: '2-digit',
+                                                })}
+                                            </p>
+                                            <p className="text-[9px] text-white/60 truncate">
+                                                {item.mode === 'video' ? 'video' : 'audio + bg'} · {Math.round(item.durationSec)}s
+                                            </p>
+                                        </div>
+                                    </button>
+                                    {/* Share this render — sits above the thumbnail button. */}
+                                    <button
+                                        type="button"
+                                        onClick={() => setShareUrl(url)}
+                                        className="absolute top-1 right-1 z-10 rounded-md bg-black/60 p-1.5 text-white/90 opacity-0 transition-opacity hover:bg-black/80 group-hover:opacity-100"
+                                        title="Share this render"
+                                        aria-label="Share this render"
+                                    >
+                                        <Share2 size={13} />
+                                    </button>
+                                </div>
                             );
                         })}
                     </div>
@@ -1582,6 +1612,26 @@ export function TimelinePage() {
                                 </Button>
                             </div>
                         </Card>
+                    </div>
+                </div>
+            )}
+
+            {shareUrl && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                    <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShareUrl(null)} />
+                    <div className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+                        <div className="flex items-center justify-between mb-3 px-1">
+                            <h3 className="font-bold text-lg text-white">Share your video</h3>
+                            <button onClick={() => setShareUrl(null)} className="text-gray-400 hover:text-white p-1" aria-label="Close">
+                                <X size={20} />
+                            </button>
+                        </div>
+                        <ShareSheet
+                            videoUrl={shareUrl}
+                            caption={editedLines.join(' ').trim()}
+                            title={editedLines[0] || ''}
+                            filename={`biblefuel-${(shareUrl.split('/').pop() || 'video').replace(/\.[^.]+$/, '').slice(0, 24)}`}
+                        />
                     </div>
                 </div>
             )}

@@ -5,7 +5,7 @@ import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
 import { Select } from './ui/Select';
 import { Textarea } from './ui/Textarea';
-import { api } from '../lib/api';
+import { api, GENERATE_TIMEOUT_MS } from '../lib/api';
 import { toOutputUrl } from '../lib/storage';
 import { useVoiceSynthesisDefaults } from '../lib/voiceSynthesisDefaults';
 import toast from 'react-hot-toast';
@@ -104,7 +104,7 @@ export function VoiceSynthesisPanel() {
                 overrides: {
                     forcedAlignmentFallback: cinematicMode,
                 },
-            });
+            }, undefined, { timeout: GENERATE_TIMEOUT_MS });
             if (res.ok && res.data?.ok) {
                 setResult(res.data);
                 toast.success(`Generated via ${res.data.provider}`);

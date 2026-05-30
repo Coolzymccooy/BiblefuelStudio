@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { GitCompare, Loader2, Plus, Trash2, Star, Copy, Check } from 'lucide-react';
 import { Card } from '../ui/Card';
 import { Badge } from '../ui/Badge';
-import { api } from '../../lib/api';
+import { api, GENERATE_TIMEOUT_MS } from '../../lib/api';
 import { STORAGE_KEYS, loadJson, saveJson, toOutputUrl } from '../../lib/storage';
 
 type TTSProvider = 'elevenlabs' | 'azure' | 'fish' | 'edge' | 'chatterbox';
@@ -112,7 +112,7 @@ export function CompareVoices({ className = '' }: { className?: string }) {
         label: c.label?.trim() || undefined,
       })),
     };
-    const res = await api.post<{ ok: boolean; results: CompareResult[] }>('/api/tts/compare', body);
+    const res = await api.post<{ ok: boolean; results: CompareResult[] }>('/api/tts/compare', body, undefined, { timeout: GENERATE_TIMEOUT_MS });
     if (res.ok && res.data?.results) {
       setResults(res.data.results);
     } else {
