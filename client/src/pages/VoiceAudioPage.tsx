@@ -937,7 +937,7 @@ export function VoiceAudioPage() {
         toast.success('Soundtrack set for Render');
     };
 
-    const currentAudioUrl = toOutputUrl(audioPath, api.baseUrl);
+    const currentAudioUrl = toOutputUrl(audioPath, api.mediaBaseUrl);
 
     // Audio treatment controls
     const [denoise, setDenoise] = useState(AUDIO_PRESET_DEFAULTS.clean_voice.denoise);
@@ -1981,7 +1981,7 @@ export function VoiceAudioPage() {
                                             Copy
                                         </Button>
                                     </div>
-                                    <audio controls src={toOutputUrl(item.path, api.baseUrl)} className="w-full md:w-64" />
+                                    <audio controls src={toOutputUrl(item.path, api.mediaBaseUrl)} className="w-full md:w-64" />
                                 </div>
                             ))}
                             {audioHistory.length > 6 && (
@@ -2032,7 +2032,7 @@ export function VoiceAudioPage() {
                                                 <p className="field-help">{new Date(item.mtime).toLocaleString()}</p>
                                             )}
                                         </div>
-                                        <audio controls src={toOutputUrl(item.path, api.baseUrl)} className="w-full md:w-64" />
+                                        <audio controls src={toOutputUrl(item.path, api.mediaBaseUrl)} className="w-full md:w-64" />
                                         <Button
                                             variant="secondary"
                                             className="text-xs h-8"

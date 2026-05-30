@@ -260,7 +260,7 @@ export function CompareVoices({ className = '' }: { className?: string }) {
                     <>
                       <audio
                         controls
-                        src={toOutputUrl(r.file, api.baseUrl)}
+                        src={toOutputUrl(r.file, api.mediaBaseUrl)}
                         className="w-full mt-2"
                       />
                       <div className="mt-2 flex items-center gap-1">

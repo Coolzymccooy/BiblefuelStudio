@@ -223,6 +223,11 @@ export function TimelinePage() {
     // the `done` event arrives. Drives the inline progress card below.
     const [renderProgress, setRenderProgress] = useState(0);
     const [renderElapsedMs, setRenderElapsedMs] = useState(0);
+    // 'preparing' = ffmpeg is opening inputs / fetching remote backgrounds /
+    // building the filtergraph (no determinate progress yet); 'encoding' once
+    // the first `time=` arrives. Lets the card show an honest "Preparing…"
+    // state instead of a frozen 0%.
+    const [renderPhase, setRenderPhase] = useState<'preparing' | 'encoding'>('preparing');
     // Recent Renders — the user's last N captioned-video renders, fetched
     // from the server on mount and refetched after each successful render so
     // the panel stays in sync without manual refresh.
@@ -353,7 +358,7 @@ export function TimelinePage() {
             // server file path — resolveAssetPath returns it directly without
             // going through library.json.
             const filePath = response.data.file;
-            const publicUrl = `${api.baseUrl}/outputs/${filePath.split(/[\\/]/).pop()}`;
+            const publicUrl = api.mediaUrl(filePath);
             const item: LibraryItem = {
                 id: filePath,
                 url: publicUrl,
@@ -419,6 +424,7 @@ export function TimelinePage() {
         const words = reflowWordsFromEditedLines(transcript, editedLines);
         setIsRenderingVideo(true);
         setRenderProgress(0);
+        setRenderPhase('preparing');
         setRenderElapsedMs(0);
         const startedAt = Date.now();
         const elapsedTimer = setInterval(() => {
@@ -435,6 +441,13 @@ export function TimelinePage() {
                     audioPath: sourceMediaPath,
                     backgroundPaths: backgroundItems.map((b) => String(b.id)),
                 };
+            // Honour the Main Assembly clip's START / DURATION trim. Sent only
+            // when set; the server defaults to the full sermon when omitted.
+            const assemblyClip = clips[0];
+            const trim = {
+                startSec: assemblyClip?.startSec ?? undefined,
+                durationSec: assemblyClip?.durationSec ?? undefined,
+            };
             // POST returns immediately with a jobId; the heavy lifting runs in
             // the background. We track real ffmpeg progress via SSE on the
             // returned jobId so the inline card shows a determinate bar.
@@ -442,6 +455,7 @@ export function TimelinePage() {
                 '/api/render/captioned-video',
                 {
                     ...payload,
+                    ...trim,
                     words,
                     typographyPreset,
                     musicPath: musicPath || undefined,
@@ -471,6 +485,7 @@ export function TimelinePage() {
 
             sse.addEventListener('progress', (e) => {
                 const data = JSON.parse((e as MessageEvent).data);
+                if (data.phase === 'preparing' || data.phase === 'encoding') setRenderPhase(data.phase);
                 if (typeof data.percent === 'number') setRenderProgress(data.percent);
             });
             sse.addEventListener('done', (e) => {
@@ -478,7 +493,7 @@ export function TimelinePage() {
                 setRenderProgress(100);
                 if (data.file) {
                     const fileName = String(data.file).split(/[\\/]/).pop();
-                    setRenderedVideo(`${api.baseUrl}/outputs/${fileName}`);
+                    setRenderedVideo(api.mediaUrl(fileName));
                     toast.success('Captioned video ready');
                 }
                 finish();
@@ -596,7 +611,7 @@ export function TimelinePage() {
                 toast.success('Audio rendered successfully!', { id: toastId });
                 if (response.data?.file) {
                     const fileName = response.data.file.split(/[\\/]/).pop();
-                    setRenderedAudio(`${api.baseUrl}/outputs/${fileName}`);
+                    setRenderedAudio(api.mediaUrl(fileName));
                 }
             } else {
                 toast.error(response.error || 'Rendering failed', { id: toastId });
@@ -636,7 +651,7 @@ export function TimelinePage() {
             if (response.ok && response.data?.file) {
                 toast.success('Preview generated!');
                 const fileName = response.data.file.split(/[\\/]/).pop();
-                setPreviewUrl(`${api.baseUrl}/outputs/${fileName}`);
+                setPreviewUrl(api.mediaUrl(fileName));
             } else {
                 toast.error(response.error || 'Preview failed');
             }
@@ -833,24 +848,38 @@ export function TimelinePage() {
                     <div className="space-y-3">
                         <div className="flex items-baseline justify-between gap-4">
                             <span className="text-sm text-gray-300">
-                                {renderProgress < 100 ? 'Encoding...' : 'Finalizing...'}
+                                {renderPhase === 'preparing' && renderProgress < 1
+                                    ? 'Preparing…'
+                                    : renderProgress < 100
+                                        ? 'Encoding...'
+                                        : 'Finalizing...'}
                             </span>
                             <span className="text-xl font-semibold tabular-nums text-primary-300">
-                                {Math.round(renderProgress)}%
+                                {renderPhase === 'preparing' && renderProgress < 1
+                                    ? ''
+                                    : `${Math.round(renderProgress)}%`}
                             </span>
                         </div>
                         <div className="h-2 w-full overflow-hidden rounded-full bg-white/5">
-                            <div
-                                className="h-full rounded-full bg-gradient-to-r from-primary-500 to-primary-300 transition-[width] duration-300 ease-out"
-                                style={{ width: `${Math.max(2, renderProgress)}%` }}
-                            />
+                            {renderPhase === 'preparing' && renderProgress < 1 ? (
+                                // Indeterminate: no real percentage exists yet, so show a
+                                // pulsing bar rather than a frozen 0% with a fake ETA.
+                                <div className="h-full w-1/3 rounded-full bg-gradient-to-r from-primary-500 to-primary-300 animate-pulse" />
+                            ) : (
+                                <div
+                                    className="h-full rounded-full bg-gradient-to-r from-primary-500 to-primary-300 transition-[width] duration-300 ease-out"
+                                    style={{ width: `${Math.max(2, renderProgress)}%` }}
+                                />
+                            )}
                         </div>
                         <div className="flex items-center justify-between text-xs text-gray-400 tabular-nums">
                             <span>Elapsed {formatElapsed(renderElapsedMs)}</span>
                             <span>
-                                {renderProgress > 1
-                                    ? `ETA ~${formatElapsed(estimateEtaMs(renderElapsedMs, renderProgress))}`
-                                    : 'Estimating...'}
+                                {renderPhase === 'preparing' && renderProgress < 1
+                                    ? 'Fetching backgrounds & building filters…'
+                                    : renderProgress > 1
+                                        ? `ETA ~${formatElapsed(estimateEtaMs(renderElapsedMs, renderProgress))}`
+                                        : 'Estimating...'}
                             </span>
                         </div>
                     </div>
@@ -890,7 +919,7 @@ export function TimelinePage() {
                     <div className="-mx-2 flex gap-3 overflow-x-auto px-2 pb-2">
                         {renderHistory.map((item) => {
                             const fileName = item.file.split(/[\\/]/).pop() || '';
-                            const url = `${api.baseUrl}/outputs/${fileName}`;
+                            const url = api.mediaUrl(fileName);
                             const isActive = renderedVideo === url;
                             return (
                                 <button

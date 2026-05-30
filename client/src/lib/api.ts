@@ -43,6 +43,31 @@ class ApiClient {
         return '';
     })();
 
+    // Base origin for media under /outputs (rendered video, sermon audio,
+    // thumbnails). In production these are served from a grey-cloud subdomain
+    // that bypasses Cloudflare: Cloudflare's proxy strips HTTP byte-range
+    // support (answers Range requests with a chunked 200 instead of 206), which
+    // makes iOS Safari/QuickTime refuse to play the file (broken-play icon)
+    // while desktop/Android still play. The origin honours Range correctly, so
+    // pointing media straight at it fixes iOS. Configurable via
+    // VITE_MEDIA_BASE_URL; otherwise derived for the known prod host; otherwise
+    // same-origin (dev / single-process).
+    public readonly mediaBaseUrl = (() => {
+        const envBase = String(import.meta.env.VITE_MEDIA_BASE_URL || '').trim().replace(/\/+$/, '');
+        if (envBase) return envBase;
+        if (typeof window !== 'undefined' && window.location.hostname === 'biblefuel.tiwaton.co.uk') {
+            return 'https://media.tiwaton.co.uk';
+        }
+        return this.baseUrl;
+    })();
+
+    /** Absolute URL for a file under /outputs, served from the media origin. */
+    mediaUrl(fileNameOrPath: string | undefined | null): string {
+        const name = String(fileNameOrPath || '').split(/[\\/]/).pop() || '';
+        if (!name) return '';
+        return `${this.mediaBaseUrl}/outputs/${name}`;
+    }
+
     // Exposed (not private) because EventSource can't send custom headers, so
     // SSE consumers need to append the token as a query string. Server's
     // requireAuth accepts both `Authorization: Bearer` and `?token=`.

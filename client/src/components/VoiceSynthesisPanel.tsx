@@ -84,7 +84,7 @@ export function VoiceSynthesisPanel() {
     }, [providers]);
 
     const audioSrc = useMemo(
-        () => toOutputUrl(result?.file, api.baseUrl),
+        () => toOutputUrl(result?.file, api.mediaBaseUrl),
         [result],
     );
 

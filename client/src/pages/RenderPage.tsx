@@ -104,7 +104,7 @@ export function RenderPage() {
     const location = useLocation();
     const navigate = useNavigate();
 
-    const toMediaUrl = (value: string | undefined | null) => toOutputUrl(value, api.baseUrl);
+    const toMediaUrl = (value: string | undefined | null) => toOutputUrl(value, api.mediaBaseUrl);
     const isVideoUrl = (value: string | undefined | null) => /\.(mp4|mov|webm|m4v)(\?|#|$)/i.test(String(value || ''));
     const deriveThumbUrl = (value: string | undefined | null) => {
         const raw = String(value || '').replace(/\\/g, '/').trim();
@@ -504,7 +504,7 @@ export function RenderPage() {
                 return;
             }
             const filePath = response.data.file;
-            const publicUrl = `${api.baseUrl}/outputs/${filePath.split(/[\\/]/).pop()}`;
+            const publicUrl = api.mediaUrl(filePath);
             const item: LibraryItem = {
                 id: filePath,
                 url: publicUrl,
@@ -607,7 +607,7 @@ export function RenderPage() {
 
     const handleShare = async () => {
         const effectivePath = shareVideoPath || result?.file;
-        const fileUrl = effectivePath ? toOutputUrl(effectivePath, api.baseUrl) : '';
+        const fileUrl = effectivePath ? toOutputUrl(effectivePath, api.mediaBaseUrl) : '';
         if (!fileUrl) {
             toast.error('Render a video first');
             return;
@@ -667,7 +667,7 @@ export function RenderPage() {
                                 variant="secondary"
                                 className="h-9 text-xs border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20"
                                 onClick={() => {
-                                    const url = toOutputUrl(completedRender.file, api.baseUrl);
+                                    const url = toOutputUrl(completedRender.file, api.mediaBaseUrl);
                                     window.open(url, '_blank');
                                 }}
                             >
@@ -701,7 +701,7 @@ export function RenderPage() {
             {completedRender?.file && !result?.file && (
                 <Card title="Share your video" className="border-emerald-500/20 bg-emerald-500/[0.03]">
                     <ShareSheet
-                        videoUrl={toOutputUrl(completedRender.file, api.baseUrl)}
+                        videoUrl={toOutputUrl(completedRender.file, api.mediaBaseUrl)}
                         caption={lines.split('\n').filter(Boolean).join(' ')}
                         title={lines.split('\n').filter(Boolean)[0]}
                         filename={`biblefuel-${new Date().toISOString().slice(0, 10)}`}
@@ -1103,7 +1103,7 @@ export function RenderPage() {
             {result?.file && (
                 <Card title="Render Result" className="border-green-500/20 bg-green-500/5">
                     <ShareSheet
-                        videoUrl={toOutputUrl(result.file, api.baseUrl)}
+                        videoUrl={toOutputUrl(result.file, api.mediaBaseUrl)}
                         caption={lines.split('\n').filter(Boolean).join(' ')}
                         title={lines.split('\n').filter(Boolean)[0]}
                         filename={`biblefuel-${new Date().toISOString().slice(0, 10)}`}
@@ -1422,7 +1422,7 @@ export function RenderPage() {
                                             <p className="text-xs text-gray-400 uppercase tracking-wider">{item.name || 'Audio'}</p>
                                             <p className="text-xs font-mono text-white/80 truncate">{item.path}</p>
                                         </div>
-                                        <audio controls src={toOutputUrl(item.path, api.baseUrl)} className="w-full md:w-56" />
+                                        <audio controls src={toOutputUrl(item.path, api.mediaBaseUrl)} className="w-full md:w-56" />
                                         <Button
                                             onClick={() => handleSelectMusic(item)}
                                             className="text-xs h-8"

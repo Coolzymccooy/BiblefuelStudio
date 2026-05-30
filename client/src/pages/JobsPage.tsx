@@ -181,8 +181,9 @@ export function JobsPage() {
     };
 
     const handleOpen = (filePath: string) => {
-        const fileName = filePath.split(/[\\/]/).pop() || filePath;
-        window.open(`${api.baseUrl}/outputs/${fileName}`, '_blank');
+        // Media origin (bypasses Cloudflare) so iOS can actually play the
+        // opened video/audio via byte-range; see api.mediaUrl.
+        window.open(api.mediaUrl(filePath), '_blank');
     };
 
     const handleRetry = async (jobId: string) => {
@@ -471,7 +472,7 @@ export function JobsPage() {
                             </button>
                         </div>
                         <ShareSheet
-                            videoUrl={toOutputUrl(shareJob.result.outFile, api.baseUrl)}
+                            videoUrl={toOutputUrl(shareJob.result.outFile, api.mediaBaseUrl)}
                             caption={(() => {
                                 const p = (shareJob.payload || {}) as Record<string, any>;
                                 if (Array.isArray(p.lines)) return p.lines.filter(Boolean).join(' ');
