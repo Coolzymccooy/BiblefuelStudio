@@ -47,6 +47,7 @@ export const STORAGE_KEYS = {
     sclBackground: 'BF_SCL_BACKGROUND', // legacy single-bg key, kept for back-compat reads
     sclBackgrounds: 'BF_SCL_BACKGROUNDS', // new: array of up to 4 LibraryItems
     sclAutoBackground: 'BF_SCL_AUTO_BACKGROUND', // let BibleFuel auto-pick from the user's library pool
+    sclSyncBackgrounds: 'BF_SCL_SYNC_BACKGROUNDS', // sync multi-bg cuts to speech + crossfade
     sclTypographyPreset: 'BF_SCL_TYPOGRAPHY_PRESET',
     sclRenderedVideo: 'BF_SCL_RENDERED_VIDEO',
 };

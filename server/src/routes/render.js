@@ -5,6 +5,7 @@ import { v4 as uuid } from "uuid";
 import { spawn, spawnSync } from "child_process";
 import { readLibrary } from "../lib/library.js";
 import { resolveAutoBackgrounds } from "../lib/autoBackground.js";
+import { computeSyncedSegments, buildCrossfadeChain } from "../lib/backgroundSequence.js";
 import { generateBibleImage } from "../lib/imageGen/index.js";
 import { isLocalOrRemote, resolveOutputAlias } from "../lib/mediaThumb.js";
 import { buildWordDrawtext, resolveKineticAnimation } from "../lib/videoFilters.js";
@@ -519,6 +520,9 @@ router.post("/captioned-video", async (req, res) => {
     // Clamped against the real media length below once it's been probed.
     const rawStartSec = req.body?.startSec;
     const rawDurationSec = req.body?.durationSec;
+    // Opt-in: sync multi-background cuts to spoken phrases + crossfade between
+    // them, instead of equal hard cuts. No-op for a single background.
+    const syncBackgrounds = req.body?.syncBackgrounds === true;
 
     if (!words.length) {
       return res.status(400).json({ ok: false, error: "words[] is required and must be non-empty" });
@@ -759,15 +763,32 @@ router.post("/captioned-video", async (req, res) => {
       // `-stream_loop -1` so a short Pexels clip wraps to fill its slot.
       // Slot duration: for N=1 we just need the full audio length; for N>=2
       // each input fills its 1/N segment.
+      // Sync mode: cut on phrase boundaries (from caption word timings) and
+      // crossfade. Computed once up front because the image inputs need their
+      // per-slot `-t` length. Falls back silently to the equal-cut path when
+      // not requested. The output `-t durationSec` cap trims the xfade surplus.
+      const useSyncBackgrounds = syncBackgrounds && N >= 2;
+      let syncChain = null;
+      let syncInputDurations = null;
+      if (useSyncBackgrounds) {
+        const segs = computeSyncedSegments({ words: drawWords, durationSec, count: N });
+        const built = buildCrossfadeChain({ count: N, segments: segs, w: renderWidth, h: renderHeight, label: "vbg" });
+        syncChain = built.chain;
+        syncInputDurations = built.inputDurations;
+      }
+
       const perSlotSec = N >= 2 ? durationSec / N : durationSec;
-      for (const bg of backgroundPaths) {
+      backgroundPaths.forEach((bg, i) => {
         const isImage = /\.(jpg|jpeg|png|webp)$/i.test(String(bg));
+        // Images need a fixed-duration stream. In sync mode each must cover its
+        // (variable) slot plus the crossfade tail; otherwise the equal slot.
+        const imgDur = useSyncBackgrounds ? syncInputDurations[i] : perSlotSec;
         if (isImage) {
-          args.push("-loop", "1", "-framerate", "30", "-t", perSlotSec.toFixed(3), "-i", bg);
+          args.push("-loop", "1", "-framerate", "30", "-t", imgDur.toFixed(3), "-i", bg);
         } else {
           args.push("-stream_loop", "-1", "-i", bg);
         }
-      }
+      });
       // Input-level seek so the trimmed sermon audio starts at trimStart,
       // rebased to t=0 (captions were shifted to match above). Backgrounds are
       // not seeked — they just fill the trimmed duration.
@@ -785,6 +806,9 @@ router.post("/captioned-video", async (req, res) => {
         preDrawChain = needsScale
           ? `[0:v]scale=${renderWidth}:${renderHeight}[vbg];`
           : `[0:v]null[vbg];`;
+      } else if (useSyncBackgrounds) {
+        // Crossfade chain over the speech-synced slot durations -> [vbg].
+        preDrawChain = syncChain;
       } else {
         const segSec = durationSec / N;
         const segParts = backgroundPaths.map((_, i) =>

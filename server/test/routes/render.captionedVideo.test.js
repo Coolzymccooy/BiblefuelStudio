@@ -160,6 +160,64 @@ describe("POST /api/render/captioned-video — auto background", () => {
   });
 });
 
+describe("POST /api/render/captioned-video — synced backgrounds (crossfade)", () => {
+  test("syncBackgrounds + multiple bgs emits an xfade chain (not concat)", async (t) => {
+    const { spawnSync } = await import("child_process");
+    const bin = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
+    if (spawnSync(bin, ["-version"], { stdio: "ignore" }).status !== 0) return t.skip("ffmpeg not available");
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "render-"));
+    t.after(() => fs.rmSync(outDir, { recursive: true, force: true }));
+    const aud = path.join(outDir, "voice.wav");
+    const bg1 = path.join(outDir, "bg1.mp4");
+    const bg2 = path.join(outDir, "bg2.mp4");
+    spawnSync(bin, ["-y", "-f", "lavfi", "-i", "anullsrc=r=22050:cl=mono", "-t", "6", aud], { stdio: "ignore" });
+    spawnSync(bin, ["-y", "-f", "lavfi", "-i", "color=size=64x64:rate=10:color=navy", "-t", "6", "-pix_fmt", "yuv420p", bg1], { stdio: "ignore" });
+    spawnSync(bin, ["-y", "-f", "lavfi", "-i", "color=size=64x64:rate=10:color=maroon", "-t", "6", "-pix_fmt", "yuv420p", bg2], { stdio: "ignore" });
+
+    const res = await request(makeApp(outDir))
+      .post("/api/render/captioned-video")
+      .send({
+        audioPath: aud,
+        backgroundPaths: [bg1, bg2],
+        syncBackgrounds: true,
+        words: [
+          { text: "be", startMs: 200, endMs: 500 },
+          { text: "strong", startMs: 3200, endMs: 3600 },
+        ],
+      });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    const filterName = fs.readdirSync(outDir).find((f) => /^filter-.*\.txt$/.test(f));
+    assert.ok(filterName, "expected a filter script to be written");
+    const graph = fs.readFileSync(path.join(outDir, filterName), "utf-8");
+    assert.match(graph, /xfade=transition=fade/, "must crossfade between backgrounds");
+    assert.doesNotMatch(graph, /concat=n=2/, "must not fall back to hard-cut concat");
+  });
+
+  test("without syncBackgrounds, multiple bgs still hard-cut via concat", async (t) => {
+    const { spawnSync } = await import("child_process");
+    const bin = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
+    if (spawnSync(bin, ["-version"], { stdio: "ignore" }).status !== 0) return t.skip("ffmpeg not available");
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "render-"));
+    t.after(() => fs.rmSync(outDir, { recursive: true, force: true }));
+    const aud = path.join(outDir, "voice.wav");
+    const bg1 = path.join(outDir, "bg1.mp4");
+    const bg2 = path.join(outDir, "bg2.mp4");
+    spawnSync(bin, ["-y", "-f", "lavfi", "-i", "anullsrc=r=22050:cl=mono", "-t", "4", aud], { stdio: "ignore" });
+    spawnSync(bin, ["-y", "-f", "lavfi", "-i", "color=size=64x64:rate=10:color=navy", "-t", "4", "-pix_fmt", "yuv420p", bg1], { stdio: "ignore" });
+    spawnSync(bin, ["-y", "-f", "lavfi", "-i", "color=size=64x64:rate=10:color=maroon", "-t", "4", "-pix_fmt", "yuv420p", bg2], { stdio: "ignore" });
+
+    const res = await request(makeApp(outDir))
+      .post("/api/render/captioned-video")
+      .send({ audioPath: aud, backgroundPaths: [bg1, bg2], words: [{ text: "Hi", startMs: 200, endMs: 600 }] });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    const filterName = fs.readdirSync(outDir).find((f) => /^filter-.*\.txt$/.test(f));
+    assert.ok(filterName, "expected a filter script to be written");
+    const graph = fs.readFileSync(path.join(outDir, filterName), "utf-8");
+    assert.match(graph, /concat=n=2/, "default path hard-cuts via concat");
+    assert.doesNotMatch(graph, /xfade/, "no crossfade unless requested");
+  });
+});
+
 describe("POST /api/render/captioned-video — filter graph delivery", () => {
   // Regression: the filtergraph file MUST be passed via `-filter_complex_script`
   // (supported since FFmpeg ~2.x), NOT the `-/filter_complex` "read option from

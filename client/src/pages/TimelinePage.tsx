@@ -246,6 +246,12 @@ export function TimelinePage() {
     // any completed render — the latest one or any item in Recent Renders — be
     // shared straight from the Timeline page.
     const [shareUrl, setShareUrl] = useState<string | null>(null);
+    // With 2+ backgrounds, sync the cuts to spoken phrases and crossfade between
+    // them (vs. equal hard cuts). On by default — it's the more cinematic result.
+    const [syncBackgrounds, setSyncBackgrounds] = usePersistedState<boolean>(
+        STORAGE_KEYS.sclSyncBackgrounds,
+        true,
+    );
 
     const readFileAsDataUrl = (file: File): Promise<string> =>
         new Promise((resolve, reject) => {
@@ -482,6 +488,8 @@ export function TimelinePage() {
                     musicPath: musicPath || undefined,
                     musicVolume,
                     autoDuck,
+                    // Only meaningful with 2+ manually-picked backgrounds.
+                    syncBackgrounds: backgroundItems.length > 1 && syncBackgrounds,
                 },
             );
             if (!response.ok || !response.data?.jobId) {
@@ -1278,9 +1286,22 @@ export function TimelinePage() {
                                         </div>
                                     ))}
                                     {backgroundItems.length > 1 && (
-                                        <p className="text-[10px] text-gray-500 px-1">
-                                            Hard cuts between {backgroundItems.length} clips, ~equal slots.
-                                        </p>
+                                        <label className="flex items-start gap-2 px-1 cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                checked={syncBackgrounds}
+                                                onChange={(e) => setSyncBackgrounds(e.target.checked)}
+                                                className="mt-0.5 accent-primary-500"
+                                            />
+                                            <span className="text-[10px] text-gray-400">
+                                                Sync cuts to speech + crossfade
+                                                <span className="block text-gray-600">
+                                                    {syncBackgrounds
+                                                        ? `${backgroundItems.length} clips change on spoken phrases, blended.`
+                                                        : `Hard cuts between ${backgroundItems.length} clips, ~equal slots.`}
+                                                </span>
+                                            </span>
+                                        </label>
                                     )}
                                     <div className="grid grid-cols-2 gap-2">
                                         <Button
