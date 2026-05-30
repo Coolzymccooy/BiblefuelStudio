@@ -83,6 +83,38 @@ test("non-empty pool with no script and no text still picks one background", () 
   assert.equal(backgrounds[0].id, "mtn1");
 });
 
+test("explicit beats[] (e.g. overlay lines) drive one background per beat", () => {
+  // Distinct-mood pool (one item per mood) so each beat's pick is deterministic.
+  const { backgrounds, beats } = selectBackgroundsForScript({
+    pool: [mtn, sea, sky],
+    beats: ["a mountain of strength", "still ocean waters", "morning sky of hope"],
+  });
+  assert.equal(beats.length, 3, "three explicit beats");
+  assert.equal(backgrounds.length, 3, "one background per beat");
+  assert.equal(backgrounds[0].id, "mtn1", "beat 1 -> mountain");
+  assert.equal(backgrounds[1].id, "sea1", "beat 2 -> ocean");
+  assert.equal(backgrounds[2].id, "sky1", "beat 3 -> sky");
+});
+
+test("beats[] takes precedence over script and is capped at maxBackgrounds", () => {
+  const { beats, backgrounds } = selectBackgroundsForScript({
+    pool: [mtn, sea, sky, mtn2],
+    beats: ["mountain", "ocean", "sky", "mountain again", "extra"],
+    script: { hook: "ignored when beats provided" },
+    maxBackgrounds: 4,
+  });
+  assert.equal(beats.length, 4, "capped at 4");
+  assert.equal(backgrounds.length, 4);
+});
+
+test("empty/blank beats[] entries are ignored", () => {
+  const { beats } = selectBackgroundsForScript({
+    pool: [mtn],
+    beats: ["mountain", "", "   ", "ocean"],
+  });
+  assert.equal(beats.length, 2, "only non-blank beats counted");
+});
+
 // resolveAutoBackgrounds: turns a pool + script into concrete background
 // identifiers the render route can resolve, falling back to AI image
 // generation when the pool is empty. generateImage is injected for testability.

@@ -179,10 +179,22 @@ packs, usage/retention learning. Revisit once per-user auto-select ships.
   manual pick. New persisted key `sclAutoBackground`. `tsc -b` clean; client
   vitest 8/8 pass.
 
-**Not done (intentionally deferred):** per-beat auto on the separate
-`RenderPage` (`/api/render/:mode`) single-render path — its sibling
-`/api/jobs/enqueue` campaign flow already auto-selects per beat. Revisit if the
-non-campaign image/video render path also needs Auto.
+**Phase 3 (RenderPage per-beat auto) — DONE, TDD, all tests green.**
+- Extended `selectBackgroundsForScript`/`resolveAutoBackgrounds` with an explicit
+  `beats: string[]` input (overlay lines → one mood-matched pick each).
+- `renderVideoCore` (`server/src/routes/jobs.js`): new `applyAutoBackground`
+  converts an `autoBackground: true` payload into per-beat `scenes[]` from the
+  user's library (AI-generates when empty), then the existing scene-splitter
+  renders it. Enqueue validation (`validatePayloadForEnqueue`, now exported)
+  bypasses the background requirement for auto payloads.
+- Client `RenderPage.tsx`: "Auto — let BibleFuel choose (video)" toggle
+  (**default ON**); auto video routes through the async enqueue path so it gets
+  per-beat scenes; guard relaxed; manual picks override.
+- Tests: +3 lib `beats[]` cases, +3 enqueue-validation cases. Server suite
+  **282 pass / 0 fail**; client `tsc` clean + vitest 8/8.
+
+**Still deferred:** waveform-mode auto (audio-viz, not cinematic-bg driven);
+shared catalog, curation, packs, retention learning (per the owner's call).
 
 ---
 

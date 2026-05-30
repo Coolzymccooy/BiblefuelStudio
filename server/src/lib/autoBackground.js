@@ -32,21 +32,32 @@ function deriveBeats(script) {
  * helper only handles beat segmentation and "don't repeat the last clip".
  *
  * Selection layers (caller's responsibility for what comes after):
- *   1. structured `script` -> up to `maxBackgrounds` per-beat picks
- *   2. flat `text` (e.g. a transcript) -> a single mood-matched pick
- *   3. neither -> a single random pick from the pool
+ *   1. explicit `beats` (array of strings, e.g. overlay lines) -> one pick each
+ *   2. structured `script` -> up to `maxBackgrounds` per-beat picks
+ *   3. flat `text` (e.g. a transcript) -> a single mood-matched pick
+ *   4. none of the above -> a single random pick from the pool
  *
  * An empty `pool` returns `{ backgrounds: [] }` — the signal for the caller to
  * fall back to AI image generation.
  *
- * @param {{ pool?: any[], script?: object, text?: string, maxBackgrounds?: number }} params
+ * @param {{ pool?: any[], script?: object, text?: string, beats?: string[], maxBackgrounds?: number }} params
  * @returns {{ backgrounds: any[], beats: { label: string, text: string }[] }}
  */
-export function selectBackgroundsForScript({ pool, script, text, maxBackgrounds = 4 } = {}) {
+export function selectBackgroundsForScript({ pool, script, text, beats: beatsInput, maxBackgrounds = 4 } = {}) {
   const items = Array.isArray(pool) ? pool : [];
   const cap = Math.max(1, Number(maxBackgrounds) || 1);
 
-  let beats = deriveBeats(script).slice(0, cap);
+  let beats;
+  if (Array.isArray(beatsInput)) {
+    // Explicit per-beat text (e.g. RenderPage overlay lines). Each non-blank
+    // entry is its own beat.
+    beats = beatsInput
+      .map((t, i) => ({ label: `line${i + 1}`, text: String(t || "").trim() }))
+      .filter((b) => b.text.length > 0)
+      .slice(0, cap);
+  } else {
+    beats = deriveBeats(script).slice(0, cap);
+  }
   if (beats.length === 0) {
     // No structured script: degrade to a single beat. Use the flat text (a
     // transcript) for mood when present, otherwise an empty beat -> random.
@@ -98,6 +109,7 @@ export async function resolveAutoBackgrounds({
   pool,
   script,
   text,
+  beats: beatsInput,
   maxBackgrounds = 4,
   generateImage,
   generateArgs = {},
@@ -106,6 +118,7 @@ export async function resolveAutoBackgrounds({
     pool,
     script,
     text,
+    beats: beatsInput,
     maxBackgrounds,
   });
 

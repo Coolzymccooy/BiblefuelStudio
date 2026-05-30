@@ -18,6 +18,8 @@ import { alignAudioWithText, isForcedAlignmentAvailable } from "../lib/voice/ali
 import { buildWordDrawtext, buildLineDrawtext, buildSceneGraph, resolveKineticAnimation } from "../lib/videoFilters.js";
 import { buildSocialCaption } from "../lib/socialCaption.js";
 import { ensureLocalPath } from "../lib/remoteCache.js";
+import { resolveAutoBackgrounds } from "../lib/autoBackground.js";
+import { generateBibleImage } from "../lib/imageGen/index.js";
 
 const router = Router();
 let ffmpegChecked = false;
@@ -596,12 +598,57 @@ async function executeJob(job) {
   throw new Error("Unknown job type");
 }
 
+// Auto background: when a render_video payload opts in (`autoBackground: true`)
+// and supplies no explicit scenes/background, choose one mood-matched clip per
+// overlay line from the user's own library — falling back to AI generation when
+// their pool is empty. Returns a payload with `scenes[]` populated so the normal
+// scene-splitter pipeline takes over. Throws (failing the job) with guidance
+// when nothing can be sourced. Pure selection logic lives in lib/autoBackground.
+async function applyAutoBackground(payload) {
+  const lib = readLibrary(currentDataDir());
+  const pool = Array.isArray(lib?.items) ? lib.items : [];
+  const lines = Array.isArray(payload?.lines) ? payload.lines.filter(Boolean) : [];
+  const total = clampDuration(payload?.durationSec || 20);
+  const aspect = String(payload?.aspect || "portrait");
+
+  const auto = await resolveAutoBackgrounds({
+    pool,
+    beats: lines,
+    text: lines.join(" "),
+    maxBackgrounds: 4,
+    generateImage: (genArgs) =>
+      generateBibleImage({
+        seriesId: `auto-${currentJobCtx?.userId || "anon"}`,
+        partNumber: 1,
+        aspect,
+        ...genArgs,
+      }),
+  });
+
+  if (auto.backgroundIds.length === 0) {
+    throw new Error(auto.error || "Could not auto-select a background");
+  }
+
+  const n = auto.backgroundIds.length;
+  const perSlot = Math.max(0.5, total / n);
+  const scenes = auto.backgroundIds.map((id) => ({ backgroundPath: id, duration: perSlot }));
+  // Clear the flag so the scene pipeline doesn't loop back here.
+  return { ...payload, scenes, autoBackground: false, autoBackgroundSource: auto.source };
+}
+
 // Core renderer extracted so both render_video jobs and campaign_auto_post
 // can produce a video without spinning up a sub-job (worker concurrency = 1).
 // When payload.words[] or payload.scenes[] is present, routes through the
 // new word-level / scene-splitter pipeline. Otherwise uses the legacy
 // single-background + line-captions path.
 async function renderVideoCore(payload, jobId) {
+  // Resolve auto backgrounds into scenes up front so the rest of the pipeline
+  // treats them exactly like client-supplied scenes.
+  const noExplicitBg =
+    !(Array.isArray(payload?.scenes) && payload.scenes.length > 0) && !payload?.backgroundPath;
+  if (payload?.autoBackground && noExplicitBg) {
+    payload = await applyAutoBackground(payload);
+  }
   const hasWords = Array.isArray(payload?.words) && payload.words.length > 0;
   const hasScenes = Array.isArray(payload?.scenes) && payload.scenes.length > 0;
   if (hasWords || hasScenes) {
@@ -1402,7 +1449,7 @@ async function runCampaignAutoPost(payload, jobId) {
   };
 }
 
-function validatePayloadForEnqueue(type, payload) {
+export function validatePayloadForEnqueue(type, payload) {
   if (type === "render_video") {
     // Accept either a single `backgroundPath` (legacy) or a `scenes[]` array
     // (multi-bg). Both shapes flow through renderVideoCore → renderAdvancedVideo,
@@ -1419,6 +1466,10 @@ function validatePayloadForEnqueue(type, payload) {
           return { ok: false, error: `scenes[${i}].backgroundPath missing or not found: ${s?.backgroundPath || "<empty>"}` };
         }
       }
+    } else if (payload?.autoBackground) {
+      // Auto mode: the worker sources backgrounds from the user's library (or
+      // AI-generates them) at render time, so no explicit background is required
+      // here. The render still needs lines[] (validated below) to pick by mood.
     } else {
       const resolvedBackground = resolveAssetPath(payload?.backgroundPath);
       if (!resolvedBackground || !isLocalOrRemote(resolvedBackground)) {
