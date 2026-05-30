@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
-import { api } from '../lib/api';
+import { api, UPLOAD_TIMEOUT_MS } from '../lib/api';
 import toast from 'react-hot-toast';
 import {
     Play,
@@ -185,6 +185,9 @@ export function TimelinePage() {
         null,
     );
     const [isUploading, setIsUploading] = useState(false);
+    // 0..100 while a media upload is in flight, null when idle. Drives the
+    // upload progress bar so large background/music files don't look frozen.
+    const [uploadProgress, setUploadProgress] = useState<number | null>(null);
     const [transcript, setTranscript] = usePersistedState<TranscriptWord[] | null>(
         STORAGE_KEYS.sclTranscript,
         null,
@@ -245,8 +248,14 @@ export function TimelinePage() {
         setIsUploading(true);
         try {
             const dataUrl = await readFileAsDataUrl(file);
+            setUploadProgress(0);
             const endpoint = isVideo ? '/api/media/upload-source-video' : '/api/media/upload-audio';
-            const response = await api.post(endpoint, { dataUrl, filename: file.name });
+            const response = await api.post(
+                endpoint,
+                { dataUrl, filename: file.name },
+                undefined,
+                { timeout: UPLOAD_TIMEOUT_MS, onUploadProgress: setUploadProgress },
+            );
             if (!response.ok || !response.data?.file) {
                 toast.error(response.error || 'Upload failed');
                 return;
@@ -283,6 +292,7 @@ export function TimelinePage() {
             toast.error('Upload failed');
         } finally {
             setIsUploading(false);
+            setUploadProgress(null);
         }
     };
 
@@ -327,9 +337,12 @@ export function TimelinePage() {
         setIsUploading(true);
         try {
             const dataUrl = await readFileAsDataUrl(file);
+            setUploadProgress(0);
             const response = await api.post<{ file: string; kind: 'image' | 'video' }>(
                 '/api/media/upload-background',
                 { dataUrl, filename: file.name },
+                undefined,
+                { timeout: UPLOAD_TIMEOUT_MS, onUploadProgress: setUploadProgress },
             );
             if (!response.ok || !response.data?.file) {
                 toast.error(response.error || 'Background upload failed');
@@ -355,6 +368,7 @@ export function TimelinePage() {
             toast.error('Background upload failed');
         } finally {
             setIsUploading(false);
+            setUploadProgress(null);
         }
     };
 
@@ -366,7 +380,13 @@ export function TimelinePage() {
         setIsUploading(true);
         try {
             const dataUrl = await readFileAsDataUrl(file);
-            const response = await api.post('/api/media/upload-audio', { dataUrl, filename: file.name });
+            setUploadProgress(0);
+            const response = await api.post(
+                '/api/media/upload-audio',
+                { dataUrl, filename: file.name },
+                undefined,
+                { timeout: UPLOAD_TIMEOUT_MS, onUploadProgress: setUploadProgress },
+            );
             if (!response.ok || !response.data?.file) {
                 toast.error(response.error || 'Music upload failed');
                 return;
@@ -377,6 +397,7 @@ export function TimelinePage() {
             toast.error('Music upload failed');
         } finally {
             setIsUploading(false);
+            setUploadProgress(null);
         }
     };
 
@@ -1196,6 +1217,20 @@ export function TimelinePage() {
                                             />
                                         </label>
                                     </div>
+                                    {uploadProgress !== null && (
+                                        <div className="space-y-1 px-1">
+                                            <div className="flex justify-between text-[10px] text-gray-400">
+                                                <span>{uploadProgress < 100 ? 'Uploading…' : 'Processing…'}</span>
+                                                <span>{uploadProgress}%</span>
+                                            </div>
+                                            <div className="h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
+                                                <div
+                                                    className="h-full bg-primary-500 transition-all duration-150"
+                                                    style={{ width: `${uploadProgress}%` }}
+                                                />
+                                            </div>
+                                        </div>
+                                    )}
                                     <p className="text-[10px] text-gray-500 px-1">
                                         Up to {MAX_UPLOAD_MB} MB per file. Video (mp4, mov, webm) or image (jpg, png, webp).
                                     </p>
@@ -1236,6 +1271,20 @@ export function TimelinePage() {
                                             />
                                         </label>
                                     </div>
+                                    {uploadProgress !== null && (
+                                        <div className="space-y-1 w-full px-1">
+                                            <div className="flex justify-between text-[10px] text-gray-400">
+                                                <span>{uploadProgress < 100 ? 'Uploading…' : 'Processing…'}</span>
+                                                <span>{uploadProgress}%</span>
+                                            </div>
+                                            <div className="h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
+                                                <div
+                                                    className="h-full bg-primary-500 transition-all duration-150"
+                                                    style={{ width: `${uploadProgress}%` }}
+                                                />
+                                            </div>
+                                        </div>
+                                    )}
                                     <p className="text-[10px] text-gray-500 px-1">
                                         Up to {MAX_UPLOAD_MB} MB. Video (mp4/mov/webm) or image (jpg/png/webp).
                                     </p>

@@ -12,6 +12,18 @@ export const AUTH_INVALID_EVENT = 'BF_AUTH_INVALID';
 // uses EventSource, not axios.
 const DEFAULT_TIMEOUT_MS = 15_000;
 
+// File uploads (base64 data URLs up to ~270 MB) can't possibly finish inside
+// the 15s default. Give them a generous ceiling; progress is surfaced via
+// onUploadProgress so a stalled upload is still visible to the user.
+export const UPLOAD_TIMEOUT_MS = 10 * 60_000;
+
+export interface PostOptions {
+    /** Override the default 15s request timeout (e.g. UPLOAD_TIMEOUT_MS). */
+    timeout?: number;
+    /** Called with 0..100 as the request body uploads. */
+    onUploadProgress?: (percent: number) => void;
+}
+
 export interface ApiResponse<T = any> {
     ok: boolean;
     status: number;
@@ -82,12 +94,19 @@ class ApiClient {
     async post<T = any>(
         url: string,
         body?: any,
-        customHeaders?: Record<string, string>
+        customHeaders?: Record<string, string>,
+        options?: PostOptions
     ): Promise<ApiResponse<T>> {
         try {
             const response = await axios.post(url, body, {
                 headers: this.getHeaders(customHeaders),
-                timeout: DEFAULT_TIMEOUT_MS,
+                timeout: options?.timeout ?? DEFAULT_TIMEOUT_MS,
+                onUploadProgress: options?.onUploadProgress
+                    ? (e) => {
+                          const pct = e.total ? Math.round((e.loaded / e.total) * 100) : 0;
+                          options.onUploadProgress!(pct);
+                      }
+                    : undefined,
             });
             return {
                 ok: true,
