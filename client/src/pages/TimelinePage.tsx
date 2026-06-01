@@ -939,11 +939,11 @@ export function TimelinePage() {
                         </Button>
                         <Button
                             variant="secondary"
-                            onClick={() => window.open(renderedVideo, '_blank')}
+                            onClick={() => { void api.downloadMedia(renderedVideo, `biblefuel-${(renderedVideo.split('/').pop() || 'video').replace(/\.[^.]+$/, '').slice(0, 24)}.mp4`); }}
                             className="text-xs h-9"
                         >
                             <Download size={16} className="mr-2" />
-                            Open
+                            Download
                         </Button>
                     </div>
                 </Card>
@@ -1018,11 +1018,11 @@ export function TimelinePage() {
                         <audio controls src={renderedAudio} className="w-full" />
                         <Button
                             variant="secondary"
-                            onClick={() => window.open(renderedAudio, '_blank')}
+                            onClick={() => { void api.downloadMedia(renderedAudio, `biblefuel-${(renderedAudio.split('/').pop() || 'audio').replace(/\.[^.]+$/, '').slice(0, 24)}.mp3`); }}
                             className="text-xs h-9"
                         >
                             <Download size={16} className="mr-2" />
-                            Open
+                            Download
                         </Button>
                     </div>
                 </Card>
@@ -1514,9 +1514,14 @@ export function TimelinePage() {
                 Clicking a tile toggles its inclusion in the ordered list;
                 selection order = render sequence. Done closes the modal. */}
             {showLibraryModal && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                <div className="fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-4">
                     <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShowLibraryModal(false)} />
-                    <div className="relative w-full max-w-4xl max-h-[80vh] flex flex-col rounded-xl bg-dark-900/95 backdrop-blur-xl border border-white/20 shadow-2xl overflow-hidden">
+                    {/* max-h in dvh (not vh): iOS reports vh against the LARGEST
+                        viewport (toolbars hidden), so an 80vh box overflows the
+                        actually-visible area when Safari's bottom toolbar is up,
+                        pushing the footer Done button off-screen. dvh tracks the
+                        live viewport so the footer always stays in view. */}
+                    <div className="relative w-full max-w-4xl max-h-[88dvh] flex flex-col rounded-xl bg-dark-900/95 backdrop-blur-xl border border-white/20 shadow-2xl overflow-hidden">
                         <div className="flex items-center justify-between p-4 border-b border-white/10 shrink-0">
                             <div>
                                 <h3 className="font-bold text-lg text-white">Select Backgrounds</h3>
@@ -1542,12 +1547,12 @@ export function TimelinePage() {
                                     return (
                                         <div
                                             key={item.id}
-                                            className={`group relative aspect-[9/16] bg-black rounded-xl overflow-hidden shadow-lg transition-all ${
+                                            className={`group relative aspect-[9/16] bg-black rounded-xl overflow-hidden shadow-lg transition-all cursor-pointer ${
                                                 isSelected
                                                     ? 'ring-2 ring-primary-400'
                                                     : disabled
-                                                        ? 'opacity-40 cursor-not-allowed'
-                                                        : 'cursor-pointer hover:ring-2 hover:ring-primary-500'
+                                                        ? 'ring-1 ring-white/10 hover:ring-amber-400/50'
+                                                        : 'hover:ring-2 hover:ring-primary-500'
                                             }`}
                                             onClick={() => {
                                                 if (isSelected) {
@@ -1556,10 +1561,17 @@ export function TimelinePage() {
                                                 } else if (!atCap) {
                                                     // Toggle on — append so order matches the click sequence.
                                                     setBackgroundItems([...backgroundItems, item]);
+                                                } else {
+                                                    // At cap — guide instead of silently ignoring the tap.
+                                                    toast.error(`Max ${MAX_BACKGROUNDS} backgrounds. Remove one to add another.`, { id: 'bg-cap' });
                                                 }
                                             }}
                                         >
-                                            <img src={item.image} className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" alt="" />
+                                            {/* Full-opacity thumbnails so each background is
+                                                clearly distinguishable. At cap, unselected tiles
+                                                stay visible (just slightly dimmed) instead of
+                                                greying out to an indistinct blur. */}
+                                            <img src={item.image} className={`w-full h-full object-cover transition-opacity ${disabled ? 'opacity-70' : 'opacity-100'}`} alt="" />
                                             {isSelected && (
                                                 <span className="absolute top-2 left-2 w-7 h-7 rounded-full bg-primary-500 text-white text-sm font-bold flex items-center justify-center shadow-lg">
                                                     {selectedIdx + 1}
@@ -1578,7 +1590,7 @@ export function TimelinePage() {
                                 </div>
                             )}
                         </div>
-                        <div className="border-t border-white/10 p-3 flex items-center justify-between gap-3 shrink-0">
+                        <div className="border-t border-white/10 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] flex items-center justify-between gap-3 shrink-0">
                             <Button
                                 variant="secondary"
                                 onClick={() => setBackgroundItems([])}
@@ -1619,7 +1631,7 @@ export function TimelinePage() {
                             </div>
                             <div className="flex gap-2">
                                 <Button
-                                    onClick={() => window.open(previewUrl, '_blank')}
+                                    onClick={() => { void api.downloadMedia(previewUrl, `biblefuel-${(previewUrl.split('/').pop() || 'preview').replace(/\.[^.]+$/, '').slice(0, 24)}.mp4`); }}
                                     className="flex-1"
                                 >
                                     <Download size={16} className="mr-2" />

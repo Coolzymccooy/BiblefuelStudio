@@ -80,14 +80,26 @@ function App() {
               default 4s) because the rendering pipeline emits long ffmpeg
               stderr messages that users can't read in 4s. Errors also get a
               wider max-width so the full message fits without truncation. */}
+          {/* top-center reads better on phones (top-right toasts overflow the
+              narrow viewport and overlap the burger menu / bell). gutter keeps
+              stacked toasts from merging into one wall, and the container is
+              nudged below the sticky mobile header. Durations are tuned so a
+              toast always auto-dismisses ("threads down") within a few seconds:
+              success 2.5s, plain 3s, error 5s (was 10s — long ffmpeg errors
+              piled up and never cleared on mobile). Repeated identical toasts
+              are de-duplicated at their call sites via a stable `id`. */}
           <Toaster
-            position="top-right"
+            position="top-center"
+            gutter={8}
+            containerStyle={{ top: 'calc(env(safe-area-inset-top, 0px) + 64px)' }}
             toastOptions={{
+              duration: 3000,
+              style: { maxWidth: 'min(92vw, 480px)', wordBreak: 'break-word' },
               error: {
-                duration: 10000,
-                style: { maxWidth: '480px', wordBreak: 'break-word' },
+                duration: 5000,
+                style: { maxWidth: 'min(92vw, 480px)', wordBreak: 'break-word' },
               },
-              success: { duration: 3500 },
+              success: { duration: 2500 },
             }}
           />
           {/* Cookie/privacy notice — mounts on every route, dismisses once

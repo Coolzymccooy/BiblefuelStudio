@@ -77,6 +77,8 @@ export function ShareSheet({ videoUrl, caption = '', title, filename = 'biblefue
     const [postizState, setPostizState] = useState<{ configured: boolean; integrations: PostizIntegration[] } | null>(null);
     const [busyPlatform, setBusyPlatform] = useState<string | null>(null);
     const [canNativeShare, setCanNativeShare] = useState(false);
+    const [downloading, setDownloading] = useState(false);
+    const [sharing, setSharing] = useState(false);
 
     // Feature-detect Web Share API + file support
     useEffect(() => {
@@ -122,26 +124,57 @@ export function ShareSheet({ videoUrl, caption = '', title, filename = 'biblefue
         }
     };
 
-    const handleNativeShare = async () => {
-        try {
-            const resp = await fetch(absVideoUrl);
-            if (!resp.ok) throw new Error(`Could not fetch video: ${resp.status}`);
-            const blob = await resp.blob();
-            const file = new File([blob], `${filename}.mp4`, { type: blob.type || 'video/mp4' });
+    const handleDownload = async () => {
+        if (downloading) return;
+        setDownloading(true);
+        const ok = await api.downloadMedia(absVideoUrl, `${filename}.mp4`);
+        if (!ok) {
+            // Fell back to opening in a new tab — tell the user how to save it
+            // there (long-press → Save Video on iOS), id-deduped so repeated
+            // taps don't stack.
+            toast('Opened in a new tab — long-press the video to save it.', { id: 'dl-fallback', icon: '⬇️' });
+        }
+        setDownloading(false);
+    };
 
-            // Some browsers (Firefox Android) implement navigator.share but not files
-            if (typeof navigator.canShare === 'function' && !navigator.canShare({ files: [file] })) {
-                // Fall back to URL share
+    const handleNativeShare = async () => {
+        if (sharing) return;
+        setSharing(true);
+        try {
+            // Try sharing the actual file first (lets the OS sheet hand it to
+            // TikTok / IG / WhatsApp as a video upload). The fetch can be slow
+            // for large clips, and on iOS the user-activation that authorises
+            // navigator.share() expires while we wait — that surfaces as a
+            // NotAllowedError. We treat that (and AbortError = user cancelled)
+            // as non-errors and quietly fall back to a URL share, then to
+            // download, so the user is never stuck.
+            let file: File | null = null;
+            try {
+                const resp = await fetch(absVideoUrl, { mode: 'cors', credentials: 'omit' });
+                if (resp.ok) {
+                    const blob = await resp.blob();
+                    file = new File([blob], `${filename}.mp4`, { type: blob.type || 'video/mp4' });
+                }
+            } catch { /* fetch failed — fall through to URL share */ }
+
+            const canShareFile = file
+                && (typeof navigator.canShare !== 'function' || navigator.canShare({ files: [file] }));
+
+            if (canShareFile && file) {
+                await navigator.share({ files: [file], title: title || 'Biblefuel video', text: caption });
+            } else {
                 await navigator.share({ title: title || 'Biblefuel video', text: caption, url: absVideoUrl });
-                return;
             }
-            await navigator.share({ files: [file], title: title || 'Biblefuel video', text: caption });
         } catch (err: unknown) {
-            // AbortError = user cancelled, not an error worth toasting
             const name = (err && typeof err === 'object' && 'name' in err) ? String((err as { name?: string }).name) : '';
+            // AbortError = user cancelled; NotAllowedError = activation expired
+            // mid-fetch. Neither is worth alarming the user about — just give
+            // them the reliable path. id-deduped so 7 taps ≠ 7 toasts.
             if (name !== 'AbortError') {
-                toast.error('Native share failed — try Download instead');
+                toast('Sharing the link instead — use Download to save the MP4.', { id: 'share-fallback', icon: 'ℹ️' });
             }
+        } finally {
+            setSharing(false);
         }
     };
 
@@ -197,12 +230,12 @@ export function ShareSheet({ videoUrl, caption = '', title, filename = 'biblefue
 
             {/* Tier 1 — always available */}
             <div className="flex flex-wrap gap-2">
-                <a href={absVideoUrl} download={`${filename}.mp4`}>
-                    <Button>
-                        <Download size={14} className="mr-2" />
-                        Download MP4
-                    </Button>
-                </a>
+                <Button onClick={handleDownload} disabled={downloading}>
+                    {downloading
+                        ? <Loader2 size={14} className="mr-2 animate-spin" />
+                        : <Download size={14} className="mr-2" />}
+                    {downloading ? 'Downloading…' : 'Download MP4'}
+                </Button>
                 <Button variant="secondary" onClick={copyLink}>
                     {copied ? <Check size={14} className="mr-2" /> : <Copy size={14} className="mr-2" />}
                     {copied ? 'Copied' : 'Copy link'}
@@ -210,9 +243,11 @@ export function ShareSheet({ videoUrl, caption = '', title, filename = 'biblefue
 
                 {/* Tier 2 — mobile native share */}
                 {canNativeShare && (
-                    <Button variant="secondary" onClick={handleNativeShare}>
-                        <Share2 size={14} className="mr-2" />
-                        Share…
+                    <Button variant="secondary" onClick={handleNativeShare} disabled={sharing}>
+                        {sharing
+                            ? <Loader2 size={14} className="mr-2 animate-spin" />
+                            : <Share2 size={14} className="mr-2" />}
+                        {sharing ? 'Sharing…' : 'Share…'}
                     </Button>
                 )}
             </div>

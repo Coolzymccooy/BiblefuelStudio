@@ -467,7 +467,7 @@ export function RenderPage() {
             return;
         }
         if (backgroundItems.length >= MAX_BACKGROUNDS) {
-            toast.error(`Max ${MAX_BACKGROUNDS} backgrounds. Remove one to add another.`);
+            toast.error(`Max ${MAX_BACKGROUNDS} backgrounds. Remove one to add another.`, { id: 'bg-cap' });
             return;
         }
         const normalized: LibraryItem = {
@@ -1317,15 +1317,21 @@ export function RenderPage() {
             )}
 
             {showLibraryModal && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                <div className="fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-4">
                     <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShowLibraryModal(false)} />
                     {/* Plain div (not <Card>) — Card wraps children in an extra
                         <div> that breaks `flex flex-col`, so the inner
                         overflow-y-auto grid has no flex parent to constrain
                         its height against and content overflows below the
                         viewport with no scrollbar. Bug was reported by the
-                        user as "hard to scroll the background picker". */}
-                    <div className="relative w-full max-w-[min(1280px,95vw)] max-h-[88vh] flex flex-col rounded-xl bg-dark-900/95 backdrop-blur-xl border border-white/20 shadow-2xl overflow-hidden">
+                        user as "hard to scroll the background picker".
+
+                        max-h in dvh (not vh): iOS reports vh against the
+                        largest viewport (toolbars hidden), so an 88vh box
+                        overflows the visible area when Safari's bottom toolbar
+                        is up and the footer Done button ends up off-screen.
+                        dvh tracks the live viewport so Done is always visible. */}
+                    <div className="relative w-full max-w-[min(1280px,95vw)] max-h-[88dvh] flex flex-col rounded-xl bg-dark-900/95 backdrop-blur-xl border border-white/20 shadow-2xl overflow-hidden">
                         <div className="flex items-center justify-between p-4 border-b border-white/10 shrink-0">
                             <div>
                                 <h3 className="font-bold text-lg text-white">Select Backgrounds</h3>
@@ -1337,7 +1343,7 @@ export function RenderPage() {
                                 <XIcon size={20} />
                             </button>
                         </div>
-                        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3">
+                        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
                             {isLoadingLibrary ? (
                                 <div className="col-span-full py-20 flex justify-center">
                                     <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-primary-500" />
@@ -1351,21 +1357,29 @@ export function RenderPage() {
                                     return (
                                         <div
                                             key={item.id}
-                                            className={`group relative aspect-[9/16] bg-black rounded-xl overflow-hidden transition-all shadow-lg ${
-                                                disabled
-                                                    ? 'opacity-30 cursor-not-allowed'
-                                                    : isSelected
-                                                        ? 'ring-2 ring-primary-400 cursor-pointer'
-                                                        : 'cursor-pointer hover:ring-2 hover:ring-primary-500'
+                                            className={`group relative aspect-[9/16] bg-black rounded-xl overflow-hidden transition-all shadow-lg cursor-pointer ${
+                                                isSelected
+                                                    ? 'ring-2 ring-primary-400'
+                                                    : disabled
+                                                        ? 'ring-1 ring-white/10 hover:ring-amber-400/50'
+                                                        : 'hover:ring-2 hover:ring-primary-500'
                                             }`}
                                             onClick={() => {
-                                                if (disabled) return;
+                                                // toggleBackgroundItem already handles the cap
+                                                // (toasts a "max reached" hint), so we let the
+                                                // tap through instead of disabling the tile —
+                                                // disabled tiles greyed out the whole library
+                                                // and users couldn't tell the backgrounds apart.
                                                 toggleBackgroundItem(item);
                                             }}
                                         >
+                                            {/* Full-opacity thumbnails so each background reads as
+                                                a distinct image. At cap, unselected tiles stay
+                                                clearly visible (slightly dimmed) rather than
+                                                fading into an indistinct grey mass. */}
                                             <img
                                                 src={getImageSrc(item)}
-                                                className="w-full h-full object-cover opacity-70 group-hover:opacity-100 transition-opacity"
+                                                className={`w-full h-full object-cover transition-opacity ${disabled ? 'opacity-70' : 'opacity-100'}`}
                                                 alt=""
                                                 loading="lazy"
                                                 onError={(e) => handleImageError(e, item)}
@@ -1402,7 +1416,7 @@ export function RenderPage() {
                                 </div>
                             )}
                         </div>
-                        <div className="flex items-center justify-between p-3 border-t border-white/10 bg-black/30 shrink-0">
+                        <div className="flex items-center justify-between p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] border-t border-white/10 bg-black/30 shrink-0">
                             <Button
                                 variant="secondary"
                                 className="text-xs h-9"

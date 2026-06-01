@@ -208,6 +208,47 @@ class ApiClient {
         }
     }
 
+    /**
+     * Force a real file download for a public /outputs media URL, even when it
+     * lives on a different origin (media.tiwaton.co.uk). The HTML `download`
+     * attribute is SILENTLY IGNORED for cross-origin links — the browser just
+     * navigates to / plays the video instead of saving it, which is exactly
+     * the "I clicked Download but nothing downloaded" bug on mobile. Fetching
+     * the bytes ourselves and handing the browser a same-origin blob: URL is
+     * the only reliable cross-origin download path.
+     *
+     * No auth header is sent: /outputs is intentionally public (unguessable
+     * UUID filenames), and omitting custom headers avoids a CORS preflight
+     * against the media subdomain. Falls back to opening the URL in a new tab
+     * if the fetch fails (offline, blocked, etc).
+     *
+     * Returns true on a successful blob download, false if it fell back.
+     */
+    async downloadMedia(url: string, filename?: string): Promise<boolean> {
+        const safeName = (() => {
+            const base = (filename || url.split(/[\\/?#]/).pop() || 'download').trim();
+            return /\.[a-z0-9]{2,4}$/i.test(base) ? base : `${base}.mp4`;
+        })();
+        try {
+            const resp = await fetch(url, { mode: 'cors', credentials: 'omit' });
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const blob = await resp.blob();
+            const objectUrl = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = objectUrl;
+            link.download = safeName;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            // Revoke on the next tick so the click has committed the download.
+            setTimeout(() => URL.revokeObjectURL(objectUrl), 4000);
+            return true;
+        } catch {
+            window.open(url, '_blank', 'noopener');
+            return false;
+        }
+    }
+
     async download(url: string): Promise<void> {
         const token = this.getToken();
         try {
