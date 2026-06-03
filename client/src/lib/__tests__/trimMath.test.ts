@@ -44,4 +44,21 @@ describe('trimMath', () => {
     const r = enforceHandles('end', 99, { start: 2, end: 10 }, 10, 0.5);
     expect(r.end).toBe(10);
   });
+
+  it('enforceHandles preserves start+minGap<=end for normal clips', () => {
+    const dur = 10, gap = 0.5;
+    for (const move of ['start', 'end'] as const) {
+      for (const proposed of [-5, 0, 1.3, 4.9, 5.0, 5.4, 9.9, 15]) {
+        const r = enforceHandles(move, proposed, { start: 2, end: 8 }, dur, gap);
+        expect(r.start).toBeGreaterThanOrEqual(0);
+        expect(r.end).toBeLessThanOrEqual(dur);
+        expect(r.start + gap).toBeLessThanOrEqual(r.end + 1e-9);
+      }
+    }
+  });
+
+  it('enforceHandles selects whole clip when duration <= minGap', () => {
+    const r = enforceHandles('start', 0.2, { start: 0, end: 0.3 }, 0.3, 0.5);
+    expect(r).toEqual({ start: 0, end: 0.3 });
+  });
 });

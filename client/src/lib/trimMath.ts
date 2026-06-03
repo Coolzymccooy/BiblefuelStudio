@@ -36,11 +36,17 @@ export function enforceHandles(
   duration: number,
   minGap: number,
 ): Selection {
+  // Degenerate clip: too short to honour the minimum gap. Best we can do is
+  // select the whole thing rather than return an invalid selection.
+  if (duration <= minGap) return { start: 0, end: clampTime(duration, duration) };
+
   const p = clampTime(snap(proposed), duration);
   if (which === 'start') {
-    const start = Math.min(p, clampTime(current.end - minGap, duration));
-    return { start: Math.max(0, start), end: current.end };
+    // Never let start cross within minGap of end.
+    const maxStart = clampTime(current.end - minGap, duration);
+    return { start: Math.max(0, Math.min(p, maxStart)), end: current.end };
   }
-  const end = Math.max(p, clampTime(current.start + minGap, duration));
-  return { start: current.start, end: Math.min(duration, end) };
+  // Never let end cross within minGap of start.
+  const minEnd = clampTime(current.start + minGap, duration);
+  return { start: current.start, end: Math.min(duration, Math.max(p, minEnd)) };
 }
