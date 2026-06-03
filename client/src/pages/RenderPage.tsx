@@ -9,13 +9,14 @@ import { Field } from '../components/ui/Field';
 import { Section } from '../components/ui/Section';
 import { api } from '../lib/api';
 import toast from 'react-hot-toast';
-import { Play, Library, Video, CheckCircle2, ClipboardList, AudioLines, Share2, X as XIcon, Plus, ChevronUp, ChevronDown, Trash2, Sparkles, Music } from 'lucide-react';
+import { Play, Library, Video, CheckCircle2, ClipboardList, AudioLines, Share2, X as XIcon, Plus, ChevronUp, ChevronDown, Trash2, Sparkles, Music, Scissors } from 'lucide-react';
 import { loadJson, saveJson, STORAGE_KEYS, toOutputUrl } from '../lib/storage';
 import { usePersistedState } from '../lib/usePersistedState';
 import { useConfig } from '../lib/config';
 import { useNotifications } from '../lib/notifications';
 import { ShareSheet } from '../components/ShareSheet';
 import { RenderProgressOverlay } from '../components/RenderProgressOverlay';
+import { MediaTrimmer } from '../components/MediaTrimmer';
 
 /** Mirrors the server's MAX_BACKGROUNDS — keep in sync with render.js. */
 const MAX_BACKGROUNDS = 4;
@@ -71,6 +72,10 @@ export function RenderPage() {
     const [showMusicModal, setShowMusicModal] = useState(false);
     const [musicItems, setMusicItems] = useState<any[]>([]);
     const [isLoadingMusic, setIsLoadingMusic] = useState(false);
+    const [trimTarget, setTrimTarget] = useState<
+      | { kind: 'audio' | 'video'; path: string; apply: (p: string) => void }
+      | null
+    >(null);
     // Ordered list of backgrounds — Pexels picks + local uploads. When > 1
     // the render switches to the queued scenes[] path on the server (hard
     // cuts at equal slots). Persisted so a refresh keeps the picks.
@@ -846,6 +851,21 @@ export function RenderPage() {
                                                     >
                                                         <Trash2 size={14} />
                                                     </button>
+                                                    {item.kind === 'video' && item.id && (
+                                                      <button
+                                                        type="button"
+                                                        onClick={() => setTrimTarget({
+                                                          kind: 'video',
+                                                          path: item.id,
+                                                          apply: (p) => setBackgroundItems(backgroundItems.map((b) => b.id === item.id ? { ...b, id: p, url: p, previewUrl: p } : b)),
+                                                        })}
+                                                        className="inline-flex items-center justify-center h-7 w-7 rounded-md bg-black/50 text-primary-200 hover:bg-black/70"
+                                                        title="Trim this clip"
+                                                        aria-label="Trim this clip"
+                                                      >
+                                                        <Scissors size={13} />
+                                                      </button>
+                                                    )}
                                                 </div>
                                             </li>
                                         );
@@ -1034,6 +1054,15 @@ export function RenderPage() {
                                 placeholder="e.g. server/outputs/tts-xyz.mp3"
                                 className="bg-black/20"
                             />
+                            {audioPath.trim() && (
+                              <button
+                                type="button"
+                                onClick={() => setTrimTarget({ kind: 'audio', path: audioPath.trim(), apply: setAudioPath })}
+                                className="mt-2 inline-flex items-center gap-1.5 text-[0.6875rem] px-2 py-1 rounded-md bg-white/[0.06] text-primary-200 hover:bg-white/[0.12] transition-colors"
+                              >
+                                <Scissors size={12} /> Trim
+                              </button>
+                            )}
                             {audioHistory.length > 0 && (
                                 <div className="mt-2 flex flex-wrap gap-1.5">
                                     {audioHistory.slice(0, 4).map((item) => (
@@ -1083,9 +1112,18 @@ export function RenderPage() {
                                 </label>
                             </div>
                             {musicPath && (
-                                <p className="mt-2 text-[10px] text-gray-400 font-mono break-all">
+                                <div className="mt-2 flex items-center justify-between gap-2">
+                                  <p className="text-[10px] text-gray-400 font-mono break-all">
                                     {musicPath.split(/[\\/]/).pop()}
-                                </p>
+                                  </p>
+                                  <button
+                                    type="button"
+                                    onClick={() => setTrimTarget({ kind: 'audio', path: musicPath, apply: setMusicPath })}
+                                    className="shrink-0 inline-flex items-center gap-1.5 text-[0.6875rem] px-2 py-1 rounded-md bg-white/[0.06] text-primary-200 hover:bg-white/[0.12] transition-colors"
+                                  >
+                                    <Scissors size={12} /> Trim
+                                  </button>
+                                </div>
                             )}
                             <p className="mt-1 text-[10px] text-gray-500">
                                 mp3, wav, m4a, aac, ogg. Up to {MAX_UPLOAD_MB} MB. Layered under your video.
@@ -1549,6 +1587,15 @@ export function RenderPage() {
                         </div>
                     </div>
                 </div>
+            )}
+
+            {trimTarget && (
+              <MediaTrimmer
+                serverPath={trimTarget.path}
+                kind={trimTarget.kind}
+                onCancel={() => setTrimTarget(null)}
+                onApply={(newPath) => { trimTarget.apply(newPath); setTrimTarget(null); }}
+              />
             )}
         </div>
     );
