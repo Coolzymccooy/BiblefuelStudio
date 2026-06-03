@@ -17,11 +17,13 @@ import {
     Sparkles,
     X,
     Share2,
+    Scissors,
 } from 'lucide-react';
 import { loadJson, saveJson, STORAGE_KEYS } from '../lib/storage';
 import { usePersistedState } from '../lib/usePersistedState';
 import { AnimationPicker } from '../components/voicelab/AnimationPicker';
 import { ShareSheet } from '../components/ShareSheet';
+import { MediaTrimmer } from '../components/MediaTrimmer';
 
 interface TranscriptWord {
     text: string;
@@ -246,6 +248,10 @@ export function TimelinePage() {
     // any completed render — the latest one or any item in Recent Renders — be
     // shared straight from the Timeline page.
     const [shareUrl, setShareUrl] = useState<string | null>(null);
+    const [trimTarget, setTrimTarget] = useState<
+        | { kind: 'audio' | 'video'; path: string; apply: (p: string) => void }
+        | null
+    >(null);
     // With 2+ backgrounds, sync the cuts to spoken phrases and crossfade between
     // them (vs. equal hard cuts). On by default — it's the more cinematic result.
     const [syncBackgrounds, setSyncBackgrounds] = usePersistedState<boolean>(
@@ -767,9 +773,35 @@ export function TimelinePage() {
                     />
                 </label>
                 {sourceMediaPath && (
-                    <div className="mt-3 text-xs text-gray-300">
-                        <span className="text-gray-500">Loaded ({sourceMediaKind}):</span>{' '}
-                        <span className="font-mono break-all">{sourceMediaPath.split(/[\\/]/).pop()}</span>
+                    <div className="mt-3 flex items-center justify-between gap-2 text-xs text-gray-300">
+                        <span>
+                            <span className="text-gray-500">Loaded ({sourceMediaKind}):</span>{' '}
+                            <span className="font-mono break-all">{sourceMediaPath.split(/[\\/]/).pop()}</span>
+                        </span>
+                        <button
+                            type="button"
+                            onClick={() => setTrimTarget({
+                                kind: sourceMediaKind === 'video' ? 'video' : 'audio',
+                                path: sourceMediaPath,
+                                apply: (p) => {
+                                    setSourceMediaPath(p);
+                                    if (sourceMediaKind !== 'video') {
+                                        const clip: TimelineClip = {
+                                            id: `clip_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                                            path: p,
+                                            label: p.split(/[\\/]/).pop() || 'clip',
+                                            startSec: null,
+                                            durationSec: null,
+                                        };
+                                        setClips([clip]);
+                                        saveClipsToCache([clip]);
+                                    }
+                                },
+                            })}
+                            className="shrink-0 inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-white/[0.06] text-primary-200 hover:bg-white/[0.12] transition-colors"
+                        >
+                            <Scissors size={12} /> Trim
+                        </button>
                     </div>
                 )}
             </Card>
@@ -840,9 +872,18 @@ export function TimelinePage() {
                         />
                     </label>
                     {musicPath && (
-                        <p className="text-xs text-gray-300 font-mono break-all">
-                            {musicPath.split(/[\\/]/).pop()}
-                        </p>
+                        <div className="flex items-center justify-between gap-2">
+                            <p className="text-xs text-gray-300 font-mono break-all">
+                                {musicPath.split(/[\\/]/).pop()}
+                            </p>
+                            <button
+                                type="button"
+                                onClick={() => setTrimTarget({ kind: 'audio', path: musicPath, apply: setMusicPath })}
+                                className="shrink-0 inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-white/[0.06] text-primary-200 hover:bg-white/[0.12] transition-colors"
+                            >
+                                <Scissors size={12} /> Trim
+                            </button>
+                        </div>
                     )}
                     <div>
                         <label className="block text-xs text-gray-400 mb-1">
@@ -1667,6 +1708,15 @@ export function TimelinePage() {
                         />
                     </div>
                 </div>
+            )}
+
+            {trimTarget && (
+                <MediaTrimmer
+                    serverPath={trimTarget.path}
+                    kind={trimTarget.kind}
+                    onCancel={() => setTrimTarget(null)}
+                    onApply={(newPath) => { trimTarget.apply(newPath); setTrimTarget(null); }}
+                />
             )}
         </div>
     );
