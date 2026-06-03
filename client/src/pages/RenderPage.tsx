@@ -857,7 +857,7 @@ export function RenderPage() {
                                                         onClick={() => setTrimTarget({
                                                           kind: 'video',
                                                           path: item.id,
-                                                          apply: (p) => setBackgroundItems(backgroundItems.map((b) => b.id === item.id ? { ...b, id: p, url: p, previewUrl: p } : b)),
+                                                          apply: (p) => setBackgroundItems(backgroundItems.map((b) => b.id === item.id ? { ...b, id: p, url: api.mediaUrl(p), previewUrl: api.mediaUrl(p), image: api.mediaUrl(p) } : b)),
                                                         })}
                                                         className="inline-flex items-center justify-center h-7 w-7 rounded-md bg-black/50 text-primary-200 hover:bg-black/70"
                                                         title="Trim this clip"
