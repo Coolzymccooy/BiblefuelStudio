@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import { v4 as uuid } from "uuid";
 import { spawn, spawnSync } from "child_process";
+import { validateTrimRequest } from "../lib/trimValidate.js";
 
 const router = Router();
 const audioExtensions = new Set([".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".webm"]);
@@ -316,6 +317,62 @@ router.post("/upload-background", async (req, res) => {
       file: outFile.replace(/\\/g, "/"),
       kind,
       mime: parsed.mime || (isImage ? `image/${ext}` : `video/${ext}`),
+    });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// Trim an uploaded clip to [startSec, endSec], producing a NEW file. The cut
+// is an accurate re-encode (not a stream copy) so it lands exactly on the
+// handles the user dragged. The original is left in place so re-trim is cheap.
+// Security: validateTrimRequest jails inputPath to the caller's own outputDir.
+router.post("/trim", async (req, res) => {
+  try {
+    const v = validateTrimRequest({
+      inputPath: req.body?.inputPath,
+      startSec: req.body?.startSec,
+      endSec: req.body?.endSec,
+      outputDir: req.ctx.outputDir,
+    });
+    if (!v.ok) return res.status(400).json({ ok: false, error: v.error });
+
+    const { resolvedPath, startSec, endSec } = v;
+    const outDir = req.ctx.outputDir;
+    if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+
+    const ext = path.extname(resolvedPath).toLowerCase();
+    const isVideo = videoExtensions.has(ext);
+    const outExt = isVideo ? "mp4" : "mp3";
+    const outFile = path.join(outDir, `trimmed-${uuid()}.${outExt}`);
+    const duration = endSec - startSec;
+
+    const ffmpeg = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
+    // -ss/-t AFTER -i = decode-accurate seek. re-encode so output starts cleanly.
+    const args = isVideo
+      ? ["-y", "-i", resolvedPath, "-ss", String(startSec), "-t", String(duration),
+         "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", "-movflags", "+faststart", outFile]
+      : ["-y", "-i", resolvedPath, "-ss", String(startSec), "-t", String(duration),
+         "-vn", "-c:a", "libmp3lame", "-ar", "44100", "-ac", "2", outFile];
+
+    const proc = spawn(ffmpeg, args);
+    let stderr = "";
+    proc.stderr.on("data", (d) => { stderr += d.toString(); });
+    proc.on("error", (err) => {
+      if (res.headersSent) return;
+      res.status(400).json({ ok: false, error: `ffmpeg launch failed: ${err?.message || err}` });
+    });
+    proc.on("close", (code) => {
+      if (res.headersSent) return;
+      if (code !== 0 || !fs.existsSync(outFile)) {
+        return res.status(400).json({ ok: false, error: "trim failed", details: stderr.slice(-800) });
+      }
+      const durationSec = probeDurationSec(outFile);
+      return res.json({
+        ok: true,
+        file: outFile.replace(/\\/g, "/"),
+        durationSec: Number.isFinite(durationSec) ? durationSec : duration,
+      });
     });
   } catch (e) {
     res.status(400).json({ ok: false, error: String(e?.message || e) });
