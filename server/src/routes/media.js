@@ -357,7 +357,7 @@ router.post("/trim", async (req, res) => {
 
     const proc = spawn(ffmpeg, args);
     let stderr = "";
-    proc.stderr.on("data", (d) => { stderr += d.toString(); });
+    proc.stderr.on("data", (d) => { if (stderr.length < 10000) stderr += d.toString(); });
     proc.on("error", (err) => {
       if (res.headersSent) return;
       res.status(400).json({ ok: false, error: `ffmpeg launch failed: ${err?.message || err}` });
