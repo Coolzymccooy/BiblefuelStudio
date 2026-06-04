@@ -752,10 +752,10 @@ export function TimelinePage() {
 
             <Card
                 title="Source Media"
-                tooltip="Drop a finished sermon recording here. Audio (mp3/wav/m4a) flows into the Main Assembly so you can master and Render Audio. Video (mp4/mov/webm) keeps its frames intact for the Render Captioned Video path."
+                tooltip="Your source recording. Audio is mastered into the assembly for an audio render; video keeps its frames for a captioned-video render."
             >
                 <p className="text-xs text-gray-400 mb-3">
-                    Upload an audio sermon (mp3, wav, m4a) or a recorded video (mp4, mov, webm).
+                    Drop in a finished sermon — audio (MP3, WAV, M4A) or video (MP4, MOV, WEBM).
                     <span className="text-gray-500"> Up to {MAX_UPLOAD_MB} MB.</span>
                 </p>
                 <label className="inline-flex items-center gap-3 px-4 py-2 rounded-lg bg-primary-500/10 border border-primary-500/30 text-primary-200 cursor-pointer hover:bg-primary-500/20">
@@ -812,7 +812,7 @@ export function TimelinePage() {
             >
                 <div className="flex items-center justify-between gap-4 mb-4">
                     <p className="text-xs text-gray-400">
-                        Pull a word-level transcript with timings, then edit the lines below.
+                        Generate a word-level transcript with timings, then refine the lines below before rendering captions.
                     </p>
                     <Button
                         variant="secondary"
@@ -852,11 +852,11 @@ export function TimelinePage() {
 
             <Card
                 title="Music Bed"
-                tooltip="Optional soundtrack mixed under the sermon. Auto-duck (sidechain compression) drops the music volume when speech is present, then ramps it back up between phrases — keeps speech intelligible without manual ducking."
+                tooltip="Background music under the sermon. Auto-duck lowers it while someone is speaking and lifts it back between phrases, so the message stays clear."
             >
                 <div className="space-y-4">
                     <p className="text-xs text-gray-400">
-                        Optional. mp3, wav, m4a. <span className="text-gray-500">Up to {MAX_UPLOAD_MB} MB.</span>
+                        Optional background music, mixed under the sermon. MP3, WAV or M4A, <span className="text-gray-500">up to {MAX_UPLOAD_MB} MB.</span>
                     </p>
                     <label className="inline-flex items-center gap-3 px-4 py-2 rounded-lg bg-primary-500/10 border border-primary-500/30 text-primary-200 cursor-pointer hover:bg-primary-500/20">
                         <Music size={16} />
@@ -1520,7 +1520,7 @@ export function TimelinePage() {
                                     <input
                                         value={manualPath}
                                         onChange={(e) => setManualPath(e.target.value)}
-                                        placeholder="e.g. server/outputs/audio.mp3"
+                                        placeholder="Pick an audio file from your library"
                                         className="flex-1 bg-black/30 border border-white/10 rounded px-3 py-2 text-sm text-gray-200"
                                     />
                                     <Button onClick={() => handleAddClip(manualPath, 'manual')} className="text-xs h-9">

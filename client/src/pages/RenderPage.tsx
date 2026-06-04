@@ -913,7 +913,7 @@ export function RenderPage() {
                                 <Input
                                     value={backgroundPath}
                                     onChange={(e) => setBackgroundPath(e.target.value)}
-                                    placeholder="Manual path (e.g. server/outputs/xyz.mp4)"
+                                    placeholder="Pick a background video or image"
                                     className="bg-black/20"
                                 />
                                 <div className="grid grid-cols-2 gap-2">
@@ -1046,12 +1046,12 @@ export function RenderPage() {
                         <Field
                             label="Voice track"
                             badge="Required for waveform"
-                            tooltip="Absolute path to the narration MP3/WAV produced in the Voice & Audio tab. Required for waveform renders; optional for video renders."
+                            tooltip="Your narration track. Generate one in Voice & Audio, or upload your own. Required for waveform videos; optional when you supply a background video."
                         >
                             <Input
                                 value={audioPath}
                                 onChange={(e) => setAudioPath(e.target.value)}
-                                placeholder="e.g. server/outputs/tts-xyz.mp3"
+                                placeholder="Pick a narration track or generate one in Voice & Audio"
                                 className="bg-black/20"
                             />
                             {audioPath.trim() && (
@@ -1081,7 +1081,7 @@ export function RenderPage() {
                             <Input
                                 value={musicPath}
                                 onChange={(e) => setMusicPath(e.target.value)}
-                                placeholder="e.g. server/outputs/music.mp3"
+                                placeholder="Add background music (optional)"
                                 className="bg-black/20"
                             />
                             <div className="grid grid-cols-2 gap-2 mt-2">
@@ -1126,7 +1126,7 @@ export function RenderPage() {
                                 </div>
                             )}
                             <p className="mt-1 text-[10px] text-gray-500">
-                                mp3, wav, m4a, aac, ogg. Up to {MAX_UPLOAD_MB} MB. Layered under your video.
+                                Plays softly under your narration. MP3, WAV, M4A, AAC or OGG, up to {MAX_UPLOAD_MB} MB.
                             </p>
                         </Field>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-start">
