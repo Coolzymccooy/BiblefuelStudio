@@ -77,7 +77,6 @@ export function ShareSheet({ videoUrl, caption = '', title, filename = 'biblefue
     const [postizState, setPostizState] = useState<{ configured: boolean; integrations: PostizIntegration[] } | null>(null);
     const [busyPlatform, setBusyPlatform] = useState<string | null>(null);
     const [canNativeShare, setCanNativeShare] = useState(false);
-    const [downloading, setDownloading] = useState(false);
     const [sharing, setSharing] = useState(false);
 
     // Feature-detect Web Share API + file support
@@ -124,17 +123,10 @@ export function ShareSheet({ videoUrl, caption = '', title, filename = 'biblefue
         }
     };
 
-    const handleDownload = async () => {
-        if (downloading) return;
-        setDownloading(true);
-        const ok = await api.downloadMedia(absVideoUrl, `${filename}.mp4`);
-        if (!ok) {
-            // Fell back to opening in a new tab — tell the user how to save it
-            // there (long-press → Save Video on iOS), id-deduped so repeated
-            // taps don't stack.
-            toast('Opened in a new tab — long-press the video to save it.', { id: 'dl-fallback', icon: '⬇️' });
-        }
-        setDownloading(false);
+    const handleDownload = () => {
+        // downloadMedia triggers a Content-Disposition:attachment navigation
+        // (reliable on iOS), so it's synchronous — no spinner state needed.
+        api.downloadMedia(absVideoUrl, `${filename}.mp4`);
     };
 
     const handleNativeShare = async () => {
@@ -230,11 +222,9 @@ export function ShareSheet({ videoUrl, caption = '', title, filename = 'biblefue
 
             {/* Tier 1 — always available */}
             <div className="flex flex-wrap gap-2">
-                <Button onClick={handleDownload} disabled={downloading}>
-                    {downloading
-                        ? <Loader2 size={14} className="mr-2 animate-spin" />
-                        : <Download size={14} className="mr-2" />}
-                    {downloading ? 'Downloading…' : 'Download MP4'}
+                <Button onClick={handleDownload}>
+                    <Download size={14} className="mr-2" />
+                    Download MP4
                 </Button>
                 <Button variant="secondary" onClick={copyLink}>
                     {copied ? <Check size={14} className="mr-2" /> : <Copy size={14} className="mr-2" />}

@@ -1,6 +1,7 @@
 import { Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import { Toaster } from 'react-hot-toast';
+import { Toaster, ToastBar, toast } from 'react-hot-toast';
+import { X } from 'lucide-react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Layout } from './components/Layout';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -88,6 +89,12 @@ function App() {
               success 2.5s, plain 3s, error 5s (was 10s — long ffmpeg errors
               piled up and never cleared on mobile). Repeated identical toasts
               are de-duplicated at their call sites via a stable `id`. */}
+          {/* Every toast gets a manual ✕ so it can ALWAYS be dismissed. On iOS
+              the auto-dismiss timer can stall (react-hot-toast pauses on touch
+              "hover" with no reliable mouse-leave to resume), and loading
+              toasts never auto-dismiss by design — both left users with a
+              notification stuck on screen until a full refresh. The close
+              button guarantees a way out regardless of the timer state. */}
           <Toaster
             position="top-center"
             gutter={8}
@@ -101,7 +108,25 @@ function App() {
               },
               success: { duration: 2500 },
             }}
-          />
+          >
+            {(t) => (
+              <ToastBar toast={t}>
+                {({ icon, message }) => (
+                  <div className="flex items-center gap-2">
+                    {icon}
+                    <div className="flex-1">{message}</div>
+                    <button
+                      onClick={() => toast.dismiss(t.id)}
+                      aria-label="Dismiss notification"
+                      className="-mr-1 shrink-0 rounded-md p-1 text-gray-400 hover:text-gray-700 hover:bg-black/5 transition-colors"
+                    >
+                      <X size={15} />
+                    </button>
+                  </div>
+                )}
+              </ToastBar>
+            )}
+          </Toaster>
           {/* Cookie/privacy notice — mounts on every route, dismisses once
               and stores acknowledgement in localStorage. UK PECR baseline. */}
           <CookieBanner />

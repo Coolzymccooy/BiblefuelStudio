@@ -28,6 +28,7 @@ import transcribeRouter from "./src/routes/transcribe.js";
 import { requireAuth } from "./src/auth.js";
 import { createAccessRequestsRouter } from "./src/routes/accessRequests.js";
 import { getAccessRequestsStore } from "./src/lib/accessRequestsStore.js";
+import { safeDownloadName } from "./src/lib/downloadName.js";
 import { createEmailTransport } from "./services/email/transport.js";
 import { sendEmail as sendEmailViaTransport } from "./services/email/send.js";
 import { withUserScope } from "./src/middleware/userScope.js";
@@ -133,9 +134,20 @@ function cacheControlForOutput(name) {
     : "public, max-age=86400, no-transform";
 }
 
+// Force a real download when the client asks for it via ?dl=<filename>.
+// Without Content-Disposition: attachment the browser serves the MP4/MP3
+// inline — and iOS Safari (which ignores the HTML `download` attribute,
+// especially cross-origin to the media subdomain) just OPENS AND PLAYS the
+// video instead of saving it. The attachment header is the only reliable way
+// to make "Download" actually save to Files/Photos on iOS. safeDownloadName
+// sanitises the value to a single safe segment to prevent header injection.
 app.use("/outputs", (req, res, next) => {
   res.setHeader("Accept-Ranges", "bytes");
   res.setHeader("Cache-Control", cacheControlForOutput(req.path));
+  if (req.query && req.query.dl !== undefined) {
+    const name = safeDownloadName(req.query.dl, decodeURIComponent(req.path));
+    res.setHeader("Content-Disposition", `attachment; filename="${name}"`);
+  }
   next();
 });
 

@@ -209,44 +209,37 @@ class ApiClient {
     }
 
     /**
-     * Force a real file download for a public /outputs media URL, even when it
-     * lives on a different origin (media.tiwaton.co.uk). The HTML `download`
-     * attribute is SILENTLY IGNORED for cross-origin links — the browser just
-     * navigates to / plays the video instead of saving it, which is exactly
-     * the "I clicked Download but nothing downloaded" bug on mobile. Fetching
-     * the bytes ourselves and handing the browser a same-origin blob: URL is
-     * the only reliable cross-origin download path.
+     * Force a real file download for a public /outputs media URL — reliably, on
+     * iOS too. Two browser facts make the "obvious" approaches fail on iPhone:
+     *   1. The HTML `download` attribute is IGNORED for cross-origin links
+     *      (media lives on media.tiwaton.co.uk), so the browser just navigates.
+     *   2. iOS Safari serves an inline-Content-Type MP4 by OPENING AND PLAYING
+     *      it — even from a blob: URL — instead of saving. That's the reported
+     *      "Download just opens and plays the video" bug.
      *
-     * No auth header is sent: /outputs is intentionally public (unguessable
-     * UUID filenames), and omitting custom headers avoids a CORS preflight
-     * against the media subdomain. Falls back to opening the URL in a new tab
-     * if the fetch fails (offline, blocked, etc).
+     * The only reliable cross-platform path is to let the SERVER force the
+     * download: we hit the same URL with `?dl=<filename>`, which makes /outputs
+     * respond with `Content-Disposition: attachment`. The browser then saves
+     * the file (iOS offers "Save to Files"/Photos) instead of playing it. No
+     * fetch/blob/CORS dance, so no user-gesture or memory limits to trip over.
      *
-     * Returns true on a successful blob download, false if it fell back.
+     * Returns true (kept for call-site compatibility).
      */
-    async downloadMedia(url: string, filename?: string): Promise<boolean> {
-        const safeName = (() => {
+    downloadMedia(url: string, filename?: string): boolean {
+        const name = (() => {
             const base = (filename || url.split(/[\\/?#]/).pop() || 'download').trim();
             return /\.[a-z0-9]{2,4}$/i.test(base) ? base : `${base}.mp4`;
         })();
-        try {
-            const resp = await fetch(url, { mode: 'cors', credentials: 'omit' });
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            const blob = await resp.blob();
-            const objectUrl = URL.createObjectURL(blob);
-            const link = document.createElement('a');
-            link.href = objectUrl;
-            link.download = safeName;
-            document.body.appendChild(link);
-            link.click();
-            link.remove();
-            // Revoke on the next tick so the click has committed the download.
-            setTimeout(() => URL.revokeObjectURL(objectUrl), 4000);
-            return true;
-        } catch {
-            window.open(url, '_blank', 'noopener');
-            return false;
-        }
+        const dlUrl = `${url}${url.includes('?') ? '&' : '?'}dl=${encodeURIComponent(name)}`;
+        const link = document.createElement('a');
+        link.href = dlUrl;
+        // Harmless on iOS/cross-origin (ignored there); helps desktop name the file.
+        link.download = name;
+        link.rel = 'noopener';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        return true;
     }
 
     async download(url: string): Promise<void> {
