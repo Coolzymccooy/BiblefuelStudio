@@ -22,7 +22,7 @@ export function HelpPage() {
             <div className="relative">
                 <div className="absolute -top-10 -left-10 w-48 h-48 bg-primary-500/10 rounded-full blur-3xl pointer-events-none"></div>
                 <h2 className="text-5xl font-extrabold mb-4 bg-clip-text text-transparent bg-gradient-to-r from-white via-primary-100 to-primary-400">Mastering Biblefuel Studio</h2>
-                <p className="text-gray-400 text-xl max-w-2xl leading-relaxed">
+                <p className="text-content-secondary text-xl max-w-2xl leading-relaxed">
                     A comprehensive guide to automating your spiritual content creation, from initial seed ideas to final high-definition renders.
                 </p>
             </div>
@@ -80,7 +80,7 @@ export function HelpPage() {
                                     <h4 className="text-lg font-bold text-primary-300 flex items-center gap-2 mb-2">
                                         <step.icon size={18} /> {step.title}
                                     </h4>
-                                    <p className="text-sm text-gray-400 leading-relaxed">{step.desc}</p>
+                                    <p className="text-help leading-relaxed">{step.desc}</p>
                                 </div>
                             </div>
                         </Card>
@@ -96,7 +96,7 @@ export function HelpPage() {
                             <FileSpreadsheet size={14} /> Data Strategy
                         </div>
                         <h3 className="text-3xl font-bold text-white">How to use your Exported CSV</h3>
-                        <p className="text-gray-400 leading-relaxed">
+                        <p className="text-help leading-relaxed">
                             The CSV isn't just a backup—it's a powerful tool for scaling your content. Here is how you should use it:
                         </p>
                         <ul className="space-y-4">
@@ -126,7 +126,7 @@ export function HelpPage() {
                     <div className="w-full md:w-80 bg-black/40 rounded-2xl border border-white/10 p-6 flex flex-col items-center justify-center text-center">
                         <FileSpreadsheet size={64} className="text-emerald-400/50 mb-4" />
                         <h4 className="text-white font-bold mb-2">Export Pro-Tip</h4>
-                        <p className="text-xs text-gray-500 mb-6">Always export after a large generation session. Use the Script ID column as your master reference.</p>
+                        <p className="text-content-tertiary mb-6">Always export after a large generation session. Use the Script ID column as your master reference.</p>
                         <button className="w-full py-2 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-lg text-sm font-bold">Download Sample CSV</button>
                     </div>
                 </div>
@@ -135,24 +135,24 @@ export function HelpPage() {
             {/* Pro Automation Tips */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8 text-left">
                 <Card title="Background Rendering" icon={Cpu}>
-                    <p className="text-sm text-gray-400 mb-4">
+                    <p className="text-help mb-4">
                         Don't wait for renders to finish. By using background rendering, your browser remains free for other tasks.
                     </p>
                     <div className="p-4 bg-primary-500/5 rounded-xl border border-primary-500/10">
                         <h5 className="text-xs font-bold text-primary-400 uppercase tracking-widest mb-1">Status Tracking</h5>
-                        <p className="text-[11px] text-gray-500 leading-normal">
+                        <p className="text-content-tertiary leading-normal">
                             Once a job is started, click the <strong>Jobs</strong> page. You'll see real-time progress bars and status updates (Pending, Processing, Completed).
                         </p>
                     </div>
                 </Card>
 
                 <Card title="Queue Management" icon={HelpCircle}>
-                    <p className="text-sm text-gray-400 mb-4">
+                    <p className="text-help mb-4">
                         The Queue list can grow quickly during batch sessions. Keep it tidy to maintain focus on current projects.
                     </p>
                     <div className="p-4 bg-red-500/5 rounded-xl border border-red-500/10">
                         <h5 className="text-xs font-bold text-red-400 uppercase tracking-widest mb-1">Deleting Scripts</h5>
-                        <p className="text-[11px] text-gray-500 leading-normal">
+                        <p className="text-content-tertiary leading-normal">
                             Use the trash icon in the Queue page to remove individual scripts after you've used them. Use <strong>Clear All</strong> to wipe the database for a new batch.
                         </p>
                     </div>
@@ -163,15 +163,15 @@ export function HelpPage() {
             <Card title="API Key Reliability" icon={ShieldCheck}>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
                     <div className="space-y-2">
-                        <h4 className="text-xs uppercase tracking-wider text-gray-500 font-bold border-b border-white/5 pb-2">Pexels Integration</h4>
-                        <p className="text-xs text-gray-400 leading-relaxed">Ensure you use the <strong>API Key</strong> found in your Pexels Dashboard. Copy it exactly—avoid any leading or trailing spaces.</p>
+                        <h4 className="text-caption tracking-wider font-bold border-b border-white/5 pb-2">Pexels Integration</h4>
+                        <p className="text-xs text-content-secondary leading-relaxed">Ensure you use the <strong>API Key</strong> found in your Pexels Dashboard. Copy it exactly—avoid any leading or trailing spaces.</p>
                     </div>
                     <div className="space-y-2">
-                        <h4 className="text-xs uppercase tracking-wider text-gray-500 font-bold border-b border-white/5 pb-2">ElevenLabs Voice</h4>
+                        <h4 className="text-caption tracking-wider font-bold border-b border-white/5 pb-2">ElevenLabs Voice</h4>
                         <p className="text-xs text-gray-400 leading-relaxed">Requires a valid XI-API-Key. Users often confuse this with OpenAI keys. XI keys usually start without 'sk_'.</p>
                     </div>
                     <div className="space-y-2">
-                        <h4 className="text-xs uppercase tracking-wider text-gray-500 font-bold border-b border-white/5 pb-2">Server Resilience</h4>
+                        <h4 className="text-caption tracking-wider font-bold border-b border-white/5 pb-2">Server Resilience</h4>
                         <p className="text-xs text-gray-400 leading-relaxed">Our server features auto-reload. When you save your <code className="text-primary-400">.env</code> keys, the server restarts itself to apply the changes.</p>
                     </div>
                 </div>
@@ -187,8 +187,8 @@ export function HelpPage() {
                 >
                     <BookOpen className="text-primary-400 group-hover:scale-110 transition-transform" size={28} />
                     <div className="text-left">
-                        <div className="text-lg font-bold text-white flex items-center gap-1">Online Documentation <ExternalLink size={14} className="text-gray-500" /></div>
-                        <div className="text-sm text-gray-500">Access the full Biblefuel Wiki for power users.</div>
+                        <div className="text-lg font-bold text-white flex items-center gap-1">Online Documentation <ExternalLink size={14} className="text-content-tertiary" /></div>
+                        <div className="text-sm text-content-tertiary">Access the full Biblefuel Wiki for power users.</div>
                     </div>
                 </a>
 
@@ -196,7 +196,7 @@ export function HelpPage() {
                     <MessageCircle className="text-primary-400 group-hover:scale-110 transition-transform" size={28} />
                     <div className="text-left">
                         <div className="text-lg font-bold text-white">Direct Support</div>
-                        <div className="text-sm text-gray-500">Contact our team via Discord or Email.</div>
+                        <div className="text-sm text-content-tertiary">Contact our team via Discord or Email.</div>
                     </div>
                 </button>
             </div>

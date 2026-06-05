@@ -46,7 +46,7 @@ export function WizardPage() {
                 <h2 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-primary-200">
                     Creator Wizard
                 </h2>
-                <p className="text-gray-400">A guided flow for fast creation. Jump to any step, any time.</p>
+                <p className="text-content-secondary">A guided flow for fast creation. Jump to any step, any time.</p>
             </div>
 
             <Card>
@@ -60,11 +60,11 @@ export function WizardPage() {
                                 onClick={() => setActiveStep(index)}
                                 className={`text-left p-4 rounded-xl border transition-all ${isActive
                                     ? 'border-primary-500/40 bg-primary-500/10 text-white'
-                                    : 'border-white/10 bg-black/20 text-gray-400 hover:border-primary-500/20'
+                                    : 'border-white/10 bg-black/20 text-content-secondary hover:border-primary-500/20'
                                     }`}
                             >
                                 <div className="flex items-center gap-2 mb-2">
-                                    <Icon size={18} className={isActive ? 'text-primary-300' : 'text-gray-500'} />
+                                    <Icon size={18} className={isActive ? 'text-primary-300' : 'text-content-tertiary'} />
                                     <span className="text-sm font-semibold">{index + 1}. {step.title}</span>
                                 </div>
                                 <p className="text-xs">{step.description}</p>
@@ -77,7 +77,7 @@ export function WizardPage() {
             <Card title="Current Step">
                 <div className="space-y-4">
                     <h3 className="text-lg font-semibold">{current.title}</h3>
-                    <p className="text-sm text-gray-400">{current.description}</p>
+                    <p className="text-help">{current.description}</p>
                     <div className="flex gap-2">
                         <Button onClick={() => navigate(current.action)}>
                             Go to {current.title}

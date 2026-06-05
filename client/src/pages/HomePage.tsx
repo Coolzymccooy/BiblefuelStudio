@@ -89,7 +89,7 @@ function DailyStatsCard() {
     const Stat = ({ value, label, accent }: { value: number; label: string; accent?: string }) => (
         <div className="flex-1 min-w-[120px] p-3 rounded-xl bg-white/[0.03] border border-white/10">
             <div className={`text-2xl font-bold ${accent || 'text-white'}`}>{loading ? '…' : value}</div>
-            <div className="text-[10px] text-gray-400 uppercase tracking-wider mt-1">{label}</div>
+            <div className="text-caption tracking-wider mt-1">{label}</div>
         </div>
     );
 
@@ -98,7 +98,7 @@ function DailyStatsCard() {
             <div className="flex flex-wrap gap-3">
                 <Stat value={stats.campaignsToday} label="Campaigns today" accent="text-amber-300" />
                 <Stat value={stats.campaignsSuccessToday} label="Published ✓" accent="text-emerald-300" />
-                <Stat value={stats.campaignsFailedToday} label="Failed" accent={stats.campaignsFailedToday > 0 ? 'text-rose-300' : 'text-gray-400'} />
+                <Stat value={stats.campaignsFailedToday} label="Failed" accent={stats.campaignsFailedToday > 0 ? 'text-rose-300' : 'text-content-secondary'} />
                 <Stat value={stats.rendersThisWeek} label="Renders (7d)" />
                 <Stat value={stats.totalJobs} label="All-time jobs" />
             </div>
@@ -206,7 +206,7 @@ function AutoPublishCard() {
                         <h3 className="text-lg font-bold text-white">
                             {renderOnly ? 'Generate a fresh video' : 'Auto-Publish a fresh post'}
                         </h3>
-                        <p className="text-sm text-gray-400 mt-1">
+                        <p className="text-help mt-1">
                             {renderOnly
                                 ? 'One click chains: script → background → voice → render. Your video will be ready to download or share manually.'
                                 : <>One click chains: <span className="text-amber-200">script</span> → background → voice → render → Make webhook → TikTok / YouTube.</>}
@@ -234,7 +234,7 @@ function AutoPublishCard() {
                                     {voiceDefaults.cinematicMode ? ' · cinematic' : ''}
                                 </span>
                             ) : (
-                                <Link to="/app/settings" className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-gray-400 hover:text-gray-200">
+                                <Link to="/app/settings" className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-content-secondary hover:text-gray-200">
                                     <Wand2 size={11} /> Voice Synthesis off · enable in Settings
                                 </Link>
                             )}
@@ -407,7 +407,7 @@ export function HomePage() {
                     <h2 className="text-3xl sm:text-4xl font-bold mb-2 bg-clip-text text-transparent bg-gradient-to-r from-white to-primary-200 leading-tight">
                         Welcome to Biblefuel
                     </h2>
-                    <p className="text-gray-400 text-base sm:text-lg max-w-2xl">
+                    <p className="text-content-secondary text-base sm:text-lg max-w-2xl">
                         Your AI-powered content creation studio.
                     </p>
                 </div>
@@ -419,7 +419,7 @@ export function HomePage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <Card title="Quick Start & Workflow">
                         <div className="space-y-4">
-                            <p className="text-sm text-gray-400">Follow this order to build your content:</p>
+                            <p className="text-help">Follow this order to build your content:</p>
                             <ol className="space-y-2 text-gray-300">
                                 {[
                                     { step: 1, text: "Generate scripts", area: "Scripts", to: "/app/scripts", icon: Sparkles },
@@ -464,7 +464,7 @@ export function HomePage() {
                                 <h4 className="text-sm font-bold text-primary-400 flex items-center gap-2 mb-1">
                                     <Cpu size={14} /> Batch Rendering
                                 </h4>
-                                <p className="text-xs text-gray-400">
+                                <p className="text-help">
                                     Queue multiple videos and render them all at once in the background. Check the <strong className="text-gray-300">Jobs</strong> tab for status.
                                 </p>
                             </div>
@@ -472,7 +472,7 @@ export function HomePage() {
                                 <h4 className="text-sm font-bold text-indigo-400 flex items-center gap-2 mb-1">
                                     <List size={14} /> Global Queue
                                 </h4>
-                                <p className="text-xs text-gray-400">
+                                <p className="text-help">
                                     Your Queue is central. Add scripts once, then pull them into any other tool (Timeline, Backgrounds) instantly.
                                 </p>
                             </div>
@@ -480,7 +480,7 @@ export function HomePage() {
                                 <h4 className="text-sm font-bold text-emerald-400 flex items-center gap-2 mb-1">
                                     <Zap size={14} /> One-Click Workflow
                                 </h4>
-                                <p className="text-xs text-gray-400">
+                                <p className="text-help">
                                     Use the "Apply to Timeline" buttons to skip the manual file picking. We track everything for you.
                                 </p>
                             </div>
@@ -489,12 +489,12 @@ export function HomePage() {
                 </div>
 
                 <Card className="mt-6 border-t font-mono text-xs">
-                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-gray-400">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-content-secondary">
                         <div className="flex items-center gap-2">
                             <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]"></div>
                             <span>System Authenticated</span>
                         </div>
-                        <span className="text-gray-600">v3.0.0</span>
+                        <span className="text-content-tertiary">v3.0.0</span>
                     </div>
                 </Card>
             </div>
@@ -557,7 +557,7 @@ export function HomePage() {
                             <h1 className="text-[52px] leading-[0.95] text-white font-black tracking-[-0.03em]">
                                 {view === 'forgot-password' ? 'Reset access' : view === 'setup' ? 'Create account' : "Let's sign you in"}
                             </h1>
-                            <p className="mt-2 text-sm text-gray-400">
+                            <p className="mt-2 text-help">
                                 {view === 'forgot-password'
                                     ? 'Enter your email and continue.'
                                     : view === 'setup'
@@ -604,7 +604,7 @@ export function HomePage() {
                                         <button
                                             type="button"
                                             onClick={() => setShowPassword((v) => !v)}
-                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-100 transition-colors"
+                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-content-secondary hover:text-gray-100 transition-colors"
                                             aria-label={showPassword ? 'Hide password' : 'Show password'}
                                             tabIndex={-1}
                                         >
@@ -624,7 +624,7 @@ export function HomePage() {
                                         <button
                                             type="button"
                                             onClick={() => setShowPasswordConfirm((v) => !v)}
-                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-100 transition-colors"
+                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-content-secondary hover:text-gray-100 transition-colors"
                                             aria-label={showPasswordConfirm ? 'Hide password' : 'Show password'}
                                             tabIndex={-1}
                                         >
@@ -647,14 +647,14 @@ export function HomePage() {
                                         <button
                                             type="button"
                                             onClick={() => setView('login')}
-                                            className="text-sm text-gray-400 hover:text-white transition-colors"
+                                            className="text-sm text-content-secondary hover:text-white transition-colors"
                                         >
                                             Already have an account? <span className="font-semibold text-blue-300">Sign in</span>
                                         </button>
                                         <button
                                             type="button"
                                             onClick={() => setView('forgot-password')}
-                                            className="text-xs text-gray-500 hover:text-blue-300 transition-colors"
+                                            className="text-meta hover:text-blue-300 transition-colors"
                                         >
                                             Forgot password?
                                         </button>
@@ -684,7 +684,7 @@ export function HomePage() {
                                         <button
                                             type="button"
                                             onClick={() => setShowPassword((v) => !v)}
-                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-100 transition-colors"
+                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-content-secondary hover:text-gray-100 transition-colors"
                                             aria-label={showPassword ? 'Hide password' : 'Show password'}
                                             tabIndex={-1}
                                         >
@@ -694,7 +694,7 @@ export function HomePage() {
                                     <button
                                         type="button"
                                         onClick={() => setView('forgot-password')}
-                                        className="text-xs text-gray-400 hover:text-blue-300 transition-colors"
+                                        className="text-meta hover:text-blue-300 transition-colors"
                                     >
                                         Forgot password?
                                     </button>
@@ -713,7 +713,7 @@ export function HomePage() {
                                     <button
                                         type="button"
                                         onClick={() => setView('setup')}
-                                        className="w-full text-sm text-gray-400 hover:text-white transition-colors"
+                                        className="w-full text-sm text-content-secondary hover:text-white transition-colors"
                                     >
                                         Don&apos;t have an account? <span className="font-semibold text-blue-300">Register</span>
                                     </button>
@@ -737,7 +737,7 @@ export function HomePage() {
                                     <button
                                         type="button"
                                         onClick={() => setView('login')}
-                                        className="w-full flex items-center justify-center gap-2 text-sm text-gray-400 hover:text-white transition-colors"
+                                        className="w-full flex items-center justify-center gap-2 text-sm text-content-secondary hover:text-white transition-colors"
                                     >
                                         <ArrowLeft size={16} />
                                         Back to login
