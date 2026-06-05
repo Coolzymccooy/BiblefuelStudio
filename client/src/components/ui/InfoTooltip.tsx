@@ -134,7 +134,7 @@ export function InfoTooltip({
                         width: tooltipWidth,
                         maxWidth: tooltipWidth,
                     }}
-                    className="z-[1000] px-3 py-2 rounded-lg bg-dark-900/[0.98] backdrop-blur-xl border border-white/[0.10] shadow-2xl shadow-black/40 text-[0.8125rem] text-gray-200 leading-relaxed font-normal normal-case tracking-normal pointer-events-none animate-fade-in"
+                    className="z-[1000] px-3 py-2 rounded-lg bg-dark-900/[0.98] backdrop-blur-xl border border-white/[0.10] shadow-2xl shadow-black/40 text-[0.8125rem] text-content-secondary leading-relaxed font-normal normal-case -tracking-[0.005em] pointer-events-none animate-fade-in"
                     data-side={coords.placed}
                 >
                     {content}
