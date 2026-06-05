@@ -168,11 +168,11 @@ export function HelpPage() {
                     </div>
                     <div className="space-y-2">
                         <h4 className="text-caption tracking-wider font-bold border-b border-white/5 pb-2">ElevenLabs Voice</h4>
-                        <p className="text-xs text-gray-400 leading-relaxed">Requires a valid XI-API-Key. Users often confuse this with OpenAI keys. XI keys usually start without 'sk_'.</p>
+                        <p className="text-xs text-content-secondary leading-relaxed">Requires a valid XI-API-Key. Users often confuse this with OpenAI keys. XI keys usually start without 'sk_'.</p>
                     </div>
                     <div className="space-y-2">
                         <h4 className="text-caption tracking-wider font-bold border-b border-white/5 pb-2">Server Resilience</h4>
-                        <p className="text-xs text-gray-400 leading-relaxed">Our server features auto-reload. When you save your <code className="text-primary-400">.env</code> keys, the server restarts itself to apply the changes.</p>
+                        <p className="text-xs text-content-secondary leading-relaxed">Our server features auto-reload. When you save your <code className="text-primary-400">.env</code> keys, the server restarts itself to apply the changes.</p>
                     </div>
                 </div>
             </Card>

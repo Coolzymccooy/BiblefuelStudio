@@ -654,7 +654,7 @@ export function HomePage() {
                                         <button
                                             type="button"
                                             onClick={() => setView('forgot-password')}
-                                            className="text-meta hover:text-blue-300 transition-colors"
+                                            className="text-xs text-content-tertiary hover:text-blue-300 transition-colors"
                                         >
                                             Forgot password?
                                         </button>
@@ -694,7 +694,7 @@ export function HomePage() {
                                     <button
                                         type="button"
                                         onClick={() => setView('forgot-password')}
-                                        className="text-meta hover:text-blue-300 transition-colors"
+                                        className="text-xs text-content-tertiary hover:text-blue-300 transition-colors"
                                     >
                                         Forgot password?
                                     </button>
