@@ -50,7 +50,7 @@ export function NotificationsBell() {
         <div className="relative" ref={panelRef}>
             <button
                 onClick={handleToggle}
-                className="relative p-2 text-gray-400 hover:text-white transition-colors"
+                className="relative p-2 text-content-secondary hover:text-white transition-colors"
                 aria-label="Notifications"
             >
                 <Bell size={20} />
@@ -73,14 +73,14 @@ export function NotificationsBell() {
                             {notifications.length > 0 && (
                                 <button
                                     onClick={clearAll}
-                                    className="text-[10px] text-gray-400 hover:text-white uppercase tracking-wider"
+                                    className="text-[10px] text-content-secondary hover:text-white uppercase tracking-wider"
                                 >
                                     Clear
                                 </button>
                             )}
                         </div>
                         {notifications.length === 0 ? (
-                            <div className="p-6 text-center text-xs text-gray-500">
+                            <div className="p-6 text-center text-xs text-content-tertiary">
                                 <Bell size={24} className="mx-auto mb-2 opacity-40" />
                                 No notifications yet
                             </div>
@@ -105,15 +105,15 @@ export function NotificationsBell() {
                                             ) : n.kind === 'job_failed' ? (
                                                 <XCircle size={16} className="text-rose-400 flex-shrink-0 mt-0.5" />
                                             ) : (
-                                                <Bell size={16} className="text-gray-400 flex-shrink-0 mt-0.5" />
+                                                <Bell size={16} className="text-content-secondary flex-shrink-0 mt-0.5" />
                                             )}
                                             <div className="flex-1 min-w-0">
                                                 <div className="flex items-center justify-between gap-2">
-                                                    <span className={`text-xs font-semibold ${n.read ? 'text-gray-400' : 'text-white'}`}>{n.title}</span>
-                                                    <span className="text-[9px] text-gray-600 flex-shrink-0">{relativeTime(n.createdAt)}</span>
+                                                    <span className={`text-xs font-semibold ${n.read ? 'text-content-secondary' : 'text-white'}`}>{n.title}</span>
+                                                    <span className="text-[9px] text-content-tertiary flex-shrink-0">{relativeTime(n.createdAt)}</span>
                                                 </div>
                                                 {n.body && (
-                                                    <p className="text-[10px] text-gray-500 mt-0.5 line-clamp-2 break-all">{n.body}</p>
+                                                    <p className="text-[10px] text-content-tertiary mt-0.5 line-clamp-2 break-all">{n.body}</p>
                                                 )}
                                                 {n.href && (
                                                     <span className="inline-flex items-center gap-1 mt-1 text-[10px] text-primary-300">

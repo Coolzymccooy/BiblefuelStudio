@@ -197,7 +197,7 @@ export function Layout() {
                                         onClick={() => setIsMobileMenuOpen(false)}
                                         className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300 group ${active
                                             ? 'bg-white/5 text-primary-200 border border-white/10'
-                                            : 'text-gray-400 hover:bg-white/5 hover:text-gray-100 hover:pl-5'
+                                            : 'text-content-secondary hover:bg-white/5 hover:text-gray-100 hover:pl-5'
                                             }`}
                                     >
                                         <Icon size={20} className={`${active ? 'text-primary-300' : 'text-gray-500 group-hover:text-gray-300'} transition-all`} />
@@ -236,11 +236,11 @@ export function Layout() {
                         <div className="flex items-center justify-between px-4 py-3 bg-dark-900/60 rounded-xl border border-white/5">
                             <div className="flex items-center gap-2">
                                 <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)] animate-pulse"></div>
-                                <span className="text-xs font-medium text-gray-400">Online</span>
+                                <span className="text-xs font-medium text-content-secondary">Online</span>
                             </div>
                             <button
                                 onClick={logout}
-                                className="text-gray-400 hover:text-red-400 transition-colors p-1"
+                                className="text-content-secondary hover:text-red-400 transition-colors p-1"
                                 title="Logout"
                             >
                                 <LogOut size={18} />
@@ -255,7 +255,7 @@ export function Layout() {
                         </Link>
                     )}
 
-                    <div className="mt-4 flex justify-between text-xs text-gray-600 px-2">
+                    <div className="mt-4 flex justify-between text-xs text-content-tertiary px-2">
                         <span>v3.0.0</span>
                         <Link to="/app/settings" className="hover:text-primary-400 transition-colors flex items-center gap-1">
                             <Settings size={12} /> Settings
@@ -312,7 +312,7 @@ export function Layout() {
                                 onClick={() => setIsMobileMenuOpen(false)}
                                 className={`flex flex-col items-center gap-1 px-3 py-2 rounded-xl text-[0.6875rem] font-medium ${active
                                     ? 'text-primary-300 bg-white/5'
-                                    : 'text-gray-400 hover:text-white'
+                                    : 'text-content-secondary hover:text-white'
                                     }`}
                             >
                                 <Icon size={18} className={active ? 'text-primary-300' : 'text-gray-500'} />

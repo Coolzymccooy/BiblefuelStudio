@@ -112,7 +112,7 @@ export function RenderProgressOverlay({
                             <span className="truncate">{stageMsg}</span>
                         </p>
 
-                        <div className="flex items-center gap-4 mt-3 text-[0.75rem] text-gray-400 tabular-nums">
+                        <div className="flex items-center gap-4 mt-3 text-[0.75rem] text-content-secondary tabular-nums">
                             <div className="flex items-center gap-1.5">
                                 <Loader2 size={12} className="text-primary-400 animate-spin" />
                                 <span>Elapsed: <span className="text-gray-200 font-medium">{fmtSeconds(elapsed)}</span></span>
@@ -135,7 +135,7 @@ export function RenderProgressOverlay({
                             )}
                         </div>
 
-                        <p className="text-[0.6875rem] text-gray-500 mt-2">
+                        <p className="text-[0.6875rem] text-content-tertiary mt-2">
                             Don't refresh — this card disappears when your render is ready.
                         </p>
                     </div>

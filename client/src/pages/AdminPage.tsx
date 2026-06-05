@@ -155,7 +155,7 @@ export function AdminPage() {
     }, [isSuperAdmin, refresh]);
 
     if (isLoading) {
-        return <div className="text-gray-400 text-sm">Checking access…</div>;
+        return <div className="text-content-secondary text-sm">Checking access…</div>;
     }
     if (!isSuperAdmin) {
         return <Navigate to="/app" replace />;
@@ -248,7 +248,7 @@ export function AdminPage() {
                         <ShieldCheck className="text-primary-300" size={28} />
                         Admin
                     </h2>
-                    <p className="text-gray-400 mt-1">Operator-only controls. Visible to super-admin accounts only.</p>
+                    <p className="text-content-secondary mt-1">Operator-only controls. Visible to super-admin accounts only.</p>
                 </div>
                 <Button onClick={refresh} isLoading={loading} variant="secondary">
                     <RefreshCw size={16} className="mr-2" />
@@ -265,7 +265,7 @@ export function AdminPage() {
                         className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
                             tab === t
                                 ? 'bg-primary-500/20 text-primary-200 border border-primary-500/30'
-                                : 'bg-white/5 text-gray-400 border border-white/5 hover:text-gray-200'
+                                : 'bg-white/5 text-content-secondary border border-white/5 hover:text-gray-200'
                         }`}
                     >
                         {TAB_LABELS[t]}
@@ -297,7 +297,7 @@ export function AdminPage() {
                         </span>
                     </div>
                     {requests.length === 0 ? (
-                        <div className="text-center py-16 text-gray-500">
+                        <div className="text-center py-16 text-content-tertiary">
                             <Inbox size={36} className="mx-auto mb-3 opacity-30" />
                             <p>{loading ? 'Loading requests…' : 'No access requests yet.'}</p>
                         </div>
@@ -326,7 +326,7 @@ export function AdminPage() {
                                                         <Badge variant="danger" className="text-[10px]">DENIED</Badge>
                                                     )}
                                                 </div>
-                                                <div className="text-xs text-gray-500 mb-2">
+                                                <div className="text-xs text-content-tertiary mb-2">
                                                     {r.org} · submitted {new Date(r.createdAt).toLocaleString()}
                                                     {r.reviewedAt && (
                                                         <span> · reviewed {new Date(r.reviewedAt).toLocaleString()} by {r.reviewedBy}</span>
@@ -377,7 +377,7 @@ export function AdminPage() {
                         </span>
                     </div>
                     {issues.length === 0 ? (
-                        <div className="text-center py-16 text-gray-500">
+                        <div className="text-center py-16 text-content-tertiary">
                             <Bug size={36} className="mx-auto mb-3 opacity-30" />
                             <p>{loading ? 'Loading issues…' : 'No issues reported yet.'}</p>
                         </div>
@@ -407,7 +407,7 @@ export function AdminPage() {
                                                         <Badge variant="success" className="text-[10px]">RESOLVED</Badge>
                                                     )}
                                                 </div>
-                                                <div className="text-xs text-gray-500 mb-2 flex flex-wrap gap-x-3 gap-y-1">
+                                                <div className="text-xs text-content-tertiary mb-2 flex flex-wrap gap-x-3 gap-y-1">
                                                     <span>{issue.reporterEmail || '(no email)'}</span>
                                                     {issue.contextPath && (
                                                         <span className="font-mono">on {issue.contextPath}</span>
@@ -452,7 +452,7 @@ export function AdminPage() {
                                                     <div className="mt-3 space-y-2 border-l-2 border-white/5 pl-3">
                                                         {issue.replies!.map((r) => (
                                                             <div key={r.id} className={`p-2 rounded ${r.isAdmin ? 'bg-primary-500/10 border border-primary-500/20' : 'bg-white/5'}`}>
-                                                                <div className="text-[0.75rem] text-gray-500 mb-1 flex items-center gap-2">
+                                                                <div className="text-[0.75rem] text-content-tertiary mb-1 flex items-center gap-2">
                                                                     <span className={r.isAdmin ? 'text-primary-300 font-semibold' : ''}>{r.byEmail || '(unknown)'}</span>
                                                                     {r.isAdmin && <span className="text-[0.625rem] font-medium bg-primary-500/20 text-primary-300 px-1.5 py-0.5 rounded">Admin</span>}
                                                                     <span>{new Date(r.at).toLocaleString()}</span>
@@ -518,7 +518,7 @@ export function AdminPage() {
             {tab === 'users' && (
                 <Card>
                     {users.length === 0 ? (
-                        <div className="text-center py-16 text-gray-500">
+                        <div className="text-center py-16 text-content-tertiary">
                             <UserIcon size={36} className="mx-auto mb-3 opacity-30" />
                             <p>{loading ? 'Loading users…' : 'No users found.'}</p>
                         </div>
@@ -538,11 +538,11 @@ export function AdminPage() {
                                         <tr key={u.id} className="border-b border-white/5 last:border-b-0 hover:bg-white/[0.02]">
                                             <td className="py-3 px-2">
                                                 <div className="flex items-center gap-2 text-gray-100">
-                                                    <Mail size={14} className="text-gray-500 shrink-0" />
+                                                    <Mail size={14} className="text-content-secondary shrink-0" />
                                                     <span className="font-medium break-all">{u.email}</span>
                                                     {u.isSuperAdmin && <Badge variant="warning" className="text-[10px]">SUPER</Badge>}
                                                 </div>
-                                                <div className="flex items-center gap-3 mt-1 text-[0.75rem] text-gray-500">
+                                                <div className="flex items-center gap-3 mt-1 text-[0.75rem] text-content-tertiary">
                                                     {u.emailVerified ? (
                                                         <span className="flex items-center gap-1 text-emerald-400/80">
                                                             <CheckCircle2 size={11} /> verified
@@ -563,14 +563,14 @@ export function AdminPage() {
                                             </td>
                                             <td className="py-3 px-2 font-mono text-gray-300">
                                                 <span className="text-primary-300">{u.usage.counts.scripts}</span>
-                                                <span className="text-gray-600"> / </span>
+                                                <span className="text-content-tertiary"> / </span>
                                                 <span className="text-primary-300">{u.usage.counts.tts}</span>
-                                                <span className="text-gray-600"> / </span>
+                                                <span className="text-content-tertiary"> / </span>
                                                 <span className="text-primary-300">{u.usage.counts.render}</span>
-                                                <span className="text-gray-600"> / </span>
+                                                <span className="text-content-tertiary"> / </span>
                                                 <span className="text-primary-300">{u.usage.counts.imageGen}</span>
                                                 {u.usage.day && (
-                                                    <span className="text-[0.6875rem] text-gray-500 ml-2">({u.usage.day})</span>
+                                                    <span className="text-[0.6875rem] text-content-tertiary ml-2">({u.usage.day})</span>
                                                 )}
                                             </td>
                                             <td className="py-3 px-2 text-right">

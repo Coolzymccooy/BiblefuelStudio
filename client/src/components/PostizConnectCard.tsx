@@ -71,7 +71,7 @@ export function PostizConnectCard() {
     if (loading) {
         return (
             <Card>
-                <div className="flex items-center gap-2 text-sm text-gray-400">
+                <div className="flex items-center gap-2 text-sm text-content-secondary">
                     <Loader2 size={16} className="animate-spin" /> Loading social connections...
                 </div>
             </Card>
@@ -97,7 +97,7 @@ export function PostizConnectCard() {
                 <Link2 size={18} className="text-primary-300" />
                 <h3 className="text-lg font-semibold text-gray-100">Connect social accounts</h3>
             </div>
-            <p className="text-xs text-gray-500 mb-4">
+            <p className="text-xs text-content-tertiary mb-4">
                 One click to authorise each platform. Your videos can then auto-post when a render finishes.
             </p>
 
@@ -119,7 +119,7 @@ export function PostizConnectCard() {
                             </div>
                             {connected ? (
                                 <div className="flex items-center justify-between">
-                                    <span className="text-[11px] text-gray-500 truncate">
+                                    <span className="text-[11px] text-content-tertiary truncate">
                                         {connected.displayName || connected.name || ''}
                                     </span>
                                     <Button

@@ -158,7 +158,7 @@ export function toastError(err: unknown): void {
           <div className="min-w-0 flex-1">
             <div className="font-semibold text-sm text-gray-100">{f.title}</div>
             {f.detail && (
-              <div className="mt-1 text-xs leading-relaxed text-gray-400">{f.detail}</div>
+              <div className="mt-1 text-xs leading-relaxed text-content-secondary">{f.detail}</div>
             )}
             {f.actionLabel && f.actionTo && (
               <Link
@@ -173,7 +173,7 @@ export function toastError(err: unknown): void {
           <button
             type="button"
             onClick={() => toast.dismiss(t.id)}
-            className="text-gray-500 hover:text-gray-200 transition-colors text-xs"
+            className="text-content-secondary hover:text-gray-200 transition-colors text-xs"
             aria-label="Dismiss"
           >
             ✕

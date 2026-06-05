@@ -253,7 +253,7 @@ export function CompareVoices({ className = '' }: { className?: string }) {
                         {r.label || r.voice || r.voiceId || r.provider}
                       </span>
                     </div>
-                    <span className="text-[10px] text-gray-400 shrink-0">{r.latencyMs} ms</span>
+                    <span className="text-[10px] text-content-secondary shrink-0">{r.latencyMs} ms</span>
                   </div>
 
                   {ok ? (
@@ -270,7 +270,7 @@ export function CompareVoices({ className = '' }: { className?: string }) {
                             type="button"
                             onClick={() => rateResult(r, n)}
                             aria-label={`Rate ${n} stars`}
-                            className="p-0.5 text-gray-500 hover:text-yellow-300"
+                            className="p-0.5 text-content-tertiary hover:text-yellow-300"
                           >
                             <Star
                               size={16}

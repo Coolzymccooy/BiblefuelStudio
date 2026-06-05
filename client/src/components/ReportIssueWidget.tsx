@@ -255,14 +255,14 @@ export function ReportIssueWidget() {
                                     <Bug size={18} className="text-amber-400" />
                                     Issues
                                 </h3>
-                                <p className="text-xs text-gray-400 mt-1">
+                                <p className="text-xs text-content-secondary mt-1">
                                     Report a problem or follow up on a previous report.
                                 </p>
                             </div>
                             <button
                                 type="button"
                                 onClick={() => !submitting && setOpen(false)}
-                                className="p-1 text-gray-400 hover:text-white"
+                                className="p-1 text-content-secondary hover:text-white"
                                 aria-label="Close"
                             >
                                 <X size={20} />
@@ -276,7 +276,7 @@ export function ReportIssueWidget() {
                                 className={`pb-2 px-1 text-sm font-medium transition-colors ${
                                     tab === 'new'
                                         ? 'text-amber-300 border-b-2 border-amber-500'
-                                        : 'text-gray-500 hover:text-gray-300'
+                                        : 'text-content-tertiary hover:text-gray-300'
                                 }`}
                             >
                                 New report
@@ -287,7 +287,7 @@ export function ReportIssueWidget() {
                                 className={`pb-2 px-1 text-sm font-medium transition-colors flex items-center gap-1.5 ${
                                     tab === 'mine'
                                         ? 'text-amber-300 border-b-2 border-amber-500'
-                                        : 'text-gray-500 hover:text-gray-300'
+                                        : 'text-content-tertiary hover:text-gray-300'
                                 }`}
                             >
                                 My reports
@@ -299,12 +299,12 @@ export function ReportIssueWidget() {
 
                         {tab === 'new' && (
                             <form onSubmit={submit}>
-                                <p className="text-xs text-gray-500 mb-3">
+                                <p className="text-xs text-content-tertiary mb-3">
                                     Page <span className="font-mono">{location.pathname}</span> is attached automatically.
                                 </p>
                                 <div className="space-y-3">
                                     <div>
-                                        <label className="block text-xs font-semibold text-gray-400 mb-1">Title</label>
+                                        <label className="block text-xs font-semibold text-content-secondary mb-1">Title</label>
                                         <input
                                             type="text"
                                             value={title}
@@ -315,7 +315,7 @@ export function ReportIssueWidget() {
                                         />
                                     </div>
                                     <div>
-                                        <label className="block text-xs font-semibold text-gray-400 mb-1">What happened?</label>
+                                        <label className="block text-xs font-semibold text-content-secondary mb-1">What happened?</label>
                                         <textarea
                                             value={body}
                                             onChange={(e) => setBody(e.target.value)}
@@ -324,10 +324,10 @@ export function ReportIssueWidget() {
                                             placeholder="Steps to reproduce, what you expected, what happened instead."
                                             className="w-full bg-dark-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-amber-500/50 focus:outline-none resize-y"
                                         />
-                                        <div className="text-[10px] text-gray-600 mt-1 text-right">{body.length} / 4000</div>
+                                        <div className="text-[10px] text-content-tertiary mt-1 text-right">{body.length} / 4000</div>
                                     </div>
                                     <div>
-                                        <label className="block text-xs font-semibold text-gray-400 mb-1">Severity</label>
+                                        <label className="block text-xs font-semibold text-content-secondary mb-1">Severity</label>
                                         <div className="flex gap-2">
                                             {(['low', 'medium', 'high'] as Severity[]).map((s) => (
                                                 <button
@@ -337,7 +337,7 @@ export function ReportIssueWidget() {
                                                     className={`flex-1 py-2 rounded-lg text-xs font-medium capitalize transition-colors ${
                                                         severity === s
                                                             ? sevPill(s) + ' border'
-                                                            : 'bg-white/5 text-gray-400 border border-white/5 hover:text-gray-200'
+                                                            : 'bg-white/5 text-content-secondary border border-white/5 hover:text-gray-200'
                                                     }`}
                                                 >
                                                     {s}
@@ -346,7 +346,7 @@ export function ReportIssueWidget() {
                                         </div>
                                     </div>
                                     <div>
-                                        <label className="block text-xs font-semibold text-gray-400 mb-1 flex items-center gap-1.5">
+                                        <label className="block text-xs font-semibold text-content-secondary mb-1 flex items-center gap-1.5">
                                             <Paperclip size={11} />
                                             Screenshots (optional, up to {MAX_ATTACHMENTS})
                                         </label>
@@ -376,7 +376,7 @@ export function ReportIssueWidget() {
                                             {staged.length < MAX_ATTACHMENTS && (
                                                 <label
                                                     htmlFor="bf-issue-files"
-                                                    className="h-16 w-16 rounded border border-dashed border-white/15 hover:border-amber-500/50 text-gray-500 hover:text-amber-300 flex items-center justify-center cursor-pointer transition-colors"
+                                                    className="h-16 w-16 rounded border border-dashed border-white/15 hover:border-amber-500/50 text-content-tertiary hover:text-amber-300 flex items-center justify-center cursor-pointer transition-colors"
                                                     title="Add a screenshot (PNG/JPEG/GIF/WEBP, max 5MB)"
                                                 >
                                                     <ImagePlus size={20} />
@@ -384,7 +384,7 @@ export function ReportIssueWidget() {
                                             )}
                                         </div>
                                         {staged.length > 0 && (
-                                            <p className="text-[10px] text-gray-600 mt-1">
+                                            <p className="text-[10px] text-content-tertiary mt-1">
                                                 {staged.length} attached · {(staged.reduce((acc, s) => acc + s.sizeBytes, 0) / 1024).toFixed(0)} KB total
                                             </p>
                                         )}
@@ -396,7 +396,7 @@ export function ReportIssueWidget() {
                                         type="button"
                                         onClick={() => !submitting && setOpen(false)}
                                         disabled={submitting}
-                                        className="px-4 py-2 text-sm text-gray-400 hover:text-white disabled:opacity-50"
+                                        className="px-4 py-2 text-sm text-content-secondary hover:text-white disabled:opacity-50"
                                     >
                                         Cancel
                                     </button>
@@ -415,12 +415,12 @@ export function ReportIssueWidget() {
                         {tab === 'mine' && (
                             <div>
                                 {mineLoading ? (
-                                    <div className="text-center py-10 text-gray-500 text-sm flex items-center justify-center gap-2">
+                                    <div className="text-center py-10 text-content-tertiary text-sm flex items-center justify-center gap-2">
                                         <Loader2 size={14} className="animate-spin" />
                                         Loading your reports…
                                     </div>
                                 ) : mine.length === 0 ? (
-                                    <div className="text-center py-10 text-gray-500">
+                                    <div className="text-center py-10 text-content-tertiary">
                                         <Inbox size={28} className="mx-auto mb-2 opacity-30" />
                                         <p className="text-sm">You haven&apos;t reported anything yet.</p>
                                     </div>
@@ -437,7 +437,7 @@ export function ReportIssueWidget() {
                                                         ? <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-1.5 py-0.5 rounded">RESOLVED</span>
                                                         : <span className="text-[10px] bg-red-500/20 text-red-300 border border-red-500/30 px-1.5 py-0.5 rounded">OPEN</span>}
                                                 </div>
-                                                <div className="text-[10px] text-gray-500 mb-2">
+                                                <div className="text-[10px] text-content-tertiary mb-2">
                                                     {new Date(issue.createdAt).toLocaleString()}
                                                     {issue.contextPath && <span className="font-mono"> · {issue.contextPath}</span>}
                                                 </div>
@@ -464,7 +464,7 @@ export function ReportIssueWidget() {
                                                     <div className="mt-2 space-y-1.5 border-l-2 border-white/5 pl-2">
                                                         {issue.replies!.map((r) => (
                                                             <div key={r.id} className={`p-2 rounded ${r.isAdmin ? 'bg-primary-500/10 border border-primary-500/20' : 'bg-white/5'}`}>
-                                                                <div className="text-[10px] text-gray-500 mb-1 flex items-center gap-1.5 flex-wrap">
+                                                                <div className="text-[10px] text-content-tertiary mb-1 flex items-center gap-1.5 flex-wrap">
                                                                     <span className={r.isAdmin ? 'text-primary-300 font-semibold' : ''}>{r.isAdmin ? 'Operator' : 'You'}</span>
                                                                     <span>·</span>
                                                                     <span>{new Date(r.at).toLocaleString()}</span>

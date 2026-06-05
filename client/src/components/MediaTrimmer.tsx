@@ -129,7 +129,7 @@ export function MediaTrimmer({ serverPath, kind, onApply, onCancel }: MediaTrimm
             <Scissors size={18} className="text-primary-300" />
             <h3 className="font-bold text-lg text-white">Trim clip</h3>
           </div>
-          <button onClick={onCancel} className="text-gray-400 hover:text-white p-1" aria-label="Close">
+          <button onClick={onCancel} className="text-content-secondary hover:text-white p-1" aria-label="Close">
             <X size={20} />
           </button>
         </div>
@@ -196,7 +196,7 @@ export function MediaTrimmer({ serverPath, kind, onApply, onCancel }: MediaTrimm
             )}
           </div>
 
-          <p className="text-[11px] text-gray-500 text-center">
+          <p className="text-[11px] text-content-tertiary text-center">
             Drag the handles to choose the part you want to keep, then Apply trim.
           </p>
 

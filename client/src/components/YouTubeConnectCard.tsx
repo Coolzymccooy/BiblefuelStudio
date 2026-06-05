@@ -120,7 +120,7 @@ export function YouTubeConnectCard() {
     if (loading) {
         return (
             <Card title="Connections" className="border-white/10">
-                <div className="flex items-center gap-2 text-sm text-gray-400 py-4">
+                <div className="flex items-center gap-2 text-sm text-content-secondary py-4">
                     <Loader2 size={16} className="animate-spin" /> Loading…
                 </div>
             </Card>
@@ -129,7 +129,7 @@ export function YouTubeConnectCard() {
 
     return (
         <Card title="Connections" className="border-white/10">
-            <p className="text-xs text-gray-400 mb-4">
+            <p className="text-xs text-content-secondary mb-4">
                 Connect your accounts so Auto-Publish posts to <span className="text-gray-200">your</span> channels.
             </p>
 
@@ -155,7 +155,7 @@ export function YouTubeConnectCard() {
                         )}
                     </div>
                     {status?.connected ? (
-                        <p className="text-xs text-gray-400 mt-1">
+                        <p className="text-xs text-content-secondary mt-1">
                             {status.channelTitle ? (
                                 <>
                                     Posting to <strong className="text-gray-200">{status.channelTitle}</strong>
@@ -168,7 +168,7 @@ export function YouTubeConnectCard() {
                             )}
                         </p>
                     ) : status?.serverConfigured ? (
-                        <p className="text-xs text-gray-400 mt-1">
+                        <p className="text-xs text-content-secondary mt-1">
                             One-click sign in with Google. Auto-Publish will upload Shorts to your channel as Private by default.
                         </p>
                     ) : (

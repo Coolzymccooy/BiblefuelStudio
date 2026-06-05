@@ -92,7 +92,7 @@ export function PlanAndUsageCard() {
     if (loading) {
         return (
             <Card>
-                <div className="flex items-center gap-2 text-sm text-gray-400">
+                <div className="flex items-center gap-2 text-sm text-content-secondary">
                     <Loader2 size={16} className="animate-spin" />
                     Loading plan...
                 </div>
@@ -122,7 +122,7 @@ export function PlanAndUsageCard() {
                         )}
                         <h3 className="text-lg font-semibold text-gray-100">{planLabel} plan</h3>
                     </div>
-                    <p className="text-xs text-gray-500 mt-1">
+                    <p className="text-xs text-content-tertiary mt-1">
                         Daily quotas reset at midnight UTC.
                     </p>
                 </div>
@@ -156,7 +156,7 @@ export function PlanAndUsageCard() {
                         <div key={key}>
                             <div className="flex items-center justify-between text-xs mb-1">
                                 <span className="text-gray-300">{label}</span>
-                                <span className={over ? 'text-red-400' : 'text-gray-500'}>
+                                <span className={over ? 'text-red-400' : 'text-content-tertiary'}>
                                     {b.unlimited ? 'Unlimited' : `${b.used} / ${b.limit}`}
                                 </span>
                             </div>
@@ -179,7 +179,7 @@ export function PlanAndUsageCard() {
             </div>
 
             {!state.stripeConfigured && !state.isSuperAdmin && (
-                <p className="text-xs text-gray-500 mt-4">
+                <p className="text-xs text-content-tertiary mt-4">
                     Payments are not enabled yet — upgrade button is hidden until then.
                 </p>
             )}

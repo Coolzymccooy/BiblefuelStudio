@@ -122,13 +122,13 @@ export function WebhookConnectCard() {
     return (
         <>
             <Card title="TikTok + Instagram Auto-Publish" className="border-white/10">
-                <p className="text-xs text-gray-400 mb-4">
+                <p className="text-xs text-content-secondary mb-4">
                     <span className="text-gray-300">Powered by Make or Zapier</span> — connect your account once, and your rendered videos
                     auto-post to TikTok, Instagram, X, LinkedIn, anywhere your scenario is wired up.
                 </p>
 
                 {loading ? (
-                    <div className="flex items-center gap-2 text-sm text-gray-400 py-4">
+                    <div className="flex items-center gap-2 text-sm text-content-secondary py-4">
                         <Loader2 size={16} className="animate-spin" /> Loading…
                     </div>
                 ) : webhooks.length === 0 ? (
@@ -137,7 +137,7 @@ export function WebhookConnectCard() {
                             <Zap size={22} className="text-amber-300" />
                         </div>
                         <p className="text-sm font-semibold text-white mt-3">Not connected yet</p>
-                        <p className="text-xs text-gray-400 mt-1 mb-4 max-w-md mx-auto">
+                        <p className="text-xs text-content-secondary mt-1 mb-4 max-w-md mx-auto">
                             One connection handles TikTok + Instagram + X + LinkedIn — all at once. Takes about 5 minutes to set up, and Make &amp; Zapier both offer free tiers for testing.
                         </p>
                         <Button
@@ -186,13 +186,13 @@ export function WebhookConnectCard() {
                                                 </span>
                                             )}
                                         </div>
-                                        <p className="text-[10px] font-mono text-gray-400 truncate mt-0.5">{w.url}</p>
+                                        <p className="text-[10px] font-mono text-content-secondary truncate mt-0.5">{w.url}</p>
                                         {/* Delivery history line — "Last delivery: 2 h ago" /
                                             "Last failure: 1 d ago". Catches silent breakage
                                             (e.g. user deleted their Make scenario after
                                             connecting it here). */}
                                         {(everSucceeded || lastFailureTs > 0) && (
-                                            <p className="text-[10px] text-gray-500 mt-1">
+                                            <p className="text-[10px] text-content-tertiary mt-1">
                                                 {everSucceeded && (
                                                     <>
                                                         Last delivery: <span className={recentFailure ? 'text-gray-400' : 'text-emerald-300/90'}>{timeAgo(w.lastSuccessAt || '')}</span>
@@ -323,10 +323,10 @@ function AddWebhookModal({ onClose, onSaved }: AddWebhookModalProps) {
                         </div>
                         <div>
                             <h3 className="text-lg font-bold text-white">Connect Make / Zapier</h3>
-                            <p className="text-xs text-gray-400">Step {step} of 2</p>
+                            <p className="text-xs text-content-secondary">Step {step} of 2</p>
                         </div>
                     </div>
-                    <button onClick={onClose} className="text-gray-500 hover:text-white" aria-label="Close">
+                    <button onClick={onClose} className="text-content-tertiary hover:text-white" aria-label="Close">
                         <XIcon size={20} />
                     </button>
                 </div>
@@ -349,7 +349,7 @@ function AddWebhookModal({ onClose, onSaved }: AddWebhookModalProps) {
                                             <strong className="text-white">Make.com</strong>
                                             <ExternalLink size={14} className="text-purple-300 group-hover:translate-x-0.5 transition-transform" />
                                         </div>
-                                        <p className="text-[11px] text-gray-400">More flexible. Free tier available for testing and light usage.</p>
+                                        <p className="text-[11px] text-content-secondary">More flexible. Free tier available for testing and light usage.</p>
                                     </a>
                                     <a
                                         href="https://zapier.com/sign-up"
@@ -361,10 +361,10 @@ function AddWebhookModal({ onClose, onSaved }: AddWebhookModalProps) {
                                             <strong className="text-white">Zapier</strong>
                                             <ExternalLink size={14} className="text-orange-300 group-hover:translate-x-0.5 transition-transform" />
                                         </div>
-                                        <p className="text-[11px] text-gray-400">Simpler interface. Free tier available for testing.</p>
+                                        <p className="text-[11px] text-content-secondary">Simpler interface. Free tier available for testing.</p>
                                     </a>
                                 </div>
-                                <p className="text-[11px] text-gray-500 mt-2">
+                                <p className="text-[11px] text-content-tertiary mt-2">
                                     Already signed up? Skip ahead — click <strong>Next</strong> below.
                                 </p>
                             </div>
@@ -415,7 +415,7 @@ function AddWebhookModal({ onClose, onSaved }: AddWebhookModalProps) {
                                     placeholder="e.g. My TikTok scenario"
                                     className="bg-black/20"
                                 />
-                                <p className="text-[10px] text-gray-500">Shown on this page — pick anything that helps you remember which scenario this is.</p>
+                                <p className="text-[10px] text-content-tertiary">Shown on this page — pick anything that helps you remember which scenario this is.</p>
                             </div>
 
                             <div className="space-y-2">
@@ -426,7 +426,7 @@ function AddWebhookModal({ onClose, onSaved }: AddWebhookModalProps) {
                                     placeholder="https://hook.eu1.make.com/..."
                                     className="bg-black/20 font-mono text-xs"
                                 />
-                                <p className="text-[10px] text-gray-500">Starts with <code className="text-amber-200">https://hook.</code> for Make, or <code className="text-amber-200">https://hooks.zapier.com/</code> for Zapier.</p>
+                                <p className="text-[10px] text-content-tertiary">Starts with <code className="text-amber-200">https://hook.</code> for Make, or <code className="text-amber-200">https://hooks.zapier.com/</code> for Zapier.</p>
                             </div>
 
                             {testResult && !testResult.ok && (

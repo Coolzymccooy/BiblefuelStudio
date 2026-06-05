@@ -78,7 +78,7 @@ export function AnimationPicker({ value, onChange, className = '' }: AnimationPi
       tooltip="Word-synced motion styles applied to kinetic captions. Renderable presets bake into the final MP4 via ffmpeg; preview-only ones are browser previews while the renderer support catches up."
     >
       {loading ? (
-        <div className="flex items-center gap-2 text-gray-400 text-sm">
+        <div className="flex items-center gap-2 text-content-secondary text-sm">
           <Loader2 size={16} className="animate-spin" /> Loading animations…
         </div>
       ) : error ? (
@@ -105,13 +105,13 @@ export function AnimationPicker({ value, onChange, className = '' }: AnimationPi
                     {a.renderable ? 'Renderable' : 'Preview-only'}
                   </Badge>
                 </div>
-                <p className="mt-1 text-xs text-gray-400">{a.description}</p>
+                <p className="mt-1 text-xs text-content-secondary">{a.description}</p>
                 {a.unsupported.length > 0 && (
                   <div className="mt-2 flex flex-wrap gap-1">
                     {a.unsupported.map((u) => (
                       <span
                         key={u}
-                        className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-gray-500 border border-white/10"
+                        className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-content-tertiary border border-white/10"
                       >
                         no {u}
                       </span>

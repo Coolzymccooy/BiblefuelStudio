@@ -245,7 +245,7 @@ export function ShareSheet({ videoUrl, caption = '', title, filename = 'biblefue
             {/* Tier 3 — per-platform auto-publish (Postiz) */}
             {postizState?.configured && (
                 <div>
-                    <div className="text-xs uppercase tracking-wider text-gray-500 mb-2 flex items-center gap-1">
+                    <div className="text-xs uppercase tracking-wider text-content-tertiary mb-2 flex items-center gap-1">
                         <Link2 size={12} /> Auto-publish to your accounts
                     </div>
                     <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
@@ -268,7 +268,7 @@ export function ShareSheet({ videoUrl, caption = '', title, filename = 'biblefue
                                         <Icon size={16} />
                                     )}
                                     <span>{label}</span>
-                                    {!connected && <span className="text-[9px] text-gray-500">Connect</span>}
+                                    {!connected && <span className="text-[9px] text-content-tertiary">Connect</span>}
                                 </button>
                             );
                         })}
@@ -278,7 +278,7 @@ export function ShareSheet({ videoUrl, caption = '', title, filename = 'biblefue
 
             {/* Universal fallback — intent URL share to platforms that accept text+link */}
             <div>
-                <div className="text-xs uppercase tracking-wider text-gray-500 mb-2 flex items-center gap-1">
+                <div className="text-xs uppercase tracking-wider text-content-tertiary mb-2 flex items-center gap-1">
                     <Share2 size={12} /> Share link
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -312,7 +312,7 @@ export function ShareSheet({ videoUrl, caption = '', title, filename = 'biblefue
 
             {/* When Postiz isn't configured */}
             {postizState && !postizState.configured && (
-                <p className="text-[11px] text-gray-500">
+                <p className="text-[11px] text-content-tertiary">
                     Tip: Download the MP4 and upload to TikTok / Instagram / YouTube directly. One-click auto-publish to those platforms is coming soon.
                 </p>
             )}

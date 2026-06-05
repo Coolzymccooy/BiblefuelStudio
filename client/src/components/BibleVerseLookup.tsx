@@ -122,9 +122,9 @@ export function BibleVerseLookup({
 
             {result && (
                 <div className="mt-4 space-y-3">
-                    <div className="text-sm uppercase tracking-wider text-gray-400">
+                    <div className="text-sm uppercase tracking-wider text-content-secondary">
                         {result.reference} · {result.translation.toUpperCase()}
-                        {result.source === 'cache' && <span className="ml-2 text-xs text-gray-500">(cached)</span>}
+                        {result.source === 'cache' && <span className="ml-2 text-xs text-content-tertiary">(cached)</span>}
                     </div>
                     {result.warning && (
                         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
@@ -153,7 +153,7 @@ export function BibleVerseLookup({
                 </div>
             )}
             {isLoading && !result && (
-                <div className="mt-3 flex items-center gap-2 text-sm text-gray-400">
+                <div className="mt-3 flex items-center gap-2 text-sm text-content-secondary">
                     <Loader2 size={14} className="animate-spin" />
                     Fetching verses…
                 </div>
