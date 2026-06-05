@@ -53,6 +53,10 @@ export default {
           cream: '#f4ead8',
           hairline: '#e8ddc4',
         },
+        content: {
+          secondary: 'var(--content-secondary)',
+          tertiary: 'var(--content-tertiary)',
+        },
       },
       backgroundImage: {
         'space-gradient': 'linear-gradient(to bottom right, #000000, #09090b)', // Pure Black to Micaceous Iron Oxide

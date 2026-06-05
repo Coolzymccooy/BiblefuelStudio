@@ -3,6 +3,11 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --content-secondary: #A8B0BC; /* ~71% lum on dark-950 — descriptions, help, subtitles */
+    --content-tertiary:  #8A929E; /* ~58% lum — meta, timestamps, counts, hints */
+  }
+
   html {
     font-size: 15px;
   }
@@ -114,7 +119,7 @@
   }
 
   .field-help {
-    @apply mt-1.5 text-[0.75rem] leading-relaxed text-gray-500;
+    @apply mt-1.5 text-[0.75rem] leading-relaxed text-content-secondary;
   }
 
   .section-title {
@@ -122,7 +127,30 @@
   }
 
   .section-subtitle {
-    @apply text-[0.8125rem] font-normal text-gray-500 mt-0.5;
+    @apply text-[0.8125rem] font-normal text-content-secondary mt-0.5;
+  }
+
+  /* Sharpened secondary-text system — see
+     docs/superpowers/specs/2026-06-05-secondary-typography-design.md */
+  .text-help {
+    @apply text-[0.8125rem] leading-relaxed text-content-secondary;
+    letter-spacing: -0.005em;
+  }
+
+  .text-subtitle {
+    @apply text-[0.8125rem] text-content-secondary;
+    letter-spacing: -0.005em;
+  }
+
+  .text-meta {
+    @apply text-[0.75rem] text-content-tertiary;
+    letter-spacing: 0;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .text-caption {
+    @apply text-[0.6875rem] uppercase text-content-tertiary;
+    letter-spacing: 0.04em;
   }
 
   /* Custom Scrollbar */
