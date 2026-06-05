@@ -129,12 +129,12 @@ export function SeriesPage() {
             <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                 <div>
                     <h1 className="text-2xl font-bold text-white">Series Mode</h1>
-                    <p className="text-sm text-gray-400">
+                    <p className="text-help">
                         Turn one Bible chapter into a sequenced set of short-form videos with continuity hooks
                         and YouVersion deep links.
                     </p>
                 </div>
-                <div className="flex items-center gap-2 text-xs text-gray-500">
+                <div className="flex items-center gap-2 text-content-secondary">
                     <ListOrdered size={14} />
                     Each part is one auto-publish job.
                 </div>
@@ -143,7 +143,7 @@ export function SeriesPage() {
             <Card title="Build a series" icon={Sparkles}>
                 <div className="grid grid-cols-1 lg:grid-cols-4 gap-3">
                     <label className="lg:col-span-2 flex flex-col gap-1.5">
-                        <span className="text-xs uppercase tracking-wider text-gray-400">Chapter reference</span>
+                        <span className="text-caption">Chapter reference</span>
                         <Input
                             value={reference}
                             onChange={(e) => setReference(e.target.value)}
@@ -151,7 +151,7 @@ export function SeriesPage() {
                         />
                     </label>
                     <label className="flex flex-col gap-1.5">
-                        <span className="text-xs uppercase tracking-wider text-gray-400">Parts</span>
+                        <span className="text-caption">Parts</span>
                         <Select value={parts} onChange={(e) => setParts(Number(e.target.value))}>
                             {PART_COUNT_OPTIONS.map((n) => (
                                 <option key={n} value={n}>
@@ -161,7 +161,7 @@ export function SeriesPage() {
                         </Select>
                     </label>
                     <label className="flex flex-col gap-1.5">
-                        <span className="text-xs uppercase tracking-wider text-gray-400">Translation</span>
+                        <span className="text-caption">Translation</span>
                         <Select value={translation} onChange={(e) => setTranslation(e.target.value)}>
                             {sortedTranslations.length === 0 ? (
                                 <option value="kjv">KJV — King James</option>
@@ -183,7 +183,7 @@ export function SeriesPage() {
                     </summary>
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-3">
                         <label className="flex flex-col gap-1.5">
-                            <span className="text-xs uppercase tracking-wider text-gray-400">Destination</span>
+                            <span className="text-caption">Destination</span>
                             <Select value={destination} onChange={(e) => setDestination(e.target.value as 'webhook' | 'buffer' | 'youtube')}>
                                 <option value="webhook">Make webhook (default funnel)</option>
                                 <option value="buffer">Buffer</option>
@@ -191,7 +191,7 @@ export function SeriesPage() {
                             </Select>
                         </label>
                         <label className="flex flex-col gap-1.5">
-                            <span className="text-xs uppercase tracking-wider text-gray-400">Aspect</span>
+                            <span className="text-caption">Aspect</span>
                             <Select value={aspect} onChange={(e) => setAspect(e.target.value as 'portrait' | 'square' | 'landscape')}>
                                 <option value="portrait">Portrait (9:16)</option>
                                 <option value="square">Square (1:1)</option>
@@ -199,7 +199,7 @@ export function SeriesPage() {
                             </Select>
                         </label>
                         <label className="flex flex-col gap-1.5">
-                            <span className="text-xs uppercase tracking-wider text-gray-400">Duration (sec)</span>
+                            <span className="text-caption">Duration (sec)</span>
                             <Input
                                 type="number"
                                 min={8}
@@ -209,7 +209,7 @@ export function SeriesPage() {
                             />
                         </label>
                         <label className="flex flex-col gap-1.5 lg:col-span-2">
-                            <span className="text-xs uppercase tracking-wider text-gray-400">Title prefix (optional)</span>
+                            <span className="text-caption">Title prefix (optional)</span>
                             <Input
                                 value={titlePrefix}
                                 onChange={(e) => setTitlePrefix(e.target.value)}
@@ -217,7 +217,7 @@ export function SeriesPage() {
                             />
                         </label>
                         <label className="flex flex-col gap-1.5">
-                            <span className="text-xs uppercase tracking-wider text-gray-400">Tone (optional)</span>
+                            <span className="text-caption">Tone (optional)</span>
                             <Input
                                 value={tone}
                                 onChange={(e) => setTone(e.target.value)}
@@ -225,7 +225,7 @@ export function SeriesPage() {
                             />
                         </label>
                         <label className="flex flex-col gap-1.5 lg:col-span-3">
-                            <span className="text-xs uppercase tracking-wider text-gray-400">Niche (optional)</span>
+                            <span className="text-caption">Niche (optional)</span>
                             <Input
                                 value={niche}
                                 onChange={(e) => setNiche(e.target.value)}
@@ -245,7 +245,7 @@ export function SeriesPage() {
                                     <ImageIcon size={14} className="text-primary-400" />
                                     Add AI-generated artwork (free)
                                 </div>
-                                <p className="text-xs text-gray-500 mt-1">
+                                <p className="text-help">
                                     Generates one painterly Bible landscape per part using Cloudflare Workers AI
                                     (free tier) with Google Imagen as fallback. Same visual style across every part
                                     of the series. No biblical figures are depicted — landscapes and symbolic
@@ -277,7 +277,7 @@ export function SeriesPage() {
 
             {plan && (
                 <Card title={`Preview — ${plan.chapterReference}`} icon={Hash}>
-                    <div className="text-xs uppercase tracking-wider text-gray-500 mb-3">
+                    <div className="text-caption mb-3">
                         {plan.totalParts} parts · {plan.translation.toUpperCase()}
                     </div>
                     <ol className="space-y-4">
@@ -290,7 +290,7 @@ export function SeriesPage() {
                                     <div className="font-semibold text-primary-200">
                                         Part {seg.partNumber} of {seg.totalParts}
                                     </div>
-                                    <div className="text-xs text-gray-400">{seg.reference}</div>
+                                    <div className="text-content-secondary">{seg.reference}</div>
                                 </div>
                                 {seg.hook && (
                                     <p className="text-sm text-gray-300 italic mb-2">&ldquo;{seg.hook}&rdquo;</p>
@@ -316,7 +316,7 @@ export function SeriesPage() {
 
             <Card title="Recent series" icon={RefreshCw}>
                 {history.length === 0 ? (
-                    <p className="text-sm text-gray-500">No series generated yet.</p>
+                    <p className="text-content-secondary">No series generated yet.</p>
                 ) : (
                     <ul className="space-y-2">
                         {history.map((row) => (
@@ -327,11 +327,11 @@ export function SeriesPage() {
                                 <div>
                                     <div className="text-gray-200">
                                         {row.chapterReference}
-                                        <span className="text-gray-500 ml-2">
+                                        <span className="text-content-secondary ml-2">
                                             · {row.totalParts} parts · {row.translation.toUpperCase()}
                                         </span>
                                     </div>
-                                    <div className="text-xs text-gray-500">
+                                    <div className="text-meta">
                                         {new Date(row.createdAt).toLocaleString()} · {row.jobIds.length} jobs
                                     </div>
                                 </div>
@@ -348,7 +348,7 @@ export function SeriesPage() {
                 )}
             </Card>
 
-            <div className="text-xs text-gray-500 flex items-center gap-1.5">
+            <div className="text-content-secondary flex items-center gap-1.5">
                 <BookOpen size={12} />
                 Verse text is fetched from api.bible (copyrighted) or bible-api.com (public domain) and cached.
             </div>

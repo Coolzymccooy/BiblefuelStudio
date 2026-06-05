@@ -224,7 +224,7 @@ export function SettingsPage() {
         <div className="max-w-5xl mx-auto space-y-6 animate-fade-in">
             <div>
                 <h2 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-400 mb-2">Settings</h2>
-                <p className="text-gray-400">Plan, integrations, and app info.</p>
+                <p className="text-help">Plan, integrations, and app info.</p>
             </div>
 
             {/* Signed-in account — shows the email of the active session so
@@ -236,10 +236,10 @@ export function SettingsPage() {
                         <UserIcon size={20} className="text-primary-300" />
                     </div>
                     <div className="flex-1 min-w-0">
-                        <div className="text-[10px] uppercase tracking-[1.5px] text-gray-500 mb-1">Signed in as</div>
+                        <div className="text-caption mb-1">Signed in as</div>
                         <div className="flex flex-wrap items-center gap-2">
                             <span className="text-sm font-mono text-gray-100 break-all">
-                                {authEmail || <span className="italic text-gray-500">not signed in</span>}
+                                {authEmail || <span className="italic text-content-secondary">not signed in</span>}
                             </span>
                             {authEmail && (
                                 emailVerified ? (
@@ -319,11 +319,11 @@ export function SettingsPage() {
                                         </div>
                                         <div>
                                             <h4 className="font-medium text-gray-200 text-sm">{key.label}</h4>
-                                            <p className="text-[10px] text-gray-500">{key.desc}</p>
+                                            <p className="text-help">{key.desc}</p>
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-2">
-                                        <code className="hidden sm:block text-[10px] text-gray-600 bg-black/20 px-2 py-1 rounded">{key.name}</code>
+                                        <code className="hidden sm:block text-[10px] text-content-tertiary bg-black/20 px-2 py-1 rounded">{key.name}</code>
                                         <Badge variant={key.enabled ? 'success' : 'warning'}>
                                             {key.enabled ? 'Ready' : 'Missing'}
                                         </Badge>
@@ -342,7 +342,7 @@ export function SettingsPage() {
             {activeSection === 'social' && isSuperAdmin && (
                 <Card title="Social Automation">
                     <div className="space-y-4">
-                        <div className="text-xs text-gray-500">
+                        <div className="text-help">
                             Use Buffer or webhooks for the fastest setup. Direct APIs require OAuth apps and approvals.
                         </div>
 
@@ -505,11 +505,11 @@ export function SettingsPage() {
                                     </Button>
                                 </div>
                             </div>
-                            <p className="text-[10px] text-gray-500">
+                            <p className="text-help">
                                 Cron format: <code>m h dom mon dow</code>. Example: <code>0 */2 * * *</code> runs every 2 hours.
                             </p>
                             {schedules.length === 0 && (
-                                <div className="text-xs text-gray-500">No schedules yet.</div>
+                                <div className="text-help">No schedules yet.</div>
                             )}
                             {schedules.map((s) => (
                                 <div key={s.id} className={`rounded-xl border p-3 space-y-2 ${s.type === 'auto_generate' ? 'border-amber-500/30 bg-amber-500/[0.04]' : 'border-white/10 bg-white/[0.03]'}`}>
@@ -651,15 +651,15 @@ export function SettingsPage() {
                 <Card title="Application Info">
                     <div className="space-y-4">
                         <div className="flex justify-between py-2 border-b border-white/5">
-                            <span className="text-gray-400">Version</span>
+                            <span className="text-meta">Version</span>
                             <span className="font-mono text-sm">v3.0.0 (React Refactor)</span>
                         </div>
                         <div className="flex justify-between py-2 border-b border-white/5">
-                            <span className="text-gray-400">Environment</span>
+                            <span className="text-meta">Environment</span>
                             <Badge variant="success">{config.env}</Badge>
                         </div>
                         <div className="flex justify-between py-2 border-b border-white/5">
-                            <span className="text-gray-400">Backend Status</span>
+                            <span className="text-meta">Backend Status</span>
                             <Badge variant="success">Connected</Badge>
                         </div>
                     </div>

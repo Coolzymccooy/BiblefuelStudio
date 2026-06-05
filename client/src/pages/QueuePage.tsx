@@ -160,7 +160,7 @@ export function QueuePage() {
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <div>
                     <h2 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-primary-200">Content Queue</h2>
-                    <p className="text-gray-400 text-sm mt-1">Manage and export your generated scripts batch.</p>
+                    <p className="text-help">Manage and export your generated scripts batch.</p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
                     {selectedIds.size > 0 && (
@@ -199,8 +199,8 @@ export function QueuePage() {
                 {queue.length === 0 ? (
                     <div className="py-12 flex flex-col items-center justify-center text-center opacity-50">
                         <Archive size={48} className="text-gray-600 mb-4" />
-                        <p className="text-gray-400">Queue is empty.</p>
-                        <p className="text-xs text-gray-500 mt-1">Scripts you generate will appear here.</p>
+                        <p className="text-content-secondary">Queue is empty.</p>
+                        <p className="text-help">Scripts you generate will appear here.</p>
                     </div>
                 ) : (
                     <div>
@@ -210,7 +210,7 @@ export function QueuePage() {
                                     <div className="flex items-start justify-between gap-3">
                                         <div className="flex-1">
                                             <div className="font-semibold text-white">{item.title}</div>
-                                            <div className="text-xs text-gray-400 mt-1 line-clamp-2 italic">"{item.hook}"</div>
+                                            <div className="text-xs text-content-secondary mt-1 line-clamp-2 italic">"{item.hook}"</div>
                                             <div className="text-[10px] text-indigo-300 mt-2">{item.verse} - {item.reference}</div>
                                             <div className="text-[10px] text-primary-400 mt-2 uppercase tracking-widest">{item.cta}</div>
                                         </div>
@@ -237,7 +237,7 @@ export function QueuePage() {
                         <div className="hidden sm:block overflow-x-auto">
                         <table className="w-full">
                             <thead>
-                                <tr className="border-b border-white/5 text-gray-400 uppercase text-[10px] tracking-widest font-bold">
+                                <tr className="border-b border-white/5 text-caption">
                                     <th className="py-3 px-4 w-10">
                                         <input
                                             type="checkbox"
@@ -266,15 +266,15 @@ export function QueuePage() {
                                         <td className="py-4 px-4 align-top max-w-xs">
                                             <div className="font-semibold text-white group-hover:text-primary-300 transition-colors line-clamp-1">{item.title}</div>
                                             {item.createdAt && (
-                                                <div className="text-[10px] text-gray-500 mt-1 font-mono">{new Date(item.createdAt).toLocaleDateString()}</div>
+                                                <div className="text-meta mt-1">{new Date(item.createdAt).toLocaleDateString()}</div>
                                             )}
                                         </td>
-                                        <td className="py-4 px-4 align-top text-xs text-gray-400 w-1/3">
+                                        <td className="py-4 px-4 align-top text-xs text-content-secondary w-1/3">
                                             <div className="line-clamp-2 text-gray-300 italic mb-2">"{item.hook}"</div>
                                             <div className="text-[10px] text-primary-400/70 font-semibold bg-primary-500/5 inline-block px-1.5 py-0.5 rounded border border-primary-500/10 uppercase tracking-tighter">{item.cta}</div>
                                         </td>
-                                        <td className="py-4 px-4 align-top text-xs text-gray-400 w-1/4">
-                                            <div className="line-clamp-2 text-gray-400">{item.verse}</div>
+                                        <td className="py-4 px-4 align-top text-xs text-content-secondary w-1/4">
+                                            <div className="line-clamp-2 text-content-secondary">{item.verse}</div>
                                             <span className="text-indigo-400/80 font-medium text-[10px] block mt-1">{item.reference}</span>
                                         </td>
                                         <td className="py-4 px-4 align-top text-right">
@@ -301,7 +301,7 @@ export function QueuePage() {
                         </table>
                         </div>
                         <div className="px-4 py-3 border-t border-white/5 bg-white/[0.01]">
-                            <p className="text-[10px] text-gray-600 uppercase tracking-widest font-medium">Showing {Math.min(queue.length, 50)} items - Auto-persisted to database</p>
+                            <p className="text-caption">Showing {Math.min(queue.length, 50)} items - Auto-persisted to database</p>
                         </div>
                     </div>
                 )}
@@ -323,13 +323,13 @@ export function QueuePage() {
                         </div>
 
                         <div className="space-y-4 mb-8">
-                            <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500">Global Background</label>
+                            <label className="block text-caption">Global Background</label>
                             {backgroundItem ? (
                                 <div className="flex items-center gap-3 p-3 bg-white/5 rounded-xl border border-white/10">
                                     <img src={backgroundItem.image} className="w-12 h-12 rounded object-cover" alt="" />
                                     <div className="flex-1 min-w-0">
                                         <div className="text-xs font-bold text-white truncate">Background Selected</div>
-                                        <div className="text-[10px] text-gray-500 font-mono truncate">{backgroundItem.id}</div>
+                                        <div className="text-meta truncate">{backgroundItem.id}</div>
                                     </div>
                                     <button onClick={() => setBackgroundItem(null)} className="text-gray-500 hover:text-white">
                                         <Trash2 size={16} />

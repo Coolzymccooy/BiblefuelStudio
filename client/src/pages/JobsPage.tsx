@@ -256,7 +256,7 @@ export function JobsPage() {
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div>
                     <h2 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-400 mb-2 text-white">Background Jobs</h2>
-                    <p className="text-gray-400">Track rendering and background processes.</p>
+                    <p className="text-help">Track rendering and background processes.</p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
                     <Button onClick={triggerTestJob} isLoading={isTriggering} variant="secondary" className="w-full sm:w-auto">
@@ -311,7 +311,7 @@ export function JobsPage() {
                                                 <Badge variant={getStatusVariant(job.status)} className="text-[0.6875rem] font-semibold uppercase">
                                                     {job.status}
                                                 </Badge>
-                                                <span className="text-[0.75rem] font-medium text-gray-400">
+                                                <span className="text-[0.75rem] font-medium text-content-tertiary">
                                                     {ident.kindLabel}
                                                 </span>
                                                 {ident.chips.map((chip, idx) => (
@@ -326,10 +326,10 @@ export function JobsPage() {
                                                         {chip.text}
                                                     </span>
                                                 ))}
-                                                <span className="text-xs text-gray-500 font-mono">#{job.id.slice(0, 8)}</span>
+                                                <span className="text-meta">#{job.id.slice(0, 8)}</span>
                                             </div>
                                             {/* Created + duration */}
-                                            <div className="flex items-center gap-x-4 gap-y-1 flex-wrap text-xs text-gray-400">
+                                            <div className="flex items-center gap-x-4 gap-y-1 flex-wrap text-meta">
                                                 <div className="flex items-center gap-1">
                                                     <Clock size={12} />
                                                     {new Date(job.createdAt).toLocaleString()}
@@ -432,7 +432,7 @@ export function JobsPage() {
                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                                             {job.payload && (
                                                 <div className="space-y-2">
-                                                    <span className="font-semibold text-gray-400">Payload:</span>
+                                                    <span className="font-semibold text-content-secondary">Payload:</span>
                                                     <pre className="bg-black/30 p-3 rounded-lg overflow-auto border border-white/5 font-mono text-gray-300 max-h-40 custom-scrollbar">
                                                         {JSON.stringify(job.payload, null, 2)}
                                                     </pre>
