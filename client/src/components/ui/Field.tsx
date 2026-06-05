@@ -33,7 +33,7 @@ export function Field({ label, htmlFor, hint, tooltip, badge, children, classNam
                             {tooltip && <InfoTooltip content={tooltip} />}
                         </label>
                     )}
-                    {badge && <div className="text-[0.6875rem] text-gray-500 shrink-0">{badge}</div>}
+                    {badge && <div className="text-[0.6875rem] text-content-tertiary shrink-0">{badge}</div>}
                 </div>
             )}
             {children}
