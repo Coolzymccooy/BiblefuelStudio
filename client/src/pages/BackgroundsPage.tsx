@@ -475,7 +475,7 @@ export function BackgroundsPage() {
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <div>
                     <h2 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-primary-200">Visual Backgrounds</h2>
-                    <p className="text-gray-400 text-sm mt-1">Search or browse your saved 4K/HD portrait videos.</p>
+                    <p className="text-help mt-1">Search or browse your saved 4K/HD portrait videos.</p>
                 </div>
 
                 <div className="flex flex-wrap bg-white/5 border border-white/10 p-1 rounded-xl">
@@ -540,7 +540,7 @@ export function BackgroundsPage() {
                     {videos.length > 0 ? (
                         <div className="space-y-4">
                             <div className="flex items-center justify-between px-2">
-                                <h3 className="text-sm font-bold uppercase tracking-widest text-gray-500">Results ({videos.length})</h3>
+                                <h3 className="text-caption">Results ({videos.length})</h3>
                                 <Button
                                     onClick={() => handleBulkDownload(videos, 'pexels')}
                                     isLoading={isBulkDownloadingSearch}
@@ -555,7 +555,7 @@ export function BackgroundsPage() {
                     ) : !isSearching && (
                         <div className="py-20 flex flex-col items-center justify-center opacity-30">
                             <Play size={64} className="text-gray-600 mb-4" />
-                            <p className="text-gray-400">Search for portrait videos to see results.</p>
+                            <p className="text-help">Search for portrait videos to see results.</p>
                         </div>
                     )}
                 </>
@@ -587,7 +587,7 @@ export function BackgroundsPage() {
                     {animatedVideos.length > 0 ? (
                         <div className="space-y-4">
                             <div className="flex items-center justify-between px-2">
-                                <h3 className="text-sm font-bold uppercase tracking-widest text-gray-500">Animated Results ({animatedVideos.length})</h3>
+                                <h3 className="text-caption">Animated Results ({animatedVideos.length})</h3>
                                 <Button
                                     onClick={() => handleBulkDownload(animatedVideos, 'pixabay')}
                                     isLoading={isBulkDownloadingAnimated}
@@ -598,14 +598,14 @@ export function BackgroundsPage() {
                                 </Button>
                             </div>
                             {renderGrid(animatedVideos, false, handleAnimatedDownload)}
-                            <div className="text-xs text-gray-500 px-2">
+                            <div className="text-help px-2">
                                 Downloads use Pixabay. Make sure `PIXABAY_API_KEY` is set in `server/.env`.
                             </div>
                         </div>
                     ) : !isSearchingAnimated && (
                         <div className="py-20 flex flex-col items-center justify-center opacity-30">
                             <Sparkles size={64} className="text-gray-600 mb-4" />
-                            <p className="text-gray-400">Search for animated backgrounds to see results.</p>
+                            <p className="text-help">Search for animated backgrounds to see results.</p>
                         </div>
                     )}
                 </>
@@ -623,13 +623,13 @@ export function BackgroundsPage() {
                                 Import Folder
                             </Button>
                         </div>
-                        <p className="text-[10px] text-gray-500 mt-2">
+                        <p className="text-help mt-2">
                             Imports .mp4/.mov/.webm/.m4v from the folder into the library and outputs.
                         </p>
                     </Card>
                     {importedLocal.length > 0 && (
                         <div className="space-y-4">
-                            <h3 className="text-sm font-bold uppercase tracking-widest text-gray-500">Imported ({importedLocal.length})</h3>
+                            <h3 className="text-caption">Imported ({importedLocal.length})</h3>
                             {renderGrid(importedLocal, true, handleDownload)}
                         </div>
                     )}
@@ -637,7 +637,7 @@ export function BackgroundsPage() {
             ) : (
                 <div className="space-y-4">
                     <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 px-2">
-                        <h3 className="text-sm font-bold uppercase tracking-widest text-gray-500">
+                        <h3 className="text-caption">
                             Saved Library ({categoryFilter ? `${filteredLibrary.length} of ${libraryItems.length}` : libraryItems.length})
                         </h3>
                         <div className="flex items-center gap-2">
@@ -676,10 +676,10 @@ export function BackgroundsPage() {
                     ) : !isLoadingLibrary && (
                         <Card className="py-20 flex flex-col items-center justify-center opacity-30 border-dashed">
                             <Library size={64} className="text-gray-600 mb-4" />
-                            <p className="text-gray-400 font-bold uppercase tracking-widest text-xs">
+                            <p className="text-caption">
                                 {libraryItems.length === 0 ? 'Library is empty' : `No items in category "${categoryFilter}"`}
                             </p>
-                            <p className="text-[10px] text-gray-500 mt-2">
+                            <p className="text-help mt-2">
                                 {libraryItems.length === 0 ? 'Save videos from search to build your library.' : 'Try a different category or clear the filter.'}
                             </p>
                         </Card>
@@ -699,7 +699,7 @@ export function BackgroundsPage() {
                                 <X size={18} />
                             </button>
                         </div>
-                        <p className="text-[10px] text-gray-500 mb-3 font-mono">ID: {editingItem.id}</p>
+                        <p className="text-meta font-mono">ID: {editingItem.id}</p>
                         <div className="flex flex-wrap gap-1.5 mb-4">
                             {CANONICAL_CATEGORIES.map((cat) => {
                                 const active = (editingItem.categories || []).includes(cat);
@@ -720,7 +720,7 @@ export function BackgroundsPage() {
                                 );
                             })}
                         </div>
-                        <p className="text-[10px] text-gray-500">
+                        <p className="text-help">
                             Tags drive the smart background picker in Auto-Publish. Scripts about peace get peace-tagged backgrounds, etc.
                         </p>
                     </Card>

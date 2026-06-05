@@ -130,7 +130,7 @@ export function VoiceSynthesisPanel() {
     if (loading) {
         return (
             <Card title="Voice Synthesis">
-                <div className="flex items-center gap-2 text-gray-400 text-sm">
+                <div className="flex items-center gap-2 text-help">
                     <Loader2 size={16} className="animate-spin" /> Loading voice engine...
                 </div>
             </Card>
@@ -150,7 +150,7 @@ export function VoiceSynthesisPanel() {
                                 <Mic2 size={16} className="text-gray-400" />
                                 <div>
                                     <div className="text-sm font-medium text-gray-200 capitalize">{id}</div>
-                                    <div className="text-[10px] text-gray-500">Priority {info.priority}</div>
+                                    <div className="text-meta">Priority {info.priority}</div>
                                 </div>
                             </div>
                             {(() => {
@@ -181,7 +181,7 @@ export function VoiceSynthesisPanel() {
                         </div>
                     ))}
                 </div>
-                <p className="text-[10px] text-gray-500 mt-3">
+                <p className="text-help mt-3">
                     ElevenLabs needs <code className="bg-black/30 px-1.5 py-0.5 rounded">ELEVENLABS_API_KEY</code>.
                     Edge-TTS is on by default. Chatterbox needs <code className="bg-black/30 px-1.5 py-0.5 rounded">CHATTERBOX_URL</code>.
                 </p>
@@ -204,8 +204,8 @@ export function VoiceSynthesisPanel() {
                                 <div className="text-sm font-semibold text-gray-100 capitalize">{p.category}</div>
                                 <Badge variant="default">{p.label}</Badge>
                             </div>
-                            <div className="text-xs text-gray-400 mb-2">{p.description}</div>
-                            <div className="text-[10px] text-gray-500">
+                            <div className="text-help mb-2">{p.description}</div>
+                            <div className="text-meta">
                                 Preset: <span className="text-gray-300">{p.recommendedTypographyPreset}</span>
                             </div>
                         </button>
@@ -217,7 +217,7 @@ export function VoiceSynthesisPanel() {
                 <div className="space-y-3">
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                         <div>
-                            <label className="text-[11px] text-gray-400 mb-1 block">Category</label>
+                            <label className="text-caption mb-1 block">Category</label>
                             <Select value={category} onChange={(e) => setCategory(e.target.value)}>
                                 {profiles.map((p) => (
                                     <option key={p.category} value={p.category}>
@@ -227,7 +227,7 @@ export function VoiceSynthesisPanel() {
                             </Select>
                         </div>
                         <div>
-                            <label className="text-[11px] text-gray-400 mb-1 block">Provider override</label>
+                            <label className="text-caption mb-1 block">Provider override</label>
                             <Select
                                 value={providerOverride}
                                 onChange={(e) => setProviderOverride(e.target.value)}
@@ -240,7 +240,7 @@ export function VoiceSynthesisPanel() {
                             </Select>
                         </div>
                         <div>
-                            <label className="text-[11px] text-gray-400 mb-1 block">Cinematic mode</label>
+                            <label className="text-caption mb-1 block">Cinematic mode</label>
                             <button
                                 type="button"
                                 onClick={() => setCinematicMode((v) => !v)}
@@ -271,7 +271,7 @@ export function VoiceSynthesisPanel() {
                             )}
                         </Button>
                         {activeProfile && (
-                            <span className="text-[11px] text-gray-500">
+                            <span className="text-meta">
                                 Profile preference: {activeProfile.providerPreference.join(' → ')}
                             </span>
                         )}
@@ -295,7 +295,7 @@ export function VoiceSynthesisPanel() {
                         >
                             {enabled ? 'Enabled across the app' : 'Apply across the app'}
                         </button>
-                        <div className="text-[11px] text-gray-400 leading-snug">
+                        <div className="text-help leading-snug">
                             When enabled, Voice &amp; Audio and Auto-Publish use{' '}
                             <span className="text-gray-200 font-medium">{activeProfile?.label || category}</span>
                             {providerOverride ? ` via ${providerOverride}` : ' via the profile preference'}
@@ -311,9 +311,9 @@ export function VoiceSynthesisPanel() {
                                 </Button>
                                 <div className="text-xs text-gray-300">
                                     <div className="font-medium">
-                                        {result.profileLabel} <span className="text-gray-500">via {result.provider}</span>
+                                        {result.profileLabel} <span className="text-meta">via {result.provider}</span>
                                     </div>
-                                    <div className="text-[10px] text-gray-500">
+                                    <div className="text-meta">
                                         Typography preset: <span className="text-gray-300">{result.recommendedTypographyPreset}</span>
                                         {result.alignment && (
                                             <>
@@ -336,7 +336,7 @@ export function VoiceSynthesisPanel() {
                                 onEnded={() => setPlaying(false)}
                                 onError={() => toast.error('Audio failed to load — check console for the requested URL')}
                             />
-                            <div className="text-[10px] text-gray-500 truncate">
+                            <div className="text-meta truncate">
                                 <a href={audioSrc} target="_blank" rel="noreferrer" className="hover:text-gray-300 underline">
                                     {audioSrc}
                                 </a>

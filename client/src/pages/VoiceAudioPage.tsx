@@ -1306,7 +1306,7 @@ export function VoiceAudioPage() {
                             // read it directly.
                             void elapsedTick;
                             return (
-                                <div className="mt-2 text-xs text-gray-400">
+                                <div className="mt-2 text-help">
                                     <div className="flex items-center justify-between mb-1">
                                         <span>
                                             {overrun
@@ -1460,14 +1460,14 @@ export function VoiceAudioPage() {
                                 <div className="pt-3 border-t border-white/[0.06]">
                                     <div className="flex items-center justify-between mb-2">
                                         <h4 className="text-[0.8125rem] font-semibold text-gray-200">Saved Chatterbox clones</h4>
-                                        <span className="text-[0.6875rem] text-gray-500">{chatterboxVoices.length} total</span>
+                                        <span className="text-meta">{chatterboxVoices.length} total</span>
                                     </div>
                                     <div className="space-y-2">
                                         {chatterboxVoices.map((cv) => (
                                             <div key={cv.id} className="flex items-center gap-2 bg-dark-900/40 border border-white/[0.06] rounded-lg p-2">
                                                 <div className="flex-1 min-w-0">
                                                     <div className="text-[0.875rem] font-medium text-emerald-300/90 truncate">{cv.name}</div>
-                                                    <div className="text-[0.6875rem] font-mono text-gray-500 truncate">{cv.refFilename || cv.refPath}</div>
+                                                    <div className="text-meta font-mono truncate">{cv.refFilename || cv.refPath}</div>
                                                 </div>
                                                 <Button
                                                     variant="secondary"
@@ -1541,7 +1541,7 @@ export function VoiceAudioPage() {
                         </Button>
 
                         <div className="bg-gray-50 rounded-lg p-3 space-y-2">
-                            <p className="text-xs text-gray-500">
+                            <p className="text-help">
                                 Quick add multiple IDs: one per line. Format: <code>Label|voiceId</code> or just <code>voiceId</code>.
                             </p>
                             <Textarea
@@ -1559,8 +1559,8 @@ export function VoiceAudioPage() {
                                 <div key={p.id} className="border border-white/[0.08] bg-dark-900/40 rounded-lg p-3 flex items-center justify-between">
                                     <div>
                                         <div className="text-[0.9375rem] font-semibold text-white">{p.label}</div>
-                                        <div className="text-[0.75rem] text-gray-400 mt-0.5">Voice ID: {p.voiceId || 'not set'}</div>
-                                        <div className="text-[0.75rem] text-gray-400">Stability {p.stability} • Similarity {p.similarity}</div>
+                                        <div className="text-meta mt-0.5">Voice ID: {p.voiceId || 'not set'}</div>
+                                        <div className="text-meta">Stability {p.stability} • Similarity {p.similarity}</div>
                                     </div>
                                     <div className="flex items-center gap-2">
                                         <Button variant="secondary" className="text-xs h-8" onClick={() => {
@@ -1630,11 +1630,11 @@ export function VoiceAudioPage() {
                             <div className="mt-3 space-y-2">
                                 <p className="field-label">Latest recording / upload</p>
                                 <audio controls src={currentAudioUrl} className="w-full" />
-                                <p className="text-[0.6875rem] text-gray-500 break-all font-mono">{audioPath}</p>
+                                <p className="text-meta break-all font-mono">{audioPath}</p>
                             </div>
                         )}
                         {recordingDebug && (
-                            <p className="text-[0.6875rem] text-gray-500 break-all font-mono">{recordingDebug}</p>
+                            <p className="text-meta break-all font-mono">{recordingDebug}</p>
                         )}
                     </div>
                 </Card>
@@ -1661,7 +1661,7 @@ export function VoiceAudioPage() {
                             Audio Treatment Guide
                         </button>
                         {showGuide && (
-                            <div className="mt-3 text-xs text-gray-200 space-y-2">
+                            <div className="text-help space-y-2">
                                 <p><strong className="text-primary-300">Preset:</strong> quick starting point. Use Clean Voice for most narration.</p>
                                 <p><strong className="text-primary-300">Denoise:</strong> reduces background noise. 0.2 to 0.6 is typical.</p>
                                 <p><strong className="text-primary-300">Gate (dB):</strong> mutes low-level noise between phrases. More negative = gentler.</p>
@@ -1673,7 +1673,7 @@ export function VoiceAudioPage() {
                                 <p><strong className="text-primary-300">De-esser:</strong> reduces harsh s sounds (0.3 to 0.7 typical).</p>
                                 <p><strong className="text-primary-300">Limiter:</strong> catches peaks to avoid clipping (ceiling around -1dB).</p>
                                 <p><strong className="text-primary-300">Presence Boost:</strong> adds clarity around 3 to 5kHz if voice sounds dull.</p>
-                                <p className="text-[10px] text-gray-400">
+                                <p className="text-help">
                                     Pro effects we can add next: multiband EQ, expander, saturation, room removal, and breath control.
                                 </p>
                             </div>
@@ -1901,7 +1901,7 @@ export function VoiceAudioPage() {
                         onChange={(e) => setAudioPath(e.target.value)}
                         placeholder="e.g. server/outputs/audio.mp3"
                     />
-                    <p className="text-sm text-gray-500 mt-2">
+                    <p className="text-help mt-2">
                         This path will be used in the Render and Timeline pages.
                     </p>
                     {currentAudioUrl && (
@@ -1938,8 +1938,8 @@ export function VoiceAudioPage() {
                                         <p className="text-[0.8125rem] font-medium text-primary-300">
                                             {item.kind}
                                         </p>
-                                        <p className="text-[0.75rem] font-mono text-gray-300 break-all mt-0.5">{item.path}</p>
-                                        <p className="field-help">
+                                        <p className="text-meta font-mono break-all mt-0.5">{item.path}</p>
+                                        <p className="text-meta">
                                             {new Date(item.createdAt).toLocaleString()}
                                         </p>
                                     </div>
