@@ -217,7 +217,7 @@ export function VoiceSynthesisPanel() {
                 <div className="space-y-3">
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                         <div>
-                            <label className="text-caption mb-1 block">Category</label>
+                            <label className="text-[11px] text-content-secondary mb-1 block">Category</label>
                             <Select value={category} onChange={(e) => setCategory(e.target.value)}>
                                 {profiles.map((p) => (
                                     <option key={p.category} value={p.category}>
@@ -227,7 +227,7 @@ export function VoiceSynthesisPanel() {
                             </Select>
                         </div>
                         <div>
-                            <label className="text-caption mb-1 block">Provider override</label>
+                            <label className="text-[11px] text-content-secondary mb-1 block">Provider override</label>
                             <Select
                                 value={providerOverride}
                                 onChange={(e) => setProviderOverride(e.target.value)}
@@ -240,7 +240,7 @@ export function VoiceSynthesisPanel() {
                             </Select>
                         </div>
                         <div>
-                            <label className="text-caption mb-1 block">Cinematic mode</label>
+                            <label className="text-[11px] text-content-secondary mb-1 block">Cinematic mode</label>
                             <button
                                 type="button"
                                 onClick={() => setCinematicMode((v) => !v)}
