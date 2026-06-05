@@ -786,7 +786,7 @@ export function RenderPage() {
                                     <Sparkles size={13} />
                                     Auto — let BibleFuel choose (video)
                                 </span>
-                                <span className="block text-[10px] text-gray-400 mt-0.5">
+                                <span className="block text-[10px] text-content-secondary mt-0.5">
                                     {backgroundItems.length > 0 || backgroundPath
                                         ? 'Overridden — your selected background will be used.'
                                         : 'Picks a mood-matched clip per line from your library. Generates one if it’s empty.'}
@@ -823,7 +823,7 @@ export function RenderPage() {
                                                             </span>
                                                         )}
                                                     </div>
-                                                    <p className="text-[10px] font-mono text-gray-400 truncate mt-0.5">
+                                                    <p className="text-[10px] font-mono text-content-tertiary truncate mt-0.5">
                                                         {String(item.id).split(/[\\/]/).pop()}
                                                     </p>
                                                 </div>
@@ -904,7 +904,7 @@ export function RenderPage() {
                                         />
                                     </label>
                                 </div>
-                                <p className="text-[10px] text-gray-500">
+                                <p className="text-help">
                                     Up to {MAX_UPLOAD_MB} MB per file. Video (mp4/mov/webm) or image (jpg/png/webp).
                                 </p>
                             </div>
@@ -939,7 +939,7 @@ export function RenderPage() {
                                         />
                                     </label>
                                 </div>
-                                <p className="text-[10px] text-gray-500">
+                                <p className="text-help">
                                     Pick up to {MAX_BACKGROUNDS}. Video (mp4/mov/webm) or image (jpg/png/webp). Up to {MAX_UPLOAD_MB} MB each.
                                 </p>
                             </div>
@@ -1113,7 +1113,7 @@ export function RenderPage() {
                             </div>
                             {musicPath && (
                                 <div className="mt-2 flex items-center justify-between gap-2">
-                                  <p className="text-[10px] text-gray-400 font-mono break-all">
+                                  <p className="text-[10px] text-content-tertiary font-mono break-all">
                                     {musicPath.split(/[\\/]/).pop()}
                                   </p>
                                   <button
@@ -1125,7 +1125,7 @@ export function RenderPage() {
                                   </button>
                                 </div>
                             )}
-                            <p className="mt-1 text-[10px] text-gray-500">
+                            <p className="mt-1 text-help">
                                 Plays softly under your narration. MP3, WAV, M4A, AAC or OGG, up to {MAX_UPLOAD_MB} MB.
                             </p>
                         </Field>
@@ -1183,7 +1183,7 @@ export function RenderPage() {
                             />
                             <div className="flex-1 min-w-0">
                                 <div className="text-[0.9375rem] font-semibold text-white">Kinetic captions</div>
-                                <p className="text-[0.8125rem] text-gray-400 mt-0.5 leading-relaxed">
+                                <p className="text-help mt-0.5 leading-relaxed">
                                     Word-by-word reveal synced to voice. Generates audio from your script
                                     via ElevenLabs and highlights each word as it's spoken. Overrides the
                                     voice track above.
@@ -1254,7 +1254,7 @@ export function RenderPage() {
                     tooltip="One-click captions + downloads for TikTok, IG Reels and YouTube Shorts. Pick a rendered video above, then copy/paste straight into your scheduler."
                 >
                     <div className="space-y-3">
-                        <p className="text-xs text-gray-400">
+                        <p className="text-help">
                             Copy your caption and upload the rendered file to TikTok/IG/YouTube Shorts.
                         </p>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
@@ -1373,7 +1373,7 @@ export function RenderPage() {
                         <div className="flex items-center justify-between p-4 border-b border-white/10 shrink-0">
                             <div>
                                 <h3 className="font-bold text-lg text-white">Select Backgrounds</h3>
-                                <p className="text-[11px] text-gray-400 mt-0.5">
+                                <p className="text-subtitle mt-0.5">
                                     {backgroundItems.length} of {MAX_BACKGROUNDS} selected · click to toggle, order = render sequence
                                 </p>
                             </div>
@@ -1566,7 +1566,7 @@ export function RenderPage() {
                                         className="bg-white/5 border border-white/10 rounded-xl p-3 flex flex-col md:flex-row md:items-center gap-3"
                                     >
                                         <div className="flex-1 min-w-0">
-                                            <p className="text-xs text-gray-400 uppercase tracking-wider">{item.name || 'Audio'}</p>
+                                            <p className="text-caption">{item.name || 'Audio'}</p>
                                             <p className="text-xs font-mono text-white/80 truncate">{item.path}</p>
                                         </div>
                                         <audio controls src={toOutputUrl(item.path, api.mediaBaseUrl)} className="w-full md:w-56" />

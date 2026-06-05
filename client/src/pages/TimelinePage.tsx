@@ -754,9 +754,9 @@ export function TimelinePage() {
                 title="Source Media"
                 tooltip="Your source recording. Audio is mastered into the assembly for an audio render; video keeps its frames for a captioned-video render."
             >
-                <p className="text-xs text-gray-400 mb-3">
+                <p className="text-help mb-3">
                     Drop in a finished sermon — audio (MP3, WAV, M4A) or video (MP4, MOV, WEBM).
-                    <span className="text-gray-500"> Up to {MAX_UPLOAD_MB} MB.</span>
+                    <span className="text-help"> Up to {MAX_UPLOAD_MB} MB.</span>
                 </p>
                 <label className="inline-flex items-center gap-3 px-4 py-2 rounded-lg bg-primary-500/10 border border-primary-500/30 text-primary-200 cursor-pointer hover:bg-primary-500/20">
                     <Film size={16} />
@@ -811,7 +811,7 @@ export function TimelinePage() {
                 tooltip="Sends the uploaded sermon through Whisper to extract a word-level transcript with timings. Long sermons are auto-chunked. Edit the lines below — word timings redistribute uniformly across edited spans, so fix transcription errors freely. Pick a kinetic style to control how each word animates on screen."
             >
                 <div className="flex items-center justify-between gap-4 mb-4">
-                    <p className="text-xs text-gray-400">
+                    <p className="text-help">
                         Generate a word-level transcript with timings, then refine the lines below before rendering captions.
                     </p>
                     <Button
@@ -855,8 +855,8 @@ export function TimelinePage() {
                 tooltip="Background music under the sermon. Auto-duck lowers it while someone is speaking and lifts it back between phrases, so the message stays clear."
             >
                 <div className="space-y-4">
-                    <p className="text-xs text-gray-400">
-                        Optional background music, mixed under the sermon. MP3, WAV or M4A, <span className="text-gray-500">up to {MAX_UPLOAD_MB} MB.</span>
+                    <p className="text-help">
+                        Optional background music, mixed under the sermon. MP3, WAV or M4A, <span className="text-help">up to {MAX_UPLOAD_MB} MB.</span>
                     </p>
                     <label className="inline-flex items-center gap-3 px-4 py-2 rounded-lg bg-primary-500/10 border border-primary-500/30 text-primary-200 cursor-pointer hover:bg-primary-500/20">
                         <Music size={16} />
@@ -942,7 +942,7 @@ export function TimelinePage() {
                                 />
                             )}
                         </div>
-                        <div className="flex items-center justify-between text-xs text-gray-400 tabular-nums">
+                        <div className="flex items-center justify-between text-meta tabular-nums">
                             <span>Elapsed {formatElapsed(renderElapsedMs)}</span>
                             <span>
                                 {renderPhase === 'preparing' && renderProgress < 1
@@ -1083,7 +1083,7 @@ export function TimelinePage() {
                                     </div>
                                     <div>
                                         <h3 className="font-bold text-lg">Main Assembly</h3>
-                                        <p className="text-xs text-gray-500">Auto-sequenced timeline</p>
+                                        <p className="text-subtitle">Auto-sequenced timeline</p>
                                     </div>
                                 </div>
                                 <Button variant="secondary" onClick={() => setShowAddClipModal(true)} className="h-9 px-4 text-xs">
@@ -1114,9 +1114,9 @@ export function TimelinePage() {
                                                         <p className="text-sm font-medium text-gray-200 truncate">
                                                             {clip.label || clip.path.split('/').pop()}
                                                         </p>
-                                                        <p className="text-[10px] text-gray-500 font-mono break-all">{clip.path}</p>
+                                                        <p className="text-[10px] text-content-tertiary font-mono break-all">{clip.path}</p>
                                                         <div className="grid grid-cols-2 gap-3 mt-3">
-                                                            <label className="text-[10px] text-gray-500 uppercase tracking-wider">
+                                                            <label className="text-caption">
                                                                 Start (sec)
                                                                 <input
                                                                     type="number"
@@ -1127,7 +1127,7 @@ export function TimelinePage() {
                                                                     step={0.1}
                                                                 />
                                                             </label>
-                                                            <label className="text-[10px] text-gray-500 uppercase tracking-wider">
+                                                            <label className="text-caption">
                                                                 Duration (sec)
                                                                 <input
                                                                     type="number"
@@ -1159,7 +1159,7 @@ export function TimelinePage() {
                     <Card title="Mastering & Filters">
                         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 p-2">
                             <div className="space-y-4">
-                                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-2">
+                                <label className="text-caption font-bold flex items-center gap-2">
                                     <Volume2 size={14} /> Normalize (LUFS)
                                 </label>
                                 <div className="flex items-center gap-3">
@@ -1176,7 +1176,7 @@ export function TimelinePage() {
                             </div>
 
                             <div className="space-y-4">
-                                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-2">
+                                <label className="text-caption font-bold flex items-center gap-2">
                                     Fade In (ms)
                                 </label>
                                 <input
@@ -1188,7 +1188,7 @@ export function TimelinePage() {
                             </div>
 
                             <div className="space-y-4">
-                                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-2">
+                                <label className="text-caption font-bold flex items-center gap-2">
                                     Fade Out (ms)
                                 </label>
                                 <input
@@ -1237,7 +1237,7 @@ export function TimelinePage() {
                                         <Sparkles size={13} />
                                         Auto — let BibleFuel choose
                                     </span>
-                                    <span className="block text-[10px] text-gray-400 mt-0.5">
+                                    <span className="block text-[10px] text-content-secondary mt-0.5">
                                         {backgroundItems.length > 0
                                             ? 'Overridden — your selected clips below will be used.'
                                             : 'Picks a mood-matched background per beat from your library. Generates one if your library is empty.'}
@@ -1278,7 +1278,7 @@ export function TimelinePage() {
                                                 )}
                                             </div>
                                             <div className="flex-1 min-w-0 flex flex-col justify-between">
-                                                <p className="text-[10px] font-mono text-gray-400 break-all line-clamp-2">
+                                                <p className="text-[10px] font-mono text-content-tertiary break-all line-clamp-2">
                                                     ID: {item.id}
                                                 </p>
                                                 <div className="flex items-center gap-1">
@@ -1334,9 +1334,9 @@ export function TimelinePage() {
                                                 onChange={(e) => setSyncBackgrounds(e.target.checked)}
                                                 className="mt-0.5 accent-primary-500"
                                             />
-                                            <span className="text-[10px] text-gray-400">
+                                            <span className="text-[10px] text-help">
                                                 Sync cuts to speech + crossfade
-                                                <span className="block text-gray-600">
+                                                <span className="block text-content-tertiary">
                                                     {syncBackgrounds
                                                         ? `${backgroundItems.length} clips change on spoken phrases, blended.`
                                                         : `Hard cuts between ${backgroundItems.length} clips, ~equal slots.`}
