@@ -124,7 +124,7 @@ export function AutoPublishCard() {
                 <Zap size={18} className="text-amber-400" />
                 <h3 className="text-lg font-semibold text-gray-100">Auto-publish on render</h3>
             </div>
-            <p className="text-xs text-content-tertiary mb-4">
+            <p className="text-xs text-content-secondary mb-4">
                 When a video finishes rendering, automatically post it to your selected platforms. Connect accounts above first.
             </p>
 

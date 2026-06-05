@@ -315,7 +315,7 @@ export function AdminPage() {
                                             <div className="flex-1 min-w-0">
                                                 <div className="flex items-center gap-2 flex-wrap mb-1.5">
                                                     <span className="font-semibold text-gray-100">{r.name}</span>
-                                                    <span className="text-gray-500 text-sm break-all">&lt;{r.email}&gt;</span>
+                                                    <span className="text-content-secondary text-sm break-all">&lt;{r.email}&gt;</span>
                                                     {r.status === 'pending' && (
                                                         <Badge variant="warning" className="text-[10px]">PENDING</Badge>
                                                     )}
@@ -526,7 +526,7 @@ export function AdminPage() {
                         <div className="overflow-x-auto">
                             <table className="w-full text-sm">
                                 <thead>
-                                    <tr className="text-left text-[0.75rem] font-medium text-gray-400 border-b border-white/[0.06]">
+                                    <tr className="text-left text-[0.75rem] font-medium text-content-secondary border-b border-white/[0.06]">
                                         <th className="py-3 px-2 font-semibold">User</th>
                                         <th className="py-3 px-2 font-semibold">Plan</th>
                                         <th className="py-3 px-2 font-semibold">Today&apos;s usage (scripts / tts / renders / images)</th>
@@ -538,7 +538,7 @@ export function AdminPage() {
                                         <tr key={u.id} className="border-b border-white/5 last:border-b-0 hover:bg-white/[0.02]">
                                             <td className="py-3 px-2">
                                                 <div className="flex items-center gap-2 text-gray-100">
-                                                    <Mail size={14} className="text-content-secondary shrink-0" />
+                                                    <Mail size={14} className="text-gray-500 shrink-0" />
                                                     <span className="font-medium break-all">{u.email}</span>
                                                     {u.isSuperAdmin && <Badge variant="warning" className="text-[10px]">SUPER</Badge>}
                                                 </div>

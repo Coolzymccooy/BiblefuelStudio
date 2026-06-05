@@ -105,7 +105,7 @@ export function NotificationsBell() {
                                             ) : n.kind === 'job_failed' ? (
                                                 <XCircle size={16} className="text-rose-400 flex-shrink-0 mt-0.5" />
                                             ) : (
-                                                <Bell size={16} className="text-content-secondary flex-shrink-0 mt-0.5" />
+                                                <Bell size={16} className="text-gray-400 flex-shrink-0 mt-0.5" />
                                             )}
                                             <div className="flex-1 min-w-0">
                                                 <div className="flex items-center justify-between gap-2">
@@ -113,7 +113,7 @@ export function NotificationsBell() {
                                                     <span className="text-[9px] text-content-tertiary flex-shrink-0">{relativeTime(n.createdAt)}</span>
                                                 </div>
                                                 {n.body && (
-                                                    <p className="text-[10px] text-content-tertiary mt-0.5 line-clamp-2 break-all">{n.body}</p>
+                                                    <p className="text-[10px] text-content-secondary mt-0.5 line-clamp-2 break-all">{n.body}</p>
                                                 )}
                                                 {n.href && (
                                                     <span className="inline-flex items-center gap-1 mt-1 text-[10px] text-primary-300">
