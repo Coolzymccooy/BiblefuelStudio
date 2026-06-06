@@ -1,1 +1,25 @@
-if(!self.define){let s,e={};const l=(l,i)=>(l=new URL(l+".js",i).href,e[l]||new Promise(e=>{if("document"in self){const s=document.createElement("script");s.src=l,s.onload=e,document.head.appendChild(s)}else s=l,importScripts(l),e()}).then(()=>{let s=e[l];if(!s)throw new Error(`Module ${l} didn’t register its module`);return s}));self.define=(i,r)=>{const n=s||("document"in self?document.currentScript.src:"")||location.href;if(e[n])return;let u={};const t=s=>l(s,n),a={module:{uri:n},exports:u,require:t};e[n]=Promise.all(i.map(s=>a[s]||t(s))).then(s=>(r(...s),u))}}define(["./workbox-8c29f6e4"],function(s){"use strict";self.skipWaiting(),s.clientsClaim(),s.precacheAndRoute([{url:"registerSW.js",revision:"1872c500de691dce40960bb85481de07"},{url:"index.html",revision:"651ac6c4d2538865f3a88435a82f5ddc"},{url:"assets/zap-D1QCN1wK.js",revision:null},{url:"assets/youtube-t1K4Axtv.js",revision:null},{url:"assets/WizardPage-B_R897kx.js",revision:null},{url:"assets/voiceSynthesisDefaults-C0imjCHD.js",revision:null},{url:"assets/VoiceAudioPage-BKsik6Br.js",revision:null},{url:"assets/user-CAY_vXL5.js",revision:null},{url:"assets/trash-2-DEE8WIRL.js",revision:null},{url:"assets/TimelinePage-BvUrm0N4.js",revision:null},{url:"assets/Textarea-s4N1RIu3.js",revision:null},{url:"assets/storage-Cms_g_BP.js",revision:null},{url:"assets/sparkles-B7nxBGtZ.js",revision:null},{url:"assets/ShareSheet-Dsl0Dq87.js",revision:null},{url:"assets/SettingsPage-D9yUVu2T.js",revision:null},{url:"assets/SeriesPage-Dy1lP_qk.js",revision:null},{url:"assets/Select-zl9D67rM.js",revision:null},{url:"assets/ScriptsPage-D1PXyTGX.js",revision:null},{url:"assets/rotate-cw-D9jXpVgh.js",revision:null},{url:"assets/rotate-ccw-L7LJJQjW.js",revision:null},{url:"assets/RenderPage-BQDsdDWS.js",revision:null},{url:"assets/refresh-cw-BpdCtPVc.js",revision:null},{url:"assets/QueuePage-C6QnBVLQ.js",revision:null},{url:"assets/plus-Cev_N9gq.js",revision:null},{url:"assets/play-ryIAvdR-.js",revision:null},{url:"assets/pause-5ZFWP-bm.js",revision:null},{url:"assets/music-D9YVkfT7.js",revision:null},{url:"assets/message-circle-BbBQB38u.js",revision:null},{url:"assets/MediaTrimmer-DU0SFqNG.js",revision:null},{url:"assets/library-DsSuiqnx.js",revision:null},{url:"assets/layers-DO6qNi52.js",revision:null},{url:"assets/JobsPage-BIKs3PnI.js",revision:null},{url:"assets/Input-6rfHwOuT.js",revision:null},{url:"assets/index-Tsg7f9xp.js",revision:null},{url:"assets/index-j2kXtn3o.css",revision:null},{url:"assets/HomePage-xl6BAG_Y.js",revision:null},{url:"assets/HelpPage-CmC4GkM-.js",revision:null},{url:"assets/GumroadPage-C3QwGm9M.js",revision:null},{url:"assets/Field-qLmB7kNe.js",revision:null},{url:"assets/errors-Bm-h23sc.js",revision:null},{url:"assets/download-D1zeHW25.js",revision:null},{url:"assets/cpu-DIWH6CTR.js",revision:null},{url:"assets/copy-ByWQfdZd.js",revision:null},{url:"assets/circle-play-c1nqQ8dv.js",revision:null},{url:"assets/check-BmQst6x_.js",revision:null},{url:"assets/Card-1LQ-a8ue.js",revision:null},{url:"assets/Badge-n-Kh6BXd.js",revision:null},{url:"assets/BackgroundsPage-BI5YKSna.js",revision:null},{url:"assets/audio-lines-BscbTC8r.js",revision:null},{url:"assets/archive-bkSGUOhF.js",revision:null},{url:"assets/AnimationPicker-BROJ8OQo.js",revision:null},{url:"assets/AdminPage-ZafSitsR.js",revision:null},{url:"vite.svg",revision:"8e3a10e157f75ada21ab742c022d5430"},{url:"manifest.webmanifest",revision:"75f78e9d9b3d12680893e20ebced1afd"}],{}),s.cleanupOutdatedCaches(),s.registerRoute(new s.NavigationRoute(s.createHandlerBoundToURL("/index.html"),{denylist:[/^\/api/,/^\/outputs/,/^\/assets\/.+\.(js|css)$/]}))});
+
+self.addEventListener('install', (e) => {
+  self.skipWaiting();
+});
+self.addEventListener('activate', (e) => {
+  self.registration.unregister()
+    .then(() => self.clients.matchAll())
+    .then((clients) => {
+      clients.forEach((client) => {
+        if (client instanceof WindowClient)
+          client.navigate(client.url);
+      });
+      return Promise.resolve();
+    })
+    .then(() => {
+      self.caches.keys().then((cacheNames) => {
+        Promise.all(
+          cacheNames.map((cacheName) => {
+            return self.caches.delete(cacheName);
+          }),
+        );
+      })
+    });
+});
+    

@@ -11,6 +11,14 @@ export default defineConfig(({ mode }) => {
     plugins: [
       react(),
       VitePWA({
+        // Self-destroying SW: generates a service worker that unregisters
+        // itself and clears all caches on every client. The committed-bundle
+        // deploy flow + a precaching SW repeatedly served stale index.html /
+        // chunk hashes after deploys (blank screen, then cross-build chunk
+        // mismatch). Killing the SW removes that whole failure class. Stuck
+        // clients auto-recover on their next visit (sw.js is served no-cache).
+        // The app stays a normal CDN-served SPA (no offline/installable PWA).
+        selfDestroying: true,
         registerType: 'autoUpdate',
         // Disabled in dev: the service worker caches index.html + bundle
         // hashes, and any HMR change ships new hashes that the cached HTML
