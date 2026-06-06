@@ -9,6 +9,7 @@ import { computeSyncedSegments, buildCrossfadeChain } from "../lib/backgroundSeq
 import { generateBibleImage } from "../lib/imageGen/index.js";
 import { isLocalOrRemote, resolveOutputAlias } from "../lib/mediaThumb.js";
 import { buildWordDrawtext, resolveKineticAnimation } from "../lib/videoFilters.js";
+import { kenBurnsFilter } from "../lib/kenBurns.js";
 import { createJob, getJob, gcJobs, markRunning, markProgress, markDone, markError } from "../lib/renderJobs.js";
 import { appendRender, listRenders } from "../lib/renderHistory.js";
 import { friendlyRenderError } from "../lib/renderErrors.js";
@@ -523,6 +524,7 @@ router.post("/captioned-video", async (req, res) => {
     // Opt-in: sync multi-background cuts to spoken phrases + crossfade between
     // them, instead of equal hard cuts. No-op for a single background.
     const syncBackgrounds = req.body?.syncBackgrounds === true;
+    const kenBurns = req.body?.kenBurns === true;
 
     if (!words.length) {
       return res.status(400).json({ ok: false, error: "words[] is required and must be non-empty" });
@@ -803,21 +805,26 @@ router.post("/captioned-video", async (req, res) => {
       // splice in extra frames. For single-bg we keep the legacy lean chain:
       // scale-on-demand only, no trim (`-shortest` handles termination).
       if (N === 1) {
-        preDrawChain = needsScale
-          ? `[0:v]scale=${renderWidth}:${renderHeight}[vbg];`
-          : `[0:v]null[vbg];`;
+        const singleIsImage = /\.(jpg|jpeg|png|webp)$/i.test(String(backgroundPaths[0]));
+        if (kenBurns && singleIsImage) {
+          preDrawChain = `[0:v]${kenBurnsFilter(renderWidth, renderHeight, durationSec, 30)}[vbg];`;
+        } else {
+          preDrawChain = needsScale
+            ? `[0:v]scale=${renderWidth}:${renderHeight}[vbg];`
+            : `[0:v]null[vbg];`;
+        }
       } else if (useSyncBackgrounds) {
         // Crossfade chain over the speech-synced slot durations -> [vbg].
         preDrawChain = syncChain;
       } else {
         const segSec = durationSec / N;
-        const segParts = backgroundPaths.map((_, i) =>
-          // setsar=1 normalizes pixel aspect across mixed sources so concat
-          // doesn't reject the inputs as "incompatible". setpts=PTS-STARTPTS
-          // rebases each trimmed segment to t=0 so concat re-times them
-          // sequentially on the output timeline.
-          `[${i}:v]trim=duration=${segSec.toFixed(3)},scale=${renderWidth}:${renderHeight},setsar=1,setpts=PTS-STARTPTS[seg${i}]`,
-        );
+        const segParts = backgroundPaths.map((bg, i) => {
+          const segIsImage = /\.(jpg|jpeg|png|webp)$/i.test(String(bg));
+          const scaleStep = (kenBurns && segIsImage)
+            ? kenBurnsFilter(renderWidth, renderHeight, segSec, 30)
+            : `scale=${renderWidth}:${renderHeight}`;
+          return `[${i}:v]trim=duration=${segSec.toFixed(3)},${scaleStep},setsar=1,setpts=PTS-STARTPTS[seg${i}]`;
+        });
         const concatInputs = backgroundPaths.map((_, i) => `[seg${i}]`).join("");
         preDrawChain = `${segParts.join(";")};${concatInputs}concat=n=${N}:v=1:a=0[vbg];`;
       }
