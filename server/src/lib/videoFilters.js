@@ -166,6 +166,24 @@ export function resolveLayout(name) {
   return LAYOUTS.includes(key) ? key : "center";
 }
 
+// Depth / layered text. When enabled, each word also draws a darker, offset
+// "ghost" copy BEHIND it — the layered, premium look from the reference clips.
+// `depth` may be `true` (defaults) or `{ dx, dy, color, opacity }` (px + colour
+// overrides). Falsy → no ghost. dx/dy default to ~1% w / ~1.2% h at render time.
+function resolveDepth(depth) {
+  if (!depth) return null;
+  if (depth === true) return { color: "black", opacity: 0.5 };
+  if (typeof depth === "object") {
+    return {
+      dx: Number.isFinite(depth.dx) ? depth.dx : undefined,
+      dy: Number.isFinite(depth.dy) ? depth.dy : undefined,
+      color: depth.color || "black",
+      opacity: Number.isFinite(depth.opacity) ? depth.opacity : 0.5,
+    };
+  }
+  return null;
+}
+
 /**
  * Resolve a layout (+ the word's micro-phrase index for staggering) into the
  * ffmpeg x expression, the y baseline expression, and a size multiplier.
@@ -235,11 +253,17 @@ export function escapeDrawText(s) {
  * @param {{ words: Array<{ text: string, start: number, end: number, emphasize?: boolean }>, w: number, h: number }} opts
  * @returns {string | null}
  */
-export function buildWordDrawtext({ words, w, h, preset, layout }) {
+export function buildWordDrawtext({ words, w, h, preset, layout, depth }) {
   if (!Array.isArray(words) || words.length === 0) return null;
   const style = resolveTypographyPreset(preset);
   // layout arg wins, else the preset may declare one, else "center".
   const resolvedLayout = resolveLayout(layout ?? style.layout);
+  // depth arg wins (incl. explicit false), else the preset may declare one.
+  const depthCfg = resolveDepth(depth ?? style.depth);
+  const depthDx = depthCfg ? (Number.isFinite(depthCfg.dx) ? depthCfg.dx : Math.round(w * 0.010)) : 0;
+  const depthDy = depthCfg ? (Number.isFinite(depthCfg.dy) ? depthCfg.dy : Math.round(h * 0.012)) : 0;
+  const depthColor = depthCfg?.color || "black";
+  const depthOpacity = depthCfg && Number.isFinite(depthCfg.opacity) ? depthCfg.opacity : 0.5;
   const baseSize = Math.max(48, Math.round(h * style.baseSizeMult));
   const emphSize = Math.max(baseSize, Math.round(h * style.emphasisSizeMult));
   // Third "hero" tier — the single biggest word per phrase. Presets that omit
@@ -298,22 +322,33 @@ export function buildWordDrawtext({ words, w, h, preset, layout }) {
     // never reach full opacity). scale-fade falls back to fade (drawtext can't
     // animate fontsize). The rise animates around the layout's y baseline.
     let alphaClause = "";
-    let yClause = `y=${yBase}`;
+    let ease = "";
     if (wordReveal && revealMs > 0) {
       const reveal = Math.min(revealMs / 1000, (end - start) * 0.9);
       if (reveal > 0) {
         const s = start.toFixed(3);
         const r = reveal.toFixed(3);
-        const ease = `clip((t-${s})/${r},0,1)`;
+        ease = `clip((t-${s})/${r},0,1)`;
         alphaClause = `:alpha='${ease}'`;
-        if (wordReveal === "rise-fade") {
-          yClause = `y='${yBase}+${riseOffset}*(1-${ease})'`;
-        }
       }
+    }
+    // Build a y-clause for a given baseline; rise-fade lifts it toward the
+    // baseline as the word reveals (shared by the main word and its ghost).
+    const riseActive = wordReveal === "rise-fade" && ease;
+    const yClauseFor = (yb) => (riseActive ? `y='${yb}+${riseOffset}*(1-${ease})'` : `y=${yb}`);
+    const enableClause = `:enable='between(t,${start.toFixed(3)},${end.toFixed(3)})'`;
+
+    // Layered "depth" ghost — a darker, offset copy drawn BEFORE (behind) the
+    // main word. No border/box/shadow; shares the reveal ease so both animate.
+    if (depthCfg) {
+      const depthYBase = `(${yBase}+${depthDy})`;
+      filters.push(
+        `drawtext=text='${text}':x=${xExpr}+${depthDx}:${yClauseFor(depthYBase)}:fontsize=${size}:fontcolor=${depthColor}@${depthOpacity}:borderw=0${alphaClause}${enableClause}`
+      );
     }
 
     filters.push(
-      `drawtext=text='${text}':x=${xExpr}:${yClause}:fontsize=${size}:fontcolor=${color}:borderw=${borderWidth}:bordercolor=black@0.85${shadowClause}${wordBox}${alphaClause}:enable='between(t,${start.toFixed(3)},${end.toFixed(3)})'`
+      `drawtext=text='${text}':x=${xExpr}:${yClauseFor(yBase)}:fontsize=${size}:fontcolor=${color}:borderw=${borderWidth}:bordercolor=black@0.85${shadowClause}${wordBox}${alphaClause}${enableClause}`
     );
   }
   if (filters.length === 0) return null;

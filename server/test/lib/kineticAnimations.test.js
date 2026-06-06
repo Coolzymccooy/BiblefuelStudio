@@ -238,3 +238,53 @@ test("bottom layout integrates with rise-fade motion around the band baseline", 
   assert.ok(filter.includes("h*0.74"), "rise-fade still anchored to the band");
   assert.ok(filter.includes("1-clip("), "rise easing preserved");
 });
+
+// ─── Depth / layered text (Phase 2b) ──────────────────────────────────────
+// Optional `depth` renders a darker, offset ghost copy of each word BEHIND the
+// main word, for the layered "words sit behind the subject" look. Off by
+// default (single drawtext per word, no regression).
+
+const drawCount = (filter) => (filter.match(/drawtext=/g) || []).length;
+
+test("no depth by default — one drawtext per word", () => {
+  const words = [{ text: "Lord", start: 0, end: 1, level: "hero" }];
+  const filter = buildWordDrawtext({ words, w: 1080, h: 1920, preset: "cinematic-default" });
+  assert.equal(drawCount(filter), 1);
+  assert.ok(!filter.includes("black@0.5"));
+});
+
+test("depth renders a darker offset ghost behind each word", () => {
+  const words = [{ text: "Lord", start: 0, end: 1, level: "hero" }];
+  const filter = buildWordDrawtext({ words, w: 1080, h: 1920, preset: "cinematic-default", depth: true });
+  assert.equal(drawCount(filter), 2, "one ghost + one main");
+  assert.ok(filter.includes("black@0.5"), "ghost is a semi-transparent dark layer");
+  assert.ok(filter.includes("x=(w-text_w)/2+11"), "ghost is horizontally offset (~1% w)");
+  assert.ok(filter.indexOf("black@0.5") < filter.indexOf("fontcolor=#F59E0B"), "ghost drawn before (behind) the main word");
+});
+
+test("depth offset shifts y by the default vertical amount", () => {
+  const words = [{ text: "Lord", start: 0, end: 1, level: "normal" }];
+  const filter = buildWordDrawtext({ words, w: 1080, h: 1920, preset: "cinematic-default", depth: true });
+  assert.ok(filter.includes("+23)"), "ghost y baseline offset (~1.2% h)");
+});
+
+test("depth accepts a custom offset/colour object", () => {
+  const words = [{ text: "Lord", start: 0, end: 1, level: "normal" }];
+  const filter = buildWordDrawtext({ words, w: 1080, h: 1920, preset: "cinematic-default", depth: { dx: 20, dy: 30, color: "navy", opacity: 0.4 } });
+  assert.ok(filter.includes("x=(w-text_w)/2+20"));
+  assert.ok(filter.includes("navy@0.4"));
+});
+
+test("depth composes with layout + rise-fade (both layers animate, in the band)", () => {
+  const words = [{ text: "Glory", start: 0, end: 1, level: "hero" }];
+  const filter = buildWordDrawtext({ words, w: 1080, h: 1920, preset: "hero-bold", layout: "bottom-center", depth: true });
+  assert.equal(drawCount(filter), 2);
+  assert.ok(filter.includes("h*0.74"), "both layers anchored in the safe band");
+  assert.equal((filter.match(/alpha='clip\(/g) || []).length, 2, "both layers fade in");
+});
+
+test("depth:false stays off even if used as an explicit arg", () => {
+  const words = [{ text: "Lord", start: 0, end: 1, level: "hero" }];
+  const filter = buildWordDrawtext({ words, w: 1080, h: 1920, preset: "cinematic-default", depth: false });
+  assert.equal(drawCount(filter), 1);
+});

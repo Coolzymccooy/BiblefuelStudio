@@ -144,5 +144,43 @@ low+centred; staggered phrase 0 anchors left). 360/360 server tests green.
 
 ## Still deferred
 
-Preview-player UI, LLM scoring, depth/layered text, glow/blur/particles,
-background-aware (face/contrast) placement.
+Preview-player UI, LLM scoring, glow/blur/particles, background-aware
+(face/contrast) placement.
+
+---
+
+# Phase 2b — Layout UI + depth/layered text (shipped 2026-06-06)
+
+## Client UI for layout (A)
+
+- Shared `client/src/lib/layoutOptions.ts` (`LAYOUT_OPTIONS`/`LAYOUT_VALUES`),
+  unit-tested to mirror the server's `listLayouts()` set so the two never drift.
+- Render page (`RenderPage.tsx`) and Sermon Clip Studio (`TimelinePage.tsx`) each
+  add a "Text layout" picker, persisted to localStorage (`BF_RENDER_LAYOUT` /
+  `BF_SCL_LAYOUT`) and sent in the render payload.
+- The captioned-video route (`render.js`, used by Sermon Clip Studio) now runs
+  its words through `annotatePhrasedTiers` — so the semantic 3-tier emphasis AND
+  `phraseIndex` (needed by `staggered`) apply there too, matching the jobs path.
+
+## Depth / layered text (B)
+
+- `buildWordDrawtext({ ..., depth })` — `depth` may be `true` (defaults) or
+  `{ dx, dy, color, opacity }`. When set, each word also draws a darker, offset
+  "ghost" copy BEHIND it (no border/box/shadow; shares the reveal ease so both
+  layers animate together). Defaults: dx≈1% w, dy≈1.2% h, `black@0.5`.
+- Threaded through both render routes (`jobs.js` payload.depth, `render.js`
+  req.body.depth) and exposed as a "Layered depth" checkbox on both pages
+  (`BF_RENDER_DEPTH` / `BF_SCL_DEPTH`). Off by default → single drawtext per
+  word, no regression.
+
+## Testing
+
+Server `kineticAnimations.test.js` — depth ghost count/offset/colour/ordering,
+custom override object, composes with layout + rise-fade, off-by-default.
+Client `layoutOptions.test.ts` — option set matches server, default center.
+Verified with real ffmpeg renders (bottom-center + depth ghost visible). 366/366
+server, 24/24 client, client tsc clean.
+
+## Still deferred
+
+Preview-player UI, LLM scoring, glow/blur/particles, background-aware placement.

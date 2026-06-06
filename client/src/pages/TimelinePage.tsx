@@ -22,6 +22,7 @@ import {
     RotateCcw,
 } from 'lucide-react';
 import { loadJson, saveJson, STORAGE_KEYS } from '../lib/storage';
+import { LAYOUT_OPTIONS } from '../lib/layoutOptions';
 import { usePersistedState } from '../lib/usePersistedState';
 import { pickTranscribeAction, baseName, type TranscriptRecord } from '../lib/transcribeAction';
 import { AnimationPicker } from '../components/voicelab/AnimationPicker';
@@ -227,6 +228,14 @@ export function TimelinePage() {
     const [typographyPreset, setTypographyPreset] = usePersistedState<string>(
         STORAGE_KEYS.sclTypographyPreset,
         'cinematic-worship',
+    );
+    const [layout, setLayout] = usePersistedState<string>(
+        STORAGE_KEYS.sclLayout,
+        'center',
+    );
+    const [depth, setDepth] = usePersistedState<boolean>(
+        STORAGE_KEYS.sclDepth,
+        false,
     );
     const [renderedVideo, setRenderedVideo] = usePersistedState<string | null>(
         STORAGE_KEYS.sclRenderedVideo,
@@ -534,6 +543,8 @@ export function TimelinePage() {
                     ...trim,
                     words,
                     typographyPreset,
+                    layout,
+                    depth,
                     musicPath: musicPath || undefined,
                     musicVolume,
                     autoDuck,
@@ -942,6 +953,27 @@ export function TimelinePage() {
                         value={typographyPreset}
                         onChange={(id) => setTypographyPreset(id)}
                     />
+                    <div className="mt-3">
+                        <p className="text-xs text-gray-400 mb-2">Text layout</p>
+                        <select
+                            value={layout}
+                            onChange={(e) => setLayout(e.target.value)}
+                            className="w-full bg-white/[0.03] border border-white/10 rounded-lg px-3 py-2 text-sm text-gray-200 focus:border-primary-500/40 focus:outline-none"
+                        >
+                            {LAYOUT_OPTIONS.map((o) => (
+                                <option key={o.value} value={o.value}>{o.label}</option>
+                            ))}
+                        </select>
+                        <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer mt-3">
+                            <input
+                                type="checkbox"
+                                checked={depth}
+                                onChange={(e) => setDepth(e.target.checked)}
+                                className="rounded border-white/10 bg-black/50 checked:bg-primary-500"
+                            />
+                            Layered depth (ghost shadow behind each word)
+                        </label>
+                    </div>
                 </div>
                 {editedLines.length > 0 && (
                     <div className="space-y-2 max-h-96 overflow-y-auto pr-2">
