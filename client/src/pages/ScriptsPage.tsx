@@ -151,7 +151,7 @@ export function ScriptsPage() {
                     </Button>
                 </div>
 
-                <p className="text-sm text-gray-500 mt-4">
+                <p className="text-sm text-content-secondary mt-4">
                     {scriptsEnabled
                         ? "If you didn't set keys, fallback scripts will be used."
                         : "Scripts are disabled until OPENAI_API_KEY or GEMINI_API_KEY is configured."}

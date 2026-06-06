@@ -723,7 +723,7 @@ export function TimelinePage() {
                     <h2 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-primary-200">
                         Timeline Editor
                     </h2>
-                    <p className="text-gray-400">Assemble and master your audio clips with precision.</p>
+                    <p className="text-content-secondary">Assemble and master your audio clips with precision.</p>
                 </div>
                 <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
                     <Button variant="secondary" onClick={() => toast.success('Saved')} className="w-full sm:w-auto">
@@ -775,7 +775,7 @@ export function TimelinePage() {
                 {sourceMediaPath && (
                     <div className="mt-3 flex items-center justify-between gap-2 text-xs text-gray-300">
                         <span>
-                            <span className="text-gray-500">Loaded ({sourceMediaKind}):</span>{' '}
+                            <span className="text-content-tertiary">Loaded ({sourceMediaKind}):</span>{' '}
                             <span className="font-mono break-all">{sourceMediaPath.split(/[\\/]/).pop()}</span>
                         </span>
                         <button
@@ -1378,7 +1378,7 @@ export function TimelinePage() {
                                     </div>
                                     {uploadProgress !== null && (
                                         <div className="space-y-1 px-1">
-                                            <div className="flex justify-between text-[10px] text-gray-400">
+                                            <div className="flex justify-between text-[10px] text-meta">
                                                 <span>{uploadProgress < 100 ? 'Uploading…' : 'Processing…'}</span>
                                                 <span>{uploadProgress}%</span>
                                             </div>
@@ -1390,7 +1390,7 @@ export function TimelinePage() {
                                             </div>
                                         </div>
                                     )}
-                                    <p className="text-[10px] text-gray-500 px-1">
+                                    <p className="text-help px-1">
                                         Up to {MAX_UPLOAD_MB} MB per file. Video (mp4, mov, webm) or image (jpg, png, webp).
                                     </p>
                                     <Button
@@ -1406,7 +1406,7 @@ export function TimelinePage() {
                             ) : (
                                 <div className="py-10 border-2 border-dashed border-white/10 rounded-xl flex flex-col items-center justify-center text-center px-4 space-y-3">
                                     <Library size={32} className="text-gray-600" />
-                                    <p className="text-xs text-gray-500">No backgrounds selected</p>
+                                    <p className="text-help">No backgrounds selected</p>
                                     <div className="grid grid-cols-2 gap-2 w-full">
                                         <Button onClick={openLibrary} className="h-9 text-[10px]">
                                             <Library size={14} className="mr-1" />
@@ -1432,7 +1432,7 @@ export function TimelinePage() {
                                     </div>
                                     {uploadProgress !== null && (
                                         <div className="space-y-1 w-full px-1">
-                                            <div className="flex justify-between text-[10px] text-gray-400">
+                                            <div className="flex justify-between text-[10px] text-meta">
                                                 <span>{uploadProgress < 100 ? 'Uploading…' : 'Processing…'}</span>
                                                 <span>{uploadProgress}%</span>
                                             </div>
@@ -1444,7 +1444,7 @@ export function TimelinePage() {
                                             </div>
                                         </div>
                                     )}
-                                    <p className="text-[10px] text-gray-500 px-1">
+                                    <p className="text-help px-1">
                                         Up to {MAX_UPLOAD_MB} MB. Video (mp4/mov/webm) or image (jpg/png/webp).
                                     </p>
                                 </div>
@@ -1455,13 +1455,13 @@ export function TimelinePage() {
                     <Card title="Stats" className="opacity-50">
                         <div className="space-y-4 p-2">
                             <div className="flex justify-between text-xs">
-                                <span className="text-gray-500">Total Duration</span>
+                                <span className="text-meta">Total Duration</span>
                                 <span className="font-mono text-primary-400">
                                     {totalDuration.toFixed(2)}s
                                 </span>
                             </div>
                             <div className="flex justify-between text-xs">
-                                <span className="text-gray-500">Clips Count</span>
+                                <span className="text-meta">Clips Count</span>
                                 <span className="font-mono text-primary-400">{clips.length}</span>
                             </div>
                         </div>
@@ -1469,11 +1469,11 @@ export function TimelinePage() {
 
                     <Card title="Recent Audio">
                         {audioHistory.length === 0 ? (
-                            <p className="text-xs text-gray-500">No audio history yet.</p>
+                            <p className="text-help">No audio history yet.</p>
                         ) : (
                             <div className="space-y-2">
                                 {audioHistory.slice(0, 5).map((item) => (
-                                    <div key={item.id} className="text-xs text-gray-400 break-all">
+                                    <div key={item.id} className="text-xs text-content-tertiary break-all">
                                         <button
                                             onClick={() => handleAddClip(item.path, item.kind)}
                                             className="text-primary-400 hover:text-primary-300"
@@ -1530,9 +1530,9 @@ export function TimelinePage() {
                             </div>
 
                             <div>
-                                <h4 className="text-xs text-gray-400 mb-2 uppercase tracking-wider">Recent Audio</h4>
+                                <h4 className="text-caption mb-2">Recent Audio</h4>
                                 {audioHistory.length === 0 ? (
-                                    <p className="text-xs text-gray-500">No recent audio found.</p>
+                                    <p className="text-help">No recent audio found.</p>
                                 ) : (
                                     <div className="space-y-2">
                                         {audioHistory.map((item) => (
@@ -1566,7 +1566,7 @@ export function TimelinePage() {
                         <div className="flex items-center justify-between p-4 border-b border-white/10 shrink-0">
                             <div>
                                 <h3 className="font-bold text-lg text-white">Select Backgrounds</h3>
-                                <p className="text-xs text-gray-400 mt-1">
+                                <p className="text-subtitle mt-1">
                                     {backgroundItems.length} of {MAX_BACKGROUNDS} selected · click to toggle, order = render sequence
                                 </p>
                             </div>

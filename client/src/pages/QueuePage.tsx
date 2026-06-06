@@ -318,7 +318,7 @@ export function QueuePage() {
                             </div>
                             <div>
                                 <h3 className="font-bold text-lg text-white">Batch Rendering</h3>
-                                <p className="text-xs text-gray-500">{selectedIds.size} scripts selected for processing.</p>
+                                <p className="text-meta">{selectedIds.size} scripts selected for processing.</p>
                             </div>
                         </div>
 
