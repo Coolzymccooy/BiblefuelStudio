@@ -959,7 +959,7 @@ async function renderAdvancedVideo(payload, jobId) {
   }
 
   const { w, h } = getDims(aspect);
-  const graph = buildSceneGraph({ scenes: resolvedScenes, w, h });
+  const graph = buildSceneGraph({ scenes: resolvedScenes, w, h, kenBurns: payload?.kenBurns === true });
   const totalDuration = Math.min(
     MAX_RENDER_SECONDS,
     audioDur != null ? audioDur : Math.max(1, Number(durationSec) || graph.totalDuration),

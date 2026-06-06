@@ -291,9 +291,9 @@ export function buildLineDrawtext({ lines, w, h, preset }) {
  *   - videoLabel: name of the final video stream (`xfinal` or `v0`)
  *   - totalDuration: number of seconds the composed video lasts
  *
- * @param {{ scenes: Array<{ backgroundPath: string, duration: number }>, w: number, h: number, xfadeDuration?: number }} opts
+ * @param {{ scenes: Array<{ backgroundPath: string, duration: number }>, w: number, h: number, xfadeDuration?: number, kenBurns?: boolean }} opts
  */
-export function buildSceneGraph({ scenes, w, h, xfadeDuration }) {
+export function buildSceneGraph({ scenes, w, h, xfadeDuration, kenBurns }) {
   if (!Array.isArray(scenes) || scenes.length === 0) {
     throw new Error("buildSceneGraph: scenes[] required");
   }
@@ -306,9 +306,20 @@ export function buildSceneGraph({ scenes, w, h, xfadeDuration }) {
   // and xfade refuses to mix mismatched inputs.
   for (let i = 0; i < scenes.length; i++) {
     const dur = Math.max(0.5, Number(scenes[i].duration) || 0);
-    filterParts.push(
-      `[${i}:v]scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},fps=30,format=yuv420p,trim=duration=${dur.toFixed(3)},setpts=PTS-STARTPTS,settb=AVTB[v${i}]`
-    );
+    const isImage = /\.(jpg|jpeg|png|webp)$/i.test(String(scenes[i].backgroundPath || ""));
+    if (kenBurns && isImage) {
+      // Ken Burns: zoompan emits d frames PER input frame, so feed it exactly
+      // one frame (trim=end_frame=1). Upscale (fill-crop, no distortion) so the
+      // slow zoom has pixels to sample, then settle to WxH for xfade.
+      const frames = Math.max(1, Math.round(dur * 30));
+      filterParts.push(
+        `[${i}:v]trim=end_frame=1,setpts=PTS-STARTPTS,scale=${w * 2}:${h * 2}:force_original_aspect_ratio=increase,crop=${w * 2}:${h * 2},zoompan=z='min(zoom+0.0006,1.06)':d=${frames}:s=${w}x${h}:fps=30,format=yuv420p,trim=duration=${dur.toFixed(3)},setpts=PTS-STARTPTS,settb=AVTB[v${i}]`
+      );
+    } else {
+      filterParts.push(
+        `[${i}:v]scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},fps=30,format=yuv420p,trim=duration=${dur.toFixed(3)},setpts=PTS-STARTPTS,settb=AVTB[v${i}]`
+      );
+    }
   }
 
   if (scenes.length === 1) {
