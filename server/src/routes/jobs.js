@@ -366,26 +366,37 @@ const volatileProgressByJob = new Map();
 // for known-error patterns; fall back to the last 8 lines.
 function summarizeFfmpegError(stderr) {
   if (!stderr) return "(ffmpeg produced no stderr output)";
-  const lines = stderr.split(/\r?\n/).map((l) => l.trimEnd()).filter(Boolean);
-  if (lines.length === 0) return "(empty stderr)";
+  const all = stderr.split(/\r?\n/).map((l) => l.trimEnd()).filter(Boolean);
+  if (all.length === 0) return "(empty stderr)";
+  // drawtext prints `[Parsed_drawtext_N @ addr] Using "<font>"` ONCE PER WORD
+  // during filtergraph init — pure info that floods the tail and used to mask
+  // the real error (the bottom-up scan would return the last font line). Drop
+  // that noise (plus progress/banner lines) before scanning for the real error.
+  const noiseRx = /\] Using ['"]|^frame=|^size=|^\s*(Stream mapping|Stream #|Input #|Output #|Duration:|Metadata:|encoder\s|configuration:|built with|Press \[q\]|lib[a-z]+\s+\d)/i;
+  const lines = all.filter((l) => !noiseRx.test(l));
+  const scan = lines.length ? lines : all;
   const errorRx = [
     /\bError\b/i,
-    /\[Parsed_/,
     /Conversion failed/i,
     /Invalid argument/i,
     /No such filter/i,
     /Cannot find/i,
     /Unable to/i,
-    /Output file does not contain any stream/i,
-    /Filter .* has an unconnected output/i,
+    /Could not/i,
+    /does not contain any stream/i,
+    /unconnected output/i,
+    /matches no streams/i,
+    // A `[Parsed_*]` filter line that is NOT a benign font-load (those were
+    // already stripped above) — e.g. "[Parsed_drawtext_3] Cannot load font".
+    /\[Parsed_/,
   ];
-  for (let i = lines.length - 1; i >= 0; i--) {
-    if (errorRx.some((rx) => rx.test(lines[i]))) {
+  for (let i = scan.length - 1; i >= 0; i--) {
+    if (errorRx.some((rx) => rx.test(scan[i]))) {
       // Include a few surrounding lines for context.
-      return lines.slice(Math.max(0, i - 2), Math.min(lines.length, i + 3)).join("\n");
+      return scan.slice(Math.max(0, i - 2), Math.min(scan.length, i + 3)).join("\n");
     }
   }
-  return lines.slice(-8).join("\n");
+  return scan.slice(-8).join("\n");
 }
 
 function runFFmpeg(args, totalDurationSec, onProgress) {

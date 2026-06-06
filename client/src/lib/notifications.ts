@@ -172,9 +172,13 @@ async function pollJobs(): Promise<void> {
                         kind,
                         title,
                         body,
+                        // Studio routes live under /app/* (see App.tsx). Without
+                        // the prefix, navigate('/render?share=…') / '/jobs' match
+                        // no route and render a blank page when the user taps
+                        // "Open" on a notification.
                         href: job.type.startsWith('render_') || isCampaign
-                            ? `/render?share=${encodeURIComponent(job.id)}`
-                            : '/jobs',
+                            ? `/app/render?share=${encodeURIComponent(job.id)}`
+                            : '/app/jobs',
                         meta: { jobId: job.id, file: file || null, jobType: job.type, renderOnly: isRenderOnly },
                     });
                 }
