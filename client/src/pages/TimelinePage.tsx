@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { api, UPLOAD_TIMEOUT_MS } from '../lib/api';
@@ -18,9 +18,12 @@ import {
     X,
     Share2,
     Scissors,
+    History as HistoryIcon,
+    RotateCcw,
 } from 'lucide-react';
 import { loadJson, saveJson, STORAGE_KEYS } from '../lib/storage';
 import { usePersistedState } from '../lib/usePersistedState';
+import { pickTranscribeAction, baseName, type TranscriptRecord } from '../lib/transcribeAction';
 import { AnimationPicker } from '../components/voicelab/AnimationPicker';
 import { ShareSheet } from '../components/ShareSheet';
 import { MediaTrimmer } from '../components/MediaTrimmer';
@@ -258,6 +261,8 @@ export function TimelinePage() {
         STORAGE_KEYS.sclSyncBackgrounds,
         true,
     );
+    const [transcriptHistory, setTranscriptHistory] = useState<TranscriptRecord[]>([]);
+    const [showHistory, setShowHistory] = useState(false);
 
     const readFileAsDataUrl = (file: File): Promise<string> =>
         new Promise((resolve, reject) => {
@@ -327,11 +332,36 @@ export function TimelinePage() {
         }
     };
 
-    const handleTranscribe = async () => {
-        if (!sourceMediaPath) {
-            toast.error('Upload a sermon first');
-            return;
-        }
+    const loadTranscriptHistory = useCallback(async () => {
+        const res = await api.get('/api/transcripts?limit=50');
+        if (res.ok && Array.isArray(res.data?.items)) setTranscriptHistory(res.data.items as TranscriptRecord[]);
+    }, []);
+
+    const saveTranscript = useCallback(async (words: TranscriptWord[], lines: string[]) => {
+        if (!sourceMediaPath || !words.length) return;
+        const res = await api.post('/api/transcripts', {
+            sourceFile: baseName(sourceMediaPath),
+            words,
+            editedLines: lines,
+            typographyPreset,
+        });
+        if (res.ok) void loadTranscriptHistory();
+    }, [sourceMediaPath, typographyPreset, loadTranscriptHistory]);
+
+    const applyTranscriptRecord = useCallback((rec: TranscriptRecord) => {
+        setTranscript(rec.words as TranscriptWord[]);
+        setEditedLines(rec.editedLines);
+        if (rec.typographyPreset) setTypographyPreset(rec.typographyPreset);
+        setShowHistory(false);
+    }, [setTranscript, setEditedLines, setTypographyPreset]);
+
+    const deleteTranscriptRecord = useCallback(async (id: string) => {
+        const res = await api.delete(`/api/transcripts/${encodeURIComponent(id)}`);
+        if (res.ok) void loadTranscriptHistory();
+    }, [loadTranscriptHistory]);
+
+    const runFreshTranscribe = async () => {
+        if (!sourceMediaPath) { toast.error('Upload a sermon first'); return; }
         setIsTranscribing(true);
         const toastId = toast.loading('Transcribing — this can take a minute...');
         try {
@@ -341,14 +371,27 @@ export function TimelinePage() {
                 return;
             }
             const words: TranscriptWord[] = response.data.words;
+            const lines = groupWordsIntoLines(words, 8);
             setTranscript(words);
-            setEditedLines(groupWordsIntoLines(words, 8));
+            setEditedLines(lines);
             toast.success(`Transcribed ${words.length} words`, { id: toastId });
+            void saveTranscript(words, lines);
         } catch {
             toast.error('Transcription failed', { id: toastId });
         } finally {
             setIsTranscribing(false);
         }
+    };
+
+    const handleTranscribe = async () => {
+        if (!sourceMediaPath) { toast.error('Upload a sermon first'); return; }
+        const action = pickTranscribeAction(transcriptHistory, sourceMediaPath);
+        if (action.mode === 'reuse') {
+            applyTranscriptRecord(action.record);
+            toast.success('Reused saved transcript — 0 quota used', { id: 'tx-reuse' });
+            return;
+        }
+        await runFreshTranscribe();
     };
 
     /**
@@ -587,6 +630,14 @@ export function TimelinePage() {
         if (cachedAudioPath) setCurrentAudioPath(cachedAudioPath);
     }, []);
 
+    useEffect(() => { void loadTranscriptHistory(); }, [loadTranscriptHistory]);
+
+    useEffect(() => {
+        if (!transcript || !transcript.length || !sourceMediaPath || !editedLines.length) return;
+        const t = setTimeout(() => { void saveTranscript(transcript, editedLines); }, 1200);
+        return () => clearTimeout(t);
+    }, [editedLines, transcript, sourceMediaPath, saveTranscript]);
+
     const saveClipsToCache = (newClips: TimelineClip[]) => {
         saveJson(STORAGE_KEYS.timelineClips, newClips);
     };
@@ -814,15 +865,76 @@ export function TimelinePage() {
                     <p className="text-help">
                         Generate a word-level transcript with timings, then refine the lines below before rendering captions.
                     </p>
-                    <Button
-                        variant="secondary"
-                        onClick={handleTranscribe}
-                        disabled={!sourceMediaPath || isTranscribing}
-                        className="h-9 text-xs"
-                    >
-                        <Waves size={14} className="mr-2" />
-                        {isTranscribing ? 'Transcribing...' : 'Transcribe'}
-                    </Button>
+                    <div className="flex items-center gap-2 relative">
+                        {transcript && transcript.length > 0 && (
+                            <>
+                                <Button
+                                    variant="secondary"
+                                    onClick={() => { setTranscript(null); setEditedLines([]); }}
+                                    className="h-9 text-xs"
+                                    title="Clear the working transcript (saved history is kept)"
+                                >
+                                    Clear
+                                </Button>
+                                <Button
+                                    variant="secondary"
+                                    onClick={runFreshTranscribe}
+                                    disabled={isTranscribing || !sourceMediaPath}
+                                    className="h-9 text-xs"
+                                    title="Run a fresh Whisper pass (uses render quota)"
+                                >
+                                    <RotateCcw size={14} className="mr-1.5" />
+                                    Re-transcribe
+                                </Button>
+                            </>
+                        )}
+                        {transcriptHistory.length > 0 && (
+                            <Button
+                                variant="secondary"
+                                onClick={() => setShowHistory((v) => !v)}
+                                className="h-9 text-xs"
+                                title="Saved transcripts"
+                            >
+                                <HistoryIcon size={14} className="mr-1.5" />
+                                History
+                            </Button>
+                        )}
+                        <Button
+                            onClick={handleTranscribe}
+                            disabled={!sourceMediaPath || isTranscribing}
+                            className="h-9 text-xs"
+                        >
+                            <Waves size={14} className="mr-2" />
+                            {isTranscribing ? 'Transcribing...' : 'Transcribe'}
+                        </Button>
+
+                        {showHistory && (
+                            <div className="absolute right-0 top-11 z-30 w-80 max-h-80 overflow-y-auto rounded-xl border border-white/15 bg-dark-900/98 backdrop-blur-xl shadow-2xl p-2">
+                                <p className="text-caption px-2 py-1">Saved transcripts</p>
+                                {transcriptHistory.map((h) => (
+                                    <div key={h.id} className="group flex items-center gap-2 rounded-lg px-2 py-2 hover:bg-white/5">
+                                        <button
+                                            type="button"
+                                            onClick={() => applyTranscriptRecord(h)}
+                                            className="flex-1 min-w-0 text-left"
+                                        >
+                                            <p className="text-content-secondary text-xs truncate">{h.label}</p>
+                                            <p className="text-meta">{h.sourceFile} · {h.lineCount} lines</p>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => void deleteTranscriptRecord(h.id)}
+                                            className="shrink-0 p-1.5 rounded-md text-gray-500 hover:text-red-400 hover:bg-white/5"
+                                            aria-label="Delete saved transcript"
+                                            title="Delete"
+                                        >
+                                            <Trash2 size={14} />
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
                 </div>
                 <div className="mb-4">
                     <p className="text-xs text-gray-400 mb-2">Kinetic typography style</p>
