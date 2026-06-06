@@ -285,6 +285,22 @@ export function splitPhrases(words, opts = {}) {
 }
 
 /**
+ * Render-path helper: chunk a flat word stream into micro-phrases, then
+ * annotate 3-tier emphasis so each short on-screen phrase gets one hero word
+ * (rather than one hero per long beat-line). This is what the kinetic caption
+ * pipeline calls in place of the legacy annotateEmphasis.
+ *
+ * @param {Array<{ text: string, start: number, end: number }>} words
+ * @param {{ maxWords?: number, maxChars?: number }} [opts]  forwarded to splitPhrases
+ * @returns {Array<{ text, start, end, level: "normal"|"key"|"hero", emphasize: boolean }>}
+ */
+export function annotatePhrasedTiers(words, opts) {
+  if (!Array.isArray(words) || words.length === 0) return [];
+  const phrases = splitPhrases(words, opts);
+  return annotateEmphasisTiers(words, phrases.map((p) => p.text));
+}
+
+/**
  * Group word-timings into beat segments aligned to logical script sections
  * (hook / verse / reflection / cta). Used by the scene splitter to know
  * when to crossfade backgrounds.

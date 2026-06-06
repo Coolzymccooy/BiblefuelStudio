@@ -13,7 +13,7 @@ import { dispatchPost } from "./social.js";
 import { readSocialStore } from "../lib/socialStore.js";
 import { isPostizConfigured, postVideo as postizPostVideo } from "../lib/postizClient.js";
 import { pickBestBackground, classifyText } from "../lib/categorize.js";
-import { charsToWords, captionWordsFromNativeWords, annotateEmphasis, groupWordsByBeat } from "../lib/captions.js";
+import { charsToWords, captionWordsFromNativeWords, annotatePhrasedTiers, groupWordsByBeat } from "../lib/captions.js";
 import { alignAudioWithText, isForcedAlignmentAvailable } from "../lib/voice/alignment.js";
 import { buildWordDrawtext, buildLineDrawtext, buildSceneGraph, resolveKineticAnimation } from "../lib/videoFilters.js";
 import { buildSocialCaption } from "../lib/socialCaption.js";
@@ -846,7 +846,9 @@ async function augmentPayloadWithKineticCaptions(payload, jobId) {
     }
     console.log(`[RENDER] Whisper alignment succeeded in ${alignMs}ms — ${alignment.characters.length} chars`);
     const rawWords = charsToWords(alignment);
-    const words = annotateEmphasis(rawWords, cleanLines);
+    // Chunk into micro-phrases and assign 3-tier emphasis (one hero per phrase).
+  // cleanLines no longer drives emphasis — phrase boundaries do.
+  const words = annotatePhrasedTiers(rawWords);
     return { ...payload, words };
   }
 
@@ -867,7 +869,9 @@ async function augmentPayloadWithKineticCaptions(payload, jobId) {
     console.warn("[RENDER] kineticCaptions: TTS returned no word timings — falling back to line captions");
     return { ...payload, kineticCaptions: false, audioPath: tts.file };
   }
-  const words = annotateEmphasis(rawWords, cleanLines);
+  // Chunk into micro-phrases and assign 3-tier emphasis (one hero per phrase).
+  // cleanLines no longer drives emphasis — phrase boundaries do.
+  const words = annotatePhrasedTiers(rawWords);
   return { ...payload, audioPath: tts.file, words };
 }
 
@@ -1258,7 +1262,7 @@ async function runCampaignAutoPost(payload, jobId) {
   let pickedBackground;
   if (tts.alignment && Array.isArray(tts.alignment.characters) && tts.alignment.characters.length > 0) {
     const rawWords = charsToWords(tts.alignment);
-    const words = annotateEmphasis(rawWords, ttsLines);
+    const words = annotatePhrasedTiers(rawWords);
     const beats = groupWordsByBeat(words, beatTexts);
     const sceneCount = beats.length >= 2 ? beats.length : 1;
 

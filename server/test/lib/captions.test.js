@@ -6,6 +6,7 @@ import {
   charsToWords,
   annotateEmphasisTiers,
   splitPhrases,
+  annotatePhrasedTiers,
 } from "../../src/lib/captions.js";
 
 /**
@@ -175,4 +176,32 @@ test("splitPhrases output feeds annotateEmphasisTiers (one hero per phrase)", ()
   // Each phrase containing a lexicon word gets its own hero (one per phrase).
   // Both phrases here hold a deity word, so 2 heroes total — never >1 per phrase.
   assert.equal(out.filter((w) => w.level === "hero").length, phrases.length);
+});
+
+// ─── annotatePhrasedTiers: the wired render-path helper ───────────────────
+// Composes splitPhrases + annotateEmphasisTiers so the renderer gets one hero
+// per short on-screen phrase (not per long beat-line). This is what the kinetic
+// caption path calls.
+
+test("annotatePhrasedTiers: tiers every word and gives one hero per micro-phrase", () => {
+  const words = wseq("The", "Lord", "is", "my", "shepherd");
+  const out = annotatePhrasedTiers(words); // chunks → ["The Lord is", "my shepherd"]
+  assert.equal(out.length, words.length);
+  // Each micro-phrase with a lexicon word gets a hero; both phrases here do.
+  assert.equal(out.filter((w) => w.level === "hero").length, 2);
+  assert.ok(out.every((w) => ["normal", "key", "hero"].includes(w.level)));
+});
+
+test("annotatePhrasedTiers: preserves timing and back-compat emphasize flag", () => {
+  const words = wseq("Lord", "of", "mercy");
+  const out = annotatePhrasedTiers(words);
+  assert.equal(out[0].start, words[0].start);
+  assert.equal(out[0].end, words[0].end);
+  // hero/key words still carry emphasize:true for older consumers.
+  assert.ok(out.filter((w) => w.emphasize).length >= 1);
+});
+
+test("annotatePhrasedTiers: empty input returns []", () => {
+  assert.deepEqual(annotatePhrasedTiers([]), []);
+  assert.deepEqual(annotatePhrasedTiers(null), []);
 });
