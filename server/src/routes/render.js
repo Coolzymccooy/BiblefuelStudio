@@ -807,7 +807,9 @@ router.post("/captioned-video", async (req, res) => {
       if (N === 1) {
         const singleIsImage = /\.(jpg|jpeg|png|webp)$/i.test(String(backgroundPaths[0]));
         if (kenBurns && singleIsImage) {
-          preDrawChain = `[0:v]${kenBurnsFilter(renderWidth, renderHeight, durationSec, 30)}[vbg];`;
+          // zoompan emits d frames PER input frame, so feed it exactly one
+          // frame (trim=end_frame=1) and let it synthesise the motion frames.
+          preDrawChain = `[0:v]trim=end_frame=1,setpts=PTS-STARTPTS,${kenBurnsFilter(renderWidth, renderHeight, durationSec, 30)}[vbg];`;
         } else {
           preDrawChain = needsScale
             ? `[0:v]scale=${renderWidth}:${renderHeight}[vbg];`
@@ -820,10 +822,12 @@ router.post("/captioned-video", async (req, res) => {
         const segSec = durationSec / N;
         const segParts = backgroundPaths.map((bg, i) => {
           const segIsImage = /\.(jpg|jpeg|png|webp)$/i.test(String(bg));
-          const scaleStep = (kenBurns && segIsImage)
-            ? kenBurnsFilter(renderWidth, renderHeight, segSec, 30)
-            : `scale=${renderWidth}:${renderHeight}`;
-          return `[${i}:v]trim=duration=${segSec.toFixed(3)},${scaleStep},setsar=1,setpts=PTS-STARTPTS[seg${i}]`;
+          if (kenBurns && segIsImage) {
+            // Feed zoompan a single frame (else it multiplies frames per input
+            // frame), synthesise motion, then cap to the slot duration.
+            return `[${i}:v]trim=end_frame=1,setpts=PTS-STARTPTS,${kenBurnsFilter(renderWidth, renderHeight, segSec, 30)},trim=duration=${segSec.toFixed(3)},setsar=1,setpts=PTS-STARTPTS[seg${i}]`;
+          }
+          return `[${i}:v]trim=duration=${segSec.toFixed(3)},scale=${renderWidth}:${renderHeight},setsar=1,setpts=PTS-STARTPTS[seg${i}]`;
         });
         const concatInputs = backgroundPaths.map((_, i) => `[seg${i}]`).join("");
         preDrawChain = `${segParts.join(";")};${concatInputs}concat=n=${N}:v=1:a=0[vbg];`;
