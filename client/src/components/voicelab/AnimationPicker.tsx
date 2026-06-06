@@ -84,40 +84,34 @@ export function AnimationPicker({ value, onChange, className = '' }: AnimationPi
       ) : error ? (
         <div className="text-red-300 text-sm">{error}</div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-80 overflow-y-auto pr-1">
           {animations.map((a) => {
             const active = a.id === selected;
+            // Browser-only effects move to a hover tooltip so each card stays a
+            // compact two-line tile instead of growing a chip stack.
+            const tip = a.unsupported.length > 0
+              ? `${a.description}\nBrowser-only (not baked): ${a.unsupported.join(', ')}`
+              : a.description;
             return (
               <button
                 key={a.id}
                 type="button"
                 onClick={() => pick(a)}
                 aria-pressed={active}
-                className={`text-left rounded-xl p-3 border transition focus:outline-none focus:ring-2 focus:ring-emerald-400/40 ${
+                title={tip}
+                className={`text-left rounded-lg px-3 py-2 border transition focus:outline-none focus:ring-2 focus:ring-emerald-400/40 ${
                   active
                     ? 'border-emerald-400/60 bg-emerald-500/10 ring-1 ring-emerald-400/40'
                     : 'border-white/10 bg-white/5 hover:bg-white/10'
                 }`}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="font-semibold text-gray-100">{a.label}</span>
+                  <span className="text-sm font-semibold text-gray-100 truncate">{a.label}</span>
                   <Badge variant={a.renderable ? 'success' : 'warning'}>
-                    {a.renderable ? 'Renderable' : 'Preview-only'}
+                    {a.renderable ? 'Renderable' : 'Preview'}
                   </Badge>
                 </div>
-                <p className="mt-1 text-xs text-content-secondary">{a.description}</p>
-                {a.unsupported.length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    {a.unsupported.map((u) => (
-                      <span
-                        key={u}
-                        className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-content-tertiary border border-white/10"
-                      >
-                        no {u}
-                      </span>
-                    ))}
-                  </div>
-                )}
+                <p className="mt-0.5 text-[11px] leading-snug text-content-secondary truncate">{a.description}</p>
               </button>
             );
           })}
