@@ -26,6 +26,7 @@ import bibleRouter from "./src/routes/bible.js";
 import seriesRouter from "./src/routes/series.js";
 import transcribeRouter from "./src/routes/transcribe.js";
 import transcriptsRouter from "./src/routes/transcripts.js";
+import imagegenRouter from "./src/routes/imagegen.js";
 import { requireAuth } from "./src/auth.js";
 import { createAccessRequestsRouter } from "./src/routes/accessRequests.js";
 import { getAccessRequestsStore } from "./src/lib/accessRequestsStore.js";
@@ -362,6 +363,7 @@ app.use("/api/gumroad",   requireAuth, withUserScope, featureGate("gumroad"),   
 app.use("/api/media",     requireAuth, withUserScope,                                              mediaRouter);
 app.use("/api/transcribe", requireAuth, withUserScope, requireVerifiedEmail, quota("render"),     transcribeRouter);
 app.use("/api/transcripts", requireAuth, withUserScope, transcriptsRouter);
+app.use("/api/imagegen",   requireAuth, withUserScope, requireVerifiedEmail, imagegenRouter);
 app.use("/api/audio",     requireAuth, withUserScope, requireVerifiedEmail,                       audioRouter);
 app.use("/api/audio-adv", requireAuth, withUserScope, requireVerifiedEmail,                       audioAdvancedRouter);
 app.use("/api/library",   requireAuth, withUserScope,                                              libraryRouter);
