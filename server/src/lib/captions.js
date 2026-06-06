@@ -297,7 +297,16 @@ export function splitPhrases(words, opts = {}) {
 export function annotatePhrasedTiers(words, opts) {
   if (!Array.isArray(words) || words.length === 0) return [];
   const phrases = splitPhrases(words, opts);
-  return annotateEmphasisTiers(words, phrases.map((p) => p.text));
+  const tiered = annotateEmphasisTiers(words, phrases.map((p) => p.text));
+  // Tag each word with the index of its micro-phrase so layout logic (e.g. the
+  // "staggered" layout) can vary position per phrase.
+  let idx = 0;
+  phrases.forEach((p, phraseIndex) => {
+    for (let k = 0; k < p.words.length && idx < tiered.length; k++) {
+      tiered[idx++].phraseIndex = phraseIndex;
+    }
+  });
+  return tiered;
 }
 
 /**

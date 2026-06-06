@@ -147,6 +147,50 @@ export function listTypographyPresets() {
   return Object.keys(TYPOGRAPHY_PRESETS);
 }
 
+// ── Layout variety ────────────────────────────────────────────────────────
+// Position presets for vertical social video. Bottom layouts sit in a safe
+// band (~74% height) so text clears the TikTok/Reels caption + UI strip;
+// horizontal anchors stay within the 8–92% safe margins. "center" reproduces
+// the historical output byte-for-byte. ffmpeg drawtext expressions reference
+// w/h/text_w/text_h (evaluated per frame).
+const SAFE_BAND_Y = 0.74; // vertical centre of the lower safe band
+const STAGGER_BAND_Y = 0.70; // staggered sits slightly higher for variety
+const LAYOUTS = Object.freeze(["center", "center-large", "bottom-center", "bottom-left", "staggered"]);
+
+export function listLayouts() {
+  return LAYOUTS.slice();
+}
+
+export function resolveLayout(name) {
+  const key = String(name ?? "").trim().toLowerCase();
+  return LAYOUTS.includes(key) ? key : "center";
+}
+
+/**
+ * Resolve a layout (+ the word's micro-phrase index for staggering) into the
+ * ffmpeg x expression, the y baseline expression, and a size multiplier.
+ *
+ * @returns {{ xExpr: string, yBase: string, sizeBoost: number }}
+ */
+function layoutGeometry(layout, phraseIndex = 0) {
+  switch (layout) {
+    case "center-large":
+      return { xExpr: "(w-text_w)/2", yBase: "(h-text_h)/2", sizeBoost: 1.25 };
+    case "bottom-center":
+      return { xExpr: "(w-text_w)/2", yBase: `(h*${SAFE_BAND_Y}-text_h/2)`, sizeBoost: 1 };
+    case "bottom-left":
+      return { xExpr: "w*0.08", yBase: `(h*${SAFE_BAND_Y}-text_h/2)`, sizeBoost: 1 };
+    case "staggered": {
+      const anchors = ["w*0.10", "(w-text_w)/2", "w*0.90-text_w"];
+      return { xExpr: anchors[((phraseIndex % 3) + 3) % 3], yBase: `(h*${STAGGER_BAND_Y}-text_h/2)`, sizeBoost: 1 };
+    }
+    case "center":
+    default:
+      // Keep the exact historical strings so existing output is unchanged.
+      return { xExpr: "(w-text_w)/2", yBase: "(h-text_h)/2", sizeBoost: 1 };
+  }
+}
+
 /**
  * The ported lumina-presenter design-animation catalog. Each entry carries a
  * `renderable` flag and `unsupported[]` effects, plus a `presetId` that always
@@ -191,9 +235,11 @@ export function escapeDrawText(s) {
  * @param {{ words: Array<{ text: string, start: number, end: number, emphasize?: boolean }>, w: number, h: number }} opts
  * @returns {string | null}
  */
-export function buildWordDrawtext({ words, w, h, preset }) {
+export function buildWordDrawtext({ words, w, h, preset, layout }) {
   if (!Array.isArray(words) || words.length === 0) return null;
   const style = resolveTypographyPreset(preset);
+  // layout arg wins, else the preset may declare one, else "center".
+  const resolvedLayout = resolveLayout(layout ?? style.layout);
   const baseSize = Math.max(48, Math.round(h * style.baseSizeMult));
   const emphSize = Math.max(baseSize, Math.round(h * style.emphasisSizeMult));
   // Third "hero" tier — the single biggest word per phrase. Presets that omit
@@ -239,7 +285,10 @@ export function buildWordDrawtext({ words, w, h, preset }) {
       word.level === "hero" ? "hero"
         : word.level === "key" || word.emphasize ? "key"
         : "normal";
-    const requested = tier === "hero" ? heroSize : tier === "key" ? emphSize : baseSize;
+    // Per-word geometry from the resolved layout (+ phrase index for stagger).
+    const { xExpr, yBase, sizeBoost } = layoutGeometry(resolvedLayout, word.phraseIndex | 0);
+    const tierSize = tier === "hero" ? heroSize : tier === "key" ? emphSize : baseSize;
+    const requested = Math.round(tierSize * sizeBoost);
     const fitSize = Math.floor(maxWidthPx / Math.max(1, text.length) / 0.55);
     const size = Math.max(40, Math.min(requested, fitSize));
     const color = tier === "hero" ? heroColor : tier === "key" ? emphasisColor : baseColor;
@@ -247,9 +296,9 @@ export function buildWordDrawtext({ words, w, h, preset }) {
     // Reveal easing: clamp the ease so it always completes inside the word's
     // visible window (a long preset reveal on a short word would otherwise
     // never reach full opacity). scale-fade falls back to fade (drawtext can't
-    // animate fontsize).
+    // animate fontsize). The rise animates around the layout's y baseline.
     let alphaClause = "";
-    let yClause = "y=(h-text_h)/2";
+    let yClause = `y=${yBase}`;
     if (wordReveal && revealMs > 0) {
       const reveal = Math.min(revealMs / 1000, (end - start) * 0.9);
       if (reveal > 0) {
@@ -258,13 +307,13 @@ export function buildWordDrawtext({ words, w, h, preset }) {
         const ease = `clip((t-${s})/${r},0,1)`;
         alphaClause = `:alpha='${ease}'`;
         if (wordReveal === "rise-fade") {
-          yClause = `y='(h-text_h)/2+${riseOffset}*(1-${ease})'`;
+          yClause = `y='${yBase}+${riseOffset}*(1-${ease})'`;
         }
       }
     }
 
     filters.push(
-      `drawtext=text='${text}':x=(w-text_w)/2:${yClause}:fontsize=${size}:fontcolor=${color}:borderw=${borderWidth}:bordercolor=black@0.85${shadowClause}${wordBox}${alphaClause}:enable='between(t,${start.toFixed(3)},${end.toFixed(3)})'`
+      `drawtext=text='${text}':x=${xExpr}:${yClause}:fontsize=${size}:fontcolor=${color}:borderw=${borderWidth}:bordercolor=black@0.85${shadowClause}${wordBox}${alphaClause}:enable='between(t,${start.toFixed(3)},${end.toFixed(3)})'`
     );
   }
   if (filters.length === 0) return null;

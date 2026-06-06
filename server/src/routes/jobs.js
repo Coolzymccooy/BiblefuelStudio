@@ -893,6 +893,7 @@ async function renderAdvancedVideo(payload, jobId) {
     scenes,
     backgroundPath,
     typographyPreset,
+    layout,
   } = payload || {};
   const resolvedAudio = resolveAssetPath(audioPath);
   const resolvedMusic = resolveAssetPath(musicPath);
@@ -985,7 +986,7 @@ async function renderAdvancedVideo(payload, jobId) {
     ? wrapTextLines(lines.map((s) => String(s).slice(0, 140)), maxChars, 12)
     : [];
   const drawtextChain = Array.isArray(words) && words.length > 0
-    ? buildWordDrawtext({ words, w, h, preset: resolvedPreset })
+    ? buildWordDrawtext({ words, w, h, preset: resolvedPreset, layout })
     : buildLineDrawtext({ lines: wrappedLines, w, h, preset: resolvedPreset });
 
   const filterParts = graph.filterParts.slice();

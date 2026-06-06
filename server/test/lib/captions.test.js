@@ -205,3 +205,11 @@ test("annotatePhrasedTiers: empty input returns []", () => {
   assert.deepEqual(annotatePhrasedTiers([]), []);
   assert.deepEqual(annotatePhrasedTiers(null), []);
 });
+
+// phraseIndex enables layout staggering (each word knows which micro-phrase it
+// belongs to). Used by buildWordDrawtext's "staggered" layout.
+test("annotatePhrasedTiers tags each word with its phraseIndex", () => {
+  const words = wseq("The", "Lord", "is", "my", "shepherd"); // ["The Lord is","my shepherd"]
+  const out = annotatePhrasedTiers(words);
+  assert.deepEqual(out.map((w) => w.phraseIndex), [0, 0, 0, 1, 1]);
+});

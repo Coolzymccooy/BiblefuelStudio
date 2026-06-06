@@ -97,8 +97,52 @@ TTS words[] → splitPhrases → annotateEmphasisTiers (lexicon + fallback, 1 he
   presets without hero fields fall back to emphasis size (no regression);
   key/normal unchanged.
 
-## Out of scope
+## Out of scope (Phase 1)
 
-Layout variety (bottom-left/staggered), preview-player UI, LLM scoring,
-glow/blur/particles. The `scoreWord` interface is shaped so an LLM scorer can
-slot in later behind the same contract.
+Preview-player UI, LLM scoring, glow/blur/particles. The `scoreWord` interface
+is shaped so an LLM scorer can slot in later behind the same contract.
+
+---
+
+# Phase 2 — Layout variety (shipped 2026-06-06)
+
+Adds optional text positioning for vertical social video. Server-side only,
+TDD, no new engine. Default `center` reproduces Phase 1 output byte-for-byte.
+
+## Layouts (`buildWordDrawtext({ ..., layout })`)
+
+| Layout | Position | Notes |
+|---|---|---|
+| `center` (default) | centred | unchanged historical output |
+| `center-large` | centred, size ×1.25 | "one word fills the screen" |
+| `bottom-center` | lower safe band (y≈74% h), centred | clears the TikTok/Reels caption strip |
+| `bottom-left` | lower safe band, x=8% w | left-anchored |
+| `staggered` | lower band (y≈70% h), x alternates left/centre/right by `phraseIndex` | the dynamic look |
+
+Safe area: bottom band at 74% h keeps text above the caption/UI strip;
+horizontal anchors stay within 8–92% w. Unknown layout → `center`
+(`resolveLayout`). `listLayouts()` exposes the set for UI.
+
+## Wiring
+
+- `captions.js annotatePhrasedTiers` now tags each word with `phraseIndex`
+  (which micro-phrase it belongs to) so `staggered` can vary position.
+- `videoFilters.js`: `layoutGeometry(layout, phraseIndex)` → `{ xExpr, yBase,
+  sizeBoost }`; `buildWordDrawtext` applies it. Rise-fade motion animates around
+  the layout's y baseline (not a hardcoded centre).
+- `jobs.js renderAdvancedVideo` threads `payload.layout` into
+  `buildWordDrawtext`. Enqueue validation passes the field through untouched;
+  `resolveLayout` defends against bad values.
+
+## Testing
+
+`captions.test.js` — phraseIndex tagging. `kineticAnimations.test.js` — each
+layout's x/y expressions, center-large size boost, staggered per-phrase
+anchors, unknown→center fallback, layout-arg override, rise-fade integration,
+`listLayouts`. Verified end-to-end with real ffmpeg renders (bottom-center sits
+low+centred; staggered phrase 0 anchors left). 360/360 server tests green.
+
+## Still deferred
+
+Preview-player UI, LLM scoring, depth/layered text, glow/blur/particles,
+background-aware (face/contrast) placement.
