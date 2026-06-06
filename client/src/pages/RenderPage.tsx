@@ -17,6 +17,7 @@ import { useNotifications } from '../lib/notifications';
 import { ShareSheet } from '../components/ShareSheet';
 import { RenderProgressOverlay } from '../components/RenderProgressOverlay';
 import { MediaTrimmer } from '../components/MediaTrimmer';
+import { applyGeneratedVisuals, type GenerateMode } from '../lib/generativeVisuals';
 
 /** Mirrors the server's MAX_BACKGROUNDS — keep in sync with render.js. */
 const MAX_BACKGROUNDS = 4;
@@ -96,6 +97,10 @@ export function RenderPage() {
     const [durationSec, setDurationSec] = useState(20);
     const [kineticCaptions, setKineticCaptions] = useState(false);
     const [ttsVoiceId, setTtsVoiceId] = useState('');
+    const [genVisualsMode, setGenVisualsMode] = useState<GenerateMode>('alongside');
+    const [genVisualsCount, setGenVisualsCount] = useState(2);
+    const [isGeneratingVisuals, setIsGeneratingVisuals] = useState(false);
+    const [kenBurns, setKenBurns] = useState(false);
     const [typographyPreset, setTypographyPreset] = useState<string>('cinematic-default');
     const [animations, setAnimations] = useState<Array<{ id: string; label: string; renderable: boolean }>>([]);
     const [postDestination, setPostDestination] = useState<'webhook' | 'buffer' | 'youtube' | 'instagram' | 'tiktok'>('webhook');
@@ -390,6 +395,7 @@ export function RenderPage() {
                 musicVolume,
                 autoDuck,
                 typographyPreset,
+                kenBurns,
                 ...(kineticCaptions && mode === 'video'
                     ? { kineticCaptions: true, ...(ttsVoiceId.trim() ? { voiceId: ttsVoiceId.trim() } : {}) }
                     : {}),
@@ -572,6 +578,35 @@ export function RenderPage() {
             toast.error('Music upload failed');
         } finally {
             setIsUploadingMusic(false);
+        }
+    };
+
+    const handleGenerateVisuals = async () => {
+        const scriptLines = lines.split('\n').map((l) => l.trim()).filter(Boolean);
+        if (scriptLines.length === 0) { toast.error('Add some script lines first'); return; }
+        setIsGeneratingVisuals(true);
+        const toastId = toast.loading('Generating visuals from your script…');
+        try {
+            const res = await api.post('/api/imagegen/generate', { lines: scriptLines, count: genVisualsCount, aspect });
+            if (!res.ok || !Array.isArray(res.data?.items) || res.data.items.length === 0) {
+                if (res.status === 503) { toast.error('AI visuals aren\'t configured on this server yet.', { id: toastId }); return; }
+                if (res.status === 429) { toast.error('Daily AI-image limit reached. Try again tomorrow or upgrade.', { id: toastId }); return; }
+                toast.error(res.error || 'Could not generate visuals', { id: toastId });
+                return;
+            }
+            const generatedItems = (res.data.items as Array<{ id: string; publicUrl: string }>).map((it) => {
+                const mediaUrl = `${api.mediaBaseUrl}${it.publicUrl}`;
+                return { id: it.id, url: mediaUrl, previewUrl: mediaUrl, image: mediaUrl, kind: 'image' as const, savedAt: new Date().toISOString() };
+            });
+            const next = applyGeneratedVisuals(backgroundItems as never[], generatedItems as never[], genVisualsMode, MAX_BACKGROUNDS) as typeof backgroundItems;
+            setBackgroundItems(next);
+            if (next.length > 0 && !backgroundPath) setBackgroundPath(String(next[0].id));
+            const failedNote = res.data.failed ? ` (${res.data.failed} failed)` : '';
+            toast.success(`Added ${res.data.generated} AI visual${res.data.generated === 1 ? '' : 's'}${failedNote}`, { id: toastId });
+        } catch {
+            toast.error('Could not generate visuals', { id: toastId });
+        } finally {
+            setIsGeneratingVisuals(false);
         }
     };
 
@@ -945,6 +980,31 @@ export function RenderPage() {
                             </div>
                         )}
                     </Field>
+
+                    <div className="mt-3 rounded-xl border border-primary-500/20 bg-primary-500/[0.04] p-3 space-y-2">
+                        <div className="flex items-center gap-2">
+                            <Sparkles size={14} className="text-primary-300" />
+                            <span className="text-content-secondary text-xs font-medium">Generate visuals from my script</span>
+                        </div>
+                        <p className="text-meta">Bible-safe AI imagery (landscapes &amp; symbols) created from your lines. Uses your daily AI-image allowance.</p>
+                        <div className="flex flex-wrap items-center gap-2">
+                            <select value={genVisualsMode} onChange={(e) => setGenVisualsMode(e.target.value as GenerateMode)} className="h-9 text-xs rounded-md bg-dark-900/70 border border-white/10 px-2 text-gray-200">
+                                <option value="alongside">Alongside my backgrounds</option>
+                                <option value="replace">Only AI visuals</option>
+                            </select>
+                            <select value={genVisualsCount} onChange={(e) => setGenVisualsCount(Number(e.target.value))} className="h-9 text-xs rounded-md bg-dark-900/70 border border-white/10 px-2 text-gray-200">
+                                {[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n} image{n === 1 ? '' : 's'}</option>)}
+                            </select>
+                            <Button onClick={handleGenerateVisuals} disabled={isGeneratingVisuals} className="h-9 text-xs">
+                                <Sparkles size={14} className="mr-1.5" />
+                                {isGeneratingVisuals ? 'Generating…' : 'Generate'}
+                            </Button>
+                        </div>
+                        <label className="flex items-center gap-2 text-xs text-content-secondary cursor-pointer pt-1">
+                            <input type="checkbox" checked={kenBurns} onChange={(e) => setKenBurns(e.target.checked)} className="rounded border-white/10 bg-black/50 checked:bg-primary-500" />
+                            Add subtle motion (Ken Burns) to image backgrounds
+                        </label>
+                    </div>
 
                     <Section title="Captions" defaultOpen={true} collapsible={false}>
                         <Field
