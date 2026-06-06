@@ -7,6 +7,7 @@ import { Textarea } from '../components/ui/Textarea';
 import { Select } from '../components/ui/Select';
 import { Field } from '../components/ui/Field';
 import { InfoTooltip } from '../components/ui/InfoTooltip';
+import { GuideSteps } from '../components/ui/GuideSteps';
 import { AnimationPicker } from '../components/voicelab/AnimationPicker';
 import { CompareVoices } from '../components/voicelab/CompareVoices';
 import { api, GENERATE_TIMEOUT_MS } from '../lib/api';
@@ -29,6 +30,8 @@ import {
     Trash2,
     RefreshCw,
     Music,
+    CheckCircle2,
+    ArrowRight,
 } from 'lucide-react';
 
 interface AudioItem {
@@ -991,7 +994,30 @@ export function VoiceAudioPage() {
 
     return (
         <div>
-            <h2 className="text-2xl font-bold mb-6">Voice & Audio</h2>
+            <h2 className="text-2xl font-bold mb-4">Voice & Audio</h2>
+
+            <div className="mb-6">
+                <GuideSteps
+                    storageKey="voiceAudio"
+                    title="Make a voice track in 4 steps"
+                    steps={[
+                        {
+                            label: <>Pick a provider and press <strong>Generate</strong> — or record / upload your own under <strong>Record / Upload</strong>.</>,
+                        },
+                        {
+                            label: <>Optional: clean it up under <strong>Audio Treatment</strong> (denoise, loudness, EQ).</>,
+                        },
+                        {
+                            label: <>Your newest clip automatically becomes <strong>Current Audio</strong> — that's the track Render uses.</>,
+                            detail: <>To switch back to an earlier clip, click <strong>Use</strong> on it under <em>Recent Audio</em>.</>,
+                        },
+                        {
+                            label: <>Head to <strong>Render</strong> to turn it into a video.</>,
+                        },
+                    ]}
+                    tip={<>Want background music? Open <strong>Soundtrack Library</strong> and click <strong>Use in Render</strong> on a track.</>}
+                />
+            </div>
 
             <div className="space-y-6">
                 <div className="flex flex-wrap gap-2">
@@ -1895,14 +1921,24 @@ export function VoiceAudioPage() {
                 )}
 
                 {(activeTab === 'all' || activeTab === 'treatment') && (
-                <Card title="Current Audio">
+                <Card
+                    title="Current Audio"
+                    headerExtra={audioPath.trim() ? (
+                        <span className="inline-flex items-center gap-1 text-[0.6875rem] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/25">
+                            <CheckCircle2 size={12} />
+                            Used in Render
+                        </span>
+                    ) : undefined}
+                >
                     <Input
                         value={audioPath}
                         onChange={(e) => setAudioPath(e.target.value)}
                         placeholder="e.g. server/outputs/audio.mp3"
                     />
                     <p className="text-help mt-2">
-                        This path will be used in the Render and Timeline pages.
+                        {audioPath.trim()
+                            ? 'This is the track the Render and Timeline pages will use. Generate, record, or click Use on a Recent Audio clip to change it.'
+                            : 'No track selected yet. Generate a voice above, record/upload, or click Use on a Recent Audio clip — it will appear here.'}
                     </p>
                     {currentAudioUrl && (
                         <div className="mt-3 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
@@ -1918,6 +1954,13 @@ export function VoiceAudioPage() {
                                 <Clipboard size={14} className="mr-2" />
                                 Copy
                             </Button>
+                            <Link
+                                to="/app/render"
+                                className="inline-flex items-center justify-center gap-1.5 text-xs h-9 px-4 rounded-lg font-medium bg-primary-500 text-white hover:bg-primary-400 transition-colors whitespace-nowrap"
+                            >
+                                Go to Render
+                                <ArrowRight size={14} />
+                            </Link>
                         </div>
                     )}
                 </Card>
@@ -1929,14 +1972,26 @@ export function VoiceAudioPage() {
                         <p className="text-sm text-gray-300">No processed or uploaded audio yet.</p>
                     ) : (
                         <div className="space-y-3">
-                            {(showAllRecent ? audioHistory : audioHistory.slice(0, 6)).map((item) => (
+                            {(showAllRecent ? audioHistory : audioHistory.slice(0, 6)).map((item) => {
+                                const isCurrent = item.path === audioPath;
+                                return (
                                 <div
                                     key={item.id}
-                                    className="flex flex-col md:flex-row md:items-center gap-3 bg-dark-900/60 border border-white/5 rounded-lg p-3"
+                                    className={`flex flex-col md:flex-row md:items-center gap-3 rounded-lg p-3 border ${
+                                        isCurrent
+                                            ? 'bg-emerald-500/[0.06] border-emerald-500/25'
+                                            : 'bg-dark-900/60 border-white/5'
+                                    }`}
                                 >
                                     <div className="flex-1 min-w-0">
-                                        <p className="text-[0.8125rem] font-medium text-primary-300">
+                                        <p className="text-[0.8125rem] font-medium text-primary-300 flex items-center gap-1.5">
                                             {item.kind}
+                                            {isCurrent && (
+                                                <span className="inline-flex items-center gap-1 text-[0.625rem] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300">
+                                                    <CheckCircle2 size={10} />
+                                                    Current
+                                                </span>
+                                            )}
                                         </p>
                                         <p className="text-meta font-mono break-all mt-0.5">{item.path}</p>
                                         <p className="text-meta">
@@ -1944,6 +1999,12 @@ export function VoiceAudioPage() {
                                         </p>
                                     </div>
                                     <div className="flex items-center gap-2">
+                                        {isCurrent ? (
+                                            <span className="inline-flex items-center gap-1.5 text-xs h-8 px-3 rounded-lg text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 whitespace-nowrap">
+                                                <CheckCircle2 size={14} />
+                                                In use
+                                            </span>
+                                        ) : (
                                         <Button
                                             variant="secondary"
                                             className="text-xs h-8"
@@ -1969,6 +2030,7 @@ export function VoiceAudioPage() {
                                             <Play size={14} className="mr-2" />
                                             Use
                                         </Button>
+                                        )}
                                         <Button
                                             variant="secondary"
                                             className="text-xs h-8"
@@ -1983,7 +2045,8 @@ export function VoiceAudioPage() {
                                     </div>
                                     <audio controls src={toOutputUrl(item.path, api.mediaBaseUrl)} className="w-full md:w-64" />
                                 </div>
-                            ))}
+                                );
+                            })}
                             {audioHistory.length > 6 && (
                                 <Button
                                     variant="secondary"

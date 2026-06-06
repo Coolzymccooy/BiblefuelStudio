@@ -7,6 +7,7 @@ import { Textarea } from '../components/ui/Textarea';
 import { Select } from '../components/ui/Select';
 import { Field } from '../components/ui/Field';
 import { Section } from '../components/ui/Section';
+import { GuideSteps, type GuideStep } from '../components/ui/GuideSteps';
 import { api } from '../lib/api';
 import toast from 'react-hot-toast';
 import { Play, Library, Video, CheckCircle2, ClipboardList, AudioLines, Share2, X as XIcon, Plus, ChevronUp, ChevronDown, Trash2, Sparkles, Music, Scissors } from 'lucide-react';
@@ -740,6 +741,42 @@ export function RenderPage() {
     const overlayMode: 'instant' | 'queued' = activeBackgroundJob ? 'queued' : 'instant';
     const overlayProgress = activeBackgroundJob?.progress;
 
+    // Live readiness checklist driving the steps banner. Mirrors the guard
+    // logic in handleRender() so the ticks match what the render buttons
+    // actually require: a background (or Auto on) + at least one overlay line.
+    const cleanLineCount = lines.split('\n').map((l) => l.trim()).filter(Boolean).length;
+    const usingAutoBackground = autoBackground && !backgroundPath.trim() && backgroundItems.length === 0;
+    const hasBackground = Boolean(backgroundPath.trim()) || backgroundItems.length > 0 || usingAutoBackground;
+    const hasVoice = Boolean(audioPath.trim());
+    const backgroundDetail = usingAutoBackground
+        ? 'Auto is on — BibleFuel will pick mood-matched clips for you (video only).'
+        : backgroundItems.length > 1
+            ? `${backgroundItems.length} clips — hard cuts between them.`
+            : 'A clip or image is selected.';
+    const renderSteps: GuideStep[] = [
+        {
+            label: hasBackground ? 'Background ready' : 'Choose a background',
+            status: hasBackground ? 'done' : 'todo',
+            detail: hasBackground
+                ? backgroundDetail
+                : 'Pick from your library, upload one, generate AI visuals — or leave Auto on.',
+        },
+        {
+            label: cleanLineCount > 0
+                ? `Overlay text ready (${cleanLineCount}/6 line${cleanLineCount === 1 ? '' : 's'})`
+                : 'Add overlay text',
+            status: cleanLineCount > 0 ? 'done' : 'todo',
+            detail: 'One line per caption slide, up to 6. This is required.',
+        },
+        {
+            label: hasVoice ? 'Voice track selected' : 'Add a voice track',
+            status: hasVoice ? 'done' : 'optional',
+            detail: hasVoice
+                ? 'Used as narration. Turn on Kinetic captions below for word-by-word reveal.'
+                : 'Optional with a video background; required for waveform. Make one in Voice & Audio.',
+        },
+    ];
+
     return (
         <div className="space-y-6 animate-fade-in">
             <h2 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-primary-200">
@@ -811,6 +848,13 @@ export function RenderPage() {
                     />
                 </Card>
             )}
+
+            <GuideSteps
+                storageKey="render"
+                title="What you need to render"
+                steps={renderSteps}
+                tip={<>Soundtrack, frame size and duration are optional — set them below. Long renders (60s+) and kinetic captions run in the background and notify you when ready.</>}
+            />
 
             <Card title="Configuration">
                 {!renderEnabled && (
