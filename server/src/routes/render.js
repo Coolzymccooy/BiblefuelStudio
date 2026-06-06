@@ -8,7 +8,7 @@ import { resolveAutoBackgrounds } from "../lib/autoBackground.js";
 import { computeSyncedSegments, buildCrossfadeChain } from "../lib/backgroundSequence.js";
 import { generateBibleImage } from "../lib/imageGen/index.js";
 import { isLocalOrRemote, resolveOutputAlias } from "../lib/mediaThumb.js";
-import { buildWordDrawtext, resolveKineticAnimation } from "../lib/videoFilters.js";
+import { buildWordDrawtext, resolveKineticAnimation, buildEndingFade } from "../lib/videoFilters.js";
 import { kenBurnsFilter } from "../lib/kenBurns.js";
 import { annotatePhrasedTiers } from "../lib/captions.js";
 import { createJob, getJob, gcJobs, markRunning, markProgress, markDone, markError } from "../lib/renderJobs.js";
@@ -196,20 +196,26 @@ router.post("/video", async (req, res) => {
     const duck = Boolean(autoDuck) && hasVoice && hasMusic;
 
     const duration = clampDuration(req.body?.durationSec || 20);
+    // Smart ending: fade the picture to black + audio out at the very end so the
+    // clip doesn't cut off sharp. Clamps to half the clip for short renders.
+    const { aFade, vFade, aStart, vStart } = buildEndingFade({ totalDuration: duration });
+    const vFadeClause = vFade > 0 ? `,fade=t=out:st=${vStart.toFixed(3)}:d=${vFade.toFixed(3)}` : "";
     if (hasMusic) {
       const aIndex = hasVoice ? 1 : null;
       const mIndex = hasVoice ? 2 : 1;
-      const vFilter = `[0:v]${vf}[vout]`;
-      const aFilter = hasVoice
+      const vFilter = `[0:v]${vf}${vFadeClause}[vout]`;
+      const aBase = hasVoice
         ? duck
           ? `[${aIndex}:a]volume=1.0,asplit=2[voice1][voice2];[${mIndex}:a]volume=${musicVol}[m1];[m1][voice1]sidechaincompress=threshold=0.01:ratio=12:attack=5:release=350:makeup=2[ducked];[voice2][ducked]amix=inputs=2:duration=shortest:dropout_transition=2[aout]`
           : `[${aIndex}:a]volume=1.0[a1];[${mIndex}:a]volume=${musicVol}[a2];[a1][a2]amix=inputs=2:duration=shortest:dropout_transition=2[aout]`
         : `[${mIndex}:a]volume=${musicVol}[aout]`;
+      const aFilter = aFade > 0 ? `${aBase};[aout]afade=t=out:st=${aStart.toFixed(3)}:d=${aFade.toFixed(3)}[aend]` : aBase;
+      const aMap = aFade > 0 ? "[aend]" : "[aout]";
       args.push(
         "-t", String(duration),
         "-filter_complex", `${vFilter};${aFilter}`,
         "-map", "[vout]",
-        "-map", "[aout]",
+        "-map", aMap,
         "-r", "30",
         "-c:v", vcodec,
         "-preset", preset,
@@ -223,7 +229,7 @@ router.post("/video", async (req, res) => {
     } else {
       args.push(
         "-t", String(duration),
-        "-vf", vf,
+        "-vf", `${vf}${vFadeClause}`,
         "-r", "30",
         "-c:v", vcodec,
         "-preset", preset,
@@ -232,6 +238,7 @@ router.post("/video", async (req, res) => {
       );
 
       if (audioPath) {
+        if (aFade > 0) args.push("-af", `afade=t=out:st=${aStart.toFixed(3)}:d=${aFade.toFixed(3)}`);
         args.push("-c:a", "aac", "-b:a", "192k", "-shortest");
       } else {
         args.push("-an");
@@ -883,13 +890,30 @@ router.post("/captioned-video", async (req, res) => {
     // on FFmpeg 7.x+, so it explodes on the FFmpeg 5.1 in production with
     // "Unrecognized option '/filter_complex'". The sibling renderer in jobs.js
     // uses the same `-filter_complex_script` form.
+    // Smart ending: fade the picture to black and the audio out at the very end
+    // so the clip finishes cleanly instead of cutting off with the last word.
+    // Clamps to half the clip for short renders.
+    const { aFade, vFade, aStart, vStart } = buildEndingFade({ totalDuration: durationSec });
+    let vMap = "vout";
+    let aMap = "aout";
+    let vFilterOut = vFilter;
+    let aFilterOut = aFilter;
+    if (vFade > 0) {
+      vFilterOut += `;[vout]fade=t=out:st=${vStart.toFixed(3)}:d=${vFade.toFixed(3)}[vend]`;
+      vMap = "vend";
+    }
+    if (aFade > 0) {
+      aFilterOut += `;[aout]afade=t=out:st=${aStart.toFixed(3)}:d=${aFade.toFixed(3)}[aend]`;
+      aMap = "aend";
+    }
+
     const filterFile = path.join(outDir, `filter-${uuid()}.txt`);
-    fs.writeFileSync(filterFile, `${vFilter};${aFilter}`);
+    fs.writeFileSync(filterFile, `${vFilterOut};${aFilterOut}`);
 
     args.push(
       "-filter_complex_script", filterFile,
-      "-map", "[vout]",
-      "-map", "[aout]",
+      "-map", `[${vMap}]`,
+      "-map", `[${aMap}]`,
       // Hard cap the output at the trimmed window. With duration=longest on the
       // audio mix this is what actually ends the render at the sermon's end.
       "-t", durationSec.toFixed(3),

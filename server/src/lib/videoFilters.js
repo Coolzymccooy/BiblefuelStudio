@@ -450,3 +450,28 @@ export function buildSceneGraph({ scenes, w, h, xfadeDuration, kenBurns }) {
     totalDuration: accumulated,
   };
 }
+
+/**
+ * Compute trailing fade-out windows for a finished render so the audio doesn't
+ * cut off sharp and the picture settles to black. Pure/numeric — the caller
+ * assembles the actual `afade` / `fade` filter strings (the two render paths
+ * use slightly different graph labels). Fades clamp to half the clip length so
+ * very short clips still fade cleanly.
+ *
+ * @param {{ totalDuration: number, audioFadeSec?: number, videoFadeSec?: number }} opts
+ * @returns {{ aFade: number, vFade: number, aStart: number, vStart: number }}
+ */
+export function buildEndingFade({ totalDuration, audioFadeSec = 1.5, videoFadeSec = 0.6 } = {}) {
+  const dur = Number(totalDuration);
+  if (!Number.isFinite(dur) || dur <= 0.1) {
+    return { aFade: 0, vFade: 0, aStart: 0, vStart: 0 };
+  }
+  const aFade = Math.max(0, Math.min(audioFadeSec, dur * 0.5));
+  const vFade = Math.max(0, Math.min(videoFadeSec, dur * 0.5));
+  return {
+    aFade,
+    vFade,
+    aStart: Math.max(0, dur - aFade),
+    vStart: Math.max(0, dur - vFade),
+  };
+}

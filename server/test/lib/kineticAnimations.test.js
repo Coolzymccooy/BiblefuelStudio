@@ -288,3 +288,39 @@ test("depth:false stays off even if used as an explicit arg", () => {
   const filter = buildWordDrawtext({ words, w: 1080, h: 1920, preset: "cinematic-default", depth: false });
   assert.equal(drawCount(filter), 1);
 });
+
+// ─── Ending fade (smart outro) ────────────────────────────────────────────
+// buildEndingFade computes trailing fade-out windows so audio doesn't cut off
+// sharp and the picture settles to black. Fades clamp to half the clip length.
+import { buildEndingFade } from "../../src/lib/videoFilters.js";
+
+test("buildEndingFade: typical clip uses default 1.5s audio / 0.6s video fades", () => {
+  const f = buildEndingFade({ totalDuration: 20 });
+  assert.equal(f.aFade, 1.5);
+  assert.equal(f.vFade, 0.6);
+  assert.equal(Number(f.aStart.toFixed(3)), 18.5);
+  assert.equal(Number(f.vStart.toFixed(3)), 19.4);
+});
+
+test("buildEndingFade: short clips clamp fades to half the duration", () => {
+  const f = buildEndingFade({ totalDuration: 2 });
+  assert.equal(f.aFade, 1); // min(1.5, 2*0.5)
+  assert.equal(f.vFade, 0.6); // min(0.6, 1.0)
+  assert.equal(f.aStart, 1);
+});
+
+test("buildEndingFade: custom fade lengths respected", () => {
+  const f = buildEndingFade({ totalDuration: 30, audioFadeSec: 3, videoFadeSec: 1 });
+  assert.equal(f.aFade, 3);
+  assert.equal(f.vFade, 1);
+  assert.equal(f.aStart, 27);
+  assert.equal(f.vStart, 29);
+});
+
+test("buildEndingFade: invalid/zero duration yields no fade", () => {
+  for (const d of [0, -5, NaN, undefined, 0.05]) {
+    const f = buildEndingFade({ totalDuration: d });
+    assert.equal(f.aFade, 0);
+    assert.equal(f.vFade, 0);
+  }
+});

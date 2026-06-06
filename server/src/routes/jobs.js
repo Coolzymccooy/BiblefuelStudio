@@ -15,7 +15,7 @@ import { isPostizConfigured, postVideo as postizPostVideo } from "../lib/postizC
 import { pickBestBackground, classifyText } from "../lib/categorize.js";
 import { charsToWords, captionWordsFromNativeWords, annotatePhrasedTiers, groupWordsByBeat } from "../lib/captions.js";
 import { alignAudioWithText, isForcedAlignmentAvailable } from "../lib/voice/alignment.js";
-import { buildWordDrawtext, buildLineDrawtext, buildSceneGraph, resolveKineticAnimation } from "../lib/videoFilters.js";
+import { buildWordDrawtext, buildLineDrawtext, buildSceneGraph, resolveKineticAnimation, buildEndingFade } from "../lib/videoFilters.js";
 import { buildSocialCaption } from "../lib/socialCaption.js";
 import { ensureLocalPath } from "../lib/remoteCache.js";
 import { resolveAutoBackgrounds } from "../lib/autoBackground.js";
@@ -1082,6 +1082,22 @@ async function renderAdvancedVideo(payload, jobId) {
   } else if (resolvedMusic) {
     filterParts.push(`[${musicInputIdx}:a]volume=${musicVol}[aout]`);
     audioMapTarget = "[aout]";
+  }
+
+  // Smart ending: fade the picture to black and the mixed audio out at the very
+  // end so the render finishes cleanly instead of cutting off sharp with the
+  // narration. Fades clamp to half the clip for short videos.
+  const { aFade, vFade, aStart, vStart } = buildEndingFade({ totalDuration });
+  if (vFade > 0) {
+    filterParts.push(`[${videoLabel}]fade=t=out:st=${vStart.toFixed(3)}:d=${vFade.toFixed(3)}[vend]`);
+    videoLabel = "vend";
+  }
+  if (aFade > 0 && audioMapTarget) {
+    // audioMapTarget is either a graph label "[aout]" or a raw input pad
+    // "idx:a" (voice-only, no music) — bracket the latter for the filter input.
+    const aIn = audioMapTarget.startsWith("[") ? audioMapTarget : `[${audioMapTarget}]`;
+    filterParts.push(`${aIn}afade=t=out:st=${aStart.toFixed(3)}:d=${aFade.toFixed(3)}[aend]`);
+    audioMapTarget = "[aend]";
   }
 
   const filterComplex = filterParts.join(";");
