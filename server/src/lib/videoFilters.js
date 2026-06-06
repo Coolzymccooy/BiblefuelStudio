@@ -98,6 +98,7 @@ const TYPOGRAPHY_PRESETS = Object.freeze({
   },
   "hero-bold": {
     baseSizeMult: 0.092, emphasisSizeMult: 0.11, baseColor: "white", emphasisColor: "#F59E0B",
+    heroSizeMult: 0.14, heroColor: "#FDE68A",
     borderWidth: 6, wordBox: false, lineBoxOpacity: 0.4, lineSizeMult: 0.04,
     lineEnter: "rise-fade", wordReveal: "rise-fade", wordRevealMs: 300, uppercase: true,
   },
@@ -195,11 +196,19 @@ export function buildWordDrawtext({ words, w, h, preset }) {
   const style = resolveTypographyPreset(preset);
   const baseSize = Math.max(48, Math.round(h * style.baseSizeMult));
   const emphSize = Math.max(baseSize, Math.round(h * style.emphasisSizeMult));
+  // Third "hero" tier — the single biggest word per phrase. Presets that omit
+  // heroSizeMult/heroColor fall back to 1.25× the emphasis size and the
+  // emphasis colour, so existing presets keep identical key/normal output.
+  const heroMult = Number.isFinite(style.heroSizeMult)
+    ? style.heroSizeMult
+    : style.emphasisSizeMult * 1.25;
+  const heroSize = Math.max(emphSize, Math.round(h * heroMult));
   // Default-font glyphs occupy ~0.55× their fontsize in width on average.
   // Clamp per-word so the longest token never overflows 85% of frame width.
   const maxWidthPx = w * 0.85;
   const baseColor = style.baseColor || BASE_TEXT_COLOR;
   const emphasisColor = style.emphasisColor || EMPHASIS_COLOR;
+  const heroColor = style.heroColor || emphasisColor;
   const borderWidth = Number.isFinite(style.borderWidth) ? style.borderWidth : 5;
   const wordBox = style.wordBox ? ":box=1:boxcolor=black@0.35:boxborderw=12" : "";
 
@@ -224,10 +233,16 @@ export function buildWordDrawtext({ words, w, h, preset }) {
     const start = Number(word.start);
     const end = Number(word.end);
     if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
-    const requested = word.emphasize ? emphSize : baseSize;
+    // 3-tier emphasis. `level` ("hero"|"key"|"normal") is preferred; the legacy
+    // `emphasize` boolean (no level) maps to the key tier for back-compat.
+    const tier =
+      word.level === "hero" ? "hero"
+        : word.level === "key" || word.emphasize ? "key"
+        : "normal";
+    const requested = tier === "hero" ? heroSize : tier === "key" ? emphSize : baseSize;
     const fitSize = Math.floor(maxWidthPx / Math.max(1, text.length) / 0.55);
     const size = Math.max(40, Math.min(requested, fitSize));
-    const color = word.emphasize ? emphasisColor : baseColor;
+    const color = tier === "hero" ? heroColor : tier === "key" ? emphasisColor : baseColor;
 
     // Reveal easing: clamp the ease so it always completes inside the word's
     // visible window (a long preset reveal on a short word would otherwise

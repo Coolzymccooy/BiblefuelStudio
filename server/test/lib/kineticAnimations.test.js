@@ -109,3 +109,55 @@ test("fade duration never exceeds the word's visible window", () => {
   assert.ok(m, "expected a fade divisor for the word");
   assert.ok(Number(m[1]) <= 0.1 + 1e-9, `fade divisor ${m[1]} should clamp to the 0.1s window`);
 });
+
+// ─── Hero size tier (3-tier emphasis) ─────────────────────────────────────
+// Words carry level: "normal" | "key" | "hero". Hero words render at a third,
+// larger size (heroSizeMult) in heroColor. Presets without hero fields fall
+// back to emphasisSizeMult * 1.25 and emphasisColor, so existing presets keep
+// identical key/normal output (no regression).
+
+test("hero word renders larger than a key word in the same preset", () => {
+  const words = [
+    { text: "mercy", start: 0, end: 1, level: "key", emphasize: true },
+    { text: "Lord", start: 1, end: 2, level: "hero", emphasize: true },
+  ];
+  const filter = buildWordDrawtext({ words, w: 1080, h: 1920 }); // cinematic-default
+  // cinematic-default has no hero fields → hero = round(0.085*1.25*1920) = 204,
+  // key = round(0.085*1920) = 163.
+  assert.ok(filter.includes("fontsize=204"), "hero word should use the hero size");
+  assert.ok(filter.includes("fontsize=163"), "key word should keep the emphasis size");
+});
+
+test("hero falls back to emphasisColor when preset omits heroColor", () => {
+  const words = [{ text: "Lord", start: 0, end: 1, level: "hero", emphasize: true }];
+  const filter = buildWordDrawtext({ words, w: 1080, h: 1920 }); // cinematic-default
+  assert.ok(filter.includes("fontcolor=#F59E0B"), "hero should use emphasisColor by default");
+});
+
+test("preset-defined heroColor and heroSizeMult are honored", () => {
+  // hero-bold defines explicit hero fields (uppercase preset).
+  const words = [{ text: "Lord", start: 0, end: 1, level: "hero", emphasize: true }];
+  const filter = buildWordDrawtext({ words, w: 1080, h: 1920, preset: "hero-bold" });
+  const hero = resolveTypographyPreset("hero-bold");
+  assert.ok(typeof hero.heroSizeMult === "number", "hero-bold should declare heroSizeMult");
+  const expected = Math.round(1920 * hero.heroSizeMult);
+  assert.ok(filter.includes(`fontsize=${expected}`), `hero size should be ${expected}`);
+  assert.ok(filter.includes(`fontcolor=${hero.heroColor}`), "hero should use the preset heroColor");
+});
+
+test("no-regression: a key word still uses emphasis size, normal uses base", () => {
+  const words = [
+    { text: "the", start: 0, end: 1, level: "normal", emphasize: false },
+    { text: "grace", start: 1, end: 2, level: "key", emphasize: true },
+  ];
+  const filter = buildWordDrawtext({ words, w: 1080, h: 1920 });
+  assert.ok(filter.includes("fontsize=134"), "normal = round(0.07*1920) = 134");
+  assert.ok(filter.includes("fontsize=163"), "key = round(0.085*1920) = 163");
+});
+
+test("legacy emphasize:true (no level) still maps to the emphasis size", () => {
+  // Older callers (annotateEmphasis) set only emphasize, no level field.
+  const words = [{ text: "Lord", start: 0, end: 1, emphasize: true }];
+  const filter = buildWordDrawtext({ words, w: 1080, h: 1920 });
+  assert.ok(filter.includes("fontsize=163"), "emphasize-only word keeps emphasis size, not hero");
+});

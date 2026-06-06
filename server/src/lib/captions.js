@@ -2,6 +2,8 @@
 // into word-level timing data the FFmpeg renderer can consume, and picks a
 // keyword per line to emphasize.
 
+import { scoreWord } from "./emphasisLexicon.js";
+
 const STOPWORDS = new Set([
   "a", "an", "the", "and", "or", "but", "if", "of", "to", "for", "in", "on", "at",
   "by", "with", "from", "as", "is", "are", "was", "were", "be", "been", "being",
@@ -144,6 +146,142 @@ export function annotateEmphasis(words, lines) {
     cursor += lineWords.length;
   }
   return annotated;
+}
+
+/** Normalize a token the same way the lexicon/keyword logic does. */
+function normToken(text) {
+  return String(text ?? "").replace(/[^A-Za-z0-9']/g, "").toLowerCase();
+}
+
+/**
+ * Slice a flat word list into per-phrase index ranges. With `lines`, each line
+ * is one phrase and words are assigned greedily by sequence (the same cursor
+ * walk annotateEmphasis uses). Without `lines`, the whole list is one phrase.
+ *
+ * @returns {Array<[number, number]>} [startIndex, endIndexExclusive] per phrase
+ */
+function phraseRanges(words, lines) {
+  if (!Array.isArray(lines) || lines.length === 0) return [[0, words.length]];
+  const ranges = [];
+  let cursor = 0;
+  for (const line of lines) {
+    const count = String(line || "").split(/\s+/).map(normToken).filter(Boolean).length;
+    if (count === 0) continue;
+    const start = cursor;
+    const end = Math.min(cursor + count, words.length);
+    if (end > start) ranges.push([start, end]);
+    cursor = end;
+    if (cursor >= words.length) break;
+  }
+  // Any words past the last line (alignment drift) join the final phrase.
+  if (ranges.length > 0 && cursor < words.length) {
+    ranges[ranges.length - 1][1] = words.length;
+  }
+  return ranges;
+}
+
+/**
+ * Annotate word-timings with a 3-tier emphasis `level`:
+ *   "hero"   — the single highest-scoring lexicon word in the phrase
+ *   "key"    — other lexicon hits, or (when nothing scores) the longest-word
+ *              fallback so every phrase still gets one emphasized word
+ *   "normal" — everything else
+ *
+ * `emphasize: true` is also set for hero+key so the existing FFmpeg drawtext
+ * path and older callers keep working unchanged. Returns NEW objects.
+ *
+ * @param {Array<{ text: string, start: number, end: number }>} words
+ * @param {string[]} [lines]  one phrase per line; omit to treat all as one
+ * @returns {Array<{ text, start, end, level: "normal"|"key"|"hero", emphasize: boolean }>}
+ */
+export function annotateEmphasisTiers(words, lines) {
+  if (!Array.isArray(words) || words.length === 0) return [];
+  const out = words.map((w) => ({ ...w, level: "normal", emphasize: false }));
+
+  for (const [start, end] of phraseRanges(words, lines)) {
+    let heroIdx = -1;
+    let heroScore = 0;
+    let anyHit = false;
+    for (let i = start; i < end; i++) {
+      const score = scoreWord(out[i].text);
+      if (score > 0) {
+        anyHit = true;
+        out[i].level = "key";
+        out[i].emphasize = true;
+        if (score > heroScore) {
+          heroScore = score;
+          heroIdx = i; // first occurrence of the max (strict >)
+        }
+      }
+    }
+    if (heroIdx >= 0) {
+      out[heroIdx].level = "hero";
+    } else if (!anyHit) {
+      // No lexicon score in this phrase → fall back to the longest-word keyword
+      // (legacy behaviour) and tag the first matching word as the lone key.
+      const phraseText = out.slice(start, end).map((w) => w.text).join(" ");
+      const keyword = pickKeyword(phraseText);
+      if (keyword) {
+        for (let i = start; i < end; i++) {
+          if (normToken(out[i].text) === keyword) {
+            out[i].level = "key";
+            out[i].emphasize = true;
+            break;
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
+const TERMINAL_PUNCT = /[.,;:!?]$/;
+
+/**
+ * Split a flat list of timed words into short "emotional" phrases for kinetic
+ * display. A phrase ends when: the word/char limit would be exceeded by the
+ * next word, or the current word ends in terminal punctuation. Each phrase
+ * carries its member words plus aggregate start/end timing.
+ *
+ * @param {Array<{ text: string, start: number, end: number }>} words
+ * @param {{ maxWords?: number, maxChars?: number }} [opts]
+ * @returns {Array<{ text: string, start: number, end: number, words: Array<any> }>}
+ */
+export function splitPhrases(words, opts = {}) {
+  if (!Array.isArray(words) || words.length === 0) return [];
+  const maxWords = Number.isFinite(opts.maxWords) ? opts.maxWords : 3;
+  const maxChars = Number.isFinite(opts.maxChars) ? opts.maxChars : 22;
+
+  const phrases = [];
+  let current = [];
+  let charLen = 0;
+
+  const flush = () => {
+    if (current.length === 0) return;
+    phrases.push({
+      text: current.map((w) => w.text).join(" "),
+      start: current[0].start,
+      end: current[current.length - 1].end,
+      words: current,
+    });
+    current = [];
+    charLen = 0;
+  };
+
+  for (const word of words) {
+    const text = String(word?.text ?? "");
+    const addLen = current.length === 0 ? text.length : charLen + 1 + text.length;
+    const wouldOverflow =
+      current.length > 0 && (current.length + 1 > maxWords || addLen > maxChars);
+    if (wouldOverflow) flush();
+
+    current.push(word);
+    charLen = current.length === 1 ? text.length : charLen + 1 + text.length;
+
+    if (TERMINAL_PUNCT.test(text.trim())) flush();
+  }
+  flush();
+  return phrases;
 }
 
 /**
