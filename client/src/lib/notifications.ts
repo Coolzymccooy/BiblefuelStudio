@@ -37,6 +37,12 @@ interface JobLike {
         [key: string]: unknown;
     };
     error?: string;
+    /**
+     * Set by the render pipeline when kinetic (word-by-word) captions had to
+     * degrade to static line captions (no word timings / alignment). The
+     * render still SUCCEEDS — this just explains why captions aren't animated.
+     */
+    captionFallback?: string;
 }
 
 const STORAGE_KEY = 'bf_notifications_v1';
@@ -163,14 +169,21 @@ async function pollJobs(): Promise<void> {
                         : job.status === 'done'
                             ? (isCampaign ? 'Auto-Publish posted ✓' : `${prettyType(job.type)} ready`)
                             : `${prettyType(job.type)} failed`;
+                    // A successful render that fell back from kinetic to static
+                    // captions surfaces the reason (instead of just the file
+                    // path) so the user understands why captions aren't animated.
+                    const captionFallback = typeof job.captionFallback === 'string' ? job.captionFallback : '';
+                    const finalTitle = (job.status === 'done' && captionFallback && !isCampaign)
+                        ? `${prettyType(job.type)} ready — captions are static`
+                        : title;
                     const body = isRenderOnly
                         ? (job.result?.share?.message || 'Connect a destination in Settings to auto-publish next time.')
                         : job.status === 'done'
-                            ? (file || '')
+                            ? (captionFallback || file || '')
                             : (job.error || 'Job failed');
                     pushNotification({
                         kind,
-                        title,
+                        title: finalTitle,
                         body,
                         // Studio routes live under /app/* (see App.tsx). Without
                         // the prefix, navigate('/render?share=…') / '/jobs' match

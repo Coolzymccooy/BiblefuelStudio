@@ -667,6 +667,16 @@ async function renderVideoCore(payload, jobId) {
   const hasWords = Array.isArray(payload?.words) && payload.words.length > 0;
   const hasScenes = Array.isArray(payload?.scenes) && payload.scenes.length > 0;
   if (hasWords || hasScenes) {
+    // Kinetic (word-by-word) captions need word timings. The scene/multi-bg
+    // path used to jump straight to renderAdvancedVideo and SKIP the
+    // augmentation below, so generative-image / multi-background renders always
+    // came out with STATIC captions (Bug: "static text in the background").
+    // Generate timings here first when kinetic is requested but words aren't
+    // present yet; augment falls back to static (and stamps a warning on the
+    // job) if alignment is unavailable.
+    if (payload?.kineticCaptions && !hasWords) {
+      payload = await augmentPayloadWithKineticCaptions(payload, jobId);
+    }
     return await renderAdvancedVideo(payload, jobId);
   }
   if (payload?.kineticCaptions) {
@@ -844,6 +854,7 @@ async function augmentPayloadWithKineticCaptions(payload, jobId) {
         "[RENDER] kineticCaptions requested with user audio but OPENAI_API_KEY missing — " +
         "falling back to line captions on the user's audio (no resynth)",
       );
+      safeUpdateJob(jobId, { captionFallback: "Word-by-word captions need an ElevenLabs voice, or OPENAI_API_KEY set on the server for this voice. Rendered static captions this time." });
       return { ...payload, kineticCaptions: false };
     }
     safeUpdateJob(jobId, { progress: 25 });
@@ -857,6 +868,7 @@ async function augmentPayloadWithKineticCaptions(payload, jobId) {
         `"[alignment] whisper error <code>" log. Falling back to line captions ` +
         `(audio preserved).`,
       );
+      safeUpdateJob(jobId, { captionFallback: "Couldn't align words to your audio for kinetic captions — rendered static captions this time." });
       return { ...payload, kineticCaptions: false };
     }
     console.log(`[RENDER] Whisper alignment succeeded in ${alignMs}ms — ${alignment.characters.length} chars`);
@@ -880,6 +892,7 @@ async function augmentPayloadWithKineticCaptions(payload, jobId) {
   }
   if (rawWords.length === 0) {
     console.warn("[RENDER] kineticCaptions: TTS returned no word timings — falling back to line captions");
+    safeUpdateJob(jobId, { captionFallback: "This voice doesn't provide word timings for kinetic captions — rendered static. Use an ElevenLabs or Azure voice for word-by-word." });
     return { ...payload, kineticCaptions: false, audioPath: tts.file };
   }
   const words = annotateEmphasis(rawWords, cleanLines);
