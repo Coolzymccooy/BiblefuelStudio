@@ -6,6 +6,7 @@ import {
   resolveKineticAnimation,
   resolveTypographyPreset,
   buildWordDrawtext,
+  listLayouts,
 } from "../../src/lib/videoFilters.js";
 
 /**
@@ -108,4 +109,182 @@ test("fade duration never exceeds the word's visible window", () => {
   const m = filter.match(/\(t-2\.000\)\/([0-9.]+)/);
   assert.ok(m, "expected a fade divisor for the word");
   assert.ok(Number(m[1]) <= 0.1 + 1e-9, `fade divisor ${m[1]} should clamp to the 0.1s window`);
+});
+
+// ─── Hero size tier (3-tier emphasis) ─────────────────────────────────────
+// Words carry level: "normal" | "key" | "hero". Hero words render at a third,
+// larger size (heroSizeMult) in heroColor. Presets without hero fields fall
+// back to emphasisSizeMult * 1.25 and emphasisColor, so existing presets keep
+// identical key/normal output (no regression).
+
+test("hero word renders larger than a key word in the same preset", () => {
+  const words = [
+    { text: "mercy", start: 0, end: 1, level: "key", emphasize: true },
+    { text: "Lord", start: 1, end: 2, level: "hero", emphasize: true },
+  ];
+  const filter = buildWordDrawtext({ words, w: 1080, h: 1920 }); // cinematic-default
+  // cinematic-default has no hero fields → hero = round(0.085*1.25*1920) = 204,
+  // key = round(0.085*1920) = 163.
+  assert.ok(filter.includes("fontsize=204"), "hero word should use the hero size");
+  assert.ok(filter.includes("fontsize=163"), "key word should keep the emphasis size");
+});
+
+test("hero falls back to emphasisColor when preset omits heroColor", () => {
+  const words = [{ text: "Lord", start: 0, end: 1, level: "hero", emphasize: true }];
+  const filter = buildWordDrawtext({ words, w: 1080, h: 1920 }); // cinematic-default
+  assert.ok(filter.includes("fontcolor=#F59E0B"), "hero should use emphasisColor by default");
+});
+
+test("preset-defined heroColor and heroSizeMult are honored", () => {
+  // hero-bold defines explicit hero fields (uppercase preset).
+  const words = [{ text: "Lord", start: 0, end: 1, level: "hero", emphasize: true }];
+  const filter = buildWordDrawtext({ words, w: 1080, h: 1920, preset: "hero-bold" });
+  const hero = resolveTypographyPreset("hero-bold");
+  assert.ok(typeof hero.heroSizeMult === "number", "hero-bold should declare heroSizeMult");
+  const expected = Math.round(1920 * hero.heroSizeMult);
+  assert.ok(filter.includes(`fontsize=${expected}`), `hero size should be ${expected}`);
+  assert.ok(filter.includes(`fontcolor=${hero.heroColor}`), "hero should use the preset heroColor");
+});
+
+test("no-regression: a key word still uses emphasis size, normal uses base", () => {
+  const words = [
+    { text: "the", start: 0, end: 1, level: "normal", emphasize: false },
+    { text: "grace", start: 1, end: 2, level: "key", emphasize: true },
+  ];
+  const filter = buildWordDrawtext({ words, w: 1080, h: 1920 });
+  assert.ok(filter.includes("fontsize=134"), "normal = round(0.07*1920) = 134");
+  assert.ok(filter.includes("fontsize=163"), "key = round(0.085*1920) = 163");
+});
+
+test("legacy emphasize:true (no level) still maps to the emphasis size", () => {
+  // Older callers (annotateEmphasis) set only emphasize, no level field.
+  const words = [{ text: "Lord", start: 0, end: 1, emphasize: true }];
+  const filter = buildWordDrawtext({ words, w: 1080, h: 1920 });
+  assert.ok(filter.includes("fontsize=163"), "emphasize-only word keeps emphasis size, not hero");
+});
+
+// ─── Layout variety (Phase 2) ─────────────────────────────────────────────
+// Optional `layout` positions text for vertical social video. Default "center"
+// keeps the historical output byte-identical. Bottom layouts sit in a safe band
+// (≈74% height) above the TikTok/Reels caption strip.
+
+const sizeOf = (filter) => Number(filter.match(/fontsize=(\d+)/)[1]);
+
+test("default layout is center (output unchanged)", () => {
+  const words = [{ text: "Lord", start: 0, end: 1, level: "normal" }];
+  const filter = buildWordDrawtext({ words, w: 1080, h: 1920 }); // cinematic-default, no motion
+  assert.ok(filter.includes("x=(w-text_w)/2"));
+  assert.ok(filter.includes("y=(h-text_h)/2"));
+});
+
+test("bottom-center anchors in the lower safe band, horizontally centered", () => {
+  const words = [{ text: "Lord", start: 0, end: 1, level: "hero" }];
+  const filter = buildWordDrawtext({ words, w: 1080, h: 1920, layout: "bottom-center" });
+  assert.ok(filter.includes("x=(w-text_w)/2"), "stays horizontally centered");
+  assert.ok(filter.includes("h*0.74"), "uses the lower safe band");
+  assert.ok(!filter.includes("y=(h-text_h)/2"), "not vertically centered");
+});
+
+test("bottom-left uses the left safe margin and lower band", () => {
+  const words = [{ text: "Lord", start: 0, end: 1, level: "hero" }];
+  const filter = buildWordDrawtext({ words, w: 1080, h: 1920, layout: "bottom-left" });
+  assert.ok(filter.includes("x=w*0.08"), "left safe margin");
+  assert.ok(filter.includes("h*0.74"), "lower safe band");
+});
+
+test("center-large boosts size relative to center", () => {
+  const words = [{ text: "Lord", start: 0, end: 1, level: "normal" }];
+  const c = buildWordDrawtext({ words, w: 1080, h: 1920, preset: "cinematic-default" });
+  const cl = buildWordDrawtext({ words, w: 1080, h: 1920, preset: "cinematic-default", layout: "center-large" });
+  assert.ok(sizeOf(cl) > sizeOf(c), "center-large should render bigger");
+});
+
+test("staggered varies x by phraseIndex (left / center / right)", () => {
+  const words = [
+    { text: "aa", start: 0, end: 1, level: "normal", phraseIndex: 0 },
+    { text: "bb", start: 1, end: 2, level: "normal", phraseIndex: 1 },
+    { text: "cc", start: 2, end: 3, level: "normal", phraseIndex: 2 },
+  ];
+  const filter = buildWordDrawtext({ words, w: 1080, h: 1920, layout: "staggered" });
+  assert.ok(filter.includes("x=w*0.10"), "phrase 0 → left");
+  assert.ok(filter.includes("x=(w-text_w)/2"), "phrase 1 → center");
+  assert.ok(filter.includes("x=w*0.90-text_w"), "phrase 2 → right");
+});
+
+test("unknown layout falls back to center", () => {
+  const words = [{ text: "Lord", start: 0, end: 1, level: "normal" }];
+  const filter = buildWordDrawtext({ words, w: 1080, h: 1920, layout: "bogus" });
+  assert.ok(filter.includes("x=(w-text_w)/2"));
+  assert.ok(filter.includes("y=(h-text_h)/2"));
+});
+
+test("explicit layout arg overrides a preset's own layout", () => {
+  // hero-bold ships no layout (defaults center); arg forces bottom-center.
+  const words = [{ text: "Lord", start: 0, end: 1, level: "hero" }];
+  const filter = buildWordDrawtext({ words, w: 1080, h: 1920, preset: "hero-bold", layout: "bottom-center" });
+  assert.ok(filter.includes("h*0.74"));
+});
+
+test("listLayouts returns the supported set", () => {
+  assert.deepEqual(
+    listLayouts().slice().sort(),
+    ["bottom-center", "bottom-left", "center", "center-large", "staggered"],
+  );
+});
+
+test("bottom layout integrates with rise-fade motion around the band baseline", () => {
+  const words = [{ text: "Glory", start: 0, end: 1, level: "hero" }];
+  const filter = buildWordDrawtext({ words, w: 1080, h: 1920, preset: "hero-bold", layout: "bottom-center" });
+  assert.ok(filter.includes("h*0.74"), "rise-fade still anchored to the band");
+  assert.ok(filter.includes("1-clip("), "rise easing preserved");
+});
+
+// ─── Depth / layered text (Phase 2b) ──────────────────────────────────────
+// Optional `depth` renders a darker, offset ghost copy of each word BEHIND the
+// main word, for the layered "words sit behind the subject" look. Off by
+// default (single drawtext per word, no regression).
+
+const drawCount = (filter) => (filter.match(/drawtext=/g) || []).length;
+
+test("no depth by default — one drawtext per word", () => {
+  const words = [{ text: "Lord", start: 0, end: 1, level: "hero" }];
+  const filter = buildWordDrawtext({ words, w: 1080, h: 1920, preset: "cinematic-default" });
+  assert.equal(drawCount(filter), 1);
+  assert.ok(!filter.includes("black@0.5"));
+});
+
+test("depth renders a darker offset ghost behind each word", () => {
+  const words = [{ text: "Lord", start: 0, end: 1, level: "hero" }];
+  const filter = buildWordDrawtext({ words, w: 1080, h: 1920, preset: "cinematic-default", depth: true });
+  assert.equal(drawCount(filter), 2, "one ghost + one main");
+  assert.ok(filter.includes("black@0.5"), "ghost is a semi-transparent dark layer");
+  assert.ok(filter.includes("x=(w-text_w)/2+11"), "ghost is horizontally offset (~1% w)");
+  assert.ok(filter.indexOf("black@0.5") < filter.indexOf("fontcolor=#F59E0B"), "ghost drawn before (behind) the main word");
+});
+
+test("depth offset shifts y by the default vertical amount", () => {
+  const words = [{ text: "Lord", start: 0, end: 1, level: "normal" }];
+  const filter = buildWordDrawtext({ words, w: 1080, h: 1920, preset: "cinematic-default", depth: true });
+  assert.ok(filter.includes("+23)"), "ghost y baseline offset (~1.2% h)");
+});
+
+test("depth accepts a custom offset/colour object", () => {
+  const words = [{ text: "Lord", start: 0, end: 1, level: "normal" }];
+  const filter = buildWordDrawtext({ words, w: 1080, h: 1920, preset: "cinematic-default", depth: { dx: 20, dy: 30, color: "navy", opacity: 0.4 } });
+  assert.ok(filter.includes("x=(w-text_w)/2+20"));
+  assert.ok(filter.includes("navy@0.4"));
+});
+
+test("depth composes with layout + rise-fade (both layers animate, in the band)", () => {
+  const words = [{ text: "Glory", start: 0, end: 1, level: "hero" }];
+  const filter = buildWordDrawtext({ words, w: 1080, h: 1920, preset: "hero-bold", layout: "bottom-center", depth: true });
+  assert.equal(drawCount(filter), 2);
+  assert.ok(filter.includes("h*0.74"), "both layers anchored in the safe band");
+  assert.equal((filter.match(/alpha='clip\(/g) || []).length, 2, "both layers fade in");
+});
+
+test("depth:false stays off even if used as an explicit arg", () => {
+  const words = [{ text: "Lord", start: 0, end: 1, level: "hero" }];
+  const filter = buildWordDrawtext({ words, w: 1080, h: 1920, preset: "cinematic-default", depth: false });
+  assert.equal(drawCount(filter), 1);
 });

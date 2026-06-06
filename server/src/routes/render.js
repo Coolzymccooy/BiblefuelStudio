@@ -10,6 +10,7 @@ import { generateBibleImage } from "../lib/imageGen/index.js";
 import { isLocalOrRemote, resolveOutputAlias } from "../lib/mediaThumb.js";
 import { buildWordDrawtext, resolveKineticAnimation } from "../lib/videoFilters.js";
 import { kenBurnsFilter } from "../lib/kenBurns.js";
+import { annotatePhrasedTiers } from "../lib/captions.js";
 import { createJob, getJob, gcJobs, markRunning, markProgress, markDone, markError } from "../lib/renderJobs.js";
 import { appendRender, listRenders } from "../lib/renderHistory.js";
 import { friendlyRenderError } from "../lib/renderErrors.js";
@@ -517,6 +518,8 @@ router.post("/captioned-video", async (req, res) => {
     const rawMusicPath = req.body?.musicPath;
     const words = Array.isArray(req.body?.words) ? req.body.words : [];
     const typographyPreset = String(req.body?.typographyPreset || "default");
+    const layout = String(req.body?.layout || "center");
+    const depth = Boolean(req.body?.depth);
     const musicVolume = req.body?.musicVolume;
     const autoDuck = Boolean(req.body?.autoDuck);
     // Timeline trim window (the Main Assembly clip's START / DURATION). Both are
@@ -721,11 +724,18 @@ router.post("/captioned-video", async (req, res) => {
     }
 
     const resolvedPreset = resolveKineticAnimation(typographyPreset)?.presetId || typographyPreset;
+    // Apply the semantic 3-tier emphasis engine (hero/key/normal) and tag each
+    // word with its micro-phrase index so the "staggered" layout can offset by
+    // phrase. This replaces the raw client `emphasize` flag with lexicon-driven
+    // emphasis, matching the kinetic-caption path in jobs.js.
+    const tieredWords = annotatePhrasedTiers(drawWords);
     const drawtextChain = buildWordDrawtext({
-      words: drawWords,
+      words: tieredWords,
       w: renderWidth,
       h: renderHeight,
       preset: resolvedPreset,
+      layout,
+      depth,
     });
     if (!drawtextChain) {
       return res.status(400).json({ ok: false, error: "buildWordDrawtext returned empty filter chain" });

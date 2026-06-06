@@ -13,7 +13,7 @@ import { dispatchPost } from "./social.js";
 import { readSocialStore } from "../lib/socialStore.js";
 import { isPostizConfigured, postVideo as postizPostVideo } from "../lib/postizClient.js";
 import { pickBestBackground, classifyText } from "../lib/categorize.js";
-import { charsToWords, captionWordsFromNativeWords, annotateEmphasis, groupWordsByBeat } from "../lib/captions.js";
+import { charsToWords, captionWordsFromNativeWords, annotatePhrasedTiers, groupWordsByBeat } from "../lib/captions.js";
 import { alignAudioWithText, isForcedAlignmentAvailable } from "../lib/voice/alignment.js";
 import { buildWordDrawtext, buildLineDrawtext, buildSceneGraph, resolveKineticAnimation } from "../lib/videoFilters.js";
 import { buildSocialCaption } from "../lib/socialCaption.js";
@@ -873,7 +873,9 @@ async function augmentPayloadWithKineticCaptions(payload, jobId) {
     }
     console.log(`[RENDER] Whisper alignment succeeded in ${alignMs}ms — ${alignment.characters.length} chars`);
     const rawWords = charsToWords(alignment);
-    const words = annotateEmphasis(rawWords, cleanLines);
+    // Chunk into micro-phrases and assign 3-tier emphasis (one hero per phrase).
+  // cleanLines no longer drives emphasis — phrase boundaries do.
+  const words = annotatePhrasedTiers(rawWords);
     return { ...payload, words };
   }
 
@@ -895,7 +897,9 @@ async function augmentPayloadWithKineticCaptions(payload, jobId) {
     safeUpdateJob(jobId, { captionFallback: "This voice doesn't provide word timings for kinetic captions — rendered static. Use an ElevenLabs or Azure voice for word-by-word." });
     return { ...payload, kineticCaptions: false, audioPath: tts.file };
   }
-  const words = annotateEmphasis(rawWords, cleanLines);
+  // Chunk into micro-phrases and assign 3-tier emphasis (one hero per phrase).
+  // cleanLines no longer drives emphasis — phrase boundaries do.
+  const words = annotatePhrasedTiers(rawWords);
   return { ...payload, audioPath: tts.file, words };
 }
 
@@ -917,6 +921,8 @@ async function renderAdvancedVideo(payload, jobId) {
     scenes,
     backgroundPath,
     typographyPreset,
+    layout,
+    depth,
   } = payload || {};
   const resolvedAudio = resolveAssetPath(audioPath);
   const resolvedMusic = resolveAssetPath(musicPath);
@@ -1009,7 +1015,7 @@ async function renderAdvancedVideo(payload, jobId) {
     ? wrapTextLines(lines.map((s) => String(s).slice(0, 140)), maxChars, 12)
     : [];
   const drawtextChain = Array.isArray(words) && words.length > 0
-    ? buildWordDrawtext({ words, w, h, preset: resolvedPreset })
+    ? buildWordDrawtext({ words, w, h, preset: resolvedPreset, layout, depth })
     : buildLineDrawtext({ lines: wrappedLines, w, h, preset: resolvedPreset });
 
   const filterParts = graph.filterParts.slice();
@@ -1289,7 +1295,7 @@ async function runCampaignAutoPost(payload, jobId) {
   let pickedBackground;
   if (tts.alignment && Array.isArray(tts.alignment.characters) && tts.alignment.characters.length > 0) {
     const rawWords = charsToWords(tts.alignment);
-    const words = annotateEmphasis(rawWords, ttsLines);
+    const words = annotatePhrasedTiers(rawWords);
     const beats = groupWordsByBeat(words, beatTexts);
     const sceneCount = beats.length >= 2 ? beats.length : 1;
 

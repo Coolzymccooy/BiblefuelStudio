@@ -20,6 +20,8 @@ export const STORAGE_KEYS = {
     renderAutoDuck: 'BF_RENDER_AUTO_DUCK',
     renderDurationSec: 'BF_RENDER_DURATION_SEC',
     renderTypographyPreset: 'BF_RENDER_TYPOGRAPHY_PRESET',
+    renderLayout: 'BF_RENDER_LAYOUT',
+    renderDepth: 'BF_RENDER_DEPTH',
     ttsVoiceId: 'BF_TTS_VOICE_ID',
     ttsStability: 'BF_TTS_STABILITY',
     ttsSimilarity: 'BF_TTS_SIMILARITY',
@@ -49,6 +51,8 @@ export const STORAGE_KEYS = {
     sclAutoBackground: 'BF_SCL_AUTO_BACKGROUND', // let BibleFuel auto-pick from the user's library pool
     sclSyncBackgrounds: 'BF_SCL_SYNC_BACKGROUNDS', // sync multi-bg cuts to speech + crossfade
     sclTypographyPreset: 'BF_SCL_TYPOGRAPHY_PRESET',
+    sclLayout: 'BF_SCL_LAYOUT',
+    sclDepth: 'BF_SCL_DEPTH',
     sclRenderedVideo: 'BF_SCL_RENDERED_VIDEO',
 };
 

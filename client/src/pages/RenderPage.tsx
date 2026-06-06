@@ -11,6 +11,7 @@ import { api } from '../lib/api';
 import toast from 'react-hot-toast';
 import { Play, Library, Video, CheckCircle2, ClipboardList, AudioLines, Share2, X as XIcon, Plus, ChevronUp, ChevronDown, Trash2, Sparkles, Music, Scissors } from 'lucide-react';
 import { loadJson, saveJson, STORAGE_KEYS, toOutputUrl } from '../lib/storage';
+import { LAYOUT_OPTIONS } from '../lib/layoutOptions';
 import { usePersistedState } from '../lib/usePersistedState';
 import { useConfig } from '../lib/config';
 import { useNotifications } from '../lib/notifications';
@@ -102,6 +103,8 @@ export function RenderPage() {
     const [isGeneratingVisuals, setIsGeneratingVisuals] = useState(false);
     const [kenBurns, setKenBurns] = useState(false);
     const [typographyPreset, setTypographyPreset] = useState<string>('cinematic-default');
+    const [layout, setLayout] = useState<string>('center');
+    const [depth, setDepth] = useState<boolean>(false);
     const [animations, setAnimations] = useState<Array<{ id: string; label: string; renderable: boolean }>>([]);
     const [postDestination, setPostDestination] = useState<'webhook' | 'buffer' | 'youtube' | 'instagram' | 'tiktok'>('webhook');
     const [youtubePrivacy, setYoutubePrivacy] = useState<'private' | 'unlisted' | 'public'>('private');
@@ -173,11 +176,23 @@ export function RenderPage() {
         if (cachedTtsVoice) setTtsVoiceId(cachedTtsVoice);
         const cachedTypography = loadJson<string>(STORAGE_KEYS.renderTypographyPreset, 'cinematic-default');
         setTypographyPreset(cachedTypography);
+        const cachedLayout = loadJson<string>(STORAGE_KEYS.renderLayout, 'center');
+        setLayout(cachedLayout);
+        const cachedDepth = loadJson<boolean>(STORAGE_KEYS.renderDepth, false);
+        setDepth(cachedDepth);
     }, []);
 
     useEffect(() => {
         saveJson(STORAGE_KEYS.renderTypographyPreset, typographyPreset);
     }, [typographyPreset]);
+
+    useEffect(() => {
+        saveJson(STORAGE_KEYS.renderLayout, layout);
+    }, [layout]);
+
+    useEffect(() => {
+        saveJson(STORAGE_KEYS.renderDepth, depth);
+    }, [depth]);
 
     // Load the kinetic caption-animation catalog so the dropdown lists the
     // word-synced animations (cinematic-worship, word-boxes, hero-bold, …) in
@@ -396,6 +411,8 @@ export function RenderPage() {
                 autoDuck,
                 typographyPreset,
                 kenBurns,
+                layout,
+                depth,
                 ...(kineticCaptions && mode === 'video'
                     ? { kineticCaptions: true, ...(ttsVoiceId.trim() ? { voiceId: ttsVoiceId.trim() } : {}) }
                     : {}),
@@ -1061,6 +1078,25 @@ export function RenderPage() {
                                 </optgroup>
                             </Select>
                         </Field>
+                        <Field
+                            label="Text layout"
+                            tooltip="Where word captions sit on the frame. Bottom layouts keep text in the safe band above the TikTok/Reels caption strip; staggered alternates left/centre/right per phrase."
+                        >
+                            <Select value={layout} onChange={(e: ChangeEvent<HTMLSelectElement>) => setLayout(e.target.value)}>
+                                {LAYOUT_OPTIONS.map((o) => (
+                                    <option key={o.value} value={o.value}>{o.label}</option>
+                                ))}
+                            </Select>
+                        </Field>
+                        <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={depth}
+                                onChange={(e) => setDepth(e.target.checked)}
+                                className="rounded border-white/10 bg-black/50 checked:bg-primary-500"
+                            />
+                            Layered depth (ghost shadow behind each word)
+                        </label>
                     </Section>
 
                     <Section title="Output & Timing">
