@@ -201,7 +201,7 @@ router.post("/video", async (req, res) => {
       const vFilter = `[0:v]${vf}[vout]`;
       const aFilter = hasVoice
         ? duck
-          ? `[${aIndex}:a]volume=1.0[a1];[${mIndex}:a]volume=${musicVol}[m1];[m1][a1]sidechaincompress=threshold=0.01:ratio=12:attack=5:release=350:makeup=2[ducked];[a1][ducked]amix=inputs=2:duration=shortest:dropout_transition=2[aout]`
+          ? `[${aIndex}:a]volume=1.0,asplit=2[voice1][voice2];[${mIndex}:a]volume=${musicVol}[m1];[m1][voice1]sidechaincompress=threshold=0.01:ratio=12:attack=5:release=350:makeup=2[ducked];[voice2][ducked]amix=inputs=2:duration=shortest:dropout_transition=2[aout]`
           : `[${aIndex}:a]volume=1.0[a1];[${mIndex}:a]volume=${musicVol}[a2];[a1][a2]amix=inputs=2:duration=shortest:dropout_transition=2[aout]`
         : `[${mIndex}:a]volume=${musicVol}[aout]`;
       args.push(
@@ -349,8 +349,11 @@ router.post("/waveform", async (req, res) => {
       filterComplexParts.push(`[${audioIndex}:a]volume=1.0[a1]`);
       filterComplexParts.push(`[${musicIndex}:a]volume=${musicVol}[m1]`);
       if (duck) {
-        filterComplexParts.push(`[m1][a1]sidechaincompress=threshold=0.01:ratio=12:attack=5:release=350:makeup=2[ducked]`);
-        filterComplexParts.push(`[a1][ducked]amix=inputs=2:duration=shortest:dropout_transition=2[amix]`);
+        // Voice feeds both the sidechain key and the mix — split it (a label
+        // can feed only one pad; reusing [a1] broke stricter ffmpeg builds).
+        filterComplexParts.push(`[a1]asplit=2[voice1][voice2]`);
+        filterComplexParts.push(`[m1][voice1]sidechaincompress=threshold=0.01:ratio=12:attack=5:release=350:makeup=2[ducked]`);
+        filterComplexParts.push(`[voice2][ducked]amix=inputs=2:duration=shortest:dropout_transition=2[amix]`);
       } else {
         filterComplexParts.push(`[a1][m1]amix=inputs=2:duration=shortest:dropout_transition=2[amix]`);
       }
