@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
-import { api, UPLOAD_TIMEOUT_MS } from '../lib/api';
+import { api, UPLOAD_TIMEOUT_MS, TRANSCRIBE_TIMEOUT_MS } from '../lib/api';
 import toast from 'react-hot-toast';
 import {
     Play,
@@ -374,7 +374,7 @@ export function TimelinePage() {
         setIsTranscribing(true);
         const toastId = toast.loading('Transcribing — this can take a minute...');
         try {
-            const response = await api.post('/api/transcribe', { mediaPath: sourceMediaPath });
+            const response = await api.post('/api/transcribe', { mediaPath: sourceMediaPath }, undefined, { timeout: TRANSCRIBE_TIMEOUT_MS });
             if (!response.ok || !Array.isArray(response.data?.words)) {
                 toast.error(response.error || 'Transcription failed', { id: toastId });
                 return;

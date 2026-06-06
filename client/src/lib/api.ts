@@ -17,6 +17,13 @@ const DEFAULT_TIMEOUT_MS = 15_000;
 // onUploadProgress so a stalled upload is still visible to the user.
 export const UPLOAD_TIMEOUT_MS = 10 * 60_000;
 
+// Transcription (OpenAI whisper-1, chunked at 40 min) runs server-side and can
+// take well over the 15s default for multi-minute sermons. Give it a 5-minute
+// ceiling so a 4–5 min clip doesn't abort with "timeout of 15000ms exceeded".
+// NOTE: very long audio (~1 hr) can still exceed the CDN/proxy edge timeout
+// (~100s) on a synchronous request — that needs the async/background path.
+export const TRANSCRIBE_TIMEOUT_MS = 5 * 60_000;
+
 // Server-side generation (TTS synthesis, audio mastering, voice compare) runs
 // far longer than the 15s default — a self-hosted Chatterbox synth of a full
 // sermon can take minutes. Without this, those POSTs abort at 15s with a
