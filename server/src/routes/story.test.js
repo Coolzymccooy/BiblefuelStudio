@@ -174,4 +174,20 @@ describe("story routes", () => {
     assert.equal(res.statusCode, 400);
     assert.equal(res.payload.ok, false);
   });
+
+  test("DELETE /:id removes the project; 404 for unknown id", async () => {
+    const create = mockReqRes({ body: { title: "T", style: "cinematic-bible" }, dataDir, outputDir });
+    await handlerFor("post", "/")(create.req, create.res);
+    const id = create.res.payload.project.projectId;
+
+    const del = mockReqRes({ params: { id }, dataDir, outputDir });
+    await handlerFor("delete", "/:id")(del.req, del.res);
+    assert.equal(del.res.payload.ok, true);
+    assert.equal(readProject(dataDir, id), null);
+
+    const again = mockReqRes({ params: { id }, dataDir, outputDir });
+    await handlerFor("delete", "/:id")(again.req, again.res);
+    assert.equal(again.res.statusCode, 404);
+    assert.equal(again.res.payload.ok, false);
+  });
 });

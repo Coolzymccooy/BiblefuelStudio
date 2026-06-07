@@ -2,7 +2,7 @@ import { Router } from "express";
 import fs from "fs";
 import path from "path";
 import {
-  createProject, readProject, writeProject, listProjects, STORY_STATUS,
+  createProject, readProject, writeProject, listProjects, deleteProject, STORY_STATUS,
 } from "../lib/story/projectStore.js";
 import { segmentScenes } from "../lib/story/sceneSegmenter.js";
 import { runStoryRender } from "../lib/story/storyRender.js";
@@ -47,6 +47,24 @@ router.get("/:id", (req, res) => {
   const project = readProject(req.ctx.dataDir, req.params.id);
   if (!project) return res.status(404).json({ ok: false, error: "project not found" });
   return res.json({ ok: true, project });
+});
+
+router.delete("/:id", (req, res) => {
+  try {
+    const existed = deleteProject(req.ctx.dataDir, req.params.id);
+    if (!existed) return res.status(404).json({ ok: false, error: "project not found" });
+    const safeId = String(req.params.id).replace(/[^a-z0-9_-]/gi, "");
+    for (const sub of ["story", "genImg"]) {
+      try {
+        fs.rmSync(path.join(req.ctx.outputDir, sub, safeId), { recursive: true, force: true });
+      } catch (e) {
+        console.warn(`[story] asset cleanup (${sub}/${safeId}) failed: ${e?.message || e}`);
+      }
+    }
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
 });
 
 router.post("/:id/transcribe", async (req, res) => {
