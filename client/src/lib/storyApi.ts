@@ -3,6 +3,7 @@ import type { StoryProject, StoryProjectSummary, StoryScene } from './storyTypes
 
 // Generating ~30 images can run for minutes; reuse a generous ceiling.
 const GENERATE_IMAGES_TIMEOUT_MS = 15 * 60_000;
+const SCRIPT_TO_AUDIO_TIMEOUT_MS = 2 * 60_000;
 
 function unwrapProject(res: { ok: boolean; data?: any; error?: string }): StoryProject {
   if (!res.ok || !res.data?.project) throw new Error(res.error || res.data?.error || 'Request failed');
@@ -61,6 +62,12 @@ export const storyApi = {
       onUploadProgress: onProgress,
     });
     if (!res.ok || !res.data?.file) throw new Error(res.error || 'Audio upload failed');
+    return res.data.file as string;
+  },
+
+  async scriptToAudio(idea: string, templateId: string, voiceId?: string): Promise<string> {
+    const res = await api.post('/api/story/script-to-audio', { idea, templateId, voiceId }, undefined, { timeout: SCRIPT_TO_AUDIO_TIMEOUT_MS });
+    if (!res.ok || !res.data?.file) throw new Error(res.error || 'Voice generation failed');
     return res.data.file as string;
   },
 };

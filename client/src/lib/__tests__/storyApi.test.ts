@@ -54,4 +54,16 @@ describe('storyApi', () => {
     vi.spyOn(api, 'delete').mockResolvedValue({ ok: false, status: 404, error: 'project not found' });
     await expect(storyApi.deleteProject('nope')).rejects.toThrow('project not found');
   });
+
+  it('scriptToAudio posts idea/template/voice and returns the audio file path', async () => {
+    const spy = vi.spyOn(api, 'post').mockResolvedValue({ ok: true, status: 200, data: { ok: true, file: '/out/story-tts-1.mp3', script: 'hi' } });
+    const file = await storyApi.scriptToAudio('an idea', 'devotional-30', 'en-US-GuyNeural');
+    expect(spy).toHaveBeenCalledWith('/api/story/script-to-audio', { idea: 'an idea', templateId: 'devotional-30', voiceId: 'en-US-GuyNeural' }, undefined, expect.objectContaining({ timeout: expect.any(Number) }));
+    expect(file).toBe('/out/story-tts-1.mp3');
+  });
+
+  it('scriptToAudio throws the server error on failure', async () => {
+    vi.spyOn(api, 'post').mockResolvedValue({ ok: false, status: 502, error: 'voice synthesis failed' });
+    await expect(storyApi.scriptToAudio('x', 'custom', 'v')).rejects.toThrow('voice synthesis failed');
+  });
 });
