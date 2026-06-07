@@ -99,13 +99,16 @@ describe('imageCounts', () => {
 });
 
 describe('isStalled', () => {
-  it('true when a transient status has no client driving it', () => {
+  it('true when a client-driven stage has no client driving it', () => {
     expect(isStalled(project({ status: 'generating_images' }), false)).toBe(true);
     expect(isStalled(project({ status: 'transcribing' }), false)).toBe(true);
-    expect(isStalled(project({ status: 'rendering' }), false)).toBe(true);
+    expect(isStalled(project({ status: 'segmenting' }), false)).toBe(true);
   });
   it('false while the client is actively driving (busy)', () => {
     expect(isStalled(project({ status: 'generating_images' }), true)).toBe(false);
+  });
+  it('false for rendering — it is server-driven, not client-orchestrated', () => {
+    expect(isStalled(project({ status: 'rendering' }), false)).toBe(false);
   });
   it('false for stable statuses', () => {
     expect(isStalled(project({ status: 'ready_to_render' }), false)).toBe(false);
