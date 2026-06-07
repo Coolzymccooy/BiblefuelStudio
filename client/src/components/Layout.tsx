@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
-    Menu, X, FileText, List, Briefcase, Image, Mic, Film, Video, Package, LogOut, LogIn, Shield, Settings, HelpCircle, Wand2, BookOpen, Home, ShieldCheck
+    Menu, X, FileText, List, Briefcase, Image, Mic, Film, Video, Package, LogOut, LogIn, Shield, Settings, HelpCircle, Wand2, BookOpen, Home, ShieldCheck, Clapperboard
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { Button } from './ui/Button';
@@ -24,6 +24,7 @@ const navItems = [
     { path: '/app/voice-audio', label: 'Voice & Audio', icon: Mic },
     { path: '/app/timeline', label: 'Timeline', icon: Film },
     { path: '/app/render', label: 'Render', icon: Video },
+    { path: '/app/story', label: 'Story Video', icon: Clapperboard },
     { path: '/app/gumroad', label: 'Gumroad', icon: Package, superOnly: true },
 ];
 

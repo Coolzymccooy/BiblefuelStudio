@@ -24,6 +24,7 @@ const SeriesPage = lazy(() => import('./pages/SeriesPage').then((m) => ({ defaul
 const SettingsPage = lazy(() => import('./pages/SettingsPage').then((m) => ({ default: m.SettingsPage })));
 const HelpPage = lazy(() => import('./pages/HelpPage').then((m) => ({ default: m.HelpPage })));
 const AdminPage = lazy(() => import('./pages/AdminPage').then((m) => ({ default: m.AdminPage })));
+const StoryVideoPage = lazy(() => import('./pages/StoryVideoPage').then((m) => ({ default: m.StoryVideoPage })));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -63,6 +64,7 @@ function App() {
                   <Route path="voice-audio" element={<VoiceAudioPage />} />
                   <Route path="timeline" element={<TimelinePage />} />
                   <Route path="render" element={<RenderPage />} />
+                  <Route path="story" element={<StoryVideoPage />} />
                   <Route path="gumroad" element={<GumroadPage />} />
                   <Route path="series" element={<SeriesPage />} />
                   <Route path="settings" element={<SettingsPage />} />
