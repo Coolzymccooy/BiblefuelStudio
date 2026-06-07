@@ -130,7 +130,7 @@ router.post("/:id/images", async (req, res) => {
         aspect: "portrait",
       });
       scenes[i] = result?.ok
-        ? { ...scenes[i], imagePath: result.path, imageStatus: "done" }
+        ? { ...scenes[i], imagePath: result.path, imageUrl: result.publicUrl || null, imageStatus: "done" }
         : { ...scenes[i], imageStatus: "error" };
       // Persist each completed scene immediately (durability: never lose a generated image record).
       project = writeProject(req.ctx.dataDir, { ...project, scenes });
@@ -161,7 +161,7 @@ router.post("/:id/scenes/:sid/regenerate", async (req, res) => {
       aspect: "portrait",
     });
     scenes[idx] = result?.ok
-      ? { ...scenes[idx], imagePath: result.path, imageStatus: "done" }
+      ? { ...scenes[idx], imagePath: result.path, imageUrl: result.publicUrl || null, imageStatus: "done" }
       : { ...scenes[idx], imageStatus: "error" };
     const updated = writeProject(req.ctx.dataDir, { ...project, scenes });
     return res.json({ ok: true, project: updated });

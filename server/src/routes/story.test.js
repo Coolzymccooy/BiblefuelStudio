@@ -88,7 +88,7 @@ describe("story routes", () => {
       ],
     });
     let calls = 0;
-    _setImageGenImpl(async () => { calls += 1; return { ok: true, path: "/new.png" }; });
+    _setImageGenImpl(async () => { calls += 1; return { ok: true, path: "/new.png", publicUrl: "/outputs/genImg/p/part-2.png" }; });
     const { req, res } = mockReqRes({ params: { id }, body: {}, dataDir, outputDir });
     await handlerFor("post", "/:id/images")(req, res);
     assert.equal(res.payload.ok, true);
@@ -96,6 +96,7 @@ describe("story routes", () => {
     const after = readProject(dataDir, id);
     assert.equal(after.scenes[1].imageStatus, "done");
     assert.equal(after.scenes[1].imagePath, "/new.png");
+    assert.equal(after.scenes[1].imageUrl, "/outputs/genImg/p/part-2.png");
   });
 
   test("GET /:id returns the project; unknown id 404s", async () => {
