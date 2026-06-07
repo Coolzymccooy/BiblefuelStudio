@@ -53,7 +53,7 @@ describe('StoryVideoPage', () => {
   it('shows step 1 (upload/setup) when there is no active project', () => {
     renderPage();
     expect(screen.getByRole('heading', { name: /story video/i })).toBeInTheDocument();
-    expect(screen.getByText(/upload/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /upload a sermon/i })).toBeInTheDocument();
   });
 
   it('resumes an active project from localStorage and shows review when scenes exist', async () => {
@@ -139,6 +139,21 @@ describe('StoryVideoPage', () => {
     pickFile();
     await waitFor(() => expect(storyApi.uploadAudio).toHaveBeenCalled());
     expect(screen.queryByRole('button', { name: /use full audio/i })).toBeNull();
+    expect(screen.getByRole('button', { name: /upload a sermon/i })).toBeInTheDocument();
+  });
+
+  it('switches to script mode and generates a voiceover, then shows the ready panel', async () => {
+    vi.spyOn(storyApi, 'scriptToAudio').mockResolvedValue('/out/story-tts-1.mp3');
+    renderPage();
+    await userEvent.click(screen.getByRole('button', { name: /write a script/i }));
+    await userEvent.type(screen.getByLabelText(/your idea/i), 'hope in the morning');
+    await userEvent.click(screen.getByRole('button', { name: /generate voiceover/i }));
+    expect(await screen.findByRole('button', { name: /use full audio/i })).toBeInTheDocument();
+    expect(storyApi.scriptToAudio).toHaveBeenCalledWith('hope in the morning', 'devotional-30', 'en-US-GuyNeural');
+  });
+
+  it('shows the upload button in upload mode (default)', () => {
+    renderPage();
     expect(screen.getByRole('button', { name: /upload a sermon/i })).toBeInTheDocument();
   });
 });

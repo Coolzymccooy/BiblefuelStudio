@@ -13,6 +13,7 @@ import { SceneCard } from '../components/story/SceneCard';
 import { ProjectHistory } from '../components/story/ProjectHistory';
 import { RenderProgressOverlay } from '../components/RenderProgressOverlay';
 import { MediaTrimmer } from '../components/MediaTrimmer';
+import { ScriptForm } from '../components/story/ScriptForm';
 import type { StoryProject } from '../lib/storyTypes';
 
 const ACTIVE_KEY = 'BF_STORY_ACTIVE';
@@ -36,6 +37,7 @@ export function StoryVideoPage() {
   const [pendingAudio, setPendingAudio] = useState<string | null>(null);
   const [showTrimmer, setShowTrimmer] = useState(false);
   const [defaultTitle, setDefaultTitle] = useState('');
+  const [entryMode, setEntryMode] = useState<'upload' | 'script'>('upload');
 
   const { data: project } = useStoryProject(projectId);
   const refresh = () => { if (projectId) qc.invalidateQueries({ queryKey: ['story-project', projectId] }); };
@@ -56,6 +58,19 @@ export function StoryVideoPage() {
       setPendingAudio(path);
     } catch (e) {
       toast.error((e as Error).message || 'Upload failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleGenerateScript = async (idea: string, templateId: string, voiceId: string) => {
+    setBusy(true);
+    try {
+      setDefaultTitle(idea.slice(0, 60));
+      const path = await storyApi.scriptToAudio(idea, templateId, voiceId);
+      setPendingAudio(path);
+    } catch (e) {
+      toast.error((e as Error).message || 'Voice generation failed');
     } finally {
       setBusy(false);
     }
@@ -225,27 +240,50 @@ export function StoryVideoPage() {
               )}
             </div>
           ) : (
-            <>
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-white/20 bg-white/[0.02] px-4 py-8 text-sm text-gray-300 hover:border-primary-400 cursor-pointer"
-              >
-                <Upload size={18} />
-                Upload a sermon (MP3/M4A/MP4)
-              </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="audio/*,video/*"
-                className="hidden"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) handlePickFile(f);
-                  e.target.value = '';
-                }}
-              />
-            </>
+            <div className="space-y-3">
+              <div className="inline-flex rounded-lg border border-white/10 p-0.5 text-sm">
+                <button
+                  type="button"
+                  onClick={() => setEntryMode('upload')}
+                  className={`rounded-md px-3 py-1 ${entryMode === 'upload' ? 'bg-white/10 text-white' : 'text-gray-400'}`}
+                >
+                  Upload audio
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEntryMode('script')}
+                  className={`rounded-md px-3 py-1 ${entryMode === 'script' ? 'bg-white/10 text-white' : 'text-gray-400'}`}
+                >
+                  Write a script
+                </button>
+              </div>
+
+              {entryMode === 'script' ? (
+                <ScriptForm onGenerate={handleGenerateScript} busy={busy} />
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-white/20 bg-white/[0.02] px-4 py-8 text-sm text-gray-300 hover:border-primary-400 cursor-pointer"
+                  >
+                    <Upload size={18} />
+                    Upload a sermon (MP3/M4A/MP4)
+                  </button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="audio/*,video/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) handlePickFile(f);
+                      e.target.value = '';
+                    }}
+                  />
+                </>
+              )}
+            </div>
           )}
         </div>
       )}
