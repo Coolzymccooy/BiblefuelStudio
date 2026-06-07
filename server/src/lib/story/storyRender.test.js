@@ -38,15 +38,31 @@ describe("storyRender arg building", () => {
     assert.ok(args.includes("/tmp/music.mp3"));
   });
 
-  test("output is capped to the audio/scene length via -t", () => {
+  test("output is capped to the audio/scene length via a single OUTPUT -t", () => {
     const { args, totalDurationSec } = buildStoryFfmpegArgs({
       scenes: SCENES, words: WORDS, audioPath: "/tmp/voice.mp3", musicPath: null,
       width: 1080, height: 1920, outPath: "/tmp/out.mp4",
     });
     assert.equal(totalDurationSec, 20);
-    const tIdx = args.indexOf("-t");
-    assert.ok(tIdx >= 0);
+    // Exactly one -t, and it must be an OUTPUT option (immediately before the
+    // output path) — NOT an input option, or it only caps the first input.
+    const tPositions = args.reduce((acc, a, i) => (a === "-t" ? [...acc, i] : acc), []);
+    assert.equal(tPositions.length, 1);
+    const tIdx = tPositions[0];
     assert.equal(args[tIdx + 1], "20.000");
+    assert.equal(args[tIdx + 2], "/tmp/out.mp4"); // -t is the last flag before output
+  });
+
+  test("each scene collapses its looped still to ONE frame (trim) — guards against the zoompan runaway", () => {
+    const { args } = buildStoryFfmpegArgs({
+      scenes: SCENES, words: WORDS, audioPath: "/tmp/voice.mp3", musicPath: null,
+      width: 1080, height: 1920, outPath: "/tmp/out.mp4",
+    });
+    const fcIdx = args.indexOf("-filter_complex");
+    const graph = args[fcIdx + 1];
+    // One trim=end_frame=1 per scene — without this, `-loop 1` + zoompan never EOFs.
+    const trimCount = (graph.match(/trim=end_frame=1/g) || []).length;
+    assert.equal(trimCount, SCENES.length);
   });
 
   test("throws when a scene is missing its image", () => {

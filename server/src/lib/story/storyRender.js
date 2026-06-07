@@ -25,8 +25,6 @@ export function buildStoryFfmpegArgs({ scenes, words, audioPath, musicPath, widt
   const totalDurationSec = Number((scenes[scenes.length - 1].endMs / 1000).toFixed(3));
 
   const args = ["-y"];
-  // Output duration cap — placed early so indexOf("-t") finds this one
-  args.push("-t", totalDurationSec.toFixed(3));
   segs.forEach((seg) => {
     args.push("-loop", "1", "-i", seg.imagePath);
   });
@@ -42,8 +40,13 @@ export function buildStoryFfmpegArgs({ scenes, words, audioPath, musicPath, widt
   const filterParts = [];
   segs.forEach((seg, i) => {
     const kb = kenBurnsFilter(width, height, seg.durationSec, 30);
+    // trim=end_frame=1 collapses the looped still to a SINGLE frame before
+    // zoompan. Without it, `-loop 1` feeds an endless frame stream into
+    // zoompan (which emits d frames per input frame), causing a runaway encode
+    // that never reaches EOF. Mirrors the proven single-image path in render.js.
     filterParts.push(
-      `[${i}:v]scale=${width}:${height}:force_original_aspect_ratio=increase,` +
+      `[${i}:v]trim=end_frame=1,setpts=PTS-STARTPTS,` +
+        `scale=${width}:${height}:force_original_aspect_ratio=increase,` +
         `crop=${width}:${height},${kb},setsar=1[s${i}]`,
     );
     sceneLabels.push(`[s${i}]`);
@@ -80,6 +83,9 @@ export function buildStoryFfmpegArgs({ scenes, words, audioPath, musicPath, widt
     "-pix_fmt", "yuv420p",
     "-c:a", "aac",
     "-b:a", "192k",
+    // Hard output cap: stop at the last scene's end even if the filtergraph
+    // would otherwise keep producing frames. Belt-and-braces with trim above.
+    "-t", totalDurationSec.toFixed(3),
     outPath,
   );
   return { args, totalDurationSec };
