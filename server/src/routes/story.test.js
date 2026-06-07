@@ -141,4 +141,36 @@ describe("story routes", () => {
     assert.equal(after.scenes[0].imagePath, "/old1.png");        // untouched
     assert.equal(after.scenes[1].imagePath, "/regenerated.png"); // updated
   });
+
+  test("transcribe rejects an empty mediaPath with 400", async () => {
+    const create = mockReqRes({ body: { title: "T", style: "cinematic-bible" }, dataDir, outputDir });
+    await handlerFor("post", "/")(create.req, create.res);
+    const id = create.res.payload.project.projectId;
+    const { req, res } = mockReqRes({ params: { id }, body: { mediaPath: "" }, dataDir, outputDir });
+    await handlerFor("post", "/:id/transcribe")(req, res);
+    assert.equal(res.statusCode, 400);
+    assert.equal(res.payload.ok, false);
+  });
+
+  test("transcribe rejects a mediaPath outside the user's dirs with 403 (path traversal)", async () => {
+    const create = mockReqRes({ body: { title: "T", style: "cinematic-bible" }, dataDir, outputDir });
+    await handlerFor("post", "/")(create.req, create.res);
+    const id = create.res.payload.project.projectId;
+    const evil = process.platform === "win32" ? "C:\\Windows\\System32\\drivers\\etc\\hosts" : "/etc/passwd";
+    const { req, res } = mockReqRes({ params: { id }, body: { mediaPath: evil }, dataDir, outputDir });
+    await handlerFor("post", "/:id/transcribe")(req, res);
+    assert.equal(res.statusCode, 403);
+    assert.equal(res.payload.ok, false);
+  });
+
+  test("transcribe accepts a path inside outputDir but 400s when the file is missing", async () => {
+    const create = mockReqRes({ body: { title: "T", style: "cinematic-bible" }, dataDir, outputDir });
+    await handlerFor("post", "/")(create.req, create.res);
+    const id = create.res.payload.project.projectId;
+    const inside = path.join(outputDir, "does-not-exist.mp3");
+    const { req, res } = mockReqRes({ params: { id }, body: { mediaPath: inside }, dataDir, outputDir });
+    await handlerFor("post", "/:id/transcribe")(req, res);
+    assert.equal(res.statusCode, 400);
+    assert.equal(res.payload.ok, false);
+  });
 });

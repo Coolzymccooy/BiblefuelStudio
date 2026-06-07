@@ -53,10 +53,24 @@ router.post("/:id/transcribe", async (req, res) => {
   try {
     const project = readProject(req.ctx.dataDir, req.params.id);
     if (!project) return res.status(404).json({ ok: false, error: "project not found" });
-    const mediaPath = String(req.body?.mediaPath || "").trim();
-    if (!mediaPath || !fs.existsSync(mediaPath)) {
-      return res.status(400).json({ ok: false, error: "mediaPath required and must exist" });
+    const rawMediaPath = String(req.body?.mediaPath || "").trim();
+    if (!rawMediaPath) {
+      return res.status(400).json({ ok: false, error: "mediaPath required" });
     }
+    // Security: confine mediaPath to the caller's own dirs so an authenticated
+    // user can't read arbitrary server files or another tenant's media.
+    const resolvedMediaPath = path.resolve(rawMediaPath);
+    const allowedRoots = [path.resolve(req.ctx.outputDir), path.resolve(req.ctx.dataDir)];
+    const withinAllowed = allowedRoots.some(
+      (root) => resolvedMediaPath === root || resolvedMediaPath.startsWith(root + path.sep),
+    );
+    if (!withinAllowed) {
+      return res.status(403).json({ ok: false, error: "mediaPath is outside the allowed directory" });
+    }
+    if (!fs.existsSync(resolvedMediaPath)) {
+      return res.status(400).json({ ok: false, error: "mediaPath not found" });
+    }
+    const mediaPath = resolvedMediaPath;
     writeProject(req.ctx.dataDir, { ...project, status: STORY_STATUS.TRANSCRIBING, error: null });
 
     const isVideo = VIDEO_EXT.has(path.extname(mediaPath).toLowerCase());

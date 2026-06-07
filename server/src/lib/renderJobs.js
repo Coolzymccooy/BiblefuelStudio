@@ -5,8 +5,12 @@ import path from "path";
 // In-memory job registry for async render endpoints. The /captioned-video
 // route hands ffmpeg a long-running spawn (a 1-min sermon at 4K takes 40s+)
 // and returns the jobId immediately; the SSE progress endpoint reads from
-// here. Persisting jobs across server restarts is intentionally out of scope —
-// a restart kills the ffmpeg child anyway, so the job is dead either way.
+// here.
+//
+// The in-memory map below is the live source of truth for progress. A thin
+// on-disk mirror (persistJob/readPersistedJob/reconcilePersistedJobs, defined
+// at the bottom of this file) survives restarts so an interrupted render can be
+// detected and resumed; the in-memory map itself is still cleared on restart.
 //
 // Jobs auto-expire after JOB_TTL_MS so a long-lived server doesn't accumulate
 // references to ancient ffmpeg runs. Done/error jobs stay long enough that a
