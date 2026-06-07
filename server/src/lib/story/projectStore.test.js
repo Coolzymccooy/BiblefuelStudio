@@ -60,4 +60,8 @@ describe("projectStore", () => {
     assert.equal(list[0].projectId, b.projectId);
     assert.equal(list.length, 2);
   });
+
+  test("readProject returns null for an empty projectId (invalid guard)", () => {
+    assert.equal(readProject(baseDir, ""), null);
+  });
 });

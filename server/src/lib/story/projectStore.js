@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { v4 as uuid } from "uuid";
@@ -20,6 +21,7 @@ function projectsDir(baseDir) {
 
 function projectPath(baseDir, projectId) {
   const safe = String(projectId || "").replace(/[^a-z0-9_-]/gi, "");
+  if (!safe) throw new Error("projectStore: invalid projectId");
   return path.join(projectsDir(baseDir), `${safe}.json`);
 }
 
@@ -51,11 +53,12 @@ export function createProject(baseDir, { title = "Untitled", style = "cinematic-
 
 /** Read a project by id. Returns null if missing or unreadable/corrupt. */
 export function readProject(baseDir, projectId) {
-  const file = projectPath(baseDir, projectId);
   try {
+    const file = projectPath(baseDir, projectId);
     if (!fs.existsSync(file)) return null;
     return JSON.parse(fs.readFileSync(file, "utf8"));
-  } catch {
+  } catch (err) {
+    console.warn(`[story] readProject failed for ${projectId}: ${err?.message || err}`);
     return null;
   }
 }
@@ -66,9 +69,14 @@ export function writeProject(baseDir, project) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   const next = { ...project, updatedAt: project.updatedAt || Date.now() };
   const file = projectPath(baseDir, next.projectId);
-  const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(next, null, 2));
-  fs.renameSync(tmp, file);
+  const tmp = `${file}.${process.pid}.${crypto.randomBytes(6).toString("hex")}.tmp`;
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(next, null, 2));
+    fs.renameSync(tmp, file);
+  } catch (err) {
+    try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch {}
+    throw err;
+  }
   return next;
 }
 
@@ -89,7 +97,8 @@ export function listProjects(baseDir) {
           style: p.style,
           updatedAt: p.updatedAt || 0,
         };
-      } catch {
+      } catch (err) {
+        console.warn(`[story] listProjects skipped a corrupt file (${f}): ${err?.message || err}`);
         return null;
       }
     })
