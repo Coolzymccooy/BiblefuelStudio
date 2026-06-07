@@ -104,4 +104,41 @@ describe("story routes", () => {
     assert.equal(res.statusCode, 404);
     assert.equal(res.payload.ok, false);
   });
+
+  test("PATCH /:id/scenes/:sid edits prompt and marks promptEditedByUser", async () => {
+    const create = mockReqRes({ body: { title: "T", style: "cinematic-bible" }, dataDir, outputDir });
+    await handlerFor("post", "/")(create.req, create.res);
+    const id = create.res.payload.project.projectId;
+    const proj = readProject(dataDir, id);
+    writeProject(dataDir, {
+      ...proj,
+      scenes: [{ id: "scene-001", text: "a", startMs: 0, endMs: 8000, imagePrompt: "p1", imagePath: null, imageStatus: "pending", promptEditedByUser: false }],
+    });
+    const { req, res } = mockReqRes({ params: { id, sid: "scene-001" }, body: { imagePrompt: "edited prompt" }, dataDir, outputDir });
+    await handlerFor("patch", "/:id/scenes/:sid")(req, res);
+    assert.equal(res.payload.ok, true);
+    assert.equal(res.payload.project.scenes[0].imagePrompt, "edited prompt");
+    assert.equal(res.payload.project.scenes[0].promptEditedByUser, true);
+  });
+
+  test("regenerate updates only the targeted scene's image", async () => {
+    const create = mockReqRes({ body: { title: "T", style: "cinematic-bible" }, dataDir, outputDir });
+    await handlerFor("post", "/")(create.req, create.res);
+    const id = create.res.payload.project.projectId;
+    const proj = readProject(dataDir, id);
+    writeProject(dataDir, {
+      ...proj,
+      scenes: [
+        { id: "scene-001", text: "a", startMs: 0, endMs: 8000, imagePrompt: "p1", imagePath: "/old1.png", imageStatus: "done", promptEditedByUser: false },
+        { id: "scene-002", text: "b", startMs: 8000, endMs: 16000, imagePrompt: "p2", imagePath: "/old2.png", imageStatus: "done", promptEditedByUser: false },
+      ],
+    });
+    _setImageGenImpl(async () => ({ ok: true, path: "/regenerated.png" }));
+    const { req, res } = mockReqRes({ params: { id, sid: "scene-002" }, body: {}, dataDir, outputDir });
+    await handlerFor("post", "/:id/scenes/:sid/regenerate")(req, res);
+    assert.equal(res.payload.ok, true);
+    const after = readProject(dataDir, id);
+    assert.equal(after.scenes[0].imagePath, "/old1.png");        // untouched
+    assert.equal(after.scenes[1].imagePath, "/regenerated.png"); // updated
+  });
 });

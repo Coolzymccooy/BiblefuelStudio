@@ -101,12 +101,14 @@ router.post("/:id/segment", async (req, res) => {
 
 router.post("/:id/images", async (req, res) => {
   try {
-    const project = readProject(req.ctx.dataDir, req.params.id);
+    let project = readProject(req.ctx.dataDir, req.params.id);
     if (!project) return res.status(404).json({ ok: false, error: "project not found" });
     const scenes = [...(project.scenes || [])];
     for (let i = 0; i < scenes.length; i++) {
       if (scenes[i].imageStatus === "done" && scenes[i].imagePath) continue;
       scenes[i] = { ...scenes[i], imageStatus: "generating" };
+      // Persist the "generating" marker so a poll/crash sees in-flight progress.
+      project = writeProject(req.ctx.dataDir, { ...project, scenes });
       const result = await _imageGenFn({
         seriesId: project.projectId,
         partNumber: i + 1,
@@ -116,6 +118,8 @@ router.post("/:id/images", async (req, res) => {
       scenes[i] = result?.ok
         ? { ...scenes[i], imagePath: result.path, imageStatus: "done" }
         : { ...scenes[i], imageStatus: "error" };
+      // Persist each completed scene immediately (durability: never lose a generated image record).
+      project = writeProject(req.ctx.dataDir, { ...project, scenes });
     }
     const allDone = scenes.every((s) => s.imageStatus === "done");
     const updated = writeProject(req.ctx.dataDir, {
@@ -153,20 +157,24 @@ router.post("/:id/scenes/:sid/regenerate", async (req, res) => {
 });
 
 router.patch("/:id/scenes/:sid", (req, res) => {
-  const project = readProject(req.ctx.dataDir, req.params.id);
-  if (!project) return res.status(404).json({ ok: false, error: "project not found" });
-  const idx = (project.scenes || []).findIndex((s) => s.id === req.params.sid);
-  if (idx < 0) return res.status(404).json({ ok: false, error: "scene not found" });
-  const scenes = [...project.scenes];
-  const patch = {};
-  if (typeof req.body?.text === "string") patch.text = req.body.text;
-  if (typeof req.body?.imagePrompt === "string") {
-    patch.imagePrompt = req.body.imagePrompt;
-    patch.promptEditedByUser = true;
+  try {
+    const project = readProject(req.ctx.dataDir, req.params.id);
+    if (!project) return res.status(404).json({ ok: false, error: "project not found" });
+    const idx = (project.scenes || []).findIndex((s) => s.id === req.params.sid);
+    if (idx < 0) return res.status(404).json({ ok: false, error: "scene not found" });
+    const scenes = [...project.scenes];
+    const patch = {};
+    if (typeof req.body?.text === "string") patch.text = req.body.text;
+    if (typeof req.body?.imagePrompt === "string") {
+      patch.imagePrompt = req.body.imagePrompt;
+      patch.promptEditedByUser = true;
+    }
+    scenes[idx] = { ...scenes[idx], ...patch };
+    const updated = writeProject(req.ctx.dataDir, { ...project, scenes });
+    return res.json({ ok: true, project: updated });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
-  scenes[idx] = { ...scenes[idx], ...patch };
-  const updated = writeProject(req.ctx.dataDir, { ...project, scenes });
-  return res.json({ ok: true, project: updated });
 });
 
 router.post("/:id/render", async (req, res) => {
