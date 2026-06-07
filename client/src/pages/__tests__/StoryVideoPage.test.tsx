@@ -15,6 +15,7 @@ function renderPage() {
 beforeEach(() => {
   vi.restoreAllMocks();
   localStorage.clear();
+  vi.spyOn(storyApi, 'listProjects').mockResolvedValue([] as any);
 });
 
 describe('StoryVideoPage', () => {
@@ -54,5 +55,21 @@ describe('StoryVideoPage', () => {
     const btn = await screen.findByRole('button', { name: /resume/i });
     await userEvent.click(btn);
     expect(gen).toHaveBeenCalledWith('p2');
+  });
+
+  it('upload control is a real button wired to a hidden file input (regression: click opens chooser)', () => {
+    renderPage();
+    const btn = screen.getByRole('button', { name: /upload a sermon/i });
+    expect(btn.tagName).toBe('BUTTON');
+    expect(document.querySelector('input[type="file"]')).toBeTruthy();
+  });
+
+  it('shows Recent projects above the new-project form when idle', async () => {
+    vi.spyOn(storyApi, 'listProjects').mockResolvedValue([
+      { projectId: 'h1', title: 'History One', status: 'done', style: 'cinematic-bible', updatedAt: Date.now() },
+    ] as any);
+    renderPage();
+    expect(await screen.findByText('History One')).toBeInTheDocument();
+    expect(screen.getByText(/recent projects/i)).toBeInTheDocument();
   });
 });

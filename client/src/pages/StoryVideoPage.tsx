@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { Upload, Loader2, Download } from 'lucide-react';
@@ -10,6 +10,7 @@ import {
 } from '../lib/storyWizard';
 import { StylePicker } from '../components/story/StylePicker';
 import { SceneCard } from '../components/story/SceneCard';
+import { ProjectHistory } from '../components/story/ProjectHistory';
 import { RenderProgressOverlay } from '../components/RenderProgressOverlay';
 import type { StoryProject } from '../lib/storyTypes';
 
@@ -30,6 +31,7 @@ export function StoryVideoPage() {
   const [title, setTitle] = useState('');
   const [style, setStyle] = useState('cinematic-bible');
   const [busy, setBusy] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: project } = useStoryProject(projectId);
   const refresh = () => { if (projectId) qc.invalidateQueries({ queryKey: ['story-project', projectId] }); };
@@ -140,6 +142,13 @@ export function StoryVideoPage() {
 
       {step === 1 && (
         <div className="mt-6 space-y-4">
+          {!project && (
+            <ProjectHistory
+              onOpen={(id) => setActive(id)}
+              activeId={projectId}
+              onDeleted={() => setActive(null)}
+            />
+          )}
           {project?.error && <ErrorBanner message={project.error} />}
           <label className="block text-sm text-gray-300">
             Title
@@ -162,17 +171,28 @@ export function StoryVideoPage() {
               {progressLabel(project!.status)}
             </div>
           ) : (
-            <label className={`flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-white/20 bg-white/[0.02] px-4 py-8 text-sm text-gray-300 hover:border-primary-400 ${busy ? 'pointer-events-none opacity-60' : ''}`}>
-              {busy ? <Loader2 className="animate-spin" size={18} /> : <Upload size={18} />}
-              {busy ? 'Working…' : 'Upload a sermon (MP3/M4A/MP4)'}
+            <>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={busy}
+                className={`flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-white/20 bg-white/[0.02] px-4 py-8 text-sm text-gray-300 hover:border-primary-400 disabled:opacity-60 ${busy ? 'cursor-default' : 'cursor-pointer'}`}
+              >
+                {busy ? <Loader2 className="animate-spin" size={18} /> : <Upload size={18} />}
+                {busy ? 'Working…' : 'Upload a sermon (MP3/M4A/MP4)'}
+              </button>
               <input
+                ref={fileInputRef}
                 type="file"
                 accept="audio/*,video/*"
                 className="hidden"
-                disabled={busy}
-                onChange={(e) => { const f = e.target.files?.[0]; if (f) handleCreateAndUpload(f); }}
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) handleCreateAndUpload(f);
+                  e.target.value = '';
+                }}
               />
-            </label>
+            </>
           )}
         </div>
       )}
