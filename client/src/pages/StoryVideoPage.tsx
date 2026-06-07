@@ -6,7 +6,7 @@ import { api } from '../lib/api';
 import { storyApi } from '../lib/storyApi';
 import { useStoryProject } from '../hooks/useStoryProject';
 import {
-  deriveStep, progressLabel, canRender, imageCounts, isTransientStatus,
+  deriveStep, progressLabel, canRender, imageCounts, isTransientStatus, isStalled,
 } from '../lib/storyWizard';
 import { StylePicker } from '../components/story/StylePicker';
 import { SceneCard } from '../components/story/SceneCard';
@@ -50,7 +50,7 @@ export function StoryVideoPage() {
       await storyApi.transcribe(created.projectId, mediaPath);
       await storyApi.segment(created.projectId);
       await storyApi.generateImages(created.projectId);
-      refresh();
+      qc.invalidateQueries({ queryKey: ['story-project', created.projectId] });
       toast.success('Scenes ready — review below');
     } catch (e) {
       toast.error((e as Error).message || 'Something went wrong');
@@ -82,8 +82,38 @@ export function StoryVideoPage() {
     finally { setBusy(false); }
   };
 
+  // Re-drive an interrupted pipeline from whatever stage the project is in.
+  const resume = async () => {
+    if (!projectId || busy) return;
+    setBusy(true);
+    try {
+      let p = await storyApi.getProject(projectId);
+      if (!p.transcript.words.length) {
+        toast.error('Upload was interrupted — please upload again.');
+        setActive(null);
+        return;
+      }
+      if (p.scenes.length === 0) {
+        p = await storyApi.segment(projectId);
+      }
+      if (p.status === 'rendering') {
+        // An interrupted render: re-encode from the already-cached scenes.
+        await storyApi.render(projectId);
+      } else {
+        await storyApi.generateImages(projectId);
+      }
+      qc.invalidateQueries({ queryKey: ['story-project', projectId] });
+      toast.success('Resumed');
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const step = project ? deriveStep(project) : 1;
   const transient = project ? isTransientStatus(project.status) : false;
+  const stalled = project ? isStalled(project, busy) : false;
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-6">
@@ -95,6 +125,18 @@ export function StoryVideoPage() {
           </button>
         )}
       </div>
+
+      {stalled && (
+        <div className="mt-4 flex items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+          <span className="text-sm text-amber-200">This project was interrupted. Pick up where it left off.</span>
+          <button
+            onClick={resume}
+            className="shrink-0 rounded-lg bg-amber-500 px-3 py-1.5 text-sm font-semibold text-dark-900 hover:bg-amber-400"
+          >
+            Resume
+          </button>
+        </div>
+      )}
 
       {step === 1 && (
         <div className="mt-6 space-y-4">
@@ -114,7 +156,7 @@ export function StoryVideoPage() {
             <StylePicker value={style} onChange={setStyle} />
           </div>
 
-          {transient ? (
+          {transient && busy ? (
             <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 flex items-center gap-3 text-sm text-gray-300">
               <Loader2 className="animate-spin text-primary-400" size={18} />
               {progressLabel(project!.status)}

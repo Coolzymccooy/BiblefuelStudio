@@ -36,4 +36,23 @@ describe('StoryVideoPage', () => {
     renderPage();
     expect(await screen.findByDisplayValue('a')).toBeInTheDocument();
   });
+
+  it('shows a Resume button for an interrupted (transient, idle) project and re-drives it', async () => {
+    localStorage.setItem('BF_STORY_ACTIVE', 'p2');
+    const proj = {
+      projectId: 'p2', title: 'T', style: 'cinematic-bible', status: 'generating_images',
+      source: { audioPath: 'a', durationMs: 8000 },
+      transcript: { words: [{ text: 'w', startMs: 0, endMs: 500 }], hash: 'h' },
+      scenes: [{ id: 'scene-001', text: 'a', startMs: 0, endMs: 8000, imagePrompt: 'p', imagePath: null, imageUrl: null, imageStatus: 'pending', promptEditedByUser: false }],
+      music: { path: null, volume: 0.3 }, captionPreset: 'default',
+      render: { jobId: null, outputPath: null, status: null }, error: null, createdAt: 0, updatedAt: 0,
+    };
+    vi.spyOn(storyApi, 'getProject').mockResolvedValue(proj as any);
+    const gen = vi.spyOn(storyApi, 'generateImages').mockResolvedValue(proj as any);
+    const { default: userEvent } = await import('@testing-library/user-event');
+    renderPage();
+    const btn = await screen.findByRole('button', { name: /resume/i });
+    await userEvent.click(btn);
+    expect(gen).toHaveBeenCalledWith('p2');
+  });
 });

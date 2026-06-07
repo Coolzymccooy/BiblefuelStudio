@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   STORY_STYLES, deriveStep, isTransientStatus, allScenesDone,
-  canRender, sceneTimeLabel, progressLabel, imageCounts,
+  canRender, sceneTimeLabel, progressLabel, imageCounts, isStalled,
 } from '../storyWizard';
 import type { StoryProject, StoryScene } from '../storyTypes';
 
@@ -95,5 +95,21 @@ describe('progressLabel', () => {
 describe('imageCounts', () => {
   it('counts done vs total', () => {
     expect(imageCounts([scene({ imageStatus: 'done' }), scene({ imageStatus: 'pending' })])).toEqual({ done: 1, total: 2 });
+  });
+});
+
+describe('isStalled', () => {
+  it('true when a transient status has no client driving it', () => {
+    expect(isStalled(project({ status: 'generating_images' }), false)).toBe(true);
+    expect(isStalled(project({ status: 'transcribing' }), false)).toBe(true);
+    expect(isStalled(project({ status: 'rendering' }), false)).toBe(true);
+  });
+  it('false while the client is actively driving (busy)', () => {
+    expect(isStalled(project({ status: 'generating_images' }), true)).toBe(false);
+  });
+  it('false for stable statuses', () => {
+    expect(isStalled(project({ status: 'ready_to_render' }), false)).toBe(false);
+    expect(isStalled(project({ status: 'done' }), false)).toBe(false);
+    expect(isStalled(project({ status: 'error' }), false)).toBe(false);
   });
 });

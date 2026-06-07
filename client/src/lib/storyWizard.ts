@@ -52,3 +52,13 @@ export function progressLabel(status: StoryStatus): string {
     default: return 'Working…';
   }
 }
+
+/**
+ * A project is "stalled" when its status is transient (an in-flight stage) but
+ * no client request is currently driving it (busy === false) — i.e. the page
+ * was reloaded after the client-orchestrated pipeline was interrupted. The UI
+ * surfaces a Resume button in this case.
+ */
+export function isStalled(project: StoryProject, busy: boolean): boolean {
+  return !busy && isTransientStatus(project.status);
+}
