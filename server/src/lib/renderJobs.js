@@ -1,4 +1,6 @@
 import { v4 as uuid } from "uuid";
+import fs from "fs";
+import path from "path";
 
 // In-memory job registry for async render endpoints. The /captioned-video
 // route hands ffmpeg a long-running spawn (a 1-min sermon at 4K takes 40s+)
@@ -98,4 +100,70 @@ export function gcJobs(now = Date.now()) {
 // Test-only: clear all jobs between cases. Avoids cross-test leakage.
 export function _resetJobs() {
   jobs.clear();
+}
+
+function jobsPersistDir(baseDir) {
+  return path.join(baseDir, "render-jobs");
+}
+
+/**
+ * Persist a thin job record (status transitions only, NOT every progress tick).
+ * @param {string} baseDir  caller's req.ctx.dataDir
+ * @param {object} job      a JobRecord plus optional { projectId, outputPath }
+ */
+export function persistJob(baseDir, job) {
+  const dir = jobsPersistDir(baseDir);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  const thin = {
+    jobId: job.jobId,
+    userId: job.userId,
+    projectId: job.projectId || null,
+    status: job.status,
+    outputPath: job.outputPath || job.file || null,
+    updatedAt: Date.now(),
+  };
+  const file = path.join(dir, `${job.jobId}.json`);
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(thin, null, 2));
+  fs.renameSync(tmp, file);
+  return thin;
+}
+
+export function readPersistedJob(baseDir, jobId) {
+  const file = path.join(jobsPersistDir(baseDir), `${String(jobId).replace(/[^a-z0-9-]/gi, "")}.json`);
+  try {
+    if (!fs.existsSync(file)) return null;
+    return JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * On boot, any persisted job still marked running/queued had its ffmpeg child
+ * killed by the restart. Flip those to 'interrupted' so the UI can offer Resume.
+ * @returns {Array<{jobId:string, projectId:string|null}>} the changed records
+ */
+export function reconcilePersistedJobs(baseDir) {
+  const dir = jobsPersistDir(baseDir);
+  if (!fs.existsSync(dir)) return [];
+  const changed = [];
+  for (const f of fs.readdirSync(dir)) {
+    if (!f.endsWith(".json")) continue;
+    const file = path.join(dir, f);
+    try {
+      const rec = JSON.parse(fs.readFileSync(file, "utf8"));
+      if (rec.status === "running" || rec.status === "queued") {
+        rec.status = "interrupted";
+        rec.updatedAt = Date.now();
+        const tmp = `${file}.${process.pid}.tmp`;
+        fs.writeFileSync(tmp, JSON.stringify(rec, null, 2));
+        fs.renameSync(tmp, file);
+        changed.push({ jobId: rec.jobId, projectId: rec.projectId || null });
+      }
+    } catch {
+      // skip corrupt record
+    }
+  }
+  return changed;
 }
