@@ -1,0 +1,218 @@
+import { Router } from "express";
+import fs from "fs";
+import path from "path";
+import {
+  createProject, readProject, writeProject, listProjects, STORY_STATUS,
+} from "../lib/story/projectStore.js";
+import { segmentScenes } from "../lib/story/sceneSegmenter.js";
+import { runStoryRender } from "../lib/story/storyRender.js";
+import { createJob, persistJob } from "../lib/renderJobs.js";
+import { generateBibleImage } from "../lib/imageGen/index.js";
+import { extractAudioToMp3 } from "../lib/transcode.js";
+import {
+  transcribeAudio, chunkAudioForTranscription, stitchTranscriptions,
+} from "../lib/voice/alignment.js";
+
+// Mockable seams (mirror routes/transcribe.js).
+let _transcribeFn = transcribeAudio;
+export function _setTranscribeImpl(impl) { _transcribeFn = impl; }
+export function _resetTranscribeImpl() { _transcribeFn = transcribeAudio; }
+
+let _imageGenFn = generateBibleImage;
+export function _setImageGenImpl(impl) { _imageGenFn = impl; }
+export function _resetImageGenImpl() { _imageGenFn = generateBibleImage; }
+
+const router = Router();
+const VIDEO_EXT = new Set([".mp4", ".mov", ".webm", ".m4v"]);
+
+function storyOutDir(outputDir, projectId) {
+  return path.join(outputDir, "story", String(projectId).replace(/[^a-z0-9_-]/gi, ""));
+}
+
+router.post("/", (req, res) => {
+  try {
+    const { title, style } = req.body || {};
+    const project = createProject(req.ctx.dataDir, { title, style });
+    return res.json({ ok: true, project });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+router.get("/", (req, res) => {
+  return res.json({ ok: true, projects: listProjects(req.ctx.dataDir) });
+});
+
+router.get("/:id", (req, res) => {
+  const project = readProject(req.ctx.dataDir, req.params.id);
+  if (!project) return res.status(404).json({ ok: false, error: "project not found" });
+  return res.json({ ok: true, project });
+});
+
+router.post("/:id/transcribe", async (req, res) => {
+  try {
+    const project = readProject(req.ctx.dataDir, req.params.id);
+    if (!project) return res.status(404).json({ ok: false, error: "project not found" });
+    const mediaPath = String(req.body?.mediaPath || "").trim();
+    if (!mediaPath || !fs.existsSync(mediaPath)) {
+      return res.status(400).json({ ok: false, error: "mediaPath required and must exist" });
+    }
+    writeProject(req.ctx.dataDir, { ...project, status: STORY_STATUS.TRANSCRIBING, error: null });
+
+    const isVideo = VIDEO_EXT.has(path.extname(mediaPath).toLowerCase());
+    const audioPath = isVideo ? await extractAudioToMp3(mediaPath, req.ctx.outputDir) : mediaPath;
+    const chunks = await chunkAudioForTranscription(audioPath, req.ctx.outputDir, 0);
+    const transcribed = await Promise.all(
+      chunks.map(async (c) => ({ offsetMs: c.offsetMs, transcription: await _transcribeFn(c.path) })),
+    );
+    const stitched = stitchTranscriptions(transcribed);
+    if (!stitched.words.length) {
+      writeProject(req.ctx.dataDir, { ...readProject(req.ctx.dataDir, req.params.id), status: STORY_STATUS.ERROR, error: "transcription returned no words" });
+      return res.status(502).json({ ok: false, error: "Transcription returned no words" });
+    }
+    const durationMs = stitched.words[stitched.words.length - 1].endMs;
+    const updated = writeProject(req.ctx.dataDir, {
+      ...readProject(req.ctx.dataDir, req.params.id),
+      source: { audioPath, durationMs },
+      transcript: { words: stitched.words, hash: String(durationMs) + ":" + stitched.words.length },
+      status: STORY_STATUS.SEGMENTING,
+    });
+    return res.json({ ok: true, project: updated });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+router.post("/:id/segment", async (req, res) => {
+  try {
+    const project = readProject(req.ctx.dataDir, req.params.id);
+    if (!project) return res.status(404).json({ ok: false, error: "project not found" });
+    const words = project.transcript?.words || [];
+    if (!words.length) return res.status(400).json({ ok: false, error: "no transcript to segment" });
+    const scenes = await segmentScenes({ words, style: project.style });
+    const updated = writeProject(req.ctx.dataDir, {
+      ...project, scenes, status: STORY_STATUS.GENERATING_IMAGES,
+    });
+    return res.json({ ok: true, project: updated });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+router.post("/:id/images", async (req, res) => {
+  try {
+    const project = readProject(req.ctx.dataDir, req.params.id);
+    if (!project) return res.status(404).json({ ok: false, error: "project not found" });
+    const scenes = [...(project.scenes || [])];
+    for (let i = 0; i < scenes.length; i++) {
+      if (scenes[i].imageStatus === "done" && scenes[i].imagePath) continue;
+      scenes[i] = { ...scenes[i], imageStatus: "generating" };
+      const result = await _imageGenFn({
+        seriesId: project.projectId,
+        partNumber: i + 1,
+        rawPrompt: scenes[i].imagePrompt,
+        aspect: "portrait",
+      });
+      scenes[i] = result?.ok
+        ? { ...scenes[i], imagePath: result.path, imageStatus: "done" }
+        : { ...scenes[i], imageStatus: "error" };
+    }
+    const allDone = scenes.every((s) => s.imageStatus === "done");
+    const updated = writeProject(req.ctx.dataDir, {
+      ...project, scenes,
+      status: allDone ? STORY_STATUS.READY_TO_RENDER : STORY_STATUS.GENERATING_IMAGES,
+    });
+    return res.json({ ok: true, project: updated });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+router.post("/:id/scenes/:sid/regenerate", async (req, res) => {
+  try {
+    const project = readProject(req.ctx.dataDir, req.params.id);
+    if (!project) return res.status(404).json({ ok: false, error: "project not found" });
+    const idx = (project.scenes || []).findIndex((s) => s.id === req.params.sid);
+    if (idx < 0) return res.status(404).json({ ok: false, error: "scene not found" });
+    const scenes = [...project.scenes];
+    scenes[idx] = { ...scenes[idx], imageStatus: "generating" };
+    const result = await _imageGenFn({
+      seriesId: `${project.projectId}-${req.params.sid}-${Date.now()}`,
+      partNumber: 1,
+      rawPrompt: scenes[idx].imagePrompt,
+      aspect: "portrait",
+    });
+    scenes[idx] = result?.ok
+      ? { ...scenes[idx], imagePath: result.path, imageStatus: "done" }
+      : { ...scenes[idx], imageStatus: "error" };
+    const updated = writeProject(req.ctx.dataDir, { ...project, scenes });
+    return res.json({ ok: true, project: updated });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+router.patch("/:id/scenes/:sid", (req, res) => {
+  const project = readProject(req.ctx.dataDir, req.params.id);
+  if (!project) return res.status(404).json({ ok: false, error: "project not found" });
+  const idx = (project.scenes || []).findIndex((s) => s.id === req.params.sid);
+  if (idx < 0) return res.status(404).json({ ok: false, error: "scene not found" });
+  const scenes = [...project.scenes];
+  const patch = {};
+  if (typeof req.body?.text === "string") patch.text = req.body.text;
+  if (typeof req.body?.imagePrompt === "string") {
+    patch.imagePrompt = req.body.imagePrompt;
+    patch.promptEditedByUser = true;
+  }
+  scenes[idx] = { ...scenes[idx], ...patch };
+  const updated = writeProject(req.ctx.dataDir, { ...project, scenes });
+  return res.json({ ok: true, project: updated });
+});
+
+router.post("/:id/render", async (req, res) => {
+  try {
+    const project = readProject(req.ctx.dataDir, req.params.id);
+    if (!project) return res.status(404).json({ ok: false, error: "project not found" });
+    const scenes = project.scenes || [];
+    if (!scenes.length || scenes.some((s) => s.imageStatus !== "done")) {
+      return res.status(400).json({ ok: false, error: "every scene needs a generated image before render" });
+    }
+    const out = storyOutDir(req.ctx.outputDir, project.projectId);
+    if (!fs.existsSync(out)) fs.mkdirSync(out, { recursive: true });
+    const outPath = path.join(out, "video.mp4");
+    const durationSec = scenes[scenes.length - 1].endMs / 1000;
+    const job = createJob(req.ctx.userId, { durationSec });
+    persistJob(req.ctx.dataDir, { ...job, projectId: project.projectId, status: "running" });
+    writeProject(req.ctx.dataDir, {
+      ...project, status: STORY_STATUS.RENDERING,
+      render: { jobId: job.jobId, outputPath: null, status: "running" },
+    });
+
+    runStoryRender({
+      jobId: job.jobId,
+      scenes,
+      words: project.transcript?.words || [],
+      audioPath: project.source?.audioPath,
+      musicPath: project.music?.path || null,
+      width: 1080, height: 1920,
+      outPath,
+    }).then((r) => {
+      const fresh = readProject(req.ctx.dataDir, project.projectId);
+      if (!fresh) return;
+      const done = r.ok;
+      writeProject(req.ctx.dataDir, {
+        ...fresh,
+        status: done ? STORY_STATUS.DONE : STORY_STATUS.ERROR,
+        error: done ? null : (r.error || "render failed"),
+        render: { jobId: job.jobId, outputPath: done ? outPath : null, status: done ? "done" : "error" },
+      });
+      persistJob(req.ctx.dataDir, { ...job, projectId: project.projectId, status: done ? "done" : "error", outputPath: done ? outPath : null });
+    });
+
+    return res.json({ ok: true, jobId: job.jobId, project: readProject(req.ctx.dataDir, project.projectId) });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+export default router;
