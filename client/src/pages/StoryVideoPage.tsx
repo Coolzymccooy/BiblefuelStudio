@@ -12,6 +12,7 @@ import { StylePicker } from '../components/story/StylePicker';
 import { SceneCard } from '../components/story/SceneCard';
 import { ProjectHistory } from '../components/story/ProjectHistory';
 import { RenderProgressOverlay } from '../components/RenderProgressOverlay';
+import { MediaTrimmer } from '../components/MediaTrimmer';
 import type { StoryProject } from '../lib/storyTypes';
 
 const ACTIVE_KEY = 'BF_STORY_ACTIVE';
@@ -32,6 +33,9 @@ export function StoryVideoPage() {
   const [style, setStyle] = useState('cinematic-bible');
   const [busy, setBusy] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [pendingAudio, setPendingAudio] = useState<string | null>(null);
+  const [showTrimmer, setShowTrimmer] = useState(false);
+  const [defaultTitle, setDefaultTitle] = useState('');
 
   const { data: project } = useStoryProject(projectId);
   const refresh = () => { if (projectId) qc.invalidateQueries({ queryKey: ['story-project', projectId] }); };
@@ -42,16 +46,32 @@ export function StoryVideoPage() {
     else localStorage.removeItem(ACTIVE_KEY);
   };
 
-  const handleCreateAndUpload = async (file: File) => {
+  // Phase 1: upload the picked file, then hold its server path for the trim step.
+  const handlePickFile = async (file: File) => {
     setBusy(true);
     try {
-      const created = await storyApi.createProject(title || file.name.replace(/\.[^.]+$/, ''), style);
-      setActive(created.projectId);
+      setDefaultTitle(file.name.replace(/\.[^.]+$/, ''));
       const dataUrl = await readFileAsDataUrl(file);
-      const mediaPath = await storyApi.uploadAudio(dataUrl, file.name);
-      await storyApi.transcribe(created.projectId, mediaPath);
+      const path = await storyApi.uploadAudio(dataUrl, file.name);
+      setPendingAudio(path);
+    } catch (e) {
+      toast.error((e as Error).message || 'Upload failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Phase 2: run the pipeline on the chosen audio path (trimmed or full).
+  const startPipeline = async (audioPath: string) => {
+    setBusy(true);
+    setShowTrimmer(false);
+    try {
+      const created = await storyApi.createProject(title || defaultTitle, style);
+      setActive(created.projectId);
+      await storyApi.transcribe(created.projectId, audioPath);
       await storyApi.segment(created.projectId);
       await storyApi.generateImages(created.projectId);
+      setPendingAudio(null);
       qc.invalidateQueries({ queryKey: ['story-project', created.projectId] });
       toast.success('Scenes ready — review below');
     } catch (e) {
@@ -114,7 +134,6 @@ export function StoryVideoPage() {
   };
 
   const step = project ? deriveStep(project) : 1;
-  const transient = project ? isTransientStatus(project.status) : false;
   const stalled = project ? isStalled(project, busy) : false;
 
   return (
@@ -165,21 +184,55 @@ export function StoryVideoPage() {
             <StylePicker value={style} onChange={setStyle} />
           </div>
 
-          {transient && busy ? (
+          {busy ? (
             <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 flex items-center gap-3 text-sm text-gray-300">
               <Loader2 className="animate-spin text-primary-400" size={18} />
-              {progressLabel(project!.status)}
+              {project && isTransientStatus(project.status) ? progressLabel(project.status) : 'Working…'}
+            </div>
+          ) : pendingAudio ? (
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
+              <div className="text-sm text-gray-200">Audio uploaded. Trim it, or use the whole thing.</div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowTrimmer(true)}
+                  className="rounded-lg bg-primary-500 px-3 py-1.5 text-sm font-semibold text-dark-900 hover:bg-primary-400"
+                >
+                  Trim audio
+                </button>
+                <button
+                  type="button"
+                  onClick={() => startPipeline(pendingAudio)}
+                  className="rounded-lg border border-white/15 px-3 py-1.5 text-sm text-gray-200 hover:border-primary-400"
+                >
+                  Use full audio
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPendingAudio(null)}
+                  className="rounded-lg border border-white/15 px-3 py-1.5 text-sm text-gray-400 hover:text-gray-200"
+                >
+                  Pick a different file
+                </button>
+              </div>
+              {showTrimmer && (
+                <MediaTrimmer
+                  serverPath={pendingAudio}
+                  kind="audio"
+                  onApply={(trimmedPath) => { setShowTrimmer(false); startPipeline(trimmedPath); }}
+                  onCancel={() => setShowTrimmer(false)}
+                />
+              )}
             </div>
           ) : (
             <>
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={busy}
-                className={`flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-white/20 bg-white/[0.02] px-4 py-8 text-sm text-gray-300 hover:border-primary-400 disabled:opacity-60 ${busy ? 'cursor-default' : 'cursor-pointer'}`}
+                className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-white/20 bg-white/[0.02] px-4 py-8 text-sm text-gray-300 hover:border-primary-400 cursor-pointer"
               >
-                {busy ? <Loader2 className="animate-spin" size={18} /> : <Upload size={18} />}
-                {busy ? 'Working…' : 'Upload a sermon (MP3/M4A/MP4)'}
+                <Upload size={18} />
+                Upload a sermon (MP3/M4A/MP4)
               </button>
               <input
                 ref={fileInputRef}
@@ -188,7 +241,7 @@ export function StoryVideoPage() {
                 className="hidden"
                 onChange={(e) => {
                   const f = e.target.files?.[0];
-                  if (f) handleCreateAndUpload(f);
+                  if (f) handlePickFile(f);
                   e.target.value = '';
                 }}
               />
