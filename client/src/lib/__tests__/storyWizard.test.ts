@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   STORY_STYLES, deriveStep, isTransientStatus, allScenesDone,
   canRender, sceneTimeLabel, progressLabel, imageCounts, isStalled,
+  relativeTime, statusMeta,
 } from '../storyWizard';
 import type { StoryProject, StoryScene } from '../storyTypes';
 
@@ -114,5 +115,30 @@ describe('isStalled', () => {
     expect(isStalled(project({ status: 'ready_to_render' }), false)).toBe(false);
     expect(isStalled(project({ status: 'done' }), false)).toBe(false);
     expect(isStalled(project({ status: 'error' }), false)).toBe(false);
+  });
+});
+
+describe('relativeTime', () => {
+  const now = 1_000_000_000_000;
+  it('formats recent times', () => {
+    expect(relativeTime(now, now)).toBe('just now');
+    expect(relativeTime(now - 30_000, now)).toBe('just now');
+    expect(relativeTime(now - 5 * 60_000, now)).toBe('5m ago');
+    expect(relativeTime(now - 3 * 3600_000, now)).toBe('3h ago');
+    expect(relativeTime(now - 2 * 86_400_000, now)).toBe('2d ago');
+  });
+  it('falls back to a date for older than ~a week', () => {
+    expect(relativeTime(now - 30 * 86_400_000, now)).toMatch(/\d{1,2}\s*\w{3}/);
+  });
+});
+
+describe('statusMeta', () => {
+  it('maps every status to a label + tone', () => {
+    expect(statusMeta('done')).toEqual({ label: 'Done', tone: 'done' });
+    expect(statusMeta('error')).toEqual({ label: 'Error', tone: 'error' });
+    expect(statusMeta('ready_to_render').tone).toBe('idle');
+    expect(statusMeta('rendering').tone).toBe('busy');
+    expect(statusMeta('generating_images').tone).toBe('busy');
+    expect(statusMeta('draft').tone).toBe('idle');
   });
 });

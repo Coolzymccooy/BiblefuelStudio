@@ -70,3 +70,33 @@ const CLIENT_DRIVEN_TRANSIENT: StoryStatus[] = ['transcribing', 'segmenting', 'g
 export function isStalled(project: StoryProject, busy: boolean): boolean {
   return !busy && CLIENT_DRIVEN_TRANSIENT.includes(project.status);
 }
+
+const MIN = 60_000, HOUR = 3_600_000, DAY = 86_400_000;
+
+/** Compact relative time. `nowMs` is injected so the function is deterministic. */
+export function relativeTime(ms: number, nowMs: number): string {
+  const diff = Math.max(0, nowMs - ms);
+  if (diff < MIN) return 'just now';
+  if (diff < HOUR) return `${Math.floor(diff / MIN)}m ago`;
+  if (diff < DAY) return `${Math.floor(diff / HOUR)}h ago`;
+  if (diff < 7 * DAY) return `${Math.floor(diff / DAY)}d ago`;
+  const d = new Date(ms);
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+export type StatusTone = 'done' | 'error' | 'busy' | 'idle';
+
+/** Pill label + tone for a project status. */
+export function statusMeta(status: StoryStatus): { label: string; tone: StatusTone } {
+  switch (status) {
+    case 'done': return { label: 'Done', tone: 'done' };
+    case 'error': return { label: 'Error', tone: 'error' };
+    case 'rendering': return { label: 'Rendering', tone: 'busy' };
+    case 'generating_images': return { label: 'Generating', tone: 'busy' };
+    case 'transcribing': return { label: 'Transcribing', tone: 'busy' };
+    case 'segmenting': return { label: 'Segmenting', tone: 'busy' };
+    case 'ready_to_render': return { label: 'Ready', tone: 'idle' };
+    case 'draft':
+    default: return { label: 'Draft', tone: 'idle' };
+  }
+}
