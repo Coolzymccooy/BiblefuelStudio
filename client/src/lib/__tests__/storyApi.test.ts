@@ -1,0 +1,46 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { api } from '../api';
+import { storyApi } from '../storyApi';
+
+const fakeProject = { projectId: 'p', title: 'T', status: 'draft', scenes: [] };
+
+beforeEach(() => { vi.restoreAllMocks(); });
+
+describe('storyApi', () => {
+  it('createProject posts title+style and returns the project', async () => {
+    const spy = vi.spyOn(api, 'post').mockResolvedValue({ ok: true, status: 200, data: { ok: true, project: fakeProject } });
+    const p = await storyApi.createProject('T', 'cinematic-bible');
+    expect(spy).toHaveBeenCalledWith('/api/story', { title: 'T', style: 'cinematic-bible' });
+    expect(p.projectId).toBe('p');
+  });
+
+  it('getProject GETs by id', async () => {
+    const spy = vi.spyOn(api, 'get').mockResolvedValue({ ok: true, status: 200, data: { ok: true, project: fakeProject } });
+    await storyApi.getProject('p');
+    expect(spy).toHaveBeenCalledWith('/api/story/p');
+  });
+
+  it('transcribe posts the mediaPath with the long timeout', async () => {
+    const spy = vi.spyOn(api, 'post').mockResolvedValue({ ok: true, status: 200, data: { ok: true, project: fakeProject } });
+    await storyApi.transcribe('p', '/out/a.mp3');
+    expect(spy).toHaveBeenCalledWith('/api/story/p/transcribe', { mediaPath: '/out/a.mp3' }, undefined, expect.objectContaining({ timeout: expect.any(Number) }));
+  });
+
+  it('patchScene PATCHes the scene fields', async () => {
+    const spy = vi.spyOn(api, 'patch').mockResolvedValue({ ok: true, status: 200, data: { ok: true, project: fakeProject } });
+    await storyApi.patchScene('p', 'scene-001', { imagePrompt: 'new' });
+    expect(spy).toHaveBeenCalledWith('/api/story/p/scenes/scene-001', { imagePrompt: 'new' });
+  });
+
+  it('throws the server error message on failure', async () => {
+    vi.spyOn(api, 'post').mockResolvedValue({ ok: false, status: 400, error: 'no transcript to segment' });
+    await expect(storyApi.segment('p')).rejects.toThrow('no transcript to segment');
+  });
+
+  it('uploadAudio returns the server file path', async () => {
+    const spy = vi.spyOn(api, 'post').mockResolvedValue({ ok: true, status: 200, data: { ok: true, file: '/out/user-audio-1.mp3' } });
+    const file = await storyApi.uploadAudio('data:audio/mp3;base64,AAA', 'sermon.mp3', () => {});
+    expect(file).toBe('/out/user-audio-1.mp3');
+    expect(spy).toHaveBeenCalled();
+  });
+});
