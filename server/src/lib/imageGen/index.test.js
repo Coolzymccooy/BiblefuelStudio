@@ -258,4 +258,48 @@ describe("imageGen orchestrator — generateBibleImage", () => {
     assert.equal(result.ok, false);
     assert.match(result.error || "", /safety/i);
   });
+
+  test("rawPrompt is used verbatim, bypassing buildBiblePrompt", async () => {
+    process.env.CLOUDFLARE_ACCOUNT_ID = "acct";
+    process.env.CLOUDFLARE_WORKERS_AI_TOKEN = "tok";
+
+    const seriesId = `test_rawprompt_${Date.now()}`;
+    cleanupTestImages(seriesId);
+
+    const VERBATIM_PROMPT = "MY_VERBATIM_PROMPT_XYZ_UNIQUE_TEST";
+    let capturedPrompt = "";
+
+    stubFetch(async (url, init) => {
+      if (/api\.cloudflare\.com/.test(url)) {
+        // Cloudflare expects JSON body with "prompt" field
+        try {
+          const body = JSON.parse(init.body || "{}");
+          capturedPrompt = body.prompt || "";
+        } catch {
+          capturedPrompt = "";
+        }
+        return jsonResponse({ success: true, result: { image: TINY_PNG_BUFFER.toString("base64") } });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+
+    const result = await generateBibleImage({
+      seriesId,
+      partNumber: 1,
+      rawPrompt: VERBATIM_PROMPT,
+    });
+
+    assert.equal(result.ok, true, "generation should succeed");
+    assert.equal(result.prompt, VERBATIM_PROMPT, "returned prompt should equal the verbatim input");
+    assert.ok(
+      capturedPrompt.includes(VERBATIM_PROMPT),
+      `provider should receive the verbatim prompt; got: ${capturedPrompt}`,
+    );
+    assert.ok(
+      !capturedPrompt.includes("buildBiblePrompt") && !capturedPrompt.includes("beatType"),
+      "should not include buildBiblePrompt-generated content",
+    );
+
+    cleanupTestImages(seriesId);
+  });
 });

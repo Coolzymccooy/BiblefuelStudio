@@ -88,6 +88,7 @@ export function listProviderChain() {
  * @param {string} [args.verseText=""]
  * @param {string} [args.aspect="portrait"]
  * @param {string} [args.styleAnchor]       optional override, otherwise derived
+ * @param {string} [args.rawPrompt]         optional fully-formed prompt to use verbatim, bypassing buildBiblePrompt
  * @returns {Promise<GenerateBibleImageResult>}
  */
 export async function generateBibleImage({
@@ -97,6 +98,7 @@ export async function generateBibleImage({
   verseText = "",
   aspect = "portrait",
   styleAnchor,
+  rawPrompt,
 }) {
   if (!isImageGenEnabled()) {
     return { ok: false, skipped: true, error: "image gen disabled (IMAGE_GEN_ENABLED=false or no provider configured)" };
@@ -113,13 +115,16 @@ export async function generateBibleImage({
     return { ok: true, path: file, publicUrl, cached: true };
   }
 
-  const anchor = styleAnchor || chooseStyleAnchor(safeSeriesId);
-  const prompt = buildBiblePrompt({
-    beatType,
-    verseText,
-    styleAnchor: anchor,
-    seriesSeed: safeSeriesId,
-  });
+  // When the caller supplies a fully-formed prompt (e.g. Story Video scenes that
+  // already carry their own style anchor), use it verbatim and skip buildBiblePrompt.
+  const prompt = (typeof rawPrompt === "string" && rawPrompt.trim())
+    ? rawPrompt.trim()
+    : buildBiblePrompt({
+        beatType,
+        verseText,
+        styleAnchor: styleAnchor || chooseStyleAnchor(safeSeriesId),
+        seriesSeed: safeSeriesId,
+      });
   const seed = normalizeSeed(`${safeSeriesId}:${part}`);
 
   const chain = listProviderChain();
