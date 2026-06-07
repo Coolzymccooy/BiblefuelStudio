@@ -1,6 +1,7 @@
 import { Router } from "express";
 import fs from "fs";
 import path from "path";
+import { v4 as uuid } from "uuid";
 import {
   createProject, readProject, writeProject, listProjects, deleteProject, STORY_STATUS,
 } from "../lib/story/projectStore.js";
@@ -12,6 +13,9 @@ import { extractAudioToMp3 } from "../lib/transcode.js";
 import {
   transcribeAudio, chunkAudioForTranscription, stitchTranscriptions,
 } from "../lib/voice/alignment.js";
+import { refineScript } from "../lib/story/scriptRefine.js";
+import { templateById } from "../lib/story/scriptTemplates.js";
+import { synthesizeEdgeTts } from "../lib/edgeTts.js";
 
 // Mockable seams (mirror routes/transcribe.js).
 let _transcribeFn = transcribeAudio;
@@ -21,6 +25,10 @@ export function _resetTranscribeImpl() { _transcribeFn = transcribeAudio; }
 let _imageGenFn = generateBibleImage;
 export function _setImageGenImpl(impl) { _imageGenFn = impl; }
 export function _resetImageGenImpl() { _imageGenFn = generateBibleImage; }
+
+let _ttsFn = synthesizeEdgeTts;
+export function _setTtsImpl(impl) { _ttsFn = impl; }
+export function _resetTtsImpl() { _ttsFn = synthesizeEdgeTts; }
 
 const router = Router();
 const VIDEO_EXT = new Set([".mp4", ".mov", ".webm", ".m4v"]);
@@ -112,6 +120,37 @@ router.post("/:id/transcribe", async (req, res) => {
     return res.json({ ok: true, project: updated });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// POST /script-to-audio — idea + template -> refined narration -> Edge TTS mp3,
+// moved into the caller's output dir so it passes the /transcribe guard.
+router.post("/script-to-audio", async (req, res) => {
+  try {
+    const idea = String(req.body?.idea || "").trim();
+    if (idea.length < 3) return res.status(400).json({ ok: false, error: "idea is required" });
+    const template = templateById(req.body?.templateId);
+    const voiceId = req.body?.voiceId ? String(req.body.voiceId) : undefined;
+
+    const script = await refineScript({ idea, template });
+    const tts = await _ttsFn({ text: script, voiceId });
+    if (!tts?.ok || !tts.file) {
+      return res.status(502).json({ ok: false, error: tts?.error || "voice synthesis failed" });
+    }
+
+    if (!fs.existsSync(req.ctx.outputDir)) fs.mkdirSync(req.ctx.outputDir, { recursive: true });
+    const dest = path.join(req.ctx.outputDir, `story-tts-${uuid()}.mp3`);
+    try {
+      fs.renameSync(tts.file, dest);
+    } catch {
+      fs.copyFileSync(tts.file, dest);
+      try { fs.unlinkSync(tts.file); } catch {}
+    }
+    return res.json({ ok: true, file: dest.replace(/\\/g, "/"), script });
+  } catch (e) {
+    const msg = String(e?.message || e);
+    const status = /disabled|required/i.test(msg) ? 400 : 500;
+    return res.status(status).json({ ok: false, error: msg });
   }
 });
 

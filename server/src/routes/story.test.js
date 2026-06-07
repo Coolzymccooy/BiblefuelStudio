@@ -6,6 +6,7 @@ import path from "path";
 import storyRouter, {
   _setTranscribeImpl, _resetTranscribeImpl,
   _setImageGenImpl, _resetImageGenImpl,
+  _setTtsImpl, _resetTtsImpl,
 } from "./story.js";
 import { _setLlmImpl, _resetLlmImpl } from "../lib/story/sceneSegmenter.js";
 import { readProject, writeProject } from "../lib/story/projectStore.js";
@@ -35,7 +36,7 @@ beforeEach(() => {
   outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "story-route-out-"));
 });
 afterEach(() => {
-  _resetTranscribeImpl(); _resetImageGenImpl(); _resetLlmImpl();
+  _resetTranscribeImpl(); _resetImageGenImpl(); _resetLlmImpl(); _resetTtsImpl();
   fs.rmSync(dataDir, { recursive: true, force: true });
   fs.rmSync(outputDir, { recursive: true, force: true });
 });
@@ -189,5 +190,34 @@ describe("story routes", () => {
     await handlerFor("delete", "/:id")(again.req, again.res);
     assert.equal(again.res.statusCode, 404);
     assert.equal(again.res.payload.ok, false);
+  });
+
+  test("POST /script-to-audio refines + synthesizes + returns an in-scope audio path", async () => {
+    const { _setLlmImpl, _resetLlmImpl } = await import("../lib/story/scriptRefine.js");
+    const { _setTtsImpl, _resetTtsImpl } = await import("./story.js");
+    _setLlmImpl(async () => "Refined narration.");
+    const fakeFs = await import("fs");
+    const fakeOs = await import("os");
+    const fakePath = await import("path");
+    const fakeSrc = fakePath.join(fakeOs.tmpdir(), `fake-tts-${Date.now()}.mp3`);
+    fakeFs.writeFileSync(fakeSrc, "ID3fake");
+    _setTtsImpl(async () => ({ ok: true, file: fakeSrc, provider: "edge", voice: "x" }));
+    try {
+      const { req, res } = mockReqRes({ body: { idea: "trust God", templateId: "devotional-30" }, dataDir, outputDir });
+      await handlerFor("post", "/script-to-audio")(req, res);
+      assert.equal(res.payload.ok, true);
+      assert.equal(res.payload.script, "Refined narration.");
+      assert.ok(res.payload.file.startsWith(outputDir.replace(/\\/g, "/")) || res.payload.file.startsWith(outputDir));
+      assert.ok(fakeFs.existsSync(res.payload.file));
+    } finally {
+      _resetLlmImpl(); _resetTtsImpl();
+    }
+  });
+
+  test("POST /script-to-audio 400s on empty idea", async () => {
+    const { req, res } = mockReqRes({ body: { idea: "  ", templateId: "custom" }, dataDir, outputDir });
+    await handlerFor("post", "/script-to-audio")(req, res);
+    assert.equal(res.statusCode, 400);
+    assert.equal(res.payload.ok, false);
   });
 });
