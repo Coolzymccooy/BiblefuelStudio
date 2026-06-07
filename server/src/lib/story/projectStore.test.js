@@ -8,6 +8,7 @@ import {
   readProject,
   writeProject,
   listProjects,
+  deleteProject,
   STORY_STATUS,
 } from "./projectStore.js";
 
@@ -63,5 +64,17 @@ describe("projectStore", () => {
 
   test("readProject returns null for an empty projectId (invalid guard)", () => {
     assert.equal(readProject(baseDir, ""), null);
+  });
+
+  test("deleteProject removes the JSON and returns true; false when absent", () => {
+    const p = createProject(baseDir, { title: "X", style: "cinematic-bible" });
+    assert.equal(readProject(baseDir, p.projectId) !== null, true);
+    assert.equal(deleteProject(baseDir, p.projectId), true);
+    assert.equal(readProject(baseDir, p.projectId), null);
+    assert.equal(deleteProject(baseDir, p.projectId), false); // already gone
+  });
+
+  test("deleteProject returns false for an unknown id (no throw)", () => {
+    assert.equal(deleteProject(baseDir, "does-not-exist"), false);
   });
 });

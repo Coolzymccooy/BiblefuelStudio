@@ -105,3 +105,27 @@ export function listProjects(baseDir) {
     .filter(Boolean)
     .sort((a, b) => b.updatedAt - a.updatedAt);
 }
+
+/**
+ * Delete a project's JSON. Returns true if it existed, false otherwise.
+ * Asset cleanup (generated images/video) is the route's responsibility, since
+ * those live under the output dir, not baseDir.
+ * @param {string} baseDir  caller's req.ctx.dataDir
+ * @param {string} projectId
+ */
+export function deleteProject(baseDir, projectId) {
+  let file;
+  try {
+    file = projectPath(baseDir, projectId);
+  } catch {
+    return false; // invalid id
+  }
+  try {
+    if (!fs.existsSync(file)) return false;
+    fs.unlinkSync(file);
+    return true;
+  } catch (err) {
+    console.warn(`[story] deleteProject failed for ${projectId}: ${err?.message || err}`);
+    return false;
+  }
+}
