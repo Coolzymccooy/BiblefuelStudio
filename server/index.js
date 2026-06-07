@@ -27,6 +27,7 @@ import seriesRouter from "./src/routes/series.js";
 import transcribeRouter from "./src/routes/transcribe.js";
 import transcriptsRouter from "./src/routes/transcripts.js";
 import imagegenRouter from "./src/routes/imagegen.js";
+import storyRouter from "./src/routes/story.js";
 import { requireAuth } from "./src/auth.js";
 import { createAccessRequestsRouter } from "./src/routes/accessRequests.js";
 import { getAccessRequestsStore } from "./src/lib/accessRequestsStore.js";
@@ -43,6 +44,7 @@ import postizRouter from "./src/routes/postiz.js";
 import { createAdminRouter } from "./src/routes/admin.js";
 import issuesRouter from "./src/routes/issues.js";
 import { DATA_DIR, OUTPUT_DIR } from "./src/lib/paths.js";
+import { reconcilePersistedJobs } from "./src/lib/renderJobs.js";
 
 // Load env from CURRENT server directory
 const __filename = fileURLToPath(import.meta.url);
@@ -357,6 +359,7 @@ app.use("/api/scripts",   requireAuth, withUserScope, requireVerifiedEmail, quot
 app.use("/api/queue",     requireAuth, withUserScope,                                              queueRouter);
 app.use("/api/tts",       requireAuth, withUserScope, requireVerifiedEmail, quota("tts"),        ttsRouter);
 app.use("/api/render",    requireAuth, withUserScope, requireVerifiedEmail, quota("render"),     renderRouter);
+app.use("/api/story",     requireAuth, withUserScope, requireVerifiedEmail, quota("render"),     storyRouter);
 app.use("/api/pexels",    requireAuth, withUserScope, requireVerifiedEmail,                       pexelsRouter);
 app.use("/api/pixabay",   requireAuth, withUserScope, requireVerifiedEmail,                       pixabayRouter);
 app.use("/api/gumroad",   requireAuth, withUserScope, featureGate("gumroad"),                     gumroadRouter);
@@ -420,6 +423,14 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = Number(process.env.PORT || 5051);
+
+try {
+  const interrupted = reconcilePersistedJobs(DATA_DIR);
+  if (interrupted.length) console.warn(`[story] reconciled ${interrupted.length} interrupted render job(s)`);
+} catch (e) {
+  console.warn("[story] job reconciliation skipped:", e?.message || e);
+}
+
 app.listen(PORT, () => {
   console.log(`✅ Biblefuel Studio v2 running at http://localhost:${PORT}`);
 
