@@ -43,4 +43,15 @@ describe('storyApi', () => {
     expect(file).toBe('/out/user-audio-1.mp3');
     expect(spy).toHaveBeenCalled();
   });
+
+  it('deleteProject DELETEs by id', async () => {
+    const spy = vi.spyOn(api, 'delete').mockResolvedValue({ ok: true, status: 200, data: { ok: true } });
+    await storyApi.deleteProject('p1');
+    expect(spy).toHaveBeenCalledWith('/api/story/p1');
+  });
+
+  it('deleteProject throws the server error on failure', async () => {
+    vi.spyOn(api, 'delete').mockResolvedValue({ ok: false, status: 404, error: 'project not found' });
+    await expect(storyApi.deleteProject('nope')).rejects.toThrow('project not found');
+  });
 });

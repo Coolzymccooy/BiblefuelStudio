@@ -50,6 +50,11 @@ export const storyApi = {
     return unwrapProject(await api.post(`/api/story/${id}/render`, {}));
   },
 
+  async deleteProject(id: string): Promise<void> {
+    const res = await api.delete(`/api/story/${id}`);
+    if (!res.ok) throw new Error(res.error || 'Failed to delete project');
+  },
+
   async uploadAudio(dataUrl: string, filename: string, onProgress?: (pct: number) => void): Promise<string> {
     const res = await api.post('/api/media/upload-audio', { dataUrl, filename }, undefined, {
       timeout: UPLOAD_TIMEOUT_MS,
