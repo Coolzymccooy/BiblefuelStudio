@@ -84,4 +84,14 @@ describe("segmentScenes", () => {
     const scenes = await segmentScenes({ words: [], style: "cinematic-bible" });
     assert.deepEqual(scenes, []);
   });
+
+  test("parses clean JSON even when LLM wraps it in prose/fences", async () => {
+    _setLlmImpl(async () =>
+      "```json\n{\"scenes\":[{\"text\":\"x\",\"startWordIndex\":0,\"endWordIndex\":29,\"imagePrompt\":\"p\"}]}\n```",
+    );
+    const scenes = await segmentScenes({ words: WORDS, style: "cinematic-bible" });
+    assert.equal(scenes.length, 1);
+    assert.equal(scenes[0].startMs, 0);
+    assert.equal(scenes[0].endMs, WORDS[WORDS.length - 1].endMs);
+  });
 });

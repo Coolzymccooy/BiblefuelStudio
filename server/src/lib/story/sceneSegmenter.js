@@ -18,11 +18,12 @@ const TARGET_SEC_DEFAULT = 8;
  */
 export async function segmentScenes({ words, style, targetSec = TARGET_SEC_DEFAULT }) {
   if (!Array.isArray(words) || words.length === 0) return [];
+  const safeTargetSec = Number(targetSec) > 0 ? Number(targetSec) : TARGET_SEC_DEFAULT;
   const anchor = anchorFor(style);
 
   let llmScenes = null;
   try {
-    const raw = await _llm(buildSegmentPrompt(words, targetSec));
+    const raw = await _llm(buildSegmentPrompt(words, safeTargetSec));
     llmScenes = parseLlmScenes(raw);
   } catch {
     llmScenes = null;
@@ -36,7 +37,7 @@ export async function segmentScenes({ words, style, targetSec = TARGET_SEC_DEFAU
           end: clampIndex(s.endWordIndex, words.length),
           imagePrompt: String(s.imagePrompt || "").trim(),
         }))
-      : fallbackRanges(words, targetSec);
+      : fallbackRanges(words, safeTargetSec);
 
   return ranges.map((r, i) => {
     const start = Math.min(r.start, r.end);
@@ -72,6 +73,8 @@ function fallbackRanges(words, targetSec) {
     const isLast = i === words.length - 1;
     if (spanMs >= windowMs || isLast) {
       ranges.push({ start: startIdx, end: i, text: "", imagePrompt: "" });
+      // Advance past the word just consumed; if that was the last word the
+      // outer loop ends, so startIdx never indexes past the array.
       startIdx = i + 1;
     }
   }
@@ -95,17 +98,22 @@ function buildSegmentPrompt(words, targetSec) {
 
 function parseLlmScenes(raw) {
   if (!raw || typeof raw !== "string") return null;
-  // Tolerate ```json fences / leading prose by extracting the first {...} block.
-  const match = raw.match(/\{[\s\S]*\}/);
-  if (!match) return null;
-  let parsed;
-  try {
-    parsed = JSON.parse(match[0]);
-  } catch {
-    return null;
-  }
+  const parsed = tryParse(raw.trim()) ?? tryParse(extractBraceBlock(raw));
   if (!parsed || !Array.isArray(parsed.scenes) || parsed.scenes.length === 0) return null;
   return parsed.scenes;
+}
+
+function tryParse(s) {
+  if (!s) return null;
+  try { return JSON.parse(s); } catch { return null; }
+}
+
+// Fallback for responses wrapped in ```json fences or prose: grab the first
+// balanced-looking object. Greedy to the last brace, which is fine once the
+// direct parse above has already handled clean JSON.
+function extractBraceBlock(raw) {
+  const match = raw.match(/\{[\s\S]*\}/);
+  return match ? match[0] : null;
 }
 
 // Default dual-provider completion. Mirrors generateScripts.js openai/gemini.
