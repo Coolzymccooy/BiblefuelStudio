@@ -331,6 +331,7 @@ export function TimelinePage() {
                 const next = [clip];
                 setClips(next);
                 saveClipsToCache(next);
+                pushAudioHistory(response.data.file, 'source');
             }
             toast.success(`${isVideo ? 'Video' : 'Audio'} uploaded`);
         } catch {
@@ -475,6 +476,7 @@ export function TimelinePage() {
                 return;
             }
             setMusicPath(response.data.file);
+            pushAudioHistory(response.data.file, 'music');
             toast.success('Music uploaded');
         } catch {
             toast.error('Music upload failed');
@@ -651,6 +653,46 @@ export function TimelinePage() {
 
     const saveClipsToCache = (newClips: TimelineClip[]) => {
         saveJson(STORAGE_KEYS.timelineClips, newClips);
+    };
+
+    // Record an uploaded/trimmed audio file into the Recent Audio history so it
+    // can be reused across slots (Source Media ↔ Music Bed). Deduped by path,
+    // newest first, capped.
+    const pushAudioHistory = (p: string, kind: string) => {
+        if (!p) return;
+        setAudioHistory((prev) => {
+            const next = [
+                { id: `aud_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, path: p, kind, createdAt: new Date().toISOString() },
+                ...prev.filter((a) => a.path !== p),
+            ].slice(0, 25);
+            saveJson(STORAGE_KEYS.audioHistory, next);
+            return next;
+        });
+    };
+
+    // Adopt an existing audio file as the Source Media (and the assembly clip),
+    // e.g. reuse the music bed as the narration source.
+    const useAsSource = (p: string) => {
+        if (!p) return;
+        setSourceMediaPath(p);
+        setSourceMediaKind('audio');
+        const clip: TimelineClip = {
+            id: `clip_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            path: p,
+            label: p.split(/[\\/]/).pop() || 'clip',
+            startSec: null,
+            durationSec: null,
+        };
+        setClips([clip]);
+        saveClipsToCache([clip]);
+        toast.success('Using as source media');
+    };
+
+    // Adopt an existing audio file as the Music Bed.
+    const useAsMusicBed = (p: string) => {
+        if (!p) return;
+        setMusicPath(p);
+        toast.success('Using as music bed');
     };
 
     const handleAddClip = (path: string, label?: string) => {
@@ -840,30 +882,42 @@ export function TimelinePage() {
                             <span className="text-content-tertiary">Loaded ({sourceMediaKind}):</span>{' '}
                             <span className="font-mono break-all">{sourceMediaPath.split(/[\\/]/).pop()}</span>
                         </span>
-                        <button
-                            type="button"
-                            onClick={() => setTrimTarget({
-                                kind: sourceMediaKind === 'video' ? 'video' : 'audio',
-                                path: sourceMediaPath,
-                                apply: (p) => {
-                                    setSourceMediaPath(p);
-                                    if (sourceMediaKind !== 'video') {
-                                        const clip: TimelineClip = {
-                                            id: `clip_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-                                            path: p,
-                                            label: p.split(/[\\/]/).pop() || 'clip',
-                                            startSec: null,
-                                            durationSec: null,
-                                        };
-                                        setClips([clip]);
-                                        saveClipsToCache([clip]);
-                                    }
-                                },
-                            })}
-                            className="shrink-0 inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-white/[0.06] text-primary-200 hover:bg-white/[0.12] transition-colors"
-                        >
-                            <Scissors size={12} /> Trim
-                        </button>
+                        <div className="shrink-0 flex items-center gap-2">
+                            {sourceMediaKind !== 'video' && (
+                                <button
+                                    type="button"
+                                    onClick={() => useAsMusicBed(sourceMediaPath)}
+                                    className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-white/[0.06] text-primary-200 hover:bg-white/[0.12] transition-colors"
+                                >
+                                    <Music size={12} /> Use as Music Bed
+                                </button>
+                            )}
+                            <button
+                                type="button"
+                                onClick={() => setTrimTarget({
+                                    kind: sourceMediaKind === 'video' ? 'video' : 'audio',
+                                    path: sourceMediaPath,
+                                    apply: (p) => {
+                                        setSourceMediaPath(p);
+                                        if (sourceMediaKind !== 'video') {
+                                            const clip: TimelineClip = {
+                                                id: `clip_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                                                path: p,
+                                                label: p.split(/[\\/]/).pop() || 'clip',
+                                                startSec: null,
+                                                durationSec: null,
+                                            };
+                                            setClips([clip]);
+                                            saveClipsToCache([clip]);
+                                            pushAudioHistory(p, 'source');
+                                        }
+                                    },
+                                })}
+                                className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-white/[0.06] text-primary-200 hover:bg-white/[0.12] transition-colors"
+                            >
+                                <Scissors size={12} /> Trim
+                            </button>
+                        </div>
                     </div>
                 )}
             </Card>
@@ -1020,13 +1074,22 @@ export function TimelinePage() {
                             <p className="text-xs text-gray-300 font-mono break-all">
                                 {musicPath.split(/[\\/]/).pop()}
                             </p>
-                            <button
-                                type="button"
-                                onClick={() => setTrimTarget({ kind: 'audio', path: musicPath, apply: setMusicPath })}
-                                className="shrink-0 inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-white/[0.06] text-primary-200 hover:bg-white/[0.12] transition-colors"
-                            >
-                                <Scissors size={12} /> Trim
-                            </button>
+                            <div className="shrink-0 flex items-center gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => useAsSource(musicPath)}
+                                    className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-white/[0.06] text-primary-200 hover:bg-white/[0.12] transition-colors"
+                                >
+                                    <Waves size={12} /> Use as Source
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setTrimTarget({ kind: 'audio', path: musicPath, apply: (p) => { setMusicPath(p); pushAudioHistory(p, 'music'); } })}
+                                    className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-white/[0.06] text-primary-200 hover:bg-white/[0.12] transition-colors"
+                                >
+                                    <Scissors size={12} /> Trim
+                                </button>
+                            </div>
                         </div>
                     )}
                     <div>
@@ -1618,13 +1681,18 @@ export function TimelinePage() {
                             <div className="space-y-2">
                                 {audioHistory.slice(0, 5).map((item) => (
                                     <div key={item.id} className="text-xs text-content-tertiary break-all">
-                                        <button
-                                            onClick={() => handleAddClip(item.path, item.kind)}
-                                            className="text-primary-400 hover:text-primary-300"
-                                        >
-                                            + Add
-                                        </button>
-                                        <span className="ml-2">{item.path}</span>
+                                        <div className="flex items-center gap-3">
+                                            <button onClick={() => handleAddClip(item.path, item.kind)} className="text-primary-400 hover:text-primary-300">
+                                                + Add
+                                            </button>
+                                            <button onClick={() => useAsSource(item.path)} className="text-primary-400 hover:text-primary-300">
+                                                Use as Source
+                                            </button>
+                                            <button onClick={() => useAsMusicBed(item.path)} className="text-primary-400 hover:text-primary-300">
+                                                Use as Music Bed
+                                            </button>
+                                        </div>
+                                        <span className="block mt-1">{item.path}</span>
                                     </div>
                                 ))}
                             </div>
