@@ -41,3 +41,50 @@ export function parseFreeDevotional(markdown: string): {
     }
     return { narrationText: lines.join(' '), lines };
 }
+
+/** Word-level timing — matches Timeline's TranscriptWord (`sclTranscript`). */
+export interface TranscriptWord {
+    text: string;
+    startMs: number;
+    endMs: number;
+}
+
+/** Average seconds-per-word used when no real audio duration is available. */
+const FALLBACK_SEC_PER_WORD = 0.4;
+
+/**
+ * Spread the narration's words uniformly across `durationSec`. TTS narration is
+ * steady-paced, so uniform spacing yields acceptable caption sync. When the
+ * duration is unknown (<=0), estimate from a fixed speaking rate.
+ */
+export function evenDistributeWords(
+    narrationText: string,
+    durationSec: number,
+): TranscriptWord[] {
+    const tokens = narrationText.trim().split(/\s+/).filter(Boolean);
+    if (!tokens.length) return [];
+    const safeSec = durationSec > 0 ? durationSec : tokens.length * FALLBACK_SEC_PER_WORD;
+    const totalMs = Math.max(1, Math.round(safeSec * 1000));
+    const per = totalMs / tokens.length;
+    return tokens.map((text, i) => ({
+        text,
+        startMs: Math.round(i * per),
+        endMs: Math.round((i + 1) * per),
+    }));
+}
+
+/**
+ * Resolve a transcript for Timeline. Prefer the provider's native word timings;
+ * otherwise even-distribute. (The provider may instead return char-level
+ * `alignment`; even distribution covers that case acceptably for steady TTS,
+ * so we deliberately do not port the server's char→word converter here.)
+ */
+export function extractTranscript(
+    data: { words?: TranscriptWord[] | null } | null | undefined,
+    narrationText: string,
+    durationSec: number,
+): TranscriptWord[] {
+    const words = data?.words;
+    if (Array.isArray(words) && words.length) return words;
+    return evenDistributeWords(narrationText, durationSec);
+}

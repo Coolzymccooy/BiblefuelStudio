@@ -49,3 +49,42 @@ describe('parseFreeDevotional', () => {
     expect(parseFreeDevotional('')).toEqual({ narrationText: '', lines: [] });
   });
 });
+
+import { evenDistributeWords, extractTranscript } from '../gumroadToTimeline';
+
+describe('evenDistributeWords', () => {
+  it('spreads N words evenly across the duration, monotonically', () => {
+    const words = evenDistributeWords('one two three four', 4);
+    expect(words).toHaveLength(4);
+    expect(words[0].startMs).toBe(0);
+    expect(words[3].endMs).toBe(4000);
+    for (let i = 1; i < words.length; i++) {
+      expect(words[i].startMs).toBeGreaterThanOrEqual(words[i - 1].endMs - 1);
+    }
+    expect(words.map((w) => w.text)).toEqual(['one', 'two', 'three', 'four']);
+  });
+
+  it('uses a rate-based fallback when duration is non-positive', () => {
+    const words = evenDistributeWords('a b c', 0);
+    expect(words).toHaveLength(3);
+    expect(words[2].endMs).toBeGreaterThan(0);
+  });
+
+  it('returns [] for empty text', () => {
+    expect(evenDistributeWords('', 5)).toEqual([]);
+  });
+});
+
+describe('extractTranscript', () => {
+  it('prefers provider words when present', () => {
+    const provided = [{ text: 'hi', startMs: 0, endMs: 500 }];
+    expect(extractTranscript({ words: provided }, 'hi there', 2)).toBe(provided);
+  });
+
+  it('falls back to even distribution when words are absent or empty', () => {
+    const a = extractTranscript({ words: [] }, 'one two', 2);
+    const b = extractTranscript(null, 'one two', 2);
+    expect(a).toHaveLength(2);
+    expect(b).toHaveLength(2);
+  });
+});
