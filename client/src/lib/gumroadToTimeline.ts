@@ -88,3 +88,49 @@ export function extractTranscript(
     if (Array.isArray(words) && words.length) return words;
     return evenDistributeWords(narrationText, durationSec);
 }
+
+/** One day of the free devotional, ready to narrate + send to the Timeline. */
+export interface DevotionalDay {
+    dayNumber: number;
+    reference: string;
+    narrationText: string;
+    lines: string[];
+}
+
+/** Matches the free lead magnet's per-day heading: `## Day 1: Philippians 4:6-7`. */
+const DAY_HEADING_RE = /^##\s*Day\s+(\d+):\s*(.+?)\s*$/;
+
+/**
+ * Split the free devotional markdown into per-day units. Within each day, the
+ * same Verse/Reflection/Prayer extraction + <=8-word chunking as
+ * parseFreeDevotional is applied, and `narrationText === lines.join(' ')` holds
+ * per day. Days with a heading but no content lines are dropped.
+ */
+export function parseFreeDevotionalDays(markdown: string): DevotionalDay[] {
+    const days: DevotionalDay[] = [];
+    let current: { dayNumber: number; reference: string; lines: string[] } | null = null;
+    const flush = () => {
+        if (current && current.lines.length) {
+            days.push({
+                dayNumber: current.dayNumber,
+                reference: current.reference,
+                narrationText: current.lines.join(' '),
+                lines: current.lines,
+            });
+        }
+    };
+    for (const raw of (markdown || '').split(/\r?\n/)) {
+        const heading = raw.match(DAY_HEADING_RE);
+        if (heading) {
+            flush();
+            current = { dayNumber: Number(heading[1]), reference: heading[2].trim(), lines: [] };
+            continue;
+        }
+        if (!current || !LABEL_RE.test(raw)) continue;
+        const text = raw.replace(LABEL_RE, '').trim();
+        if (!text) continue;
+        for (const chunk of chunkWords(text, 8)) current.lines.push(chunk);
+    }
+    flush();
+    return days;
+}

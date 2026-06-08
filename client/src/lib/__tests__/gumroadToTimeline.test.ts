@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseFreeDevotional, evenDistributeWords, extractTranscript } from '../gumroadToTimeline';
+import { parseFreeDevotional, evenDistributeWords, extractTranscript, parseFreeDevotionalDays } from '../gumroadToTimeline';
 
 const FREE_MD = `# 7 Bible Verses for Anxiety & Fear
 
@@ -84,5 +84,55 @@ describe('extractTranscript', () => {
     const b = extractTranscript(null, 'one two', 2);
     expect(a).toHaveLength(2);
     expect(b).toHaveLength(2);
+  });
+});
+
+const MULTI_DAY_MD = `# 7 Bible Verses for Anxiety & Fear
+
+A simple devotional from **@Biblefuel** to help you find calm.
+
+## Day 1: Philippians 4:6-7
+**Verse:** Do not be anxious about anything but in everything by prayer present your requests.
+
+**Reflection:** Breathe. God is present.
+
+**Prayer:** Lord, I give You what I cannot carry. Amen.
+
+## Day 2: 1 Peter 5:7
+**Verse:** Cast all your anxiety on Him because He cares for you.
+
+**Reflection:** Breathe. God is present.
+
+---
+Want more? Check the **Biblefuel 30-Day Devotional**.`;
+
+describe('parseFreeDevotionalDays', () => {
+  it('splits into one unit per day with number + reference', () => {
+    const days = parseFreeDevotionalDays(MULTI_DAY_MD);
+    expect(days).toHaveLength(2);
+    expect(days[0].dayNumber).toBe(1);
+    expect(days[0].reference).toBe('Philippians 4:6-7');
+    expect(days[1].dayNumber).toBe(2);
+    expect(days[1].reference).toBe('1 Peter 5:7');
+  });
+
+  it('keeps each day narrationText equal to its lines joined by a space', () => {
+    for (const d of parseFreeDevotionalDays(MULTI_DAY_MD)) {
+      expect(d.narrationText).toBe(d.lines.join(' '));
+      for (const line of d.lines) expect(line.split(/\s+/).length).toBeLessThanOrEqual(8);
+    }
+  });
+
+  it('scopes content to its own day (no bleed across days)', () => {
+    const days = parseFreeDevotionalDays(MULTI_DAY_MD);
+    expect(days[0].narrationText).toContain('Do not be anxious');
+    expect(days[0].narrationText).not.toContain('Cast all your anxiety');
+    expect(days[1].narrationText).toContain('Cast all your anxiety');
+  });
+
+  it('ignores headings/intro/footer and returns [] for empty input', () => {
+    expect(parseFreeDevotionalDays('')).toEqual([]);
+    const joined = parseFreeDevotionalDays(MULTI_DAY_MD).map((d) => d.narrationText).join(' ');
+    expect(joined).not.toContain('Biblefuel 30-Day Devotional');
   });
 });
