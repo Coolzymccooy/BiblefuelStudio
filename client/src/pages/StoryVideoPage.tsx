@@ -11,6 +11,7 @@ import {
 import { StylePicker } from '../components/story/StylePicker';
 import { SceneCard } from '../components/story/SceneCard';
 import { ProjectHistory } from '../components/story/ProjectHistory';
+import { MusicControl } from '../components/story/MusicControl';
 import { RenderProgressOverlay } from '../components/RenderProgressOverlay';
 import { MediaTrimmer } from '../components/MediaTrimmer';
 import { ScriptForm } from '../components/story/ScriptForm';
@@ -117,6 +118,14 @@ export function StoryVideoPage() {
     try { await storyApi.render(projectId); refresh(); }
     catch (e) { toast.error((e as Error).message); }
     finally { setBusy(false); }
+  };
+
+  const onMusicChange = async (next: { path: string | null; volume: number; autoDuck?: boolean }) => {
+    if (!projectId) return;
+    try {
+      await storyApi.setMusic(projectId, { path: next.path, volume: next.volume, autoDuck: next.autoDuck ?? true });
+      refresh();
+    } catch (e) { toast.error((e as Error).message); }
   };
 
   // Re-drive an interrupted pipeline from whatever stage the project is in.
@@ -295,6 +304,7 @@ export function StoryVideoPage() {
           {project.scenes.map((s) => (
             <SceneCard key={s.id} scene={s} onPatch={onPatch} onRegenerate={onRegenerate} busy={busy} />
           ))}
+          <MusicControl music={project.music ?? { path: null, volume: 0.3, autoDuck: true }} onChange={onMusicChange} busy={busy} />
           <button
             onClick={onRender}
             disabled={!canRender(project) || busy}

@@ -47,6 +47,12 @@ export const storyApi = {
     return unwrapProject(await api.patch(`/api/story/${id}/scenes/${sceneId}`, patch));
   },
 
+  async setMusic(id: string, music: { path: string | null; volume: number; autoDuck: boolean }): Promise<StoryProject> {
+    const res = await api.patch(`/api/story/${id}/music`, music);
+    if (!res.ok || !res.data?.project) throw new Error(res.error || 'Failed to set music');
+    return res.data.project as StoryProject;
+  },
+
   async render(id: string): Promise<StoryProject> {
     return unwrapProject(await api.post(`/api/story/${id}/render`, {}));
   },
