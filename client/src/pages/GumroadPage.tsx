@@ -11,6 +11,7 @@ import { saveJson, STORAGE_KEYS } from '../lib/storage';
 
 interface GumroadRecord {
     id: string;
+    userId?: string;
     freeTitle: string;
     paidTitle: string;
     freeMarkdown: string;
