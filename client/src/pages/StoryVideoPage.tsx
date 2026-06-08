@@ -84,12 +84,10 @@ export function StoryVideoPage() {
     try {
       const created = await storyApi.createProject(title || defaultTitle, style);
       setActive(created.projectId);
-      await storyApi.transcribe(created.projectId, audioPath);
-      await storyApi.segment(created.projectId);
-      await storyApi.generateImages(created.projectId);
+      await storyApi.process(created.projectId, audioPath);
       setPendingAudio(null);
       qc.invalidateQueries({ queryKey: ['story-project', created.projectId] });
-      toast.success('Scenes ready — review below');
+      toast.success('Generating on the server — you can leave this page');
     } catch (e) {
       toast.error((e as Error).message || 'Something went wrong');
       refresh();
@@ -133,20 +131,17 @@ export function StoryVideoPage() {
     if (!projectId || busy) return;
     setBusy(true);
     try {
-      let p = await storyApi.getProject(projectId);
-      if (!p.transcript.words.length) {
-        toast.error('Upload was interrupted — please upload again.');
+      const p = await storyApi.getProject(projectId);
+      const audioPath = p.source?.audioPath;
+      if (!audioPath) {
+        toast.error('Upload was interrupted — please start again.');
         setActive(null);
         return;
       }
-      if (p.scenes.length === 0) {
-        p = await storyApi.segment(projectId);
-      }
       if (p.status === 'rendering') {
-        // An interrupted render: re-encode from the already-cached scenes.
         await storyApi.render(projectId);
       } else {
-        await storyApi.generateImages(projectId);
+        await storyApi.process(projectId, audioPath);
       }
       qc.invalidateQueries({ queryKey: ['story-project', projectId] });
       toast.success('Resumed');
@@ -158,7 +153,7 @@ export function StoryVideoPage() {
   };
 
   const step = project ? deriveStep(project) : 1;
-  const stalled = project ? isStalled(project, busy) : false;
+  const stalled = project ? isStalled(project, Date.now()) : false;
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-6">

@@ -53,22 +53,16 @@ export function progressLabel(status: StoryStatus): string {
   }
 }
 
-// Stages the CLIENT drives via sequential awaits. If one of these is the live
-// status while the client is idle (busy === false), the pipeline was interrupted
-// (e.g. tab closed) and nothing is advancing it — so we offer Resume. NOTE:
-// 'rendering' is deliberately excluded: it runs server-side (fire-and-forget),
-// so the client is always idle during a *normal* render — treating it as stalled
-// would show a spurious Resume banner over the render-progress overlay.
-const CLIENT_DRIVEN_TRANSIENT: StoryStatus[] = ['transcribing', 'segmenting', 'generating_images'];
+const STALL_MS = 90_000; // a transient status older than this looks stuck (server died)
 
 /**
- * A project is "stalled" when a client-driven stage is the live status but no
- * client request is currently driving it (busy === false) — i.e. the page was
- * reloaded after the client-orchestrated pipeline was interrupted. The UI
- * surfaces a Resume button in this case.
+ * A project is "stalled" when it's in a transient (in-flight) status but its
+ * record hasn't been touched in a while — i.e. no server stage is advancing it
+ * (e.g. the server restarted mid-pipeline). The server drives the pipeline now,
+ * so a fresh transient status just means "working" — NOT stalled.
  */
-export function isStalled(project: StoryProject, busy: boolean): boolean {
-  return !busy && CLIENT_DRIVEN_TRANSIENT.includes(project.status);
+export function isStalled(project: StoryProject, nowMs: number): boolean {
+  return isTransientStatus(project.status) && (nowMs - project.updatedAt) > STALL_MS;
 }
 
 const MIN = 60_000, HOUR = 3_600_000, DAY = 86_400_000;

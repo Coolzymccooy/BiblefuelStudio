@@ -72,4 +72,10 @@ describe('storyApi', () => {
     await storyApi.setMusic('p', { path: '/m.mp3', volume: 0.3, autoDuck: true });
     expect(spy).toHaveBeenCalledWith('/api/story/p/music', { path: '/m.mp3', volume: 0.3, autoDuck: true });
   });
+
+  it('process posts the mediaPath to /process', async () => {
+    const spy = vi.spyOn(api, 'post').mockResolvedValue({ ok: true, status: 200, data: { ok: true } });
+    await storyApi.process('p', '/out/a.mp3');
+    expect(spy).toHaveBeenCalledWith('/api/story/p/process', { mediaPath: '/out/a.mp3' }, undefined, expect.objectContaining({ timeout: expect.any(Number) }));
+  });
 });
