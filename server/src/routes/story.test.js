@@ -123,6 +123,23 @@ describe("story routes", () => {
     assert.equal(res.payload.project.scenes[0].promptEditedByUser, true);
   });
 
+  test("PATCH /:id/music stores path/volume/autoDuck and clamps; null path clears", async () => {
+    const create = mockReqRes({ body: { title: "T", style: "cinematic-bible" }, dataDir, outputDir });
+    await handlerFor("post", "/")(create.req, create.res);
+    const id = create.res.payload.project.projectId;
+
+    const set = mockReqRes({ params: { id }, body: { path: "/out/music.mp3", volume: 5, autoDuck: true }, dataDir, outputDir });
+    await handlerFor("patch", "/:id/music")(set.req, set.res);
+    assert.equal(set.res.payload.ok, true);
+    assert.equal(set.res.payload.project.music.path, "/out/music.mp3");
+    assert.equal(set.res.payload.project.music.volume, 1);
+    assert.equal(set.res.payload.project.music.autoDuck, true);
+
+    const clear = mockReqRes({ params: { id }, body: { path: null }, dataDir, outputDir });
+    await handlerFor("patch", "/:id/music")(clear.req, clear.res);
+    assert.equal(clear.res.payload.project.music.path, null);
+  });
+
   test("regenerate updates only the targeted scene's image", async () => {
     const create = mockReqRes({ body: { title: "T", style: "cinematic-bible" }, dataDir, outputDir });
     await handlerFor("post", "/")(create.req, create.res);

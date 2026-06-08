@@ -6,7 +6,7 @@ import {
   createProject, readProject, writeProject, listProjects, deleteProject, STORY_STATUS,
 } from "../lib/story/projectStore.js";
 import { segmentScenes } from "../lib/story/sceneSegmenter.js";
-import { runStoryRender } from "../lib/story/storyRender.js";
+import { runStoryRender, probeAudioDurationSec } from "../lib/story/storyRender.js";
 import { createJob, persistJob } from "../lib/renderJobs.js";
 import { generateBibleImage } from "../lib/imageGen/index.js";
 import { extractAudioToMp3 } from "../lib/transcode.js";
@@ -248,6 +248,21 @@ router.patch("/:id/scenes/:sid", (req, res) => {
   }
 });
 
+// PATCH /:id/music — set/clear the background music bed
+router.patch("/:id/music", (req, res) => {
+  try {
+    const project = readProject(req.ctx.dataDir, req.params.id);
+    if (!project) return res.status(404).json({ ok: false, error: "project not found" });
+    const path = req.body?.path ? String(req.body.path) : null;
+    const volume = Math.min(1, Math.max(0, Number(req.body?.volume ?? project.music?.volume ?? 0.3)));
+    const autoDuck = req.body?.autoDuck === undefined ? (project.music?.autoDuck ?? true) : Boolean(req.body.autoDuck);
+    const updated = writeProject(req.ctx.dataDir, { ...project, music: { path, volume, autoDuck } });
+    return res.json({ ok: true, project: updated });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
 router.post("/:id/render", async (req, res) => {
   try {
     const project = readProject(req.ctx.dataDir, req.params.id);
@@ -267,14 +282,19 @@ router.post("/:id/render", async (req, res) => {
       render: { jobId: job.jobId, outputPath: null, status: "running" },
     });
 
+    const audioPath = project.source?.audioPath;
+    const audioDurationSec = await probeAudioDurationSec(audioPath);
     runStoryRender({
       jobId: job.jobId,
       scenes,
       words: project.transcript?.words || [],
-      audioPath: project.source?.audioPath,
+      audioPath,
       musicPath: project.music?.path || null,
+      musicVolume: project.music?.volume ?? 0.3,
+      autoDuck: project.music?.autoDuck ?? true,
       width: 1080, height: 1920,
       outPath,
+      audioDurationSec: audioDurationSec || undefined,
     }).then((r) => {
       const fresh = readProject(req.ctx.dataDir, project.projectId);
       if (!fresh) return;
