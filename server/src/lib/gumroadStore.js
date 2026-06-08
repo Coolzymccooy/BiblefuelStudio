@@ -55,6 +55,7 @@ export function upsertGumroadPack(dataDir, userId, input) {
   const freeTitle = String(input?.freeTitle || "").trim();
   const paidTitle = String(input?.paidTitle || "").trim();
   if (!freeTitle) throw new Error("freeTitle required");
+  if (!paidTitle) throw new Error("paidTitle required");
   const freeMarkdown = String(input?.freeMarkdown || "");
   const paidMarkdown = String(input?.paidMarkdown || "");
   const now = input?.now || new Date().toISOString();
