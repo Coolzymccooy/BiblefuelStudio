@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseFreeDevotional } from '../gumroadToTimeline';
+import { parseFreeDevotional, evenDistributeWords, extractTranscript } from '../gumroadToTimeline';
 
 const FREE_MD = `# 7 Bible Verses for Anxiety & Fear
 
@@ -49,8 +49,6 @@ describe('parseFreeDevotional', () => {
     expect(parseFreeDevotional('')).toEqual({ narrationText: '', lines: [] });
   });
 });
-
-import { evenDistributeWords, extractTranscript } from '../gumroadToTimeline';
 
 describe('evenDistributeWords', () => {
   it('spreads N words evenly across the duration, monotonically', () => {
