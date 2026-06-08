@@ -1,11 +1,29 @@
 import { useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useNavigate } from 'react-router-dom';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { api } from '../lib/api';
 import { useAuth } from '../hooks/useAuth';
 import toast from 'react-hot-toast';
+import { parseFreeDevotional, extractTranscript } from '../lib/gumroadToTimeline';
+import { saveJson, STORAGE_KEYS } from '../lib/storage';
+
+/**
+ * Read an audio file's duration (seconds) by loading its metadata in a detached
+ * <Audio> element. Resolves 0 if the metadata can't be read, in which case the
+ * caller falls back to a rate-based estimate.
+ */
+function getAudioDurationSec(url: string): Promise<number> {
+    return new Promise((resolve) => {
+        const audio = new Audio();
+        audio.preload = 'metadata';
+        const finish = (v: number) => resolve(Number.isFinite(v) && v > 0 ? v : 0);
+        audio.onloadedmetadata = () => finish(audio.duration);
+        audio.onerror = () => finish(0);
+        audio.src = url;
+    });
+}
 
 export function GumroadPage() {
     const { isSuperAdmin, isLoading } = useAuth();
@@ -13,6 +31,8 @@ export function GumroadPage() {
     const [paidTitle, setPaidTitle] = useState('Biblefuel: 30 Days of Strength, Peace & Faith');
     const [result, setResult] = useState<{ freeMarkdown?: string; paidMarkdown?: string } | null>(null);
     const [isGenerating, setIsGenerating] = useState(false);
+    const [isSending, setIsSending] = useState(false);
+    const navigate = useNavigate();
 
     // Server-side gate (featureGate('gumroad')) already 403s non-super-admin
     // calls. Mirror that here so a direct URL hit doesn't show a broken page.
@@ -42,6 +62,47 @@ export function GumroadPage() {
 
     const handleDownloadZip = () => {
         api.download('/api/gumroad/download.zip');
+    };
+
+    const sendToTimeline = async () => {
+        if (!result?.freeMarkdown) return;
+        const { narrationText, lines } = parseFreeDevotional(result.freeMarkdown);
+        if (!narrationText) {
+            toast.error('Nothing to narrate in the free devotional');
+            return;
+        }
+        setIsSending(true);
+        const toastId = toast.loading('Narrating devotional…');
+        try {
+            const response = await api.post('/api/tts/synthesize-category', {
+                text: narrationText,
+                category: 'devotional',
+                withTimestamps: true,
+            });
+            if (!response.ok || !response.data?.file) {
+                toast.error(response.error || 'Narration failed', { id: toastId });
+                return;
+            }
+            const file = response.data.file as string;
+            const durationSec = await getAudioDurationSec(api.mediaUrl(file));
+            const transcript = extractTranscript(response.data, narrationText, durationSec);
+
+            // Seed the Timeline (Sermon Clip Studio) state. Clearing the Main
+            // Assembly clips is REQUIRED: Timeline reads clips[0] as a render
+            // trim, so a stale clip would silently crop our narration.
+            saveJson(STORAGE_KEYS.timelineClips, []);
+            saveJson(STORAGE_KEYS.sclSourcePath, file);
+            saveJson(STORAGE_KEYS.sclSourceKind, 'audio');
+            saveJson(STORAGE_KEYS.sclTranscript, transcript);
+            saveJson(STORAGE_KEYS.sclEditedLines, lines);
+
+            toast.success('Sent to Timeline — pick a background and render', { id: toastId });
+            navigate('/app/timeline');
+        } catch {
+            toast.error('Narration failed', { id: toastId });
+        } finally {
+            setIsSending(false);
+        }
     };
 
     return (
@@ -92,6 +153,19 @@ export function GumroadPage() {
                             <pre className="bg-black/30 border border-white/10 text-gray-200 p-4 rounded overflow-auto text-sm whitespace-pre-wrap">
                                 {result.freeMarkdown}
                             </pre>
+                            <div className="mt-3">
+                                <Button
+                                    onClick={sendToTimeline}
+                                    isLoading={isSending}
+                                    className="w-full sm:w-auto"
+                                >
+                                    Send to Timeline
+                                </Button>
+                                <p className="text-xs text-gray-500 mt-2">
+                                    Narrates this devotional and opens the Timeline editor — pick a
+                                    background and render a captioned video.
+                                </p>
+                            </div>
                         </Card>
                     )}
 
