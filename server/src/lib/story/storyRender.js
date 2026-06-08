@@ -3,26 +3,42 @@ import { buildWordDrawtext } from "../videoFilters.js";
 import { kenBurnsFilter } from "../kenBurns.js";
 import { markRunning, markProgress, markDone, markError } from "../renderJobs.js";
 
-/** Convert scenes' ms windows into per-scene second durations. */
-export function sceneSegmentsSec(scenes) {
-  return scenes.map((s) => ({
-    id: s.id,
-    durationSec: Math.max(0.1, (s.endMs - s.startMs) / 1000),
-    imagePath: s.imagePath,
-  }));
+/**
+ * Per-scene display durations. Scenes are made CONTIGUOUS: scene i shows from
+ * its start until scene i+1 starts (scene 0 starts at 0), and the last scene
+ * stretches to audioDurationSec — so the video timeline equals the audio
+ * timeline and the absolute-timed captions stay in sync. Falls back to the last
+ * scene's word-span end when audioDurationSec is absent.
+ */
+export function sceneSegmentsSec(scenes, audioDurationSec) {
+  const total = Number(audioDurationSec);
+  const useTotal = Number.isFinite(total) && total > 0;
+  const lastEndMs = scenes.length ? scenes[scenes.length - 1].endMs : 0;
+  const finalMs = useTotal ? total * 1000 : lastEndMs;
+  return scenes.map((s, i) => {
+    const startMs = i === 0 ? 0 : s.startMs;
+    const nextMs = i < scenes.length - 1 ? scenes[i + 1].startMs : finalMs;
+    return {
+      id: s.id,
+      durationSec: Math.max(0.1, (nextMs - startMs) / 1000),
+      imagePath: s.imagePath,
+    };
+  });
 }
 
 /**
  * Build the FFmpeg argv for an N-scene story video.
  * @returns {{args:string[], totalDurationSec:number}}
  */
-export function buildStoryFfmpegArgs({ scenes, words, audioPath, musicPath, width, height, outPath }) {
+export function buildStoryFfmpegArgs({ scenes, words, audioPath, musicPath, musicVolume, autoDuck, width, height, outPath, audioDurationSec }) {
   if (!scenes.length) throw new Error("story render: no scenes");
   for (const s of scenes) {
     if (!s.imagePath) throw new Error(`story render: scene ${s.id} missing image`);
   }
-  const segs = sceneSegmentsSec(scenes);
-  const totalDurationSec = Number((scenes[scenes.length - 1].endMs / 1000).toFixed(3));
+  const segs = sceneSegmentsSec(scenes, audioDurationSec);
+  const totalDurationSec = (Number.isFinite(audioDurationSec) && audioDurationSec > 0)
+    ? Number(Number(audioDurationSec).toFixed(3))
+    : Number((scenes[scenes.length - 1].endMs / 1000).toFixed(3));
 
   const args = ["-y"];
   segs.forEach((seg) => {
@@ -65,10 +81,21 @@ export function buildStoryFfmpegArgs({ scenes, words, audioPath, musicPath, widt
 
   let audioMap;
   if (musicInputIdx >= 0) {
-    filterParts.push(
-      `[${musicInputIdx}:a]volume=0.3[mlow];` +
-        `[${audioInputIdx}:a][mlow]amix=inputs=2:duration=first:dropout_transition=2[aout]`,
-    );
+    const vol = Math.min(1, Math.max(0, Number(musicVolume ?? 0.3)));
+    if (autoDuck) {
+      filterParts.push(
+        `[${audioInputIdx}:a]asplit=2[v1][v2];` +
+          `[${musicInputIdx}:a]volume=${vol}[m1];` +
+          `[m1][v1]sidechaincompress=threshold=0.01:ratio=12:attack=5:release=350:makeup=2[ducked];` +
+          `[v2][ducked]amix=inputs=2:duration=first:dropout_transition=2[aout]`,
+      );
+    } else {
+      filterParts.push(
+        `[${audioInputIdx}:a]volume=1[a1];` +
+          `[${musicInputIdx}:a]volume=${vol}[m1];` +
+          `[a1][m1]amix=inputs=2:duration=first:dropout_transition=2[aout]`,
+      );
+    }
     audioMap = "[aout]";
   } else {
     audioMap = `${audioInputIdx}:a`;
@@ -95,11 +122,11 @@ export function buildStoryFfmpegArgs({ scenes, words, audioPath, musicPath, widt
  * Spawn FFmpeg for a story render, wiring progress into the job registry.
  * Resolves with { ok, file } / { ok:false, error }.
  */
-export function runStoryRender({ jobId, scenes, words, audioPath, musicPath, width, height, outPath }) {
+export function runStoryRender({ jobId, scenes, words, audioPath, musicPath, musicVolume, autoDuck, width, height, outPath, audioDurationSec }) {
   return new Promise((resolve) => {
     let built;
     try {
-      built = buildStoryFfmpegArgs({ scenes, words, audioPath, musicPath, width, height, outPath });
+      built = buildStoryFfmpegArgs({ scenes, words, audioPath, musicPath, musicVolume, autoDuck, width, height, outPath, audioDurationSec });
     } catch (err) {
       markError(jobId, err?.message || err);
       return resolve({ ok: false, error: String(err?.message || err) });
@@ -129,6 +156,24 @@ export function runStoryRender({ jobId, scenes, words, audioPath, musicPath, wid
         markError(jobId, `ffmpeg exited ${code}: ${stderrTail.slice(-400)}`);
         resolve({ ok: false, error: `ffmpeg exited ${code}` });
       }
+    });
+  });
+}
+
+/** Probe an audio file's duration in seconds via ffprobe. Resolves null on failure. */
+export function probeAudioDurationSec(filePath) {
+  return new Promise((resolve) => {
+    const ffprobe = process.env.FFPROBE_PATH?.trim() || "ffprobe";
+    const proc = spawn(ffprobe, [
+      "-v", "error", "-show_entries", "format=duration",
+      "-of", "default=noprint_wrappers=1:nokey=1", filePath,
+    ]);
+    let out = "";
+    proc.stdout.on("data", (d) => { out += d.toString(); });
+    proc.on("error", () => resolve(null));
+    proc.on("close", () => {
+      const sec = Number(String(out).trim());
+      resolve(Number.isFinite(sec) && sec > 0 ? sec : null);
     });
   });
 }

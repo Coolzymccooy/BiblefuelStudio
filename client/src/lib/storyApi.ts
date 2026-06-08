@@ -4,6 +4,7 @@ import type { StoryProject, StoryProjectSummary, StoryScene } from './storyTypes
 // Generating ~30 images can run for minutes; reuse a generous ceiling.
 const GENERATE_IMAGES_TIMEOUT_MS = 15 * 60_000;
 const SCRIPT_TO_AUDIO_TIMEOUT_MS = 2 * 60_000;
+const PROCESS_TIMEOUT_MS = 60_000;
 
 function unwrapProject(res: { ok: boolean; data?: any; error?: string }): StoryProject {
   if (!res.ok || !res.data?.project) throw new Error(res.error || res.data?.error || 'Request failed');
@@ -47,6 +48,12 @@ export const storyApi = {
     return unwrapProject(await api.patch(`/api/story/${id}/scenes/${sceneId}`, patch));
   },
 
+  async setMusic(id: string, music: { path: string | null; volume: number; autoDuck: boolean }): Promise<StoryProject> {
+    const res = await api.patch(`/api/story/${id}/music`, music);
+    if (!res.ok || !res.data?.project) throw new Error(res.error || 'Failed to set music');
+    return res.data.project as StoryProject;
+  },
+
   async render(id: string): Promise<StoryProject> {
     return unwrapProject(await api.post(`/api/story/${id}/render`, {}));
   },
@@ -69,5 +76,10 @@ export const storyApi = {
     const res = await api.post('/api/story/script-to-audio', { idea, templateId, voiceId }, undefined, { timeout: SCRIPT_TO_AUDIO_TIMEOUT_MS });
     if (!res.ok || !res.data?.file) throw new Error(res.error || 'Voice generation failed');
     return res.data.file as string;
+  },
+
+  async process(id: string, mediaPath: string): Promise<void> {
+    const res = await api.post(`/api/story/${id}/process`, { mediaPath }, undefined, { timeout: PROCESS_TIMEOUT_MS });
+    if (!res.ok) throw new Error(res.error || 'Failed to start processing');
   },
 };

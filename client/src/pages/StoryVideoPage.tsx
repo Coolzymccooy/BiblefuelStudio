@@ -11,6 +11,7 @@ import {
 import { StylePicker } from '../components/story/StylePicker';
 import { SceneCard } from '../components/story/SceneCard';
 import { ProjectHistory } from '../components/story/ProjectHistory';
+import { MusicControl } from '../components/story/MusicControl';
 import { RenderProgressOverlay } from '../components/RenderProgressOverlay';
 import { MediaTrimmer } from '../components/MediaTrimmer';
 import { ScriptForm } from '../components/story/ScriptForm';
@@ -83,12 +84,10 @@ export function StoryVideoPage() {
     try {
       const created = await storyApi.createProject(title || defaultTitle, style);
       setActive(created.projectId);
-      await storyApi.transcribe(created.projectId, audioPath);
-      await storyApi.segment(created.projectId);
-      await storyApi.generateImages(created.projectId);
+      await storyApi.process(created.projectId, audioPath);
       setPendingAudio(null);
       qc.invalidateQueries({ queryKey: ['story-project', created.projectId] });
-      toast.success('Scenes ready — review below');
+      toast.success('Generating on the server — you can leave this page');
     } catch (e) {
       toast.error((e as Error).message || 'Something went wrong');
       refresh();
@@ -119,25 +118,30 @@ export function StoryVideoPage() {
     finally { setBusy(false); }
   };
 
+  const onMusicChange = async (next: { path: string | null; volume: number; autoDuck?: boolean }) => {
+    if (!projectId) return;
+    try {
+      await storyApi.setMusic(projectId, { path: next.path, volume: next.volume, autoDuck: next.autoDuck ?? true });
+      refresh();
+    } catch (e) { toast.error((e as Error).message); }
+  };
+
   // Re-drive an interrupted pipeline from whatever stage the project is in.
   const resume = async () => {
     if (!projectId || busy) return;
     setBusy(true);
     try {
-      let p = await storyApi.getProject(projectId);
-      if (!p.transcript.words.length) {
-        toast.error('Upload was interrupted — please upload again.');
+      const p = await storyApi.getProject(projectId);
+      const audioPath = p.source?.audioPath;
+      if (!audioPath) {
+        toast.error('Upload was interrupted — please start again.');
         setActive(null);
         return;
       }
-      if (p.scenes.length === 0) {
-        p = await storyApi.segment(projectId);
-      }
       if (p.status === 'rendering') {
-        // An interrupted render: re-encode from the already-cached scenes.
         await storyApi.render(projectId);
       } else {
-        await storyApi.generateImages(projectId);
+        await storyApi.process(projectId, audioPath);
       }
       qc.invalidateQueries({ queryKey: ['story-project', projectId] });
       toast.success('Resumed');
@@ -149,7 +153,7 @@ export function StoryVideoPage() {
   };
 
   const step = project ? deriveStep(project) : 1;
-  const stalled = project ? isStalled(project, busy) : false;
+  const stalled = project ? isStalled(project, Date.now()) : false;
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-6">
@@ -295,6 +299,7 @@ export function StoryVideoPage() {
           {project.scenes.map((s) => (
             <SceneCard key={s.id} scene={s} onPatch={onPatch} onRegenerate={onRegenerate} busy={busy} />
           ))}
+          <MusicControl music={project.music ?? { path: null, volume: 0.3, autoDuck: true }} onChange={onMusicChange} busy={busy} />
           <button
             onClick={onRender}
             disabled={!canRender(project) || busy}

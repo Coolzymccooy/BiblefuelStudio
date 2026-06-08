@@ -26,7 +26,7 @@ export interface StoryProject {
   source: { audioPath: string | null; durationMs: number };
   transcript: { words: StoryWord[]; hash: string | null };
   scenes: StoryScene[];
-  music: { path: string | null; volume: number };
+  music: { path: string | null; volume: number; autoDuck?: boolean };
   captionPreset: string;
   render: { jobId: string | null; outputPath: string | null; status: string | null };
   error: string | null;

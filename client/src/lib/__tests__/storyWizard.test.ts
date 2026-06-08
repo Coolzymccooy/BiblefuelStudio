@@ -100,21 +100,18 @@ describe('imageCounts', () => {
 });
 
 describe('isStalled', () => {
-  it('true when a client-driven stage has no client driving it', () => {
-    expect(isStalled(project({ status: 'generating_images' }), false)).toBe(true);
-    expect(isStalled(project({ status: 'transcribing' }), false)).toBe(true);
-    expect(isStalled(project({ status: 'segmenting' }), false)).toBe(true);
+  const now = 1_000_000_000_000;
+  it('true when a transient status has gone stale (server likely died)', () => {
+    expect(isStalled(project({ status: 'generating_images', updatedAt: now - 200_000 }), now)).toBe(true);
+    expect(isStalled(project({ status: 'transcribing', updatedAt: now - 200_000 }), now)).toBe(true);
   });
-  it('false while the client is actively driving (busy)', () => {
-    expect(isStalled(project({ status: 'generating_images' }), true)).toBe(false);
+  it('false while a transient status is still fresh (server actively working)', () => {
+    expect(isStalled(project({ status: 'generating_images', updatedAt: now - 5_000 }), now)).toBe(false);
   });
-  it('false for rendering — it is server-driven, not client-orchestrated', () => {
-    expect(isStalled(project({ status: 'rendering' }), false)).toBe(false);
-  });
-  it('false for stable statuses', () => {
-    expect(isStalled(project({ status: 'ready_to_render' }), false)).toBe(false);
-    expect(isStalled(project({ status: 'done' }), false)).toBe(false);
-    expect(isStalled(project({ status: 'error' }), false)).toBe(false);
+  it('false for non-transient statuses regardless of age', () => {
+    expect(isStalled(project({ status: 'ready_to_render', updatedAt: 0 }), now)).toBe(false);
+    expect(isStalled(project({ status: 'done', updatedAt: 0 }), now)).toBe(false);
+    expect(isStalled(project({ status: 'error', updatedAt: 0 }), now)).toBe(false);
   });
 });
 

@@ -40,9 +40,7 @@ describe('StoryVideoPage', () => {
   function mockPipeline() {
     vi.spyOn(storyApi, 'createProject').mockResolvedValue(mkDraft());
     vi.spyOn(storyApi, 'getProject').mockResolvedValue(mkDraft());
-    vi.spyOn(storyApi, 'segment').mockResolvedValue(mkDraft());
-    vi.spyOn(storyApi, 'generateImages').mockResolvedValue(mkDraft());
-    return vi.spyOn(storyApi, 'transcribe').mockResolvedValue(mkDraft());
+    return vi.spyOn(storyApi, 'process').mockResolvedValue(undefined);
   }
   function pickFile() {
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
@@ -69,23 +67,24 @@ describe('StoryVideoPage', () => {
     expect(await screen.findByDisplayValue('a')).toBeInTheDocument();
   });
 
-  it('shows a Resume button for an interrupted (transient, idle) project and re-drives it', async () => {
+  it('shows a Resume button for an interrupted (transient, stale) project and re-drives it', async () => {
     localStorage.setItem('BF_STORY_ACTIVE', 'p2');
+    const now = Date.now();
     const proj = {
       projectId: 'p2', title: 'T', style: 'cinematic-bible', status: 'generating_images',
       source: { audioPath: 'a', durationMs: 8000 },
       transcript: { words: [{ text: 'w', startMs: 0, endMs: 500 }], hash: 'h' },
       scenes: [{ id: 'scene-001', text: 'a', startMs: 0, endMs: 8000, imagePrompt: 'p', imagePath: null, imageUrl: null, imageStatus: 'pending', promptEditedByUser: false }],
       music: { path: null, volume: 0.3 }, captionPreset: 'default',
-      render: { jobId: null, outputPath: null, status: null }, error: null, createdAt: 0, updatedAt: 0,
+      render: { jobId: null, outputPath: null, status: null }, error: null, createdAt: 0, updatedAt: now - 200_000,
     };
     vi.spyOn(storyApi, 'getProject').mockResolvedValue(proj as any);
-    const gen = vi.spyOn(storyApi, 'generateImages').mockResolvedValue(proj as any);
+    const proc = vi.spyOn(storyApi, 'process').mockResolvedValue(undefined);
     const { default: userEvent } = await import('@testing-library/user-event');
     renderPage();
     const btn = await screen.findByRole('button', { name: /resume/i });
     await userEvent.click(btn);
-    expect(gen).toHaveBeenCalledWith('p2');
+    expect(proc).toHaveBeenCalledWith('p2', 'a');
   });
 
   it('upload control is a real button wired to a hidden file input (regression: click opens chooser)', () => {
@@ -106,31 +105,31 @@ describe('StoryVideoPage', () => {
 
   it('after picking a file, shows the ready panel — NOT an immediate transcribe', async () => {
     vi.spyOn(storyApi, 'uploadAudio').mockResolvedValue('/out/full.mp3');
-    const transcribe = mockPipeline();
+    mockPipeline();
     renderPage();
     pickFile();
     expect(await screen.findByRole('button', { name: /use full audio/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /trim audio/i })).toBeInTheDocument();
-    expect(transcribe).not.toHaveBeenCalled();
+    expect(storyApi.process).not.toHaveBeenCalled();
   });
 
   it('"Use full audio" runs the pipeline with the uploaded path', async () => {
     vi.spyOn(storyApi, 'uploadAudio').mockResolvedValue('/out/full.mp3');
-    const transcribe = mockPipeline();
+    mockPipeline();
     renderPage();
     pickFile();
     await userEvent.click(await screen.findByRole('button', { name: /use full audio/i }));
-    await waitFor(() => expect(transcribe).toHaveBeenCalledWith('np', '/out/full.mp3'));
+    await waitFor(() => expect(storyApi.process).toHaveBeenCalledWith('np', '/out/full.mp3'));
   });
 
   it('"Trim audio" → apply runs the pipeline with the trimmed path', async () => {
     vi.spyOn(storyApi, 'uploadAudio').mockResolvedValue('/out/full.mp3');
-    const transcribe = mockPipeline();
+    mockPipeline();
     renderPage();
     pickFile();
     await userEvent.click(await screen.findByRole('button', { name: /trim audio/i }));
     await userEvent.click(await screen.findByRole('button', { name: /trimmer-apply/i }));
-    await waitFor(() => expect(transcribe).toHaveBeenCalledWith('np', '/out/trimmed.mp3'));
+    await waitFor(() => expect(storyApi.process).toHaveBeenCalledWith('np', '/out/trimmed.mp3'));
   });
 
   it('upload error returns to the form (no ready panel)', async () => {

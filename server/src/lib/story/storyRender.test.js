@@ -75,4 +75,50 @@ describe("storyRender arg building", () => {
       /missing image/i,
     );
   });
+
+  const GAPPY = [
+    { id: "scene-001", startMs: 500, endMs: 7000, imagePath: "/a.png" },
+    { id: "scene-002", startMs: 9000, endMs: 15000, imagePath: "/b.png" },
+    { id: "scene-003", startMs: 17000, endMs: 20000, imagePath: "/c.png" },
+  ];
+
+  test("sceneSegmentsSec makes scenes contiguous and covers the full audio length", () => {
+    const segs = sceneSegmentsSec(GAPPY, 25);
+    assert.deepEqual(segs.map((s) => s.durationSec), [9, 8, 8]);
+    const sum = segs.reduce((a, s) => a + s.durationSec, 0);
+    assert.equal(Number(sum.toFixed(3)), 25);
+  });
+
+  test("output -t uses the audio length when provided, scene-end as fallback", () => {
+    const withAudio = buildStoryFfmpegArgs({
+      scenes: GAPPY, words: WORDS, audioPath: "/v.mp3", musicPath: null,
+      width: 1080, height: 1920, outPath: "/o.mp4", audioDurationSec: 25,
+    });
+    const tIdx1 = withAudio.args.indexOf("-t");
+    assert.equal(withAudio.args[tIdx1 + 1], "25.000");
+
+    const noAudio = buildStoryFfmpegArgs({
+      scenes: GAPPY, words: WORDS, audioPath: "/v.mp3", musicPath: null,
+      width: 1080, height: 1920, outPath: "/o.mp4",
+    });
+    const tIdx2 = noAudio.args.indexOf("-t");
+    assert.equal(noAudio.args[tIdx2 + 1], "20.000");
+  });
+
+  test("autoduck builds a sidechaincompress chain; without it a plain amix", () => {
+    const fcOf = (extra) => {
+      const { args } = buildStoryFfmpegArgs({
+        scenes: GAPPY, words: WORDS, audioPath: "/v.mp3", musicPath: "/m.mp3",
+        width: 1080, height: 1920, outPath: "/o.mp4", audioDurationSec: 25, ...extra,
+      });
+      return args[args.indexOf("-filter_complex") + 1];
+    };
+    const ducked = fcOf({ autoDuck: true, musicVolume: 0.25 });
+    assert.match(ducked, /sidechaincompress/);
+    assert.match(ducked, /volume=0\.25/);
+    const flat = fcOf({ autoDuck: false, musicVolume: 0.4 });
+    assert.doesNotMatch(flat, /sidechaincompress/);
+    assert.match(flat, /amix=inputs=2/);
+    assert.match(flat, /volume=0\.4/);
+  });
 });
