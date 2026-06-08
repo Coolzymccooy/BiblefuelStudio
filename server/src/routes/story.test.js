@@ -237,4 +237,58 @@ describe("story routes", () => {
     assert.equal(res.statusCode, 400);
     assert.equal(res.payload.ok, false);
   });
+
+  test("runStoryPipeline drives a project from a transcript to ready_to_render", async () => {
+    const { runStoryPipeline } = await import("./story.js");
+    const create = mockReqRes({ body: { title: "T", style: "cinematic-bible" }, dataDir, outputDir });
+    await handlerFor("post", "/")(create.req, create.res);
+    const id = create.res.payload.project.projectId;
+    const ffs = await import("fs");
+    const fpath = await import("path");
+    const audio = fpath.join(outputDir, "voice.mp3");
+    ffs.writeFileSync(audio, "ID3");
+    _setTranscribeImpl(async () => ({ words: Array.from({ length: 12 }, (_, i) => ({ text: `w${i}`, startMs: i * 1000, endMs: i * 1000 + 800 })) }));
+    _setLlmImpl(async () => JSON.stringify({ scenes: [{ text: "a", startWordIndex: 0, endWordIndex: 5, imagePrompt: "p" }, { text: "b", startWordIndex: 6, endWordIndex: 11, imagePrompt: "q" }] }));
+    _setImageGenImpl(async () => ({ ok: true, path: "/img.png", publicUrl: "/outputs/img.png" }));
+    try {
+      await runStoryPipeline({ dataDir, outputDir }, id, audio);
+      const p = readProject(dataDir, id);
+      assert.equal(p.status, "ready_to_render");
+      assert.equal(p.scenes.length, 2);
+      assert.equal(p.scenes.every((s) => s.imageStatus === "done"), true);
+    } finally {
+      _resetTranscribeImpl(); _resetLlmImpl(); _resetImageGenImpl();
+    }
+  });
+
+  test("runStoryPipeline is re-entrant — skips transcription when a transcript exists", async () => {
+    const { runStoryPipeline } = await import("./story.js");
+    const fpath = await import("path");
+    const create = mockReqRes({ body: { title: "T", style: "cinematic-bible" }, dataDir, outputDir });
+    await handlerFor("post", "/")(create.req, create.res);
+    const id = create.res.payload.project.projectId;
+    const proj = readProject(dataDir, id);
+    writeProject(dataDir, { ...proj, transcript: { words: Array.from({ length: 8 }, (_, i) => ({ text: `w${i}`, startMs: i * 1000, endMs: i * 1000 + 800 })), hash: "h" } });
+    let transcribeCalls = 0;
+    _setTranscribeImpl(async () => { transcribeCalls += 1; return { words: [] }; });
+    _setLlmImpl(async () => JSON.stringify({ scenes: [{ text: "a", startWordIndex: 0, endWordIndex: 7, imagePrompt: "p" }] }));
+    _setImageGenImpl(async () => ({ ok: true, path: "/img.png", publicUrl: "/o/img.png" }));
+    try {
+      await runStoryPipeline({ dataDir, outputDir }, id, fpath.join(outputDir, "nope.mp3"));
+      assert.equal(transcribeCalls, 0);
+      assert.equal(readProject(dataDir, id).status, "ready_to_render");
+    } finally {
+      _resetTranscribeImpl(); _resetLlmImpl(); _resetImageGenImpl();
+    }
+  });
+
+  test("POST /:id/process returns ok immediately and rejects an out-of-scope mediaPath", async () => {
+    const create = mockReqRes({ body: { title: "T", style: "cinematic-bible" }, dataDir, outputDir });
+    await handlerFor("post", "/")(create.req, create.res);
+    const id = create.res.payload.project.projectId;
+    const evil = process.platform === "win32" ? "C:\\Windows\\System32\\drivers\\etc\\hosts" : "/etc/passwd";
+    const bad = mockReqRes({ params: { id }, body: { mediaPath: evil }, dataDir, outputDir });
+    await handlerFor("post", "/:id/process")(bad.req, bad.res);
+    assert.equal(bad.res.statusCode, 403);
+  });
 });

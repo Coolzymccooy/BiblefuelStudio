@@ -30,6 +30,83 @@ let _ttsFn = synthesizeEdgeTts;
 export function _setTtsImpl(impl) { _ttsFn = impl; }
 export function _resetTtsImpl() { _ttsFn = synthesizeEdgeTts; }
 
+// Confine a user-supplied mediaPath to the caller's own dirs (anti path-traversal).
+function confineMediaPath(ctx, rawMediaPath) {
+  const raw = String(rawMediaPath || "").trim();
+  if (!raw) return { ok: false, status: 400, error: "mediaPath required" };
+  const resolved = path.resolve(raw);
+  const roots = [path.resolve(ctx.outputDir), path.resolve(ctx.dataDir)];
+  const within = roots.some((r) => resolved === r || resolved.startsWith(r + path.sep));
+  if (!within) return { ok: false, status: 403, error: "mediaPath is outside the allowed directory" };
+  if (!fs.existsSync(resolved)) return { ok: false, status: 400, error: "mediaPath not found" };
+  return { ok: true, path: resolved };
+}
+
+// --- Pipeline stages (re-entrant). ctx = { dataDir, outputDir }. ---
+async function transcribeStage(ctx, projectId, mediaPath) {
+  const project = readProject(ctx.dataDir, projectId);
+  if (!project) throw new Error("project not found");
+  if (project.transcript?.words?.length) {
+    return writeProject(ctx.dataDir, { ...project, status: STORY_STATUS.SEGMENTING });
+  }
+  writeProject(ctx.dataDir, { ...project, status: STORY_STATUS.TRANSCRIBING, error: null });
+  const isVideo = VIDEO_EXT.has(path.extname(mediaPath).toLowerCase());
+  const audioPath = isVideo ? await extractAudioToMp3(mediaPath, ctx.outputDir) : mediaPath;
+  const chunks = await chunkAudioForTranscription(audioPath, ctx.outputDir, 0);
+  const transcribed = await Promise.all(
+    chunks.map(async (c) => ({ offsetMs: c.offsetMs, transcription: await _transcribeFn(c.path) })),
+  );
+  const stitched = stitchTranscriptions(transcribed);
+  if (!stitched.words.length) {
+    writeProject(ctx.dataDir, { ...readProject(ctx.dataDir, projectId), status: STORY_STATUS.ERROR, error: "transcription returned no words" });
+    throw new Error("Transcription returned no words");
+  }
+  const durationMs = stitched.words[stitched.words.length - 1].endMs;
+  return writeProject(ctx.dataDir, {
+    ...readProject(ctx.dataDir, projectId),
+    source: { audioPath, durationMs },
+    transcript: { words: stitched.words, hash: String(durationMs) + ":" + stitched.words.length },
+    status: STORY_STATUS.SEGMENTING,
+  });
+}
+
+async function segmentStage(ctx, projectId) {
+  const project = readProject(ctx.dataDir, projectId);
+  if (!project) throw new Error("project not found");
+  if (project.scenes?.length) {
+    return writeProject(ctx.dataDir, { ...project, status: STORY_STATUS.GENERATING_IMAGES });
+  }
+  const words = project.transcript?.words || [];
+  if (!words.length) throw new Error("no transcript to segment");
+  const scenes = await segmentScenes({ words, style: project.style });
+  return writeProject(ctx.dataDir, { ...project, scenes, status: STORY_STATUS.GENERATING_IMAGES });
+}
+
+async function imagesStage(ctx, projectId) {
+  let project = readProject(ctx.dataDir, projectId);
+  if (!project) throw new Error("project not found");
+  const scenes = [...(project.scenes || [])];
+  for (let i = 0; i < scenes.length; i++) {
+    if (scenes[i].imageStatus === "done" && scenes[i].imagePath) continue;
+    scenes[i] = { ...scenes[i], imageStatus: "generating" };
+    project = writeProject(ctx.dataDir, { ...project, scenes });
+    const result = await _imageGenFn({ seriesId: project.projectId, partNumber: i + 1, rawPrompt: scenes[i].imagePrompt, aspect: "portrait" });
+    scenes[i] = result?.ok
+      ? { ...scenes[i], imagePath: result.path, imageUrl: result.publicUrl || null, imageStatus: "done" }
+      : { ...scenes[i], imageStatus: "error" };
+    project = writeProject(ctx.dataDir, { ...project, scenes });
+  }
+  const allDone = scenes.every((s) => s.imageStatus === "done");
+  return writeProject(ctx.dataDir, { ...project, scenes, status: allDone ? STORY_STATUS.READY_TO_RENDER : STORY_STATUS.GENERATING_IMAGES });
+}
+
+/** Run the whole pipeline server-side. Awaitable; the route fires it detached. */
+export async function runStoryPipeline(ctx, projectId, mediaPath) {
+  await transcribeStage(ctx, projectId, mediaPath);
+  await segmentStage(ctx, projectId);
+  await imagesStage(ctx, projectId);
+}
+
 const router = Router();
 const VIDEO_EXT = new Set([".mp4", ".mov", ".webm", ".m4v"]);
 
@@ -77,49 +154,14 @@ router.delete("/:id", (req, res) => {
 
 router.post("/:id/transcribe", async (req, res) => {
   try {
-    const project = readProject(req.ctx.dataDir, req.params.id);
-    if (!project) return res.status(404).json({ ok: false, error: "project not found" });
-    const rawMediaPath = String(req.body?.mediaPath || "").trim();
-    if (!rawMediaPath) {
-      return res.status(400).json({ ok: false, error: "mediaPath required" });
-    }
-    // Security: confine mediaPath to the caller's own dirs so an authenticated
-    // user can't read arbitrary server files or another tenant's media.
-    const resolvedMediaPath = path.resolve(rawMediaPath);
-    const allowedRoots = [path.resolve(req.ctx.outputDir), path.resolve(req.ctx.dataDir)];
-    const withinAllowed = allowedRoots.some(
-      (root) => resolvedMediaPath === root || resolvedMediaPath.startsWith(root + path.sep),
-    );
-    if (!withinAllowed) {
-      return res.status(403).json({ ok: false, error: "mediaPath is outside the allowed directory" });
-    }
-    if (!fs.existsSync(resolvedMediaPath)) {
-      return res.status(400).json({ ok: false, error: "mediaPath not found" });
-    }
-    const mediaPath = resolvedMediaPath;
-    writeProject(req.ctx.dataDir, { ...project, status: STORY_STATUS.TRANSCRIBING, error: null });
-
-    const isVideo = VIDEO_EXT.has(path.extname(mediaPath).toLowerCase());
-    const audioPath = isVideo ? await extractAudioToMp3(mediaPath, req.ctx.outputDir) : mediaPath;
-    const chunks = await chunkAudioForTranscription(audioPath, req.ctx.outputDir, 0);
-    const transcribed = await Promise.all(
-      chunks.map(async (c) => ({ offsetMs: c.offsetMs, transcription: await _transcribeFn(c.path) })),
-    );
-    const stitched = stitchTranscriptions(transcribed);
-    if (!stitched.words.length) {
-      writeProject(req.ctx.dataDir, { ...readProject(req.ctx.dataDir, req.params.id), status: STORY_STATUS.ERROR, error: "transcription returned no words" });
-      return res.status(502).json({ ok: false, error: "Transcription returned no words" });
-    }
-    const durationMs = stitched.words[stitched.words.length - 1].endMs;
-    const updated = writeProject(req.ctx.dataDir, {
-      ...readProject(req.ctx.dataDir, req.params.id),
-      source: { audioPath, durationMs },
-      transcript: { words: stitched.words, hash: String(durationMs) + ":" + stitched.words.length },
-      status: STORY_STATUS.SEGMENTING,
-    });
+    if (!readProject(req.ctx.dataDir, req.params.id)) return res.status(404).json({ ok: false, error: "project not found" });
+    const guard = confineMediaPath(req.ctx, req.body?.mediaPath);
+    if (!guard.ok) return res.status(guard.status).json({ ok: false, error: guard.error });
+    const updated = await transcribeStage({ dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir }, req.params.id, guard.path);
     return res.json({ ok: true, project: updated });
   } catch (e) {
-    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+    const msg = String(e?.message || e);
+    return res.status(/no words/i.test(msg) ? 502 : 500).json({ ok: false, error: msg });
   }
 });
 
@@ -156,51 +198,39 @@ router.post("/script-to-audio", async (req, res) => {
 
 router.post("/:id/segment", async (req, res) => {
   try {
-    const project = readProject(req.ctx.dataDir, req.params.id);
-    if (!project) return res.status(404).json({ ok: false, error: "project not found" });
-    const words = project.transcript?.words || [];
-    if (!words.length) return res.status(400).json({ ok: false, error: "no transcript to segment" });
-    const scenes = await segmentScenes({ words, style: project.style });
-    const updated = writeProject(req.ctx.dataDir, {
-      ...project, scenes, status: STORY_STATUS.GENERATING_IMAGES,
-    });
+    const updated = await segmentStage({ dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir }, req.params.id);
     return res.json({ ok: true, project: updated });
   } catch (e) {
-    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+    const msg = String(e?.message || e);
+    const status = /not found/i.test(msg) ? 404 : /no transcript/i.test(msg) ? 400 : 500;
+    return res.status(status).json({ ok: false, error: msg });
   }
 });
 
 router.post("/:id/images", async (req, res) => {
   try {
-    let project = readProject(req.ctx.dataDir, req.params.id);
-    if (!project) return res.status(404).json({ ok: false, error: "project not found" });
-    const scenes = [...(project.scenes || [])];
-    for (let i = 0; i < scenes.length; i++) {
-      if (scenes[i].imageStatus === "done" && scenes[i].imagePath) continue;
-      scenes[i] = { ...scenes[i], imageStatus: "generating" };
-      // Persist the "generating" marker so a poll/crash sees in-flight progress.
-      project = writeProject(req.ctx.dataDir, { ...project, scenes });
-      const result = await _imageGenFn({
-        seriesId: project.projectId,
-        partNumber: i + 1,
-        rawPrompt: scenes[i].imagePrompt,
-        aspect: "portrait",
-      });
-      scenes[i] = result?.ok
-        ? { ...scenes[i], imagePath: result.path, imageUrl: result.publicUrl || null, imageStatus: "done" }
-        : { ...scenes[i], imageStatus: "error" };
-      // Persist each completed scene immediately (durability: never lose a generated image record).
-      project = writeProject(req.ctx.dataDir, { ...project, scenes });
-    }
-    const allDone = scenes.every((s) => s.imageStatus === "done");
-    const updated = writeProject(req.ctx.dataDir, {
-      ...project, scenes,
-      status: allDone ? STORY_STATUS.READY_TO_RENDER : STORY_STATUS.GENERATING_IMAGES,
-    });
+    const updated = await imagesStage({ dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir }, req.params.id);
     return res.json({ ok: true, project: updated });
   } catch (e) {
-    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+    const msg = String(e?.message || e);
+    return res.status(/not found/i.test(msg) ? 404 : 500).json({ ok: false, error: msg });
   }
+});
+
+// POST /:id/process — run transcribe -> segment -> images SERVER-SIDE, detached.
+router.post("/:id/process", (req, res) => {
+  if (!readProject(req.ctx.dataDir, req.params.id)) return res.status(404).json({ ok: false, error: "project not found" });
+  const guard = confineMediaPath(req.ctx, req.body?.mediaPath);
+  if (!guard.ok) return res.status(guard.status).json({ ok: false, error: guard.error });
+  const ctx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir };
+  const id = req.params.id;
+  runStoryPipeline(ctx, id, guard.path).catch((e) => {
+    try {
+      const fresh = readProject(ctx.dataDir, id);
+      if (fresh) writeProject(ctx.dataDir, { ...fresh, status: STORY_STATUS.ERROR, error: String(e?.message || e) });
+    } catch {}
+  });
+  return res.json({ ok: true });
 });
 
 router.post("/:id/scenes/:sid/regenerate", async (req, res) => {
