@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
@@ -6,13 +6,22 @@ import { Input } from '../components/ui/Input';
 import { api } from '../lib/api';
 import { useAuth } from '../hooks/useAuth';
 import toast from 'react-hot-toast';
-import { parseFreeDevotional, extractTranscript } from '../lib/gumroadToTimeline';
+import { parseFreeDevotionalDays, extractTranscript, type DevotionalDay } from '../lib/gumroadToTimeline';
 import { saveJson, STORAGE_KEYS } from '../lib/storage';
 
+interface GumroadRecord {
+    id: string;
+    freeTitle: string;
+    paidTitle: string;
+    freeMarkdown: string;
+    paidMarkdown: string;
+    createdAt: string;
+    updatedAt: string;
+}
+
 /**
- * Read an audio file's duration (seconds) by loading its metadata in a detached
- * <Audio> element. Resolves 0 if the metadata can't be read, in which case the
- * caller falls back to a rate-based estimate.
+ * Read an audio file's duration (seconds) via a detached <Audio> element.
+ * Resolves 0 if metadata can't be read (caller falls back to a rate estimate).
  */
 function getAudioDurationSec(url: string): Promise<number> {
     return new Promise((resolve) => {
@@ -31,8 +40,16 @@ export function GumroadPage() {
     const [paidTitle, setPaidTitle] = useState('Biblefuel: 30 Days of Strength, Peace & Faith');
     const [result, setResult] = useState<{ freeMarkdown?: string; paidMarkdown?: string } | null>(null);
     const [isGenerating, setIsGenerating] = useState(false);
-    const [isSending, setIsSending] = useState(false);
+    const [sendingDay, setSendingDay] = useState<number | null>(null);
+    const [history, setHistory] = useState<GumroadRecord[]>([]);
     const navigate = useNavigate();
+
+    const fetchHistory = useCallback(async () => {
+        const res = await api.get('/api/gumroad/history?limit=50');
+        if (res.ok && Array.isArray(res.data?.items)) setHistory(res.data.items as GumroadRecord[]);
+    }, []);
+
+    useEffect(() => { void fetchHistory(); }, [fetchHistory]);
 
     // Server-side gate (featureGate('gumroad')) already 403s non-super-admin
     // calls. Mirror that here so a direct URL hit doesn't show a broken page.
@@ -42,36 +59,26 @@ export function GumroadPage() {
     const handleGenerate = async () => {
         setIsGenerating(true);
         try {
-            const response = await api.post('/api/gumroad/generate', {
-                freeTitle,
-                paidTitle,
-            });
-
+            const response = await api.post('/api/gumroad/generate', { freeTitle, paidTitle });
             if (response.ok && response.data) {
                 setResult(response.data);
                 toast.success('Generated Gumroad packs!');
+                void fetchHistory();
             } else {
                 toast.error(response.error || 'Generation failed');
             }
-        } catch (error) {
+        } catch {
             toast.error('An error occurred');
         } finally {
             setIsGenerating(false);
         }
     };
 
-    const handleDownloadZip = () => {
-        api.download('/api/gumroad/download.zip');
-    };
+    const handleDownloadZip = () => { api.download('/api/gumroad/download.zip'); };
 
-    const sendToTimeline = async () => {
-        if (!result?.freeMarkdown) return;
-        const { narrationText, lines } = parseFreeDevotional(result.freeMarkdown);
-        if (!narrationText) {
-            toast.error('Nothing to narrate in the free devotional');
-            return;
-        }
-        setIsSending(true);
+    /** Narrate the given text and drop the user into the Timeline, render-ready. */
+    const narrateAndSendToTimeline = async (narrationText: string, lines: string[]) => {
+        if (!narrationText) { toast.error('Nothing to narrate in this day'); return; }
         const toastId = toast.loading('Narrating devotional…');
         try {
             const response = await api.post('/api/tts/synthesize-category', {
@@ -87,9 +94,8 @@ export function GumroadPage() {
             const durationSec = await getAudioDurationSec(api.mediaUrl(file));
             const transcript = extractTranscript(response.data, narrationText, durationSec);
 
-            // Seed the Timeline (Sermon Clip Studio) state. Clearing the Main
-            // Assembly clips is REQUIRED: Timeline reads clips[0] as a render
-            // trim, so a stale clip would silently crop our narration.
+            // Clearing the Main Assembly clips is REQUIRED: Timeline reads clips[0]
+            // as a render trim, so a stale clip would silently crop our narration.
             saveJson(STORAGE_KEYS.timelineClips, []);
             saveJson(STORAGE_KEYS.sclSourcePath, file);
             saveJson(STORAGE_KEYS.sclSourceKind, 'audio');
@@ -100,10 +106,32 @@ export function GumroadPage() {
             navigate('/app/timeline');
         } catch {
             toast.error('Narration failed', { id: toastId });
-        } finally {
-            setIsSending(false);
         }
     };
+
+    const sendDay = async (day: DevotionalDay) => {
+        setSendingDay(day.dayNumber);
+        try {
+            await narrateAndSendToTimeline(day.narrationText, day.lines);
+        } finally {
+            setSendingDay(null);
+        }
+    };
+
+    const loadPack = (rec: GumroadRecord) => {
+        setFreeTitle(rec.freeTitle);
+        setPaidTitle(rec.paidTitle);
+        setResult({ freeMarkdown: rec.freeMarkdown, paidMarkdown: rec.paidMarkdown });
+        toast.success('Loaded saved pack');
+    };
+
+    const deletePack = async (id: string) => {
+        const res = await api.delete(`/api/gumroad/history/${encodeURIComponent(id)}`);
+        if (res.ok) { toast.success('Deleted'); void fetchHistory(); }
+        else toast.error(res.error || 'Delete failed');
+    };
+
+    const days: DevotionalDay[] = result?.freeMarkdown ? parseFreeDevotionalDays(result.freeMarkdown) : [];
 
     return (
         <div>
@@ -116,23 +144,13 @@ export function GumroadPage() {
 
                 <div className="space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Lead magnet title
-                        </label>
-                        <Input
-                            value={freeTitle}
-                            onChange={(e) => setFreeTitle(e.target.value)}
-                        />
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Lead magnet title</label>
+                        <Input value={freeTitle} onChange={(e) => setFreeTitle(e.target.value)} />
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Paid product title
-                        </label>
-                        <Input
-                            value={paidTitle}
-                            onChange={(e) => setPaidTitle(e.target.value)}
-                        />
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Paid product title</label>
+                        <Input value={paidTitle} onChange={(e) => setPaidTitle(e.target.value)} />
                     </div>
 
                     <div className="flex flex-wrap gap-2">
@@ -146,6 +164,26 @@ export function GumroadPage() {
                 </div>
             </Card>
 
+            {history.length > 0 && (
+                <Card title="History" className="mt-6">
+                    <p className="text-xs text-gray-500 mb-3">Previously generated packs — open to revisit, or delete.</p>
+                    <div className="space-y-2">
+                        {history.map((h) => (
+                            <div key={h.id} className="flex items-center justify-between gap-3 bg-black/20 border border-white/10 rounded-lg px-3 py-2">
+                                <div className="min-w-0">
+                                    <p className="text-sm text-gray-200 truncate">{h.freeTitle}</p>
+                                    <p className="text-xs text-gray-500">{new Date(h.updatedAt || h.createdAt).toLocaleString()}</p>
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                    <Button onClick={() => loadPack(h)} className="text-xs h-8">Open</Button>
+                                    <Button onClick={() => deletePack(h.id)} variant="secondary" className="text-xs h-8">Delete</Button>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </Card>
+            )}
+
             {result && (
                 <div className="mt-6 space-y-4">
                     {result.freeMarkdown && (
@@ -153,18 +191,23 @@ export function GumroadPage() {
                             <pre className="bg-black/30 border border-white/10 text-gray-200 p-4 rounded overflow-auto text-sm whitespace-pre-wrap">
                                 {result.freeMarkdown}
                             </pre>
-                            <div className="mt-3">
-                                <Button
-                                    onClick={sendToTimeline}
-                                    isLoading={isSending}
-                                    className="w-full sm:w-auto"
-                                >
-                                    Send to Timeline
-                                </Button>
-                                <p className="text-xs text-gray-500 mt-2">
-                                    Narrates this devotional and opens the Timeline editor — pick a
-                                    background and render a captioned video.
+                            <div className="mt-4 space-y-2">
+                                <p className="text-xs text-gray-400">
+                                    Send a day to the Timeline — narrates that day and opens the editor to render a captioned video.
                                 </p>
+                                {days.map((d) => (
+                                    <div key={d.dayNumber} className="flex items-center justify-between gap-3 bg-black/20 border border-white/10 rounded-lg px-3 py-2">
+                                        <span className="text-sm text-gray-200">Day {d.dayNumber} · {d.reference}</span>
+                                        <Button
+                                            onClick={() => sendDay(d)}
+                                            isLoading={sendingDay === d.dayNumber}
+                                            disabled={sendingDay !== null}
+                                            className="text-xs h-8 shrink-0"
+                                        >
+                                            Send to Timeline
+                                        </Button>
+                                    </div>
+                                ))}
                             </div>
                         </Card>
                     )}
