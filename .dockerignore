@@ -1,0 +1,31 @@
+# Root build context (base_directory=/). Keep secrets, deps, runtime data,
+# and dev cruft OUT of the image. The client/server deps are installed fresh
+# inside the Dockerfile via `npm ci`.
+
+# Dependencies — reinstalled in-image (host binaries are wrong for linux anyway)
+**/node_modules
+
+# Secrets — NEVER copy these into the image (runtime env comes from Coolify)
+.env
+.env.*
+**/.env
+**/.env.*
+
+# Vite output is rebuilt in stage 1; don't ship the committed copy as context
+server/public
+
+# Runtime / persisted data and rendered output
+server/data
+server/outputs
+**/data.db
+**/*.db-shm
+**/*.db-wal
+
+# Local agent / worktree cruft (huge, irrelevant to the build)
+.claude
+.git
+
+# Logs and misc
+*.log
+npm-debug.log*
+server/test_output.txt
