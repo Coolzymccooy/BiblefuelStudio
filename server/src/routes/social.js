@@ -427,21 +427,20 @@ function scheduleSignature(s) {
   });
 }
 
-async function runScheduledPost(schedule) {
+export async function runScheduledPost(schedule, ctx, deps = {}) {
+  const enqueue = deps.enqueueCampaignAutoPost
+    || (await import("./jobs.js")).enqueueCampaignAutoPost;
+  const dispatch = deps.dispatchPost || dispatchPost;
   try {
     if (!schedule?.enabled) return;
 
-    // Type "auto_generate": enqueue a campaign_auto_post job that produces a
-    // fresh video (script + bg + voice + render) and fires the webhook.
     if (String(schedule.type || "replay") === "auto_generate") {
-      const { enqueueCampaignAutoPost } = await import("./jobs.js");
-      const job = await enqueueCampaignAutoPost({
+      const job = await enqueue({
         destination: schedule.destination || "webhook",
         webhookId: schedule.webhookId || undefined,
         profileIds: schedule.profileId ? [schedule.profileId] : undefined,
         title: schedule.name,
         privacyStatus: schedule.privacyStatus,
-        // Optional content knobs piggy-backed on the schedule row.
         niche: schedule.niche,
         tone: schedule.tone,
         ctaStyle: schedule.ctaStyle,
@@ -449,12 +448,11 @@ async function runScheduledPost(schedule) {
         durationSec: schedule.durationSec,
         voiceId: schedule.voiceId,
         backgroundQuery: schedule.backgroundQuery,
-      });
-      console.log(`[SOCIAL][CRON] Schedule ${schedule.id} enqueued auto_generate job ${job?.id}`);
+      }, ctx);
+      console.log(`[SOCIAL][CRON] Schedule ${schedule.id} enqueued auto_generate job ${job?.id} (owner=${ctx?.userId ?? "root"})`);
       return;
     }
 
-    // Default "replay": post an existing videoUrl through the configured destination.
     const payload = {
       destination: schedule.destination,
       caption: schedule.caption,
@@ -464,13 +462,9 @@ async function runScheduledPost(schedule) {
       title: schedule.name,
       privacyStatus: schedule.privacyStatus,
     };
-    const reqLike = {
-      headers: {},
-      protocol: "https",
-      get: () => "",
-    };
-    const result = await dispatchPost(payload, reqLike);
-    console.log(`[SOCIAL][CRON] Schedule ${schedule.id} posted successfully`, {
+    const reqLike = { headers: {}, protocol: "https", get: () => "", ctx };
+    const result = await dispatch(payload, reqLike);
+    console.log(`[SOCIAL][CRON] Schedule ${schedule.id} posted (owner=${ctx?.userId ?? "root"})`, {
       destination: schedule.destination,
       videoUrl: result?.videoUrl || "",
     });
