@@ -203,6 +203,16 @@ router.post("/generate", async (req, res) => {
           reference: segment.reference,
           chapterReference: plan.chapterReference,
         },
+      }, {
+        // Tenant isolation: stamp every series job with the caller's scope so
+        // it (a) is owned by — and visible only to — its creator (+ super-admin)
+        // and (b) renders into the creator's per-user data/output dirs. Omitting
+        // this made series jobs global/null-owner: they surfaced under the
+        // operator's Jobs list and rendered into the operator's directories.
+        dataDir: req.ctx.dataDir,
+        outputDir: req.ctx.outputDir,
+        userId: req.ctx.userId,
+        isSuperAdmin: Boolean(req.ctx.isSuperAdmin),
       });
       jobIds.push(job.id);
     }
