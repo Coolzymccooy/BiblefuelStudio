@@ -20,6 +20,8 @@ import {
     Scissors,
     History as HistoryIcon,
     RotateCcw,
+    ChevronUp,
+    ChevronDown,
 } from 'lucide-react';
 import { loadJson, saveJson, STORAGE_KEYS } from '../lib/storage';
 import { LAYOUT_OPTIONS } from '../lib/layoutOptions';
@@ -793,7 +795,7 @@ export function TimelinePage() {
     }, [clips]);
 
     return (
-        <div className="space-y-6 animate-fade-in">
+        <div className="space-y-5 animate-fade-in">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div>
                     <h2 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-primary-200">
@@ -1086,15 +1088,17 @@ export function TimelinePage() {
                     title="Rendered Captioned Video"
                     tooltip="The final sermon with kinetic captions burned onto the original video frames. Click Open to download or share."
                 >
-                    {/* Vertical (1080x1920) sermons render full-width-by-default would
-                        push the page well past the viewport on a wide column. Cap by
-                        viewport height instead and center horizontally so the whole
-                        frame is always visible without scrolling. */}
-                    <video
-                        controls
-                        src={renderedVideo}
-                        className="block mx-auto rounded-lg max-h-[70vh] w-auto max-w-full bg-black"
-                    />
+                    {/* Program monitor: a contained preview, not a hero. Vertical
+                        (1080x1920) sermons are capped to a broadcast-style monitor
+                        height and centred on a letterboxed panel so the result reads
+                        like an NLE viewer instead of dominating the page. */}
+                    <div className="flex justify-center rounded-xl bg-black/60 border border-white/[0.06] py-3 px-2">
+                        <video
+                            controls
+                            src={renderedVideo}
+                            className="block rounded-lg max-h-[360px] w-auto max-w-full bg-black shadow-lg shadow-black/40"
+                        />
+                    </div>
                     <div className="mt-3 flex gap-2">
                         <Button
                             onClick={() => setShareUrl(renderedVideo)}
@@ -1338,7 +1342,7 @@ export function TimelinePage() {
                     </Card>
                 </div>
 
-                <div className="space-y-6">
+                <div className="space-y-4">
                     {/* Video Selection — ordered list of up to MAX_BACKGROUNDS
                         clips. Render hard-cuts between them at durationSec/N each. */}
                     <Card
@@ -1370,13 +1374,13 @@ export function TimelinePage() {
                                 </span>
                             </label>
                             {backgroundItems.length > 0 ? (
-                                <div className="space-y-3">
+                                <div className="space-y-2">
                                     {backgroundItems.map((item, idx) => (
                                         <div
                                             key={`${item.id}-${idx}`}
-                                            className="flex gap-3 bg-black/30 rounded-xl p-2 border border-white/5"
+                                            className="flex items-center gap-2.5 bg-black/30 rounded-lg p-1.5 border border-white/5"
                                         >
-                                            <div className="relative w-20 aspect-[9/16] bg-black rounded-lg overflow-hidden shrink-0">
+                                            <div className="relative w-12 aspect-[9/16] bg-black rounded-md overflow-hidden shrink-0">
                                                 {item.kind === 'image' ? (
                                                     <img
                                                         src={item.previewUrl || item.url}
@@ -1393,61 +1397,57 @@ export function TimelinePage() {
                                                         className="w-full h-full object-cover"
                                                     />
                                                 )}
-                                                <span className="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-primary-500/80 text-[10px] font-bold text-white">
+                                                <span className="absolute top-0.5 left-0.5 w-4 h-4 grid place-items-center rounded bg-primary-500/85 text-[9px] font-bold text-black">
                                                     {idx + 1}
                                                 </span>
-                                                {item.kind === 'image' && (
-                                                    <span className="absolute top-1 right-1 px-1 py-0.5 rounded bg-black/70 text-[8px] uppercase tracking-wider text-gray-300">
-                                                        img
-                                                    </span>
-                                                )}
                                             </div>
-                                            <div className="flex-1 min-w-0 flex flex-col justify-between">
-                                                <p className="text-[10px] font-mono text-content-tertiary break-all line-clamp-2">
-                                                    ID: {item.id}
-                                                </p>
-                                                <div className="flex items-center gap-1">
-                                                    <Button
-                                                        variant="secondary"
-                                                        onClick={() => {
-                                                            if (idx === 0) return;
-                                                            const next = [...backgroundItems];
-                                                            [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
-                                                            setBackgroundItems(next);
-                                                        }}
-                                                        disabled={idx === 0}
-                                                        className="h-7 px-2 text-xs"
-                                                        aria-label="Move up"
-                                                    >
-                                                        ↑
-                                                    </Button>
-                                                    <Button
-                                                        variant="secondary"
-                                                        onClick={() => {
-                                                            if (idx === backgroundItems.length - 1) return;
-                                                            const next = [...backgroundItems];
-                                                            [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
-                                                            setBackgroundItems(next);
-                                                        }}
-                                                        disabled={idx === backgroundItems.length - 1}
-                                                        className="h-7 px-2 text-xs"
-                                                        aria-label="Move down"
-                                                    >
-                                                        ↓
-                                                    </Button>
-                                                    <Button
-                                                        variant="secondary"
-                                                        onClick={() =>
-                                                            setBackgroundItems(
-                                                                backgroundItems.filter((_, i) => i !== idx),
-                                                            )
-                                                        }
-                                                        className="h-7 px-2 text-xs bg-red-500/10 text-red-300 border-red-500/20 hover:bg-red-500/30"
-                                                        aria-label="Remove"
-                                                    >
-                                                        <Trash2 size={12} />
-                                                    </Button>
-                                                </div>
+                                            <span
+                                                className="flex-1 min-w-0 truncate font-mono text-[10px] text-content-tertiary"
+                                                title={`ID: ${item.id}${item.kind === 'image' ? ' (image)' : ''}`}
+                                            >
+                                                {item.id}
+                                            </span>
+                                            <div className="flex items-center gap-1 shrink-0">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        if (idx === 0) return;
+                                                        const next = [...backgroundItems];
+                                                        [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
+                                                        setBackgroundItems(next);
+                                                    }}
+                                                    disabled={idx === 0}
+                                                    aria-label="Move up"
+                                                    className="h-7 w-7 grid place-items-center rounded-md bg-white/5 text-gray-300 hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-white/5 transition-colors"
+                                                >
+                                                    <ChevronUp size={14} />
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        if (idx === backgroundItems.length - 1) return;
+                                                        const next = [...backgroundItems];
+                                                        [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
+                                                        setBackgroundItems(next);
+                                                    }}
+                                                    disabled={idx === backgroundItems.length - 1}
+                                                    aria-label="Move down"
+                                                    className="h-7 w-7 grid place-items-center rounded-md bg-white/5 text-gray-300 hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-white/5 transition-colors"
+                                                >
+                                                    <ChevronDown size={14} />
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() =>
+                                                        setBackgroundItems(
+                                                            backgroundItems.filter((_, i) => i !== idx),
+                                                        )
+                                                    }
+                                                    aria-label="Remove"
+                                                    className="h-7 w-7 grid place-items-center rounded-md bg-red-500/10 text-red-300 hover:bg-red-500/20 transition-colors"
+                                                >
+                                                    <Trash2 size={13} />
+                                                </button>
                                             </div>
                                         </div>
                                     ))}
@@ -1596,23 +1596,49 @@ export function TimelinePage() {
                         {audioHistory.length === 0 ? (
                             <p className="text-help">No audio history yet.</p>
                         ) : (
-                            <div className="space-y-2">
-                                {audioHistory.slice(0, 5).map((item) => (
-                                    <div key={item.id} className="text-xs text-content-tertiary break-all">
-                                        <div className="flex items-center gap-3">
-                                            <button onClick={() => handleAddClip(item.path, item.kind)} className="text-primary-400 hover:text-primary-300">
-                                                + Add
-                                            </button>
-                                            <button onClick={() => useAsSource(item.path)} className="text-primary-400 hover:text-primary-300">
-                                                Use as Source
-                                            </button>
-                                            <button onClick={() => useAsMusicBed(item.path)} className="text-primary-400 hover:text-primary-300">
-                                                Use as Music Bed
-                                            </button>
+                            <div className="space-y-1.5">
+                                {audioHistory.slice(0, 6).map((item) => {
+                                    const name = item.path.split(/[\\/]/).pop() || item.path;
+                                    return (
+                                        <div
+                                            key={item.id}
+                                            className="flex items-center gap-2 rounded-lg bg-black/20 border border-white/5 px-2 py-1.5"
+                                        >
+                                            <span
+                                                className="flex-1 min-w-0 truncate font-mono text-[11px] text-content-secondary"
+                                                title={item.path}
+                                            >
+                                                {name}
+                                            </span>
+                                            <div className="flex items-center gap-0.5 shrink-0">
+                                                <button
+                                                    onClick={() => handleAddClip(item.path, item.kind)}
+                                                    title="Add to assembly"
+                                                    aria-label="Add to assembly"
+                                                    className="p-1 rounded-md text-content-tertiary hover:text-primary-300 hover:bg-white/5 transition-colors"
+                                                >
+                                                    <Plus size={13} />
+                                                </button>
+                                                <button
+                                                    onClick={() => useAsSource(item.path)}
+                                                    title="Use as source"
+                                                    aria-label="Use as source"
+                                                    className="p-1 rounded-md text-content-tertiary hover:text-primary-300 hover:bg-white/5 transition-colors"
+                                                >
+                                                    <Waves size={13} />
+                                                </button>
+                                                <button
+                                                    onClick={() => useAsMusicBed(item.path)}
+                                                    title="Use as music bed"
+                                                    aria-label="Use as music bed"
+                                                    className="p-1 rounded-md text-content-tertiary hover:text-primary-300 hover:bg-white/5 transition-colors"
+                                                >
+                                                    <Music size={13} />
+                                                </button>
+                                            </div>
                                         </div>
-                                        <span className="block mt-1">{item.path}</span>
-                                    </div>
-                                ))}
+                                    );
+                                })}
                             </div>
                         )}
                     </Card>

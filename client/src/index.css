@@ -6,10 +6,26 @@
   :root {
     --content-secondary: #A8B0BC; /* ~71% lum on dark-950 — descriptions, help, subtitles */
     --content-tertiary:  #8A929E; /* ~58% lum — meta, timestamps, counts, hints */
+    /* Render native controls (select popups, scrollbars, date pickers) in dark
+       mode so the OS-drawn <option> list never renders white-on-white. */
+    color-scheme: dark;
   }
 
   html {
     font-size: 15px;
+  }
+
+  /* Native dropdowns: keep the OS-rendered option list legible on the dark
+     theme. color-scheme handles modern Chromium/Firefox; the explicit option
+     colors are a belt-and-braces fallback for engines that ignore it. */
+  select {
+    color-scheme: dark;
+  }
+
+  option,
+  optgroup {
+    background-color: #0b0c0e; /* dark-900 */
+    color: #e5e7eb;            /* gray-200 */
   }
 
   body {
