@@ -8,9 +8,10 @@ import { Select } from '../components/ui/Select';
 import { Field } from '../components/ui/Field';
 import { Section } from '../components/ui/Section';
 import { GuideSteps, type GuideStep } from '../components/ui/GuideSteps';
+import { MusicPicker } from '../components/MusicPicker';
 import { api } from '../lib/api';
 import toast from 'react-hot-toast';
-import { Play, Library, Video, CheckCircle2, ClipboardList, AudioLines, Share2, X as XIcon, Plus, ChevronUp, ChevronDown, Trash2, Sparkles, Music, Scissors } from 'lucide-react';
+import { Play, Library, Video, CheckCircle2, ClipboardList, AudioLines, Share2, X as XIcon, Plus, ChevronUp, ChevronDown, Trash2, Sparkles, Scissors } from 'lucide-react';
 import { loadJson, saveJson, STORAGE_KEYS, toOutputUrl } from '../lib/storage';
 import { LAYOUT_OPTIONS } from '../lib/layoutOptions';
 import { usePersistedState } from '../lib/usePersistedState';
@@ -72,9 +73,6 @@ export function RenderPage() {
     const [showLibraryModal, setShowLibraryModal] = useState(false);
     const [libraryItems, setLibraryItems] = useState<any[]>([]);
     const [isLoadingLibrary, setIsLoadingLibrary] = useState(false);
-    const [showMusicModal, setShowMusicModal] = useState(false);
-    const [musicItems, setMusicItems] = useState<any[]>([]);
-    const [isLoadingMusic, setIsLoadingMusic] = useState(false);
     const [trimTarget, setTrimTarget] = useState<
       | { kind: 'audio' | 'video'; path: string; apply: (p: string) => void }
       | null
@@ -87,7 +85,6 @@ export function RenderPage() {
         [],
     );
     const [isUploadingBackground, setIsUploadingBackground] = useState(false);
-    const [isUploadingMusic, setIsUploadingMusic] = useState(false);
     const [showScriptsModal, setShowScriptsModal] = useState(false);
     const [scripts, setScripts] = useState<Script[]>([]);
     const [audioHistory, setAudioHistory] = useState<AudioItem[]>([]);
@@ -461,28 +458,6 @@ export function RenderPage() {
         }
     };
 
-    const openMusicLibrary = async () => {
-        setShowMusicModal(true);
-        setIsLoadingMusic(true);
-        try {
-            const response = await api.get('/api/media/audio-list');
-            if (response.ok && response.data?.items) {
-                setMusicItems(response.data.items);
-            } else {
-                toast.error(response.error || 'Failed to load music library');
-            }
-        } catch (error) {
-            toast.error('Failed to load music library');
-        } finally {
-            setIsLoadingMusic(false);
-        }
-    };
-
-    const handleSelectMusic = (item: any) => {
-        setMusicPath(item.path || '');
-        setShowMusicModal(false);
-        toast.success('Soundtrack selected');
-    };
 
     /**
      * Toggle a library item in the ordered backgroundItems list. First click
@@ -565,39 +540,6 @@ export function RenderPage() {
         }
     };
 
-    // Upload a music bed from the user's device. Mirrors the Sermon Clip Studio
-    // flow: the file is sent to /api/media/upload-audio and the returned server
-    // path is set as the soundtrack, which the render pipeline mixes (with the
-    // volume + auto-duck controls below).
-    const handleLocalMusicUpload = async (file: File) => {
-        if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
-            toast.error(`File is ${(file.size / 1024 / 1024).toFixed(1)} MB. Max upload is ${MAX_UPLOAD_MB} MB.`);
-            return;
-        }
-        setIsUploadingMusic(true);
-        try {
-            const dataUrl: string = await new Promise((resolve, reject) => {
-                const reader = new FileReader();
-                reader.onload = () => resolve(String(reader.result));
-                reader.onerror = () => reject(reader.error);
-                reader.readAsDataURL(file);
-            });
-            const response = await api.post<{ file: string }>(
-                '/api/media/upload-audio',
-                { dataUrl, filename: file.name },
-            );
-            if (!response.ok || !response.data?.file) {
-                toast.error(response.error || 'Music upload failed');
-                return;
-            }
-            setMusicPath(response.data.file);
-            toast.success('Music uploaded');
-        } catch {
-            toast.error('Music upload failed');
-        } finally {
-            setIsUploadingMusic(false);
-        }
-    };
 
     const handleGenerateVisuals = async () => {
         const scriptLines = lines.split('\n').map((l) => l.trim()).filter(Boolean);
@@ -1217,80 +1159,15 @@ export function RenderPage() {
                                 </div>
                             )}
                         </Field>
-                        <Field label="Soundtrack" badge="Optional">
-                            <Input
-                                value={musicPath}
-                                onChange={(e) => setMusicPath(e.target.value)}
-                                placeholder="Add background music (optional)"
-                                className="bg-black/20"
-                            />
-                            <div className="grid grid-cols-2 gap-2 mt-2">
-                                <Button
-                                    onClick={openMusicLibrary}
-                                    variant="secondary"
-                                    className="h-9 text-xs border-dashed border-white/10"
-                                >
-                                    <Library size={14} className="mr-1.5" />
-                                    Music Library
-                                </Button>
-                                <label
-                                    className={`inline-flex items-center justify-center gap-1.5 h-9 text-xs rounded-md border cursor-pointer border-primary-500/30 bg-primary-500/10 text-primary-200 hover:bg-primary-500/20 ${isUploadingMusic ? 'opacity-50 cursor-not-allowed' : ''}`}
-                                >
-                                    <Music size={14} />
-                                    {isUploadingMusic ? 'Uploading…' : (musicPath ? 'Replace music' : 'Upload from device')}
-                                    <input
-                                        type="file"
-                                        className="hidden"
-                                        accept=".mp3,.wav,.m4a,.aac,.ogg"
-                                        disabled={isUploadingMusic}
-                                        onChange={(e) => {
-                                            const f = e.target.files?.[0];
-                                            if (f) handleLocalMusicUpload(f);
-                                            e.target.value = '';
-                                        }}
-                                    />
-                                </label>
-                            </div>
-                            {musicPath && (
-                                <div className="mt-2 flex items-center justify-between gap-2">
-                                  <p className="text-[10px] text-content-tertiary font-mono break-all">
-                                    {musicPath.split(/[\\/]/).pop()}
-                                  </p>
-                                  <button
-                                    type="button"
-                                    onClick={() => setTrimTarget({ kind: 'audio', path: musicPath, apply: setMusicPath })}
-                                    className="shrink-0 inline-flex items-center gap-1.5 text-[0.6875rem] px-2 py-1 rounded-md bg-white/[0.06] text-primary-200 hover:bg-white/[0.12] transition-colors"
-                                  >
-                                    <Scissors size={12} /> Trim
-                                  </button>
-                                </div>
-                            )}
-                            <p className="mt-1 text-help">
-                                Plays softly under your narration. MP3, WAV, M4A, AAC or OGG, up to {MAX_UPLOAD_MB} MB.
-                            </p>
-                        </Field>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-start">
-                            <Field label={`Music volume (${musicVolume.toFixed(2)})`}>
-                                <input
-                                    type="range"
-                                    min="0"
-                                    max="1"
-                                    step="0.05"
-                                    value={musicVolume}
-                                    onChange={(e) => setMusicVolume(Number(e.target.value))}
-                                    className="w-full accent-primary-500"
-                                />
-                            </Field>
-                            <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer pt-7">
-                                <input
-                                    type="checkbox"
-                                    checked={autoDuck}
-                                    onChange={(e) => setAutoDuck(e.target.checked)}
-                                    className="rounded border-white/10 bg-black/50 checked:bg-primary-500"
-                                />
-                                Auto-duck music under voice
-                            </label>
-                        </div>
+                        <MusicPicker
+                          value={{ path: musicPath || null, volume: musicVolume, autoDuck }}
+                          onChange={(m) => {
+                            setMusicPath(m.path || '');
+                            setMusicVolume(m.volume);
+                            setAutoDuck(m.autoDuck ?? true);
+                          }}
+                          busy={false}
+                        />
                     </Section>
 
                     <div className="flex items-center gap-2">
@@ -1678,51 +1555,6 @@ export function RenderPage() {
                                         </div>
                                     </div>
                                 ))
-                            )}
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {showMusicModal && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-                    <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShowMusicModal(false)} />
-                    <div className="relative w-full max-w-3xl max-h-[80vh] flex flex-col rounded-xl bg-dark-900/95 backdrop-blur-xl border border-white/20 shadow-2xl overflow-hidden">
-                        <div className="flex items-center justify-between p-4 border-b border-white/10 shrink-0">
-                            <h3 className="font-bold text-lg text-white">Music Library</h3>
-                            <button onClick={() => setShowMusicModal(false)} className="text-gray-500 hover:text-white">
-                                <CheckCircle2 size={24} />
-                            </button>
-                        </div>
-                        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 space-y-3">
-                            {isLoadingMusic ? (
-                                <div className="py-20 flex justify-center">
-                                    <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-primary-500" />
-                                </div>
-                            ) : musicItems.length > 0 ? (
-                                musicItems.map((item: any) => (
-                                    <div
-                                        key={item.path || item.name}
-                                        className="bg-white/5 border border-white/10 rounded-xl p-3 flex flex-col md:flex-row md:items-center gap-3"
-                                    >
-                                        <div className="flex-1 min-w-0">
-                                            <p className="text-caption">{item.name || 'Audio'}</p>
-                                            <p className="text-xs font-mono text-white/80 truncate">{item.path}</p>
-                                        </div>
-                                        <audio controls src={toOutputUrl(item.path, api.mediaBaseUrl)} className="w-full md:w-56" />
-                                        <Button
-                                            onClick={() => handleSelectMusic(item)}
-                                            className="text-xs h-8"
-                                            variant="secondary"
-                                        >
-                                            Use
-                                        </Button>
-                                    </div>
-                                ))
-                            ) : (
-                                <div className="py-20 text-center text-gray-400 text-sm">
-                                    No audio files found in outputs.
-                                </div>
                             )}
                         </div>
                     </div>

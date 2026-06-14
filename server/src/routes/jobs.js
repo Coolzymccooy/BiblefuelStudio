@@ -20,6 +20,7 @@ import { buildSocialCaption } from "../lib/socialCaption.js";
 import { ensureLocalPath } from "../lib/remoteCache.js";
 import { resolveAutoBackgrounds } from "../lib/autoBackground.js";
 import { generateBibleImage } from "../lib/imageGen/index.js";
+import { resolveLibraryTrack, defaultTrackRef } from "../lib/musicLibrary.js";
 
 const router = Router();
 let ffmpegChecked = false;
@@ -299,6 +300,8 @@ function resolveAssetPath(pathOrId) {
   if (pathOrId == null) return null;
   const normalized = String(pathOrId).trim();
   if (!normalized) return null;
+  const libTrack = resolveLibraryTrack(normalized);
+  if (libTrack) return libTrack;
   const direct = resolveOutputAlias(normalized);
   if (String(direct).startsWith("http")) return direct;
   if (fs.existsSync(direct)) return direct;
@@ -1203,6 +1206,14 @@ async function runCampaignAutoPost(payload, jobId) {
     typographyPreset: typographyPresetOverride,
   } = payload || {};
 
+  // Series + Auto-Publish auto-apply the default gospel bed when none chosen.
+  payload = {
+    ...payload,
+    musicPath: payload?.musicPath || defaultTrackRef(),
+    musicVolume: payload?.musicVolume ?? 0.3,
+    autoDuck: payload?.autoDuck ?? true,
+  };
+
   safeUpdateJob(jobId, { progress: 2 });
 
   // 1. Get a script — either prebuilt (Series Mode) or AI-generated.
@@ -1375,6 +1386,9 @@ async function runCampaignAutoPost(payload, jobId) {
       aspect,
       captionWidthPct,
       typographyPreset,
+      musicPath: payload.musicPath,
+      musicVolume: payload.musicVolume,
+      autoDuck: payload.autoDuck,
     }, jobId);
   } else {
     console.warn("[CAMPAIGN] no alignment from TTS (Edge-TTS fallback?) — using legacy line captions");
@@ -1391,6 +1405,9 @@ async function runCampaignAutoPost(payload, jobId) {
         aspect,
         captionWidthPct,
         typographyPreset,
+        musicPath: payload.musicPath,
+        musicVolume: payload.musicVolume,
+        autoDuck: payload.autoDuck,
       }, jobId);
       pickedBackground = { id: generatedImage };
     } else {
@@ -1404,6 +1421,9 @@ async function runCampaignAutoPost(payload, jobId) {
         aspect,
         captionWidthPct,
         typographyPreset,
+        musicPath: payload.musicPath,
+        musicVolume: payload.musicVolume,
+        autoDuck: payload.autoDuck,
       }, jobId);
     }
   }

@@ -28,6 +28,7 @@ import transcribeRouter from "./src/routes/transcribe.js";
 import transcriptsRouter from "./src/routes/transcripts.js";
 import imagegenRouter from "./src/routes/imagegen.js";
 import storyRouter from "./src/routes/story.js";
+import musicRouter from "./src/routes/music.js";
 import { requireAuth } from "./src/auth.js";
 import { createAccessRequestsRouter } from "./src/routes/accessRequests.js";
 import { getAccessRequestsStore } from "./src/lib/accessRequestsStore.js";
@@ -162,6 +163,8 @@ app.use("/outputs", express.static(outputDir, {
     res.setHeader("Cache-Control", cacheControlForOutput(filePath));
   },
 }));
+
+app.use("/music", express.static(path.resolve(__dirname, "assets/music"), { acceptRanges: true }));
 
 // Per-user outputs fallback. With multi-tenant on, renders + processed audio
 // land in DATA_DIR/users/<userId>/outputs/, NOT the global outputDir served
@@ -370,6 +373,7 @@ app.use("/api/imagegen",   requireAuth, withUserScope, requireVerifiedEmail, ima
 app.use("/api/audio",     requireAuth, withUserScope, requireVerifiedEmail,                       audioRouter);
 app.use("/api/audio-adv", requireAuth, withUserScope, requireVerifiedEmail,                       audioAdvancedRouter);
 app.use("/api/library",   requireAuth, withUserScope,                                              libraryRouter);
+app.use("/api/music",     requireAuth, withUserScope,                                              musicRouter);
 // YouTube OAuth callback — Google redirects here after a user consents,
 // arriving with no JWT (just ?code and ?state). Mount BEFORE the
 // auth-gated /api/social router so it isn't blocked by requireAuth.

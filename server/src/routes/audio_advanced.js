@@ -4,6 +4,7 @@ import path from "path";
 import { v4 as uuid } from "uuid";
 import { spawn } from "child_process";
 import { readLibrary } from "../lib/library.js";
+import { resolveLibraryTrack } from "../lib/musicLibrary.js";
 
 const router = Router();
 
@@ -11,6 +12,8 @@ function resolveAssetPath(dataDir, pathOrId) {
   if (pathOrId == null) return null;
   const normalized = String(pathOrId).trim();
   if (!normalized) return null;
+  const libTrack = resolveLibraryTrack(normalized);
+  if (libTrack) return libTrack;
   if (normalized.startsWith('http')) return normalized;
   if (fs.existsSync(normalized)) return normalized;
 

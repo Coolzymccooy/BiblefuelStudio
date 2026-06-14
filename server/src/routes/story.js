@@ -16,6 +16,7 @@ import {
 import { refineScript } from "../lib/story/scriptRefine.js";
 import { templateById } from "../lib/story/scriptTemplates.js";
 import { synthesizeEdgeTts } from "../lib/edgeTts.js";
+import { resolveLibraryTrack } from "../lib/musicLibrary.js";
 
 // Mockable seams (mirror routes/transcribe.js).
 let _transcribeFn = transcribeAudio;
@@ -319,7 +320,7 @@ router.post("/:id/render", async (req, res) => {
       scenes,
       words: project.transcript?.words || [],
       audioPath,
-      musicPath: project.music?.path || null,
+      musicPath: resolveLibraryTrack(project.music?.path) || project.music?.path || null,
       musicVolume: project.music?.volume ?? 0.3,
       autoDuck: project.music?.autoDuck ?? true,
       width: 1080, height: 1920,

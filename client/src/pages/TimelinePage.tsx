@@ -28,6 +28,7 @@ import { pickTranscribeAction, baseName, type TranscriptRecord } from '../lib/tr
 import { AnimationPicker } from '../components/voicelab/AnimationPicker';
 import { ShareSheet } from '../components/ShareSheet';
 import { MediaTrimmer } from '../components/MediaTrimmer';
+import { MusicPicker } from '../components/MusicPicker';
 
 interface TranscriptWord {
     text: string;
@@ -456,35 +457,6 @@ export function TimelinePage() {
         }
     };
 
-    const handleMusicUpload = async (file: File) => {
-        if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
-            toast.error(`File is ${(file.size / 1024 / 1024).toFixed(1)} MB. Max upload is ${MAX_UPLOAD_MB} MB.`);
-            return;
-        }
-        setIsUploading(true);
-        try {
-            const dataUrl = await readFileAsDataUrl(file);
-            setUploadProgress(0);
-            const response = await api.post(
-                '/api/media/upload-audio',
-                { dataUrl, filename: file.name },
-                undefined,
-                { timeout: UPLOAD_TIMEOUT_MS, onUploadProgress: setUploadProgress },
-            );
-            if (!response.ok || !response.data?.file) {
-                toast.error(response.error || 'Music upload failed');
-                return;
-            }
-            setMusicPath(response.data.file);
-            pushAudioHistory(response.data.file, 'music');
-            toast.success('Music uploaded');
-        } catch {
-            toast.error('Music upload failed');
-        } finally {
-            setIsUploading(false);
-            setUploadProgress(null);
-        }
-    };
 
     const handleRenderCaptionedVideo = async () => {
         if (!sourceMediaPath) {
@@ -1052,69 +1024,15 @@ export function TimelinePage() {
                 title="Music Bed"
                 tooltip="Background music under the sermon. Auto-duck lowers it while someone is speaking and lifts it back between phrases, so the message stays clear."
             >
-                <div className="space-y-4">
-                    <p className="text-help">
-                        Optional background music, mixed under the sermon. MP3, WAV or M4A, <span className="text-help">up to {MAX_UPLOAD_MB} MB.</span>
-                    </p>
-                    <label className="inline-flex items-center gap-3 px-4 py-2 rounded-lg bg-primary-500/10 border border-primary-500/30 text-primary-200 cursor-pointer hover:bg-primary-500/20">
-                        <Music size={16} />
-                        <span className="text-sm">{musicPath ? 'Replace music' : 'Choose music file'}</span>
-                        <input
-                            type="file"
-                            className="hidden"
-                            accept=".mp3,.wav,.m4a"
-                            onChange={(e) => {
-                                const f = e.target.files?.[0];
-                                if (f) handleMusicUpload(f);
-                            }}
-                        />
-                    </label>
-                    {musicPath && (
-                        <div className="flex items-center justify-between gap-2">
-                            <p className="text-xs text-gray-300 font-mono break-all">
-                                {musicPath.split(/[\\/]/).pop()}
-                            </p>
-                            <div className="shrink-0 flex items-center gap-2">
-                                <button
-                                    type="button"
-                                    onClick={() => useAsSource(musicPath)}
-                                    className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-white/[0.06] text-primary-200 hover:bg-white/[0.12] transition-colors"
-                                >
-                                    <Waves size={12} /> Use as Source
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setTrimTarget({ kind: 'audio', path: musicPath, apply: (p) => { setMusicPath(p); pushAudioHistory(p, 'music'); } })}
-                                    className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-white/[0.06] text-primary-200 hover:bg-white/[0.12] transition-colors"
-                                >
-                                    <Scissors size={12} /> Trim
-                                </button>
-                            </div>
-                        </div>
-                    )}
-                    <div>
-                        <label className="block text-xs text-gray-400 mb-1">
-                            Music volume: {Math.round(musicVolume * 100)}%
-                        </label>
-                        <input
-                            type="range"
-                            min={0}
-                            max={1}
-                            step={0.05}
-                            value={musicVolume}
-                            onChange={(e) => setMusicVolume(Number(e.target.value))}
-                            className="w-full"
-                        />
-                    </div>
-                    <label className="flex items-center gap-2 text-xs text-gray-300">
-                        <input
-                            type="checkbox"
-                            checked={autoDuck}
-                            onChange={(e) => setAutoDuck(e.target.checked)}
-                        />
-                        Auto-duck music under speech (sidechain compression)
-                    </label>
-                </div>
+                <MusicPicker
+                  value={{ path: musicPath || null, volume: musicVolume, autoDuck }}
+                  onChange={(m) => {
+                    setMusicPath(m.path || null);
+                    setMusicVolume(m.volume);
+                    setAutoDuck(m.autoDuck ?? true);
+                  }}
+                  busy={isUploading}
+                />
             </Card>
 
             {isRenderingVideo && (
