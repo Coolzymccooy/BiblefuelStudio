@@ -1386,6 +1386,9 @@ async function runCampaignAutoPost(payload, jobId) {
       aspect,
       captionWidthPct,
       typographyPreset,
+      musicPath: payload.musicPath,
+      musicVolume: payload.musicVolume,
+      autoDuck: payload.autoDuck,
     }, jobId);
   } else {
     console.warn("[CAMPAIGN] no alignment from TTS (Edge-TTS fallback?) — using legacy line captions");
@@ -1402,6 +1405,9 @@ async function runCampaignAutoPost(payload, jobId) {
         aspect,
         captionWidthPct,
         typographyPreset,
+        musicPath: payload.musicPath,
+        musicVolume: payload.musicVolume,
+        autoDuck: payload.autoDuck,
       }, jobId);
       pickedBackground = { id: generatedImage };
     } else {
@@ -1415,6 +1421,9 @@ async function runCampaignAutoPost(payload, jobId) {
         aspect,
         captionWidthPct,
         typographyPreset,
+        musicPath: payload.musicPath,
+        musicVolume: payload.musicVolume,
+        autoDuck: payload.autoDuck,
       }, jobId);
     }
   }
