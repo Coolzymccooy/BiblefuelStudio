@@ -4,14 +4,22 @@ import fs from "fs";
 import { MUSIC_LIBRARY, listTracks, resolveLibraryTrack, defaultTrackRef } from "./musicLibrary.js";
 
 describe("musicLibrary", () => {
-  test("has 10 tracks with exactly one default", () => {
-    assert.equal(MUSIC_LIBRARY.length, 10);
+  test("has 23 tracks with exactly one default, all with unique ids", () => {
+    assert.equal(MUSIC_LIBRARY.length, 23);
     assert.equal(MUSIC_LIBRARY.filter((t) => t.default).length, 1);
     for (const t of MUSIC_LIBRARY) { assert.ok(t.id && t.label && t.file); }
+    assert.equal(new Set(MUSIC_LIBRARY.map((t) => t.id)).size, 23);
+    assert.equal(new Set(MUSIC_LIBRARY.map((t) => t.file)).size, 23);
+  });
+  test("the auto-applied default is instrumental (not a vocal song)", () => {
+    // Series / Auto-Publish auto-select the default as a bed UNDER narration,
+    // so it must not be one of the labelled "(vocal)" gospel songs.
+    const def = MUSIC_LIBRARY.find((t) => t.default);
+    assert.doesNotMatch(def.label, /vocal/i);
   });
   test("listTracks exposes id/label/mood/previewUrl/default", () => {
     const list = listTracks();
-    assert.equal(list.length, 10);
+    assert.equal(list.length, 23);
     assert.match(list[0].previewUrl, /^\/music\//);
     assert.equal(list.filter((t) => t.default).length, 1);
   });

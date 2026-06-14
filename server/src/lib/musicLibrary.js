@@ -5,18 +5,39 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MUSIC_DIR = path.resolve(__dirname, "../../assets/music");
 
-/** The 10 default gospel beds. Files live in server/assets/music/. */
+/**
+ * The default gospel music beds. Files live in server/assets/music/.
+ *
+ * Instrumental tracks are bed-safe (they sit under narration). The five
+ * `(vocal)` gospel songs carry lyrics, so they are offered for selection but
+ * are NOT good auto-applied beds under a voiceover — the default is therefore
+ * an instrumental calm worship track. All tracks are Pixabay-license /
+ * royalty-free, free for commercial use, no attribution required.
+ */
 export const MUSIC_LIBRARY = [
   { id: "peaceful-worship", label: "Peaceful Worship", mood: "calm", file: "01-peaceful-worship.mp3", default: true },
-  { id: "hopeful-strings", label: "Hopeful Strings", mood: "uplifting", file: "02-hopeful-strings.mp3" },
-  { id: "gentle-piano", label: "Gentle Piano", mood: "reflective", file: "03-gentle-piano.mp3" },
-  { id: "uplifting-pads", label: "Uplifting Pads", mood: "uplifting", file: "04-uplifting-pads.mp3" },
-  { id: "reflective-acoustic", label: "Reflective Acoustic", mood: "reflective", file: "05-reflective-acoustic.mp3" },
-  { id: "joyful-praise", label: "Joyful Praise", mood: "joyful", file: "06-joyful-praise.mp3" },
-  { id: "cinematic-hope", label: "Cinematic Hope", mood: "cinematic", file: "07-cinematic-hope.mp3" },
-  { id: "soft-prayer", label: "Soft Prayer", mood: "calm", file: "08-soft-prayer.mp3" },
-  { id: "warm-devotion", label: "Warm Devotion", mood: "calm", file: "09-warm-devotion.mp3" },
-  { id: "triumphant-rise", label: "Triumphant Rise", mood: "triumphant", file: "10-triumphant-rise.mp3" },
+  { id: "prayer-piano", label: "Prayer Piano", mood: "calm", file: "02-prayer-piano.mp3" },
+  { id: "heaven-prayer", label: "Harmony of Heaven", mood: "calm", file: "03-heaven-prayer.mp3" },
+  { id: "worship-is-worship", label: "Worship Is Worship", mood: "calm", file: "04-worship-is-worship.mp3" },
+  { id: "gentle-peace", label: "Gentle Peace", mood: "calm", file: "05-gentle-peace.mp3" },
+  { id: "gentle-calm", label: "Gentle Calm", mood: "calm", file: "06-gentle-calm.mp3" },
+  { id: "hopeful", label: "Hopeful", mood: "uplifting", file: "07-hopeful.mp3" },
+  { id: "reflective-acoustic", label: "Reflective Acoustic", mood: "reflective", file: "08-reflective-acoustic.mp3" },
+  { id: "sentimental-acoustic", label: "Sentimental Acoustic", mood: "reflective", file: "09-sentimental-acoustic.mp3" },
+  { id: "devotional", label: "Devotional", mood: "calm", file: "10-devotional.mp3" },
+  { id: "cinematic-inspirational", label: "Cinematic Inspirational", mood: "cinematic", file: "11-cinematic-inspirational.mp3" },
+  { id: "cinematic-epic", label: "Cinematic Epic", mood: "cinematic", file: "12-cinematic-epic.mp3" },
+  { id: "inspiring-cinematic", label: "Inspiring Cinematic", mood: "cinematic", file: "13-inspiring-cinematic.mp3" },
+  { id: "inspirational-epic", label: "Inspirational Epic", mood: "cinematic", file: "14-inspirational-epic.mp3" },
+  { id: "ascend-to-glory", label: "Ascend to Glory", mood: "triumphant", file: "15-ascend-to-glory.mp3" },
+  { id: "epic-corporate", label: "Epic Corporate", mood: "triumphant", file: "16-epic-corporate.mp3" },
+  { id: "epic-anthem", label: "Epic Anthem", mood: "triumphant", file: "17-epic-anthem.mp3" },
+  { id: "dramatic", label: "Dramatic", mood: "cinematic", file: "18-dramatic.mp3" },
+  { id: "gospel-praise", label: "Gospel Praise (vocal)", mood: "joyful", file: "19-gospel-praise.mp3" },
+  { id: "gospel-revival", label: "Gospel Revival (vocal)", mood: "joyful", file: "20-gospel-revival.mp3" },
+  { id: "gospel-testimony", label: "Gospel Testimony (vocal)", mood: "joyful", file: "21-gospel-testimony.mp3" },
+  { id: "gospel-fire", label: "Gospel Fire (vocal)", mood: "joyful", file: "22-gospel-fire.mp3" },
+  { id: "nothing-compares", label: "Nothing Compares (vocal)", mood: "worship", file: "23-nothing-compares.mp3" },
 ];
 
 export function listTracks() {

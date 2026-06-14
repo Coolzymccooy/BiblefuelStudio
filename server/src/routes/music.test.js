@@ -12,11 +12,11 @@ function res() {
 }
 
 describe("music route", () => {
-  test("GET /library returns the 10 tracks", () => {
+  test("GET /library returns the 23 tracks", () => {
     const r = res();
     handlerFor("get", "/library")({}, r);
     assert.equal(r.payload.ok, true);
-    assert.equal(r.payload.tracks.length, 10);
+    assert.equal(r.payload.tracks.length, 23);
     assert.match(r.payload.tracks[0].previewUrl, /^\/music\//);
   });
 });
