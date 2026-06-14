@@ -485,35 +485,39 @@ function refreshScheduleTasks() {
   const activeKeys = new Set();
 
   for (const source of listScheduleSources()) {
-    const ctx = scheduleOwnerCtx(source);
     const ownerKey = source.ownerId ?? "__root__";
-    const store = readSocialStore(ctx.dataDir);
-    const schedules = Array.isArray(store.schedules) ? store.schedules : [];
+    try {
+      const ctx = scheduleOwnerCtx(source);
+      const store = readSocialStore(ctx.dataDir);
+      const schedules = Array.isArray(store.schedules) ? store.schedules : [];
 
-    for (const s of schedules) {
-      const sid = String(s.id || "").trim();
-      if (!sid) continue;
-      const key = `${ownerKey}::${sid}`;
-      activeKeys.add(key);
+      for (const s of schedules) {
+        const sid = String(s.id || "").trim();
+        if (!sid) continue;
+        const key = `${ownerKey}::${sid}`;
+        activeKeys.add(key);
 
-      const sig = scheduleSignature(s);
-      const existing = scheduleTasks.get(key);
-      if (existing && existing.signature === sig) continue;
-      if (existing) stopScheduleTask(key);
+        const sig = scheduleSignature(s);
+        const existing = scheduleTasks.get(key);
+        if (existing && existing.signature === sig) continue;
+        if (existing) stopScheduleTask(key);
 
-      if (!s.enabled) continue;
-      if (!s.cron || !cron.validate(s.cron)) {
-        console.warn(`[SOCIAL][CRON] Invalid cron for schedule ${key}: ${s.cron}`);
-        continue;
+        if (!s.enabled) continue;
+        if (!s.cron || !cron.validate(s.cron)) {
+          console.warn(`[SOCIAL][CRON] Invalid cron for schedule ${key}: ${s.cron}`);
+          continue;
+        }
+
+        const task = cron.schedule(
+          s.cron,
+          async () => { await runScheduledPost(s, ctx); },
+          { timezone: s.timezone || "UTC" }
+        );
+        scheduleTasks.set(key, { task, signature: sig });
+        console.log(`[SOCIAL][CRON] Scheduled ${key} (${s.name}) at "${s.cron}" tz=${s.timezone || "UTC"} owner=${ctx.userId ?? "root"}`);
       }
-
-      const task = cron.schedule(
-        s.cron,
-        async () => { await runScheduledPost(s, ctx); },
-        { timezone: s.timezone || "UTC" }
-      );
-      scheduleTasks.set(key, { task, signature: sig });
-      console.log(`[SOCIAL][CRON] Scheduled ${key} (${s.name}) at "${s.cron}" tz=${s.timezone || "UTC"} owner=${ctx.userId ?? "root"}`);
+    } catch (e) {
+      console.warn(`[SOCIAL][CRON] Failed to register schedules for owner ${ownerKey}:`, e?.message || e);
     }
   }
 
