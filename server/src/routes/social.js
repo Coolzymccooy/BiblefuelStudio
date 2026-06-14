@@ -7,6 +7,7 @@ import cron from "node-cron";
 import { google } from "googleapis";
 import jwt from "jsonwebtoken";
 import { readSocialStore, writeSocialStore } from "../lib/socialStore.js";
+import { scheduleOwnerCtx, listScheduleSources } from "../lib/social/scheduleSources.js";
 // DATA_DIR is used ONLY by the boot-time cron rehydrator below, which operates
 // on the super-admin's global social.json. Per-user schedule rehydration is
 // Phase 4 work; see specs/2026-05-26-public-multitenancy-design.md §6.
@@ -481,41 +482,43 @@ function stopScheduleTask(id) {
 }
 
 function refreshScheduleTasks() {
-  // Phase 1: super-admin only. Per-user schedule rehydration is Phase 4 work.
-  // See specs/2026-05-26-public-multitenancy-design.md §6 — when MULTITENANT
-  // ships, walk users/*/social.json and key tasks by `${userId}::${schedule.id}`.
-  const store = readSocialStore(DATA_DIR);
-  const schedules = Array.isArray(store.schedules) ? store.schedules : [];
-  const activeIds = new Set();
+  const activeKeys = new Set();
 
-  for (const s of schedules) {
-    const id = String(s.id || "").trim();
-    if (!id) continue;
-    activeIds.add(id);
+  for (const source of listScheduleSources()) {
+    const ctx = scheduleOwnerCtx(source);
+    const ownerKey = source.ownerId ?? "__root__";
+    const store = readSocialStore(ctx.dataDir);
+    const schedules = Array.isArray(store.schedules) ? store.schedules : [];
 
-    const sig = scheduleSignature(s);
-    const existing = scheduleTasks.get(id);
-    if (existing && existing.signature === sig) continue;
-    if (existing) stopScheduleTask(id);
+    for (const s of schedules) {
+      const sid = String(s.id || "").trim();
+      if (!sid) continue;
+      const key = `${ownerKey}::${sid}`;
+      activeKeys.add(key);
 
-    if (!s.enabled) continue;
-    if (!s.cron || !cron.validate(s.cron)) {
-      console.warn(`[SOCIAL][CRON] Invalid cron for schedule ${id}: ${s.cron}`);
-      continue;
+      const sig = scheduleSignature(s);
+      const existing = scheduleTasks.get(key);
+      if (existing && existing.signature === sig) continue;
+      if (existing) stopScheduleTask(key);
+
+      if (!s.enabled) continue;
+      if (!s.cron || !cron.validate(s.cron)) {
+        console.warn(`[SOCIAL][CRON] Invalid cron for schedule ${key}: ${s.cron}`);
+        continue;
+      }
+
+      const task = cron.schedule(
+        s.cron,
+        async () => { await runScheduledPost(s, ctx); },
+        { timezone: s.timezone || "UTC" }
+      );
+      scheduleTasks.set(key, { task, signature: sig });
+      console.log(`[SOCIAL][CRON] Scheduled ${key} (${s.name}) at "${s.cron}" tz=${s.timezone || "UTC"} owner=${ctx.userId ?? "root"}`);
     }
-
-    const task = cron.schedule(
-      s.cron,
-      async () => { await runScheduledPost(s); },
-      { timezone: s.timezone || "UTC" }
-    );
-
-    scheduleTasks.set(id, { task, signature: sig });
-    console.log(`[SOCIAL][CRON] Scheduled ${id} (${s.name}) at "${s.cron}" tz=${s.timezone || "UTC"}`);
   }
 
-  for (const [id] of scheduleTasks) {
-    if (!activeIds.has(id)) stopScheduleTask(id);
+  for (const [key] of scheduleTasks) {
+    if (!activeKeys.has(key)) stopScheduleTask(key);
   }
 }
 
@@ -662,7 +665,7 @@ router.post("/schedules", (req, res) => {
     else list.unshift(schedule);
 
     writeSocialStore(req.ctx.dataDir, { ...store, schedules: list });
-    if (req.ctx.isSuperAdmin) refreshScheduleTasks();
+    refreshScheduleTasks();
     res.json({ ok: true, schedule });
   } catch (e) {
     res.status(400).json({ ok: false, error: String(e?.message || e) });
@@ -675,7 +678,7 @@ router.delete("/schedules/:id", (req, res) => {
   const store = readSocialStore(req.ctx.dataDir);
   const list = (store.schedules || []).filter((s) => String(s.id) !== id);
   writeSocialStore(req.ctx.dataDir, { ...store, schedules: list });
-  if (req.ctx.isSuperAdmin) refreshScheduleTasks();
+  refreshScheduleTasks();
   res.json({ ok: true });
 });
 
