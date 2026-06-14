@@ -1340,6 +1340,77 @@ export function TimelinePage() {
                             </div>
                         </div>
                     </Card>
+
+                    {/* Stats + Recent Audio sit side-by-side under Mastering &
+                        Filters, filling the left column's spare width and keeping
+                        the right rail short (Video Background only). */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                        <Card title="Stats" className="opacity-50">
+                            <div className="space-y-4 p-2">
+                                <div className="flex justify-between text-xs">
+                                    <span className="text-meta">Total Duration</span>
+                                    <span className="font-mono text-primary-400">
+                                        {totalDuration.toFixed(2)}s
+                                    </span>
+                                </div>
+                                <div className="flex justify-between text-xs">
+                                    <span className="text-meta">Clips Count</span>
+                                    <span className="font-mono text-primary-400">{clips.length}</span>
+                                </div>
+                            </div>
+                        </Card>
+
+                        <Card title="Recent Audio">
+                            {audioHistory.length === 0 ? (
+                                <p className="text-help">No audio history yet.</p>
+                            ) : (
+                                <div className="space-y-1.5">
+                                    {audioHistory.slice(0, 6).map((item) => {
+                                        const name = item.path.split(/[\\/]/).pop() || item.path;
+                                        return (
+                                            <div
+                                                key={item.id}
+                                                className="flex items-center gap-2 rounded-lg bg-black/20 border border-white/5 px-2 py-1.5"
+                                            >
+                                                <span
+                                                    className="flex-1 min-w-0 truncate font-mono text-[11px] text-content-secondary"
+                                                    title={item.path}
+                                                >
+                                                    {name}
+                                                </span>
+                                                <div className="flex items-center gap-0.5 shrink-0">
+                                                    <button
+                                                        onClick={() => handleAddClip(item.path, item.kind)}
+                                                        title="Add to assembly"
+                                                        aria-label="Add to assembly"
+                                                        className="p-1 rounded-md text-content-tertiary hover:text-primary-300 hover:bg-white/5 transition-colors"
+                                                    >
+                                                        <Plus size={13} />
+                                                    </button>
+                                                    <button
+                                                        onClick={() => useAsSource(item.path)}
+                                                        title="Use as source"
+                                                        aria-label="Use as source"
+                                                        className="p-1 rounded-md text-content-tertiary hover:text-primary-300 hover:bg-white/5 transition-colors"
+                                                    >
+                                                        <Waves size={13} />
+                                                    </button>
+                                                    <button
+                                                        onClick={() => useAsMusicBed(item.path)}
+                                                        title="Use as music bed"
+                                                        aria-label="Use as music bed"
+                                                        className="p-1 rounded-md text-content-tertiary hover:text-primary-300 hover:bg-white/5 transition-colors"
+                                                    >
+                                                        <Music size={13} />
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </Card>
+                    </div>
                 </div>
 
                 <div className="space-y-4">
@@ -1577,71 +1648,6 @@ export function TimelinePage() {
                         </div>
                     </Card>
 
-                    <Card title="Stats" className="opacity-50">
-                        <div className="space-y-4 p-2">
-                            <div className="flex justify-between text-xs">
-                                <span className="text-meta">Total Duration</span>
-                                <span className="font-mono text-primary-400">
-                                    {totalDuration.toFixed(2)}s
-                                </span>
-                            </div>
-                            <div className="flex justify-between text-xs">
-                                <span className="text-meta">Clips Count</span>
-                                <span className="font-mono text-primary-400">{clips.length}</span>
-                            </div>
-                        </div>
-                    </Card>
-
-                    <Card title="Recent Audio">
-                        {audioHistory.length === 0 ? (
-                            <p className="text-help">No audio history yet.</p>
-                        ) : (
-                            <div className="space-y-1.5">
-                                {audioHistory.slice(0, 6).map((item) => {
-                                    const name = item.path.split(/[\\/]/).pop() || item.path;
-                                    return (
-                                        <div
-                                            key={item.id}
-                                            className="flex items-center gap-2 rounded-lg bg-black/20 border border-white/5 px-2 py-1.5"
-                                        >
-                                            <span
-                                                className="flex-1 min-w-0 truncate font-mono text-[11px] text-content-secondary"
-                                                title={item.path}
-                                            >
-                                                {name}
-                                            </span>
-                                            <div className="flex items-center gap-0.5 shrink-0">
-                                                <button
-                                                    onClick={() => handleAddClip(item.path, item.kind)}
-                                                    title="Add to assembly"
-                                                    aria-label="Add to assembly"
-                                                    className="p-1 rounded-md text-content-tertiary hover:text-primary-300 hover:bg-white/5 transition-colors"
-                                                >
-                                                    <Plus size={13} />
-                                                </button>
-                                                <button
-                                                    onClick={() => useAsSource(item.path)}
-                                                    title="Use as source"
-                                                    aria-label="Use as source"
-                                                    className="p-1 rounded-md text-content-tertiary hover:text-primary-300 hover:bg-white/5 transition-colors"
-                                                >
-                                                    <Waves size={13} />
-                                                </button>
-                                                <button
-                                                    onClick={() => useAsMusicBed(item.path)}
-                                                    title="Use as music bed"
-                                                    aria-label="Use as music bed"
-                                                    className="p-1 rounded-md text-content-tertiary hover:text-primary-300 hover:bg-white/5 transition-colors"
-                                                >
-                                                    <Music size={13} />
-                                                </button>
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        )}
-                    </Card>
                 </div>
             </div>
 
