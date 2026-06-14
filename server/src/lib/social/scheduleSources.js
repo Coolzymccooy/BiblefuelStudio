@@ -22,3 +22,33 @@ export function scheduleOwnerCtx(owner) {
     isSuperAdmin: false,
   };
 }
+
+/**
+ * Enumerate every schedule-source directory: the root store (super-admin)
+ * plus each users/<id>/ that has a social.json. Returns owner descriptors —
+ * NOT ctx — so the caller decides when to derive dirs via scheduleOwnerCtx.
+ *
+ * @param {string} [baseDir] defaults to DATA_DIR; injectable for tests.
+ * @returns {Array<{ ownerId: string|null, isSuperAdmin: boolean }>}
+ */
+export function listScheduleSources(baseDir = DATA_DIR) {
+  const sources = [];
+  if (fs.existsSync(path.join(baseDir, "social.json"))) {
+    sources.push({ ownerId: null, isSuperAdmin: true });
+  }
+  const usersDir = path.join(baseDir, "users");
+  let entries = [];
+  try {
+    entries = fs.readdirSync(usersDir, { withFileTypes: true });
+  } catch {
+    return sources; // no users/ dir yet
+  }
+  for (const ent of entries) {
+    if (!ent.isDirectory()) continue;
+    const storePath = path.join(usersDir, ent.name, "social.json");
+    if (fs.existsSync(storePath)) {
+      sources.push({ ownerId: ent.name, isSuperAdmin: false });
+    }
+  }
+  return sources;
+}
