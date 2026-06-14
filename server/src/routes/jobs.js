@@ -1809,6 +1809,28 @@ router.post("/:id/retry", (req, res) => {
   res.json({ ok: true, job });
 });
 
+// Pure constructor for a campaign_auto_post job row. Extracted so the
+// ownership/isolation contract is unit-testable without touching the jobs
+// store: a job MUST carry the caller's `ownerId` and per-user `ctx`
+// (dataDir/outputDir) or it falls back to the global super-admin scope and
+// becomes visible ONLY to the operator — the Series cross-tenant leak.
+// A missing isSuperAdmin defaults to false (safer — treat unknown ctx as a
+// regular user so we never accidentally leak to env Zernio / global dirs).
+export function buildCampaignJob(id, payload, ctx) {
+  const normalizedCtx = ctx
+    ? { ...ctx, isSuperAdmin: Boolean(ctx.isSuperAdmin) }
+    : null;
+  return {
+    id,
+    type: "campaign_auto_post",
+    payload: payload || {},
+    ownerId: normalizedCtx?.userId || null,
+    ctx: normalizedCtx,
+    status: "queued",
+    createdAt: new Date().toISOString(),
+  };
+}
+
 // Programmatic enqueue helper for in-process callers (e.g. cron-driven
 // schedules in social.js). Skips HTTP/auth, performs the same validation.
 export async function enqueueCampaignAutoPost(payload, ctx) {
@@ -1816,8 +1838,6 @@ export async function enqueueCampaignAutoPost(payload, ctx) {
   //   { dataDir, outputDir, userId, isSuperAdmin }
   // Callers that don't pass ctx (legacy cron in social.js pre-refactor) get
   // the global super-admin paths, matching pre-multi-tenant behaviour.
-  // A missing isSuperAdmin defaults to false (safer — treat unknown ctx
-  // as a regular user so we never accidentally leak to env Zernio).
   const normalizedCtx = ctx
     ? { ...ctx, isSuperAdmin: Boolean(ctx.isSuperAdmin) }
     : null;
@@ -1827,16 +1847,7 @@ export async function enqueueCampaignAutoPost(payload, ctx) {
   try { validation = validatePayloadForEnqueue("campaign_auto_post", payload || {}); }
   finally { currentJobCtx = prevCtx; }
   if (!validation.ok) throw new Error(validation.error);
-  const id = `job_${uuid()}`;
-  const job = {
-    id,
-    type: "campaign_auto_post",
-    payload: payload || {},
-    ownerId: normalizedCtx?.userId || null,
-    ctx: normalizedCtx,
-    status: "queued",
-    createdAt: new Date().toISOString(),
-  };
+  const job = buildCampaignJob(`job_${uuid()}`, payload, ctx);
   store = loadJobs();
   store.jobs.push(job);
   saveJobs(store);
