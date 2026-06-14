@@ -11,7 +11,7 @@ import {
 import { StylePicker } from '../components/story/StylePicker';
 import { SceneCard } from '../components/story/SceneCard';
 import { ProjectHistory } from '../components/story/ProjectHistory';
-import { MusicControl } from '../components/story/MusicControl';
+import { MusicPicker } from '../components/MusicPicker';
 import { RenderProgressOverlay } from '../components/RenderProgressOverlay';
 import { MediaTrimmer } from '../components/MediaTrimmer';
 import { ScriptForm } from '../components/story/ScriptForm';
@@ -299,7 +299,11 @@ export function StoryVideoPage() {
           {project.scenes.map((s) => (
             <SceneCard key={s.id} scene={s} onPatch={onPatch} onRegenerate={onRegenerate} busy={busy} />
           ))}
-          <MusicControl music={project.music ?? { path: null, volume: 0.3, autoDuck: true }} onChange={onMusicChange} busy={busy} />
+          <MusicPicker
+            value={project.music ?? { path: null, volume: 0.3, autoDuck: true }}
+            onChange={onMusicChange}
+            busy={busy}
+          />
           <button
             onClick={onRender}
             disabled={!canRender(project) || busy}
