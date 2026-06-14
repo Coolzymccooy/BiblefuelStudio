@@ -23,7 +23,7 @@ import { MediaTrimmer } from '../components/MediaTrimmer';
 import { applyGeneratedVisuals, type GenerateMode } from '../lib/generativeVisuals';
 
 /** Mirrors the server's MAX_BACKGROUNDS — keep in sync with render.js. */
-const MAX_BACKGROUNDS = 4;
+const MAX_BACKGROUNDS = 30;
 /** Mirrors the server's MAX_INPUT_MB so big uploads fail client-side first. */
 const MAX_UPLOAD_MB = 200;
 
@@ -833,7 +833,7 @@ export function RenderPage() {
                         </label>
                         {backgroundItems.length > 0 ? (
                             <div className="space-y-2">
-                                <ul className="space-y-2">
+                                <ul className="space-y-2 max-h-[22rem] overflow-y-auto pr-1">
                                     {backgroundItems.map((item, idx) => {
                                         const isImage = item.kind === 'image';
                                         return (

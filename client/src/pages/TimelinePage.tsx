@@ -135,8 +135,8 @@ interface AudioItem {
     createdAt: string;
 }
 
-/** Cap matched to the server's MAX_BACKGROUNDS — keep these in sync. */
-const MAX_BACKGROUNDS = 4;
+/** Cap matched to the server's MAX_BACKGROUNDS (render.js) — keep these in sync. */
+const MAX_BACKGROUNDS = 30;
 
 /**
  * Mirrors the server's MAX_INPUT_MB (default 200). Surfaced in the UI as
@@ -1446,6 +1446,10 @@ export function TimelinePage() {
                             </label>
                             {backgroundItems.length > 0 ? (
                                 <div className="space-y-2">
+                                    {/* Scroll-cap the clip list so a long selection
+                                        (up to MAX_BACKGROUNDS) never drags the panel
+                                        down — the Sync + add controls stay below. */}
+                                    <div className="space-y-2 max-h-[22rem] overflow-y-auto pr-1">
                                     {backgroundItems.map((item, idx) => (
                                         <div
                                             key={`${item.id}-${idx}`}
@@ -1522,6 +1526,7 @@ export function TimelinePage() {
                                             </div>
                                         </div>
                                     ))}
+                                    </div>
                                     {backgroundItems.length > 1 && (
                                         <label className="flex items-start gap-2 px-1 cursor-pointer">
                                             <input

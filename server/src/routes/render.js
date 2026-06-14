@@ -546,7 +546,11 @@ router.post("/captioned-video", async (req, res) => {
       return res.status(400).json({ ok: false, error: "words[] is required and must be non-empty" });
     }
 
-    const MAX_BACKGROUNDS = 4;
+    // Raised from 4 to support photo-memory montages (many images/clips). Each
+    // background becomes one ffmpeg segment concatenated into the render; images
+    // are cheap, video-heavy sequences at the top of this range render slower.
+    // Keep in sync with the client MAX_BACKGROUNDS in TimelinePage/RenderPage.
+    const MAX_BACKGROUNDS = 30;
 
     // Auto background mode: when the caller opts in (`autoBackground: true`) and
     // hasn't picked any background explicitly, let BibleFuel choose one clip per

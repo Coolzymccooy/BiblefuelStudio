@@ -86,12 +86,13 @@ describe("POST /api/render/captioned-video — validation", () => {
     }
   });
 
-  test("rejects more than 4 backgrounds", async (t) => {
+  test("rejects more than 30 backgrounds", async (t) => {
     const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "render-"));
     const aud = path.join(outDir, "a.wav");
     fs.writeFileSync(aud, Buffer.alloc(200, 0));
-    const bgs = ["bg1.mp4", "bg2.mp4", "bg3.mp4", "bg4.mp4", "bg5.mp4"].map((n) => {
-      const p = path.join(outDir, n);
+    // 31 > the MAX_BACKGROUNDS cap (30) — should be rejected before any probe.
+    const bgs = Array.from({ length: 31 }, (_, i) => {
+      const p = path.join(outDir, `bg${i}.mp4`);
       fs.writeFileSync(p, Buffer.alloc(200, 0));
       return p;
     });
@@ -104,7 +105,7 @@ describe("POST /api/render/captioned-video — validation", () => {
         words: [{ text: "Hi", startMs: 0, endMs: 200 }],
       });
     assert.equal(res.status, 400);
-    assert.match(res.body.error || "", /at most 4 backgrounds/);
+    assert.match(res.body.error || "", /at most 30 backgrounds/);
   });
 });
 
