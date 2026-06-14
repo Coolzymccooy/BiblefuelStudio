@@ -7,6 +7,7 @@ import cron from "node-cron";
 import { google } from "googleapis";
 import jwt from "jsonwebtoken";
 import { readSocialStore, writeSocialStore } from "../lib/socialStore.js";
+import { scheduleOwnerCtx, listScheduleSources } from "../lib/social/scheduleSources.js";
 // DATA_DIR is used ONLY by the boot-time cron rehydrator below, which operates
 // on the super-admin's global social.json. Per-user schedule rehydration is
 // Phase 4 work; see specs/2026-05-26-public-multitenancy-design.md §6.
@@ -427,21 +428,20 @@ function scheduleSignature(s) {
   });
 }
 
-async function runScheduledPost(schedule) {
+export async function runScheduledPost(schedule, ctx, deps = {}) {
+  const enqueue = deps.enqueueCampaignAutoPost
+    || (await import("./jobs.js")).enqueueCampaignAutoPost;
+  const dispatch = deps.dispatchPost || dispatchPost;
   try {
     if (!schedule?.enabled) return;
 
-    // Type "auto_generate": enqueue a campaign_auto_post job that produces a
-    // fresh video (script + bg + voice + render) and fires the webhook.
     if (String(schedule.type || "replay") === "auto_generate") {
-      const { enqueueCampaignAutoPost } = await import("./jobs.js");
-      const job = await enqueueCampaignAutoPost({
+      const job = await enqueue({
         destination: schedule.destination || "webhook",
         webhookId: schedule.webhookId || undefined,
         profileIds: schedule.profileId ? [schedule.profileId] : undefined,
         title: schedule.name,
         privacyStatus: schedule.privacyStatus,
-        // Optional content knobs piggy-backed on the schedule row.
         niche: schedule.niche,
         tone: schedule.tone,
         ctaStyle: schedule.ctaStyle,
@@ -449,12 +449,11 @@ async function runScheduledPost(schedule) {
         durationSec: schedule.durationSec,
         voiceId: schedule.voiceId,
         backgroundQuery: schedule.backgroundQuery,
-      });
-      console.log(`[SOCIAL][CRON] Schedule ${schedule.id} enqueued auto_generate job ${job?.id}`);
+      }, ctx);
+      console.log(`[SOCIAL][CRON] Schedule ${schedule.id} enqueued auto_generate job ${job?.id} (owner=${ctx?.userId ?? "root"})`);
       return;
     }
 
-    // Default "replay": post an existing videoUrl through the configured destination.
     const payload = {
       destination: schedule.destination,
       caption: schedule.caption,
@@ -464,13 +463,9 @@ async function runScheduledPost(schedule) {
       title: schedule.name,
       privacyStatus: schedule.privacyStatus,
     };
-    const reqLike = {
-      headers: {},
-      protocol: "https",
-      get: () => "",
-    };
-    const result = await dispatchPost(payload, reqLike);
-    console.log(`[SOCIAL][CRON] Schedule ${schedule.id} posted successfully`, {
+    const reqLike = { headers: {}, protocol: "https", get: () => "", ctx };
+    const result = await dispatch(payload, reqLike);
+    console.log(`[SOCIAL][CRON] Schedule ${schedule.id} posted (owner=${ctx?.userId ?? "root"})`, {
       destination: schedule.destination,
       videoUrl: result?.videoUrl || "",
     });
@@ -487,41 +482,47 @@ function stopScheduleTask(id) {
 }
 
 function refreshScheduleTasks() {
-  // Phase 1: super-admin only. Per-user schedule rehydration is Phase 4 work.
-  // See specs/2026-05-26-public-multitenancy-design.md §6 — when MULTITENANT
-  // ships, walk users/*/social.json and key tasks by `${userId}::${schedule.id}`.
-  const store = readSocialStore(DATA_DIR);
-  const schedules = Array.isArray(store.schedules) ? store.schedules : [];
-  const activeIds = new Set();
+  const activeKeys = new Set();
 
-  for (const s of schedules) {
-    const id = String(s.id || "").trim();
-    if (!id) continue;
-    activeIds.add(id);
+  for (const source of listScheduleSources()) {
+    const ownerKey = source.ownerId ?? "__root__";
+    try {
+      const ctx = scheduleOwnerCtx(source);
+      const store = readSocialStore(ctx.dataDir);
+      const schedules = Array.isArray(store.schedules) ? store.schedules : [];
 
-    const sig = scheduleSignature(s);
-    const existing = scheduleTasks.get(id);
-    if (existing && existing.signature === sig) continue;
-    if (existing) stopScheduleTask(id);
+      for (const s of schedules) {
+        const sid = String(s.id || "").trim();
+        if (!sid) continue;
+        const key = `${ownerKey}::${sid}`;
+        activeKeys.add(key);
 
-    if (!s.enabled) continue;
-    if (!s.cron || !cron.validate(s.cron)) {
-      console.warn(`[SOCIAL][CRON] Invalid cron for schedule ${id}: ${s.cron}`);
-      continue;
+        const sig = scheduleSignature(s);
+        const existing = scheduleTasks.get(key);
+        if (existing && existing.signature === sig) continue;
+        if (existing) stopScheduleTask(key);
+
+        if (!s.enabled) continue;
+        if (!s.cron || !cron.validate(s.cron)) {
+          console.warn(`[SOCIAL][CRON] Invalid cron for schedule ${key}: ${s.cron}`);
+          continue;
+        }
+
+        const task = cron.schedule(
+          s.cron,
+          async () => { await runScheduledPost(s, ctx); },
+          { timezone: s.timezone || "UTC" }
+        );
+        scheduleTasks.set(key, { task, signature: sig });
+        console.log(`[SOCIAL][CRON] Scheduled ${key} (${s.name}) at "${s.cron}" tz=${s.timezone || "UTC"} owner=${ctx.userId ?? "root"}`);
+      }
+    } catch (e) {
+      console.warn(`[SOCIAL][CRON] Failed to register schedules for owner ${ownerKey}:`, e?.message || e);
     }
-
-    const task = cron.schedule(
-      s.cron,
-      async () => { await runScheduledPost(s); },
-      { timezone: s.timezone || "UTC" }
-    );
-
-    scheduleTasks.set(id, { task, signature: sig });
-    console.log(`[SOCIAL][CRON] Scheduled ${id} (${s.name}) at "${s.cron}" tz=${s.timezone || "UTC"}`);
   }
 
-  for (const [id] of scheduleTasks) {
-    if (!activeIds.has(id)) stopScheduleTask(id);
+  for (const [key] of scheduleTasks) {
+    if (!activeKeys.has(key)) stopScheduleTask(key);
   }
 }
 
@@ -668,7 +669,7 @@ router.post("/schedules", (req, res) => {
     else list.unshift(schedule);
 
     writeSocialStore(req.ctx.dataDir, { ...store, schedules: list });
-    if (req.ctx.isSuperAdmin) refreshScheduleTasks();
+    refreshScheduleTasks();
     res.json({ ok: true, schedule });
   } catch (e) {
     res.status(400).json({ ok: false, error: String(e?.message || e) });
@@ -681,7 +682,7 @@ router.delete("/schedules/:id", (req, res) => {
   const store = readSocialStore(req.ctx.dataDir);
   const list = (store.schedules || []).filter((s) => String(s.id) !== id);
   writeSocialStore(req.ctx.dataDir, { ...store, schedules: list });
-  if (req.ctx.isSuperAdmin) refreshScheduleTasks();
+  refreshScheduleTasks();
   res.json({ ok: true });
 });
 
