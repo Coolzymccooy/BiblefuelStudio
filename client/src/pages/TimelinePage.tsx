@@ -1364,8 +1364,8 @@ export function TimelinePage() {
                             {audioHistory.length === 0 ? (
                                 <p className="text-help">No audio history yet.</p>
                             ) : (
-                                <div className="space-y-1.5">
-                                    {audioHistory.slice(0, 6).map((item) => {
+                                <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                                    {audioHistory.slice(0, 25).map((item) => {
                                         const name = item.path.split(/[\\/]/).pop() || item.path;
                                         return (
                                             <div
@@ -1373,7 +1373,7 @@ export function TimelinePage() {
                                                 className="flex items-center gap-2 rounded-lg bg-black/20 border border-white/5 px-2 py-1.5"
                                             >
                                                 <span
-                                                    className="flex-1 min-w-0 truncate font-mono text-[11px] text-content-secondary"
+                                                    className="flex-1 min-w-0 truncate text-xs text-content-secondary"
                                                     title={item.path}
                                                 >
                                                     {name}
@@ -1473,7 +1473,7 @@ export function TimelinePage() {
                                                 </span>
                                             </div>
                                             <span
-                                                className="flex-1 min-w-0 truncate font-mono text-[10px] text-content-tertiary"
+                                                className="flex-1 min-w-0 truncate text-[11px] text-content-tertiary"
                                                 title={`ID: ${item.id}${item.kind === 'image' ? ' (image)' : ''}`}
                                             >
                                                 {item.id}

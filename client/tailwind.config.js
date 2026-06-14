@@ -11,7 +11,11 @@ export default {
         display: ['"Inter Variable"', 'Inter', 'Sora', 'ui-sans-serif', 'system-ui'],
         displaySerif: ['"Cormorant Garamond"', 'Georgia', 'serif'],
         bodyserif: ['Georgia', 'serif'],
-        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
+        // `mono` intentionally maps to the sans stack: the app only uses font-mono
+        // for technical strings (file paths, IDs, hashes, tokens), which read more
+        // legibly in the humanist sans body font than in a fixed-width face. Number
+        // columns that need alignment keep it via `tabular-nums` where applied.
+        mono: ['"Inter Variable"', 'Inter', '"IBM Plex Sans"', 'ui-sans-serif', 'system-ui'],
       },
       colors: {
         primary: {
