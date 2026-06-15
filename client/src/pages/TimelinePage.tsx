@@ -214,6 +214,9 @@ export function TimelinePage() {
         null,
     );
     const [isTranscribing, setIsTranscribing] = useState(false);
+    // Rough ETA (ms) for the transcription progress bar, derived from the audio
+    // length when a fresh pass starts. undefined → indeterminate bar.
+    const [transcribeEstimateMs, setTranscribeEstimateMs] = useState<number | undefined>(undefined);
     const [editedLines, setEditedLines] = usePersistedState<string[]>(
         STORAGE_KEYS.sclEditedLines,
         [],
@@ -389,6 +392,14 @@ export function TimelinePage() {
     const runFreshTranscribe = async () => {
         if (!sourceMediaPath) { toast.error('Upload a sermon first'); return; }
         setIsTranscribing(true);
+        // Best-effort ETA from the audio length: re-encode + upload (~15s fixed)
+        // plus Whisper processing (~4% of real time). Drives the progress bar's
+        // % + time-left; falls back to indeterminate if the probe fails.
+        try {
+            const info = await api.get(`/api/audio-adv/info?inputPath=${encodeURIComponent(sourceMediaPath)}`);
+            const dur = Number(info.data?.durationSec);
+            setTranscribeEstimateMs(Number.isFinite(dur) && dur > 0 ? Math.round(15000 + dur * 1000 * 0.04) : undefined);
+        } catch { setTranscribeEstimateMs(undefined); }
         const toastId = toast.loading('Transcribing — this can take a minute...');
         try {
             const response = await api.post('/api/transcribe', { mediaPath: sourceMediaPath }, undefined, { timeout: TRANSCRIBE_TIMEOUT_MS });
@@ -1016,6 +1027,7 @@ export function TimelinePage() {
                     <BusyBar
                         className="mb-4"
                         label="Transcribing…"
+                        estimatedMs={transcribeEstimateMs}
                         hint="Whisper is extracting word-level timings. Long sermons take a few minutes — you can leave this running."
                     />
                 )}

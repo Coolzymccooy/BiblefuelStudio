@@ -245,6 +245,9 @@ export function MediaTrimmer({ serverPath, kind, onApply, onCancel }: MediaTrimm
           {applying && (
             <BusyBar
               label={`Trimming ${fmt(selDur)}…`}
+              // Accurate re-encode runs faster than real time; ~1/25th is a fair
+              // ballpark, floored so very short clips still show a moving bar.
+              estimatedMs={Math.max(4000, Math.round((selDur * 1000) / 25))}
               hint="Re-encoding your selection — longer clips take a little longer. Keep this open."
             />
           )}

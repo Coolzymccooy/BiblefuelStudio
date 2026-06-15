@@ -20,7 +20,12 @@ import fetch, { File, FormData } from "node-fetch";
  */
 
 const WHISPER_API_URL = "https://api.openai.com/v1/audio/transcriptions";
-const WHISPER_TIMEOUT_MS = 60_000;
+// Whisper's processing time scales with audio length: a ~27-min sermon chunk
+// takes well over a minute server-side. The old 60s abort killed those calls
+// mid-flight, so long sermons came back empty ("no words") even though the
+// file was a valid, under-limit upload. Chunks are ≤30 min of audio and run in
+// parallel, so 5 minutes per chunk is ample headroom without stalling failures.
+const WHISPER_TIMEOUT_MS = 5 * 60_000;
 
 function getOpenAIApiKey() {
   const raw = (process.env.OPENAI_API_KEY || "").replace(/['"]/g, "").trim();
