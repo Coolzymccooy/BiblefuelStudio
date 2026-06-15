@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { X, Scissors, Play, Pause, Loader2 } from 'lucide-react';
 import { Button } from './ui/Button';
-import { api } from '../lib/api';
+import { BusyBar } from './ui/BusyBar';
+import { api, MEDIA_OP_TIMEOUT_MS } from '../lib/api';
 import { pxToTime, timeToPct, enforceHandles, moveSelection, type Selection } from '../lib/trimMath';
 import toast from 'react-hot-toast';
 
@@ -136,7 +137,7 @@ export function MediaTrimmer({ serverPath, kind, onApply, onCancel }: MediaTrimm
       inputPath: serverPath,
       startSec: sel.start,
       endSec: sel.end,
-    });
+    }, undefined, { timeout: MEDIA_OP_TIMEOUT_MS });
     setApplying(false);
     if (res.ok && res.data?.file) {
       toast.success(`Trimmed to ${fmt(Number(res.data.durationSec) || (sel.end - sel.start))}`, { id: 'trim-ok' });
@@ -236,10 +237,17 @@ export function MediaTrimmer({ serverPath, kind, onApply, onCancel }: MediaTrimm
             <span>Out <span className="text-white font-semibold">{fmt(sel.end)}</span></span>
           </div>
 
-          <Button variant="secondary" onClick={playSelection} className="h-9 text-xs" disabled={duration == null}>
+          <Button variant="secondary" onClick={playSelection} className="h-9 text-xs" disabled={duration == null || applying}>
             {playing ? <Pause size={14} className="mr-1.5" /> : <Play size={14} className="mr-1.5" />}
             {playing ? 'Stop' : 'Play selection'}
           </Button>
+
+          {applying && (
+            <BusyBar
+              label={`Trimming ${fmt(selDur)}…`}
+              hint="Re-encoding your selection — longer clips take a little longer. Keep this open."
+            />
+          )}
         </div>
 
         <div className="flex items-center justify-end gap-2 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] border-t border-white/10 bg-black/30 shrink-0">

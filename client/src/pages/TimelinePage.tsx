@@ -32,6 +32,7 @@ import { ShareSheet } from '../components/ShareSheet';
 import { MediaTrimmer } from '../components/MediaTrimmer';
 import { MusicPicker } from '../components/MusicPicker';
 import { InfoTooltip } from '../components/ui/InfoTooltip';
+import { BusyBar } from '../components/ui/BusyBar';
 
 interface TranscriptWord {
     text: string;
@@ -1018,6 +1019,13 @@ export function TimelinePage() {
                         )}
                     </div>
                 </div>
+                {isTranscribing && (
+                    <BusyBar
+                        className="mb-4"
+                        label="Transcribing…"
+                        hint="Whisper is extracting word-level timings. Long sermons take a few minutes — you can leave this running."
+                    />
+                )}
                 <div className="mb-4">
                     <p className="text-xs text-gray-400 mb-2">Kinetic typography style</p>
                     <AnimationPicker

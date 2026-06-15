@@ -17,6 +17,12 @@ const DEFAULT_TIMEOUT_MS = 15_000;
 // onUploadProgress so a stalled upload is still visible to the user.
 export const UPLOAD_TIMEOUT_MS = 10 * 60_000;
 
+// Server-side FFmpeg media ops (trim re-encode, master) are synchronous and
+// run far past the 15s default — accurately re-encoding a 25-minute selection
+// takes tens of seconds. Without this the request aborts with "timeout of
+// 15000ms exceeded" and the trim never lands. 10 minutes is a safe ceiling.
+export const MEDIA_OP_TIMEOUT_MS = 10 * 60_000;
+
 // Transcription (OpenAI whisper-1, chunked at 40 min) runs server-side and can
 // take well over the 15s default for multi-minute sermons. Give it a 5-minute
 // ceiling so a 4–5 min clip doesn't abort with "timeout of 15000ms exceeded".
