@@ -7,6 +7,7 @@ import { Textarea } from '../components/ui/Textarea';
 import { Select } from '../components/ui/Select';
 import { Field } from '../components/ui/Field';
 import { InfoTooltip } from '../components/ui/InfoTooltip';
+import { DropZone } from '../components/ui/DropZone';
 import { GuideSteps } from '../components/ui/GuideSteps';
 import { AnimationPicker } from '../components/voicelab/AnimationPicker';
 import { CompareVoices } from '../components/voicelab/CompareVoices';
@@ -1597,7 +1598,14 @@ export function VoiceAudioPage() {
                     defaultOpen={false}
                     tooltip="Bring your own voice — record from the browser mic or upload an MP3/WAV. Saved to your outputs and picked up automatically by Render and Timeline."
                 >
-                    <div className="space-y-4">
+                    <DropZone
+                        className="space-y-4"
+                        onFiles={(files) => { if (files[0]) void handleUploadFile(files[0]); }}
+                        accept={['audio/*', '.mp3', '.wav', '.webm', '.m4a', '.aac', '.ogg', '.flac']}
+                        multiple={false}
+                        disabled={isUploading}
+                        overlayLabel="Drop an audio file to upload"
+                    >
                         <p className="text-sm text-gray-200">
                             Record directly in the browser or upload an audio file. The result is saved to outputs and becomes selectable across Render and Timeline.
                         </p>
@@ -1641,7 +1649,7 @@ export function VoiceAudioPage() {
                         {recordingDebug && (
                             <p className="text-meta break-all font-mono">{recordingDebug}</p>
                         )}
-                    </div>
+                    </DropZone>
                 </Card>
                 )}
 

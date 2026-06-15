@@ -33,6 +33,7 @@ import { MediaTrimmer } from '../components/MediaTrimmer';
 import { MusicPicker } from '../components/MusicPicker';
 import { InfoTooltip } from '../components/ui/InfoTooltip';
 import { BusyBar } from '../components/ui/BusyBar';
+import { DropZone } from '../components/ui/DropZone';
 
 interface TranscriptWord {
     text: string;
@@ -436,6 +437,24 @@ export function TimelinePage() {
      * the same backgroundItems list as Pexels picks — order matters; this
      * becomes the next segment in the sequence.
      */
+    // Upload several dropped background files in sequence, honouring the
+    // MAX_BACKGROUNDS cap up-front (drops beyond the remaining slots are
+    // skipped with a heads-up rather than silently failing each one).
+    const handleDroppedBackgrounds = async (files: File[]) => {
+        const remaining = MAX_BACKGROUNDS - backgroundItems.length;
+        if (remaining <= 0) {
+            toast.error(`Max ${MAX_BACKGROUNDS} backgrounds reached. Remove one to add another.`);
+            return;
+        }
+        const toUpload = files.slice(0, remaining);
+        if (files.length > toUpload.length) {
+            toast(`Adding ${toUpload.length} of ${files.length} — ${MAX_BACKGROUNDS} background max.`, { icon: 'ℹ️' });
+        }
+        for (const file of toUpload) {
+            await handleLocalBackgroundUpload(file);
+        }
+    };
+
     const handleLocalBackgroundUpload = async (file: File) => {
         if (backgroundItems.length >= MAX_BACKGROUNDS) {
             toast.error(`Max ${MAX_BACKGROUNDS} backgrounds reached. Remove one to add another.`);
@@ -473,7 +492,9 @@ export function TimelinePage() {
                 savedAt: new Date().toISOString(),
                 kind: response.data.kind,
             };
-            setBackgroundItems([...backgroundItems, item]);
+            // Functional update so sequential drops (multi-file) accumulate
+            // instead of clobbering each other via stale closure state.
+            setBackgroundItems((prev) => [...prev, item]);
             toast.success(`${response.data.kind === 'image' ? 'Image' : 'Video'} added as background`, { id: toastId });
         } catch {
             toast.error('Background upload failed', { id: toastId });
@@ -887,6 +908,13 @@ export function TimelinePage() {
                 title="Source Media"
                 tooltip={`Drop in a finished sermon — audio (MP3, WAV, M4A) or video (MP4, MOV, WEBM), up to ${MAX_UPLOAD_MB} MB. Audio is mastered into the assembly for an audio render; video keeps its frames for a captioned-video render.`}
             >
+              <DropZone
+                onFiles={(files) => handleSourceUpload(files[0])}
+                accept={['audio/*', 'video/*', '.mp3', '.wav', '.m4a', '.mp4', '.mov', '.webm', '.m4v']}
+                multiple={false}
+                disabled={isUploading}
+                overlayLabel="Drop sermon audio or video"
+              >
                 <label className="inline-flex items-center gap-3 px-4 py-2 rounded-lg bg-primary-500/10 border border-primary-500/30 text-primary-200 cursor-pointer hover:bg-primary-500/20">
                     <Film size={16} />
                     <span className="text-sm">{isUploading ? 'Uploading...' : 'Choose file'}</span>
@@ -945,6 +973,7 @@ export function TimelinePage() {
                         </div>
                     </div>
                 )}
+              </DropZone>
             </Card>
 
             <Card
@@ -1495,7 +1524,13 @@ export function TimelinePage() {
                         title="Video Background"
                         tooltip={`Pick 1–${MAX_BACKGROUNDS} background clips. With more than one, the render hard-cuts between them at equal slots (1/N of the sermon duration each); use the arrows to reorder. Each clip up to ${MAX_UPLOAD_MB} MB — video (mp4/mov/webm) or image (jpg/png/webp).`}
                     >
-                        <div className="p-2">
+                        <DropZone
+                            className="p-2"
+                            onFiles={handleDroppedBackgrounds}
+                            accept={['image/*', 'video/*', '.jpg', '.jpeg', '.png', '.webp', '.mp4', '.mov', '.webm', '.m4v']}
+                            disabled={isUploading}
+                            overlayLabel="Drop image or video backgrounds"
+                        >
                             {/* Auto background: default on. BibleFuel picks a
                                 mood-matched clip per beat from the user's library
                                 (AI-generates one if the pool is empty). Picking
@@ -1719,7 +1754,7 @@ export function TimelinePage() {
                                     )}
                                 </div>
                             )}
-                        </div>
+                        </DropZone>
                     </Card>
 
                 </div>

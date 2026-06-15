@@ -10,6 +10,7 @@ import { Section } from '../components/ui/Section';
 import { GuideSteps, type GuideStep } from '../components/ui/GuideSteps';
 import { MusicPicker } from '../components/MusicPicker';
 import { api, UPLOAD_TIMEOUT_MS } from '../lib/api';
+import { DropZone } from '../components/ui/DropZone';
 import toast from 'react-hot-toast';
 import { Play, Library, Video, CheckCircle2, ClipboardList, AudioLines, Share2, X as XIcon, Plus, ChevronUp, ChevronDown, Trash2, Sparkles, Scissors } from 'lucide-react';
 import { loadJson, saveJson, STORAGE_KEYS, toOutputUrl } from '../lib/storage';
@@ -488,6 +489,23 @@ export function RenderPage() {
         if (backgroundItems.length === 0) setBackgroundPath(String(item.id));
     };
 
+    // Upload several dropped background files in sequence, honouring the
+    // MAX_BACKGROUNDS cap up-front.
+    const handleDroppedBackgrounds = async (files: File[]) => {
+        const remaining = MAX_BACKGROUNDS - backgroundItems.length;
+        if (remaining <= 0) {
+            toast.error(`Max ${MAX_BACKGROUNDS} backgrounds. Remove one to add another.`);
+            return;
+        }
+        const toUpload = files.slice(0, remaining);
+        if (files.length > toUpload.length) {
+            toast(`Adding ${toUpload.length} of ${files.length} — ${MAX_BACKGROUNDS} background max.`, { icon: 'ℹ️' });
+        }
+        for (const file of toUpload) {
+            await handleLocalBackgroundUpload(file);
+        }
+    };
+
     /**
      * Upload a local video or image as a background. Slots into the same
      * backgroundItems list as Pexels picks — order matters; new uploads
@@ -524,9 +542,10 @@ export function RenderPage() {
                 savedAt: new Date().toISOString(),
                 kind: response.data.kind,
             };
-            const next = [...backgroundItems, item];
-            setBackgroundItems(next);
-            if (next.length === 1) setBackgroundPath(filePath);
+            // Functional updates so sequential (multi-file) drops accumulate
+            // instead of clobbering each other via stale closure state.
+            setBackgroundItems((prev) => [...prev, item]);
+            setBackgroundPath((prev) => prev || filePath);
             toast.success(`${response.data.kind === 'image' ? 'Image' : 'Video'} added as background`);
         } catch {
             toast.error('Background upload failed');
@@ -827,7 +846,13 @@ export function RenderPage() {
                             </span>
                         </label>
                         {backgroundItems.length > 0 ? (
-                            <div className="space-y-2">
+                            <DropZone
+                                className="space-y-2"
+                                onFiles={handleDroppedBackgrounds}
+                                accept={['image/*', 'video/*', '.jpg', '.jpeg', '.png', '.webp', '.mp4', '.mov', '.webm', '.m4v']}
+                                disabled={isUploadingBackground}
+                                overlayLabel="Drop image or video backgrounds"
+                            >
                                 <ul className="space-y-2 max-h-[22rem] overflow-y-auto pr-1">
                                     {backgroundItems.map((item, idx) => {
                                         const isImage = item.kind === 'image';
@@ -940,9 +965,15 @@ export function RenderPage() {
                                 <p className="text-help">
                                     Up to {MAX_UPLOAD_MB} MB per file. Video (mp4/mov/webm) or image (jpg/png/webp).
                                 </p>
-                            </div>
+                            </DropZone>
                         ) : (
-                            <div className="flex flex-col gap-2">
+                            <DropZone
+                                className="flex flex-col gap-2"
+                                onFiles={handleDroppedBackgrounds}
+                                accept={['image/*', 'video/*', '.jpg', '.jpeg', '.png', '.webp', '.mp4', '.mov', '.webm', '.m4v']}
+                                disabled={isUploadingBackground}
+                                overlayLabel="Drop image or video backgrounds"
+                            >
                                 <Input
                                     value={backgroundPath}
                                     onChange={(e) => setBackgroundPath(e.target.value)}
@@ -975,7 +1006,7 @@ export function RenderPage() {
                                 <p className="text-help">
                                     Pick up to {MAX_BACKGROUNDS}. Video (mp4/mov/webm) or image (jpg/png/webp). Up to {MAX_UPLOAD_MB} MB each.
                                 </p>
-                            </div>
+                            </DropZone>
                         )}
                     </Field>
 

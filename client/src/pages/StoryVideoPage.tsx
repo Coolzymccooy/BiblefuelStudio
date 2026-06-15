@@ -14,6 +14,7 @@ import { ProjectHistory } from '../components/story/ProjectHistory';
 import { MusicPicker } from '../components/MusicPicker';
 import { RenderProgressOverlay } from '../components/RenderProgressOverlay';
 import { MediaTrimmer } from '../components/MediaTrimmer';
+import { DropZone } from '../components/ui/DropZone';
 import { ScriptForm } from '../components/story/ScriptForm';
 import type { StoryProject } from '../lib/storyTypes';
 
@@ -255,7 +256,13 @@ export function StoryVideoPage() {
               {entryMode === 'script' ? (
                 <ScriptForm onGenerate={handleGenerateScript} busy={busy} />
               ) : (
-                <>
+                <DropZone
+                  onFiles={(files) => { if (files[0]) handlePickFile(files[0]); }}
+                  accept={['audio/*', 'video/*', '.mp3', '.m4a', '.wav', '.mp4', '.mov', '.webm']}
+                  multiple={false}
+                  disabled={busy}
+                  overlayLabel="Drop a sermon file"
+                >
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
@@ -275,7 +282,7 @@ export function StoryVideoPage() {
                       e.target.value = '';
                     }}
                   />
-                </>
+                </DropZone>
               )}
             </div>
           )}

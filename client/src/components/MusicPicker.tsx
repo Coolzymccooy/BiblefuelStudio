@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import { api } from '../lib/api';
 import { storyApi } from '../lib/storyApi';
 import { useMusicLibrary } from '../hooks/useMusicLibrary';
+import { DropZone } from './ui/DropZone';
 
 export interface MusicValue { path: string | null; volume: number; autoDuck?: boolean }
 
@@ -44,7 +45,14 @@ export function MusicPicker({ value, onChange, busy }: MusicPickerProps) {
   };
 
   return (
-    <div className="space-y-2 rounded-lg border border-white/10 bg-white/[0.03] p-3 text-xs text-gray-300">
+    <DropZone
+      className="space-y-2 rounded-lg border border-white/10 bg-white/[0.03] p-3 text-xs text-gray-300"
+      onFiles={(files) => { if (files[0]) upload(files[0]); }}
+      accept={['audio/*', '.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac']}
+      multiple={false}
+      disabled={busy || isUploading}
+      overlayLabel="Drop a music track"
+    >
       <div className="flex items-center gap-2"><Music size={14} /> <span className="font-medium">Background music</span></div>
 
       <label className="flex items-center gap-2">
@@ -92,6 +100,6 @@ export function MusicPicker({ value, onChange, busy }: MusicPickerProps) {
         )}
         {(busy || isUploading) && <Loader2 size={12} className="animate-spin" />}
       </div>
-    </div>
+    </DropZone>
   );
 }
