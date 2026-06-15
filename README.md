@@ -95,5 +95,5 @@ v7 adds a simple timeline editor in the dashboard: add clips, reorder, optional 
 4) Use /api/jobs/enqueue for background renders (waveform/video).
 
 
-## Deploy to Render
-See `DEPLOY_RENDER.md`.
+## Deploy (Coolify)
+Production runs on Coolify at https://biblefuel.tiwaton.co.uk. See `DEPLOY_COOLIFY.md`.
