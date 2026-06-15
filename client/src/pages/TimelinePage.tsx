@@ -241,6 +241,13 @@ export function TimelinePage() {
         STORAGE_KEYS.sclAutoDuck,
         true,
     );
+    // Burn per-word kinetic captions onto the video. Off → render a plain
+    // audio/video + background clip (the escape hatch for clips too long for
+    // the caption filter graph, or when captions aren't wanted).
+    const [kineticCaptions, setKineticCaptions] = usePersistedState<boolean>(
+        STORAGE_KEYS.sclKineticCaptions,
+        true,
+    );
     const [typographyPreset, setTypographyPreset] = usePersistedState<string>(
         STORAGE_KEYS.sclTypographyPreset,
         'cinematic-worship',
@@ -517,8 +524,10 @@ export function TimelinePage() {
             toast.error('Upload a sermon audio or video first');
             return;
         }
-        if (!transcript || !transcript.length) {
-            toast.error('Transcribe the sermon first');
+        // Captions require a transcript; with kinetic captions OFF we render a
+        // plain audio/video + background clip and skip that requirement.
+        if (kineticCaptions && (!transcript || !transcript.length)) {
+            toast.error('Transcribe the sermon first, or turn off kinetic captions');
             return;
         }
         // Audio sources need a background. In Auto mode BibleFuel supplies one
@@ -529,15 +538,15 @@ export function TimelinePage() {
             return;
         }
 
-        const words = reflowWordsFromEditedLines(transcript, editedLines);
+        const words = kineticCaptions && transcript ? reflowWordsFromEditedLines(transcript, editedLines) : [];
         // Feasibility guard: kinetic captions don't scale to long sermons — the
         // filter graph explodes and the render effectively never finishes. Block
-        // early with a clear path forward rather than letting it hang.
-        if (words.length > MAX_CAPTION_WORDS) {
+        // early with a clear path forward (only when captions are on).
+        if (kineticCaptions && words.length > MAX_CAPTION_WORDS) {
             const mins = Math.round((words[words.length - 1]?.endMs || 0) / 60000);
             toast.error(
                 `This clip has ${words.length} words${mins ? ` (~${mins} min)` : ''} — too long for kinetic captions (max ~${MAX_CAPTION_WORDS}). ` +
-                `Trim it to a short clip, or use Series mode to split the chapter into short videos.`,
+                `Trim it to a short clip, use Series mode, or turn off kinetic captions to render it plain.`,
                 { duration: 8000 },
             );
             return;
@@ -615,6 +624,7 @@ export function TimelinePage() {
                 {
                     ...payload,
                     ...trim,
+                    captions: kineticCaptions,
                     words,
                     typographyPreset,
                     layout,
@@ -930,13 +940,13 @@ export function TimelinePage() {
                         disabled={
                             isRenderingVideo
                             || !sourceMediaPath
-                            || !transcript
+                            || (kineticCaptions && !transcript)
                             || (sourceMediaKind === 'audio' && backgroundItems.length === 0 && !autoBackground)
                         }
                         className="w-full sm:w-auto"
                     >
                         <Film size={16} className="mr-2" />
-                        {isRenderingVideo ? 'Rendering...' : 'Render Captioned Video'}
+                        {isRenderingVideo ? 'Rendering...' : kineticCaptions ? 'Render Captioned Video' : 'Render Video'}
                     </Button>
                 </div>
             </div>
@@ -1097,6 +1107,22 @@ export function TimelinePage() {
                         hint="Whisper is extracting word-level timings. Long sermons take a few minutes — you can leave this running."
                     />
                 )}
+                <label className="flex items-start gap-3 mb-4 rounded-lg border border-white/5 bg-dark-900/40 p-3 cursor-pointer hover:bg-dark-900/60 transition-colors">
+                    <input
+                        type="checkbox"
+                        checked={kineticCaptions}
+                        onChange={(e) => setKineticCaptions(e.target.checked)}
+                        className="mt-0.5 rounded border-white/10 bg-black/50 checked:bg-primary-500"
+                    />
+                    <span className="flex-1">
+                        <span className="block text-sm text-gray-200">Burn kinetic captions onto the video</span>
+                        <span className="text-help">
+                            On: animated word-by-word captions (needs a transcript; short clips only).
+                            Off: render plain audio/video + background — no caption length limit.
+                        </span>
+                    </span>
+                </label>
+                {kineticCaptions && (
                 <div className="mb-4">
                     <p className="text-xs text-gray-400 mb-2">Kinetic typography style</p>
                     <AnimationPicker
@@ -1125,7 +1151,8 @@ export function TimelinePage() {
                         </label>
                     </div>
                 </div>
-                {editedLines.length > 0 && (
+                )}
+                {kineticCaptions && editedLines.length > 0 && (
                     <div className="space-y-2 max-h-96 overflow-y-auto pr-2">
                         {editedLines.map((line, idx) => (
                             <input

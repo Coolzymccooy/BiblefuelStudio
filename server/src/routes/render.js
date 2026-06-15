@@ -541,6 +541,12 @@ router.post("/captioned-video", async (req, res) => {
     // them, instead of equal hard cuts. No-op for a single background.
     const syncBackgrounds = req.body?.syncBackgrounds === true;
     const kenBurns = req.body?.kenBurns === true;
+    // Kinetic captions can be turned OFF (default on) to render a plain
+    // audio/video + background clip with no per-word text — the escape hatch
+    // for clips too long for the caption filter graph, or when captions aren't
+    // wanted. With captions off, words[] is optional and the drawtext chain is
+    // a passthrough.
+    const captions = req.body?.captions !== false;
 
     // Defense in depth against an infeasible render: kinetic captions emit a
     // drawtext filter per word, so word count drives filter-graph size. A
@@ -548,15 +554,16 @@ router.post("/captioned-video", async (req, res) => {
     // at ~1% and never finishes. The client blocks this earlier with guidance
     // (Trim / Series mode); reject here too so a stale client can't wedge the
     // single-worker render pipeline. Kept generous (short-form is the target).
+    // Only relevant when captions are on.
     const MAX_CAPTION_WORDS = 1500;
-    if (Array.isArray(words) && words.length > MAX_CAPTION_WORDS) {
+    if (captions && Array.isArray(words) && words.length > MAX_CAPTION_WORDS) {
       return res.status(413).json({
         ok: false,
         error: `Too many caption words (${words.length}; max ${MAX_CAPTION_WORDS}). Kinetic captions are for short clips — trim the audio or use Series mode to split it into short videos.`,
       });
     }
 
-    if (!words.length) {
+    if (captions && !words.length) {
       return res.status(400).json({ ok: false, error: "words[] is required and must be non-empty" });
     }
 
@@ -725,7 +732,7 @@ router.post("/captioned-video", async (req, res) => {
     // (the trimmed voice is rebased to t=0) and keep only words overlapping the
     // [0, trimDuration] window, clamping partial words to the edges so a caption
     // never renders before t=0 or past the output end.
-    const drawWords = words
+    const drawWords = !captions ? [] : words
       .map((w) => ({
         text: w?.text,
         start: Number(w?.startMs) / 1000 - trimStart,
@@ -747,26 +754,30 @@ router.post("/captioned-video", async (req, res) => {
         end: Math.min(durationSec, w.end),
       }));
 
-    if (drawWords.length === 0) {
-      return res.status(400).json({ ok: false, error: "words[] contained no usable entries (need text + startMs + endMs)" });
-    }
-
-    const resolvedPreset = resolveKineticAnimation(typographyPreset)?.presetId || typographyPreset;
-    // Apply the semantic 3-tier emphasis engine (hero/key/normal) and tag each
-    // word with its micro-phrase index so the "staggered" layout can offset by
-    // phrase. This replaces the raw client `emphasize` flag with lexicon-driven
-    // emphasis, matching the kinetic-caption path in jobs.js.
-    const tieredWords = annotatePhrasedTiers(drawWords);
-    const drawtextChain = buildWordDrawtext({
-      words: tieredWords,
-      w: renderWidth,
-      h: renderHeight,
-      preset: resolvedPreset,
-      layout,
-      depth,
-    });
-    if (!drawtextChain) {
-      return res.status(400).json({ ok: false, error: "buildWordDrawtext returned empty filter chain" });
+    // No-captions mode → drawtext is a passthrough ([vbg]null[vout]); the rest
+    // of the pipeline (background, music, ending fade) is unchanged.
+    let drawtextChain = "null";
+    if (captions) {
+      if (drawWords.length === 0) {
+        return res.status(400).json({ ok: false, error: "words[] contained no usable entries (need text + startMs + endMs)" });
+      }
+      const resolvedPreset = resolveKineticAnimation(typographyPreset)?.presetId || typographyPreset;
+      // Apply the semantic 3-tier emphasis engine (hero/key/normal) and tag each
+      // word with its micro-phrase index so the "staggered" layout can offset by
+      // phrase. This replaces the raw client `emphasize` flag with lexicon-driven
+      // emphasis, matching the kinetic-caption path in jobs.js.
+      const tieredWords = annotatePhrasedTiers(drawWords);
+      drawtextChain = buildWordDrawtext({
+        words: tieredWords,
+        w: renderWidth,
+        h: renderHeight,
+        preset: resolvedPreset,
+        layout,
+        depth,
+      });
+      if (!drawtextChain) {
+        return res.status(400).json({ ok: false, error: "buildWordDrawtext returned empty filter chain" });
+      }
     }
 
     const outDir = req.ctx.outputDir;
@@ -792,7 +803,10 @@ router.post("/captioned-video", async (req, res) => {
       // rebased to t=0 (captions were shifted to match above).
       if (trimStart > 0) args.push("-ss", trimStart.toFixed(3));
       args.push("-i", videoPath);
-      if (musicPath) args.push("-i", musicPath);
+      // -stream_loop -1 so a music bed SHORTER than the clip loops to fill it
+      // instead of dropping to silence partway through. The output `-t` caps it,
+      // and the ending afade fades the looped bed out together with the video.
+      if (musicPath) args.push("-stream_loop", "-1", "-i", musicPath);
       voiceIdx = 0;
       musicIdx = musicPath ? 1 : -1;
       preDrawChain = needsScale
@@ -810,7 +824,9 @@ router.post("/captioned-video", async (req, res) => {
       // crossfade. Computed once up front because the image inputs need their
       // per-slot `-t` length. Falls back silently to the equal-cut path when
       // not requested. The output `-t durationSec` cap trims the xfade surplus.
-      const useSyncBackgrounds = syncBackgrounds && N >= 2;
+      // Speech-synced cuts need caption word timings — fall back to equal cuts
+      // when captions are off (no words to sync to).
+      const useSyncBackgrounds = syncBackgrounds && N >= 2 && drawWords.length > 0;
       let syncChain = null;
       let syncInputDurations = null;
       if (useSyncBackgrounds) {
@@ -837,7 +853,8 @@ router.post("/captioned-video", async (req, res) => {
       // not seeked — they just fill the trimmed duration.
       if (trimStart > 0) args.push("-ss", trimStart.toFixed(3));
       args.push("-i", audioPath);
-      if (musicPath) args.push("-i", musicPath);
+      // Loop a short music bed to fill the whole clip (see note in video mode).
+      if (musicPath) args.push("-stream_loop", "-1", "-i", musicPath);
       voiceIdx = N;
       musicIdx = musicPath ? N + 1 : -1;
 

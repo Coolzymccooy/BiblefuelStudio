@@ -62,6 +62,39 @@ describe("POST /api/render/captioned-video — validation", () => {
     }
   });
 
+  test("with captions:false, empty words[] is allowed (no-captions render)", async (t) => {
+    // The kinetic-captions toggle: captions off renders a plain audio+bg clip,
+    // so words[] is optional. Must NOT 400 on the words gate — a later probe
+    // failure on the zeroed sentinel files is the expected stopping point.
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "render-"));
+    const aud = path.join(outDir, "a.wav");
+    const bg = path.join(outDir, "bg.mp4");
+    fs.writeFileSync(aud, Buffer.alloc(200, 0));
+    fs.writeFileSync(bg, Buffer.alloc(200, 0));
+    t.after(() => fs.rmSync(outDir, { recursive: true, force: true }));
+    const res = await request(makeApp(outDir))
+      .post("/api/render/captioned-video")
+      .send({ audioPath: aud, backgroundPath: bg, captions: false, words: [] });
+    if (res.status === 400) {
+      assert.doesNotMatch(res.body.error || "", /words\[\] is required/);
+    }
+  });
+
+  test("with captions on, a huge word count is rejected (feasibility guard)", async (t) => {
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "render-"));
+    const aud = path.join(outDir, "a.wav");
+    const bg = path.join(outDir, "bg.mp4");
+    fs.writeFileSync(aud, Buffer.alloc(200, 0));
+    fs.writeFileSync(bg, Buffer.alloc(200, 0));
+    t.after(() => fs.rmSync(outDir, { recursive: true, force: true }));
+    const words = Array.from({ length: 1600 }, (_, i) => ({ text: `w${i}`, startMs: i * 100, endMs: i * 100 + 80 }));
+    const res = await request(makeApp(outDir))
+      .post("/api/render/captioned-video")
+      .send({ audioPath: aud, backgroundPath: bg, words });
+    assert.equal(res.status, 413);
+    assert.match(res.body.error || "", /Too many caption words/);
+  });
+
   test("accepts backgroundPaths[] (multi-background sequence)", async (t) => {
     // Multi-bg shape: pass an array; same probe-failure-on-fake-file pattern
     // as the single-bg case but locks the new contract.

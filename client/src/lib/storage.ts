@@ -50,6 +50,7 @@ export const STORAGE_KEYS = {
     sclBackgrounds: 'BF_SCL_BACKGROUNDS', // new: array of up to 4 LibraryItems
     sclAutoBackground: 'BF_SCL_AUTO_BACKGROUND', // let BibleFuel auto-pick from the user's library pool
     sclSyncBackgrounds: 'BF_SCL_SYNC_BACKGROUNDS', // sync multi-bg cuts to speech + crossfade
+    sclKineticCaptions: 'BF_SCL_KINETIC_CAPTIONS', // burn per-word captions onto the video (off = plain audio/video + bg)
     sclTypographyPreset: 'BF_SCL_TYPOGRAPHY_PRESET',
     sclLayout: 'BF_SCL_LAYOUT',
     sclDepth: 'BF_SCL_DEPTH',
