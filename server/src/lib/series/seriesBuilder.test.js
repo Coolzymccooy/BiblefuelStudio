@@ -71,6 +71,28 @@ describe("planVerseRanges", () => {
       { from: 3, to: 3 },
     ]);
   });
+
+  test("offsets ranges by startVerse for a sub-chapter span", () => {
+    // Span = verses 5..8 (4 verses), split into 4 → one verse each, starting at 5.
+    const ranges = planVerseRanges(4, 4, 5);
+    assert.deepEqual(ranges, [
+      { from: 5, to: 5 },
+      { from: 6, to: 6 },
+      { from: 7, to: 7 },
+      { from: 8, to: 8 },
+    ]);
+  });
+
+  test("offset span stays within the requested window", () => {
+    // Span = verses 5..12 (8 verses), split into 3.
+    const ranges = planVerseRanges(8, 3, 5);
+    assert.equal(ranges[0].from, 5);
+    assert.equal(ranges[ranges.length - 1].to, 12);
+    // Contiguous, no gaps or overlaps.
+    for (let i = 1; i < ranges.length; i += 1) {
+      assert.equal(ranges[i].from, ranges[i - 1].to + 1);
+    }
+  });
 });
 
 describe("buildSegmentCaption", () => {
@@ -154,12 +176,62 @@ describe("buildSeriesPlan", () => {
     assert.equal(plan.segments[plan.segments.length - 1].verseTo, 36);
   });
 
-  test("rejects single-verse references", async () => {
-    const fetchVerses = async () => [stubVerse(16, "anything")];
-    await assert.rejects(
-      () => buildSeriesPlan({ chapterReference: "John 3:16", parts: 4, translation: "kjv", fetchVerses }),
-      /requires a chapter reference/i,
-    );
+  test("splits only the requested verse range, not the whole chapter", async () => {
+    const seen = [];
+    const fetchVerses = async (range) => {
+      seen.push(range);
+      const match = range.match(/(\d+)(?:-(\d+))?$/);
+      const from = Number(match[1]);
+      const to = Number(match[2] || match[1]);
+      return Array.from({ length: to - from + 1 }, (_, i) => stubVerse(from + i, `Verse ${from + i} text.`));
+    };
+    // John 3:5-12 split into 4 → verses 5-6, 7-8, 9-10, 11-12. Must NOT touch
+    // verses outside 5..12 (the whole-chapter bug ballooned 5-12 into 5-36).
+    const plan = await buildSeriesPlan({
+      chapterReference: "John 3:5-12",
+      parts: 4,
+      translation: "kjv",
+      fetchVerses,
+    });
+    assert.equal(plan.totalParts, 4);
+    assert.equal(plan.segments.length, 4);
+    assert.equal(plan.segments[0].verseFrom, 5);
+    assert.equal(plan.segments[plan.segments.length - 1].verseTo, 12);
+    // Span reference reflects the window the user asked for.
+    assert.equal(plan.chapterReference, "John 3:5-12");
+    // Every fetched range is inside 5..12.
+    for (const range of seen) {
+      const m = range.match(/(\d+)(?:-(\d+))?$/);
+      assert.ok(Number(m[1]) >= 5 && Number(m[2] || m[1]) <= 12, `range ${range} escaped the window`);
+    }
+  });
+
+  test("accepts a single verse as a one-part series", async () => {
+    const fetchVerses = async () => [stubVerse(16, "For God so loved the world")];
+    const plan = await buildSeriesPlan({ chapterReference: "John 3:16", parts: 4, translation: "kjv", fetchVerses });
+    assert.equal(plan.totalParts, 1);
+    assert.equal(plan.segments.length, 1);
+    assert.equal(plan.segments[0].verseFrom, 16);
+    assert.equal(plan.segments[0].verseTo, 16);
+    assert.equal(plan.chapterReference, "John 3:16");
+  });
+
+  test("totalParts always equals the number of segments produced", async () => {
+    const fetchVerses = async (range) => {
+      const match = range.match(/(\d+)(?:-(\d+))?$/);
+      const from = Number(match[1]);
+      const to = Number(match[2] || match[1]);
+      return Array.from({ length: to - from + 1 }, (_, i) => stubVerse(from + i, `t${from + i}`));
+    };
+    // Ask for more parts than the span has verses (5..7 = 3 verses, ask 8).
+    const plan = await buildSeriesPlan({
+      chapterReference: "John 3:5-7",
+      parts: 8,
+      translation: "kjv",
+      fetchVerses,
+    });
+    assert.equal(plan.totalParts, plan.segments.length);
+    assert.equal(plan.segments.length, 3);
   });
 
   test("rejects unparseable references", async () => {

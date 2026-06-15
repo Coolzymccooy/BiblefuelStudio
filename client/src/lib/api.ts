@@ -156,6 +156,45 @@ class ApiClient {
         }
     }
 
+    /**
+     * Upload a File/Blob as a RAW binary request body (no base64, no JSON).
+     * The browser streams the bytes directly — ~1.37x smaller on the wire than
+     * a base64 data URL and constant-memory on the server (it pipes to disk).
+     * The original filename rides on the `?filename=` query so the server can
+     * pick the right extension; the Content-Type carries the MIME.
+     *
+     * Mirrors `post()`'s return contract so call sites swap in cleanly.
+     */
+    async uploadRaw<T = any>(
+        url: string,
+        file: Blob,
+        options?: PostOptions & { filename?: string }
+    ): Promise<ApiResponse<T>> {
+        try {
+            const filename = options?.filename || (file as File).name || 'upload.bin';
+            const headers: Record<string, string> = {
+                'Content-Type': file.type || 'application/octet-stream',
+            };
+            const token = this.getToken();
+            if (token) headers['Authorization'] = `Bearer ${token}`;
+
+            const sep = url.includes('?') ? '&' : '?';
+            const response = await axios.post(`${url}${sep}filename=${encodeURIComponent(filename)}`, file, {
+                headers,
+                timeout: options?.timeout ?? DEFAULT_TIMEOUT_MS,
+                onUploadProgress: options?.onUploadProgress
+                    ? (e) => {
+                          const pct = e.total ? Math.round((e.loaded / e.total) * 100) : 0;
+                          options.onUploadProgress!(pct);
+                      }
+                    : undefined,
+            });
+            return { ok: true, status: response.status, data: response.data };
+        } catch (error) {
+            return this.handleError(error);
+        }
+    }
+
     async delete<T = any>(
         url: string,
         customHeaders?: Record<string, string>

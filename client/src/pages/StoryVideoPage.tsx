@@ -19,15 +19,6 @@ import type { StoryProject } from '../lib/storyTypes';
 
 const ACTIVE_KEY = 'BF_STORY_ACTIVE';
 
-function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-}
-
 export function StoryVideoPage() {
   const qc = useQueryClient();
   const [projectId, setProjectId] = useState<string | null>(() => localStorage.getItem(ACTIVE_KEY));
@@ -54,8 +45,7 @@ export function StoryVideoPage() {
     setBusy(true);
     try {
       setDefaultTitle(file.name.replace(/\.[^.]+$/, ''));
-      const dataUrl = await readFileAsDataUrl(file);
-      const path = await storyApi.uploadAudio(dataUrl, file.name);
+      const path = await storyApi.uploadAudio(file, file.name);
       setPendingAudio(path);
     } catch (e) {
       toast.error((e as Error).message || 'Upload failed');

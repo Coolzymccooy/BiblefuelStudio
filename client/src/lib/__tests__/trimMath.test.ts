@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { clampTime, snap, pxToTime, timeToPct, enforceHandles } from '../trimMath';
+import { clampTime, snap, pxToTime, timeToPct, enforceHandles, moveSelection } from '../trimMath';
 
 describe('trimMath', () => {
   it('clampTime keeps t within [0, duration]', () => {
@@ -60,5 +60,38 @@ describe('trimMath', () => {
   it('enforceHandles selects whole clip when duration <= minGap', () => {
     const r = enforceHandles('start', 0.2, { start: 0, end: 0.3 }, 0.3, 0.5);
     expect(r).toEqual({ start: 0, end: 0.3 });
+  });
+
+  describe('moveSelection', () => {
+    it('slides the window forward preserving its width', () => {
+      // 1:00–1:15 (15s) dragged forward 20s → 1:20–1:35 in a 120s clip.
+      const r = moveSelection({ start: 60, end: 75 }, 20, 120);
+      expect(r).toEqual({ start: 80, end: 95 });
+    });
+
+    it('slides the window backward preserving its width', () => {
+      const r = moveSelection({ start: 60, end: 75 }, -20, 120);
+      expect(r).toEqual({ start: 40, end: 55 });
+    });
+
+    it('clamps at the start edge without shrinking the window', () => {
+      const r = moveSelection({ start: 5, end: 20 }, -50, 120);
+      expect(r).toEqual({ start: 0, end: 15 });
+    });
+
+    it('clamps at the end edge without shrinking the window', () => {
+      const r = moveSelection({ start: 100, end: 115 }, 50, 120);
+      expect(r).toEqual({ start: 105, end: 120 });
+    });
+
+    it('preserves width for any delta', () => {
+      const width = 12;
+      for (const delta of [-200, -7.3, 0, 3.1, 200]) {
+        const r = moveSelection({ start: 30, end: 30 + width }, delta, 120);
+        expect(r.start).toBeGreaterThanOrEqual(0);
+        expect(r.end).toBeLessThanOrEqual(120);
+        expect(r.end - r.start).toBeCloseTo(width, 5);
+      }
+    });
   });
 });

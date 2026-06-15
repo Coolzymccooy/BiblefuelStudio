@@ -37,11 +37,12 @@ describe('storyApi', () => {
     await expect(storyApi.segment('p')).rejects.toThrow('no transcript to segment');
   });
 
-  it('uploadAudio returns the server file path', async () => {
-    const spy = vi.spyOn(api, 'post').mockResolvedValue({ ok: true, status: 200, data: { ok: true, file: '/out/user-audio-1.mp3' } });
-    const file = await storyApi.uploadAudio('data:audio/mp3;base64,AAA', 'sermon.mp3', () => {});
+  it('uploadAudio streams the blob and returns the server file path', async () => {
+    const spy = vi.spyOn(api, 'uploadRaw').mockResolvedValue({ ok: true, status: 200, data: { ok: true, file: '/out/user-audio-1.mp3' } });
+    const blob = new Blob([new Uint8Array([1, 2, 3])], { type: 'audio/mpeg' });
+    const file = await storyApi.uploadAudio(blob, 'sermon.mp3', () => {});
     expect(file).toBe('/out/user-audio-1.mp3');
-    expect(spy).toHaveBeenCalled();
+    expect(spy).toHaveBeenCalledWith('/api/media/upload-audio', blob, expect.objectContaining({ filename: 'sermon.mp3' }));
   });
 
   it('deleteProject DELETEs by id', async () => {

@@ -50,3 +50,18 @@ export function enforceHandles(
   const minEnd = clampTime(current.start + minGap, duration);
   return { start: current.start, end: Math.min(duration, Math.max(p, minEnd)) };
 }
+
+/**
+ * Slide the whole selection window by `deltaSec`, preserving its width and
+ * keeping it inside [0, duration]. Powers the "drag the middle to reposition"
+ * gesture (WhatsApp-style): a 15s window at 1:00–1:15 dragged forward 20s
+ * becomes 1:20–1:35, same length, just moved.
+ */
+export function moveSelection(current: Selection, deltaSec: number, duration: number): Selection {
+  const width = Math.max(0, current.end - current.start);
+  // The window can't run past either edge, so the start is bounded by
+  // [0, duration - width]. Clamp first, then derive end so width is preserved.
+  const maxStart = Math.max(0, duration - width);
+  const start = snap(Math.min(maxStart, Math.max(0, current.start + deltaSec)));
+  return { start, end: Math.min(duration, snap(start + width)) };
+}

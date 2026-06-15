@@ -10,7 +10,7 @@ import { InfoTooltip } from '../components/ui/InfoTooltip';
 import { GuideSteps } from '../components/ui/GuideSteps';
 import { AnimationPicker } from '../components/voicelab/AnimationPicker';
 import { CompareVoices } from '../components/voicelab/CompareVoices';
-import { api, GENERATE_TIMEOUT_MS } from '../lib/api';
+import { api, GENERATE_TIMEOUT_MS, UPLOAD_TIMEOUT_MS } from '../lib/api';
 import toast from 'react-hot-toast';
 import { loadJson, pushUnique, saveJson, STORAGE_KEYS, toOutputUrl } from '../lib/storage';
 import { useConfig } from '../lib/config';
@@ -529,10 +529,14 @@ export function VoiceAudioPage() {
         }
     };
 
-    const uploadDataUrl = async (dataUrl: string, filename: string, kind: AudioItem['kind']) => {
+    const uploadBlob = async (blob: Blob, filename: string, kind: AudioItem['kind']) => {
         setIsUploading(true);
         try {
-            const response = await api.post('/api/media/upload-audio', { dataUrl, filename });
+            // Raw binary streaming — no base64 inflation, constant server memory.
+            const response = await api.uploadRaw('/api/media/upload-audio', blob, {
+                filename,
+                timeout: UPLOAD_TIMEOUT_MS,
+            });
             if (response.ok && response.data?.file) {
                 setAudioPath(response.data.file);
                 addToHistory(response.data.file, kind, filename);
@@ -553,16 +557,13 @@ export function VoiceAudioPage() {
     };
 
     const handleUploadFile = async (file: File) => {
-        const reader = new FileReader();
-        reader.onload = async () => {
-            const dataUrl = String(reader.result || '');
-            if (!dataUrl.startsWith('data:audio/')) {
-                toast.error('Please select an audio file');
-                return;
-            }
-            await uploadDataUrl(dataUrl, file.name || 'upload.webm', 'upload');
-        };
-        reader.readAsDataURL(file);
+        const looksAudio = (file.type || '').startsWith('audio/')
+            || /\.(mp3|wav|m4a|aac|ogg|flac|webm)$/i.test(file.name || '');
+        if (!looksAudio) {
+            toast.error('Please select an audio file');
+            return;
+        }
+        await uploadBlob(file, file.name || 'upload.webm', 'upload');
     };
 
     const startVisualizer = async (stream: MediaStream) => {
@@ -666,28 +667,6 @@ export function VoiceAudioPage() {
         return '';
     };
 
-    const blobToDataUrl = async (blob: Blob) => {
-        if (!blob || blob.size === 0) throw new Error('Empty audio blob');
-        const reader = new FileReader();
-        const dataUrl = await new Promise<string>((resolve, reject) => {
-            reader.onerror = () => reject(new Error('Failed to read audio blob'));
-            reader.onload = () => resolve(String(reader.result || ''));
-            reader.readAsDataURL(blob);
-        });
-        if (dataUrl && dataUrl.startsWith('data:') && dataUrl.includes(',')) return dataUrl;
-
-        const buffer = await blob.arrayBuffer();
-        const bytes = new Uint8Array(buffer);
-        let binary = '';
-        for (let i = 0; i < bytes.length; i++) {
-            binary += String.fromCharCode(bytes[i]);
-        }
-        const base64 = btoa(binary);
-        const mime = blob.type || 'audio/webm';
-        const normalizedMime = mime.split(';')[0] || 'audio/webm';
-        return `data:${normalizedMime};base64,${base64}`;
-    };
-
     const handleStartRecording = async () => {
         if (isRecording || (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording')) {
             return;
@@ -714,12 +693,12 @@ export function VoiceAudioPage() {
                 const blob = new Blob(chunksRef.current, { type: actualMime });
                 setRecordingDebug(`Captured ${chunksRef.current.length} chunk(s), ${blob.size} bytes, mime=${actualMime}`);
                 try {
-                    const dataUrl = await blobToDataUrl(blob);
+                    if (!blob || blob.size === 0) throw new Error('Empty audio blob');
                     const ext =
                         actualMime.includes('ogg') ? 'ogg' :
                             actualMime.includes('wav') ? 'wav' :
                                 actualMime.includes('mp4') ? 'm4a' : 'webm';
-                    const upload = await uploadDataUrl(dataUrl, `recording-${Date.now()}.${ext}`, 'record');
+                    const upload = await uploadBlob(blob, `recording-${Date.now()}.${ext}`, 'record');
                     if (!upload.ok) {
                         return;
                     }

@@ -462,29 +462,34 @@ export function JobsPage() {
             </Card>
 
             {shareJob?.result?.outFile && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-                    <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShareJob(null)} />
-                    <div className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-                        <div className="flex items-center justify-between mb-3 px-1">
-                            <h3 className="font-bold text-lg text-white">Share your video</h3>
-                            <button onClick={() => setShareJob(null)} className="text-gray-400 hover:text-white p-1" aria-label="Close">
-                                <XIcon size={20} />
-                            </button>
+                // Scroll the whole overlay (not an inner max-h box) so the share
+                // buttons can never be clipped, and pad the bottom on mobile so
+                // the last row clears the fixed bottom nav bar.
+                <div className="fixed inset-0 z-50 overflow-y-auto">
+                    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShareJob(null)} />
+                    <div className="relative flex min-h-full items-start sm:items-center justify-center p-4 pb-28 sm:pb-4">
+                        <div className="relative w-full max-w-2xl">
+                            <div className="flex items-center justify-between mb-3 px-1">
+                                <h3 className="font-bold text-lg text-white">Share your video</h3>
+                                <button onClick={() => setShareJob(null)} className="text-gray-400 hover:text-white p-1" aria-label="Close">
+                                    <XIcon size={20} />
+                                </button>
+                            </div>
+                            <ShareSheet
+                                videoUrl={toOutputUrl(shareJob.result.outFile, api.mediaBaseUrl)}
+                                caption={(() => {
+                                    const p = (shareJob.payload || {}) as Record<string, any>;
+                                    if (Array.isArray(p.lines)) return p.lines.filter(Boolean).join(' ');
+                                    if (typeof p.caption === 'string') return p.caption;
+                                    return '';
+                                })()}
+                                title={(() => {
+                                    const p = (shareJob.payload || {}) as Record<string, any>;
+                                    return String(p.title || '') || (Array.isArray(p.lines) ? String(p.lines[0] || '') : '');
+                                })()}
+                                filename={`biblefuel-${shareJob.id.slice(0, 8)}`}
+                            />
                         </div>
-                        <ShareSheet
-                            videoUrl={toOutputUrl(shareJob.result.outFile, api.mediaBaseUrl)}
-                            caption={(() => {
-                                const p = (shareJob.payload || {}) as Record<string, any>;
-                                if (Array.isArray(p.lines)) return p.lines.filter(Boolean).join(' ');
-                                if (typeof p.caption === 'string') return p.caption;
-                                return '';
-                            })()}
-                            title={(() => {
-                                const p = (shareJob.payload || {}) as Record<string, any>;
-                                return String(p.title || '') || (Array.isArray(p.lines) ? String(p.lines[0] || '') : '');
-                            })()}
-                            filename={`biblefuel-${shareJob.id.slice(0, 8)}`}
-                        />
                     </div>
                 </div>
             )}

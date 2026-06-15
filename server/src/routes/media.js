@@ -75,42 +75,150 @@ function isPlayableAudio(filePath) {
   }
 }
 
+// Mirror the client-side cap (MAX_UPLOAD_MB). Belt-and-braces: the raw stream
+// path enforces it byte-by-byte and the base64 path checks the decoded length,
+// so an oversized upload can never fill the disk regardless of transport.
+const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
+
+// Audio container/codec → file extension. Pulled out of the route so the raw
+// streaming path (mime from the request's Content-Type header) and the legacy
+// base64 path (mime from the data-URL prefix) share one mapping.
+export const audioMimeToExt = (mime, hint) => {
+  const m = String(mime || "").toLowerCase();
+  if (m.includes("webm")) return "webm";
+  if (m.includes("wav") || m.includes("x-wav")) return "wav";
+  if (m.includes("mpeg") || m.includes("mp3")) return "mp3";
+  if (m.includes("ogg")) return "ogg";
+  if (m.includes("flac")) return "flac";
+  if (m.includes("aac")) return "aac";
+  if (m.includes("mp4") || m.includes("m4a") || m.includes("x-m4a")) return "m4a";
+  return hint || "bin";
+};
+
+/**
+ * Land an uploaded payload on disk via either transport:
+ *   - Raw binary body (Content-Type: application/octet-stream or any non-JSON):
+ *     piped straight to disk → flat memory, no base64 inflation. This is the
+ *     path the current client uses.
+ *   - Legacy base64 JSON ({ dataUrl }): decoded in memory. Kept so an older
+ *     cached bundle (or any not-yet-migrated caller) still works.
+ *
+ * Returns { ok, mime, bytes } or { ok:false, status, error }. On any failure
+ * the partial file is removed so a rejected upload never leaves a stub behind.
+ *
+ * @param {import('express').Request} req
+ * @param {string} destPath
+ * @param {{ b64?: string|null, mime?: string }} [opts]
+ */
+export async function receiveUploadToFile(req, destPath, opts = {}) {
+  const maxBytes = opts.maxBytes ?? MAX_UPLOAD_BYTES;
+  // Legacy base64 JSON path — express.json already populated req.body.
+  if (opts.b64 != null) {
+    const buf = Buffer.from(opts.b64 || "", "base64");
+    if (buf.length > maxBytes) {
+      return { ok: false, status: 413, error: "File exceeds the upload limit" };
+    }
+    if (!buf.length || buf.length < 128) {
+      return { ok: false, status: 400, error: "Upload payload is empty or too small" };
+    }
+    try {
+      fs.writeFileSync(destPath, buf);
+    } catch (e) {
+      return { ok: false, status: 500, error: `Failed to write upload: ${e?.message || e}` };
+    }
+    return { ok: true, mime: opts.mime || "application/octet-stream", bytes: buf.length };
+  }
+
+  // Raw streaming path.
+  return await new Promise((resolve) => {
+    let bytes = 0;
+    let settled = false;
+    const ws = fs.createWriteStream(destPath);
+
+    const succeed = (result) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+    // On failure the partial file must be removed AFTER the writer releases its
+    // handle — unlinking while a piped chunk is still flushing would let the
+    // write re-create the file. So tear down the stream, then unlink on close.
+    const fail = (result) => {
+      if (settled) return;
+      settled = true;
+      const cleanup = () => { try { fs.unlinkSync(destPath); } catch {} resolve(result); };
+      if (ws.destroyed) return cleanup();
+      ws.once("close", cleanup);
+      ws.destroy();
+    };
+
+    req.on("data", (chunk) => {
+      bytes += chunk.length;
+      if (bytes > maxBytes) {
+        try { req.unpipe(ws); } catch {}
+        try { req.destroy(); } catch {}
+        fail({ ok: false, status: 413, error: "File exceeds the upload limit" });
+      }
+    });
+    req.on("error", () => fail({ ok: false, status: 400, error: "Upload stream error" }));
+    ws.on("error", (e) => fail({ ok: false, status: 500, error: `Failed to write upload: ${e?.message || e}` }));
+    ws.on("finish", () => {
+      if (bytes < 128) {
+        return fail({ ok: false, status: 400, error: "Upload payload is empty or too small" });
+      }
+      succeed({ ok: true, mime: String(req.headers["content-type"] || opts.mime || "application/octet-stream"), bytes });
+    });
+    req.pipe(ws);
+  });
+}
+
+/**
+ * Resolve the uploaded mime + base64 (legacy) for a request up front, so the
+ * route can name the destination file with the right extension BEFORE writing.
+ * For raw uploads the mime comes from the Content-Type header; for base64 from
+ * the data-URL prefix.
+ * @returns {{ ok:true, mime:string, b64:string|null } | { ok:false, error:string }}
+ */
+function resolveUploadMeta(req) {
+  if (req.body && typeof req.body.dataUrl === "string" && req.body.dataUrl) {
+    const parsed = parseDataUrlPayload(req.body.dataUrl);
+    if (!parsed.ok) return { ok: false, error: parsed.error || "Invalid dataUrl" };
+    return { ok: true, mime: parsed.mime || "application/octet-stream", b64: parsed.b64 || "" };
+  }
+  return { ok: true, mime: String(req.headers["content-type"] || "application/octet-stream"), b64: null };
+}
+
 router.post("/upload-audio", async (req, res) => {
   try {
-    const dataUrl = String(req.body?.dataUrl || "");
-    const fileNameHint = String(req.body?.filename || "").trim();
-    const parsed = parseDataUrlPayload(dataUrl);
-    if (!parsed.ok) return res.status(400).json({ ok: false, error: parsed.error || "Invalid dataUrl" });
-
-    const mime = parsed.mime || "application/octet-stream";
-    const b64 = parsed.b64 || "";
-    const decodedBuffer = Buffer.from(b64, "base64");
-    if (!decodedBuffer.length || decodedBuffer.length < 128) {
-      return res.status(400).json({ ok: false, error: "Audio payload is empty or too small" });
-    }
+    const fileNameHint = String(req.query?.filename || req.body?.filename || "").trim();
+    const meta = resolveUploadMeta(req);
+    if (!meta.ok) return res.status(400).json({ ok: false, error: meta.error });
 
     const extFromName = fileNameHint ? path.extname(fileNameHint).replace(".", "").toLowerCase() : "";
-    const ext =
-      mime.includes("webm") ? "webm" :
-      mime.includes("wav") ? "wav" :
-      mime.includes("mpeg") ? "mp3" :
-      mime.includes("mp3") ? "mp3" :
-      mime.includes("ogg") ? "ogg" :
-      mime.includes("flac") ? "flac" :
-      mime.includes("aac") ? "aac" :
-      mime.includes("mp4") ? "m4a" :
-      extFromName || "bin";
+    const ext = audioMimeToExt(meta.mime, extFromName);
+    const mime = meta.mime;
 
     const outDir = req.ctx.outputDir;
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
     const rawFile = path.join(outDir, `user-audio-${uuid()}.${ext}`);
-    fs.writeFileSync(rawFile, decodedBuffer);
+    const recv = await receiveUploadToFile(req, rawFile, { b64: meta.b64, mime });
+    if (!recv.ok) return res.status(recv.status || 400).json({ ok: false, error: recv.error });
 
-    if (ext === "mp3" || ext === "wav") {
-      if (!isPlayableAudio(rawFile)) {
-        return res.status(400).json({ ok: false, error: "Uploaded audio is invalid or too short" });
-      }
+    if (!isPlayableAudio(rawFile)) {
+      try { fs.unlinkSync(rawFile); } catch {}
+      return res.status(400).json({ ok: false, error: "Uploaded audio is invalid or too short" });
+    }
+
+    // PART 2 — no up-front transcode for formats that are already both
+    // browser-playable AND natively read by FFmpeg. Every downstream step
+    // (transcribe, master, render, waveform) feeds the file through FFmpeg,
+    // and <audio> plays these directly, so converting on upload only delayed
+    // the response — a 25 MB m4a sermon spent that whole wait in libmp3lame.
+    // We return immediately; conversion is no longer on the critical path.
+    // (Exotic/uncommon containers below still convert so playback never fails.)
+    const NATIVE_OK = new Set(["mp3", "wav", "m4a", "aac", "ogg", "webm"]);
+    if (NATIVE_OK.has(ext)) {
       return res.json({ ok: true, file: rawFile.replace(/\\/g, "/"), mime });
     }
 
@@ -245,26 +353,21 @@ const imageMimeToExt = (mime, hint) => {
 // upload, not absence of validation.
 router.post("/upload-source-video", async (req, res) => {
   try {
-    const dataUrl = String(req.body?.dataUrl || "");
-    const fileNameHint = String(req.body?.filename || "").trim();
-    const parsed = parseDataUrlPayload(dataUrl);
-    if (!parsed.ok) return res.status(400).json({ ok: false, error: parsed.error || "Invalid dataUrl" });
-
-    const decoded = Buffer.from(parsed.b64 || "", "base64");
-    if (!decoded.length || decoded.length < 128) {
-      return res.status(400).json({ ok: false, error: "Video payload is empty or too small" });
-    }
+    const fileNameHint = String(req.query?.filename || req.body?.filename || "").trim();
+    const meta = resolveUploadMeta(req);
+    if (!meta.ok) return res.status(400).json({ ok: false, error: meta.error });
 
     const extHint = fileNameHint ? path.extname(fileNameHint).replace(".", "").toLowerCase() : "";
-    const ext = videoMimeToExt(parsed.mime, extHint);
+    const ext = videoMimeToExt(meta.mime, extHint);
 
     const outDir = req.ctx.outputDir;
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
     const outFile = path.join(outDir, `source-video-${uuid()}.${ext}`);
-    fs.writeFileSync(outFile, decoded);
+    const recv = await receiveUploadToFile(req, outFile, { b64: meta.b64, mime: meta.mime });
+    if (!recv.ok) return res.status(recv.status || 400).json({ ok: false, error: recv.error });
 
-    return res.json({ ok: true, file: outFile.replace(/\\/g, "/"), mime: parsed.mime || `video/${ext}` });
+    return res.json({ ok: true, file: outFile.replace(/\\/g, "/"), mime: meta.mime || `video/${ext}` });
   } catch (e) {
     res.status(400).json({ ok: false, error: String(e?.message || e) });
   }
@@ -278,17 +381,11 @@ router.post("/upload-source-video", async (req, res) => {
 // preview instead of a <video> for images.
 router.post("/upload-background", async (req, res) => {
   try {
-    const dataUrl = String(req.body?.dataUrl || "");
-    const fileNameHint = String(req.body?.filename || "").trim();
-    const parsed = parseDataUrlPayload(dataUrl);
-    if (!parsed.ok) return res.status(400).json({ ok: false, error: parsed.error || "Invalid dataUrl" });
+    const fileNameHint = String(req.query?.filename || req.body?.filename || "").trim();
+    const meta = resolveUploadMeta(req);
+    if (!meta.ok) return res.status(400).json({ ok: false, error: meta.error });
 
-    const decoded = Buffer.from(parsed.b64 || "", "base64");
-    if (!decoded.length || decoded.length < 128) {
-      return res.status(400).json({ ok: false, error: "Background payload is empty or too small" });
-    }
-
-    const mime = String(parsed.mime || "").toLowerCase();
+    const mime = String(meta.mime || "").toLowerCase();
     const extHint = fileNameHint ? path.extname(fileNameHint).replace(".", "").toLowerCase() : "";
     const isImage =
       mime.startsWith("image/") ||
@@ -310,13 +407,14 @@ router.post("/upload-background", async (req, res) => {
     const outDir = req.ctx.outputDir;
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
     const outFile = path.join(outDir, `bg-${kind}-${uuid()}.${ext}`);
-    fs.writeFileSync(outFile, decoded);
+    const recv = await receiveUploadToFile(req, outFile, { b64: meta.b64, mime: meta.mime });
+    if (!recv.ok) return res.status(recv.status || 400).json({ ok: false, error: recv.error });
 
     return res.json({
       ok: true,
       file: outFile.replace(/\\/g, "/"),
       kind,
-      mime: parsed.mime || (isImage ? `image/${ext}` : `video/${ext}`),
+      mime: meta.mime || (isImage ? `image/${ext}` : `video/${ext}`),
     });
   } catch (e) {
     res.status(400).json({ ok: false, error: String(e?.message || e) });

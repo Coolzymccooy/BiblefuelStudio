@@ -63,26 +63,33 @@ export function clampPartsCount(value, maxVerses) {
 }
 
 /**
- * Compute the verse ranges for a chapter divided into N parts.
- * Even split with the remainder distributed to earlier parts so the chapter
- * is fully partitioned (no orphan verses at the tail).
+ * Compute the verse ranges for a span of `totalVerses` verses divided into N
+ * parts. Even split with the remainder distributed to earlier parts so the
+ * span is fully partitioned (no orphan verses at the tail).
  *
- * @param {number} totalVerses
+ * `startVerse` lets the caller partition an arbitrary window inside a chapter
+ * (e.g. "John 3:5-12") rather than always verse 1 onward. Returned `from`/`to`
+ * are absolute verse numbers.
+ *
+ * @param {number} totalVerses  number of verses in the span (not the chapter)
  * @param {number} parts
+ * @param {number} [startVerse=1]  first verse of the span (absolute)
  * @returns {Array<{ from: number, to: number }>}
  */
-export function planVerseRanges(totalVerses, parts) {
+export function planVerseRanges(totalVerses, parts, startVerse = 1) {
   const t = Math.max(1, Math.round(totalVerses));
   const p = Math.max(1, Math.min(t, Math.round(parts)));
+  const start = Math.max(1, Math.round(startVerse));
+  const end = start + t - 1;
   const base = Math.floor(t / p);
   const extra = t - base * p;
   /** @type {Array<{ from: number, to: number }>} */
   const ranges = [];
-  let cursor = 1;
+  let cursor = start;
   for (let i = 0; i < p; i += 1) {
     const size = base + (i < extra ? 1 : 0);
     const from = cursor;
-    const to = Math.min(t, cursor + size - 1);
+    const to = Math.min(end, cursor + size - 1);
     ranges.push({ from, to });
     cursor = to + 1;
   }
@@ -173,13 +180,34 @@ export function buildSegmentCaption({ partNumber, totalParts, reference, verses,
 export async function buildSeriesPlan({ chapterReference, parts, translation, fetchVerses }) {
   const parsed = normalizeReference(chapterReference);
   if (!parsed) throw new Error(`Could not parse chapter reference: ${chapterReference}`);
-  if (parsed.verseFrom != null) {
-    throw new Error("Series mode requires a chapter reference (e.g. 'John 3'), not a single verse");
-  }
 
-  const totalVerses = getChapterVerseCount(parsed.book.name, parsed.chapter);
-  const totalParts = clampPartsCount(parts, totalVerses);
-  const ranges = planVerseRanges(totalVerses, totalParts);
+  // Determine the verse window to partition. With no verse part ("John 3")
+  // it's the whole chapter; with a verse range ("John 3:5-12") it's exactly
+  // that span, and with a single verse ("John 3:16") it's a one-verse window.
+  // Previously a range was rejected, forcing whole-chapter splits — so a user
+  // asking for 3 videos of John 3:1-5 got the entire 36-verse chapter split
+  // into 3 instead.
+  const chapterVerseCount = getChapterVerseCount(parsed.book.name, parsed.chapter);
+  const hasRange = parsed.verseFrom != null;
+  const spanStart = hasRange ? parsed.verseFrom : 1;
+  const spanEnd = hasRange
+    ? Math.min(parsed.verseTo ?? parsed.verseFrom, chapterVerseCount)
+    : chapterVerseCount;
+  const spanVerseCount = Math.max(1, spanEnd - spanStart + 1);
+
+  const requestedParts = clampPartsCount(parts, spanVerseCount);
+  const ranges = planVerseRanges(spanVerseCount, requestedParts, spanStart);
+  // Source of truth for the part count is the ranges we actually produced —
+  // clampPartsCount can ask for more parts than a short span has verses, and
+  // planVerseRanges caps at one verse per part. Deriving totalParts here keeps
+  // captions ("Part X of N") and segment count in lock-step.
+  const totalParts = ranges.length;
+
+  const spanReference = hasRange
+    ? (spanEnd > spanStart
+        ? `${parsed.book.name} ${parsed.chapter}:${spanStart}-${spanEnd}`
+        : `${parsed.book.name} ${parsed.chapter}:${spanStart}`)
+    : `${parsed.book.name} ${parsed.chapter}`;
 
   /** @type {SeriesSegment[]} */
   const segments = [];
@@ -226,7 +254,7 @@ export async function buildSeriesPlan({ chapterReference, parts, translation, fe
   const seriesId = `series_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
   return {
     seriesId,
-    chapterReference: `${parsed.book.name} ${parsed.chapter}`,
+    chapterReference: spanReference,
     book: parsed.book.name,
     chapter: parsed.chapter,
     translation,

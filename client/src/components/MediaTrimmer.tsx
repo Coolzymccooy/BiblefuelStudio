@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { X, Scissors, Play, Pause, Loader2 } from 'lucide-react';
 import { Button } from './ui/Button';
 import { api } from '../lib/api';
-import { pxToTime, timeToPct, enforceHandles, type Selection } from '../lib/trimMath';
+import { pxToTime, timeToPct, enforceHandles, moveSelection, type Selection } from '../lib/trimMath';
 import toast from 'react-hot-toast';
 
 const MIN_GAP = 0.5; // seconds — smallest allowed selection
@@ -35,7 +35,11 @@ export function MediaTrimmer({ serverPath, kind, onApply, onCancel }: MediaTrimm
 
   const trackRef = useRef<HTMLDivElement | null>(null);
   const mediaRef = useRef<(HTMLVideoElement & HTMLAudioElement) | null>(null);
-  const draggingRef = useRef<null | 'start' | 'end'>(null);
+  const draggingRef = useRef<null | 'start' | 'end' | 'move'>(null);
+  // Anchor captured when a "move whole window" drag begins: the pointer time
+  // and the selection at grab-start. Applying the total delta from this anchor
+  // (rather than per-event increments) keeps the window from drifting.
+  const moveAnchorRef = useRef<{ pointerTime: number; sel: Selection } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -60,7 +64,21 @@ export function MediaTrimmer({ serverPath, kind, onApply, onCancel }: MediaTrimm
 
   const startDrag = (which: 'start' | 'end') => (e: React.PointerEvent) => {
     e.preventDefault();
+    e.stopPropagation(); // don't also trigger the window-move on the region behind
     draggingRef.current = which;
+    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+  };
+
+  // Grab the highlighted region to slide the whole selection (WhatsApp-style).
+  const startMove = (e: React.PointerEvent) => {
+    if (duration == null) return;
+    const track = trackRef.current;
+    if (!track) return;
+    e.preventDefault();
+    const rect = track.getBoundingClientRect();
+    const pointerTime = pxToTime(e.clientX - rect.left, rect.width, duration);
+    draggingRef.current = 'move';
+    moveAnchorRef.current = { pointerTime, sel };
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
   };
 
@@ -71,6 +89,16 @@ export function MediaTrimmer({ serverPath, kind, onApply, onCancel }: MediaTrimm
       if (!which || !track || duration == null) return;
       const rect = track.getBoundingClientRect();
       const t = pxToTime(e.clientX - rect.left, rect.width, duration);
+
+      if (which === 'move') {
+        const anchor = moveAnchorRef.current;
+        if (!anchor) return;
+        const next = moveSelection(anchor.sel, t - anchor.pointerTime, duration);
+        if (mediaRef.current) mediaRef.current.currentTime = next.start;
+        setSel(next);
+        return;
+      }
+
       setSel((cur) => {
         const next = enforceHandles(which, t, cur, duration, MIN_GAP);
         if (mediaRef.current) mediaRef.current.currentTime = which === 'start' ? next.start : next.end;
@@ -78,7 +106,7 @@ export function MediaTrimmer({ serverPath, kind, onApply, onCancel }: MediaTrimm
       });
     };
 
-    const endDrag = () => { draggingRef.current = null; };
+    const endDrag = () => { draggingRef.current = null; moveAnchorRef.current = null; };
 
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', endDrag);
@@ -169,8 +197,10 @@ export function MediaTrimmer({ serverPath, kind, onApply, onCancel }: MediaTrimm
             {duration != null && (
               <>
                 <div
-                  className="absolute inset-y-0 bg-primary-500/25 border-x-2 border-primary-400"
+                  onPointerDown={startMove}
+                  className="absolute inset-y-0 bg-primary-500/25 border-x-2 border-primary-400 cursor-grab active:cursor-grabbing touch-none"
                   style={{ left: `${timeToPct(sel.start, duration)}%`, right: `${100 - timeToPct(sel.end, duration)}%` }}
+                  aria-label="Move selection"
                 />
                 <div
                   role="slider"
@@ -197,7 +227,7 @@ export function MediaTrimmer({ serverPath, kind, onApply, onCancel }: MediaTrimm
           </div>
 
           <p className="text-[11px] text-content-tertiary text-center">
-            Drag the handles to choose the part you want to keep, then Apply trim.
+            Drag the handles to resize, or drag the middle to slide the whole selection. Play selection to preview, then Apply trim.
           </p>
 
           <div className="flex items-center justify-between text-xs text-gray-300 tabular-nums">

@@ -9,7 +9,7 @@ import { Field } from '../components/ui/Field';
 import { Section } from '../components/ui/Section';
 import { GuideSteps, type GuideStep } from '../components/ui/GuideSteps';
 import { MusicPicker } from '../components/MusicPicker';
-import { api } from '../lib/api';
+import { api, UPLOAD_TIMEOUT_MS } from '../lib/api';
 import toast from 'react-hot-toast';
 import { Play, Library, Video, CheckCircle2, ClipboardList, AudioLines, Share2, X as XIcon, Plus, ChevronUp, ChevronDown, Trash2, Sparkles, Scissors } from 'lucide-react';
 import { loadJson, saveJson, STORAGE_KEYS, toOutputUrl } from '../lib/storage';
@@ -505,15 +505,10 @@ export function RenderPage() {
         }
         setIsUploadingBackground(true);
         try {
-            const dataUrl: string = await new Promise((resolve, reject) => {
-                const reader = new FileReader();
-                reader.onload = () => resolve(String(reader.result));
-                reader.onerror = () => reject(reader.error);
-                reader.readAsDataURL(file);
-            });
-            const response = await api.post<{ file: string; kind: 'image' | 'video' }>(
+            const response = await api.uploadRaw<{ file: string; kind: 'image' | 'video' }>(
                 '/api/media/upload-background',
-                { dataUrl, filename: file.name },
+                file,
+                { filename: file.name, timeout: UPLOAD_TIMEOUT_MS },
             );
             if (!response.ok || !response.data?.file) {
                 toast.error(response.error || 'Background upload failed');

@@ -13,15 +13,6 @@ interface MusicPickerProps {
   busy: boolean;
 }
 
-function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => resolve(String(r.result));
-    r.onerror = () => reject(r.error);
-    r.readAsDataURL(file);
-  });
-}
-
 export function MusicPicker({ value, onChange, busy }: MusicPickerProps) {
   const { data: tracks } = useMusicLibrary();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -36,8 +27,7 @@ export function MusicPicker({ value, onChange, busy }: MusicPickerProps) {
     if (isUploading) return;
     setIsUploading(true);
     try {
-      const dataUrl = await readFileAsDataUrl(file);
-      const path = await storyApi.uploadAudio(dataUrl, file.name);
+      const path = await storyApi.uploadAudio(file, file.name);
       onChange({ path, volume: value.volume ?? 0.3, autoDuck });
       toast.success('Music added');
     } catch (e) { toast.error((e as Error).message || 'Music upload failed'); }

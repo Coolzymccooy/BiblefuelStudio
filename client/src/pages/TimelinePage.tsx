@@ -31,6 +31,7 @@ import { AnimationPicker } from '../components/voicelab/AnimationPicker';
 import { ShareSheet } from '../components/ShareSheet';
 import { MediaTrimmer } from '../components/MediaTrimmer';
 import { MusicPicker } from '../components/MusicPicker';
+import { InfoTooltip } from '../components/ui/InfoTooltip';
 
 interface TranscriptWord {
     text: string;
@@ -276,13 +277,18 @@ export function TimelinePage() {
     const [transcriptHistory, setTranscriptHistory] = useState<TranscriptRecord[]>([]);
     const [showHistory, setShowHistory] = useState(false);
 
-    const readFileAsDataUrl = (file: File): Promise<string> =>
-        new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(String(reader.result));
-            reader.onerror = () => reject(reader.error);
-            reader.readAsDataURL(file);
-        });
+    // Drives a single compact toast through an upload's two phases: byte
+    // transfer (determinate %) then server-side processing (indeterminate).
+    // The processing phase matters most for audio — the server transcodes
+    // m4a/aac/etc → mp3 with ffmpeg AFTER the bytes land, so without this the
+    // bar would sit at 100% and look frozen for a long sermon.
+    const makeUploadToast = (toastId: string, label: string) => (pct: number) => {
+        setUploadProgress(pct);
+        toast.loading(
+            pct < 100 ? `${label} ${pct}%` : 'Processing… long sermons take a moment',
+            { id: toastId },
+        );
+    };
 
     const handleSourceUpload = async (file: File) => {
         // Client-side gate matches the server's MAX_INPUT_MB so a 300 MB
@@ -293,19 +299,25 @@ export function TimelinePage() {
             return;
         }
         const isVideo = /\.(mp4|mov|webm|m4v)$/i.test(file.name);
+        const toastId = 'scl-source-upload';
         setIsUploading(true);
         try {
-            const dataUrl = await readFileAsDataUrl(file);
             setUploadProgress(0);
+            toast.loading(isVideo ? 'Uploading video… 0%' : 'Uploading sermon… 0%', { id: toastId });
             const endpoint = isVideo ? '/api/media/upload-source-video' : '/api/media/upload-audio';
-            const response = await api.post(
+            // Raw binary streaming — the browser sends the file's bytes directly
+            // (no base64 inflation, constant server memory). See api.uploadRaw.
+            const response = await api.uploadRaw(
                 endpoint,
-                { dataUrl, filename: file.name },
-                undefined,
-                { timeout: UPLOAD_TIMEOUT_MS, onUploadProgress: setUploadProgress },
+                file,
+                {
+                    filename: file.name,
+                    timeout: UPLOAD_TIMEOUT_MS,
+                    onUploadProgress: makeUploadToast(toastId, isVideo ? 'Uploading video…' : 'Uploading sermon…'),
+                },
             );
             if (!response.ok || !response.data?.file) {
-                toast.error(response.error || 'Upload failed');
+                toast.error(response.error || 'Upload failed', { id: toastId });
                 return;
             }
             setSourceMediaPath(response.data.file);
@@ -336,9 +348,9 @@ export function TimelinePage() {
                 saveClipsToCache(next);
                 pushAudioHistory(response.data.file, 'source');
             }
-            toast.success(`${isVideo ? 'Video' : 'Audio'} uploaded`);
+            toast.success(`${isVideo ? 'Video' : 'Audio'} uploaded`, { id: toastId });
         } catch {
-            toast.error('Upload failed');
+            toast.error('Upload failed', { id: toastId });
         } finally {
             setIsUploading(false);
             setUploadProgress(null);
@@ -421,18 +433,18 @@ export function TimelinePage() {
             toast.error(`File is ${(file.size / 1024 / 1024).toFixed(1)} MB. Max upload is ${MAX_UPLOAD_MB} MB.`);
             return;
         }
+        const toastId = 'scl-bg-upload';
         setIsUploading(true);
         try {
-            const dataUrl = await readFileAsDataUrl(file);
             setUploadProgress(0);
-            const response = await api.post<{ file: string; kind: 'image' | 'video' }>(
+            toast.loading('Uploading background… 0%', { id: toastId });
+            const response = await api.uploadRaw<{ file: string; kind: 'image' | 'video' }>(
                 '/api/media/upload-background',
-                { dataUrl, filename: file.name },
-                undefined,
-                { timeout: UPLOAD_TIMEOUT_MS, onUploadProgress: setUploadProgress },
+                file,
+                { filename: file.name, timeout: UPLOAD_TIMEOUT_MS, onUploadProgress: makeUploadToast(toastId, 'Uploading background…') },
             );
             if (!response.ok || !response.data?.file) {
-                toast.error(response.error || 'Background upload failed');
+                toast.error(response.error || 'Background upload failed', { id: toastId });
                 return;
             }
             // Build a synthetic LibraryItem so the rest of the multi-bg flow
@@ -450,9 +462,9 @@ export function TimelinePage() {
                 kind: response.data.kind,
             };
             setBackgroundItems([...backgroundItems, item]);
-            toast.success(`${response.data.kind === 'image' ? 'Image' : 'Video'} added as background`);
+            toast.success(`${response.data.kind === 'image' ? 'Image' : 'Video'} added as background`, { id: toastId });
         } catch {
-            toast.error('Background upload failed');
+            toast.error('Background upload failed', { id: toastId });
         } finally {
             setIsUploading(false);
             setUploadProgress(null);
@@ -488,6 +500,37 @@ export function TimelinePage() {
         }, 250);
 
         try {
+            // Carry the Mastering & Filters chain (loudness, fades, de-esser)
+            // into the video so the final render sounds as polished as Render
+            // Audio — no manual "Render Audio → use as source" round-trip.
+            //
+            // We bake the FULL, untrimmed source as a single clip on purpose:
+            // loudnorm / fades / de-esser all PRESERVE duration, so the existing
+            // word-level caption timings stay perfectly in sync. (Concatenating
+            // multiple clips or applying per-clip trims WOULD shift timings and
+            // desync the edited transcript, so those remain on the Render Audio
+            // path.) Audio only — video sources keep their own audio track.
+            let audioForVideo = sourceMediaPath;
+            if (sourceMediaKind === 'audio') {
+                const masteringActive = deess || fadeIn > 0 || fadeOut > 0 || normalizeLUFS !== -14;
+                if (masteringActive) {
+                    toast.loading('Mastering audio…', { id: 'scl-master' });
+                    const masterRes = await api.post<{ file: string }>('/api/audio-adv/timeline', {
+                        clips: [{ path: sourceMediaPath }],
+                        normalizeLUFS,
+                        fades: { inMs: fadeIn, outMs: fadeOut },
+                        deess: { enabled: deess, amount: 0.55 },
+                    });
+                    if (masterRes.ok && masterRes.data?.file) {
+                        audioForVideo = masterRes.data.file;
+                        toast.success('Audio mastered', { id: 'scl-master' });
+                    } else {
+                        // Non-fatal: fall back to raw audio so the render still proceeds.
+                        toast.error('Mastering skipped — using raw audio', { id: 'scl-master' });
+                    }
+                }
+            }
+
             // Multi-bg: send the full ORDERED list as backgroundPaths[]. Server
             // hard-cuts at durationSec/N. Falls back to single-bg when only
             // one is selected (server treats N=1 as the legacy lean path).
@@ -497,9 +540,9 @@ export function TimelinePage() {
             const payload = sourceMediaKind === 'video'
                 ? { videoPath: sourceMediaPath }
                 : useAuto
-                    ? { audioPath: sourceMediaPath, autoBackground: true }
+                    ? { audioPath: audioForVideo, autoBackground: true }
                     : {
-                        audioPath: sourceMediaPath,
+                        audioPath: audioForVideo,
                         backgroundPaths: backgroundItems.map((b) => String(b.id)),
                     };
             // Honour the Main Assembly clip's START / DURATION trim. Sent only
@@ -900,11 +943,11 @@ export function TimelinePage() {
                 title="Transcribe & Caption"
                 tooltip="Sends the uploaded sermon through Whisper to extract a word-level transcript with timings. Long sermons are auto-chunked. Edit the lines below — word timings redistribute uniformly across edited spans, so fix transcription errors freely. Pick a kinetic style to control how each word animates on screen."
             >
-                <div className="flex items-center justify-between gap-4 mb-4">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
                     <p className="text-help">
                         Generate a word-level transcript with timings, then refine the lines below before rendering captions.
                     </p>
-                    <div className="flex items-center gap-2 relative">
+                    <div className="flex flex-wrap items-center gap-2 relative">
                         {transcript && transcript.length > 0 && (
                             <>
                                 <Button
@@ -948,7 +991,7 @@ export function TimelinePage() {
                         </Button>
 
                         {showHistory && (
-                            <div className="absolute right-0 top-11 z-30 w-80 max-h-80 overflow-y-auto rounded-xl border border-white/15 bg-dark-900/98 backdrop-blur-xl shadow-2xl p-2">
+                            <div className="absolute right-0 top-full mt-1 z-30 w-80 max-w-[calc(100vw-3rem)] max-h-80 overflow-y-auto rounded-xl border border-white/15 bg-dark-900/98 backdrop-blur-xl shadow-2xl p-2">
                                 <p className="text-caption px-2 py-1">Saved transcripts</p>
                                 {transcriptHistory.map((h) => (
                                     <div key={h.id} className="group flex items-center gap-2 rounded-lg px-2 py-2 hover:bg-white/5">
@@ -1211,7 +1254,26 @@ export function TimelinePage() {
                                         <Waves size={20} />
                                     </div>
                                     <div>
-                                        <h3 className="font-bold text-lg">Main Assembly</h3>
+                                        <h3 className="font-bold text-lg flex items-center gap-1.5">
+                                            Main Assembly
+                                            <InfoTooltip
+                                                width="lg"
+                                                content={
+                                                    <span>
+                                                        Your sermon&rsquo;s audio timeline. Clips play in order, top to
+                                                        bottom. Set <strong>Start</strong> / <strong>Duration (sec)</strong>{' '}
+                                                        to trim a clip — leave blank to use the whole thing. Use{' '}
+                                                        <strong>Add Clip</strong> to stitch in more audio.
+                                                        <br />
+                                                        <br />
+                                                        <strong>Render Audio</strong> bakes every clip + the Mastering &amp;
+                                                        Filters below into one polished file. <strong>Render Captioned
+                                                        Video</strong> applies your mastering to the final video
+                                                        automatically (using clip&nbsp;1&rsquo;s trim).
+                                                    </span>
+                                                }
+                                            />
+                                        </h3>
                                         <p className="text-subtitle">Auto-sequenced timeline</p>
                                     </div>
                                 </div>
@@ -1858,21 +1920,26 @@ export function TimelinePage() {
             )}
 
             {shareUrl && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-                    <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShareUrl(null)} />
-                    <div className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-                        <div className="flex items-center justify-between mb-3 px-1">
-                            <h3 className="font-bold text-lg text-white">Share your video</h3>
-                            <button onClick={() => setShareUrl(null)} className="text-gray-400 hover:text-white p-1" aria-label="Close">
-                                <X size={20} />
-                            </button>
+                // Scroll the whole overlay (not an inner max-h box) so the share
+                // buttons can never be clipped, and pad the bottom on mobile so
+                // the last row clears the fixed bottom nav bar.
+                <div className="fixed inset-0 z-50 overflow-y-auto">
+                    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShareUrl(null)} />
+                    <div className="relative flex min-h-full items-start sm:items-center justify-center p-4 pb-28 sm:pb-4">
+                        <div className="relative w-full max-w-2xl">
+                            <div className="flex items-center justify-between mb-3 px-1">
+                                <h3 className="font-bold text-lg text-white">Share your video</h3>
+                                <button onClick={() => setShareUrl(null)} className="text-gray-400 hover:text-white p-1" aria-label="Close">
+                                    <X size={20} />
+                                </button>
+                            </div>
+                            <ShareSheet
+                                videoUrl={shareUrl}
+                                caption={editedLines.join(' ').trim()}
+                                title={editedLines[0] || ''}
+                                filename={`biblefuel-${(shareUrl.split('/').pop() || 'video').replace(/\.[^.]+$/, '').slice(0, 24)}`}
+                            />
                         </div>
-                        <ShareSheet
-                            videoUrl={shareUrl}
-                            caption={editedLines.join(' ').trim()}
-                            title={editedLines[0] || ''}
-                            filename={`biblefuel-${(shareUrl.split('/').pop() || 'video').replace(/\.[^.]+$/, '').slice(0, 24)}`}
-                        />
                     </div>
                 </div>
             )}

@@ -143,15 +143,19 @@ export function SeriesPage() {
             <Card title="Build a series" icon={Sparkles}>
                 <div className="grid grid-cols-1 lg:grid-cols-4 gap-3">
                     <label className="lg:col-span-2 flex flex-col gap-1.5">
-                        <span className="text-caption">Chapter reference</span>
+                        <span className="text-caption">Chapter or verse range</span>
                         <Input
                             value={reference}
                             onChange={(e) => setReference(e.target.value)}
-                            placeholder='e.g. "John 3", "Romans 8", "Psalms 23"'
+                            placeholder='e.g. "John 3" or "Isaiah 60:5-8"'
                         />
+                        <span className="text-help">
+                            Whole chapter, or a verse range like <span className="text-gray-300">Isaiah 60:5-8</span>.
+                            Only the verses you pick are split into the videos below.
+                        </span>
                     </label>
                     <label className="flex flex-col gap-1.5">
-                        <span className="text-caption">Parts</span>
+                        <span className="text-caption">Split into</span>
                         <Select value={parts} onChange={(e) => setParts(Number(e.target.value))}>
                             {PART_COUNT_OPTIONS.map((n) => (
                                 <option key={n} value={n}>
