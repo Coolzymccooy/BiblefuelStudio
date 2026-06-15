@@ -44,6 +44,7 @@ export const STORAGE_KEYS = {
     sclTranscript: 'BF_SCL_TRANSCRIPT',
     sclEditedLines: 'BF_SCL_EDITED_LINES',
     sclMusicPath: 'BF_SCL_MUSIC_PATH',
+    sclMusicPaths: 'BF_SCL_MUSIC_PATHS', // ordered multi-track music bed (played in sequence, then looped)
     sclMusicVolume: 'BF_SCL_MUSIC_VOLUME',
     sclAutoDuck: 'BF_SCL_AUTO_DUCK',
     sclBackground: 'BF_SCL_BACKGROUND', // legacy single-bg key, kept for back-compat reads

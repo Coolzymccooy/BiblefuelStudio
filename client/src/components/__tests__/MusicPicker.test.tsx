@@ -44,4 +44,29 @@ describe('MusicPicker', () => {
     await userEvent.click(await screen.findByRole('button', { name: /remove music/i }));
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ path: null }));
   });
+
+  describe('multiple mode', () => {
+    it('appends a library track to the ordered list', async () => {
+      const onChange = vi.fn();
+      renderWith(<MusicPicker multiple value={{ path: 'library:peaceful-worship', paths: ['library:peaceful-worship'], volume: 0.3, autoDuck: true }} onChange={onChange} busy={false} />);
+      const select = await screen.findByLabelText(/add music from library/i);
+      await screen.findByRole('option', { name: /joyful praise/i });
+      await userEvent.selectOptions(select, 'joyful-praise');
+      expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
+        paths: ['library:peaceful-worship', 'library:joyful-praise'],
+        path: 'library:peaceful-worship',
+      }));
+    });
+
+    it('removes a track by index, keeping order', async () => {
+      const onChange = vi.fn();
+      renderWith(<MusicPicker multiple value={{ path: 'library:peaceful-worship', paths: ['library:peaceful-worship', 'library:joyful-praise'], volume: 0.3, autoDuck: true }} onChange={onChange} busy={false} />);
+      const removeButtons = await screen.findAllByRole('button', { name: /remove track/i });
+      await userEvent.click(removeButtons[0]);
+      expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
+        paths: ['library:joyful-praise'],
+        path: 'library:joyful-praise',
+      }));
+    });
+  });
 });

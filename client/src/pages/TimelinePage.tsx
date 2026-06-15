@@ -233,6 +233,12 @@ export function TimelinePage() {
         STORAGE_KEYS.sclMusicPath,
         null,
     );
+    // Ordered multi-track music bed (played in sequence, then looped to fill
+    // the clip). musicPath mirrors musicPaths[0] for back-compat.
+    const [musicPaths, setMusicPaths] = usePersistedState<string[]>(
+        STORAGE_KEYS.sclMusicPaths,
+        [],
+    );
     const [musicVolume, setMusicVolume] = usePersistedState<number>(
         STORAGE_KEYS.sclMusicVolume,
         0.25,
@@ -603,19 +609,20 @@ export function TimelinePage() {
             }
 
             // Multi-bg: send the full ORDERED list as backgroundPaths[]. Server
-            // hard-cuts at durationSec/N. Falls back to single-bg when only
-            // one is selected (server treats N=1 as the legacy lean path).
-            // Manual picks always win; otherwise Auto mode asks the server to
-            // choose per-beat from the user's library (and AI-generate if empty).
-            const useAuto = autoBackground && backgroundItems.length === 0;
+            // hard-cuts at durationSec/N. Blend: send the uploaded clips AND the
+            // auto flag together — the server uses the uploads first, then fills
+            // the remaining slots (up to MAX) with auto-picked/AI clips. Either
+            // alone still works (auto-only when no uploads; uploads-only when
+            // Auto is off).
             const payload = sourceMediaKind === 'video'
                 ? { videoPath: sourceMediaPath }
-                : useAuto
-                    ? { audioPath: audioForVideo, autoBackground: true }
-                    : {
-                        audioPath: audioForVideo,
-                        backgroundPaths: backgroundItems.map((b) => String(b.id)),
-                    };
+                : {
+                    audioPath: audioForVideo,
+                    ...(backgroundItems.length > 0
+                        ? { backgroundPaths: backgroundItems.map((b) => String(b.id)) }
+                        : {}),
+                    ...(autoBackground ? { autoBackground: true } : {}),
+                };
             // Honour the Main Assembly clip's START / DURATION trim. Sent only
             // when set; the server defaults to the full sermon when omitted.
             const assemblyClip = clips[0];
@@ -636,7 +643,10 @@ export function TimelinePage() {
                     typographyPreset,
                     layout,
                     depth,
-                    musicPath: musicPath || undefined,
+                    // Multi-track bed: the server concatenates these and loops
+                    // the result. Falls back to musicPath for older servers.
+                    musicPaths: musicPaths.length > 0 ? musicPaths : undefined,
+                    musicPath: musicPaths[0] || musicPath || undefined,
                     musicVolume,
                     autoDuck,
                     // Only meaningful with 2+ manually-picked backgrounds.
@@ -1207,9 +1217,12 @@ export function TimelinePage() {
                 tooltip="Background music under the sermon. Auto-duck lowers it while someone is speaking and lifts it back between phrases, so the message stays clear."
             >
                 <MusicPicker
-                  value={{ path: musicPath || null, volume: musicVolume, autoDuck }}
+                  multiple
+                  value={{ path: musicPath || null, paths: musicPaths, volume: musicVolume, autoDuck }}
                   onChange={(m) => {
-                    setMusicPath(m.path || null);
+                    const next = m.paths ?? (m.path ? [m.path] : []);
+                    setMusicPaths(next);
+                    setMusicPath(next[0] || null);
                     setMusicVolume(m.volume);
                     setAutoDuck(m.autoDuck ?? true);
                   }}
@@ -1650,7 +1663,7 @@ export function TimelinePage() {
                                     </span>
                                     <span className="block text-[10px] text-content-secondary mt-0.5">
                                         {backgroundItems.length > 0
-                                            ? 'Overridden — your selected clips below will be used.'
+                                            ? `Blended — your ${backgroundItems.length} clip${backgroundItems.length > 1 ? 's' : ''} first, then auto-picked clips fill the rest.`
                                             : 'Picks a mood-matched background per beat from your library. Generates one if your library is empty.'}
                                     </span>
                                 </span>

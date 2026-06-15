@@ -95,6 +95,43 @@ describe("POST /api/render/captioned-video — validation", () => {
     assert.match(res.body.error || "", /Too many caption words/);
   });
 
+  test("blend: accepts manual backgroundPaths[] together with autoBackground", async (t) => {
+    // Uploaded clips + Auto on should not be rejected as a contradictory shape;
+    // the server blends them. With manual picks present, an empty auto result
+    // is non-fatal, so it proceeds to the (fake-file) probe failure.
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "render-"));
+    const aud = path.join(outDir, "a.wav");
+    const bg = path.join(outDir, "bg.mp4");
+    fs.writeFileSync(aud, Buffer.alloc(200, 0));
+    fs.writeFileSync(bg, Buffer.alloc(200, 0));
+    t.after(() => fs.rmSync(outDir, { recursive: true, force: true }));
+    const res = await request(makeApp(outDir))
+      .post("/api/render/captioned-video")
+      .send({ audioPath: aud, backgroundPaths: [bg], autoBackground: true, words: [{ text: "Hi", startMs: 0, endMs: 200 }] });
+    if (res.status === 400) {
+      assert.doesNotMatch(res.body.error || "", /Provide either/);
+      assert.doesNotMatch(res.body.error || "", /Could not auto-select/);
+    }
+  });
+
+  test("accepts musicPaths[] (multi-track bed)", async (t) => {
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "render-"));
+    const aud = path.join(outDir, "a.wav");
+    const bg = path.join(outDir, "bg.mp4");
+    const m1 = path.join(outDir, "m1.mp3");
+    const m2 = path.join(outDir, "m2.mp3");
+    [aud, bg, m1, m2].forEach((f) => fs.writeFileSync(f, Buffer.alloc(2048, 0)));
+    t.after(() => fs.rmSync(outDir, { recursive: true, force: true }));
+    const res = await request(makeApp(outDir))
+      .post("/api/render/captioned-video")
+      .send({ audioPath: aud, backgroundPath: bg, musicPaths: [m1, m2], words: [{ text: "Hi", startMs: 0, endMs: 200 }] });
+    // Must get past music validation (both tracks resolve) — the eventual stop
+    // is the fake-file probe/concat, not a musicPaths rejection.
+    if (res.status === 400) {
+      assert.doesNotMatch(res.body.error || "", /music track .* not found/);
+    }
+  });
+
   test("accepts backgroundPaths[] (multi-background sequence)", async (t) => {
     // Multi-bg shape: pass an array; same probe-failure-on-fake-file pattern
     // as the single-bg case but locks the new contract.

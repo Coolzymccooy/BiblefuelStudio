@@ -487,6 +487,35 @@ function probeAudioDuration(filePath) {
 }
 
 /**
+ * Concatenate audio tracks back-to-back into one normalized MP3. Each input is
+ * re-formatted to 44.1 kHz stereo first (concat requires matching layouts), so
+ * mixed-format tracks stitch cleanly. Used to merge a multi-track music bed
+ * before it loops under the render.
+ * @param {string[]} paths
+ * @param {string} destPath
+ */
+function concatAudioTracks(paths, destPath) {
+  return new Promise((resolve, reject) => {
+    const ffmpeg = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
+    const inputs = [];
+    for (const p of paths) inputs.push("-i", p);
+    const norm = paths
+      .map((_, i) => `[${i}:a]aformat=sample_rates=44100:channel_layouts=stereo[a${i}]`)
+      .join(";");
+    const cat = paths.map((_, i) => `[a${i}]`).join("") + `concat=n=${paths.length}:v=0:a=1[out]`;
+    const args = ["-y", ...inputs, "-filter_complex", `${norm};${cat}`, "-map", "[out]", "-c:a", "libmp3lame", "-b:a", "192k", destPath];
+    const proc = spawn(ffmpeg, args);
+    let stderr = "";
+    proc.stderr.on("data", (d) => { if (stderr.length < 8000) stderr += d.toString(); });
+    proc.on("error", reject);
+    proc.on("close", (code) => {
+      if (code === 0 && fs.existsSync(destPath)) return resolve(destPath);
+      reject(new Error(`audio concat exited ${code}: ${stderr.slice(-300)}`));
+    });
+  });
+}
+
+/**
  * Burn kinetic-typography captions onto a sermon. Two input modes:
  *
  *   (a) videoPath          — uploaded sermon video; drives duration + canvas
@@ -527,6 +556,12 @@ router.post("/captioned-video", async (req, res) => {
       .map((p) => (p == null ? "" : String(p).trim()))
       .filter(Boolean);
     const rawMusicPath = req.body?.musicPath;
+    // Multi-track music bed: accept `musicPaths[]` (ordered). The plural form
+    // wins; the singular collapses into a 1-element list. Multiple tracks are
+    // concatenated back-to-back into one bed, which then loops to fill the clip.
+    const rawMusicPaths = (Array.isArray(req.body?.musicPaths) ? req.body.musicPaths : (rawMusicPath ? [rawMusicPath] : []))
+      .map((p) => (p == null ? "" : String(p).trim()))
+      .filter(Boolean);
     const words = Array.isArray(req.body?.words) ? req.body.words : [];
     const typographyPreset = String(req.body?.typographyPreset || "default");
     const layout = String(req.body?.layout || "center");
@@ -581,7 +616,13 @@ router.post("/captioned-video", async (req, res) => {
     let autoBackgroundSource = null;
     const wantsAuto =
       req.body?.autoBackground === true || String(req.body?.background || "").toLowerCase() === "auto";
-    if (wantsAuto && rawBackgroundPaths.length === 0 && rawAudioPath) {
+    // Blend: Auto now ADDS to manual picks instead of only running when none
+    // were chosen. With N images uploaded and Auto on, it fills the remaining
+    // (MAX_BACKGROUNDS - N) slots with library/AI picks for variety. Auto
+    // failure is only fatal when there are no manual picks to fall back on.
+    const manualBackgroundCount = rawBackgroundPaths.length;
+    const autoRoom = MAX_BACKGROUNDS - manualBackgroundCount;
+    if (wantsAuto && autoRoom > 0 && rawAudioPath) {
       const script = req.body?.script && typeof req.body.script === "object" ? req.body.script : undefined;
       const transcript = words.map((w) => w?.text).filter(Boolean).join(" ");
       const lib = readLibrary(req.ctx.dataDir);
@@ -591,7 +632,7 @@ router.post("/captioned-video", async (req, res) => {
         pool,
         script,
         text: transcript,
-        maxBackgrounds: MAX_BACKGROUNDS,
+        maxBackgrounds: autoRoom,
         generateImage: (genArgs) =>
           generateBibleImage({
             seriesId: `auto-${req.ctx.userId || "anon"}`,
@@ -601,10 +642,17 @@ router.post("/captioned-video", async (req, res) => {
           }),
       });
       if (auto.backgroundIds.length === 0) {
-        return res.status(400).json({ ok: false, error: auto.error || "Could not auto-select a background" });
+        // No auto picks: fatal only when we'd otherwise have nothing to render.
+        if (manualBackgroundCount === 0) {
+          return res.status(400).json({ ok: false, error: auto.error || "Could not auto-select a background" });
+        }
+      } else {
+        // Dedup against manual picks so the same library clip isn't added twice.
+        const already = new Set(rawBackgroundPaths.map(String));
+        const fresh = auto.backgroundIds.filter((id) => !already.has(String(id)));
+        rawBackgroundPaths.push(...fresh);
+        autoBackgroundSource = manualBackgroundCount > 0 ? `blend:${auto.source}` : auto.source;
       }
-      rawBackgroundPaths.push(...auto.backgroundIds);
-      autoBackgroundSource = auto.source;
     }
     if (rawBackgroundPaths.length > MAX_BACKGROUNDS) {
       return res.status(400).json({
@@ -722,9 +770,41 @@ router.post("/captioned-video", async (req, res) => {
       durationSec = audDur;
     }
 
-    const musicPath = rawMusicPath ? resolveAssetPath(req.ctx.dataDir, rawMusicPath) : null;
-    if (musicPath && !isLocalOrRemote(musicPath)) {
-      return res.status(400).json({ ok: false, error: `musicPath not found: ${rawMusicPath}` });
+    // Resolve every music track; pre-download remote ones. Multiple tracks are
+    // concatenated into a single bed file so the rest of the pipeline (one
+    // looping music input + amix + ending fade) is unchanged.
+    let musicPath = null;
+    {
+      const resolvedMusic = [];
+      for (let i = 0; i < rawMusicPaths.length; i += 1) {
+        let m = resolveAssetPath(req.ctx.dataDir, rawMusicPaths[i]);
+        if (!m || !isLocalOrRemote(m)) {
+          return res.status(400).json({ ok: false, error: `music track ${i + 1} not found: ${rawMusicPaths[i]}` });
+        }
+        if (isRemoteUrl(m)) {
+          try { m = await localizeRemote(m, `music${i}`); }
+          catch (e) { return res.status(502).json({ ok: false, error: `Failed to fetch music track ${i + 1}: ${e?.message || e}` }); }
+        }
+        if (isFileTooLarge(m)) {
+          return res.status(400).json({ ok: false, error: `music track ${i + 1} too large (>${MAX_INPUT_MB}MB)` });
+        }
+        resolvedMusic.push(m);
+      }
+      if (resolvedMusic.length === 1) {
+        musicPath = resolvedMusic[0];
+      } else if (resolvedMusic.length > 1) {
+        const concatFile = path.join(localOutDir, `music-cat-${uuid()}.mp3`);
+        try {
+          await concatAudioTracks(resolvedMusic, concatFile);
+          tempInputs.push(concatFile);
+          musicPath = concatFile;
+        } catch (e) {
+          // Non-fatal: a concat failure shouldn't sink the whole render — fall
+          // back to the first track (which still loops to fill the clip).
+          console.warn(`[captioned-video] music concat failed, using first track: ${e?.message || e}`);
+          musicPath = resolvedMusic[0];
+        }
+      }
     }
 
     // Apply the Timeline trim window. `durationSec` so far holds the FULL source
