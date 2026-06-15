@@ -542,6 +542,20 @@ router.post("/captioned-video", async (req, res) => {
     const syncBackgrounds = req.body?.syncBackgrounds === true;
     const kenBurns = req.body?.kenBurns === true;
 
+    // Defense in depth against an infeasible render: kinetic captions emit a
+    // drawtext filter per word, so word count drives filter-graph size. A
+    // long sermon (~4000 words / ~27 min) builds a ~1.5 MB filter that crawls
+    // at ~1% and never finishes. The client blocks this earlier with guidance
+    // (Trim / Series mode); reject here too so a stale client can't wedge the
+    // single-worker render pipeline. Kept generous (short-form is the target).
+    const MAX_CAPTION_WORDS = 1500;
+    if (Array.isArray(words) && words.length > MAX_CAPTION_WORDS) {
+      return res.status(413).json({
+        ok: false,
+        error: `Too many caption words (${words.length}; max ${MAX_CAPTION_WORDS}). Kinetic captions are for short clips — trim the audio or use Series mode to split it into short videos.`,
+      });
+    }
+
     if (!words.length) {
       return res.status(400).json({ ok: false, error: "words[] is required and must be non-empty" });
     }

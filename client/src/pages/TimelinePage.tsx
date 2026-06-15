@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
-import { api, UPLOAD_TIMEOUT_MS, TRANSCRIBE_TIMEOUT_MS } from '../lib/api';
+import { api, UPLOAD_TIMEOUT_MS, TRANSCRIBE_TIMEOUT_MS, MEDIA_OP_TIMEOUT_MS } from '../lib/api';
 import toast from 'react-hot-toast';
 import {
     Play,
@@ -140,6 +140,13 @@ interface AudioItem {
 
 /** Cap matched to the server's MAX_BACKGROUNDS (render.js) — keep these in sync. */
 const MAX_BACKGROUNDS = 30;
+
+// Kinetic captions render one (or more) drawtext filter per word, so the ffmpeg
+// filter graph grows linearly with word count. A ~27-min sermon (~4000 words)
+// produces a ~1.5 MB filter script that crawls at ~1%/several-minutes and never
+// realistically finishes. Kinetic captions are a short-form tool — block well
+// before that and steer long sermons to Trim or Series mode.
+const MAX_CAPTION_WORDS = 1500;
 
 /**
  * Mirrors the server's MAX_INPUT_MB (default 200). Surfaced in the UI as
@@ -523,6 +530,18 @@ export function TimelinePage() {
         }
 
         const words = reflowWordsFromEditedLines(transcript, editedLines);
+        // Feasibility guard: kinetic captions don't scale to long sermons — the
+        // filter graph explodes and the render effectively never finishes. Block
+        // early with a clear path forward rather than letting it hang.
+        if (words.length > MAX_CAPTION_WORDS) {
+            const mins = Math.round((words[words.length - 1]?.endMs || 0) / 60000);
+            toast.error(
+                `This clip has ${words.length} words${mins ? ` (~${mins} min)` : ''} — too long for kinetic captions (max ~${MAX_CAPTION_WORDS}). ` +
+                `Trim it to a short clip, or use Series mode to split the chapter into short videos.`,
+                { duration: 8000 },
+            );
+            return;
+        }
         setIsRenderingVideo(true);
         setRenderProgress(0);
         setRenderPhase('preparing');
@@ -548,18 +567,21 @@ export function TimelinePage() {
                 const masteringActive = deess || fadeIn > 0 || fadeOut > 0 || normalizeLUFS !== -14;
                 if (masteringActive) {
                     toast.loading('Mastering audio…', { id: 'scl-master' });
+                    // Long audio re-encode runs well past the 15s default — use
+                    // the media-op ceiling so it doesn't spuriously "skip".
                     const masterRes = await api.post<{ file: string }>('/api/audio-adv/timeline', {
                         clips: [{ path: sourceMediaPath }],
                         normalizeLUFS,
                         fades: { inMs: fadeIn, outMs: fadeOut },
                         deess: { enabled: deess, amount: 0.55 },
-                    });
+                    }, undefined, { timeout: MEDIA_OP_TIMEOUT_MS });
                     if (masterRes.ok && masterRes.data?.file) {
                         audioForVideo = masterRes.data.file;
                         toast.success('Audio mastered', { id: 'scl-master' });
                     } else {
-                        // Non-fatal: fall back to raw audio so the render still proceeds.
-                        toast.error('Mastering skipped — using raw audio', { id: 'scl-master' });
+                        // Non-fatal: fall back to raw audio so the render still
+                        // proceeds. Not an error — keep it low-key.
+                        toast('Mastering skipped — rendering with raw audio', { id: 'scl-master', icon: 'ℹ️' });
                     }
                 }
             }
@@ -624,7 +646,15 @@ export function TimelinePage() {
                 setIsRenderingVideo(false);
             };
 
+            // Don't reconnect forever on a dropped connection: a few transient
+            // blips are fine (auto-reconnect), but sustained failure means the
+            // job/server is gone — finalize so the UI can't hang on "Rendering…".
+            // Reset on any real progress so a long render isn't cut short.
+            let transportErrors = 0;
+            const MAX_TRANSPORT_ERRORS = 8;
+
             sse.addEventListener('progress', (e) => {
+                transportErrors = 0;
                 const data = JSON.parse((e as MessageEvent).data);
                 if (data.phase === 'preparing' || data.phase === 'encoding') setRenderPhase(data.phase);
                 if (typeof data.percent === 'number') setRenderProgress(data.percent);
@@ -646,7 +676,14 @@ export function TimelinePage() {
                 // EventSource auto-reconnect — only finalize on the typed
                 // server event.
                 const raw = (e as MessageEvent).data;
-                if (!raw) return;
+                if (!raw) {
+                    transportErrors += 1;
+                    if (transportErrors >= MAX_TRANSPORT_ERRORS) {
+                        toast.error('Lost connection to the render — check the Jobs page for the result.');
+                        finish();
+                    }
+                    return;
+                }
                 try {
                     const data = JSON.parse(raw);
                     toast.error(data.error || 'Render failed');
@@ -835,7 +872,7 @@ export function TimelinePage() {
                 normalizeLUFS,
                 fades: { inMs: fadeIn, outMs: fadeOut },
                 deess: { enabled: deess, amount: 0.55 },
-            });
+            }, undefined, { timeout: MEDIA_OP_TIMEOUT_MS });
 
             if (response.ok && response.data?.file) {
                 toast.success('Preview generated!');
