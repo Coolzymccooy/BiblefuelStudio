@@ -4,8 +4,9 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import {
-  createJob, markRunning, markDone, getJob, _resetJobs,
+  createJob, markRunning, markDone, markError, getJob, _resetJobs,
   persistJob, reconcilePersistedJobs, readPersistedJob,
+  attachProc, cancelJob,
 } from "./renderJobs.js";
 
 let baseDir;
@@ -14,6 +15,40 @@ beforeEach(() => {
   baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "render-jobs-"));
 });
 afterEach(() => fs.rmSync(baseDir, { recursive: true, force: true }));
+
+describe("cancelJob", () => {
+  test("kills the attached proc and marks the job cancelled", () => {
+    const job = createJob("user-1", { durationSec: 20 });
+    markRunning(job.jobId);
+    let killed = null;
+    attachProc(job.jobId, { kill: (sig) => { killed = sig; } });
+    const result = cancelJob(job.jobId, "user-1");
+    assert.equal(result.ok, true);
+    assert.equal(killed, "SIGKILL");
+    const rec = getJob(job.jobId);
+    assert.equal(rec.status, "error");
+    assert.equal(rec.error, "Render cancelled");
+    assert.equal(rec.cancelled, true);
+  });
+
+  test("a cancelled job keeps its message even if ffmpeg errors afterward", () => {
+    const job = createJob("user-1", { durationSec: 20 });
+    markRunning(job.jobId);
+    attachProc(job.jobId, { kill: () => {} });
+    cancelJob(job.jobId, "user-1");
+    markError(job.jobId, "ffmpeg exited 255"); // the SIGKILL'd proc's late error
+    assert.equal(getJob(job.jobId).error, "Render cancelled");
+  });
+
+  test("rejects another user and unknown/terminal jobs", () => {
+    const job = createJob("user-1", { durationSec: 20 });
+    markRunning(job.jobId);
+    assert.equal(cancelJob(job.jobId, "user-2").reason, "forbidden");
+    assert.equal(cancelJob("nope", "user-1").reason, "not_found");
+    markDone(job.jobId, "/out/x.mp4");
+    assert.equal(cancelJob(job.jobId, "user-1").reason, "terminal");
+  });
+});
 
 describe("durable render jobs", () => {
   test("persistJob writes a thin record to disk", () => {

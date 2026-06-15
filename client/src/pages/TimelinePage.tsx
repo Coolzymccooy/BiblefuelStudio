@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { api, UPLOAD_TIMEOUT_MS, TRANSCRIBE_TIMEOUT_MS, MEDIA_OP_TIMEOUT_MS } from '../lib/api';
@@ -275,6 +275,11 @@ export function TimelinePage() {
     // the first `time=` arrives. Lets the card show an honest "Preparing…"
     // state instead of a frozen 0%.
     const [renderPhase, setRenderPhase] = useState<'preparing' | 'encoding'>('preparing');
+    // Live render job id + its EventSource/timer, kept in refs so the Cancel
+    // button can tear the render down from outside handleRenderCaptionedVideo.
+    const [renderJobId, setRenderJobId] = useState<string | null>(null);
+    const renderSseRef = useRef<EventSource | null>(null);
+    const renderTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
     // Recent Renders — the user's last N captioned-video renders, fetched
     // from the server on mount and refetched after each successful render so
     // the panel stays in sync without manual refresh.
@@ -555,10 +560,12 @@ export function TimelinePage() {
         setRenderProgress(0);
         setRenderPhase('preparing');
         setRenderElapsedMs(0);
+        setRenderJobId(null);
         const startedAt = Date.now();
         const elapsedTimer = setInterval(() => {
             setRenderElapsedMs(Date.now() - startedAt);
         }, 250);
+        renderTimerRef.current = elapsedTimer;
 
         try {
             // Carry the Mastering & Filters chain (loudness, fades, de-esser)
@@ -646,11 +653,16 @@ export function TimelinePage() {
             // Open SSE. Token goes on the query string because EventSource
             // can't set Authorization headers — server's requireAuth accepts
             // ?token= as a documented fallback.
+            setRenderJobId(response.data.jobId);
             const token = api.getToken();
             const sseUrl = `${api.baseUrl}/api/render/captioned-video-progress/${response.data.jobId}${token ? `?token=${encodeURIComponent(token)}` : ''}`;
             const sse = new EventSource(sseUrl);
+            renderSseRef.current = sse;
 
             const finish = () => {
+                renderSseRef.current = null;
+                renderTimerRef.current = null;
+                setRenderJobId(null);
                 clearInterval(elapsedTimer);
                 sse.close();
                 setIsRenderingVideo(false);
@@ -704,11 +716,30 @@ export function TimelinePage() {
             });
         } catch {
             clearInterval(elapsedTimer);
+            renderTimerRef.current = null;
+            renderSseRef.current = null;
+            setRenderJobId(null);
             setIsRenderingVideo(false);
             toast.error('Render failed');
         }
         // No finally — completion is owned by the SSE event handlers above
         // (each calls finish() which clears the timer + flips isRendering).
+    };
+
+    // Abort an in-progress render: reset the UI immediately, then tell the
+    // server to SIGKILL the ffmpeg job. Optimistic so the user is never stuck
+    // waiting on the network round-trip.
+    const cancelRender = async () => {
+        const jobId = renderJobId;
+        try { renderSseRef.current?.close(); } catch { /* noop */ }
+        renderSseRef.current = null;
+        if (renderTimerRef.current) { clearInterval(renderTimerRef.current); renderTimerRef.current = null; }
+        setIsRenderingVideo(false);
+        setRenderJobId(null);
+        toast('Render cancelled', { icon: '🛑' });
+        if (jobId) {
+            try { await api.post(`/api/render/captioned-video/${jobId}/cancel`); } catch { /* best-effort */ }
+        }
     };
 
     const fetchRenderHistory = async () => {
@@ -1227,6 +1258,12 @@ export function TimelinePage() {
                                         ? `ETA ~${formatElapsed(estimateEtaMs(renderElapsedMs, renderProgress))}`
                                         : 'Estimating...'}
                             </span>
+                        </div>
+                        <div className="flex justify-end pt-1">
+                            <Button variant="secondary" onClick={cancelRender} className="h-9 text-xs">
+                                <X size={14} className="mr-1.5" />
+                                Cancel render
+                            </Button>
                         </div>
                     </div>
                 </Card>

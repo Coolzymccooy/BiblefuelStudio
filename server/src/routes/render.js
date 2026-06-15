@@ -8,10 +8,11 @@ import { resolveAutoBackgrounds } from "../lib/autoBackground.js";
 import { computeSyncedSegments, buildCrossfadeChain } from "../lib/backgroundSequence.js";
 import { generateBibleImage } from "../lib/imageGen/index.js";
 import { isLocalOrRemote, resolveOutputAlias } from "../lib/mediaThumb.js";
+import { downloadToFile, isRemoteUrl } from "../lib/downloadInput.js";
 import { buildWordDrawtext, resolveKineticAnimation, buildEndingFade } from "../lib/videoFilters.js";
 import { kenBurnsFilter } from "../lib/kenBurns.js";
 import { annotatePhrasedTiers } from "../lib/captions.js";
-import { createJob, getJob, gcJobs, markRunning, markProgress, markDone, markError } from "../lib/renderJobs.js";
+import { createJob, getJob, gcJobs, markRunning, markProgress, markDone, markError, attachProc, cancelJob } from "../lib/renderJobs.js";
 import { appendRender, listRenders } from "../lib/renderHistory.js";
 import { friendlyRenderError } from "../lib/renderErrors.js";
 import { resolveLibraryTrack } from "../lib/musicLibrary.js";
@@ -625,6 +626,24 @@ router.post("/captioned-video", async (req, res) => {
     let audioPath = null;
     /** @type {string[]} resolved background paths (1..MAX_BACKGROUNDS, audio mode only). */
     let backgroundPaths = [];
+    // Remote inputs we download to disk up-front; cleaned up when the render
+    // ends. Pre-downloading (with retry) means a mid-encode TLS reset on a
+    // Pexels URL can't abort the whole job — the old code streamed URLs
+    // straight into ffmpeg, so one -10054 killed everything.
+    const tempInputs = [];
+    const localOutDir = req.ctx.outputDir;
+    if (!fs.existsSync(localOutDir)) fs.mkdirSync(localOutDir, { recursive: true });
+    const localizeRemote = async (url, label) => {
+      const clean = String(url).split("?")[0];
+      const ext = (clean.match(/\.(mp4|mov|webm|m4v|jpg|jpeg|png|webp)$/i) || [, "mp4"])[1].toLowerCase();
+      const dest = path.join(localOutDir, `remote-${label}-${uuid()}.${ext}`);
+      await downloadToFile(url, dest);
+      tempInputs.push(dest);
+      return dest;
+    };
+    const cleanupTempInputs = () => {
+      for (const f of tempInputs) { try { fs.unlinkSync(f); } catch {} }
+    };
     let canvasWidth = 0;
     let canvasHeight = 0;
     let durationSec = 0;
@@ -633,6 +652,10 @@ router.post("/captioned-video", async (req, res) => {
       videoPath = resolveAssetPath(req.ctx.dataDir, rawVideoPath);
       if (!videoPath || !isLocalOrRemote(videoPath)) {
         return res.status(400).json({ ok: false, error: `videoPath not found: ${rawVideoPath}` });
+      }
+      if (isRemoteUrl(videoPath)) {
+        try { videoPath = await localizeRemote(videoPath, "video"); }
+        catch (e) { return res.status(502).json({ ok: false, error: `Failed to fetch video: ${e?.message || e}` }); }
       }
       if (isFileTooLarge(videoPath)) {
         return res.status(400).json({ ok: false, error: `videoPath too large (>${MAX_INPUT_MB}MB)` });
@@ -665,13 +688,23 @@ router.post("/captioned-video", async (req, res) => {
             error: `backgroundPaths[${i}] not found: ${rawBackgroundPaths[i]}`,
           });
         }
-        if (isFileTooLarge(resolved)) {
+        // Pre-download remote (Pexels) backgrounds with retry before they ever
+        // reach ffmpeg, so a transient network reset on one clip can't fail the
+        // whole render.
+        let local = resolved;
+        if (isRemoteUrl(resolved)) {
+          try { local = await localizeRemote(resolved, `bg${i}`); }
+          catch (e) {
+            return res.status(502).json({ ok: false, error: `Failed to fetch background ${i + 1}: ${e?.message || e}` });
+          }
+        }
+        if (isFileTooLarge(local)) {
           return res.status(400).json({
             ok: false,
             error: `backgroundPaths[${i}] too large (>${MAX_INPUT_MB}MB)`,
           });
         }
-        backgroundPaths.push(resolved);
+        backgroundPaths.push(local);
       }
 
       // Canvas dims come from the FIRST background; concat requires every
@@ -985,6 +1018,7 @@ router.post("/captioned-video", async (req, res) => {
       new Promise((resolve, reject) => {
         markRunning(job.jobId);
         const proc = spawn(ffmpeg, args);
+        attachProc(job.jobId, proc); // so POST /captioned-video/:jobId/cancel can SIGKILL it
         let stderr = "";
         // FFmpeg emits `time=HH:MM:SS.MS` on stderr during encoding. Parse it
         // to a percentage of the target duration so SSE clients see a
@@ -1002,6 +1036,7 @@ router.post("/captioned-video", async (req, res) => {
           }
         });
         proc.on("error", (err) => {
+          cleanupTempInputs();
           markError(job.jobId, `ffmpeg launch failed: ${err?.message || err}`);
           reject(err);
         });
@@ -1029,10 +1064,19 @@ router.post("/captioned-video", async (req, res) => {
               });
             } catch {}
             try { fs.unlinkSync(filterFile); } catch {}
+            cleanupTempInputs();
             logMemory("render/captioned-video:done");
             return resolve(outFile);
           }
           try { if (fs.existsSync(outFile)) fs.unlinkSync(outFile); } catch {}
+          // Cancelled by the user (SIGKILL): the non-zero exit is expected.
+          // Clean up quietly — don't log a FAILED job or dump stderr, and let
+          // the "Render cancelled" status (already set by cancelJob) stand.
+          if (getJob(job.jobId)?.cancelled) {
+            try { fs.unlinkSync(filterFile); } catch {}
+            cleanupTempInputs();
+            return reject(new Error("Render cancelled"));
+          }
           const stderrDump = path.join(outDir, `captioned-stderr-${path.basename(outFile, ".mp4")}.txt`);
           try { fs.writeFileSync(stderrDump, stderr); } catch {}
           // The user sees a plain-language message; the raw ffmpeg stderr stays
@@ -1043,6 +1087,7 @@ router.post("/captioned-video", async (req, res) => {
           console.error(`[captioned-video] FAILED job ${job.jobId} — ${friendly}\n  filter kept at ${filterFile}\n  ${technical}`);
           const err = new Error(friendly);
           err.technical = technical;
+          cleanupTempInputs();
           markError(job.jobId, friendly);
           reject(err);
         });
@@ -1155,6 +1200,23 @@ router.get("/captioned-video-status/:jobId", (req, res) => {
     return res.status(403).json({ ok: false, error: "job belongs to another user" });
   }
   return res.json({ ok: true, ...summarizeJob(job) });
+});
+
+/**
+ * Cancel a running render: SIGKILL its ffmpeg and mark the job cancelled. The
+ * SSE feed then emits a terminal `error` ("Render cancelled") so any other
+ * watcher also unwinds.
+ */
+router.post("/captioned-video/:jobId/cancel", (req, res) => {
+  const result = cancelJob(req.params.jobId, req.ctx.userId);
+  if (result.ok) return res.json({ ok: true });
+  const status = result.reason === "not_found" ? 404
+    : result.reason === "forbidden" ? 403
+    : 409; // terminal
+  const error = result.reason === "not_found" ? "job not found"
+    : result.reason === "forbidden" ? "job belongs to another user"
+    : "render already finished";
+  return res.status(status).json({ ok: false, error });
 });
 
 function summarizeJob(job) {

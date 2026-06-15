@@ -37,6 +37,14 @@ const JOB_TTL_MS = 60 * 60 * 1000; // 1 hour
 /** @type {Map<string, JobRecord>} */
 const jobs = new Map();
 
+/**
+ * Live ffmpeg child-process handles for running renders, keyed by jobId. Kept
+ * separate from the (serializable) job records so cancellation can SIGKILL the
+ * real process. Never persisted.
+ * @type {Map<string, import('child_process').ChildProcess>}
+ */
+const procs = new Map();
+
 export function createJob(userId, { durationSec }) {
   const now = Date.now();
   const jobId = uuid();
@@ -86,11 +94,43 @@ export function markProgress(jobId, percent) {
 }
 
 export function markDone(jobId, file) {
+  procs.delete(jobId);
+  const record = jobs.get(jobId);
+  // A cancelled job stays cancelled even if ffmpeg happened to finish first.
+  if (record?.cancelled) return record;
   return updateJob(jobId, { status: "done", percent: 100, file });
 }
 
 export function markError(jobId, error) {
+  procs.delete(jobId);
+  const record = jobs.get(jobId);
+  // Keep the "Render cancelled" message rather than the SIGKILL'd ffmpeg's
+  // non-zero-exit error that arrives right after a cancel.
+  if (record?.cancelled) return record;
   return updateJob(jobId, { status: "error", error: String(error || "render failed") });
+}
+
+/** Register the live ffmpeg process for a job so it can be cancelled. */
+export function attachProc(jobId, proc) {
+  if (proc) procs.set(jobId, proc);
+}
+
+/**
+ * Cancel a running render: SIGKILL its ffmpeg and mark the job cancelled.
+ * Returns { ok } or { ok:false, reason } so the route can map to an HTTP code.
+ */
+export function cancelJob(jobId, userId) {
+  const record = jobs.get(jobId);
+  if (!record) return { ok: false, reason: "not_found" };
+  if (userId != null && record.userId !== userId) return { ok: false, reason: "forbidden" };
+  if (record.status === "done" || record.status === "error") return { ok: false, reason: "terminal" };
+  const proc = procs.get(jobId);
+  if (proc) {
+    try { proc.kill("SIGKILL"); } catch {}
+    procs.delete(jobId);
+  }
+  updateJob(jobId, { status: "error", error: "Render cancelled", cancelled: true });
+  return { ok: true };
 }
 
 // Sweep stale records. Called from getJob's caller paths so we don't need a
@@ -104,6 +144,7 @@ export function gcJobs(now = Date.now()) {
 // Test-only: clear all jobs between cases. Avoids cross-test leakage.
 export function _resetJobs() {
   jobs.clear();
+  procs.clear();
 }
 
 function jobsPersistDir(baseDir) {
