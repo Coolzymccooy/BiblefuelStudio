@@ -56,6 +56,8 @@ router.post("/", async (req, res) => {
     const audioPath = isVideo ? await extractAudioToMp3(mediaPath, outDir) : mediaPath;
 
     const durationMs = (await probeDurationMs(audioPath)) ?? 0;
+    // Re-encodes to compact 16 kHz mono chunks so each clears Whisper's 25 MB
+    // limit — a long sermon used to 413 here and surface as "no words".
     const chunks = await chunkAudioForTranscription(audioPath, outDir, durationMs);
 
     const transcribed = await Promise.all(
@@ -63,8 +65,17 @@ router.post("/", async (req, res) => {
     );
     const stitched = stitchTranscriptions(transcribed);
 
+    // Best-effort cleanup of the transcription-only temp files (the compact
+    // `-whisper.mp3` / `-chunk-NNN.mp3` we just generated). Never touch the
+    // user's own source file.
+    for (const c of chunks) {
+      if (c.path !== mediaPath && c.path !== audioPath) {
+        try { fs.unlinkSync(c.path); } catch {}
+      }
+    }
+
     if (!stitched.words.length) {
-      return res.status(502).json({ ok: false, error: "Transcription returned no words (Whisper unavailable or audio silent)" });
+      return res.status(502).json({ ok: false, error: "Transcription returned no words — the audio may be silent or have no clear speech, or the server's OPENAI_API_KEY may be missing/invalid." });
     }
 
     return res.json({ ok: true, audioPath, durationMs, words: stitched.words });

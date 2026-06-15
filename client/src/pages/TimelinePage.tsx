@@ -874,12 +874,8 @@ export function TimelinePage() {
 
             <Card
                 title="Source Media"
-                tooltip="Your source recording. Audio is mastered into the assembly for an audio render; video keeps its frames for a captioned-video render."
+                tooltip={`Drop in a finished sermon — audio (MP3, WAV, M4A) or video (MP4, MOV, WEBM), up to ${MAX_UPLOAD_MB} MB. Audio is mastered into the assembly for an audio render; video keeps its frames for a captioned-video render.`}
             >
-                <p className="text-help mb-3">
-                    Drop in a finished sermon — audio (MP3, WAV, M4A) or video (MP4, MOV, WEBM).
-                    <span className="text-help"> Up to {MAX_UPLOAD_MB} MB.</span>
-                </p>
                 <label className="inline-flex items-center gap-3 px-4 py-2 rounded-lg bg-primary-500/10 border border-primary-500/30 text-primary-200 cursor-pointer hover:bg-primary-500/20">
                     <Film size={16} />
                     <span className="text-sm">{isUploading ? 'Uploading...' : 'Choose file'}</span>
@@ -944,10 +940,7 @@ export function TimelinePage() {
                 title="Transcribe & Caption"
                 tooltip="Sends the uploaded sermon through Whisper to extract a word-level transcript with timings. Long sermons are auto-chunked. Edit the lines below — word timings redistribute uniformly across edited spans, so fix transcription errors freely. Pick a kinetic style to control how each word animates on screen."
             >
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
-                    <p className="text-help">
-                        Generate a word-level transcript with timings, then refine the lines below before rendering captions.
-                    </p>
+                <div className="flex justify-end mb-4">
                     <div className="flex flex-wrap items-center gap-2 relative">
                         {transcript && transcript.length > 0 && (
                             <>
@@ -1488,7 +1481,7 @@ export function TimelinePage() {
                         clips. Render hard-cuts between them at durationSec/N each. */}
                     <Card
                         title="Video Background"
-                        tooltip={`Pick 1–${MAX_BACKGROUNDS} background clips. With more than one, the render hard-cuts between them at equal slots (1/N of the sermon duration each). Use the arrows to reorder.`}
+                        tooltip={`Pick 1–${MAX_BACKGROUNDS} background clips. With more than one, the render hard-cuts between them at equal slots (1/N of the sermon duration each); use the arrows to reorder. Each clip up to ${MAX_UPLOAD_MB} MB — video (mp4/mov/webm) or image (jpg/png/webp).`}
                     >
                         <div className="p-2">
                             {/* Auto background: default on. BibleFuel picks a
@@ -1661,9 +1654,6 @@ export function TimelinePage() {
                                             </div>
                                         </div>
                                     )}
-                                    <p className="text-help px-1">
-                                        Up to {MAX_UPLOAD_MB} MB per file. Video (mp4, mov, webm) or image (jpg, png, webp).
-                                    </p>
                                     <Button
                                         onClick={handlePreview}
                                         isLoading={isPreviewing}
@@ -1715,9 +1705,6 @@ export function TimelinePage() {
                                             </div>
                                         </div>
                                     )}
-                                    <p className="text-help px-1">
-                                        Up to {MAX_UPLOAD_MB} MB. Video (mp4/mov/webm) or image (jpg/png/webp).
-                                    </p>
                                 </div>
                             )}
                         </div>

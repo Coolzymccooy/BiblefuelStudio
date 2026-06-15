@@ -235,44 +235,80 @@ export async function transcribeAudio(audioPath, options = {}) {
   }
 }
 
-export const CHUNK_DURATION_MS = 40 * 60 * 1000;
+// Whisper re-encode target: 16 kHz mono MP3 @ 64 kbps. The OpenAI transcription
+// API rejects files over 25 MB, and a ~27-min sermon at normal podcast bitrate
+// lands right at/above that (the reported "no words" failures were 25.6 MB
+// m4a files getting 413'd). Whisper downsamples everything to 16 kHz mono
+// internally, so this costs zero accuracy while shrinking that same sermon to
+// ~13 MB. At 64 kbps that's ~0.48 MB/min.
+const WHISPER_AR = "16000";
+const WHISPER_AC = "1";
+const WHISPER_BITRATE = "64k";
+
+// ~0.48 MB/min → 30 min ≈ 14 MB, comfortably under the 25 MB API limit even
+// with container overhead. Longer audio is segmented into pieces this size.
+export const CHUNK_DURATION_MS = 30 * 60 * 1000;
+
+function runFfmpeg(args) {
+  const ffmpeg = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
+  return new Promise((resolve, reject) => {
+    const proc = spawn(ffmpeg, args);
+    let stderr = "";
+    proc.stderr.on("data", (d) => { if (stderr.length < 8000) stderr += d.toString(); });
+    proc.on("error", reject);
+    proc.on("close", (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg exited ${code}: ${stderr.slice(-400)}`)));
+  });
+}
 
 /**
- * Split an audio file into ≤CHUNK_DURATION_MS chunks. Returns the list of
+ * Prepare an audio file for Whisper transcription: re-encode to a compact
+ * 16 kHz mono MP3 (so it clears the 25 MB API limit) and, for long audio,
+ * split it into ≤CHUNK_DURATION_MS segments. Returns the list of
  * { path, offsetMs }, suitable for parallel transcription + stitching.
  *
- * Files at or below the chunk threshold are returned as a single entry with
- * offsetMs=0 so callers don't need to special-case short sermons.
+ * Normal-length audio yields a single compact entry with offsetMs=0 so callers
+ * don't need to special-case short sermons.
  *
  * @param {string} audioPath
  * @param {string} outDir
- * @param {number} durationMs   Actual duration of the source (caller probes it).
+ * @param {number} durationMs   Actual duration of the source (caller probes it; 0 = unknown).
  * @returns {Promise<Array<{ path: string, offsetMs: number }>>}
  */
 export async function chunkAudioForTranscription(audioPath, outDir, durationMs) {
-  if (durationMs <= CHUNK_DURATION_MS) {
-    return [{ path: audioPath, offsetMs: 0 }];
-  }
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
-
-  const ffmpeg = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
-  const chunkSec = CHUNK_DURATION_MS / 1000;
   const base = path.basename(audioPath, path.extname(audioPath));
-  const pattern = path.join(outDir, `${base}-chunk-%03d.mp3`);
 
-  await new Promise((resolve, reject) => {
-    const proc = spawn(ffmpeg, [
+  // Normal-length (or unknown-length) audio → one compact, Whisper-optimal
+  // file. Always re-encode (never stream-copy) so the request clears the 25 MB
+  // limit regardless of the source's bitrate, codec, or container. If the
+  // re-encode fails for any reason, fall back to the original file so
+  // transcription still attempts rather than hard-failing.
+  if (!durationMs || durationMs <= CHUNK_DURATION_MS) {
+    const out = path.join(outDir, `${base}-whisper.mp3`);
+    try {
+      await runFfmpeg(["-y", "-i", audioPath, "-vn", "-ac", WHISPER_AC, "-ar", WHISPER_AR, "-b:a", WHISPER_BITRATE, out]);
+      return [{ path: out, offsetMs: 0 }];
+    } catch (err) {
+      console.warn(`[transcribe] compact re-encode failed, using original: ${err?.message || err}`);
+      return [{ path: audioPath, offsetMs: 0 }];
+    }
+  }
+
+  // Long audio → segment into compact mono chunks (re-encode while segmenting,
+  // so each piece is independently under the size limit). On failure, fall back
+  // to a single original-file chunk.
+  const pattern = path.join(outDir, `${base}-chunk-%03d.mp3`);
+  try {
+    await runFfmpeg([
       "-y", "-i", audioPath,
-      "-f", "segment",
-      "-segment_time", String(chunkSec),
-      "-c", "copy",
+      "-vn", "-ac", WHISPER_AC, "-ar", WHISPER_AR, "-b:a", WHISPER_BITRATE,
+      "-f", "segment", "-segment_time", String(CHUNK_DURATION_MS / 1000),
       pattern,
     ]);
-    let stderr = "";
-    proc.stderr.on("data", (d) => { stderr += d.toString(); });
-    proc.on("error", reject);
-    proc.on("close", (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg segment exited ${code}: ${stderr.slice(-400)}`)));
-  });
+  } catch (err) {
+    console.warn(`[transcribe] segment re-encode failed, using original: ${err?.message || err}`);
+    return [{ path: audioPath, offsetMs: 0 }];
+  }
 
   return fs.readdirSync(outDir)
     .filter((name) => name.startsWith(`${base}-chunk-`) && name.endsWith(".mp3"))
