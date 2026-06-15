@@ -633,13 +633,19 @@ router.post("/captioned-video", async (req, res) => {
         script,
         text: transcript,
         maxBackgrounds: autoRoom,
-        generateImage: (genArgs) =>
-          generateBibleImage({
-            seriesId: `auto-${req.ctx.userId || "anon"}`,
-            partNumber: 1,
-            aspect,
-            ...genArgs,
-          }),
+        // When BLENDING (the user already has their own clips), only supplement
+        // from the existing library — don't AI-generate. Generation is slow and
+        // costs money/quota; reserve it for pure-auto (no manual picks) where we
+        // otherwise have nothing to show.
+        generateImage: manualBackgroundCount > 0
+          ? undefined
+          : (genArgs) =>
+              generateBibleImage({
+                seriesId: `auto-${req.ctx.userId || "anon"}`,
+                partNumber: 1,
+                aspect,
+                ...genArgs,
+              }),
       });
       if (auto.backgroundIds.length === 0) {
         // No auto picks: fatal only when we'd otherwise have nothing to render.

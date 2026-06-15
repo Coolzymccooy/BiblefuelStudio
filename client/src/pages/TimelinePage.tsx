@@ -652,6 +652,12 @@ export function TimelinePage() {
                     // Only meaningful with 2+ manually-picked backgrounds.
                     syncBackgrounds: backgroundItems.length > 1 && syncBackgrounds,
                 },
+                undefined,
+                // This POST does real prep before returning the job id — resolve
+                // auto/blend backgrounds, concat the music bed, probe N clips —
+                // which easily exceeds the 15s default. The actual encode is
+                // tracked separately over SSE.
+                { timeout: MEDIA_OP_TIMEOUT_MS },
             );
             if (!response.ok || !response.data?.jobId) {
                 clearInterval(elapsedTimer);
