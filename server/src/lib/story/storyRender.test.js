@@ -143,8 +143,9 @@ describe("storyRender arg building", () => {
       });
       const fc = args[args.indexOf("-filter_complex") + 1];
       const n = (fc.match(/drawtext=/g) || []).length;
-      assert.ok(n > 0 && n < 300, `expected grouped subtitle captions (<300 drawtext), got ${n}`);
-      assert.match(fc, /box=1:boxcolor=black@0\.5/); // subtitle box present
+      assert.ok(n > 0 && n < 400, `expected grouped subtitle captions (<400 drawtext), got ${n}`);
+      assert.doesNotMatch(fc, /box=1/); // outline/shadow, not a per-line filled box
+      assert.match(fc, /shadowcolor=black/);
     } finally {
       delete process.env.STORY_KINETIC_MAX_WORDS;
     }
@@ -172,12 +173,13 @@ describe("buildSubtitleDrawtext", () => {
     const cues = [{ text: "And why I took my test from Because", start: 1, end: 4 }];
     const out = buildSubtitleDrawtext(cues, 720, 1280);
     assert.match(out, /drawtext=/);
-    assert.match(out, /box=1:boxcolor=black@0\.5/);
+    assert.doesNotMatch(out, /box=1/); // outline + shadow, not a costly filled box
+    assert.match(out, /shadowcolor=black/);
     // lower third: y should be well below the vertical midpoint (640) for h=1280
     const ys = [...out.matchAll(/:y=(\d+):/g)].map((m) => Number(m[1]));
     assert.ok(ys.length >= 1 && ys.every((y) => y > 700), `captions should sit low, got y=${ys}`);
-    // moderate font ~4% of height (≈51px @1280), not the 40px-floor word style
-    assert.match(out, /fontsize=51/);
+    // moderate compact font ~3.8% of height (≈49px @1280)
+    assert.match(out, /fontsize=49/);
     assert.match(out, /enable='between\(t,1\.000,4\.000\)'/);
   });
 

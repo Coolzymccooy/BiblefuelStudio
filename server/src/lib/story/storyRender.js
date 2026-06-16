@@ -85,14 +85,19 @@ export function wrapCue(text, maxChars) {
  */
 export function buildSubtitleDrawtext(cues, w, h) {
   if (!Array.isArray(cues) || cues.length === 0) return null;
-  // Moderate, industry-ish caption size (~4% of height) — not oversized.
-  const fontSize = Math.max(28, Math.round(h * 0.040));
-  // Chars that comfortably fit ~88% of the width at this size (~0.5em/glyph).
-  const maxChars = Math.max(14, Math.floor((w * 0.88) / (fontSize * 0.5)));
-  const lineH = Math.round(fontSize * 1.32);
+  // Moderate, compact caption size (~3.8% of height) — readable, not oversized.
+  const fontSize = Math.max(28, Math.round(h * 0.038));
+  // Chars that comfortably fit ~90% of the width at this size (~0.5em/glyph).
+  const maxChars = Math.max(14, Math.floor((w * 0.9) / (fontSize * 0.5)));
+  const lineH = Math.round(fontSize * 1.3);
   // Lower third: the text block's BOTTOM sits ~16% above the frame bottom and
   // grows upward, so multi-line cues never drift to center.
   const bottomY = Math.round(h * 0.84);
+  // Readability comes from a heavy outline + drop shadow rather than a filled
+  // box. A per-line box (box=1) renders a filled rectangle every frame and,
+  // multiplied across hundreds of cues, stalls the encode — outline/shadow is
+  // visually clean and effectively free.
+  const style = "fontcolor=white:borderw=6:bordercolor=black@0.95:shadowcolor=black@0.85:shadowx=2:shadowy=2";
   const parts = [];
   for (const cue of cues) {
     const start = Number(cue?.start);
@@ -106,9 +111,7 @@ export function buildSubtitleDrawtext(cues, w, h) {
       const txt = escapeDrawText(ln);
       if (!txt) return;
       const y = blockTop + i * lineH;
-      parts.push(
-        `drawtext=text='${txt}':x=(w-text_w)/2:y=${y}:fontsize=${fontSize}:fontcolor=white:borderw=4:bordercolor=black@0.9:box=1:boxcolor=black@0.5:boxborderw=14:${enable}`,
-      );
+      parts.push(`drawtext=text='${txt}':x=(w-text_w)/2:y=${y}:fontsize=${fontSize}:${style}:${enable}`);
     });
   }
   return parts.length ? parts.join(",") : null;
@@ -169,7 +172,7 @@ export function buildStoryFfmpegArgs({ scenes, words, audioPath, musicPath, musi
   // and no edge-clipping).
   const kineticMaxWords = Math.max(0, Number(process.env.STORY_KINETIC_MAX_WORDS) || 1500);
   const drawtext = drawWords.length > kineticMaxWords
-    ? buildSubtitleDrawtext(groupWordsIntoCues(drawWords, { maxWords: 7, maxSec: 4 }), width, height)
+    ? buildSubtitleDrawtext(groupWordsIntoCues(drawWords, { maxWords: 5, maxSec: 3.5 }), width, height)
     : buildWordDrawtext({ words: drawWords, w: width, h: height });
   if (drawtext) {
     filterParts.push(`[vcat]${drawtext}[vout]`);
