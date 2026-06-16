@@ -104,11 +104,15 @@ const cancelledProjects = new Set();
 // previous UI just showed "image failed" with no explanation.
 function shortImageError(raw) {
   const msg = String(raw || "image generation failed");
-  if (/only available on|paid|billed|billing|permission|FAILED_PRECONDITION|not.?configured|no image.?gen providers/i.test(msg)) {
-    return "Image provider isn't available — set up Cloudflare Workers AI or a billed Imagen key on the server.";
+  // Quota first — it's the most common real failure and the most actionable
+  // ("wait for the daily reset, or upgrade"). The combined provider error can
+  // ALSO contain Imagen's "paid plan" text, but the primary blocker is the
+  // free-tier quota, so this message must win.
+  if (/\b429\b|quota|rate.?limit|exceed|insufficient|neuron|allocation|capacity|too many/i.test(msg)) {
+    return "Daily free image quota used up — resets each day, or upgrade the Cloudflare Workers AI plan.";
   }
-  if (/\b429\b|quota|rate.?limit|exceed|insufficient|neuron|capacity|too many/i.test(msg)) {
-    return "Daily image quota reached — try again later, or add billing for the image provider.";
+  if (/only available on|\bpaid\b|billed|billing|permission|FAILED_PRECONDITION|not.?configured|no image.?gen providers/i.test(msg)) {
+    return "Image provider isn't available — configure Cloudflare Workers AI or a billed Imagen key on the server.";
   }
   if (/timed out|timeout/i.test(msg)) return "Image generation timed out — try again.";
   if (/safety|\brai\b|filter/i.test(msg)) return "Blocked by the provider's safety filter — edit the image prompt.";
