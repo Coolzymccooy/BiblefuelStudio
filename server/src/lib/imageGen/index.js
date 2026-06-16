@@ -132,7 +132,10 @@ export async function generateBibleImage({
     return { ok: false, error: "No image-gen providers configured", prompt };
   }
 
-  let lastError = "";
+  // Collect EVERY provider's error, not just the last — otherwise a Cloudflare
+  // quota failure is masked by the Imagen fallback's "needs billing" error and
+  // the operator can't tell which provider to fix.
+  const errors = [];
   for (const provider of chain) {
     const result = provider === "cloudflare"
       ? await generateImageCloudflare({ prompt, seed })
@@ -154,15 +157,16 @@ export async function generateBibleImage({
           prompt,
         };
       } catch (err) {
-        lastError = `${provider}: write failed (${err?.message || err})`;
+        errors.push(`${provider}: write failed (${err?.message || err})`);
         continue;
       }
     }
-    lastError = `${provider}: ${result.error || "unknown error"}`;
-    console.warn(`[IMG-GEN] ${lastError} — trying next provider`);
+    const e = `${provider}: ${result.error || "unknown error"}`;
+    errors.push(e);
+    console.warn(`[IMG-GEN] ${e} — trying next provider`);
   }
 
-  return { ok: false, error: lastError || "all providers failed", prompt };
+  return { ok: false, error: errors.join(" | ") || "all providers failed", prompt };
 }
 
 /**

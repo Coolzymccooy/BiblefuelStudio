@@ -104,12 +104,14 @@ const cancelledProjects = new Set();
 // previous UI just showed "image failed" with no explanation.
 function shortImageError(raw) {
   const msg = String(raw || "image generation failed");
-  if (/\b429\b|quota|rate.?limit|exceed|insufficient|neuron|capacity|billing|too many/i.test(msg)) {
+  if (/only available on|paid|billed|billing|permission|FAILED_PRECONDITION|not.?configured|no image.?gen providers/i.test(msg)) {
+    return "Image provider isn't available — set up Cloudflare Workers AI or a billed Imagen key on the server.";
+  }
+  if (/\b429\b|quota|rate.?limit|exceed|insufficient|neuron|capacity|too many/i.test(msg)) {
     return "Daily image quota reached — try again later, or add billing for the image provider.";
   }
-  if (/not configured/i.test(msg)) return "Image generation isn't configured on the server.";
   if (/timed out|timeout/i.test(msg)) return "Image generation timed out — try again.";
-  if (/safety|rai|filter/i.test(msg)) return "Blocked by the provider's safety filter — edit the image prompt.";
+  if (/safety|\brai\b|filter/i.test(msg)) return "Blocked by the provider's safety filter — edit the image prompt.";
   return msg.slice(0, 200);
 }
 
