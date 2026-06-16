@@ -8,10 +8,13 @@ interface SceneCardProps {
   scene: StoryScene;
   onPatch: (sceneId: string, patch: { text?: string; imagePrompt?: string }) => void;
   onRegenerate: (sceneId: string) => void;
+  /** A page-wide operation (bulk retry, render, etc.) is running — disable actions. */
   busy: boolean;
+  /** This specific scene is mid-regenerate — only THIS card shows the spinner. */
+  regenerating?: boolean;
 }
 
-export function SceneCard({ scene, onPatch, onRegenerate, busy }: SceneCardProps) {
+export function SceneCard({ scene, onPatch, onRegenerate, busy, regenerating = false }: SceneCardProps) {
   const [text, setText] = useState(scene.text);
   const [prompt, setPrompt] = useState(scene.imagePrompt);
   const [showPrompt, setShowPrompt] = useState(false);
@@ -80,11 +83,11 @@ export function SceneCard({ scene, onPatch, onRegenerate, busy }: SceneCardProps
           <button
             type="button"
             onClick={() => onRegenerate(scene.id)}
-            disabled={busy}
+            disabled={busy || regenerating}
             className="inline-flex items-center gap-1 rounded-md border border-white/10 px-2 py-1 text-xs text-gray-200 hover:border-primary-400 disabled:opacity-50"
           >
-            {busy ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-            Regenerate
+            {regenerating ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+            {regenerating ? 'Regenerating…' : 'Regenerate'}
           </button>
           {scene.promptEditedByUser && (
             <span className="ml-2 inline-flex items-center gap-1 text-[10px] text-primary-300">

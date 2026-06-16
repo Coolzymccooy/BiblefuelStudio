@@ -29,6 +29,7 @@ export function StoryVideoPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [pendingAudio, setPendingAudio] = useState<string | null>(null);
   const [showTrimmer, setShowTrimmer] = useState(false);
+  const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
   const [defaultTitle, setDefaultTitle] = useState('');
   const [entryMode, setEntryMode] = useState<'upload' | 'script'>('upload');
 
@@ -93,9 +94,11 @@ export function StoryVideoPage() {
     catch (e) { toast.error((e as Error).message); }
   };
 
+  // Per-scene regenerate uses its own id (not the page-wide `busy`) so only the
+  // clicked scene shows a spinner — not every card.
   const onRegenerate = async (sceneId: string) => {
-    if (!projectId) return;
-    setBusy(true);
+    if (!projectId || regeneratingId) return;
+    setRegeneratingId(sceneId);
     try {
       const updated = await storyApi.regenerateScene(projectId, sceneId);
       refresh();
@@ -105,7 +108,7 @@ export function StoryVideoPage() {
       if (sc && sc.imageStatus === 'error') toast.error(sc.imageError || 'Image generation failed');
       else toast.success('Image regenerated');
     } catch (e) { toast.error((e as Error).message); }
-    finally { setBusy(false); }
+    finally { setRegeneratingId(null); }
   };
 
   const onRender = async () => {
@@ -426,7 +429,14 @@ export function StoryVideoPage() {
       {step === 2 && project && (
         <div className="mt-6 space-y-3">
           {project.scenes.map((s) => (
-            <SceneCard key={s.id} scene={s} onPatch={onPatch} onRegenerate={onRegenerate} busy={busy} />
+            <SceneCard
+              key={s.id}
+              scene={s}
+              onPatch={onPatch}
+              onRegenerate={onRegenerate}
+              busy={busy}
+              regenerating={regeneratingId === s.id}
+            />
           ))}
           {/* Bulk image controls — retry just the failures, or rebuild all. */}
           <div className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-white/[0.02] p-3">
