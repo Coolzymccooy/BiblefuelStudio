@@ -30,6 +30,7 @@ import {
 } from "./prompt.js";
 import { generateImageCloudflare, isCloudflareConfigured } from "./providers/cloudflare.js";
 import { generateImageImagen, isImagenConfigured } from "./providers/imagen.js";
+import { generateImagePollinations, isPollinationsConfigured } from "./providers/pollinations.js";
 
 const SUBDIR = "genImg";
 
@@ -44,25 +45,29 @@ export function isImageGenEnabled() {
   const flag = String(process.env.IMAGE_GEN_ENABLED || "").trim().toLowerCase();
   if (flag === "true" || flag === "1" || flag === "yes") return true;
   if (flag === "false" || flag === "0" || flag === "no") return false;
-  // Default: enabled IFF at least one provider has credentials.
-  return isCloudflareConfigured() || isImagenConfigured();
+  // Default: enabled IFF at least one provider has credentials/is enabled.
+  return isCloudflareConfigured() || isImagenConfigured() || isPollinationsConfigured();
 }
 
 /**
  * Returns the ordered provider chain to try, honoring IMAGE_GEN_PROVIDER.
- * `auto` (default) picks all configured providers in their natural order.
+ * `auto` (default) picks all configured providers in their natural order:
+ * free providers first (Cloudflare → Pollinations), then paid (Imagen), so a
+ * free fallback is exhausted before any paid call.
  *
- * @returns {Array<"cloudflare" | "imagen">}
+ * @returns {Array<"cloudflare" | "pollinations" | "imagen">}
  */
 export function listProviderChain() {
   const requested = String(process.env.IMAGE_GEN_PROVIDER || "auto").trim().toLowerCase();
   const all = [];
   if (isCloudflareConfigured()) all.push("cloudflare");
+  if (isPollinationsConfigured()) all.push("pollinations");
   if (isImagenConfigured()) all.push("imagen");
   if (requested === "auto") return all;
-  if (requested === "cloudflare") return all.filter((p) => p === "cloudflare");
-  if (requested === "imagen") return all.filter((p) => p === "imagen");
   if (requested === "none") return [];
+  if (["cloudflare", "pollinations", "imagen"].includes(requested)) {
+    return all.filter((p) => p === requested);
+  }
   return all;
 }
 
@@ -139,9 +144,11 @@ export async function generateBibleImage({
   for (const provider of chain) {
     const result = provider === "cloudflare"
       ? await generateImageCloudflare({ prompt, seed })
-      : provider === "imagen"
-        ? await generateImageImagen({ prompt, aspect })
-        : null;
+      : provider === "pollinations"
+        ? await generateImagePollinations({ prompt, seed, aspect })
+        : provider === "imagen"
+          ? await generateImageImagen({ prompt, aspect })
+          : null;
 
     if (!result) continue;
     if (result.ok && result.imageBuffer && result.imageBuffer.length > 0) {

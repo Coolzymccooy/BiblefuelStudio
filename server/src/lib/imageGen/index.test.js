@@ -36,6 +36,9 @@ const ORIGINAL_ENV_KEYS = [
   "GEMINI_API_KEY",
   "IMAGEN_API_KEY",
   "IMAGEN_MODEL",
+  "POLLINATIONS_ENABLED",
+  "POLLINATIONS_TOKEN",
+  "POLLINATIONS_MODEL",
 ];
 const savedEnv = {};
 
@@ -123,6 +126,34 @@ describe("imageGen orchestrator — config & provider chain", () => {
     process.env.IMAGE_GEN_PROVIDER = "none";
     assert.deepEqual(listProviderChain(), []);
   });
+
+  test("Pollinations joins the chain (free, after Cloudflare, before Imagen) when enabled", () => {
+    process.env.CLOUDFLARE_ACCOUNT_ID = "acct";
+    process.env.CLOUDFLARE_WORKERS_AI_TOKEN = "tok";
+    process.env.GEMINI_API_KEY = "key";
+    process.env.POLLINATIONS_ENABLED = "true";
+    assert.deepEqual(listProviderChain(), ["cloudflare", "pollinations", "imagen"]);
+  });
+
+  test("Pollinations is opt-in — absent from the chain unless enabled", () => {
+    process.env.CLOUDFLARE_ACCOUNT_ID = "acct";
+    process.env.CLOUDFLARE_WORKERS_AI_TOKEN = "tok";
+    assert.deepEqual(listProviderChain(), ["cloudflare"]);
+  });
+
+  test("Pollinations alone enables image gen with no API keys", () => {
+    process.env.POLLINATIONS_ENABLED = "true";
+    assert.equal(isImageGenEnabled(), true);
+    assert.deepEqual(listProviderChain(), ["pollinations"]);
+  });
+
+  test("IMAGE_GEN_PROVIDER=pollinations isolates it", () => {
+    process.env.CLOUDFLARE_ACCOUNT_ID = "acct";
+    process.env.CLOUDFLARE_WORKERS_AI_TOKEN = "tok";
+    process.env.POLLINATIONS_ENABLED = "true";
+    process.env.IMAGE_GEN_PROVIDER = "pollinations";
+    assert.deepEqual(listProviderChain(), ["pollinations"]);
+  });
 });
 
 describe("imageGen orchestrator — generateBibleImage", () => {
@@ -204,6 +235,53 @@ describe("imageGen orchestrator — generateBibleImage", () => {
     assert.equal(result.provider, "imagen");
 
     cleanupTestImages(seriesId);
+  });
+
+  test("Cloudflare quota failure falls back to Pollinations (image bytes)", async () => {
+    process.env.CLOUDFLARE_ACCOUNT_ID = "acct";
+    process.env.CLOUDFLARE_WORKERS_AI_TOKEN = "tok";
+    process.env.POLLINATIONS_ENABLED = "true";
+
+    const seriesId = `test_poll_${Date.now()}`;
+    cleanupTestImages(seriesId);
+
+    let cloudflareCalled = false;
+    let pollinationsUrl = "";
+    stubFetch(async (url) => {
+      if (/api\.cloudflare\.com/.test(url)) {
+        cloudflareCalled = true;
+        return new Response("daily neurons used up", { status: 429 });
+      }
+      if (/image\.pollinations\.ai/.test(url)) {
+        pollinationsUrl = url;
+        return new Response(TINY_PNG_BUFFER, { status: 200, headers: { "content-type": "image/png" } });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+
+    const result = await generateBibleImage({ seriesId, partNumber: 1, aspect: "portrait" });
+
+    assert.ok(cloudflareCalled, "Cloudflare should be tried first");
+    assert.match(pollinationsUrl, /image\.pollinations\.ai\/prompt\//);
+    assert.match(pollinationsUrl, /width=768&height=1344/); // portrait dims
+    assert.equal(result.ok, true);
+    assert.equal(result.provider, "pollinations");
+    assert.ok(result.path && fs.existsSync(result.path), `file not written: ${result.path}`);
+
+    cleanupTestImages(seriesId);
+  });
+
+  test("Pollinations 200-with-HTML error is rejected, not cached as an image", async () => {
+    process.env.POLLINATIONS_ENABLED = "true";
+    stubFetch(async (url) => {
+      if (/image\.pollinations\.ai/.test(url)) {
+        return new Response("<html>rate limited</html>", { status: 200, headers: { "content-type": "text/html" } });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    const result = await generateBibleImage({ seriesId: `test_pollhtml_${Date.now()}`, partNumber: 1 });
+    assert.equal(result.ok, false);
+    assert.match(result.error || "", /non-image/i);
   });
 
   test("all providers fail → ok:false with last provider's error", async () => {
