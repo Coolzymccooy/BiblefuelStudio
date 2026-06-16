@@ -496,6 +496,27 @@ router.post("/:id/render", async (req, res) => {
 
     const audioPath = project.source?.audioPath;
     const audioDurationSec = await probeAudioDurationSec(audioPath);
+    // Persist render % into the project file (throttled) so GET /story/:id can
+    // report progress even when the in-memory job lives in another request/
+    // process. Bumping updatedAt also keeps the project "live" so the UI shows
+    // the % bar instead of a false "interrupted" banner.
+    const dataDir = req.ctx.dataDir;
+    const pid = project.projectId;
+    let lastPersistPct = -1;
+    let lastPersistAt = 0;
+    const persistRenderPct = (pct) => {
+      const p = Math.min(99, Math.max(0, Math.round(pct)));
+      const now = Date.now();
+      if (p <= lastPersistPct && now - lastPersistAt < 8000) return; // throttle
+      if (p === lastPersistPct) return;
+      lastPersistPct = p; lastPersistAt = now;
+      try {
+        const fresh = readProject(dataDir, pid);
+        if (fresh && fresh.status === STORY_STATUS.RENDERING) {
+          writeProject(dataDir, { ...fresh, render: { ...fresh.render, percent: p }, updatedAt: now });
+        }
+      } catch { /* progress persistence is best-effort */ }
+    };
     runStoryRender({
       jobId: job.jobId,
       scenes,
@@ -504,6 +525,7 @@ router.post("/:id/render", async (req, res) => {
       musicPath: resolveLibraryTrack(project.music?.path) || project.music?.path || null,
       musicVolume: project.music?.volume ?? 0.3,
       autoDuck: project.music?.autoDuck ?? true,
+      onProgress: persistRenderPct,
       // Render resolution is env-tunable. Default 720×1280 (still vertical /
       // social-ready) keeps long videos renderable on a modest CPU box — full
       // 1080×1920 over a 27-min kinetic render pegs CPU/RAM and stalls the

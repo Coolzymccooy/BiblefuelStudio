@@ -122,7 +122,7 @@ export function buildStoryFfmpegArgs({ scenes, words, audioPath, musicPath, musi
  * Spawn FFmpeg for a story render, wiring progress into the job registry.
  * Resolves with { ok, file } / { ok:false, error }.
  */
-export function runStoryRender({ jobId, scenes, words, audioPath, musicPath, musicVolume, autoDuck, width, height, outPath, audioDurationSec }) {
+export function runStoryRender({ jobId, scenes, words, audioPath, musicPath, musicVolume, autoDuck, width, height, outPath, audioDurationSec, onProgress }) {
   return new Promise((resolve) => {
     let built;
     try {
@@ -143,7 +143,12 @@ export function runStoryRender({ jobId, scenes, words, audioPath, musicPath, mus
       const m = s.match(/time=(\d+):(\d+):(\d+\.\d+)/);
       if (m && built.totalDurationSec > 0) {
         const sec = Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
-        markProgress(jobId, (sec / built.totalDurationSec) * 100);
+        const pct = (sec / built.totalDurationSec) * 100;
+        markProgress(jobId, pct);
+        // Persist to the project too (callback) so progress survives across
+        // requests/processes — the in-memory job map isn't always visible to
+        // the request serving GET /story/:id.
+        if (onProgress) { try { onProgress(pct); } catch { /* never break the render */ } }
       }
     });
     proc.on("error", (err) => {
