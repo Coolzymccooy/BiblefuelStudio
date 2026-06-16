@@ -27,6 +27,35 @@ export function sceneSegmentsSec(scenes, audioDurationSec) {
 }
 
 /**
+ * Group word-timed tokens into short subtitle-style cues so long videos don't
+ * generate one drawtext filter per word. A cue closes when it reaches maxWords
+ * or would span more than maxSec. Each cue keeps the first word's start and the
+ * last word's end so it stays in sync with the audio.
+ *
+ * @param {Array<{text:string,start:number,end:number}>} words
+ * @param {{maxWords?:number, maxSec?:number}} [opts]
+ * @returns {Array<{text:string,start:number,end:number}>}
+ */
+export function groupWordsIntoCues(words, { maxWords = 8, maxSec = 4 } = {}) {
+  const cues = [];
+  let cur = null;
+  for (const w of words) {
+    if (!cur) { cur = { text: String(w.text), start: w.start, end: w.end, n: 1 }; continue; }
+    const span = w.end - cur.start;
+    if (cur.n >= maxWords || span > maxSec) {
+      cues.push({ text: cur.text, start: cur.start, end: cur.end });
+      cur = { text: String(w.text), start: w.start, end: w.end, n: 1 };
+    } else {
+      cur.text += " " + String(w.text);
+      cur.end = w.end;
+      cur.n += 1;
+    }
+  }
+  if (cur) cues.push({ text: cur.text, start: cur.start, end: cur.end });
+  return cues;
+}
+
+/**
  * Build the FFmpeg argv for an N-scene story video.
  * @returns {{args:string[], totalDurationSec:number}}
  */
@@ -72,7 +101,22 @@ export function buildStoryFfmpegArgs({ scenes, words, audioPath, musicPath, musi
   const drawWords = words
     .filter((w) => w && w.text && Number.isFinite(w.startMs) && Number.isFinite(w.endMs))
     .map((w) => ({ text: w.text, start: w.startMs / 1000, end: w.endMs / 1000 }));
-  const drawtext = buildWordDrawtext({ words: drawWords, w: width, h: height });
+  // Per-word kinetic captions emit ~2 drawtext filters PER WORD, each evaluated
+  // every frame. For a long transcript (e.g. a 27-min sermon ≈ 3,800 words)
+  // that's thousands of filters and the render crawls / stalls the box. Above
+  // STORY_KINETIC_MAX_WORDS, group words into short subtitle-style cues
+  // (~8 words / ≤4s) and drop the depth ghost → a few hundred filters, renders
+  // in minutes. Short videos keep the full word-by-word kinetic look.
+  const kineticMaxWords = Math.max(0, Number(process.env.STORY_KINETIC_MAX_WORDS) || 600);
+  const captionWords = drawWords.length > kineticMaxWords
+    ? groupWordsIntoCues(drawWords, { maxWords: 8, maxSec: 4 })
+    : drawWords;
+  const drawtext = buildWordDrawtext({
+    words: captionWords,
+    w: width,
+    h: height,
+    depth: drawWords.length > kineticMaxWords ? false : undefined,
+  });
   if (drawtext) {
     filterParts.push(`[vcat]${drawtext}[vout]`);
   } else {

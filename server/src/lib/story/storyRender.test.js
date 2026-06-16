@@ -1,6 +1,17 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { buildStoryFfmpegArgs, sceneSegmentsSec } from "./storyRender.js";
+import { buildStoryFfmpegArgs, sceneSegmentsSec, groupWordsIntoCues } from "./storyRender.js";
+
+function countDrawtext(args) {
+  const fc = args[args.indexOf("-filter_complex") + 1] || "";
+  return (fc.match(/drawtext=/g) || []).length;
+}
+function makeWords(n, totalSec) {
+  const step = totalSec / n;
+  return Array.from({ length: n }, (_, i) => ({
+    text: `w${i}`, startMs: Math.round(i * step * 1000), endMs: Math.round((i + 1) * step * 1000),
+  }));
+}
 
 const SCENES = [
   { id: "scene-001", startMs: 0, endMs: 8000, imagePath: "/tmp/a.png" },
@@ -120,5 +131,42 @@ describe("storyRender arg building", () => {
     assert.doesNotMatch(flat, /sidechaincompress/);
     assert.match(flat, /amix=inputs=2/);
     assert.match(flat, /volume=0\.4/);
+  });
+
+  test("long transcript is grouped into far fewer drawtext filters (renderable)", () => {
+    const words = makeWords(1000, 60);
+    const { args } = buildStoryFfmpegArgs({
+      scenes: GAPPY, words, audioPath: "/v.mp3", musicPath: null,
+      width: 720, height: 1280, outPath: "/o.mp4", audioDurationSec: 60,
+    });
+    const n = countDrawtext(args);
+    assert.ok(n > 0, "should still draw captions");
+    assert.ok(n < 300, `expected grouped captions (<300 drawtext) for 1000 words, got ${n}`);
+  });
+
+  test("short transcript keeps per-word kinetic captions", () => {
+    const words = makeWords(40, 30);
+    const { args } = buildStoryFfmpegArgs({
+      scenes: GAPPY, words, audioPath: "/v.mp3", musicPath: null,
+      width: 720, height: 1280, outPath: "/o.mp4", audioDurationSec: 30,
+    });
+    assert.ok(countDrawtext(args) >= 40, "per-word path should draw at least one filter per word");
+  });
+});
+
+describe("groupWordsIntoCues", () => {
+  test("groups by word count", () => {
+    const cues = groupWordsIntoCues(makeWords(16, 16).map((w) => ({ text: w.text, start: w.startMs / 1000, end: w.endMs / 1000 })), { maxWords: 8, maxSec: 999 });
+    assert.equal(cues.length, 2);
+  });
+  test("splits when a cue would span longer than maxSec", () => {
+    const cues = groupWordsIntoCues([
+      { text: "a", start: 0, end: 1 },
+      { text: "b", start: 1, end: 2 },
+      { text: "c", start: 10, end: 11 },
+    ], { maxWords: 99, maxSec: 4 });
+    assert.equal(cues.length, 2);
+    assert.equal(cues[0].text, "a b");
+    assert.equal(cues[1].text, "c");
   });
 });
