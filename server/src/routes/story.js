@@ -504,7 +504,12 @@ router.post("/:id/render", async (req, res) => {
       musicPath: resolveLibraryTrack(project.music?.path) || project.music?.path || null,
       musicVolume: project.music?.volume ?? 0.3,
       autoDuck: project.music?.autoDuck ?? true,
-      width: 1080, height: 1920,
+      // Render resolution is env-tunable. Default 720×1280 (still vertical /
+      // social-ready) keeps long videos renderable on a modest CPU box — full
+      // 1080×1920 over a 27-min kinetic render pegs CPU/RAM and stalls the
+      // server. Bump STORY_RENDER_WIDTH/HEIGHT once on bigger hardware.
+      width: Math.max(240, Number(process.env.STORY_RENDER_WIDTH) || 720),
+      height: Math.max(240, Number(process.env.STORY_RENDER_HEIGHT) || 1280),
       outPath,
       audioDurationSec: audioDurationSec || undefined,
     }).then((r) => {
