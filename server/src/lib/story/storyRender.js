@@ -1,5 +1,5 @@
 import { spawn } from "child_process";
-import { buildWordDrawtext } from "../videoFilters.js";
+import { buildWordDrawtext, escapeDrawText } from "../videoFilters.js";
 import { kenBurnsFilter } from "../kenBurns.js";
 import { markRunning, markProgress, markDone, markError, attachProc } from "../renderJobs.js";
 
@@ -56,6 +56,65 @@ export function groupWordsIntoCues(words, { maxWords = 8, maxSec = 4 } = {}) {
 }
 
 /**
+ * Greedy word-wrap into lines of at most maxChars. Never drops words (a single
+ * over-long word becomes its own line).
+ * @returns {string[]}
+ */
+export function wrapCue(text, maxChars) {
+  const words = String(text || "").trim().split(/\s+/).filter(Boolean);
+  const lines = [];
+  let cur = "";
+  for (const w of words) {
+    const next = cur ? `${cur} ${w}` : w;
+    if (next.length > maxChars && cur) { lines.push(cur); cur = w; }
+    else cur = next;
+  }
+  if (cur) lines.push(cur);
+  return lines;
+}
+
+/**
+ * Build a compact, lower-third SUBTITLE drawtext chain for long videos: a
+ * moderate fixed font (no per-word size clamping that overflowed and clipped),
+ * wrapped to fit the frame width, anchored in the lower third with a readable
+ * box. One cue shows at a time via enable='between(...)'.
+ *
+ * @param {Array<{text:string,start:number,end:number}>} cues
+ * @param {number} w @param {number} h
+ * @returns {string | null}
+ */
+export function buildSubtitleDrawtext(cues, w, h) {
+  if (!Array.isArray(cues) || cues.length === 0) return null;
+  // Moderate, industry-ish caption size (~4% of height) — not oversized.
+  const fontSize = Math.max(28, Math.round(h * 0.040));
+  // Chars that comfortably fit ~88% of the width at this size (~0.5em/glyph).
+  const maxChars = Math.max(14, Math.floor((w * 0.88) / (fontSize * 0.5)));
+  const lineH = Math.round(fontSize * 1.32);
+  // Lower third: the text block's BOTTOM sits ~16% above the frame bottom and
+  // grows upward, so multi-line cues never drift to center.
+  const bottomY = Math.round(h * 0.84);
+  const parts = [];
+  for (const cue of cues) {
+    const start = Number(cue?.start);
+    const end = Number(cue?.end);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
+    const lines = wrapCue(cue.text, maxChars);
+    if (lines.length === 0) continue;
+    const blockTop = bottomY - lines.length * lineH;
+    const enable = `enable='between(t,${start.toFixed(3)},${end.toFixed(3)})'`;
+    lines.forEach((ln, i) => {
+      const txt = escapeDrawText(ln);
+      if (!txt) return;
+      const y = blockTop + i * lineH;
+      parts.push(
+        `drawtext=text='${txt}':x=(w-text_w)/2:y=${y}:fontsize=${fontSize}:fontcolor=white:borderw=4:bordercolor=black@0.9:box=1:boxcolor=black@0.5:boxborderw=14:${enable}`,
+      );
+    });
+  }
+  return parts.length ? parts.join(",") : null;
+}
+
+/**
  * Build the FFmpeg argv for an N-scene story video.
  * @returns {{args:string[], totalDurationSec:number}}
  */
@@ -102,21 +161,16 @@ export function buildStoryFfmpegArgs({ scenes, words, audioPath, musicPath, musi
     .filter((w) => w && w.text && Number.isFinite(w.startMs) && Number.isFinite(w.endMs))
     .map((w) => ({ text: w.text, start: w.startMs / 1000, end: w.endMs / 1000 }));
   // Per-word kinetic captions emit ~2 drawtext filters PER WORD, each evaluated
-  // every frame. For a long transcript (e.g. a 27-min sermon ≈ 3,800 words)
-  // that's thousands of filters and the render crawls / stalls the box. Above
-  // STORY_KINETIC_MAX_WORDS, group words into short subtitle-style cues
-  // (~8 words / ≤4s) and drop the depth ghost → a few hundred filters, renders
-  // in minutes. Short videos keep the full word-by-word kinetic look.
-  const kineticMaxWords = Math.max(0, Number(process.env.STORY_KINETIC_MAX_WORDS) || 600);
-  const captionWords = drawWords.length > kineticMaxWords
-    ? groupWordsIntoCues(drawWords, { maxWords: 8, maxSec: 4 })
-    : drawWords;
-  const drawtext = buildWordDrawtext({
-    words: captionWords,
-    w: width,
-    h: height,
-    depth: drawWords.length > kineticMaxWords ? false : undefined,
-  });
+  // every frame — fine for short videos, but a long transcript (a 27-min sermon
+  // ≈ 3,800 words) becomes thousands of filters and the render crawls / stalls
+  // the box. So: short videos (≤ STORY_KINETIC_MAX_WORDS, ~10 min at 150 wpm)
+  // keep the full word-by-word kinetic box; longer videos switch to a compact,
+  // wrapped, lower-third SUBTITLE (a few hundred filters, renders in minutes,
+  // and no edge-clipping).
+  const kineticMaxWords = Math.max(0, Number(process.env.STORY_KINETIC_MAX_WORDS) || 1500);
+  const drawtext = drawWords.length > kineticMaxWords
+    ? buildSubtitleDrawtext(groupWordsIntoCues(drawWords, { maxWords: 7, maxSec: 4 }), width, height)
+    : buildWordDrawtext({ words: drawWords, w: width, h: height });
   if (drawtext) {
     filterParts.push(`[vcat]${drawtext}[vout]`);
   } else {

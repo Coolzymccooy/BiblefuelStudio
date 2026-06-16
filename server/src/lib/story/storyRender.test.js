@@ -1,6 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { buildStoryFfmpegArgs, sceneSegmentsSec, groupWordsIntoCues } from "./storyRender.js";
+import { buildStoryFfmpegArgs, sceneSegmentsSec, groupWordsIntoCues, buildSubtitleDrawtext, wrapCue } from "./storyRender.js";
 
 function countDrawtext(args) {
   const fc = args[args.indexOf("-filter_complex") + 1] || "";
@@ -133,24 +133,57 @@ describe("storyRender arg building", () => {
     assert.match(flat, /volume=0\.4/);
   });
 
-  test("long transcript is grouped into far fewer drawtext filters (renderable)", () => {
-    const words = makeWords(1000, 60);
-    const { args } = buildStoryFfmpegArgs({
-      scenes: GAPPY, words, audioPath: "/v.mp3", musicPath: null,
-      width: 720, height: 1280, outPath: "/o.mp4", audioDurationSec: 60,
-    });
-    const n = countDrawtext(args);
-    assert.ok(n > 0, "should still draw captions");
-    assert.ok(n < 300, `expected grouped captions (<300 drawtext) for 1000 words, got ${n}`);
+  test("long transcript switches to compact subtitle captions (few filters, lower-third)", () => {
+    process.env.STORY_KINETIC_MAX_WORDS = "100";
+    try {
+      const words = makeWords(1000, 60);
+      const { args } = buildStoryFfmpegArgs({
+        scenes: GAPPY, words, audioPath: "/v.mp3", musicPath: null,
+        width: 720, height: 1280, outPath: "/o.mp4", audioDurationSec: 60,
+      });
+      const fc = args[args.indexOf("-filter_complex") + 1];
+      const n = (fc.match(/drawtext=/g) || []).length;
+      assert.ok(n > 0 && n < 300, `expected grouped subtitle captions (<300 drawtext), got ${n}`);
+      assert.match(fc, /box=1:boxcolor=black@0\.5/); // subtitle box present
+    } finally {
+      delete process.env.STORY_KINETIC_MAX_WORDS;
+    }
   });
 
-  test("short transcript keeps per-word kinetic captions", () => {
-    const words = makeWords(40, 30);
+  test("short transcript keeps per-word kinetic captions (default ~10-min threshold)", () => {
+    const words = makeWords(400, 120); // ~well under 1500-word default
     const { args } = buildStoryFfmpegArgs({
       scenes: GAPPY, words, audioPath: "/v.mp3", musicPath: null,
-      width: 720, height: 1280, outPath: "/o.mp4", audioDurationSec: 30,
+      width: 720, height: 1280, outPath: "/o.mp4", audioDurationSec: 120,
     });
-    assert.ok(countDrawtext(args) >= 40, "per-word path should draw at least one filter per word");
+    assert.ok(countDrawtext(args) >= 400, "per-word path should draw at least one filter per word");
+  });
+});
+
+describe("buildSubtitleDrawtext", () => {
+  test("wrapCue never drops words and respects the char budget", () => {
+    const lines = wrapCue("one two three four five six seven eight nine ten", 12);
+    assert.ok(lines.length >= 2);
+    assert.equal(lines.join(" "), "one two three four five six seven eight nine ten");
+    for (const l of lines) assert.ok(l.length <= 12 || !l.includes(" "), `line too long: "${l}"`);
+  });
+
+  test("renders a moderate, lower-third, boxed caption per cue (no width clamp to overflow)", () => {
+    const cues = [{ text: "And why I took my test from Because", start: 1, end: 4 }];
+    const out = buildSubtitleDrawtext(cues, 720, 1280);
+    assert.match(out, /drawtext=/);
+    assert.match(out, /box=1:boxcolor=black@0\.5/);
+    // lower third: y should be well below the vertical midpoint (640) for h=1280
+    const ys = [...out.matchAll(/:y=(\d+):/g)].map((m) => Number(m[1]));
+    assert.ok(ys.length >= 1 && ys.every((y) => y > 700), `captions should sit low, got y=${ys}`);
+    // moderate font ~4% of height (≈51px @1280), not the 40px-floor word style
+    assert.match(out, /fontsize=51/);
+    assert.match(out, /enable='between\(t,1\.000,4\.000\)'/);
+  });
+
+  test("apostrophes are normalised (drawtext lexer safety)", () => {
+    const out = buildSubtitleDrawtext([{ text: "John's word can't break", start: 0, end: 2 }], 720, 1280);
+    assert.doesNotMatch(out, /[a-z]'[a-z]/i); // no raw ASCII apostrophes inside words
   });
 });
 
