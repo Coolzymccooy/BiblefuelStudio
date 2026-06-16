@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Loader2, RefreshCw, Wand2 } from 'lucide-react';
+import { Loader2, RefreshCw, Wand2, ImageOff } from 'lucide-react';
 import { AuthedImage } from '../AuthedImage';
 import { sceneTimeLabel } from '../../lib/storyWizard';
 import type { StoryScene } from '../../lib/storyTypes';
@@ -33,12 +33,13 @@ export function SceneCard({ scene, onPatch, onRegenerate, busy }: SceneCardProps
             </div>
           ) : scene.imageStatus === 'error' || !scene.imageUrl ? (
             <div
-              className="flex h-full flex-col items-center justify-center gap-1 p-1 text-center"
-              title={scene.imageError || 'image failed'}
+              className="flex h-full flex-col items-center justify-center gap-1 p-1.5 text-center"
+              title={scene.imageError || 'No image yet'}
             >
-              <span className="text-[10px] font-medium text-red-400">image failed</span>
+              <ImageOff className="text-gray-500" size={16} />
+              <span className="text-[9px] font-medium text-gray-400">No image yet</span>
               {scene.imageError && (
-                <span className="text-[9px] leading-tight text-red-300/80 line-clamp-4">{scene.imageError}</span>
+                <span className="text-[8px] leading-snug text-gray-500 line-clamp-3">{scene.imageError}</span>
               )}
             </div>
           ) : (

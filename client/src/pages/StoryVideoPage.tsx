@@ -5,6 +5,7 @@ import { Upload, Loader2, Download, X, RefreshCw } from 'lucide-react';
 import { api } from '../lib/api';
 import { storyApi } from '../lib/storyApi';
 import { useStoryProject } from '../hooks/useStoryProject';
+// StoryProject type no longer referenced here after removing the inline progress widget.
 import {
   deriveStep, progressLabel, canRender, imageCounts, isTransientStatus, isStalled,
 } from '../lib/storyWizard';
@@ -16,7 +17,6 @@ import { RenderProgressOverlay } from '../components/RenderProgressOverlay';
 import { MediaTrimmer } from '../components/MediaTrimmer';
 import { DropZone } from '../components/ui/DropZone';
 import { ScriptForm } from '../components/story/ScriptForm';
-import type { StoryProject } from '../lib/storyTypes';
 
 const ACTIVE_KEY = 'BF_STORY_ACTIVE';
 
@@ -198,6 +198,7 @@ export function StoryVideoPage() {
   const transient = project ? isTransientStatus(project.status) : false;
   const stalled = project ? isStalled(project, Date.now()) : false;
   const isError = project?.status === 'error';
+  const cancelled = isError && /^cancelled/i.test(project?.error || '');
   const hasTranscript = (project?.transcript?.words?.length ?? 0) > 0;
   const hasScenes = (project?.scenes?.length ?? 0) > 0;
   const counts = project ? imageCounts(project.scenes) : { done: 0, total: 0 };
@@ -276,10 +277,14 @@ export function StoryVideoPage() {
         </div>
       )}
 
-      {/* Failed: reuse the transcript/audio instead of starting over. */}
+      {/* Failed (or cancelled): reuse the transcript/audio instead of starting over.
+          Cancellation is a user action, not an error, so it gets a calm neutral
+          tone rather than alarming red. */}
       {isError && (
-        <div className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3">
-          <div className="text-sm text-red-300">{project?.error || 'Something went wrong.'}</div>
+        <div className={`mt-4 rounded-xl border px-4 py-3 ${cancelled ? 'border-white/10 bg-white/[0.03]' : 'border-red-500/30 bg-red-500/10'}`}>
+          <div className={`text-sm ${cancelled ? 'text-gray-300' : 'text-red-300'}`}>
+            {cancelled ? 'Cancelled. Pick up where you left off:' : (project?.error || 'Something went wrong.')}
+          </div>
           <div className="mt-2 flex flex-wrap gap-2">
             {hasScenes && (
               <button onClick={retryFailedImages} disabled={busy} className="inline-flex items-center gap-1 rounded-lg bg-primary-500 px-3 py-1.5 text-sm font-semibold text-dark-900 hover:bg-primary-400 disabled:opacity-50">
@@ -307,7 +312,7 @@ export function StoryVideoPage() {
               onDeleted={() => setActive(null)}
             />
           )}
-          {project?.error && <ErrorBanner message={project.error} />}
+          {project?.error && !isError && <ErrorBanner message={project.error} />}
           <label className="block text-sm text-gray-300">
             Title
             <input
@@ -420,8 +425,6 @@ export function StoryVideoPage() {
 
       {step === 2 && project && (
         <div className="mt-6 space-y-3">
-          {project.error && <ErrorBanner message={project.error} />}
-          <ImageProgress project={project} />
           {project.scenes.map((s) => (
             <SceneCard key={s.id} scene={s} onPatch={onPatch} onRegenerate={onRegenerate} busy={busy} />
           ))}
@@ -492,17 +495,6 @@ function ErrorBanner({ message }: { message: string }) {
   return (
     <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
       {message}
-    </div>
-  );
-}
-
-function ImageProgress({ project }: { project: StoryProject }) {
-  const { done, total } = imageCounts(project.scenes);
-  if (done >= total) return null;
-  return (
-    <div className="flex items-center gap-2 text-xs text-gray-400">
-      <Loader2 className="animate-spin text-primary-400" size={14} />
-      Generating images… {done}/{total}
     </div>
   );
 }
