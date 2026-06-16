@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { Upload, Loader2, Download } from 'lucide-react';
+import { Upload, Loader2, Download, X, RefreshCw } from 'lucide-react';
 import { api } from '../lib/api';
 import { storyApi } from '../lib/storyApi';
 import { useStoryProject } from '../hooks/useStoryProject';
@@ -96,15 +96,49 @@ export function StoryVideoPage() {
   const onRegenerate = async (sceneId: string) => {
     if (!projectId) return;
     setBusy(true);
-    try { await storyApi.regenerateScene(projectId, sceneId); refresh(); toast.success('Image regenerated'); }
-    catch (e) { toast.error((e as Error).message); }
+    try {
+      const updated = await storyApi.regenerateScene(projectId, sceneId);
+      refresh();
+      // Report the truth: the request succeeds even when the image itself
+      // failed (e.g. quota), so check the scene's actual status.
+      const sc = updated.scenes.find((s) => s.id === sceneId);
+      if (sc && sc.imageStatus === 'error') toast.error(sc.imageError || 'Image generation failed');
+      else toast.success('Image regenerated');
+    } catch (e) { toast.error((e as Error).message); }
     finally { setBusy(false); }
   };
 
   const onRender = async () => {
     if (!projectId) return;
     setBusy(true);
-    try { await storyApi.render(projectId); refresh(); }
+    try {
+      await storyApi.render(projectId);
+      refresh();
+      toast.success('Render started — running in the background. You can leave this page.');
+    } catch (e) { toast.error((e as Error).message); }
+    finally { setBusy(false); }
+  };
+
+  const retryFailedImages = async () => {
+    if (!projectId || busy) return;
+    setBusy(true);
+    try { await storyApi.generateImages(projectId); refresh(); toast.success('Retrying failed images…'); }
+    catch (e) { toast.error((e as Error).message); }
+    finally { setBusy(false); }
+  };
+
+  const regenerateAllImages = async () => {
+    if (!projectId || busy) return;
+    setBusy(true);
+    try { await storyApi.regenerateAllImages(projectId); refresh(); toast.success('Regenerating all images…'); }
+    catch (e) { toast.error((e as Error).message); }
+    finally { setBusy(false); }
+  };
+
+  const cancelJob = async () => {
+    if (!projectId || busy) return;
+    setBusy(true);
+    try { await storyApi.cancel(projectId); refresh(); toast.success('Cancelled'); }
     catch (e) { toast.error((e as Error).message); }
     finally { setBusy(false); }
   };
@@ -161,7 +195,12 @@ export function StoryVideoPage() {
   };
 
   const step = project ? deriveStep(project) : 1;
+  const transient = project ? isTransientStatus(project.status) : false;
   const stalled = project ? isStalled(project, Date.now()) : false;
+  const isError = project?.status === 'error';
+  const hasTranscript = (project?.transcript?.words?.length ?? 0) > 0;
+  const hasScenes = (project?.scenes?.length ?? 0) > 0;
+  const counts = project ? imageCounts(project.scenes) : { done: 0, total: 0 };
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-6">
@@ -174,10 +213,31 @@ export function StoryVideoPage() {
         )}
       </div>
 
+      {/* Actively working: always show what's happening + a way to stop it. */}
+      {project && transient && !stalled && (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary-500/30 bg-primary-500/[0.08] px-4 py-3">
+          <span className="flex items-center gap-2 text-sm text-primary-100">
+            <Loader2 className="animate-spin text-primary-400" size={16} />
+            {progressLabel(project.status)}
+            {project.status === 'generating_images' && (
+              <span className="text-primary-300/80">{counts.done}/{counts.total}</span>
+            )}
+          </span>
+          <button
+            onClick={cancelJob}
+            disabled={busy}
+            className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-white/15 px-3 py-1.5 text-sm text-gray-300 hover:border-red-400 hover:text-red-300 disabled:opacity-50"
+          >
+            <X size={14} /> Cancel
+          </button>
+        </div>
+      )}
+
+      {/* Interrupted (server died mid-run): offer to pick up or rebuild. */}
       {stalled && (
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">
           <span className="text-sm text-amber-200">This project was interrupted. Pick up where it left off.</span>
-          <div className="flex shrink-0 gap-2">
+          <div className="flex shrink-0 flex-wrap gap-2">
             <button
               onClick={resume}
               disabled={busy}
@@ -185,7 +245,17 @@ export function StoryVideoPage() {
             >
               Resume
             </button>
-            {(project?.scenes?.length ?? 0) > 0 && (
+            {hasScenes && (
+              <button
+                onClick={retryFailedImages}
+                disabled={busy}
+                title="Reuse the transcript and scenes — just retry the images that failed."
+                className="rounded-lg border border-amber-400/40 px-3 py-1.5 text-sm text-amber-200 hover:border-amber-300 disabled:opacity-50"
+              >
+                Retry failed images
+              </button>
+            )}
+            {hasScenes && (
               <button
                 onClick={resegment}
                 disabled={busy}
@@ -195,11 +265,40 @@ export function StoryVideoPage() {
                 Re-segment (fewer scenes)
               </button>
             )}
+            <button
+              onClick={cancelJob}
+              disabled={busy}
+              className="rounded-lg border border-white/15 px-3 py-1.5 text-sm text-gray-300 hover:border-red-400 hover:text-red-300 disabled:opacity-50"
+            >
+              Cancel
+            </button>
           </div>
         </div>
       )}
 
-      {step === 1 && (
+      {/* Failed: reuse the transcript/audio instead of starting over. */}
+      {isError && (
+        <div className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3">
+          <div className="text-sm text-red-300">{project?.error || 'Something went wrong.'}</div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {hasScenes && (
+              <button onClick={retryFailedImages} disabled={busy} className="inline-flex items-center gap-1 rounded-lg bg-primary-500 px-3 py-1.5 text-sm font-semibold text-dark-900 hover:bg-primary-400 disabled:opacity-50">
+                <RefreshCw size={13} /> Retry failed images
+              </button>
+            )}
+            {hasTranscript && (
+              <button onClick={resegment} disabled={busy} title="Keep the transcript & audio; rebuild scenes." className="rounded-lg border border-white/15 px-3 py-1.5 text-sm text-gray-200 hover:border-primary-400 disabled:opacity-50">
+                Re-segment (keep transcript)
+              </button>
+            )}
+            <button onClick={() => setActive(null)} disabled={busy} className="rounded-lg border border-white/15 px-3 py-1.5 text-sm text-gray-400 hover:text-gray-200 disabled:opacity-50">
+              Start over
+            </button>
+          </div>
+        </div>
+      )}
+
+      {step === 1 && !transient && (
         <div className="mt-6 space-y-4">
           {!project && (
             <ProjectHistory
@@ -326,6 +425,34 @@ export function StoryVideoPage() {
           {project.scenes.map((s) => (
             <SceneCard key={s.id} scene={s} onPatch={onPatch} onRegenerate={onRegenerate} busy={busy} />
           ))}
+          {/* Bulk image controls — retry just the failures, or rebuild all. */}
+          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-white/[0.02] p-3">
+            <span className="text-xs text-gray-400">
+              Images: {counts.done}/{counts.total} ready
+              {counts.total - counts.done > 0 && (
+                <span className="text-red-300/80"> · {counts.total - counts.done} failed</span>
+              )}
+            </span>
+            <div className="ml-auto flex flex-wrap gap-2">
+              {counts.done < counts.total && (
+                <button
+                  onClick={retryFailedImages}
+                  disabled={busy}
+                  className="inline-flex items-center gap-1 rounded-lg border border-white/15 px-3 py-1.5 text-xs text-gray-200 hover:border-primary-400 disabled:opacity-50"
+                >
+                  <RefreshCw size={12} /> Retry failed images
+                </button>
+              )}
+              <button
+                onClick={regenerateAllImages}
+                disabled={busy}
+                title="Discard every current image and regenerate them all from scratch."
+                className="inline-flex items-center gap-1 rounded-lg border border-white/15 px-3 py-1.5 text-xs text-gray-200 hover:border-primary-400 disabled:opacity-50"
+              >
+                <RefreshCw size={12} /> Regenerate all
+              </button>
+            </div>
+          </div>
           <MusicPicker
             value={project.music ?? { path: null, volume: 0.3, autoDuck: true }}
             onChange={onMusicChange}

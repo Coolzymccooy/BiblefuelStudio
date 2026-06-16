@@ -30,6 +30,17 @@ function mockReqRes({ params = {}, body = {}, dataDir, outputDir }) {
   return { req, res };
 }
 
+// Poll a detached pipeline (e.g. /images, /process) until `pred(project)` holds.
+async function waitForProject(dataDir, id, pred, timeoutMs = 3000) {
+  const start = Date.now();
+  for (;;) {
+    const p = readProject(dataDir, id);
+    if (p && pred(p)) return p;
+    if (Date.now() - start > timeoutMs) return readProject(dataDir, id);
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
 let dataDir, outputDir;
 beforeEach(() => {
   dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "story-route-data-"));
@@ -93,8 +104,8 @@ describe("story routes", () => {
     const { req, res } = mockReqRes({ params: { id }, body: {}, dataDir, outputDir });
     await handlerFor("post", "/:id/images")(req, res);
     assert.equal(res.payload.ok, true);
+    const after = await waitForProject(dataDir, id, (p) => p.status === "ready_to_render");
     assert.equal(calls, 1);
-    const after = readProject(dataDir, id);
     assert.equal(after.scenes[1].imageStatus, "done");
     assert.equal(after.scenes[1].imagePath, "/new.png");
     assert.equal(after.scenes[1].imageUrl, "/outputs/genImg/p/part-2.png");
@@ -118,12 +129,75 @@ describe("story routes", () => {
       const { req, res } = mockReqRes({ params: { id }, body: {}, dataDir, outputDir });
       await handlerFor("post", "/:id/images")(req, res);
       assert.equal(res.payload.ok, true);
-      const after = readProject(dataDir, id);
+      const after = await waitForProject(dataDir, id, (p) => p.scenes[0].imageStatus === "error");
       assert.equal(after.scenes[0].imageStatus, "error");
+      assert.match(after.scenes[0].imageError || "", /timed out/i); // reason surfaced
       assert.equal(after.status, "generating_images"); // not all done -> stays for resume
     } finally {
       delete process.env.STORY_IMAGE_TIMEOUT_MS;
     }
+  });
+
+  test("images stage surfaces a quota error as a friendly reason", async () => {
+    const create = mockReqRes({ body: { title: "T", style: "cinematic-bible" }, dataDir, outputDir });
+    await handlerFor("post", "/")(create.req, create.res);
+    const id = create.res.payload.project.projectId;
+    const proj = readProject(dataDir, id);
+    writeProject(dataDir, {
+      ...proj,
+      scenes: [{ id: "scene-001", text: "a", startMs: 0, endMs: 8000, imagePrompt: "p1", imagePath: null, imageStatus: "pending", promptEditedByUser: false }],
+    });
+    _setImageGenImpl(async () => ({ ok: false, error: "Cloudflare 429: code 10000 quota exceeded for the day" }));
+    const { req, res } = mockReqRes({ params: { id }, body: {}, dataDir, outputDir });
+    await handlerFor("post", "/:id/images")(req, res);
+    const after = await waitForProject(dataDir, id, (p) => p.scenes[0].imageStatus === "error");
+    assert.equal(after.scenes[0].imageStatus, "error");
+    assert.match(after.scenes[0].imageError, /quota/i);
+  });
+
+  test("force regenerate reruns even already-done scenes", async () => {
+    const create = mockReqRes({ body: { title: "T", style: "cinematic-bible" }, dataDir, outputDir });
+    await handlerFor("post", "/")(create.req, create.res);
+    const id = create.res.payload.project.projectId;
+    const proj = readProject(dataDir, id);
+    writeProject(dataDir, {
+      ...proj,
+      scenes: [
+        { id: "scene-001", text: "a", startMs: 0, endMs: 8000, imagePrompt: "p1", imagePath: "/old1.png", imageUrl: "/o/old1.png", imageStatus: "done", promptEditedByUser: false },
+        { id: "scene-002", text: "b", startMs: 8000, endMs: 16000, imagePrompt: "p2", imagePath: "/old2.png", imageUrl: "/o/old2.png", imageStatus: "done", promptEditedByUser: false },
+      ],
+    });
+    let calls = 0;
+    _setImageGenImpl(async ({ partNumber }) => { calls += 1; return { ok: true, path: `/new-${partNumber}.png`, publicUrl: `/o/new-${partNumber}.png` }; });
+    const { req, res } = mockReqRes({ params: { id }, body: { force: true }, dataDir, outputDir });
+    await handlerFor("post", "/:id/images")(req, res);
+    const after = await waitForProject(dataDir, id, (p) => p.scenes.every((s) => s.imagePath?.startsWith("/new-")));
+    assert.equal(calls, 2, "both done scenes regenerated under force");
+    assert.equal(after.scenes[0].imagePath, "/new-1.png");
+  });
+
+  test("cancel stops a long image run and marks the project cancelled", async () => {
+    const create = mockReqRes({ body: { title: "T", style: "cinematic-bible" }, dataDir, outputDir });
+    await handlerFor("post", "/")(create.req, create.res);
+    const id = create.res.payload.project.projectId;
+    const proj = readProject(dataDir, id);
+    const scenes = Array.from({ length: 8 }, (_, i) => ({
+      id: `scene-${String(i + 1).padStart(3, "0")}`, text: `t${i}`, startMs: i * 8000, endMs: (i + 1) * 8000,
+      imagePrompt: `p${i}`, imagePath: null, imageStatus: "pending", promptEditedByUser: false,
+    }));
+    writeProject(dataDir, { ...proj, scenes });
+    let calls = 0;
+    _setImageGenImpl(async ({ partNumber }) => { calls += 1; await new Promise((r) => setTimeout(r, 40)); return { ok: true, path: `/i-${partNumber}.png`, publicUrl: `/o/i-${partNumber}.png` }; });
+    const start = mockReqRes({ params: { id }, body: {}, dataDir, outputDir });
+    await handlerFor("post", "/:id/images")(start.req, start.res);
+    await new Promise((r) => setTimeout(r, 25)); // let a couple begin
+    const cancel = mockReqRes({ params: { id }, body: {}, dataDir, outputDir });
+    await handlerFor("post", "/:id/cancel")(cancel.req, cancel.res);
+    assert.equal(cancel.res.payload.ok, true);
+    const after = await waitForProject(dataDir, id, (p) => p.status === "error");
+    assert.equal(after.status, "error");
+    assert.match(after.error || "", /cancel/i);
+    assert.ok(calls < scenes.length, `cancel should stop early: ${calls}/${scenes.length} generated`);
   });
 
   test("images stage generates many scenes concurrently and finishes", async () => {
@@ -145,7 +219,7 @@ describe("story routes", () => {
     });
     const { req, res } = mockReqRes({ params: { id }, body: {}, dataDir, outputDir });
     await handlerFor("post", "/:id/images")(req, res);
-    const after = readProject(dataDir, id);
+    const after = await waitForProject(dataDir, id, (p) => p.status === "ready_to_render");
     assert.equal(after.status, "ready_to_render");
     assert.equal(after.scenes.every((s) => s.imageStatus === "done"), true);
     assert.ok(peak > 1, `expected concurrent generation, peak was ${peak}`);

@@ -36,8 +36,20 @@ export const storyApi = {
     return unwrapProject(await api.post(`/api/story/${id}/segment`, {}));
   },
 
+  // Retry only failed/pending images. Runs in the background server-side and
+  // returns the project's in-flight state immediately; poll for progress.
   async generateImages(id: string): Promise<StoryProject> {
-    return unwrapProject(await api.post(`/api/story/${id}/images`, {}, undefined, { timeout: GENERATE_IMAGES_TIMEOUT_MS }));
+    return unwrapProject(await api.post(`/api/story/${id}/images`, {}));
+  },
+
+  // Regenerate EVERY image from scratch (purges the cache server-side).
+  async regenerateAllImages(id: string): Promise<StoryProject> {
+    return unwrapProject(await api.post(`/api/story/${id}/images`, { force: true }));
+  },
+
+  // Stop an in-flight pipeline/render that's running long or has gone rogue.
+  async cancel(id: string): Promise<StoryProject> {
+    return unwrapProject(await api.post(`/api/story/${id}/cancel`, {}));
   },
 
   async regenerateScene(id: string, sceneId: string): Promise<StoryProject> {

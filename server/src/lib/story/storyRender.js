@@ -1,7 +1,7 @@
 import { spawn } from "child_process";
 import { buildWordDrawtext } from "../videoFilters.js";
 import { kenBurnsFilter } from "../kenBurns.js";
-import { markRunning, markProgress, markDone, markError } from "../renderJobs.js";
+import { markRunning, markProgress, markDone, markError, attachProc } from "../renderJobs.js";
 
 /**
  * Per-scene display durations. Scenes are made CONTIGUOUS: scene i shows from
@@ -134,6 +134,8 @@ export function runStoryRender({ jobId, scenes, words, audioPath, musicPath, mus
     markRunning(jobId);
     const ff = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
     const proc = spawn(ff, built.args);
+    // Register so a user cancel (cancelJob) can SIGKILL this render.
+    attachProc(jobId, proc);
     let stderrTail = "";
     proc.stderr.on("data", (d) => {
       const s = d.toString();

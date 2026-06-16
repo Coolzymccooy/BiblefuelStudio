@@ -7,7 +7,7 @@ import {
 } from "../lib/story/projectStore.js";
 import { segmentScenes } from "../lib/story/sceneSegmenter.js";
 import { runStoryRender, probeAudioDurationSec } from "../lib/story/storyRender.js";
-import { createJob, persistJob } from "../lib/renderJobs.js";
+import { createJob, persistJob, cancelJob as cancelRenderJob } from "../lib/renderJobs.js";
 import { generateBibleImage } from "../lib/imageGen/index.js";
 import { extractAudioToMp3 } from "../lib/transcode.js";
 import {
@@ -94,6 +94,25 @@ function imageStageTimeoutMs() {
   return Math.max(1000, Number(process.env.STORY_IMAGE_TIMEOUT_MS) || 90_000);
 }
 
+// Projects the user asked to cancel mid-pipeline. imagesStage checks this
+// between images so a long (or rogue) run stops promptly instead of grinding
+// through every remaining scene.
+const cancelledProjects = new Set();
+
+// Translate a raw provider error into a short, user-facing reason. The most
+// common real-world failure is the daily free image quota running out — the
+// previous UI just showed "image failed" with no explanation.
+function shortImageError(raw) {
+  const msg = String(raw || "image generation failed");
+  if (/\b429\b|quota|rate.?limit|exceed|insufficient|neuron|capacity|billing|too many/i.test(msg)) {
+    return "Daily image quota reached — try again later, or add billing for the image provider.";
+  }
+  if (/not configured/i.test(msg)) return "Image generation isn't configured on the server.";
+  if (/timed out|timeout/i.test(msg)) return "Image generation timed out — try again.";
+  if (/safety|rai|filter/i.test(msg)) return "Blocked by the provider's safety filter — edit the image prompt.";
+  return msg.slice(0, 200);
+}
+
 // Resolve `promise`, or reject once `ms` elapses. The underlying generation
 // call isn't cancelled (the providers take no AbortSignal yet), but the
 // pipeline stops waiting on it — one hung request can no longer freeze the
@@ -107,9 +126,23 @@ function withTimeout(promise, ms, message) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
-async function imagesStage(ctx, projectId) {
+async function imagesStage(ctx, projectId, opts = {}) {
+  const force = Boolean(opts.force);
   const project = readProject(ctx.dataDir, projectId);
   if (!project) throw new Error("project not found");
+
+  // Force mode regenerates EVERY scene from scratch — purge the cached images
+  // first (generateBibleImage caches by {projectId, partNumber}, so without
+  // this it would just return the same files).
+  if (force) {
+    const safeId = String(project.projectId).replace(/[^a-z0-9_-]/gi, "");
+    try {
+      fs.rmSync(path.join(ctx.outputDir, "genImg", safeId), { recursive: true, force: true });
+    } catch (e) {
+      console.warn(`[story] force-regenerate cache cleanup failed for ${safeId}: ${e?.message || e}`);
+    }
+  }
+
   // Single shared, mutated-in-place scenes array. writeProject is fully
   // synchronous (writeFileSync + renameSync), and JS is single-threaded, so
   // incremental writes from the concurrent workers below can't interleave or
@@ -118,16 +151,18 @@ async function imagesStage(ctx, projectId) {
 
   const pending = [];
   for (let i = 0; i < scenes.length; i++) {
-    if (scenes[i].imageStatus === "done" && scenes[i].imagePath) continue;
-    scenes[i] = { ...scenes[i], imageStatus: "generating" };
+    const alreadyDone = scenes[i].imageStatus === "done" && scenes[i].imagePath;
+    if (alreadyDone && !force) continue; // retry-failed reruns error/pending; force reruns all
+    scenes[i] = { ...scenes[i], imageStatus: "generating", imageError: null, ...(force ? { imagePath: null, imageUrl: null } : {}) };
     pending.push(i);
   }
-  writeProject(ctx.dataDir, { ...project, scenes });
+  writeProject(ctx.dataDir, { ...project, scenes, status: STORY_STATUS.GENERATING_IMAGES });
 
   const timeoutMs = imageStageTimeoutMs();
   let cursor = 0;
   const worker = async () => {
     while (cursor < pending.length) {
+      if (cancelledProjects.has(projectId)) return; // stop promptly on cancel
       const i = pending[cursor++];
       let result;
       try {
@@ -141,14 +176,19 @@ async function imagesStage(ctx, projectId) {
         result = { ok: false, error: String(err?.message || err) };
       }
       scenes[i] = result?.ok
-        ? { ...scenes[i], imagePath: result.path, imageUrl: result.publicUrl || null, imageStatus: "done" }
-        : { ...scenes[i], imageStatus: "error" };
+        ? { ...scenes[i], imagePath: result.path, imageUrl: result.publicUrl || null, imageStatus: "done", imageError: null }
+        : { ...scenes[i], imageStatus: "error", imageError: shortImageError(result?.error) };
       writeProject(ctx.dataDir, { ...project, scenes });
     }
   };
 
   const workerCount = Math.min(imageStageConcurrency(), Math.max(1, pending.length));
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
+
+  if (cancelledProjects.has(projectId)) {
+    cancelledProjects.delete(projectId);
+    return writeProject(ctx.dataDir, { ...project, scenes, status: STORY_STATUS.ERROR, error: "Cancelled." });
+  }
 
   const allDone = scenes.every((s) => s.imageStatus === "done");
   return writeProject(ctx.dataDir, { ...project, scenes, status: allDone ? STORY_STATUS.READY_TO_RENDER : STORY_STATUS.GENERATING_IMAGES });
@@ -261,14 +301,42 @@ router.post("/:id/segment", async (req, res) => {
   }
 });
 
-router.post("/:id/images", async (req, res) => {
-  try {
-    const updated = await imagesStage({ dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir }, req.params.id);
-    return res.json({ ok: true, project: updated });
-  } catch (e) {
-    const msg = String(e?.message || e);
-    return res.status(/not found/i.test(msg) ? 404 : 500).json({ ok: false, error: msg });
-  }
+// POST /:id/images — (re)generate scene images. Runs DETACHED and returns
+// immediately so it isn't killed by the ~100s edge timeout when a long video
+// has dozens of images; the client polls the project for progress.
+//   body/query `force=true` → regenerate EVERY scene from scratch (purges cache)
+//   otherwise               → retry only failed/pending scenes
+router.post("/:id/images", (req, res) => {
+  const project = readProject(req.ctx.dataDir, req.params.id);
+  if (!project) return res.status(404).json({ ok: false, error: "project not found" });
+  if (!(project.scenes || []).length) return res.status(400).json({ ok: false, error: "no scenes to generate — segment first" });
+  const force = req.body?.force === true || String(req.query?.force || "") === "true";
+
+  const ctx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir };
+  const id = req.params.id;
+  cancelledProjects.delete(id); // a fresh run supersedes any earlier cancel
+  imagesStage(ctx, id, { force }).catch((e) => {
+    try {
+      const fresh = readProject(ctx.dataDir, id);
+      if (fresh) writeProject(ctx.dataDir, { ...fresh, status: STORY_STATUS.ERROR, error: String(e?.message || e) });
+    } catch {}
+  });
+  // Reflect the in-flight state immediately so the UI shows progress, not idle.
+  writeProject(ctx.dataDir, { ...project, status: STORY_STATUS.GENERATING_IMAGES, error: null });
+  return res.json({ ok: true, project: readProject(ctx.dataDir, id) });
+});
+
+// POST /:id/cancel — stop an in-flight pipeline/render that's running long or
+// has gone rogue. Flags the project so imagesStage halts between images, and
+// kills the render ffmpeg if one is active.
+router.post("/:id/cancel", (req, res) => {
+  const project = readProject(req.ctx.dataDir, req.params.id);
+  if (!project) return res.status(404).json({ ok: false, error: "project not found" });
+  cancelledProjects.add(req.params.id);
+  const jobId = project.render?.jobId;
+  if (jobId) { try { cancelRenderJob(jobId, req.ctx.userId); } catch {} }
+  const updated = writeProject(req.ctx.dataDir, { ...project, status: STORY_STATUS.ERROR, error: "Cancelled." });
+  return res.json({ ok: true, project: updated });
 });
 
 // POST /:id/process — run transcribe -> segment -> images SERVER-SIDE, detached.
@@ -278,6 +346,7 @@ router.post("/:id/process", (req, res) => {
   if (!guard.ok) return res.status(guard.status).json({ ok: false, error: guard.error });
   const ctx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir };
   const id = req.params.id;
+  cancelledProjects.delete(id);
   runStoryPipeline(ctx, id, guard.path).catch((e) => {
     try {
       const fresh = readProject(ctx.dataDir, id);
@@ -317,6 +386,7 @@ router.post("/:id/resegment", (req, res) => {
 
   const ctx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir };
   const id = req.params.id;
+  cancelledProjects.delete(id);
   runStoryPipeline(ctx, id, audioPath).catch((e) => {
     try {
       const fresh = readProject(ctx.dataDir, id);
@@ -341,10 +411,12 @@ router.post("/:id/scenes/:sid/regenerate", async (req, res) => {
       aspect: "portrait",
     });
     scenes[idx] = result?.ok
-      ? { ...scenes[idx], imagePath: result.path, imageUrl: result.publicUrl || null, imageStatus: "done" }
-      : { ...scenes[idx], imageStatus: "error" };
+      ? { ...scenes[idx], imagePath: result.path, imageUrl: result.publicUrl || null, imageStatus: "done", imageError: null }
+      : { ...scenes[idx], imageStatus: "error", imageError: shortImageError(result?.error) };
     const updated = writeProject(req.ctx.dataDir, { ...project, scenes });
-    return res.json({ ok: true, project: updated });
+    // ok=false on the *scene* (not the request) so the client can show the
+    // real reason instead of a misleading "regenerated" success.
+    return res.json({ ok: true, project: updated, sceneOk: Boolean(result?.ok), sceneError: result?.ok ? null : shortImageError(result?.error) });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }

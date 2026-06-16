@@ -15,6 +15,8 @@ export interface StoryScene {
   imagePath: string | null;
   imageUrl?: string | null;
   imageStatus: ImageStatus;
+  /** When imageStatus === 'error', a short human-readable reason (quota, timeout, safety, …). */
+  imageError?: string | null;
   promptEditedByUser: boolean;
 }
 

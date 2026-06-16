@@ -32,8 +32,14 @@ export function SceneCard({ scene, onPatch, onRegenerate, busy }: SceneCardProps
               <Loader2 className="animate-spin text-primary-400" size={20} />
             </div>
           ) : scene.imageStatus === 'error' || !scene.imageUrl ? (
-            <div className="flex h-full flex-col items-center justify-center gap-1 p-1 text-center">
-              <span className="text-[10px] text-red-400">image failed</span>
+            <div
+              className="flex h-full flex-col items-center justify-center gap-1 p-1 text-center"
+              title={scene.imageError || 'image failed'}
+            >
+              <span className="text-[10px] font-medium text-red-400">image failed</span>
+              {scene.imageError && (
+                <span className="text-[9px] leading-tight text-red-300/80 line-clamp-4">{scene.imageError}</span>
+              )}
             </div>
           ) : (
             <AuthedImage src={scene.imageUrl} alt={scene.text} className="h-full w-full object-cover" openOnClick={false} />
