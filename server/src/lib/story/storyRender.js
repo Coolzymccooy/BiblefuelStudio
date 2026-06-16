@@ -83,37 +83,46 @@ export function wrapCue(text, maxChars) {
  * @param {number} w @param {number} h
  * @returns {string | null}
  */
-export function buildSubtitleDrawtext(cues, w, h) {
-  if (!Array.isArray(cues) || cues.length === 0) return null;
-  // Moderate, compact caption size (~3.8% of height) — readable, not oversized.
-  const fontSize = Math.max(28, Math.round(h * 0.038));
-  // Chars that comfortably fit ~90% of the width at this size (~0.5em/glyph).
-  const maxChars = Math.max(14, Math.floor((w * 0.9) / (fontSize * 0.5)));
-  const lineH = Math.round(fontSize * 1.3);
-  // Lower third: the text block's BOTTOM sits ~16% above the frame bottom and
-  // grows upward, so multi-line cues never drift to center.
-  const bottomY = Math.round(h * 0.84);
-  // Readability comes from a heavy outline + drop shadow rather than a filled
-  // box. A per-line box (box=1) renders a filled rectangle every frame and,
-  // multiplied across hundreds of cues, stalls the encode — outline/shadow is
-  // visually clean and effectively free.
+export function buildSubtitleDrawtext(words, w, h) {
+  if (!Array.isArray(words) || words.length === 0) return null;
+  // Compact caption size. Each cue is ONE line; ffmpeg's drawtext chain gets
+  // pathologically slow past ~600 filters, so we keep the cue count down by
+  // packing each line near `maxChars` (a smaller font fits more per line → far
+  // fewer total lines → fast encode) instead of wrapping (which doubled them).
+  const fontSize = Math.max(28, Math.round(h * 0.026));
+  const maxChars = Math.max(20, Math.floor((w * 0.9) / (fontSize * 0.5)));
+  const y = Math.round(h * 0.80); // single-line caption, lower third
+  // Outline + shadow (not a filled box — boxes per cue stall the encode).
   const style = "fontcolor=white:borderw=6:bordercolor=black@0.95:shadowcolor=black@0.85:shadowx=2:shadowy=2";
-  const parts = [];
-  for (const cue of cues) {
-    const start = Number(cue?.start);
-    const end = Number(cue?.end);
+
+  // Pack words into single-line cues ≤ maxChars (and ≤5s) — no wrapping, so the
+  // filter count stays near the proven-fast zone and nothing ever clips.
+  const cues = [];
+  let cur = null;
+  for (const word of words) {
+    const t = String(word?.text || "").trim();
+    if (!t) continue;
+    const start = Number(word.start);
+    const end = Number(word.end);
     if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
-    const lines = wrapCue(cue.text, maxChars);
-    if (lines.length === 0) continue;
-    const blockTop = bottomY - lines.length * lineH;
-    const enable = `enable='between(t,${start.toFixed(3)},${end.toFixed(3)})'`;
-    lines.forEach((ln, i) => {
-      const txt = escapeDrawText(ln);
-      if (!txt) return;
-      const y = blockTop + i * lineH;
-      parts.push(`drawtext=text='${txt}':x=(w-text_w)/2:y=${y}:fontsize=${fontSize}:${style}:${enable}`);
-    });
+    if (!cur) { cur = { text: t, start, end }; continue; }
+    const cand = `${cur.text} ${t}`;
+    if (cand.length > maxChars || end - cur.start > 5) {
+      cues.push(cur);
+      cur = { text: t, start, end };
+    } else {
+      cur.text = cand;
+      cur.end = end;
+    }
   }
+  if (cur) cues.push(cur);
+
+  const parts = cues.map((c) => {
+    const txt = escapeDrawText(c.text);
+    return txt
+      ? `drawtext=text='${txt}':x=(w-text_w)/2:y=${y}:fontsize=${fontSize}:${style}:enable='between(t,${c.start.toFixed(3)},${c.end.toFixed(3)})'`
+      : null;
+  }).filter(Boolean);
   return parts.length ? parts.join(",") : null;
 }
 
@@ -172,7 +181,7 @@ export function buildStoryFfmpegArgs({ scenes, words, audioPath, musicPath, musi
   // and no edge-clipping).
   const kineticMaxWords = Math.max(0, Number(process.env.STORY_KINETIC_MAX_WORDS) || 1500);
   const drawtext = drawWords.length > kineticMaxWords
-    ? buildSubtitleDrawtext(groupWordsIntoCues(drawWords, { maxWords: 5, maxSec: 3.5 }), width, height)
+    ? buildSubtitleDrawtext(drawWords, width, height)
     : buildWordDrawtext({ words: drawWords, w: width, h: height });
   if (drawtext) {
     filterParts.push(`[vcat]${drawtext}[vout]`);

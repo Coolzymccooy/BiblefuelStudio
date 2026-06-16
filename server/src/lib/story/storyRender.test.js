@@ -169,22 +169,23 @@ describe("buildSubtitleDrawtext", () => {
     for (const l of lines) assert.ok(l.length <= 12 || !l.includes(" "), `line too long: "${l}"`);
   });
 
-  test("renders a moderate, lower-third, boxed caption per cue (no width clamp to overflow)", () => {
-    const cues = [{ text: "And why I took my test from Because", start: 1, end: 4 }];
-    const out = buildSubtitleDrawtext(cues, 720, 1280);
+  test("packs words into single-line lower-third cues (no clipping, no box)", () => {
+    const words = makeWords(40, 30).map((w) => ({ text: w.text, start: w.startMs / 1000, end: w.endMs / 1000 }));
+    const out = buildSubtitleDrawtext(words, 720, 1280);
     assert.match(out, /drawtext=/);
     assert.doesNotMatch(out, /box=1/); // outline + shadow, not a costly filled box
     assert.match(out, /shadowcolor=black/);
-    // lower third: y should be well below the vertical midpoint (640) for h=1280
+    // single line, lower third: y ≈ 0.80*1280 = 1024
     const ys = [...out.matchAll(/:y=(\d+):/g)].map((m) => Number(m[1]));
     assert.ok(ys.length >= 1 && ys.every((y) => y > 700), `captions should sit low, got y=${ys}`);
-    // moderate compact font ~3.8% of height (≈49px @1280)
-    assert.match(out, /fontsize=49/);
-    assert.match(out, /enable='between\(t,1\.000,4\.000\)'/);
+    assert.match(out, /fontsize=33/); // compact ~2.6% of height @1280
+    // far fewer drawtext than words (packed into lines)
+    const n = (out.match(/drawtext=/g) || []).length;
+    assert.ok(n < words.length, `expected packing (<${words.length} drawtext), got ${n}`);
   });
 
   test("apostrophes are normalised (drawtext lexer safety)", () => {
-    const out = buildSubtitleDrawtext([{ text: "John's word can't break", start: 0, end: 2 }], 720, 1280);
+    const out = buildSubtitleDrawtext([{ text: "John's", start: 0, end: 1 }, { text: "word", start: 1, end: 2 }], 720, 1280);
     assert.doesNotMatch(out, /[a-z]'[a-z]/i); // no raw ASCII apostrophes inside words
   });
 });
