@@ -20,8 +20,16 @@
 // Uses Node 18+ global fetch — same rationale as the Cloudflare/Imagen adapters.
 
 const ENDPOINT_BASE = "https://image.pollinations.ai/prompt";
-// On-demand generation behind a free queue can take a while; give it room.
-const REQUEST_TIMEOUT_MS = 60_000;
+// On-demand generation behind a free queue can take a while; give each attempt
+// room but keep it short enough that retries fit under the caller's wrapper.
+const REQUEST_TIMEOUT_MS = 30_000;
+// The anonymous free tier rate-limits hard (HTTP 429). Retry a few times with
+// growing backoff so bursts of scene generations don't all fail. A
+// POLLINATIONS_TOKEN raises the limits and largely avoids this.
+const MAX_ATTEMPTS = 3;
+const BACKOFF_MS = [2000, 5000];
+
+function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
 /**
  * @returns {boolean}
@@ -79,38 +87,45 @@ export async function generateImagePollinations({ prompt, seed, aspect, model, s
   if (token) params.set("token", token);
 
   const url = `${ENDPOINT_BASE}/${encodeURIComponent(prompt.trim().slice(0, 2048))}?${params.toString()}`;
+  const headers = { Accept: "image/*" };
+  if (token) headers.Authorization = `Bearer ${token}`;
 
-  const ctrl = new AbortController();
-  const timeoutTimer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
-  if (signal) {
-    if (signal.aborted) ctrl.abort();
-    else signal.addEventListener("abort", () => ctrl.abort(), { once: true });
+  let lastError = "Pollinations failed";
+  let lastStatus;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    if (signal?.aborted) return { ok: false, provider: "pollinations", model: modelId, error: "aborted" };
+    if (attempt > 0) await sleep(BACKOFF_MS[Math.min(attempt - 1, BACKOFF_MS.length - 1)]);
+
+    const ctrl = new AbortController();
+    const timeoutTimer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+    if (signal) {
+      if (signal.aborted) ctrl.abort();
+      else signal.addEventListener("abort", () => ctrl.abort(), { once: true });
+    }
+    try {
+      const resp = await fetch(url, { headers, signal: ctrl.signal });
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => "");
+        lastStatus = resp.status;
+        lastError = `Pollinations ${resp.status}: ${text.slice(0, 200)}`;
+        // Retry transient rate-limit / server errors; give up on the rest.
+        if (resp.status === 429 || resp.status >= 500) continue;
+        return { ok: false, provider: "pollinations", model: modelId, status: resp.status, error: lastError };
+      }
+      const contentType = String(resp.headers.get("content-type") || "").toLowerCase();
+      const buf = Buffer.from(await resp.arrayBuffer());
+      if (!buf.length) { lastError = "Pollinations returned an empty body"; continue; }
+      // Guard against 200-status error pages (HTML/JSON) being cached as an image.
+      if (!contentType.startsWith("image/")) {
+        return { ok: false, provider: "pollinations", model: modelId, error: `Pollinations returned a non-image response (${contentType || "unknown content-type"})` };
+      }
+      return { ok: true, provider: "pollinations", model: modelId, imageBuffer: buf, contentType: contentType || "image/jpeg" };
+    } catch (err) {
+      lastError = err?.name === "AbortError" ? "Pollinations request timed out" : String(err?.message || err);
+      // timeouts/network blips are worth another try
+    } finally {
+      clearTimeout(timeoutTimer);
+    }
   }
-
-  try {
-    const headers = { Accept: "image/*" };
-    if (token) headers.Authorization = `Bearer ${token}`;
-    const resp = await fetch(url, { headers, signal: ctrl.signal });
-
-    if (!resp.ok) {
-      const text = await resp.text().catch(() => "");
-      return { ok: false, provider: "pollinations", model: modelId, status: resp.status, error: `Pollinations ${resp.status}: ${text.slice(0, 200)}` };
-    }
-
-    const contentType = String(resp.headers.get("content-type") || "").toLowerCase();
-    const buf = Buffer.from(await resp.arrayBuffer());
-    if (!buf.length) {
-      return { ok: false, provider: "pollinations", model: modelId, error: "Pollinations returned an empty body" };
-    }
-    // Guard against 200-status error pages (HTML/JSON) being cached as an image.
-    if (!contentType.startsWith("image/")) {
-      return { ok: false, provider: "pollinations", model: modelId, error: `Pollinations returned a non-image response (${contentType || "unknown content-type"})` };
-    }
-    return { ok: true, provider: "pollinations", model: modelId, imageBuffer: buf, contentType: contentType || "image/jpeg" };
-  } catch (err) {
-    const msg = err?.name === "AbortError" ? "Pollinations request timed out" : String(err?.message || err);
-    return { ok: false, provider: "pollinations", model: modelId, error: msg };
-  } finally {
-    clearTimeout(timeoutTimer);
-  }
+  return { ok: false, provider: "pollinations", model: modelId, status: lastStatus, error: lastError };
 }
