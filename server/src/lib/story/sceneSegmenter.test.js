@@ -85,6 +85,47 @@ describe("segmentScenes", () => {
     assert.deepEqual(scenes, []);
   });
 
+  // Long audio (e.g. a 30-min sermon/voice memo) must NOT produce one ~8s
+  // scene per beat — that would demand ~200 sequential AI image generations
+  // (≈45min, and blows the daily image-gen quota). Scenes are widened so the
+  // count stays bounded: fewer, longer scenes.
+  test("caps scene count for long audio by widening scenes (fallback path)", async () => {
+    const longWords = Array.from({ length: 1800 }, (_, i) => ({
+      text: `w${i}`, startMs: i * 1000, endMs: i * 1000 + 900,
+    })); // 30 minutes @ 1 word/sec
+    _setLlmImpl(async () => null); // force the duration-based fallback
+    const scenes = await segmentScenes({ words: longWords, style: "cinematic-bible" });
+    assert.ok(scenes.length <= 60, `expected <= 60 scenes, got ${scenes.length}`);
+    assert.ok(scenes.length >= 20, `expected scenes to still span the audio, got ${scenes.length}`);
+    assert.equal(scenes[0].startMs, 0);
+    assert.equal(scenes[scenes.length - 1].endMs, longWords[longWords.length - 1].endMs);
+  });
+
+  test("rejects LLM output that exceeds the scene cap and uses bounded fallback", async () => {
+    const longWords = Array.from({ length: 1800 }, (_, i) => ({
+      text: `w${i}`, startMs: i * 1000, endMs: i * 1000 + 900,
+    }));
+    // LLM ignores the target and returns 200 tiny ~8s scenes — over the cap.
+    _setLlmImpl(async () => JSON.stringify({
+      scenes: Array.from({ length: 200 }, (_, i) => ({
+        text: `s${i}`, startWordIndex: i * 9, endWordIndex: i * 9 + 8, imagePrompt: `p${i}`,
+      })),
+    }));
+    const scenes = await segmentScenes({ words: longWords, style: "cinematic-bible" });
+    assert.ok(scenes.length <= 60, `expected <= 60 scenes, got ${scenes.length}`);
+  });
+
+  test("short audio is unaffected — honours the LLM's scene split", async () => {
+    _setLlmImpl(async () =>
+      JSON.stringify({ scenes: [
+        { text: "a", startWordIndex: 0, endWordIndex: 14, imagePrompt: "p1" },
+        { text: "b", startWordIndex: 15, endWordIndex: 29, imagePrompt: "p2" },
+      ] }),
+    );
+    const scenes = await segmentScenes({ words: WORDS, style: "cinematic-bible" });
+    assert.equal(scenes.length, 2);
+  });
+
   test("parses clean JSON even when LLM wraps it in prose/fences", async () => {
     _setLlmImpl(async () =>
       "```json\n{\"scenes\":[{\"text\":\"x\",\"startWordIndex\":0,\"endWordIndex\":29,\"imagePrompt\":\"p\"}]}\n```",

@@ -83,20 +83,73 @@ async function segmentStage(ctx, projectId) {
   return writeProject(ctx.dataDir, { ...project, scenes, status: STORY_STATUS.GENERATING_IMAGES });
 }
 
+// Bounded concurrency + per-image timeout for the image stage. Reads env each
+// call so deploys (and tests) can tune without a code change.
+//   STORY_IMAGE_CONCURRENCY — images generated at once (default 4)
+//   STORY_IMAGE_TIMEOUT_MS   — give up on a single image after this long
+function imageStageConcurrency() {
+  return Math.max(1, Math.min(8, Number(process.env.STORY_IMAGE_CONCURRENCY) || 4));
+}
+function imageStageTimeoutMs() {
+  return Math.max(1000, Number(process.env.STORY_IMAGE_TIMEOUT_MS) || 90_000);
+}
+
+// Resolve `promise`, or reject once `ms` elapses. The underlying generation
+// call isn't cancelled (the providers take no AbortSignal yet), but the
+// pipeline stops waiting on it — one hung request can no longer freeze the
+// whole render. unref()'d so a pending timer never holds the process open.
+function withTimeout(promise, ms, message) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message || `timed out after ${ms}ms`)), ms);
+    if (timer?.unref) timer.unref();
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 async function imagesStage(ctx, projectId) {
-  let project = readProject(ctx.dataDir, projectId);
+  const project = readProject(ctx.dataDir, projectId);
   if (!project) throw new Error("project not found");
+  // Single shared, mutated-in-place scenes array. writeProject is fully
+  // synchronous (writeFileSync + renameSync), and JS is single-threaded, so
+  // incremental writes from the concurrent workers below can't interleave or
+  // clobber each other — each persists the latest full array.
   const scenes = [...(project.scenes || [])];
+
+  const pending = [];
   for (let i = 0; i < scenes.length; i++) {
     if (scenes[i].imageStatus === "done" && scenes[i].imagePath) continue;
     scenes[i] = { ...scenes[i], imageStatus: "generating" };
-    project = writeProject(ctx.dataDir, { ...project, scenes });
-    const result = await _imageGenFn({ seriesId: project.projectId, partNumber: i + 1, rawPrompt: scenes[i].imagePrompt, aspect: "portrait" });
-    scenes[i] = result?.ok
-      ? { ...scenes[i], imagePath: result.path, imageUrl: result.publicUrl || null, imageStatus: "done" }
-      : { ...scenes[i], imageStatus: "error" };
-    project = writeProject(ctx.dataDir, { ...project, scenes });
+    pending.push(i);
   }
+  writeProject(ctx.dataDir, { ...project, scenes });
+
+  const timeoutMs = imageStageTimeoutMs();
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < pending.length) {
+      const i = pending[cursor++];
+      let result;
+      try {
+        result = await withTimeout(
+          _imageGenFn({ seriesId: project.projectId, partNumber: i + 1, rawPrompt: scenes[i].imagePrompt, aspect: "portrait" }),
+          timeoutMs,
+          `image gen for scene ${i + 1} timed out after ${timeoutMs}ms`,
+        );
+      } catch (err) {
+        console.warn(`[story] scene ${i + 1} image gen failed: ${err?.message || err}`);
+        result = { ok: false, error: String(err?.message || err) };
+      }
+      scenes[i] = result?.ok
+        ? { ...scenes[i], imagePath: result.path, imageUrl: result.publicUrl || null, imageStatus: "done" }
+        : { ...scenes[i], imageStatus: "error" };
+      writeProject(ctx.dataDir, { ...project, scenes });
+    }
+  };
+
+  const workerCount = Math.min(imageStageConcurrency(), Math.max(1, pending.length));
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+
   const allDone = scenes.every((s) => s.imageStatus === "done");
   return writeProject(ctx.dataDir, { ...project, scenes, status: allDone ? STORY_STATUS.READY_TO_RENDER : STORY_STATUS.GENERATING_IMAGES });
 }

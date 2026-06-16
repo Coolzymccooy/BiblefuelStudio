@@ -8,6 +8,12 @@ export function _setLlmImpl(impl) { _llm = impl; }
 export function _resetLlmImpl() { _llm = defaultLlmComplete; }
 
 const TARGET_SEC_DEFAULT = 8;
+// Hard ceiling on scenes per project. Each scene is one AI image generated at
+// render time, so the scene count IS the image-generation cost and wall-clock.
+// A 27-min recording at the 8s default would demand ~200 sequential images
+// (~45min, and exhausts the daily image-gen quota). Above this many, scenes
+// are widened (fewer, longer scenes) so a long recording still finishes.
+const MAX_SCENES = Math.max(8, Number(process.env.STORY_MAX_SCENES) || 60);
 
 /**
  * @param {object} args
@@ -18,26 +24,35 @@ const TARGET_SEC_DEFAULT = 8;
  */
 export async function segmentScenes({ words, style, targetSec = TARGET_SEC_DEFAULT }) {
   if (!Array.isArray(words) || words.length === 0) return [];
-  const safeTargetSec = Number(targetSec) > 0 ? Number(targetSec) : TARGET_SEC_DEFAULT;
+  const baseTargetSec = Number(targetSec) > 0 ? Number(targetSec) : TARGET_SEC_DEFAULT;
+  // Widen scenes for long audio so the count never exceeds MAX_SCENES. The
+  // effective target is whichever is LONGER: the requested per-scene length, or
+  // the length needed to fit the whole recording into MAX_SCENES scenes.
+  const totalSec = Math.max(0, (words[words.length - 1].endMs - words[0].startMs) / 1000);
+  const minSecForCap = totalSec > 0 ? totalSec / MAX_SCENES : baseTargetSec;
+  const effectiveTargetSec = Math.max(baseTargetSec, minSecForCap);
   const anchor = anchorFor(style);
 
   let llmScenes = null;
   try {
-    const raw = await _llm(buildSegmentPrompt(words, safeTargetSec));
+    const raw = await _llm(buildSegmentPrompt(words, effectiveTargetSec));
     llmScenes = parseLlmScenes(raw);
   } catch {
     llmScenes = null;
   }
 
+  // Use the LLM split only when it's present AND respects the cap. If it
+  // over-segments (ignoring the widened target), fall back to bounded
+  // duration windows so we never blow past MAX_SCENES.
   const ranges =
-    llmScenes && llmScenes.length > 0
+    llmScenes && llmScenes.length > 0 && llmScenes.length <= MAX_SCENES
       ? llmScenes.map((s) => ({
           text: String(s.text || "").trim(),
           start: clampIndex(s.startWordIndex, words.length),
           end: clampIndex(s.endWordIndex, words.length),
           imagePrompt: String(s.imagePrompt || "").trim(),
         }))
-      : fallbackRanges(words, safeTargetSec);
+      : fallbackRanges(words, effectiveTargetSec);
 
   return ranges.map((r, i) => {
     const start = Math.min(r.start, r.end);

@@ -100,6 +100,57 @@ describe("story routes", () => {
     assert.equal(after.scenes[1].imageUrl, "/outputs/genImg/p/part-2.png");
   });
 
+  test("images stage doesn't hang on a stuck generator — times out and marks the scene error", async () => {
+    process.env.STORY_IMAGE_TIMEOUT_MS = "50";
+    try {
+      const create = mockReqRes({ body: { title: "T", style: "cinematic-bible" }, dataDir, outputDir });
+      await handlerFor("post", "/")(create.req, create.res);
+      const id = create.res.payload.project.projectId;
+      const proj = readProject(dataDir, id);
+      writeProject(dataDir, {
+        ...proj,
+        scenes: [
+          { id: "scene-001", text: "a", startMs: 0, endMs: 8000, imagePrompt: "p1", imagePath: null, imageStatus: "pending", promptEditedByUser: false },
+        ],
+      });
+      // Generator never resolves — without a timeout this would hang forever.
+      _setImageGenImpl(() => new Promise(() => {}));
+      const { req, res } = mockReqRes({ params: { id }, body: {}, dataDir, outputDir });
+      await handlerFor("post", "/:id/images")(req, res);
+      assert.equal(res.payload.ok, true);
+      const after = readProject(dataDir, id);
+      assert.equal(after.scenes[0].imageStatus, "error");
+      assert.equal(after.status, "generating_images"); // not all done -> stays for resume
+    } finally {
+      delete process.env.STORY_IMAGE_TIMEOUT_MS;
+    }
+  });
+
+  test("images stage generates many scenes concurrently and finishes", async () => {
+    const create = mockReqRes({ body: { title: "T", style: "cinematic-bible" }, dataDir, outputDir });
+    await handlerFor("post", "/")(create.req, create.res);
+    const id = create.res.payload.project.projectId;
+    const proj = readProject(dataDir, id);
+    const scenes = Array.from({ length: 12 }, (_, i) => ({
+      id: `scene-${String(i + 1).padStart(3, "0")}`, text: `t${i}`, startMs: i * 8000, endMs: (i + 1) * 8000,
+      imagePrompt: `p${i}`, imagePath: null, imageStatus: "pending", promptEditedByUser: false,
+    }));
+    writeProject(dataDir, { ...proj, scenes });
+    let active = 0; let peak = 0;
+    _setImageGenImpl(async ({ partNumber }) => {
+      active += 1; peak = Math.max(peak, active);
+      await new Promise((r) => setTimeout(r, 10));
+      active -= 1;
+      return { ok: true, path: `/img-${partNumber}.png`, publicUrl: `/o/img-${partNumber}.png` };
+    });
+    const { req, res } = mockReqRes({ params: { id }, body: {}, dataDir, outputDir });
+    await handlerFor("post", "/:id/images")(req, res);
+    const after = readProject(dataDir, id);
+    assert.equal(after.status, "ready_to_render");
+    assert.equal(after.scenes.every((s) => s.imageStatus === "done"), true);
+    assert.ok(peak > 1, `expected concurrent generation, peak was ${peak}`);
+  });
+
   test("GET /:id returns the project; unknown id 404s", async () => {
     const { req, res } = mockReqRes({ params: { id: "missing" }, dataDir, outputDir });
     await handlerFor("get", "/:id")(req, res);
