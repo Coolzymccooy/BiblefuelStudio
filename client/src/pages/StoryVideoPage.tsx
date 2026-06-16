@@ -205,6 +205,11 @@ export function StoryVideoPage() {
   const hasTranscript = (project?.transcript?.words?.length ?? 0) > 0;
   const hasScenes = (project?.scenes?.length ?? 0) > 0;
   const counts = project ? imageCounts(project.scenes) : { done: 0, total: 0 };
+  // Live ffmpeg render progress. `percent` present ⇒ the render is actually
+  // running in the server process; absent while "rendering" ⇒ the job died
+  // (e.g. a redeploy) and we should offer Resume instead of a fake bar.
+  const renderPct = typeof project?.render?.percent === 'number' ? project.render.percent : undefined;
+  const renderLive = project?.status === 'rendering' && renderPct !== undefined;
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-6">
@@ -217,8 +222,9 @@ export function StoryVideoPage() {
         )}
       </div>
 
-      {/* Actively working: always show what's happening + a way to stop it. */}
-      {project && transient && !stalled && (
+      {/* Actively working (non-render): show what's happening + a way to stop it.
+          Rendering has its own progress card with a real % in step 3. */}
+      {project && transient && project.status !== 'rendering' && !stalled && (
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary-500/30 bg-primary-500/[0.08] px-4 py-3">
           <span className="flex items-center gap-2 text-sm text-primary-100">
             <Loader2 className="animate-spin text-primary-400" size={16} />
@@ -237,8 +243,9 @@ export function StoryVideoPage() {
         </div>
       )}
 
-      {/* Interrupted (server died mid-run): offer to pick up or rebuild. */}
-      {stalled && (
+      {/* Interrupted (server died mid-run): offer to pick up or rebuild.
+          Suppressed while a render is genuinely live (it has its own % card). */}
+      {stalled && !renderLive && (
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">
           <span className="text-sm text-amber-200">This project was interrupted. Pick up where it left off.</span>
           <div className="flex shrink-0 flex-wrap gap-2">
@@ -490,7 +497,20 @@ export function StoryVideoPage() {
 
       {step === 3 && project && (
         <div className="mt-6 space-y-4">
-          {project.status === 'rendering' && <RenderProgressOverlay active mode="queued" />}
+          {project.status === 'rendering' && renderLive && (
+            <>
+              <RenderProgressOverlay active mode="queued" progress={renderPct} />
+              <div className="flex justify-center">
+                <button
+                  onClick={cancelJob}
+                  disabled={busy}
+                  className="inline-flex items-center gap-1 rounded-lg border border-white/15 px-3 py-1.5 text-sm text-gray-300 hover:border-red-400 hover:text-red-300 disabled:opacity-50"
+                >
+                  <X size={14} /> Cancel render
+                </button>
+              </div>
+            </>
+          )}
           {project.status === 'done' && project.render.outputPath && (
             <DonePanel projectId={project.projectId} />
           )}

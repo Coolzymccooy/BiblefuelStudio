@@ -30,7 +30,14 @@ export interface StoryProject {
   scenes: StoryScene[];
   music: { path: string | null; volume: number; autoDuck?: boolean };
   captionPreset: string;
-  render: { jobId: string | null; outputPath: string | null; status: string | null };
+  render: {
+    jobId: string | null;
+    outputPath: string | null;
+    status: string | null;
+    /** Live ffmpeg progress 0–100 while rendering (absent if the render isn't alive in the server process). */
+    percent?: number;
+    phase?: 'preparing' | 'encoding';
+  };
   error: string | null;
   createdAt: number;
   updatedAt: number;

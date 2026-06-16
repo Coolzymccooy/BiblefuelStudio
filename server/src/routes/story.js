@@ -7,7 +7,7 @@ import {
 } from "../lib/story/projectStore.js";
 import { segmentScenes } from "../lib/story/sceneSegmenter.js";
 import { runStoryRender, probeAudioDurationSec } from "../lib/story/storyRender.js";
-import { createJob, persistJob, cancelJob as cancelRenderJob } from "../lib/renderJobs.js";
+import { createJob, persistJob, cancelJob as cancelRenderJob, getJob as getRenderJob } from "../lib/renderJobs.js";
 import { generateBibleImage } from "../lib/imageGen/index.js";
 import { extractAudioToMp3 } from "../lib/transcode.js";
 import {
@@ -231,7 +231,18 @@ router.get("/", (req, res) => {
 router.get("/:id", (req, res) => {
   const project = readProject(req.ctx.dataDir, req.params.id);
   if (!project) return res.status(404).json({ ok: false, error: "project not found" });
-  return res.json({ ok: true, project });
+  // Enrich with the LIVE render progress (kept in the in-memory job registry,
+  // not persisted per-tick). `percent` present ⇒ the render is actually alive
+  // in this process; absent while status==="rendering" ⇒ the job died (e.g.
+  // server restart) and the UI should offer Resume rather than a fake bar.
+  let out = project;
+  if (project.status === STORY_STATUS.RENDERING && project.render?.jobId) {
+    const job = getRenderJob(project.render.jobId);
+    if (job) {
+      out = { ...project, render: { ...project.render, percent: job.percent, phase: job.phase } };
+    }
+  }
+  return res.json({ ok: true, project: out });
 });
 
 router.delete("/:id", (req, res) => {
