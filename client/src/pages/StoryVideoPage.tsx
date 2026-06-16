@@ -143,6 +143,23 @@ export function StoryVideoPage() {
     }
   };
 
+  // Rebuild scenes from the transcript with the (capped) "fewer, longer scenes"
+  // segmentation. Recovers a project that over-segmented into hundreds of
+  // scenes and stalled while generating images.
+  const resegment = async () => {
+    if (!projectId || busy) return;
+    setBusy(true);
+    try {
+      await storyApi.resegment(projectId);
+      qc.invalidateQueries({ queryKey: ['story-project', projectId] });
+      toast.success('Rebuilding with fewer scenes…');
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const step = project ? deriveStep(project) : 1;
   const stalled = project ? isStalled(project, Date.now()) : false;
 
@@ -158,14 +175,27 @@ export function StoryVideoPage() {
       </div>
 
       {stalled && (
-        <div className="mt-4 flex items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">
           <span className="text-sm text-amber-200">This project was interrupted. Pick up where it left off.</span>
-          <button
-            onClick={resume}
-            className="shrink-0 rounded-lg bg-amber-500 px-3 py-1.5 text-sm font-semibold text-dark-900 hover:bg-amber-400"
-          >
-            Resume
-          </button>
+          <div className="flex shrink-0 gap-2">
+            <button
+              onClick={resume}
+              disabled={busy}
+              className="rounded-lg bg-amber-500 px-3 py-1.5 text-sm font-semibold text-dark-900 hover:bg-amber-400 disabled:opacity-50"
+            >
+              Resume
+            </button>
+            {(project?.scenes?.length ?? 0) > 0 && (
+              <button
+                onClick={resegment}
+                disabled={busy}
+                title="Discard the current scenes and rebuild with fewer, longer scenes — faster, and recovers a render stuck on hundreds of images."
+                className="rounded-lg border border-amber-400/40 px-3 py-1.5 text-sm text-amber-200 hover:border-amber-300 disabled:opacity-50"
+              >
+                Re-segment (fewer scenes)
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -307,6 +337,13 @@ export function StoryVideoPage() {
             className="w-full rounded-xl bg-primary-500 px-4 py-3 text-sm font-semibold text-dark-900 hover:bg-primary-400 disabled:opacity-50"
           >
             {canRender(project) ? 'Looks good → Render' : 'Waiting for all images…'}
+          </button>
+          <button
+            onClick={resegment}
+            disabled={busy}
+            className="w-full text-center text-xs text-gray-500 hover:text-gray-300 disabled:opacity-50"
+          >
+            Too many scenes, or images stuck? Re-segment with fewer, longer scenes
           </button>
         </div>
       )}

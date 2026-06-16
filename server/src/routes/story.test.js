@@ -333,6 +333,62 @@ describe("story routes", () => {
     }
   });
 
+  test("POST /:id/resegment discards old scenes and rebuilds from the existing transcript", async () => {
+    const create = mockReqRes({ body: { title: "T", style: "cinematic-bible" }, dataDir, outputDir });
+    await handlerFor("post", "/")(create.req, create.res);
+    const id = create.res.payload.project.projectId;
+    const audio = path.join(outputDir, "voice.mp3");
+    fs.writeFileSync(audio, "ID3");
+    const proj = readProject(dataDir, id);
+    // Simulate a stuck project: a transcript plus a pile of stale scenes.
+    writeProject(dataDir, {
+      ...proj,
+      source: { audioPath: audio, durationMs: 240000 },
+      transcript: { words: Array.from({ length: 40 }, (_, i) => ({ text: `w${i}`, startMs: i * 1000, endMs: i * 1000 + 900 })), hash: "h" },
+      scenes: Array.from({ length: 30 }, (_, i) => ({
+        id: `scene-${String(i + 1).padStart(3, "0")}`, text: `old${i}`, startMs: i, endMs: i + 1,
+        imagePrompt: `old-p${i}`, imagePath: `/old-${i}.png`, imageStatus: "done", promptEditedByUser: false,
+      })),
+      status: "generating_images",
+    });
+    let transcribeCalls = 0;
+    _setTranscribeImpl(async () => { transcribeCalls += 1; return { words: [] }; });
+    _setLlmImpl(async () => JSON.stringify({ scenes: [
+      { text: "new-a", startWordIndex: 0, endWordIndex: 19, imagePrompt: "np1" },
+      { text: "new-b", startWordIndex: 20, endWordIndex: 39, imagePrompt: "np2" },
+    ] }));
+    _setImageGenImpl(async ({ partNumber }) => ({ ok: true, path: `/new-${partNumber}.png`, publicUrl: `/o/new-${partNumber}.png` }));
+
+    const { req, res } = mockReqRes({ params: { id }, body: {}, dataDir, outputDir });
+    await handlerFor("post", "/:id/resegment")(req, res);
+    assert.equal(res.payload.ok, true);
+
+    // The pipeline runs detached; give the microtasks a moment to settle.
+    await new Promise((r) => setTimeout(r, 50));
+    const after = readProject(dataDir, id);
+    assert.equal(transcribeCalls, 0, "must reuse the existing transcript, not re-transcribe");
+    assert.equal(after.scenes.length, 2, "scenes rebuilt with the new (capped) segmentation");
+    assert.equal(after.scenes[0].text, "new-a");
+    assert.equal(after.status, "ready_to_render");
+    assert.equal(after.scenes.every((s) => s.imageStatus === "done"), true);
+  });
+
+  test("POST /:id/resegment 400s when there is no transcript to rebuild from", async () => {
+    const create = mockReqRes({ body: { title: "T", style: "cinematic-bible" }, dataDir, outputDir });
+    await handlerFor("post", "/")(create.req, create.res);
+    const id = create.res.payload.project.projectId;
+    const { req, res } = mockReqRes({ params: { id }, body: {}, dataDir, outputDir });
+    await handlerFor("post", "/:id/resegment")(req, res);
+    assert.equal(res.statusCode, 400);
+    assert.equal(res.payload.ok, false);
+  });
+
+  test("POST /:id/resegment 404s for an unknown project", async () => {
+    const { req, res } = mockReqRes({ params: { id: "nope" }, body: {}, dataDir, outputDir });
+    await handlerFor("post", "/:id/resegment")(req, res);
+    assert.equal(res.statusCode, 404);
+  });
+
   test("POST /:id/process returns ok immediately and rejects an out-of-scope mediaPath", async () => {
     const create = mockReqRes({ body: { title: "T", style: "cinematic-bible" }, dataDir, outputDir });
     await handlerFor("post", "/")(create.req, create.res);

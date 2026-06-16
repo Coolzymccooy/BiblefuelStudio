@@ -287,6 +287,45 @@ router.post("/:id/process", (req, res) => {
   return res.json({ ok: true });
 });
 
+// POST /:id/resegment — discard the current scenes and rebuild them from the
+// EXISTING transcript, then regenerate images. Lets a project created before
+// the scene-count cap (e.g. a 200-scene render that never finished) adopt the
+// "fewer, longer scenes" behaviour without re-uploading or re-transcribing.
+router.post("/:id/resegment", (req, res) => {
+  const project = readProject(req.ctx.dataDir, req.params.id);
+  if (!project) return res.status(404).json({ ok: false, error: "project not found" });
+  if (!project.transcript?.words?.length) {
+    return res.status(400).json({ ok: false, error: "no transcript to re-segment — start again" });
+  }
+  const audioPath = project.source?.audioPath;
+  if (!audioPath) {
+    return res.status(400).json({ ok: false, error: "missing source audio — start again" });
+  }
+
+  // Purge cached generated images. They're keyed by { projectId, partNumber }
+  // (generateBibleImage caches part-N.png), so without this the new scenes
+  // would silently reuse the OLD images that no longer match their prompts.
+  const safeId = String(project.projectId).replace(/[^a-z0-9_-]/gi, "");
+  try {
+    fs.rmSync(path.join(req.ctx.outputDir, "genImg", safeId), { recursive: true, force: true });
+  } catch (e) {
+    console.warn(`[story] resegment image-cache cleanup failed for ${safeId}: ${e?.message || e}`);
+  }
+
+  // Clear scenes so segmentStage re-runs (it short-circuits when scenes exist).
+  writeProject(req.ctx.dataDir, { ...project, scenes: [], status: STORY_STATUS.SEGMENTING, error: null });
+
+  const ctx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir };
+  const id = req.params.id;
+  runStoryPipeline(ctx, id, audioPath).catch((e) => {
+    try {
+      const fresh = readProject(ctx.dataDir, id);
+      if (fresh) writeProject(ctx.dataDir, { ...fresh, status: STORY_STATUS.ERROR, error: String(e?.message || e) });
+    } catch {}
+  });
+  return res.json({ ok: true });
+});
+
 router.post("/:id/scenes/:sid/regenerate", async (req, res) => {
   try {
     const project = readProject(req.ctx.dataDir, req.params.id);

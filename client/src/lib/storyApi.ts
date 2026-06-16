@@ -83,4 +83,12 @@ export const storyApi = {
     const res = await api.post(`/api/story/${id}/process`, { mediaPath }, undefined, { timeout: PROCESS_TIMEOUT_MS });
     if (!res.ok) throw new Error(res.error || 'Failed to start processing');
   },
+
+  // Discard the current scenes and rebuild them (fewer, longer scenes) from the
+  // existing transcript — recovers a project that over-segmented into hundreds
+  // of scenes and never finished generating images.
+  async resegment(id: string): Promise<void> {
+    const res = await api.post(`/api/story/${id}/resegment`, {}, undefined, { timeout: PROCESS_TIMEOUT_MS });
+    if (!res.ok) throw new Error(res.error || 'Failed to re-segment');
+  },
 };
