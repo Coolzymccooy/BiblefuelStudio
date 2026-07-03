@@ -1946,14 +1946,14 @@ export function TimelinePage() {
                 Clicking a tile toggles its inclusion in the ordered list;
                 selection order = render sequence. Done closes the modal. */}
             {showLibraryModal && (
-                <div className="fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-4">
+                <div className="fixed inset-0 z-[1000] flex items-center justify-center p-2 sm:p-4">
                     <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShowLibraryModal(false)} />
                     {/* max-h in dvh (not vh): iOS reports vh against the LARGEST
                         viewport (toolbars hidden), so an 80vh box overflows the
                         actually-visible area when Safari's bottom toolbar is up,
                         pushing the footer Done button off-screen. dvh tracks the
                         live viewport so the footer always stays in view. */}
-                    <div className="relative w-full max-w-4xl max-h-[88dvh] flex flex-col rounded-xl bg-dark-900/95 backdrop-blur-xl border border-white/20 shadow-2xl overflow-hidden">
+                    <div className="relative w-full max-w-4xl max-h-[calc(100dvh-1rem)] flex flex-col rounded-xl bg-dark-900/95 backdrop-blur-xl border border-white/20 shadow-2xl overflow-hidden">
                         <div className="flex items-center justify-between p-4 border-b border-white/10 shrink-0">
                             <div>
                                 <h3 className="font-bold text-lg text-white">Select Backgrounds</h3>
@@ -1979,7 +1979,7 @@ export function TimelinePage() {
                                     return (
                                         <div
                                             key={item.id}
-                                            className={`group relative aspect-[9/16] bg-black rounded-xl overflow-hidden shadow-lg transition-all cursor-pointer ${
+                                            className={`group relative bg-black rounded-xl overflow-hidden shadow-lg transition-all cursor-pointer ${
                                                 isSelected
                                                     ? 'ring-2 ring-primary-400'
                                                     : disabled
@@ -1999,11 +1999,15 @@ export function TimelinePage() {
                                                 }
                                             }}
                                         >
+                                            {/* Padding-box aspect ratio instead of CSS aspect-ratio.
+                                                iOS Safari can collapse aspect-ratio grid children
+                                                with h-full media into thin stacked strips. */}
+                                            <div className="w-full pt-[177.7778%]" aria-hidden="true" />
                                             {/* Full-opacity thumbnails so each background is
                                                 clearly distinguishable. At cap, unselected tiles
                                                 stay visible (just slightly dimmed) instead of
                                                 greying out to an indistinct blur. */}
-                                            <img src={item.image} className={`w-full h-full object-cover transition-opacity ${disabled ? 'opacity-70' : 'opacity-100'}`} alt="" />
+                                            <img src={item.image} className={`absolute inset-0 w-full h-full object-cover transition-opacity ${disabled ? 'opacity-70' : 'opacity-100'}`} alt="" />
                                             {isSelected && (
                                                 <span className="absolute top-2 left-2 w-7 h-7 rounded-full bg-primary-500 text-white text-sm font-bold flex items-center justify-center shadow-lg">
                                                     {selectedIdx + 1}

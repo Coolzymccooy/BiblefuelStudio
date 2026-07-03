@@ -1,4 +1,4 @@
-﻿import { useEffect, useRef, useState, type ChangeEvent, type SyntheticEvent } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent, type SyntheticEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
@@ -1398,7 +1398,7 @@ export function RenderPage() {
             )}
 
             {showLibraryModal && (
-                <div className="fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-4">
+                <div className="fixed inset-0 z-[1000] flex items-center justify-center p-2 sm:p-4">
                     <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShowLibraryModal(false)} />
                     {/* Plain div (not <Card>) — Card wraps children in an extra
                         <div> that breaks `flex flex-col`, so the inner
@@ -1412,7 +1412,7 @@ export function RenderPage() {
                         overflows the visible area when Safari's bottom toolbar
                         is up and the footer Done button ends up off-screen.
                         dvh tracks the live viewport so Done is always visible. */}
-                    <div className="relative w-full max-w-[min(1280px,95vw)] max-h-[88dvh] flex flex-col rounded-xl bg-dark-900/95 backdrop-blur-xl border border-white/20 shadow-2xl overflow-hidden">
+                    <div className="relative w-full max-w-[min(1280px,95vw)] max-h-[calc(100dvh-1rem)] flex flex-col rounded-xl bg-dark-900/95 backdrop-blur-xl border border-white/20 shadow-2xl overflow-hidden">
                         <div className="flex items-center justify-between p-4 border-b border-white/10 shrink-0">
                             <div>
                                 <h3 className="font-bold text-lg text-white">Select Backgrounds</h3>
@@ -1438,7 +1438,7 @@ export function RenderPage() {
                                     return (
                                         <div
                                             key={item.id}
-                                            className={`group relative aspect-[9/16] bg-black rounded-xl overflow-hidden transition-all shadow-lg cursor-pointer ${
+                                            className={`group relative bg-black rounded-xl overflow-hidden transition-all shadow-lg cursor-pointer ${
                                                 isSelected
                                                     ? 'ring-2 ring-primary-400'
                                                     : disabled
@@ -1454,13 +1454,17 @@ export function RenderPage() {
                                                 toggleBackgroundItem(item);
                                             }}
                                         >
+                                            {/* Padding-box aspect ratio instead of CSS aspect-ratio.
+                                                iOS Safari can collapse aspect-ratio grid children
+                                                with h-full media into thin stacked strips. */}
+                                            <div className="w-full pt-[177.7778%]" aria-hidden="true" />
                                             {/* Full-opacity thumbnails so each background reads as
                                                 a distinct image. At cap, unselected tiles stay
                                                 clearly visible (slightly dimmed) rather than
                                                 fading into an indistinct grey mass. */}
                                             <img
                                                 src={getImageSrc(item)}
-                                                className={`w-full h-full object-cover transition-opacity ${disabled ? 'opacity-70' : 'opacity-100'}`}
+                                                className={`absolute inset-0 w-full h-full object-cover transition-opacity ${disabled ? 'opacity-70' : 'opacity-100'}`}
                                                 alt=""
                                                 loading="lazy"
                                                 onError={(e) => handleImageError(e, item)}
