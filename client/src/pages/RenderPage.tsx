@@ -9,7 +9,8 @@ import { Field } from '../components/ui/Field';
 import { Section } from '../components/ui/Section';
 import { GuideSteps, type GuideStep } from '../components/ui/GuideSteps';
 import { MusicPicker } from '../components/MusicPicker';
-import { api, UPLOAD_TIMEOUT_MS } from '../lib/api';
+import { api, DIRECT_UPLOAD_MAX_BYTES } from '../lib/api';
+import { uploadMedia } from '../lib/mediaUpload';
 import { DropZone } from '../components/ui/DropZone';
 import toast from 'react-hot-toast';
 import { Play, Library, Video, CheckCircle2, ClipboardList, AudioLines, Share2, X as XIcon, Plus, ChevronUp, ChevronDown, Trash2, Sparkles, Scissors } from 'lucide-react';
@@ -25,8 +26,9 @@ import { applyGeneratedVisuals, type GenerateMode } from '../lib/generativeVisua
 
 /** Mirrors the server's MAX_BACKGROUNDS — keep in sync with render.js. */
 const MAX_BACKGROUNDS = 30;
-/** Mirrors the server's MAX_INPUT_MB so big uploads fail client-side first. */
-const MAX_UPLOAD_MB = 200;
+/** Client-side ceiling; large files (>90MB) go via the resumable path. Mirrors
+ *  the server's RESUMABLE_MAX_BYTES so oversized uploads fail client-side first. */
+const MAX_UPLOAD_MB = 400;
 
 interface LibraryItem {
     id: string;
@@ -522,37 +524,39 @@ export function RenderPage() {
             return;
         }
         setIsUploadingBackground(true);
+        // Large clips stream to storage over seconds — show live progress.
+        const isLarge = file.size > DIRECT_UPLOAD_MAX_BYTES;
+        const toastId = 'render-bg-upload';
+        if (isLarge) toast.loading('Uploading… 0%', { id: toastId });
         try {
-            const response = await api.uploadRaw<{ file: string; kind: 'image' | 'video'; thumb?: string }>(
-                '/api/media/upload-background',
+            const data = await uploadMedia(
                 file,
-                { filename: file.name, timeout: UPLOAD_TIMEOUT_MS },
+                file.name,
+                'background',
+                isLarge ? (pct) => toast.loading(`Uploading… ${pct}%`, { id: toastId }) : undefined,
             );
-            if (!response.ok || !response.data?.file) {
-                toast.error(response.error || 'Background upload failed');
-                return;
-            }
-            const filePath = response.data.file;
+            const filePath = data.file;
             const publicUrl = api.mediaUrl(filePath);
             // Videos have no browser-derivable poster; the server returns a
             // first-frame .jpg so the tile shows a real thumbnail instead of a
             // black square. Images are their own thumbnail.
-            const thumbUrl = response.data.thumb ? api.mediaUrl(response.data.thumb) : publicUrl;
+            const thumbUrl = data.thumb ? api.mediaUrl(data.thumb) : publicUrl;
             const item: LibraryItem = {
                 id: filePath,
                 url: publicUrl,
                 previewUrl: publicUrl,
                 image: thumbUrl,
                 savedAt: new Date().toISOString(),
-                kind: response.data.kind,
+                kind: data.kind,
             };
             // Functional updates so sequential (multi-file) drops accumulate
             // instead of clobbering each other via stale closure state.
             setBackgroundItems((prev) => [...prev, item]);
             setBackgroundPath((prev) => prev || filePath);
-            toast.success(`${response.data.kind === 'image' ? 'Image' : 'Video'} added as background`);
-        } catch {
-            toast.error('Background upload failed');
+            const msg = `${data.kind === 'image' ? 'Image' : 'Video'} added as background`;
+            if (isLarge) toast.success(msg, { id: toastId }); else toast.success(msg);
+        } catch (e) {
+            toast.error((e as Error).message || 'Background upload failed', isLarge ? { id: toastId } : undefined);
         } finally {
             setIsUploadingBackground(false);
         }

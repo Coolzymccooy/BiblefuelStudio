@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
-import { api, UPLOAD_TIMEOUT_MS, TRANSCRIBE_TIMEOUT_MS, MEDIA_OP_TIMEOUT_MS } from '../lib/api';
+import { api, TRANSCRIBE_TIMEOUT_MS, MEDIA_OP_TIMEOUT_MS } from '../lib/api';
+import { uploadMedia } from '../lib/mediaUpload';
 import toast from 'react-hot-toast';
 import {
     Play,
@@ -154,7 +155,8 @@ const MAX_CAPTION_WORDS = 1500;
  * with a friendly toast instead of after a long base64 round-trip ending
  * in a generic server 413/400.
  */
-const MAX_UPLOAD_MB = 200;
+// Client-side ceiling; large files (>90MB) go via the resumable path (uploadMedia).
+const MAX_UPLOAD_MB = 400;
 
 /** Server-recorded captioned-video render — shape mirrors renderHistory.js. */
 interface RenderHistoryItem {
@@ -334,23 +336,15 @@ export function TimelinePage() {
         try {
             setUploadProgress(0);
             toast.loading(isVideo ? 'Uploading video… 0%' : 'Uploading sermon… 0%', { id: toastId });
-            const endpoint = isVideo ? '/api/media/upload-source-video' : '/api/media/upload-audio';
-            // Raw binary streaming — the browser sends the file's bytes directly
-            // (no base64 inflation, constant server memory). See api.uploadRaw.
-            const response = await api.uploadRaw(
-                endpoint,
+            // Small files stream one-shot; large files (which Cloudflare would
+            // reject) go resumable → storage. uploadMedia picks the transport.
+            const data = await uploadMedia(
                 file,
-                {
-                    filename: file.name,
-                    timeout: UPLOAD_TIMEOUT_MS,
-                    onUploadProgress: makeUploadToast(toastId, isVideo ? 'Uploading video…' : 'Uploading sermon…'),
-                },
+                file.name,
+                isVideo ? 'source-video' : 'audio',
+                makeUploadToast(toastId, isVideo ? 'Uploading video…' : 'Uploading sermon…'),
             );
-            if (!response.ok || !response.data?.file) {
-                toast.error(response.error || 'Upload failed', { id: toastId });
-                return;
-            }
-            setSourceMediaPath(response.data.file);
+            setSourceMediaPath(data.file);
             setSourceMediaKind(isVideo ? 'video' : 'audio');
             setTranscript(null);
             setEditedLines([]);
@@ -368,7 +362,7 @@ export function TimelinePage() {
             if (!isVideo) {
                 const clip: TimelineClip = {
                     id: `clip_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-                    path: response.data.file,
+                    path: data.file,
                     label: file.name,
                     startSec: null,
                     durationSec: null,
@@ -376,11 +370,11 @@ export function TimelinePage() {
                 const next = [clip];
                 setClips(next);
                 saveClipsToCache(next);
-                pushAudioHistory(response.data.file, 'source');
+                pushAudioHistory(data.file, 'source');
             }
             toast.success(`${isVideo ? 'Video' : 'Audio'} uploaded`, { id: toastId });
-        } catch {
-            toast.error('Upload failed', { id: toastId });
+        } catch (e) {
+            toast.error((e as Error).message || 'Upload failed', { id: toastId });
         } finally {
             setIsUploading(false);
             setUploadProgress(null);
@@ -494,38 +488,37 @@ export function TimelinePage() {
         try {
             setUploadProgress(0);
             toast.loading('Uploading background… 0%', { id: toastId });
-            const response = await api.uploadRaw<{ file: string; kind: 'image' | 'video'; thumb?: string }>(
-                '/api/media/upload-background',
+            // Small files stream one-shot; large clips (which Cloudflare would
+            // reject) go resumable → storage. uploadMedia picks the transport.
+            const data = await uploadMedia(
                 file,
-                { filename: file.name, timeout: UPLOAD_TIMEOUT_MS, onUploadProgress: makeUploadToast(toastId, 'Uploading background…') },
+                file.name,
+                'background',
+                makeUploadToast(toastId, 'Uploading background…'),
             );
-            if (!response.ok || !response.data?.file) {
-                toast.error(response.error || 'Background upload failed', { id: toastId });
-                return;
-            }
             // Build a synthetic LibraryItem so the rest of the multi-bg flow
             // treats local uploads identically to Pexels picks. id is the
             // server file path — resolveAssetPath returns it directly without
             // going through library.json.
-            const filePath = response.data.file;
+            const filePath = data.file;
             const publicUrl = api.mediaUrl(filePath);
             // Videos get a server-extracted first-frame .jpg poster so the tile
             // isn't a black square; images are their own thumbnail.
-            const thumbUrl = response.data.thumb ? api.mediaUrl(response.data.thumb) : publicUrl;
+            const thumbUrl = data.thumb ? api.mediaUrl(data.thumb) : publicUrl;
             const item: LibraryItem = {
                 id: filePath,
                 url: publicUrl,
                 previewUrl: publicUrl,
                 image: thumbUrl,
                 savedAt: new Date().toISOString(),
-                kind: response.data.kind,
+                kind: data.kind,
             };
             // Functional update so sequential drops (multi-file) accumulate
             // instead of clobbering each other via stale closure state.
             setBackgroundItems((prev) => [...prev, item]);
-            toast.success(`${response.data.kind === 'image' ? 'Image' : 'Video'} added as background`, { id: toastId });
-        } catch {
-            toast.error('Background upload failed', { id: toastId });
+            toast.success(`${data.kind === 'image' ? 'Image' : 'Video'} added as background`, { id: toastId });
+        } catch (e) {
+            toast.error((e as Error).message || 'Background upload failed', { id: toastId });
         } finally {
             setIsUploading(false);
             setUploadProgress(null);

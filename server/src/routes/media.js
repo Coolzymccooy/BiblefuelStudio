@@ -367,19 +367,35 @@ router.post("/upload-finalize", async (req, res) => {
       return res.status(413).json({ ok: false, error: "File exceeds the upload limit" });
     }
 
+    const kind = String(req.body?.kind || "audio").trim();
     const extHint = filename ? path.extname(filename).replace(".", "").toLowerCase() : "";
-    const ext = audioMimeToExt(contentType, extHint);
-    const mime = contentType || `audio/${ext}`;
-
     const outDir = req.ctx.outputDir;
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+    const cleanupGcs = () => deleteUploadObject(objectPath).catch(() => {}); // local copy becomes source of truth
+
+    if (kind === "background") {
+      const cls = classifyBackground(contentType, extHint);
+      if (!cls.ok) { cleanupGcs(); return res.status(400).json({ ok: false, error: cls.error }); }
+      const outFile = path.join(outDir, `bg-${cls.kind}-${uuid()}.${cls.ext}`);
+      await downloadUploadToLocal(objectPath, outFile);
+      cleanupGcs();
+      return respondWithBackground(res, outFile, cls.kind, cls.isImage, contentType || (cls.isImage ? `image/${cls.ext}` : `video/${cls.ext}`));
+    }
+
+    if (kind === "source-video") {
+      const ext = videoMimeToExt(contentType, extHint);
+      const outFile = path.join(outDir, `source-video-${uuid()}.${ext}`);
+      await downloadUploadToLocal(objectPath, outFile);
+      cleanupGcs();
+      return res.json({ ok: true, file: outFile.replace(/\\/g, "/"), mime: contentType || `video/${ext}` });
+    }
+
+    // default: audio — validate + native/transcode exactly like /upload-audio.
+    const ext = audioMimeToExt(contentType, extHint);
+    const mime = contentType || `audio/${ext}`;
     const rawFile = path.join(outDir, `user-audio-${uuid()}.${ext}`);
-
     await downloadUploadToLocal(objectPath, rawFile);
-    // Local copy is now the source of truth (same as a direct upload); the GCS
-    // object is transient scratch — remove it best-effort.
-    deleteUploadObject(objectPath).catch(() => {});
-
+    cleanupGcs();
     return processReceivedAudio(rawFile, ext, mime, res);
   } catch (e) {
     return res.status(400).json({ ok: false, error: String(e?.message || e) });
@@ -451,6 +467,34 @@ const imageMimeToExt = (mime, hint) => {
   return imageExtensions.has(`.${hint}`) ? hint : "jpg";
 };
 
+// Decide whether a background upload is an image or a video, and pick its
+// extension + kind. Shared by the direct (/upload-background) and resumable
+// (/upload-finalize) paths so both classify identically.
+function classifyBackground(mime, extHint) {
+  const m = String(mime || "").toLowerCase();
+  const isImage = m.startsWith("image/") || imageExtensions.has(`.${extHint}`);
+  const isVideo = m.startsWith("video/") || videoExtensions.has(`.${extHint}`);
+  if (!isImage && !isVideo) {
+    return { ok: false, error: `Background must be an image (jpg/png/webp) or video (mp4/mov/webm); got mime=${mime || "unknown"}` };
+  }
+  return { ok: true, isImage, ext: isImage ? imageMimeToExt(m, extHint) : videoMimeToExt(m, extHint), kind: isImage ? "image" : "video" };
+}
+
+// Finish a background upload once its bytes are on disk (either transport):
+// extract a first-frame poster for videos (so tiles aren't black) and reply
+// with the shape the client expects. Poster is best-effort — never fatal.
+function respondWithBackground(res, outFile, kind, isImage, mimeOut) {
+  let thumb = "";
+  if (!isImage) {
+    try {
+      thumb = generateVideoThumbnail(outFile, { outputBaseName: path.basename(outFile, path.extname(outFile)) }) || "";
+    } catch {
+      thumb = "";
+    }
+  }
+  return res.json({ ok: true, file: outFile.replace(/\\/g, "/"), kind, thumb, mime: mimeOut });
+}
+
 // Sibling of /upload-audio that preserves the original video tracks for the
 // "Render Captioned Video" mode. Skips the ffprobe playability check that
 // /upload-audio runs — video probing is expensive and the file goes through
@@ -490,53 +534,17 @@ router.post("/upload-background", async (req, res) => {
     const meta = resolveUploadMeta(req);
     if (!meta.ok) return res.status(400).json({ ok: false, error: meta.error });
 
-    const mime = String(meta.mime || "").toLowerCase();
     const extHint = fileNameHint ? path.extname(fileNameHint).replace(".", "").toLowerCase() : "";
-    const isImage =
-      mime.startsWith("image/") ||
-      imageExtensions.has(`.${extHint}`);
-    const isVideo =
-      mime.startsWith("video/") ||
-      videoExtensions.has(`.${extHint}`);
-
-    if (!isImage && !isVideo) {
-      return res.status(400).json({
-        ok: false,
-        error: `Background must be an image (jpg/png/webp) or video (mp4/mov/webm); got mime=${mime || "unknown"}`,
-      });
-    }
-
-    const ext = isImage ? imageMimeToExt(mime, extHint) : videoMimeToExt(mime, extHint);
-    const kind = isImage ? "image" : "video";
+    const cls = classifyBackground(meta.mime, extHint);
+    if (!cls.ok) return res.status(400).json({ ok: false, error: cls.error });
 
     const outDir = req.ctx.outputDir;
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
-    const outFile = path.join(outDir, `bg-${kind}-${uuid()}.${ext}`);
+    const outFile = path.join(outDir, `bg-${cls.kind}-${uuid()}.${cls.ext}`);
     const recv = await receiveUploadToFile(req, outFile, { b64: meta.b64, mime: meta.mime });
     if (!recv.ok) return res.status(recv.status || 400).json({ ok: false, error: recv.error });
 
-    // Videos have no browser-derivable poster, so a <img> preview of the clip
-    // 404s and the tile renders black. Extract a first-frame .jpg the same way
-    // library/pexels/pixabay clips do, so the client has a real thumbnail.
-    // Best-effort: a missing poster must never fail the upload itself.
-    let thumb = "";
-    if (!isImage) {
-      try {
-        thumb = generateVideoThumbnail(outFile, {
-          outputBaseName: path.basename(outFile, path.extname(outFile)),
-        }) || "";
-      } catch {
-        thumb = "";
-      }
-    }
-
-    return res.json({
-      ok: true,
-      file: outFile.replace(/\\/g, "/"),
-      kind,
-      thumb,
-      mime: meta.mime || (isImage ? `image/${ext}` : `video/${ext}`),
-    });
+    return respondWithBackground(res, outFile, cls.kind, cls.isImage, meta.mime || (cls.isImage ? `image/${cls.ext}` : `video/${cls.ext}`));
   } catch (e) {
     res.status(400).json({ ok: false, error: String(e?.message || e) });
   }
