@@ -743,9 +743,10 @@ export function RenderPage() {
 
     return (
         <div className="space-y-6 animate-fade-in">
-            <h2 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-primary-200">
-                Video Renderer
-            </h2>
+            <div>
+                <div className="bf-eyebrow">Studio</div>
+                <h2 className="font-displaySerif text-[28px] leading-[1.08] font-semibold text-bf-cream mt-1.5">Send it to <em className="italic font-medium text-bf-gold">the world</em>.</h2>
+            </div>
 
             <RenderProgressOverlay
                 active={isRenderInFlight && !completedRender && !result?.file}

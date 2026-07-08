@@ -16,6 +16,7 @@ import { MusicPicker } from '../components/MusicPicker';
 import { RenderProgressOverlay } from '../components/RenderProgressOverlay';
 import { MediaTrimmer } from '../components/MediaTrimmer';
 import { DropZone } from '../components/ui/DropZone';
+import { ScreenHeader } from '../components/ui/ScreenHeader';
 import { ScriptForm } from '../components/story/ScriptForm';
 
 const ACTIVE_KEY = 'BF_STORY_ACTIVE';
@@ -223,14 +224,14 @@ export function StoryVideoPage() {
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold text-white">Story Video</h1>
-        {project && (
-          <button onClick={() => setActive(null)} className="text-xs text-gray-400 hover:text-gray-200">
-            Start new
-          </button>
-        )}
-      </div>
+      <ScreenHeader
+        eyebrow="Create"
+        title={<>Scripture into <em>scenes</em>.</>}
+        right={project ? (
+          <button onClick={() => setActive(null)} className="text-xs text-content-tertiary hover:text-bf-cream">Start new</button>
+        ) : undefined}
+      />
+      <div className="h-5" />
 
       {/* Actively working (non-render): show what's happening + a way to stop it.
           Rendering has its own progress card with a real % in step 3. */}

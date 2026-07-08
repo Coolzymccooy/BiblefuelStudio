@@ -964,10 +964,9 @@ export function TimelinePage() {
         <div className="space-y-5 animate-fade-in">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div>
-                    <h2 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-primary-200">
-                        Timeline Editor
-                    </h2>
-                    <p className="text-content-secondary">Assemble and master your audio clips with precision.</p>
+                    <div className="bf-eyebrow">Studio</div>
+                    <h2 className="font-displaySerif text-[28px] leading-[1.08] font-semibold text-bf-cream mt-1.5">Arrange the <em className="italic font-medium text-bf-gold">cut</em>.</h2>
+                    <p className="text-help mt-2">Assemble and master your audio clips with precision.</p>
                 </div>
                 <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
                     <Button variant="secondary" onClick={() => toast.success('Saved')} className="w-full sm:w-auto">

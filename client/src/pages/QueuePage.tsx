@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
+import { ScreenHeader } from '../components/ui/ScreenHeader';
 import { api } from '../lib/api';
 import toast from 'react-hot-toast';
 import { Trash2, RefreshCcw, Download, Archive, Trash, Mic, CheckCircle2, Video, Library, Layers } from 'lucide-react';
@@ -158,10 +159,8 @@ export function QueuePage() {
     return (
         <div className="space-y-6 animate-fade-in">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                <div>
-                    <h2 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-primary-200">Content Queue</h2>
-                    <p className="text-help">Manage and export your generated scripts batch.</p>
-                </div>
+                <ScreenHeader eyebrow="Studio" title={<>Ready to <em>publish</em>.</>} subtitle="Manage and export your generated scripts batch." />
+
                 <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
                     {selectedIds.size > 0 && (
                         <div className="flex items-center gap-2 bg-primary-500/10 border border-primary-500/20 px-3 py-1 rounded-full animate-in fade-in zoom-in duration-300">

@@ -128,8 +128,9 @@ export function SeriesPage() {
         <div className="space-y-6">
             <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                 <div>
-                    <h1 className="text-2xl font-bold text-white">Series Mode</h1>
-                    <p className="text-help">
+                    <div className="bf-eyebrow">Create</div>
+                    <h1 className="font-displaySerif text-[28px] leading-[1.08] font-semibold text-bf-cream mt-1.5">One chapter, a <em className="italic font-medium text-bf-gold">series</em>.</h1>
+                    <p className="text-help mt-2">
                         Turn one Bible chapter into a sequenced set of short-form videos with continuity hooks
                         and YouVersion deep links.
                     </p>

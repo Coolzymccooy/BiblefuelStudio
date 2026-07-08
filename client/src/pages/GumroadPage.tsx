@@ -3,6 +3,7 @@ import { Navigate, useNavigate } from 'react-router-dom';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
+import { ScreenHeader } from '../components/ui/ScreenHeader';
 import { api } from '../lib/api';
 import { useAuth } from '../hooks/useAuth';
 import toast from 'react-hot-toast';
@@ -136,7 +137,7 @@ export function GumroadPage() {
 
     return (
         <div>
-            <h2 className="text-2xl font-bold mb-6">Gumroad Pack Builder</h2>
+            <ScreenHeader eyebrow="Gumroad" title={<>Package the <em>work</em>.</>} className="mb-6" />
 
             <Card title="Configuration">
                 <p className="text-sm text-gray-600 mb-4">

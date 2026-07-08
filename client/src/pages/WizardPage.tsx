@@ -43,10 +43,9 @@ export function WizardPage() {
     return (
         <div className="space-y-6 animate-fade-in">
             <div>
-                <h2 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-primary-200">
-                    Creator Wizard
-                </h2>
-                <p className="text-content-secondary">A guided flow for fast creation. Jump to any step, any time.</p>
+                <div className="bf-eyebrow">Create</div>
+                <h2 className="font-displaySerif text-[28px] leading-[1.08] font-semibold text-bf-cream mt-1.5">Start to <em className="italic font-medium text-bf-gold">finish</em>.</h2>
+                <p className="text-help mt-2">A guided flow for fast creation. Jump to any step, any time.</p>
             </div>
 
             <Card>

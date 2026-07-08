@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Navigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { ShieldCheck, RefreshCw, RotateCcw, Mail, CheckCircle2, XCircle, User as UserIcon, Check, X, Inbox, Clock, Bug, RotateCw } from 'lucide-react';
+import { RefreshCw, RotateCcw, Mail, CheckCircle2, XCircle, User as UserIcon, Check, X, Inbox, Clock, Bug, RotateCw } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
@@ -244,11 +244,9 @@ export function AdminPage() {
         <div className="space-y-6 animate-fade-in">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div>
-                    <h2 className="text-3xl font-bold text-white flex items-center gap-2">
-                        <ShieldCheck className="text-primary-300" size={28} />
-                        Admin
-                    </h2>
-                    <p className="text-content-secondary mt-1">Operator-only controls. Visible to super-admin accounts only.</p>
+                    <div className="bf-eyebrow">Admin</div>
+                    <h2 className="font-displaySerif text-[28px] leading-[1.08] font-semibold text-bf-cream mt-1.5">Behind the <em className="italic font-medium text-bf-gold">curtain</em>.</h2>
+                    <p className="text-help mt-2">Operator-only controls. Visible to super-admin accounts only.</p>
                 </div>
                 <Button onClick={refresh} isLoading={loading} variant="secondary">
                     <RefreshCw size={16} className="mr-2" />

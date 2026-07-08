@@ -489,8 +489,8 @@ export function HomePage() {
                                 </div>
                             </div>
 
-                            <h1 className="text-[52px] leading-[0.95] text-white font-black tracking-[-0.03em]">
-                                {view === 'forgot-password' ? 'Reset access' : view === 'setup' ? 'Create account' : "Let's sign you in"}
+                            <h1 className="font-displaySerif text-[44px] leading-[1.0] text-bf-cream font-semibold tracking-[-0.005em]">
+                                {view === 'forgot-password' ? 'Reset access' : view === 'setup' ? 'Create account' : "Let's sign you in."}
                             </h1>
                             <p className="mt-2 text-help">
                                 {view === 'forgot-password'
@@ -515,7 +515,7 @@ export function HomePage() {
                                             onChange={(e) => setSetupKey(e.target.value)}
                                             placeholder="Setup key"
                                             required
-                                            className="h-11 rounded-xl border-white/10 bg-[#1a1f2d] text-gray-100 placeholder:text-gray-500"
+                                            className="h-11 rounded-xl border-[rgba(216,184,120,0.14)] bg-bf-input text-bf-cream placeholder:text-bf-muted"
                                         />
                                     )}
                                     <Input
@@ -524,7 +524,7 @@ export function HomePage() {
                                         onChange={(e) => setEmail(e.target.value)}
                                         placeholder="Email"
                                         required
-                                        className="h-11 rounded-xl border-white/10 bg-[#1a1f2d] text-gray-100 placeholder:text-gray-500"
+                                        className="h-11 rounded-xl border-[rgba(216,184,120,0.14)] bg-bf-input text-bf-cream placeholder:text-bf-muted"
                                     />
                                     <div className="relative">
                                         <Input
@@ -534,7 +534,7 @@ export function HomePage() {
                                             placeholder="Password"
                                             required
                                             minLength={8}
-                                            className="h-11 rounded-xl border-white/10 bg-[#1a1f2d] pr-11 text-gray-100 placeholder:text-gray-500"
+                                            className="h-11 rounded-xl border-[rgba(216,184,120,0.14)] bg-bf-input pr-11 text-bf-cream placeholder:text-bf-muted"
                                         />
                                         <button
                                             type="button"
@@ -554,7 +554,7 @@ export function HomePage() {
                                             placeholder="Confirm password"
                                             required
                                             minLength={8}
-                                            className="h-11 rounded-xl border-white/10 bg-[#1a1f2d] pr-11 text-gray-100 placeholder:text-gray-500"
+                                            className="h-11 rounded-xl border-[rgba(216,184,120,0.14)] bg-bf-input pr-11 text-bf-cream placeholder:text-bf-muted"
                                         />
                                         <button
                                             type="button"
@@ -566,7 +566,7 @@ export function HomePage() {
                                             {showPasswordConfirm ? <EyeOff size={16} /> : <Eye size={16} />}
                                         </button>
                                     </div>
-                                    <Button type="submit" className="mt-1 h-11 w-full border-none bg-[#3f6dff] text-white shadow-[0_10px_22px_rgba(44,94,255,0.3)] hover:bg-[#4a75ff]" isLoading={isLoading}>
+                                    <Button type="submit" className="mt-1 h-11 w-full border-none bg-gradient-to-b from-[#e9cd8d] to-[#cba85f] text-[#221703] font-semibold shadow-[0_12px_26px_-8px_rgba(216,184,120,0.5)] hover:brightness-[1.03]" isLoading={isLoading}>
                                         Create account
                                     </Button>
                                     <Button
@@ -584,12 +584,12 @@ export function HomePage() {
                                             onClick={() => setView('login')}
                                             className="text-sm text-content-secondary hover:text-white transition-colors"
                                         >
-                                            Already have an account? <span className="font-semibold text-blue-300">Sign in</span>
+                                            Already have an account? <span className="font-semibold text-bf-gold">Sign in</span>
                                         </button>
                                         <button
                                             type="button"
                                             onClick={() => setView('forgot-password')}
-                                            className="text-xs text-content-tertiary hover:text-blue-300 transition-colors"
+                                            className="text-xs text-content-tertiary hover:text-bf-gold transition-colors"
                                         >
                                             Forgot password?
                                         </button>
@@ -605,7 +605,7 @@ export function HomePage() {
                                         onChange={(e) => setEmail(e.target.value)}
                                         placeholder="Email"
                                         required
-                                        className="h-11 rounded-xl border-white/10 bg-[#1a1f2d] text-gray-100 placeholder:text-gray-500"
+                                        className="h-11 rounded-xl border-[rgba(216,184,120,0.14)] bg-bf-input text-bf-cream placeholder:text-bf-muted"
                                     />
                                     <div className="relative">
                                         <Input
@@ -614,7 +614,7 @@ export function HomePage() {
                                             onChange={(e) => setPassword(e.target.value)}
                                             placeholder="Password"
                                             required
-                                            className="h-11 rounded-xl border-white/10 bg-[#1a1f2d] pr-11 text-gray-100 placeholder:text-gray-500"
+                                            className="h-11 rounded-xl border-[rgba(216,184,120,0.14)] bg-bf-input pr-11 text-bf-cream placeholder:text-bf-muted"
                                         />
                                         <button
                                             type="button"
@@ -629,11 +629,11 @@ export function HomePage() {
                                     <button
                                         type="button"
                                         onClick={() => setView('forgot-password')}
-                                        className="text-xs text-content-tertiary hover:text-blue-300 transition-colors"
+                                        className="text-xs text-content-tertiary hover:text-bf-gold transition-colors"
                                     >
                                         Forgot password?
                                     </button>
-                                    <Button type="submit" className="h-11 w-full border-none bg-[#3f6dff] text-white shadow-[0_10px_22px_rgba(44,94,255,0.3)] hover:bg-[#4a75ff]" isLoading={isLoading}>
+                                    <Button type="submit" className="h-11 w-full border-none bg-gradient-to-b from-[#e9cd8d] to-[#cba85f] text-[#221703] font-semibold shadow-[0_12px_26px_-8px_rgba(216,184,120,0.5)] hover:brightness-[1.03]" isLoading={isLoading}>
                                         Sign in
                                     </Button>
                                     <Button
@@ -650,7 +650,7 @@ export function HomePage() {
                                         onClick={() => setView('setup')}
                                         className="w-full text-sm text-content-secondary hover:text-white transition-colors"
                                     >
-                                        Don&apos;t have an account? <span className="font-semibold text-blue-300">Register</span>
+                                        Don&apos;t have an account? <span className="font-semibold text-bf-gold">Register</span>
                                     </button>
                                 </form>
                             )}
@@ -663,9 +663,9 @@ export function HomePage() {
                                         onChange={(e) => setEmail(e.target.value)}
                                         placeholder="Email"
                                         required
-                                        className="h-11 rounded-xl border-white/10 bg-[#1a1f2d] text-gray-100 placeholder:text-gray-500"
+                                        className="h-11 rounded-xl border-[rgba(216,184,120,0.14)] bg-bf-input text-bf-cream placeholder:text-bf-muted"
                                     />
-                                    <Button type="submit" className="h-11 w-full border-none bg-[#3f6dff] text-white shadow-[0_10px_22px_rgba(44,94,255,0.3)] hover:bg-[#4a75ff]" isLoading={isLoading}>
+                                    <Button type="submit" className="h-11 w-full border-none bg-gradient-to-b from-[#e9cd8d] to-[#cba85f] text-[#221703] font-semibold shadow-[0_12px_26px_-8px_rgba(216,184,120,0.5)] hover:brightness-[1.03]" isLoading={isLoading}>
                                         <Mail size={16} className="mr-2" />
                                         Send reset link
                                     </Button>

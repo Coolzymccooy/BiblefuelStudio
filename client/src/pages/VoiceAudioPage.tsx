@@ -9,6 +9,7 @@ import { Field } from '../components/ui/Field';
 import { InfoTooltip } from '../components/ui/InfoTooltip';
 import { DropZone } from '../components/ui/DropZone';
 import { GuideSteps } from '../components/ui/GuideSteps';
+import { ScreenHeader } from '../components/ui/ScreenHeader';
 import { AnimationPicker } from '../components/voicelab/AnimationPicker';
 import { CompareVoices } from '../components/voicelab/CompareVoices';
 import { api, GENERATE_TIMEOUT_MS, UPLOAD_TIMEOUT_MS } from '../lib/api';
@@ -974,7 +975,7 @@ export function VoiceAudioPage() {
 
     return (
         <div>
-            <h2 className="text-2xl font-bold mb-4">Voice & Audio</h2>
+            <ScreenHeader eyebrow="Studio" title={<>Give it a <em>voice</em>.</>} className="mb-5" />
 
             <div className="mb-6">
                 <GuideSteps
