@@ -14,7 +14,7 @@ export function HowItWorks() {
   const m = useEditorialMotion();
 
   return (
-    <section id="who" className="bg-editorial-dark px-5 py-14 text-editorial-paper sm:px-8 sm:py-20 md:px-10">
+    <section id="who" className="border-y border-[rgba(216,184,120,0.08)] bg-[#100b07] px-5 py-14 text-bf-cream sm:px-8 sm:py-20 md:px-10">
       <div className="mx-auto max-w-6xl">
         <motion.h2
           initial="hidden"
@@ -44,10 +44,10 @@ export function HowItWorks() {
           className="grid grid-cols-1 gap-7 sm:gap-9 md:grid-cols-3"
         >
           {steps.map((s) => (
-            <motion.div key={s.num} variants={m.fadeUp} className="border-t border-editorial-goldLite/20 pt-5 sm:pt-6">
-              <div className="font-sans text-[11px] uppercase tracking-[2px] text-editorial-goldLite">{s.num}</div>
-              <h3 className="mt-2 font-displaySerif text-[22px] sm:text-[26px]">{s.title}</h3>
-              <p className="mt-3 font-bodyserif text-[14px] leading-[1.6] text-[#a8a098]">{s.body}</p>
+            <motion.div key={s.num} variants={m.fadeUp} className="border-t border-[rgba(216,184,120,0.2)] pt-5 sm:pt-6">
+              <div className="font-sans text-[11px] uppercase tracking-[2px] text-bf-gold">{s.num}</div>
+              <h3 className="mt-2 font-displaySerif text-[22px] text-bf-cream sm:text-[26px]">{s.title}</h3>
+              <p className="mt-3 font-bodyserif text-[14px] leading-[1.6] text-bf-sub">{s.body}</p>
             </motion.div>
           ))}
         </motion.div>
