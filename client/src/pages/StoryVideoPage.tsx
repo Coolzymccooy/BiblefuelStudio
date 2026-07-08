@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { Upload, Loader2, Download, X, RefreshCw } from 'lucide-react';
-import { api } from '../lib/api';
+import { api, DIRECT_UPLOAD_MAX_BYTES } from '../lib/api';
 import { storyApi } from '../lib/storyApi';
 import { useStoryProject } from '../hooks/useStoryProject';
 // StoryProject type no longer referenced here after removing the inline progress widget.
@@ -45,12 +45,22 @@ export function StoryVideoPage() {
   // Phase 1: upload the picked file, then hold its server path for the trim step.
   const handlePickFile = async (file: File) => {
     setBusy(true);
+    // Large files stream to storage over seconds/minutes — show live progress
+    // (and give the mobile user feedback instead of a silent "Working…").
+    const isLarge = file.size > DIRECT_UPLOAD_MAX_BYTES;
+    const toastId = 'story-audio-upload';
+    if (isLarge) toast.loading('Uploading… 0%', { id: toastId });
     try {
       setDefaultTitle(file.name.replace(/\.[^.]+$/, ''));
-      const path = await storyApi.uploadAudio(file, file.name);
+      const path = await storyApi.uploadAudio(
+        file,
+        file.name,
+        isLarge ? (pct) => toast.loading(`Uploading… ${pct}%`, { id: toastId }) : undefined,
+      );
+      if (isLarge) toast.success('Upload complete', { id: toastId });
       setPendingAudio(path);
     } catch (e) {
-      toast.error((e as Error).message || 'Upload failed');
+      toast.error((e as Error).message || 'Upload failed', isLarge ? { id: toastId } : undefined);
     } finally {
       setBusy(false);
     }

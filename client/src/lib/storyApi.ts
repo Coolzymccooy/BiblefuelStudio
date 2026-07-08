@@ -1,5 +1,45 @@
-import { api, TRANSCRIBE_TIMEOUT_MS, UPLOAD_TIMEOUT_MS } from './api';
+import {
+  api,
+  TRANSCRIBE_TIMEOUT_MS,
+  UPLOAD_TIMEOUT_MS,
+  MEDIA_OP_TIMEOUT_MS,
+  DIRECT_UPLOAD_MAX_BYTES,
+  RESUMABLE_UPLOAD_MAX_BYTES,
+} from './api';
+import { resumableUploadToSession } from './resumableUpload';
 import type { StoryProject, StoryProjectSummary, StoryScene } from './storyTypes';
+
+function mb(bytes: number): string {
+  return (bytes / 1024 / 1024).toFixed(0);
+}
+
+/**
+ * Upload a large audio file (> Cloudflare's safe one-shot size) straight to
+ * storage via a server-minted resumable session, then have the server pull it
+ * down to a local path. Returns the same local path shape as a direct upload,
+ * so the Story pipeline is unchanged.
+ */
+async function uploadAudioResumable(file: Blob, filename: string, onProgress?: (pct: number) => void): Promise<string> {
+  const contentType = (file as File).type || 'application/octet-stream';
+  const session = await api.post<{ sessionUrl: string; objectPath: string }>(
+    '/api/media/upload-session',
+    { filename, contentType, size: file.size },
+  );
+  if (!session.ok || !session.data?.sessionUrl || !session.data?.objectPath) {
+    throw new Error(session.error || 'Large uploads are not available on this server right now.');
+  }
+
+  await resumableUploadToSession(session.data.sessionUrl, file, { onProgress });
+
+  const finalized = await api.post<{ file: string }>(
+    '/api/media/upload-finalize',
+    { objectPath: session.data.objectPath, filename, contentType },
+    undefined,
+    { timeout: MEDIA_OP_TIMEOUT_MS },
+  );
+  if (!finalized.ok || !finalized.data?.file) throw new Error(finalized.error || 'Finalizing upload failed');
+  return finalized.data.file;
+}
 
 // Generating ~30 images can run for minutes; reuse a generous ceiling.
 const GENERATE_IMAGES_TIMEOUT_MS = 15 * 60_000;
@@ -76,6 +116,14 @@ export const storyApi = {
   },
 
   async uploadAudio(file: Blob, filename: string, onProgress?: (pct: number) => void): Promise<string> {
+    // Files above Cloudflare's safe one-shot size go straight to storage,
+    // resumably (survives mobile drops). Small files keep the fast direct path.
+    if (file.size > RESUMABLE_UPLOAD_MAX_BYTES) {
+      throw new Error(`File is ${mb(file.size)} MB. The maximum is ${mb(RESUMABLE_UPLOAD_MAX_BYTES)} MB.`);
+    }
+    if (file.size > DIRECT_UPLOAD_MAX_BYTES) {
+      return uploadAudioResumable(file, filename, onProgress);
+    }
     const res = await api.uploadRaw('/api/media/upload-audio', file, {
       filename,
       timeout: UPLOAD_TIMEOUT_MS,

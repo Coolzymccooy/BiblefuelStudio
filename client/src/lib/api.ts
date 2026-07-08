@@ -17,6 +17,13 @@ const DEFAULT_TIMEOUT_MS = 15_000;
 // onUploadProgress so a stalled upload is still visible to the user.
 export const UPLOAD_TIMEOUT_MS = 10 * 60_000;
 
+// Files at/under this go through the fast one-shot upload (comfortably under
+// Cloudflare's 100 MB request-body cap on prod). Larger ones must use the
+// resumable direct-to-storage path (see storyApi.uploadAudio / resumableUpload).
+// Mirror of the server's `directMaxMb` in routes/media.js.
+export const DIRECT_UPLOAD_MAX_BYTES = 90 * 1024 * 1024;
+export const RESUMABLE_UPLOAD_MAX_BYTES = 400 * 1024 * 1024;
+
 // Server-side FFmpeg media ops (trim re-encode, master) are synchronous and
 // run far past the 15s default — accurately re-encoding a 25-minute selection
 // takes tens of seconds. Without this the request aborts with "timeout of

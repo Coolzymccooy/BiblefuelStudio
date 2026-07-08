@@ -494,7 +494,7 @@ export function TimelinePage() {
         try {
             setUploadProgress(0);
             toast.loading('Uploading background… 0%', { id: toastId });
-            const response = await api.uploadRaw<{ file: string; kind: 'image' | 'video' }>(
+            const response = await api.uploadRaw<{ file: string; kind: 'image' | 'video'; thumb?: string }>(
                 '/api/media/upload-background',
                 file,
                 { filename: file.name, timeout: UPLOAD_TIMEOUT_MS, onUploadProgress: makeUploadToast(toastId, 'Uploading background…') },
@@ -509,11 +509,14 @@ export function TimelinePage() {
             // going through library.json.
             const filePath = response.data.file;
             const publicUrl = api.mediaUrl(filePath);
+            // Videos get a server-extracted first-frame .jpg poster so the tile
+            // isn't a black square; images are their own thumbnail.
+            const thumbUrl = response.data.thumb ? api.mediaUrl(response.data.thumb) : publicUrl;
             const item: LibraryItem = {
                 id: filePath,
                 url: publicUrl,
                 previewUrl: publicUrl,
-                image: publicUrl,
+                image: thumbUrl,
                 savedAt: new Date().toISOString(),
                 kind: response.data.kind,
             };
@@ -1965,7 +1968,7 @@ export function TimelinePage() {
                                 <X size={24} />
                             </button>
                         </div>
-                        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+                        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 pb-24">
                             {isLoadingLibrary ? (
                                 <div className="col-span-full py-20 flex justify-center">
                                     <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-primary-500" />
@@ -2002,7 +2005,7 @@ export function TimelinePage() {
                                             {/* Padding-box aspect ratio instead of CSS aspect-ratio.
                                                 iOS Safari can collapse aspect-ratio grid children
                                                 with h-full media into thin stacked strips. */}
-                                            <div className="w-full pt-[177.7778%]" aria-hidden="true" />
+                                            <div className="w-full" style={{ paddingTop: '177.7778%' }} aria-hidden="true" />
                                             {/* Full-opacity thumbnails so each background is
                                                 clearly distinguishable. At cap, unselected tiles
                                                 stay visible (just slightly dimmed) instead of

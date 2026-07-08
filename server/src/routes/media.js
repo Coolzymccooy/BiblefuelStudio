@@ -4,6 +4,15 @@ import path from "path";
 import { v4 as uuid } from "uuid";
 import { spawn, spawnSync } from "child_process";
 import { validateTrimRequest } from "../lib/trimValidate.js";
+import { generateVideoThumbnail } from "../lib/mediaThumb.js";
+import {
+  isFirebaseAdminEnabled,
+  createResumableUploadSession,
+  downloadUploadToLocal,
+  deleteUploadObject,
+  getUploadObjectSize,
+  isOwnUploadPath,
+} from "../lib/firebaseAdmin.js";
 
 const router = Router();
 const audioExtensions = new Set([".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".webm"]);
@@ -79,6 +88,11 @@ function isPlayableAudio(filePath) {
 // path enforces it byte-by-byte and the base64 path checks the decoded length,
 // so an oversized upload can never fill the disk regardless of transport.
 const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
+
+// Ceiling for the resumable direct-to-GCS path (files too big for Cloudflare's
+// 100MB origin cap). The client mirrors this so the user gets an instant "too
+// large" message instead of a doomed upload.
+const RESUMABLE_MAX_BYTES = 400 * 1024 * 1024;
 
 // Audio container/codec → file extension. Pulled out of the route so the raw
 // streaming path (mime from the request's Content-Type header) and the legacy
@@ -188,6 +202,85 @@ function resolveUploadMeta(req) {
   return { ok: true, mime: String(req.headers["content-type"] || "application/octet-stream"), b64: null };
 }
 
+// Shared post-receive audio handling for BOTH the direct one-shot upload
+// (/upload-audio) and the resumable path (/upload-finalize). Extracted verbatim
+// so the two transports produce identical results: validate playability, return
+// native formats as-is, transcode exotic containers to mp3. Writes the HTTP
+// response (res.json) — the file it names is what the Story pipeline consumes.
+function processReceivedAudio(rawFile, ext, mime, res) {
+  if (!isPlayableAudio(rawFile)) {
+    try { fs.unlinkSync(rawFile); } catch {}
+    return res.status(400).json({ ok: false, error: "Uploaded audio is invalid or too short" });
+  }
+
+  // PART 2 — no up-front transcode for formats that are already both
+  // browser-playable AND natively read by FFmpeg. Every downstream step
+  // (transcribe, master, render, waveform) feeds the file through FFmpeg,
+  // and <audio> plays these directly, so converting on upload only delayed
+  // the response — a 25 MB m4a sermon spent that whole wait in libmp3lame.
+  // We return immediately; conversion is no longer on the critical path.
+  // (Exotic/uncommon containers below still convert so playback never fails.)
+  const NATIVE_OK = new Set(["mp3", "wav", "m4a", "aac", "ogg", "webm"]);
+  if (NATIVE_OK.has(ext)) {
+    return res.json({ ok: true, file: rawFile.replace(/\\/g, "/"), mime });
+  }
+
+  const ffmpeg = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
+  const mp3File = rawFile.replace(/\.[^.]+$/, ".mp3");
+  const args = ["-y", "-i", rawFile, "-vn", "-acodec", "libmp3lame", "-ar", "44100", "-ac", "2", mp3File];
+
+  const proc = spawn(ffmpeg, args);
+  let stderr = "";
+  proc.stderr.on("data", d => stderr += d.toString());
+  proc.on("error", () => {
+    if (res.headersSent) return;
+    if (isPlayableAudio(rawFile)) {
+      return res.json({
+        ok: true,
+        file: rawFile.replace(/\\/g, "/"),
+        mime,
+        warning: "ffmpeg unavailable; using raw file",
+      });
+    }
+    return res.status(400).json({ ok: false, error: "Failed to convert/upload audio" });
+  });
+
+  proc.on("close", (code) => {
+    if (res.headersSent) return;
+    if (code !== 0) {
+      if (isPlayableAudio(rawFile)) {
+        return res.json({
+          ok: true,
+          file: rawFile.replace(/\\/g, "/"),
+          mime,
+          warning: "ffmpeg conversion failed; using raw file",
+          details: stderr.slice(-800),
+        });
+      }
+      return res.status(400).json({
+        ok: false,
+        error: "Audio conversion failed and raw file is not playable",
+        details: stderr.slice(-800),
+      });
+    }
+
+    if (!isPlayableAudio(mp3File)) {
+      if (isPlayableAudio(rawFile)) {
+        return res.json({
+          ok: true,
+          file: rawFile.replace(/\\/g, "/"),
+          mime,
+          warning: "Converted file invalid; using raw audio",
+        });
+      }
+      return res.status(400).json({ ok: false, error: "Converted audio is invalid" });
+    }
+
+    try { fs.unlinkSync(rawFile); } catch {}
+    return res.json({ ok: true, file: mp3File.replace(/\\/g, "/"), mime: "audio/mpeg" });
+  });
+}
+
 router.post("/upload-audio", async (req, res) => {
   try {
     const fileNameHint = String(req.query?.filename || req.body?.filename || "").trim();
@@ -205,79 +298,91 @@ router.post("/upload-audio", async (req, res) => {
     const recv = await receiveUploadToFile(req, rawFile, { b64: meta.b64, mime });
     if (!recv.ok) return res.status(recv.status || 400).json({ ok: false, error: recv.error });
 
-    if (!isPlayableAudio(rawFile)) {
-      try { fs.unlinkSync(rawFile); } catch {}
-      return res.status(400).json({ ok: false, error: "Uploaded audio is invalid or too short" });
-    }
-
-    // PART 2 — no up-front transcode for formats that are already both
-    // browser-playable AND natively read by FFmpeg. Every downstream step
-    // (transcribe, master, render, waveform) feeds the file through FFmpeg,
-    // and <audio> plays these directly, so converting on upload only delayed
-    // the response — a 25 MB m4a sermon spent that whole wait in libmp3lame.
-    // We return immediately; conversion is no longer on the critical path.
-    // (Exotic/uncommon containers below still convert so playback never fails.)
-    const NATIVE_OK = new Set(["mp3", "wav", "m4a", "aac", "ogg", "webm"]);
-    if (NATIVE_OK.has(ext)) {
-      return res.json({ ok: true, file: rawFile.replace(/\\/g, "/"), mime });
-    }
-
-    const ffmpeg = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
-    const mp3File = rawFile.replace(/\.[^.]+$/, ".mp3");
-    const args = ["-y", "-i", rawFile, "-vn", "-acodec", "libmp3lame", "-ar", "44100", "-ac", "2", mp3File];
-
-    const proc = spawn(ffmpeg, args);
-    let stderr = "";
-    proc.stderr.on("data", d => stderr += d.toString());
-    proc.on("error", () => {
-      if (res.headersSent) return;
-      if (isPlayableAudio(rawFile)) {
-        return res.json({
-          ok: true,
-          file: rawFile.replace(/\\/g, "/"),
-          mime,
-          warning: "ffmpeg unavailable; using raw file",
-        });
-      }
-      return res.status(400).json({ ok: false, error: "Failed to convert/upload audio" });
-    });
-
-    proc.on("close", (code) => {
-      if (res.headersSent) return;
-      if (code !== 0) {
-        if (isPlayableAudio(rawFile)) {
-          return res.json({
-            ok: true,
-            file: rawFile.replace(/\\/g, "/"),
-            mime,
-            warning: "ffmpeg conversion failed; using raw file",
-            details: stderr.slice(-800),
-          });
-        }
-        return res.status(400).json({
-          ok: false,
-          error: "Audio conversion failed and raw file is not playable",
-          details: stderr.slice(-800),
-        });
-      }
-
-      if (!isPlayableAudio(mp3File)) {
-        if (isPlayableAudio(rawFile)) {
-          return res.json({
-            ok: true,
-            file: rawFile.replace(/\\/g, "/"),
-            mime,
-            warning: "Converted file invalid; using raw audio",
-          });
-        }
-        return res.status(400).json({ ok: false, error: "Converted audio is invalid" });
-      }
-
-      try { fs.unlinkSync(rawFile); } catch {}
-      return res.json({ ok: true, file: mp3File.replace(/\\/g, "/"), mime: "audio/mpeg" });
-    });
+    return processReceivedAudio(rawFile, ext, mime, res);
   } catch (e) {
     res.status(400).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// Lets the client learn, before it starts, whether the resumable large-upload
+// path exists on this server (Firebase configured) and the size ceiling — so it
+// can branch and show accurate limits instead of attempting a doomed upload.
+router.get("/upload-config", (req, res) => {
+  res.json({
+    ok: true,
+    resumable: isFirebaseAdminEnabled(),
+    // Files at/under this stay on the fast one-shot path (well under Cloudflare's
+    // 100MB cap); larger ones need the resumable path.
+    directMaxMb: 90,
+    maxMb: Math.floor(RESUMABLE_MAX_BYTES / (1024 * 1024)),
+  });
+});
+
+// Resumable upload — step 1: mint a GCS session the browser PUTs chunks to
+// directly, bypassing Cloudflare's 100MB body cap. The object is namespaced to
+// the caller's own uploads/<userId>/ prefix.
+router.post("/upload-session", async (req, res) => {
+  try {
+    if (!isFirebaseAdminEnabled()) {
+      return res.status(501).json({ ok: false, error: "Large uploads are not available on this server" });
+    }
+    const filename = String(req.body?.filename || "").trim();
+    const contentType = String(req.body?.contentType || "application/octet-stream").trim();
+    const size = Number(req.body?.size || 0);
+    if (!filename) return res.status(400).json({ ok: false, error: "filename required" });
+    if (Number.isFinite(size) && size > RESUMABLE_MAX_BYTES) {
+      return res.status(413).json({ ok: false, error: `File exceeds the ${Math.floor(RESUMABLE_MAX_BYTES / (1024 * 1024))} MB limit` });
+    }
+    const { sessionUrl, objectPath } = await createResumableUploadSession({
+      userId: req.ctx.userId,
+      filename,
+      contentType,
+    });
+    return res.json({ ok: true, sessionUrl, objectPath });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// Resumable upload — step 2: the browser finished uploading to GCS. Pull the
+// object down to the user's local output dir (the Story pipeline reads local
+// files), validate + process it exactly like a direct audio upload, then delete
+// the transient GCS copy. objectPath is jailed to the caller's own prefix so a
+// user can never finalize (and download) someone else's object.
+router.post("/upload-finalize", async (req, res) => {
+  try {
+    if (!isFirebaseAdminEnabled()) {
+      return res.status(501).json({ ok: false, error: "Large uploads are not available on this server" });
+    }
+    const objectPath = String(req.body?.objectPath || "").trim();
+    const filename = String(req.body?.filename || "").trim();
+    const contentType = String(req.body?.contentType || "").trim();
+    if (!isOwnUploadPath(objectPath, req.ctx.userId)) {
+      return res.status(403).json({ ok: false, error: "Not your upload" });
+    }
+
+    const size = await getUploadObjectSize(objectPath);
+    if (size != null && size > RESUMABLE_MAX_BYTES) {
+      deleteUploadObject(objectPath).catch(() => {});
+      return res.status(413).json({ ok: false, error: "File exceeds the upload limit" });
+    }
+
+    const extHint = filename ? path.extname(filename).replace(".", "").toLowerCase() : "";
+    const ext = audioMimeToExt(contentType, extHint);
+    const mime = contentType || `audio/${ext}`;
+
+    const outDir = req.ctx.outputDir;
+    if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+    const rawFile = path.join(outDir, `user-audio-${uuid()}.${ext}`);
+
+    await downloadUploadToLocal(objectPath, rawFile);
+    // Local copy is now the source of truth (same as a direct upload); the GCS
+    // object is transient scratch — remove it best-effort.
+    deleteUploadObject(objectPath).catch(() => {});
+
+    return processReceivedAudio(rawFile, ext, mime, res);
+  } catch (e) {
+    return res.status(400).json({ ok: false, error: String(e?.message || e) });
   }
 });
 
@@ -410,10 +515,26 @@ router.post("/upload-background", async (req, res) => {
     const recv = await receiveUploadToFile(req, outFile, { b64: meta.b64, mime: meta.mime });
     if (!recv.ok) return res.status(recv.status || 400).json({ ok: false, error: recv.error });
 
+    // Videos have no browser-derivable poster, so a <img> preview of the clip
+    // 404s and the tile renders black. Extract a first-frame .jpg the same way
+    // library/pexels/pixabay clips do, so the client has a real thumbnail.
+    // Best-effort: a missing poster must never fail the upload itself.
+    let thumb = "";
+    if (!isImage) {
+      try {
+        thumb = generateVideoThumbnail(outFile, {
+          outputBaseName: path.basename(outFile, path.extname(outFile)),
+        }) || "";
+      } catch {
+        thumb = "";
+      }
+    }
+
     return res.json({
       ok: true,
       file: outFile.replace(/\\/g, "/"),
       kind,
+      thumb,
       mime: meta.mime || (isImage ? `image/${ext}` : `video/${ext}`),
     });
   } catch (e) {
