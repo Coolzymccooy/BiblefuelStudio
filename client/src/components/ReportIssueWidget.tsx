@@ -237,7 +237,7 @@ export function ReportIssueWidget() {
                 onClick={() => setOpen(true)}
                 title="Report an issue"
                 aria-label="Report an issue"
-                className="fixed bottom-20 right-4 lg:bottom-6 lg:right-6 z-30 w-12 h-12 rounded-full bg-amber-500/90 hover:bg-amber-500 text-dark-950 shadow-lg shadow-amber-500/30 flex items-center justify-center transition-transform hover:scale-105 active:scale-95"
+                className="fixed right-4 lg:right-6 lg:bottom-6 z-30 w-11 h-11 rounded-full bg-bf-goldDeep/90 hover:bg-bf-gold text-[#221703] shadow-lg shadow-black/40 flex items-center justify-center transition-transform hover:scale-105 active:scale-95 bottom-[calc(92px+env(safe-area-inset-bottom))]"
             >
                 <Bug size={20} strokeWidth={2.5} />
             </button>

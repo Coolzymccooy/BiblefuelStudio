@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
-import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import toast from 'react-hot-toast';
-import { Sparkles, Play, Archive, Mail, ArrowLeft, Globe, Mic, Film, Video, HelpCircle, Cpu, List, Zap, ShieldCheck, Rocket, Briefcase, Wand2, Eye, EyeOff } from 'lucide-react';
+import { Sparkles, Mail, ArrowLeft, Globe, ShieldCheck, Rocket, Briefcase, Wand2, Eye, EyeOff, ChevronRight } from 'lucide-react';
+import { NotificationsBell } from '../components/NotificationsBell';
 import { api } from '../lib/api';
 import { firebaseRequestPasswordReset, getFirebaseAuthErrorMessage, isFirebaseClientEnabled } from '../lib/firebase';
 import { useVoiceSynthesisDefaults } from '../lib/voiceSynthesisDefaults';
@@ -87,27 +87,28 @@ function DailyStatsCard() {
     }, []);
 
     const Stat = ({ value, label, accent }: { value: number; label: string; accent?: string }) => (
-        <div className="flex-1 min-w-[120px] p-3 rounded-xl bg-white/[0.03] border border-white/10">
-            <div className={`text-2xl font-bold ${accent || 'text-white'}`}>{loading ? '…' : value}</div>
-            <div className="text-caption tracking-wider mt-1">{label}</div>
+        <div className="rounded-[13px] bg-[rgba(216,184,120,0.04)] border border-[rgba(216,184,120,0.08)] px-2.5 py-3">
+            <div className="text-[22px] font-bold leading-none" style={{ color: accent || '#f4ecdc' }}>{loading ? '…' : value}</div>
+            <div className="text-[9px] font-medium uppercase tracking-wide text-bf-muted mt-1.5">{label}</div>
         </div>
     );
 
     return (
-        <Card title="Today" className="border-white/10">
-            <div className="flex flex-wrap gap-3">
-                <Stat value={stats.campaignsToday} label="Campaigns today" accent="text-amber-300" />
-                <Stat value={stats.campaignsSuccessToday} label="Published ✓" accent="text-emerald-300" />
-                <Stat value={stats.campaignsFailedToday} label="Failed" accent={stats.campaignsFailedToday > 0 ? 'text-rose-300' : 'text-content-secondary'} />
-                <Stat value={stats.rendersThisWeek} label="Renders (7d)" />
-                <Stat value={stats.totalJobs} label="All-time jobs" />
-            </div>
-            <div className="mt-3 flex justify-end">
-                <button onClick={() => navigate('/app/jobs')} className="text-[10px] uppercase tracking-widest text-primary-300 hover:text-primary-200">
-                    View all jobs →
+        <div className="card !p-4">
+            <div className="flex items-center justify-between mb-3.5">
+                <div className="text-[12px] font-semibold text-bf-cream">Today</div>
+                <button onClick={() => navigate('/app/jobs')} className="text-[9px] font-semibold uppercase tracking-[0.12em] text-bf-goldDeep hover:text-bf-gold">
+                    All jobs →
                 </button>
             </div>
-        </Card>
+            <div className="grid grid-cols-3 gap-2">
+                <Stat value={stats.campaignsToday} label="Campaigns" accent="#e6c98a" />
+                <Stat value={stats.campaignsSuccessToday} label="Published" accent="#6fcf97" />
+                <Stat value={stats.campaignsFailedToday} label="Failed" accent={stats.campaignsFailedToday > 0 ? '#e08a8a' : '#a99f8b'} />
+                <Stat value={stats.rendersThisWeek} label="Renders 7d" />
+                <Stat value={stats.totalJobs} label="All jobs" />
+            </div>
+        </div>
     );
 }
 
@@ -191,97 +192,81 @@ function AutoPublishCard() {
         }
     };
 
+    const pillGreen = 'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-medium text-bf-success';
+    const pillGreenStyle = { background: 'rgba(111,207,151,0.14)', border: '1px solid rgba(111,207,151,0.28)' };
+
     return (
-        <Card className={renderOnly
-            ? 'border-emerald-500/30 bg-gradient-to-br from-emerald-500/10 via-primary-500/5 to-transparent'
-            : 'border-amber-500/30 bg-gradient-to-br from-amber-500/10 via-primary-500/5 to-transparent'}>
-            <div className="flex flex-col sm:flex-row sm:items-center gap-4 p-1">
-                <div className="flex items-start gap-3 flex-1 min-w-0">
-                    <div className={renderOnly
-                        ? 'rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-3 flex-shrink-0'
-                        : 'rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3 flex-shrink-0'}>
-                        <Rocket size={22} className={renderOnly ? 'text-emerald-300' : 'text-amber-300'} />
+        <div
+            className="relative overflow-hidden rounded-bf-lg p-[22px] border"
+            style={{
+                borderColor: renderOnly ? 'rgba(111,207,151,0.30)' : 'rgba(230,201,138,0.28)',
+                background: renderOnly
+                    ? 'linear-gradient(155deg,rgba(111,207,151,0.14),rgba(216,184,120,0.03) 55%,transparent)'
+                    : 'linear-gradient(155deg,rgba(230,201,138,0.16),rgba(216,184,120,0.03) 55%,transparent)',
+            }}
+        >
+            <div className="pointer-events-none absolute -top-8 -right-5 h-[150px] w-[150px] rounded-full" style={{ background: 'radial-gradient(circle,rgba(230,201,138,0.22),transparent 70%)' }} />
+            <div className="relative">
+                <div className="flex items-center gap-2.5">
+                    <div className="flex h-[42px] w-[42px] items-center justify-center rounded-[13px] border" style={{ borderColor: renderOnly ? 'rgba(111,207,151,0.3)' : 'rgba(230,201,138,0.3)', background: renderOnly ? 'rgba(111,207,151,0.12)' : 'rgba(230,201,138,0.12)' }}>
+                        <Rocket size={22} className={renderOnly ? 'text-bf-success' : 'text-[#f0d49a]'} />
                     </div>
-                    <div className="min-w-0">
-                        <h3 className="text-lg font-bold text-white">
-                            {renderOnly ? 'Generate a fresh video' : 'Auto-Publish a fresh post'}
-                        </h3>
-                        <p className="text-help mt-1">
-                            {renderOnly
-                                ? 'One click chains: script → background → voice → render. Your video will be ready to download or share manually.'
-                                : <>One click chains: <span className="text-amber-200">script</span> → background → voice → render → Make webhook → TikTok / YouTube.</>}
-                            {' '}Requires at least one background in your Library.
-                        </p>
-                        {/* Render-only banner. Surfaces the same information
-                            we wrote into the job's share.skipped reason — but
-                            BEFORE the user even clicks the button, so they
-                            don't waste 2 minutes wondering why their video
-                            didn't post. */}
-                        {renderOnly && (
-                            <div className="mt-3 text-[12px] flex items-start gap-2 px-3 py-2 rounded-lg border border-amber-400/30 bg-amber-500/[0.08] text-amber-100">
-                                <span aria-hidden className="shrink-0">⚠️</span>
-                                <div className="flex-1">
-                                    <strong className="font-semibold text-amber-200">Render-only mode.</strong>{' '}
-                                    Your video will be generated but won't auto-post — you have no destination connected yet.{' '}
-                                    <Link to="/app/settings" className="underline decoration-amber-300/60 hover:text-amber-50">Set up Auto-Publish →</Link>
-                                </div>
-                            </div>
-                        )}
-                        <div className="mt-2 text-[11px] flex flex-wrap items-center gap-2">
-                            {voiceDefaults.enabled ? (
-                                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-200">
-                                    <Wand2 size={11} /> Voice Synthesis: {voiceDefaults.category}
-                                    {voiceDefaults.cinematicMode ? ' · cinematic' : ''}
-                                </span>
-                            ) : (
-                                <Link to="/app/settings" className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-content-secondary hover:text-gray-200">
-                                    <Wand2 size={11} /> Voice Synthesis off · enable in Settings
-                                </Link>
-                            )}
-                            {/* Always present — auto-publish now ships kinetic
-                                captions by default, with Whisper alignment as
-                                fallback. Tells the user what they're getting. */}
-                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-primary-500/15 border border-primary-500/30 text-primary-200">
-                                <Sparkles size={11} /> Kinetic captions on
-                            </span>
-                            {/* Show which destinations are live (super-admin
-                                with env Zernio sees "TikTok via Zernio" so
-                                they can confirm at a glance things are wired). */}
-                            {status?.destinations?.map((d) => (
-                                <span key={d} className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-200">
-                                    ✓ {d === 'zernio' ? 'TikTok (Zernio)' : d === 'webhook' ? 'Webhook' : d}
-                                </span>
-                            ))}
-                        </div>
-                        {recentJobId && (
-                            <p className="text-[11px] font-mono text-emerald-300 mt-2">
-                                Last job: {recentJobId} — watch the bell, or check Jobs.
-                            </p>
-                        )}
+                    <div className="font-semibold text-[17px] text-bf-cream">
+                        {renderOnly ? 'Generate a fresh video' : 'Auto-Publish a fresh post'}
                     </div>
                 </div>
-                <div className="flex flex-col sm:flex-row gap-2 flex-shrink-0">
-                    <Button
-                        className={renderOnly
-                            ? 'h-11 px-6 bg-emerald-500 hover:bg-emerald-400 text-black font-bold border-emerald-500/40'
-                            : 'h-11 px-6 bg-amber-500 hover:bg-amber-400 text-black font-bold border-amber-500/40'}
-                        onClick={handleAutoPublish}
-                        isLoading={isLaunching}
-                    >
-                        <Rocket size={16} className="mr-2" />
-                        {renderOnly ? 'Generate Video' : 'Auto-Publish Now'}
-                    </Button>
-                    <Button
-                        variant="secondary"
-                        className="h-11 px-4 bg-white/5 border-white/10"
-                        onClick={() => navigate('/app/jobs')}
-                    >
-                        <Briefcase size={14} className="mr-2" />
-                        Jobs
-                    </Button>
+
+                <p className="mt-3 text-[12px] leading-relaxed text-[#c0b49c]">
+                    {renderOnly
+                        ? 'One click chains: script → background → voice → render. Ready to download or share manually.'
+                        : <>One click chains: <span className="text-bf-gold">script → background → voice → render → TikTok / YouTube.</span></>}
+                    {' '}Needs at least one background in your Library.
+                </p>
+
+                {renderOnly && (
+                    <div className="mt-3 flex items-start gap-2 rounded-lg px-3 py-2 text-[12px]" style={{ border: '1px solid rgba(230,201,138,0.3)', background: 'rgba(230,201,138,0.08)', color: '#e6c98a' }}>
+                        <span aria-hidden className="shrink-0">⚠︎</span>
+                        <div className="flex-1">
+                            <strong className="font-semibold">Render-only mode.</strong>{' '}
+                            No destination connected yet — the video generates but won&apos;t auto-post.{' '}
+                            <Link to="/app/settings" className="underline decoration-bf-goldDeep/60 hover:text-bf-cream">Set up Auto-Publish →</Link>
+                        </div>
+                    </div>
+                )}
+
+                <div className="mt-3.5 flex flex-wrap items-center gap-1.5">
+                    <span className={pillGreen} style={pillGreenStyle}><Sparkles size={12} /> Kinetic captions on</span>
+                    {voiceDefaults.enabled ? (
+                        <span className={pillGreen} style={pillGreenStyle}>
+                            <Wand2 size={12} /> Voice: {voiceDefaults.category}{voiceDefaults.cinematicMode ? ' · cinematic' : ''}
+                        </span>
+                    ) : (
+                        <Link to="/app/settings" className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-medium text-content-secondary hover:text-bf-cream" style={{ background: 'rgba(216,184,120,0.06)', border: '1px solid rgba(216,184,120,0.16)' }}>
+                            <Wand2 size={12} /> Voice off — enable
+                        </Link>
+                    )}
+                    {status?.destinations?.map((d) => (
+                        <span key={d} className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-medium text-bf-gold" style={{ background: 'rgba(230,201,138,0.12)', border: '1px solid rgba(230,201,138,0.24)' }}>
+                            ✓ {d === 'zernio' ? 'TikTok (Zernio)' : d === 'webhook' ? 'Webhook' : d}
+                        </span>
+                    ))}
+                </div>
+
+                {recentJobId && (
+                    <p className="mt-2 font-mono text-[11px] text-bf-success">Last job: {recentJobId} — watch the bell, or open Jobs.</p>
+                )}
+
+                <div className="mt-4 flex gap-2">
+                    <button onClick={handleAutoPublish} disabled={isLaunching} className="btn btn-primary h-[50px] flex-1 gap-2 rounded-[14px] disabled:opacity-60">
+                        <Rocket size={17} />
+                        {isLaunching ? 'Starting…' : renderOnly ? 'Generate Video' : 'Auto-Publish Now'}
+                    </button>
+                    <button onClick={() => navigate('/app/jobs')} className="btn btn-secondary h-[50px] px-4 rounded-[14px]" aria-label="Jobs">
+                        <Briefcase size={16} />
+                    </button>
                 </div>
             </div>
-        </Card>
+        </div>
     );
 }
 
@@ -400,103 +385,53 @@ export function HomePage() {
     const error = localError || authError;
 
     if (token) {
+        const workflow = [
+            { text: 'Generate scripts', to: '/app/scripts' },
+            { text: 'Add to queue & export', to: '/app/queue' },
+            { text: 'Get backgrounds', to: '/app/backgrounds' },
+            { text: 'Generate voice', to: '/app/voice-audio' },
+            { text: 'Edit timeline', to: '/app/timeline' },
+            { text: 'Render video', to: '/app/render' },
+            { text: 'Share to socials', to: '/app/render#share-kit' },
+        ];
         return (
-            <div className="space-y-8 animate-fade-in">
-                <div className="relative">
-                    <div className="absolute -top-10 -left-10 w-32 h-32 bg-primary-500/20 rounded-full blur-3xl pointer-events-none"></div>
-                    <h2 className="text-3xl sm:text-4xl font-bold mb-2 bg-clip-text text-transparent bg-gradient-to-r from-white to-primary-200 leading-tight">
-                        Welcome to Biblefuel
-                    </h2>
-                    <p className="text-content-secondary text-base sm:text-lg max-w-2xl">
-                        Your AI-powered content creation studio.
-                    </p>
+            <div className="space-y-5">
+                {/* Greeting */}
+                <div className="flex items-center justify-between">
+                    <div>
+                        <div className="text-[12px] text-content-secondary">Peace be with you,</div>
+                        <div className="font-displaySerif text-[26px] font-semibold leading-none text-bf-cream mt-0.5">Welcome back</div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <NotificationsBell />
+                        <div className="flex h-[38px] w-[38px] items-center justify-center rounded-xl border border-[rgba(216,184,120,0.2)] font-semibold text-bf-gold" style={{ background: 'linear-gradient(150deg,#4a3d24,#251c10)' }}>✦</div>
+                    </div>
                 </div>
 
                 <AutoPublishCard />
-
                 <DailyStatsCard />
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <Card title="Quick Start & Workflow">
-                        <div className="space-y-4">
-                            <p className="text-help">Follow this order to build your content:</p>
-                            <ol className="space-y-2 text-gray-300">
-                                {[
-                                    { step: 1, text: "Generate scripts", area: "Scripts", to: "/app/scripts", icon: Sparkles },
-                                    { step: 2, text: "Add to queue & export", area: "Queue", to: "/app/queue", icon: Archive },
-                                    { step: 3, text: "Get backgrounds", area: "Backgrounds", to: "/app/backgrounds", icon: Play },
-                                    { step: 4, text: "Generate voice", area: "Voice & Audio", to: "/app/voice-audio", icon: Mic },
-                                    { step: 5, text: "Edit timeline", area: "Timeline", to: "/app/timeline", icon: Film },
-                                    { step: 6, text: "Render video", area: "Render", to: "/app/render", icon: Video },
-                                    { step: 7, text: "Share to socials", area: "Share", to: "/app/render#share-kit", icon: Globe },
-                                ].map((item) => (
-                                    <li key={item.step} className="flex gap-3 items-center p-2 rounded-lg hover:bg-white/[0.04] transition-colors group">
-                                        <span className="flex items-center justify-center w-6 h-6 shrink-0 rounded-full bg-primary-500/10 text-primary-400 font-semibold text-[0.75rem] ring-1 ring-primary-500/20 group-hover:bg-primary-500/20 group-hover:ring-primary-500/40 transition-all tabular-nums">
-                                            {item.step}
-                                        </span>
-                                        <span className="flex-1 min-w-0 text-[0.875rem] text-gray-200 truncate">
-                                            {item.text}
-                                        </span>
-                                        <Link
-                                            to={item.to}
-                                            className="shrink-0 text-[0.6875rem] font-medium text-primary-300/90 hover:text-primary-200 bg-primary-500/[0.08] hover:bg-primary-500/[0.16] border border-primary-500/15 hover:border-primary-500/30 rounded-full px-2 py-0.5 transition-colors"
-                                        >
-                                            {item.area}
-                                        </Link>
-                                    </li>
-                                ))}
-                            </ol>
-                            <Link to="/app/help" className="block w-full">
-                                <Button
-                                    variant="secondary"
-                                    className="w-full mt-4 text-xs h-9 justify-center bg-white/5 border-white/10"
-                                >
-                                    <HelpCircle size={14} className="mr-2" />
-                                    View Full Automation Guide
-                                </Button>
+                {/* The workflow */}
+                <div className="card !p-4">
+                    <div className="font-displaySerif text-[19px] font-semibold text-bf-cream">The workflow</div>
+                    <div className="mt-0.5 mb-3 text-[11px] text-bf-muted">Follow the order, or jump anywhere.</div>
+                    <div className="flex flex-col">
+                        {workflow.map((w, i) => (
+                            <Link key={w.to} to={w.to} className="group flex items-center gap-3 rounded-xl px-2 py-2.5 transition-colors hover:bg-[rgba(216,184,120,0.05)]">
+                                <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full border border-[rgba(216,184,120,0.24)] bg-[rgba(216,184,120,0.10)] text-[11px] font-semibold text-bf-goldDeep tabular-nums">{i + 1}</div>
+                                <div className="flex-1 text-[13px] font-medium text-[#d8cdb6]">{w.text}</div>
+                                <ChevronRight size={18} className="text-bf-faint transition-transform group-hover:translate-x-0.5" />
                             </Link>
-                        </div>
-                    </Card>
-
-                    <Card title="Automation Tips">
-                        <div className="space-y-4">
-                            <div className="p-3 bg-primary-500/5 rounded-xl border border-primary-500/10">
-                                <h4 className="text-sm font-bold text-primary-400 flex items-center gap-2 mb-1">
-                                    <Cpu size={14} /> Batch Rendering
-                                </h4>
-                                <p className="text-help">
-                                    Queue multiple videos and render them all at once in the background. Check the <strong className="text-gray-300">Jobs</strong> tab for status.
-                                </p>
-                            </div>
-                            <div className="p-3 bg-indigo-500/5 rounded-xl border border-indigo-500/10">
-                                <h4 className="text-sm font-bold text-indigo-400 flex items-center gap-2 mb-1">
-                                    <List size={14} /> Global Queue
-                                </h4>
-                                <p className="text-help">
-                                    Your Queue is central. Add scripts once, then pull them into any other tool (Timeline, Backgrounds) instantly.
-                                </p>
-                            </div>
-                            <div className="p-3 bg-emerald-500/5 rounded-xl border border-emerald-500/10">
-                                <h4 className="text-sm font-bold text-emerald-400 flex items-center gap-2 mb-1">
-                                    <Zap size={14} /> One-Click Workflow
-                                </h4>
-                                <p className="text-help">
-                                    Use the "Apply to Timeline" buttons to skip the manual file picking. We track everything for you.
-                                </p>
-                            </div>
-                        </div>
-                    </Card>
+                        ))}
+                    </div>
+                    <Link to="/app/help" className="btn btn-secondary mt-3 h-9 w-full justify-center text-xs">View the full automation guide</Link>
                 </div>
 
-                <Card className="mt-6 border-t font-mono text-xs">
-                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-content-secondary">
-                        <div className="flex items-center gap-2">
-                            <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]"></div>
-                            <span>System Authenticated</span>
-                        </div>
-                        <span className="text-content-tertiary">v3.0.0</span>
-                    </div>
-                </Card>
+                {/* Footer */}
+                <div className="flex items-center justify-center gap-2 font-mono text-[10px] text-bf-faint">
+                    <div className="h-1.5 w-1.5 rounded-full bg-bf-success animate-bfpulse" />
+                    System authenticated · v3.0.0
+                </div>
             </div>
         );
     }

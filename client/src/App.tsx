@@ -25,6 +25,8 @@ const SettingsPage = lazy(() => import('./pages/SettingsPage').then((m) => ({ de
 const HelpPage = lazy(() => import('./pages/HelpPage').then((m) => ({ default: m.HelpPage })));
 const AdminPage = lazy(() => import('./pages/AdminPage').then((m) => ({ default: m.AdminPage })));
 const StoryVideoPage = lazy(() => import('./pages/StoryVideoPage').then((m) => ({ default: m.StoryVideoPage })));
+const CreateHubPage = lazy(() => import('./pages/CreateHubPage').then((m) => ({ default: m.CreateHubPage })));
+const StudioHubPage = lazy(() => import('./pages/StudioHubPage').then((m) => ({ default: m.StudioHubPage })));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -56,6 +58,8 @@ function App() {
                 <Route path="/privacy" element={<PrivacyPage />} />
                 <Route path="/app" element={<Layout />}>
                   <Route index element={<HomePage />} />
+                  <Route path="create" element={<CreateHubPage />} />
+                  <Route path="studio" element={<StudioHubPage />} />
                   <Route path="wizard" element={<WizardPage />} />
                   <Route path="scripts" element={<ScriptsPage />} />
                   <Route path="queue" element={<QueuePage />} />
