@@ -403,7 +403,8 @@ export function HomePage() {
                         <div className="font-displaySerif text-[26px] font-semibold leading-none text-bf-cream mt-0.5">Welcome back</div>
                     </div>
                     <div className="flex items-center gap-2">
-                        <NotificationsBell />
+                        {/* Global bell already lives in the desktop shell corner — avoid a duplicate. */}
+                        <span className="lg:hidden"><NotificationsBell /></span>
                         <div className="flex h-[38px] w-[38px] items-center justify-center rounded-xl border border-[rgba(216,184,120,0.2)] font-semibold text-bf-gold" style={{ background: 'linear-gradient(150deg,#4a3d24,#251c10)' }}>✦</div>
                     </div>
                 </div>
