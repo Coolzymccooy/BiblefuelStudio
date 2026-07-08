@@ -17,6 +17,7 @@ import { RenderProgressOverlay } from '../components/RenderProgressOverlay';
 import { MediaTrimmer } from '../components/MediaTrimmer';
 import { DropZone } from '../components/ui/DropZone';
 import { ScreenHeader } from '../components/ui/ScreenHeader';
+import { StoryStepper } from '../components/story/StoryStepper';
 import { ScriptForm } from '../components/story/ScriptForm';
 
 const ACTIVE_KEY = 'BF_STORY_ACTIVE';
@@ -232,6 +233,13 @@ export function StoryVideoPage() {
         ) : undefined}
       />
       <div className="h-5" />
+
+      {/* Pipeline stepper — shows where an active project is in the 5 stages. */}
+      {project && (
+        <div className="mb-2">
+          <StoryStepper project={project} />
+        </div>
+      )}
 
       {/* Actively working (non-render): show what's happening + a way to stop it.
           Rendering has its own progress card with a real % in step 3. */}
