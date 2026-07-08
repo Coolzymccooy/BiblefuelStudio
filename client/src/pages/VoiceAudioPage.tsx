@@ -12,6 +12,7 @@ import { GuideSteps } from '../components/ui/GuideSteps';
 import { ScreenHeader } from '../components/ui/ScreenHeader';
 import { AnimationPicker } from '../components/voicelab/AnimationPicker';
 import { CompareVoices } from '../components/voicelab/CompareVoices';
+import { VoicePlayer } from '../components/voicelab/VoicePlayer';
 import { api, GENERATE_TIMEOUT_MS, UPLOAD_TIMEOUT_MS } from '../lib/api';
 import toast from 'react-hot-toast';
 import { loadJson, pushUnique, saveJson, STORAGE_KEYS, toOutputUrl } from '../lib/storage';
@@ -922,6 +923,11 @@ export function VoiceAudioPage() {
     };
 
     const currentAudioUrl = toOutputUrl(audioPath, api.mediaBaseUrl);
+    const currentTrack = audioHistory.find((a) => a.path === audioPath);
+    const currentTrackLabel = currentTrack?.label || 'Current audio track';
+    const currentTrackKind = currentTrack
+        ? ({ tts: 'Generated speech', processed: 'Treated audio', upload: 'Uploaded file', record: 'Recording' } as const)[currentTrack.kind]
+        : undefined;
 
     // Audio treatment controls
     const [denoise, setDenoise] = useState(AUDIO_PRESET_DEFAULTS.clean_voice.denoise);
@@ -1019,6 +1025,12 @@ export function VoiceAudioPage() {
                         </Button>
                     ))}
                 </div>
+
+                {/* Now-playing player for the current track (gold + animated waveform). */}
+                {currentAudioUrl && (
+                    <VoicePlayer src={currentAudioUrl} label={currentTrackLabel} kindLabel={currentTrackKind} />
+                )}
+
                 {(activeTab === 'all' || activeTab === 'voice') && (
                 <Card title="1. TTS (voice generation)">
                     <div className="space-y-4">
