@@ -50,7 +50,7 @@ describe('StoryVideoPage', () => {
 
   it('shows step 1 (upload/setup) when there is no active project', () => {
     renderPage();
-    expect(screen.getByRole('heading', { name: /story video/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /cinematic scenes/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /upload a sermon/i })).toBeInTheDocument();
   });
 
@@ -64,7 +64,9 @@ describe('StoryVideoPage', () => {
       render: { jobId: null, outputPath: null, status: null }, error: null, createdAt: 0, updatedAt: 0,
     } as any);
     renderPage();
-    expect(await screen.findByDisplayValue('a')).toBeInTheDocument();
+    // Scene caption is shown as read-only serif text in the review list (the
+    // editable input now lives behind each scene's "tune" toggle).
+    expect(await screen.findByText('a')).toBeInTheDocument();
   });
 
   it('shows a Resume button for an interrupted (transient, stale) project and re-drives it', async () => {
