@@ -17,6 +17,7 @@ import {
   describeProvidersAsync,
 } from "../lib/voice/index.js";
 import { listKineticAnimations } from "../lib/videoFilters.js";
+import { cleanSpeakableText } from "../lib/speakableScript.js";
 import {
   addChatterboxVoice,
   getChatterboxVoiceById,
@@ -409,7 +410,8 @@ router.delete("/chatterbox-voices/:id", async (req, res) => {
 
 router.post("/elevenlabs", async (req, res) => {
   if (!elevenLabsAllowed(req)) return denyElevenLabs(req, res);
-  const { text, voiceId, voiceSettings, modelId } = req.body || {};
+  const { voiceId, voiceSettings, modelId } = req.body || {};
+  const text = cleanSpeakableText(req.body?.text);
   try {
     const result = await synthesizeElevenLabs({ text, voiceId, voiceSettings, modelId });
     res.json(result);
@@ -450,7 +452,8 @@ router.post("/elevenlabs", async (req, res) => {
 // Free users hit /auto and get Edge-TTS directly (orchestrator's ElevenLabs
 // branch is bypassed via the plan check).
 router.post("/auto", async (req, res) => {
-  const { text, voiceId } = req.body || {};
+  const { voiceId } = req.body || {};
+  const text = cleanSpeakableText(req.body?.text);
   try {
     if (!elevenLabsAllowed(req)) {
       // Free plan: skip ElevenLabs entirely, go straight to Edge-TTS.
@@ -546,7 +549,8 @@ router.get("/animations", (_req, res) => {
 });
 
 router.post("/synthesize-category", async (req, res) => {
-  const { text, category, withTimestamps, preferredProvider, overrides } = req.body || {};
+  const { category, withTimestamps, preferredProvider, overrides } = req.body || {};
+  const text = cleanSpeakableText(req.body?.text);
   try {
     if (String(preferredProvider || "").toLowerCase() === "elevenlabs" && !elevenLabsAllowed(req)) {
       return denyElevenLabs(req, res);
@@ -573,7 +577,8 @@ router.post("/synthesize-category", async (req, res) => {
 });
 
 router.post("/edge", async (req, res) => {
-  const { text, voiceId, rate, pitch, volume } = req.body || {};
+  const { voiceId, rate, pitch, volume } = req.body || {};
+  const text = cleanSpeakableText(req.body?.text);
   try {
     const result = await synthesizeEdgeTts({ text, voiceId, rate, pitch, volume });
     res.json(result);
@@ -598,7 +603,8 @@ router.post("/edge", async (req, res) => {
 // can show "delivered via Edge-TTS — Chatterbox was offline" instead of
 // a raw pipeline error.
 router.post("/chatterbox", async (req, res) => {
-  const { text, voiceId, exaggeration, cfgWeight } = req.body || {};
+  const { voiceId, exaggeration, cfgWeight } = req.body || {};
+  const text = cleanSpeakableText(req.body?.text);
   // Resolve `cb:<uuid>` aliases to the bridge-side reference path before
   // handing off to the orchestrator/provider.
   const resolved = resolveChatterboxVoiceId(req, voiceId);
@@ -656,7 +662,8 @@ router.post("/chatterbox", async (req, res) => {
 router.post("/fish", async (req, res) => {
   if (!fishAllowed(req)) return denyFish(req, res);
 
-  const { text, voiceId, voiceSettings, modelId, speed, withTimestamps } = req.body || {};
+  const { voiceId, voiceSettings, modelId, speed, withTimestamps } = req.body || {};
+  const text = cleanSpeakableText(req.body?.text);
   try {
     const mergedSettings = { ...(voiceSettings && typeof voiceSettings === "object" ? voiceSettings : {}) };
     if (typeof speed === "number") mergedSettings.speed = speed;
@@ -684,7 +691,8 @@ router.post("/fish", async (req, res) => {
 // preferredProvider:"azure". Pass withTimestamps:true to get the normalized
 // word-alignment contract back in result.words for kinetic typography.
 router.post("/azure", async (req, res) => {
-  const { text, voiceId, withTimestamps } = req.body || {};
+  const { voiceId, withTimestamps } = req.body || {};
+  const text = cleanSpeakableText(req.body?.text);
   try {
     const result = await synthesize({
       text,
@@ -707,7 +715,8 @@ router.post("/azure", async (req, res) => {
 // the orchestrator's forced-alignment pass when withTimestamps is true.
 // See docs/PIPER_SETUP.md.
 router.post("/piper", async (req, res) => {
-  const { text, voiceId, withTimestamps } = req.body || {};
+  const { voiceId, withTimestamps } = req.body || {};
+  const text = cleanSpeakableText(req.body?.text);
   try {
     const result = await synthesize({
       text,
@@ -752,7 +761,8 @@ export function _setCompareSynthImpl(fn) {
 }
 
 router.post("/compare", async (req, res) => {
-  const { text, candidates, withTimestamps } = req.body || {};
+  const { candidates, withTimestamps } = req.body || {};
+  const text = cleanSpeakableText(req.body?.text);
 
   if (typeof text !== "string" || text.trim().length === 0) {
     return res.status(400).json({ ok: false, error: "text is required" });

@@ -2,12 +2,39 @@ import fetch from "node-fetch";
 import fs from "fs";
 import path from "path";
 import { DATA_DIR } from "./paths.js";
+import { sanitizeScriptObject } from "./speakableScript.js";
 
 const CTA_MAP = {
   save: "Save this verse.",
   follow: "Follow @Biblefuel for daily encouragement.",
   share: "Share this with someone who needs it.",
   comment: "Comment 'amen' if you receive it.",
+};
+
+const SCRIPT_TYPES = {
+  peace: "peace in storms, rest, calm, God's presence, trust when life feels heavy",
+  strength: "spiritual strength, battles, endurance, courage, God's power in weakness",
+  anxiety: "anxiety, fear, worry, overthinking, casting burdens on God",
+  identity: "identity in Christ, image of God, chosen, loved, purpose, confidence in Him",
+  prayer: "prayer, waiting, persistence, God hears, faith while answers are delayed",
+  gratitude: "gratitude, daily mercy, contentment, joy, remembering God's goodness",
+  forgiveness: "forgiveness, grace, mercy, release from guilt, starting again",
+  purpose: "calling, direction, destiny, using gifts, walking with God",
+  healing: "healing, grief, brokenness, restoration, God near to wounded hearts",
+  custom: "the user's custom prompt",
+};
+
+const SCRIPT_TYPE_TITLES = {
+  peace: "Peace in the Storm",
+  strength: "Strength for the Battle",
+  anxiety: "Faith Over Fear",
+  identity: "Created in His Image",
+  prayer: "Keep Praying",
+  gratitude: "Mercy Every Morning",
+  forgiveness: "Grace to Begin Again",
+  purpose: "Made for Purpose",
+  healing: "Healing for the Heart",
+  custom: "Biblefuel Post",
 };
 
 const FALLBACK_POOL = [
@@ -68,17 +95,38 @@ const REFLECTION_VARIANTS = [
   "Speak this out loud the next time fear knocks.",
 ];
 
-function fallbackScripts(count, ctaStyle, startOffset = 0) {
+function chooseFallbackPool(scriptType = "peace") {
+  const needles = {
+    peace: ["peace", "rest", "still", "breathe", "waters"],
+    strength: ["strength", "battle", "fight", "strong", "courage"],
+    anxiety: ["anxiety", "fear", "worry", "panic"],
+    identity: ["chosen", "loved", "identity", "purpose", "image"],
+    prayer: ["prayer", "pray", "hears", "waiting"],
+    gratitude: ["mercy", "joy", "morning", "goodness"],
+    forgiveness: ["grace", "mercy", "failure", "surrender"],
+    purpose: ["purpose", "plan", "chosen", "works for the good"],
+    healing: ["broken", "healing", "wounded", "restoration"],
+  }[scriptType] || [];
+  if (!needles.length) return FALLBACK_POOL;
+  const scored = FALLBACK_POOL.filter((item) => {
+    const hay = `${item.hook} ${item.verse} ${item.reference} ${item.reflection}`.toLowerCase();
+    return needles.some((n) => hay.includes(n));
+  });
+  return scored.length ? scored : FALLBACK_POOL;
+}
+
+function fallbackScripts(count, ctaStyle, startOffset = 0, scriptType = "peace") {
+  const pool = chooseFallbackPool(scriptType);
   const cta = CTA_MAP[ctaStyle] || CTA_MAP.save;
   const items = [];
   for (let i = 0; i < count; i++) {
-    const template = FALLBACK_POOL[(startOffset + i) % FALLBACK_POOL.length];
-    items.push({
+    const template = pool[(startOffset + i) % pool.length];
+    items.push(sanitizeScriptObject({
       ...template,
       cta,
-      title: `Biblefuel Post #${i + 1}`,
+      title: `${SCRIPT_TYPE_TITLES[scriptType] || "Biblefuel Post"} #${i + 1}`,
       hashtags: ["#faith", "#bible", "#jesus", "#christian", "#encouragement", "#hope"],
-    });
+    }));
   }
   return items;
 }
@@ -125,11 +173,11 @@ function dedupeScripts(list, existingKeys) {
   return out;
 }
 
-function finalizeScripts({ preferred, count, ctaStyle, historyKeys }) {
+function finalizeScripts({ preferred, count, ctaStyle, historyKeys, scriptType = "peace" }) {
   let out = dedupeScripts(preferred || [], historyKeys);
   if (out.length < count) {
     const seed = (historyKeys.size * 13 + Math.floor(Date.now() / 60000)) % FALLBACK_POOL.length;
-    const fallback = fallbackScripts(Math.max(count * 8, FALLBACK_POOL.length), ctaStyle, seed);
+    const fallback = fallbackScripts(Math.max(count * 8, FALLBACK_POOL.length), ctaStyle, seed, scriptType);
     out = out.concat(dedupeScripts(fallback, historyKeys));
   }
 
@@ -137,13 +185,14 @@ function finalizeScripts({ preferred, count, ctaStyle, historyKeys }) {
   if (out.length < count) {
     let attempt = 0;
     while (out.length < count && attempt < count * 40) {
-      const base = FALLBACK_POOL[(historyKeys.size + attempt) % FALLBACK_POOL.length];
+      const remixPool = chooseFallbackPool(scriptType);
+      const base = remixPool[(historyKeys.size + attempt) % remixPool.length];
       const extra = REFLECTION_VARIANTS[(historyKeys.size + attempt) % REFLECTION_VARIANTS.length];
       const remixed = {
         ...base,
         reflection: `${base.reflection} ${extra}`,
         cta: CTA_MAP[ctaStyle] || CTA_MAP.save,
-        title: `Biblefuel Post #${out.length + 1}`,
+        title: `${SCRIPT_TYPE_TITLES[scriptType] || "Biblefuel Post"} #${out.length + 1}`,
         hashtags: ["#faith", "#bible", "#jesus", "#christian", "#encouragement", "#hope"],
       };
       const add = dedupeScripts([remixed], historyKeys);
@@ -167,11 +216,12 @@ function finalizeScripts({ preferred, count, ctaStyle, historyKeys }) {
     const ts = Date.now();
     let i = 0;
     while (out.length < count) {
-      const base = FALLBACK_POOL[(out.length + i) % FALLBACK_POOL.length];
+      const safetyPool = chooseFallbackPool(scriptType);
+      const base = safetyPool[(out.length + i) % safetyPool.length];
       out.push({
         ...base,
         cta,
-        title: `Biblefuel Post #${out.length + 1}`,
+        title: `${SCRIPT_TYPE_TITLES[scriptType] || "Biblefuel Post"} #${out.length + 1}`,
         hashtags: ["#faith", "#bible", "#jesus", "#christian", "#encouragement", "#hope"],
         _stamp: ts + i,
       });
@@ -181,11 +231,11 @@ function finalizeScripts({ preferred, count, ctaStyle, historyKeys }) {
 
   return out.slice(0, count).map((s, i) => {
     const { _stamp, ...clean } = s;
-    return {
+    return sanitizeScriptObject({
       ...clean,
-      title: clean.title || `Biblefuel Post #${i + 1}`,
+      title: clean.title || `${SCRIPT_TYPE_TITLES[scriptType] || "Biblefuel Post"} #${i + 1}`,
       hashtags: Array.isArray(clean.hashtags) && clean.hashtags.length ? clean.hashtags : ["#faith", "#bible", "#jesus", "#christian", "#encouragement", "#hope"],
-    };
+    });
   });
 }
 
@@ -343,7 +393,7 @@ async function geminiGenerate(prompt) {
   }
 }
 
-export async function generateScripts({ niche, tone, count, lengthSeconds, includeVerseReference, ctaStyle }) {
+export async function generateScripts({ niche, tone, count, lengthSeconds, includeVerseReference, ctaStyle, scriptType = "peace", customPrompt = "" }) {
   const schema = {
     type: "array",
     items: {
@@ -365,14 +415,16 @@ export async function generateScripts({ niche, tone, count, lengthSeconds, inclu
 Generate ${count} UNIQUE faceless TikTok scripts for Bible content.
 Niche: ${niche}
 Tone: ${tone}
+Script type: ${SCRIPT_TYPE_TITLES[scriptType] || scriptType}
+Theme brief: ${scriptType === "custom" && customPrompt ? customPrompt : (SCRIPT_TYPES[scriptType] || SCRIPT_TYPES.peace)}
 Target length: ${lengthSeconds}s each
 Rules:
-- Hook: 1 short sentence.
+- Hook: 1 short sentence. Do not always start with "Feeling overwhelmed" or "Feeling weak". Vary the opening by script type.
 - Verse: short (paraphrase ok).
 - Reference: ${includeVerseReference ? "include a real Bible reference" : "leave empty string"}.
 - Reflection: 1-2 short sentences.
 - CTA style: ${ctaStyle}
-- Include 6-10 hashtags.
+- Include 6-10 hashtags in the hashtags array only. Do NOT put hashtags, asterisks, markdown, bullets, or social symbols inside hook/verse/reflection/cta.
 - Return ONLY valid JSON array.
 Schema:
 ${JSON.stringify(schema)}
@@ -386,7 +438,7 @@ ${JSON.stringify(schema)}
   if (!raw) raw = await openaiGenerate(prompt);
 
   if (!raw) {
-    const scripts = finalizeScripts({ preferred: [], count, ctaStyle, historyKeys });
+    const scripts = finalizeScripts({ preferred: [], count, ctaStyle, historyKeys, scriptType });
     saveHistory([...historyKeys]);
     return scripts;
   }
@@ -394,7 +446,7 @@ ${JSON.stringify(schema)}
   const firstBracket = raw.indexOf("[");
   const lastBracket = raw.lastIndexOf("]");
   if (firstBracket === -1 || lastBracket === -1) {
-    const scripts = finalizeScripts({ preferred: [], count, ctaStyle, historyKeys });
+    const scripts = finalizeScripts({ preferred: [], count, ctaStyle, historyKeys, scriptType });
     saveHistory([...historyKeys]);
     return scripts;
   }
@@ -403,8 +455,8 @@ ${JSON.stringify(schema)}
   try {
     const parsed = JSON.parse(jsonText);
     const list = Array.isArray(parsed) ? parsed : [];
-    const normalized = list.map((x, i) => ({
-      title: String(x?.title || `Biblefuel Post #${i + 1}`).trim(),
+    const normalized = list.map((x, i) => sanitizeScriptObject({
+      title: String(x?.title || `${SCRIPT_TYPE_TITLES[scriptType] || "Biblefuel Post"} #${i + 1}`).trim(),
       hook: String(x?.hook || "").trim(),
       verse: String(x?.verse || "").trim(),
       reference: includeVerseReference ? String(x?.reference || "").trim() : "",
@@ -413,11 +465,11 @@ ${JSON.stringify(schema)}
       hashtags: Array.isArray(x?.hashtags) ? x.hashtags.map((h) => String(h || "").trim()).filter(Boolean).map((h) => (h.startsWith("#") ? h : `#${h}`)) : [],
     })).filter((x) => x.hook && x.verse && x.reflection);
 
-    const scripts = finalizeScripts({ preferred: normalized, count, ctaStyle, historyKeys });
+    const scripts = finalizeScripts({ preferred: normalized, count, ctaStyle, historyKeys, scriptType });
     saveHistory([...historyKeys]);
     return scripts;
   } catch {
-    const scripts = finalizeScripts({ preferred: [], count, ctaStyle, historyKeys });
+    const scripts = finalizeScripts({ preferred: [], count, ctaStyle, historyKeys, scriptType });
     saveHistory([...historyKeys]);
     return scripts;
   }

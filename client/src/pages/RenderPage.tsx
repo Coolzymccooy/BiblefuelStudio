@@ -23,6 +23,7 @@ import { ShareSheet } from '../components/ShareSheet';
 import { RenderProgressOverlay } from '../components/RenderProgressOverlay';
 import { MediaTrimmer } from '../components/MediaTrimmer';
 import { applyGeneratedVisuals, type GenerateMode } from '../lib/generativeVisuals';
+import { buildSpeakableLines } from '../lib/speakableScript';
 
 /** Mirrors the server's MAX_BACKGROUNDS — keep in sync with render.js. */
 const MAX_BACKGROUNDS = 30;
@@ -1056,6 +1057,13 @@ export function RenderPage() {
                                 className="bg-black/20 h-32"
                             />
                             <div className="mt-2 flex flex-wrap gap-2">
+                                <Button
+                                    variant="secondary"
+                                    className="h-8 text-xs"
+                                    onClick={() => { const next = buildSpeakableLines(lines, { maxLines: 6, maxChars: 72 }).join('\n'); setLines(next); toast.success('Formatted for video'); }}
+                                >
+                                    Format for Video
+                                </Button>
                                 <Button
                                     variant="secondary"
                                     className="h-8 text-xs"

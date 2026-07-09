@@ -7,6 +7,19 @@ export const GenerateScriptsSchema = z.object({
   lengthSeconds: z.number().int().min(8).max(90).default(20),
   includeVerseReference: z.boolean().default(true),
   ctaStyle: z.enum(["save", "follow", "share", "comment"]).default("save"),
+  scriptType: z.enum([
+    "peace",
+    "strength",
+    "anxiety",
+    "identity",
+    "prayer",
+    "gratitude",
+    "forgiveness",
+    "purpose",
+    "healing",
+    "custom",
+  ]).default("peace"),
+  customPrompt: z.string().max(300).optional().default(""),
 });
 
 export const QueueAddSchema = z.object({
