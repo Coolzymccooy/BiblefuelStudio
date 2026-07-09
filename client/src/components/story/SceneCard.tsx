@@ -3,6 +3,7 @@ import { Loader2, RefreshCw, Wand2, ImageOff } from 'lucide-react';
 import { AuthedImage } from '../AuthedImage';
 import { sceneTimeLabel } from '../../lib/storyWizard';
 import type { StoryScene } from '../../lib/storyTypes';
+import { cleanCaptionLine } from '../../lib/speakableScript';
 
 interface SceneCardProps {
   scene: StoryScene;
@@ -20,7 +21,9 @@ export function SceneCard({ scene, onPatch, onRegenerate, busy, regenerating = f
   const [showPrompt, setShowPrompt] = useState(false);
 
   const commitText = () => {
-    if (text !== scene.text) onPatch(scene.id, { text });
+    const clean = cleanCaptionLine(text);
+    if (clean !== text) setText(clean);
+    if (clean && clean !== scene.text) onPatch(scene.id, { text: clean });
   };
   const commitPrompt = () => {
     if (prompt !== scene.imagePrompt) onPatch(scene.id, { imagePrompt: prompt });

@@ -17,6 +17,7 @@ import { RenderProgressOverlay } from '../components/RenderProgressOverlay';
 import { MediaTrimmer } from '../components/MediaTrimmer';
 import { DropZone } from '../components/ui/DropZone';
 import { ScriptForm } from '../components/story/ScriptForm';
+import { cleanSpeakableText } from '../lib/speakableScript';
 
 const ACTIVE_KEY = 'BF_STORY_ACTIVE';
 
@@ -67,10 +68,12 @@ export function StoryVideoPage() {
   };
 
   const handleGenerateScript = async (idea: string, templateId: string, voiceId: string) => {
+    const cleanIdea = cleanSpeakableText(idea);
+    if (!cleanIdea) { toast.error('Add a script or idea first'); return; }
     setBusy(true);
     try {
-      setDefaultTitle(idea.slice(0, 60));
-      const path = await storyApi.scriptToAudio(idea, templateId, voiceId);
+      setDefaultTitle(cleanIdea.slice(0, 60));
+      const path = await storyApi.scriptToAudio(cleanIdea, templateId, voiceId);
       setPendingAudio(path);
     } catch (e) {
       toast.error((e as Error).message || 'Voice generation failed');

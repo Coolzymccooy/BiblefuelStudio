@@ -35,6 +35,7 @@ import { MusicPicker } from '../components/MusicPicker';
 import { InfoTooltip } from '../components/ui/InfoTooltip';
 import { BusyBar } from '../components/ui/BusyBar';
 import { DropZone } from '../components/ui/DropZone';
+import { buildSpeakableLines, cleanCaptionLine } from '../lib/speakableScript';
 
 interface TranscriptWord {
     text: string;
@@ -79,7 +80,8 @@ function reflowWordsFromEditedLines(
     originalWords: TranscriptWord[],
     lines: string[],
 ): TranscriptWord[] {
-    const lineWords = lines.flatMap((l) => l.split(/\s+/).filter(Boolean));
+    const lineWords = lines
+        .flatMap((l) => cleanCaptionLine(l).split(/\s+/).filter(Boolean));
     if (!originalWords.length || !lineWords.length) return [];
 
     // Pair each edited word positionally with its original Whisper word so
@@ -526,6 +528,16 @@ export function TimelinePage() {
     };
 
 
+
+    const formatTimelineCaptions = () => {
+        const next = buildSpeakableLines(editedLines.join("\n"), {
+            maxLines: Math.max(editedLines.length || 1, 1),
+            maxChars: 90,
+        });
+        setEditedLines(next);
+        toast.success('Formatted captions');
+    };
+
     const handleRenderCaptionedVideo = async () => {
         if (!sourceMediaPath) {
             toast.error('Upload a sermon audio or video first');
@@ -545,7 +557,15 @@ export function TimelinePage() {
             return;
         }
 
-        const words = kineticCaptions && transcript ? reflowWordsFromEditedLines(transcript, editedLines) : [];
+        const captionLines = buildSpeakableLines(editedLines.join("\n"), {
+            maxLines: Math.max(editedLines.length || 1, 1),
+            maxChars: 90,
+        });
+        if (captionLines.join("\n") !== editedLines.join("\n")) {
+            setEditedLines(captionLines);
+            toast('Formatted captions before render', { icon: '✨' });
+        }
+        const words = kineticCaptions && transcript ? reflowWordsFromEditedLines(transcript, captionLines) : [];
         // Feasibility guard: kinetic captions don't scale to long sermons — the
         // filter graph explodes and the render effectively never finishes. Block
         // early with a clear path forward (only when captions are on).
@@ -1076,6 +1096,14 @@ export function TimelinePage() {
                             <>
                                 <Button
                                     variant="secondary"
+                                    onClick={formatTimelineCaptions}
+                                    className="h-9 text-xs"
+                                    title="Remove markdown symbols and hashtags from caption lines"
+                                >
+                                    Format captions
+                                </Button>
+                                <Button
+                                    variant="secondary"
                                     onClick={() => { setTranscript(null); setEditedLines([]); }}
                                     className="h-9 text-xs"
                                     title="Clear the working transcript (saved history is kept)"
@@ -1206,6 +1234,14 @@ export function TimelinePage() {
                                     const next = [...editedLines];
                                     next[idx] = e.target.value;
                                     setEditedLines(next);
+                                }}
+                                onBlur={() => {
+                                    const clean = cleanCaptionLine(editedLines[idx]);
+                                    if (clean !== editedLines[idx]) {
+                                        const next = [...editedLines];
+                                        next[idx] = clean;
+                                        setEditedLines(next.filter(Boolean));
+                                    }
                                 }}
                                 className="w-full bg-white/[0.03] border border-white/10 rounded-lg px-3 py-2 text-sm text-gray-200 focus:border-primary-500/40 focus:outline-none"
                             />

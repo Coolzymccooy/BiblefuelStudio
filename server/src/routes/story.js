@@ -17,6 +17,7 @@ import { refineScript } from "../lib/story/scriptRefine.js";
 import { templateById } from "../lib/story/scriptTemplates.js";
 import { synthesizeEdgeTts } from "../lib/edgeTts.js";
 import { resolveLibraryTrack } from "../lib/musicLibrary.js";
+import { cleanCaptionLine, cleanSpeakableText } from "../lib/speakableScript.js";
 
 // Mockable seams (mirror routes/transcribe.js).
 let _transcribeFn = transcribeAudio;
@@ -285,7 +286,9 @@ router.post("/script-to-audio", async (req, res) => {
     const template = templateById(req.body?.templateId);
     const voiceId = req.body?.voiceId ? String(req.body.voiceId) : undefined;
 
-    const script = await refineScript({ idea, template });
+    const rawScript = await refineScript({ idea, template });
+    const script = cleanSpeakableText(rawScript || idea);
+    if (script.length < 3) return res.status(400).json({ ok: false, error: "script is empty after formatting" });
     const tts = await _ttsFn({ text: script, voiceId });
     if (!tts?.ok || !tts.file) {
       return res.status(502).json({ ok: false, error: tts?.error || "voice synthesis failed" });
@@ -447,7 +450,7 @@ router.patch("/:id/scenes/:sid", (req, res) => {
     if (idx < 0) return res.status(404).json({ ok: false, error: "scene not found" });
     const scenes = [...project.scenes];
     const patch = {};
-    if (typeof req.body?.text === "string") patch.text = req.body.text;
+    if (typeof req.body?.text === "string") patch.text = cleanCaptionLine(req.body.text);
     if (typeof req.body?.imagePrompt === "string") {
       patch.imagePrompt = req.body.imagePrompt;
       patch.promptEditedByUser = true;
