@@ -32,6 +32,7 @@ import { AnimationPicker } from '../components/voicelab/AnimationPicker';
 import { ShareSheet } from '../components/ShareSheet';
 import { MediaTrimmer } from '../components/MediaTrimmer';
 import { MusicPicker } from '../components/MusicPicker';
+import { BackgroundLibraryModal } from '../components/BackgroundLibraryModal';
 import { InfoTooltip } from '../components/ui/InfoTooltip';
 import { BusyBar } from '../components/ui/BusyBar';
 import { DropZone } from '../components/ui/DropZone';
@@ -1977,111 +1978,33 @@ export function TimelinePage() {
             {/* Library Picker Modal — multi-select up to MAX_BACKGROUNDS.
                 Clicking a tile toggles its inclusion in the ordered list;
                 selection order = render sequence. Done closes the modal. */}
-            {showLibraryModal && (
-                <div className="fixed inset-0 z-[1000] flex items-center justify-center p-2 sm:p-4">
-                    <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShowLibraryModal(false)} />
-                    {/* max-h in dvh (not vh): iOS reports vh against the LARGEST
-                        viewport (toolbars hidden), so an 80vh box overflows the
-                        actually-visible area when Safari's bottom toolbar is up,
-                        pushing the footer Done button off-screen. dvh tracks the
-                        live viewport so the footer always stays in view. */}
-                    <div className="relative w-full max-w-4xl max-h-[calc(100dvh-1rem)] flex flex-col rounded-xl bg-dark-900/95 backdrop-blur-xl border border-white/20 shadow-2xl overflow-hidden">
-                        <div className="flex items-center justify-between p-4 border-b border-white/10 shrink-0">
-                            <div>
-                                <h3 className="font-bold text-lg text-white">Select Backgrounds</h3>
-                                <p className="text-subtitle mt-1">
-                                    {backgroundItems.length} of {MAX_BACKGROUNDS} selected · click to toggle, order = render sequence
-                                </p>
-                            </div>
-                            <button onClick={() => setShowLibraryModal(false)} className="text-gray-500 hover:text-white">
-                                <X size={24} />
-                            </button>
-                        </div>
-                        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 pb-24">
-                            {isLoadingLibrary ? (
-                                <div className="col-span-full py-20 flex justify-center">
-                                    <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-primary-500" />
-                                </div>
-                            ) : libraryItems.length > 0 ? (
-                                libraryItems.map((item) => {
-                                    const selectedIdx = backgroundItems.findIndex((b) => b.id === item.id);
-                                    const isSelected = selectedIdx >= 0;
-                                    const atCap = backgroundItems.length >= MAX_BACKGROUNDS;
-                                    const disabled = !isSelected && atCap;
-                                    return (
-                                        <div
-                                            key={item.id}
-                                            className={`group relative bg-black rounded-xl overflow-hidden shadow-lg transition-all cursor-pointer ${
-                                                isSelected
-                                                    ? 'ring-2 ring-primary-400'
-                                                    : disabled
-                                                        ? 'ring-1 ring-white/10 hover:ring-amber-400/50'
-                                                        : 'hover:ring-2 hover:ring-primary-500'
-                                            }`}
-                                            onClick={() => {
-                                                if (isSelected) {
-                                                    // Toggle off
-                                                    setBackgroundItems(backgroundItems.filter((b) => b.id !== item.id));
-                                                } else if (!atCap) {
-                                                    // Toggle on — append so order matches the click sequence.
-                                                    setBackgroundItems([...backgroundItems, item]);
-                                                } else {
-                                                    // At cap — guide instead of silently ignoring the tap.
-                                                    toast.error(`Max ${MAX_BACKGROUNDS} backgrounds. Remove one to add another.`, { id: 'bg-cap' });
-                                                }
-                                            }}
-                                        >
-                                            {/* Padding-box aspect ratio instead of CSS aspect-ratio.
-                                                iOS Safari can collapse aspect-ratio grid children
-                                                with h-full media into thin stacked strips. */}
-                                            <div className="w-full" style={{ paddingTop: '177.7778%' }} aria-hidden="true" />
-                                            {/* Full-opacity thumbnails so each background is
-                                                clearly distinguishable. At cap, unselected tiles
-                                                stay visible (just slightly dimmed) instead of
-                                                greying out to an indistinct blur. */}
-                                            <img src={item.image} className={`absolute inset-0 w-full h-full object-cover transition-opacity ${disabled ? 'opacity-70' : 'opacity-100'}`} alt="" />
-                                            {isSelected && (
-                                                <span className="absolute top-2 left-2 w-7 h-7 rounded-full bg-primary-500 text-white text-sm font-bold flex items-center justify-center shadow-lg">
-                                                    {selectedIdx + 1}
-                                                </span>
-                                            )}
-                                            <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/80 to-transparent">
-                                                <p className="text-[10px] font-mono text-white truncate">ID: {item.id}</p>
-                                            </div>
-                                        </div>
-                                    );
-                                })
-                            ) : (
-                                <div className="col-span-full py-20 text-center opacity-30 text-white">
-                                    <Library size={48} className="mx-auto mb-4" />
-                                    <p>Your library is empty.</p>
-                                </div>
-                            )}
-                        </div>
-                        <div className="border-t border-white/10 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] flex items-center justify-between gap-3 shrink-0">
-                            <Button
-                                variant="secondary"
-                                onClick={() => setBackgroundItems([])}
-                                disabled={backgroundItems.length === 0}
-                                className="h-9 text-xs"
-                            >
-                                Clear all
-                            </Button>
-                            <Button
-                                onClick={() => {
-                                    setShowLibraryModal(false);
-                                    if (backgroundItems.length > 0) {
-                                        toast.success(`${backgroundItems.length} background${backgroundItems.length === 1 ? '' : 's'} selected`);
-                                    }
-                                }}
-                                className="h-9 text-xs"
-                            >
-                                Done
-                            </Button>
-                        </div>
-                    </div>
-                </div>
-            )}
+            <BackgroundLibraryModal
+                open={showLibraryModal}
+                onClose={() => setShowLibraryModal(false)}
+                items={libraryItems}
+                isLoading={isLoadingLibrary}
+                mode="multi"
+                max={MAX_BACKGROUNDS}
+                selectedIds={backgroundItems.map((b) => b.id)}
+                onPick={(item) => {
+                    const isSelected = backgroundItems.some((b) => b.id === item.id);
+                    if (isSelected) {
+                        setBackgroundItems(backgroundItems.filter((b) => b.id !== item.id));
+                    } else if (backgroundItems.length < MAX_BACKGROUNDS) {
+                        // Append so order matches the click sequence (= render sequence).
+                        setBackgroundItems([...backgroundItems, item]);
+                    } else {
+                        toast.error(`Max ${MAX_BACKGROUNDS} backgrounds. Remove one to add another.`, { id: 'bg-cap' });
+                    }
+                }}
+                onClear={() => setBackgroundItems([])}
+                onDone={() => {
+                    setShowLibraryModal(false);
+                    if (backgroundItems.length > 0) {
+                        toast.success(`${backgroundItems.length} background${backgroundItems.length === 1 ? '' : 's'} selected`);
+                    }
+                }}
+            />
 
             {/* Preview Result Modal */}
             {previewUrl && (
