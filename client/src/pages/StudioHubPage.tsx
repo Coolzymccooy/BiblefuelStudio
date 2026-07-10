@@ -29,7 +29,7 @@ export function StudioHubPage() {
                     <Link
                         key={to}
                         to={to}
-                        className="group flex flex-col rounded-bf border border-[rgba(216,184,120,0.12)] bg-bf-card p-4 transition-colors hover:border-[rgba(216,184,120,0.28)]"
+                        className="group flex flex-col rounded-bf glass p-4 transition-colors hover:border-[rgba(216,184,120,0.28)]"
                     >
                         <div className="flex h-11 w-11 items-center justify-center rounded-[13px] border border-[rgba(216,184,120,0.22)] bg-[rgba(216,184,120,0.08)]">
                             <Icon size={20} className="text-bf-gold" />
@@ -41,7 +41,7 @@ export function StudioHubPage() {
             </div>
             <Link
                 to="/app/queue"
-                className="group flex items-center gap-3 rounded-bf border border-[rgba(216,184,120,0.12)] bg-bf-card px-4 py-3.5 transition-colors hover:border-[rgba(216,184,120,0.28)]"
+                className="group flex items-center gap-3 rounded-bf glass px-4 py-3.5 transition-colors hover:border-[rgba(216,184,120,0.28)]"
             >
                 <List size={19} className="text-bf-goldDeep" />
                 <span className="font-medium text-sm text-bf-cream">Publishing queue</span>
