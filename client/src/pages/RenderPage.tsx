@@ -22,7 +22,9 @@ import { useNotifications } from '../lib/notifications';
 import { ShareSheet } from '../components/ShareSheet';
 import { RenderProgressOverlay } from '../components/RenderProgressOverlay';
 import { MediaTrimmer } from '../components/MediaTrimmer';
+import { BackgroundLibraryModal } from '../components/BackgroundLibraryModal';
 import { applyGeneratedVisuals, type GenerateMode } from '../lib/generativeVisuals';
+import { buildSpeakableLines } from '../lib/speakableScript';
 
 /** Mirrors the server's MAX_BACKGROUNDS — keep in sync with render.js. */
 const MAX_BACKGROUNDS = 30;
@@ -116,6 +118,14 @@ export function RenderPage() {
     const [jobVideoOptions, setJobVideoOptions] = useState<{ id: string; label: string; path: string }[]>([]);
     const [shareVideoPath, setShareVideoPath] = useState('');
     const [completedRender, setCompletedRender] = useState<{ jobId: string; file: string; jobType?: string } | null>(null);
+    // When a background render finishes, bring the "Render complete" banner into
+    // view so the user lands on the result instead of the config they left.
+    const renderDoneRef = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+        if (completedRender) {
+            requestAnimationFrame(() => renderDoneRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+        }
+    }, [completedRender]);
     const [activeBackgroundJob, setActiveBackgroundJob] = useState<{ id: string; kind: 'video' | 'waveform'; progress: number } | null>(null);
     const myEnqueuedJobsRef = useRef<Set<string>>(new Set());
     const lastRenderKindRef = useRef<'video' | 'waveform'>('video');
@@ -673,7 +683,9 @@ export function RenderPage() {
         if (result?.file) setShareVideoPath(result.file);
     }, [result?.file]);
 
+    const [isSharing, setIsSharing] = useState(false);
     const handleShare = async () => {
+        if (isSharing) return; // guard against double-taps while the post is in flight
         const effectivePath = shareVideoPath || result?.file;
         const fileUrl = effectivePath ? toOutputUrl(effectivePath, api.mediaBaseUrl) : '';
         if (!fileUrl) {
@@ -695,9 +707,14 @@ export function RenderPage() {
         if (postDestination === 'buffer') payload.profileIds = [selectedProfile];
         if (postDestination === 'youtube') payload.privacyStatus = youtubePrivacy;
 
-        const res = await api.post('/api/social/post', payload);
-        if (res.ok) toast.success('Share triggered');
-        else toast.error(res.error || 'Share failed');
+        setIsSharing(true);
+        try {
+            const res = await api.post('/api/social/post', payload);
+            if (res.ok) toast.success('Share triggered');
+            else toast.error(res.error || 'Share failed');
+        } finally {
+            setIsSharing(false);
+        }
     };
 
     const isRenderInFlight = isRendering || !!activeBackgroundJob;
@@ -756,7 +773,7 @@ export function RenderPage() {
             />
 
             {completedRender && (
-                <div className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 shadow-[0_10px_40px_rgba(16,185,129,0.15)] animate-fade-in">
+                <div ref={renderDoneRef} className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 shadow-[0_10px_40px_rgba(16,185,129,0.15)] animate-fade-in">
                     <div className="flex items-start gap-3 flex-1 min-w-0">
                         <CheckCircle2 size={20} className="text-emerald-400 flex-shrink-0 mt-0.5" />
                         <div className="min-w-0">
@@ -1057,6 +1074,13 @@ export function RenderPage() {
                                 className="bg-black/20 h-32"
                             />
                             <div className="mt-2 flex flex-wrap gap-2">
+                                <Button
+                                    variant="secondary"
+                                    className="h-8 text-xs"
+                                    onClick={() => { const next = buildSpeakableLines(lines, { maxLines: 6, maxChars: 72 }).join('\n'); setLines(next); toast.success('Formatted for video'); }}
+                                >
+                                    Format for Video
+                                </Button>
                                 <Button
                                     variant="secondary"
                                     className="h-8 text-xs"
@@ -1396,8 +1420,8 @@ export function RenderPage() {
                                         Direct API requires OAuth setup
                                     </div>
                                 )}
-                                <Button onClick={handleShare} className="text-xs h-8">
-                                    Share Now
+                                <Button onClick={handleShare} isLoading={isSharing} disabled={isSharing} className="text-xs h-8">
+                                    {isSharing ? 'Sharing…' : 'Share Now'}
                                 </Button>
                             </div>
                         </div>
@@ -1406,135 +1430,26 @@ export function RenderPage() {
                 </div>
             )}
 
-            {showLibraryModal && (
-                <div className="fixed inset-0 z-[1000] flex items-center justify-center p-2 sm:p-4">
-                    <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShowLibraryModal(false)} />
-                    {/* Plain div (not <Card>) — Card wraps children in an extra
-                        <div> that breaks `flex flex-col`, so the inner
-                        overflow-y-auto grid has no flex parent to constrain
-                        its height against and content overflows below the
-                        viewport with no scrollbar. Bug was reported by the
-                        user as "hard to scroll the background picker".
-
-                        max-h in dvh (not vh): iOS reports vh against the
-                        largest viewport (toolbars hidden), so an 88vh box
-                        overflows the visible area when Safari's bottom toolbar
-                        is up and the footer Done button ends up off-screen.
-                        dvh tracks the live viewport so Done is always visible. */}
-                    <div className="relative w-full max-w-[min(1280px,95vw)] max-h-[calc(100dvh-1rem)] flex flex-col rounded-xl bg-dark-900/95 backdrop-blur-xl border border-white/20 shadow-2xl overflow-hidden">
-                        <div className="flex items-center justify-between p-4 border-b border-white/10 shrink-0">
-                            <div>
-                                <h3 className="font-bold text-lg text-white">Select Backgrounds</h3>
-                                <p className="text-subtitle mt-0.5">
-                                    {backgroundItems.length} of {MAX_BACKGROUNDS} selected · click to toggle, order = render sequence
-                                </p>
-                            </div>
-                            <button onClick={() => setShowLibraryModal(false)} className="text-gray-500 hover:text-white" aria-label="Close">
-                                <XIcon size={20} />
-                            </button>
-                        </div>
-                        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-3 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 pb-24">
-                            {isLoadingLibrary ? (
-                                <div className="col-span-full py-20 flex justify-center">
-                                    <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-primary-500" />
-                                </div>
-                            ) : libraryItems.length > 0 ? (
-                                libraryItems.map((item) => {
-                                    const selectedIdx = backgroundItems.findIndex((b) => b.id === item.id);
-                                    const isSelected = selectedIdx !== -1;
-                                    const atCap = backgroundItems.length >= MAX_BACKGROUNDS;
-                                    const disabled = !isSelected && atCap;
-                                    return (
-                                        <div
-                                            key={item.id}
-                                            className={`group relative bg-black rounded-xl overflow-hidden transition-all shadow-lg cursor-pointer ${
-                                                isSelected
-                                                    ? 'ring-2 ring-primary-400'
-                                                    : disabled
-                                                        ? 'ring-1 ring-white/10 hover:ring-amber-400/50'
-                                                        : 'hover:ring-2 hover:ring-primary-500'
-                                            }`}
-                                            onClick={() => {
-                                                // toggleBackgroundItem already handles the cap
-                                                // (toasts a "max reached" hint), so we let the
-                                                // tap through instead of disabling the tile —
-                                                // disabled tiles greyed out the whole library
-                                                // and users couldn't tell the backgrounds apart.
-                                                toggleBackgroundItem(item);
-                                            }}
-                                        >
-                                            {/* Padding-box aspect ratio instead of CSS aspect-ratio.
-                                                iOS Safari can collapse aspect-ratio grid children
-                                                with h-full media into thin stacked strips. */}
-                                            <div className="w-full" style={{ paddingTop: '177.7778%' }} aria-hidden="true" />
-                                            {/* Full-opacity thumbnails so each background reads as
-                                                a distinct image. At cap, unselected tiles stay
-                                                clearly visible (slightly dimmed) rather than
-                                                fading into an indistinct grey mass. */}
-                                            <img
-                                                src={getImageSrc(item)}
-                                                className={`absolute inset-0 w-full h-full object-cover transition-opacity ${disabled ? 'opacity-70' : 'opacity-100'}`}
-                                                alt=""
-                                                loading="lazy"
-                                                onError={(e) => handleImageError(e, item)}
-                                            />
-                                            {isVideoUrl(item.previewUrl || item.url) && (
-                                                <video
-                                                    src={toMediaUrl(item.previewUrl || item.url)}
-                                                    className="absolute inset-0 w-full h-full object-cover opacity-0 group-hover:opacity-100 transition-opacity"
-                                                    muted
-                                                    loop
-                                                    playsInline
-                                                    autoPlay
-                                                    preload="metadata"
-                                                    onError={(e) => {
-                                                        e.currentTarget.style.display = 'none';
-                                                    }}
-                                                />
-                                            )}
-                                            {isSelected && (
-                                                <div className="absolute top-2 right-2 w-6 h-6 rounded-full bg-primary-500 text-white text-[11px] font-bold flex items-center justify-center shadow-lg">
-                                                    {selectedIdx + 1}
-                                                </div>
-                                            )}
-                                            <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/80 to-transparent">
-                                                <p className="text-[10px] font-mono text-white truncate">ID: {item.id}</p>
-                                            </div>
-                                        </div>
-                                    );
-                                })
-                            ) : (
-                                <div className="col-span-full py-20 text-center opacity-30 text-white">
-                                    <Library size={48} className="mx-auto mb-4" />
-                                    <p>Your library is empty.</p>
-                                </div>
-                            )}
-                        </div>
-                        <div className="flex items-center justify-between p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] border-t border-white/10 bg-black/30 shrink-0">
-                            <Button
-                                variant="secondary"
-                                className="text-xs h-9"
-                                onClick={() => setBackgroundItems([])}
-                                disabled={backgroundItems.length === 0}
-                            >
-                                Clear all
-                            </Button>
-                            <Button
-                                className="text-xs h-9"
-                                onClick={() => {
-                                    setShowLibraryModal(false);
-                                    if (backgroundItems.length > 0) {
-                                        toast.success(`${backgroundItems.length} background${backgroundItems.length === 1 ? '' : 's'} selected`);
-                                    }
-                                }}
-                            >
-                                <CheckCircle2 size={14} className="mr-1.5" />
-                                Done
-                            </Button>
-                        </div>
-                    </div>
-                </div>
-            )}
+            <BackgroundLibraryModal
+                open={showLibraryModal}
+                onClose={() => setShowLibraryModal(false)}
+                items={libraryItems}
+                isLoading={isLoadingLibrary}
+                mode="multi"
+                max={MAX_BACKGROUNDS}
+                selectedIds={backgroundItems.map((b) => b.id)}
+                onPick={toggleBackgroundItem}
+                onClear={() => setBackgroundItems([])}
+                onDone={() => {
+                    setShowLibraryModal(false);
+                    if (backgroundItems.length > 0) {
+                        toast.success(`${backgroundItems.length} background${backgroundItems.length === 1 ? '' : 's'} selected`);
+                    }
+                }}
+                getImageSrc={getImageSrc}
+                getVideoSrc={(item) => (isVideoUrl(item.previewUrl || item.url) ? toMediaUrl(item.previewUrl || item.url) : null)}
+                onImageError={handleImageError}
+            />
 
             {showScriptsModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
