@@ -118,6 +118,14 @@ export function RenderPage() {
     const [jobVideoOptions, setJobVideoOptions] = useState<{ id: string; label: string; path: string }[]>([]);
     const [shareVideoPath, setShareVideoPath] = useState('');
     const [completedRender, setCompletedRender] = useState<{ jobId: string; file: string; jobType?: string } | null>(null);
+    // When a background render finishes, bring the "Render complete" banner into
+    // view so the user lands on the result instead of the config they left.
+    const renderDoneRef = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+        if (completedRender) {
+            requestAnimationFrame(() => renderDoneRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+        }
+    }, [completedRender]);
     const [activeBackgroundJob, setActiveBackgroundJob] = useState<{ id: string; kind: 'video' | 'waveform'; progress: number } | null>(null);
     const myEnqueuedJobsRef = useRef<Set<string>>(new Set());
     const lastRenderKindRef = useRef<'video' | 'waveform'>('video');
@@ -675,7 +683,9 @@ export function RenderPage() {
         if (result?.file) setShareVideoPath(result.file);
     }, [result?.file]);
 
+    const [isSharing, setIsSharing] = useState(false);
     const handleShare = async () => {
+        if (isSharing) return; // guard against double-taps while the post is in flight
         const effectivePath = shareVideoPath || result?.file;
         const fileUrl = effectivePath ? toOutputUrl(effectivePath, api.mediaBaseUrl) : '';
         if (!fileUrl) {
@@ -697,9 +707,14 @@ export function RenderPage() {
         if (postDestination === 'buffer') payload.profileIds = [selectedProfile];
         if (postDestination === 'youtube') payload.privacyStatus = youtubePrivacy;
 
-        const res = await api.post('/api/social/post', payload);
-        if (res.ok) toast.success('Share triggered');
-        else toast.error(res.error || 'Share failed');
+        setIsSharing(true);
+        try {
+            const res = await api.post('/api/social/post', payload);
+            if (res.ok) toast.success('Share triggered');
+            else toast.error(res.error || 'Share failed');
+        } finally {
+            setIsSharing(false);
+        }
     };
 
     const isRenderInFlight = isRendering || !!activeBackgroundJob;
@@ -758,7 +773,7 @@ export function RenderPage() {
             />
 
             {completedRender && (
-                <div className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 shadow-[0_10px_40px_rgba(16,185,129,0.15)] animate-fade-in">
+                <div ref={renderDoneRef} className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 shadow-[0_10px_40px_rgba(16,185,129,0.15)] animate-fade-in">
                     <div className="flex items-start gap-3 flex-1 min-w-0">
                         <CheckCircle2 size={20} className="text-emerald-400 flex-shrink-0 mt-0.5" />
                         <div className="min-w-0">
@@ -1405,8 +1420,8 @@ export function RenderPage() {
                                         Direct API requires OAuth setup
                                     </div>
                                 )}
-                                <Button onClick={handleShare} className="text-xs h-8">
-                                    Share Now
+                                <Button onClick={handleShare} isLoading={isSharing} disabled={isSharing} className="text-xs h-8">
+                                    {isSharing ? 'Sharing…' : 'Share Now'}
                                 </Button>
                             </div>
                         </div>

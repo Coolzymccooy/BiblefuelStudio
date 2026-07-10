@@ -29,7 +29,7 @@ export function CreateHubPage() {
                     <Link
                         key={to}
                         to={to}
-                        className="group flex items-center gap-4 rounded-bf border border-[rgba(216,184,120,0.12)] bg-bf-card p-4 transition-colors hover:border-[rgba(216,184,120,0.28)]"
+                        className="group glass flex items-center gap-4 rounded-bf p-4 transition-colors"
                     >
                         <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[14px] border border-[rgba(216,184,120,0.22)] bg-[rgba(216,184,120,0.08)]">
                             <Icon size={22} className="text-bf-gold" />

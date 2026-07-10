@@ -291,6 +291,29 @@ export function TimelinePage() {
     const [renderJobId, setRenderJobId] = useState<string | null>(null);
     const renderSseRef = useRef<EventSource | null>(null);
     const renderTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    // Collapsible caption-lines editor — the transcript list gets long, so let
+    // the user fold it away while dressing the render.
+    const [showCaptionLines, setShowCaptionLines] = useState(true);
+    // Render-flow refs: drive the mobile view through the flow. When a render
+    // starts we scroll to the live progress card; when it finishes we scroll to
+    // the rendered-video card — so the user follows the work instead of hunting
+    // for it after tapping a button.
+    const progressRef = useRef<HTMLDivElement>(null);
+    const resultRef = useRef<HTMLDivElement>(null);
+    const wasRenderingRef = useRef(false);
+
+    // Drive the view through the render flow. Gated by wasRenderingRef so a
+    // persisted renderedVideo doesn't yank the page down on every mount — only
+    // a real rendering→done transition scrolls to the result.
+    useEffect(() => {
+        if (isRenderingVideo) {
+            wasRenderingRef.current = true;
+            requestAnimationFrame(() => progressRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+        } else if (wasRenderingRef.current && renderedVideo) {
+            wasRenderingRef.current = false;
+            requestAnimationFrame(() => resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+        }
+    }, [isRenderingVideo, renderedVideo]);
     // Recent Renders — the user's last N captioned-video renders, fetched
     // from the server on mount and refetched after each successful render so
     // the panel stays in sync without manual refresh.
@@ -527,7 +550,6 @@ export function TimelinePage() {
             setUploadProgress(null);
         }
     };
-
 
 
     const formatTimelineCaptions = () => {
@@ -1224,28 +1246,42 @@ export function TimelinePage() {
                 </div>
                 )}
                 {kineticCaptions && editedLines.length > 0 && (
-                    <div className="space-y-2 max-h-96 overflow-y-auto pr-2">
-                        {editedLines.map((line, idx) => (
-                            <input
-                                key={idx}
-                                type="text"
-                                value={line}
-                                onChange={(e) => {
-                                    const next = [...editedLines];
-                                    next[idx] = e.target.value;
-                                    setEditedLines(next);
-                                }}
-                                onBlur={() => {
-                                    const clean = cleanCaptionLine(editedLines[idx]);
-                                    if (clean !== editedLines[idx]) {
-                                        const next = [...editedLines];
-                                        next[idx] = clean;
-                                        setEditedLines(next.filter(Boolean));
-                                    }
-                                }}
-                                className="w-full bg-white/[0.03] border border-white/10 rounded-lg px-3 py-2 text-sm text-gray-200 focus:border-primary-500/40 focus:outline-none"
-                            />
-                        ))}
+                    <div className="mt-1">
+                        <button
+                            type="button"
+                            onClick={() => setShowCaptionLines((v) => !v)}
+                            aria-expanded={showCaptionLines}
+                            className="flex w-full items-center gap-2 py-1 text-xs text-gray-400 hover:text-gray-200"
+                        >
+                            <ChevronDown size={14} className={`shrink-0 transition-transform ${showCaptionLines ? 'rotate-180' : ''}`} />
+                            <span>Caption lines ({editedLines.length})</span>
+                            <span className="ml-auto text-[0.6875rem] text-gray-500">tap to {showCaptionLines ? 'collapse' : 'edit'}</span>
+                        </button>
+                        {showCaptionLines && (
+                            <div className="mt-2 space-y-2 max-h-96 overflow-y-auto pr-2">
+                                {editedLines.map((line, idx) => (
+                                    <input
+                                        key={idx}
+                                        type="text"
+                                        value={line}
+                                        onChange={(e) => {
+                                            const next = [...editedLines];
+                                            next[idx] = e.target.value;
+                                            setEditedLines(next);
+                                        }}
+                                        onBlur={() => {
+                                            const clean = cleanCaptionLine(editedLines[idx]);
+                                            if (clean !== editedLines[idx]) {
+                                                const next = [...editedLines];
+                                                next[idx] = clean;
+                                                setEditedLines(next.filter(Boolean));
+                                            }
+                                        }}
+                                        className="w-full bg-white/[0.03] border border-white/10 rounded-lg px-3 py-2 text-sm text-gray-200 focus:border-primary-500/40 focus:outline-none"
+                                    />
+                                ))}
+                            </div>
+                        )}
                     </div>
                 )}
             </Card>
@@ -1269,6 +1305,7 @@ export function TimelinePage() {
             </Card>
 
             {isRenderingVideo && (
+                <div ref={progressRef}>
                 <Card
                     title="Rendering captioned video"
                     tooltip="Live progress from the FFmpeg encoder. Percent is computed from the encoder's processed time against the sermon duration, so the bar reflects real work — not a fake animation."
@@ -1310,7 +1347,11 @@ export function TimelinePage() {
                                         : 'Estimating...'}
                             </span>
                         </div>
-                        <div className="flex justify-end pt-1">
+                        <div className="flex items-center justify-between gap-2 pt-1">
+                            <Button variant="secondary" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} className="h-9 text-xs">
+                                <ChevronUp size={14} className="mr-1.5" />
+                                Keep editing
+                            </Button>
                             <Button variant="secondary" onClick={cancelRender} className="h-9 text-xs">
                                 <X size={14} className="mr-1.5" />
                                 Cancel render
@@ -1318,9 +1359,11 @@ export function TimelinePage() {
                         </div>
                     </div>
                 </Card>
+                </div>
             )}
 
             {renderedVideo && !isRenderingVideo && (
+                <div ref={resultRef}>
                 <Card
                     title="Rendered Captioned Video"
                     tooltip="The final sermon with kinetic captions burned onto the original video frames. Click Open to download or share."
@@ -1354,6 +1397,7 @@ export function TimelinePage() {
                         </Button>
                     </div>
                 </Card>
+                </div>
             )}
 
             {renderHistory.length > 0 && (
