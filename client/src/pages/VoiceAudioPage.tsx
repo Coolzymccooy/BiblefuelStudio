@@ -13,6 +13,7 @@ import { ScreenHeader } from '../components/ui/ScreenHeader';
 import { AnimationPicker } from '../components/voicelab/AnimationPicker';
 import { CompareVoices } from '../components/voicelab/CompareVoices';
 import { VoicePlayer } from '../components/voicelab/VoicePlayer';
+import { RevealSection } from '../components/voice-audio/RevealSection';
 import { api, GENERATE_TIMEOUT_MS, UPLOAD_TIMEOUT_MS } from '../lib/api';
 import toast from 'react-hot-toast';
 import { loadJson, pushUnique, saveJson, STORAGE_KEYS, toOutputUrl } from '../lib/storage';
@@ -1361,13 +1362,7 @@ export function VoiceAudioPage() {
                 </Card>
                 )}
 
-                {(activeTab === 'all' || activeTab === 'voice') && (
-                    <Card
-                        title="Voice Clone"
-                        collapsible
-                        defaultOpen={false}
-                        tooltip="Clone your own voice from a short sample. ElevenLabs creates a persistent voice ID; Chatterbox saves the sample as a conditioning reference. Azure and Edge don't support open cloning."
-                    >
+                <RevealSection title="Voice clone" storageKey="va.clone">
                         <div className="space-y-4">
                             <div className="rounded-lg border border-amber-500/25 bg-amber-500/[0.06] px-3 py-2 text-[0.8125rem] text-amber-100/90 leading-relaxed flex items-start gap-2">
                                 <InfoTooltip
@@ -1523,16 +1518,9 @@ export function VoiceAudioPage() {
                                 </div>
                             )}
                         </div>
-                    </Card>
-                )}
+                </RevealSection>
 
-                {(activeTab === 'all' || activeTab === 'voice') && (
-                <Card
-                    title="Voice Presets"
-                    collapsible
-                    defaultOpen={false}
-                    tooltip="Save commonly-used voice + provider combos so you can recall them in one click — handy for series narrators, scripture voices, or B-roll narration styles."
-                >
+                <RevealSection title="Voice presets" storageKey="va.presets">
                     <div className="space-y-4">
                         <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                             <Input
@@ -1606,8 +1594,7 @@ export function VoiceAudioPage() {
                             ))}
                         </div>
                     </div>
-                </Card>
-                )}
+                </RevealSection>
                 {/* Caption animation picker — kinetic typography styles ported from lumina,
                     synced to the word timings the TTS pipeline produces. */}
                 <AnimationPicker />
@@ -1676,13 +1663,7 @@ export function VoiceAudioPage() {
                 </Card>
                 )}
 
-                {(activeTab === 'all' || activeTab === 'treatment') && (
-                <Card
-                    title="3. Audio Treatment"
-                    collapsible
-                    defaultOpen={false}
-                    tooltip="Mastering chain — loudness normalisation, EQ, de-noise, and compression. Pick a preset for fast results, or open advanced to fine-tune each stage."
-                >
+                <RevealSection title="Audio treatment" storageKey="va.treatment">
                     <p className="text-sm text-gray-200 mb-4">
                         Choose a preset, then tweak controls. Click <strong>Process Audio</strong> to generate a
                         cleaned MP3 and auto-fill Audio Path.
@@ -1927,8 +1908,7 @@ export function VoiceAudioPage() {
                             Process Audio
                         </Button>
                     </div>
-                </Card>
-                )}
+                </RevealSection>
 
                 {(activeTab === 'all' || activeTab === 'treatment') && (
                 <Card
@@ -1976,8 +1956,7 @@ export function VoiceAudioPage() {
                 </Card>
                 )}
 
-                {(activeTab === 'all' || activeTab === 'treatment') && (
-                <Card title="Recent Audio (Saved)">
+                <RevealSection title="Recent audio" storageKey="va.recent">
                     {audioHistory.length === 0 ? (
                         <p className="text-sm text-gray-300">No processed or uploaded audio yet.</p>
                     ) : (
@@ -2068,16 +2047,9 @@ export function VoiceAudioPage() {
                             )}
                         </div>
                     )}
-                </Card>
-                )}
+                </RevealSection>
 
-                {(activeTab === 'all' || activeTab === 'soundtrack') && (
-                <Card
-                    title="Soundtrack Library"
-                    collapsible
-                    defaultOpen={false}
-                    tooltip="Royalty-free background beds organised by mood. Click any track to set it as the Render soundtrack, or preview before committing."
-                >
+                <RevealSection title="Soundtrack library" storageKey="va.soundtrack">
                     <div className="space-y-3">
                         <div className="flex flex-wrap items-center gap-2">
                             <Button
@@ -2123,8 +2095,7 @@ export function VoiceAudioPage() {
                             <p className="text-sm text-gray-300">No audio files found. Upload or process audio first.</p>
                         )}
                     </div>
-                </Card>
-                )}
+                </RevealSection>
             </div>
         </div>
     );
