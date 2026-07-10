@@ -20,6 +20,7 @@ import { useConfig } from '../lib/config';
 import { useVoiceSynthesisDefaults } from '../lib/voiceSynthesisDefaults';
 import { ApiError } from '../lib/apiError';
 import { toastError } from '../lib/errors';
+import { cleanSpeakableText } from '../lib/speakableScript';
 import { Link } from 'react-router-dom';
 import {
     Play,
@@ -375,10 +376,12 @@ export function VoiceAudioPage() {
     }, [ttsStartedAt]);
 
     const handleTTS = async () => {
-        if (!ttsText.trim()) {
+        const formattedTtsText = cleanSpeakableText(ttsText);
+        if (!formattedTtsText.trim()) {
             toast.error('Enter some text first');
             return;
         }
+        if (formattedTtsText !== ttsText) setTtsText(formattedTtsText);
 
         setIsProcessing(true);
         setTtsStartedAt(Date.now());
@@ -394,7 +397,7 @@ export function VoiceAudioPage() {
                 // settings, and forced-alignment fallback automatically.
                 url = '/api/tts/synthesize-category';
                 payload = {
-                    text: ttsText,
+                    text: formattedTtsText,
                     category: voiceDefaults.category,
                     preferredProvider: voiceDefaults.providerOverride || undefined,
                     withTimestamps: true,
@@ -405,12 +408,12 @@ export function VoiceAudioPage() {
                 providerLabel = `Voice Synthesis · ${voiceDefaults.category}`;
             } else if (provider === 'edge') {
                 url = '/api/tts/edge';
-                payload = { text: ttsText, voiceId: edgeVoiceId || undefined };
+                payload = { text: formattedTtsText, voiceId: edgeVoiceId || undefined };
                 providerLabel = 'Edge-TTS';
             } else if (provider === 'chatterbox') {
                 url = '/api/tts/chatterbox';
                 payload = {
-                    text: ttsText,
+                    text: formattedTtsText,
                     voiceId: chatterboxAudioPrompt.trim() || undefined,
                     exaggeration: typeof chatterboxStyle === 'number' ? chatterboxStyle : undefined,
                     cfgWeight: typeof chatterboxCfg === 'number' ? chatterboxCfg : undefined,
@@ -421,17 +424,17 @@ export function VoiceAudioPage() {
                 // blank → server default (AZURE_SPEECH_VOICE). withTimestamps gives
                 // the word-alignment contract back for kinetic captions.
                 url = '/api/tts/azure';
-                payload = { text: ttsText, voiceId: voiceId || undefined, withTimestamps: true };
+                payload = { text: formattedTtsText, voiceId: voiceId || undefined, withTimestamps: true };
                 providerLabel = 'Azure Speech';
             } else if (provider === 'fish') {
                 // Fish voice id is a reference_id; blank → FISH_DEFAULT_REFERENCE_ID.
                 url = '/api/tts/fish';
-                payload = { text: ttsText, voiceId: voiceId || undefined };
+                payload = { text: formattedTtsText, voiceId: voiceId || undefined };
                 providerLabel = 'Fish Audio';
             } else {
                 url = '/api/tts/elevenlabs';
                 payload = {
-                    text: ttsText,
+                    text: formattedTtsText,
                     voiceId: voiceId || undefined,
                     voiceSettings: { stability, similarity_boost: similarity },
                 };
@@ -1048,6 +1051,9 @@ export function VoiceAudioPage() {
                                 <Button onClick={handleUseLatestScript} variant="secondary" className="text-xs h-8">
                                     <Wand2 size={14} className="mr-2" />
                                     Use Latest Script
+                                </Button>
+                                <Button onClick={() => { const next = cleanSpeakableText(ttsText); setTtsText(next); toast.success('Formatted for voice'); }} variant="secondary" className="text-xs h-8">
+                                    Format for Voice
                                 </Button>
                                 <Button onClick={handleInsertTemplate} variant="secondary" className="text-xs h-8">
                                     <Clipboard size={14} className="mr-2" />
