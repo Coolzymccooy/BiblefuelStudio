@@ -14,6 +14,7 @@ import { AnimationPicker } from '../components/voicelab/AnimationPicker';
 import { CompareVoices } from '../components/voicelab/CompareVoices';
 import { VoicePlayer } from '../components/voicelab/VoicePlayer';
 import { RevealSection } from '../components/voice-audio/RevealSection';
+import { CreateVoiceHero } from '../components/voice-audio/CreateVoiceHero';
 import { api, GENERATE_TIMEOUT_MS, UPLOAD_TIMEOUT_MS } from '../lib/api';
 import toast from 'react-hot-toast';
 import { loadJson, pushUnique, saveJson, STORAGE_KEYS, toOutputUrl } from '../lib/storage';
@@ -754,6 +755,13 @@ export function VoiceAudioPage() {
         const template = `Hook line here...\n\nVerse (Reference)\n\nShort reflection/prayer...\n\nCTA (e.g. Save this + follow for more)`;
         setTtsText(template);
     };
+
+    const handleFormatForVoice = () => {
+        const next = cleanSpeakableText(ttsText);
+        setTtsText(next);
+        toast.success('Formatted for voice');
+    };
+
     const applyPreset = (presetItem: VoicePreset) => {
         setVoiceId(presetItem.voiceId || '');
         setStability(presetItem.stability);
@@ -983,6 +991,339 @@ export function VoiceAudioPage() {
         };
     }, []);
 
+    const providerControls = (
+        <>
+            {voiceDefaults.enabled && (
+                <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 flex flex-wrap items-center gap-3 text-xs">
+                    <Wand2 size={14} className="text-emerald-300 shrink-0" />
+                    <span className="text-emerald-200">
+                        Voice Synthesis defaults active —{' '}
+                        <span className="font-semibold">{voiceDefaults.category}</span>
+                        {voiceDefaults.providerOverride ? ` · ${voiceDefaults.providerOverride}` : ' · auto-provider'}
+                        {voiceDefaults.cinematicMode ? ' · cinematic timings' : ''}.
+                    </span>
+                    <Link to="/app/settings" className="ml-auto text-[0.75rem] text-emerald-300 hover:text-emerald-200 underline">
+                        Edit in Settings
+                    </Link>
+                </div>
+            )}
+            <div>
+                <label className="field-label inline-flex items-center gap-1.5">
+                    <span>Provider</span>
+                    <InfoTooltip
+                        width="lg"
+                        content={
+                            provider === 'edge'
+                                ? 'Free Microsoft neural voices via the Edge "Read Aloud" service. ~400 voices, no key required.'
+                                : provider === 'chatterbox'
+                                    ? 'Self-hosted open-source TTS (Resemble AI). Calls a Chatterbox HTTP bridge — free, supports voice cloning via a reference WAV. Slower than ElevenLabs but expressive.'
+                                    : provider === 'azure'
+                                        ? 'Microsoft Azure Speech — commercial-safe, returns reliable word-level timestamps (primary kinetic-caption engine). Voice id is an Azure voice name (e.g. en-US-GuyNeural).'
+                                        : provider === 'fish'
+                                            ? 'Fish Audio — premium multilingual cloud voices with cloning. Voice id is a Fish reference_id. Counts against your Fish credits.'
+                                            : 'Premium voices + cloning. Requires ELEVENLABS_API_KEY and counts against your monthly character quota.'
+                        }
+                    />
+                </label>
+                <div className="inline-flex rounded-lg border border-white/10 overflow-hidden mt-0">
+                    <button
+                        type="button"
+                        onClick={() => setProvider('elevenlabs')}
+                        disabled={!elevenlabsAvailable}
+                        className={`px-3 py-1.5 text-xs font-medium transition ${
+                            provider === 'elevenlabs'
+                                ? 'bg-primary-500 text-white'
+                                : 'bg-transparent text-gray-300 hover:bg-white/5'
+                        } disabled:opacity-40 disabled:cursor-not-allowed`}
+                    >
+                        ElevenLabs <span className="opacity-60">· premium</span>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setProvider('azure')}
+                        disabled={!azureAvailable}
+                        title={azureAvailable
+                            ? ''
+                            : (azureReason || 'AZURE_SPEECH_KEY / AZURE_SPEECH_REGION not set — see docs/AZURE_SPEECH_SETUP.md')}
+                        className={`px-3 py-1.5 text-xs font-medium transition border-l border-white/10 ${
+                            provider === 'azure'
+                                ? 'bg-primary-500 text-white'
+                                : 'bg-transparent text-gray-300 hover:bg-white/5'
+                        } disabled:opacity-40 disabled:cursor-not-allowed`}
+                    >
+                        Azure <span className="opacity-60">· word-sync</span>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setProvider('fish')}
+                        disabled={!fishAvailable}
+                        title={fishAvailable
+                            ? ''
+                            : (fishReason || 'FISH_API_KEY not set — see docs/FISH_AUDIO_SETUP.md')}
+                        className={`px-3 py-1.5 text-xs font-medium transition border-l border-white/10 ${
+                            provider === 'fish'
+                                ? 'bg-primary-500 text-white'
+                                : 'bg-transparent text-gray-300 hover:bg-white/5'
+                        } disabled:opacity-40 disabled:cursor-not-allowed`}
+                    >
+                        Fish <span className="opacity-60">· premium</span>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setProvider('chatterbox')}
+                        disabled={!chatterboxAvailable}
+                        title={chatterboxAvailable ? '' : 'CHATTERBOX_URL not set — point it at a Chatterbox HTTP server (self-hosted bridge, e.g. https://chatterbox.tiwaton.co.uk).'}
+                        className={`px-3 py-1.5 text-xs font-medium transition border-l border-white/10 ${
+                            provider === 'chatterbox'
+                                ? 'bg-emerald-500/15 text-emerald-200'
+                                : 'text-gray-300 hover:bg-white/5'
+                        } disabled:opacity-40 disabled:cursor-not-allowed`}
+                    >
+                        Chatterbox <span className="opacity-60">· self-hosted</span>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setProvider('edge')}
+                        disabled={!edgeAvailable}
+                        className={`px-3 py-1.5 text-xs font-medium transition border-l border-white/10 ${
+                            provider === 'edge'
+                                ? 'bg-primary-500 text-white'
+                                : 'bg-transparent text-gray-300 hover:bg-white/5'
+                        } disabled:opacity-40 disabled:cursor-not-allowed`}
+                    >
+                        Edge-TTS <span className="opacity-60">· free</span>
+                    </button>
+                </div>
+                {(!azureAvailable && azureReason) || (!fishAvailable && fishReason) ? (
+                    <ul className="mt-2 space-y-1 text-[0.6875rem] text-amber-300/90">
+                        {!azureAvailable && azureReason && (
+                            <li><span className="font-semibold">Azure disabled:</span> {azureReason}</li>
+                        )}
+                        {!fishAvailable && fishReason && (
+                            <li><span className="font-semibold">Fish disabled:</span> {fishReason}</li>
+                        )}
+                    </ul>
+                ) : null}
+            </div>
+            {provider === 'chatterbox' ? (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <Field
+                        label="Reference voice"
+                        badge="Optional"
+                        tooltip="Absolute path to a WAV file on the Chatterbox host. Leave empty to use the model's default voice. The path is resolved by the Chatterbox server, not Biblefuel."
+                    >
+                        <Input
+                            value={chatterboxAudioPrompt}
+                            onChange={(e) => setChatterboxAudioPrompt(e.target.value)}
+                            placeholder="/path/to/reference.wav"
+                        />
+                    </Field>
+                    <Field
+                        label={`Exaggeration (${chatterboxStyle})`}
+                        tooltip="Controls expressive intensity. Higher values yield more dramatic delivery; lower values stay closer to neutral."
+                    >
+                        <input
+                            type="range"
+                            min="0"
+                            max="1"
+                            step="0.05"
+                            value={chatterboxStyle}
+                            onChange={(e) => setChatterboxStyle(Number(e.target.value))}
+                            className="w-full accent-primary-500"
+                        />
+                    </Field>
+                    <Field
+                        label={`CFG weight (${chatterboxCfg})`}
+                        tooltip="Classifier-free guidance weight. Lower stays more faithful to the reference voice; higher gives the model more creative freedom."
+                    >
+                        <input
+                            type="range"
+                            min="0"
+                            max="1"
+                            step="0.05"
+                            value={chatterboxCfg}
+                            onChange={(e) => setChatterboxCfg(Number(e.target.value))}
+                            className="w-full accent-primary-500"
+                        />
+                    </Field>
+                </div>
+            ) : (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <Field
+                        label="Voice ID"
+                        badge="Optional"
+                        tooltip="Paste a voice ID or use Load Voices below to browse. Leave empty for the server default voice."
+                    >
+                        <Input
+                            value={provider === 'edge' ? edgeVoiceId : voiceId}
+                            onChange={(e) =>
+                                provider === 'edge'
+                                    ? setEdgeVoiceId(e.target.value)
+                                    : setVoiceId(e.target.value)
+                            }
+                            placeholder={
+                                provider === 'edge'
+                                    ? 'e.g. en-US-AriaNeural'
+                                    : 'Leave empty to use default voice'
+                            }
+                        />
+                    </Field>
+                    <Field
+                        label={`Stability (${stability})`}
+                        tooltip={provider === 'edge'
+                            ? 'ElevenLabs-only — not used by Edge TTS.'
+                            : 'How consistent the voice is between generations. Higher = more uniform; lower = more variation between takes.'}
+                    >
+                        <input
+                            type="range"
+                            min="0"
+                            max="1"
+                            step="0.05"
+                            value={stability}
+                            onChange={(e) => setStability(Number(e.target.value))}
+                            disabled={provider === 'edge'}
+                            className="w-full accent-primary-500 disabled:opacity-40"
+                        />
+                    </Field>
+                    <Field
+                        label={`Similarity Boost (${similarity})`}
+                        tooltip={provider === 'edge'
+                            ? 'ElevenLabs-only — not used by Edge TTS.'
+                            : 'How closely the output matches the cloned voice. Higher = more faithful; may amplify recording artifacts.'}
+                    >
+                        <input
+                            type="range"
+                            min="0"
+                            max="1"
+                            step="0.05"
+                            value={similarity}
+                            onChange={(e) => setSimilarity(Number(e.target.value))}
+                            disabled={provider === 'edge'}
+                            className="w-full accent-primary-500 disabled:opacity-40"
+                        />
+                    </Field>
+                </div>
+            )}
+            <div className="flex items-center gap-2">
+            <Button variant="secondary" className="text-xs h-8" onClick={loadVoices} isLoading={isLoadingVoices} disabled={!ttsEnabled}>
+                <RefreshCw size={14} className="mr-2" />
+                Load Voices
+            </Button>
+                {voices.length > 0 && (
+                    <Select
+                        value={provider === 'edge' ? edgeVoiceId : voiceId}
+                        onChange={(e) =>
+                            provider === 'edge'
+                                ? setEdgeVoiceId(e.target.value)
+                                : setVoiceId(e.target.value)
+                        }
+                    >
+                        <option value="">Select a voice...</option>
+                        {voices.map((v) => (
+                            <option key={v.voice_id} value={v.voice_id}>
+                                {v.name}
+                            </option>
+                        ))}
+                    </Select>
+                )}
+            </div>
+            <Button onClick={handleTTS} isLoading={isProcessing} disabled={!ttsEnabled}>
+                Generate ({
+                    provider === 'edge' ? 'Edge-TTS'
+                        : provider === 'chatterbox' ? 'Chatterbox'
+                            : provider === 'azure' ? 'Azure'
+                                : provider === 'fish' ? 'Fish'
+                                    : 'ElevenLabs'
+                })
+            </Button>
+            {isProcessing && provider === 'chatterbox' && ttsStartedAt && (() => {
+                const elapsedSec = Math.max(0, Math.floor((Date.now() - ttsStartedAt) / 1000));
+                const charsPerSec = 8;
+                const estimatedSec = Math.max(5, Math.ceil(ttsText.length / charsPerSec));
+                const progress = Math.min(100, Math.round((elapsedSec / estimatedSec) * 100));
+                const overrun = elapsedSec > estimatedSec;
+                void elapsedTick;
+                return (
+                    <div className="mt-2 text-help">
+                        <div className="flex items-center justify-between mb-1">
+                            <span>
+                                {overrun
+                                    ? `Still working — ${elapsedSec}s elapsed (estimate was ~${estimatedSec}s)`
+                                    : `Generating — ~${Math.max(0, estimatedSec - elapsedSec)}s left (${elapsedSec}/${estimatedSec}s)`}
+                            </span>
+                        </div>
+                        <div className="w-full h-1 bg-white/10 rounded overflow-hidden">
+                            <div
+                                className={`h-full transition-all duration-1000 ${overrun ? 'bg-amber-400/70' : 'bg-primary-500/70'}`}
+                                style={{ width: `${progress}%` }}
+                            />
+                        </div>
+                    </div>
+                );
+            })()}
+            {!ttsEnabled && (
+                <p className="text-xs text-yellow-600">
+                    TTS disabled. Set `ELEVENLABS_API_KEY` or `EDGE_TTS_ENABLED=true` in `server/.env`.
+                </p>
+            )}
+        </>
+    );
+
+    const recordUploadPanel = (
+        <DropZone
+            className="space-y-4"
+            onFiles={(files) => { if (files[0]) void handleUploadFile(files[0]); }}
+            accept={['audio/*', '.mp3', '.wav', '.webm', '.m4a', '.aac', '.ogg', '.flac']}
+            multiple={false}
+            disabled={isUploading}
+            overlayLabel="Drop an audio file to upload"
+        >
+            <p className="text-sm text-gray-200">
+                Record directly in the browser or upload an audio file. The result is saved to outputs and becomes selectable across Render and Timeline.
+            </p>
+            <div className="flex flex-wrap gap-2">
+                {!isRecording ? (
+                    <Button onClick={handleStartRecording} className="text-xs h-9">
+                        <Mic size={14} className="mr-2" />
+                        Start Recording
+                    </Button>
+                ) : (
+                    <Button onClick={handleStopRecording} variant="danger" className="text-xs h-9">
+                        Stop Recording
+                    </Button>
+                )}
+                <label className="text-xs h-9 px-4 rounded-lg font-medium transition-all duration-200 bg-gray-200 text-gray-800 hover:bg-gray-300 flex items-center gap-2 cursor-pointer">
+                    <Upload size={14} />
+                    Upload Audio
+                    <input
+                        type="file"
+                        accept="audio/*,.mp3,.wav,.webm,.m4a,.aac,.ogg,.flac"
+                        className="hidden"
+                        onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) handleUploadFile(file);
+                        }}
+                        disabled={isUploading}
+                    />
+                </label>
+            </div>
+            <div className="mt-4">
+                <p className="field-label">Live input</p>
+                <canvas ref={canvasRef} width={520} height={80} className="w-full rounded-lg border border-white/10 bg-black/30" />
+            </div>
+            {currentAudioUrl && (
+                <div className="mt-3 space-y-2">
+                    <p className="field-label">Latest recording / upload</p>
+                    <audio controls src={currentAudioUrl} className="w-full" />
+                    <p className="text-meta break-all font-mono">{audioPath}</p>
+                </div>
+            )}
+            {recordingDebug && (
+                <p className="text-meta break-all font-mono">{recordingDebug}</p>
+            )}
+        </DropZone>
+    );
+
     return (
         <div>
             <ScreenHeader eyebrow="Studio" title={<>Give it a <em>voice</em>.</>} className="mb-5" />
@@ -1040,326 +1381,15 @@ export function VoiceAudioPage() {
                 )}
 
                 {(activeTab === 'all' || activeTab === 'voice') && (
-                <Card title="1. TTS (voice generation)">
-                    <div className="space-y-4">
-                        <Field
-                            label="Text for voice"
-                            tooltip="Paste any combination of hook, verse, short reflection or prayer, and CTA. Keep it under about 6 short lines for the best caption rhythm."
-                        >
-                            <Textarea
-                                value={ttsText}
-                                onChange={(e) => setTtsText(e.target.value)}
-                                placeholder="Paste hook + verse + reflection"
-                                className="min-h-[180px]"
-                            />
-                            <div className="mt-2 flex flex-wrap gap-2">
-                                <Button onClick={handleUseLatestScript} variant="secondary" className="text-xs h-8">
-                                    <Wand2 size={14} className="mr-2" />
-                                    Use Latest Script
-                                </Button>
-                                <Button onClick={() => { const next = cleanSpeakableText(ttsText); setTtsText(next); toast.success('Formatted for voice'); }} variant="secondary" className="text-xs h-8">
-                                    Format for Voice
-                                </Button>
-                                <Button onClick={handleInsertTemplate} variant="secondary" className="text-xs h-8">
-                                    <Clipboard size={14} className="mr-2" />
-                                    Insert Template
-                                </Button>
-                            </div>
-                        </Field>
-                        {voiceDefaults.enabled && (
-                            <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 flex flex-wrap items-center gap-3 text-xs">
-                                <Wand2 size={14} className="text-emerald-300 shrink-0" />
-                                <span className="text-emerald-200">
-                                    Voice Synthesis defaults active —{' '}
-                                    <span className="font-semibold">{voiceDefaults.category}</span>
-                                    {voiceDefaults.providerOverride ? ` · ${voiceDefaults.providerOverride}` : ' · auto-provider'}
-                                    {voiceDefaults.cinematicMode ? ' · cinematic timings' : ''}.
-                                </span>
-                                <Link to="/app/settings" className="ml-auto text-[0.75rem] text-emerald-300 hover:text-emerald-200 underline">
-                                    Edit in Settings
-                                </Link>
-                            </div>
-                        )}
-                        <div>
-                            <label className="field-label inline-flex items-center gap-1.5">
-                                <span>Provider</span>
-                                <InfoTooltip
-                                    width="lg"
-                                    content={
-                                        provider === 'edge'
-                                            ? 'Free Microsoft neural voices via the Edge "Read Aloud" service. ~400 voices, no key required.'
-                                            : provider === 'chatterbox'
-                                                ? 'Self-hosted open-source TTS (Resemble AI). Calls a Chatterbox HTTP bridge — free, supports voice cloning via a reference WAV. Slower than ElevenLabs but expressive.'
-                                                : provider === 'azure'
-                                                    ? 'Microsoft Azure Speech — commercial-safe, returns reliable word-level timestamps (primary kinetic-caption engine). Voice id is an Azure voice name (e.g. en-US-GuyNeural).'
-                                                    : provider === 'fish'
-                                                        ? 'Fish Audio — premium multilingual cloud voices with cloning. Voice id is a Fish reference_id. Counts against your Fish credits.'
-                                                        : 'Premium voices + cloning. Requires ELEVENLABS_API_KEY and counts against your monthly character quota.'
-                                    }
-                                />
-                            </label>
-                            <div className="inline-flex rounded-lg border border-white/10 overflow-hidden mt-0">
-                                <button
-                                    type="button"
-                                    onClick={() => setProvider('elevenlabs')}
-                                    disabled={!elevenlabsAvailable}
-                                    className={`px-3 py-1.5 text-xs font-medium transition ${
-                                        provider === 'elevenlabs'
-                                            ? 'bg-primary-500 text-white'
-                                            : 'bg-transparent text-gray-300 hover:bg-white/5'
-                                    } disabled:opacity-40 disabled:cursor-not-allowed`}
-                                >
-                                    ElevenLabs <span className="opacity-60">· premium</span>
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setProvider('azure')}
-                                    disabled={!azureAvailable}
-                                    title={azureAvailable
-                                        ? ''
-                                        : (azureReason || 'AZURE_SPEECH_KEY / AZURE_SPEECH_REGION not set — see docs/AZURE_SPEECH_SETUP.md')}
-                                    className={`px-3 py-1.5 text-xs font-medium transition border-l border-white/10 ${
-                                        provider === 'azure'
-                                            ? 'bg-primary-500 text-white'
-                                            : 'bg-transparent text-gray-300 hover:bg-white/5'
-                                    } disabled:opacity-40 disabled:cursor-not-allowed`}
-                                >
-                                    Azure <span className="opacity-60">· word-sync</span>
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setProvider('fish')}
-                                    disabled={!fishAvailable}
-                                    title={fishAvailable
-                                        ? ''
-                                        : (fishReason || 'FISH_API_KEY not set — see docs/FISH_AUDIO_SETUP.md')}
-                                    className={`px-3 py-1.5 text-xs font-medium transition border-l border-white/10 ${
-                                        provider === 'fish'
-                                            ? 'bg-primary-500 text-white'
-                                            : 'bg-transparent text-gray-300 hover:bg-white/5'
-                                    } disabled:opacity-40 disabled:cursor-not-allowed`}
-                                >
-                                    Fish <span className="opacity-60">· premium</span>
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setProvider('chatterbox')}
-                                    disabled={!chatterboxAvailable}
-                                    title={chatterboxAvailable ? '' : 'CHATTERBOX_URL not set — point it at a Chatterbox HTTP server (self-hosted bridge, e.g. https://chatterbox.tiwaton.co.uk).'}
-                                    className={`px-3 py-1.5 text-xs font-medium transition border-l border-white/10 ${
-                                        provider === 'chatterbox'
-                                            ? 'bg-emerald-500/15 text-emerald-200'
-                                            : 'text-gray-300 hover:bg-white/5'
-                                    } disabled:opacity-40 disabled:cursor-not-allowed`}
-                                >
-                                    Chatterbox <span className="opacity-60">· self-hosted</span>
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setProvider('edge')}
-                                    disabled={!edgeAvailable}
-                                    className={`px-3 py-1.5 text-xs font-medium transition border-l border-white/10 ${
-                                        provider === 'edge'
-                                            ? 'bg-primary-500 text-white'
-                                            : 'bg-transparent text-gray-300 hover:bg-white/5'
-                                    } disabled:opacity-40 disabled:cursor-not-allowed`}
-                                >
-                                    Edge-TTS <span className="opacity-60">· free</span>
-                                </button>
-                            </div>
-                            {/* Touch-device friendly diagnostic: surface the
-                                reason for any greyed-out provider so users
-                                without hover can still see what's missing.
-                                Only renders when a provider is unavailable
-                                AND the server returned a reason. */}
-                            {(!azureAvailable && azureReason) || (!fishAvailable && fishReason) ? (
-                                <ul className="mt-2 space-y-1 text-[0.6875rem] text-amber-300/90">
-                                    {!azureAvailable && azureReason && (
-                                        <li><span className="font-semibold">Azure disabled:</span> {azureReason}</li>
-                                    )}
-                                    {!fishAvailable && fishReason && (
-                                        <li><span className="font-semibold">Fish disabled:</span> {fishReason}</li>
-                                    )}
-                                </ul>
-                            ) : null}
-                        </div>
-                        {provider === 'chatterbox' ? (
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                <Field
-                                    label="Reference voice"
-                                    badge="Optional"
-                                    tooltip="Absolute path to a WAV file on the Chatterbox host. Leave empty to use the model's default voice. The path is resolved by the Chatterbox server, not Biblefuel."
-                                >
-                                    <Input
-                                        value={chatterboxAudioPrompt}
-                                        onChange={(e) => setChatterboxAudioPrompt(e.target.value)}
-                                        placeholder="/path/to/reference.wav"
-                                    />
-                                </Field>
-                                <Field
-                                    label={`Exaggeration (${chatterboxStyle})`}
-                                    tooltip="Controls expressive intensity. Higher values yield more dramatic delivery; lower values stay closer to neutral."
-                                >
-                                    <input
-                                        type="range"
-                                        min="0"
-                                        max="1"
-                                        step="0.05"
-                                        value={chatterboxStyle}
-                                        onChange={(e) => setChatterboxStyle(Number(e.target.value))}
-                                        className="w-full accent-primary-500"
-                                    />
-                                </Field>
-                                <Field
-                                    label={`CFG weight (${chatterboxCfg})`}
-                                    tooltip="Classifier-free guidance weight. Lower stays more faithful to the reference voice; higher gives the model more creative freedom."
-                                >
-                                    <input
-                                        type="range"
-                                        min="0"
-                                        max="1"
-                                        step="0.05"
-                                        value={chatterboxCfg}
-                                        onChange={(e) => setChatterboxCfg(Number(e.target.value))}
-                                        className="w-full accent-primary-500"
-                                    />
-                                </Field>
-                            </div>
-                        ) : (
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                <Field
-                                    label="Voice ID"
-                                    badge="Optional"
-                                    tooltip="Paste a voice ID or use Load Voices below to browse. Leave empty for the server default voice."
-                                >
-                                    <Input
-                                        value={provider === 'edge' ? edgeVoiceId : voiceId}
-                                        onChange={(e) =>
-                                            provider === 'edge'
-                                                ? setEdgeVoiceId(e.target.value)
-                                                : setVoiceId(e.target.value)
-                                        }
-                                        placeholder={
-                                            provider === 'edge'
-                                                ? 'e.g. en-US-AriaNeural'
-                                                : 'Leave empty to use default voice'
-                                        }
-                                    />
-                                </Field>
-                                <Field
-                                    label={`Stability (${stability})`}
-                                    tooltip={provider === 'edge'
-                                        ? 'ElevenLabs-only — not used by Edge TTS.'
-                                        : 'How consistent the voice is between generations. Higher = more uniform; lower = more variation between takes.'}
-                                >
-                                    <input
-                                        type="range"
-                                        min="0"
-                                        max="1"
-                                        step="0.05"
-                                        value={stability}
-                                        onChange={(e) => setStability(Number(e.target.value))}
-                                        disabled={provider === 'edge'}
-                                        className="w-full accent-primary-500 disabled:opacity-40"
-                                    />
-                                </Field>
-                                <Field
-                                    label={`Similarity Boost (${similarity})`}
-                                    tooltip={provider === 'edge'
-                                        ? 'ElevenLabs-only — not used by Edge TTS.'
-                                        : 'How closely the output matches the cloned voice. Higher = more faithful; may amplify recording artifacts.'}
-                                >
-                                    <input
-                                        type="range"
-                                        min="0"
-                                        max="1"
-                                        step="0.05"
-                                        value={similarity}
-                                        onChange={(e) => setSimilarity(Number(e.target.value))}
-                                        disabled={provider === 'edge'}
-                                        className="w-full accent-primary-500 disabled:opacity-40"
-                                    />
-                                </Field>
-                            </div>
-                        )}
-                        <div className="flex items-center gap-2">
-                        <Button variant="secondary" className="text-xs h-8" onClick={loadVoices} isLoading={isLoadingVoices} disabled={!ttsEnabled}>
-                            <RefreshCw size={14} className="mr-2" />
-                            Load Voices
-                        </Button>
-                            {voices.length > 0 && (
-                                <Select
-                                    value={provider === 'edge' ? edgeVoiceId : voiceId}
-                                    onChange={(e) =>
-                                        provider === 'edge'
-                                            ? setEdgeVoiceId(e.target.value)
-                                            : setVoiceId(e.target.value)
-                                    }
-                                >
-                                    <option value="">Select a voice...</option>
-                                    {voices.map((v) => (
-                                        <option key={v.voice_id} value={v.voice_id}>
-                                            {v.name}
-                                        </option>
-                                    ))}
-                                </Select>
-                            )}
-                        </div>
-                        <Button onClick={handleTTS} isLoading={isProcessing} disabled={!ttsEnabled}>
-                            Generate ({
-                                provider === 'edge' ? 'Edge-TTS'
-                                    : provider === 'chatterbox' ? 'Chatterbox'
-                                        : provider === 'azure' ? 'Azure'
-                                            : provider === 'fish' ? 'Fish'
-                                                : 'ElevenLabs'
-                            })
-                        </Button>
-                        {/* Chatterbox progress indicator. Local inference can
-                            take 10-90s depending on the bridge's hardware, and
-                            the static spinner makes the UI feel stuck. Estimate
-                            from text length at ~8 chars/sec which lines up with
-                            CPU-only inference on the persona-overseer bridge;
-                            the real-time elapsed counter is what reassures the
-                            user that something is happening even when our
-                            estimate is wrong.
-                            We do NOT show this for Edge/ElevenLabs because they
-                            complete in 1-3s and the indicator would flash and
-                            disappear, which feels worse than no indicator. */}
-                        {isProcessing && provider === 'chatterbox' && ttsStartedAt && (() => {
-                            const elapsedSec = Math.max(0, Math.floor((Date.now() - ttsStartedAt) / 1000));
-                            const charsPerSec = 8;
-                            const estimatedSec = Math.max(5, Math.ceil(ttsText.length / charsPerSec));
-                            const progress = Math.min(100, Math.round((elapsedSec / estimatedSec) * 100));
-                            const overrun = elapsedSec > estimatedSec;
-                            // Keep referencing elapsedTick so the closure
-                            // re-evaluates each second even though we don't
-                            // read it directly.
-                            void elapsedTick;
-                            return (
-                                <div className="mt-2 text-help">
-                                    <div className="flex items-center justify-between mb-1">
-                                        <span>
-                                            {overrun
-                                                ? `Still working — ${elapsedSec}s elapsed (estimate was ~${estimatedSec}s)`
-                                                : `Generating — ~${Math.max(0, estimatedSec - elapsedSec)}s left (${elapsedSec}/${estimatedSec}s)`}
-                                        </span>
-                                    </div>
-                                    <div className="w-full h-1 bg-white/10 rounded overflow-hidden">
-                                        <div
-                                            className={`h-full transition-all duration-1000 ${overrun ? 'bg-amber-400/70' : 'bg-primary-500/70'}`}
-                                            style={{ width: `${progress}%` }}
-                                        />
-                                    </div>
-                                </div>
-                            );
-                        })()}
-                        {!ttsEnabled && (
-                            <p className="text-xs text-yellow-600">
-                                TTS disabled. Set `ELEVENLABS_API_KEY` or `EDGE_TTS_ENABLED=true` in `server/.env`.
-                            </p>
-                        )}
-                    </div>
-                </Card>
+                <CreateVoiceHero
+                    ttsText={ttsText}
+                    onTtsTextChange={setTtsText}
+                    onUseLatestScript={handleUseLatestScript}
+                    onFormatForVoice={handleFormatForVoice}
+                    onInsertTemplate={handleInsertTemplate}
+                    providerControls={providerControls}
+                    recordUploadPanel={recordUploadPanel}
+                />
                 )}
 
                 <RevealSection title="Voice clone" storageKey="va.clone">
@@ -1601,67 +1631,6 @@ export function VoiceAudioPage() {
                 {/* Side-by-side Voice Lab compare — synth the same line across 2-4
                     providers in parallel, rate them, and persist the rating. */}
                 <CompareVoices />
-                {(activeTab === 'all' || activeTab === 'record') && (
-                <Card
-                    title="2. Record / Upload"
-                    collapsible
-                    defaultOpen={false}
-                    tooltip="Bring your own voice — record from the browser mic or upload an MP3/WAV. Saved to your outputs and picked up automatically by Render and Timeline."
-                >
-                    <DropZone
-                        className="space-y-4"
-                        onFiles={(files) => { if (files[0]) void handleUploadFile(files[0]); }}
-                        accept={['audio/*', '.mp3', '.wav', '.webm', '.m4a', '.aac', '.ogg', '.flac']}
-                        multiple={false}
-                        disabled={isUploading}
-                        overlayLabel="Drop an audio file to upload"
-                    >
-                        <p className="text-sm text-gray-200">
-                            Record directly in the browser or upload an audio file. The result is saved to outputs and becomes selectable across Render and Timeline.
-                        </p>
-                        <div className="flex flex-wrap gap-2">
-                            {!isRecording ? (
-                                <Button onClick={handleStartRecording} className="text-xs h-9">
-                                    <Mic size={14} className="mr-2" />
-                                    Start Recording
-                                </Button>
-                            ) : (
-                                <Button onClick={handleStopRecording} variant="danger" className="text-xs h-9">
-                                    Stop Recording
-                                </Button>
-                            )}
-                            <label className="text-xs h-9 px-4 rounded-lg font-medium transition-all duration-200 bg-gray-200 text-gray-800 hover:bg-gray-300 flex items-center gap-2 cursor-pointer">
-                                <Upload size={14} />
-                                Upload Audio
-                                <input
-                                    type="file"
-                                    accept="audio/*,.mp3,.wav,.webm,.m4a,.aac,.ogg,.flac"
-                                    className="hidden"
-                                    onChange={(e) => {
-                                        const file = e.target.files?.[0];
-                                        if (file) handleUploadFile(file);
-                                    }}
-                                    disabled={isUploading}
-                                />
-                            </label>
-                        </div>
-                        <div className="mt-4">
-                            <p className="field-label">Live input</p>
-                            <canvas ref={canvasRef} width={520} height={80} className="w-full rounded-lg border border-white/10 bg-black/30" />
-                        </div>
-                        {currentAudioUrl && (
-                            <div className="mt-3 space-y-2">
-                                <p className="field-label">Latest recording / upload</p>
-                                <audio controls src={currentAudioUrl} className="w-full" />
-                                <p className="text-meta break-all font-mono">{audioPath}</p>
-                            </div>
-                        )}
-                        {recordingDebug && (
-                            <p className="text-meta break-all font-mono">{recordingDebug}</p>
-                        )}
-                    </DropZone>
-                </Card>
-                )}
 
                 <RevealSection title="Audio treatment" storageKey="va.treatment">
                     <p className="text-sm text-gray-200 mb-4">
