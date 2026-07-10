@@ -145,20 +145,7 @@ export function BackgroundLibraryModal<T extends LibraryPickerItem>({
                             return (
                                 <div
                                     key={item.id}
-                                    // aspect-[9/16] gives each tile a real, width-derived height.
-                                    // A percentage-padding spacer looks equivalent but contributes
-                                    // 0 to CSS-grid row sizing, so `align-content` stretched the
-                                    // rows to fill the grid — collapsing a full library into thin
-                                    // strips. aspect-ratio DOES feed track sizing; the media is
-                                    // absolutely positioned (not a flow `h-full` child), which is
-                                    // what avoids the iOS Safari aspect-ratio collapse.
-                                    className={`group relative aspect-[9/16] bg-black rounded-xl overflow-hidden transition-all shadow-lg cursor-pointer ${
-                                        isSelected
-                                            ? 'ring-2 ring-primary-400'
-                                            : disabled
-                                                ? 'ring-1 ring-white/10 hover:ring-amber-400/50'
-                                                : 'hover:ring-2 hover:ring-primary-500'
-                                    }`}
+                                    className="cursor-pointer"
                                     // Tap always goes through — onPick owns the cap (it toasts a
                                     // hint) so users can still tell every clip apart instead of
                                     // fading unselected tiles into an indistinct grey mass.
@@ -167,6 +154,24 @@ export function BackgroundLibraryModal<T extends LibraryPickerItem>({
                                         if (!isMulti) onClose();
                                     }}
                                 >
+                                    {/* The grid item is a plain block; the aspect box lives one
+                                        level in. A grid ITEM's own aspect-ratio (like a %-padding
+                                        spacer) contributes 0 to auto-row track sizing, so the rows
+                                        collapsed and the tall tiles overflowed/overlapped into a
+                                        masonry-strip cascade. As a nested block child, the aspect
+                                        box resolves a real height against the already-sized column
+                                        width, which DOES feed row track sizing. Media stays
+                                        absolutely positioned (not a flow h-full child) to avoid the
+                                        iOS Safari aspect-ratio collapse. */}
+                                    <div
+                                        className={`group relative aspect-[9/16] bg-black rounded-xl overflow-hidden transition-all shadow-lg ${
+                                            isSelected
+                                                ? 'ring-2 ring-primary-400'
+                                                : disabled
+                                                    ? 'ring-1 ring-white/10 hover:ring-amber-400/50'
+                                                    : 'hover:ring-2 hover:ring-primary-500'
+                                        }`}
+                                    >
                                     {/* Full-opacity thumbnails so each background reads as a
                                         distinct image; at cap, unselected tiles stay visible
                                         (slightly dimmed) rather than greying out. */}
@@ -198,6 +203,7 @@ export function BackgroundLibraryModal<T extends LibraryPickerItem>({
                                     )}
                                     <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/80 to-transparent">
                                         <p className="text-[10px] font-mono text-white truncate">ID: {item.id}</p>
+                                    </div>
                                     </div>
                                 </div>
                             );
