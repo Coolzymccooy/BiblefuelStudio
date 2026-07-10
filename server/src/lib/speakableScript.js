@@ -5,6 +5,10 @@ export function cleanCaptionLine(value) {
   let s = String(value || "").replace(/\r/g, "").trim();
   if (!s) return "";
   if (HASHTAG_LINE_RX.test(s)) return "";
+  // Markdown ATX header line ("## Title", "# Hook") — a structural label, not
+  // spoken content. Drop it so TTS never reads the "##" (spoken as "hashtag")
+  // or the bare label word.
+  if (/^#{1,6}\s+/.test(s)) return "";
 
   s = s
     .replace(/[“”]/g, '"')
