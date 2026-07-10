@@ -19,7 +19,7 @@ export function CreateVoiceHero({
 }: CreateVoiceHeroProps) {
   const [showRecord, setShowRecord] = useState(false);
   return (
-    <section className="rounded-bf border border-[rgba(216,184,120,0.28)] bg-bf-card p-4 sm:p-5">
+    <section className="glass rounded-bf p-4 sm:p-5">
       <h2 className="font-serif text-xl text-bf-cream">Create a voice</h2>
       <p className="text-help mt-0.5">Paste a hook, verse, reflection or prayer — then generate, or record your own.</p>
 

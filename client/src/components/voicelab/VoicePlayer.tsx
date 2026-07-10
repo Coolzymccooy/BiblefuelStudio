@@ -39,13 +39,10 @@ export function VoicePlayer({ src, label, kindLabel }: VoicePlayerProps) {
     };
 
     return (
-        <div
-            className="relative overflow-hidden rounded-bf-lg border p-4"
-            style={{
-                borderColor: 'rgba(230,201,138,0.28)',
-                background: 'linear-gradient(155deg,rgba(230,201,138,0.14),rgba(216,184,120,0.03) 55%,transparent)',
-            }}
-        >
+        <div className="glass-float relative overflow-hidden rounded-bf-lg p-4">
+            {/* Neutral frosted surface (glass-float, ~0.86 opaque + blur) so
+                scrolling content can't bleed into the waveform. Gold lives only
+                in the play button + waveform below — an accent, not a wash. */}
             <audio
                 ref={audioRef}
                 src={src}

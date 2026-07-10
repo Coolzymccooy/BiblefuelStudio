@@ -314,6 +314,39 @@
   @apply hover:border-white/15 hover:bg-dark-900/70 hover:shadow-2xl transition-all duration-300;
 }
 
+/* iOS-style warm glass — a brand-tinted frosted MATERIAL (palette unchanged):
+   translucency + backdrop blur + saturation + a thin top light-rim, so content
+   behind reads as a soft frost with depth, never a flat panel.
+   `.glass`       — in-flow panels (reveal sections, hero, cards).
+   `.glass-float` — elements that hover over scrolling content (the sticky
+   now-playing player, popovers): more opaque + stronger blur so nothing
+   underneath collides with what's on top (fixes the freeze-pane bleed). */
+.glass {
+  /* Neutral dark frost matched to the production card surface (bf-card #140f09),
+     NOT a gold wash — no saturate (it amplifies the warm background), neutral
+     white hairline rim. Gold stays an accent (buttons, active chips, waveform). */
+  background: rgba(17, 14, 10, 0.60);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 10px 30px -14px rgba(0, 0, 0, 0.5);
+}
+
+.glass-float {
+  background: rgba(12, 10, 7, 0.86);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 18px 44px -16px rgba(0, 0, 0, 0.72);
+}
+
+/* Respect users who don't want the blur (perf / vestibular) — fall back to a
+   solid tint so panels stay legible. */
+@media (prefers-reduced-transparency: reduce) {
+  .glass { background: #140f09; backdrop-filter: none; -webkit-backdrop-filter: none; }
+  .glass-float { background: #0c0a07; backdrop-filter: none; -webkit-backdrop-filter: none; }
+}
+
 /* Typography Enhancements */
 .neon-text {
   text-shadow: 0 1px 0 rgba(0, 0, 0, 0.6);

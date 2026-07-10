@@ -1619,7 +1619,11 @@ export function VoiceAudioPage() {
                     </div>
                 </RevealSection>
 
-                <RevealSection title="Soundtrack library" storageKey="va.soundtrack">
+                <RevealSection
+                    title="Soundtrack library"
+                    storageKey="va.soundtrack"
+                    info="Use any audio file from outputs as a soundtrack for Render."
+                >
                     <div className="space-y-3">
                         <div className="flex flex-wrap items-center gap-2">
                             <Button
@@ -1631,9 +1635,6 @@ export function VoiceAudioPage() {
                                 <Music size={14} className="mr-2" />
                                 Load Music Library
                             </Button>
-                            <span className="text-[0.8125rem] text-gray-400">
-                                Use any audio file from outputs as a soundtrack for Render.
-                            </span>
                         </div>
 
                         {musicItems.length > 0 ? (
@@ -1982,10 +1983,19 @@ export function VoiceAudioPage() {
                                                 </span>
                                             )}
                                         </p>
-                                        <p className="text-meta font-mono break-all mt-0.5">{item.path}</p>
-                                        <p className="text-meta">
+                                        <p className="text-meta mt-0.5">
                                             {new Date(item.createdAt).toLocaleString()}
                                         </p>
+                                        {/* Raw output path is debug detail — collapse it behind a
+                                            clear toggle so the card reads cleanly. Native <details>
+                                            keeps it accessible with no per-card React state. */}
+                                        <details className="group mt-1">
+                                            <summary className="inline-flex items-center gap-1 text-[0.6875rem] text-content-tertiary hover:text-primary-300 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
+                                                <ChevronDown size={11} className="transition-transform group-open:rotate-180" />
+                                                File path
+                                            </summary>
+                                            <p className="text-meta font-mono break-all mt-1">{item.path}</p>
+                                        </details>
                                     </div>
                                     <div className="flex items-center gap-2">
                                         {isCurrent ? (
