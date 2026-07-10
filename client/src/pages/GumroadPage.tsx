@@ -4,7 +4,7 @@ import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { ScreenHeader } from '../components/ui/ScreenHeader';
-import { api } from '../lib/api';
+import { api, GENERATE_TIMEOUT_MS } from '../lib/api';
 import { useAuth } from '../hooks/useAuth';
 import toast from 'react-hot-toast';
 import { parseFreeDevotionalDays, extractTranscript, type DevotionalDay } from '../lib/gumroadToTimeline';
@@ -87,7 +87,10 @@ export function GumroadPage() {
                 text: narrationText,
                 category: 'devotional',
                 withTimestamps: true,
-            });
+                // Narrating a full devotional day (TTS synthesis) routinely takes
+                // far longer than the 15s default, which surfaced as "timeout of
+                // 15000ms exceeded". Match the Voice & Audio generate timeout.
+            }, undefined, { timeout: GENERATE_TIMEOUT_MS });
             if (!response.ok || !response.data?.file) {
                 toast.error(response.error || 'Narration failed', { id: toastId });
                 return;
