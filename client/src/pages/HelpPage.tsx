@@ -19,12 +19,10 @@ export function HelpPage() {
     return (
         <div className="space-y-12 animate-fade-in max-w-5xl mx-auto pb-20">
             {/* Header */}
-            <div className="relative">
-                <div className="absolute -top-10 -left-10 w-48 h-48 bg-primary-500/10 rounded-full blur-3xl pointer-events-none"></div>
-                <h2 className="text-5xl font-extrabold mb-4 bg-clip-text text-transparent bg-gradient-to-r from-white via-primary-100 to-primary-400">Mastering Biblefuel Studio</h2>
-                <p className="text-content-secondary text-xl max-w-2xl leading-relaxed">
-                    A comprehensive guide to automating your spiritual content creation, from initial seed ideas to final high-definition renders.
-                </p>
+            <div>
+                <div className="bf-eyebrow">Help</div>
+                <h2 className="font-displaySerif text-[30px] leading-[1.08] font-semibold text-bf-cream mt-1.5">The full <em className="italic font-medium text-bf-gold">automation</em> guide.</h2>
+                <p className="text-help mt-2 max-w-[52ch]">From seed idea to final high-definition render — the whole pipeline, explained.</p>
             </div>
 
             {/* Step-by-Step Deep Dive */}

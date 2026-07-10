@@ -8,8 +8,9 @@
        the old #A8B0BC/#8A929E read as washed-out on the near-black UI and made
        users squint. Lifted a clear step so descriptions/meta are comfortable
        while still ranking below pure-white headings. */
-    --content-secondary: #CBD2DC; /* ~82% lum — descriptions, help, subtitles */
-    --content-tertiary:  #ABB3BF; /* ~70% lum — meta, timestamps, counts, hints */
+    /* Quiet-studio warm text system — reads cohesively on the warm near-black. */
+    --content-secondary: #c0b49c; /* descriptions, help, subtitles */
+    --content-tertiary:  #a99f8b; /* meta, timestamps, counts, hints */
     /* Render native controls (select popups, scrollbars, date pickers) in dark
        mode so the OS-drawn <option> list never renders white-on-white. */
     color-scheme: dark;
@@ -33,15 +34,15 @@
   }
 
   body {
-    @apply bg-dark-950 text-gray-200 overflow-x-hidden font-sans;
+    @apply text-gray-200 overflow-x-hidden font-sans;
+    /* Quiet-studio: warm gold-on-near-black wash. */
+    background-color: #0b0906;
     background-image:
-      linear-gradient(180deg, rgba(8, 9, 11, 0.98) 0%, rgba(5, 6, 8, 0.98) 100%),
-      radial-gradient(circle at 15% 10%, rgba(255, 255, 255, 0.04) 0px, transparent 45%),
-      radial-gradient(circle at 85% 15%, rgba(255, 255, 255, 0.03) 0px, transparent 50%),
-      radial-gradient(circle at 50% 100%, rgba(176, 141, 87, 0.08) 0px, transparent 55%);
+      radial-gradient(1200px 700px at 20% -10%, rgba(216, 184, 120, 0.10), transparent 55%),
+      radial-gradient(900px 600px at 110% 110%, rgba(107, 79, 31, 0.16), transparent 55%),
+      linear-gradient(160deg, #161009 0%, #0b0805 60%, #080604 100%);
     background-attachment: fixed;
-    letter-spacing: -0.01em;
-    font-feature-settings: 'cv11', 'ss01', 'ss03';
+    letter-spacing: 0;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     line-height: 1.5;
@@ -89,13 +90,13 @@
 
 @layer components {
 
-  /* Dynamic Glass Card */
+  /* Quiet-studio card: warm surface, faint gold hairline. */
   .card {
-    @apply relative bg-dark-900/60 backdrop-blur-xl border border-white/[0.07] rounded-xl p-5 sm:p-6 shadow-xl transition-all duration-300 overflow-hidden;
+    @apply relative bg-bf-card border border-[rgba(216,184,120,0.12)] rounded-bf p-5 sm:p-6 transition-all duration-300 overflow-hidden;
   }
 
   .card:hover {
-    @apply border-white/[0.12] bg-dark-900/70 shadow-2xl;
+    @apply border-[rgba(216,184,120,0.20)];
   }
 
   .card-glow::before {
@@ -109,28 +110,35 @@
 
   /* Buttons */
   .btn {
-    @apply inline-flex items-center justify-center rounded-xl px-4 py-2.5 text-sm font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 active:scale-95 disabled:pointer-events-none disabled:opacity-50;
+    @apply inline-flex items-center justify-center rounded-xl px-4 py-2.5 text-sm font-medium transition-all duration-200 outline-none focus-visible:ring-2 focus-visible:ring-[rgba(216,184,120,0.55)] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0b0906] active:scale-95 disabled:pointer-events-none disabled:opacity-50;
   }
 
+  /* Gold gradient CTA on ink text — the quiet-studio primary action. */
   .btn-primary {
-    @apply bg-primary-500 text-black shadow-lg shadow-black/30 hover:bg-primary-400 border border-primary-400/40 hover:-translate-y-0.5;
+    @apply text-[#221703] border-none font-semibold hover:-translate-y-0.5;
+    background-image: linear-gradient(180deg, #e9cd8d, #cba85f);
+    box-shadow: 0 14px 28px -10px rgba(216, 184, 120, 0.5);
+  }
+
+  .btn-primary:hover {
+    filter: brightness(1.03);
   }
 
   .btn-secondary {
-    @apply bg-dark-900/60 text-gray-200 border border-white/10 hover:bg-dark-900/80 hover:border-white/20 hover:text-white backdrop-blur-sm;
+    @apply bg-bf-card text-[#cdbfa6] border border-[rgba(216,184,120,0.16)] hover:bg-bf-card2 hover:border-[rgba(216,184,120,0.30)] hover:text-bf-cream;
   }
 
   .btn-danger {
     @apply bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 hover:text-red-300 hover:border-red-500/30;
   }
 
-  /* Inputs */
+  /* Inputs — warm ink field with a gold hairline. */
   .input {
-    @apply block w-full rounded-lg border border-white/[0.08] bg-dark-900/70 px-3.5 py-2 text-[0.9375rem] text-gray-100 placeholder-gray-500 shadow-sm focus:border-primary-500/50 focus:bg-dark-900/90 focus:ring-2 focus:ring-primary-500/15 transition-all duration-150 outline-none backdrop-blur-sm;
+    @apply block w-full rounded-[13px] border border-[rgba(216,184,120,0.14)] bg-bf-input px-3.5 py-2.5 text-[0.9375rem] text-bf-cream placeholder-[#8a7f6b] focus:border-[rgba(216,184,120,0.4)] focus:ring-2 focus:ring-[rgba(216,184,120,0.14)] transition-all duration-150 outline-none;
   }
 
   .input:hover:not(:focus):not(:disabled) {
-    @apply border-white/[0.14];
+    @apply border-[rgba(216,184,120,0.24)];
   }
 
   /* Field primitives - the building blocks for forms */
@@ -171,6 +179,12 @@
   .text-caption {
     @apply text-[0.6875rem] uppercase text-content-tertiary;
     letter-spacing: 0.04em;
+  }
+
+  /* Quiet-studio eyebrow: gold, uppercase, wide tracking — the section marker. */
+  .bf-eyebrow {
+    @apply text-[10px] font-semibold uppercase text-bf-goldDim;
+    letter-spacing: 0.24em;
   }
 
   /* Custom Scrollbar */
@@ -300,6 +314,39 @@
   @apply hover:border-white/15 hover:bg-dark-900/70 hover:shadow-2xl transition-all duration-300;
 }
 
+/* iOS-style warm glass — a brand-tinted frosted MATERIAL (palette unchanged):
+   translucency + backdrop blur + saturation + a thin top light-rim, so content
+   behind reads as a soft frost with depth, never a flat panel.
+   `.glass`       — in-flow panels (reveal sections, hero, cards).
+   `.glass-float` — elements that hover over scrolling content (the sticky
+   now-playing player, popovers): more opaque + stronger blur so nothing
+   underneath collides with what's on top (fixes the freeze-pane bleed). */
+.glass {
+  /* Neutral dark frost matched to the production card surface (bf-card #140f09),
+     NOT a gold wash — no saturate (it amplifies the warm background), neutral
+     white hairline rim. Gold stays an accent (buttons, active chips, waveform). */
+  background: rgba(17, 14, 10, 0.60);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 10px 30px -14px rgba(0, 0, 0, 0.5);
+}
+
+.glass-float {
+  background: rgba(12, 10, 7, 0.86);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 18px 44px -16px rgba(0, 0, 0, 0.72);
+}
+
+/* Respect users who don't want the blur (perf / vestibular) — fall back to a
+   solid tint so panels stay legible. */
+@media (prefers-reduced-transparency: reduce) {
+  .glass { background: #140f09; backdrop-filter: none; -webkit-backdrop-filter: none; }
+  .glass-float { background: #0c0a07; backdrop-filter: none; -webkit-backdrop-filter: none; }
+}
+
 /* Typography Enhancements */
 .neon-text {
   text-shadow: 0 1px 0 rgba(0, 0, 0, 0.6);
@@ -313,7 +360,7 @@
 input:-webkit-autofill,
 input:-webkit-autofill:hover,
 input:-webkit-autofill:focus {
-  -webkit-text-fill-color: white;
-  -webkit-box-shadow: 0 0 0px 1000px rgba(9, 10, 12, 0.98) inset;
+  -webkit-text-fill-color: #f4ecdc;
+  -webkit-box-shadow: 0 0 0px 1000px #161009 inset;
   transition: background-color 5000s ease-in-out 0s;
 }

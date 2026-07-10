@@ -9,8 +9,12 @@ import { Field } from '../components/ui/Field';
 import { InfoTooltip } from '../components/ui/InfoTooltip';
 import { DropZone } from '../components/ui/DropZone';
 import { GuideSteps } from '../components/ui/GuideSteps';
+import { ScreenHeader } from '../components/ui/ScreenHeader';
 import { AnimationPicker } from '../components/voicelab/AnimationPicker';
 import { CompareVoices } from '../components/voicelab/CompareVoices';
+import { VoicePlayer } from '../components/voicelab/VoicePlayer';
+import { RevealSection } from '../components/voice-audio/RevealSection';
+import { CreateVoiceHero } from '../components/voice-audio/CreateVoiceHero';
 import { api, GENERATE_TIMEOUT_MS, UPLOAD_TIMEOUT_MS } from '../lib/api';
 import toast from 'react-hot-toast';
 import { loadJson, pushUnique, saveJson, STORAGE_KEYS, toOutputUrl } from '../lib/storage';
@@ -186,7 +190,6 @@ export function VoiceAudioPage() {
     const [cloneHasRights, setCloneHasRights] = useState(false);
     const [cloneNoImpersonation, setCloneNoImpersonation] = useState(false);
     const [cloneTermsAccepted, setCloneTermsAccepted] = useState(false);
-    const [activeTab, setActiveTab] = useState<'all' | 'voice' | 'record' | 'treatment' | 'soundtrack'>('all');
     const [musicItems, setMusicItems] = useState<any[]>([]);
     const [isLoadingMusic, setIsLoadingMusic] = useState(false);
 
@@ -751,6 +754,13 @@ export function VoiceAudioPage() {
         const template = `Hook line here...\n\nVerse (Reference)\n\nShort reflection/prayer...\n\nCTA (e.g. Save this + follow for more)`;
         setTtsText(template);
     };
+
+    const handleFormatForVoice = () => {
+        const next = cleanSpeakableText(ttsText);
+        setTtsText(next);
+        toast.success('Formatted for voice');
+    };
+
     const applyPreset = (presetItem: VoicePreset) => {
         setVoiceId(presetItem.voiceId || '');
         setStability(presetItem.stability);
@@ -924,6 +934,11 @@ export function VoiceAudioPage() {
     };
 
     const currentAudioUrl = toOutputUrl(audioPath, api.mediaBaseUrl);
+    const currentTrack = audioHistory.find((a) => a.path === audioPath);
+    const currentTrackLabel = currentTrack?.label || 'Current audio track';
+    const currentTrackKind = currentTrack
+        ? ({ tts: 'Generated speech', processed: 'Treated audio', upload: 'Uploaded file', record: 'Recording' } as const)[currentTrack.kind]
+        : undefined;
 
     // Audio treatment controls
     const [denoise, setDenoise] = useState(AUDIO_PRESET_DEFAULTS.clean_voice.denoise);
@@ -975,9 +990,342 @@ export function VoiceAudioPage() {
         };
     }, []);
 
+    const providerControls = (
+        <>
+            {voiceDefaults.enabled && (
+                <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 flex flex-wrap items-center gap-3 text-xs">
+                    <Wand2 size={14} className="text-emerald-300 shrink-0" />
+                    <span className="text-emerald-200">
+                        Voice Synthesis defaults active —{' '}
+                        <span className="font-semibold">{voiceDefaults.category}</span>
+                        {voiceDefaults.providerOverride ? ` · ${voiceDefaults.providerOverride}` : ' · auto-provider'}
+                        {voiceDefaults.cinematicMode ? ' · cinematic timings' : ''}.
+                    </span>
+                    <Link to="/app/settings" className="ml-auto text-[0.75rem] text-emerald-300 hover:text-emerald-200 underline">
+                        Edit in Settings
+                    </Link>
+                </div>
+            )}
+            <div>
+                <label className="field-label inline-flex items-center gap-1.5">
+                    <span>Provider</span>
+                    <InfoTooltip
+                        width="lg"
+                        content={
+                            provider === 'edge'
+                                ? 'Free Microsoft neural voices via the Edge "Read Aloud" service. ~400 voices, no key required.'
+                                : provider === 'chatterbox'
+                                    ? 'Self-hosted open-source TTS (Resemble AI). Calls a Chatterbox HTTP bridge — free, supports voice cloning via a reference WAV. Slower than ElevenLabs but expressive.'
+                                    : provider === 'azure'
+                                        ? 'Microsoft Azure Speech — commercial-safe, returns reliable word-level timestamps (primary kinetic-caption engine). Voice id is an Azure voice name (e.g. en-US-GuyNeural).'
+                                        : provider === 'fish'
+                                            ? 'Fish Audio — premium multilingual cloud voices with cloning. Voice id is a Fish reference_id. Counts against your Fish credits.'
+                                            : 'Premium voices + cloning. Requires ELEVENLABS_API_KEY and counts against your monthly character quota.'
+                        }
+                    />
+                </label>
+                <div className="inline-flex rounded-lg border border-white/10 overflow-hidden mt-0">
+                    <button
+                        type="button"
+                        onClick={() => setProvider('elevenlabs')}
+                        disabled={!elevenlabsAvailable}
+                        className={`px-3 py-1.5 text-xs font-medium transition ${
+                            provider === 'elevenlabs'
+                                ? 'bg-primary-500 text-white'
+                                : 'bg-transparent text-gray-300 hover:bg-white/5'
+                        } disabled:opacity-40 disabled:cursor-not-allowed`}
+                    >
+                        ElevenLabs <span className="opacity-60">· premium</span>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setProvider('azure')}
+                        disabled={!azureAvailable}
+                        title={azureAvailable
+                            ? ''
+                            : (azureReason || 'AZURE_SPEECH_KEY / AZURE_SPEECH_REGION not set — see docs/AZURE_SPEECH_SETUP.md')}
+                        className={`px-3 py-1.5 text-xs font-medium transition border-l border-white/10 ${
+                            provider === 'azure'
+                                ? 'bg-primary-500 text-white'
+                                : 'bg-transparent text-gray-300 hover:bg-white/5'
+                        } disabled:opacity-40 disabled:cursor-not-allowed`}
+                    >
+                        Azure <span className="opacity-60">· word-sync</span>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setProvider('fish')}
+                        disabled={!fishAvailable}
+                        title={fishAvailable
+                            ? ''
+                            : (fishReason || 'FISH_API_KEY not set — see docs/FISH_AUDIO_SETUP.md')}
+                        className={`px-3 py-1.5 text-xs font-medium transition border-l border-white/10 ${
+                            provider === 'fish'
+                                ? 'bg-primary-500 text-white'
+                                : 'bg-transparent text-gray-300 hover:bg-white/5'
+                        } disabled:opacity-40 disabled:cursor-not-allowed`}
+                    >
+                        Fish <span className="opacity-60">· premium</span>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setProvider('chatterbox')}
+                        disabled={!chatterboxAvailable}
+                        title={chatterboxAvailable ? '' : 'CHATTERBOX_URL not set — point it at a Chatterbox HTTP server (self-hosted bridge, e.g. https://chatterbox.tiwaton.co.uk).'}
+                        className={`px-3 py-1.5 text-xs font-medium transition border-l border-white/10 ${
+                            provider === 'chatterbox'
+                                ? 'bg-emerald-500/15 text-emerald-200'
+                                : 'text-gray-300 hover:bg-white/5'
+                        } disabled:opacity-40 disabled:cursor-not-allowed`}
+                    >
+                        Chatterbox <span className="opacity-60">· self-hosted</span>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setProvider('edge')}
+                        disabled={!edgeAvailable}
+                        className={`px-3 py-1.5 text-xs font-medium transition border-l border-white/10 ${
+                            provider === 'edge'
+                                ? 'bg-primary-500 text-white'
+                                : 'bg-transparent text-gray-300 hover:bg-white/5'
+                        } disabled:opacity-40 disabled:cursor-not-allowed`}
+                    >
+                        Edge-TTS <span className="opacity-60">· free</span>
+                    </button>
+                </div>
+                {(!azureAvailable && azureReason) || (!fishAvailable && fishReason) ? (
+                    <ul className="mt-2 space-y-1 text-[0.6875rem] text-amber-300/90">
+                        {!azureAvailable && azureReason && (
+                            <li><span className="font-semibold">Azure disabled:</span> {azureReason}</li>
+                        )}
+                        {!fishAvailable && fishReason && (
+                            <li><span className="font-semibold">Fish disabled:</span> {fishReason}</li>
+                        )}
+                    </ul>
+                ) : null}
+            </div>
+            {provider === 'chatterbox' ? (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <Field
+                        label="Reference voice"
+                        badge="Optional"
+                        tooltip="Absolute path to a WAV file on the Chatterbox host. Leave empty to use the model's default voice. The path is resolved by the Chatterbox server, not Biblefuel."
+                    >
+                        <Input
+                            value={chatterboxAudioPrompt}
+                            onChange={(e) => setChatterboxAudioPrompt(e.target.value)}
+                            placeholder="/path/to/reference.wav"
+                        />
+                    </Field>
+                    <Field
+                        label={`Exaggeration (${chatterboxStyle})`}
+                        tooltip="Controls expressive intensity. Higher values yield more dramatic delivery; lower values stay closer to neutral."
+                    >
+                        <input
+                            type="range"
+                            min="0"
+                            max="1"
+                            step="0.05"
+                            value={chatterboxStyle}
+                            onChange={(e) => setChatterboxStyle(Number(e.target.value))}
+                            className="w-full accent-primary-500"
+                        />
+                    </Field>
+                    <Field
+                        label={`CFG weight (${chatterboxCfg})`}
+                        tooltip="Classifier-free guidance weight. Lower stays more faithful to the reference voice; higher gives the model more creative freedom."
+                    >
+                        <input
+                            type="range"
+                            min="0"
+                            max="1"
+                            step="0.05"
+                            value={chatterboxCfg}
+                            onChange={(e) => setChatterboxCfg(Number(e.target.value))}
+                            className="w-full accent-primary-500"
+                        />
+                    </Field>
+                </div>
+            ) : (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <Field
+                        label="Voice ID"
+                        badge="Optional"
+                        tooltip="Paste a voice ID or use Load Voices below to browse. Leave empty for the server default voice."
+                    >
+                        <Input
+                            value={provider === 'edge' ? edgeVoiceId : voiceId}
+                            onChange={(e) =>
+                                provider === 'edge'
+                                    ? setEdgeVoiceId(e.target.value)
+                                    : setVoiceId(e.target.value)
+                            }
+                            placeholder={
+                                provider === 'edge'
+                                    ? 'e.g. en-US-AriaNeural'
+                                    : 'Leave empty to use default voice'
+                            }
+                        />
+                    </Field>
+                    <Field
+                        label={`Stability (${stability})`}
+                        tooltip={provider === 'edge'
+                            ? 'ElevenLabs-only — not used by Edge TTS.'
+                            : 'How consistent the voice is between generations. Higher = more uniform; lower = more variation between takes.'}
+                    >
+                        <input
+                            type="range"
+                            min="0"
+                            max="1"
+                            step="0.05"
+                            value={stability}
+                            onChange={(e) => setStability(Number(e.target.value))}
+                            disabled={provider === 'edge'}
+                            className="w-full accent-primary-500 disabled:opacity-40"
+                        />
+                    </Field>
+                    <Field
+                        label={`Similarity Boost (${similarity})`}
+                        tooltip={provider === 'edge'
+                            ? 'ElevenLabs-only — not used by Edge TTS.'
+                            : 'How closely the output matches the cloned voice. Higher = more faithful; may amplify recording artifacts.'}
+                    >
+                        <input
+                            type="range"
+                            min="0"
+                            max="1"
+                            step="0.05"
+                            value={similarity}
+                            onChange={(e) => setSimilarity(Number(e.target.value))}
+                            disabled={provider === 'edge'}
+                            className="w-full accent-primary-500 disabled:opacity-40"
+                        />
+                    </Field>
+                </div>
+            )}
+            <div className="flex items-center gap-2">
+            <Button variant="secondary" className="text-xs h-8" onClick={loadVoices} isLoading={isLoadingVoices} disabled={!ttsEnabled}>
+                <RefreshCw size={14} className="mr-2" />
+                Load Voices
+            </Button>
+                {voices.length > 0 && (
+                    <Select
+                        value={provider === 'edge' ? edgeVoiceId : voiceId}
+                        onChange={(e) =>
+                            provider === 'edge'
+                                ? setEdgeVoiceId(e.target.value)
+                                : setVoiceId(e.target.value)
+                        }
+                    >
+                        <option value="">Select a voice...</option>
+                        {voices.map((v) => (
+                            <option key={v.voice_id} value={v.voice_id}>
+                                {v.name}
+                            </option>
+                        ))}
+                    </Select>
+                )}
+            </div>
+            <Button onClick={handleTTS} isLoading={isProcessing} disabled={!ttsEnabled}>
+                Generate ({
+                    provider === 'edge' ? 'Edge-TTS'
+                        : provider === 'chatterbox' ? 'Chatterbox'
+                            : provider === 'azure' ? 'Azure'
+                                : provider === 'fish' ? 'Fish'
+                                    : 'ElevenLabs'
+                })
+            </Button>
+            {isProcessing && provider === 'chatterbox' && ttsStartedAt && (() => {
+                const elapsedSec = Math.max(0, Math.floor((Date.now() - ttsStartedAt) / 1000));
+                const charsPerSec = 8;
+                const estimatedSec = Math.max(5, Math.ceil(ttsText.length / charsPerSec));
+                const progress = Math.min(100, Math.round((elapsedSec / estimatedSec) * 100));
+                const overrun = elapsedSec > estimatedSec;
+                void elapsedTick;
+                return (
+                    <div className="mt-2 text-help">
+                        <div className="flex items-center justify-between mb-1">
+                            <span>
+                                {overrun
+                                    ? `Still working — ${elapsedSec}s elapsed (estimate was ~${estimatedSec}s)`
+                                    : `Generating — ~${Math.max(0, estimatedSec - elapsedSec)}s left (${elapsedSec}/${estimatedSec}s)`}
+                            </span>
+                        </div>
+                        <div className="w-full h-1 bg-white/10 rounded overflow-hidden">
+                            <div
+                                className={`h-full transition-all duration-1000 ${overrun ? 'bg-amber-400/70' : 'bg-primary-500/70'}`}
+                                style={{ width: `${progress}%` }}
+                            />
+                        </div>
+                    </div>
+                );
+            })()}
+            {!ttsEnabled && (
+                <p className="text-xs text-yellow-600">
+                    TTS disabled. Set `ELEVENLABS_API_KEY` or `EDGE_TTS_ENABLED=true` in `server/.env`.
+                </p>
+            )}
+        </>
+    );
+
+    const recordUploadPanel = (
+        <DropZone
+            className="space-y-4"
+            onFiles={(files) => { if (files[0]) void handleUploadFile(files[0]); }}
+            accept={['audio/*', '.mp3', '.wav', '.webm', '.m4a', '.aac', '.ogg', '.flac']}
+            multiple={false}
+            disabled={isUploading}
+            overlayLabel="Drop an audio file to upload"
+        >
+            <p className="text-sm text-gray-200">
+                Record directly in the browser or upload an audio file. The result is saved to outputs and becomes selectable across Render and Timeline.
+            </p>
+            <div className="flex flex-wrap gap-2">
+                {!isRecording ? (
+                    <Button onClick={handleStartRecording} className="text-xs h-9">
+                        <Mic size={14} className="mr-2" />
+                        Start Recording
+                    </Button>
+                ) : (
+                    <Button onClick={handleStopRecording} variant="danger" className="text-xs h-9">
+                        Stop Recording
+                    </Button>
+                )}
+                <label className="text-xs h-9 px-4 rounded-lg font-medium transition-all duration-200 bg-gray-200 text-gray-800 hover:bg-gray-300 flex items-center gap-2 cursor-pointer">
+                    <Upload size={14} />
+                    Upload Audio
+                    <input
+                        type="file"
+                        accept="audio/*,.mp3,.wav,.webm,.m4a,.aac,.ogg,.flac"
+                        className="hidden"
+                        onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) handleUploadFile(file);
+                        }}
+                        disabled={isUploading}
+                    />
+                </label>
+            </div>
+            <div className="mt-4">
+                <p className="field-label">Live input</p>
+                <canvas ref={canvasRef} width={520} height={80} className="w-full rounded-lg border border-white/10 bg-black/30" />
+            </div>
+            {currentAudioUrl && (
+                <div className="mt-3 space-y-2">
+                    <p className="field-label">Latest recording / upload</p>
+                    <audio controls src={currentAudioUrl} className="w-full" />
+                    <p className="text-meta break-all font-mono">{audioPath}</p>
+                </div>
+            )}
+            {recordingDebug && (
+                <p className="text-meta break-all font-mono">{recordingDebug}</p>
+            )}
+        </DropZone>
+    );
+
     return (
         <div>
-            <h2 className="text-2xl font-bold mb-4">Voice & Audio</h2>
+            <ScreenHeader eyebrow="Studio" title={<>Give it a <em>voice</em>.</>} className="mb-5" />
 
             <div className="mb-6">
                 <GuideSteps
@@ -1003,669 +1351,28 @@ export function VoiceAudioPage() {
             </div>
 
             <div className="space-y-6">
-                <div className="flex flex-wrap gap-2">
-                    {[
-                        { id: 'all', label: 'All' },
-                        { id: 'voice', label: 'Voice' },
-                        { id: 'record', label: 'Record/Upload' },
-                        { id: 'treatment', label: 'Audio Treatment' },
-                        { id: 'soundtrack', label: 'Soundtrack' },
-                    ].map((tab) => (
-                        <Button
-                            key={tab.id}
-                            variant={activeTab === tab.id ? 'primary' : 'secondary'}
-                            className="text-xs h-8"
-                            onClick={() => setActiveTab(tab.id as any)}
-                        >
-                            {tab.label}
-                        </Button>
-                    ))}
-                </div>
-                {(activeTab === 'all' || activeTab === 'voice') && (
-                <Card title="1. TTS (voice generation)">
-                    <div className="space-y-4">
-                        <Field
-                            label="Text for voice"
-                            tooltip="Paste any combination of hook, verse, short reflection or prayer, and CTA. Keep it under about 6 short lines for the best caption rhythm."
-                        >
-                            <Textarea
-                                value={ttsText}
-                                onChange={(e) => setTtsText(e.target.value)}
-                                placeholder="Paste hook + verse + reflection"
-                                className="min-h-[180px]"
-                            />
-                            <div className="mt-2 flex flex-wrap gap-2">
-                                <Button onClick={handleUseLatestScript} variant="secondary" className="text-xs h-8">
-                                    <Wand2 size={14} className="mr-2" />
-                                    Use Latest Script
-                                </Button>
-                                <Button onClick={() => { const next = cleanSpeakableText(ttsText); setTtsText(next); toast.success('Formatted for voice'); }} variant="secondary" className="text-xs h-8">
-                                    Format for Voice
-                                </Button>
-                                <Button onClick={handleInsertTemplate} variant="secondary" className="text-xs h-8">
-                                    <Clipboard size={14} className="mr-2" />
-                                    Insert Template
-                                </Button>
-                            </div>
-                        </Field>
-                        {voiceDefaults.enabled && (
-                            <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 flex flex-wrap items-center gap-3 text-xs">
-                                <Wand2 size={14} className="text-emerald-300 shrink-0" />
-                                <span className="text-emerald-200">
-                                    Voice Synthesis defaults active —{' '}
-                                    <span className="font-semibold">{voiceDefaults.category}</span>
-                                    {voiceDefaults.providerOverride ? ` · ${voiceDefaults.providerOverride}` : ' · auto-provider'}
-                                    {voiceDefaults.cinematicMode ? ' · cinematic timings' : ''}.
-                                </span>
-                                <Link to="/app/settings" className="ml-auto text-[0.75rem] text-emerald-300 hover:text-emerald-200 underline">
-                                    Edit in Settings
-                                </Link>
-                            </div>
-                        )}
-                        <div>
-                            <label className="field-label inline-flex items-center gap-1.5">
-                                <span>Provider</span>
-                                <InfoTooltip
-                                    width="lg"
-                                    content={
-                                        provider === 'edge'
-                                            ? 'Free Microsoft neural voices via the Edge "Read Aloud" service. ~400 voices, no key required.'
-                                            : provider === 'chatterbox'
-                                                ? 'Self-hosted open-source TTS (Resemble AI). Calls a Chatterbox HTTP bridge — free, supports voice cloning via a reference WAV. Slower than ElevenLabs but expressive.'
-                                                : provider === 'azure'
-                                                    ? 'Microsoft Azure Speech — commercial-safe, returns reliable word-level timestamps (primary kinetic-caption engine). Voice id is an Azure voice name (e.g. en-US-GuyNeural).'
-                                                    : provider === 'fish'
-                                                        ? 'Fish Audio — premium multilingual cloud voices with cloning. Voice id is a Fish reference_id. Counts against your Fish credits.'
-                                                        : 'Premium voices + cloning. Requires ELEVENLABS_API_KEY and counts against your monthly character quota.'
-                                    }
-                                />
-                            </label>
-                            <div className="inline-flex rounded-lg border border-white/10 overflow-hidden mt-0">
-                                <button
-                                    type="button"
-                                    onClick={() => setProvider('elevenlabs')}
-                                    disabled={!elevenlabsAvailable}
-                                    className={`px-3 py-1.5 text-xs font-medium transition ${
-                                        provider === 'elevenlabs'
-                                            ? 'bg-primary-500 text-white'
-                                            : 'bg-transparent text-gray-300 hover:bg-white/5'
-                                    } disabled:opacity-40 disabled:cursor-not-allowed`}
-                                >
-                                    ElevenLabs <span className="opacity-60">· premium</span>
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setProvider('azure')}
-                                    disabled={!azureAvailable}
-                                    title={azureAvailable
-                                        ? ''
-                                        : (azureReason || 'AZURE_SPEECH_KEY / AZURE_SPEECH_REGION not set — see docs/AZURE_SPEECH_SETUP.md')}
-                                    className={`px-3 py-1.5 text-xs font-medium transition border-l border-white/10 ${
-                                        provider === 'azure'
-                                            ? 'bg-primary-500 text-white'
-                                            : 'bg-transparent text-gray-300 hover:bg-white/5'
-                                    } disabled:opacity-40 disabled:cursor-not-allowed`}
-                                >
-                                    Azure <span className="opacity-60">· word-sync</span>
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setProvider('fish')}
-                                    disabled={!fishAvailable}
-                                    title={fishAvailable
-                                        ? ''
-                                        : (fishReason || 'FISH_API_KEY not set — see docs/FISH_AUDIO_SETUP.md')}
-                                    className={`px-3 py-1.5 text-xs font-medium transition border-l border-white/10 ${
-                                        provider === 'fish'
-                                            ? 'bg-primary-500 text-white'
-                                            : 'bg-transparent text-gray-300 hover:bg-white/5'
-                                    } disabled:opacity-40 disabled:cursor-not-allowed`}
-                                >
-                                    Fish <span className="opacity-60">· premium</span>
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setProvider('chatterbox')}
-                                    disabled={!chatterboxAvailable}
-                                    title={chatterboxAvailable ? '' : 'CHATTERBOX_URL not set — point it at a Chatterbox HTTP server (self-hosted bridge, e.g. https://chatterbox.tiwaton.co.uk).'}
-                                    className={`px-3 py-1.5 text-xs font-medium transition border-l border-white/10 ${
-                                        provider === 'chatterbox'
-                                            ? 'bg-emerald-500/15 text-emerald-200'
-                                            : 'text-gray-300 hover:bg-white/5'
-                                    } disabled:opacity-40 disabled:cursor-not-allowed`}
-                                >
-                                    Chatterbox <span className="opacity-60">· self-hosted</span>
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setProvider('edge')}
-                                    disabled={!edgeAvailable}
-                                    className={`px-3 py-1.5 text-xs font-medium transition border-l border-white/10 ${
-                                        provider === 'edge'
-                                            ? 'bg-primary-500 text-white'
-                                            : 'bg-transparent text-gray-300 hover:bg-white/5'
-                                    } disabled:opacity-40 disabled:cursor-not-allowed`}
-                                >
-                                    Edge-TTS <span className="opacity-60">· free</span>
-                                </button>
-                            </div>
-                            {/* Touch-device friendly diagnostic: surface the
-                                reason for any greyed-out provider so users
-                                without hover can still see what's missing.
-                                Only renders when a provider is unavailable
-                                AND the server returned a reason. */}
-                            {(!azureAvailable && azureReason) || (!fishAvailable && fishReason) ? (
-                                <ul className="mt-2 space-y-1 text-[0.6875rem] text-amber-300/90">
-                                    {!azureAvailable && azureReason && (
-                                        <li><span className="font-semibold">Azure disabled:</span> {azureReason}</li>
-                                    )}
-                                    {!fishAvailable && fishReason && (
-                                        <li><span className="font-semibold">Fish disabled:</span> {fishReason}</li>
-                                    )}
-                                </ul>
-                            ) : null}
-                        </div>
-                        {provider === 'chatterbox' ? (
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                <Field
-                                    label="Reference voice"
-                                    badge="Optional"
-                                    tooltip="Absolute path to a WAV file on the Chatterbox host. Leave empty to use the model's default voice. The path is resolved by the Chatterbox server, not Biblefuel."
-                                >
-                                    <Input
-                                        value={chatterboxAudioPrompt}
-                                        onChange={(e) => setChatterboxAudioPrompt(e.target.value)}
-                                        placeholder="/path/to/reference.wav"
-                                    />
-                                </Field>
-                                <Field
-                                    label={`Exaggeration (${chatterboxStyle})`}
-                                    tooltip="Controls expressive intensity. Higher values yield more dramatic delivery; lower values stay closer to neutral."
-                                >
-                                    <input
-                                        type="range"
-                                        min="0"
-                                        max="1"
-                                        step="0.05"
-                                        value={chatterboxStyle}
-                                        onChange={(e) => setChatterboxStyle(Number(e.target.value))}
-                                        className="w-full accent-primary-500"
-                                    />
-                                </Field>
-                                <Field
-                                    label={`CFG weight (${chatterboxCfg})`}
-                                    tooltip="Classifier-free guidance weight. Lower stays more faithful to the reference voice; higher gives the model more creative freedom."
-                                >
-                                    <input
-                                        type="range"
-                                        min="0"
-                                        max="1"
-                                        step="0.05"
-                                        value={chatterboxCfg}
-                                        onChange={(e) => setChatterboxCfg(Number(e.target.value))}
-                                        className="w-full accent-primary-500"
-                                    />
-                                </Field>
-                            </div>
-                        ) : (
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                <Field
-                                    label="Voice ID"
-                                    badge="Optional"
-                                    tooltip="Paste a voice ID or use Load Voices below to browse. Leave empty for the server default voice."
-                                >
-                                    <Input
-                                        value={provider === 'edge' ? edgeVoiceId : voiceId}
-                                        onChange={(e) =>
-                                            provider === 'edge'
-                                                ? setEdgeVoiceId(e.target.value)
-                                                : setVoiceId(e.target.value)
-                                        }
-                                        placeholder={
-                                            provider === 'edge'
-                                                ? 'e.g. en-US-AriaNeural'
-                                                : 'Leave empty to use default voice'
-                                        }
-                                    />
-                                </Field>
-                                <Field
-                                    label={`Stability (${stability})`}
-                                    tooltip={provider === 'edge'
-                                        ? 'ElevenLabs-only — not used by Edge TTS.'
-                                        : 'How consistent the voice is between generations. Higher = more uniform; lower = more variation between takes.'}
-                                >
-                                    <input
-                                        type="range"
-                                        min="0"
-                                        max="1"
-                                        step="0.05"
-                                        value={stability}
-                                        onChange={(e) => setStability(Number(e.target.value))}
-                                        disabled={provider === 'edge'}
-                                        className="w-full accent-primary-500 disabled:opacity-40"
-                                    />
-                                </Field>
-                                <Field
-                                    label={`Similarity Boost (${similarity})`}
-                                    tooltip={provider === 'edge'
-                                        ? 'ElevenLabs-only — not used by Edge TTS.'
-                                        : 'How closely the output matches the cloned voice. Higher = more faithful; may amplify recording artifacts.'}
-                                >
-                                    <input
-                                        type="range"
-                                        min="0"
-                                        max="1"
-                                        step="0.05"
-                                        value={similarity}
-                                        onChange={(e) => setSimilarity(Number(e.target.value))}
-                                        disabled={provider === 'edge'}
-                                        className="w-full accent-primary-500 disabled:opacity-40"
-                                    />
-                                </Field>
-                            </div>
-                        )}
-                        <div className="flex items-center gap-2">
-                        <Button variant="secondary" className="text-xs h-8" onClick={loadVoices} isLoading={isLoadingVoices} disabled={!ttsEnabled}>
-                            <RefreshCw size={14} className="mr-2" />
-                            Load Voices
-                        </Button>
-                            {voices.length > 0 && (
-                                <Select
-                                    value={provider === 'edge' ? edgeVoiceId : voiceId}
-                                    onChange={(e) =>
-                                        provider === 'edge'
-                                            ? setEdgeVoiceId(e.target.value)
-                                            : setVoiceId(e.target.value)
-                                    }
-                                >
-                                    <option value="">Select a voice...</option>
-                                    {voices.map((v) => (
-                                        <option key={v.voice_id} value={v.voice_id}>
-                                            {v.name}
-                                        </option>
-                                    ))}
-                                </Select>
-                            )}
-                        </div>
-                        <Button onClick={handleTTS} isLoading={isProcessing} disabled={!ttsEnabled}>
-                            Generate ({
-                                provider === 'edge' ? 'Edge-TTS'
-                                    : provider === 'chatterbox' ? 'Chatterbox'
-                                        : provider === 'azure' ? 'Azure'
-                                            : provider === 'fish' ? 'Fish'
-                                                : 'ElevenLabs'
-                            })
-                        </Button>
-                        {/* Chatterbox progress indicator. Local inference can
-                            take 10-90s depending on the bridge's hardware, and
-                            the static spinner makes the UI feel stuck. Estimate
-                            from text length at ~8 chars/sec which lines up with
-                            CPU-only inference on the persona-overseer bridge;
-                            the real-time elapsed counter is what reassures the
-                            user that something is happening even when our
-                            estimate is wrong.
-                            We do NOT show this for Edge/ElevenLabs because they
-                            complete in 1-3s and the indicator would flash and
-                            disappear, which feels worse than no indicator. */}
-                        {isProcessing && provider === 'chatterbox' && ttsStartedAt && (() => {
-                            const elapsedSec = Math.max(0, Math.floor((Date.now() - ttsStartedAt) / 1000));
-                            const charsPerSec = 8;
-                            const estimatedSec = Math.max(5, Math.ceil(ttsText.length / charsPerSec));
-                            const progress = Math.min(100, Math.round((elapsedSec / estimatedSec) * 100));
-                            const overrun = elapsedSec > estimatedSec;
-                            // Keep referencing elapsedTick so the closure
-                            // re-evaluates each second even though we don't
-                            // read it directly.
-                            void elapsedTick;
-                            return (
-                                <div className="mt-2 text-help">
-                                    <div className="flex items-center justify-between mb-1">
-                                        <span>
-                                            {overrun
-                                                ? `Still working — ${elapsedSec}s elapsed (estimate was ~${estimatedSec}s)`
-                                                : `Generating — ~${Math.max(0, estimatedSec - elapsedSec)}s left (${elapsedSec}/${estimatedSec}s)`}
-                                        </span>
-                                    </div>
-                                    <div className="w-full h-1 bg-white/10 rounded overflow-hidden">
-                                        <div
-                                            className={`h-full transition-all duration-1000 ${overrun ? 'bg-amber-400/70' : 'bg-primary-500/70'}`}
-                                            style={{ width: `${progress}%` }}
-                                        />
-                                    </div>
-                                </div>
-                            );
-                        })()}
-                        {!ttsEnabled && (
-                            <p className="text-xs text-yellow-600">
-                                TTS disabled. Set `ELEVENLABS_API_KEY` or `EDGE_TTS_ENABLED=true` in `server/.env`.
-                            </p>
-                        )}
+                {/* Sticky now-playing player — pins under the app header (above the mobile
+                    nav) so preview + "Use in Render" stay reachable while scrolling. z-20
+                    keeps it under the app shell header/nav (z-30+) but over page content. */}
+                {currentAudioUrl && (
+                    <div className="sticky top-2 z-20 -mx-1 px-1">
+                        <VoicePlayer src={currentAudioUrl} label={currentTrackLabel} kindLabel={currentTrackKind} />
                     </div>
-                </Card>
                 )}
 
-                {(activeTab === 'all' || activeTab === 'voice') && (
-                    <Card
-                        title="Voice Clone"
-                        collapsible
-                        defaultOpen={false}
-                        tooltip="Clone your own voice from a short sample. ElevenLabs creates a persistent voice ID; Chatterbox saves the sample as a conditioning reference. Azure and Edge don't support open cloning."
-                    >
-                        <div className="space-y-4">
-                            <div className="rounded-lg border border-amber-500/25 bg-amber-500/[0.06] px-3 py-2 text-[0.8125rem] text-amber-100/90 leading-relaxed flex items-start gap-2">
-                                <InfoTooltip
-                                    width="lg"
-                                    iconClassName="!text-amber-300 !w-4 !h-4 mt-0.5 shrink-0"
-                                    content="Cloning is governed by the chosen provider's usage policy. Make sure you have explicit recorded consent before cloning any voice that isn't your own."
-                                />
-                                <span>Consent required — clone only voices you own or have explicit permission to use. Provide at least one clear sample file path from your outputs.</span>
-                            </div>
+                <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] lg:gap-6">
+                    <div className="space-y-4 min-w-0">
+                        <CreateVoiceHero
+                    ttsText={ttsText}
+                    onTtsTextChange={setTtsText}
+                    onUseLatestScript={handleUseLatestScript}
+                    onFormatForVoice={handleFormatForVoice}
+                    onInsertTemplate={handleInsertTemplate}
+                    providerControls={providerControls}
+                    recordUploadPanel={recordUploadPanel}
+                />
 
-                            {/* Provider selector. ElevenLabs and Chatterbox are the only
-                                providers with usable cloning APIs in this app; Azure and
-                                Edge are surfaced as disabled so it's obvious they exist
-                                but aren't supported here. */}
-                            <div>
-                                <label className="field-label">Provider</label>
-                                <div className="inline-flex flex-wrap gap-1 rounded-lg border border-white/10 p-1 bg-black/20">
-                                    <button
-                                        type="button"
-                                        onClick={() => setCloneProvider('elevenlabs')}
-                                        disabled={!ttsEnabled}
-                                        className={`px-3 py-1.5 text-xs font-medium rounded transition ${cloneProvider === 'elevenlabs'
-                                            ? 'bg-primary-500 text-white'
-                                            : 'text-gray-300 hover:bg-white/5'
-                                            } disabled:opacity-40 disabled:cursor-not-allowed`}
-                                    >
-                                        ElevenLabs <span className="opacity-60">· cloud</span>
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => setCloneProvider('chatterbox')}
-                                        disabled={!chatterboxAvailable}
-                                        title={chatterboxAvailable ? '' : 'CHATTERBOX_URL not set or bridge unreachable.'}
-                                        className={`px-3 py-1.5 text-xs font-medium rounded transition ${cloneProvider === 'chatterbox'
-                                            ? 'bg-emerald-500/20 text-emerald-200'
-                                            : 'text-gray-300 hover:bg-white/5'
-                                            } disabled:opacity-40 disabled:cursor-not-allowed`}
-                                    >
-                                        Chatterbox <span className="opacity-60">· self-hosted</span>
-                                    </button>
-                                    <button
-                                        type="button"
-                                        disabled
-                                        title="Azure cloning needs Custom Neural Voice or Personal Voice activation on your Azure tenant — not wired in this app."
-                                        className="px-3 py-1.5 text-xs font-medium rounded text-gray-500 opacity-50 cursor-not-allowed"
-                                    >
-                                        Azure <span className="opacity-60">· tenant-only</span>
-                                    </button>
-                                    <button
-                                        type="button"
-                                        disabled
-                                        title="Edge-TTS is the Microsoft Edge Read-Aloud service. Stock voices only — no cloning API exists."
-                                        className="px-3 py-1.5 text-xs font-medium rounded text-gray-500 opacity-50 cursor-not-allowed"
-                                    >
-                                        Edge <span className="opacity-60">· no cloning</span>
-                                    </button>
-                                </div>
-                                <p className="field-help">
-                                    {cloneProvider === 'chatterbox'
-                                        ? 'Chatterbox conditions on a single reference WAV at synthesis time. The sample is uploaded to your bridge once and reused for every future render.'
-                                        : 'ElevenLabs creates a permanent voice in your ElevenLabs library. Counts against your monthly character / voice-slot quota.'}
-                                </p>
-                            </div>
-
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                <Input
-                                    value={cloneVoiceName}
-                                    onChange={(e) => setCloneVoiceName(e.target.value)}
-                                    placeholder="Clone name (e.g. Segun Narrator)"
-                                />
-                                <Input
-                                    value={cloneSamplePath}
-                                    onChange={(e) => setCloneSamplePath(e.target.value)}
-                                    placeholder="Sample audio path (e.g. server/outputs/user-audio-xxx.wav)"
-                                />
-                            </div>
-                            <Input
-                                value={cloneVoiceDescription}
-                                onChange={(e) => setCloneVoiceDescription(e.target.value)}
-                                placeholder="Optional description"
-                            />
-                            <div className="space-y-2 text-xs">
-                                <label className="flex items-center gap-2">
-                                    <input type="checkbox" checked={cloneHasRights} onChange={(e) => setCloneHasRights(e.target.checked)} />
-                                    I confirm I have rights and consent to clone this voice.
-                                </label>
-                                <label className="flex items-center gap-2">
-                                    <input type="checkbox" checked={cloneNoImpersonation} onChange={(e) => setCloneNoImpersonation(e.target.checked)} />
-                                    I will not use this to impersonate or deceive.
-                                </label>
-                                <label className="flex items-center gap-2">
-                                    <input type="checkbox" checked={cloneTermsAccepted} onChange={(e) => setCloneTermsAccepted(e.target.checked)} />
-                                    I accept the chosen provider's terms and responsibility for usage.
-                                </label>
-                            </div>
-                            <div className="flex gap-2">
-                                <Button
-                                    variant="secondary"
-                                    className="text-xs h-8"
-                                    onClick={() => {
-                                        setCloneSamplePath(audioPath);
-                                        toast.success('Sample path loaded from current audio. Click Clone Voice to proceed.');
-                                    }}
-                                    disabled={!audioPath}
-                                >
-                                    Use Current Audio Path
-                                </Button>
-                                <Button
-                                    onClick={handleCloneVoice}
-                                    isLoading={isCloningVoice}
-                                    disabled={cloneProvider === 'elevenlabs' ? !ttsEnabled : !chatterboxAvailable}
-                                >
-                                    Clone Voice
-                                </Button>
-                            </div>
-
-                            {/* Saved Chatterbox clones — server-side list keyed by user. */}
-                            {chatterboxVoices.length > 0 && (
-                                <div className="pt-3 border-t border-white/[0.06]">
-                                    <div className="flex items-center justify-between mb-2">
-                                        <h4 className="text-[0.8125rem] font-semibold text-gray-200">Saved Chatterbox clones</h4>
-                                        <span className="text-meta">{chatterboxVoices.length} total</span>
-                                    </div>
-                                    <div className="space-y-2">
-                                        {chatterboxVoices.map((cv) => (
-                                            <div key={cv.id} className="flex items-center gap-2 bg-dark-900/40 border border-white/[0.06] rounded-lg p-2">
-                                                <div className="flex-1 min-w-0">
-                                                    <div className="text-[0.875rem] font-medium text-emerald-300/90 truncate">{cv.name}</div>
-                                                    <div className="text-meta font-mono truncate">{cv.refFilename || cv.refPath}</div>
-                                                </div>
-                                                <Button
-                                                    variant="secondary"
-                                                    className="text-[0.6875rem] h-7"
-                                                    onClick={() => {
-                                                        setProvider('chatterbox');
-                                                        setVoiceId(cv.id);
-                                                        toast.success(`Voice "${cv.name}" selected — generate to test.`);
-                                                    }}
-                                                >
-                                                    Use
-                                                </Button>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => deleteChatterboxVoice(cv.id)}
-                                                    title="Delete this saved clone"
-                                                    className="p-1.5 rounded text-gray-500 hover:text-red-300 hover:bg-red-500/10 transition-colors"
-                                                >
-                                                    <Trash2 size={14} />
-                                                </button>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    </Card>
-                )}
-
-                {(activeTab === 'all' || activeTab === 'voice') && (
-                <Card
-                    title="Voice Presets"
-                    collapsible
-                    defaultOpen={false}
-                    tooltip="Save commonly-used voice + provider combos so you can recall them in one click — handy for series narrators, scripture voices, or B-roll narration styles."
-                >
-                    <div className="space-y-4">
-                        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                            <Input
-                                value={presetLabel}
-                                onChange={(e) => setPresetLabel(e.target.value)}
-                                placeholder="Preset label (e.g. Narrator)"
-                            />
-                            <Input
-                                value={presetVoiceId}
-                                onChange={(e) => setPresetVoiceId(e.target.value)}
-                                placeholder="Voice ID (optional)"
-                            />
-                            <Input
-                                type="number"
-                                value={presetStability}
-                                onChange={(e) => setPresetStability(Number(e.target.value))}
-                                step={0.05}
-                                min={0}
-                                max={1}
-                                placeholder="Stability"
-                            />
-                            <Input
-                                type="number"
-                                value={presetSimilarity}
-                                onChange={(e) => setPresetSimilarity(Number(e.target.value))}
-                                step={0.05}
-                                min={0}
-                                max={1}
-                                placeholder="Similarity"
-                            />
-                        </div>
-                        <Button onClick={addPreset} className="text-xs h-8">
-                            <Plus size={14} className="mr-2" />
-                            Save Preset
-                        </Button>
-
-                        <div className="bg-gray-50 rounded-lg p-3 space-y-2">
-                            <p className="text-help">
-                                Quick add multiple IDs: one per line. Format: <code>Label|voiceId</code> or just <code>voiceId</code>.
-                            </p>
-                            <Textarea
-                                value={quickIds}
-                                onChange={(e) => setQuickIds(e.target.value)}
-                                placeholder="Narrator|xxxxxxxx\nSermon|yyyyyyyy\nzzzzzzzz"
-                            />
-                            <Button variant="secondary" className="text-xs h-8" onClick={addQuickIds}>
-                                Add IDs
-                            </Button>
-                        </div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                            {voicePresets.map((p) => (
-                                <div key={p.id} className="border border-white/[0.08] bg-dark-900/40 rounded-lg p-3 flex items-center justify-between">
-                                    <div>
-                                        <div className="text-[0.9375rem] font-semibold text-white">{p.label}</div>
-                                        <div className="text-meta mt-0.5">Voice ID: {p.voiceId || 'not set'}</div>
-                                        <div className="text-meta">Stability {p.stability} • Similarity {p.similarity}</div>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        <Button variant="secondary" className="text-xs h-8" onClick={() => {
-                                            applyPreset(p);
-                                            toast.success(`Applied preset: ${p.label}`);
-                                        }}>
-                                            Use
-                                        </Button>
-                                        <Button variant="secondary" className="text-xs h-8" onClick={() => removePreset(p.id)}>
-                                            <Trash2 size={14} />
-                                        </Button>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                </Card>
-                )}
-                {/* Caption animation picker — kinetic typography styles ported from lumina,
-                    synced to the word timings the TTS pipeline produces. */}
-                <AnimationPicker />
-                {/* Side-by-side Voice Lab compare — synth the same line across 2-4
-                    providers in parallel, rate them, and persist the rating. */}
-                <CompareVoices />
-                {(activeTab === 'all' || activeTab === 'record') && (
-                <Card
-                    title="2. Record / Upload"
-                    collapsible
-                    defaultOpen={false}
-                    tooltip="Bring your own voice — record from the browser mic or upload an MP3/WAV. Saved to your outputs and picked up automatically by Render and Timeline."
-                >
-                    <DropZone
-                        className="space-y-4"
-                        onFiles={(files) => { if (files[0]) void handleUploadFile(files[0]); }}
-                        accept={['audio/*', '.mp3', '.wav', '.webm', '.m4a', '.aac', '.ogg', '.flac']}
-                        multiple={false}
-                        disabled={isUploading}
-                        overlayLabel="Drop an audio file to upload"
-                    >
-                        <p className="text-sm text-gray-200">
-                            Record directly in the browser or upload an audio file. The result is saved to outputs and becomes selectable across Render and Timeline.
-                        </p>
-                        <div className="flex flex-wrap gap-2">
-                            {!isRecording ? (
-                                <Button onClick={handleStartRecording} className="text-xs h-9">
-                                    <Mic size={14} className="mr-2" />
-                                    Start Recording
-                                </Button>
-                            ) : (
-                                <Button onClick={handleStopRecording} variant="danger" className="text-xs h-9">
-                                    Stop Recording
-                                </Button>
-                            )}
-                            <label className="text-xs h-9 px-4 rounded-lg font-medium transition-all duration-200 bg-gray-200 text-gray-800 hover:bg-gray-300 flex items-center gap-2 cursor-pointer">
-                                <Upload size={14} />
-                                Upload Audio
-                                <input
-                                    type="file"
-                                    accept="audio/*,.mp3,.wav,.webm,.m4a,.aac,.ogg,.flac"
-                                    className="hidden"
-                                    onChange={(e) => {
-                                        const file = e.target.files?.[0];
-                                        if (file) handleUploadFile(file);
-                                    }}
-                                    disabled={isUploading}
-                                />
-                            </label>
-                        </div>
-                        <div className="mt-4">
-                            <p className="field-label">Live input</p>
-                            <canvas ref={canvasRef} width={520} height={80} className="w-full rounded-lg border border-white/10 bg-black/30" />
-                        </div>
-                        {currentAudioUrl && (
-                            <div className="mt-3 space-y-2">
-                                <p className="field-label">Latest recording / upload</p>
-                                <audio controls src={currentAudioUrl} className="w-full" />
-                                <p className="text-meta break-all font-mono">{audioPath}</p>
-                            </div>
-                        )}
-                        {recordingDebug && (
-                            <p className="text-meta break-all font-mono">{recordingDebug}</p>
-                        )}
-                    </DropZone>
-                </Card>
-                )}
-
-                {(activeTab === 'all' || activeTab === 'treatment') && (
-                <Card
-                    title="3. Audio Treatment"
-                    collapsible
-                    defaultOpen={false}
-                    tooltip="Mastering chain — loudness normalisation, EQ, de-noise, and compression. Pick a preset for fast results, or open advanced to fine-tune each stage."
-                >
+                <RevealSection title="Audio treatment" storageKey="va.treatment">
                     <p className="text-sm text-gray-200 mb-4">
                         Choose a preset, then tweak controls. Click <strong>Process Audio</strong> to generate a
                         cleaned MP3 and auto-fill Audio Path.
@@ -1910,57 +1617,347 @@ export function VoiceAudioPage() {
                             Process Audio
                         </Button>
                     </div>
-                </Card>
-                )}
+                </RevealSection>
 
-                {(activeTab === 'all' || activeTab === 'treatment') && (
-                <Card
-                    title="Current Audio"
-                    headerExtra={audioPath.trim() ? (
-                        <span className="inline-flex items-center gap-1 text-[0.6875rem] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/25">
-                            <CheckCircle2 size={12} />
-                            Used in Render
-                        </span>
-                    ) : undefined}
+                <RevealSection
+                    title="Soundtrack library"
+                    storageKey="va.soundtrack"
+                    info="Use any audio file from outputs as a soundtrack for Render."
                 >
-                    <Input
-                        value={audioPath}
-                        onChange={(e) => setAudioPath(e.target.value)}
-                        placeholder="e.g. server/outputs/audio.mp3"
-                    />
-                    <p className="text-help mt-2">
-                        {audioPath.trim()
-                            ? 'This is the track the Render and Timeline pages will use. Generate, record, or click Use on a Recent Audio clip to change it.'
-                            : 'No track selected yet. Generate a voice above, record/upload, or click Use on a Recent Audio clip — it will appear here.'}
-                    </p>
-                    {currentAudioUrl && (
-                        <div className="mt-3 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-                            <audio controls src={currentAudioUrl} className="w-full" />
+                    <div className="space-y-3">
+                        <div className="flex flex-wrap items-center gap-2">
                             <Button
                                 variant="secondary"
-                                onClick={() => {
-                                    navigator.clipboard.writeText(audioPath);
-                                    toast.success('Audio path copied');
-                                }}
-                                className="text-xs h-9"
+                                className="text-xs h-8"
+                                onClick={loadMusicLibrary}
+                                isLoading={isLoadingMusic}
                             >
-                                <Clipboard size={14} className="mr-2" />
-                                Copy
+                                <Music size={14} className="mr-2" />
+                                Load Music Library
                             </Button>
-                            <Link
-                                to="/app/render"
-                                className="inline-flex items-center justify-center gap-1.5 text-xs h-9 px-4 rounded-lg font-medium bg-primary-500 text-white hover:bg-primary-400 transition-colors whitespace-nowrap"
-                            >
-                                Go to Render
-                                <ArrowRight size={14} />
-                            </Link>
                         </div>
-                    )}
-                </Card>
-                )}
 
-                {(activeTab === 'all' || activeTab === 'treatment') && (
-                <Card title="Recent Audio (Saved)">
+                        {musicItems.length > 0 ? (
+                            <div className="space-y-3">
+                                {musicItems.slice(0, 20).map((item: any) => (
+                                    <div key={item.path || item.name} className="flex flex-col md:flex-row md:items-center gap-3 bg-dark-900/60 border border-white/[0.06] rounded-lg p-3">
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-[0.8125rem] font-medium text-primary-300">{item.name || 'Audio'}</p>
+                                            <p className="text-[0.75rem] font-mono text-gray-300 break-all mt-0.5">{item.path}</p>
+                                            {item.mtime && (
+                                                <p className="field-help">{new Date(item.mtime).toLocaleString()}</p>
+                                            )}
+                                        </div>
+                                        <audio controls src={toOutputUrl(item.path, api.mediaBaseUrl)} className="w-full md:w-64" />
+                                        <Button
+                                            variant="secondary"
+                                            className="text-xs h-8"
+                                            onClick={() => useAsSoundtrack(item.path)}
+                                        >
+                                            Use in Render
+                                        </Button>
+                                    </div>
+                                ))}
+                                {musicItems.length > 20 && (
+                                    <p className="field-help">Showing latest 20 items.</p>
+                                )}
+                            </div>
+                        ) : (
+                            <p className="text-sm text-gray-300">No audio files found. Upload or process audio first.</p>
+                        )}
+                    </div>
+                </RevealSection>
+
+                <RevealSection title="Current audio" storageKey="va.current" defaultOpen>
+                    <Card
+                        title="Current Audio"
+                        headerExtra={audioPath.trim() ? (
+                            <span className="inline-flex items-center gap-1 text-[0.6875rem] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/25">
+                                <CheckCircle2 size={12} />
+                                Used in Render
+                            </span>
+                        ) : undefined}
+                    >
+                        <Input
+                            value={audioPath}
+                            onChange={(e) => setAudioPath(e.target.value)}
+                            placeholder="e.g. server/outputs/audio.mp3"
+                        />
+                        <p className="text-help mt-2">
+                            {audioPath.trim()
+                                ? 'This is the track the Render and Timeline pages will use. Generate, record, or click Use on a Recent Audio clip to change it.'
+                                : 'No track selected yet. Generate a voice above, record/upload, or click Use on a Recent Audio clip — it will appear here.'}
+                        </p>
+                        {currentAudioUrl && (
+                            <div className="mt-3 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                                <audio controls src={currentAudioUrl} className="w-full" />
+                                <Button
+                                    variant="secondary"
+                                    onClick={() => {
+                                        navigator.clipboard.writeText(audioPath);
+                                        toast.success('Audio path copied');
+                                    }}
+                                    className="text-xs h-9"
+                                >
+                                    <Clipboard size={14} className="mr-2" />
+                                    Copy
+                                </Button>
+                                <Link
+                                    to="/app/render"
+                                    className="inline-flex items-center justify-center gap-1.5 text-xs h-9 px-4 rounded-lg font-medium bg-primary-500 text-white hover:bg-primary-400 transition-colors whitespace-nowrap"
+                                >
+                                    Go to Render
+                                    <ArrowRight size={14} />
+                                </Link>
+                            </div>
+                        )}
+                    </Card>
+                </RevealSection>
+
+                <RevealSection title="Voice clone" storageKey="va.clone">
+                        <div className="space-y-4">
+                            <div className="rounded-lg border border-amber-500/25 bg-amber-500/[0.06] px-3 py-2 text-[0.8125rem] text-amber-100/90 leading-relaxed flex items-start gap-2">
+                                <InfoTooltip
+                                    width="lg"
+                                    iconClassName="!text-amber-300 !w-4 !h-4 mt-0.5 shrink-0"
+                                    content="Cloning is governed by the chosen provider's usage policy. Make sure you have explicit recorded consent before cloning any voice that isn't your own."
+                                />
+                                <span>Consent required — clone only voices you own or have explicit permission to use. Provide at least one clear sample file path from your outputs.</span>
+                            </div>
+
+                            {/* Provider selector. ElevenLabs and Chatterbox are the only
+                                providers with usable cloning APIs in this app; Azure and
+                                Edge are surfaced as disabled so it's obvious they exist
+                                but aren't supported here. */}
+                            <div>
+                                <label className="field-label">Provider</label>
+                                <div className="inline-flex flex-wrap gap-1 rounded-lg border border-white/10 p-1 bg-black/20">
+                                    <button
+                                        type="button"
+                                        onClick={() => setCloneProvider('elevenlabs')}
+                                        disabled={!ttsEnabled}
+                                        className={`px-3 py-1.5 text-xs font-medium rounded transition ${cloneProvider === 'elevenlabs'
+                                            ? 'bg-primary-500 text-white'
+                                            : 'text-gray-300 hover:bg-white/5'
+                                            } disabled:opacity-40 disabled:cursor-not-allowed`}
+                                    >
+                                        ElevenLabs <span className="opacity-60">· cloud</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setCloneProvider('chatterbox')}
+                                        disabled={!chatterboxAvailable}
+                                        title={chatterboxAvailable ? '' : 'CHATTERBOX_URL not set or bridge unreachable.'}
+                                        className={`px-3 py-1.5 text-xs font-medium rounded transition ${cloneProvider === 'chatterbox'
+                                            ? 'bg-emerald-500/20 text-emerald-200'
+                                            : 'text-gray-300 hover:bg-white/5'
+                                            } disabled:opacity-40 disabled:cursor-not-allowed`}
+                                    >
+                                        Chatterbox <span className="opacity-60">· self-hosted</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        disabled
+                                        title="Azure cloning needs Custom Neural Voice or Personal Voice activation on your Azure tenant — not wired in this app."
+                                        className="px-3 py-1.5 text-xs font-medium rounded text-gray-500 opacity-50 cursor-not-allowed"
+                                    >
+                                        Azure <span className="opacity-60">· tenant-only</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        disabled
+                                        title="Edge-TTS is the Microsoft Edge Read-Aloud service. Stock voices only — no cloning API exists."
+                                        className="px-3 py-1.5 text-xs font-medium rounded text-gray-500 opacity-50 cursor-not-allowed"
+                                    >
+                                        Edge <span className="opacity-60">· no cloning</span>
+                                    </button>
+                                </div>
+                                <p className="field-help">
+                                    {cloneProvider === 'chatterbox'
+                                        ? 'Chatterbox conditions on a single reference WAV at synthesis time. The sample is uploaded to your bridge once and reused for every future render.'
+                                        : 'ElevenLabs creates a permanent voice in your ElevenLabs library. Counts against your monthly character / voice-slot quota.'}
+                                </p>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                <Input
+                                    value={cloneVoiceName}
+                                    onChange={(e) => setCloneVoiceName(e.target.value)}
+                                    placeholder="Clone name (e.g. Segun Narrator)"
+                                />
+                                <Input
+                                    value={cloneSamplePath}
+                                    onChange={(e) => setCloneSamplePath(e.target.value)}
+                                    placeholder="Sample audio path (e.g. server/outputs/user-audio-xxx.wav)"
+                                />
+                            </div>
+                            <Input
+                                value={cloneVoiceDescription}
+                                onChange={(e) => setCloneVoiceDescription(e.target.value)}
+                                placeholder="Optional description"
+                            />
+                            <div className="space-y-2 text-xs">
+                                <label className="flex items-center gap-2">
+                                    <input type="checkbox" checked={cloneHasRights} onChange={(e) => setCloneHasRights(e.target.checked)} />
+                                    I confirm I have rights and consent to clone this voice.
+                                </label>
+                                <label className="flex items-center gap-2">
+                                    <input type="checkbox" checked={cloneNoImpersonation} onChange={(e) => setCloneNoImpersonation(e.target.checked)} />
+                                    I will not use this to impersonate or deceive.
+                                </label>
+                                <label className="flex items-center gap-2">
+                                    <input type="checkbox" checked={cloneTermsAccepted} onChange={(e) => setCloneTermsAccepted(e.target.checked)} />
+                                    I accept the chosen provider's terms and responsibility for usage.
+                                </label>
+                            </div>
+                            <div className="flex gap-2">
+                                <Button
+                                    variant="secondary"
+                                    className="text-xs h-8"
+                                    onClick={() => {
+                                        setCloneSamplePath(audioPath);
+                                        toast.success('Sample path loaded from current audio. Click Clone Voice to proceed.');
+                                    }}
+                                    disabled={!audioPath}
+                                >
+                                    Use Current Audio Path
+                                </Button>
+                                <Button
+                                    onClick={handleCloneVoice}
+                                    isLoading={isCloningVoice}
+                                    disabled={cloneProvider === 'elevenlabs' ? !ttsEnabled : !chatterboxAvailable}
+                                >
+                                    Clone Voice
+                                </Button>
+                            </div>
+
+                            {/* Saved Chatterbox clones — server-side list keyed by user. */}
+                            {chatterboxVoices.length > 0 && (
+                                <div className="pt-3 border-t border-white/[0.06]">
+                                    <div className="flex items-center justify-between mb-2">
+                                        <h4 className="text-[0.8125rem] font-semibold text-gray-200">Saved Chatterbox clones</h4>
+                                        <span className="text-meta">{chatterboxVoices.length} total</span>
+                                    </div>
+                                    <div className="space-y-2">
+                                        {chatterboxVoices.map((cv) => (
+                                            <div key={cv.id} className="flex items-center gap-2 bg-dark-900/40 border border-white/[0.06] rounded-lg p-2">
+                                                <div className="flex-1 min-w-0">
+                                                    <div className="text-[0.875rem] font-medium text-emerald-300/90 truncate">{cv.name}</div>
+                                                    <div className="text-meta font-mono truncate">{cv.refFilename || cv.refPath}</div>
+                                                </div>
+                                                <Button
+                                                    variant="secondary"
+                                                    className="text-[0.6875rem] h-7"
+                                                    onClick={() => {
+                                                        setProvider('chatterbox');
+                                                        setVoiceId(cv.id);
+                                                        toast.success(`Voice "${cv.name}" selected — generate to test.`);
+                                                    }}
+                                                >
+                                                    Use
+                                                </Button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => deleteChatterboxVoice(cv.id)}
+                                                    title="Delete this saved clone"
+                                                    className="p-1.5 rounded text-gray-500 hover:text-red-300 hover:bg-red-500/10 transition-colors"
+                                                >
+                                                    <Trash2 size={14} />
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                </RevealSection>
+
+                <RevealSection title="Voice presets" storageKey="va.presets">
+                    <div className="space-y-4">
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                            <Input
+                                value={presetLabel}
+                                onChange={(e) => setPresetLabel(e.target.value)}
+                                placeholder="Preset label (e.g. Narrator)"
+                            />
+                            <Input
+                                value={presetVoiceId}
+                                onChange={(e) => setPresetVoiceId(e.target.value)}
+                                placeholder="Voice ID (optional)"
+                            />
+                            <Input
+                                type="number"
+                                value={presetStability}
+                                onChange={(e) => setPresetStability(Number(e.target.value))}
+                                step={0.05}
+                                min={0}
+                                max={1}
+                                placeholder="Stability"
+                            />
+                            <Input
+                                type="number"
+                                value={presetSimilarity}
+                                onChange={(e) => setPresetSimilarity(Number(e.target.value))}
+                                step={0.05}
+                                min={0}
+                                max={1}
+                                placeholder="Similarity"
+                            />
+                        </div>
+                        <Button onClick={addPreset} className="text-xs h-8">
+                            <Plus size={14} className="mr-2" />
+                            Save Preset
+                        </Button>
+
+                        <div className="bg-gray-50 rounded-lg p-3 space-y-2">
+                            <p className="text-help">
+                                Quick add multiple IDs: one per line. Format: <code>Label|voiceId</code> or just <code>voiceId</code>.
+                            </p>
+                            <Textarea
+                                value={quickIds}
+                                onChange={(e) => setQuickIds(e.target.value)}
+                                placeholder="Narrator|xxxxxxxx\nSermon|yyyyyyyy\nzzzzzzzz"
+                            />
+                            <Button variant="secondary" className="text-xs h-8" onClick={addQuickIds}>
+                                Add IDs
+                            </Button>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            {voicePresets.map((p) => (
+                                <div key={p.id} className="border border-white/[0.08] bg-dark-900/40 rounded-lg p-3 flex items-center justify-between">
+                                    <div>
+                                        <div className="text-[0.9375rem] font-semibold text-white">{p.label}</div>
+                                        <div className="text-meta mt-0.5">Voice ID: {p.voiceId || 'not set'}</div>
+                                        <div className="text-meta">Stability {p.stability} • Similarity {p.similarity}</div>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <Button variant="secondary" className="text-xs h-8" onClick={() => {
+                                            applyPreset(p);
+                                            toast.success(`Applied preset: ${p.label}`);
+                                        }}>
+                                            Use
+                                        </Button>
+                                        <Button variant="secondary" className="text-xs h-8" onClick={() => removePreset(p.id)}>
+                                            <Trash2 size={14} />
+                                        </Button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </RevealSection>
+
+                {/* Caption animation picker — kinetic typography styles ported from lumina,
+                    synced to the word timings the TTS pipeline produces. */}
+                <AnimationPicker />
+                {/* Side-by-side Voice Lab compare — synth the same line across 2-4
+                    providers in parallel, rate them, and persist the rating. */}
+                <CompareVoices />
+                    </div>
+
+                    <aside className="space-y-4 lg:sticky lg:top-24 lg:self-start">
+                        <RevealSection title="Recent audio" storageKey="va.recent" defaultOpen>
                     {audioHistory.length === 0 ? (
                         <p className="text-sm text-gray-300">No processed or uploaded audio yet.</p>
                     ) : (
@@ -1986,10 +1983,19 @@ export function VoiceAudioPage() {
                                                 </span>
                                             )}
                                         </p>
-                                        <p className="text-meta font-mono break-all mt-0.5">{item.path}</p>
-                                        <p className="text-meta">
+                                        <p className="text-meta mt-0.5">
                                             {new Date(item.createdAt).toLocaleString()}
                                         </p>
+                                        {/* Raw output path is debug detail — collapse it behind a
+                                            clear toggle so the card reads cleanly. Native <details>
+                                            keeps it accessible with no per-card React state. */}
+                                        <details className="group mt-1">
+                                            <summary className="inline-flex items-center gap-1 text-[0.6875rem] text-content-tertiary hover:text-primary-300 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
+                                                <ChevronDown size={11} className="transition-transform group-open:rotate-180" />
+                                                File path
+                                            </summary>
+                                            <p className="text-meta font-mono break-all mt-1">{item.path}</p>
+                                        </details>
                                     </div>
                                     <div className="flex items-center gap-2">
                                         {isCurrent ? (
@@ -2051,63 +2057,9 @@ export function VoiceAudioPage() {
                             )}
                         </div>
                     )}
-                </Card>
-                )}
-
-                {(activeTab === 'all' || activeTab === 'soundtrack') && (
-                <Card
-                    title="Soundtrack Library"
-                    collapsible
-                    defaultOpen={false}
-                    tooltip="Royalty-free background beds organised by mood. Click any track to set it as the Render soundtrack, or preview before committing."
-                >
-                    <div className="space-y-3">
-                        <div className="flex flex-wrap items-center gap-2">
-                            <Button
-                                variant="secondary"
-                                className="text-xs h-8"
-                                onClick={loadMusicLibrary}
-                                isLoading={isLoadingMusic}
-                            >
-                                <Music size={14} className="mr-2" />
-                                Load Music Library
-                            </Button>
-                            <span className="text-[0.8125rem] text-gray-400">
-                                Use any audio file from outputs as a soundtrack for Render.
-                            </span>
-                        </div>
-
-                        {musicItems.length > 0 ? (
-                            <div className="space-y-3">
-                                {musicItems.slice(0, 20).map((item: any) => (
-                                    <div key={item.path || item.name} className="flex flex-col md:flex-row md:items-center gap-3 bg-dark-900/60 border border-white/[0.06] rounded-lg p-3">
-                                        <div className="flex-1 min-w-0">
-                                            <p className="text-[0.8125rem] font-medium text-primary-300">{item.name || 'Audio'}</p>
-                                            <p className="text-[0.75rem] font-mono text-gray-300 break-all mt-0.5">{item.path}</p>
-                                            {item.mtime && (
-                                                <p className="field-help">{new Date(item.mtime).toLocaleString()}</p>
-                                            )}
-                                        </div>
-                                        <audio controls src={toOutputUrl(item.path, api.mediaBaseUrl)} className="w-full md:w-64" />
-                                        <Button
-                                            variant="secondary"
-                                            className="text-xs h-8"
-                                            onClick={() => useAsSoundtrack(item.path)}
-                                        >
-                                            Use in Render
-                                        </Button>
-                                    </div>
-                                ))}
-                                {musicItems.length > 20 && (
-                                    <p className="field-help">Showing latest 20 items.</p>
-                                )}
-                            </div>
-                        ) : (
-                            <p className="text-sm text-gray-300">No audio files found. Upload or process audio first.</p>
-                        )}
-                    </div>
-                </Card>
-                )}
+                        </RevealSection>
+                    </aside>
+                </div>
             </div>
         </div>
     );

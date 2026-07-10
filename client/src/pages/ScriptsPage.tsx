@@ -3,6 +3,7 @@ import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Select } from '../components/ui/Select';
+import { ScreenHeader } from '../components/ui/ScreenHeader';
 import { api } from '../lib/api';
 import toast from 'react-hot-toast';
 import { Mic, Plus } from 'lucide-react';
@@ -104,8 +105,8 @@ export function ScriptsPage() {
     };
 
     return (
-        <div>
-            <h2 className="text-2xl font-bold mb-6">Generate Scripts</h2>
+        <div className="space-y-6">
+            <ScreenHeader eyebrow="Create" title={<>Write the <em>hook</em>.</>} subtitle="Topic or verse in, a scroll-stopping script out." />
 
             <Card title="Configuration">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">

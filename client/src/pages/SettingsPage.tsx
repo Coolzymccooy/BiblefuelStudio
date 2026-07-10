@@ -5,6 +5,7 @@ import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Select } from '../components/ui/Select';
+import { ScreenHeader } from '../components/ui/ScreenHeader';
 import { api } from '../lib/api';
 import toast from 'react-hot-toast';
 import { useConfig } from '../lib/config';
@@ -222,10 +223,8 @@ export function SettingsPage() {
 
     return (
         <div className="max-w-5xl mx-auto space-y-6 animate-fade-in">
-            <div>
-                <h2 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-400 mb-2">Settings</h2>
-                <p className="text-help">Plan, integrations, and app info.</p>
-            </div>
+            <ScreenHeader eyebrow="Settings" title={<>Tune the <em>studio</em>.</>} subtitle="Plan, integrations, and app info." />
+
 
             {/* Signed-in account — shows the email of the active session so
                 operators using multiple test accounts can immediately see

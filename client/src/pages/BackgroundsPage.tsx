@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
+import { ScreenHeader } from '../components/ui/ScreenHeader';
 import { api } from '../lib/api';
 import toast from 'react-hot-toast';
 import { Search, Download, Play, ExternalLink, Image as ImageIcon, Bookmark, Trash2, Library, Sparkles, FolderUp, Tag, X } from 'lucide-react';
@@ -473,10 +474,8 @@ export function BackgroundsPage() {
     return (
         <div className="space-y-6 animate-fade-in">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                <div>
-                    <h2 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-primary-200">Visual Backgrounds</h2>
-                    <p className="text-help mt-1">Search or browse your saved 4K/HD portrait videos.</p>
-                </div>
+                <ScreenHeader eyebrow="Studio" title={<>Set the <em>scene</em>.</>} subtitle="Search or browse your saved 4K/HD portrait footage." />
+
 
                 <div className="flex flex-wrap bg-white/5 border border-white/10 p-1 rounded-xl">
                     <button

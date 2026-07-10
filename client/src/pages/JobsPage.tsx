@@ -3,6 +3,7 @@ import type { ComponentType } from 'react';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
+import { ScreenHeader } from '../components/ui/ScreenHeader';
 import { api } from '../lib/api';
 import { RefreshCw, Download, Clock, Terminal, PlayCircle, ExternalLink, BookOpen, Wand2, Film, AudioLines, Share2, X as XIcon, RotateCw } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -254,10 +255,8 @@ export function JobsPage() {
     return (
         <div className="space-y-6 animate-fade-in">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                <div>
-                    <h2 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-400 mb-2 text-white">Background Jobs</h2>
-                    <p className="text-help">Track rendering and background processes.</p>
-                </div>
+                <ScreenHeader eyebrow="Jobs" title={<>What the studio<br />is <em>making</em>.</>} subtitle="Track rendering and background processes." />
+
                 <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
                     <Button onClick={triggerTestJob} isLoading={isTriggering} variant="secondary" className="w-full sm:w-auto">
                         <PlayCircle size={16} className="mr-2" />

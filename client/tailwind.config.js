@@ -7,15 +7,13 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['"Inter Variable"', 'Inter', '"IBM Plex Sans"', 'ui-sans-serif', 'system-ui'],
-        display: ['"Inter Variable"', 'Inter', 'Sora', 'ui-sans-serif', 'system-ui'],
+        // Quiet-studio identity: Instrument Sans for UI/body, Cormorant Garamond
+        // for display serif titles, JetBrains Mono for IDs/durations/dB/filenames.
+        sans: ['"Instrument Sans"', 'Inter', '"IBM Plex Sans"', 'ui-sans-serif', 'system-ui'],
+        display: ['"Instrument Sans"', 'Inter', 'ui-sans-serif', 'system-ui'],
         displaySerif: ['"Cormorant Garamond"', 'Georgia', 'serif'],
-        bodyserif: ['Georgia', 'serif'],
-        // `mono` intentionally maps to the sans stack: the app only uses font-mono
-        // for technical strings (file paths, IDs, hashes, tokens), which read more
-        // legibly in the humanist sans body font than in a fixed-width face. Number
-        // columns that need alignment keep it via `tabular-nums` where applied.
-        mono: ['"Inter Variable"', 'Inter', '"IBM Plex Sans"', 'ui-sans-serif', 'system-ui'],
+        bodyserif: ['"Cormorant Garamond"', 'Georgia', 'serif'],
+        mono: ['"JetBrains Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
       },
       colors: {
         primary: {
@@ -31,11 +29,33 @@ export default {
           900: '#3f3120',
           950: '#241b11',
         },
+        // Warm near-black surfaces (quiet-studio). Remapped from the old cool
+        // greys so every existing `bg-dark-*` shifts to the new identity.
         dark: {
-          950: '#050505',
-          900: '#0b0c0e',
-          800: '#121417',
-          700: '#1a1d21',
+          950: '#080604',
+          900: '#0b0906',
+          800: '#140f09',
+          700: '#17130c',
+        },
+        // Exact quiet-studio tokens from the mobile redesign handoff.
+        bf: {
+          bg: '#0b0906',
+          bg2: '#080604',
+          card: '#140f09',
+          card2: '#17130c',
+          input: '#161009',
+          input2: '#0f0b07',
+          gold: '#e6c98a',
+          goldDeep: '#cba85f',
+          goldDim: '#a8894f',
+          cream: '#f4ecdc',
+          cream2: '#f0e6d3',
+          sub: '#b7ac97',
+          sub2: '#a99f8b',
+          muted: '#8a7f6b',
+          faint: '#6f6654',
+          success: '#6fcf97',
+          danger: '#e08a8a',
         },
         glass: {
           100: 'rgba(255, 255, 255, 0.03)',
@@ -72,11 +92,17 @@ export default {
         'neon': 'none', // Removed neon for maturity
       },
       borderRadius: {
-        'card': '8px', // Sharper, more professional
+        'card': '16px', // quiet-studio cards 16–22px
+        'bf': '18px',
+        'bf-lg': '22px',
       },
       animation: {
         'fade-in': 'fadeIn 0.5s ease-out',
         'slide-up': 'slideUp 0.5s ease-out',
+        'bffade': 'bffade 0.45s ease both',
+        'bfbars': 'bfbars 0.8s ease-in-out infinite',
+        'bfpulse': 'bfpulse 2s ease-in-out infinite',
+        'bfspin': 'bfspin 0.9s linear infinite',
       },
       keyframes: {
         fadeIn: {
@@ -86,6 +112,22 @@ export default {
         slideUp: {
           '0%': { transform: 'translateY(20px)', opacity: '0' },
           '100%': { transform: 'translateY(0)', opacity: '1' },
+        },
+        // Quiet-studio screen entrance + micro-motions from the handoff.
+        bffade: {
+          '0%': { opacity: '0', transform: 'translateY(10px)' },
+          '100%': { opacity: '1', transform: 'none' },
+        },
+        bfbars: {
+          '0%,100%': { transform: 'scaleY(0.3)' },
+          '50%': { transform: 'scaleY(1)' },
+        },
+        bfpulse: {
+          '0%,100%': { opacity: '0.45' },
+          '50%': { opacity: '1' },
+        },
+        bfspin: {
+          to: { transform: 'rotate(360deg)' },
         },
       },
     },

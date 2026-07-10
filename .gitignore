@@ -12,3 +12,4 @@ data/social.json
 tests/selenium/
 .playwright-mcp/
 make-*.png
+.superpowers/

@@ -16,6 +16,9 @@ import { MusicPicker } from '../components/MusicPicker';
 import { RenderProgressOverlay } from '../components/RenderProgressOverlay';
 import { MediaTrimmer } from '../components/MediaTrimmer';
 import { DropZone } from '../components/ui/DropZone';
+import { ScreenHeader } from '../components/ui/ScreenHeader';
+import { StoryStepper } from '../components/story/StoryStepper';
+import { StoryScenePreview } from '../components/story/StoryScenePreview';
 import { ScriptForm } from '../components/story/ScriptForm';
 import { cleanSpeakableText } from '../lib/speakableScript';
 
@@ -226,14 +229,22 @@ export function StoryVideoPage() {
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold text-white">Story Video</h1>
-        {project && (
-          <button onClick={() => setActive(null)} className="text-xs text-gray-400 hover:text-gray-200">
-            Start new
-          </button>
-        )}
-      </div>
+      <ScreenHeader
+        eyebrow="Create"
+        title={<>Verse to <em>cinematic scenes</em>.</>}
+        subtitle={project ? `${project.style} · ${project.title}` : undefined}
+        right={project ? (
+          <button onClick={() => setActive(null)} className="text-xs text-content-tertiary hover:text-bf-cream">Start new</button>
+        ) : undefined}
+      />
+      <div className="h-5" />
+
+      {/* Pipeline stepper — shows where an active project is in the 5 stages. */}
+      {project && (
+        <div className="mb-2">
+          <StoryStepper project={project} />
+        </div>
+      )}
 
       {/* Actively working (non-render): show what's happening + a way to stop it.
           Rendering has its own progress card with a real % in step 3. */}
@@ -447,17 +458,28 @@ export function StoryVideoPage() {
       )}
 
       {step === 2 && project && (
-        <div className="mt-6 space-y-3">
-          {project.scenes.map((s) => (
-            <SceneCard
-              key={s.id}
-              scene={s}
-              onPatch={onPatch}
-              onRegenerate={onRegenerate}
-              busy={busy}
-              regenerating={regeneratingId === s.id}
-            />
-          ))}
+        <div className="mt-6 space-y-4">
+          <StoryScenePreview scenes={project.scenes} />
+
+          <div className="flex items-baseline justify-between">
+            <div className="font-displaySerif text-[19px] font-semibold text-bf-cream">Scenes</div>
+            <div className="text-[11px] text-bf-muted">{project.scenes.length} generated</div>
+          </div>
+
+          <div className="space-y-3">
+            {project.scenes.map((s, i) => (
+              <SceneCard
+                key={s.id}
+                scene={s}
+                index={i}
+                onPatch={onPatch}
+                onRegenerate={onRegenerate}
+                busy={busy}
+                regenerating={regeneratingId === s.id}
+              />
+            ))}
+          </div>
+
           {/* Bulk image controls — retry just the failures, or rebuild all. */}
           <div className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-white/[0.02] p-3">
             <span className="text-xs text-gray-400">
