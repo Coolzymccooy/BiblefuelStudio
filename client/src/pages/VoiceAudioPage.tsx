@@ -1029,9 +1029,13 @@ export function VoiceAudioPage() {
                     ))}
                 </div>
 
-                {/* Now-playing player for the current track (gold + animated waveform). */}
+                {/* Sticky now-playing player — pins under the app header (above the mobile
+                    nav) so preview + "Use in Render" stay reachable while scrolling. z-20
+                    keeps it under the app shell header/nav (z-30+) but over page content. */}
                 {currentAudioUrl && (
-                    <VoicePlayer src={currentAudioUrl} label={currentTrackLabel} kindLabel={currentTrackKind} />
+                    <div className="sticky top-2 z-20 -mx-1 px-1">
+                        <VoicePlayer src={currentAudioUrl} label={currentTrackLabel} kindLabel={currentTrackKind} />
+                    </div>
                 )}
 
                 {(activeTab === 'all' || activeTab === 'voice') && (
