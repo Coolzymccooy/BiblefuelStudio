@@ -620,6 +620,12 @@ export function RenderPage() {
         setBackgroundItems(backgroundItems.filter((_, i) => i !== idx));
     };
 
+    const clearAllBackgrounds = () => {
+        if (backgroundItems.length === 0) return;
+        if (!window.confirm(`Remove all ${backgroundItems.length} selected backgrounds?`)) return;
+        setBackgroundItems([]);
+    };
+
     const loadSocialConfig = async () => {
         const res = await api.get('/api/social/config');
         if (res.ok && res.data) {
@@ -879,6 +885,19 @@ export function RenderPage() {
                                 disabled={isUploadingBackground}
                                 overlayLabel="Drop image or video backgrounds"
                             >
+                                <div className="flex items-center justify-between mb-1">
+                                    <span className="text-[10px] text-content-tertiary">
+                                        {backgroundItems.length} background{backgroundItems.length === 1 ? '' : 's'} selected
+                                    </span>
+                                    <button
+                                        type="button"
+                                        onClick={clearAllBackgrounds}
+                                        className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded-md text-gray-400 hover:text-red-300 hover:bg-red-500/15"
+                                        aria-label="Clear all backgrounds"
+                                    >
+                                        <Trash2 size={12} /> Clear all
+                                    </button>
+                                </div>
                                 <ul className="space-y-2 max-h-[22rem] overflow-y-auto pr-1">
                                     {backgroundItems.map((item, idx) => {
                                         const isImage = item.kind === 'image';
