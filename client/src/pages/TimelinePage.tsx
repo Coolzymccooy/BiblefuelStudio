@@ -566,12 +566,16 @@ export function TimelinePage() {
             toast.error('Upload a sermon audio or video first');
             return;
         }
-        // Captions require a transcript; with kinetic captions OFF we render a
-        // plain audio/video + background clip and skip that requirement.
-        if (kineticCaptions && (!transcript || !transcript.length)) {
+        // Captions require a transcript. For an uploaded MP4 that already has a
+        // voice-over, let the user render it plain with an optional music bed —
+        // no STT/TTS/transcript required. Audio-only sources still need the
+        // normal background flow.
+        const shouldRenderCaptions = kineticCaptions && Boolean(transcript?.length);
+        if (kineticCaptions && !shouldRenderCaptions && sourceMediaKind !== 'video') {
             toast.error('Transcribe the sermon first, or turn off kinetic captions');
             return;
         }
+
         // Audio sources need a background. In Auto mode BibleFuel supplies one
         // from the user's library (or AI-generates it), so a manual pick is only
         // required when Auto is off. Video sources bring their own visual layer.
@@ -580,19 +584,21 @@ export function TimelinePage() {
             return;
         }
 
-        const captionLines = buildSpeakableLines(editedLines.join("\n"), {
-            maxLines: Math.max(editedLines.length || 1, 1),
-            maxChars: 90,
-        });
-        if (captionLines.join("\n") !== editedLines.join("\n")) {
+        const captionLines = shouldRenderCaptions
+            ? buildSpeakableLines(editedLines.join("\n"), {
+                maxLines: Math.max(editedLines.length || 1, 1),
+                maxChars: 90,
+            })
+            : [];
+        if (shouldRenderCaptions && captionLines.join("\n") !== editedLines.join("\n")) {
             setEditedLines(captionLines);
             toast('Formatted captions before render', { icon: '✨' });
         }
-        const words = kineticCaptions && transcript ? reflowWordsFromEditedLines(transcript, captionLines) : [];
+        const words = shouldRenderCaptions && transcript ? reflowWordsFromEditedLines(transcript, captionLines) : [];
         // Feasibility guard: kinetic captions don't scale to long sermons — the
         // filter graph explodes and the render effectively never finishes. Block
         // early with a clear path forward (only when captions are on).
-        if (kineticCaptions && words.length > MAX_CAPTION_WORDS) {
+        if (shouldRenderCaptions && words.length > MAX_CAPTION_WORDS) {
             const mins = Math.round((words[words.length - 1]?.endMs || 0) / 60000);
             toast.error(
                 `This clip has ${words.length} words${mins ? ` (~${mins} min)` : ''} — too long for kinetic captions (max ~${MAX_CAPTION_WORDS}). ` +
@@ -677,7 +683,7 @@ export function TimelinePage() {
                 {
                     ...payload,
                     ...trim,
-                    captions: kineticCaptions,
+                    captions: shouldRenderCaptions,
                     words,
                     typographyPreset,
                     layout,
@@ -1025,13 +1031,17 @@ export function TimelinePage() {
                         disabled={
                             isRenderingVideo
                             || !sourceMediaPath
-                            || (kineticCaptions && !transcript)
+                            || (kineticCaptions && !transcript && sourceMediaKind !== 'video')
                             || (sourceMediaKind === 'audio' && backgroundItems.length === 0 && !autoBackground)
                         }
                         className="w-full sm:w-auto"
                     >
                         <Film size={16} className="mr-2" />
-                        {isRenderingVideo ? 'Rendering...' : kineticCaptions ? 'Render Captioned Video' : 'Render Video'}
+                        {isRenderingVideo
+                            ? 'Rendering...'
+                            : kineticCaptions && transcript
+                                ? 'Render Captioned Video'
+                                : 'Render Video'}
                     </Button>
                 </div>
             </div>
