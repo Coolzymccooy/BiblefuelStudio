@@ -61,7 +61,7 @@ export function AccessForm() {
   };
 
   return (
-    <section id="access" className="bg-[#0d0906] px-5 py-14 text-center sm:px-8 sm:py-20 md:px-10">
+    <section id="access" className="bg-editorial-parchment px-5 py-14 text-center sm:px-8 sm:py-20 md:px-10">
       <motion.div
         initial="hidden"
         whileInView="visible"
@@ -71,15 +71,15 @@ export function AccessForm() {
       >
         {submitted ? (
           <div>
-            <h2 className="font-displaySerif text-[34px] leading-tight text-bf-cream sm:text-[44px]">Received.</h2>
-            <p className="mt-3 font-bodyserif text-[14px] text-bf-sub sm:text-[15px]">
+            <h2 className="font-displaySerif text-[34px] leading-tight text-editorial-ink sm:text-[44px]">Received.</h2>
+            <p className="mt-3 font-bodyserif text-[14px] text-editorial-muted sm:text-[15px]">
               We'll be in touch soon — usually within a few days.
             </p>
           </div>
         ) : (
           <>
-            <h2 className="font-displaySerif text-[34px] leading-tight text-bf-cream sm:text-[44px]">Request access.</h2>
-            <p className="mt-3 mb-8 font-bodyserif text-[14px] text-bf-sub sm:mb-9 sm:text-[15px]">
+            <h2 className="font-displaySerif text-[34px] leading-tight text-editorial-ink sm:text-[44px]">Request access.</h2>
+            <p className="mt-3 mb-8 font-bodyserif text-[14px] text-editorial-muted sm:mb-9 sm:text-[15px]">
               The studio is opening in waves to a small number of ministries and creators.
               Tell us a little about your work — we'll be in touch.
             </p>
@@ -104,7 +104,7 @@ export function AccessForm() {
               </label>
 
               {serverError && (
-                <div className="rounded-md border border-[rgba(224,138,138,0.3)] bg-[rgba(224,138,138,0.08)] p-3 text-[13px] text-bf-danger">
+                <div className="rounded-sm border border-editorial-goldDeep/30 bg-editorial-paper p-3 text-[13px] text-editorial-ink">
                   {serverError}
                 </div>
               )}
@@ -112,7 +112,7 @@ export function AccessForm() {
               <button
                 type="submit"
                 disabled={submitting}
-                className="btn btn-primary mt-2 h-[50px] rounded-[13px] text-[13px] disabled:opacity-60"
+                className="mt-2 rounded-sm bg-editorial-ink px-6 py-3.5 font-sans text-[11px] font-medium uppercase tracking-[1.8px] text-editorial-paper disabled:opacity-60"
               >
                 {submitting ? 'Submitting…' : 'Submit request →'}
               </button>
@@ -136,11 +136,11 @@ interface FieldProps {
 
 function Field({ label, name, value, onChange, error, type = 'text', textarea = false }: FieldProps) {
   const id = `bf-${name}`;
-  const baseClass = 'rounded-[11px] border border-[rgba(216,184,120,0.14)] bg-bf-input px-4 py-3 font-bodyserif text-[15px] text-bf-cream placeholder:text-bf-muted/70 focus:border-[rgba(216,184,120,0.4)] focus:outline-none';
+  const baseClass = 'rounded-sm border border-editorial-hairline bg-editorial-paper px-4 py-3 font-bodyserif text-[14px] text-editorial-ink placeholder:text-editorial-muted/60 focus:border-editorial-goldDeep focus:outline-none';
 
   return (
     <div>
-      <label htmlFor={id} className="block font-sans text-[10px] uppercase tracking-[1.5px] text-bf-muted">
+      <label htmlFor={id} className="block font-sans text-[10px] uppercase tracking-[1.5px] text-editorial-muted">
         {label}
       </label>
       {textarea ? (
@@ -148,7 +148,7 @@ function Field({ label, name, value, onChange, error, type = 'text', textarea = 
       ) : (
         <input id={id} name={name} type={type} value={value} onChange={onChange} className={`${baseClass} mt-1 w-full`} />
       )}
-      {error && <div className="mt-1 font-sans text-[11px] text-bf-danger">{error}</div>}
+      {error && <div className="mt-1 font-sans text-[11px] text-editorial-goldDeep">{error}</div>}
     </div>
   );
 }
