@@ -2,13 +2,16 @@ import { describe, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
 import request from 'supertest';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import timelineRouter, { _resetTimelineRenderJobsForTest, _setTimelineRendererForTest } from './timeline.js';
 
-function app() {
+function app(ctx = {}) {
   const a = express();
   a.use(express.json());
   a.use((req, _res, next) => {
-    req.ctx = { userId: 'test-user' };
+    req.ctx = { userId: 'test-user', dataDir: ctx.dataDir || fs.mkdtempSync(path.join(os.tmpdir(), 'timeline-route-data-')) };
     next();
   });
   a.use('/api/timeline', timelineRouter);
@@ -93,5 +96,49 @@ describe('timeline route', () => {
     assert.equal(failed.body.status, 'failed');
     assert.equal(failed.body.progress, 100);
     assert.match(failed.body.error, /Chatterbox unavailable/);
+  });
+
+  test('GET /render/:jobId can recover a terminal timeline job from disk after memory reset', async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'timeline-route-persist-'));
+    _setTimelineRendererForTest(async () => ({
+      ok: true,
+      outputPath: 'C:/tmp/timeline-proof.mp4',
+      publicUrl: '/outputs/timeline/timeline-proof.mp4',
+      ignoredPlaceholders: 0,
+      generatedVoiceovers: [],
+    }));
+
+    const queued = await request(app({ dataDir }))
+      .post('/api/timeline/render')
+      .send({ project: projectWithClip(), quality: 'proof_720p' })
+      .expect(202);
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    _resetTimelineRenderJobsForTest();
+
+    const recovered = await request(app({ dataDir })).get(`/api/timeline/render/${queued.body.jobId}`).expect(200);
+    assert.equal(recovered.body.status, 'completed');
+    assert.equal(recovered.body.publicUrl, '/outputs/timeline/timeline-proof.mp4');
+  });
+
+  test('timeline projects can be saved, listed, and restored from the user data dir', async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'timeline-projects-'));
+    const project = projectWithClip();
+
+    const saved = await request(app({ dataDir }))
+      .put(`/api/timeline/projects/${project.id}`)
+      .send({ project })
+      .expect(200);
+
+    assert.equal(saved.body.ok, true);
+    assert.equal(saved.body.project.id, project.id);
+
+    const listed = await request(app({ dataDir })).get('/api/timeline/projects').expect(200);
+    assert.equal(listed.body.projects.length, 1);
+    assert.equal(listed.body.projects[0].id, project.id);
+
+    const loaded = await request(app({ dataDir })).get(`/api/timeline/projects/${project.id}`).expect(200);
+    assert.equal(loaded.body.project.title, project.title);
+    assert.equal(loaded.body.project.tracks[0].clips[0].assetId, 'asset-video');
   });
 });

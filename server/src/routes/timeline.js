@@ -1,3 +1,4 @@
+import fs from 'fs';
 import { Router } from 'express';
 import { randomUUID } from 'crypto';
 import path from 'path';
@@ -12,6 +13,79 @@ const SERVER_ROOT = path.resolve(__dirname, '../..');
 
 const jobs = new Map();
 let _renderTimelineProof = renderTimelineProof;
+
+function timelineJobsDir(dataDir) {
+  return path.join(dataDir || path.join(SERVER_ROOT, 'data'), 'timeline-render-jobs');
+}
+
+function persistTimelineJob(job) {
+  if (!job.dataDir) return;
+  const dir = timelineJobsDir(job.dataDir);
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `${job.jobId}.json`);
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(serializeJob(job), null, 2));
+  fs.renameSync(tmp, file);
+}
+
+function readPersistedTimelineJob(dataDir, jobId) {
+  const safeId = String(jobId || '').replace(/[^a-z0-9-]/gi, '');
+  if (!safeId) return null;
+  const file = path.join(timelineJobsDir(dataDir), `${safeId}.json`);
+  try {
+    if (!fs.existsSync(file)) return null;
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (parsed?.jobId !== jobId) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function safeProjectId(projectId) {
+  return String(projectId || '').trim().replace(/[^a-z0-9_-]/gi, '').slice(0, 120);
+}
+
+function timelineProjectsDir(dataDir) {
+  return path.join(dataDir || path.join(SERVER_ROOT, 'data'), 'timeline-projects');
+}
+
+function projectFile(dataDir, projectId) {
+  const safeId = safeProjectId(projectId);
+  if (!safeId) return null;
+  return path.join(timelineProjectsDir(dataDir), `${safeId}.json`);
+}
+
+function writeTimelineProject(dataDir, project) {
+  const id = safeProjectId(project?.id);
+  if (!id) throw new Error('Timeline project id required');
+  const dir = timelineProjectsDir(dataDir);
+  fs.mkdirSync(dir, { recursive: true });
+  const record = { ...project, id, updatedAt: Date.now() };
+  const file = projectFile(dataDir, id);
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(record, null, 2));
+  fs.renameSync(tmp, file);
+  return record;
+}
+
+function readTimelineProject(dataDir, projectId) {
+  const file = projectFile(dataDir, projectId);
+  if (!file || !fs.existsSync(file)) return null;
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
+}
+
+function listTimelineProjects(dataDir) {
+  const dir = timelineProjectsDir(dataDir);
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir)
+    .filter((name) => name.endsWith('.json'))
+    .map((name) => {
+      try { return JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8')); } catch { return null; }
+    })
+    .filter(Boolean)
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+}
 
 export function _setTimelineRendererForTest(fn) {
   _renderTimelineProof = fn;
@@ -52,6 +126,7 @@ async function runTimelineJob(job) {
   job.phase = 'rendering';
   job.progress = 10;
   job.startedAt = Date.now();
+  persistTimelineJob(job);
 
   try {
     const proofResult = await _renderTimelineProof(job.plan, {
@@ -78,6 +153,7 @@ async function runTimelineJob(job) {
       job.error = proofResult.error || 'Timeline proof render failed';
       job.note = 'Timeline proof render failed before producing a playable MP4.';
     }
+    persistTimelineJob(job);
   } catch (e) {
     job.status = 'failed';
     job.phase = 'failed';
@@ -85,10 +161,33 @@ async function runTimelineJob(job) {
     job.completedAt = Date.now();
     job.error = String(e?.message || e);
     job.note = 'Timeline proof render failed before producing a playable MP4.';
+    persistTimelineJob(job);
   }
 }
 
 const router = Router();
+
+router.get('/projects', (req, res) => {
+  return res.json({ ok: true, projects: listTimelineProjects(req.ctx?.dataDir) });
+});
+
+router.put('/projects/:projectId', (req, res) => {
+  try {
+    const project = req.body?.project;
+    if (!project || project.id !== req.params.projectId) return res.status(400).json({ ok: false, error: 'Timeline project id mismatch' });
+    buildTimelineRenderPlan(project, { quality: project.renderSettings?.quality || 'proof_720p' });
+    const saved = writeTimelineProject(req.ctx?.dataDir, project);
+    return res.json({ ok: true, project: saved });
+  } catch (e) {
+    return res.status(400).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+router.get('/projects/:projectId', (req, res) => {
+  const project = readTimelineProject(req.ctx?.dataDir, req.params.projectId);
+  if (!project) return res.status(404).json({ ok: false, error: 'NOT_FOUND' });
+  return res.json({ ok: true, project });
+});
 
 router.post('/render', (req, res) => {
   try {
@@ -104,6 +203,7 @@ router.post('/render', (req, res) => {
     const job = {
       jobId,
       userId: req.ctx?.userId || 'anon',
+      dataDir: req.ctx?.dataDir,
       status: 'queued',
       phase: 'queued',
       progress: 0,
@@ -119,6 +219,7 @@ router.post('/render', (req, res) => {
       note: 'Timeline proof render queued.',
     };
     jobs.set(jobId, job);
+    persistTimelineJob(job);
 
     setTimeout(() => {
       runTimelineJob(job).catch((e) => {
@@ -127,6 +228,7 @@ router.post('/render', (req, res) => {
         job.progress = 100;
         job.completedAt = Date.now();
         job.error = String(e?.message || e);
+        persistTimelineJob(job);
       });
     }, 0);
 
@@ -138,8 +240,16 @@ router.post('/render', (req, res) => {
 
 router.get('/render/:jobId', (req, res) => {
   const job = jobs.get(req.params.jobId);
-  if (!job) return res.status(404).json({ ok: false, error: 'NOT_FOUND' });
-  return res.json(serializeJob(job));
+  if (job) return res.json(serializeJob(job));
+  const persisted = readPersistedTimelineJob(req.ctx?.dataDir, req.params.jobId);
+  if (!persisted) return res.status(404).json({ ok: false, error: 'NOT_FOUND' });
+  if (persisted.status === 'queued' || persisted.status === 'running') {
+    persisted.status = 'failed';
+    persisted.phase = 'interrupted';
+    persisted.progress = 100;
+    persisted.error = 'Timeline render was interrupted by a server restart. Please render again.';
+  }
+  return res.json(persisted);
 });
 
 export default router;

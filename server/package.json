@@ -10,6 +10,7 @@
     "test": "node --test \"test/**/*.test.js\" \"src/**/*.test.js\""
   },
   "dependencies": {
+    "@huggingface/transformers": "^3.8.1",
     "archiver": "^7.0.1",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",

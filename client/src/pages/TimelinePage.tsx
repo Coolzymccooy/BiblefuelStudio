@@ -338,12 +338,25 @@ export function TimelinePage() {
         if (restored) {
             setDocumentaryProject(restored);
         }
+        timelineApi.listProjects().then((response) => {
+            const latest = response.data?.projects?.[0];
+            if (response.ok && latest) setDocumentaryProject(latest);
+        }).catch(() => {
+            // Local storage remains the offline fallback.
+        });
     }, []);
 
     useEffect(() => {
         if (documentaryProject) {
             saveTimelineProject(documentaryProject);
+            const timer = window.setTimeout(() => {
+                timelineApi.saveProject(documentaryProject).catch(() => {
+                    // Keep editing uninterrupted; localStorage is already saved.
+                });
+            }, 750);
+            return () => window.clearTimeout(timer);
         }
+        return undefined;
     }, [documentaryProject]);
 
     useEffect(() => {

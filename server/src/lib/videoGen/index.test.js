@@ -5,11 +5,13 @@ import {
   listVideoProviderChain,
   generateTimelineVideo,
 } from './index.js';
+import { generateVideoVeo } from './providers/veo.js';
 
 const ENV_KEYS = [
   'VIDEO_GEN_ENABLED',
   'VIDEO_GEN_PROVIDER',
   'VEO_API_KEY',
+  'VEO_API_URL',
   'GOOGLE_VERTEX_PROJECT',
   'GOOGLE_VERTEX_LOCATION',
   'GOOGLE_APPLICATION_CREDENTIALS',
@@ -98,5 +100,26 @@ describe('videoGen orchestrator — generateTimelineVideo', () => {
     assert.equal(result.provider, 'veo');
     assert.equal(result.code, 'PROVIDER_NOT_IMPLEMENTED');
     assert.match(result.error, /Veo/i);
+  });
+
+  test('Veo provider posts to an official configured endpoint when VEO_API_URL is set', async () => {
+    process.env.VEO_API_KEY = 'key';
+    process.env.VEO_API_URL = 'https://veo.example.test/generate';
+    const calls = [];
+    const result = await generateVideoVeo({
+      projectId: 'lhp',
+      prompt: 'cinematic golden worship light rays',
+      aspect: '16:9',
+      durationSec: 8,
+      fetchImpl: async (url, init) => {
+        calls.push({ url, init });
+        return { ok: true, status: 200, json: async () => ({ publicUrl: 'https://cdn.example.test/veo.mp4', path: 'gs://bucket/veo.mp4' }) };
+      },
+    });
+
+    assert.equal(calls[0].url, 'https://veo.example.test/generate');
+    assert.match(calls[0].init.headers.Authorization, /^Bearer /);
+    assert.equal(result.ok, true);
+    assert.equal(result.publicUrl, 'https://cdn.example.test/veo.mp4');
   });
 });

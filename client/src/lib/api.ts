@@ -404,4 +404,7 @@ export interface TimelineRenderResponse {
 export const timelineApi = {
     render: (project: any, quality = 'proof_720p') => api.post<TimelineRenderResponse>('/api/timeline/render', { project, quality }, undefined, { timeout: DEFAULT_TIMEOUT_MS }),
     getRenderJob: (jobId: string) => api.get<TimelineRenderResponse>(`/api/timeline/render/${encodeURIComponent(jobId)}`),
+    saveProject: (project: any) => api.put<{ ok: boolean; project: any }>(`/api/timeline/projects/${encodeURIComponent(project.id)}`, { project }),
+    getProject: (projectId: string) => api.get<{ ok: boolean; project: any }>(`/api/timeline/projects/${encodeURIComponent(projectId)}`),
+    listProjects: () => api.get<{ ok: boolean; projects: any[] }>('/api/timeline/projects'),
 };
