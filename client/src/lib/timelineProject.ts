@@ -281,11 +281,16 @@ export function insertSourceMediaOnTimeline(
     path: string;
     proxyPath?: string;
     proxyStatus?: 'pending' | 'ready' | 'failed' | string;
-    kind: 'video' | 'audio';
+    kind: 'video' | 'audio' | 'image';
     durationSec?: number;
     startSec?: number;
   },
 ): TimelineProject {
+  const targetTrackKind = input.kind === 'audio' ? 'music' : input.kind === 'image' ? 'broll' : 'video';
+  const targetTrack = project.tracks.find((track) => track.kind === targetTrackKind);
+  const appendStartSec = targetTrack?.clips.length
+    ? Math.max(...targetTrack.clips.map((clip) => clip.startSec + clip.durationSec))
+    : 0;
   const asset: TimelineAsset = {
     id: makeId('asset-upload'),
     kind: input.kind,
@@ -295,14 +300,18 @@ export function insertSourceMediaOnTimeline(
     proxyPath: input.proxyPath,
     proxyStatus: input.proxyStatus,
     durationSec: input.durationSec,
-    aspect: input.kind === 'video' ? project.aspect : undefined,
-    tags: input.kind === 'video' ? ['real_footage', 'source_media'] : ['source_audio'],
+    aspect: input.kind !== 'audio' ? project.aspect : undefined,
+    tags: input.kind === 'video'
+      ? ['real_footage', 'source_media']
+      : input.kind === 'image'
+        ? ['cutaway', 'source_image', 'broll']
+        : ['source_audio'],
   };
   return insertAssetOnTrack(project, {
-    trackKind: input.kind === 'video' ? 'video' : 'music',
+    trackKind: targetTrackKind,
     asset,
-    startSec: input.startSec ?? 0,
-    durationSec: input.durationSec ?? asset.durationSec ?? 30,
+    startSec: input.startSec ?? appendStartSec,
+    durationSec: input.durationSec ?? asset.durationSec ?? (input.kind === 'image' ? 5 : 30),
     fit: input.kind === 'video' ? 'face-safe' : 'contain',
   });
 }

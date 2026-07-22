@@ -29,8 +29,8 @@ const TRACK_ICON: Record<TimelineTrackKind, typeof Film> = {
 };
 
 const EMPTY_HINT: Record<TimelineTrackKind, string> = {
-  video: 'Drop or insert video clips here',
-  broll: 'Generate Veo B-roll or add cutaways',
+  video: 'Inserted videos appear here in sequence',
+  broll: 'Add images, uploaded cutaways, or configured AI B-roll here',
   voiceover: 'Add Chatterbox/Fish scene briefs',
   music: 'Add soundtrack bed or worship-safe music',
   captions: 'Add kinetic captions and scripture callouts',
@@ -152,29 +152,38 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
             <div className="rounded-full border border-primary-500/20 bg-primary-500/10 px-3 py-1 text-xs text-primary-100">
               Face-safe default · {project.renderSettings.voiceProvider} VO · {project.aspect}
             </div>
-            <Button variant="secondary" className="text-xs px-3 py-1.5" onClick={() => onRequestVeoBroll?.(buildVeoPrompt(project))}>
-              <Sparkles size={14} className="mr-1.5" /> Generate Veo B-roll
+            <Button
+              variant="secondary"
+              className="text-xs px-3 py-1.5"
+              onClick={() => onRequestVeoBroll?.(buildVeoPrompt(project))}
+              title="Requires official Veo endpoint/API config. Uploaded videos/images can still be inserted without Veo."
+            >
+              <Sparkles size={14} className="mr-1.5" /> Request AI B-roll
             </Button>
           </div>
         </div>
 
-        {selection && (
-          <div className="flex flex-col gap-3 rounded-xl border border-emerald-400/25 bg-emerald-500/10 p-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-emerald-100">Selected clip</p>
-              <p className="mt-1 text-sm text-emerald-50">{selection.asset?.label || selection.clip.assetId}</p>
-              <p className="text-[11px] text-emerald-100/70">{selection.track.label} · starts {formatDuration(selection.clip.startSec)} · {Math.round(selection.clip.durationSec)}s</p>
-            </div>
-            <div className="flex gap-2">
-              <Button variant="secondary" className="text-xs px-3 py-1.5" onClick={handleSplit} disabled={!onProjectChange || selection.clip.durationSec < 1}>
-                <Scissors size={14} className="mr-1.5" /> Split clip
-              </Button>
-              <Button variant="ghost" className="text-xs px-3 py-1.5" onClick={handleRemove} disabled={!onProjectChange}>
-                <Trash2 size={14} className="mr-1.5" /> Remove clip
-              </Button>
-            </div>
+        <div className="flex flex-col gap-3 rounded-xl border border-emerald-400/25 bg-emerald-500/10 p-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-emerald-100">Selected clip</p>
+            {selection ? (
+              <>
+                <p className="mt-1 text-sm text-emerald-50">{selection.asset?.label || selection.clip.assetId}</p>
+                <p className="text-[11px] text-emerald-100/70">{selection.track.label} · starts {formatDuration(selection.clip.startSec)} · {Math.round(selection.clip.durationSec)}s</p>
+              </>
+            ) : (
+              <p className="mt-1 text-sm text-emerald-50/80">Click a clip block in any lane first, then split or remove it here.</p>
+            )}
           </div>
-        )}
+          <div className="flex gap-2">
+            <Button variant="secondary" className="text-xs px-3 py-1.5" onClick={handleSplit} disabled={!selection || !onProjectChange || selection.clip.durationSec < 1}>
+              <Scissors size={14} className="mr-1.5" /> Split clip
+            </Button>
+            <Button variant="ghost" className="text-xs px-3 py-1.5" onClick={handleRemove} disabled={!selection || !onProjectChange}>
+              <Trash2 size={14} className="mr-1.5" /> Remove clip
+            </Button>
+          </div>
+        </div>
 
         <div className="overflow-x-auto rounded-xl border border-white/10 bg-black/25 p-3">
           <div className="min-w-[920px] space-y-3">

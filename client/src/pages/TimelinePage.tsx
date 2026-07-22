@@ -230,7 +230,7 @@ export function TimelinePage() {
         STORAGE_KEYS.sclSourcePath,
         null,
     );
-    const [sourceMediaKind, setSourceMediaKind] = usePersistedState<'audio' | 'video' | null>(
+    const [sourceMediaKind, setSourceMediaKind] = usePersistedState<'audio' | 'video' | 'image' | null>(
         STORAGE_KEYS.sclSourceKind,
         null,
     );
@@ -424,21 +424,24 @@ export function TimelinePage() {
             return;
         }
         const isVideo = /\.(mp4|mov|webm|m4v)$/i.test(file.name);
+        const isImage = /\.(png|jpe?g|webp|gif)$/i.test(file.name) || file.type.startsWith('image/');
+        const mediaKind: 'video' | 'image' | 'audio' = isVideo ? 'video' : isImage ? 'image' : 'audio';
+        const uploadKind = isVideo ? 'source-video' : isImage ? 'background' : 'audio';
         const toastId = 'scl-source-upload';
         setIsUploading(true);
         try {
             setUploadProgress(0);
-            toast.loading(isVideo ? 'Uploading video… 0%' : 'Uploading sermon… 0%', { id: toastId });
+            toast.loading(isVideo ? 'Uploading video… 0%' : isImage ? 'Uploading image… 0%' : 'Uploading sermon… 0%', { id: toastId });
             // Small files stream one-shot; large files (which Cloudflare would
             // reject) go resumable → storage. uploadMedia picks the transport.
             const data = await uploadMedia(
                 file,
                 file.name,
-                isVideo ? 'source-video' : 'audio',
-                makeUploadToast(toastId, isVideo ? 'Uploading video…' : 'Uploading sermon…'),
+                uploadKind,
+                makeUploadToast(toastId, isVideo ? 'Uploading video…' : isImage ? 'Uploading image…' : 'Uploading sermon…'),
             );
             setSourceMediaPath(data.file);
-            setSourceMediaKind(isVideo ? 'video' : 'audio');
+            setSourceMediaKind(mediaKind);
             setSourceMediaProxyPath(isVideo ? data.proxyPath || null : null);
             setSourceMediaProxyStatus(isVideo ? data.proxyStatus || null : null);
             setTranscript(null);
@@ -454,7 +457,7 @@ export function TimelinePage() {
             // path tries to concat both the old (possibly stale) clip and
             // the new one, throws an ffmpeg validation error, and the user
             // has to manually delete the duplicate to recover.
-            if (!isVideo) {
+            if (mediaKind === 'audio') {
                 const clip: TimelineClip = {
                     id: `clip_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
                     path: data.file,
@@ -467,7 +470,7 @@ export function TimelinePage() {
                 saveClipsToCache(next);
                 pushAudioHistory(data.file, 'source');
             }
-            toast.success(`${isVideo ? 'Video' : 'Audio'} uploaded`, { id: toastId });
+            toast.success(`${mediaKind === 'video' ? 'Video' : mediaKind === 'image' ? 'Image' : 'Audio'} uploaded`, { id: toastId });
         } catch (e) {
             toast.error((e as Error).message || 'Upload failed', { id: toastId });
         } finally {
@@ -1091,11 +1094,10 @@ export function TimelinePage() {
             proxyPath: sourceMediaKind === 'video' ? sourceMediaProxyPath || undefined : undefined,
             proxyStatus: sourceMediaKind === 'video' ? sourceMediaProxyStatus || undefined : undefined,
             kind: sourceMediaKind,
-            durationSec: 30,
-            startSec: 0,
+            durationSec: sourceMediaKind === 'image' ? 5 : 30,
         });
         setDocumentaryProject(nextProject);
-        toast.success(sourceMediaKind === 'video' ? 'Inserted into Real footage track' : 'Inserted into Music bed track');
+        toast.success(sourceMediaKind === 'video' ? 'Inserted into Real footage track' : sourceMediaKind === 'image' ? 'Inserted into AI B-roll / cutaways track' : 'Inserted into Music bed track');
     };
 
     const handleInsertVoiceoverPlaceholder = () => {
@@ -1227,10 +1229,12 @@ export function TimelinePage() {
 
     const sourceMediaPreviewPath = sourceMediaKind === 'video' && sourceMediaProxyPath && sourceMediaProxyStatus === 'ready'
         ? sourceMediaProxyPath
-        : sourceMediaPath;
+        : sourceMediaKind === 'video'
+            ? ''
+            : sourceMediaPath;
 
-    const sourceMediaPreviewLabel = sourceMediaKind === 'video' && sourceMediaPreviewPath === sourceMediaProxyPath
-        ? 'Preview source (proxy)'
+    const sourceMediaPreviewLabel = sourceMediaKind === 'video'
+        ? (sourceMediaProxyStatus === 'ready' ? 'Preview source (proxy)' : 'Proxy processing…')
         : 'Preview source';
 
     return (
@@ -1397,17 +1401,18 @@ export function TimelinePage() {
                             )}
                         </span>
                         <div className="shrink-0 flex items-center gap-2">
-                            {sourceMediaKind === 'video' && sourceMediaPreviewPath && (
+                            {sourceMediaKind === 'video' && (
                                 <button
                                     type="button"
-                                    onClick={() => setPreviewUrl(sourceMediaPreviewPath)}
-                                    className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-white/[0.06] text-primary-200 hover:bg-white/[0.12] transition-colors"
-                                    title={sourceMediaPreviewPath === sourceMediaProxyPath ? 'Plays the low-res proxy for faster mobile preview; final render still uses original.' : 'Plays the original uploaded video until the proxy is ready.'}
+                                    onClick={() => sourceMediaPreviewPath && setPreviewUrl(sourceMediaPreviewPath)}
+                                    disabled={!sourceMediaPreviewPath}
+                                    className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-white/[0.06] text-primary-200 hover:bg-white/[0.12] transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                                    title={sourceMediaPreviewPath ? 'Plays the low-res proxy for faster mobile preview; final render still uses original.' : 'Proxy is still processing. Preview is disabled to avoid opening the large original and blanking the page.'}
                                 >
                                     <Play size={12} /> {sourceMediaPreviewLabel}
                                 </button>
                             )}
-                            {sourceMediaKind !== 'video' && (
+                            {sourceMediaKind === 'audio' && (
                                 <button
                                     type="button"
                                     onClick={() => useAsMusicBed(sourceMediaPath)}
@@ -1416,6 +1421,7 @@ export function TimelinePage() {
                                     <Music size={12} /> Use as Music Bed
                                 </button>
                             )}
+                            {sourceMediaKind !== 'image' && (
                             <button
                                 type="button"
                                 onClick={() => setTrimTarget({
@@ -1441,6 +1447,7 @@ export function TimelinePage() {
                             >
                                 <Scissors size={12} /> Trim
                             </button>
+                            )}
                         </div>
                     </div>
                 )}

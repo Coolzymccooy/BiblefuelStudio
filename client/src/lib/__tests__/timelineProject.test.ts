@@ -143,6 +143,41 @@ describe('timelineProject', () => {
     expect(getTimelineAssetPreviewPath({ ...pending, proxyStatus: 'failed' })).toBe('original.mov');
   });
 
+  test('insertSourceMediaOnTimeline appends repeated uploaded videos after existing real-footage clips', () => {
+    const project = buildWorshipDocumentaryProject({ title: 'Multi upload insert' });
+    const first = insertSourceMediaOnTimeline(project, {
+      label: 'first.mp4',
+      path: 'uploads/first.mp4',
+      kind: 'video',
+      durationSec: 12,
+    });
+    const second = insertSourceMediaOnTimeline(first, {
+      label: 'second.mp4',
+      path: 'uploads/second.mp4',
+      kind: 'video',
+      durationSec: 8,
+    });
+
+    const video = second.tracks.find((track) => track.kind === 'video');
+    expect(video?.clips).toHaveLength(2);
+    expect(video?.clips[0].startSec).toBe(0);
+    expect(video?.clips[1].startSec).toBe(12);
+  });
+
+  test('insertSourceMediaOnTimeline inserts uploaded images into the B-roll cutaway track', () => {
+    const project = buildWorshipDocumentaryProject({ title: 'Image insert' });
+    const updated = insertSourceMediaOnTimeline(project, {
+      label: 'church-arrival.jpg',
+      path: 'uploads/church-arrival.jpg',
+      kind: 'image',
+    });
+
+    const broll = updated.tracks.find((track) => track.kind === 'broll');
+    expect(broll?.clips).toHaveLength(1);
+    expect(broll?.clips[0].durationSec).toBe(5);
+    expect(updated.assets[broll!.clips[0].assetId]).toMatchObject({ kind: 'image', source: 'upload', label: 'church-arrival.jpg' });
+  });
+
   test('insertVoiceoverPlaceholderOnTimeline adds Chatterbox narration placeholder to Voice-over track', () => {
     const project = buildWorshipDocumentaryProject({ title: 'VO insert' });
     const updated = insertVoiceoverPlaceholderOnTimeline(project, {
