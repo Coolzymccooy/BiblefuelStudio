@@ -10,6 +10,7 @@ import { Mic, Plus } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { loadJson, saveJson, STORAGE_KEYS } from '../lib/storage';
 import { useConfig } from '../lib/config';
+import { cleanCaptionLine, cleanSpeakableText } from '../lib/speakableScript';
 
 interface Script {
     title: string;
@@ -31,6 +32,8 @@ export function ScriptsPage() {
     const [count, setCount] = useState(1);
     const [ctaStyle, setCtaStyle] = useState('save');
     const [lengthSeconds, setLengthSeconds] = useState(20);
+    const [scriptType, setScriptType] = useState('peace');
+    const [customPrompt, setCustomPrompt] = useState('');
     const [scripts, setScripts] = useState<Script[]>([]);
     const [isGenerating, setIsGenerating] = useState(false);
 
@@ -48,6 +51,8 @@ export function ScriptsPage() {
                 count,
                 ctaStyle,
                 lengthSeconds,
+                scriptType,
+                customPrompt,
             });
 
             if (response.ok && response.data?.scripts) {
@@ -68,11 +73,11 @@ export function ScriptsPage() {
         try {
             const response = await api.post('/api/queue/add', {
                 title: script.title || 'Biblefuel Post',
-                hook: script.hook || '',
-                verse: script.verse || '',
-                reference: script.reference || '',
-                reflection: script.reflection || '',
-                cta: script.cta || '',
+                hook: cleanCaptionLine(script.hook || ''),
+                verse: cleanCaptionLine(script.verse || ''),
+                reference: cleanCaptionLine(script.reference || ''),
+                reflection: cleanCaptionLine(script.reflection || ''),
+                cta: cleanCaptionLine(script.cta || ''),
                 hashtags: script.hashtags || [],
             });
 
@@ -87,7 +92,8 @@ export function ScriptsPage() {
     };
 
     const handleSendToVoice = (script: Script) => {
-        const fullText = `${script.hook}\n\n${script.verse} (${script.reference})\n\n${script.reflection}\n\n${script.cta}`;
+        const verseLine = script.reference ? `${script.verse} (${script.reference})` : script.verse;
+        const fullText = cleanSpeakableText(`${script.hook}\n\n${verseLine}\n\n${script.reflection}\n\n${script.cta}`);
         localStorage.setItem('bf_tts_text', fullText);
         toast.success('Script sent to Voice page!');
         navigate('/app/voice-audio');
@@ -141,7 +147,36 @@ export function ScriptsPage() {
                             max={90}
                         />
                     </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-gray-200 mb-1">
+                            Script type
+                        </label>
+                        <Select value={scriptType} onChange={(e) => setScriptType(e.target.value)}>
+                            <option value="peace">Peace / storm</option>
+                            <option value="strength">Strength / battles</option>
+                            <option value="anxiety">Anxiety / fear</option>
+                            <option value="identity">Identity in Christ</option>
+                            <option value="prayer">Prayer / waiting</option>
+                            <option value="gratitude">Gratitude / mercy</option>
+                            <option value="forgiveness">Forgiveness / grace</option>
+                            <option value="purpose">Purpose / calling</option>
+                            <option value="healing">Healing / grief</option>
+                            <option value="custom">Custom prompt</option>
+                        </Select>
+                    </div>
                 </div>
+
+                {scriptType === 'custom' && (
+                    <div className="mb-4">
+                        <label className="block text-sm font-medium text-gray-200 mb-1">Custom script idea</label>
+                        <Input
+                            value={customPrompt}
+                            onChange={(e) => setCustomPrompt(e.target.value)}
+                            placeholder="e.g. trusting God after disappointment"
+                        />
+                    </div>
+                )}
 
                 <div className="flex flex-wrap gap-2">
                     <Button onClick={handleGenerate} isLoading={isGenerating} disabled={!scriptsEnabled} className="w-full sm:w-auto">

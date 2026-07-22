@@ -9,6 +9,7 @@ import storyRouter, {
   _setTtsImpl, _resetTtsImpl,
 } from "./story.js";
 import { _setLlmImpl, _resetLlmImpl } from "../lib/story/sceneSegmenter.js";
+import { _setLlmImpl as _setScriptLlmImpl, _resetLlmImpl as _resetScriptLlmImpl } from "../lib/story/scriptRefine.js";
 import { readProject, writeProject } from "../lib/story/projectStore.js";
 
 function handlerFor(method, routePath) {
@@ -47,7 +48,7 @@ beforeEach(() => {
   outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "story-route-out-"));
 });
 afterEach(() => {
-  _resetTranscribeImpl(); _resetImageGenImpl(); _resetLlmImpl(); _resetTtsImpl();
+  _resetTranscribeImpl(); _resetImageGenImpl(); _resetLlmImpl(); _resetScriptLlmImpl(); _resetTtsImpl();
   fs.rmSync(dataDir, { recursive: true, force: true });
   fs.rmSync(outputDir, { recursive: true, force: true });
 });
@@ -246,6 +247,51 @@ describe("story routes", () => {
     assert.equal(res.payload.ok, true);
     assert.equal(res.payload.project.scenes[0].imagePrompt, "edited prompt");
     assert.equal(res.payload.project.scenes[0].promptEditedByUser, true);
+  });
+
+  test("script-to-audio sanitizes pasted markdown and hashtags before TTS", async () => {
+    let spokenText = "";
+    _setScriptLlmImpl(async () => '*"I can do all things through Christ who strengthens me."* — Philippians 4:13\n\n#Faith');
+    _setTtsImpl(async ({ text }) => {
+      spokenText = text;
+      const file = path.join(outputDir, "story-source.mp3");
+      fs.writeFileSync(file, "fake mp3");
+      return { ok: true, file };
+    });
+
+    const { req, res } = mockReqRes({
+      body: { idea: '*"God gives the strongest battles"*\n#Faith', templateId: "short", voiceId: "en-US-JennyNeural" },
+      dataDir,
+      outputDir,
+    });
+    await handlerFor("post", "/script-to-audio")(req, res);
+
+    assert.equal(res.payload.ok, true);
+    assert.equal(spokenText.includes("#"), false);
+    assert.equal(spokenText.includes("*"), false);
+    assert.equal(spokenText, "I can do all things through Christ who strengthens me. — Philippians 4:13");
+    assert.equal(res.payload.script, spokenText);
+  });
+
+  test("PATCH /:id/scenes/:sid sanitizes edited scene text", async () => {
+    const create = mockReqRes({ body: { title: "T", style: "cinematic-bible" }, dataDir, outputDir });
+    await handlerFor("post", "/")(create.req, create.res);
+    const id = create.res.payload.project.projectId;
+    const proj = readProject(dataDir, id);
+    writeProject(dataDir, {
+      ...proj,
+      scenes: [{ id: "scene-001", text: "old", startMs: 0, endMs: 8000, imagePrompt: "p1", imagePath: null, imageStatus: "pending", promptEditedByUser: false }],
+    });
+    const { req, res } = mockReqRes({
+      params: { id, sid: "scene-001" },
+      body: { text: '*"So God created mankind in His own image."* — Genesis 1:27\n#Faith' },
+      dataDir,
+      outputDir,
+    });
+    await handlerFor("patch", "/:id/scenes/:sid")(req, res);
+
+    assert.equal(res.payload.ok, true);
+    assert.equal(res.payload.project.scenes[0].text, "So God created mankind in His own image. — Genesis 1:27");
   });
 
   test("PATCH /:id/music stores path/volume/autoDuck and clamps; null path clears", async () => {

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
-import { api, TRANSCRIBE_TIMEOUT_MS, MEDIA_OP_TIMEOUT_MS } from '../lib/api';
+import { api, TRANSCRIBE_TIMEOUT_MS, MEDIA_OP_TIMEOUT_MS, videoGenApi, timelineApi, RESUMABLE_UPLOAD_MAX_BYTES } from '../lib/api';
 import { uploadMedia } from '../lib/mediaUpload';
 import toast from 'react-hot-toast';
 import {
@@ -33,10 +33,20 @@ import { ShareSheet } from '../components/ShareSheet';
 import { MediaTrimmer } from '../components/MediaTrimmer';
 import { MusicPicker } from '../components/MusicPicker';
 import { BackgroundLibraryModal } from '../components/BackgroundLibraryModal';
+import { AIDocumentaryTimelinePanel } from '../components/timeline/AIDocumentaryTimelinePanel';
+import { VisualTimelineCanvas } from '../components/timeline/VisualTimelineCanvas';
 import { InfoTooltip } from '../components/ui/InfoTooltip';
 import { BusyBar } from '../components/ui/BusyBar';
 import { DropZone } from '../components/ui/DropZone';
 import { buildSpeakableLines, cleanCaptionLine } from '../lib/speakableScript';
+import type { TimelineProject } from '../lib/timelineProject';
+import {
+    insertAssetOnTrack,
+    insertSourceMediaOnTimeline,
+    insertVoiceoverPlaceholderOnTimeline,
+    loadTimelineProject,
+    saveTimelineProject,
+} from '../lib/timelineProject';
 
 interface TranscriptWord {
     text: string;
@@ -159,7 +169,7 @@ const MAX_CAPTION_WORDS = 1500;
  * in a generic server 413/400.
  */
 // Client-side ceiling; large files (>90MB) go via the resumable path (uploadMedia).
-const MAX_UPLOAD_MB = 400;
+const MAX_UPLOAD_MB = Math.floor(RESUMABLE_UPLOAD_MAX_BYTES / 1024 / 1024);
 
 /** Server-recorded captioned-video render — shape mirrors renderHistory.js. */
 interface RenderHistoryItem {
@@ -174,7 +184,13 @@ interface RenderHistoryItem {
 
 export function TimelinePage() {
     const [clips, setClips] = useState<TimelineClip[]>([]);
-    // Backgrounds are part of the captioned-video flow (Sermon Clip Studio).
+    const [documentaryProject, setDocumentaryProject] = useState<TimelineProject | null>(null);
+    const [isRequestingVeoBroll, setIsRequestingVeoBroll] = useState(false);
+    const [isRenderingDocumentaryTimeline, setIsRenderingDocumentaryTimeline] = useState(false);
+    const [documentaryRenderJobId, setDocumentaryRenderJobId] = useState<string | null>(null);
+    const [documentaryRenderStatus, setDocumentaryRenderStatus] = useState<string | null>(null);
+    const [documentaryRenderProgress, setDocumentaryRenderProgress] = useState(0);
+    // Backgrounds are part
     // Persisted as an ORDERED array of up to MAX_BACKGROUNDS items — the
     // render route hard-cuts between them at durationSec/N each. See the
     // server's MAX_BACKGROUNDS constant for the matching cap.
@@ -218,6 +234,8 @@ export function TimelinePage() {
         STORAGE_KEYS.sclSourceKind,
         null,
     );
+    const [sourceMediaProxyPath, setSourceMediaProxyPath] = useState<string | null>(null);
+    const [sourceMediaProxyStatus, setSourceMediaProxyStatus] = useState<string | null>(null);
     const [isUploading, setIsUploading] = useState(false);
     // 0..100 while a media upload is in flight, null when idle. Drives the
     // upload progress bar so large background/music files don't look frozen.
@@ -314,7 +332,43 @@ export function TimelinePage() {
             requestAnimationFrame(() => resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
         }
     }, [isRenderingVideo, renderedVideo]);
-    // Recent Renders — the user's last N captioned-video renders, fetched
+
+    useEffect(() => {
+        const restored = loadTimelineProject();
+        if (restored) {
+            setDocumentaryProject(restored);
+        }
+    }, []);
+
+    useEffect(() => {
+        if (documentaryProject) {
+            saveTimelineProject(documentaryProject);
+        }
+    }, [documentaryProject]);
+
+    useEffect(() => {
+        if (!sourceMediaProxyPath || sourceMediaProxyStatus === 'ready') return;
+        let cancelled = false;
+        const checkProxy = async () => {
+            const response = await api.get<{ status?: string; proxyPath?: string }>(`/api/media/proxy-status?proxyPath=${encodeURIComponent(sourceMediaProxyPath)}`);
+            if (cancelled || !response.ok || !response.data?.status) return;
+            setSourceMediaProxyStatus(response.data.status);
+            if (response.data.status === 'ready' && documentaryProject) {
+                setDocumentaryProject({
+                    ...documentaryProject,
+                    assets: Object.fromEntries(Object.entries(documentaryProject.assets).map(([id, asset]) => [
+                        id,
+                        asset.proxyPath === sourceMediaProxyPath ? { ...asset, proxyStatus: 'ready' } : asset,
+                    ])),
+                    updatedAt: new Date().toISOString(),
+                });
+            }
+        };
+        checkProxy();
+        const timer = window.setInterval(checkProxy, 5000);
+        return () => { cancelled = true; window.clearInterval(timer); };
+    }, [sourceMediaProxyPath, sourceMediaProxyStatus, documentaryProject]);
+    // Recent Renders
     // from the server on mount and refetched after each successful render so
     // the panel stays in sync without manual refresh.
     const [renderHistory, setRenderHistory] = useState<RenderHistoryItem[]>([]);
@@ -372,6 +426,8 @@ export function TimelinePage() {
             );
             setSourceMediaPath(data.file);
             setSourceMediaKind(isVideo ? 'video' : 'audio');
+            setSourceMediaProxyPath(isVideo ? data.proxyPath || null : null);
+            setSourceMediaProxyStatus(isVideo ? data.proxyStatus || null : null);
             setTranscript(null);
             setEditedLines([]);
             // Audio uploads feed the legacy "Main Assembly" clip list so the
@@ -454,10 +510,11 @@ export function TimelinePage() {
                 return;
             }
             const words: TranscriptWord[] = response.data.words;
+            const provider = response.data?.sttProvider ? ` via ${response.data.sttProvider}` : '';
             const lines = groupWordsIntoLines(words, 8);
             setTranscript(words);
             setEditedLines(lines);
-            toast.success(`Transcribed ${words.length} words`, { id: toastId });
+            toast.success(`Transcribed ${words.length} words${provider}`, { id: toastId });
             void saveTranscript(words, lines);
         } catch {
             toast.error('Transcription failed', { id: toastId });
@@ -1005,9 +1062,163 @@ export function TimelinePage() {
         }
     };
 
+    const handleInsertSourceMediaIntoDocumentary = () => {
+        if (!documentaryProject) {
+            toast.error('Create a documentary timeline first');
+            return;
+        }
+        if (!sourceMediaPath || !sourceMediaKind) {
+            toast.error('Upload source media first');
+            return;
+        }
+        const label = sourceMediaPath.split(/[\\/]/).pop() || (sourceMediaKind === 'video' ? 'Uploaded video' : 'Uploaded audio');
+        const nextProject = insertSourceMediaOnTimeline(documentaryProject, {
+            label,
+            path: sourceMediaPath,
+            proxyPath: sourceMediaKind === 'video' ? sourceMediaProxyPath || undefined : undefined,
+            proxyStatus: sourceMediaKind === 'video' ? sourceMediaProxyStatus || undefined : undefined,
+            kind: sourceMediaKind,
+            durationSec: 30,
+            startSec: 0,
+        });
+        setDocumentaryProject(nextProject);
+        toast.success(sourceMediaKind === 'video' ? 'Inserted into Real footage track' : 'Inserted into Music bed track');
+    };
+
+    const handleInsertVoiceoverPlaceholder = () => {
+        if (!documentaryProject) {
+            toast.error('Create a documentary timeline first');
+            return;
+        }
+        const firstScene = documentaryProject.scenes[0];
+        const text = editedLines[0] || firstScene?.voiceoverBrief || 'Opening narration placeholder.';
+        const nextProject = insertVoiceoverPlaceholderOnTimeline(documentaryProject, {
+            label: `${firstScene?.label || 'Opening'} narration`,
+            text,
+            startSec: firstScene?.startSec || 0,
+            durationSec: 6,
+        });
+        setDocumentaryProject(nextProject);
+        toast.success('Inserted Chatterbox VO placeholder');
+    };
+
+    const handleRenderDocumentaryTimeline = async () => {
+        if (!documentaryProject) {
+            toast.error('Create a documentary timeline first');
+            return;
+        }
+        if (isRenderingDocumentaryTimeline) return;
+
+        const toastId = toast.loading('Queued timeline render…');
+        setIsRenderingDocumentaryTimeline(true);
+        setDocumentaryRenderProgress(0);
+        setDocumentaryRenderStatus('queued');
+        try {
+            const response = await timelineApi.render(documentaryProject, documentaryProject.renderSettings?.quality || 'proof_720p');
+            if (!response.ok || !response.data?.ok || !response.data.jobId) {
+                toast.error(response.error || response.data?.error || 'Timeline render rejected', { id: toastId });
+                setDocumentaryRenderStatus('failed');
+                return;
+            }
+
+            const jobId = response.data.jobId;
+            setDocumentaryRenderJobId(jobId);
+            setDocumentaryRenderStatus(response.data.status || 'queued');
+            setDocumentaryRenderProgress(response.data.progress ?? 0);
+            toast.loading('Timeline render running…', { id: toastId });
+
+            for (let attempt = 0; attempt < 120; attempt += 1) {
+                await new Promise((resolve) => setTimeout(resolve, attempt < 5 ? 1000 : 2000));
+                const job = await timelineApi.getRenderJob(jobId);
+                if (!job.ok || !job.data?.ok) continue;
+                const data = job.data;
+                setDocumentaryRenderStatus(data.status || null);
+                setDocumentaryRenderProgress(data.progress ?? 0);
+
+                if (data.status === 'completed') {
+                    const proof = data.publicUrl || '';
+                    if (proof) setRenderedVideo(proof);
+                    const providers = data.voiceProvidersUsed?.length ? ` · VO: ${data.voiceProvidersUsed.join(', ')}` : '';
+                    const fallbackNote = data.voiceFallbacks?.length ? ' (fallback used)' : '';
+                    toast.success(`Timeline proof MP4 ready (${data.plan?.durationSec || 0}s)${providers}${fallbackNote}`, { id: toastId });
+                    return;
+                }
+
+                if (data.status === 'failed') {
+                    toast.error(data.error || 'Timeline render failed', { id: toastId });
+                    return;
+                }
+            }
+
+            toast('Timeline render is still running. Check the job status again shortly.', { id: toastId, icon: 'ℹ️' });
+        } catch (error) {
+            toast.error((error as Error).message || 'Timeline render failed', { id: toastId });
+            setDocumentaryRenderStatus('failed');
+        } finally {
+            setIsRenderingDocumentaryTimeline(false);
+        }
+    };
+
+    const handleRequestVeoBroll = async (request: { prompt: string; aspect: '16:9' | '9:16' | '1:1'; durationSec: number; targetTrackKind: 'broll'; startSec: number }) => {
+        if (!documentaryProject || isRequestingVeoBroll) return;
+        const toastId = toast.loading('Requesting Veo B-roll…');
+        setIsRequestingVeoBroll(true);
+        try {
+            const response = await videoGenApi.generate({
+                projectId: documentaryProject.id,
+                prompt: request.prompt,
+                aspect: request.aspect,
+                durationSec: request.durationSec,
+                style: 'worship-documentary-broll',
+            });
+
+            if (response.ok && response.data?.ok && (response.data.publicUrl || response.data.path)) {
+                const publicUrl = response.data.publicUrl || response.data.path || '';
+                const nextProject = insertAssetOnTrack(documentaryProject, {
+                    trackKind: request.targetTrackKind,
+                    asset: {
+                        id: `veo-${Date.now()}`,
+                        kind: 'video',
+                        source: 'veo',
+                        label: 'Veo worship B-roll',
+                        path: publicUrl,
+                        durationSec: request.durationSec,
+                        aspect: request.aspect,
+                        prompt: request.prompt,
+                        tags: ['ai_broll', 'veo', 'worship-documentary'],
+                    },
+                    startSec: request.startSec,
+                    durationSec: request.durationSec,
+                    fit: 'contain',
+                });
+                setDocumentaryProject(nextProject);
+                toast.success('Veo B-roll inserted on AI B-roll track', { id: toastId });
+                return;
+            }
+
+            const code = response.data?.code || response.error || 'NOT_READY';
+            const message = code === 'PROVIDER_NOT_IMPLEMENTED'
+                ? 'Veo provider seam is ready; real Google Veo generation is not wired yet.'
+                : (response.error || response.data?.error || 'Veo generation is not configured yet.');
+            toast(message, { id: toastId, icon: 'ℹ️' });
+        } catch (error) {
+            toast.error((error as Error).message || 'Veo request failed', { id: toastId });
+        } finally {
+            setIsRequestingVeoBroll(false);
+        }
+    };
+
     const totalDuration = useMemo(() => {
         return clips.reduce((acc, c) => acc + (c.durationSec || 0), 0);
     }, [clips]);
+
+    const sourceMediaPreviewPath = sourceMediaKind === 'video' && sourceMediaProxyPath && sourceMediaProxyStatus === 'ready'
+        ? sourceMediaProxyPath
+        : sourceMediaPath;
+
+    const sourceMediaPreviewLabel = sourceMediaKind === 'video' && sourceMediaPreviewPath === sourceMediaProxyPath
+        ? 'Preview source (proxy)'
+        : 'Preview source';
 
     return (
         <div className="space-y-5 animate-fade-in">
@@ -1046,6 +1257,96 @@ export function TimelinePage() {
                 </div>
             </div>
 
+            <AIDocumentaryTimelinePanel
+                onCreateProject={(project) => {
+                    setDocumentaryProject(project);
+                    toast.success('AI documentary timeline created');
+                }}
+            />
+
+            {documentaryProject && (
+                <>
+                    <Card
+                        title="Active documentary backbone"
+                        tooltip="This is the new multi-track project model. The current render controls below still work; this backbone is the foundation for the richer CapCut-like editor and Veo B-roll insertion."
+                    >
+                    <div className="grid gap-3 md:grid-cols-3">
+                        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                            <p className="text-caption">Template</p>
+                            <p className="mt-1 text-sm font-semibold text-gray-100">{documentaryProject.template}</p>
+                            <p className="mt-1 text-meta">{documentaryProject.aspect} · target {Math.round(documentaryProject.targetDurationSec / 60)} min max</p>
+                        </div>
+                        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                            <p className="text-caption">Tracks</p>
+                            <p className="mt-1 text-sm font-semibold text-gray-100">{documentaryProject.tracks.length} layered tracks</p>
+                            <p className="mt-1 text-meta">Video, B-roll, VO, music, captions, effects</p>
+                        </div>
+                        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                            <p className="text-caption">AI rules</p>
+                            <p className="mt-1 text-sm font-semibold text-gray-100">Face-safe + Chatterbox</p>
+                            <p className="mt-1 text-meta">Real event audio stays for praise/worship/dance</p>
+                        </div>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                        <Button
+                            variant="secondary"
+                            className="text-xs px-3 py-1.5"
+                            onClick={handleInsertSourceMediaIntoDocumentary}
+                            disabled={!sourceMediaPath || !sourceMediaKind}
+                        >
+                            <Plus size={14} className="mr-1.5" />
+                            Insert uploaded source media
+                        </Button>
+                        <Button
+                            variant="secondary"
+                            className="text-xs px-3 py-1.5"
+                            onClick={handleInsertVoiceoverPlaceholder}
+                        >
+                            <Sparkles size={14} className="mr-1.5" />
+                            Insert Chatterbox VO placeholder
+                        </Button>
+                        <Button
+                            className="text-xs px-3 py-1.5"
+                            onClick={handleRenderDocumentaryTimeline}
+                            disabled={isRenderingDocumentaryTimeline}
+                        >
+                            <Film size={14} className="mr-1.5" />
+                            {isRenderingDocumentaryTimeline ? 'Rendering proof…' : 'Render documentary proof'}
+                        </Button>
+                        <span className="self-center text-[11px] text-content-tertiary">Autosaved locally; restored after refresh.</span>
+                    </div>
+                    {documentaryRenderStatus && (
+                        <div className="mt-3 rounded-lg border border-primary-500/20 bg-primary-500/5 p-3">
+                            <div className="flex items-center justify-between gap-3 text-xs">
+                                <span className="font-semibold text-primary-100">Render job: {documentaryRenderStatus}</span>
+                                <span className="text-content-secondary">{Math.round(documentaryRenderProgress)}%</span>
+                            </div>
+                            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
+                                <div
+                                    className="h-full rounded-full bg-primary-400 transition-all"
+                                    style={{ width: `${Math.max(0, Math.min(100, documentaryRenderProgress))}%` }}
+                                />
+                            </div>
+                            {documentaryRenderJobId && <p className="mt-2 text-[11px] text-content-tertiary">Job ID: {documentaryRenderJobId}</p>}
+                        </div>
+                    )}
+                    <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+                        {documentaryProject.scenes.map((scene) => (
+                            <div key={scene.id} className="min-w-44 rounded-lg border border-primary-500/20 bg-primary-500/5 p-3">
+                                <p className="text-xs font-semibold text-primary-100">{scene.label}</p>
+                                <p className="mt-1 text-[10px] leading-relaxed text-content-secondary">{scene.voiceoverBrief}</p>
+                            </div>
+                        ))}
+                    </div>
+                </Card>
+                <VisualTimelineCanvas
+                    project={documentaryProject}
+                    onProjectChange={setDocumentaryProject}
+                    onRequestVeoBroll={handleRequestVeoBroll}
+                />
+            </>
+            )}
+
             <Card
                 title="Source Media"
                 tooltip={`Drop in a finished sermon — audio (MP3, WAV, M4A) or video (MP4, MOV, WEBM), up to ${MAX_UPLOAD_MB} MB. Audio is mastered into the assembly for an audio render; video keeps its frames for a captioned-video render.`}
@@ -1076,8 +1377,23 @@ export function TimelinePage() {
                         <span>
                             <span className="text-content-tertiary">Loaded ({sourceMediaKind}):</span>{' '}
                             <span className="font-mono break-all">{sourceMediaPath.split(/[\\/]/).pop()}</span>
+                            {sourceMediaKind === 'video' && sourceMediaProxyPath && (
+                                <span className={`ml-2 rounded-full px-2 py-0.5 text-[10px] ${sourceMediaProxyStatus === 'ready' ? 'bg-emerald-500/15 text-emerald-200' : sourceMediaProxyStatus === 'failed' ? 'bg-red-500/15 text-red-200' : 'bg-amber-500/15 text-amber-200'}`}>
+                                    Proxy {sourceMediaProxyStatus === 'ready' ? 'ready' : sourceMediaProxyStatus === 'failed' ? 'failed' : 'pending'}
+                                </span>
+                            )}
                         </span>
                         <div className="shrink-0 flex items-center gap-2">
+                            {sourceMediaKind === 'video' && sourceMediaPreviewPath && (
+                                <button
+                                    type="button"
+                                    onClick={() => setPreviewUrl(sourceMediaPreviewPath)}
+                                    className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-white/[0.06] text-primary-200 hover:bg-white/[0.12] transition-colors"
+                                    title={sourceMediaPreviewPath === sourceMediaProxyPath ? 'Plays the low-res proxy for faster mobile preview; final render still uses original.' : 'Plays the original uploaded video until the proxy is ready.'}
+                                >
+                                    <Play size={12} /> {sourceMediaPreviewLabel}
+                                </button>
+                            )}
                             {sourceMediaKind !== 'video' && (
                                 <button
                                     type="button"

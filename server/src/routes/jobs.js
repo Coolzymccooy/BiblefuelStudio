@@ -21,6 +21,7 @@ import { ensureLocalPath } from "../lib/remoteCache.js";
 import { resolveAutoBackgrounds } from "../lib/autoBackground.js";
 import { generateBibleImage } from "../lib/imageGen/index.js";
 import { resolveLibraryTrack, defaultTrackRef } from "../lib/musicLibrary.js";
+import { buildSpeakableLines, cleanCaptionLine, cleanSpeakableText, sanitizeScriptObject } from "../lib/speakableScript.js";
 
 const router = Router();
 let ffmpegChecked = false;
@@ -491,7 +492,7 @@ async function executeJob(job) {
     if (resolvedBackground && isFileTooLarge(resolvedBackground)) throw new Error(`backgroundPath too large (>${MAX_INPUT_MB}MB)`);
     if (resolvedMusic && isFileTooLarge(resolvedMusic)) throw new Error(`musicPath too large (>${MAX_INPUT_MB}MB)`);
 
-    const rawLines = Array.isArray(lines) ? lines.map(s => String(s).slice(0, 140)) : [];
+    const rawLines = Array.isArray(lines) ? lines.map(s => cleanCaptionLine(String(s).slice(0, 140))).filter(Boolean) : [];
     const { w, h } = getDims(aspect);
     const widthPct = Math.min(100, Math.max(60, Number(captionWidthPct || 90)));
     const baseChars = w >= 1800 ? 42 : w >= 1200 ? 34 : 28;
@@ -718,7 +719,7 @@ async function renderVideoCore(payload, jobId) {
       throw new Error(`background download failed: ${err?.message || err}`);
     }
   }
-  const rawLines = Array.isArray(lines) ? lines.map(s => String(s).slice(0, 140)) : [];
+  const rawLines = Array.isArray(lines) ? lines.map(s => cleanCaptionLine(String(s).slice(0, 140))).filter(Boolean) : [];
   const { w, h } = getDims(aspect);
   const widthPct = Math.min(100, Math.max(60, Number(captionWidthPct || 90)));
   const baseChars = w >= 1800 ? 42 : w >= 1200 ? 34 : 28;
@@ -840,7 +841,7 @@ async function renderVideoCore(payload, jobId) {
 // (always re-synthesize, then overwrite audioPath) silently replaced
 // hand-tuned Chatterbox audio with whatever Edge-TTS produced.
 async function augmentPayloadWithKineticCaptions(payload, jobId) {
-  const rawLines = Array.isArray(payload?.lines) ? payload.lines.map((s) => String(s).slice(0, 280)) : [];
+  const rawLines = Array.isArray(payload?.lines) ? payload.lines.map((s) => cleanCaptionLine(String(s).slice(0, 280))).filter(Boolean) : [];
   const cleanLines = rawLines.map((s) => s.trim()).filter(Boolean);
   if (cleanLines.length === 0) throw new Error("kineticCaptions: lines[] required");
   const ttsText = cleanLines.join(" ").trim();
@@ -883,7 +884,7 @@ async function augmentPayloadWithKineticCaptions(payload, jobId) {
   }
 
   // Caller didn't provide audio — synthesize fresh with timestamps.
-  const tts = await synthesizeTts({ text: ttsText, voiceId: payload?.voiceId, withTimestamps: true });
+  const tts = await synthesizeTts({ text: cleanSpeakableText(ttsText), voiceId: payload?.voiceId, withTimestamps: true });
   safeUpdateJob(jobId, { progress: 35 });
   // Prefer the provider's native word boundaries (Azure — the kinetic-caption
   // primary, registered word-timestamp provider). Fall back to char-level
@@ -1015,7 +1016,7 @@ async function renderAdvancedVideo(payload, jobId) {
   const baseChars = w >= 1800 ? 42 : w >= 1200 ? 34 : 28;
   const maxChars = Math.max(18, Math.floor(baseChars * (captionWidthPct / 100)));
   const wrappedLines = Array.isArray(lines)
-    ? wrapTextLines(lines.map((s) => String(s).slice(0, 140)), maxChars, 12)
+    ? wrapTextLines(lines.map((s) => cleanCaptionLine(String(s).slice(0, 140))).filter(Boolean), maxChars, 12)
     : [];
   const drawtextChain = Array.isArray(words) && words.length > 0
     ? buildWordDrawtext({ words, w, h, preset: resolvedPreset, layout, depth })
@@ -1239,7 +1240,8 @@ async function runCampaignAutoPost(payload, jobId) {
     script = Array.isArray(scripts) ? scripts[0] : null;
     if (!script) throw new Error("campaign: script generation produced 0 results");
   }
-  const lines = [script.hook, script.reference ? `${script.verse} (${script.reference})` : script.verse, script.reflection, script.cta].filter(Boolean);
+  const cleanScript = sanitizeScriptObject(script);
+  const lines = [cleanScript.hook, cleanScript.reference ? `${cleanScript.verse} (${cleanScript.reference})` : cleanScript.verse, cleanScript.reflection, cleanScript.cta].filter(Boolean);
   safeUpdateJob(jobId, { progress: 12 });
 
   // 2. Library check — we'll pick backgrounds per beat after TTS so each
@@ -1253,7 +1255,7 @@ async function runCampaignAutoPost(payload, jobId) {
   // ElevenLabs supplies them natively; for Edge-TTS / Chatterbox we lean on
   // the category orchestrator's forced-alignment fallback (Whisper) when the
   // caller opted into Voice Synthesis defaults.
-  const ttsText = `${script.hook} ${script.verse} ${script.reflection} ${script.cta}`.trim();
+  const ttsText = cleanSpeakableText(`${cleanScript.hook}\n${cleanScript.verse}\n${cleanScript.reflection}\n${cleanScript.cta}`);
   const useCategory = typeof narrationCategory === "string" && narrationCategory.trim().length > 0;
   const tts = useCategory
     ? await synthesizeForCategory({
@@ -1311,11 +1313,11 @@ async function runCampaignAutoPost(payload, jobId) {
 
   // 4. If we have alignment, build word-level captions + per-beat scenes.
   // Otherwise fall back to the legacy single-bg + line-captions path.
-  const ttsLines = [script.hook, script.verse, script.reflection, script.cta].filter(Boolean);
+  const ttsLines = [cleanScript.hook, cleanScript.verse, cleanScript.reflection, cleanScript.cta].filter(Boolean);
   const beatTexts = [
-    script.hook,
-    script.reference ? `${script.verse} (${script.reference})` : script.verse,
-    [script.reflection, script.cta].filter(Boolean).join(" "),
+    cleanScript.hook,
+    cleanScript.reference ? `${cleanScript.verse} (${cleanScript.reference})` : cleanScript.verse,
+    [cleanScript.reflection, cleanScript.cta].filter(Boolean).join(" "),
   ].filter(Boolean);
 
   let renderResult;
@@ -1555,7 +1557,7 @@ export function validatePayloadForEnqueue(type, payload) {
     if (payload?.musicPath && !isLocalOrRemote(resolvedMusic)) {
       return { ok: false, error: `musicPath not found: ${payload?.musicPath}` };
     }
-    const lines = Array.isArray(payload?.lines) ? payload.lines.map((x) => String(x).trim()).filter(Boolean) : [];
+    const lines = Array.isArray(payload?.lines) ? buildSpeakableLines(payload.lines.join("\n"), { maxLines: 12, maxChars: 140 }) : [];
     if (lines.length === 0) return { ok: false, error: "lines[] required for render_video" };
     return { ok: true };
   }
@@ -1629,7 +1631,7 @@ function publicVideoUrlFromOutFile(outFile) {
 function buildAutoPublishCaption(job) {
   const p = (job?.payload || {});
   if (typeof p.caption === "string" && p.caption.trim()) return p.caption.trim().slice(0, 1900);
-  if (Array.isArray(p.lines)) return p.lines.filter(Boolean).join(" ").slice(0, 1900);
+  if (Array.isArray(p.lines)) return p.lines.map(cleanCaptionLine).filter(Boolean).join(" ").slice(0, 1900);
   if (typeof p.title === "string" && p.title.trim()) return p.title.trim().slice(0, 1900);
   return "";
 }

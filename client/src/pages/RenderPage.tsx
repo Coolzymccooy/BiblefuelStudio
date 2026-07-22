@@ -9,7 +9,7 @@ import { Field } from '../components/ui/Field';
 import { Section } from '../components/ui/Section';
 import { GuideSteps, type GuideStep } from '../components/ui/GuideSteps';
 import { MusicPicker } from '../components/MusicPicker';
-import { api, DIRECT_UPLOAD_MAX_BYTES } from '../lib/api';
+import { api, DIRECT_UPLOAD_MAX_BYTES, RESUMABLE_UPLOAD_MAX_BYTES } from '../lib/api';
 import { uploadMedia } from '../lib/mediaUpload';
 import { DropZone } from '../components/ui/DropZone';
 import toast from 'react-hot-toast';
@@ -30,7 +30,7 @@ import { buildSpeakableLines } from '../lib/speakableScript';
 const MAX_BACKGROUNDS = 30;
 /** Client-side ceiling; large files (>90MB) go via the resumable path. Mirrors
  *  the server's RESUMABLE_MAX_BYTES so oversized uploads fail client-side first. */
-const MAX_UPLOAD_MB = 400;
+const MAX_UPLOAD_MB = Math.floor(RESUMABLE_UPLOAD_MAX_BYTES / 1024 / 1024);
 
 interface LibraryItem {
     id: string;

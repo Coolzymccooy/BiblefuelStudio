@@ -2,9 +2,10 @@ import { useState, useEffect } from 'react';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { ScreenHeader } from '../components/ui/ScreenHeader';
+import { BackgroundLibraryModal } from '../components/BackgroundLibraryModal';
 import { api } from '../lib/api';
 import toast from 'react-hot-toast';
-import { Trash2, RefreshCcw, Download, Archive, Trash, Mic, CheckCircle2, Video, Library, Layers } from 'lucide-react';
+import { Trash2, RefreshCcw, Download, Archive, Trash, Mic, Video, Library, Layers } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 interface QueueItem {
@@ -360,48 +361,16 @@ export function QueuePage() {
                 </div>
             )}
 
-            {/* Library Picker Modal (Reused) */}
-            {showLibraryModal && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-                    <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShowLibraryModal(false)} />
-                    <Card className="relative w-full max-w-4xl max-h-[80vh] overflow-hidden flex flex-col border-white/20 shadow-2xl">
-                        <div className="flex items-center justify-between p-4 border-b border-white/10">
-                            <h3 className="font-bold text-lg text-white">Select Batch Background</h3>
-                            <button onClick={() => setShowLibraryModal(false)} className="text-gray-500 hover:text-white">
-                                <CheckCircle2 size={24} />
-                            </button>
-                        </div>
-                        <div className="flex-1 overflow-y-auto p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-                            {isLoadingLibrary ? (
-                                <div className="col-span-full py-20 flex justify-center">
-                                    <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-primary-500" />
-                                </div>
-                            ) : libraryItems.length > 0 ? (
-                                libraryItems.map((item) => (
-                                    <div
-                                        key={item.id}
-                                        className="group relative aspect-[9/16] bg-black rounded-xl overflow-hidden cursor-pointer hover:ring-2 hover:ring-primary-500 transition-all shadow-lg"
-                                        onClick={() => {
-                                            setBackgroundItem(item);
-                                            setShowLibraryModal(false);
-                                        }}
-                                    >
-                                        <img src={item.image} className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" alt="" />
-                                        <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/80 to-transparent">
-                                            <p className="text-[10px] font-mono text-white truncate">ID: {item.id}</p>
-                                        </div>
-                                    </div>
-                                ))
-                            ) : (
-                                <div className="col-span-full py-20 text-center opacity-30 text-white">
-                                    <Library size={48} className="mx-auto mb-4" />
-                                    <p>Your library is empty.</p>
-                                </div>
-                            )}
-                        </div>
-                    </Card>
-                </div>
-            )}
+            {/* Batch background picker — shared component, single-select. */}
+            <BackgroundLibraryModal
+                open={showLibraryModal}
+                onClose={() => setShowLibraryModal(false)}
+                items={libraryItems}
+                isLoading={isLoadingLibrary}
+                mode="single"
+                title="Select Batch Background"
+                onPick={(item) => setBackgroundItem(item)}
+            />
         </div>
     );
 }

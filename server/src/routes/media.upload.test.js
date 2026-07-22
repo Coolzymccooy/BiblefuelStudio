@@ -9,7 +9,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
-import { audioMimeToExt, receiveUploadToFile } from "./media.js";
+import {
+  audioMimeToExt,
+  getUploadLimits,
+  hasDiskHeadroomForUpload,
+  getVideoProxyStatus,
+  startVideoProxyGeneration,
+  receiveUploadToFile,
+} from "./media.js";
 
 const tmp = (name) => path.join(os.tmpdir(), `bf-upload-test-${Date.now()}-${Math.random().toString(36).slice(2)}-${name}`);
 
@@ -20,6 +27,67 @@ function mockReq(buf, headers = {}) {
   process.nextTick(() => { r.push(buf); r.push(null); });
   return r;
 }
+
+describe("upload limits and disk headroom", () => {
+  test("defaults resumable uploads to 1GB so 700MB videos are allowed through the large-upload path", () => {
+    const old = process.env.RESUMABLE_UPLOAD_MAX_MB;
+    delete process.env.RESUMABLE_UPLOAD_MAX_MB;
+    try {
+      const limits = getUploadLimits();
+      assert.equal(limits.resumableMaxMb, 1024);
+      assert.equal(limits.resumableMaxBytes, 1024 * 1024 * 1024);
+      assert.equal(limits.allowsLargeFileBytes(700 * 1024 * 1024), true);
+    } finally {
+      if (old == null) delete process.env.RESUMABLE_UPLOAD_MAX_MB;
+      else process.env.RESUMABLE_UPLOAD_MAX_MB = old;
+    }
+  });
+
+  test("supports environment overrides for production storage policy", () => {
+    const old = process.env.RESUMABLE_UPLOAD_MAX_MB;
+    process.env.RESUMABLE_UPLOAD_MAX_MB = "1536";
+    try {
+      assert.equal(getUploadLimits().resumableMaxMb, 1536);
+    } finally {
+      if (old == null) delete process.env.RESUMABLE_UPLOAD_MAX_MB;
+      else process.env.RESUMABLE_UPLOAD_MAX_MB = old;
+    }
+  });
+
+  test("disk headroom guard rejects uploads that would leave too little local space", () => {
+    const result = hasDiskHeadroomForUpload("/tmp", 800, {
+      statfs: () => ({ bavail: 1000, bsize: 1 }),
+      minFreeAfterBytes: 300,
+    });
+    assert.equal(result.ok, false);
+    assert.match(result.error, /Not enough disk space/i);
+  });
+});
+
+describe("source-video proxy generation", () => {
+  test("starts a low-res proxy transcode beside the uploaded original", () => {
+    const calls = [];
+    const proxy = startVideoProxyGeneration("C:/tmp/source-video-123.mov", {
+      spawnImpl: (bin, args) => {
+        calls.push({ bin, args });
+        return { stderr: { on() {} }, on(event, cb) { if (event === 'close') cb(0); return this; } };
+      },
+    });
+    assert.equal(proxy.proxyPath, "C:/tmp/source-video-123-proxy.mp4");
+    assert.equal(proxy.status, "pending");
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].args.slice(-3), ["-movflags", "+faststart", "C:/tmp/source-video-123-proxy.mp4"]);
+    assert.match(calls[0].args.join(" "), /scale=854:480/);
+  });
+
+  test("reports proxy status from file existence", () => {
+    const dest = tmp("proxy.mp4");
+    assert.equal(getVideoProxyStatus(dest).status, "pending");
+    fs.writeFileSync(dest, Buffer.alloc(2048, 1));
+    assert.equal(getVideoProxyStatus(dest).status, "ready");
+    fs.unlinkSync(dest);
+  });
+});
 
 describe("audioMimeToExt", () => {
   test("maps common container/codec mimes", () => {

@@ -3,6 +3,7 @@ import { Loader2, RefreshCw, Wand2, ImageOff, SlidersHorizontal, Check, Clock } 
 import { AuthedImage } from '../AuthedImage';
 import { sceneTimeLabel } from '../../lib/storyWizard';
 import type { ImageStatus, StoryScene } from '../../lib/storyTypes';
+import { cleanCaptionLine } from '../../lib/speakableScript';
 
 interface SceneCardProps {
   scene: StoryScene;
@@ -29,7 +30,11 @@ export function SceneCard({ scene, index = 0, onPatch, onRegenerate, busy, regen
   const [tuning, setTuning] = useState(false);
   const [showPrompt, setShowPrompt] = useState(false);
 
-  const commitText = () => { if (text !== scene.text) onPatch(scene.id, { text }); };
+  const commitText = () => {
+    const clean = cleanCaptionLine(text);
+    if (clean !== text) setText(clean);
+    if (clean && clean !== scene.text) onPatch(scene.id, { text: clean });
+  };
   const commitPrompt = () => { if (prompt !== scene.imagePrompt) onPatch(scene.id, { imagePrompt: prompt }); };
 
   const st = STATUS[scene.imageStatus] ?? STATUS.pending;
