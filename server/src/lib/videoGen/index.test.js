@@ -12,6 +12,11 @@ const ENV_KEYS = [
   'VIDEO_GEN_PROVIDER',
   'VEO_API_KEY',
   'VEO_API_URL',
+  'VEO_MODEL',
+  'VEO_MAX_POLLS',
+  'VEO_POLL_MS',
+  'GOOGLE_AI_API_KEY',
+  'GEMINI_API_KEY',
   'GOOGLE_VERTEX_PROJECT',
   'GOOGLE_VERTEX_LOCATION',
   'GOOGLE_APPLICATION_CREDENTIALS',
@@ -87,19 +92,39 @@ describe('videoGen orchestrator — generateTimelineVideo', () => {
     assert.equal(result.provider, undefined);
   });
 
-  test('configured Veo provider is surfaced as not implemented until real credentials/API call are wired', async () => {
+  test('configured Veo provider calls the official Gemini long-running video API when no custom endpoint is set', async () => {
     process.env.VEO_API_KEY = 'key';
-    const result = await generateTimelineVideo({
+    process.env.VEO_MAX_POLLS = '1';
+    process.env.VEO_POLL_MS = '250';
+    const calls = [];
+    const result = await generateVideoVeo({
       projectId: 'lhp',
       prompt: 'cinematic golden worship light rays',
       aspect: '16:9',
       durationSec: 8,
+      fetchImpl: async (url, init = {}) => {
+        calls.push({ url, init });
+        if (String(url).includes(':predictLongRunning')) {
+          return { ok: true, status: 200, text: async () => JSON.stringify({ name: 'operations/veo-123' }) };
+        }
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({
+            done: true,
+            response: { generateVideoResponse: { generatedSamples: [{ video: { uri: 'https://download.example.test/veo.mp4' } }] } },
+          }),
+        };
+      },
+      r2Config: { configured: false },
     });
 
-    assert.equal(result.ok, false);
+    assert.match(calls[0].url, /models\/veo-3\.0-generate-preview%3ApredictLongRunning|models\/veo-3\.0-generate-preview:predictLongRunning/);
+    assert.match(calls[1].url, /operations\/veo-123/);
+    assert.equal(result.ok, true);
     assert.equal(result.provider, 'veo');
-    assert.equal(result.code, 'PROVIDER_NOT_IMPLEMENTED');
-    assert.match(result.error, /Veo/i);
+    assert.equal(result.publicUrl, 'https://download.example.test/veo.mp4');
+    assert.equal(result.storage.provider, 'google-temporary');
   });
 
   test('Veo provider posts to an official configured endpoint when VEO_API_URL is set', async () => {

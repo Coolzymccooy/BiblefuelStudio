@@ -46,15 +46,9 @@ describe('video-gen route', () => {
     assert.equal(res.body.error, 'NOT_CONFIGURED');
   });
 
-  test('POST /generate surfaces the Veo placeholder contract when configured', async () => {
+  test('GET /status reports enabled when Veo credentials are configured', async () => {
     process.env.VEO_API_KEY = 'key';
-    const res = await request(app())
-      .post('/api/video-gen/generate')
-      .send({ prompt: 'golden worship light rays', aspect: '16:9', durationSec: 8 })
-      .expect(501);
-
-    assert.equal(res.body.ok, false);
-    assert.equal(res.body.provider, 'veo');
-    assert.equal(res.body.code, 'PROVIDER_NOT_IMPLEMENTED');
+    const res = await request(app()).get('/api/video-gen/status').expect(200);
+    assert.deepEqual(res.body, { ok: true, enabled: true });
   });
 });
