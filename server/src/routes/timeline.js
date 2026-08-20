@@ -110,6 +110,11 @@ function serializeJob(job) {
     publicUrl: job.publicUrl || undefined,
     file: job.file || undefined,
     ignoredPlaceholders: job.ignoredPlaceholders || 0,
+    // What the render actually included, and what it left out. Surfaced so the
+    // UI can say so plainly — a church that lays out an effects track should
+    // be told it was not composed, not left to spot the absence by watching.
+    coverage: job.coverage || null,
+    warnings: job.warnings || [],
     generatedVoiceovers,
     voiceProvidersUsed,
     voiceFallbacks,
@@ -140,6 +145,8 @@ async function runTimelineJob(job) {
     job.publicUrl = proofResult.publicUrl || null;
     job.file = proofResult.outputPath || null;
     job.ignoredPlaceholders = proofResult.ignoredPlaceholders || 0;
+    job.coverage = proofResult.coverage || null;
+    job.warnings = proofResult.warnings || [];
     job.generatedVoiceovers = proofResult.generatedVoiceovers || [];
 
     if (proofResult.ok) {

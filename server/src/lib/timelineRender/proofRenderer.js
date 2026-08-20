@@ -4,6 +4,17 @@ import { spawn } from 'child_process';
 import { setTimeout as delay } from 'timers/promises';
 import { OUTPUT_DIR } from '../paths.js';
 import { get as getVoiceProvider } from '../voice/index.js';
+import { escapeDrawText } from '../videoFilters.js';
+import { describeRenderCoverage } from './coverage.js';
+
+// Safety ceilings on ffmpeg input count, NOT editorial limits. Anything beyond
+// these is reported through describeRenderCoverage rather than dropped
+// silently, which is what the previous hardcoded slice(0,1)/slice(0,4) did.
+const MAX_BROLL_INPUTS = 24;
+const MAX_VOICEOVER_INPUTS = 24;
+// drawtext with a very long string bloats the filtergraph and is unreadable
+// on screen anyway; captions are cues, not paragraphs.
+const MAX_CAPTION_CHARS = 120;
 
 function isSubPath(child, parent) {
   const rel = path.relative(parent, child);
@@ -51,6 +62,15 @@ function brollClips(plan) {
 function voiceoverClips(plan) {
   return (plan.tracks?.find((track) => track.kind === 'voiceover')?.clips || [])
     .filter((clip) => clip.prompt || clip.path);
+}
+
+function musicClips(plan) {
+  return (plan.tracks?.find((track) => track.kind === 'music')?.clips || []).filter((clip) => clip.path);
+}
+
+function captionClips(plan) {
+  return (plan.tracks?.find((track) => track.kind === 'captions')?.clips || [])
+    .filter((clip) => String(clip.text || '').trim());
 }
 
 function outputRelativePath(absPath, outputDir) {
@@ -212,17 +232,33 @@ export function buildProofRenderCommand(plan, opts = {}) {
   const mainPath = resolveTimelineAssetPath(main.path, opts);
   if (!mainPath) return { ok: false, error: `Unsafe or unsupported main clip path: ${main.path}` };
 
+  // Caps removed. The old slice(0, 1) / slice(0, 4) silently discarded every
+  // B-roll clip after the first and every voice-over after the fourth, with no
+  // warning — a church laying out a full service got most of it dropped.
+  // MAX_* are safety ceilings on ffmpeg input count, not editorial limits, and
+  // anything beyond them is REPORTED via describeRenderCoverage.
   const broll = brollClips(plan)
     .filter((clip) => clip.id !== main.id)
-    .slice(0, 1)
+    .slice(0, MAX_BROLL_INPUTS)
     .map((clip) => ({ ...clip, resolvedPath: resolveTimelineAssetPath(clip.path, opts) }))
-    .filter((clip) => clip.resolvedPath);
+    .filter((clip) => clip.resolvedPath)
+    .sort((a, b) => Number(a.startSec || 0) - Number(b.startSec || 0));
 
   const voiceovers = voiceoverClips(plan)
     .filter((clip) => clip.path && !clip.placeholder)
-    .slice(0, 4)
+    .slice(0, MAX_VOICEOVER_INPUTS)
     .map((clip) => ({ ...clip, resolvedPath: resolveTimelineAssetPath(clip.path, opts) }))
     .filter((clip) => clip.resolvedPath);
+
+  // Music bed: one track, looped to fill, ducked under narration. A worship
+  // recap without a bed under the B-roll sounds unfinished, so this is the
+  // most valuable of the previously-ignored tracks.
+  const music = musicClips(plan)
+    .slice(0, 1)
+    .map((clip) => ({ ...clip, resolvedPath: resolveTimelineAssetPath(clip.path, opts) }))
+    .filter((clip) => clip.resolvedPath)[0] || null;
+
+  const captions = captionClips(plan);
 
   const ignoredPlaceholders = (plan.tracks || [])
     .flatMap((track) => track.clips || [])
@@ -235,37 +271,100 @@ export function buildProofRenderCommand(plan, opts = {}) {
   const args = ['-y', '-hide_banner', '-loglevel', 'warning', '-i', mainPath];
   for (const clip of broll) args.push('-i', clip.resolvedPath);
   for (const clip of voiceovers) args.push('-i', clip.resolvedPath);
+  // Loop the bed so a short track still covers a long recap.
+  if (music) args.push('-stream_loop', '-1', '-i', music.resolvedPath);
 
-  let filter;
-  if (broll.length > 0) {
-    const clip = broll[0];
+  const videoParts = [];
+  videoParts.push(
+    `[0:v]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},setsar=1[base0]`,
+  );
+
+  // Chain every B-roll clip as its own timed overlay. Previously only the
+  // first survived; a documentary cutaway sequence needs all of them.
+  let videoLabel = '[base0]';
+  broll.forEach((clip, index) => {
+    const inputIndex = 1 + index;
     const start = Math.max(0, Number(clip.startSec || 0));
     const end = Math.max(start + 0.1, start + Number(clip.durationSec || 3));
-    filter = `[0:v]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},setsar=1[base];` +
-      `[1:v]scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1[broll];` +
-      `[base][broll]overlay=0:0:enable='between(t,${start},${end})'[v]`;
-  } else {
-    filter = `[0:v]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},setsar=1[v]`;
+    videoParts.push(
+      `[${inputIndex}:v]scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
+        `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1[bro${index}]`,
+    );
+    const out = `[ov${index}]`;
+    videoParts.push(`${videoLabel}[bro${index}]overlay=0:0:enable='between(t,${start},${end})'${out}`);
+    videoLabel = out;
+  });
+
+  // Burn captions. Font size scales with canvas height so 720p and 1280p
+  // stay visually consistent; the box keeps them legible over any footage.
+  if (captions.length > 0) {
+    const fontSize = Math.max(18, Math.round(height * 0.045));
+    const drawtexts = captions.map((clip) => {
+      const start = Math.max(0, Number(clip.startSec || 0));
+      const end = Math.max(start + 0.1, start + Number(clip.durationSec || 2));
+      const text = escapeDrawText(String(clip.text).slice(0, MAX_CAPTION_CHARS));
+      return `drawtext=text='${text}':x=(w-text_w)/2:y=h-(h*0.16):fontsize=${fontSize}`
+        + `:fontcolor=white:borderw=${Math.max(2, Math.round(fontSize * 0.08))}:bordercolor=black@0.9`
+        + `:box=1:boxcolor=black@0.45:boxborderw=${Math.round(fontSize * 0.35)}`
+        + `:enable='between(t,${start},${end})'`;
+    });
+    videoParts.push(`${videoLabel}${drawtexts.join(',')}[vtxt]`);
+    videoLabel = '[vtxt]';
   }
 
-  const audioInputCount = 1 + broll.length;
-  if (voiceovers.length > 0) {
-    const parts = [filter, '[0:a]volume=0.35[basea]'];
-    const audioLabels = ['[basea]'];
-    voiceovers.forEach((clip, index) => {
-      const inputIndex = audioInputCount + index;
-      const delayMs = Math.max(0, Math.round(Number(clip.startSec || 0) * 1000));
-      parts.push(`[${inputIndex}:a]adelay=${delayMs}|${delayMs},volume=1.25[vo${index}]`);
-      audioLabels.push(`[vo${index}]`);
-    });
-    parts.push(`${audioLabels.join('')}amix=inputs=${audioLabels.length}:duration=first:dropout_transition=1[a]`);
-    filter = parts.join(';');
+  videoParts.push(`${videoLabel}null[v]`);
+
+  const audioParts = [];
+  const audioLabels = [];
+  const musicInputIndex = 1 + broll.length + voiceovers.length;
+
+  // Event audio. Held near full when there is no narration over it — the
+  // "real event audio stays for praise/worship/dance" rule — and pulled down
+  // only when voice-overs need to be heard.
+  const baseVolume = voiceovers.length > 0 ? 0.35 : 1.0;
+  audioParts.push(`[0:a]volume=${baseVolume}[basea]`);
+  audioLabels.push('[basea]');
+
+  voiceovers.forEach((clip, index) => {
+    const inputIndex = 1 + broll.length + index;
+    const delayMs = Math.max(0, Math.round(Number(clip.startSec || 0) * 1000));
+    audioParts.push(`[${inputIndex}:a]adelay=${delayMs}|${delayMs},volume=1.25[vo${index}]`);
+    audioLabels.push(`[vo${index}]`);
+  });
+
+  if (music) {
+    // Sit the bed well under everything else, and duck it further when a
+    // voice-over is present so narration stays intelligible.
+    const musicVolume = Number.isFinite(Number(music.volume))
+      ? Math.max(0, Math.min(1, Number(music.volume)))
+      : (voiceovers.length > 0 ? 0.12 : 0.25);
+    audioParts.push(`[${musicInputIndex}:a]volume=${musicVolume}[bed]`);
+    audioLabels.push('[bed]');
   }
+
+  // duration=first keeps the mix tied to the event audio rather than the
+  // looped bed, which would otherwise run forever.
+  //
+  // normalize=0 is essential: amix DIVIDES every input by the input count, so
+  // a service with narration + bed + several VO clips came out progressively
+  // quieter the more the church added — a 5-input mix at 20% volume. With
+  // normalization off the per-clip `volume` filters above are the single
+  // source of truth for level, and alimiter catches any resulting peaks
+  // instead of letting them clip.
+  const mixNeeded = audioLabels.length > 1;
+  if (mixNeeded) {
+    audioParts.push(
+      `${audioLabels.join('')}amix=inputs=${audioLabels.length}:duration=first:dropout_transition=1:normalize=0[amixed]`,
+    );
+    audioParts.push('[amixed]alimiter=limit=0.95[a]');
+  }
+
+  const filter = [...videoParts, ...audioParts].join(';');
 
   args.push(
     '-filter_complex', filter,
     '-map', '[v]',
-    ...(voiceovers.length > 0 ? ['-map', '[a]'] : ['-map', '0:a?']),
+    ...(mixNeeded ? ['-map', '[a]'] : ['-map', '[basea]']),
     '-t', String(duration),
     '-r', '24',
     '-c:v', 'libx264',
@@ -278,12 +377,18 @@ export function buildProofRenderCommand(plan, opts = {}) {
     outputPath,
   );
 
+  const coverage = describeRenderCoverage(plan);
+
   return {
     ok: true,
     args,
     outputPath,
     publicUrl: normalizeOutputPublicUrl(outputPath, outputDir),
     ignoredPlaceholders,
+    // What actually made it in, and what did not — so the UI can say so
+    // instead of leaving the operator to discover omissions by watching.
+    coverage,
+    warnings: coverage.warnings,
   };
 }
 

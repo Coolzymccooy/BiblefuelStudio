@@ -123,3 +123,128 @@ describe('timeline proofRenderer', () => {
     assert.match(joined, /-map \[a\]/);
   });
 });
+
+// ── Multi-track composition (music bed, captions, uncapped B-roll/VO) ──
+
+function richPlan() {
+  return {
+    projectId: 'timeline-rich',
+    aspect: '16:9',
+    durationSec: 30,
+    tracks: [
+      { kind: 'video', clips: [{ id: 'main', path: 'uploads/main.mp4', startSec: 0, durationSec: 30 }] },
+      {
+        kind: 'broll',
+        clips: [
+          { id: 'b1', path: '/outputs/videoGen/a.mp4', startSec: 4, durationSec: 3 },
+          { id: 'b2', path: '/outputs/videoGen/b.mp4', startSec: 12, durationSec: 3 },
+          { id: 'b3', path: '/outputs/videoGen/c.mp4', startSec: 20, durationSec: 3 },
+        ],
+      },
+      {
+        kind: 'voiceover',
+        clips: [
+          { id: 'v1', path: '/outputs/timeline/vo1.mp3', startSec: 0, durationSec: 4 },
+          { id: 'v2', path: '/outputs/timeline/vo2.mp3', startSec: 10, durationSec: 4 },
+          { id: 'v3', path: '/outputs/timeline/vo3.mp3', startSec: 18, durationSec: 4 },
+          { id: 'v4', path: '/outputs/timeline/vo4.mp3', startSec: 24, durationSec: 3 },
+          { id: 'v5', path: '/outputs/timeline/vo5.mp3', startSec: 27, durationSec: 2 },
+        ],
+      },
+      { kind: 'music', clips: [{ id: 'm1', path: '/outputs/music/bed.mp3', startSec: 0, durationSec: 30 }] },
+      {
+        kind: 'captions',
+        clips: [
+          { id: 'c1', text: 'Welcome to the house of God', startSec: 1, durationSec: 3 },
+          { id: 'c2', text: "He is worthy of all praise", startSec: 8, durationSec: 3 },
+        ],
+      },
+      { kind: 'effects', clips: [{ id: 'e1', path: '/outputs/fx/glow.mov', startSec: 0, durationSec: 2 }] },
+    ],
+  };
+}
+
+const richOpts = {
+  outputPath: path.resolve('/tmp/biblefuel-server/outputs/timeline/rich.mp4'),
+  serverRoot: path.resolve('/tmp/biblefuel-server'),
+  outputDir: path.resolve('/tmp/biblefuel-server/outputs'),
+};
+
+describe('proofRenderer — multi-track composition', () => {
+  test('overlays EVERY B-roll clip, not just the first', () => {
+    const cmd = buildProofRenderCommand(richPlan(), richOpts);
+    const filter = cmd.args[cmd.args.indexOf('-filter_complex') + 1];
+    const overlays = filter.match(/overlay=0:0:enable=/g) || [];
+    assert.equal(overlays.length, 3, 'all three B-roll clips must be composed');
+  });
+
+  test('B-roll overlays are chained in timeline order', () => {
+    const cmd = buildProofRenderCommand(richPlan(), richOpts);
+    const filter = cmd.args[cmd.args.indexOf('-filter_complex') + 1];
+    assert.ok(filter.indexOf("between(t,4,7)") < filter.indexOf("between(t,12,15)"));
+    assert.ok(filter.indexOf("between(t,12,15)") < filter.indexOf("between(t,20,23)"));
+  });
+
+  test('mixes ALL voice-overs, not only the first four', () => {
+    const cmd = buildProofRenderCommand(richPlan(), richOpts);
+    const filter = cmd.args[cmd.args.indexOf('-filter_complex') + 1];
+    for (let i = 0; i < 5; i += 1) assert.match(filter, new RegExp(`\[vo${i}\]`));
+  });
+
+  test('includes the music bed, looped and ducked under narration', () => {
+    const cmd = buildProofRenderCommand(richPlan(), richOpts);
+    const filter = cmd.args[cmd.args.indexOf('-filter_complex') + 1];
+    assert.match(filter, /\[bed\]/, 'music bed must be in the mix');
+    assert.ok(cmd.args.includes('-stream_loop'), 'bed loops so a short track covers a long recap');
+    const bedVol = /\[\d+:a\]volume=([\d.]+)\[bed\]/.exec(filter);
+    assert.ok(bedVol && Number(bedVol[1]) <= 0.15, `bed should duck under narration, got ${bedVol?.[1]}`);
+  });
+
+  test('burns caption text onto the video', () => {
+    const cmd = buildProofRenderCommand(richPlan(), richOpts);
+    const filter = cmd.args[cmd.args.indexOf('-filter_complex') + 1];
+    assert.match(filter, /drawtext=text='Welcome to the house of God'/);
+    assert.match(filter, /enable='between\(t,1,4\)'/);
+  });
+
+  test('keeps event audio near full when there is no narration', () => {
+    const p = richPlan();
+    p.tracks = p.tracks.filter((t) => t.kind !== 'voiceover');
+    const cmd = buildProofRenderCommand(p, richOpts);
+    const filter = cmd.args[cmd.args.indexOf('-filter_complex') + 1];
+    assert.match(filter, /\[0:a\]volume=1\[basea\]/,
+      'real event audio must not be ducked when nothing is speaking over it');
+  });
+
+  test('reports effects clips as omitted instead of dropping them silently', () => {
+    const cmd = buildProofRenderCommand(richPlan(), richOpts);
+    assert.ok(cmd.warnings.length > 0);
+    assert.match(cmd.warnings.join(' '), /Effects/);
+  });
+
+  test('amix does NOT normalize — otherwise every extra clip quietens the mix', () => {
+    const cmd = buildProofRenderCommand(richPlan(), richOpts);
+    const filter = cmd.args[cmd.args.indexOf('-filter_complex') + 1];
+    assert.match(filter, /amix=[^;]*normalize=0/,
+      'amix divides by input count by default; a 7-input service mix would drop to ~14% volume');
+    assert.match(filter, /alimiter/, 'peaks must be limited once normalization is off');
+  });
+
+  test('a plan with no music or captions still builds a valid command', () => {
+    const cmd = buildProofRenderCommand(plan(), richOpts);
+    assert.equal(cmd.ok, true);
+    const filter = cmd.args[cmd.args.indexOf('-filter_complex') + 1];
+    assert.doesNotMatch(filter, /\[bed\]/);
+    assert.doesNotMatch(filter, /drawtext/);
+  });
+
+  test('escapes caption text so quotes cannot break the filtergraph', () => {
+    const p = richPlan();
+    p.tracks.find((t) => t.kind === 'captions').clips = [
+      { id: 'c1', text: "It's God's house", startSec: 0, durationSec: 2 },
+    ];
+    const cmd = buildProofRenderCommand(p, richOpts);
+    const filter = cmd.args[cmd.args.indexOf('-filter_complex') + 1];
+    assert.doesNotMatch(filter, /text='It's/, 'raw apostrophe would terminate the string early');
+  });
+});

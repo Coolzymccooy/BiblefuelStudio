@@ -187,6 +187,12 @@ export function TimelinePage() {
     const [documentaryProject, setDocumentaryProject] = useState<TimelineProject | null>(null);
     const [isRequestingVeoBroll, setIsRequestingVeoBroll] = useState(false);
     const [isRenderingDocumentaryTimeline, setIsRenderingDocumentaryTimeline] = useState(false);
+    // What the last proof render included / omitted, straight from the server.
+    const [renderCoverage, setRenderCoverage] = useState<{
+        included: Array<{ kind: string; label: string; used: number; total: number }>;
+        omitted: Array<{ kind: string; label: string; count: number; reason: string }>;
+        warnings: string[];
+    } | null>(null);
     const [documentaryRenderJobId, setDocumentaryRenderJobId] = useState<string | null>(null);
     const [documentaryRenderStatus, setDocumentaryRenderStatus] = useState<string | null>(null);
     const [documentaryRenderProgress, setDocumentaryRenderProgress] = useState(0);
@@ -1156,6 +1162,15 @@ export function TimelinePage() {
                     const providers = data.voiceProvidersUsed?.length ? ` · VO: ${data.voiceProvidersUsed.join(', ')}` : '';
                     const fallbackNote = data.voiceFallbacks?.length ? ' (fallback used)' : '';
                     toast.success(`Timeline proof MP4 ready (${data.plan?.durationSec || 0}s)${providers}${fallbackNote}`, { id: toastId });
+
+                    // Anything the renderer could NOT include is stated outright.
+                    // Silently dropping a track the user filled in makes the
+                    // output impossible to trust, so surface it every time.
+                    setRenderCoverage(data.coverage || null);
+                    const warnings: string[] = data.warnings || [];
+                    if (warnings.length > 0) {
+                        toast(warnings.join(' '), { icon: '⚠️', duration: 9000 });
+                    }
                     return;
                 }
 
@@ -1337,6 +1352,34 @@ export function TimelinePage() {
                         </Button>
                         <span className="self-center text-[11px] text-content-tertiary">Autosaved locally; restored after refresh.</span>
                     </div>
+
+                    {/* What the last render actually used. A toast disappears;
+                        this stays, so the operator can check before publishing
+                        rather than discovering an omission on playback. */}
+                    {renderCoverage && (
+                        <div className="mt-3 rounded-lg border border-white/10 bg-black/20 p-3">
+                            <p className="text-xs font-semibold text-gray-200 mb-2">What went into this render</p>
+                            <div className="flex flex-wrap gap-1.5">
+                                {renderCoverage.included.map((i) => (
+                                    <span
+                                        key={i.kind}
+                                        className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] text-emerald-200"
+                                    >
+                                        {i.label} · {i.used}/{i.total}
+                                    </span>
+                                ))}
+                            </div>
+                            {renderCoverage.omitted.length > 0 && (
+                                <ul className="mt-2 space-y-1">
+                                    {renderCoverage.omitted.map((o, idx) => (
+                                        <li key={`${o.kind}-${idx}`} className="text-[11px] text-amber-200/90">
+                                            ⚠ {o.count} {o.label} clip{o.count === 1 ? '' : 's'} left out — {o.reason}.
+                                        </li>
+                                    ))}
+                                </ul>
+                            )}
+                        </div>
+                    )}
                     {documentaryRenderStatus && (
                         <div className="mt-3 rounded-lg border border-primary-500/20 bg-primary-500/5 p-3">
                             <div className="flex items-center justify-between gap-3 text-xs">

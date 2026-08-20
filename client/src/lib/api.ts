@@ -394,6 +394,14 @@ export interface TimelineRenderResponse {
     publicUrl?: string;
     file?: string;
     ignoredPlaceholders?: number;
+    /** Which tracks the renderer composed, and which it left out. */
+    coverage?: {
+        included: Array<{ kind: string; label: string; used: number; total: number }>;
+        omitted: Array<{ kind: string; label: string; count: number; reason: string }>;
+        warnings: string[];
+    } | null;
+    /** Human-readable omissions, ready to show without further formatting. */
+    warnings?: string[];
     generatedVoiceovers?: Array<{ clipId?: string; path?: string; outputPath?: string; provider?: string; fallbacks?: Array<{ provider: string; error: string }> }>;
     voiceProvidersUsed?: string[];
     voiceFallbacks?: Array<{ provider: string; error: string }>;
