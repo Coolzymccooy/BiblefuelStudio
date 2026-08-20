@@ -1,6 +1,8 @@
 import { spawn } from "child_process";
 import { buildWordDrawtext, escapeDrawText } from "../videoFilters.js";
 import { kenBurnsFilter } from "../kenBurns.js";
+import { kenBurnsVariedFilter, moveForIndex } from "../kenBurnsVaried.js";
+import { buildXfadeChain } from "./sceneTransitions.js";
 import { markRunning, markProgress, markDone, markError, attachProc } from "../renderJobs.js";
 
 /**
@@ -154,8 +156,19 @@ export function buildStoryFfmpegArgs({ scenes, words, audioPath, musicPath, musi
 
   const sceneLabels = [];
   const filterParts = [];
+  // Crossfade instead of hard-cutting between scenes. xfade OVERLAPS its
+  // inputs, so each scene (bar the last) is rendered slightly longer and the
+  // extra frames are what the dissolve consumes — total runtime is unchanged,
+  // which keeps the visuals locked to the narration audio.
+  const xfade = buildXfadeChain(segs);
   segs.forEach((seg, i) => {
-    const kb = kenBurnsFilter(width, height, seg.durationSec, 30);
+    // Ken Burns spans the PADDED duration so the move still completes across
+    // the whole clip, including the frames the crossfade eats.
+    const kbDuration = xfade.paddedDurations[i] ?? seg.durationSec;
+    // Alternate the move per scene; a uniform push-in across 30 stills is what
+    // makes a sequence feel mechanical. Deterministic on index so re-renders
+    // match the approved video.
+    const kb = kenBurnsVariedFilter(width, height, kbDuration, 30, moveForIndex(i));
     // trim=end_frame=1 collapses the looped still to a SINGLE frame before
     // zoompan. Without it, `-loop 1` feeds an endless frame stream into
     // zoompan (which emits d frames per input frame), causing a runaway encode
@@ -167,7 +180,12 @@ export function buildStoryFfmpegArgs({ scenes, words, audioPath, musicPath, musi
     );
     sceneLabels.push(`[s${i}]`);
   });
-  filterParts.push(`${sceneLabels.join("")}concat=n=${segs.length}:v=1:a=0[vcat]`);
+  if (xfade.filters.length > 0) {
+    filterParts.push(...xfade.filters);
+  } else {
+    // Single scene: nothing to cross into, so alias it straight to [vcat].
+    filterParts.push(`${sceneLabels.join("")}null[vcat]`);
+  }
 
   const drawWords = words
     .filter((w) => w && w.text && Number.isFinite(w.startMs) && Number.isFinite(w.endMs))
