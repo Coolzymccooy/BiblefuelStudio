@@ -239,19 +239,77 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                             const widthPct = Math.max(5, Math.min(100 - leftPct, (clip.durationSec / target) * 100));
                             const selected = selectedClipId === clip.id;
                             return (
-                              <button
+                              <div
                                 key={clip.id}
-                                type="button"
-                                aria-label={`Timeline clip: ${asset?.label || clip.assetId}`}
                                 draggable
+                                // Selection lives on the CONTAINER: the refactor
+                                // moved it to an inner button, so clicking the
+                                // clip block itself no longer selected it and the
+                                // Split/Remove toolbar stayed disabled.
                                 onClick={() => setSelectedClipId(clip.id)}
+                                aria-label={`Timeline clip: ${asset?.label || clip.assetId}`}
                                 className={`absolute top-1 h-10 rounded-md border px-2 py-1 text-left text-[10px] shadow-sm transition ${selected ? 'border-emerald-200 bg-emerald-400/30 text-white ring-2 ring-emerald-300/40' : 'border-emerald-400/40 bg-emerald-500/15 text-emerald-50 hover:border-emerald-200/70'}`}
                                 style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
                                 title={`${asset?.label || clip.assetId} · ${sourceLabel(asset)} · ${Math.round(clip.durationSec)}s · ${previewMode}`}
                               >
-                                <p className="truncate font-semibold">{asset?.label || clip.assetId}</p>
-                                <p className="truncate text-emerald-100/75">{sourceLabel(asset)} · {Math.round(clip.durationSec)}s{proxy ? ` · ${proxy}` : ''}</p>
-                              </button>
+                                <div className="flex items-center justify-between gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedClipId(clip.id)}
+                                    className="min-w-0 text-left"
+                                  >
+                                    <p className="truncate font-semibold">{asset?.label || clip.assetId}</p>
+                                    <p className="truncate text-emerald-100/75">{sourceLabel(asset)} · {Math.round(clip.durationSec)}s{proxy ? ` · ${proxy}` : ''}</p>
+                                  </button>
+                                  <div className="flex shrink-0 gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        onProjectChange?.({
+                                          ...project,
+                                          // Target THIS clip's own row. Using
+                                          // selection.track here crashed when
+                                          // nothing was selected, and muted the
+                                          // wrong track when a clip in another
+                                          // row was the selected one.
+                                          tracks: project.tracks.map((t) =>
+                                            t.id === track.id ? {
+                                              ...t,
+                                              clips: t.clips.map((c) => c.id === clip.id ? { ...c, muted: !c.muted } : c),
+                                            } : t,
+                                          ),
+                                        });
+                                      }}
+                                      className={`rounded px-1.5 py-0.5 transition ${clip.muted ? 'bg-amber-400/30 text-amber-100' : 'bg-black/30 text-emerald-100 hover:bg-black/50'}`}
+                                      title={clip.muted ? 'Unmute clip' : 'Mute clip'}
+                                    >
+                                      {clip.muted ? 'Muted' : 'Mute'}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        // Remove from THIS clip's own row. Using
+                                        // selection.track deleted from the wrong
+                                        // track, and the !selection guard made the
+                                        // button silently do nothing until some
+                                        // other clip had been selected first.
+                                        if (!onProjectChange) return;
+                                        onProjectChange(removeClip(project, track, clip));
+                                        if (selectedClipId === clip.id) setSelectedClipId(null);
+                                      }}
+                                      className="rounded bg-black/30 px-1.5 py-0.5 text-emerald-100 hover:bg-red-500/20 hover:text-red-200 transition"
+                                      // Distinct from the toolbar's "Remove clip" so
+                                      // accessible-name queries stay unambiguous.
+                                      aria-label={`Delete clip: ${asset?.label || clip.assetId}`}
+                                      title="Delete this clip"
+                                    >
+                                      <Trash2 size={12} />
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
                             );
                           })}
                         </div>

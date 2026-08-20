@@ -1087,7 +1087,7 @@ export function TimelinePage() {
             toast.error('Upload source media first');
             return;
         }
-        const label = sourceMediaPath.split(/[\\/]/).pop() || (sourceMediaKind === 'video' ? 'Uploaded video' : 'Uploaded audio');
+        const label = sourceMediaPath.split(/[\\/]/).pop() || (sourceMediaKind === 'video' ? 'Uploaded video' : sourceMediaKind === 'image' ? 'Uploaded image' : 'Uploaded audio');
         const nextProject = insertSourceMediaOnTimeline(documentaryProject, {
             label,
             path: sourceMediaPath,
@@ -1233,9 +1233,14 @@ export function TimelinePage() {
             ? ''
             : sourceMediaPath;
 
-    const sourceMediaPreviewLabel = sourceMediaKind === 'video'
-        ? (sourceMediaProxyStatus === 'ready' ? 'Preview source (proxy)' : 'Proxy processing…')
-        : 'Preview source';
+    const handlePreviewSource = () => {
+        const target = (sourceMediaKind === 'video' && sourceMediaProxyStatus !== 'ready') ? sourceMediaPath : sourceMediaPreviewPath;
+        if (!target) {
+            toast.error('Source media preview is not ready yet');
+            return;
+        }
+        setPreviewUrl(target);
+    };
 
     return (
         <div className="space-y-5 animate-fade-in">
@@ -1370,10 +1375,10 @@ export function TimelinePage() {
             >
               <DropZone
                 onFiles={(files) => handleSourceUpload(files[0])}
-                accept={['audio/*', 'video/*', '.mp3', '.wav', '.m4a', '.mp4', '.mov', '.webm', '.m4v']}
+                accept={['audio/*', 'video/*', 'image/*', '.mp3', '.wav', '.m4a', '.mp4', '.mov', '.webm', '.m4v', '.png', '.jpg', '.jpeg', '.webp', '.gif']}
                 multiple={false}
-                disabled={isUploading}
-                overlayLabel="Drop sermon audio or video"
+                disabled={isUploading || !documentaryProject}
+                overlayLabel="Drop sermon audio, video, or image"
               >
                 <label className="inline-flex items-center gap-3 px-4 py-2 rounded-lg bg-primary-500/10 border border-primary-500/30 text-primary-200 cursor-pointer hover:bg-primary-500/20">
                     <Film size={16} />
@@ -1381,17 +1386,20 @@ export function TimelinePage() {
                     <input
                         type="file"
                         className="hidden"
-                        accept=".mp3,.wav,.m4a,.mp4,.mov,.webm,.m4v"
-                        disabled={isUploading}
+                        accept=".mp3,.wav,.m4a,.mp4,.mov,.webm,.m4v,.png,.jpg,.jpeg,.webp,.gif,audio/*,video/*,image/*"
+                        disabled={isUploading || !documentaryProject}
                         onChange={(e) => {
                             const f = e.target.files?.[0];
                             if (f) handleSourceUpload(f);
                         }}
                     />
                 </label>
+                {!documentaryProject && (
+                  <p className="mt-2 text-[11px] text-content-tertiary">Create a documentary timeline first to insert source media.</p>
+                )}
                 {sourceMediaPath && (
-                    <div className="mt-3 flex items-center justify-between gap-2 text-xs text-gray-300">
-                        <span>
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-gray-300">
+                        <span className="min-w-0">
                             <span className="text-content-tertiary">Loaded ({sourceMediaKind}):</span>{' '}
                             <span className="font-mono break-all">{sourceMediaPath.split(/[\\/]/).pop()}</span>
                             {sourceMediaKind === 'video' && sourceMediaProxyPath && (
@@ -1400,16 +1408,16 @@ export function TimelinePage() {
                                 </span>
                             )}
                         </span>
-                        <div className="shrink-0 flex items-center gap-2">
+                        <div className="shrink-0 flex flex-wrap items-center gap-2">
                             {sourceMediaKind === 'video' && (
                                 <button
                                     type="button"
-                                    onClick={() => sourceMediaPreviewPath && setPreviewUrl(sourceMediaPreviewPath)}
-                                    disabled={!sourceMediaPreviewPath}
+                                    onClick={handlePreviewSource}
+                                    disabled={!sourceMediaPath}
                                     className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-white/[0.06] text-primary-200 hover:bg-white/[0.12] transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-                                    title={sourceMediaPreviewPath ? 'Plays the low-res proxy for faster mobile preview; final render still uses original.' : 'Proxy is still processing. Preview is disabled to avoid opening the large original and blanking the page.'}
+                                    title={sourceMediaPreviewPath ? 'Opens the source or proxy preview in the preview modal.' : 'Upload source media first.'}
                                 >
-                                    <Play size={12} /> {sourceMediaPreviewLabel}
+                                    <Play size={12} /> Preview source
                                 </button>
                             )}
                             {sourceMediaKind === 'audio' && (
@@ -1422,32 +1430,50 @@ export function TimelinePage() {
                                 </button>
                             )}
                             {sourceMediaKind !== 'image' && (
+                              <button
+                                  type="button"
+                                  onClick={() => setTrimTarget({
+                                      kind: sourceMediaKind === 'video' ? 'video' : 'audio',
+                                      path: sourceMediaPath,
+                                      apply: (p) => {
+                                          setSourceMediaPath(p);
+                                          if (sourceMediaKind !== 'video') {
+                                              const clip: TimelineClip = {
+                                                  id: `clip_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                                                  path: p,
+                                                  label: p.split(/[\\/]/).pop() || 'clip',
+                                                  startSec: null,
+                                                  durationSec: null,
+                                              };
+                                              setClips([clip]);
+                                              saveClipsToCache([clip]);
+                                              pushAudioHistory(p, 'source');
+                                          }
+                                      },
+                                  })}
+                                  className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-white/[0.06] text-primary-200 hover:bg-white/[0.12] transition-colors"
+                              >
+                                  <Scissors size={12} /> Trim
+                              </button>
+                            )}
                             <button
                                 type="button"
-                                onClick={() => setTrimTarget({
-                                    kind: sourceMediaKind === 'video' ? 'video' : 'audio',
-                                    path: sourceMediaPath,
-                                    apply: (p) => {
-                                        setSourceMediaPath(p);
-                                        if (sourceMediaKind !== 'video') {
-                                            const clip: TimelineClip = {
-                                                id: `clip_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-                                                path: p,
-                                                label: p.split(/[\\/]/).pop() || 'clip',
-                                                startSec: null,
-                                                durationSec: null,
-                                            };
-                                            setClips([clip]);
-                                            saveClipsToCache([clip]);
-                                            pushAudioHistory(p, 'source');
-                                        }
-                                    },
-                                })}
-                                className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-white/[0.06] text-primary-200 hover:bg-white/[0.12] transition-colors"
+                                onClick={handleInsertSourceMediaIntoDocumentary}
+                                disabled={!sourceMediaPath || !sourceMediaKind || !documentaryProject}
+                                className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-primary-500/15 text-primary-100 hover:bg-primary-500/25 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                                title={documentaryProject ? 'Insert this source media into the active documentary timeline' : 'Create a documentary timeline first'}
                             >
-                                <Scissors size={12} /> Trim
+                                <Plus size={12} /> Insert source media
                             </button>
-                            )}
+                            <button
+                                type="button"
+                                onClick={handleInsertVoiceoverPlaceholder}
+                                disabled={!documentaryProject}
+                                className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-white/[0.06] text-primary-200 hover:bg-white/[0.12] transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                                title={documentaryProject ? 'Insert a Chatterbox placeholder into the documentary timeline' : 'Create a documentary timeline first'}
+                            >
+                                <Sparkles size={12} /> Insert VO placeholder
+                            </button>
                         </div>
                     </div>
                 )}

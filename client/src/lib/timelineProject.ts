@@ -41,6 +41,7 @@ export interface TimelineClip {
   transform: TimelineClipTransform;
   transitionIn?: TimelineTransition;
   transitionOut?: TimelineTransition;
+  muted?: boolean;
 }
 
 export interface TimelineTrack {
