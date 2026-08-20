@@ -17,6 +17,7 @@ import { charsToWords, captionWordsFromNativeWords, annotatePhrasedTiers, groupW
 import { alignAudioWithText, isForcedAlignmentAvailable } from "../lib/voice/alignment.js";
 import { buildWordDrawtext, buildLineDrawtext, buildSceneGraph, resolveKineticAnimation, buildEndingFade } from "../lib/videoFilters.js";
 import { buildSocialCaption } from "../lib/socialCaption.js";
+import { pickScriptType } from "../lib/highPerformerProfile.js";
 import { ensureLocalPath } from "../lib/remoteCache.js";
 import { resolveAutoBackgrounds } from "../lib/autoBackground.js";
 import { generateBibleImage } from "../lib/imageGen/index.js";
@@ -120,6 +121,29 @@ function logMemory(tag) {
 let currentJobCtx = null;
 function currentOutDir() { return currentJobCtx?.outputDir || OUTPUT_DIR; }
 function currentDataDir() { return currentJobCtx?.dataDir || DATA_DIR; }
+
+// Monotonic counter backing the script-type rotation. Persisted per-tenant so
+// the rotation survives restarts — an in-memory counter would reset to the
+// first bucket on every deploy, which is how the page ends up looking
+// repetitive again. Failure to read or write is non-fatal: a bad counter must
+// never stop a post from going out, so we fall back to a time-derived index.
+function nextScriptTypeIndex() {
+  const file = path.join(currentDataDir(), "script-rotation.json");
+  try {
+    let current = 0;
+    if (fs.existsSync(file)) {
+      const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+      if (Number.isFinite(Number(parsed?.index))) current = Number(parsed.index);
+    }
+    const next = current + 1;
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ index: next }, null, 2));
+    return current;
+  } catch (e) {
+    console.warn("[JOBS] script rotation counter unavailable, using time-derived index:", e?.message || e);
+    return Math.floor(Date.now() / 60000);
+  }
+}
 function currentIsSuperAdmin() { return Boolean(currentJobCtx?.isSuperAdmin); }
 
 /**
@@ -1229,6 +1253,13 @@ async function runCampaignAutoPost(payload, jobId) {
       title: String(prebuiltScript.title || "").trim(),
     };
   } else {
+    // scriptType was previously omitted here, so generateScripts fell back to
+    // its "peace" default on EVERY auto-publish and every scheduled run — one
+    // narrow bucket feeding the whole page. Rotate through the problem-led
+    // types instead (see highPerformerProfile), keyed off the run counter so
+    // consecutive posts land in different territory. An explicit payload
+    // scriptType still wins, so Series Mode and manual runs are unaffected.
+    const rotatedScriptType = payload?.scriptType || pickScriptType(nextScriptTypeIndex());
     const scripts = await generateScripts({
       niche: niche || "Christian / Bible encouragement",
       tone: tone || "warm, encouraging, simple",
@@ -1236,6 +1267,7 @@ async function runCampaignAutoPost(payload, jobId) {
       lengthSeconds: Math.max(8, Math.min(90, Number(lengthSeconds) || 20)),
       includeVerseReference: Boolean(includeVerseReference),
       ctaStyle,
+      scriptType: rotatedScriptType,
     });
     script = Array.isArray(scripts) ? scripts[0] : null;
     if (!script) throw new Error("campaign: script generation produced 0 results");

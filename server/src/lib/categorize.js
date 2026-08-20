@@ -144,6 +144,45 @@ export function classifySearchQuery(query) {
  * Random selection within the highest-priority tier prevents predictable
  * sequences while still respecting mood.
  */
+/**
+ * Like {@link pickBestBackground}, but reports HOW the pick was made.
+ *
+ * The plain picker falls back to a random item when nothing matches the script's
+ * mood, and the caller cannot tell a mood match from that random pick. That is
+ * how a verse about anxiety ends up over a celebration clip. This variant
+ * surfaces the match quality so callers can prefer AI generation over a
+ * mismatched library item.
+ *
+ * @param {any[]} pool
+ * @param {{ script?: object, backgroundQuery?: string }} opts
+ * @returns {{ item: any|null, quality: "mood"|"query"|"random"|"empty" }}
+ */
+export function pickBackgroundWithQuality(pool, { script, backgroundQuery } = {}) {
+  const items = Array.isArray(pool) ? pool : [];
+  if (items.length === 0) return { item: null, quality: "empty" };
+
+  const scriptCats = script ? classifyScript(script) : [];
+  if (scriptCats.length > 0) {
+    const matched = items.filter((it) => {
+      const cats = Array.isArray(it?.categories) ? it.categories : [];
+      return cats.some((c) => scriptCats.includes(String(c).toLowerCase()));
+    });
+    if (matched.length > 0) {
+      return { item: matched[Math.floor(Math.random() * matched.length)], quality: "mood" };
+    }
+  }
+
+  if (backgroundQuery) {
+    const needle = String(backgroundQuery).toLowerCase();
+    const matched = items.filter((it) => JSON.stringify(it).toLowerCase().includes(needle));
+    if (matched.length > 0) {
+      return { item: matched[Math.floor(Math.random() * matched.length)], quality: "query" };
+    }
+  }
+
+  return { item: items[Math.floor(Math.random() * items.length)], quality: "random" };
+}
+
 export function pickBestBackground(pool, { script, backgroundQuery } = {}) {
   const items = Array.isArray(pool) ? pool : [];
   if (items.length === 0) return null;

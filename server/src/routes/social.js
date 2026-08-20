@@ -348,7 +348,15 @@ async function postToYoutube({ caption, videoUrl, title, privacyStatus }, req, s
   const clientSecret = String(yt.clientSecret || "").trim();
   const refreshToken = String(yt.refreshToken || "").trim();
   if (!clientId || !clientSecret || !refreshToken) {
-    throw new Error("YouTube direct config missing. Set clientId, clientSecret, and refreshToken in Settings.");
+    // Name the MISSING piece. A scheduled post that fails here is invisible
+    // until someone reads the job log, so the message has to say exactly what
+    // to do rather than listing all three fields generically.
+    const missing = [
+      !clientId && "client ID",
+      !clientSecret && "client secret",
+      !refreshToken && "refresh token (click Connect YouTube in Settings)",
+    ].filter(Boolean).join(", ");
+    throw new Error(`YouTube is not connected — missing ${missing}. Posts to YouTube will keep failing until this is fixed.`);
   }
 
   const upload = await resolveVideoInputForUpload(videoUrl, req);
@@ -659,7 +667,7 @@ router.post("/schedules", (req, res) => {
       return res.status(400).json({ ok: false, error: "Invalid cron expression" });
     }
     if (schedule.type === "replay" && (!schedule.caption || !schedule.videoUrl)) {
-      return res.status(400).json({ ok: false, error: "caption and videoUrl are required for replay schedules" });
+      return res.status(400).json({ ok: false, error: "Replay schedules need a caption and a video URL. For a fresh post every run, switch the type to Auto-Generate instead." });
     }
 
     const store = readSocialStore(req.ctx.dataDir);

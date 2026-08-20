@@ -1,4 +1,5 @@
-import { pickBestBackground } from "./categorize.js";
+import { pickBestBackground, pickBackgroundWithQuality } from "./categorize.js";
+import { filterPool } from "./faithFilter.js";
 
 /**
  * Derive the ordered "beats" of a script — the segments that each deserve their
@@ -44,7 +45,17 @@ function deriveBeats(script) {
  * @returns {{ backgrounds: any[], beats: { label: string, text: string }[] }}
  */
 export function selectBackgroundsForScript({ pool, script, text, beats: beatsInput, maxBackgrounds = 4 } = {}) {
-  const items = Array.isArray(pool) ? pool : [];
+  // Faith screen FIRST, before any mood matching. @Biblefuel is a Christian
+  // page; stock libraries return mosques/temples for innocent queries like
+  // "prayer" or "worship", and an auto-published verse over a mosque is an
+  // unrecoverable mistake. Filtering at the pool entry point means every
+  // downstream selection path (beats, script, text, random) inherits it.
+  const screened = filterPool(pool);
+  if (screened.removed.length > 0) {
+    const terms = [...new Set(screened.removed.map((r) => r.term))].join(", ");
+    console.log(`[AUTOBG] Faith filter removed ${screened.removed.length} background(s) from the pool (matched: ${terms})`);
+  }
+  const items = screened.kept;
   const cap = Math.max(1, Number(maxBackgrounds) || 1);
 
   let beats;
@@ -64,10 +75,11 @@ export function selectBackgroundsForScript({ pool, script, text, beats: beatsInp
     beats = [{ label: "all", text: String(text || "").trim() }];
   }
 
-  if (items.length === 0) return { backgrounds: [], beats };
+  if (items.length === 0) return { backgrounds: [], beats, weakMatches: 0, totalBeats: beats.length };
 
   const backgrounds = [];
   const used = new Set();
+  let weakMatches = 0;
   for (const beat of beats) {
     // Prefer clips we haven't used yet so the sequence varies; fall back to the
     // full pool once we've exhausted the distinct options.
@@ -76,16 +88,19 @@ export function selectBackgroundsForScript({ pool, script, text, beats: beatsInp
       const fresh = items.filter((it) => !used.has(it.id));
       candidatePool = fresh.length > 0 ? fresh : items;
     }
-    const picked = pickBestBackground(candidatePool, {
+    const { item: picked, quality } = pickBackgroundWithQuality(candidatePool, {
       script: beat.text ? { hook: beat.text } : undefined,
     });
     if (picked) {
       backgrounds.push(picked);
       used.add(picked.id);
+      // "random" means nothing in the library matched this beat's mood — the
+      // caller may prefer to AI-generate rather than ship a mismatch.
+      if (quality === "random") weakMatches += 1;
     }
   }
 
-  return { backgrounds, beats };
+  return { backgrounds, beats, weakMatches, totalBeats: beats.length };
 }
 
 /**
@@ -114,13 +129,35 @@ export async function resolveAutoBackgrounds({
   generateImage,
   generateArgs = {},
 } = {}) {
-  const { backgrounds, beats } = selectBackgroundsForScript({
+  const { backgrounds, beats, weakMatches, totalBeats } = selectBackgroundsForScript({
     pool,
     script,
     text,
     beats: beatsInput,
     maxBackgrounds,
   });
+
+  // A pick is "weak" when nothing in the library matched the beat's mood and the
+  // picker fell back to a random clip — that is how a verse about anxiety lands
+  // on a celebration background. When EVERY beat is weak and we can generate,
+  // prefer a purpose-made image over a wholly mismatched library sequence.
+  // Partial matches are kept: some real mood matching beats none.
+  const allWeak = backgrounds.length > 0 && weakMatches === totalBeats;
+  if (allWeak && typeof generateImage === "function") {
+    const verseText = beats[0]?.text || String(text || "").trim();
+    try {
+      const gen = await generateImage({ beatType: "verse", verseText, ...generateArgs });
+      if (gen && gen.ok && gen.path) {
+        console.log(`[AUTOBG] No mood match across ${totalBeats} beat(s) — generated a purpose-made background instead`);
+        return { backgroundIds: [String(gen.path)], source: "generated-no-match", beats };
+      }
+    } catch (e) {
+      // Generation is an UPGRADE path, never a gate: if it fails we still have
+      // usable library clips, and a post going out beats a post blocked on an
+      // image provider.
+      console.warn(`[AUTOBG] Generation fallback failed, using library picks: ${e?.message || e}`);
+    }
+  }
 
   if (backgrounds.length > 0) {
     return {
