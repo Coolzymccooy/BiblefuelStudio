@@ -1967,7 +1967,11 @@ export function VoiceAudioPage() {
                                 return (
                                 <div
                                     key={item.id}
-                                    className={`flex flex-col md:flex-row md:items-center gap-3 rounded-lg p-3 border ${
+                                    // Stacked, NOT md:flex-row. These cards live in a fixed
+                                    // 320px rail, but `md:` is a VIEWPORT breakpoint — on any
+                                    // desktop it forced a horizontal row into a narrow column,
+                                    // overlapping the timestamp, buttons and File path toggle.
+                                    className={`flex flex-col gap-2 rounded-lg p-3 border ${
                                         isCurrent
                                             ? 'bg-emerald-500/[0.06] border-emerald-500/25'
                                             : 'bg-dark-900/60 border-white/5'
@@ -1997,7 +2001,7 @@ export function VoiceAudioPage() {
                                             <p className="text-meta font-mono break-all mt-1">{item.path}</p>
                                         </details>
                                     </div>
-                                    <div className="flex items-center gap-2">
+                                    <div className="flex flex-wrap items-center gap-2">
                                         {isCurrent ? (
                                             <span className="inline-flex items-center gap-1.5 text-xs h-8 px-3 rounded-lg text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 whitespace-nowrap">
                                                 <CheckCircle2 size={14} />
