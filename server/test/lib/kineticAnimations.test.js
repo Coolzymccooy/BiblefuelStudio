@@ -1,10 +1,11 @@
-import { test } from "node:test";
+import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
 import {
   listKineticAnimations,
   resolveKineticAnimation,
   resolveTypographyPreset,
+  listTypographyPresets,
   buildWordDrawtext,
   listLayouts,
 } from "../../src/lib/videoFilters.js";
@@ -323,4 +324,39 @@ test("buildEndingFade: invalid/zero duration yields no fade", () => {
     assert.equal(f.aFade, 0);
     assert.equal(f.vFade, 0);
   }
+});
+
+describe("karaoke-pop preset", () => {
+  test("is registered as a typography preset", () => {
+    assert.ok(listTypographyPresets().includes("karaoke-pop"));
+  });
+
+  test("highlights the spoken word in magenta over a white phrase", () => {
+    const p = resolveTypographyPreset("karaoke-pop");
+    assert.equal(p.baseColor, "white");
+    assert.equal(p.emphasisColor, "#FF00FF");
+  });
+
+  test("renders uppercase", () => {
+    assert.equal(resolveTypographyPreset("karaoke-pop").uppercase, true);
+  });
+
+  test("carries legibility with a heavy outline, not a backdrop box", () => {
+    const p = resolveTypographyPreset("karaoke-pop");
+    assert.ok(p.borderWidth >= 6, "outline must be thick enough to read over busy footage");
+    assert.equal(p.wordBox, false);
+    assert.equal(p.lineBoxOpacity, 0);
+  });
+
+  test("recolours in place — the highlight must not resize and reflow the line", () => {
+    const p = resolveTypographyPreset("karaoke-pop");
+    assert.equal(p.emphasisSizeMult, p.baseSizeMult);
+  });
+
+  test("is offered as a renderable kinetic animation", () => {
+    const a = resolveKineticAnimation("karaoke-pop");
+    assert.equal(a.presetId, "karaoke-pop");
+    assert.equal(a.renderable, true);
+    assert.deepEqual(a.unsupported, []);
+  });
 });

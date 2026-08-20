@@ -107,6 +107,30 @@ const TYPOGRAPHY_PRESETS = Object.freeze({
     borderWidth: 5, wordBox: false, lineBoxOpacity: 0.4, lineSizeMult: 0.035,
     lineEnter: "rise-fade", wordReveal: "fade", wordRevealMs: 240, uppercase: false,
   },
+  // Short-form social karaoke: the whole phrase sits on screen in heavy white
+  // uppercase and the word being spoken flips to magenta. Distinct from the
+  // single-hero-word styles above — the viewer reads ahead while the highlight
+  // tracks the voice, which holds attention through longer narration.
+  //
+  // emphasisSizeMult INTENTIONALLY equals baseSizeMult: karaoke highlighting
+  // recolours a word in place. Growing it would reflow the line and make the
+  // surrounding words jitter on every syllable.
+  //
+  // No backdrop box (lineBoxOpacity 0) — a thick outline carries legibility
+  // over busy footage, which is what the reference style does.
+  //
+  // KNOWN LIMITATION: buildWordDrawtext renders ONE word at a time, so this
+  // preset currently gives the reference's colour/weight treatment but not its
+  // full phrase context (reference keeps the whole 2-line phrase on screen and
+  // recolours the spoken word in place). True karaoke needs a phrase-layout
+  // builder that positions each word within a measured line — a larger change
+  // than a preset. Tracked as follow-up work.
+  "karaoke-pop": {
+    baseSizeMult: 0.078, emphasisSizeMult: 0.078, baseColor: "white", emphasisColor: "#FF00FF",
+    borderWidth: 8, wordBox: false, lineBoxOpacity: 0, lineSizeMult: 0.038,
+    lineEnter: "fade", wordReveal: "fade", wordRevealMs: 120, uppercase: true,
+    shadow: { color: "black@0.85", x: 0, y: 3 },
+  },
 });
 
 // The lumina-presenter design-animation catalog, ported. Browser-only effects
@@ -122,6 +146,7 @@ const KINETIC_ANIMATIONS = Object.freeze([
   { id: "word-boxes", label: "Word Boxes", description: "Bold uppercase words on backdrop panels (per-word colour grid + 3D extrude are browser-only).", presetId: "word-boxes", renderable: true, unsupported: ["per-word-colour-grid", "3d-extrude"] },
   { id: "hero-bold", label: "Hero Bold", description: "Huge bold uppercase words that rise and fade in.", presetId: "hero-bold", renderable: true, unsupported: [] },
   { id: "music-video", label: "Music Video", description: "Snappy, fast-paced word reveals.", presetId: "music-video", renderable: true, unsupported: [] },
+  { id: "karaoke-pop", label: "Karaoke Pop", description: "Bold white uppercase phrase with the spoken word highlighted magenta — the short-form social caption style.", presetId: "karaoke-pop", renderable: true, unsupported: [] },
   { id: "minimal-lower-third", label: "Minimal Lower Third", description: "Small lower-third captions (bottom-anchor layout is not yet ported).", presetId: "cinematic-worship", renderable: false, unsupported: ["bottom-anchor-layout"] },
   { id: "tiled-repeat", label: "Tiled Repeat", description: "Repeated tiled text grid (tiled layout is browser-only).", presetId: "hero-bold", renderable: false, unsupported: ["tiled-layout"] },
   { id: "glass-chrome", label: "Glass Chrome", description: "Glass/metal material text (material fills are browser-only).", presetId: "cinematic-worship", renderable: false, unsupported: ["glass-fill", "metal-fill"] },
