@@ -18,6 +18,7 @@ import { MediaTrimmer } from '../components/MediaTrimmer';
 import { DropZone } from '../components/ui/DropZone';
 import { ScreenHeader } from '../components/ui/ScreenHeader';
 import { StoryStepper } from '../components/story/StoryStepper';
+import { CastPicker } from '../components/story/CastPicker';
 import { StoryScenePreview } from '../components/story/StoryScenePreview';
 import { ScriptForm } from '../components/story/ScriptForm';
 import { cleanSpeakableText } from '../lib/speakableScript';
@@ -254,6 +255,17 @@ export function StoryVideoPage() {
       {project && (
         <div className="mb-2">
           <StoryStepper project={project} />
+        </div>
+      )}
+
+      {/* Cast — pins recurring figures so they look the same in every scene. */}
+      {project && (
+        <div className="mb-3">
+          <CastPicker
+            projectId={project.projectId}
+            value={project.cast || []}
+            onChange={refresh}
+          />
         </div>
       )}
 

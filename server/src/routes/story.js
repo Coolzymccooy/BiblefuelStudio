@@ -19,6 +19,7 @@ import { synthesizeEdgeTts } from "../lib/edgeTts.js";
 import { resolveLibraryTrack } from "../lib/musicLibrary.js";
 import { cleanCaptionLine, cleanSpeakableText } from "../lib/speakableScript.js";
 import { buildImportedTranscript } from "../lib/story/scriptImport.js";
+import { CHARACTER_ANCHORS } from "../lib/story/styleAnchors.js";
 
 // Mockable seams (mirror routes/transcribe.js).
 let _transcribeFn = transcribeAudio;
@@ -81,7 +82,7 @@ async function segmentStage(ctx, projectId) {
   }
   const words = project.transcript?.words || [];
   if (!words.length) throw new Error("no transcript to segment");
-  const scenes = await segmentScenes({ words, style: project.style });
+  const scenes = await segmentScenes({ words, style: project.style, cast: project.cast || [] });
   return writeProject(ctx.dataDir, { ...project, scenes, status: STORY_STATUS.GENERATING_IMAGES });
 }
 
@@ -218,8 +219,8 @@ function storyOutDir(outputDir, projectId) {
 
 router.post("/", (req, res) => {
   try {
-    const { title, style } = req.body || {};
-    const project = createProject(req.ctx.dataDir, { title, style });
+    const { title, style, cast } = req.body || {};
+    const project = createProject(req.ctx.dataDir, { title, style, cast });
     return res.json({ ok: true, project });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
@@ -228,6 +229,17 @@ router.post("/", (req, res) => {
 
 router.get("/", (req, res) => {
   return res.json({ ok: true, projects: listProjects(req.ctx.dataDir) });
+});
+
+// NOTE: must precede the "/:id" route below — Express matches in declaration
+// order, so a dynamic ":id" placed first would swallow "/characters".
+// GET /characters — the cast options the UI offers. Returned from the server
+// so the list stays in one place; adding a character needs no client change.
+router.get("/characters", (_req, res) => {
+  res.json({
+    ok: true,
+    characters: Object.entries(CHARACTER_ANCHORS).map(([key, description]) => ({ key, description })),
+  });
 });
 
 router.get("/:id", (req, res) => {
@@ -326,6 +338,37 @@ router.post("/script-to-audio", async (req, res) => {
 // Body: { script, audioPath, durationMs, words?, title?, style? }
 // Returns a project already at SEGMENTING; the client then calls
 // /:id/segment and /:id/images exactly as the media path does.
+// PATCH /:id/cast — set which figures appear in this story.
+//
+// Changing the cast only affects prompts built AFTERWARDS, so scenes already
+// generated keep their old images until they are regenerated. The response
+// says so explicitly rather than leaving the operator to wonder why the
+// existing images did not change.
+router.patch("/:id/cast", (req, res) => {
+  const project = readProject(req.ctx.dataDir, req.params.id);
+  if (!project) return res.status(404).json({ ok: false, error: "project not found" });
+
+  const incoming = req.body?.cast;
+  if (!Array.isArray(incoming)) {
+    return res.status(400).json({ ok: false, error: "cast must be an array of character keys" });
+  }
+
+  const known = new Set(Object.keys(CHARACTER_ANCHORS));
+  const cast = [...new Set(incoming.map((k) => String(k).trim().toLowerCase()))].filter((k) => known.has(k));
+  const rejected = incoming.filter((k) => !known.has(String(k).trim().toLowerCase()));
+
+  const updated = writeProject(req.ctx.dataDir, { ...project, cast });
+  const generated = (updated.scenes || []).filter((s) => s.imageStatus === "done").length;
+  return res.json({
+    ok: true,
+    project: updated,
+    rejected,
+    note: generated > 0
+      ? `${generated} scene image(s) already generated — regenerate them to apply the new cast.`
+      : "",
+  });
+});
+
 router.post("/import-script", (req, res) => {
   try {
     const script = String(req.body?.script || "").trim();
@@ -349,6 +392,7 @@ router.post("/import-script", (req, res) => {
     const project = createProject(req.ctx.dataDir, {
       title: req.body?.title || script.slice(0, 60),
       style: req.body?.style,
+      cast: req.body?.cast,
     });
 
     const ready = writeProject(req.ctx.dataDir, {

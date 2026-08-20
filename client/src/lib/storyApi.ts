@@ -13,8 +13,23 @@ function unwrapProject(res: { ok: boolean; data?: any; error?: string }): StoryP
 }
 
 export const storyApi = {
-  async createProject(title: string, style: string): Promise<StoryProject> {
-    return unwrapProject(await api.post('/api/story', { title, style }));
+  async createProject(title: string, style: string, cast: string[] = []): Promise<StoryProject> {
+    return unwrapProject(await api.post('/api/story', { title, style, cast }));
+  },
+
+  // The cast options come from the server so adding a character needs no
+  // client change.
+  async listCharacters(): Promise<Array<{ key: string; description: string }>> {
+    const res = await api.get('/api/story/characters');
+    if (!res.ok) throw new Error(res.error || 'Failed to load characters');
+    return (res.data?.characters ?? []) as Array<{ key: string; description: string }>;
+  },
+
+  // Sets which biblical figures appear in this story. Only affects prompts
+  // built afterwards — already-generated scenes keep their images until
+  // regenerated, which the server reports back in `note`.
+  async setCast(id: string, cast: string[]): Promise<StoryProject> {
+    return unwrapProject(await api.patch(`/api/story/${id}/cast`, { cast }));
   },
 
   async listProjects(): Promise<StoryProjectSummary[]> {
