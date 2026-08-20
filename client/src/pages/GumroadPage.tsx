@@ -8,6 +8,7 @@ import { api, GENERATE_TIMEOUT_MS } from '../lib/api';
 import { useAuth } from '../hooks/useAuth';
 import toast from 'react-hot-toast';
 import { parseFreeDevotionalDays, extractTranscript, type DevotionalDay } from '../lib/gumroadToTimeline';
+import { narrateAndSendToStory } from '../lib/sendToStoryVideo';
 import { saveJson, STORAGE_KEYS } from '../lib/storage';
 
 interface GumroadRecord {
@@ -43,6 +44,7 @@ export function GumroadPage() {
     const [result, setResult] = useState<{ freeMarkdown?: string; paidMarkdown?: string } | null>(null);
     const [isGenerating, setIsGenerating] = useState(false);
     const [sendingDay, setSendingDay] = useState<number | null>(null);
+    const [sendingStoryDay, setSendingStoryDay] = useState<number | null>(null);
     const [history, setHistory] = useState<GumroadRecord[]>([]);
     const navigate = useNavigate();
 
@@ -123,6 +125,26 @@ export function GumroadPage() {
         }
     };
 
+    // Story Video route: narrates the same day, but builds a scene-per-image
+    // cinematic video instead of a captioned audio timeline.
+    const sendDayToStory = async (day: DevotionalDay) => {
+        setSendingStoryDay(day.dayNumber);
+        const toastId = toast.loading('Narrating for Story Video…');
+        try {
+            const res = await narrateAndSendToStory(day.narrationText, {
+                title: `Day ${day.dayNumber} · ${day.reference}`,
+            });
+            if (!res.ok || !res.projectId) {
+                toast.error(res.error || 'Could not send to Story Video', { id: toastId });
+                return;
+            }
+            toast.success('Sent to Story Video — generating scenes', { id: toastId });
+            navigate(`/app/story?project=${encodeURIComponent(res.projectId)}`);
+        } finally {
+            setSendingStoryDay(null);
+        }
+    };
+
     const loadPack = (rec: GumroadRecord) => {
         setFreeTitle(rec.freeTitle);
         setPaidTitle(rec.paidTitle);
@@ -198,19 +220,30 @@ export function GumroadPage() {
                             </pre>
                             <div className="mt-4 space-y-2">
                                 <p className="text-xs text-gray-400">
-                                    Send a day to the Timeline — narrates that day and opens the editor to render a captioned video.
+                                    Send a day to the Timeline for a captioned audio video, or to Story Video for a cinematic scene-by-scene film.
                                 </p>
                                 {days.map((d) => (
                                     <div key={d.dayNumber} className="flex items-center justify-between gap-3 bg-black/20 border border-white/10 rounded-lg px-3 py-2">
                                         <span className="text-sm text-gray-200">Day {d.dayNumber} · {d.reference}</span>
-                                        <Button
-                                            onClick={() => sendDay(d)}
-                                            isLoading={sendingDay === d.dayNumber}
-                                            disabled={sendingDay !== null}
-                                            className="text-xs h-8 shrink-0"
-                                        >
-                                            Send to Timeline
-                                        </Button>
+                                        <div className="flex items-center gap-2 shrink-0">
+                                            <Button
+                                                onClick={() => sendDay(d)}
+                                                isLoading={sendingDay === d.dayNumber}
+                                                disabled={sendingDay !== null || sendingStoryDay !== null}
+                                                variant="secondary"
+                                                className="text-xs h-8"
+                                            >
+                                                Send to Timeline
+                                            </Button>
+                                            <Button
+                                                onClick={() => sendDayToStory(d)}
+                                                isLoading={sendingStoryDay === d.dayNumber}
+                                                disabled={sendingDay !== null || sendingStoryDay !== null}
+                                                className="text-xs h-8"
+                                            >
+                                                Send to Story Video
+                                            </Button>
+                                        </div>
                                     </div>
                                 ))}
                             </div>

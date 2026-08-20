@@ -18,6 +18,7 @@ import { templateById } from "../lib/story/scriptTemplates.js";
 import { synthesizeEdgeTts } from "../lib/edgeTts.js";
 import { resolveLibraryTrack } from "../lib/musicLibrary.js";
 import { cleanCaptionLine, cleanSpeakableText } from "../lib/speakableScript.js";
+import { buildImportedTranscript } from "../lib/story/scriptImport.js";
 
 // Mockable seams (mirror routes/transcribe.js).
 let _transcribeFn = transcribeAudio;
@@ -307,6 +308,58 @@ router.post("/script-to-audio", async (req, res) => {
     const msg = String(e?.message || e);
     const status = /disabled|required/i.test(msg) ? 400 : 500;
     return res.status(status).json({ ok: false, error: msg });
+  }
+});
+
+// POST /import-script — create a Story project from text that is ALREADY
+// written (a Gumroad devotional day, a Series part), rather than from uploaded
+// media.
+//
+// Unlike /script-to-audio this does NOT run the text through refineScript: the
+// caller's words are authoritative. A devotional the operator generated and
+// reviewed should not be silently rewritten on its way to video.
+//
+// The narration's own word timings are written straight into the project, so
+// transcribeStage short-circuits and the pipeline resumes at segmentation —
+// no lossy speech-recognition round trip over words we already have.
+//
+// Body: { script, audioPath, durationMs, words?, title?, style? }
+// Returns a project already at SEGMENTING; the client then calls
+// /:id/segment and /:id/images exactly as the media path does.
+router.post("/import-script", (req, res) => {
+  try {
+    const script = String(req.body?.script || "").trim();
+    if (script.length < 3) return res.status(400).json({ ok: false, error: "script is required" });
+
+    const audioPath = String(req.body?.audioPath || "").trim();
+    if (!audioPath) return res.status(400).json({ ok: false, error: "audioPath is required" });
+
+    const durationMs = Number(req.body?.durationMs);
+    if (!Number.isFinite(durationMs) || durationMs <= 0) {
+      return res.status(400).json({ ok: false, error: "durationMs must be a positive number" });
+    }
+
+    let patch;
+    try {
+      patch = buildImportedTranscript({ script, audioPath, durationMs, words: req.body?.words });
+    } catch (e) {
+      return res.status(400).json({ ok: false, error: String(e?.message || e) });
+    }
+
+    const project = createProject(req.ctx.dataDir, {
+      title: req.body?.title || script.slice(0, 60),
+      style: req.body?.style,
+    });
+
+    const ready = writeProject(req.ctx.dataDir, {
+      ...project,
+      ...patch,
+      status: STORY_STATUS.SEGMENTING,
+    });
+
+    return res.json({ ok: true, project: ready });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
 

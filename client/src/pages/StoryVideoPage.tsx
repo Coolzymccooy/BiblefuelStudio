@@ -26,7 +26,18 @@ const ACTIVE_KEY = 'BF_STORY_ACTIVE';
 
 export function StoryVideoPage() {
   const qc = useQueryClient();
-  const [projectId, setProjectId] = useState<string | null>(() => localStorage.getItem(ACTIVE_KEY));
+  // A ?project= deep link (from Gumroad "Send to Story Video" or Series) wins
+  // over the last-active project, and is promoted to active so a refresh keeps
+  // it. Resolved in the lazy initialiser rather than an effect so the correct
+  // project renders on the first paint instead of flashing the previous one.
+  const [projectId, setProjectId] = useState<string | null>(() => {
+    const linked = new URLSearchParams(window.location.search).get('project');
+    if (linked) {
+      localStorage.setItem(ACTIVE_KEY, linked);
+      return linked;
+    }
+    return localStorage.getItem(ACTIVE_KEY);
+  });
   const [title, setTitle] = useState('');
   const [style, setStyle] = useState('cinematic-bible');
   const [busy, setBusy] = useState(false);

@@ -16,6 +16,7 @@ import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
+import { narrateAndSendToStory } from '../lib/sendToStoryVideo';
 import { Input } from '../components/ui/Input';
 import { Select } from '../components/ui/Select';
 import { BibleVerseLookup } from '../components/BibleVerseLookup';
@@ -48,6 +49,7 @@ export function SeriesPage() {
     const [history, setHistory] = useState<SeriesRecord[]>([]);
     const [isPreviewLoading, setIsPreviewLoading] = useState(false);
     const [isGenerating, setIsGenerating] = useState(false);
+    const [sendingStoryPart, setSendingStoryPart] = useState<number | null>(null);
 
     useEffect(() => {
         bibleApi.listTranslations().then(setCatalog).catch(() => setCatalog(null));
@@ -81,6 +83,29 @@ export function SeriesPage() {
             setPlan(null);
         } finally {
             setIsPreviewLoading(false);
+        }
+    };
+
+    // Send ONE previewed part to Story Video. The series' own Generate button
+    // enqueues the fast caption-over-background pipeline for every part; this
+    // is the slower cinematic route for a single part worth more attention.
+    const sendPartToStory = async (seg: { partNumber: number; reference: string; hook?: string; caption: string }) => {
+        setSendingStoryPart(seg.partNumber);
+        const toastId = toast.loading('Narrating for Story Video…');
+        try {
+            // The hook leads so the narration opens the way the video should.
+            const narration = [seg.hook, seg.caption].filter(Boolean).join(' ');
+            const res = await narrateAndSendToStory(narration, {
+                title: `${seg.reference} · Part ${seg.partNumber}`,
+            });
+            if (!res.ok || !res.projectId) {
+                toast.error(res.error || 'Could not send to Story Video', { id: toastId });
+                return;
+            }
+            toast.success('Sent to Story Video — generating scenes', { id: toastId });
+            navigate(`/app/story?project=${encodeURIComponent(res.projectId)}`);
+        } finally {
+            setSendingStoryPart(null);
         }
     };
 
@@ -311,6 +336,17 @@ export function SeriesPage() {
                                 >
                                     Verify on YouVersion ↗
                                 </a>
+                                <div className="mt-3">
+                                    <Button
+                                        onClick={() => sendPartToStory(seg)}
+                                        isLoading={sendingStoryPart === seg.partNumber}
+                                        disabled={sendingStoryPart !== null}
+                                        variant="secondary"
+                                        className="text-xs h-8"
+                                    >
+                                        Send to Story Video
+                                    </Button>
+                                </div>
                             </li>
                         ))}
                     </ol>
