@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { pageWidthClass } from '../lib/pageWidth';
 import {
     Menu, X, FileText, List, Briefcase, Image, Mic, Film, Video, Package, LogOut, LogIn,
     Settings, HelpCircle, Wand2, BookOpen, Home, ShieldCheck, Clapperboard, Sparkles, ChevronRight,
@@ -165,12 +166,10 @@ export function Layout() {
                 {/* key on pathname replays the bffade screen entrance on navigate */}
                 <div
                     key={location.pathname}
-                    className={`mx-auto w-full ${
-                        // Voice & Audio is a two-pane layout (create column + recent-audio
-                        // rail); it needs more room than the single-column default, which
-                        // otherwise crushes the hero and leaves big desktop side-gaps.
-                        location.pathname.startsWith('/app/voice-audio') ? 'max-w-6xl' : 'max-w-3xl'
-                    } px-[18px] pt-5 lg:pt-8 lg:px-8 pb-[calc(88px+env(safe-area-inset-bottom))] lg:pb-16 animate-bffade`}
+                    // Width is per-screen: editing surfaces (timeline, studio) get
+                    // near-full width on desktop, two-pane screens get a wider
+                    // column, and reading/form screens stay narrow. See pageWidth.
+                    className={`mx-auto w-full ${pageWidthClass(location.pathname)} px-[18px] pt-5 lg:pt-8 lg:px-8 pb-[calc(88px+env(safe-area-inset-bottom))] lg:pb-16 animate-bffade`}
                 >
                     <Outlet />
                 </div>
