@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import '@fontsource-variable/inter/index.css'
 import './index.css'
 import App from './App.tsx'
+import { initTheme } from './lib/theme'
 
 const PRELOAD_RELOAD_KEY = 'bfs:preload-reload-attempted';
 
@@ -36,6 +37,10 @@ if ('serviceWorker' in navigator) {
     })
     .catch(() => {});
 }
+
+// Apply the saved theme BEFORE first paint, otherwise a light-mode user sees
+// a flash of the dark app on every load.
+initTheme();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

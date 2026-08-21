@@ -10,6 +10,7 @@ import { api } from '../lib/api';
 import toast from 'react-hot-toast';
 import { useConfig } from '../lib/config';
 import { describeCron } from '../lib/cronDescribe';
+import { ThemeToggle } from '../components/ThemeToggle';
 import { useAuth } from '../hooks/useAuth';
 import { VoiceSynthesisPanel } from '../components/VoiceSynthesisPanel';
 import { PlanAndUsageCard } from '../components/PlanAndUsageCard';
@@ -281,6 +282,12 @@ export function SettingsPage() {
                         </Button>
                     )}
                 </div>
+            </Card>
+
+            <Card>
+
+                <ThemeToggle />
+
             </Card>
 
             <PlanAndUsageCard />

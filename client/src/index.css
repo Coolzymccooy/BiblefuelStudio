@@ -3,6 +3,67 @@
 @tailwind utilities;
 
 @layer base {
+  /* -- Theme tokens ---------------------------------------------------------
+     Every surface and text colour resolves through these so a `data-theme`
+     attribute can repaint the app. DARK is the default and stays exactly as it
+     was; the light values are additive, not a rewrite.
+
+     LIGHT is NOT an inversion. Gold at the dark theme's saturation reads as
+     muddy yellow on white, so the accent darkens for contrast while keeping the
+     warm identity, and surfaces stay cream-tinted rather than clinical white so
+     both themes feel like the same product. Every light value is measured at
+     >= 4.5:1 against its surface (WCAG AA body text).
+     ----------------------------------------------------------------------- */
+  :root,
+  :root[data-theme='dark'] {
+    --surface-bg: #0b0906;
+    --surface-card: #140f09;
+    --surface-card2: #17130c;
+    --surface-input: #161009;
+    --border-subtle: rgba(216, 184, 120, 0.08);
+    --border-strong: rgba(216, 184, 120, 0.20);
+    --text-primary: #f4ecdc;
+    --accent: #e6c98a;
+    --accent-deep: #cba85f;
+    --tone-success: #6fcf97;
+    --tone-danger: #e08a8a;
+  }
+
+  :root[data-theme='light'] {
+    --surface-bg: #faf7f2;
+    --surface-card: #ffffff;
+    --surface-card2: #f5f1e9;
+    --surface-input: #ffffff;
+    --border-subtle: rgba(28, 26, 21, 0.10);
+    --border-strong: rgba(28, 26, 21, 0.22);
+    --text-primary: #1c1a15;
+    /* Darkened so gold still reads as gold at 4.87:1 on white. */
+    --accent: #8a6d33;
+    --accent-deep: #6f5726;
+    --tone-success: #1a7f4f;
+    --tone-danger: #b03b3b;
+    /* Secondary text follows the theme, else it stays a dark-mode cream. */
+    --content-secondary: #5c5548;
+    --content-tertiary: #7a7264;
+    /* Native controls (select popups, scrollbars) must follow too, or the
+       OS-drawn option list renders dark-on-light. */
+    color-scheme: light;
+  }
+
+  :root[data-theme='light'] select { color-scheme: light; }
+
+  :root[data-theme='light'] option,
+  :root[data-theme='light'] optgroup {
+    background-color: #ffffff;
+    color: #1c1a15;
+  }
+
+  :root[data-theme='light'] body {
+    background-color: var(--surface-bg);
+    background-image: none;
+    color: var(--text-primary);
+  }
+
   :root {
     /* Secondary-text system, brightened for legibility — small/light subtext at
        the old #A8B0BC/#8A929E read as washed-out on the near-black UI and made
