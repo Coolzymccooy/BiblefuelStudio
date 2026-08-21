@@ -37,25 +37,31 @@ export default {
           800: '#140f09',
           700: '#17130c',
         },
-        // Exact quiet-studio tokens from the mobile redesign handoff.
+        // Quiet-studio tokens, resolved through CSS variables so a single
+        // `data-theme` attribute repaints all ~150 usages at once. Hardcoding
+        // the hex values here baked the dark theme into every component, which
+        // is why light mode rendered cream text on cream cards.
+        //
+        // The fallbacks are the original dark values, so anything rendering
+        // before the variables load still looks correct.
         bf: {
-          bg: '#0b0906',
-          bg2: '#080604',
-          card: '#140f09',
-          card2: '#17130c',
-          input: '#161009',
-          input2: '#0f0b07',
-          gold: '#e6c98a',
-          goldDeep: '#cba85f',
-          goldDim: '#a8894f',
-          cream: '#f4ecdc',
-          cream2: '#f0e6d3',
-          sub: '#b7ac97',
-          sub2: '#a99f8b',
-          muted: '#8a7f6b',
-          faint: '#6f6654',
-          success: '#6fcf97',
-          danger: '#e08a8a',
+          bg: 'var(--bf-bg, #0b0906)',
+          bg2: 'var(--bf-bg2, #080604)',
+          card: 'var(--bf-card, #140f09)',
+          card2: 'var(--bf-card2, #17130c)',
+          input: 'var(--bf-input, #161009)',
+          input2: 'var(--bf-input2, #0f0b07)',
+          gold: 'var(--bf-gold, #e6c98a)',
+          goldDeep: 'var(--bf-goldDeep, #cba85f)',
+          goldDim: 'var(--bf-goldDim, #a8894f)',
+          cream: 'var(--bf-cream, #f4ecdc)',
+          cream2: 'var(--bf-cream2, #f0e6d3)',
+          sub: 'var(--bf-sub, #b7ac97)',
+          sub2: 'var(--bf-sub2, #a99f8b)',
+          muted: 'var(--bf-muted, #8a7f6b)',
+          faint: 'var(--bf-faint, #6f6654)',
+          success: 'var(--bf-success, #6fcf97)',
+          danger: 'var(--bf-danger, #e08a8a)',
         },
         glass: {
           100: 'rgba(255, 255, 255, 0.03)',

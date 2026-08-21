@@ -16,6 +16,26 @@
      ----------------------------------------------------------------------- */
   :root,
   :root[data-theme='dark'] {
+    /* The bf.* Tailwind tokens resolve to these, so one attribute repaints
+       every component that uses them. Dark keeps the original values exactly. */
+    --bf-bg: #0b0906;
+    --bf-bg2: #080604;
+    --bf-card: #140f09;
+    --bf-card2: #17130c;
+    --bf-input: #161009;
+    --bf-input2: #0f0b07;
+    --bf-gold: #e6c98a;
+    --bf-goldDeep: #cba85f;
+    --bf-goldDim: #a8894f;
+    --bf-cream: #f4ecdc;
+    --bf-cream2: #f0e6d3;
+    --bf-sub: #b7ac97;
+    --bf-sub2: #a99f8b;
+    --bf-muted: #8a7f6b;
+    --bf-faint: #6f6654;
+    --bf-success: #6fcf97;
+    --bf-danger: #e08a8a;
+
     --surface-bg: #0b0906;
     --surface-card: #140f09;
     --surface-card2: #17130c;
@@ -30,6 +50,28 @@
   }
 
   :root[data-theme='light'] {
+    /* Light is NOT an inversion. `cream` is the PRIMARY TEXT token, so in light
+       mode it must become near-black — leaving it cream is what made headings
+       and sidebar labels invisible. Every value below was measured against the
+       white card surface and passes WCAG AA (>= 4.5:1). */
+    --bf-bg: #faf7f2;
+    --bf-bg2: #f2ede4;
+    --bf-card: #ffffff;
+    --bf-card2: #f7f3ec;
+    --bf-input: #ffffff;
+    --bf-input2: #f7f3ec;
+    --bf-gold: #8a6d33;      /* 4.87:1 — still reads gold, not yellow */
+    --bf-goldDeep: #6f5726;  /* 6.85:1 */
+    --bf-goldDim: #82683a;   /* 5.26:1 */
+    --bf-cream: #1c1a15;     /* 17.38:1 — primary text */
+    --bf-cream2: #2a2620;    /* 15.04:1 */
+    --bf-sub: #4a4438;       /* 9.65:1 */
+    --bf-sub2: #5c5548;      /* 7.37:1 */
+    --bf-muted: #6b6456;     /* 5.86:1 */
+    --bf-faint: #7a7264;     /* 4.75:1 */
+    --bf-success: #1a7f4f;   /* 5.01:1 */
+    --bf-danger: #b03b3b;    /* 5.94:1 */
+
     --surface-bg: #faf7f2;
     --surface-card: #ffffff;
     --surface-card2: #f5f1e9;
