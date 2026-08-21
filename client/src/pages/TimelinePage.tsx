@@ -7,6 +7,9 @@ import toast from 'react-hot-toast';
 import {
     Play,
     Save,
+    Type,
+    Volume2,
+    Layers,
     Trash2,
     Plus,
     Music,
@@ -37,6 +40,7 @@ import { CaptionStylePanel } from '../components/timeline/CaptionStylePanel';
 import { MasteringPanel } from '../components/timeline/MasteringPanel';
 import { RecentAudioPanel } from '../components/timeline/RecentAudioPanel';
 import { TranscriptActions } from '../components/timeline/TranscriptActions';
+import { EditorShell } from '../components/editor/EditorShell';
 import { AIDocumentaryTimelinePanel } from '../components/timeline/AIDocumentaryTimelinePanel';
 import { VisualTimelineCanvas } from '../components/timeline/VisualTimelineCanvas';
 import { InfoTooltip } from '../components/ui/InfoTooltip';
@@ -411,6 +415,12 @@ export function TimelinePage() {
     );
     const [transcriptHistory, setTranscriptHistory] = useState<TranscriptRecord[]>([]);
     const [showHistory, setShowHistory] = useState(false);
+    // Editor layout is opt-in and persisted. The classic stacked view stays the
+    // default until the shell has been used in anger — a layout switch should
+    // never be something the operator discovers mid-Sunday.
+    const [editorLayout, setEditorLayout] = usePersistedState<boolean>(
+        'bf.timeline.editorLayout', false,
+    );
 
     // Drives a single compact toast through an upload's two phases: byte
     // transfer (determinate %) then server-side processing (indeterminate).
@@ -1261,6 +1271,171 @@ export function TimelinePage() {
         setPreviewUrl(target);
     };
 
+    // ── Editor layout (CapCut-style shell) ──────────────────────────────────
+    // Same state, same handlers, different arrangement: tools in a rail,
+    // preview centre, timeline across the bottom. Rendering it as an
+    // alternative BRANCH rather than replacing the page means the classic view
+    // stays available if anything here is wrong.
+    if (editorLayout) {
+        return (
+            <EditorShell
+                topBar={(
+                    <>
+                        <span className="font-semibold">Arrange the cut</span>
+                        {sourceMediaPath && (
+                            <span className="truncate rounded-md border border-editor-line px-2.5 py-1 text-[12px] text-editor-dim">
+                                {sourceMediaPath.split(/[\\/]/).pop()}
+                            </span>
+                        )}
+                        <span className="flex-1" />
+                        <Button variant="secondary" className="h-8 text-xs" onClick={() => setEditorLayout(false)}>
+                            Classic view
+                        </Button>
+                        <Button className="h-8 text-xs" onClick={handleRenderCaptionedVideo} disabled={isRenderingVideo}>
+                            {isRenderingVideo ? 'Rendering…' : 'Render'}
+                        </Button>
+                    </>
+                )}
+                tools={[
+                    { id: 'media', label: 'Media', icon: <Film size={17} /> },
+                    { id: 'captions', label: 'Captions', icon: <Type size={17} /> },
+                    { id: 'music', label: 'Music', icon: <Music size={17} /> },
+                    { id: 'voice', label: 'Voice', icon: <Waves size={17} />, count: audioHistory.length },
+                    { id: 'scenes', label: 'Scenes', icon: <Sparkles size={17} /> },
+                ]}
+                panels={{
+                    media: (
+                        <SourceMediaPanel
+                            sourceMediaPath={sourceMediaPath}
+                            sourceMediaKind={sourceMediaKind}
+                            sourceMediaPreviewPath={sourceMediaPreviewPath}
+                            sourceMediaProxyPath={sourceMediaProxyPath}
+                            sourceMediaProxyStatus={sourceMediaProxyStatus}
+                            isUploading={isUploading}
+                            hasProject={Boolean(documentaryProject)}
+                            maxUploadMb={MAX_UPLOAD_MB}
+                            onUpload={handleSourceUpload}
+                            onPreviewSource={handlePreviewSource}
+                            onUseAsMusicBed={useAsMusicBed}
+                            onTrim={() => sourceMediaPath && setTrimTarget({
+                                kind: sourceMediaKind === 'video' ? 'video' : 'audio',
+                                path: sourceMediaPath,
+                                apply: (np) => setSourceMediaPath(np),
+                            })}
+                            onInsertSourceMedia={handleInsertSourceMediaIntoDocumentary}
+                            onInsertVoiceoverPlaceholder={handleInsertVoiceoverPlaceholder}
+                        />
+                    ),
+                    captions: (
+                        <div className="space-y-4">
+                            <TranscriptActions
+                                hasTranscript={Boolean(transcript && transcript.length > 0)}
+                                isTranscribing={isTranscribing}
+                                canTranscribe={Boolean(sourceMediaPath)}
+                                history={transcriptHistory}
+                                showHistory={showHistory}
+                                onToggleHistory={() => setShowHistory((v) => !v)}
+                                onTranscribe={handleTranscribe}
+                                onReTranscribe={runFreshTranscribe}
+                                onFormatCaptions={formatTimelineCaptions}
+                                onClear={() => { setTranscript(null); setEditedLines([]); }}
+                                onApplyRecord={applyTranscriptRecord}
+                                onDeleteRecord={(id) => void deleteTranscriptRecord(id)}
+                            />
+                            <label className="flex cursor-pointer items-start gap-2 text-xs text-editor-dim">
+                                <input
+                                    type="checkbox"
+                                    checked={kineticCaptions}
+                                    onChange={(e) => setKineticCaptions(e.target.checked)}
+                                    className="mt-0.5"
+                                />
+                                Burn kinetic captions
+                            </label>
+                            <CaptionStylePanel
+                                enabled={kineticCaptions}
+                                typographyPreset={typographyPreset}
+                                onTypographyPresetChange={setTypographyPreset}
+                                layout={layout}
+                                onLayoutChange={setLayout}
+                                layoutOptions={LAYOUT_OPTIONS}
+                                depth={depth}
+                                onDepthChange={setDepth}
+                            />
+                        </div>
+                    ),
+                    music: (
+                        <MusicPicker
+                            multiple
+                            value={{ path: musicPath || null, paths: musicPaths, volume: musicVolume, autoDuck }}
+                            onChange={(m) => {
+                                const next = m.paths ?? (m.path ? [m.path] : []);
+                                setMusicPaths(next);
+                                setMusicPath(next[0] || null);
+                                setMusicVolume(m.volume);
+                                setAutoDuck(m.autoDuck ?? true);
+                            }}
+                            busy={isUploading}
+                        />
+                    ),
+                    voice: (
+                        <RecentAudioPanel
+                            items={audioHistory}
+                            onAddClip={handleAddClip}
+                            onUseAsSource={useAsSource}
+                            onUseAsMusicBed={useAsMusicBed}
+                        />
+                    ),
+                    scenes: documentaryProject ? (
+                        <div className="space-y-2">
+                            {documentaryProject.scenes.map((scene) => (
+                                <div key={scene.id} className="rounded-lg border border-editor-line p-2">
+                                    <p className="text-xs font-semibold text-editor-text">{scene.label}</p>
+                                    <p className="mt-1 text-[10px] text-editor-dim">{scene.voiceoverBrief}</p>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <p className="text-[11px] text-editor-faint">Create a documentary timeline first.</p>
+                    ),
+                }}
+                propertyTools={[{ id: 'audio', label: 'Audio', icon: <Volume2 size={15} /> }]}
+                propertyPanels={{
+                    audio: (
+                        <MasteringPanel
+                            layout="column"
+                            normalizeLUFS={normalizeLUFS}
+                            onNormalizeLUFSChange={setNormalizeLUFS}
+                            fadeInMs={fadeIn}
+                            onFadeInChange={setFadeIn}
+                            fadeOutMs={fadeOut}
+                            onFadeOutChange={setFadeOut}
+                            deEsser={deess}
+                            onDeEsserChange={setDeess}
+                        />
+                    ),
+                }}
+                stage={(
+                    renderedVideo ? (
+                        <video src={api.mediaUrl(renderedVideo)} controls className="max-h-full max-w-full rounded-lg" />
+                    ) : (
+                        <div className="text-[12px] text-editor-faint">
+                            {isRenderingVideo ? `Rendering… ${Math.round(renderProgress)}%` : 'Preview appears here after a render.'}
+                        </div>
+                    )
+                )}
+                strip={documentaryProject ? (
+                    <div className="max-h-[260px] overflow-auto">
+                        <VisualTimelineCanvas
+                            project={documentaryProject}
+                            onProjectChange={setDocumentaryProject}
+                            onRequestVeoBroll={handleRequestVeoBroll}
+                        />
+                    </div>
+                ) : undefined}
+            />
+        );
+    }
+
     return (
         <div className="space-y-5 animate-fade-in">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -1270,6 +1445,15 @@ export function TimelinePage() {
                     <p className="text-help mt-2">Assemble and master your audio clips with precision.</p>
                 </div>
                 <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
+                    <Button
+                        variant="secondary"
+                        onClick={() => setEditorLayout(true)}
+                        className="w-full sm:w-auto"
+                        title="Switch to the editor layout — tools in a rail, preview centre, timeline across the bottom"
+                    >
+                        <Layers size={16} className="mr-2" />
+                        Editor view
+                    </Button>
                     <Button variant="secondary" onClick={() => toast.success('Saved')} className="w-full sm:w-auto">
                         <Save size={16} className="mr-2" />
                         Save Project
