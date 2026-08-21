@@ -10,7 +10,7 @@ import {
     Trash2,
     Plus,
     Music,
-    Volume2,
+    
     Waves,
     Library,
     Film,
@@ -34,6 +34,7 @@ import { MusicPicker } from '../components/MusicPicker';
 import { BackgroundLibraryModal } from '../components/BackgroundLibraryModal';
 import { SourceMediaPanel } from '../components/timeline/SourceMediaPanel';
 import { CaptionStylePanel } from '../components/timeline/CaptionStylePanel';
+import { MasteringPanel } from '../components/timeline/MasteringPanel';
 import { AIDocumentaryTimelinePanel } from '../components/timeline/AIDocumentaryTimelinePanel';
 import { VisualTimelineCanvas } from '../components/timeline/VisualTimelineCanvas';
 import { InfoTooltip } from '../components/ui/InfoTooltip';
@@ -1908,59 +1909,16 @@ export function TimelinePage() {
 
                     {/* Master Controls */}
                     <Card title="Mastering & Filters">
-                        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 p-2">
-                            <div className="space-y-4">
-                                <label className="text-caption font-bold flex items-center gap-2">
-                                    <Volume2 size={14} /> Normalize (LUFS)
-                                </label>
-                                <div className="flex items-center gap-3">
-                                    <input
-                                        type="range"
-                                        min="-24"
-                                        max="-6"
-                                        value={normalizeLUFS}
-                                        onChange={(e) => setNormalizeLUFS(Number(e.target.value))}
-                                        className="flex-1 accent-primary-500"
-                                    />
-                                    <span className="text-xs font-mono w-8">{normalizeLUFS}</span>
-                                </div>
-                            </div>
-
-                            <div className="space-y-4">
-                                <label className="text-caption font-bold flex items-center gap-2">
-                                    Fade In (ms)
-                                </label>
-                                <input
-                                    type="number"
-                                    className="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs w-full font-mono"
-                                    value={fadeIn}
-                                    onChange={(e) => setFadeIn(Number(e.target.value))}
-                                />
-                            </div>
-
-                            <div className="space-y-4">
-                                <label className="text-caption font-bold flex items-center gap-2">
-                                    Fade Out (ms)
-                                </label>
-                                <input
-                                    type="number"
-                                    className="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs w-full font-mono"
-                                    value={fadeOut}
-                                    onChange={(e) => setFadeOut(Number(e.target.value))}
-                                />
-                            </div>
-
-                            <div className="flex items-center gap-3 pt-6">
-                                <input
-                                    type="checkbox"
-                                    id="deess"
-                                    checked={deess}
-                                    onChange={(e) => setDeess(e.target.checked)}
-                                    className="rounded border-white/10 bg-black/50 checked:bg-primary-500"
-                                />
-                                <label htmlFor="deess" className="text-xs text-gray-400">Enable De-esser</label>
-                            </div>
-                        </div>
+                        <MasteringPanel
+                            normalizeLUFS={normalizeLUFS}
+                            onNormalizeLUFSChange={setNormalizeLUFS}
+                            fadeInMs={fadeIn}
+                            onFadeInChange={setFadeIn}
+                            fadeOutMs={fadeOut}
+                            onFadeOutChange={setFadeOut}
+                            deEsser={deess}
+                            onDeEsserChange={setDeess}
+                        />
                     </Card>
 
                     {/* Stats + Recent Audio sit side-by-side under Mastering &
