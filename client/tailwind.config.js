@@ -16,6 +16,28 @@ export default {
         mono: ['"JetBrains Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
       },
       colors: {
+        // Tailwind's default gray scale, routed through CSS variables.
+        // 387 hardcoded text-gray-*/text-white usages across 49 files were
+        // baked to DARK-mode values, so on a light background headings, field
+        // labels and card titles rendered pale-on-white and vanished.
+        // In light mode the scale INVERTS: gray-100..300 are heading/label
+        // colours, so they become near-black. Every light value is >= 4.5:1 on
+        // white. Fallbacks are Tailwind's originals.
+        gray: {
+          100: 'var(--g-100, #f3f4f6)',
+          200: 'var(--g-200, #e5e7eb)',
+          300: 'var(--g-300, #d1d5db)',
+          400: 'var(--g-400, #9ca3af)',
+          500: 'var(--g-500, #6b7280)',
+          600: 'var(--g-600, #4b5563)',
+          700: 'var(--g-700, #374151)',
+          800: 'var(--g-800, #1f2937)',
+          900: 'var(--g-900, #111827)',
+        },
+        // NOTE: `white` is deliberately NOT overridden. Making it a CSS variable
+        // breaks Tailwind's opacity modifiers (bg-white/10, via-white/10 …),
+        // which cannot alpha-composite a var(). The ~112 `text-white` usages
+        // are handled by a targeted rule in index.css instead.
         primary: {
           50: '#fbf7ef',
           100: '#f3ead6',

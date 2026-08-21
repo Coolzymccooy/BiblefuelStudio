@@ -35,6 +35,24 @@
     --bf-faint: #6f6654;
     --bf-success: #6fcf97;
     --bf-danger: #e08a8a;
+    /* Card/glass surfaces. Hardcoding these is what kept light mode muddy:
+       .card painted rgba(17,14,10,.6) regardless of theme. */
+    --bf-cardSurface: rgba(17, 14, 10, 0.60);
+    --bf-cardBorder: rgba(255, 255, 255, 0.06);
+    --bf-cardBorderHover: rgba(255, 255, 255, 0.12);
+    --bf-cardShadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 10px 30px -14px rgba(0, 0, 0, 0.5);
+    --bf-cardSolid: #140f09;
+    /* Pale gold fill -> near-black label (11.81:1). */
+    --bf-btnPrimaryFill: linear-gradient(180deg, #e9cd8d, #cba85f);
+    --bf-btnPrimaryInk: #221703;
+    --bf-btnPrimaryShadow: 0 14px 28px -10px rgba(216, 184, 120, 0.5);
+    --bf-btnSecondaryInk: #cdbfa6;
+    --bf-btnSecondaryBorder: rgba(216, 184, 120, 0.16);
+    --bf-btnSecondaryBorderHover: rgba(216, 184, 120, 0.30);
+    /* Tailwind gray, unchanged in dark. */
+    --g-100:#f3f4f6; --g-200:#e5e7eb; --g-300:#d1d5db; --g-400:#9ca3af;
+    --g-500:#6b7280; --g-600:#4b5563; --g-700:#374151; --g-800:#1f2937; --g-900:#111827;
+    --ink:#ffffff;
 
     --surface-bg: #0b0906;
     --surface-card: #140f09;
@@ -71,6 +89,26 @@
     --bf-faint: #7a7264;     /* 4.75:1 */
     --bf-success: #1a7f4f;   /* 5.01:1 */
     --bf-danger: #b03b3b;    /* 5.94:1 */
+    /* Opaque white cards. A translucent surface over a cream page produced the
+       muddy brown panels; light mode wants clean white with a real border. */
+    --bf-cardSurface: #ffffff;
+    --bf-cardBorder: rgba(28, 26, 21, 0.10);
+    --bf-cardBorderHover: rgba(28, 26, 21, 0.20);
+    --bf-cardShadow: 0 1px 2px rgba(28, 26, 21, 0.04), 0 8px 24px -12px rgba(28, 26, 21, 0.14);
+    --bf-cardSolid: #ffffff;
+    /* Deeper gold fill so the button reads as a solid action against white
+       cards, with a WHITE label (4.87:1). Near-black here would be 3.9:1. */
+    --bf-btnPrimaryFill: linear-gradient(180deg, #8a6d33, #745c2c);
+    --bf-btnPrimaryInk: #ffffff;
+    --bf-btnPrimaryShadow: 0 10px 22px -12px rgba(122, 98, 46, 0.55);
+    --bf-btnSecondaryInk: #4a4438;      /* 9.65:1 on white */
+    --bf-btnSecondaryBorder: rgba(28, 26, 21, 0.18);
+    --bf-btnSecondaryBorderHover: rgba(28, 26, 21, 0.34);
+    /* INVERTED: 100-300 are heading/label colours, so they go near-black.
+       Measured on white — 18.7, 17.4, 14.2, 9.7, 7.4, 5.9, 4.8 : 1. */
+    --g-100:#141210; --g-200:#1c1a15; --g-300:#2f2a22; --g-400:#4a4438;
+    --g-500:#5c5548; --g-600:#6b6456; --g-700:#7a7264; --g-800:#8a8272; --g-900:#9a9280;
+    --ink:#1c1a15;
 
     --surface-bg: #faf7f2;
     --surface-card: #ffffff;
@@ -90,6 +128,50 @@
     /* Native controls (select popups, scrollbars) must follow too, or the
        OS-drawn option list renders dark-on-light. */
     color-scheme: light;
+  }
+
+  /* `text-white` is used ~112 times as the PRIMARY heading colour. On a white
+     card that is invisible. Remapping the utility itself is the only way to
+     fix them all without touching 49 files — and it cannot be done in the
+     Tailwind config, because that would break bg-white/10 opacity modifiers. */
+  :root[data-theme='light'] .text-white { color: #1c1a15; }
+
+  /* Type on a pale ground reads THINNER than the same weight on dark. Light
+     mode therefore steps every label/heading class up a weight so the UI feels
+     as solid as the dark theme rather than washed out. */
+  :root[data-theme='light'] .field-label,
+  :root[data-theme='light'] .text-caption,
+  :root[data-theme='light'] .bf-eyebrow { font-weight: 700; }
+
+  :root[data-theme='light'] .card-title,
+  :root[data-theme='light'] h1,
+  :root[data-theme='light'] h2,
+  :root[data-theme='light'] h3 { font-weight: 650; }
+
+  /* Gold on a pale ground is the thinnest-reading combination in the app, so
+     it gets the biggest bump — this is the "make the gold bolder" fix. */
+  :root[data-theme='light'] .text-bf-gold,
+  :root[data-theme='light'] .text-bf-goldDeep,
+  :root[data-theme='light'] .text-bf-goldDim { font-weight: 600; }
+
+  /* MOBILE SAFETY NET
+     body has overflow-x-hidden, which stops the PAGE scrolling sideways but
+     silently CLIPS anything wider than the viewport — a w-[600px] panel on a
+     375px phone loses its right-hand content with no scrollbar to reveal it.
+     Below the lg breakpoint, fixed-width boxes shrink to fit and long strings
+     (file paths, job ids, URLs) wrap instead of pushing the layout wide. */
+  @media (max-width: 1023px) {
+    [class*="w-["] { max-width: 100%; }
+    pre, code, .font-mono { overflow-wrap: anywhere; }
+    table { display: block; overflow-x: auto; }
+  }
+
+  /* Phones: desktop card padding (20-24px each side) eats a third of a 390px
+     screen, so content is squeezed and long labels wrap awkwardly. Tighten it
+     and let flex rows wrap rather than overflow. */
+  @media (max-width: 639px) {
+    .card { padding: 14px; border-radius: 14px; }
+    .input { padding-left: 12px; padding-right: 12px; }
   }
 
   :root[data-theme='light'] select { color-scheme: light; }
@@ -139,7 +221,7 @@
   body {
     @apply text-gray-200 overflow-x-hidden font-sans;
     /* Quiet-studio: warm gold-on-near-black wash. */
-    background-color: #0b0906;
+    background-color: var(--bf-bg);
     background-image:
       radial-gradient(1200px 700px at 20% -10%, rgba(216, 184, 120, 0.10), transparent 55%),
       radial-gradient(900px 600px at 110% 110%, rgba(107, 79, 31, 0.16), transparent 55%),
@@ -197,15 +279,15 @@
      surface). Gold stays an accent elsewhere, never a surface wash. */
   .card {
     @apply relative rounded-bf p-5 sm:p-6 transition-all duration-300 overflow-hidden;
-    background: rgba(17, 14, 10, 0.60);
+    background: var(--bf-cardSurface);
     backdrop-filter: blur(16px);
     -webkit-backdrop-filter: blur(16px);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 10px 30px -14px rgba(0, 0, 0, 0.5);
+    border: 1px solid var(--bf-cardBorder);
+    box-shadow: var(--bf-cardShadow);
   }
 
   .card:hover {
-    border-color: rgba(255, 255, 255, 0.12);
+    border-color: var(--bf-cardBorderHover);
   }
 
   .card-glow::before {
@@ -223,18 +305,31 @@
   }
 
   /* Gold gradient CTA on ink text — the quiet-studio primary action. */
+  /* The label colour MUST flip with the theme. Measured on the actual button
+     fill: near-black on pale gold is 11.8:1, but on the DARKENED light-mode
+     gold it is only 3.9:1 — a fail. White on that darker gold is 4.87:1.
+     Using one fixed label colour makes the button illegible in one theme. */
   .btn-primary {
-    @apply text-[#221703] border-none font-semibold hover:-translate-y-0.5;
-    background-image: linear-gradient(180deg, #e9cd8d, #cba85f);
-    box-shadow: 0 14px 28px -10px rgba(216, 184, 120, 0.5);
+    @apply border-none font-semibold hover:-translate-y-0.5;
+    color: var(--bf-btnPrimaryInk);
+    background-image: var(--bf-btnPrimaryFill);
+    box-shadow: var(--bf-btnPrimaryShadow);
   }
 
   .btn-primary:hover {
     filter: brightness(1.03);
   }
 
+  /* Secondary label was a fixed pale #cdbfa6 — fine on a dark card, nearly
+     invisible on a white one. Follows the theme now. */
   .btn-secondary {
-    @apply bg-bf-card text-[#cdbfa6] border border-[rgba(216,184,120,0.16)] hover:bg-bf-card2 hover:border-[rgba(216,184,120,0.30)] hover:text-bf-cream;
+    @apply bg-bf-card2 border hover:bg-bf-card hover:text-bf-cream;
+    color: var(--bf-btnSecondaryInk);
+    border-color: var(--bf-btnSecondaryBorder);
+  }
+
+  .btn-secondary:hover {
+    border-color: var(--bf-btnSecondaryBorderHover);
   }
 
   .btn-danger {
@@ -252,7 +347,7 @@
 
   /* Field primitives - the building blocks for forms */
   .field-label {
-    @apply block text-[0.8125rem] font-medium text-gray-300 mb-1.5;
+    @apply block text-[0.8125rem] font-semibold text-gray-300 mb-1.5;
   }
 
   .field-help {
@@ -434,11 +529,11 @@
   /* Neutral dark frost matched to the production card surface (bf-card #140f09),
      NOT a gold wash — no saturate (it amplifies the warm background), neutral
      white hairline rim. Gold stays an accent (buttons, active chips, waveform). */
-  background: rgba(17, 14, 10, 0.60);
+  background: var(--bf-cardSurface);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 10px 30px -14px rgba(0, 0, 0, 0.5);
+  border: 1px solid var(--bf-cardBorder);
+  box-shadow: var(--bf-cardShadow);
 }
 
 .glass-float {
@@ -452,7 +547,7 @@
 /* Respect users who don't want the blur (perf / vestibular) — fall back to a
    solid tint so panels stay legible. */
 @media (prefers-reduced-transparency: reduce) {
-  .glass, .card { background: #140f09; backdrop-filter: none; -webkit-backdrop-filter: none; }
+  .glass, .card { background: var(--bf-cardSolid); backdrop-filter: none; -webkit-backdrop-filter: none; }
   .glass-float { background: #0c0a07; backdrop-filter: none; -webkit-backdrop-filter: none; }
 }
 
