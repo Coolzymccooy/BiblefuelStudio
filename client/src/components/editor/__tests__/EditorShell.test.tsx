@@ -85,6 +85,68 @@ describe('EditorShell', () => {
     expect(screen.getByRole('tab', { name: /effects/i })).not.toHaveTextContent('0');
   });
 
+  it('hides the properties rail when nothing is selected', () => {
+    setup();
+    expect(screen.queryByRole('tablist', { name: /properties/i })).not.toBeInTheDocument();
+  });
+
+  it('shows the properties rail when a selection exists', () => {
+    // CapCut reveals a RIGHT-hand rail (Basic, Background, Audio, Speed…) only
+    // once a clip is selected. Keeping it hidden otherwise is what leaves the
+    // centre free for the preview.
+    setup({
+      propertyTools: [
+        { id: 'basic', label: 'Basic', icon: 'B' },
+        { id: 'speed', label: 'Speed', icon: 'S' },
+      ],
+      propertyPanels: { basic: <div>basic properties</div> },
+    });
+    expect(screen.getByRole('tablist', { name: /properties/i })).toBeInTheDocument();
+    expect(screen.getByText('basic properties')).toBeInTheDocument();
+  });
+
+  it('switches property panels independently of the tool rail', async () => {
+    const user = userEvent.setup();
+    setup({
+      propertyTools: [
+        { id: 'basic', label: 'Basic', icon: 'B' },
+        { id: 'speed', label: 'Speed', icon: 'S' },
+      ],
+      propertyPanels: { basic: <div>basic properties</div>, speed: <div>speed properties</div> },
+    });
+    await user.click(screen.getByRole('tab', { name: /speed/i }));
+    expect(screen.getByText('speed properties')).toBeInTheDocument();
+    // The left rail must not have changed.
+    expect(screen.getByText('media panel body')).toBeInTheDocument();
+  });
+
+  it('renders an icon-only clip toolbar with accessible names', () => {
+    setup({
+      clipActions: [
+        { id: 'split', label: 'Split clip', icon: 'S', onClick: vi.fn() },
+        { id: 'delete', label: 'Delete clip', icon: 'D', onClick: vi.fn() },
+      ],
+    });
+    // Icon-only buttons still need names — this is the trade for the density.
+    expect(screen.getByRole('button', { name: 'Split clip' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delete clip' })).toBeInTheDocument();
+  });
+
+  it('fires the clip action handler', async () => {
+    const onClick = vi.fn();
+    const user = userEvent.setup();
+    setup({ clipActions: [{ id: 'split', label: 'Split clip', icon: 'S', onClick }] });
+    await user.click(screen.getByRole('button', { name: 'Split clip' }));
+    expect(onClick).toHaveBeenCalled();
+  });
+
+  it('disables a clip action that is not currently available', () => {
+    setup({
+      clipActions: [{ id: 'split', label: 'Split clip', icon: 'S', onClick: vi.fn(), disabled: true }],
+    });
+    expect(screen.getByRole('button', { name: 'Split clip' })).toBeDisabled();
+  });
+
   it('renders without a strip or top bar', () => {
     render(<EditorShell tools={tools} panels={panels} stage={<div>only stage</div>} />);
     expect(screen.getByText('only stage')).toBeInTheDocument();

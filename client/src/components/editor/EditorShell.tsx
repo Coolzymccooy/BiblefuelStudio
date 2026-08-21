@@ -28,6 +28,16 @@ export interface EditorTool {
   count?: number;
 }
 
+/** An icon-only operation on the current clip (split, delete, crop, speed…). */
+export interface ClipAction {
+  id: string;
+  /** Accessible name AND tooltip. Icon-only buttons still need a real name. */
+  label: string;
+  icon: ReactNode;
+  onClick: () => void;
+  disabled?: boolean;
+}
+
 export interface EditorShellProps {
   tools: EditorTool[];
   /** Panel body per tool id. A missing entry renders the empty state. */
@@ -42,6 +52,18 @@ export interface EditorShellProps {
   initialToolId?: string;
   /** Notified when the user switches tool, for pages that need to react. */
   onToolChange?: (toolId: string) => void;
+  /**
+   * Right-hand properties rail, shown only when there is something to inspect.
+   * CapCut reveals this once a clip is selected; keeping it hidden otherwise is
+   * what leaves the centre free for the preview.
+   */
+  propertyTools?: EditorTool[];
+  propertyPanels?: Record<string, ReactNode>;
+  /**
+   * Dense icon-only toolbar above the timeline. Labels live in aria-label and
+   * title rather than on screen — that density is how the chrome stays thin.
+   */
+  clipActions?: ClipAction[];
 }
 
 export function EditorShell({
@@ -52,9 +74,15 @@ export function EditorShell({
   topBar,
   initialToolId,
   onToolChange,
+  propertyTools,
+  propertyPanels,
+  clipActions,
 }: EditorShellProps) {
   const [activeId, setActiveId] = useState<string>(
     () => initialToolId || tools[0]?.id || '',
+  );
+  const [activePropId, setActivePropId] = useState<string>(
+    () => propertyTools?.[0]?.id || '',
   );
 
   const select = (id: string) => {
@@ -125,7 +153,60 @@ export function EditorShell({
         <div className="flex min-w-0 flex-1 items-center justify-center overflow-auto bg-editor-stage p-4 lg:p-6">
           {stage}
         </div>
+
+        {propertyTools && propertyTools.length > 0 && (
+          <div className="flex shrink-0 max-lg:hidden">
+            <div className="w-[248px] overflow-auto border-l border-editor-line bg-editor-panel p-3.5">
+              {propertyPanels?.[activePropId] ?? (
+                <p className="text-[11px] text-editor-faint">Select a clip to edit it.</p>
+              )}
+            </div>
+            <div
+              role="tablist"
+              aria-label="Properties"
+              className="flex w-[64px] flex-col items-center gap-1 border-l border-editor-line py-2"
+            >
+              {propertyTools.map((tool) => {
+                const active = tool.id === activePropId;
+                return (
+                  <button
+                    key={tool.id}
+                    role="tab"
+                    aria-selected={active}
+                    onClick={() => setActivePropId(tool.id)}
+                    className={`flex h-[56px] w-[56px] flex-col items-center justify-center gap-1 rounded-lg text-[10px] transition ${
+                      active
+                        ? 'bg-editor-hover text-editor-accent'
+                        : 'text-editor-faint hover:bg-editor-hover hover:text-editor-dim'
+                    }`}
+                  >
+                    <span className="text-[15px] leading-none">{tool.icon}</span>
+                    <span className="max-w-full truncate px-1">{tool.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
+
+      {clipActions && clipActions.length > 0 && (
+        <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-t border-editor-line bg-editor-chrome px-3 py-1.5">
+          {clipActions.map((action) => (
+            <button
+              key={action.id}
+              type="button"
+              aria-label={action.label}
+              title={action.label}
+              onClick={action.onClick}
+              disabled={action.disabled}
+              className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-editor-dim transition hover:bg-editor-hover hover:text-editor-text disabled:pointer-events-none disabled:opacity-40"
+            >
+              {action.icon}
+            </button>
+          ))}
+        </div>
+      )}
 
       {strip && (
         <div className="shrink-0 border-t border-editor-line bg-editor-chrome">
