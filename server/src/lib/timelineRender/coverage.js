@@ -11,10 +11,10 @@
 // return it and the UI can say so plainly.
 
 /** Tracks the proof renderer can actually compose today. */
-export const RENDERED_KINDS = Object.freeze(['video', 'broll', 'voiceover', 'music', 'captions']);
+export const RENDERED_KINDS = Object.freeze(['video', 'broll', 'voiceover', 'music', 'captions', 'effects']);
 
 /** Tracks that exist in the UI but are not yet composed. */
-export const UNRENDERED_KINDS = Object.freeze(['effects']);
+export const UNRENDERED_KINDS = Object.freeze([]);
 
 /** Per-track caps the renderer applies. null = uncapped. */
 export const TRACK_CAPS = Object.freeze({
@@ -22,7 +22,10 @@ export const TRACK_CAPS = Object.freeze({
   voiceover: null,
   music: 1,
   captions: null,
+  effects: null,
 });
+
+import { SUPPORTED_EFFECTS } from './effects.js';
 
 const LABELS = Object.freeze({
   video: 'Real footage',
@@ -59,6 +62,8 @@ export function describeRenderCoverage(plan) {
     const usable = clips.filter((c) => {
       if (!c) return false;
       if (kind === 'captions') return Boolean(String(c.text || '').trim());
+      // Effects are generated filters, identified by kind rather than a file.
+      if (kind === 'effects') return SUPPORTED_EFFECTS.includes(String(c.effect || '').trim().toLowerCase());
       return Boolean(c.path || c.prompt);
     });
     const unusable = clips.length - usable.length;
@@ -80,7 +85,9 @@ export function describeRenderCoverage(plan) {
         kind,
         label: LABELS[kind],
         count: unusable,
-        reason: 'clip has no media file yet',
+        reason: kind === 'effects'
+          ? `unrecognised effect — supported: ${SUPPORTED_EFFECTS.join(', ')}`
+          : 'clip has no media file yet',
       });
     }
   }

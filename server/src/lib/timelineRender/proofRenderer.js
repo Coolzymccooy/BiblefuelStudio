@@ -6,6 +6,10 @@ import { OUTPUT_DIR } from '../paths.js';
 import { get as getVoiceProvider } from '../voice/index.js';
 import { escapeDrawText } from '../videoFilters.js';
 import { describeRenderCoverage } from './coverage.js';
+import {
+  normalizeEffectClip, isSupportedEffect,
+  buildGlowFilter, buildGradeFilter, buildLightLeakFilter,
+} from './effects.js';
 
 // Safety ceilings on ffmpeg input count, NOT editorial limits. Anything beyond
 // these is reported through describeRenderCoverage rather than dropped
@@ -71,6 +75,10 @@ function musicClips(plan) {
 function captionClips(plan) {
   return (plan.tracks?.find((track) => track.kind === 'captions')?.clips || [])
     .filter((clip) => String(clip.text || '').trim());
+}
+
+function effectClips(plan) {
+  return (plan.tracks?.find((track) => track.kind === 'effects')?.clips || []).filter(isSupportedEffect);
 }
 
 function outputRelativePath(absPath, outputDir) {
@@ -293,6 +301,27 @@ export function buildProofRenderCommand(plan, opts = {}) {
     const out = `[ov${index}]`;
     videoParts.push(`${videoLabel}[bro${index}]overlay=0:0:enable='between(t,${start},${end})'${out}`);
     videoLabel = out;
+  });
+
+  // Effects chain. Applied AFTER B-roll so a glow or grade affects whatever is
+  // actually on screen at that moment, and BEFORE captions so text stays crisp
+  // rather than being blurred or graded along with the footage.
+  const effects = effectClips(plan);
+  effects.forEach((clip, index) => {
+    const { kind } = normalizeEffectClip(clip);
+    const out = `[fx${index}]`;
+    if (kind === 'glow') {
+      videoParts.push(buildGlowFilter({ clip, inLabel: videoLabel, outLabel: out, index }));
+      videoLabel = out;
+    } else if (kind === 'grade') {
+      videoParts.push(buildGradeFilter({ clip, inLabel: videoLabel, outLabel: out }));
+      videoLabel = out;
+    } else if (kind === 'lightleak') {
+      videoParts.push(buildLightLeakFilter({ clip, inLabel: videoLabel, outLabel: out, width, height, index }));
+      videoLabel = out;
+    }
+    // 'transition' clips are handled by the B-roll/scene chain rather than as a
+    // standalone pass — a transition needs two streams, not one.
   });
 
   // Burn captions. Font size scales with canvas height so 720p and 1280p

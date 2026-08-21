@@ -16,15 +16,22 @@ describe('describeRenderCoverage', () => {
     assert.ok(kinds.includes('music'), 'music is composed now and must be reported as included');
   });
 
-  test('warns when an effects clip is dropped — the track is not composed', () => {
+  test('recognised effects are reported as INCLUDED now the track is composed', () => {
     const r = describeRenderCoverage(plan([
       { kind: 'video', clips: [clip('v1')] },
-      { kind: 'effects', clips: [clip('e1'), clip('e2')] },
+      { kind: 'effects', clips: [{ id: 'e1', effect: 'glow' }, { id: 'e2', effect: 'grade' }] },
+    ]));
+    assert.deepEqual(r.warnings, []);
+    assert.equal(r.included.find((i) => i.kind === 'effects').used, 2);
+  });
+
+  test('an unrecognised effect is reported, listing what IS supported', () => {
+    const r = describeRenderCoverage(plan([
+      { kind: 'effects', clips: [{ id: 'e1', effect: 'teleport' }] },
     ]));
     assert.equal(r.omitted.length, 1);
-    assert.equal(r.omitted[0].count, 2);
-    assert.match(r.warnings[0], /Effects/);
-    assert.match(r.warnings[0], /not composed by the renderer yet/);
+    assert.match(r.omitted[0].reason, /unrecognised effect/);
+    assert.match(r.omitted[0].reason, /glow/, 'the message must name the supported kinds');
   });
 
   test('warns when a capped track has more clips than the cap', () => {
