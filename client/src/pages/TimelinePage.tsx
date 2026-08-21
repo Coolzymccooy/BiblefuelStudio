@@ -2398,8 +2398,13 @@ export function TimelinePage() {
                     <div className="relative w-full max-w-xl animate-in zoom-in-95 duration-200">
                         <Card className="border-primary-500/30 shadow-[0_0_50px_rgba(var(--primary-500-rgb),0.3)]">
                             <div className="aspect-[9/16] bg-black rounded-xl overflow-hidden mb-4 relative">
+                                {/* Must go through api.mediaUrl: previewUrl holds a
+                                    server PATH, not a servable URL. Passing it raw
+                                    opened the modal but never played, while Download
+                                    (api.downloadMedia) and Trim (api.mediaUrl) both
+                                    worked from the same value. */}
                                 <video
-                                    src={previewUrl}
+                                    src={api.mediaUrl(previewUrl)}
                                     controls
                                     autoPlay
                                     className="w-full h-full object-contain"
