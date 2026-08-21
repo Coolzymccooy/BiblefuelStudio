@@ -35,6 +35,7 @@ import { BackgroundLibraryModal } from '../components/BackgroundLibraryModal';
 import { SourceMediaPanel } from '../components/timeline/SourceMediaPanel';
 import { CaptionStylePanel } from '../components/timeline/CaptionStylePanel';
 import { MasteringPanel } from '../components/timeline/MasteringPanel';
+import { RecentAudioPanel } from '../components/timeline/RecentAudioPanel';
 import { AIDocumentaryTimelinePanel } from '../components/timeline/AIDocumentaryTimelinePanel';
 import { VisualTimelineCanvas } from '../components/timeline/VisualTimelineCanvas';
 import { InfoTooltip } from '../components/ui/InfoTooltip';
@@ -1941,54 +1942,12 @@ export function TimelinePage() {
                         </Card>
 
                         <Card title="Recent Audio">
-                            {audioHistory.length === 0 ? (
-                                <p className="text-help">No audio history yet.</p>
-                            ) : (
-                                <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
-                                    {audioHistory.slice(0, 25).map((item) => {
-                                        const name = item.path.split(/[\\/]/).pop() || item.path;
-                                        return (
-                                            <div
-                                                key={item.id}
-                                                className="flex items-center gap-2 rounded-lg bg-black/20 border border-white/5 px-2 py-1.5"
-                                            >
-                                                <span
-                                                    className="flex-1 min-w-0 truncate text-xs text-content-secondary"
-                                                    title={item.path}
-                                                >
-                                                    {name}
-                                                </span>
-                                                <div className="flex items-center gap-0.5 shrink-0">
-                                                    <button
-                                                        onClick={() => handleAddClip(item.path, item.kind)}
-                                                        title="Add to assembly"
-                                                        aria-label="Add to assembly"
-                                                        className="p-1 rounded-md text-content-tertiary hover:text-primary-300 hover:bg-white/5 transition-colors"
-                                                    >
-                                                        <Plus size={13} />
-                                                    </button>
-                                                    <button
-                                                        onClick={() => useAsSource(item.path)}
-                                                        title="Use as source"
-                                                        aria-label="Use as source"
-                                                        className="p-1 rounded-md text-content-tertiary hover:text-primary-300 hover:bg-white/5 transition-colors"
-                                                    >
-                                                        <Waves size={13} />
-                                                    </button>
-                                                    <button
-                                                        onClick={() => useAsMusicBed(item.path)}
-                                                        title="Use as music bed"
-                                                        aria-label="Use as music bed"
-                                                        className="p-1 rounded-md text-content-tertiary hover:text-primary-300 hover:bg-white/5 transition-colors"
-                                                    >
-                                                        <Music size={13} />
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            )}
+                            <RecentAudioPanel
+                                items={audioHistory}
+                                onAddClip={handleAddClip}
+                                onUseAsSource={useAsSource}
+                                onUseAsMusicBed={useAsMusicBed}
+                            />
                         </Card>
                     </div>
                 </div>
