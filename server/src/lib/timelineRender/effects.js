@@ -99,3 +99,41 @@ export function buildTransitionFilter({ clip, fromLabel, toLabel, outLabel, maxD
 
   return `${fromLabel}${toLabel}xfade=transition=${transition}:duration=${duration}:offset=${startSec}${outLabel}`;
 }
+
+/**
+ * Build a timed bloom/glow.
+ *
+ * A real bloom is a blurred, brightened copy of the frame blended back over
+ * the original — not a brightness bump, which just washes the image out. The
+ * source is split, one leg blurred and lifted, then blended with `screen` so
+ * highlights bloom while shadows stay put.
+ *
+ * `enable` gates the BLEND, so the effect appears only for the clip's window
+ * and the untouched frame passes through the rest of the time.
+ *
+ * @param {{clip: object, inLabel: string, outLabel: string, index?: number}} params
+ * @returns {string} an ffmpeg filtergraph fragment
+ */
+export function buildGlowFilter({ clip, inLabel, outLabel, index = 0 }) {
+  const { startSec, durationSec, options } = normalizeEffectClip(clip);
+  const end = startSec + durationSec;
+
+  // 0..1. Clamped because a >1 opacity is invalid and a negative one silently
+  // disables the effect, which is the failure mode this module exists to avoid.
+  const intensity = Math.max(0, Math.min(1, num(options.intensity ?? clip?.intensity, 0.45)));
+  const radius = Math.max(1, Math.min(50, num(options.radius ?? clip?.radius, 12)));
+
+  // Unique intermediate labels so multiple glows can chain in one graph.
+  const base = `gb${index}`;
+  const src = `[${base}src]`;
+  const blur = `[${base}blur]`;
+
+  return (
+    `${inLabel}split=2${src}${blur};` +
+    // Lift the blurred leg before blending so the bloom reads as light,
+    // not as a grey haze.
+    `${blur}gblur=sigma=${radius},eq=brightness=0.06:saturation=1.05[${base}lit];` +
+    `${src}[${base}lit]blend=all_mode=screen:all_opacity=${intensity}` +
+    `:enable='between(t,${startSec},${end})'${outLabel}`
+  );
+}

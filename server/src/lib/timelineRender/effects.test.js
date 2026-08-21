@@ -4,6 +4,7 @@ import {
   normalizeEffectClip,
   isSupportedEffect,
   buildTransitionFilter,
+  buildGlowFilter,
   TRANSITION_STYLES,
 } from './effects.js';
 
@@ -89,5 +90,61 @@ describe('buildTransitionFilter', () => {
     });
     const d = Number(/duration=([\d.]+)/.exec(f)[1]);
     assert.ok(d > 0);
+  });
+});
+
+describe('buildGlowFilter', () => {
+  test('emits a timed bloom that returns to the caller label', () => {
+    const f = buildGlowFilter({
+      clip: { effect: 'glow', startSec: 4, durationSec: 3 },
+      inLabel: '[v0]',
+      outLabel: '[v1]',
+    });
+    assert.match(f, /^\[v0\]/);
+    assert.match(f, /\[v1\]$/);
+    // A bloom is a blurred, brightened copy blended back over the original.
+    assert.match(f, /gblur|boxblur/);
+    assert.match(f, /blend|overlay/);
+  });
+
+  test('is time-gated so it does not glow for the whole video', () => {
+    const f = buildGlowFilter({
+      clip: { effect: 'glow', startSec: 4, durationSec: 3 },
+      inLabel: '[v0]', outLabel: '[v1]',
+    });
+    assert.match(f, /enable='between\(t,4,7\)'/);
+  });
+
+  test('intensity is clamped to a sane range', () => {
+    const hot = buildGlowFilter({
+      clip: { effect: 'glow', startSec: 0, durationSec: 1, intensity: 99 },
+      inLabel: '[a]', outLabel: '[b]',
+    });
+    const opacity = Number(/all_opacity=([\d.]+)/.exec(hot)[1]);
+    assert.ok(opacity <= 1, `opacity must stay <= 1, got ${opacity}`);
+
+    const cold = buildGlowFilter({
+      clip: { effect: 'glow', startSec: 0, durationSec: 1, intensity: -5 },
+      inLabel: '[a]', outLabel: '[b]',
+    });
+    const lowOpacity = Number(/all_opacity=([\d.]+)/.exec(cold)[1]);
+    assert.ok(lowOpacity >= 0, 'opacity must not go negative');
+  });
+
+  test('a stronger intensity produces a stronger blend than a weaker one', () => {
+    const weak = Number(/all_opacity=([\d.]+)/.exec(buildGlowFilter({
+      clip: { effect: 'glow', startSec: 0, durationSec: 1, intensity: 0.2 },
+      inLabel: '[a]', outLabel: '[b]' })) [1]);
+    const strong = Number(/all_opacity=([\d.]+)/.exec(buildGlowFilter({
+      clip: { effect: 'glow', startSec: 0, durationSec: 1, intensity: 0.9 },
+      inLabel: '[a]', outLabel: '[b]' })) [1]);
+    assert.ok(strong > weak, 'intensity must actually change the result');
+  });
+
+  test('labels are unique per index so several glows can chain', () => {
+    const a = buildGlowFilter({ clip: { effect: 'glow' }, inLabel: '[v0]', outLabel: '[v1]', index: 0 });
+    const b = buildGlowFilter({ clip: { effect: 'glow' }, inLabel: '[v1]', outLabel: '[v2]', index: 1 });
+    assert.notEqual(a, b);
+    assert.doesNotMatch(b, /\[gb0\]/, 'index 1 must not reuse index 0 intermediate labels');
   });
 });
