@@ -28,12 +28,12 @@ import { loadJson, saveJson, STORAGE_KEYS } from '../lib/storage';
 import { LAYOUT_OPTIONS } from '../lib/layoutOptions';
 import { usePersistedState } from '../lib/usePersistedState';
 import { pickTranscribeAction, baseName, type TranscriptRecord } from '../lib/transcribeAction';
-import { AnimationPicker } from '../components/voicelab/AnimationPicker';
 import { ShareSheet } from '../components/ShareSheet';
 import { MediaTrimmer } from '../components/MediaTrimmer';
 import { MusicPicker } from '../components/MusicPicker';
 import { BackgroundLibraryModal } from '../components/BackgroundLibraryModal';
 import { SourceMediaPanel } from '../components/timeline/SourceMediaPanel';
+import { CaptionStylePanel } from '../components/timeline/CaptionStylePanel';
 import { AIDocumentaryTimelinePanel } from '../components/timeline/AIDocumentaryTimelinePanel';
 import { VisualTimelineCanvas } from '../components/timeline/VisualTimelineCanvas';
 import { InfoTooltip } from '../components/ui/InfoTooltip';
@@ -1557,36 +1557,16 @@ export function TimelinePage() {
                         </span>
                     </span>
                 </label>
-                {kineticCaptions && (
-                <div className="mb-4">
-                    <p className="text-xs text-gray-400 mb-2">Kinetic typography style</p>
-                    <AnimationPicker
-                        value={typographyPreset}
-                        onChange={(id) => setTypographyPreset(id)}
-                    />
-                    <div className="mt-3">
-                        <p className="text-xs text-gray-400 mb-2">Text layout</p>
-                        <select
-                            value={layout}
-                            onChange={(e) => setLayout(e.target.value)}
-                            className="w-full bg-white/[0.03] border border-white/10 rounded-lg px-3 py-2 text-sm text-gray-200 focus:border-primary-500/40 focus:outline-none"
-                        >
-                            {LAYOUT_OPTIONS.map((o) => (
-                                <option key={o.value} value={o.value}>{o.label}</option>
-                            ))}
-                        </select>
-                        <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer mt-3">
-                            <input
-                                type="checkbox"
-                                checked={depth}
-                                onChange={(e) => setDepth(e.target.checked)}
-                                className="rounded border-white/10 bg-black/50 checked:bg-primary-500"
-                            />
-                            Layered depth (ghost shadow behind each word)
-                        </label>
-                    </div>
-                </div>
-                )}
+                <CaptionStylePanel
+                    enabled={kineticCaptions}
+                    typographyPreset={typographyPreset}
+                    onTypographyPresetChange={setTypographyPreset}
+                    layout={layout}
+                    onLayoutChange={setLayout}
+                    layoutOptions={LAYOUT_OPTIONS}
+                    depth={depth}
+                    onDepthChange={setDepth}
+                />
                 {kineticCaptions && editedLines.length > 0 && (
                     <div className="mt-1">
                         <button
