@@ -42,11 +42,28 @@ function getStorePath(dataDir) {
   return path.join(dataDir, "social.json");
 }
 
+// This is an ALLOWLIST: anything not named here is dropped on save. `type` and
+// the auto_generate settings were missing, so every save silently rewrote a
+// schedule back to "replay" and discarded its content config. The schedule
+// then reloaded as replay — which looked like the UI resetting itself, and
+// like edits made on one device never reaching another.
+//
+// When adding a schedule field, it MUST be added here too or it will not
+// survive a save.
 function normalizeSchedule(raw = {}) {
+  const optionalString = (value) => {
+    const s = String(value ?? "").trim();
+    return s ? s : undefined;
+  };
+
   return {
     id: String(raw.id || `sch_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`),
     name: String(raw.name || "Scheduled Post").trim() || "Scheduled Post",
     enabled: Boolean(raw.enabled ?? true),
+    // "replay" reposts a fixed URL; "auto_generate" builds a fresh video each
+    // run. Anything unrecognised falls back to replay, matching the /schedules
+    // route so both write paths agree.
+    type: String(raw.type || "").trim() === "auto_generate" ? "auto_generate" : "replay",
     cron: String(raw.cron || "").trim(),
     timezone: String(raw.timezone || "").trim() || "UTC",
     destination: String(raw.destination || "webhook").trim(),
@@ -55,6 +72,16 @@ function normalizeSchedule(raw = {}) {
     webhookId: String(raw.webhookId || "").trim(),
     profileId: String(raw.profileId || "").trim(),
     privacyStatus: String(raw.privacyStatus || "private").trim() || "private",
+    // auto_generate content settings. Left undefined rather than "" when
+    // absent so the generator falls back to its own defaults instead of
+    // being handed an empty string as an explicit choice.
+    niche: optionalString(raw.niche),
+    tone: optionalString(raw.tone),
+    ctaStyle: optionalString(raw.ctaStyle),
+    aspect: optionalString(raw.aspect),
+    durationSec: Number.isFinite(Number(raw.durationSec)) ? Number(raw.durationSec) : undefined,
+    voiceId: optionalString(raw.voiceId),
+    backgroundQuery: optionalString(raw.backgroundQuery),
   };
 }
 
@@ -80,6 +107,26 @@ function emptyStore() {
   };
 }
 
+/**
+ * Recover the `type` of a schedule written before it was persisted.
+ *
+ * normalizeSchedule's allowlist omitted `type`, so schedules saved by older
+ * builds have NO type field at all and would now default to "replay". A replay
+ * schedule with no videoUrl can never post anything, so such a record is
+ * certainly a lost auto_generate — recovering it is strictly better than
+ * leaving the operator with a schedule that silently cannot run.
+ *
+ * Only applied when `type` is ABSENT. An explicit "replay" is always honoured.
+ *
+ * @param {object} raw a schedule as read from disk
+ * @returns {object} the schedule with a usable type
+ */
+function recoverScheduleType(raw = {}) {
+  if (raw.type) return raw;
+  const hasReplayTarget = String(raw.videoUrl || "").trim().length > 0;
+  return { ...raw, type: hasReplayTarget ? "replay" : "auto_generate" };
+}
+
 export function readSocialStore(dataDir) {
   try {
     const file = getStorePath(dataDir);
@@ -97,7 +144,9 @@ export function readSocialStore(dataDir) {
         instagram: data?.direct?.instagram || {},
         tiktok: data?.direct?.tiktok || {},
       },
-      schedules: Array.isArray(data?.schedules) ? data.schedules.map(normalizeSchedule) : [],
+      schedules: Array.isArray(data?.schedules)
+        ? data.schedules.map((r) => normalizeSchedule(recoverScheduleType(r)))
+        : [],
       postiz: normalizePostiz(data?.postiz || {}),
     };
   } catch {

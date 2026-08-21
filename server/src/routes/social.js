@@ -627,7 +627,12 @@ router.post("/config", (req, res) => {
   };
 
   writeSocialStore(req.ctx.dataDir, next);
-  if (req.ctx.isSuperAdmin) refreshScheduleTasks();
+  // Refresh for EVERY tenant, not just super-admins. refreshScheduleTasks
+  // re-reads all schedule sources anyway, so the old isSuperAdmin guard
+  // prevented nothing — it just meant a regular user's saved schedule sat
+  // inert until the next server restart, which reads as "my schedule never
+  // ran". Matches the /schedules route, which already refreshes unconditionally.
+  refreshScheduleTasks();
   res.json({ ok: true });
 });
 
