@@ -19,8 +19,8 @@ import {
     X,
     Share2,
     
-    History as HistoryIcon,
-    RotateCcw,
+    
+    
     ChevronUp,
     ChevronDown,
 } from 'lucide-react';
@@ -36,6 +36,7 @@ import { SourceMediaPanel } from '../components/timeline/SourceMediaPanel';
 import { CaptionStylePanel } from '../components/timeline/CaptionStylePanel';
 import { MasteringPanel } from '../components/timeline/MasteringPanel';
 import { RecentAudioPanel } from '../components/timeline/RecentAudioPanel';
+import { TranscriptActions } from '../components/timeline/TranscriptActions';
 import { AIDocumentaryTimelinePanel } from '../components/timeline/AIDocumentaryTimelinePanel';
 import { VisualTimelineCanvas } from '../components/timeline/VisualTimelineCanvas';
 import { InfoTooltip } from '../components/ui/InfoTooltip';
@@ -1457,84 +1458,20 @@ export function TimelinePage() {
                 tooltip="Sends the uploaded sermon through Whisper to extract a word-level transcript with timings. Long sermons are auto-chunked. Edit the lines below — word timings redistribute uniformly across edited spans, so fix transcription errors freely. Pick a kinetic style to control how each word animates on screen."
             >
                 <div className="flex justify-end mb-4">
-                    <div className="flex flex-wrap items-center gap-2 relative">
-                        {transcript && transcript.length > 0 && (
-                            <>
-                                <Button
-                                    variant="secondary"
-                                    onClick={formatTimelineCaptions}
-                                    className="h-9 text-xs"
-                                    title="Remove markdown symbols and hashtags from caption lines"
-                                >
-                                    Format captions
-                                </Button>
-                                <Button
-                                    variant="secondary"
-                                    onClick={() => { setTranscript(null); setEditedLines([]); }}
-                                    className="h-9 text-xs"
-                                    title="Clear the working transcript (saved history is kept)"
-                                >
-                                    Clear
-                                </Button>
-                                <Button
-                                    variant="secondary"
-                                    onClick={runFreshTranscribe}
-                                    disabled={isTranscribing || !sourceMediaPath}
-                                    className="h-9 text-xs"
-                                    title="Run a fresh Whisper pass (uses render quota)"
-                                >
-                                    <RotateCcw size={14} className="mr-1.5" />
-                                    Re-transcribe
-                                </Button>
-                            </>
-                        )}
-                        {transcriptHistory.length > 0 && (
-                            <Button
-                                variant="secondary"
-                                onClick={() => setShowHistory((v) => !v)}
-                                className="h-9 text-xs"
-                                title="Saved transcripts"
-                            >
-                                <HistoryIcon size={14} className="mr-1.5" />
-                                History
-                            </Button>
-                        )}
-                        <Button
-                            onClick={handleTranscribe}
-                            disabled={!sourceMediaPath || isTranscribing}
-                            className="h-9 text-xs"
-                        >
-                            <Waves size={14} className="mr-2" />
-                            {isTranscribing ? 'Transcribing...' : 'Transcribe'}
-                        </Button>
-
-                        {showHistory && (
-                            <div className="absolute right-0 top-full mt-1 z-30 w-80 max-w-[calc(100vw-3rem)] max-h-80 overflow-y-auto rounded-xl border border-white/15 bg-dark-900/98 backdrop-blur-xl shadow-2xl p-2">
-                                <p className="text-caption px-2 py-1">Saved transcripts</p>
-                                {transcriptHistory.map((h) => (
-                                    <div key={h.id} className="group flex items-center gap-2 rounded-lg px-2 py-2 hover:bg-white/5">
-                                        <button
-                                            type="button"
-                                            onClick={() => applyTranscriptRecord(h)}
-                                            className="flex-1 min-w-0 text-left"
-                                        >
-                                            <p className="text-content-secondary text-xs truncate">{h.label}</p>
-                                            <p className="text-meta">{h.sourceFile} · {h.lineCount} lines</p>
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={() => void deleteTranscriptRecord(h.id)}
-                                            className="shrink-0 p-1.5 rounded-md text-gray-500 hover:text-red-400 hover:bg-white/5"
-                                            aria-label="Delete saved transcript"
-                                            title="Delete"
-                                        >
-                                            <Trash2 size={14} />
-                                        </button>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </div>
+                    <TranscriptActions
+                        hasTranscript={Boolean(transcript && transcript.length > 0)}
+                        isTranscribing={isTranscribing}
+                        canTranscribe={Boolean(sourceMediaPath)}
+                        history={transcriptHistory}
+                        showHistory={showHistory}
+                        onToggleHistory={() => setShowHistory((v) => !v)}
+                        onTranscribe={handleTranscribe}
+                        onReTranscribe={runFreshTranscribe}
+                        onFormatCaptions={formatTimelineCaptions}
+                        onClear={() => { setTranscript(null); setEditedLines([]); }}
+                        onApplyRecord={applyTranscriptRecord}
+                        onDeleteRecord={(id) => void deleteTranscriptRecord(id)}
+                    />
                 </div>
                 {isTranscribing && (
                     <BusyBar
