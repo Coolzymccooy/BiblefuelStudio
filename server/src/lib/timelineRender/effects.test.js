@@ -5,7 +5,9 @@ import {
   isSupportedEffect,
   buildTransitionFilter,
   buildGlowFilter,
+  buildGradeFilter,
   TRANSITION_STYLES,
+  GRADE_LOOKS,
 } from './effects.js';
 
 describe('normalizeEffectClip', () => {
@@ -146,5 +148,66 @@ describe('buildGlowFilter', () => {
     const b = buildGlowFilter({ clip: { effect: 'glow' }, inLabel: '[v1]', outLabel: '[v2]', index: 1 });
     assert.notEqual(a, b);
     assert.doesNotMatch(b, /\[gb0\]/, 'index 1 must not reuse index 0 intermediate labels');
+  });
+});
+
+describe('buildGradeFilter', () => {
+  test('emits an eq filter gated to the clip window', () => {
+    const f = buildGradeFilter({
+      clip: { effect: 'grade', startSec: 2, durationSec: 5, look: 'warm' },
+      inLabel: '[v0]', outLabel: '[v1]',
+    });
+    assert.match(f, /^\[v0\]/);
+    assert.match(f, /\[v1\]$/);
+    assert.match(f, /eq=/);
+    assert.match(f, /enable='between\(t,2,7\)'/);
+  });
+
+  test('every documented look produces a distinct grade', () => {
+    const seen = new Set();
+    for (const look of Object.keys(GRADE_LOOKS)) {
+      const f = buildGradeFilter({
+        clip: { effect: 'grade', startSec: 0, durationSec: 1, look },
+        inLabel: '[a]', outLabel: '[b]',
+      });
+      assert.doesNotMatch(f, /undefined|NaN/, `${look} produced an invalid parameter`);
+      seen.add(f);
+    }
+    assert.equal(seen.size, Object.keys(GRADE_LOOKS).length, 'looks must differ from each other');
+  });
+
+  test('warm and cool push colour in opposite directions', () => {
+    const warm = buildGradeFilter({ clip: { effect: 'grade', look: 'warm' }, inLabel: '[a]', outLabel: '[b]' });
+    const cool = buildGradeFilter({ clip: { effect: 'grade', look: 'cool' }, inLabel: '[a]', outLabel: '[b]' });
+    const warmR = Number(/gamma_r=([\d.]+)/.exec(warm)[1]);
+    const coolR = Number(/gamma_r=([\d.]+)/.exec(cool)[1]);
+    assert.ok(warmR > coolR, 'warm must lift red relative to cool');
+  });
+
+  test('an unknown look falls back instead of emitting invalid params', () => {
+    const f = buildGradeFilter({
+      clip: { effect: 'grade', look: 'neon-dragon' }, inLabel: '[a]', outLabel: '[b]',
+    });
+    assert.doesNotMatch(f, /undefined|NaN/);
+    assert.match(f, /eq=/);
+  });
+
+  test('custom overrides beat the named look', () => {
+    const f = buildGradeFilter({
+      clip: { effect: 'grade', look: 'warm', saturation: 2.0 },
+      inLabel: '[a]', outLabel: '[b]',
+    });
+    assert.match(f, /saturation=2/);
+  });
+
+  test('saturation and contrast are clamped to ffmpeg-valid ranges', () => {
+    const f = buildGradeFilter({
+      clip: { effect: 'grade', saturation: 99, contrast: -99 },
+      inLabel: '[a]', outLabel: '[b]',
+    });
+    const sat = Number(/saturation=([\d.]+)/.exec(f)[1]);
+    const con = Number(/contrast=(-?[\d.]+)/.exec(f)[1]);
+    assert.ok(sat <= 3, `saturation out of range: ${sat}`);
+    assert.ok(con >= -2, `contrast out of range: ${con}`);
   });
 });

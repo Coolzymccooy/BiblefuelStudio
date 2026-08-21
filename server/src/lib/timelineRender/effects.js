@@ -137,3 +137,43 @@ export function buildGlowFilter({ clip, inLabel, outLabel, index = 0 }) {
     `:enable='between(t,${startSec},${end})'${outLabel}`
   );
 }
+
+/**
+ * Build a timed colour grade.
+ *
+ * Named looks are the common case (a church picks "warm" for worship, "cool"
+ * for testimony), but every parameter can be overridden individually so the
+ * looks are a starting point rather than a cage.
+ *
+ * All values are clamped to ffmpeg's valid `eq` ranges. Out-of-range input
+ * makes ffmpeg reject the whole filtergraph, which would fail an entire
+ * service render because of one mistyped number.
+ *
+ * @param {{clip: object, inLabel: string, outLabel: string}} params
+ * @returns {string} an ffmpeg filtergraph fragment
+ */
+export function buildGradeFilter({ clip, inLabel, outLabel }) {
+  const { startSec, durationSec, options } = normalizeEffectClip(clip);
+  const end = startSec + durationSec;
+
+  const lookName = String(options.look ?? clip?.look ?? 'warm').toLowerCase();
+  const look = GRADE_LOOKS[lookName] || GRADE_LOOKS.warm;
+
+  const pick = (key, fallback, min, max) => {
+    const raw = options[key] ?? clip?.[key] ?? fallback;
+    return Math.max(min, Math.min(max, num(raw, fallback)));
+  };
+
+  // Ranges per ffmpeg's eq filter documentation.
+  const contrast = pick('contrast', look.contrast, -2, 2);
+  const brightness = pick('brightness', look.brightness, -1, 1);
+  const saturation = pick('saturation', look.saturation, 0, 3);
+  const gammaR = pick('gamma_r', look.gamma_r, 0.1, 10);
+  const gammaB = pick('gamma_b', look.gamma_b, 0.1, 10);
+
+  return (
+    `${inLabel}eq=contrast=${contrast}:brightness=${brightness}:saturation=${saturation}` +
+    `:gamma_r=${gammaR}:gamma_b=${gammaB}` +
+    `:enable='between(t,${startSec},${end})'${outLabel}`
+  );
+}
