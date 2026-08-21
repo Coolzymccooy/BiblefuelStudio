@@ -71,7 +71,7 @@ export function MasteringPanel({
         <input
           id="mastering-fade-in"
           type="number"
-          className="w-full rounded border border-white/10 bg-black/20 px-2 py-1 font-mono text-xs"
+          className="surface-sunken w-full rounded px-2 py-1 font-mono text-xs"
           value={fadeInMs}
           onChange={(e) => onFadeInChange(Number(e.target.value))}
         />
@@ -84,7 +84,7 @@ export function MasteringPanel({
         <input
           id="mastering-fade-out"
           type="number"
-          className="w-full rounded border border-white/10 bg-black/20 px-2 py-1 font-mono text-xs"
+          className="surface-sunken w-full rounded px-2 py-1 font-mono text-xs"
           value={fadeOutMs}
           onChange={(e) => onFadeOutChange(Number(e.target.value))}
         />

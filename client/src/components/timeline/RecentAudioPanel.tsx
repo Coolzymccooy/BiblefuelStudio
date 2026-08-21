@@ -24,8 +24,8 @@ export interface RecentAudioPanelProps {
   onUseAsMusicBed: (path: string) => void;
 }
 
-const ICON_BUTTON =
-  'p-1 rounded-md text-content-tertiary hover:text-primary-300 hover:bg-white/5 transition-colors';
+// Shared vocabulary rather than a local style: see .icon-btn in index.css.
+const ICON_BUTTON = 'icon-btn';
 
 export function RecentAudioPanel({
   items,
@@ -46,7 +46,7 @@ export function RecentAudioPanel({
         return (
           <div
             key={item.id}
-            className="flex items-center gap-2 rounded-lg border border-white/5 bg-black/20 px-2 py-1.5"
+            className="surface-raised flex items-center gap-2 rounded-lg px-2 py-1.5"
           >
             <span
               className="min-w-0 flex-1 truncate text-xs text-content-secondary"

@@ -133,7 +133,7 @@ export function TranscriptActions<TSummary extends TranscriptSummary>({
               <button
                 type="button"
                 onClick={() => onDeleteRecord(h.id)}
-                className="shrink-0 rounded-md p-1.5 text-gray-500 hover:bg-white/5 hover:text-red-400"
+                className="icon-btn-danger shrink-0"
                 aria-label={`Delete saved transcript ${h.label}`}
                 title="Delete"
               >

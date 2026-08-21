@@ -42,6 +42,7 @@
     --bf-cardBorderHover: rgba(255, 255, 255, 0.12);
     --bf-cardShadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 10px 30px -14px rgba(0, 0, 0, 0.5);
     --bf-cardSolid: #140f09;
+    --bf-hoverTint: rgba(255, 255, 255, 0.07);
     /* Pale gold fill -> near-black label (11.81:1). */
     --bf-btnPrimaryFill: linear-gradient(180deg, #e9cd8d, #cba85f);
     --bf-btnPrimaryInk: #221703;
@@ -98,6 +99,7 @@
     --bf-cardBorderHover: rgba(28, 26, 21, 0.20);
     --bf-cardShadow: 0 1px 2px rgba(28, 26, 21, 0.04), 0 8px 24px -12px rgba(28, 26, 21, 0.14);
     --bf-cardSolid: #ffffff;
+    --bf-hoverTint: rgba(28, 26, 21, 0.06);
     /* Deeper gold fill so the button reads as a solid action against white
        cards, with a WHITE label (4.87:1). Near-black here would be 3.9:1. */
     --bf-btnPrimaryFill: linear-gradient(180deg, #8a6d33, #745c2c);
@@ -346,6 +348,58 @@
 
   .input:hover:not(:focus):not(:disabled) {
     @apply border-[rgba(216,184,120,0.24)];
+  }
+
+  /* ── Surface + icon-button vocabulary ────────────────────────────────────
+     TimelinePage alone had NINE different surface treatments (bg-black at five
+     opacities, bg-white at four, plus tinted one-offs) because each control
+     invented its own. That reads as unfinished however good the palette is.
+
+     CapCut's discipline is the fix: ONE accent, used sparingly, and everything
+     else neutral. These three surfaces and two icon-button styles are the whole
+     vocabulary — a new control picks one rather than inventing a tenth. */
+
+  /* Recessed: inputs, wells, anything you type or drop into. */
+  .surface-sunken {
+    background: var(--bf-input);
+    border: 1px solid var(--bf-cardBorder);
+  }
+
+  /* Raised: list rows, thumbnails, chips — a step above the card. */
+  .surface-raised {
+    background: var(--bf-card2);
+    border: 1px solid var(--bf-cardBorder);
+  }
+
+  /* Overlay: floats above content (badges over media, hover controls). */
+  .surface-overlay {
+    background: rgba(0, 0, 0, 0.62);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+  }
+
+  /* Neutral icon button. The DEFAULT for icon actions: no colour until hover,
+     so a row of them reads as one control group rather than a fruit salad. */
+  .icon-btn {
+    @apply inline-grid place-items-center rounded-md p-1.5 transition-colors;
+    color: var(--content-tertiary);
+  }
+  .icon-btn:hover:not(:disabled) {
+    color: var(--bf-cream);
+    background: var(--bf-hoverTint);
+  }
+  .icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* Destructive icon button. The ONLY icon variant that carries colour, and it
+     stays neutral until hover — a delete that is permanently red shouts on
+     every row, and the shouting stops being read. */
+  .icon-btn-danger {
+    @apply inline-grid place-items-center rounded-md p-1.5 transition-colors;
+    color: var(--content-tertiary);
+  }
+  .icon-btn-danger:hover:not(:disabled) {
+    color: #f87171;
+    background: rgba(248, 113, 113, 0.12);
   }
 
   /* Field primitives - the building blocks for forms */

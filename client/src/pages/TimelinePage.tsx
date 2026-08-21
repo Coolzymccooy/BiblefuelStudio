@@ -10,6 +10,8 @@ import {
     Type,
     Volume2,
     Layers,
+    Image as ImageIcon,
+    Clapperboard,
     Trash2,
     Plus,
     Music,
@@ -1271,6 +1273,245 @@ export function TimelinePage() {
         setPreviewUrl(target);
     };
 
+    // Hoisted so the classic card AND the editor panel render the SAME
+    // JSX. Duplicating a 200-line block would guarantee the two layouts
+    // drift apart the first time either is touched.
+    const videoBackgroundContent = (
+        <>
+                            <DropZone
+                                className="p-2"
+                                onFiles={handleDroppedBackgrounds}
+                                accept={['image/*', 'video/*', '.jpg', '.jpeg', '.png', '.webp', '.mp4', '.mov', '.webm', '.m4v']}
+                                disabled={isUploading}
+                                overlayLabel="Drop image or video backgrounds"
+                            >
+                                {/* Auto background: default on. BibleFuel picks a
+                                    mood-matched clip per beat from the user's library
+                                    (AI-generates one if the pool is empty). Picking
+                                    clips manually below overrides Auto. */}
+                                <label className="flex items-start gap-2 mb-3 p-2 rounded-xl border border-primary-500/20 bg-primary-500/5 cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={autoBackground}
+                                        onChange={(e) => setAutoBackground(e.target.checked)}
+                                        className="mt-0.5 accent-primary-500"
+                                    />
+                                    <span className="flex-1">
+                                        <span className="flex items-center gap-1.5 text-xs font-semibold text-primary-200">
+                                            <Sparkles size={13} />
+                                            Auto — let BibleFuel choose
+                                        </span>
+                                        <span className="block text-[10px] text-content-secondary mt-0.5">
+                                            {backgroundItems.length > 0
+                                                ? `Blended — your ${backgroundItems.length} clip${backgroundItems.length > 1 ? 's' : ''} first, then auto-picked clips fill the rest.`
+                                                : 'Picks a mood-matched background per beat from your library. Generates one if your library is empty.'}
+                                        </span>
+                                    </span>
+                                </label>
+                                {backgroundItems.length > 0 ? (
+                                    <div className="space-y-2">
+                                        {/* Scroll-cap the clip list so a long selection
+                                            (up to MAX_BACKGROUNDS) never drags the panel
+                                            down — the Sync + add controls stay below. */}
+                                        <div className="space-y-2 max-h-[22rem] overflow-y-auto pr-1">
+                                        {backgroundItems.map((item, idx) => (
+                                            <div
+                                                key={`${item.id}-${idx}`}
+                                                className="flex items-center gap-2.5 bg-black/30 rounded-lg p-1.5 border border-white/5"
+                                            >
+                                                <div className="relative w-12 aspect-[9/16] bg-black rounded-md overflow-hidden shrink-0">
+                                                    {item.kind === 'image' ? (
+                                                        <img
+                                                            src={item.previewUrl || item.url}
+                                                            alt=""
+                                                            className="w-full h-full object-cover"
+                                                        />
+                                                    ) : (
+                                                        <video
+                                                            src={item.previewUrl || item.url}
+                                                            muted
+                                                            loop
+                                                            autoPlay
+                                                            playsInline
+                                                            className="w-full h-full object-cover"
+                                                        />
+                                                    )}
+                                                    <span className="absolute top-0.5 left-0.5 w-4 h-4 grid place-items-center rounded bg-primary-500/85 text-[9px] font-bold text-black">
+                                                        {idx + 1}
+                                                    </span>
+                                                </div>
+                                                <span
+                                                    className="flex-1 min-w-0 truncate text-[11px] text-content-tertiary"
+                                                    title={`ID: ${item.id}${item.kind === 'image' ? ' (image)' : ''}`}
+                                                >
+                                                    {item.id}
+                                                </span>
+                                                <div className="flex items-center gap-1 shrink-0">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            if (idx === 0) return;
+                                                            const next = [...backgroundItems];
+                                                            [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
+                                                            setBackgroundItems(next);
+                                                        }}
+                                                        disabled={idx === 0}
+                                                        aria-label="Move up"
+                                                        className="h-7 w-7 grid place-items-center rounded-md bg-white/5 text-gray-300 hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-white/5 transition-colors"
+                                                    >
+                                                        <ChevronUp size={14} />
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            if (idx === backgroundItems.length - 1) return;
+                                                            const next = [...backgroundItems];
+                                                            [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
+                                                            setBackgroundItems(next);
+                                                        }}
+                                                        disabled={idx === backgroundItems.length - 1}
+                                                        aria-label="Move down"
+                                                        className="h-7 w-7 grid place-items-center rounded-md bg-white/5 text-gray-300 hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-white/5 transition-colors"
+                                                    >
+                                                        <ChevronDown size={14} />
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() =>
+                                                            setBackgroundItems(
+                                                                backgroundItems.filter((_, i) => i !== idx),
+                                                            )
+                                                        }
+                                                        aria-label="Remove"
+                                                        className="h-7 w-7 grid place-items-center rounded-md bg-red-500/10 text-red-300 hover:bg-red-500/20 transition-colors"
+                                                    >
+                                                        <Trash2 size={13} />
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                        </div>
+                                        {backgroundItems.length > 1 && (
+                                            <label className="flex items-start gap-2 px-1 cursor-pointer">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={syncBackgrounds}
+                                                    onChange={(e) => setSyncBackgrounds(e.target.checked)}
+                                                    className="mt-0.5 accent-primary-500"
+                                                />
+                                                <span className="text-[10px] text-help">
+                                                    Sync cuts to speech + crossfade
+                                                    <span className="block text-content-tertiary">
+                                                        {syncBackgrounds
+                                                            ? `${backgroundItems.length} clips change on spoken phrases, blended.`
+                                                            : `Hard cuts between ${backgroundItems.length} clips, ~equal slots.`}
+                                                    </span>
+                                                </span>
+                                            </label>
+                                        )}
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <Button
+                                                onClick={openLibrary}
+                                                disabled={backgroundItems.length >= MAX_BACKGROUNDS}
+                                                variant="secondary"
+                                                className="h-9 text-[10px]"
+                                            >
+                                                <Library size={14} className="mr-1" />
+                                                {backgroundItems.length >= MAX_BACKGROUNDS ? 'Library' : 'From library'}
+                                            </Button>
+                                            <label
+                                                className={`inline-flex items-center justify-center gap-1 h-9 text-[10px] rounded-md border ${
+                                                    backgroundItems.length >= MAX_BACKGROUNDS
+                                                        ? 'opacity-40 cursor-not-allowed border-white/10 text-gray-500'
+                                                        : 'cursor-pointer border-white/10 text-gray-200 hover:bg-white/5'
+                                                }`}
+                                            >
+                                                <Plus size={14} />
+                                                Upload from device
+                                                <input
+                                                    type="file"
+                                                    className="hidden"
+                                                    accept=".mp4,.mov,.webm,.m4v,.jpg,.jpeg,.png,.webp"
+                                                    disabled={backgroundItems.length >= MAX_BACKGROUNDS || isUploading}
+                                                    onChange={(e) => {
+                                                        const f = e.target.files?.[0];
+                                                        if (f) handleLocalBackgroundUpload(f);
+                                                        e.target.value = ''; // allow re-picking the same file
+                                                    }}
+                                                />
+                                            </label>
+                                        </div>
+                                        {uploadProgress !== null && (
+                                            <div className="space-y-1 px-1">
+                                                <div className="flex justify-between text-[10px] text-meta">
+                                                    <span>{uploadProgress < 100 ? 'Uploading…' : 'Processing…'}</span>
+                                                    <span>{uploadProgress}%</span>
+                                                </div>
+                                                <div className="h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
+                                                    <div
+                                                        className="h-full bg-primary-500 transition-all duration-150"
+                                                        style={{ width: `${uploadProgress}%` }}
+                                                    />
+                                                </div>
+                                            </div>
+                                        )}
+                                        <Button
+                                            onClick={handlePreview}
+                                            isLoading={isPreviewing}
+                                            variant="secondary"
+                                            className="w-full h-9 text-[10px] border-primary-500/20 text-primary-400"
+                                        >
+                                            <Film size={14} className="mr-2" />
+                                            Preview with First Background
+                                        </Button>
+                                    </div>
+                                ) : (
+                                    <div className="py-10 border-2 border-dashed border-white/10 rounded-xl flex flex-col items-center justify-center text-center px-4 space-y-3">
+                                        <Library size={32} className="text-gray-600" />
+                                        <p className="text-help">No backgrounds selected</p>
+                                        <div className="grid grid-cols-2 gap-2 w-full">
+                                            <Button onClick={openLibrary} className="h-9 text-[10px]">
+                                                <Library size={14} className="mr-1" />
+                                                From library
+                                            </Button>
+                                            <label
+                                                className={`inline-flex items-center justify-center gap-1 h-9 text-[10px] rounded-md border cursor-pointer border-primary-500/30 bg-primary-500/10 text-primary-200 hover:bg-primary-500/20 ${isUploading ? 'opacity-50' : ''}`}
+                                            >
+                                                <Plus size={14} />
+                                                Upload from device
+                                                <input
+                                                    type="file"
+                                                    className="hidden"
+                                                    accept=".mp4,.mov,.webm,.m4v,.jpg,.jpeg,.png,.webp"
+                                                    disabled={isUploading}
+                                                    onChange={(e) => {
+                                                        const f = e.target.files?.[0];
+                                                        if (f) handleLocalBackgroundUpload(f);
+                                                        e.target.value = '';
+                                                    }}
+                                                />
+                                            </label>
+                                        </div>
+                                        {uploadProgress !== null && (
+                                            <div className="space-y-1 w-full px-1">
+                                                <div className="flex justify-between text-[10px] text-meta">
+                                                    <span>{uploadProgress < 100 ? 'Uploading…' : 'Processing…'}</span>
+                                                    <span>{uploadProgress}%</span>
+                                                </div>
+                                                <div className="h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
+                                                    <div
+                                                        className="h-full bg-primary-500 transition-all duration-150"
+                                                        style={{ width: `${uploadProgress}%` }}
+                                                    />
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </DropZone>
+        </>
+    );
+
     // ── Editor layout (CapCut-style shell) ──────────────────────────────────
     // Same state, same handlers, different arrangement: tools in a rail,
     // preview centre, timeline across the bottom. Rendering it as an
@@ -1302,6 +1543,8 @@ export function TimelinePage() {
                     { id: 'music', label: 'Music', icon: <Music size={17} /> },
                     { id: 'voice', label: 'Voice', icon: <Waves size={17} />, count: audioHistory.length },
                     { id: 'scenes', label: 'Scenes', icon: <Sparkles size={17} /> },
+                    { id: 'background', label: 'Background', icon: <ImageIcon size={17} />, count: backgroundItems.length },
+                    { id: 'renders', label: 'Renders', icon: <Clapperboard size={17} />, count: renderHistory.length },
                 ]}
                 panels={{
                     media: (
@@ -1397,6 +1640,44 @@ export function TimelinePage() {
                     ) : (
                         <p className="text-[11px] text-editor-faint">Create a documentary timeline first.</p>
                     ),
+                    background: videoBackgroundContent,
+                    renders: (
+                        <div className="space-y-3">
+                            {renderedVideo && (
+                                <div>
+                                    <p className="mb-1.5 text-[10px] uppercase tracking-[.12em] text-editor-faint">Latest render</p>
+                                    <video
+                                        src={api.mediaUrl(renderedVideo)}
+                                        controls
+                                        className="w-full rounded-lg"
+                                    />
+                                </div>
+                            )}
+                            <div>
+                                <p className="mb-1.5 text-[10px] uppercase tracking-[.12em] text-editor-faint">
+                                    Recent renders
+                                </p>
+                                {renderHistory.length === 0 ? (
+                                    <p className="text-[11px] text-editor-faint">No renders yet.</p>
+                                ) : (
+                                    <div className="space-y-1.5">
+                                        {renderHistory.slice(0, 12).map((item) => (
+                                            <button
+                                                key={item.jobId}
+                                                type="button"
+                                                onClick={() => setRenderedVideo(item.file)}
+                                                className="surface-raised flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left"
+                                            >
+                                                <span className="min-w-0 flex-1 truncate text-xs text-content-secondary">
+                                                    {(item.file || '').split(/[\\/]/).pop()}
+                                                </span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    ),
                 }}
                 propertyTools={[{ id: 'audio', label: 'Audio', icon: <Volume2 size={15} /> }]}
                 propertyPanels={{
@@ -1415,12 +1696,31 @@ export function TimelinePage() {
                     ),
                 }}
                 stage={(
-                    renderedVideo ? (
+                    isRenderingVideo ? (
+                        // Progress stays on the STAGE, not in a panel: a render in
+                        // flight must remain visible whichever tool is open.
+                        <div className="w-full max-w-md text-center">
+                            <p className="text-[13px] text-editor-text">
+                                {renderPhase === 'preparing' && renderProgress < 1 ? 'Preparing…' : `Rendering… ${Math.round(renderProgress)}%`}
+                            </p>
+                            <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                                <div
+                                    className="h-full bg-primary-500 transition-all duration-150"
+                                    style={{ width: `${Math.max(2, renderProgress)}%` }}
+                                />
+                            </div>
+                            <Button
+                                variant="secondary"
+                                className="mt-4 h-8 text-xs"
+                                onClick={cancelRender}
+                            >
+                                Cancel render
+                            </Button>
+                        </div>
+                    ) : renderedVideo ? (
                         <video src={api.mediaUrl(renderedVideo)} controls className="max-h-full max-w-full rounded-lg" />
                     ) : (
-                        <div className="text-[12px] text-editor-faint">
-                            {isRenderingVideo ? `Rendering… ${Math.round(renderProgress)}%` : 'Preview appears here after a render.'}
-                        </div>
+                        <div className="text-[12px] text-editor-faint">Preview appears here after a render.</div>
                     )
                 )}
                 strip={documentaryProject ? (
@@ -2080,237 +2380,7 @@ export function TimelinePage() {
                         title="Video Background"
                         tooltip={`Pick 1–${MAX_BACKGROUNDS} background clips. With more than one, the render hard-cuts between them at equal slots (1/N of the sermon duration each); use the arrows to reorder. Each clip up to ${MAX_UPLOAD_MB} MB — video (mp4/mov/webm) or image (jpg/png/webp).`}
                     >
-                        <DropZone
-                            className="p-2"
-                            onFiles={handleDroppedBackgrounds}
-                            accept={['image/*', 'video/*', '.jpg', '.jpeg', '.png', '.webp', '.mp4', '.mov', '.webm', '.m4v']}
-                            disabled={isUploading}
-                            overlayLabel="Drop image or video backgrounds"
-                        >
-                            {/* Auto background: default on. BibleFuel picks a
-                                mood-matched clip per beat from the user's library
-                                (AI-generates one if the pool is empty). Picking
-                                clips manually below overrides Auto. */}
-                            <label className="flex items-start gap-2 mb-3 p-2 rounded-xl border border-primary-500/20 bg-primary-500/5 cursor-pointer">
-                                <input
-                                    type="checkbox"
-                                    checked={autoBackground}
-                                    onChange={(e) => setAutoBackground(e.target.checked)}
-                                    className="mt-0.5 accent-primary-500"
-                                />
-                                <span className="flex-1">
-                                    <span className="flex items-center gap-1.5 text-xs font-semibold text-primary-200">
-                                        <Sparkles size={13} />
-                                        Auto — let BibleFuel choose
-                                    </span>
-                                    <span className="block text-[10px] text-content-secondary mt-0.5">
-                                        {backgroundItems.length > 0
-                                            ? `Blended — your ${backgroundItems.length} clip${backgroundItems.length > 1 ? 's' : ''} first, then auto-picked clips fill the rest.`
-                                            : 'Picks a mood-matched background per beat from your library. Generates one if your library is empty.'}
-                                    </span>
-                                </span>
-                            </label>
-                            {backgroundItems.length > 0 ? (
-                                <div className="space-y-2">
-                                    {/* Scroll-cap the clip list so a long selection
-                                        (up to MAX_BACKGROUNDS) never drags the panel
-                                        down — the Sync + add controls stay below. */}
-                                    <div className="space-y-2 max-h-[22rem] overflow-y-auto pr-1">
-                                    {backgroundItems.map((item, idx) => (
-                                        <div
-                                            key={`${item.id}-${idx}`}
-                                            className="flex items-center gap-2.5 bg-black/30 rounded-lg p-1.5 border border-white/5"
-                                        >
-                                            <div className="relative w-12 aspect-[9/16] bg-black rounded-md overflow-hidden shrink-0">
-                                                {item.kind === 'image' ? (
-                                                    <img
-                                                        src={item.previewUrl || item.url}
-                                                        alt=""
-                                                        className="w-full h-full object-cover"
-                                                    />
-                                                ) : (
-                                                    <video
-                                                        src={item.previewUrl || item.url}
-                                                        muted
-                                                        loop
-                                                        autoPlay
-                                                        playsInline
-                                                        className="w-full h-full object-cover"
-                                                    />
-                                                )}
-                                                <span className="absolute top-0.5 left-0.5 w-4 h-4 grid place-items-center rounded bg-primary-500/85 text-[9px] font-bold text-black">
-                                                    {idx + 1}
-                                                </span>
-                                            </div>
-                                            <span
-                                                className="flex-1 min-w-0 truncate text-[11px] text-content-tertiary"
-                                                title={`ID: ${item.id}${item.kind === 'image' ? ' (image)' : ''}`}
-                                            >
-                                                {item.id}
-                                            </span>
-                                            <div className="flex items-center gap-1 shrink-0">
-                                                <button
-                                                    type="button"
-                                                    onClick={() => {
-                                                        if (idx === 0) return;
-                                                        const next = [...backgroundItems];
-                                                        [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
-                                                        setBackgroundItems(next);
-                                                    }}
-                                                    disabled={idx === 0}
-                                                    aria-label="Move up"
-                                                    className="h-7 w-7 grid place-items-center rounded-md bg-white/5 text-gray-300 hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-white/5 transition-colors"
-                                                >
-                                                    <ChevronUp size={14} />
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => {
-                                                        if (idx === backgroundItems.length - 1) return;
-                                                        const next = [...backgroundItems];
-                                                        [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
-                                                        setBackgroundItems(next);
-                                                    }}
-                                                    disabled={idx === backgroundItems.length - 1}
-                                                    aria-label="Move down"
-                                                    className="h-7 w-7 grid place-items-center rounded-md bg-white/5 text-gray-300 hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-white/5 transition-colors"
-                                                >
-                                                    <ChevronDown size={14} />
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={() =>
-                                                        setBackgroundItems(
-                                                            backgroundItems.filter((_, i) => i !== idx),
-                                                        )
-                                                    }
-                                                    aria-label="Remove"
-                                                    className="h-7 w-7 grid place-items-center rounded-md bg-red-500/10 text-red-300 hover:bg-red-500/20 transition-colors"
-                                                >
-                                                    <Trash2 size={13} />
-                                                </button>
-                                            </div>
-                                        </div>
-                                    ))}
-                                    </div>
-                                    {backgroundItems.length > 1 && (
-                                        <label className="flex items-start gap-2 px-1 cursor-pointer">
-                                            <input
-                                                type="checkbox"
-                                                checked={syncBackgrounds}
-                                                onChange={(e) => setSyncBackgrounds(e.target.checked)}
-                                                className="mt-0.5 accent-primary-500"
-                                            />
-                                            <span className="text-[10px] text-help">
-                                                Sync cuts to speech + crossfade
-                                                <span className="block text-content-tertiary">
-                                                    {syncBackgrounds
-                                                        ? `${backgroundItems.length} clips change on spoken phrases, blended.`
-                                                        : `Hard cuts between ${backgroundItems.length} clips, ~equal slots.`}
-                                                </span>
-                                            </span>
-                                        </label>
-                                    )}
-                                    <div className="grid grid-cols-2 gap-2">
-                                        <Button
-                                            onClick={openLibrary}
-                                            disabled={backgroundItems.length >= MAX_BACKGROUNDS}
-                                            variant="secondary"
-                                            className="h-9 text-[10px]"
-                                        >
-                                            <Library size={14} className="mr-1" />
-                                            {backgroundItems.length >= MAX_BACKGROUNDS ? 'Library' : 'From library'}
-                                        </Button>
-                                        <label
-                                            className={`inline-flex items-center justify-center gap-1 h-9 text-[10px] rounded-md border ${
-                                                backgroundItems.length >= MAX_BACKGROUNDS
-                                                    ? 'opacity-40 cursor-not-allowed border-white/10 text-gray-500'
-                                                    : 'cursor-pointer border-white/10 text-gray-200 hover:bg-white/5'
-                                            }`}
-                                        >
-                                            <Plus size={14} />
-                                            Upload from device
-                                            <input
-                                                type="file"
-                                                className="hidden"
-                                                accept=".mp4,.mov,.webm,.m4v,.jpg,.jpeg,.png,.webp"
-                                                disabled={backgroundItems.length >= MAX_BACKGROUNDS || isUploading}
-                                                onChange={(e) => {
-                                                    const f = e.target.files?.[0];
-                                                    if (f) handleLocalBackgroundUpload(f);
-                                                    e.target.value = ''; // allow re-picking the same file
-                                                }}
-                                            />
-                                        </label>
-                                    </div>
-                                    {uploadProgress !== null && (
-                                        <div className="space-y-1 px-1">
-                                            <div className="flex justify-between text-[10px] text-meta">
-                                                <span>{uploadProgress < 100 ? 'Uploading…' : 'Processing…'}</span>
-                                                <span>{uploadProgress}%</span>
-                                            </div>
-                                            <div className="h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
-                                                <div
-                                                    className="h-full bg-primary-500 transition-all duration-150"
-                                                    style={{ width: `${uploadProgress}%` }}
-                                                />
-                                            </div>
-                                        </div>
-                                    )}
-                                    <Button
-                                        onClick={handlePreview}
-                                        isLoading={isPreviewing}
-                                        variant="secondary"
-                                        className="w-full h-9 text-[10px] border-primary-500/20 text-primary-400"
-                                    >
-                                        <Film size={14} className="mr-2" />
-                                        Preview with First Background
-                                    </Button>
-                                </div>
-                            ) : (
-                                <div className="py-10 border-2 border-dashed border-white/10 rounded-xl flex flex-col items-center justify-center text-center px-4 space-y-3">
-                                    <Library size={32} className="text-gray-600" />
-                                    <p className="text-help">No backgrounds selected</p>
-                                    <div className="grid grid-cols-2 gap-2 w-full">
-                                        <Button onClick={openLibrary} className="h-9 text-[10px]">
-                                            <Library size={14} className="mr-1" />
-                                            From library
-                                        </Button>
-                                        <label
-                                            className={`inline-flex items-center justify-center gap-1 h-9 text-[10px] rounded-md border cursor-pointer border-primary-500/30 bg-primary-500/10 text-primary-200 hover:bg-primary-500/20 ${isUploading ? 'opacity-50' : ''}`}
-                                        >
-                                            <Plus size={14} />
-                                            Upload from device
-                                            <input
-                                                type="file"
-                                                className="hidden"
-                                                accept=".mp4,.mov,.webm,.m4v,.jpg,.jpeg,.png,.webp"
-                                                disabled={isUploading}
-                                                onChange={(e) => {
-                                                    const f = e.target.files?.[0];
-                                                    if (f) handleLocalBackgroundUpload(f);
-                                                    e.target.value = '';
-                                                }}
-                                            />
-                                        </label>
-                                    </div>
-                                    {uploadProgress !== null && (
-                                        <div className="space-y-1 w-full px-1">
-                                            <div className="flex justify-between text-[10px] text-meta">
-                                                <span>{uploadProgress < 100 ? 'Uploading…' : 'Processing…'}</span>
-                                                <span>{uploadProgress}%</span>
-                                            </div>
-                                            <div className="h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
-                                                <div
-                                                    className="h-full bg-primary-500 transition-all duration-150"
-                                                    style={{ width: `${uploadProgress}%` }}
-                                                />
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
-                            )}
-                        </DropZone>
+                        {videoBackgroundContent}
                     </Card>
 
                 </div>
