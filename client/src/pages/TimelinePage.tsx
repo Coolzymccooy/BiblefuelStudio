@@ -18,7 +18,7 @@ import {
     Sparkles,
     X,
     Share2,
-    Scissors,
+    
     History as HistoryIcon,
     RotateCcw,
     ChevronUp,
@@ -33,6 +33,7 @@ import { ShareSheet } from '../components/ShareSheet';
 import { MediaTrimmer } from '../components/MediaTrimmer';
 import { MusicPicker } from '../components/MusicPicker';
 import { BackgroundLibraryModal } from '../components/BackgroundLibraryModal';
+import { SourceMediaPanel } from '../components/timeline/SourceMediaPanel';
 import { AIDocumentaryTimelinePanel } from '../components/timeline/AIDocumentaryTimelinePanel';
 import { VisualTimelineCanvas } from '../components/timeline/VisualTimelineCanvas';
 import { InfoTooltip } from '../components/ui/InfoTooltip';
@@ -1412,115 +1413,41 @@ export function TimelinePage() {
             </>
             )}
 
-            <Card
-                title="Source Media"
-                tooltip={`Drop in a finished sermon — audio (MP3, WAV, M4A) or video (MP4, MOV, WEBM), up to ${MAX_UPLOAD_MB} MB. Audio is mastered into the assembly for an audio render; video keeps its frames for a captioned-video render.`}
-            >
-              <DropZone
-                onFiles={(files) => handleSourceUpload(files[0])}
-                accept={['audio/*', 'video/*', 'image/*', '.mp3', '.wav', '.m4a', '.mp4', '.mov', '.webm', '.m4v', '.png', '.jpg', '.jpeg', '.webp', '.gif']}
-                multiple={false}
-                disabled={isUploading || !documentaryProject}
-                overlayLabel="Drop sermon audio, video, or image"
-              >
-                <label className="inline-flex items-center gap-3 px-4 py-2 rounded-lg bg-primary-500/10 border border-primary-500/30 text-primary-200 cursor-pointer hover:bg-primary-500/20">
-                    <Film size={16} />
-                    <span className="text-sm">{isUploading ? 'Uploading...' : 'Choose file'}</span>
-                    <input
-                        type="file"
-                        className="hidden"
-                        accept=".mp3,.wav,.m4a,.mp4,.mov,.webm,.m4v,.png,.jpg,.jpeg,.webp,.gif,audio/*,video/*,image/*"
-                        disabled={isUploading || !documentaryProject}
-                        onChange={(e) => {
-                            const f = e.target.files?.[0];
-                            if (f) handleSourceUpload(f);
-                        }}
-                    />
-                </label>
-                {!documentaryProject && (
-                  <p className="mt-2 text-[11px] text-content-tertiary">Create a documentary timeline first to insert source media.</p>
-                )}
-                {sourceMediaPath && (
-                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-gray-300">
-                        <span className="min-w-0">
-                            <span className="text-content-tertiary">Loaded ({sourceMediaKind}):</span>{' '}
-                            <span className="font-mono break-all">{sourceMediaPath.split(/[\\/]/).pop()}</span>
-                            {sourceMediaKind === 'video' && sourceMediaProxyPath && (
-                                <span className={`ml-2 rounded-full px-2 py-0.5 text-[10px] ${sourceMediaProxyStatus === 'ready' ? 'bg-emerald-500/15 text-emerald-200' : sourceMediaProxyStatus === 'failed' ? 'bg-red-500/15 text-red-200' : 'bg-amber-500/15 text-amber-200'}`}>
-                                    Proxy {sourceMediaProxyStatus === 'ready' ? 'ready' : sourceMediaProxyStatus === 'failed' ? 'failed' : 'pending'}
-                                </span>
-                            )}
-                        </span>
-                        <div className="shrink-0 flex flex-wrap items-center gap-2">
-                            {sourceMediaKind === 'video' && (
-                                <button
-                                    type="button"
-                                    onClick={handlePreviewSource}
-                                    disabled={!sourceMediaPath}
-                                    className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-white/[0.06] text-primary-200 hover:bg-white/[0.12] transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-                                    title={sourceMediaPreviewPath ? 'Opens the source or proxy preview in the preview modal.' : 'Upload source media first.'}
-                                >
-                                    <Play size={12} /> Preview source
-                                </button>
-                            )}
-                            {sourceMediaKind === 'audio' && (
-                                <button
-                                    type="button"
-                                    onClick={() => useAsMusicBed(sourceMediaPath)}
-                                    className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-white/[0.06] text-primary-200 hover:bg-white/[0.12] transition-colors"
-                                >
-                                    <Music size={12} /> Use as Music Bed
-                                </button>
-                            )}
-                            {sourceMediaKind !== 'image' && (
-                              <button
-                                  type="button"
-                                  onClick={() => setTrimTarget({
-                                      kind: sourceMediaKind === 'video' ? 'video' : 'audio',
-                                      path: sourceMediaPath,
-                                      apply: (p) => {
-                                          setSourceMediaPath(p);
-                                          if (sourceMediaKind !== 'video') {
-                                              const clip: TimelineClip = {
-                                                  id: `clip_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-                                                  path: p,
-                                                  label: p.split(/[\\/]/).pop() || 'clip',
-                                                  startSec: null,
-                                                  durationSec: null,
-                                              };
-                                              setClips([clip]);
-                                              saveClipsToCache([clip]);
-                                              pushAudioHistory(p, 'source');
-                                          }
-                                      },
-                                  })}
-                                  className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-white/[0.06] text-primary-200 hover:bg-white/[0.12] transition-colors"
-                              >
-                                  <Scissors size={12} /> Trim
-                              </button>
-                            )}
-                            <button
-                                type="button"
-                                onClick={handleInsertSourceMediaIntoDocumentary}
-                                disabled={!sourceMediaPath || !sourceMediaKind || !documentaryProject}
-                                className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-primary-500/15 text-primary-100 hover:bg-primary-500/25 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-                                title={documentaryProject ? 'Insert this source media into the active documentary timeline' : 'Create a documentary timeline first'}
-                            >
-                                <Plus size={12} /> Insert source media
-                            </button>
-                            <button
-                                type="button"
-                                onClick={handleInsertVoiceoverPlaceholder}
-                                disabled={!documentaryProject}
-                                className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-white/[0.06] text-primary-200 hover:bg-white/[0.12] transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-                                title={documentaryProject ? 'Insert a Chatterbox placeholder into the documentary timeline' : 'Create a documentary timeline first'}
-                            >
-                                <Sparkles size={12} /> Insert VO placeholder
-                            </button>
-                        </div>
-                    </div>
-                )}
-              </DropZone>
+            <Card title="Source Media">
+              <SourceMediaPanel
+                sourceMediaPath={sourceMediaPath}
+                sourceMediaKind={sourceMediaKind}
+                sourceMediaPreviewPath={sourceMediaPreviewPath}
+                sourceMediaProxyPath={sourceMediaProxyPath}
+                sourceMediaProxyStatus={sourceMediaProxyStatus}
+                isUploading={isUploading}
+                hasProject={Boolean(documentaryProject)}
+                maxUploadMb={MAX_UPLOAD_MB}
+                onUpload={handleSourceUpload}
+                onPreviewSource={handlePreviewSource}
+                onUseAsMusicBed={useAsMusicBed}
+                onTrim={() => sourceMediaPath && setTrimTarget({
+                    kind: sourceMediaKind === 'video' ? 'video' : 'audio',
+                    path: sourceMediaPath,
+                    apply: (p) => {
+                        setSourceMediaPath(p);
+                        if (sourceMediaKind !== 'video') {
+                            const clip: TimelineClip = {
+                                id: `clip_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                                path: p,
+                                label: p.split(/[\/]/).pop() || 'clip',
+                                startSec: null,
+                                durationSec: null,
+                            };
+                            setClips([clip]);
+                            saveClipsToCache([clip]);
+                            pushAudioHistory(p, 'source');
+                        }
+                    },
+                })}
+                onInsertSourceMedia={handleInsertSourceMediaIntoDocumentary}
+                onInsertVoiceoverPlaceholder={handleInsertVoiceoverPlaceholder}
+              />
             </Card>
 
             <Card
