@@ -97,6 +97,10 @@ export function pushNotification(n: Omit<Notification, 'id' | 'createdAt' | 'rea
     cache = [next, ...cache].slice(0, MAX_NOTIFICATIONS);
     persist();
     emit();
+    // Job end-states also raise a sticky banner. Writing only to the bell's
+    // list meant a finished — or FAILED — render produced no visible signal
+    // until the user thought to check.
+    void import('./completionAlert').then((m) => m.considerForAlert(next)).catch(() => {});
     return next;
 }
 

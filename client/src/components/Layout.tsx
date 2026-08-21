@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { pageWidthClass } from '../lib/pageWidth';
+import { CompletionBanner } from './CompletionBanner';
 import {
     Menu, X, FileText, List, Briefcase, Image, Mic, Film, Video, Package, LogOut, LogIn,
     Settings, HelpCircle, Wand2, BookOpen, Home, ShieldCheck, Clapperboard, Sparkles, ChevronRight,
@@ -171,6 +172,9 @@ export function Layout() {
                     // column, and reading/form screens stay narrow. See pageWidth.
                     className={`mx-auto w-full ${pageWidthClass(location.pathname)} px-[18px] pt-5 lg:pt-8 lg:px-8 pb-[calc(88px+env(safe-area-inset-bottom))] lg:pb-16 animate-bffade`}
                 >
+                    {/* Job outcomes announce themselves here rather than only
+                        in the bell, so a finished or failed render is seen. */}
+                    <CompletionBanner />
                     <Outlet />
                 </div>
             </main>
