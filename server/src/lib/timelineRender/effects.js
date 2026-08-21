@@ -177,3 +177,74 @@ export function buildGradeFilter({ clip, inLabel, outLabel }) {
     `:enable='between(t,${startSec},${end})'${outLabel}`
   );
 }
+
+/** Light-leak colours, as ffmpeg gradient stop pairs. */
+export const LEAK_COLOURS = Object.freeze({
+  warm: { c0: '0xff8a3d', c1: '0xffd98a' },
+  cool: { c0: '0x3d9bff', c1: '0x8ad8ff' },
+  gold: { c0: '0xffb347', c1: '0xfff3c4' },
+});
+
+/**
+ * Build a timed light leak.
+ *
+ * A leak is a soft coloured gradient washing across the frame, blended with
+ * `screen` so it ADDS light rather than covering the image. It is generated
+ * rather than loaded from a file, so no asset shipping is required and it
+ * scales to any canvas size.
+ *
+ * The opacity ramps up and back down across the clip instead of switching on:
+ * a hard on/off reads as a glitch, not as light falling across a lens. The
+ * ramp is expressed as a time function so a single gradient input can serve
+ * the whole effect.
+ *
+ * @param {{clip: object, inLabel: string, outLabel: string, width: number, height: number, index?: number}} params
+ * @returns {string} an ffmpeg filtergraph fragment
+ */
+export function buildLightLeakFilter({ clip, inLabel, outLabel, width, height, index = 0 }) {
+  const { startSec, durationSec, options } = normalizeEffectClip(clip);
+  const end = startSec + durationSec;
+  const w = Math.max(2, Math.round(num(width, 1280)));
+  const h = Math.max(2, Math.round(num(height, 720)));
+
+  const colourName = String(options.colour ?? clip?.colour ?? 'warm').toLowerCase();
+  const colour = LEAK_COLOURS[colourName] || LEAK_COLOURS.warm;
+
+  const peak = Math.max(0, Math.min(1, num(options.intensity ?? clip?.intensity, 0.5)));
+  const angle = Math.round(num(options.angle ?? clip?.angle, 45));
+
+  const base = `ll${index}`;
+  const grad = `[${base}grad]`;
+
+  // The ramp CANNOT go on blend's all_opacity: that option takes a constant,
+  // and passing a time expression makes ffmpeg reject the filtergraph
+  // ("Undefined constant or missing '('"). Caught by rendering, not by unit
+  // tests — the string looked perfectly reasonable.
+  //
+  // Instead the gradient itself is faded in and out, so the leak still swells
+  // and recedes rather than popping on, and blend keeps a constant opacity.
+  const fadeSec = Math.max(0.1, Math.min(durationSec / 2, 0.6));
+  const fadeOutStart = Math.max(0, durationSec - fadeSec);
+
+  // The gradient runs from the leak colour to BLACK, not to a second bright
+  // colour: with `screen` blending, black is a no-op, so the leak falls off to
+  // nothing across the frame instead of washing the whole image. An earlier
+  // version blended two bright stops and produced a solid pink rectangle that
+  // covered the shot — visible only by looking at a rendered frame.
+  //
+  // A heavy blur after rotation hides the rotated rectangle's hard corners,
+  // which otherwise read as a graphic overlay rather than light on a lens.
+  const softness = Math.round(Math.max(w, h) * 0.12);
+
+  return (
+    `gradients=s=${w}x${h}:c0=${colour.c0}:c1=0x000000:x0=0:y0=0:x1=${Math.round(w * 0.7)}:y1=${Math.round(h * 0.7)}` +
+    `:nb_colors=2:speed=0.005:duration=${Math.max(1, Math.ceil(end))}${grad};` +
+    `${grad}rotate=${angle}*PI/180:c=black@0:ow=${w}:oh=${h},` +
+    `gblur=sigma=${softness},` +
+    `fade=t=in:st=0:d=${fadeSec}:alpha=1,` +
+    `fade=t=out:st=${fadeOutStart}:d=${fadeSec}:alpha=1,` +
+    `tpad=start_duration=${startSec}:start_mode=clone[${base}rot];` +
+    `${inLabel}[${base}rot]blend=all_mode=screen:all_opacity=${peak}` +
+    `:enable='between(t,${startSec},${end})'${outLabel}`
+  );
+}

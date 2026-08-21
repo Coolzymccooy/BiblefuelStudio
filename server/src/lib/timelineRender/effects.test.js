@@ -6,6 +6,7 @@ import {
   buildTransitionFilter,
   buildGlowFilter,
   buildGradeFilter,
+  buildLightLeakFilter,
   TRANSITION_STYLES,
   GRADE_LOOKS,
 } from './effects.js';
@@ -209,5 +210,72 @@ describe('buildGradeFilter', () => {
     const con = Number(/contrast=(-?[\d.]+)/.exec(f)[1]);
     assert.ok(sat <= 3, `saturation out of range: ${sat}`);
     assert.ok(con >= -2, `contrast out of range: ${con}`);
+  });
+});
+
+describe('buildLightLeakFilter', () => {
+  test('generates a coloured gradient blended over the frame', () => {
+    const f = buildLightLeakFilter({
+      clip: { effect: 'lightleak', startSec: 3, durationSec: 2 },
+      inLabel: '[v0]', outLabel: '[v1]', width: 1280, height: 720,
+    });
+    // Unlike the other effects this fragment does NOT start with the input
+    // label: the gradient must be generated as its own source first, then
+    // blended with the incoming video. It still CONSUMES [v0] and produces [v1].
+    assert.match(f, /^gradients=/, 'the leak generates its own gradient source');
+    assert.match(f, /\[v0\]\[ll\d+rot\]blend/, 'the incoming video is consumed by the blend');
+    assert.match(f, /\[v1\]$/);
+    assert.match(f, /blend=all_mode=screen/, 'a leak adds light, so screen not overlay');
+  });
+
+  test('is time-gated to the clip window', () => {
+    const f = buildLightLeakFilter({
+      clip: { effect: 'lightleak', startSec: 3, durationSec: 2 },
+      inLabel: '[a]', outLabel: '[b]', width: 640, height: 360,
+    });
+    assert.match(f, /enable='between\(t,3,5\)'/);
+  });
+
+  test('leak fades in and out rather than popping on', () => {
+    const f = buildLightLeakFilter({
+      clip: { effect: 'lightleak', startSec: 2, durationSec: 4 },
+      inLabel: '[a]', outLabel: '[b]', width: 640, height: 360,
+    });
+    // The swell must NOT be on blend's all_opacity - that option takes a
+    // constant, and ffmpeg rejects a time expression there. It belongs on the
+    // gradient as alpha fades. Caught by rendering, not by unit tests.
+    assert.match(f, /fade=t=in:[^,]*alpha=1/, 'leak fades in');
+    assert.match(f, /fade=t=out:[^,]*alpha=1/, 'leak fades out');
+  });
+
+  test('supports warm and cool leak colours', () => {
+    const warm = buildLightLeakFilter({
+      clip: { effect: 'lightleak', colour: 'warm' }, inLabel: '[a]', outLabel: '[b]', width: 64, height: 36,
+    });
+    const cool = buildLightLeakFilter({
+      clip: { effect: 'lightleak', colour: 'cool' }, inLabel: '[a]', outLabel: '[b]', width: 64, height: 36,
+    });
+    assert.notEqual(warm, cool, 'colour choice must change the output');
+  });
+
+  test('matches the canvas size it is given', () => {
+    const f = buildLightLeakFilter({
+      clip: { effect: 'lightleak' }, inLabel: '[a]', outLabel: '[b]', width: 1920, height: 1080,
+    });
+    assert.match(f, /1920x1080|s=1920x1080/);
+  });
+
+  test('intensity is clamped', () => {
+    const f = buildLightLeakFilter({
+      clip: { effect: 'lightleak', intensity: 50 }, inLabel: '[a]', outLabel: '[b]', width: 64, height: 36,
+    });
+    const peak = Math.max(...[...f.matchAll(/([\d.]+)\)?\*?/g)].map((m) => Number(m[1])).filter((n) => n <= 5));
+    assert.ok(peak <= 5, 'no absurd multipliers leak into the graph');
+  });
+
+  test('unique labels per index so several leaks can chain', () => {
+    const a = buildLightLeakFilter({ clip: {}, inLabel: '[v0]', outLabel: '[v1]', width: 64, height: 36, index: 0 });
+    const b = buildLightLeakFilter({ clip: {}, inLabel: '[v1]', outLabel: '[v2]', width: 64, height: 36, index: 1 });
+    assert.notEqual(a, b);
   });
 });
