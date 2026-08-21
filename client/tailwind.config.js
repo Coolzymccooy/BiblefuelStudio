@@ -16,6 +16,21 @@ export default {
         mono: ['"JetBrains Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
       },
       colors: {
+        // Editor chrome (rail, panel, bottom strip). Deliberately NOT
+        // theme-switched: CapCut keeps its chrome dark even on a light page so
+        // the preview stays the brightest thing on screen. Only `stage`
+        // follows the theme.
+        editor: {
+          chrome: '#14100a',
+          panel: '#1a150d',
+          stage: 'var(--editor-stage, #080604)',
+          hover: 'rgba(216, 184, 120, 0.10)',
+          line: 'rgba(216, 184, 120, 0.14)',
+          text: '#f0e6d3',
+          dim: '#a99f8b',
+          faint: '#6f6654',
+          accent: '#e6c98a',
+        },
         // Tailwind's default gray scale, routed through CSS variables.
         // 387 hardcoded text-gray-*/text-white usages across 49 files were
         // baked to DARK-mode values, so on a light background headings, field

@@ -53,6 +53,8 @@
     --g-100:#f3f4f6; --g-200:#e5e7eb; --g-300:#d1d5db; --g-400:#9ca3af;
     --g-500:#6b7280; --g-600:#4b5563; --g-700:#374151; --g-800:#1f2937; --g-900:#111827;
     --ink:#ffffff;
+    /* Stage is the only editor surface that follows the theme. */
+    --editor-stage:#080604;
 
     --surface-bg: #0b0906;
     --surface-card: #140f09;
@@ -109,6 +111,7 @@
     --g-100:#141210; --g-200:#1c1a15; --g-300:#2f2a22; --g-400:#4a4438;
     --g-500:#5c5548; --g-600:#6b6456; --g-700:#7a7264; --g-800:#8a8272; --g-900:#9a9280;
     --ink:#1c1a15;
+    --editor-stage:#e9e4db;
 
     --surface-bg: #faf7f2;
     --surface-card: #ffffff;
