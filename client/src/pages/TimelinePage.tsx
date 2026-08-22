@@ -1834,7 +1834,15 @@ export function TimelinePage() {
                                     <video
                                         src={api.mediaUrl(renderedVideo)}
                                         controls
-                                        className="w-full rounded-lg"
+                                        // Height CAP, not just w-full. A 9:16 render in a
+                                        // ~300px panel computes to ~530px tall and ate the
+                                        // whole column, so the history list below it had no
+                                        // room left and read as empty even with 11 renders.
+                                        // A vh cap (not %) because the wrapper is auto-height,
+                                        // so a percentage would have nothing to resolve against.
+                                        // guaranteeing the list its share; object-contain
+                                        // letterboxes rather than distorting the frame.
+                                        className="max-h-[34vh] w-full rounded-lg object-contain"
                                     />
                                 </div>
                             )}
