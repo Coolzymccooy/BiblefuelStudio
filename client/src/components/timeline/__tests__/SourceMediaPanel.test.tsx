@@ -31,7 +31,9 @@ describe('SourceMediaPanel', () => {
   it('shows the loaded file name and kind once media exists', () => {
     setup({ sourceMediaPath: '/uploads/sermon-final.mp4', sourceMediaKind: 'video' });
     expect(screen.getByText('sermon-final.mp4')).toBeInTheDocument();
-    expect(screen.getByText(/Loaded \(video\)/)).toBeInTheDocument();
+    // The kind is now a compact caption beside the name rather than the
+    // sentence "Loaded (video):", which out-shouted the controls.
+    expect(screen.getByText('video')).toBeInTheDocument();
   });
 
   it('shows no actions until media is loaded', () => {
@@ -120,7 +122,7 @@ describe('SourceMediaPanel', () => {
     it('fires insert and trim handlers', async () => {
       const user = userEvent.setup();
       const props = setup({ sourceMediaPath: '/a.mp4', sourceMediaKind: 'video' });
-      await user.click(screen.getByRole('button', { name: /^trim$/i }));
+      await user.click(screen.getByRole('button', { name: /trim/i }));
       expect(props.onTrim).toHaveBeenCalled();
       await user.click(screen.getByRole('button', { name: /insert source media/i }));
       expect(props.onInsertSourceMedia).toHaveBeenCalled();

@@ -48,8 +48,10 @@ const PROXY_TONE: Record<string, string> = {
   failed: 'bg-red-500/15 text-red-200',
 };
 
+// Tighter padding and a smaller size so three actions fit a 300px panel.
+// 'Insert source media' was being clipped at the panel edge.
 const ACTION_CLASS =
-  'inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-white/[0.06] text-primary-200 hover:bg-white/[0.12] transition-colors disabled:cursor-not-allowed disabled:opacity-50';
+  'inline-flex items-center gap-1 rounded-md bg-white/[0.06] px-1.5 py-1 text-[11px] text-primary-200 transition-colors hover:bg-white/[0.12] disabled:cursor-not-allowed disabled:opacity-50';
 
 export function SourceMediaPanel({
   sourceMediaPath,
@@ -71,9 +73,11 @@ export function SourceMediaPanel({
 
   return (
     <div>
-      <p className="text-help mb-3">
-        Drop in a finished sermon — audio (MP3, WAV, M4A) or video (MP4, MOV, WEBM),
-        up to {maxUploadMb} MB.
+      {/* Demoted to a caption. It is reference information — formats and a size
+          cap — not an instruction, and at body size it out-shouted the Choose
+          file button, which is the only thing on this panel that matters. */}
+      <p className="mb-2.5 text-[10px] leading-snug text-content-tertiary">
+        Sermon audio or video · up to {maxUploadMb} MB
       </p>
 
       <DropZone
@@ -105,10 +109,20 @@ export function SourceMediaPanel({
         )}
 
         {sourceMediaPath && (
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-gray-300">
+          <div className="mt-3 flex flex-col gap-2 text-xs text-gray-300">
             <span className="min-w-0">
-              <span className="text-content-tertiary">Loaded ({sourceMediaKind}):</span>{' '}
-              <span className="break-all font-mono">{fileName}</span>
+              {/* Truncated, not break-all. A 40-character job id wrapped over
+                  three lines and became the loudest thing in the panel; the
+                  full name stays available in the title attribute. */}
+              <span className="text-[10px] uppercase tracking-wide text-content-tertiary">
+                {sourceMediaKind}
+              </span>
+              <span
+                className="ml-1.5 inline-block max-w-full truncate align-bottom font-mono text-[11px] text-content-secondary"
+                title={fileName}
+              >
+                {fileName}
+              </span>
               {sourceMediaKind === 'video' && sourceMediaProxyPath && (
                 <span
                   className={`ml-2 rounded-full px-2 py-0.5 text-[10px] ${
@@ -125,11 +139,12 @@ export function SourceMediaPanel({
               )}
             </span>
 
-            <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-1.5">
               {sourceMediaKind === 'video' && (
                 <button
                   type="button"
                   onClick={onPreviewSource}
+                  aria-label="Preview source"
                   disabled={!sourceMediaPath}
                   className={ACTION_CLASS}
                   title={
@@ -138,7 +153,7 @@ export function SourceMediaPanel({
                       : 'Upload source media first.'
                   }
                 >
-                  <Play size={12} /> Preview source
+                  <Play size={12} /> Preview
                 </button>
               )}
 
@@ -146,9 +161,10 @@ export function SourceMediaPanel({
                 <button
                   type="button"
                   onClick={() => sourceMediaPath && onUseAsMusicBed(sourceMediaPath)}
+                  aria-label="Use as Music Bed"
                   className={ACTION_CLASS}
                 >
-                  <Music size={12} /> Use as Music Bed
+                  <Music size={12} /> Music bed
                 </button>
               )}
 
@@ -161,20 +177,22 @@ export function SourceMediaPanel({
               <button
                 type="button"
                 onClick={onInsertSourceMedia}
+                aria-label="Insert source media"
                 disabled={!sourceMediaPath || !sourceMediaKind || !hasProject}
-                className="inline-flex items-center gap-1.5 rounded-md bg-primary-500/15 px-2 py-1 text-primary-100 transition-colors hover:bg-primary-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex items-center gap-1 rounded-md bg-primary-500/15 px-1.5 py-1 text-[11px] text-primary-100 transition-colors hover:bg-primary-500/25 disabled:cursor-not-allowed disabled:opacity-50"
                 title={
                   hasProject
                     ? 'Insert this source media into the active documentary timeline'
                     : 'Create a documentary timeline first'
                 }
               >
-                <Plus size={12} /> Insert source media
+                <Plus size={12} /> Insert
               </button>
 
               <button
                 type="button"
                 onClick={onInsertVoiceoverPlaceholder}
+                aria-label="Insert VO placeholder"
                 disabled={!hasProject}
                 className={ACTION_CLASS}
                 title={
@@ -183,7 +201,7 @@ export function SourceMediaPanel({
                     : 'Create a documentary timeline first'
                 }
               >
-                <Sparkles size={12} /> Insert VO placeholder
+                <Sparkles size={12} /> VO
               </button>
             </div>
           </div>

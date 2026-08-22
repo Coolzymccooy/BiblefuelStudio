@@ -260,10 +260,15 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                                     <button
                                       type="button"
                                       onClick={() => setSelectedClipId(clip.id)}
-                                      className="min-w-0 text-left"
+                                      className="min-w-0 flex-1 text-left"
                                     >
-                                      <p className="truncate font-semibold">{asset?.label || clip.assetId}</p>
-                                      <p className="truncate text-emerald-100/75">{sourceLabel(asset)} · {Math.round(clip.durationSec)}s{proxy ? ` · ${proxy}` : ''}</p>
+                                      {/* ONE line, not two. A stacked label inside a
+                                          28px compact clip wrapped under the Mute
+                                          button and read as broken. */}
+                                      <p className="truncate font-semibold leading-tight">{asset?.label || clip.assetId}</p>
+                                      {!compact && (
+                                        <p className="truncate text-emerald-100/75">{sourceLabel(asset)} · {Math.round(clip.durationSec)}s{proxy ? ` · ${proxy}` : ''}</p>
+                                      )}
                                     </button>
                                     <div className="flex shrink-0 gap-1">
                                       <button

@@ -1716,7 +1716,13 @@ export function TimelinePage() {
                         </div>
                     ),
                 }}
-                propertyTools={[{ id: 'audio', label: 'Audio', icon: <Volume2 size={15} /> }]}
+                // The properties rail appears only when there is something to
+                // apply it to. Mastering controls sitting permanently on screen
+                // with no audio loaded imply an effect on nothing — CapCut
+                // reveals properties on selection for the same reason.
+                propertyTools={sourceMediaPath
+                    ? [{ id: 'audio', label: 'Audio', icon: <Volume2 size={15} /> }]
+                    : undefined}
                 propertyPanels={{
                     audio: (
                         <MasteringPanel

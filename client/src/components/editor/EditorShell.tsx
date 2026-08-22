@@ -94,10 +94,14 @@ export function EditorShell({
 
   return (
     <div
-      className="flex flex-col bg-editor-chrome text-editor-text"
-      // Fills the viewport below the app header. A fixed height is what lets
-      // the panel and stage scroll independently instead of the whole page.
-      style={{ height: 'calc(100vh - 0px)' }}
+      className="fixed inset-0 z-30 flex flex-col overflow-hidden bg-editor-chrome text-editor-text lg:left-64"
+      // lg:left-64 clears the app's 256px (w-64) desktop sidebar so the
+      // fixed shell does not sit beneath it.
+      // FIXED, not 100vh-in-a-padded-container. Previously the shell was
+      // height:100vh inside a wrapper with pt-5/pb-16, so it overflowed by
+      // exactly that padding and the WHOLE editor scrolled — rails, preview
+      // and all. An editor's furniture must stay put; only the panels and
+      // lanes inside it scroll. overflow-hidden makes that structural.
     >
       {topBar && (
         <div className="flex h-[52px] shrink-0 items-center gap-3 border-b border-editor-line px-4">
@@ -111,7 +115,7 @@ export function EditorShell({
         <div
           role="tablist"
           aria-label="Editor tools"
-          className="flex shrink-0 gap-1 overflow-x-auto border-editor-line max-lg:w-full max-lg:flex-row max-lg:border-b max-lg:px-2 max-lg:py-1.5 lg:w-[72px] lg:flex-col lg:items-center lg:border-r lg:py-2"
+          className="flex shrink-0 gap-1 overflow-x-auto border-editor-line max-lg:w-full max-lg:flex-row max-lg:border-b max-lg:px-2 max-lg:py-1.5 lg:w-[60px] lg:flex-col lg:items-center lg:border-r lg:py-1.5"
         >
           {tools.map((tool) => {
             const active = tool.id === activeId;
@@ -122,17 +126,22 @@ export function EditorShell({
                 aria-selected={active}
                 aria-controls={`panel-${tool.id}`}
                 onClick={() => select(tool.id)}
-                className={`flex shrink-0 flex-col items-center justify-center gap-1 rounded-lg text-[10px] transition max-lg:min-w-[64px] max-lg:px-2 max-lg:py-1.5 lg:h-[62px] lg:w-[60px] ${
+                className={`flex shrink-0 flex-col items-center justify-center gap-1 rounded-lg text-[10px] transition max-lg:min-w-[64px] max-lg:px-2 max-lg:py-1.5 lg:h-[52px] lg:w-[52px] ${
                   active
                     ? 'bg-editor-hover text-editor-accent'
                     : 'text-editor-faint hover:bg-editor-hover hover:text-editor-dim'
                 }`}
               >
-                <span className="text-[17px] leading-none">{tool.icon}</span>
-                <span className="max-w-full truncate">{tool.label}</span>
-                {typeof tool.count === 'number' && tool.count > 0 && (
-                  <span className="text-[9px] text-editor-faint">{tool.count}</span>
-                )}
+                <span className="text-[16px] leading-none">{tool.icon}</span>
+                {/* Count rides ON the label rather than taking a third line —
+                    that third line is what forced the rail to 62px and pushed
+                    the last tool out of view. */}
+                <span className="max-w-full truncate leading-tight">
+                  {tool.label}
+                  {typeof tool.count === 'number' && tool.count > 0 && (
+                    <span className="text-editor-faint"> {tool.count}</span>
+                  )}
+                </span>
               </button>
             );
           })}
@@ -143,7 +152,7 @@ export function EditorShell({
         <div
           id={`panel-${activeId}`}
           role="tabpanel"
-          className="min-h-0 shrink-0 overflow-auto border-editor-line bg-editor-panel p-3.5 max-lg:max-h-[38vh] max-lg:w-full max-lg:border-b lg:w-[296px] lg:border-r"
+          className="min-h-0 shrink-0 overflow-auto border-editor-line bg-editor-panel p-3.5 max-lg:max-h-[38vh] max-lg:w-full max-lg:border-b lg:w-[300px] lg:border-r"
         >
           {activePanel ?? (
             <p className="text-[11px] text-editor-faint">Nothing here yet.</p>
@@ -156,7 +165,7 @@ export function EditorShell({
 
         {propertyTools && propertyTools.length > 0 && (
           <div className="flex shrink-0 max-lg:hidden">
-            <div className="w-[248px] overflow-auto border-l border-editor-line bg-editor-panel p-3.5">
+            <div className="w-[216px] overflow-auto border-l border-editor-line bg-editor-panel p-3.5">
               {propertyPanels?.[activePropId] ?? (
                 <p className="text-[11px] text-editor-faint">Select a clip to edit it.</p>
               )}
@@ -164,7 +173,7 @@ export function EditorShell({
             <div
               role="tablist"
               aria-label="Properties"
-              className="flex w-[64px] flex-col items-center gap-1 border-l border-editor-line py-2"
+              className="flex w-[56px] flex-col items-center gap-1 border-l border-editor-line py-2"
             >
               {propertyTools.map((tool) => {
                 const active = tool.id === activePropId;
@@ -174,7 +183,7 @@ export function EditorShell({
                     role="tab"
                     aria-selected={active}
                     onClick={() => setActivePropId(tool.id)}
-                    className={`flex h-[56px] w-[56px] flex-col items-center justify-center gap-1 rounded-lg text-[10px] transition ${
+                    className={`flex h-[50px] w-[48px] flex-col items-center justify-center gap-0.5 rounded-lg text-[10px] transition ${
                       active
                         ? 'bg-editor-hover text-editor-accent'
                         : 'text-editor-faint hover:bg-editor-hover hover:text-editor-dim'
