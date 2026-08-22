@@ -457,6 +457,12 @@ export async function runScheduledPost(schedule, ctx, deps = {}) {
         durationSec: schedule.durationSec,
         voiceId: schedule.voiceId,
         backgroundQuery: schedule.backgroundQuery,
+        // Carry the caption style through. Without this the payload reached
+        // renderVideoCore with kineticCaptions undefined, so the word-by-word
+        // branch never ran and every scheduled post rendered the flat, boxed
+        // static captions - the "preview mode" look the operator reported.
+        // Default true: these go to a public feed unreviewed.
+        kineticCaptions: schedule.kineticCaptions !== false,
       }, ctx);
       console.log(`[SOCIAL][CRON] Schedule ${schedule.id} enqueued auto_generate job ${job?.id} (owner=${ctx?.userId ?? "root"})`);
       return;

@@ -93,3 +93,49 @@ describe('reading schedules written before type was persisted', () => {
       'migration must never override a deliberate choice');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Kinetic captions on scheduled posts.
+//
+// The operator's scheduled videos came out with static, boxed caption lines -
+// the "preview mode" look - rather than the word-by-word reveal. Two layers
+// dropped the setting: normalizeSchedule had no such field, so it was stripped
+// on save, and the cron payload in social.js never carried it, so
+// `payload?.kineticCaptions` was always undefined and the kinetic branch in
+// jobs.js never ran.
+//
+// Exercised through the STORE rather than the normalizer directly: that is the
+// path a saved schedule actually takes, so it proves the setting survives a
+// round trip rather than merely surviving one function.
+describe('kinetic captions on schedules', () => {
+  function roundTrip(schedule) {
+    const dir = tmpDir();
+    writeSocialStore(dir, { schedules: [schedule] });
+    return readSocialStore(dir).schedules[0];
+  }
+
+  test('an explicit true survives the round trip', () => {
+    assert.equal(roundTrip({ type: 'auto_generate', kineticCaptions: true }).kineticCaptions, true);
+  });
+
+  test('an explicit false survives - a deliberate opt-out is not "absent"', () => {
+    assert.equal(roundTrip({ type: 'auto_generate', kineticCaptions: false }).kineticCaptions, false);
+  });
+
+  test('defaults to TRUE for auto_generate', () => {
+    // These posts reach a public feed with no human review, so the better
+    // caption is the right default. Static was never chosen - it was the
+    // accident of an absent field.
+    assert.equal(roundTrip({ type: 'auto_generate' }).kineticCaptions, true);
+  });
+
+  test('a replay schedule gains no caption setting', () => {
+    // Replay reposts an existing video; there is nothing to caption.
+    const s = roundTrip({ type: 'replay', videoUrl: 'https://x/v.mp4' });
+    assert.equal(s.kineticCaptions, undefined);
+  });
+
+  test('a non-boolean is coerced', () => {
+    assert.equal(typeof roundTrip({ type: 'auto_generate', kineticCaptions: 'yes' }).kineticCaptions, 'boolean');
+  });
+});

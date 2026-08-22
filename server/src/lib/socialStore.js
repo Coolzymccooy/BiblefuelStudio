@@ -82,6 +82,14 @@ function normalizeSchedule(raw = {}) {
     durationSec: Number.isFinite(Number(raw.durationSec)) ? Number(raw.durationSec) : undefined,
     voiceId: optionalString(raw.voiceId),
     backgroundQuery: optionalString(raw.backgroundQuery),
+    // Word-by-word captions. DEFAULTS TO TRUE for auto_generate: these posts
+    // go straight to a public feed with no human review, so the better-looking
+    // caption is the right default. Static captions were never a choice - the
+    // field simply did not exist here, so the setting was stripped on save and
+    // every scheduled video rendered with the flat, boxed preview look.
+    kineticCaptions: String(raw.type || "").trim() === "auto_generate"
+      ? (raw.kineticCaptions === undefined ? true : Boolean(raw.kineticCaptions))
+      : undefined,
   };
 }
 
