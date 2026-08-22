@@ -1,4 +1,5 @@
 import fs from 'fs';
+import { clipMediaPath, clipsWithMedia } from './clipPaths.js';
 import { planAudioSources } from './audioGraph.js';
 import path from 'path';
 import { spawn } from 'child_process';
@@ -56,21 +57,25 @@ export function resolveTimelineAssetPath(rawPath, opts = {}) {
   return isSubPath(resolved, serverRoot) ? resolved : null;
 }
 
+// Media lives on the ASSET; clips reference it by assetId. These used to read
+// clip.path directly, which the UI never sets - so every clip added through the
+// interface was discarded before rendering and images simply never appeared.
 function firstClip(plan, kind) {
-  return plan.tracks?.find((track) => track.kind === kind)?.clips?.find((clip) => clip.path) || null;
+  return clipsWithMedia(plan, kind)[0] || null;
 }
 
 function brollClips(plan) {
-  return (plan.tracks?.find((track) => track.kind === 'broll')?.clips || []).filter((clip) => clip.path);
+  return clipsWithMedia(plan, 'broll');
 }
 
 function voiceoverClips(plan) {
   return (plan.tracks?.find((track) => track.kind === 'voiceover')?.clips || [])
-    .filter((clip) => clip.prompt || clip.path);
+    .filter((clip) => clip.prompt || clipMediaPath(clip, plan))
+    .map((clip) => ({ ...clip, resolvedMediaPath: clipMediaPath(clip, plan) }));
 }
 
 function musicClips(plan) {
-  return (plan.tracks?.find((track) => track.kind === 'music')?.clips || []).filter((clip) => clip.path);
+  return clipsWithMedia(plan, 'music');
 }
 
 function captionClips(plan) {
@@ -238,8 +243,8 @@ export function buildProofRenderCommand(plan, opts = {}) {
   const main = firstClip(plan, 'video') || firstClip(plan, 'broll');
   if (!main) return { ok: false, error: 'No video or B-roll clip with a media path found' };
 
-  const mainPath = resolveTimelineAssetPath(main.path, opts);
-  if (!mainPath) return { ok: false, error: `Unsafe or unsupported main clip path: ${main.path}` };
+  const mainPath = resolveTimelineAssetPath(main.resolvedMediaPath || main.path, opts);
+  if (!mainPath) return { ok: false, error: `Unsafe or unsupported main clip path: ${main.resolvedMediaPath || main.path}` };
 
   // Caps removed. The old slice(0, 1) / slice(0, 4) silently discarded every
   // B-roll clip after the first and every voice-over after the fourth, with no
@@ -249,14 +254,14 @@ export function buildProofRenderCommand(plan, opts = {}) {
   const broll = brollClips(plan)
     .filter((clip) => clip.id !== main.id)
     .slice(0, MAX_BROLL_INPUTS)
-    .map((clip) => ({ ...clip, resolvedPath: resolveTimelineAssetPath(clip.path, opts) }))
+    .map((clip) => ({ ...clip, resolvedPath: resolveTimelineAssetPath(clip.resolvedMediaPath || clip.path, opts) }))
     .filter((clip) => clip.resolvedPath)
     .sort((a, b) => Number(a.startSec || 0) - Number(b.startSec || 0));
 
   const voiceovers = voiceoverClips(plan)
-    .filter((clip) => clip.path && !clip.placeholder)
+    .filter((clip) => (clip.resolvedMediaPath || clip.path) && !clip.placeholder)
     .slice(0, MAX_VOICEOVER_INPUTS)
-    .map((clip) => ({ ...clip, resolvedPath: resolveTimelineAssetPath(clip.path, opts) }))
+    .map((clip) => ({ ...clip, resolvedPath: resolveTimelineAssetPath(clip.resolvedMediaPath || clip.path, opts) }))
     .filter((clip) => clip.resolvedPath);
 
   // Music bed: one track, looped to fill, ducked under narration. A worship
@@ -264,7 +269,7 @@ export function buildProofRenderCommand(plan, opts = {}) {
   // most valuable of the previously-ignored tracks.
   const music = musicClips(plan)
     .slice(0, 1)
-    .map((clip) => ({ ...clip, resolvedPath: resolveTimelineAssetPath(clip.path, opts) }))
+    .map((clip) => ({ ...clip, resolvedPath: resolveTimelineAssetPath(clip.resolvedMediaPath || clip.path, opts) }))
     .filter((clip) => clip.resolvedPath)[0] || null;
 
   const captions = captionClips(plan);

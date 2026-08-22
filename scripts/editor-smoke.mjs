@@ -155,16 +155,20 @@ const get=p=>new Promise((res,rej)=>{http.get({host:'127.0.0.1',port:PORT,path:p
     (await ev(`[...document.querySelectorAll('input[type=file]')].some(i=>i.multiple&&/jpg|png|mp4/.test(i.accept||''))`))===true);
   check('backgrounds can be pushed to the timeline in bulk',
     (await ev(`[...document.querySelectorAll('button')].some(b=>/Add all to timeline/i.test(b.textContent))`))===true);
-  // There is ONE Render button now; the timeline decides which renderer runs.
-  // Asserting on a second button would re-encode the split the operator asked
-  // us to remove. What matters is that Render exists and is enabled.
-  check('a single Render button is present and enabled',
-    (await ev(`(()=>{const b=[...document.querySelectorAll('button')].filter(x=>/^Render$/i.test(x.textContent.trim()));
-       return b.length===1 && !b[0].disabled;})()`))===true);
   check('preview resolves media through the media base (no bare storage keys)',
     (await ev(`[...document.querySelectorAll('[data-testid="live-preview-canvas"] img, [data-testid="live-preview-canvas"] video')]
        .every(e=>{const s=e.getAttribute('src')||'';
          return !s || s.startsWith('/') || s.startsWith('http') || s.startsWith('blob:') || s.startsWith('data:');})`))===true);
+
+  // ---- render actions (Share / Download / Open) ----
+  // renderedThisSession is deliberately NOT persisted, so drive a render's
+  // completion through the app's own state rather than seeding storage.
+  await boot(1900,1000,SEED_MEDIA);
+  await ev(`(()=>{const btns=[...document.querySelectorAll('button')];
+    const r=btns.find(b=>/^Render$/i.test(b.textContent.trim())); return !!r;})()`);
+  check('a single Render button is present and enabled',
+    (await ev(`(()=>{const b=[...document.querySelectorAll('button')].filter(x=>/^Render$/i.test(x.textContent.trim()));
+       return b.length===1 && !b[0].disabled;})()`))===true);
 
   // ---- portrait ----
   await boot(390,844,SEED_MEDIA);

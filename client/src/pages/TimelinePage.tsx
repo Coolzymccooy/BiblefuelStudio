@@ -23,6 +23,7 @@ import {
     Sparkles,
     X,
     Share2,
+    ExternalLink,
     
     
     
@@ -2134,14 +2135,46 @@ export function TimelinePage() {
                         </div>
                     ) : renderedVideo && renderedThisSession ? (
                         <div className="flex h-full max-h-full flex-col items-center justify-center gap-2">
-                            <video src={api.mediaUrl(renderedVideo)} controls className="max-h-[calc(100%-2rem)] max-w-full rounded-lg" />
-                            <button
-                                type="button"
-                                onClick={() => setRenderedThisSession(false)}
-                                className="text-[11px] text-editor-faint underline-offset-2 hover:underline"
-                            >
-                                Back to the cut
-                            </button>
+                            <video src={api.mediaUrl(renderedVideo)} controls className="max-h-[calc(100%-3.5rem)] max-w-full rounded-lg" />
+                            {/* Share / Download / Export lived only in the classic
+                                branch, past the editor's early return - so a render
+                                finished in the editor could be watched and nothing
+                                else. The operator had to switch layouts to get the
+                                file out. */}
+                            <div className="flex shrink-0 flex-wrap items-center justify-center gap-2">
+                                <Button
+                                    onClick={() => setShareUrl(renderedVideo)}
+                                    className="h-8 text-xs"
+                                >
+                                    <Share2 size={14} className="mr-1.5" />
+                                    Share
+                                </Button>
+                                <Button
+                                    variant="secondary"
+                                    onClick={() => { void api.downloadMedia(renderedVideo, `biblefuel-${(renderedVideo.split('/').pop() || 'video').replace(/\.[^.]+$/, '').slice(0, 24)}.mp4`); }}
+                                    className="h-8 text-xs"
+                                >
+                                    <Download size={14} className="mr-1.5" />
+                                    Download
+                                </Button>
+                                <a
+                                    href={api.mediaUrl(renderedVideo)}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="inline-flex h-8 items-center rounded-md border border-editor-line px-2.5 text-xs text-editor-dim transition-colors hover:bg-editor-hover"
+                                    title="Open the file in a new tab"
+                                >
+                                    <ExternalLink size={14} className="mr-1.5" />
+                                    Open
+                                </a>
+                                <button
+                                    type="button"
+                                    onClick={() => setRenderedThisSession(false)}
+                                    className="text-[11px] text-editor-faint underline-offset-2 hover:underline"
+                                >
+                                    Back to the cut
+                                </button>
+                            </div>
                         </div>
                     ) : (
                         // Live composite instead of a dead end. The stage used to
@@ -2570,7 +2603,11 @@ export function TimelinePage() {
                     <div className="flex justify-center rounded-xl bg-black/60 border border-white/[0.06] py-3 px-2">
                         <video
                             controls
-                            src={renderedVideo}
+                            // Through mediaUrl, like every other player. A raw
+                            // /outputs/timeline/... path is servable, but a bare
+                            // storage key is not - the classic view had the same
+                            // 404 the editor stage did.
+                            src={api.mediaUrl(renderedVideo)}
                             className="block rounded-lg max-h-[360px] w-auto max-w-full bg-black shadow-lg shadow-black/40"
                         />
                     </div>
