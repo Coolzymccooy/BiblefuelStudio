@@ -1526,8 +1526,124 @@ export function TimelinePage() {
     // preview centre, timeline across the bottom. Rendering it as an
     // alternative BRANCH rather than replacing the page means the classic view
     // stays available if anything here is wrong.
+    // Overlays live in ONE place and both layouts render them.
+    //
+    // They used to sit only in the classic branch, AFTER the editor branch's
+    // early `return`. In editor mode React therefore never reached them: the
+    // Preview, Trim, Share and background-Library buttons all set their state
+    // correctly and then nothing rendered it, so every one of them looked dead
+    // on click. Anything mounted for one layout must be mounted for both.
+    const overlays = (
+        <>
+            {/* Library Picker Modal — multi-select up to MAX_BACKGROUNDS.
+                Clicking a tile toggles its inclusion in the ordered list;
+                selection order = render sequence. Done closes the modal. */}
+            <BackgroundLibraryModal
+                open={showLibraryModal}
+                onClose={() => setShowLibraryModal(false)}
+                items={libraryItems}
+                isLoading={isLoadingLibrary}
+                mode="multi"
+                max={MAX_BACKGROUNDS}
+                selectedIds={backgroundItems.map((b) => b.id)}
+                onPick={(item) => {
+                    const isSelected = backgroundItems.some((b) => b.id === item.id);
+                    if (isSelected) {
+                        setBackgroundItems(backgroundItems.filter((b) => b.id !== item.id));
+                    } else if (backgroundItems.length < MAX_BACKGROUNDS) {
+                        // Append so order matches the click sequence (= render sequence).
+                        setBackgroundItems([...backgroundItems, item]);
+                    } else {
+                        toast.error(`Max ${MAX_BACKGROUNDS} backgrounds. Remove one to add another.`, { id: 'bg-cap' });
+                    }
+                }}
+                onClear={() => setBackgroundItems([])}
+                onDone={() => {
+                    setShowLibraryModal(false);
+                    if (backgroundItems.length > 0) {
+                        toast.success(`${backgroundItems.length} background${backgroundItems.length === 1 ? '' : 's'} selected`);
+                    }
+                }}
+            />
+
+            {/* Preview Result Modal */}
+            {previewUrl && (
+                <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+                    <div className="absolute inset-0 bg-black/90 backdrop-blur-md" onClick={() => setPreviewUrl(null)} />
+                    <div className="relative w-full max-w-xl animate-in zoom-in-95 duration-200">
+                        <Card className="border-primary-500/30 shadow-[0_0_50px_rgba(var(--primary-500-rgb),0.3)]">
+                            <div className="aspect-[9/16] bg-black rounded-xl overflow-hidden mb-4 relative">
+                                {/* Must go through api.mediaUrl: previewUrl holds a
+                                    server PATH, not a servable URL. Passing it raw
+                                    opened the modal but never played, while Download
+                                    (api.downloadMedia) and Trim (api.mediaUrl) both
+                                    worked from the same value. */}
+                                <video
+                                    src={api.mediaUrl(previewUrl)}
+                                    controls
+                                    autoPlay
+                                    className="w-full h-full object-contain"
+                                />
+                            </div>
+                            <div className="flex gap-2">
+                                <Button
+                                    onClick={() => { void api.downloadMedia(previewUrl, `biblefuel-${(previewUrl.split('/').pop() || 'preview').replace(/\.[^.]+$/, '').slice(0, 24)}.mp4`); }}
+                                    className="flex-1"
+                                >
+                                    <Download size={16} className="mr-2" />
+                                    Download Preview
+                                </Button>
+                                <Button
+                                    variant="secondary"
+                                    onClick={() => setPreviewUrl(null)}
+                                >
+                                    Close
+                                </Button>
+                            </div>
+                        </Card>
+                    </div>
+                </div>
+            )}
+
+            {shareUrl && (
+                // Scroll the whole overlay (not an inner max-h box) so the share
+                // buttons can never be clipped, and pad the bottom on mobile so
+                // the last row clears the fixed bottom nav bar.
+                <div className="fixed inset-0 z-50 overflow-y-auto">
+                    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShareUrl(null)} />
+                    <div className="relative flex min-h-full items-start sm:items-center justify-center p-4 pb-28 sm:pb-4">
+                        <div className="relative w-full max-w-2xl">
+                            <div className="flex items-center justify-between mb-3 px-1">
+                                <h3 className="font-bold text-lg text-white">Share your video</h3>
+                                <button onClick={() => setShareUrl(null)} className="text-gray-400 hover:text-white p-1" aria-label="Close">
+                                    <X size={20} />
+                                </button>
+                            </div>
+                            <ShareSheet
+                                videoUrl={shareUrl}
+                                caption={editedLines.join(' ').trim()}
+                                title={editedLines[0] || ''}
+                                filename={`biblefuel-${(shareUrl.split('/').pop() || 'video').replace(/\.[^.]+$/, '').slice(0, 24)}`}
+                            />
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {trimTarget && (
+                <MediaTrimmer
+                    serverPath={trimTarget.path}
+                    kind={trimTarget.kind}
+                    onCancel={() => setTrimTarget(null)}
+                    onApply={(newPath) => { trimTarget.apply(newPath); setTrimTarget(null); }}
+                />
+            )}
+        </>
+    );
+
     if (editorLayout) {
         return (
+            <>
             <EditorShell
                 topBar={(
                     <>
@@ -1816,6 +1932,8 @@ export function TimelinePage() {
                     </div>
                 ) : undefined}
             />
+            {overlays}
+            </>
         );
     }
 
@@ -2531,109 +2649,7 @@ export function TimelinePage() {
                 </div>
             )}
 
-            {/* Library Picker Modal — multi-select up to MAX_BACKGROUNDS.
-                Clicking a tile toggles its inclusion in the ordered list;
-                selection order = render sequence. Done closes the modal. */}
-            <BackgroundLibraryModal
-                open={showLibraryModal}
-                onClose={() => setShowLibraryModal(false)}
-                items={libraryItems}
-                isLoading={isLoadingLibrary}
-                mode="multi"
-                max={MAX_BACKGROUNDS}
-                selectedIds={backgroundItems.map((b) => b.id)}
-                onPick={(item) => {
-                    const isSelected = backgroundItems.some((b) => b.id === item.id);
-                    if (isSelected) {
-                        setBackgroundItems(backgroundItems.filter((b) => b.id !== item.id));
-                    } else if (backgroundItems.length < MAX_BACKGROUNDS) {
-                        // Append so order matches the click sequence (= render sequence).
-                        setBackgroundItems([...backgroundItems, item]);
-                    } else {
-                        toast.error(`Max ${MAX_BACKGROUNDS} backgrounds. Remove one to add another.`, { id: 'bg-cap' });
-                    }
-                }}
-                onClear={() => setBackgroundItems([])}
-                onDone={() => {
-                    setShowLibraryModal(false);
-                    if (backgroundItems.length > 0) {
-                        toast.success(`${backgroundItems.length} background${backgroundItems.length === 1 ? '' : 's'} selected`);
-                    }
-                }}
-            />
-
-            {/* Preview Result Modal */}
-            {previewUrl && (
-                <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-                    <div className="absolute inset-0 bg-black/90 backdrop-blur-md" onClick={() => setPreviewUrl(null)} />
-                    <div className="relative w-full max-w-xl animate-in zoom-in-95 duration-200">
-                        <Card className="border-primary-500/30 shadow-[0_0_50px_rgba(var(--primary-500-rgb),0.3)]">
-                            <div className="aspect-[9/16] bg-black rounded-xl overflow-hidden mb-4 relative">
-                                {/* Must go through api.mediaUrl: previewUrl holds a
-                                    server PATH, not a servable URL. Passing it raw
-                                    opened the modal but never played, while Download
-                                    (api.downloadMedia) and Trim (api.mediaUrl) both
-                                    worked from the same value. */}
-                                <video
-                                    src={api.mediaUrl(previewUrl)}
-                                    controls
-                                    autoPlay
-                                    className="w-full h-full object-contain"
-                                />
-                            </div>
-                            <div className="flex gap-2">
-                                <Button
-                                    onClick={() => { void api.downloadMedia(previewUrl, `biblefuel-${(previewUrl.split('/').pop() || 'preview').replace(/\.[^.]+$/, '').slice(0, 24)}.mp4`); }}
-                                    className="flex-1"
-                                >
-                                    <Download size={16} className="mr-2" />
-                                    Download Preview
-                                </Button>
-                                <Button
-                                    variant="secondary"
-                                    onClick={() => setPreviewUrl(null)}
-                                >
-                                    Close
-                                </Button>
-                            </div>
-                        </Card>
-                    </div>
-                </div>
-            )}
-
-            {shareUrl && (
-                // Scroll the whole overlay (not an inner max-h box) so the share
-                // buttons can never be clipped, and pad the bottom on mobile so
-                // the last row clears the fixed bottom nav bar.
-                <div className="fixed inset-0 z-50 overflow-y-auto">
-                    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShareUrl(null)} />
-                    <div className="relative flex min-h-full items-start sm:items-center justify-center p-4 pb-28 sm:pb-4">
-                        <div className="relative w-full max-w-2xl">
-                            <div className="flex items-center justify-between mb-3 px-1">
-                                <h3 className="font-bold text-lg text-white">Share your video</h3>
-                                <button onClick={() => setShareUrl(null)} className="text-gray-400 hover:text-white p-1" aria-label="Close">
-                                    <X size={20} />
-                                </button>
-                            </div>
-                            <ShareSheet
-                                videoUrl={shareUrl}
-                                caption={editedLines.join(' ').trim()}
-                                title={editedLines[0] || ''}
-                                filename={`biblefuel-${(shareUrl.split('/').pop() || 'video').replace(/\.[^.]+$/, '').slice(0, 24)}`}
-                            />
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {trimTarget && (
-                <MediaTrimmer
-                    serverPath={trimTarget.path}
-                    kind={trimTarget.kind}
-                    onCancel={() => setTrimTarget(null)}
-                    onApply={(newPath) => { trimTarget.apply(newPath); setTrimTarget(null); }}
-                />
-            )}
+            {overlays}
         </div>
     );
 }
