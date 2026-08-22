@@ -1,0 +1,458 @@
+{
+ "render": [
+  {
+   "line": 797,
+   "label": "(unidentified)"
+  },
+  {
+   "line": 809,
+   "label": "sets ShareVideoPath"
+  },
+  {
+   "line": 819,
+   "label": "Dismiss"
+  },
+  {
+   "line": 865,
+   "label": "sets AutoBackground"
+  },
+  {
+   "line": 894,
+   "label": "Clear all backgrounds"
+  },
+  {
+   "line": 935,
+   "label": "Move up"
+  },
+  {
+   "line": 943,
+   "label": "Move up"
+  },
+  {
+   "line": 951,
+   "label": "Move down"
+  },
+  {
+   "line": 960,
+   "label": "Trim this clip"
+  },
+  {
+   "line": 984,
+   "label": "openLibrary()"
+  },
+  {
+   "line": 1002,
+   "label": "(unidentified)"
+  },
+  {
+   "line": 1024,
+   "label": "Pick a background video or image"
+  },
+  {
+   "line": 1029,
+   "label": "Pick a background video or image"
+  },
+  {
+   "line": 1043,
+   "label": "(unidentified)"
+  },
+  {
+   "line": 1065,
+   "label": "Generate visuals from my script"
+  },
+  {
+   "line": 1069,
+   "label": "Alongside my backgrounds"
+  },
+  {
+   "line": 1072,
+   "label": "Only AI visuals"
+  },
+  {
+   "line": 1078,
+   "label": "Captions"
+  },
+  {
+   "line": 1091,
+   "label": "Enter your script lines here..."
+  },
+  {
+   "line": 1099,
+   "label": "Format for Video"
+  },
+  {
+   "line": 1106,
+   "label": "Pick From Scripts"
+  },
+  {
+   "line": 1115,
+   "label": "Use Latest Script"
+  },
+  {
+   "line": 1126,
+   "label": "Caption animation"
+  },
+  {
+   "line": 1149,
+   "label": "Text layout"
+  },
+  {
+   "line": 1159,
+   "label": "Layered depth (ghost shadow behind each word)"
+  },
+  {
+   "line": 1169,
+   "label": "Output & Timing"
+  },
+  {
+   "line": 1176,
+   "label": "Duration"
+  },
+  {
+   "line": 1199,
+   "label": "Audio"
+  },
+  {
+   "line": 1213,
+   "label": "Pick a narration track or generate one in Voice & Audio"
+  },
+  {
+   "line": 1220,
+   "label": "Trim"
+  },
+  {
+   "line": 1231,
+   "label": "sets AudioPath"
+  },
+  {
+   "line": 1242,
+   "label": "sets MusicPath"
+  },
+  {
+   "line": 1256,
+   "label": "Render in background"
+  },
+  {
+   "line": 1276,
+   "label": "Kinetic captions"
+  },
+  {
+   "line": 1293,
+   "label": "ElevenLabs voice ID"
+  },
+  {
+   "line": 1309,
+   "label": "handleRender()"
+  },
+  {
+   "line": 1318,
+   "label": "handleRender()"
+  },
+  {
+   "line": 1358,
+   "label": "Completed Jobs"
+  },
+  {
+   "line": 1376,
+   "label": "outputs/video-xyz.mp4"
+  },
+  {
+   "line": 1386,
+   "label": "Refresh Rendered Videos"
+  },
+  {
+   "line": 1398,
+   "label": "Copy Caption"
+  },
+  {
+   "line": 1410,
+   "label": "Auto-post"
+  },
+  {
+   "line": 1418,
+   "label": "YouTube (Direct)"
+  },
+  {
+   "line": 1425,
+   "label": "Select profile..."
+  },
+  {
+   "line": 1432,
+   "label": "YouTube Private"
+  },
+  {
+   "line": 1442,
+   "label": "Direct API requires OAuth setup"
+  },
+  {
+   "line": 1475,
+   "label": "Scripts Library"
+  },
+  {
+   "line": 1479,
+   "label": "Scripts Library"
+  },
+  {
+   "line": 1501,
+   "label": "sets Lines"
+  },
+  {
+   "line": 1513,
+   "label": "(unidentified)"
+  }
+ ],
+ "voice": [
+  {
+   "line": 1030,
+   "label": "sets Provider"
+  },
+  {
+   "line": 1042,
+   "label": "ElevenLabs"
+  },
+  {
+   "line": 1057,
+   "label": "Azure"
+  },
+  {
+   "line": 1072,
+   "label": "Fish"
+  },
+  {
+   "line": 1085,
+   "label": "Chatterbox"
+  },
+  {
+   "line": 1116,
+   "label": "/path/to/reference.wav"
+  },
+  {
+   "line": 1130,
+   "label": "sets ChatterboxStyle"
+  },
+  {
+   "line": 1144,
+   "label": "sets ChatterboxCfg"
+  },
+  {
+   "line": 1158,
+   "label": "sets EdgeVoiceId"
+  },
+  {
+   "line": 1182,
+   "label": "sets Stability"
+  },
+  {
+   "line": 1199,
+   "label": "sets Similarity"
+  },
+  {
+   "line": 1207,
+   "label": "Load Voices"
+  },
+  {
+   "line": 1214,
+   "label": "Select a voice..."
+  },
+  {
+   "line": 1229,
+   "label": "handleTTS()"
+  },
+  {
+   "line": 1285,
+   "label": "Start Recording"
+  },
+  {
+   "line": 1290,
+   "label": "Start Recording"
+  },
+  {
+   "line": 1301,
+   "label": "(unidentified)"
+  },
+  {
+   "line": 1383,
+   "label": "sets ShowGuide"
+  },
+  {
+   "line": 1412,
+   "label": "Preset"
+  },
+  {
+   "line": 1428,
+   "label": "sets Denoise"
+  },
+  {
+   "line": 1442,
+   "label": "sets Gate"
+  },
+  {
+   "line": 1456,
+   "label": "sets Highpass"
+  },
+  {
+   "line": 1470,
+   "label": "sets Lowpass"
+  },
+  {
+   "line": 1484,
+   "label": "sets CompRatio"
+  },
+  {
+   "line": 1498,
+   "label": "sets CompThreshold"
+  },
+  {
+   "line": 1512,
+   "label": "sets Lufs"
+  },
+  {
+   "line": 1525,
+   "label": "Remove Silence"
+  },
+  {
+   "line": 1535,
+   "label": "sets ShowAdvanced"
+  },
+  {
+   "line": 1550,
+   "label": "sets DeesserAmount"
+  },
+  {
+   "line": 1564,
+   "label": "sets LimiterCeiling"
+  },
+  {
+   "line": 1578,
+   "label": "sets PresenceGain"
+  },
+  {
+   "line": 1592,
+   "label": "sets PresenceFreq"
+  },
+  {
+   "line": 1606,
+   "label": "sets PresenceQ"
+  },
+  {
+   "line": 1616,
+   "label": "Process Audio"
+  },
+  {
+   "line": 1632,
+   "label": "Load Music Library"
+  },
+  {
+   "line": 1655,
+   "label": "Use in Render"
+  },
+  {
+   "line": 1683,
+   "label": "e.g. server/outputs/audio.mp3"
+  },
+  {
+   "line": 1696,
+   "label": "(unidentified)"
+  },
+  {
+   "line": 1737,
+   "label": "Provider"
+  },
+  {
+   "line": 1748,
+   "label": "ElevenLabs"
+  },
+  {
+   "line": 1785,
+   "label": "Clone name (e.g. Segun Narrator)"
+  },
+  {
+   "line": 1790,
+   "label": "Clone name (e.g. Segun Narrator)"
+  },
+  {
+   "line": 1796,
+   "label": "Sample audio path (e.g. server/outputs/user-audio-xxx.wav)"
+  },
+  {
+   "line": 1801,
+   "label": "Optional description"
+  },
+  {
+   "line": 1805,
+   "label": "sets CloneHasRights"
+  },
+  {
+   "line": 1809,
+   "label": "sets CloneNoImpersonation"
+  },
+  {
+   "line": 1817,
+   "label": "sets CloneSamplePath"
+  },
+  {
+   "line": 1826,
+   "label": "Use Current Audio Path"
+  },
+  {
+   "line": 1851,
+   "label": "sets Provider"
+  },
+  {
+   "line": 1861,
+   "label": "Delete this saved clone"
+  },
+  {
+   "line": 1880,
+   "label": "Voice presets"
+  },
+  {
+   "line": 1885,
+   "label": "Preset label (e.g. Narrator)"
+  },
+  {
+   "line": 1891,
+   "label": "Voice ID (optional)"
+  },
+  {
+   "line": 1900,
+   "label": "Stability"
+  },
+  {
+   "line": 1907,
+   "label": "Similarity"
+  },
+  {
+   "line": 1918,
+   "label": "Narrator|xxxxxxxx\\nSermon|yyyyyyyy\\nzzzzzzzz"
+  },
+  {
+   "line": 1921,
+   "label": "Narrator|xxxxxxxx\\nSermon|yyyyyyyy\\nzzzzzzzz"
+  },
+  {
+   "line": 1935,
+   "label": "Use"
+  },
+  {
+   "line": 1941,
+   "label": "Use"
+  },
+  {
+   "line": 2014,
+   "label": "sets AudioPath"
+  },
+  {
+   "line": 2023,
+   "label": "toast()"
+  },
+  {
+   "line": 2040,
+   "label": "(unidentified)"
+  },
+  {
+   "line": 2057,
+   "label": "sets ShowAllRecent"
+  }
+ ]
+}
