@@ -1,4 +1,5 @@
 import fs from 'fs';
+import { planAudioSources } from './audioGraph.js';
 import path from 'path';
 import { spawn } from 'child_process';
 import { setTimeout as delay } from 'timers/promises';
@@ -350,9 +351,22 @@ export function buildProofRenderCommand(plan, opts = {}) {
   // Event audio. Held near full when there is no narration over it — the
   // "real event audio stays for praise/worship/dance" rule — and pulled down
   // only when voice-overs need to be heard.
+  //
+  // ONLY reference [0:a] when input 0 can actually carry audio. When the Real
+  // footage lane is empty the main clip falls back to B-roll, which is usually
+  // a still image - and `[0:a]` against an image made ffmpeg reject the entire
+  // filtergraph ("Stream specifier ':a' ... matches no streams"), so the render
+  // produced no video at all.
+  const { useBaseAudio, hasAnyAudio } = planAudioSources({
+    mainPath,
+    voiceovers,
+    music,
+  });
   const baseVolume = voiceovers.length > 0 ? 0.35 : 1.0;
-  audioParts.push(`[0:a]volume=${baseVolume}[basea]`);
-  audioLabels.push('[basea]');
+  if (useBaseAudio) {
+    audioParts.push(`[0:a]volume=${baseVolume}[basea]`);
+    audioLabels.push('[basea]');
+  }
 
   voiceovers.forEach((clip, index) => {
     const inputIndex = 1 + broll.length + index;
@@ -387,13 +401,20 @@ export function buildProofRenderCommand(plan, opts = {}) {
     );
     audioParts.push('[amixed]alimiter=limit=0.95[a]');
   }
+  // Exactly one source: give it the [a] label too, so the -map below has a
+  // single shape to reason about rather than three.
+  if (!mixNeeded && audioLabels.length === 1) {
+    audioParts.push(`${audioLabels[0]}anull[a]`);
+  }
 
   const filter = [...videoParts, ...audioParts].join(';');
 
   args.push(
     '-filter_complex', filter,
     '-map', '[v]',
-    ...(mixNeeded ? ['-map', '[a]'] : ['-map', '[basea]']),
+    // A stills-only timeline with no music or VO is legitimately SILENT.
+    // Mapping a non-existent audio label would fail the render outright.
+    ...(hasAnyAudio ? ['-map', '[a]'] : []),
     '-t', String(duration),
     '-r', '24',
     '-c:v', 'libx264',

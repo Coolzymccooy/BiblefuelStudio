@@ -1,4 +1,5 @@
 import fs from 'fs';
+import { friendlyRenderError } from "../lib/renderErrors.js";
 import { Router } from 'express';
 import { randomUUID } from 'crypto';
 import path from 'path';
@@ -157,7 +158,7 @@ async function runTimelineJob(job) {
     } else {
       job.status = 'failed';
       job.phase = 'failed';
-      job.error = proofResult.error || 'Timeline proof render failed';
+      job.error = friendlyRenderError('timeline-render', proofResult.error) || 'Timeline proof render failed';
       job.note = 'Timeline proof render failed before producing a playable MP4.';
     }
     persistTimelineJob(job);
@@ -166,7 +167,7 @@ async function runTimelineJob(job) {
     job.phase = 'failed';
     job.progress = 100;
     job.completedAt = Date.now();
-    job.error = String(e?.message || e);
+    job.error = friendlyRenderError('timeline-render', String(e?.message || e));
     job.note = 'Timeline proof render failed before producing a playable MP4.';
     persistTimelineJob(job);
   }
@@ -234,7 +235,7 @@ router.post('/render', (req, res) => {
         job.phase = 'failed';
         job.progress = 100;
         job.completedAt = Date.now();
-        job.error = String(e?.message || e);
+        job.error = friendlyRenderError('timeline-render', String(e?.message || e));
         persistTimelineJob(job);
       });
     }, 0);
