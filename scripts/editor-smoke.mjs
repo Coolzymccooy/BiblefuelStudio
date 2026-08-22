@@ -130,7 +130,7 @@ const get=p=>new Promise((res,rej)=>{http.get({host:'127.0.0.1',port:PORT,path:p
   check('effect reaches the render payload', (await ev(`(()=>{const raw=localStorage.getItem('BF_SCL_DOC_PROJECT');if(!raw)return true;const p=JSON.parse(raw);const t=(p.tracks||[]).find(x=>x.kind==='effects');return !t||t.clips.every(c=>!!c.effect);})()`))===true);
 
   // ---- live preview + resizable panel ----
-  await boot(1900,1000,SEED_MEDIA);
+  await boot(1900,1000,SEED_MEDIA+`localStorage.setItem('bf.editor.panelWidth','300');`);
   check('stage shows a live preview, not a render-only dead end',
     (await ev(`!!document.querySelector('[data-testid="live-preview-canvas"]')`))===true);
   check('preview has a scrub control',
