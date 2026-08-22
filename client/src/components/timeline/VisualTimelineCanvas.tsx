@@ -17,6 +17,19 @@ interface VisualTimelineCanvasProps {
   project: TimelineProject;
   onProjectChange?: (project: TimelineProject) => void;
   onRequestVeoBroll?: (request: VeoBrollRequest) => void;
+  /**
+   * Compact mode for the editor shell's bottom strip.
+   *
+   * The full layout spends ~180px on chrome before the first lane renders: a
+   * Card title, a project-meta block, a settings badge, and a "Selected clip"
+   * panel that is mostly instruction text. In a page that scrolls, that is
+   * fine. In a fixed-height strip it means the operator scrolls to see lanes
+   * that should all be visible at once.
+   *
+   * Compact keeps every control but folds them into a single toolbar row, so
+   * the lanes get the height instead.
+   */
+  compact?: boolean;
 }
 
 const TRACK_ICON: Record<TimelineTrackKind, typeof Film> = {
@@ -119,7 +132,7 @@ function buildVeoPrompt(project: TimelineProject): VeoBrollRequest {
   };
 }
 
-export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBroll }: VisualTimelineCanvasProps) {
+export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBroll, compact = false }: VisualTimelineCanvasProps) {
   const target = Math.max(1, project.targetDurationSec);
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   const selection = useMemo(() => findClip(project, selectedClipId), [project, selectedClipId]);
@@ -134,6 +147,213 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
     onProjectChange(removeClip(project, selection.track, selection.clip));
     setSelectedClipId(null);
   };
+
+  // Hoisted so the compact strip and the full card render the SAME lanes.
+  // Duplicating this block would guarantee the two drift apart.
+  const lanes = (
+          <div className="overflow-x-auto rounded-xl border border-white/10 bg-black/25 p-3">
+            <div className="min-w-[920px] space-y-3">
+              <div className="ml-36 flex h-20 items-stretch gap-1" aria-label="Scene ruler">
+                {project.scenes.map((scene) => {
+                  const widthPct = Math.max(8, (scene.targetDurationSec / target) * 100);
+                  return (
+                    <div
+                      key={scene.id}
+                      aria-label={`Scene block: ${scene.label}`}
+                      draggable
+                      className="group relative min-w-28 rounded-lg border border-primary-500/25 bg-gradient-to-br from-primary-500/15 to-amber-500/10 p-2 shadow-inner outline-none transition hover:border-primary-300/60"
+                      style={{ flexBasis: `${widthPct}%` }}
+                      title={scene.voiceoverBrief}
+                    >
+                      <p className="truncate text-[11px] font-semibold text-primary-100">{scene.label}</p>
+                      <p className="mt-1 text-[10px] text-content-tertiary">{formatDuration(scene.startSec)} · {Math.round(scene.targetDurationSec)}s</p>
+                      <div className="absolute inset-x-2 bottom-2 h-1 rounded-full bg-primary-400/30" />
+                    </div>
+                  );
+                })}
+              </div>
+  
+              <div className="space-y-2">
+                {project.tracks.map((track) => {
+                  const Icon = TRACK_ICON[track.kind];
+                  return (
+                    <div
+                      key={track.id}
+                      aria-label={`Track lane: ${track.label}`}
+                      className="grid grid-cols-[9rem_1fr] items-stretch gap-2"
+                    >
+                      <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
+                        <Icon size={15} className="text-primary-200" />
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-semibold text-gray-100">{track.label}</p>
+                          <p className="text-[10px] text-content-tertiary">{track.clips.length} clip{track.clips.length === 1 ? '' : 's'}</p>
+                        </div>
+                      </div>
+  
+                      <div className="relative min-h-14 rounded-lg border border-dashed border-white/10 bg-white/[0.02] p-2">
+                        {track.clips.length === 0 ? (
+                          <div className="flex h-10 items-center justify-center rounded-md bg-black/20 text-[11px] text-content-tertiary">
+                            {EMPTY_HINT[track.kind]}
+                          </div>
+                        ) : (
+                          <div className="relative h-12">
+                            {track.clips.map((clip) => {
+                              const asset = project.assets[clip.assetId];
+                              const proxy = proxyLabel(asset);
+                              const previewMode = previewModeLabel(asset);
+                              const leftPct = Math.max(0, Math.min(96, (clip.startSec / target) * 100));
+                              const widthPct = Math.max(5, Math.min(100 - leftPct, (clip.durationSec / target) * 100));
+                              const selected = selectedClipId === clip.id;
+                              return (
+                                <div
+                                  key={clip.id}
+                                  draggable
+                                  // Selection lives on the CONTAINER: the refactor
+                                  // moved it to an inner button, so clicking the
+                                  // clip block itself no longer selected it and the
+                                  // Split/Remove toolbar stayed disabled.
+                                  onClick={() => setSelectedClipId(clip.id)}
+                                  aria-label={`Timeline clip: ${asset?.label || clip.assetId}`}
+                                  className={`absolute top-1 h-10 rounded-md border px-2 py-1 text-left text-[10px] shadow-sm transition ${selected ? 'border-emerald-200 bg-emerald-400/30 text-white ring-2 ring-emerald-300/40' : 'border-emerald-400/40 bg-emerald-500/15 text-emerald-50 hover:border-emerald-200/70'}`}
+                                  style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                                  title={`${asset?.label || clip.assetId} · ${sourceLabel(asset)} · ${Math.round(clip.durationSec)}s · ${previewMode}`}
+                                >
+                                  <div className="flex items-center justify-between gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => setSelectedClipId(clip.id)}
+                                      className="min-w-0 text-left"
+                                    >
+                                      <p className="truncate font-semibold">{asset?.label || clip.assetId}</p>
+                                      <p className="truncate text-emerald-100/75">{sourceLabel(asset)} · {Math.round(clip.durationSec)}s{proxy ? ` · ${proxy}` : ''}</p>
+                                    </button>
+                                    <div className="flex shrink-0 gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          onProjectChange?.({
+                                            ...project,
+                                            // Target THIS clip's own row. Using
+                                            // selection.track here crashed when
+                                            // nothing was selected, and muted the
+                                            // wrong track when a clip in another
+                                            // row was the selected one.
+                                            tracks: project.tracks.map((t) =>
+                                              t.id === track.id ? {
+                                                ...t,
+                                                clips: t.clips.map((c) => c.id === clip.id ? { ...c, muted: !c.muted } : c),
+                                              } : t,
+                                            ),
+                                          });
+                                        }}
+                                        className={`rounded px-1.5 py-0.5 transition ${clip.muted ? 'bg-amber-400/30 text-amber-100' : 'bg-black/30 text-emerald-100 hover:bg-black/50'}`}
+                                        title={clip.muted ? 'Unmute clip' : 'Mute clip'}
+                                      >
+                                        {clip.muted ? 'Muted' : 'Mute'}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          // Remove from THIS clip's own row. Using
+                                          // selection.track deleted from the wrong
+                                          // track, and the !selection guard made the
+                                          // button silently do nothing until some
+                                          // other clip had been selected first.
+                                          if (!onProjectChange) return;
+                                          onProjectChange(removeClip(project, track, clip));
+                                          if (selectedClipId === clip.id) setSelectedClipId(null);
+                                        }}
+                                        className="rounded bg-black/30 px-1.5 py-0.5 text-emerald-100 hover:bg-red-500/20 hover:text-red-200 transition"
+                                        // Distinct from the toolbar's "Remove clip" so
+                                        // accessible-name queries stay unambiguous.
+                                        aria-label={`Delete clip: ${asset?.label || clip.assetId}`}
+                                        title="Delete this clip"
+                                      >
+                                        <Trash2 size={12} />
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+  );
+
+  // One dense toolbar carrying everything the tall header used to stack:
+  // project identity, the settings badge, selection state, and the clip
+  // actions. Split/Remove are icon-only here — the label is in the tooltip and
+  // aria-label, which is the trade that buys the lanes their height.
+  const compactToolbar = (
+    <div className="flex flex-wrap items-center gap-2 border-b border-editor-line px-3 py-2 text-[11px]">
+      <span className="font-semibold text-editor-text">{project.title}</span>
+      <span className="text-editor-faint">
+        {project.scenes.length} scenes · {project.tracks.length} tracks · {formatDuration(project.targetDurationSec)}
+      </span>
+      <span className="text-editor-faint">·</span>
+      <span className="text-editor-dim">
+        {project.renderSettings.voiceProvider} VO · {project.aspect}
+      </span>
+      <span className="flex-1" />
+      {selection ? (
+        <span className="truncate text-editor-dim">
+          {selection.asset?.label || selection.clip.assetId}
+          <span className="text-editor-faint"> · {Math.round(selection.clip.durationSec)}s</span>
+        </span>
+      ) : (
+        <span className="text-editor-faint">Select a clip to split or remove</span>
+      )}
+      <button
+        type="button"
+        onClick={handleSplit}
+        disabled={!selection || !onProjectChange || (selection?.clip.durationSec ?? 0) < 1}
+        className="icon-btn"
+        aria-label="Split clip"
+        title="Split clip"
+      >
+        <Scissors size={14} />
+      </button>
+      <button
+        type="button"
+        onClick={handleRemove}
+        disabled={!selection || !onProjectChange}
+        className="icon-btn-danger"
+        aria-label="Remove clip"
+        title="Remove clip"
+      >
+        <Trash2 size={14} />
+      </button>
+      <button
+        type="button"
+        onClick={() => onRequestVeoBroll?.(buildVeoPrompt(project))}
+        className="icon-btn"
+        aria-label="Request AI B-roll"
+        title="Request AI B-roll"
+      >
+        <Sparkles size={14} />
+      </button>
+    </div>
+  );
+
+  if (compact) {
+    return (
+      <div className="flex h-full flex-col">
+        {compactToolbar}
+        <div className="min-h-0 flex-1 overflow-auto px-3 py-2">
+          {lanes}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <Card
@@ -185,142 +405,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
           </div>
         </div>
 
-        <div className="overflow-x-auto rounded-xl border border-white/10 bg-black/25 p-3">
-          <div className="min-w-[920px] space-y-3">
-            <div className="ml-36 flex h-20 items-stretch gap-1" aria-label="Scene ruler">
-              {project.scenes.map((scene) => {
-                const widthPct = Math.max(8, (scene.targetDurationSec / target) * 100);
-                return (
-                  <div
-                    key={scene.id}
-                    aria-label={`Scene block: ${scene.label}`}
-                    draggable
-                    className="group relative min-w-28 rounded-lg border border-primary-500/25 bg-gradient-to-br from-primary-500/15 to-amber-500/10 p-2 shadow-inner outline-none transition hover:border-primary-300/60"
-                    style={{ flexBasis: `${widthPct}%` }}
-                    title={scene.voiceoverBrief}
-                  >
-                    <p className="truncate text-[11px] font-semibold text-primary-100">{scene.label}</p>
-                    <p className="mt-1 text-[10px] text-content-tertiary">{formatDuration(scene.startSec)} · {Math.round(scene.targetDurationSec)}s</p>
-                    <div className="absolute inset-x-2 bottom-2 h-1 rounded-full bg-primary-400/30" />
-                  </div>
-                );
-              })}
-            </div>
-
-            <div className="space-y-2">
-              {project.tracks.map((track) => {
-                const Icon = TRACK_ICON[track.kind];
-                return (
-                  <div
-                    key={track.id}
-                    aria-label={`Track lane: ${track.label}`}
-                    className="grid grid-cols-[9rem_1fr] items-stretch gap-2"
-                  >
-                    <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
-                      <Icon size={15} className="text-primary-200" />
-                      <div className="min-w-0">
-                        <p className="truncate text-xs font-semibold text-gray-100">{track.label}</p>
-                        <p className="text-[10px] text-content-tertiary">{track.clips.length} clip{track.clips.length === 1 ? '' : 's'}</p>
-                      </div>
-                    </div>
-
-                    <div className="relative min-h-14 rounded-lg border border-dashed border-white/10 bg-white/[0.02] p-2">
-                      {track.clips.length === 0 ? (
-                        <div className="flex h-10 items-center justify-center rounded-md bg-black/20 text-[11px] text-content-tertiary">
-                          {EMPTY_HINT[track.kind]}
-                        </div>
-                      ) : (
-                        <div className="relative h-12">
-                          {track.clips.map((clip) => {
-                            const asset = project.assets[clip.assetId];
-                            const proxy = proxyLabel(asset);
-                            const previewMode = previewModeLabel(asset);
-                            const leftPct = Math.max(0, Math.min(96, (clip.startSec / target) * 100));
-                            const widthPct = Math.max(5, Math.min(100 - leftPct, (clip.durationSec / target) * 100));
-                            const selected = selectedClipId === clip.id;
-                            return (
-                              <div
-                                key={clip.id}
-                                draggable
-                                // Selection lives on the CONTAINER: the refactor
-                                // moved it to an inner button, so clicking the
-                                // clip block itself no longer selected it and the
-                                // Split/Remove toolbar stayed disabled.
-                                onClick={() => setSelectedClipId(clip.id)}
-                                aria-label={`Timeline clip: ${asset?.label || clip.assetId}`}
-                                className={`absolute top-1 h-10 rounded-md border px-2 py-1 text-left text-[10px] shadow-sm transition ${selected ? 'border-emerald-200 bg-emerald-400/30 text-white ring-2 ring-emerald-300/40' : 'border-emerald-400/40 bg-emerald-500/15 text-emerald-50 hover:border-emerald-200/70'}`}
-                                style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
-                                title={`${asset?.label || clip.assetId} · ${sourceLabel(asset)} · ${Math.round(clip.durationSec)}s · ${previewMode}`}
-                              >
-                                <div className="flex items-center justify-between gap-1">
-                                  <button
-                                    type="button"
-                                    onClick={() => setSelectedClipId(clip.id)}
-                                    className="min-w-0 text-left"
-                                  >
-                                    <p className="truncate font-semibold">{asset?.label || clip.assetId}</p>
-                                    <p className="truncate text-emerald-100/75">{sourceLabel(asset)} · {Math.round(clip.durationSec)}s{proxy ? ` · ${proxy}` : ''}</p>
-                                  </button>
-                                  <div className="flex shrink-0 gap-1">
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        onProjectChange?.({
-                                          ...project,
-                                          // Target THIS clip's own row. Using
-                                          // selection.track here crashed when
-                                          // nothing was selected, and muted the
-                                          // wrong track when a clip in another
-                                          // row was the selected one.
-                                          tracks: project.tracks.map((t) =>
-                                            t.id === track.id ? {
-                                              ...t,
-                                              clips: t.clips.map((c) => c.id === clip.id ? { ...c, muted: !c.muted } : c),
-                                            } : t,
-                                          ),
-                                        });
-                                      }}
-                                      className={`rounded px-1.5 py-0.5 transition ${clip.muted ? 'bg-amber-400/30 text-amber-100' : 'bg-black/30 text-emerald-100 hover:bg-black/50'}`}
-                                      title={clip.muted ? 'Unmute clip' : 'Mute clip'}
-                                    >
-                                      {clip.muted ? 'Muted' : 'Mute'}
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        // Remove from THIS clip's own row. Using
-                                        // selection.track deleted from the wrong
-                                        // track, and the !selection guard made the
-                                        // button silently do nothing until some
-                                        // other clip had been selected first.
-                                        if (!onProjectChange) return;
-                                        onProjectChange(removeClip(project, track, clip));
-                                        if (selectedClipId === clip.id) setSelectedClipId(null);
-                                      }}
-                                      className="rounded bg-black/30 px-1.5 py-0.5 text-emerald-100 hover:bg-red-500/20 hover:text-red-200 transition"
-                                      // Distinct from the toolbar's "Remove clip" so
-                                      // accessible-name queries stay unambiguous.
-                                      aria-label={`Delete clip: ${asset?.label || clip.assetId}`}
-                                      title="Delete this clip"
-                                    >
-                                      <Trash2 size={12} />
-                                    </button>
-                                  </div>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
+        {lanes}
       </div>
     </Card>
   );

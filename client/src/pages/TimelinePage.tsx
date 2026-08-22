@@ -43,6 +43,7 @@ import { MasteringPanel } from '../components/timeline/MasteringPanel';
 import { RecentAudioPanel } from '../components/timeline/RecentAudioPanel';
 import { TranscriptActions } from '../components/timeline/TranscriptActions';
 import { EditorShell } from '../components/editor/EditorShell';
+import { PanelSection } from '../components/editor/PanelSection';
 import { AIDocumentaryTimelinePanel } from '../components/timeline/AIDocumentaryTimelinePanel';
 import { VisualTimelineCanvas } from '../components/timeline/VisualTimelineCanvas';
 import { InfoTooltip } from '../components/ui/InfoTooltip';
@@ -1548,6 +1549,11 @@ export function TimelinePage() {
                 ]}
                 panels={{
                     media: (
+                        <PanelSection
+                            title="Source media"
+                            defaultOpen
+                            summary={sourceMediaPath?.split(/[\\/]/).pop()}
+                        >
                         <SourceMediaPanel
                             sourceMediaPath={sourceMediaPath}
                             sourceMediaKind={sourceMediaKind}
@@ -1568,6 +1574,7 @@ export function TimelinePage() {
                             onInsertSourceMedia={handleInsertSourceMediaIntoDocumentary}
                             onInsertVoiceoverPlaceholder={handleInsertVoiceoverPlaceholder}
                         />
+                        </PanelSection>
                     ),
                     captions: (
                         <div className="space-y-4">
@@ -1607,18 +1614,48 @@ export function TimelinePage() {
                         </div>
                     ),
                     music: (
-                        <MusicPicker
-                            multiple
-                            value={{ path: musicPath || null, paths: musicPaths, volume: musicVolume, autoDuck }}
-                            onChange={(m) => {
-                                const next = m.paths ?? (m.path ? [m.path] : []);
-                                setMusicPaths(next);
-                                setMusicPath(next[0] || null);
-                                setMusicVolume(m.volume);
-                                setAutoDuck(m.autoDuck ?? true);
-                            }}
-                            busy={isUploading}
-                        />
+                        <>
+                            <PanelSection
+                                title="Background music"
+                                defaultOpen
+                                count={musicPaths.length}
+                                summary={musicPaths[0]?.split(/[\\/]/).pop()}
+                            >
+                                <MusicPicker
+                                    multiple
+                                    value={{ path: musicPath || null, paths: musicPaths, volume: musicVolume, autoDuck }}
+                                    onChange={(m) => {
+                                        const next = m.paths ?? (m.path ? [m.path] : []);
+                                        setMusicPaths(next);
+                                        setMusicPath(next[0] || null);
+                                        setMusicVolume(m.volume);
+                                        setAutoDuck(m.autoDuck ?? true);
+                                    }}
+                                    busy={isUploading}
+                                />
+                            </PanelSection>
+                            <PanelSection title="Mastering" summary={`${normalizeLUFS} LUFS`}>
+                                <MasteringPanel
+                                    layout="column"
+                                    normalizeLUFS={normalizeLUFS}
+                                    onNormalizeLUFSChange={setNormalizeLUFS}
+                                    fadeInMs={fadeIn}
+                                    onFadeInChange={setFadeIn}
+                                    fadeOutMs={fadeOut}
+                                    onFadeOutChange={setFadeOut}
+                                    deEsser={deess}
+                                    onDeEsserChange={setDeess}
+                                />
+                            </PanelSection>
+                            <PanelSection title="Recent audio" count={audioHistory.length}>
+                                <RecentAudioPanel
+                                    items={audioHistory}
+                                    onAddClip={handleAddClip}
+                                    onUseAsSource={useAsSource}
+                                    onUseAsMusicBed={useAsMusicBed}
+                                />
+                            </PanelSection>
+                        </>
                     ),
                     voice: (
                         <RecentAudioPanel
@@ -1724,8 +1761,13 @@ export function TimelinePage() {
                     )
                 )}
                 strip={documentaryProject ? (
-                    <div className="max-h-[260px] overflow-auto">
+                    // Fixed height, not max-height: the strip should always
+                    // claim its share of the viewport so all six lanes are
+                    // visible at once. Compact mode folds ~180px of header
+                    // chrome into one toolbar row to make that fit.
+                    <div className="h-[340px]">
                         <VisualTimelineCanvas
+                            compact
                             project={documentaryProject}
                             onProjectChange={setDocumentaryProject}
                             onRequestVeoBroll={handleRequestVeoBroll}
