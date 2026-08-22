@@ -60,6 +60,12 @@ export function resolveTimelineAssetPath(rawPath, opts = {}) {
 // Media lives on the ASSET; clips reference it by assetId. These used to read
 // clip.path directly, which the UI never sets - so every clip added through the
 // interface was discarded before rendering and images simply never appeared.
+/** Stills need -loop 1 -t to have a timeline the overlay can be timed against. */
+const DEFAULT_IMAGE_SEC = 5;
+function isStillImagePath(p) {
+  return /\.(jpe?g|png|webp|bmp|tiff?)$/i.test(String(p || '').split('?')[0]);
+}
+
 function firstClip(plan, kind) {
   return clipsWithMedia(plan, kind)[0] || null;
 }
@@ -283,7 +289,21 @@ export function buildProofRenderCommand(plan, opts = {}) {
   const duration = Math.max(1, Math.min(300, Number(plan.durationSec || main.durationSec || 8)));
 
   const args = ['-y', '-hide_banner', '-loglevel', 'warning', '-i', mainPath];
-  for (const clip of broll) args.push('-i', clip.resolvedPath);
+  for (const clip of broll) {
+    // A still image decodes to ONE frame at t=0 and carries no timeline, so
+    // `enable='between(t,...)'` on the overlay never matched and the image
+    // never appeared - the render came out as the source video alone, with no
+    // error. -loop 1 -t gives the still a real duration to be timed against.
+    if (isStillImagePath(clip.resolvedPath)) {
+      // Loop for the WHOLE output, not the clip's own length. Each input has
+      // its own local timeline starting at 0, but `enable='between(t,10,15)'`
+      // is evaluated on the OUTPUT timeline - so an image capped at its 5s
+      // duration had already ended before its overlay window opened, and it
+      // never appeared. The enable expression alone decides when it shows.
+      args.push('-loop', '1', '-t', String(duration));
+    }
+    args.push('-i', clip.resolvedPath);
+  }
   for (const clip of voiceovers) args.push('-i', clip.resolvedPath);
   // Loop the bed so a short track still covers a long recap.
   if (music) args.push('-stream_loop', '-1', '-i', music.resolvedPath);

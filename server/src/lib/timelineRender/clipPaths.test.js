@@ -30,14 +30,16 @@ test('a path ON the clip still wins, for older plans', () => {
   assert.equal(clipMediaPath({ path: '/outputs/legacy.mp4', assetId: 'a1' }, plan), '/outputs/legacy.mp4');
 });
 
-test('prefers a ready proxy over the original', () => {
-  // Proxies exist so the renderer does not chew through a 4K original.
-  assert.equal(clipMediaPath({ assetId: 'a2' }, plan), '/outputs/clip-proxy.mp4');
+test('uses the ORIGINAL, never the proxy, even when the proxy is ready', () => {
+  // Proxies are video-only: they exist for fast scrubbing in the editor.
+  // Rendering from one dropped the audio track, and the graph then failed on
+  // [0:a] with "matches no streams" - the render produced nothing usable.
+  assert.equal(clipMediaPath({ assetId: 'a2' }, plan), '/outputs/clip.mp4');
 });
 
-test('ignores a proxy that is not ready', () => {
-  const p = { assets: { x: { path: '/o/a.mp4', proxyPath: '/o/a-p.mp4', proxyStatus: 'pending' } }, tracks: [] };
-  assert.equal(clipMediaPath({ assetId: 'x' }, p), '/o/a.mp4');
+test('falls back to the proxy only when there is no original', () => {
+  const p = { assets: { x: { proxyPath: '/o/a-p.mp4', proxyStatus: 'ready' } }, tracks: [] };
+  assert.equal(clipMediaPath({ assetId: 'x' }, p), '/o/a-p.mp4');
 });
 
 test('an asset with no media yields nothing', () => {

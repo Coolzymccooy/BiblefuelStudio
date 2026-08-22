@@ -22,9 +22,12 @@ export function clipMediaPath(clip, plan) {
   const asset = plan?.assets?.[clip.assetId];
   if (!asset) return null;
 
-  // A ready proxy is the cheaper input; that is what proxies are for.
-  if (asset.proxyPath && asset.proxyStatus === 'ready') return asset.proxyPath;
-  return asset.path || null;
+  // NOT the proxy. Proxies are generated for fast scrubbing and are
+  // VIDEO-ONLY - using one as a render input silently dropped the audio
+  // track, and the filtergraph then failed on [0:a] with "matches no
+  // streams". The renderer must read the original; the proxy exists for the
+  // editor's benefit, not ffmpeg's.
+  return asset.path || asset.proxyPath || null;
 }
 
 /**
