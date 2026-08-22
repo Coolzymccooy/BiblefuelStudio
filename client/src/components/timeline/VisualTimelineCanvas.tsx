@@ -148,12 +148,48 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
     setSelectedClipId(null);
   };
 
+
+  // Compact halves the vertical budget per lane without shrinking the text.
+  //
+  // Full lane: min-h-14 (56px) + p-2 (16px) + space-y-2 gap (8px) = 80px each.
+  // Six lanes plus an 80px scene ruler is ~560px — nearly double the 340px
+  // strip, so the operator scrolls to see lanes that should all be visible.
+  //
+  // Compact: min-h-9 (36px) + p-1 (8px) + gap-1 (4px) = 48px each, and a 48px
+  // ruler. Six lanes then fit in ~336px. Font sizes are UNCHANGED: the boxes
+  // shrink, the labels stay readable.
+  const d = compact
+    ? {
+        wrap: 'p-2',
+        stack: 'space-y-1',
+        ruler: 'h-12',
+        lane: 'min-h-9',
+        lanePad: 'p-1',
+        laneGap: 'gap-1',
+        headPad: 'px-2 py-1',
+        clipRow: 'h-9',
+        clipHeight: 'h-7',
+        emptyRow: 'h-7',
+      }
+    : {
+        wrap: 'p-3',
+        stack: 'space-y-3',
+        ruler: 'h-20',
+        lane: 'min-h-14',
+        lanePad: 'p-2',
+        laneGap: 'gap-2',
+        headPad: 'px-3 py-2',
+        clipRow: 'h-12',
+        clipHeight: 'h-10',
+        emptyRow: 'h-10',
+      };
+
   // Hoisted so the compact strip and the full card render the SAME lanes.
   // Duplicating this block would guarantee the two drift apart.
   const lanes = (
-          <div className="overflow-x-auto rounded-xl border border-white/10 bg-black/25 p-3">
-            <div className="min-w-[920px] space-y-3">
-              <div className="ml-36 flex h-20 items-stretch gap-1" aria-label="Scene ruler">
+          <div className={`overflow-x-auto rounded-xl border border-white/10 bg-black/25 ${d.wrap}`}>
+            <div className={`min-w-[920px] ${d.stack}`}>
+              <div className={`ml-36 flex ${d.ruler} items-stretch gap-1`} aria-label="Scene ruler">
                 {project.scenes.map((scene) => {
                   const widthPct = Math.max(8, (scene.targetDurationSec / target) * 100);
                   return (
@@ -161,28 +197,30 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                       key={scene.id}
                       aria-label={`Scene block: ${scene.label}`}
                       draggable
-                      className="group relative min-w-28 rounded-lg border border-primary-500/25 bg-gradient-to-br from-primary-500/15 to-amber-500/10 p-2 shadow-inner outline-none transition hover:border-primary-300/60"
+                      className={`group relative min-w-24 rounded-lg border border-primary-500/25 bg-gradient-to-br from-primary-500/15 to-amber-500/10 ${d.lanePad} shadow-inner outline-none transition hover:border-primary-300/60`}
                       style={{ flexBasis: `${widthPct}%` }}
                       title={scene.voiceoverBrief}
                     >
                       <p className="truncate text-[11px] font-semibold text-primary-100">{scene.label}</p>
+                      {!compact && (
                       <p className="mt-1 text-[10px] text-content-tertiary">{formatDuration(scene.startSec)} · {Math.round(scene.targetDurationSec)}s</p>
-                      <div className="absolute inset-x-2 bottom-2 h-1 rounded-full bg-primary-400/30" />
+                    )}
+                      {!compact && <div className="absolute inset-x-2 bottom-2 h-1 rounded-full bg-primary-400/30" />}
                     </div>
                   );
                 })}
               </div>
   
-              <div className="space-y-2">
+              <div className={d.stack}>
                 {project.tracks.map((track) => {
                   const Icon = TRACK_ICON[track.kind];
                   return (
                     <div
                       key={track.id}
                       aria-label={`Track lane: ${track.label}`}
-                      className="grid grid-cols-[9rem_1fr] items-stretch gap-2"
+                      className={`grid grid-cols-[9rem_1fr] items-stretch ${d.laneGap}`}
                     >
-                      <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
+                      <div className={`flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] ${d.headPad}`}>
                         <Icon size={15} className="text-primary-200" />
                         <div className="min-w-0">
                           <p className="truncate text-xs font-semibold text-gray-100">{track.label}</p>
@@ -190,13 +228,13 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                         </div>
                       </div>
   
-                      <div className="relative min-h-14 rounded-lg border border-dashed border-white/10 bg-white/[0.02] p-2">
+                      <div className={`relative ${d.lane} rounded-lg border border-dashed border-white/10 bg-white/[0.02] ${d.lanePad}`}>
                         {track.clips.length === 0 ? (
-                          <div className="flex h-10 items-center justify-center rounded-md bg-black/20 text-[11px] text-content-tertiary">
+                          <div className={`flex ${d.emptyRow} items-center justify-center rounded-md bg-black/20 text-[11px] text-content-tertiary`}>
                             {EMPTY_HINT[track.kind]}
                           </div>
                         ) : (
-                          <div className="relative h-12">
+                          <div className={`relative ${d.clipRow}`}>
                             {track.clips.map((clip) => {
                               const asset = project.assets[clip.assetId];
                               const proxy = proxyLabel(asset);
@@ -214,7 +252,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                                   // Split/Remove toolbar stayed disabled.
                                   onClick={() => setSelectedClipId(clip.id)}
                                   aria-label={`Timeline clip: ${asset?.label || clip.assetId}`}
-                                  className={`absolute top-1 h-10 rounded-md border px-2 py-1 text-left text-[10px] shadow-sm transition ${selected ? 'border-emerald-200 bg-emerald-400/30 text-white ring-2 ring-emerald-300/40' : 'border-emerald-400/40 bg-emerald-500/15 text-emerald-50 hover:border-emerald-200/70'}`}
+                                  className={`absolute top-1 ${d.clipHeight} rounded-md border px-2 py-1 text-left text-[10px] shadow-sm transition ${selected ? 'border-emerald-200 bg-emerald-400/30 text-white ring-2 ring-emerald-300/40' : 'border-emerald-400/40 bg-emerald-500/15 text-emerald-50 hover:border-emerald-200/70'}`}
                                   style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
                                   title={`${asset?.label || clip.assetId} · ${sourceLabel(asset)} · ${Math.round(clip.durationSec)}s · ${previewMode}`}
                                 >
