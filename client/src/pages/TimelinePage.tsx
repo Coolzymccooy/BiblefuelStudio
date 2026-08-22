@@ -1821,9 +1821,15 @@ export function TimelinePage() {
                     ),
                     background: videoBackgroundContent,
                     renders: (
-                        <div className="space-y-3">
+                        <div
+                            // Fixed-height column: the latest render PINS at the top and
+                            // only the history list scrolls. The whole panel used to
+                            // scroll as one, so paging the render list carried the
+                            // player off-screen, exactly when it is wanted to compare.
+                            className="flex h-full min-h-0 flex-col gap-3"
+                        >
                             {renderedVideo && (
-                                <div>
+                                <div className="shrink-0">
                                     <p className="mb-1.5 text-[10px] uppercase tracking-[.12em] text-editor-faint">Latest render</p>
                                     <video
                                         src={api.mediaUrl(renderedVideo)}
@@ -1832,15 +1838,16 @@ export function TimelinePage() {
                                     />
                                 </div>
                             )}
-                            <div>
-                                <p className="mb-1.5 text-[10px] uppercase tracking-[.12em] text-editor-faint">
+                            <div className="flex min-h-0 flex-1 flex-col">
+                                <p className="mb-1.5 shrink-0 text-[10px] uppercase tracking-[.12em] text-editor-faint">
                                     Recent renders
+                                    <span className="ml-1.5">{renderHistory.length}</span>
                                 </p>
                                 {renderHistory.length === 0 ? (
                                     <p className="text-[11px] text-editor-faint">No renders yet.</p>
                                 ) : (
-                                    <div className="space-y-1.5">
-                                        {renderHistory.slice(0, 12).map((item) => (
+                                    <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
+                                        {renderHistory.map((item) => (
                                             <button
                                                 key={item.jobId}
                                                 type="button"
