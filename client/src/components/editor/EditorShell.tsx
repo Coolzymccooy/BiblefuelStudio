@@ -72,6 +72,17 @@ const MIN_PANEL_W = 220;
 const MAX_PANEL_W = 560;
 const DEFAULT_PANEL_W = 300;
 const PANEL_WIDTH_KEY = 'bf.editor.panelWidth';
+/**
+ * Timeline strip height bounds, as a PERCENTAGE of the shell.
+ *
+ * A percentage, not pixels: the operator asked that dragging the timeline up
+ * must not squeeze the preview into nothing. Both surfaces then scale with the
+ * window instead of one eating a fixed slice of a small screen.
+ */
+const MIN_STRIP_PCT = 15;
+const MAX_STRIP_PCT = 65;
+const DEFAULT_STRIP_PCT = 38;
+const STRIP_HEIGHT_KEY = 'bf.editor.stripPct';
 const APP_NAV_W = 240;
 const RAIL_W = 60;
 
@@ -105,6 +116,21 @@ export function EditorShell({
   });
   const dragging = useRef(false);
 
+  // Timeline height, dragged from the divider above the strip.
+  const [stripPct, setStripPct] = useState<number>(() => {
+    const saved = Number(localStorage.getItem(STRIP_HEIGHT_KEY));
+    return Number.isFinite(saved) && saved >= MIN_STRIP_PCT && saved <= MAX_STRIP_PCT
+      ? saved
+      : DEFAULT_STRIP_PCT;
+  });
+  const draggingStrip = useRef(false);
+  const shellRef = useRef<HTMLDivElement | null>(null);
+
+  const onStripDragStart = useCallback((e: React.PointerEvent) => {
+    draggingStrip.current = true;
+    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+  }, []);
+
   const onDragStart = useCallback((e: React.PointerEvent) => {
     dragging.current = true;
     // Capture so the drag survives the pointer leaving the 6px handle.
@@ -113,6 +139,17 @@ export function EditorShell({
 
   useEffect(() => {
     const move = (e: PointerEvent) => {
+      if (draggingStrip.current) {
+        // Measured against the shell's own box, so the split is correct
+        // whatever the window height. Clamped so neither the timeline nor
+        // the preview above it can be driven to nothing.
+        const box = shellRef.current?.getBoundingClientRect();
+        if (box && box.height > 0) {
+          const pct = ((box.bottom - e.clientY) / box.height) * 100;
+          setStripPct(Math.min(MAX_STRIP_PCT, Math.max(MIN_STRIP_PCT, Math.round(pct))));
+        }
+        return;
+      }
       if (!dragging.current) return;
       // Width is measured from the shell's left edge minus the rail, so the
       // handle tracks the cursor exactly rather than drifting.
@@ -121,6 +158,11 @@ export function EditorShell({
       setPanelWidth(Math.min(MAX_PANEL_W, Math.max(MIN_PANEL_W, next)));
     };
     const up = () => {
+      if (draggingStrip.current) {
+        draggingStrip.current = false;
+        setStripPct((p) => { localStorage.setItem(STRIP_HEIGHT_KEY, String(p)); return p; });
+        return;
+      }
       if (!dragging.current) return;
       dragging.current = false;
       // Persist on release, not on every move: a write per pointermove would
@@ -152,6 +194,7 @@ export function EditorShell({
   // left. Escaping to <body> makes `fixed` mean the viewport again.
   return createPortal(
     <div
+      ref={shellRef}
       className="fixed inset-0 z-30 flex h-screen flex-col overflow-hidden bg-editor-chrome text-editor-text lg:left-[240px]"
       // h-screen is NOT redundant with inset-0. Measured in the live DOM: with
       // position:fixed, top:0 AND bottom:0, the element still computed to
@@ -326,9 +369,27 @@ export function EditorShell({
         // viewport and starved the rail/panel row to h=0 - the same
         // starvation pattern as the render player. A short-viewport
         // ceiling keeps the split sane on both orientations.
-        <div className="overflow-hidden border-t border-editor-line bg-editor-chrome max-lg:flex-1 short:max-h-[45%] short:min-h-0 min-h-[150px] lg:h-[38%] lg:shrink-0">
+        <>
+        {/* Horizontal drag handle above the timeline. The operator asked to be
+            able to pull the timeline up - and that doing so must NOT squeeze
+            the preview to nothing, which is why the height is a clamped
+            percentage rather than free pixels. */}
+        <div
+          role="separator"
+          aria-label="Resize timeline"
+          aria-orientation="horizontal"
+          onPointerDown={onStripDragStart}
+          className="h-1.5 shrink-0 cursor-row-resize transition-colors hover:bg-primary-400/40"
+        />
+        <div
+          className="overflow-hidden border-t border-editor-line bg-editor-chrome min-h-[120px] shrink-0"
+          // Height is inline because it is DRAGGED; a Tailwind class cannot
+          // express a runtime value.
+          style={{ height: `${stripPct}%` }}
+        >
           {strip}
         </div>
+        </>
       )}
     </div>,
     document.body,

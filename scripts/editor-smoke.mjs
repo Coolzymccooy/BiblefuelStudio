@@ -170,6 +170,32 @@ const get=p=>new Promise((res,rej)=>{http.get({host:'127.0.0.1',port:PORT,path:p
     (await ev(`(()=>{const b=[...document.querySelectorAll('button')].filter(x=>/^Render$/i.test(x.textContent.trim()));
        return b.length===1 && !b[0].disabled;})()`))===true);
 
+  // ---- vertical timeline resize ----
+  await boot(1900,1000,SEED_MEDIA+`localStorage.setItem('bf.editor.stripPct','38');`);
+  const measure=`(()=>{
+    const sep=document.querySelector('[role="separator"][aria-label="Resize timeline"]');
+    const strip=sep&&sep.nextElementSibling;
+    const stage=document.querySelector('[data-testid="live-preview-canvas"]');
+    return {sep:!!sep, strip:strip?Math.round(strip.getBoundingClientRect().height):0,
+            stage:stage?Math.round(stage.getBoundingClientRect().height):0};})()`;
+  const stripBefore=await ev(measure);
+  check('timeline has a vertical drag handle', stripBefore.sep===true);
+
+  // Drag UPWARD - the operator's ask.
+  await ev(`(()=>{const h=document.querySelector('[role="separator"][aria-label="Resize timeline"]');
+    const r=h.getBoundingClientRect();
+    const o={bubbles:true,clientX:r.x+400,clientY:r.y+3,pointerId:7};
+    h.dispatchEvent(new PointerEvent('pointerdown',o));
+    window.dispatchEvent(new PointerEvent('pointermove',{...o,clientY:r.y-180}));
+    window.dispatchEvent(new PointerEvent('pointerup',{...o,clientY:r.y-180}));})()`);
+  await waitFor(`(()=>{const sep=document.querySelector('[role="separator"][aria-label="Resize timeline"]');
+    const st=sep&&sep.nextElementSibling;
+    return st && Math.round(st.getBoundingClientRect().height)!==${stripBefore.strip};})()`);
+  const stripAfter=await ev(measure);
+  check('dragging up grows the timeline', stripAfter.strip>stripBefore.strip, `${stripBefore.strip}->${stripAfter.strip}`);
+  // The whole point of a clamped percentage: the preview must survive.
+  check('the preview is not squeezed to nothing', stripAfter.stage>120, `stage h=${stripAfter.stage}`);
+
   // ---- portrait ----
   await boot(390,844,SEED_MEDIA);
   const railP=await ev(`(()=>{const r=document.querySelector('[aria-label="Editor tools"]');const b=r&&r.getBoundingClientRect();return b?Math.round(b.height):0;})()`);
