@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, type ChangeEvent, type SyntheticEvent } from 'react';
+import { RenderCaptionsPanel } from '../components/render/RenderCaptionsPanel';
 import { checkRenderReadiness } from '../lib/renderReadiness';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
-import { Textarea } from '../components/ui/Textarea';
 import { Select } from '../components/ui/Select';
 import { Field } from '../components/ui/Field';
 import { Section } from '../components/ui/Section';
@@ -1104,86 +1104,31 @@ export function RenderPage() {
                     </div>
 
                     <Section title="Captions" defaultOpen={true} collapsible={false}>
-                        <Field
-                            label="Overlay text"
-                            badge="Max 6 lines"
-                            tooltip="One line per caption slide. Lines are auto-sliced to fit the frame and the chosen animation rhythm."
-                        >
-                            <Textarea
-                                value={lines}
-                                onChange={(e) => setLines(e.target.value)}
-                                placeholder="Enter your script lines here..."
-                                className="bg-black/20 h-32"
-                            />
-                            <div className="mt-2 flex flex-wrap gap-2">
-                                <Button
-                                    variant="secondary"
-                                    className="h-8 text-xs"
-                                    onClick={() => { const next = buildSpeakableLines(lines, { maxLines: 6, maxChars: 72 }).join('\n'); setLines(next); toast.success('Formatted for video'); }}
-                                >
-                                    Format for Video
-                                </Button>
-                                <Button
-                                    variant="secondary"
-                                    className="h-8 text-xs"
-                                    onClick={() => setShowScriptsModal(true)}
-                                >
-                                    <ClipboardList size={14} className="mr-2" />
-                                    Pick From Scripts
-                                </Button>
-                                {scripts.length > 0 && (
-                                    <Button
-                                        variant="secondary"
-                                        className="h-8 text-xs"
-                                        onClick={() => setLines(buildLinesFromScript(scripts[0]))}
-                                    >
-                                        Use Latest Script
-                                    </Button>
-                                )}
-                            </div>
-                        </Field>
-                        <Field
-                            label="Caption animation"
-                            tooltip="Word-synced motion applies when Kinetic captions are on. The list matches the Voice Lab picker."
-                        >
-                            <Select value={typographyPreset} onChange={(e: ChangeEvent<HTMLSelectElement>) => setTypographyPreset(e.target.value)}>
-                                {animations.length > 0 && (
-                                    <optgroup label="Caption animations (word-synced)">
-                                        {animations.map((a) => (
-                                            <option key={a.id} value={a.id}>
-                                                {a.label}{a.renderable ? '' : ' (preview-only)'}
-                                            </option>
-                                        ))}
-                                    </optgroup>
-                                )}
-                                <optgroup label="Classic presets (no motion)">
-                                    <option value="cinematic-default">Cinematic (default)</option>
-                                    <option value="intimate-fade">Intimate fade</option>
-                                    <option value="scripture-emphasis">Scripture emphasis</option>
-                                    <option value="playful-pop">Playful pop</option>
-                                    <option value="worship-cinematic">Worship cinematic</option>
-                                </optgroup>
-                            </Select>
-                        </Field>
-                        <Field
-                            label="Text layout"
-                            tooltip="Where word captions sit on the frame. Bottom layouts keep text in the safe band above the TikTok/Reels caption strip; staggered alternates left/centre/right per phrase."
-                        >
-                            <Select value={layout} onChange={(e: ChangeEvent<HTMLSelectElement>) => setLayout(e.target.value)}>
-                                {LAYOUT_OPTIONS.map((o) => (
-                                    <option key={o.value} value={o.value}>{o.label}</option>
-                                ))}
-                            </Select>
-                        </Field>
-                        <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
-                            <input
-                                type="checkbox"
-                                checked={depth}
-                                onChange={(e) => setDepth(e.target.checked)}
-                                className="rounded border-white/10 bg-black/50 checked:bg-primary-500"
-                            />
-                            Layered depth (ghost shadow behind each word)
-                        </label>
+                        {/* Extracted so the editor shell and the classic layout
+                            render the SAME panel. Two copies would drift apart the
+                            first time either was touched - that is exactly how the
+                            Timeline's overlays became unreachable in one layout. */}
+                        <RenderCaptionsPanel
+                            lines={lines}
+                            onLinesChange={setLines}
+                            typographyPreset={typographyPreset}
+                            onTypographyPresetChange={setTypographyPreset}
+                            layout={layout}
+                            onLayoutChange={setLayout}
+                            layoutOptions={LAYOUT_OPTIONS}
+                            depth={depth}
+                            onDepthChange={setDepth}
+                            animations={animations}
+                            hasScripts={scripts.length > 0}
+                            onOpenScripts={() => setShowScriptsModal(true)}
+                            onUseLatestScript={() => setLines(buildLinesFromScript(scripts[0]))}
+                            onFormatForVideo={() => {
+                                const next = buildSpeakableLines(lines, { maxLines: 6, maxChars: 72 }).join(String.fromCharCode(10));
+                                setLines(next);
+                                toast.success('Formatted for video');
+                            }}
+                            maxLines={6}
+                        />
                     </Section>
 
                     <Section title="Output & Timing">

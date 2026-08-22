@@ -3,10 +3,25 @@
 // because a control behind a collapsed section is still a feature.
 import fs from 'node:fs';
 
+// The two pages, PLUS the components their controls are being extracted into.
+// Scanning only the pages would report a control as "gone" the moment it moved
+// into a component - which is a refactor, not a lost feature. The check must
+// follow the controls, not the files.
+const ROOT = new URL('../client/src/', import.meta.url);
 const FILES = {
-  render: 'C:/Users/segun/source/repos/biblefuel-studio/client/src/pages/RenderPage.tsx',
-  voice:  'C:/Users/segun/source/repos/biblefuel-studio/client/src/pages/VoiceAudioPage.tsx',
+  render: new URL('pages/RenderPage.tsx', ROOT),
+  voice: new URL('pages/VoiceAudioPage.tsx', ROOT),
 };
+
+// Every component under components/render and components/voice counts too.
+for (const dir of ['components/render', 'components/voice']) {
+  let entries = [];
+  try { entries = fs.readdirSync(new URL(dir + '/', ROOT)); } catch { /* not created yet */ }
+  for (const f of entries) {
+    if (!f.endsWith('.tsx') || f.includes('.test.')) continue;
+    FILES[`${dir}/${f}`] = new URL(`${dir}/${f}`, ROOT);
+  }
+}
 
 const LABEL = /(?:title|label|aria-label|placeholder)="([^"]{2,60})"/g;
 
@@ -16,15 +31,36 @@ function scan(file) {
   const out = [];
   lines.forEach((line, i) => {
     if (!/on(Click|Change|Submit|Drop)=/.test(line)) return;
+    // Search FORWARD first. A control's own text sits on the lines after its
+    // handler; searching backward first stole the previous button's label and
+    // reported this one as missing.
+    const fwd = lines.slice(i, i + 6).join(' ');
     const win = lines.slice(Math.max(0, i - 5), i + 7).join(' ');
 
     let label = '';
-    const explicit = [...win.matchAll(LABEL)];
-    if (explicit.length) label = explicit[0][1];
+    // Own text content, forward only.
+    const own = fwd.match(/>\s*([A-Z][A-Za-z0-9 '&/.,()-]{2,44}?)\s*</);
+    if (own) label = own[1].trim();
+    if (!label) {
+      const explicit = [...win.matchAll(LABEL)];
+      if (explicit.length) label = explicit[0][1];
+    }
 
     if (!label) {
-      const t = win.match(/>\s*\{?\s*'?([A-Z][A-Za-z0-9 '&/.,()-]{2,44})'?\s*\}?\s*</);
+      // Text content anywhere in the window. The previous pattern required the
+      // text to sit between > and < on ONE line, so a button whose label is on
+      // the following line ("Use Latest Script") went unlabelled and looked
+      // like a dropped control.
+      const t = win.match(/>\s*\{?\s*'?([A-Z][A-Za-z0-9 '&/.,()-]{2,44}?)'?\s*\}?\s*</);
       if (t) label = t[1].trim();
+    }
+    if (!label) {
+      // Fall back to the raw lines after the handler, which is where JSX puts
+      // a multi-line label.
+      for (let k = i; k < Math.min(lines.length, i + 6) && !label; k++) {
+        const bare = lines[k].trim();
+        if (/^[A-Z][A-Za-z0-9 '&/.,()-]{2,44}$/.test(bare)) label = bare;
+      }
     }
     if (!label) {
       const setter = win.match(/set([A-Z][A-Za-z0-9]{2,28})\s*\(/);

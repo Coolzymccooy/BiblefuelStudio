@@ -1,203 +1,203 @@
 {
  "render": [
   {
-   "line": 797,
+   "line": 820,
    "label": "(unidentified)"
   },
   {
-   "line": 809,
+   "line": 832,
    "label": "sets ShareVideoPath"
   },
   {
-   "line": 819,
+   "line": 842,
    "label": "Dismiss"
   },
   {
-   "line": 865,
+   "line": 888,
    "label": "sets AutoBackground"
   },
   {
-   "line": 894,
-   "label": "Clear all backgrounds"
+   "line": 917,
+   "label": "Clear all"
   },
   {
-   "line": 935,
+   "line": 958,
    "label": "Move up"
   },
   {
-   "line": 943,
+   "line": 966,
    "label": "Move up"
   },
   {
-   "line": 951,
+   "line": 974,
    "label": "Move down"
   },
   {
-   "line": 960,
+   "line": 983,
    "label": "Trim this clip"
   },
   {
-   "line": 984,
+   "line": 1007,
    "label": "openLibrary()"
   },
   {
-   "line": 1002,
+   "line": 1025,
    "label": "(unidentified)"
   },
   {
-   "line": 1024,
+   "line": 1047,
    "label": "Pick a background video or image"
   },
   {
-   "line": 1029,
-   "label": "Pick a background video or image"
+   "line": 1052,
+   "label": "From library"
   },
   {
-   "line": 1043,
+   "line": 1066,
    "label": "(unidentified)"
   },
   {
-   "line": 1065,
-   "label": "Generate visuals from my script"
-  },
-  {
-   "line": 1069,
+   "line": 1088,
    "label": "Alongside my backgrounds"
   },
   {
-   "line": 1072,
+   "line": 1092,
+   "label": "Alongside my backgrounds"
+  },
+  {
+   "line": 1095,
    "label": "Only AI visuals"
   },
   {
-   "line": 1078,
+   "line": 1101,
    "label": "Captions"
   },
   {
-   "line": 1091,
+   "line": 1114,
    "label": "Enter your script lines here..."
   },
   {
-   "line": 1099,
+   "line": 1122,
    "label": "Format for Video"
   },
   {
-   "line": 1106,
+   "line": 1129,
    "label": "Pick From Scripts"
   },
   {
-   "line": 1115,
+   "line": 1138,
    "label": "Use Latest Script"
   },
   {
-   "line": 1126,
+   "line": 1149,
    "label": "Caption animation"
   },
   {
-   "line": 1149,
+   "line": 1172,
    "label": "Text layout"
   },
   {
-   "line": 1159,
+   "line": 1182,
    "label": "Layered depth (ghost shadow behind each word)"
   },
   {
-   "line": 1169,
+   "line": 1192,
    "label": "Output & Timing"
   },
   {
-   "line": 1176,
+   "line": 1199,
    "label": "Duration"
   },
   {
-   "line": 1199,
+   "line": 1222,
    "label": "Audio"
   },
   {
-   "line": 1213,
+   "line": 1236,
    "label": "Pick a narration track or generate one in Voice & Audio"
   },
   {
-   "line": 1220,
+   "line": 1243,
    "label": "Trim"
   },
   {
-   "line": 1231,
+   "line": 1254,
    "label": "sets AudioPath"
   },
   {
-   "line": 1242,
+   "line": 1265,
    "label": "sets MusicPath"
   },
   {
-   "line": 1256,
+   "line": 1279,
    "label": "Render in background"
   },
   {
-   "line": 1276,
+   "line": 1299,
    "label": "Kinetic captions"
   },
   {
-   "line": 1293,
+   "line": 1316,
    "label": "ElevenLabs voice ID"
   },
   {
-   "line": 1309,
+   "line": 1332,
    "label": "handleRender()"
   },
   {
-   "line": 1318,
+   "line": 1342,
    "label": "handleRender()"
   },
   {
-   "line": 1358,
-   "label": "Completed Jobs"
+   "line": 1383,
+   "label": "Latest Instant Render"
   },
   {
-   "line": 1376,
+   "line": 1401,
    "label": "outputs/video-xyz.mp4"
   },
   {
-   "line": 1386,
+   "line": 1411,
    "label": "Refresh Rendered Videos"
   },
   {
-   "line": 1398,
+   "line": 1423,
    "label": "Copy Caption"
   },
   {
-   "line": 1410,
-   "label": "Auto-post"
+   "line": 1435,
+   "label": "Webhook (Zapier/Make)"
   },
   {
-   "line": 1418,
-   "label": "YouTube (Direct)"
+   "line": 1443,
+   "label": "Select webhook..."
   },
   {
-   "line": 1425,
+   "line": 1450,
    "label": "Select profile..."
   },
   {
-   "line": 1432,
+   "line": 1457,
    "label": "YouTube Private"
   },
   {
-   "line": 1442,
+   "line": 1467,
    "label": "Direct API requires OAuth setup"
   },
   {
-   "line": 1475,
+   "line": 1500,
    "label": "Scripts Library"
   },
   {
-   "line": 1479,
+   "line": 1504,
    "label": "Scripts Library"
   },
   {
-   "line": 1501,
+   "line": 1526,
    "label": "sets Lines"
   },
   {
-   "line": 1513,
+   "line": 1538,
    "label": "(unidentified)"
   }
  ],
@@ -264,7 +264,7 @@
   },
   {
    "line": 1290,
-   "label": "Start Recording"
+   "label": "Stop Recording"
   },
   {
    "line": 1301,
@@ -272,11 +272,11 @@
   },
   {
    "line": 1383,
-   "label": "sets ShowGuide"
+   "label": "Audio Treatment Guide"
   },
   {
    "line": 1412,
-   "label": "Preset"
+   "label": "Clean voice (recommended)"
   },
   {
    "line": 1428,
@@ -308,11 +308,11 @@
   },
   {
    "line": 1525,
-   "label": "Remove Silence"
+   "label": "Yes"
   },
   {
    "line": 1535,
-   "label": "sets ShowAdvanced"
+   "label": "Advanced Effects"
   },
   {
    "line": 1550,
@@ -392,7 +392,7 @@
   },
   {
    "line": 1826,
-   "label": "Use Current Audio Path"
+   "label": "Clone Voice"
   },
   {
    "line": 1851,
@@ -420,15 +420,15 @@
   },
   {
    "line": 1907,
-   "label": "Similarity"
+   "label": "Save Preset"
   },
   {
    "line": 1918,
-   "label": "Narrator|xxxxxxxx\\nSermon|yyyyyyyy\\nzzzzzzzz"
+   "label": "Add IDs"
   },
   {
    "line": 1921,
-   "label": "Narrator|xxxxxxxx\\nSermon|yyyyyyyy\\nzzzzzzzz"
+   "label": "Add IDs"
   },
   {
    "line": 1935,
