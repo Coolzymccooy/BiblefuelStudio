@@ -1,0 +1,116 @@
+// Editor smoke suite - run after ANY editor/timeline change.
+//
+//   npm run smoke:editor
+//
+// Requires: dev server on :5174 and headless Chrome with --remote-debugging-port=9333.
+// Pass a JWT as argv[2].
+//
+// Every check here corresponds to a bug the operator actually reported and that
+// was fixed. They kept regressing because each fix was verified once by hand and
+// nothing re-checked it afterwards. Add a check here whenever you fix an editor
+// bug - that is the whole point of this file.
+// Editor smoke suite. Runs EVERY previously-fixed behaviour in one pass so a
+// regression is caught by running one command, not by the operator finding it.
+import http from 'node:http';
+import { createRequire } from 'node:module';
+const WebSocket = createRequire(import.meta.url)('ws');
+const PORT=9333, TOKEN=process.argv[2]||'', BASE='http://localhost:5174';
+const get=p=>new Promise((res,rej)=>{http.get({host:'127.0.0.1',port:PORT,path:p},r=>{let d='';r.on('data',c=>d+=c);r.on('end',()=>res(JSON.parse(d)));}).on('error',rej);});
+
+(async()=>{
+  const t=(await get('/json/list')).find(x=>x.type==='page');
+  const ws=new WebSocket(t.webSocketDebuggerUrl,{perMessageDeflate:false});
+  let id=0;const pending=new Map();
+  const send=(m,p={})=>new Promise(r=>{const i=++id;pending.set(i,r);ws.send(JSON.stringify({id:i,method:m,params:p}));});
+  ws.on('message',raw=>{const m=JSON.parse(raw);if(m.id&&pending.has(m.id)){pending.get(m.id)(m.result);pending.delete(m.id);}});
+  await new Promise(r=>ws.on('open',r));
+  await send('Page.enable');await send('Runtime.enable');
+  const ev=async e=>(await send('Runtime.evaluate',{returnByValue:true,expression:e})).result.value;
+
+  async function boot(w,h,seed){
+    await send('Emulation.setDeviceMetricsOverride',{width:w,height:h,deviceScaleFactor:1,mobile:h>w});
+    await send('Page.navigate',{url:BASE+'/'});
+    await new Promise(r=>setTimeout(r,2000));
+    await send('Runtime.evaluate',{expression:
+      `localStorage.setItem('BF_TOKEN', ${JSON.stringify(TOKEN)});
+       localStorage.setItem('bf.timeline.editorLayout','true');
+       ${seed||''}`});
+    await send('Page.navigate',{url:BASE+'/app/timeline'});
+    await new Promise(r=>setTimeout(r,5500));
+  }
+  const overlayCount=()=>ev(`[...document.querySelectorAll('div')].filter(d=>{const c=getComputedStyle(d);return c.position==='fixed'&&d.getBoundingClientRect().width>600&&parseInt(c.zIndex||'0',10)>=40;}).length`);
+  const clickText=re=>ev(`(()=>{const b=[...document.querySelectorAll('button')].find(x=>${re}.test(x.textContent.trim()));if(!b)return'MISSING';if(b.disabled)return'DISABLED';b.click();return'ok';})()`);
+
+  const results=[];
+  const check=(name,pass,detail)=>{results.push({name,pass,detail});};
+
+  const SEED_MEDIA=`localStorage.setItem('BF_SCL_SOURCE_PATH', JSON.stringify('uploads/source-video-71cdc98e-decd-4df1-a66e-786458a82923.mp4'));
+     localStorage.setItem('BF_SCL_SOURCE_KIND', JSON.stringify('video'));`;
+
+  // ---- desktop ----
+  await boot(1900,1000,SEED_MEDIA);
+  const shellH=await ev(`(()=>{const s=[...document.querySelectorAll('div')].find(d=>{const c=getComputedStyle(d);return c.position==='fixed'&&c.zIndex==='30'&&d.getBoundingClientRect().width>600;});const r=s&&s.getBoundingClientRect();return r?Math.round(r.height):0;})()`);
+  check('shell fills viewport', shellH===1000, `shell h=${shellH}`);
+  check('topbar chip hides raw filename', (await ev(`(()=>{const e=document.querySelector('span.cursor-help[title]');return e?(/loaded$/i.test(e.textContent.trim())&&/\.mp4$/.test(e.getAttribute('title')||'')):false;})()`))===true);
+
+  const before=await overlayCount();
+  const trimClick=await clickText('/^Trim$/');
+  await new Promise(r=>setTimeout(r,2500));
+  const after=await overlayCount();
+  check('Trim opens an overlay', trimClick==='ok'&&after>before, `${trimClick} ${before}->${after}`);
+  await ev(`(()=>{const b=[...document.querySelectorAll('button')].find(x=>/Cancel|Close/i.test(x.textContent.trim()));if(b)b.click();})()`);
+  await new Promise(r=>setTimeout(r,1200));
+
+  await clickText('/^Background/');
+  await new Promise(r=>setTimeout(r,1200));
+  const b2=await overlayCount();
+  const libClick=await clickText('/From library|^Library$/');
+  await new Promise(r=>setTimeout(r,2500));
+  const a2=await overlayCount();
+  check('From library opens the picker', libClick==='ok'&&a2>b2, `${libClick} ${b2}->${a2}`);
+  await ev(`(()=>{const b=[...document.querySelectorAll('button')].find(x=>x.textContent.trim()==='Done');if(b)b.click();})()`);
+  await new Promise(r=>setTimeout(r,1000));
+
+  await boot(1900,1000,SEED_MEDIA+`localStorage.setItem('BF_SCL_RENDERED_VIDEO', JSON.stringify('stale-from-last-session.mp4'));`);
+  check('stage ignores a stale render', (await ev(`document.querySelectorAll('video').length`))===0);
+
+  await boot(1900,1000,SEED_MEDIA+`localStorage.setItem('BF_SCL_EDITED_LINES', JSON.stringify(['line one','line two']));localStorage.setItem('BF_SCL_KINETIC_CAPTIONS','true');`);
+  await clickText('/^Captions/'); await new Promise(r=>setTimeout(r,1200));
+  check('caption lines visible in editor', (await ev(`/Caption lines/.test(document.body.innerText)`))===true);
+
+  const overlaps=await ev(`(()=>{
+    const b=[...document.querySelectorAll('[aria-label^="Timeline clip"]')].map(e=>{
+      const r=e.getBoundingClientRect();
+      return {x:Math.round(r.x),w:Math.round(r.width),y:Math.round(r.y)};});
+    let bad=0;
+    for(let i=0;i<b.length;i++)for(let j=i+1;j<b.length;j++){
+      const A=b[i],B=b[j];
+      if(Math.abs(A.y-B.y)>6) continue;          // different lane
+      if(Math.abs(A.x-B.x)<2 && Math.abs(A.w-B.w)<2) continue;  // duplicate clip, not a bleed
+      const [L,R]=A.x<=B.x?[A,B]:[B,A];
+      if(L.x+L.w > R.x+4) bad++;   // >4px = real bleed, not sub-pixel rounding
+    }
+    return bad;})()`);
+  check('clips do not overlap', overlaps===0, `${overlaps} overlapping pairs`);
+
+  // ---- portrait ----
+  await boot(390,844,SEED_MEDIA);
+  const railP=await ev(`(()=>{const r=document.querySelector('[aria-label="Editor tools"]');const b=r&&r.getBoundingClientRect();return b?Math.round(b.height):0;})()`);
+  check('portrait rail is a strip', railP>0&&railP<120, `rail h=${railP}`);
+  const panelX=await ev(`(()=>{const p=document.querySelector('[role="tabpanel"]');const b=p&&p.getBoundingClientRect();return b?Math.round(b.x):-1;})()`);
+  check('portrait panel on-screen', panelX===0, `panel x=${panelX}`);
+  check('no horizontal overflow', (await ev(`document.documentElement.scrollWidth<=innerWidth`))===true);
+
+  // ---- landscape ----
+  await boot(844,390,SEED_MEDIA);
+  const mid=await ev(`(()=>{const r=document.querySelector('[aria-label="Editor tools"]');const m=r&&r.parentElement;const b=m&&m.getBoundingClientRect();return b?Math.round(b.height):0;})()`);
+  check('landscape mid row has height', mid>80, `midRow h=${mid}`);
+  check('landscape sticky header holds', (await ev(`(()=>{const c=document.querySelector('div[class*="sticky"][class*="left-0"]');if(!c)return false;let s=c.parentElement;while(s&&getComputedStyle(s).overflowX!=='auto')s=s.parentElement;if(!s)return false;const x0=Math.round(c.getBoundingClientRect().x);s.scrollLeft=200;const moved=s.scrollLeft;const x1=Math.round(c.getBoundingClientRect().x);s.scrollLeft=0;return moved>50&&x0===x1;})()`))===true);
+
+  const pass=results.filter(r=>r.pass).length;
+  console.log('\n=== EDITOR SMOKE ===');
+  for(const r of results) console.log(`${r.pass?'PASS':'FAIL'}  ${r.name}${r.detail?'  ['+r.detail+']':''}`);
+  console.log(`\n${pass}/${results.length} passed`);
+  ws.close();
+  process.exit(pass===results.length?0:1);
+})().catch(e=>{console.error('ERR',e.message);process.exit(2);});

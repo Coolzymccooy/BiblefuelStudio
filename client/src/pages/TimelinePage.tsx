@@ -1054,8 +1054,25 @@ export function TimelinePage() {
     };
 
     const handlePreview = async () => {
-        if (clips.length === 0) {
-            toast.error('Timeline is empty');
+        // Two timeline models coexist on this page: the legacy `clips` array
+        // (what this preview endpoint consumes) and `documentaryProject.tracks`
+        // (what the operator actually SEES in the strip). Guarding on `clips`
+        // alone reported "Timeline is empty" over a visibly full timeline,
+        // because loading source media populates sourceMediaPath without
+        // touching `clips`. Fall back to the source media, which is the same
+        // audio this preview would have used anyway.
+        const previewClips = clips.length > 0
+            ? clips.map((c) => ({
+                path: c.path,
+                startSec: c.startSec != null ? c.startSec : undefined,
+                durationSec: c.durationSec != null ? c.durationSec : undefined,
+            }))
+            : sourceMediaPath
+                ? [{ path: sourceMediaPath, startSec: undefined, durationSec: undefined }]
+                : [];
+
+        if (previewClips.length === 0) {
+            toast.error('Load a sermon or add a clip first');
             return;
         }
         if (backgroundItems.length === 0) {
@@ -1069,11 +1086,7 @@ export function TimelinePage() {
             // Use the FIRST selection so this quick-preview UI keeps working
             // even when the captioned-video flow has 4 backgrounds queued.
             const response = await api.post('/api/audio-adv/timeline-preview', {
-                clips: clips.map((c) => ({
-                    path: c.path,
-                    startSec: c.startSec != null ? c.startSec : undefined,
-                    durationSec: c.durationSec != null ? c.durationSec : undefined,
-                })),
+                clips: previewClips,
                 backgroundPath: backgroundItems[0].id,
                 normalizeLUFS,
                 fades: { inMs: fadeIn, outMs: fadeOut },
