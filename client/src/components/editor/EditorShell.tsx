@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 
 /**
  * CapCut-style editor shell: icon rail, docked panel, stage, bottom strip.
@@ -92,10 +93,25 @@ export function EditorShell({
 
   const activePanel = panels[activeId];
 
-  return (
+  // Portalled to <body> ON PURPOSE. The app's page wrapper carries
+  // `animate-bffade`, whose keyframes animate `transform` with fill-mode
+  // `both` — so a transform stays applied forever. A transformed ancestor
+  // becomes the containing block for fixed descendants, which cost us twice:
+  // `inset-0` stopped resolving against the viewport (the shell computed to
+  // 107px tall and the editor rendered blank), and `left-64` stacked on top
+  // of the wrapper's own centring margin, leaving a ~270px dead gap down the
+  // left. Escaping to <body> makes `fixed` mean the viewport again.
+  return createPortal(
     <div
-      className="fixed inset-0 z-30 flex flex-col overflow-hidden bg-editor-chrome text-editor-text lg:left-64"
-      // lg:left-64 clears the app's 256px (w-64) desktop sidebar so the
+      className="fixed inset-0 z-30 flex h-screen flex-col overflow-hidden bg-editor-chrome text-editor-text lg:left-[240px]"
+      // h-screen is NOT redundant with inset-0. Measured in the live DOM: with
+      // position:fixed, top:0 AND bottom:0, the element still computed to
+      // 106.75px, because it is a flex ITEM of the app's <main> column and that
+      // flex sizing beat the inset stretch. Without an explicit height the
+      // middle row resolved to 0 and the editor rendered blank.
+      // An explicit 240px, not a rem-derived scale step: this app's root
+      // font-size is 15px, so lg:left-60 (15rem) resolved to 225px and left
+      // the shell underlapping the 240px nav. Clears the sidebar so the
       // fixed shell does not sit beneath it.
       // FIXED, not 100vh-in-a-padded-container. Previously the shell was
       // height:100vh inside a wrapper with pt-5/pb-16, so it overflowed by
@@ -109,7 +125,7 @@ export function EditorShell({
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1 shrink-0 basis-0">
+      <div className="flex min-h-0 flex-1 overflow-hidden">
         {/* Icon rail. Horizontal-scrolling strip on phones, where a 72px
             vertical rail would eat a fifth of the screen. */}
         <div
@@ -223,11 +239,15 @@ export function EditorShell({
         // rail/panel/stage row above it to zero — the screen goes blank apart
         // from the two bars. The strip may take at most 40% of the height and
         // never less than 160px, so the editor above it always has room.
-        <div className="min-h-[160px] shrink basis-auto overflow-hidden border-t border-editor-line bg-editor-chrome"
-             style={{ maxHeight: '40%' }}>
+        // shrink-0 with a fixed height starved the row above; `shrink basis-auto`
+        // then let it claim 160px while the shell itself had collapsed. The
+        // strip is now a plain flex item with a hard height ceiling, so the
+        // middle row (flex-1) always gets the remainder.
+        <div className="h-[38%] min-h-[150px] shrink-0 overflow-hidden border-t border-editor-line bg-editor-chrome">
           {strip}
         </div>
       )}
-    </div>
+    </div>,
+    document.body,
   );
 }
