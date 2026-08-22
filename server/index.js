@@ -291,6 +291,17 @@ app.get('/api/health', async (req, res) => {
       ffmpeg: ffmpegVersion,
       platform: process.platform,
       node: process.version
+    },
+    // Which capabilities are actually configured HERE. Booleans only - never
+    // the values. Word-by-word captions need either an ElevenLabs voice (which
+    // returns word timings directly) or OPENAI_API_KEY (Whisper aligns the
+    // audio afterwards). Without both, a scheduled render silently produces
+    // static captions, and there was no way to tell from outside which box was
+    // missing the key.
+    capabilities: {
+      elevenlabs: Boolean(process.env.ELEVENLABS_API_KEY),
+      openai: Boolean(process.env.OPENAI_API_KEY),
+      kineticCaptions: Boolean(process.env.ELEVENLABS_API_KEY || process.env.OPENAI_API_KEY),
     }
   });
 });

@@ -1425,7 +1425,17 @@ async function runCampaignAutoPost(payload, jobId) {
       autoDuck: payload.autoDuck,
     }, jobId);
   } else {
+    // Tell the OPERATOR, not just the console. A scheduled post publishes
+    // unreviewed, so a silent downgrade to static captions is discovered by
+    // watching the finished video on a public feed. Word timings come from the
+    // TTS provider's alignment, and only ElevenLabs returns it - so the honest
+    // message names the cause and the fix.
     console.warn("[CAMPAIGN] no alignment from TTS (Edge-TTS fallback?) — using legacy line captions");
+    safeUpdateJob(jobId, {
+      captionFallback:
+        "Word-by-word captions need an ElevenLabs voice — this schedule's voice returned no word timings, "
+        + "so static captions were used. Set an ElevenLabs voice on the schedule to get animated captions.",
+    });
     const hasGenImage = typeof generatedImage === "string" && generatedImage.trim().length > 0;
     if (hasGenImage) {
       // Route through the advanced renderer (scenes[]) so the image gets
