@@ -41,6 +41,14 @@ const TRACK_ICON: Record<TimelineTrackKind, typeof Film> = {
   effects: Wand2,
 };
 
+// Short clips still need to be clickable, so they get a minimum width - but
+// only up to the room actually available before the next clip starts.
+const MIN_CLIP_WIDTH_PCT = 5;
+
+// Below this width a clip cannot hold its Mute + delete controls without them
+// overflowing the block. Selecting the clip reveals them regardless.
+const CONTROLS_MIN_WIDTH_PCT = 4;
+
 const EMPTY_HINT: Record<TimelineTrackKind, string> = {
   video: 'Inserted videos appear here in sequence',
   broll: 'Add images, uploaded cutaways, or configured AI B-roll here',
@@ -240,7 +248,26 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                               const proxy = proxyLabel(asset);
                               const previewMode = previewModeLabel(asset);
                               const leftPct = Math.max(0, Math.min(96, (clip.startSec / target) * 100));
-                              const widthPct = Math.max(5, Math.min(100 - leftPct, (clip.durationSec / target) * 100));
+                              // The 5% minimum width used to be unconditional, which
+                              // made short clips WIDER than their own slot: three 5s
+                              // images on a 270s timeline start 1.85% apart but were
+                              // each drawn 5% wide, so every clip overlapped the next
+                              // by more than half and the lane looked like one stack
+                              // of Mute buttons. Clamp the floor to the gap before the
+                              // next clip, so a short clip stays visible without
+                              // running over its neighbour.
+                              const trueWidthPct = (clip.durationSec / target) * 100;
+                              const nextStartPct = track.clips
+                                .filter((other) => other.startSec > clip.startSec)
+                                .reduce<number | null>((soonest, other) => {
+                                  const pct = (other.startSec / target) * 100;
+                                  return soonest === null || pct < soonest ? pct : soonest;
+                                }, null);
+                              const roomPct = (nextStartPct ?? 100) - leftPct;
+                              const widthPct = Math.max(
+                                Math.min(MIN_CLIP_WIDTH_PCT, roomPct),
+                                Math.min(100 - leftPct, trueWidthPct),
+                              );
                               const selected = selectedClipId === clip.id;
                               return (
                                 <div
@@ -256,7 +283,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                                   style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
                                   title={`${asset?.label || clip.assetId} · ${sourceLabel(asset)} · ${Math.round(clip.durationSec)}s · ${previewMode}`}
                                 >
-                                  <div className="flex items-center justify-between gap-1">
+                                  <div className="flex h-full items-center gap-1 overflow-hidden">
                                     <button
                                       type="button"
                                       onClick={() => setSelectedClipId(clip.id)}
@@ -270,7 +297,13 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                                         <p className="truncate text-emerald-100/75">{sourceLabel(asset)} · {Math.round(clip.durationSec)}s{proxy ? ` · ${proxy}` : ''}</p>
                                       )}
                                     </button>
-                                    <div className="flex shrink-0 gap-1">
+                                    {/* Controls need ~70px. On a clip narrower
+                                        than that they were shrink-0, so they spilled
+                                        OUTSIDE the block and three short clips read as
+                                        one stack of Mute buttons. Below the threshold
+                                        the clip is still selectable and the toolbar
+                                        above the lanes acts on the selection. */}
+                                    <div className={`flex shrink-0 gap-1 ${widthPct < CONTROLS_MIN_WIDTH_PCT && !selected ? 'hidden' : ''}`}>
                                       <button
                                         type="button"
                                         onClick={(e) => {
