@@ -155,8 +155,12 @@ const get=p=>new Promise((res,rej)=>{http.get({host:'127.0.0.1',port:PORT,path:p
     (await ev(`[...document.querySelectorAll('input[type=file]')].some(i=>i.multiple&&/jpg|png|mp4/.test(i.accept||''))`))===true);
   check('backgrounds can be pushed to the timeline in bulk',
     (await ev(`[...document.querySelectorAll('button')].some(b=>/Add all to timeline/i.test(b.textContent))`))===true);
-  check('the timeline renderer is reachable from the editor',
-    (await ev(`[...document.querySelectorAll('button')].some(b=>/Render timeline/i.test(b.textContent))`))===true);
+  // There is ONE Render button now; the timeline decides which renderer runs.
+  // Asserting on a second button would re-encode the split the operator asked
+  // us to remove. What matters is that Render exists and is enabled.
+  check('a single Render button is present and enabled',
+    (await ev(`(()=>{const b=[...document.querySelectorAll('button')].filter(x=>/^Render$/i.test(x.textContent.trim()));
+       return b.length===1 && !b[0].disabled;})()`))===true);
   check('preview resolves media through the media base (no bare storage keys)',
     (await ev(`[...document.querySelectorAll('[data-testid="live-preview-canvas"] img, [data-testid="live-preview-canvas"] video')]
        .every(e=>{const s=e.getAttribute('src')||'';

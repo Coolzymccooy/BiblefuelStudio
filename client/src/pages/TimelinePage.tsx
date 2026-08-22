@@ -1168,6 +1168,22 @@ export function TimelinePage() {
      * multi-select list; this is the missing bridge from that list to the
      * timeline.
      */
+    /**
+     * Does the timeline carry anything the captioned-video pipeline cannot
+     * render? That pipeline knows only source media, captions and backgrounds,
+     * so B-roll, extra footage, voice-over, music and effects would silently
+     * vanish from its output - which is exactly what the operator hit.
+     */
+    const timelineHasOwnContent = Boolean(documentaryProject?.tracks?.some(
+        (t) => t.kind !== 'captions' && (t.clips?.length || 0) > 0,
+    ));
+
+    /** One Render button; the timeline decides which renderer is correct. */
+    const handleRenderFromEditor = () => {
+        if (timelineHasOwnContent) return void handleRenderDocumentaryTimeline();
+        return void handleRenderCaptionedVideo();
+    };
+
     const handleInsertBackgroundsIntoTimeline = () => {
         if (!documentaryProject) {
             toast.error('Create a documentary timeline first');
@@ -1851,29 +1867,24 @@ export function TimelinePage() {
                         <Button variant="secondary" className="h-8 text-xs" onClick={() => setEditorLayout(false)}>
                             Classic view
                         </Button>
-                        {/* TWO renderers exist and they are not interchangeable.
-                            "Render" is the captioned-video pipeline: source media
-                            + captions + backgrounds. It knows nothing about the
-                            timeline's tracks, so B-roll, images and EFFECTS are
-                            silently absent from its output - which is exactly
-                            what the operator hit. "Render timeline" drives
-                            proofRenderer, which composes every track including
-                            effects. Both are reachable from the editor now, and
-                            the labels say which is which. */}
-                        <Button className="h-8 text-xs" onClick={handleRenderCaptionedVideo} disabled={isRenderingVideo}
-                            title="Source media + captions + backgrounds. Does not include timeline tracks or effects.">
-                            {isRenderingVideo ? 'Rendering…' : 'Render'}
+                        {/* ONE Render button. Two renderers exist, but which one
+                            is correct is decidable from the timeline itself, so
+                            making the operator choose was pushing our
+                            implementation detail onto them - and choosing wrong
+                            silently dropped B-roll, images and effects from the
+                            output. When the timeline has content beyond the
+                            source media, use the renderer that composes every
+                            track; otherwise the captioned-video pipeline. */}
+                        <Button
+                            className="h-8 text-xs"
+                            onClick={handleRenderFromEditor}
+                            disabled={isRenderingVideo || isRenderingDocumentaryTimeline}
+                            title={timelineHasOwnContent
+                                ? 'Composes every timeline track: footage, B-roll, voice-over, music, captions and effects.'
+                                : 'Renders your source media with captions and backgrounds.'}
+                        >
+                            {isRenderingVideo || isRenderingDocumentaryTimeline ? 'Rendering…' : 'Render'}
                         </Button>
-                        {documentaryProject && (
-                            <Button
-                                className="h-8 text-xs"
-                                onClick={handleRenderDocumentaryTimeline}
-                                disabled={isRenderingDocumentaryTimeline}
-                                title="Composes every timeline track: real footage, B-roll, voice-over, music, captions and effects."
-                            >
-                                {isRenderingDocumentaryTimeline ? 'Rendering timeline…' : 'Render timeline'}
-                            </Button>
-                        )}
                     </>
                 )}
                 tools={[

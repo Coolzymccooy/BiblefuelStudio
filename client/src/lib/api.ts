@@ -91,7 +91,18 @@ class ApiClient {
 
     /** Absolute URL for a file under /outputs, served from the media origin. */
     mediaUrl(fileNameOrPath: string | undefined | null): string {
-        const name = String(fileNameOrPath || '').split(/[\\/]/).pop() || '';
+        const raw = String(fileNameOrPath || '').trim();
+        if (!raw) return '';
+        // Already a URL: hand it back. Mangling a Veo/Pexels link into
+        // /outputs/<basename> pointed at a file that does not exist locally.
+        if (/^(https?:|blob:|data:)/i.test(raw)) return raw;
+        // Already served from /outputs: keep the path INTACT. The timeline
+        // renderer writes to /outputs/timeline/<file>.mp4, and stripping to
+        // the basename produced /outputs/<file>.mp4 - a 404, so a render that
+        // had completed successfully played nothing.
+        if (raw.startsWith('/outputs/')) return `${this.mediaBaseUrl}${raw}`;
+        // Anything else is a storage key; the server serves it by basename.
+        const name = raw.split(/[\\/]/).pop() || '';
         if (!name) return '';
         return `${this.mediaBaseUrl}/outputs/${name}`;
     }
