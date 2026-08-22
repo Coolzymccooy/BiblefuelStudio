@@ -39,6 +39,10 @@ import { MusicPicker } from '../components/MusicPicker';
 import { BackgroundLibraryModal } from '../components/BackgroundLibraryModal';
 import { SourceMediaPanel } from '../components/timeline/SourceMediaPanel';
 import { CaptionStylePanel } from '../components/timeline/CaptionStylePanel';
+import { ScenesPanel } from '../components/timeline/ScenesPanel';
+import { addEffectToScene, removeEffectClip } from '../lib/timelineEffects';
+import { syncSidecarTracks } from '../lib/timelineTrackSync';
+import type { TimelineEffectKind } from '../lib/timelineProject';
 import { MasteringPanel } from '../components/timeline/MasteringPanel';
 import { RecentAudioPanel } from '../components/timeline/RecentAudioPanel';
 import { TranscriptActions } from '../components/timeline/TranscriptActions';
@@ -196,6 +200,11 @@ interface RenderHistoryItem {
 export function TimelinePage() {
     const [clips, setClips] = useState<TimelineClip[]>([]);
     const [documentaryProject, setDocumentaryProject] = useState<TimelineProject | null>(null);
+    // Scene selection is page-level state: the Scenes panel and the scene
+    // blocks in the strip are separate components that must agree on it.
+    const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null);
+    // Which option each effect is configured with, e.g. { grade: 'cinematic' }.
+    const [effectOption, setEffectOption] = useState<Partial<Record<TimelineEffectKind, string>>>({});
     const [isRequestingVeoBroll, setIsRequestingVeoBroll] = useState(false);
     const [isRenderingDocumentaryTimeline, setIsRenderingDocumentaryTimeline] = useState(false);
     // What the last proof render included / omitted, straight from the server.
@@ -1227,6 +1236,40 @@ export function TimelinePage() {
         }
     };
 
+    // Effects are computed by a PURE helper, then set as a separate statement.
+    // Never inside a state updater: React invokes updaters twice under
+    // StrictMode, which would add the effect twice.
+    // Mirror the sidecar state onto the timeline's own lanes, so the Music bed
+    // and Captions lanes stop reading "0 clips" when the operator has added
+    // both. syncSidecarTracks is pure and returns the SAME reference when
+    // nothing changed, which is what stops this effect from looping.
+    useEffect(() => {
+        if (!documentaryProject) return;
+        const next = syncSidecarTracks(documentaryProject, {
+            musicPaths,
+            captionLines: editedLines,
+        });
+        if (next !== documentaryProject) setDocumentaryProject(next);
+    }, [documentaryProject, musicPaths, editedLines]);
+
+    const handleAddEffect = (sceneId: string, effect: TimelineEffectKind, option?: string) => {
+        if (!documentaryProject) return;
+        const options = option
+            ? { [effect === 'transition' ? 'style' : effect === 'grade' ? 'look' : 'colour']: option }
+            : undefined;
+        const next = addEffectToScene(documentaryProject, { sceneId, effect, options });
+        if (next === documentaryProject) return;   // unknown scene; nothing to do
+        setDocumentaryProject(next);
+        toast.success(`${effect} added`);
+    };
+
+    const handleRemoveEffect = (clipId: string) => {
+        if (!documentaryProject) return;
+        const next = removeEffectClip(documentaryProject, clipId);
+        if (next === documentaryProject) return;
+        setDocumentaryProject(next);
+    };
+
     const handleRequestVeoBroll = async (request: { prompt: string; aspect: '16:9' | '9:16' | '1:1'; durationSec: number; targetTrackKind: 'broll'; startSec: number }) => {
         if (!documentaryProject || isRequestingVeoBroll) return;
         const toastId = toast.loading('Requesting Veo B-roll…');
@@ -1867,17 +1910,18 @@ export function TimelinePage() {
                             onUseAsMusicBed={useAsMusicBed}
                         />
                     ),
-                    scenes: documentaryProject ? (
-                        <div className="space-y-2">
-                            {documentaryProject.scenes.map((scene) => (
-                                <div key={scene.id} className="rounded-lg border border-editor-line p-2">
-                                    <p className="text-xs font-semibold text-editor-text">{scene.label}</p>
-                                    <p className="mt-1 text-[10px] text-editor-dim">{scene.voiceoverBrief}</p>
-                                </div>
-                            ))}
-                        </div>
-                    ) : (
-                        <p className="text-[11px] text-editor-faint">Create a documentary timeline first.</p>
+                    scenes: (
+                        <ScenesPanel
+                            project={documentaryProject}
+                            selectedSceneId={selectedSceneId}
+                            onSelectScene={setSelectedSceneId}
+                            onAddEffect={handleAddEffect}
+                            onRemoveEffect={handleRemoveEffect}
+                            effectOption={effectOption}
+                            onEffectOptionChange={(fx, value) =>
+                                setEffectOption((prev) => ({ ...prev, [fx]: value }))
+                            }
+                        />
                     ),
                     background: videoBackgroundContent,
                     renders: (
@@ -2003,6 +2047,8 @@ export function TimelinePage() {
                             project={documentaryProject}
                             onProjectChange={setDocumentaryProject}
                             onRequestVeoBroll={handleRequestVeoBroll}
+                            selectedSceneId={selectedSceneId}
+                            onSelectScene={setSelectedSceneId}
                         />
                     </div>
                 ) : undefined}
@@ -2172,6 +2218,8 @@ export function TimelinePage() {
                     project={documentaryProject}
                     onProjectChange={setDocumentaryProject}
                     onRequestVeoBroll={handleRequestVeoBroll}
+                    selectedSceneId={selectedSceneId}
+                    onSelectScene={setSelectedSceneId}
                 />
             </>
             )}

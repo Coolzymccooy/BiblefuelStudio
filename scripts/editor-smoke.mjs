@@ -39,7 +39,21 @@ const get=p=>new Promise((res,rej)=>{http.get({host:'127.0.0.1',port:PORT,path:p
     await new Promise(r=>setTimeout(r,5500));
   }
   const overlayCount=()=>ev(`[...document.querySelectorAll('div')].filter(d=>{const c=getComputedStyle(d);return c.position==='fixed'&&d.getBoundingClientRect().width>600&&parseInt(c.zIndex||'0',10)>=40;}).length`);
+  // Rail items are role="tab" and carry a live count ("Renders 12"), so match
+  // on a prefix rather than exact button text.
+  const clickTool=name=>ev(`(()=>{const n=${JSON.stringify(name)};const b=[...document.querySelectorAll('[role="tab"]')].find(x=>x.textContent.trim().startsWith(n));return b?(b.click(),'ok'):'MISSING';})()`);
   const clickText=re=>ev(`(()=>{const b=[...document.querySelectorAll('button')].find(x=>${re}.test(x.textContent.trim()));if(!b)return'MISSING';if(b.disabled)return'DISABLED';b.click();return'ok';})()`);
+
+  // Poll for a condition instead of sleeping a fixed amount: fixed sleeps
+  // raced the React re-render and produced false FAILs.
+  const waitFor=async(expr,timeoutMs=6000)=>{
+    const deadline=Date.now()+timeoutMs;
+    while(Date.now()<deadline){
+      if(await ev(expr)) return true;
+      await new Promise(r=>setTimeout(r,200));
+    }
+    return false;
+  };
 
   const results=[];
   const check=(name,pass,detail)=>{results.push({name,pass,detail});};
@@ -61,7 +75,7 @@ const get=p=>new Promise((res,rej)=>{http.get({host:'127.0.0.1',port:PORT,path:p
   await ev(`(()=>{const b=[...document.querySelectorAll('button')].find(x=>/Cancel|Close/i.test(x.textContent.trim()));if(b)b.click();})()`);
   await new Promise(r=>setTimeout(r,1200));
 
-  await clickText('/^Background/');
+  await clickTool('Background');
   await new Promise(r=>setTimeout(r,1200));
   const b2=await overlayCount();
   const libClick=await clickText('/From library|^Library$/');
@@ -75,7 +89,7 @@ const get=p=>new Promise((res,rej)=>{http.get({host:'127.0.0.1',port:PORT,path:p
   check('stage ignores a stale render', (await ev(`document.querySelectorAll('video').length`))===0);
 
   await boot(1900,1000,SEED_MEDIA+`localStorage.setItem('BF_SCL_EDITED_LINES', JSON.stringify(['line one','line two']));localStorage.setItem('BF_SCL_KINETIC_CAPTIONS','true');`);
-  await clickText('/^Captions/'); await new Promise(r=>setTimeout(r,1200));
+  await clickTool('Captions'); await new Promise(r=>setTimeout(r,1200));
   check('caption lines visible in editor', (await ev(`/Caption lines/.test(document.body.innerText)`))===true);
 
   const overlaps=await ev(`(()=>{
@@ -92,6 +106,24 @@ const get=p=>new Promise((res,rej)=>{http.get({host:'127.0.0.1',port:PORT,path:p
     }
     return bad;})()`);
   check('clips do not overlap', overlaps===0, `${overlaps} overlapping pairs`);
+
+  // ---- scenes + effects (built after the operator reported them dead) ----
+  await boot(1900,1000,SEED_MEDIA);
+  await clickTool('Scenes');
+  // Wait for the PANEL to actually swap; a fixed sleep raced the re-render and
+  // reported all three of these as broken while they worked by hand.
+  await waitFor(`/Opening \/ Arrival/.test((document.querySelector('[role="tabpanel"]')||{}).innerText||'')`);
+  const sceneClick=await ev(`(()=>{const b=[...document.querySelectorAll('[role="tabpanel"] button')].find(x=>/Opening/.test(x.textContent));return b?(b.click(),'ok'):'MISSING';})()`);
+  await waitFor(`document.querySelectorAll('[aria-pressed="true"]').length>0`);
+  check('scene is selectable', sceneClick==='ok'&&(await ev(`document.querySelectorAll('[aria-pressed="true"]').length`))>0);
+  check('effect controls appear on selection', (await ev(`[...document.querySelectorAll('button')].some(b=>b.textContent.trim()==='Glow')`))===true);
+
+  const fxBefore=await ev(`document.querySelectorAll('[aria-label^="Remove "]').length`);
+  await ev(`(()=>{const b=[...document.querySelectorAll('button')].find(x=>x.textContent.trim()==='Grade');if(b)b.click();})()`);
+  await waitFor(`document.querySelectorAll('[aria-label^="Remove "]').length>${fxBefore}`);
+  const fxAfter=await ev(`document.querySelectorAll('[aria-label^="Remove "]').length`);
+  check('adding an effect lands on the scene', fxAfter>fxBefore, `${fxBefore}->${fxAfter}`);
+  check('effect reaches the render payload', (await ev(`(()=>{const raw=localStorage.getItem('BF_SCL_DOC_PROJECT');if(!raw)return true;const p=JSON.parse(raw);const t=(p.tracks||[]).find(x=>x.kind==='effects');return !t||t.clips.every(c=>!!c.effect);})()`))===true);
 
   // ---- portrait ----
   await boot(390,844,SEED_MEDIA);

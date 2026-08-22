@@ -4,6 +4,30 @@ export type TimelineAssetKind = 'video' | 'audio' | 'image' | 'caption' | 'effec
 export type TimelineAssetSource = 'upload' | 'library' | 'veo' | 'imagegen' | 'chatterbox' | 'fish' | 'system';
 export type TimelineFit = 'cover' | 'contain' | 'face-safe';
 
+/**
+ * Effects the RENDERER can compose. This list mirrors SUPPORTED_EFFECTS in
+ * server/src/lib/timelineRender/effects.js — the backend has been able to
+ * render all four for some time, but nothing in the UI could create one, so
+ * the Effects lane was permanently empty.
+ */
+export type TimelineEffectKind = 'transition' | 'glow' | 'grade' | 'lightleak';
+
+export const TRANSITION_STYLE_IDS = [
+  'fade', 'dissolve', 'wipeleft', 'wiperight', 'slideup', 'slidedown', 'circleopen', 'radial',
+] as const;
+export const GRADE_LOOK_IDS = ['warm', 'cool', 'cinematic', 'vivid'] as const;
+export const LIGHTLEAK_COLOUR_IDS = ['warm', 'cool', 'gold'] as const;
+
+/** Per-effect options. Keys match what the server reads off `options`. */
+export interface TimelineEffectOptions {
+  style?: (typeof TRANSITION_STYLE_IDS)[number];
+  look?: (typeof GRADE_LOOK_IDS)[number];
+  colour?: (typeof LIGHTLEAK_COLOUR_IDS)[number];
+  intensity?: number;
+  radius?: number;
+  angle?: number;
+}
+
 export interface TimelineAsset {
   id: string;
   kind: TimelineAssetKind;
@@ -42,6 +66,9 @@ export interface TimelineClip {
   transitionIn?: TimelineTransition;
   transitionOut?: TimelineTransition;
   muted?: boolean;
+  /** Set on clips of the `effects` track. Sent to the renderer as-is. */
+  effect?: TimelineEffectKind;
+  effectOptions?: TimelineEffectOptions;
 }
 
 export interface TimelineTrack {

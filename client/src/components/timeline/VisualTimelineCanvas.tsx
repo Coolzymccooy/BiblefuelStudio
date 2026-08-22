@@ -18,6 +18,14 @@ interface VisualTimelineCanvasProps {
   onProjectChange?: (project: TimelineProject) => void;
   onRequestVeoBroll?: (request: VeoBrollRequest) => void;
   /**
+   * Scene selection is owned by the PAGE, not by this canvas: the Scenes panel
+   * in the rail and the scene blocks here are separate components that must
+   * agree on which scene is active. Scene blocks were previously draggable but
+   * had no click handler at all, so scenes could not be selected anywhere.
+   */
+  selectedSceneId?: string | null;
+  onSelectScene?: (sceneId: string) => void;
+  /**
    * Compact mode for the editor shell's bottom strip.
    *
    * The full layout spends ~180px on chrome before the first lane renders: a
@@ -140,7 +148,7 @@ function buildVeoPrompt(project: TimelineProject): VeoBrollRequest {
   };
 }
 
-export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBroll, compact = false }: VisualTimelineCanvasProps) {
+export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBroll, compact = false, selectedSceneId = null, onSelectScene }: VisualTimelineCanvasProps) {
   const target = Math.max(1, project.targetDurationSec);
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   const selection = useMemo(() => findClip(project, selectedClipId), [project, selectedClipId]);
@@ -201,11 +209,18 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                 {project.scenes.map((scene) => {
                   const widthPct = Math.max(8, (scene.targetDurationSec / target) * 100);
                   return (
-                    <div
+                    <button
                       key={scene.id}
+                      type="button"
                       aria-label={`Scene block: ${scene.label}`}
+                      aria-pressed={selectedSceneId === scene.id}
                       draggable
-                      className={`group relative min-w-24 rounded-lg border border-primary-500/25 bg-gradient-to-br from-primary-500/15 to-amber-500/10 ${d.lanePad} shadow-inner outline-none transition hover:border-primary-300/60`}
+                      onClick={() => onSelectScene?.(scene.id)}
+                      className={`group relative min-w-24 rounded-lg border text-left ${d.lanePad} shadow-inner outline-none transition ${
+                        selectedSceneId === scene.id
+                          ? 'border-primary-300 bg-gradient-to-br from-primary-500/35 to-amber-500/25 ring-2 ring-primary-300/40'
+                          : 'border-primary-500/25 bg-gradient-to-br from-primary-500/15 to-amber-500/10 hover:border-primary-300/60'
+                      }`}
                       style={{ flexBasis: `${widthPct}%` }}
                       title={scene.voiceoverBrief}
                     >
@@ -214,7 +229,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                       <p className="mt-1 text-[10px] text-content-tertiary">{formatDuration(scene.startSec)} · {Math.round(scene.targetDurationSec)}s</p>
                     )}
                       {!compact && <div className="absolute inset-x-2 bottom-2 h-1 rounded-full bg-primary-400/30" />}
-                    </div>
+                    </button>
                   );
                 })}
               </div>
