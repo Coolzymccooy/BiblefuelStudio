@@ -1533,6 +1533,52 @@ export function TimelinePage() {
     // Preview, Trim, Share and background-Library buttons all set their state
     // correctly and then nothing rendered it, so every one of them looked dead
     // on click. Anything mounted for one layout must be mounted for both.
+    // The transcript's editable caption lines. Shared by both layouts: this
+    // rendered ONLY in the classic branch, after the editor branch's early
+    // return, so transcribing in editor mode gave a success toast and no
+    // visible words - no way to tell it had worked.
+    const captionLinesEditor = (
+        kineticCaptions && editedLines.length > 0 && (
+            <div className="mt-1">
+                <button
+                    type="button"
+                    onClick={() => setShowCaptionLines((v) => !v)}
+                    aria-expanded={showCaptionLines}
+                    className="flex w-full items-center gap-2 py-1 text-xs text-gray-400 hover:text-gray-200"
+                >
+                    <ChevronDown size={14} className={`shrink-0 transition-transform ${showCaptionLines ? 'rotate-180' : ''}`} />
+                    <span>Caption lines ({editedLines.length})</span>
+                    <span className="ml-auto text-[0.6875rem] text-gray-500">tap to {showCaptionLines ? 'collapse' : 'edit'}</span>
+                </button>
+                {showCaptionLines && (
+                    <div className="mt-2 space-y-2 max-h-96 overflow-y-auto pr-2">
+                        {editedLines.map((line, idx) => (
+                            <input
+                                key={idx}
+                                type="text"
+                                value={line}
+                                onChange={(e) => {
+                                    const next = [...editedLines];
+                                    next[idx] = e.target.value;
+                                    setEditedLines(next);
+                                }}
+                                onBlur={() => {
+                                    const clean = cleanCaptionLine(editedLines[idx]);
+                                    if (clean !== editedLines[idx]) {
+                                        const next = [...editedLines];
+                                        next[idx] = clean;
+                                        setEditedLines(next.filter(Boolean));
+                                    }
+                                }}
+                                className="w-full bg-white/[0.03] border border-white/10 rounded-lg px-3 py-2 text-sm text-gray-200 focus:border-primary-500/40 focus:outline-none"
+                            />
+                        ))}
+                    </div>
+                )}
+            </div>
+        )
+    );
+
     const overlays = (
         <>
             {/* Library Picker Modal — multi-select up to MAX_BACKGROUNDS.
@@ -1753,6 +1799,7 @@ export function TimelinePage() {
                                 depth={depth}
                                 onDepthChange={setDepth}
                             />
+                            {captionLinesEditor}
                         </div>
                     ),
                     music: (
