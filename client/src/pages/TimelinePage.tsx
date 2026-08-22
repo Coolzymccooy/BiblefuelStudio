@@ -1771,7 +1771,7 @@ export function TimelinePage() {
                     // claim its share of the viewport so all six lanes are
                     // visible at once. Compact mode folds ~180px of header
                     // chrome into one toolbar row to make that fit.
-                    <div className="h-[340px]">
+                    <div className="h-full">
                         <VisualTimelineCanvas
                             compact
                             project={documentaryProject}

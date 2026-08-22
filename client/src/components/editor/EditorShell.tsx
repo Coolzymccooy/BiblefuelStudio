@@ -109,7 +109,7 @@ export function EditorShell({
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1 shrink-0 basis-0">
         {/* Icon rail. Horizontal-scrolling strip on phones, where a 72px
             vertical rail would eat a fifth of the screen. */}
         <div
@@ -218,7 +218,13 @@ export function EditorShell({
       )}
 
       {strip && (
-        <div className="shrink-0 border-t border-editor-line bg-editor-chrome">
+        // basis/max-h rather than shrink-0. A shrink-0 strip at a fixed height
+        // wins the flex fight outright on a short viewport, collapsing the
+        // rail/panel/stage row above it to zero — the screen goes blank apart
+        // from the two bars. The strip may take at most 40% of the height and
+        // never less than 160px, so the editor above it always has room.
+        <div className="min-h-[160px] shrink basis-auto overflow-hidden border-t border-editor-line bg-editor-chrome"
+             style={{ maxHeight: '40%' }}>
           {strip}
         </div>
       )}
