@@ -22,8 +22,12 @@ import type {
 /** Longest a transition may run. It joins two scenes, so it must stay short. */
 const MAX_TRANSITION_SEC = 1;
 const DEFAULT_TRANSITION_SEC = 0.6;
-/** A look/glow that runs the whole scene is usually wrong; start modest. */
-const DEFAULT_EFFECT_SEC = 4;
+/**
+ * An effect attached to a scene applies to THAT SCENE. The previous 4s default
+ * tinted a sixth of a 25s shot, and the operator reported seeing no effect at
+ * all - reasonably, since four seconds of a subtle grade is invisible in a
+ * finished video. A caller can still pass a shorter durationSec.
+ */
 
 /**
  * Per-effect defaults, chosen to match the server's own fallbacks so an effect
@@ -84,7 +88,7 @@ export function addEffectToScene(
   // an effect running past its scene would bleed into the next one.
   const durationSec = isTransition
     ? Math.min(MAX_TRANSITION_SEC, input.durationSec ?? DEFAULT_TRANSITION_SEC)
-    : Math.min(scene.targetDurationSec, input.durationSec ?? DEFAULT_EFFECT_SEC);
+    : Math.min(scene.targetDurationSec, input.durationSec ?? scene.targetDurationSec);
   const startSec = isTransition
     ? Math.max(0, scene.startSec - durationSec / 2)
     : scene.startSec;

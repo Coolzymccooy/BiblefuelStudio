@@ -29,15 +29,24 @@ export const TRANSITION_STYLES = Object.freeze({
 });
 
 /** Colour-grade looks. Values are eq/curve parameters, not presets by name. */
+/**
+ * Colour looks, strengthened so they READ on a finished video.
+ *
+ * The originals moved contrast/saturation by ~6-12%, which is a colourist's
+ * nudge - real, but invisible to someone checking whether their effect
+ * applied. The operator reported "no special effect" against a warm grade
+ * doing exactly what it was told. These are roughly doubled: still tasteful
+ * for worship footage, but unmistakably present.
+ */
 export const GRADE_LOOKS = Object.freeze({
-  // Warm, slightly lifted — the default "worship" look.
-  warm: { contrast: 1.06, brightness: 0.02, saturation: 1.12, gamma_r: 1.05, gamma_b: 0.96 },
+  // Warm, lifted — the default "worship" look.
+  warm: { contrast: 1.12, brightness: 0.04, saturation: 1.28, gamma_r: 1.12, gamma_b: 0.9 },
   // Cool and clean, for testimony/interview segments.
-  cool: { contrast: 1.08, brightness: 0.0, saturation: 0.95, gamma_r: 0.97, gamma_b: 1.06 },
-  // Filmic: crushed a touch, desaturated highlights.
-  cinematic: { contrast: 1.15, brightness: -0.02, saturation: 0.92, gamma_r: 1.02, gamma_b: 1.02 },
+  cool: { contrast: 1.16, brightness: 0.0, saturation: 0.86, gamma_r: 0.92, gamma_b: 1.14 },
+  // Filmic: crushed blacks, desaturated highlights.
+  cinematic: { contrast: 1.32, brightness: -0.04, saturation: 0.78, gamma_r: 1.05, gamma_b: 1.06 },
   // Punchy for praise/dance sections.
-  vivid: { contrast: 1.12, brightness: 0.03, saturation: 1.3, gamma_r: 1.0, gamma_b: 1.0 },
+  vivid: { contrast: 1.24, brightness: 0.05, saturation: 1.65, gamma_r: 1.0, gamma_b: 1.0 },
 });
 
 const DEFAULT_TRANSITION_SEC = 0.6;

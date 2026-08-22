@@ -59,6 +59,17 @@ describe('addEffectToScene', () => {
     expect(clip.startSec).toBeLessThanOrEqual(scene.startSec);
   });
 
+  it('a non-transition effect covers its WHOLE scene by default', () => {
+    // A 4s default on a 25s scene meant a grade tinted a sixth of the shot and
+    // the operator reported seeing no effect at all. An effect attached to a
+    // scene should apply to that scene.
+    const p = project();
+    const scene = p.scenes[0];
+    const next = addEffectToScene(p, { sceneId: scene.id, effect: 'grade' });
+    const clip = next.tracks.find((t) => t.kind === 'effects')!.clips[0];
+    expect(clip.durationSec).toBe(scene.targetDurationSec);
+  });
+
   it('clamps a non-transition effect to the scene length', () => {
     const p = project();
     const scene = p.scenes[0];
