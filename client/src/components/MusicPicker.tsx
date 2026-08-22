@@ -1,5 +1,5 @@
-import { useRef, useState } from 'react';
-import { Music, X, Loader2, Play } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Music, X, Loader2, Play, Square } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { api } from '../lib/api';
 import { storyApi } from '../lib/storyApi';
@@ -25,6 +25,10 @@ export function MusicPicker({ value, onChange, busy, multiple = false }: MusicPi
   const { data: tracks } = useMusicLibrary();
   const inputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  // Which track is currently previewing. Without this the button could only
+  // ever start playback: clicking the same track again just built a second
+  // Audio element, so a preview could not be stopped.
+  const [playingId, setPlayingId] = useState<string | null>(null);
   const autoDuck = value.autoDuck ?? true;
   const [isUploading, setIsUploading] = useState(false);
   const defaultTrack = (tracks || []).find((t) => t.default);
@@ -57,14 +61,36 @@ export function MusicPicker({ value, onChange, busy, multiple = false }: MusicPi
     finally { setIsUploading(false); }
   };
 
+  const stopPreview = () => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      audioRef.current = null;
+    }
+    setPlayingId(null);
+  };
+
+  // Toggle, not play-only. Clicking the playing track stops it; clicking a
+  // different one switches to it.
   const preview = (id: string) => {
+    if (playingId === id) { stopPreview(); return; }
     const t = (tracks || []).find((x) => x.id === id);
     if (!t) return;
-    if (audioRef.current) audioRef.current.pause();
+    stopPreview();
     const el = new Audio(`${api.baseUrl}${t.previewUrl}`);
     audioRef.current = el;
-    el.play().catch(() => {});
+    // Reset the control when the clip finishes on its own, or fails to load -
+    // otherwise the button would sit on "stop" with nothing playing.
+    el.addEventListener('ended', () => setPlayingId(null));
+    el.addEventListener('error', () => setPlayingId(null));
+    setPlayingId(id);
+    el.play().catch(() => setPlayingId(null));
   };
+
+  // Never leave audio playing after the picker unmounts.
+  useEffect(() => () => {
+    if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
+  }, []);
 
   if (multiple) {
     return (
@@ -87,7 +113,14 @@ export function MusicPicker({ value, onChange, busy, multiple = false }: MusicPi
                 <span className="w-4 text-center text-[10px] text-content-tertiary">{idx + 1}</span>
                 <span className="flex-1 truncate">{trackLabel(p)}</span>
                 {p.startsWith('library:') && (
-                  <button type="button" onClick={() => preview(p.slice('library:'.length))} className="text-gray-400 hover:text-primary-300" aria-label="preview"><Play size={12} /></button>
+                  <button
+                    type="button"
+                    onClick={() => preview(p.slice('library:'.length))}
+                    className="text-gray-400 hover:text-primary-300"
+                    aria-label={playingId === p.slice('library:'.length) ? 'Stop preview' : 'Preview'}
+                  >
+                    {playingId === p.slice('library:'.length) ? <Square size={12} /> : <Play size={12} />}
+                  </button>
                 )}
                 <button type="button" onClick={() => emitPaths(paths.filter((_, i) => i !== idx))} className="text-gray-400 hover:text-red-300" aria-label="remove track"><X size={12} /></button>
               </li>
@@ -161,7 +194,13 @@ export function MusicPicker({ value, onChange, busy, multiple = false }: MusicPi
           {(tracks || []).map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
         </select>
         {currentId && (
-          <button type="button" onClick={() => preview(currentId)} className="inline-flex items-center gap-1 text-gray-400 hover:text-primary-300"><Play size={12} /> preview</button>
+          <button
+            type="button"
+            onClick={() => preview(currentId)}
+            className="inline-flex items-center gap-1 text-gray-400 hover:text-primary-300"
+          >
+            {playingId === currentId ? <><Square size={12} /> stop</> : <><Play size={12} /> preview</>}
+          </button>
         )}
       </label>
 
