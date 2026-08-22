@@ -120,7 +120,7 @@ export function EditorShell({
       // lanes inside it scroll. overflow-hidden makes that structural.
     >
       {topBar && (
-        <div className="flex h-[52px] shrink-0 items-center gap-3 border-b border-editor-line px-4">
+        <div className="flex shrink-0 items-center gap-3 border-b border-editor-line px-4 short:h-[40px] h-[52px]">
           {topBar}
         </div>
       )}
@@ -130,13 +130,13 @@ export function EditorShell({
           horizontal layout: measured at 390px the rail stretched to
           471px tall and the panel sat at x=390, completely off-screen.
           That is the empty-editor look on mobile. */}
-      <div className="flex min-h-0 flex-1 overflow-hidden max-lg:flex-col lg:flex-row">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
         {/* Icon rail. Horizontal-scrolling strip on phones, where a 72px
             vertical rail would eat a fifth of the screen. */}
         <div
           role="tablist"
           aria-label="Editor tools"
-          className="flex shrink-0 gap-1 overflow-x-auto border-editor-line max-lg:w-full max-lg:flex-row max-lg:border-b max-lg:px-2 max-lg:py-1.5 lg:w-[60px] lg:flex-col lg:items-center lg:border-r lg:py-1.5"
+          className="flex w-full shrink-0 flex-row gap-1 overflow-x-auto border-b border-editor-line px-2 py-1.5 lg:w-[60px] lg:flex-col lg:items-center lg:border-b-0 lg:border-r lg:px-0 lg:py-1.5"
         >
           {tools.map((tool) => {
             const active = tool.id === activeId;
@@ -147,7 +147,8 @@ export function EditorShell({
                 aria-selected={active}
                 aria-controls={`panel-${tool.id}`}
                 onClick={() => select(tool.id)}
-                className={`flex shrink-0 flex-col items-center justify-center gap-1 rounded-lg text-[10px] transition max-lg:min-w-[64px] max-lg:px-2 max-lg:py-1.5 lg:h-[52px] lg:w-[52px] ${
+                title={tool.label}
+                className={`flex min-w-[64px] shrink-0 flex-col items-center justify-center gap-1 rounded-lg px-2 py-1.5 text-[10px] transition lg:h-[52px] lg:w-[52px] lg:min-w-0 lg:px-0 lg:py-0 ${
                   active
                     ? 'bg-editor-hover text-editor-accent'
                     : 'text-editor-faint hover:bg-editor-hover hover:text-editor-dim'
@@ -173,7 +174,7 @@ export function EditorShell({
         <div
           id={`panel-${activeId}`}
           role="tabpanel"
-          className="min-h-0 shrink-0 overflow-auto border-editor-line bg-editor-panel p-3.5 max-lg:max-h-[38vh] max-lg:w-full max-lg:border-b lg:w-[300px] lg:border-r"
+          className="min-h-0 w-full shrink-0 overflow-auto border-b border-editor-line bg-editor-panel p-3.5 max-h-[38vh] short:max-h-[46%] lg:max-h-none lg:w-[300px] lg:border-b-0 lg:border-r"
         >
           {activePanel ?? (
             <p className="text-[11px] text-editor-faint">Nothing here yet.</p>
@@ -257,7 +258,12 @@ export function EditorShell({
         // the timeline is the working surface there. Without flex-1 that
         // space became a ~450px dead gap between stage and timeline.
         // Desktop keeps the fixed 38% ceiling so the preview stays king.
-        <div className="min-h-[150px] overflow-hidden border-t border-editor-line bg-editor-chrome max-lg:flex-1 lg:h-[38%] lg:shrink-0">
+        // max-lg:flex-1 is right in PORTRAIT, where the timeline is the
+        // working surface. In landscape it grew to 350px of a 390px
+        // viewport and starved the rail/panel row to h=0 - the same
+        // starvation pattern as the render player. A short-viewport
+        // ceiling keeps the split sane on both orientations.
+        <div className="overflow-hidden border-t border-editor-line bg-editor-chrome max-lg:flex-1 short:max-h-[45%] short:min-h-0 min-h-[150px] lg:h-[38%] lg:shrink-0">
           {strip}
         </div>
       )}

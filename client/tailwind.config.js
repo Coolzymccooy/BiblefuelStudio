@@ -6,6 +6,15 @@ export default {
   ],
   theme: {
     extend: {
+      screens: {
+        // Short viewports - landscape phones, split-screen. The editor's chrome
+        // (topbar + rail + panel) totals ~242px, leaving almost nothing for the
+        // stage and timeline on a 390px-tall screen. `short:` collapses the
+        // chrome to give the content surfaces their room back.
+        // Inside extend on purpose: a top-level `screens` REPLACES the defaults
+        // and would kill every lg:/sm: class in the app.
+        short: { raw: '(max-height: 500px)' },
+      },
       fontFamily: {
         // Quiet-studio identity: Instrument Sans for UI/body, Cormorant Garamond
         // for display serif titles, JetBrains Mono for IDs/durations/dB/filenames.
