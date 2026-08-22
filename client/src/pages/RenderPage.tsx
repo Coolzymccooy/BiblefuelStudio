@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ChangeEvent, type SyntheticEvent } from 'react';
+import { checkRenderReadiness } from '../lib/renderReadiness';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
@@ -352,28 +353,40 @@ export function RenderPage() {
         ].filter(Boolean).join('\n');
     };
 
+    // Live readiness, so the operator sees what is missing BEFORE pressing
+    // Render rather than discovering it one toast at a time afterwards.
+    const readinessFor = (mode: 'video' | 'waveform') => checkRenderReadiness({
+        mode,
+        lines,
+        audioPath,
+        backgroundPath,
+        backgroundItemCount: backgroundItems.length,
+        autoBackground,
+    });
+    const videoReadiness = readinessFor('video');
+    const waveformReadiness = readinessFor('waveform');
+
     const handleRender = async (mode: 'video' | 'waveform') => {
         const hasMultiBg = backgroundItems.length > 0;
-        // Auto mode (video only) lets the server source a background, so a manual
-        // pick isn't required. Waveform still needs an explicit background.
         const useAuto = autoBackground && mode === 'video' && !backgroundPath && !hasMultiBg;
-        if (!backgroundPath && !hasMultiBg && !useAuto) {
-            toast.error('Background is required (or turn on Auto for video)');
+
+        // One readiness pass instead of four sequential early returns. The old
+        // form fired a toast and returned on the FIRST failure, so fixing it only
+        // revealed the next; this reports every blocker at once, and the same
+        // verdict drives the readiness shown on the controls themselves.
+        const readiness = checkRenderReadiness({
+            mode,
+            lines,
+            audioPath,
+            backgroundPath,
+            backgroundItemCount: backgroundItems.length,
+            autoBackground,
+        });
+        if (!readiness.ready) {
+            toast.error(readiness.blockers.map((b) => b.message).join(' '));
             return;
         }
-        const cleanLines = lines.split('\n').map((l) => l.trim()).filter(Boolean).slice(0, 6);
-        if (cleanLines.length === 0) {
-            toast.error('Overlay text lines are required (max 6)');
-            return;
-        }
-        if (mode === 'waveform' && !audioPath.trim()) {
-            toast.error('Audio Path is required for waveform mode');
-            return;
-        }
-        if (mode === 'waveform' && backgroundItems.length > 1) {
-            toast.error('Waveform render uses a single background. Remove extras or use Video Render.');
-            return;
-        }
+        const cleanLines = lines.split('\n').map((x) => x.trim()).filter(Boolean).slice(0, 6);
         // Kinetic captions require the async worker path (it does TTS-with-timestamps
         // server-side, which can take several seconds before render even starts).
         // voiceId is optional — server falls back to ELEVENLABS_VOICE_ID env / Sarah.
@@ -762,6 +775,16 @@ export function RenderPage() {
                 ? 'Used as narration. Turn on Kinetic captions below for word-by-word reveal.'
                 : 'Optional with a video background; required for waveform. Make one in Voice & Audio.',
         },
+        // Waveform-only rules. GuideSteps covered background, text and voice;
+        // these two refusals existed only as post-click toasts, so a waveform
+        // render could look ready and then be rejected.
+        ...(waveformReadiness.blockers
+            .filter((b) => b.field === 'background' && backgroundItems.length > 1)
+            .map((b) => ({
+                label: 'Waveform needs a single background',
+                status: 'todo' as const,
+                detail: b.message,
+            }))),
     ];
 
     return (
@@ -1310,6 +1333,7 @@ export function RenderPage() {
                             isLoading={isRendering}
                             className="w-full h-12 text-md"
                             disabled={!renderEnabled || (isLongRender && !renderInBackground)}
+                            title={videoReadiness.blockers[0]?.message || 'Render the video'}
                         >
                             <Video size={18} className="mr-2" />
                             {renderInBackground ? 'Queue Video Render' : 'Start Instant Render'}
@@ -1320,6 +1344,7 @@ export function RenderPage() {
                             variant="secondary"
                             className="w-full h-12 text-md"
                             disabled={!renderEnabled || (isLongRender && !renderInBackground)}
+                            title={waveformReadiness.blockers[0]?.message || 'Render a waveform video'}
                         >
                             <AudioLines size={18} className="mr-2" />
                             {renderInBackground ? 'Queue Waveform Render' : 'Render Waveform MP4'}
