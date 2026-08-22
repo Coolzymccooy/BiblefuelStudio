@@ -125,7 +125,12 @@ export function EditorShell({
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1 overflow-hidden">
+      {/* Column on phones, row on desktop. As a row, the full-width
+          mobile tool strip and the panel became SIBLINGS in a
+          horizontal layout: measured at 390px the rail stretched to
+          471px tall and the panel sat at x=390, completely off-screen.
+          That is the empty-editor look on mobile. */}
+      <div className="flex min-h-0 flex-1 overflow-hidden max-lg:flex-col lg:flex-row">
         {/* Icon rail. Horizontal-scrolling strip on phones, where a 72px
             vertical rail would eat a fifth of the screen. */}
         <div
@@ -175,7 +180,12 @@ export function EditorShell({
           )}
         </div>
 
-        <div className="flex min-w-0 flex-1 items-center justify-center overflow-auto bg-editor-stage p-4 lg:p-6">
+        {/* On phones the stage is CONTENT-SIZED, not flex-1. At 390px an
+            empty stage claimed ~500px - the largest thing on screen - to
+            say "Preview appears here after a render", pushing the panel
+            and timeline into slivers. Desktop keeps flex-1, where the
+            preview genuinely is the main surface. */}
+        <div className="flex min-w-0 items-center justify-center overflow-auto bg-editor-stage p-4 max-lg:shrink-0 lg:flex-1 lg:p-6">
           {stage}
         </div>
 
@@ -243,7 +253,11 @@ export function EditorShell({
         // then let it claim 160px while the shell itself had collapsed. The
         // strip is now a plain flex item with a hard height ceiling, so the
         // middle row (flex-1) always gets the remainder.
-        <div className="h-[38%] min-h-[150px] shrink-0 overflow-hidden border-t border-editor-line bg-editor-chrome">
+        // On phones the strip GROWS into the space the stage gave up -
+        // the timeline is the working surface there. Without flex-1 that
+        // space became a ~450px dead gap between stage and timeline.
+        // Desktop keeps the fixed 38% ceiling so the preview stays king.
+        <div className="min-h-[150px] overflow-hidden border-t border-editor-line bg-editor-chrome max-lg:flex-1 lg:h-[38%] lg:shrink-0">
           {strip}
         </div>
       )}
