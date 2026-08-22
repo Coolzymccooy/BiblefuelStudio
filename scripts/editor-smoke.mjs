@@ -86,7 +86,11 @@ const get=p=>new Promise((res,rej)=>{http.get({host:'127.0.0.1',port:PORT,path:p
   await new Promise(r=>setTimeout(r,1000));
 
   await boot(1900,1000,SEED_MEDIA+`localStorage.setItem('BF_SCL_RENDERED_VIDEO', JSON.stringify('stale-from-last-session.mp4'));`);
-  check('stage ignores a stale render', (await ev(`document.querySelectorAll('video').length`))===0);
+  // Assert on the STALE FILE specifically. A bare <video> count was a valid
+  // proxy when the stage had no live preview; the preview now renders video
+  // layers legitimately, so counting elements flags a false regression.
+  check('stage ignores a stale render',
+    (await ev(`[...document.querySelectorAll('video')].every(v=>!/stale-from-last-session/.test(v.src))`))===true);
 
   await boot(1900,1000,SEED_MEDIA+`localStorage.setItem('BF_SCL_EDITED_LINES', JSON.stringify(['line one','line two']));localStorage.setItem('BF_SCL_KINETIC_CAPTIONS','true');`);
   await clickTool('Captions'); await new Promise(r=>setTimeout(r,1200));
@@ -124,6 +128,24 @@ const get=p=>new Promise((res,rej)=>{http.get({host:'127.0.0.1',port:PORT,path:p
   const fxAfter=await ev(`document.querySelectorAll('[aria-label^="Remove "]').length`);
   check('adding an effect lands on the scene', fxAfter>fxBefore, `${fxBefore}->${fxAfter}`);
   check('effect reaches the render payload', (await ev(`(()=>{const raw=localStorage.getItem('BF_SCL_DOC_PROJECT');if(!raw)return true;const p=JSON.parse(raw);const t=(p.tracks||[]).find(x=>x.kind==='effects');return !t||t.clips.every(c=>!!c.effect);})()`))===true);
+
+  // ---- live preview + resizable panel ----
+  await boot(1900,1000,SEED_MEDIA);
+  check('stage shows a live preview, not a render-only dead end',
+    (await ev(`!!document.querySelector('[data-testid="live-preview-canvas"]')`))===true);
+  check('preview has a scrub control',
+    (await ev(`!!document.querySelector('input[aria-label="Preview playhead"]')`))===true);
+
+  const w0=await ev(`(()=>{const p=document.querySelector('[role="tabpanel"]');return p?Math.round(p.getBoundingClientRect().width):0;})()`);
+  const handle=await ev(`(()=>{const h=document.querySelector('[role="separator"][aria-label="Resize panel"]');if(!h)return'MISSING';const r=h.getBoundingClientRect();
+    const opts={bubbles:true,clientX:r.x+3,clientY:r.y+40,pointerId:1};
+    h.dispatchEvent(new PointerEvent('pointerdown',opts));
+    window.dispatchEvent(new PointerEvent('pointermove',{...opts,clientX:r.x+130}));
+    window.dispatchEvent(new PointerEvent('pointerup',{...opts,clientX:r.x+130}));
+    return 'ok';})()`);
+  await waitFor(`(()=>{const p=document.querySelector('[role="tabpanel"]');return p&&Math.round(p.getBoundingClientRect().width)!==${w0};})()`);
+  const w1=await ev(`(()=>{const p=document.querySelector('[role="tabpanel"]');return p?Math.round(p.getBoundingClientRect().width):0;})()`);
+  check('panel divider resizes the panel', handle==='ok'&&w1>w0, `${w0}->${w1}`);
 
   // ---- portrait ----
   await boot(390,844,SEED_MEDIA);

@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 /**
@@ -67,6 +67,14 @@ export interface EditorShellProps {
   clipActions?: ClipAction[];
 }
 
+/** Panel resize bounds. Below the minimum the panel's own controls clip. */
+const MIN_PANEL_W = 220;
+const MAX_PANEL_W = 560;
+const DEFAULT_PANEL_W = 300;
+const PANEL_WIDTH_KEY = 'bf.editor.panelWidth';
+const APP_NAV_W = 240;
+const RAIL_W = 60;
+
 export function EditorShell({
   tools,
   panels,
@@ -85,6 +93,47 @@ export function EditorShell({
   const [activePropId, setActivePropId] = useState<string>(
     () => propertyTools?.[0]?.id || '',
   );
+
+  // Draggable panel divider, as CapCut has. The panel was a fixed 300px, so a
+  // dense panel (backgrounds, render history) could not be widened and the
+  // stage could not be given more room for a close look at the frame.
+  const [panelWidth, setPanelWidth] = useState<number>(() => {
+    const saved = Number(localStorage.getItem(PANEL_WIDTH_KEY));
+    return Number.isFinite(saved) && saved >= MIN_PANEL_W && saved <= MAX_PANEL_W
+      ? saved
+      : DEFAULT_PANEL_W;
+  });
+  const dragging = useRef(false);
+
+  const onDragStart = useCallback((e: React.PointerEvent) => {
+    dragging.current = true;
+    // Capture so the drag survives the pointer leaving the 6px handle.
+    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+  }, []);
+
+  useEffect(() => {
+    const move = (e: PointerEvent) => {
+      if (!dragging.current) return;
+      // Width is measured from the shell's left edge minus the rail, so the
+      // handle tracks the cursor exactly rather than drifting.
+      const shellLeft = window.innerWidth >= 1024 ? APP_NAV_W + RAIL_W : RAIL_W;
+      const next = Math.round(e.clientX - shellLeft);
+      setPanelWidth(Math.min(MAX_PANEL_W, Math.max(MIN_PANEL_W, next)));
+    };
+    const up = () => {
+      if (!dragging.current) return;
+      dragging.current = false;
+      // Persist on release, not on every move: a write per pointermove would
+      // hit localStorage dozens of times a second.
+      setPanelWidth((w) => { localStorage.setItem(PANEL_WIDTH_KEY, String(w)); return w; });
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    return () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+    };
+  }, []);
 
   const select = (id: string) => {
     setActiveId(id);
@@ -174,7 +223,11 @@ export function EditorShell({
         <div
           id={`panel-${activeId}`}
           role="tabpanel"
-          className="min-h-0 w-full shrink-0 overflow-auto border-b border-editor-line bg-editor-panel p-3.5 max-h-[38vh] short:max-h-[40%] short:p-2 lg:max-h-none lg:w-[300px] lg:border-b-0 lg:border-r"
+          className="min-h-0 w-full shrink-0 overflow-auto border-b border-editor-line bg-editor-panel p-3.5 max-h-[38vh] short:max-h-[40%] short:p-2 lg:max-h-none lg:border-b-0 lg:border-r"
+          // Width is inline because it is DRAGGED: a Tailwind class cannot
+          // express a runtime value. Desktop only - on mobile the panel is
+          // full-width and stacked, so a horizontal drag has no meaning.
+          style={typeof window !== 'undefined' && window.innerWidth >= 1024 ? { width: panelWidth } : undefined}
         >
           {activePanel ?? (
             <p className="text-[11px] text-editor-faint">Nothing here yet.</p>
@@ -186,6 +239,16 @@ export function EditorShell({
             say "Preview appears here after a render", pushing the panel
             and timeline into slivers. Desktop keeps flex-1, where the
             preview genuinely is the main surface. */}
+        {/* Drag handle, desktop only. 6px hit area with a 1px visible line, so
+            it is grabbable without drawing a thick divider. */}
+        <div
+          role="separator"
+          aria-label="Resize panel"
+          aria-orientation="vertical"
+          onPointerDown={onDragStart}
+          className="hidden w-1.5 shrink-0 cursor-col-resize transition-colors hover:bg-primary-400/40 lg:block"
+        />
+
         <div className="flex min-w-0 items-center justify-center overflow-auto bg-editor-stage p-4 max-lg:shrink-0 lg:flex-1 lg:p-6">
           {stage}
         </div>

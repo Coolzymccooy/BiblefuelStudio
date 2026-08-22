@@ -40,6 +40,7 @@ import { BackgroundLibraryModal } from '../components/BackgroundLibraryModal';
 import { SourceMediaPanel } from '../components/timeline/SourceMediaPanel';
 import { CaptionStylePanel } from '../components/timeline/CaptionStylePanel';
 import { ScenesPanel } from '../components/timeline/ScenesPanel';
+import { LivePreviewStage } from '../components/timeline/LivePreviewStage';
 import { addEffectToScene, removeEffectClip } from '../lib/timelineEffects';
 import { syncSidecarTracks } from '../lib/timelineTrackSync';
 import type { TimelineEffectKind } from '../lib/timelineProject';
@@ -203,6 +204,9 @@ export function TimelinePage() {
     // Scene selection is page-level state: the Scenes panel and the scene
     // blocks in the strip are separate components that must agree on it.
     const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null);
+    // Playhead for the live preview. Not persisted: where you were scrubbing
+    // is a within-session concern, not project state.
+    const [previewTimeSec, setPreviewTimeSec] = useState(0);
     // Which option each effect is configured with, e.g. { grade: 'cinematic' }.
     const [effectOption, setEffectOption] = useState<Partial<Record<TimelineEffectKind, string>>>({});
     const [isRequestingVeoBroll, setIsRequestingVeoBroll] = useState(false);
@@ -2033,7 +2037,22 @@ export function TimelinePage() {
                             </button>
                         </div>
                     ) : (
-                        <div className="text-[12px] text-editor-faint">Preview appears here after a render.</div>
+                        // Live composite instead of a dead end. The stage used to
+                        // say "Preview appears here after a render", so adding a
+                        // clip, background or caption changed nothing on screen
+                        // and the cut could not be judged before rendering.
+                        <LivePreviewStage
+                            project={documentaryProject}
+                            backgrounds={backgroundItems.map((b) => ({
+                                id: b.id,
+                                url: b.previewUrl || b.image || b.url,
+                                kind: b.kind,
+                            }))}
+                            captionLines={kineticCaptions ? editedLines : []}
+                            timeSec={previewTimeSec}
+                            onTimeChange={setPreviewTimeSec}
+                            aspect={documentaryProject?.aspect || '16:9'}
+                        />
                     )
                 )}
                 strip={documentaryProject ? (
