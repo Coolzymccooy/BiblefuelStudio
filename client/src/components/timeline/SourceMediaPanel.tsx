@@ -76,7 +76,7 @@ export function SourceMediaPanel({
       {/* Demoted to a caption. It is reference information — formats and a size
           cap — not an instruction, and at body size it out-shouted the Choose
           file button, which is the only thing on this panel that matters. */}
-      <p className="mb-2.5 text-[10px] leading-snug text-content-tertiary">
+      <p className="mb-2.5 text-[10px] leading-snug text-content-tertiary short:hidden">
         Sermon audio or video · up to {maxUploadMb} MB
       </p>
 

@@ -195,7 +195,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
   // Hoisted so the compact strip and the full card render the SAME lanes.
   // Duplicating this block would guarantee the two drift apart.
   const lanes = (
-          <div className={`overflow-x-auto rounded-xl border border-white/10 bg-black/25 ${d.wrap}`}>
+          <div className={`min-h-0 flex-1 overflow-x-auto overflow-y-auto rounded-xl border border-white/10 bg-black/25 ${d.wrap}`}>
             <div className={`min-w-[920px] ${d.stack}`}>
               <div className={`ml-36 flex ${d.ruler} items-stretch gap-1`} aria-label="Scene ruler">
                 {project.scenes.map((scene) => {
@@ -228,7 +228,12 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                       aria-label={`Track lane: ${track.label}`}
                       className={`grid grid-cols-[9rem_1fr] items-stretch ${d.laneGap}`}
                     >
-                      <div className={`flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] ${d.headPad}`}>
+                      {/* Sticky so the track headers - the clip counts the
+                          operator reads while scrubbing - stay in view while
+                          the clips scroll horizontally underneath. Needs an
+                          OPAQUE background, not bg-white/[0.03], or the clips
+                          show through as they pass behind it. */}
+                      <div className={`sticky left-0 z-10 flex items-center gap-2 rounded-lg border border-white/10 bg-[#141210] ${d.headPad}`}>
                         <Icon size={15} className="text-primary-200" />
                         <div className="min-w-0">
                           <p className="truncate text-xs font-semibold text-gray-100">{track.label}</p>
@@ -424,7 +429,11 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
     return (
       <div className="flex h-full flex-col">
         {compactToolbar}
-        <div className="min-h-0 flex-1 overflow-auto px-3 py-2">
+        {/* The SCROLLER is the lanes container itself, so the sticky track
+            headers have a scroll context to stick within. This wrapper only
+            supplies the height - a second overflow here would fight it and
+            leave the inner h-full with no resolved parent height. */}
+        <div className="flex min-h-0 flex-1 flex-col px-3 py-2">
           {lanes}
         </div>
       </div>

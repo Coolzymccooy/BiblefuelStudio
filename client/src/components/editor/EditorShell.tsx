@@ -120,7 +120,7 @@ export function EditorShell({
       // lanes inside it scroll. overflow-hidden makes that structural.
     >
       {topBar && (
-        <div className="flex shrink-0 items-center gap-3 border-b border-editor-line px-4 short:h-[40px] h-[52px]">
+        <div className="flex shrink-0 items-center gap-3 border-b border-editor-line px-4 short:h-[36px] h-[52px]">
           {topBar}
         </div>
       )}
@@ -174,7 +174,7 @@ export function EditorShell({
         <div
           id={`panel-${activeId}`}
           role="tabpanel"
-          className="min-h-0 w-full shrink-0 overflow-auto border-b border-editor-line bg-editor-panel p-3.5 max-h-[38vh] short:max-h-[46%] lg:max-h-none lg:w-[300px] lg:border-b-0 lg:border-r"
+          className="min-h-0 w-full shrink-0 overflow-auto border-b border-editor-line bg-editor-panel p-3.5 max-h-[38vh] short:max-h-[40%] short:p-2 lg:max-h-none lg:w-[300px] lg:border-b-0 lg:border-r"
         >
           {activePanel ?? (
             <p className="text-[11px] text-editor-faint">Nothing here yet.</p>

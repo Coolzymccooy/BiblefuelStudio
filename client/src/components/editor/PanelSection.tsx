@@ -39,7 +39,7 @@ export function PanelSection({
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="flex w-full items-center gap-2 py-2.5 text-left"
+        className="flex w-full items-center gap-2 py-2.5 text-left short:py-1"
       >
         <ChevronDown
           size={13}
