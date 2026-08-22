@@ -310,6 +310,13 @@ export function TimelinePage() {
         STORAGE_KEYS.sclRenderedVideo,
         null,
     );
+    // renderedVideo is PERSISTED (the Renders list, download and share all read
+    // it), but the STAGE must not open onto a finished video from a previous
+    // session. The stage is where the operator works on the cut; greeting them
+    // with last week's export hides the editor behind an artefact they did not
+    // ask to see. This flag is deliberately NOT persisted, so the playback
+    // surface appears only for a render completed in THIS session.
+    const [renderedThisSession, setRenderedThisSession] = useState(false);
     const [isRenderingVideo, setIsRenderingVideo] = useState(false);
     // Determinate progress for the captioned-video render. Fed by the server's
     // SSE stream of ffmpeg `time=` parses; runs 0..100 and freezes at 100 once
@@ -844,6 +851,7 @@ export function TimelinePage() {
                 if (data.file) {
                     const fileName = String(data.file).split(/[\\/]/).pop();
                     setRenderedVideo(api.mediaUrl(fileName));
+                    setRenderedThisSession(true);
                     toast.success('Captioned video ready');
                 }
                 finish();
@@ -1175,7 +1183,7 @@ export function TimelinePage() {
 
                 if (data.status === 'completed') {
                     const proof = data.publicUrl || '';
-                    if (proof) setRenderedVideo(proof);
+                    if (proof) { setRenderedVideo(proof); setRenderedThisSession(true); }
                     const providers = data.voiceProvidersUsed?.length ? ` · VO: ${data.voiceProvidersUsed.join(', ')}` : '';
                     const fallbackNote = data.voiceFallbacks?.length ? ' (fallback used)' : '';
                     toast.success(`Timeline proof MP4 ready (${data.plan?.durationSec || 0}s)${providers}${fallbackNote}`, { id: toastId });
@@ -1525,8 +1533,20 @@ export function TimelinePage() {
                     <>
                         <span className="font-semibold">Arrange the cut</span>
                         {sourceMediaPath && (
-                            <span className="truncate rounded-md border border-editor-line px-2.5 py-1 text-[12px] text-editor-dim">
-                                {sourceMediaPath.split(/[\\/]/).pop()}
+                            /* The stored filename is a UUID storage key the
+                               operator never chose and cannot act on. Showing it
+                               by default spent the most valuable strip of the
+                               topbar on noise; the KIND is what identifies the
+                               media at a glance. The exact name stays one hover
+                               (or tap, via the native title tooltip) away, for
+                               matching a file on disk. */
+                            <span
+                                className="cursor-help truncate rounded-md border border-editor-line px-2.5 py-1 text-[12px] text-editor-dim"
+                                title={sourceMediaPath.split(/[\\/]/).pop()}
+                            >
+                                {sourceMediaKind === 'audio' ? 'Audio loaded'
+                                    : sourceMediaKind === 'image' ? 'Image loaded'
+                                    : 'Video loaded'}
                             </span>
                         )}
                         <span className="flex-1" />
@@ -1552,7 +1572,13 @@ export function TimelinePage() {
                         <PanelSection
                             title="Source media"
                             defaultOpen
-                            summary={sourceMediaPath?.split(/[\\/]/).pop()}
+                            // Same reasoning as the topbar chip: a collapsed summary
+                            // should say what is loaded, not recite a storage key.
+                            summary={sourceMediaPath
+                                ? sourceMediaKind === 'audio' ? 'Audio loaded'
+                                    : sourceMediaKind === 'image' ? 'Image loaded'
+                                    : 'Video loaded'
+                                : undefined}
                         >
                         <SourceMediaPanel
                             sourceMediaPath={sourceMediaPath}
@@ -1702,7 +1728,7 @@ export function TimelinePage() {
                                             <button
                                                 key={item.jobId}
                                                 type="button"
-                                                onClick={() => setRenderedVideo(item.file)}
+                                                onClick={() => { setRenderedVideo(item.file); setRenderedThisSession(true); }}
                                                 className="surface-raised flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left"
                                             >
                                                 <span className="min-w-0 flex-1 truncate text-xs text-content-secondary">
@@ -1760,8 +1786,17 @@ export function TimelinePage() {
                                 Cancel render
                             </Button>
                         </div>
-                    ) : renderedVideo ? (
-                        <video src={api.mediaUrl(renderedVideo)} controls className="max-h-full max-w-full rounded-lg" />
+                    ) : renderedVideo && renderedThisSession ? (
+                        <div className="flex h-full max-h-full flex-col items-center justify-center gap-2">
+                            <video src={api.mediaUrl(renderedVideo)} controls className="max-h-[calc(100%-2rem)] max-w-full rounded-lg" />
+                            <button
+                                type="button"
+                                onClick={() => setRenderedThisSession(false)}
+                                className="text-[11px] text-editor-faint underline-offset-2 hover:underline"
+                            >
+                                Back to the cut
+                            </button>
+                        </div>
                     ) : (
                         <div className="text-[12px] text-editor-faint">Preview appears here after a render.</div>
                     )
@@ -2211,7 +2246,7 @@ export function TimelinePage() {
                                     {/* Full-area button loads this render back into the preview. */}
                                     <button
                                         type="button"
-                                        onClick={() => setRenderedVideo(url)}
+                                        onClick={() => { setRenderedVideo(url); setRenderedThisSession(true); }}
                                         className="absolute inset-0 h-full w-full"
                                         title={fileName}
                                     >
