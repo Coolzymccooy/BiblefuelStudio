@@ -22,6 +22,12 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 5174,
       strictPort: true,
+      // Opt-in LAN exposure for testing on a phone / second laptop:
+      //   npm run dev -- --host        (or set VITE_EXPOSE=1)
+      // Off by default: binding 0.0.0.0 puts the dev server, and the API it
+      // proxies, on every network the machine is joined to. Deliberate, not
+      // automatic.
+      host: env.VITE_EXPOSE ? true : undefined,
       proxy: {
         '/api': {
           target: apiTarget,
