@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolvePreviewFrame } from '../livePreview';
+import { resolvePreviewFrame, toPlayableUrl } from '../livePreview';
 import { buildWorshipDocumentaryProject, insertAssetOnTrack } from '../timelineProject';
 import { addEffectToScene } from '../timelineEffects';
 
@@ -105,5 +105,35 @@ describe('resolvePreviewFrame', () => {
     const before = JSON.stringify(p);
     resolvePreviewFrame(p, { timeSec: 5, backgrounds: [] });
     expect(JSON.stringify(p)).toBe(before);
+  });
+});
+
+describe('toPlayableUrl', () => {
+  // Mirrors api.mediaUrl: it serves by BASENAME out of /outputs.
+  const base = (p: string) => `http://host/outputs/${p.split(/[\/]/).pop()}`;
+
+  it('passes an absolute URL straight through', () => {
+    const u = 'https://cdn.example.com/clip.mp4';
+    expect(toPlayableUrl(u, base)).toBe(u);
+  });
+
+  it('passes a root-relative served path through unchanged', () => {
+    // /outputs/... is already what the server exposes.
+    expect(toPlayableUrl('/outputs/a.mp4', base)).toBe('/outputs/a.mp4');
+  });
+
+  it('resolves a bare storage path through the media base', () => {
+    // This is the case that broke the preview: `uploads/bg.jpg` is a storage
+    // key, not a URL, so putting it in src produced a broken image.
+    expect(toPlayableUrl('uploads/bg.jpg', base)).toBe('http://host/outputs/bg.jpg');
+  });
+
+  it('returns empty for nothing', () => {
+    expect(toPlayableUrl('', base)).toBe('');
+    expect(toPlayableUrl(undefined, base)).toBe('');
+  });
+
+  it('handles a blob/data url without mangling it', () => {
+    expect(toPlayableUrl('blob:http://x/abc', base)).toBe('blob:http://x/abc');
   });
 });

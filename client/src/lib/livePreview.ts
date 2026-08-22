@@ -44,6 +44,30 @@ export interface ResolveInput {
   backgrounds: PreviewBackground[];
   captionLines?: string[];
   totalSec?: number;
+  /** Media-base resolver. Defaults to identity so tests stay simple. */
+  resolveUrl?: (p: string) => string;
+}
+
+/**
+ * Turn a stored asset path into something a browser can actually load.
+ *
+ * Assets arrive in three shapes: an absolute URL (Veo/Pexels), a root-relative
+ * served path (/outputs/...), or a BARE STORAGE KEY like `uploads/bg.jpg`.
+ * The preview originally used the raw value, so the third shape rendered as a
+ * broken image - the operator saw an empty frame with a broken-image icon.
+ *
+ * @param resolve Injected media-base resolver (api.mediaUrl), so this stays pure.
+ */
+export function toPlayableUrl(
+  raw: string | undefined | null,
+  resolve: (p: string) => string,
+): string {
+  const p = String(raw || '').trim();
+  if (!p) return '';
+  // Already loadable: absolute, protocol-relative, blob/data, or server-rooted.
+  if (/^(https?:|blob:|data:|\/\/)/i.test(p)) return p;
+  if (p.startsWith('/')) return p;
+  return resolve(p);
 }
 
 function isImagePath(p: string): boolean {
@@ -66,6 +90,7 @@ export function resolvePreviewFrame(
   input: ResolveInput,
 ): PreviewFrame {
   const { timeSec } = input;
+  const resolve = input.resolveUrl || ((p: string) => p);
   const layers: PreviewLayer[] = [];
 
   // Background sits BEHIND everything. With several selected they divide the
@@ -82,7 +107,7 @@ export function resolvePreviewFrame(
       layers.push({
         role: 'background',
         kind: bg.kind === 'image' || isImagePath(bg.url) ? 'image' : 'video',
-        src: bg.url,
+        src: toPlayableUrl(bg.url, resolve),
         seekSec: Math.max(0, timeSec - each * idx),
         key: `bg-${bg.id}`,
       });
@@ -101,7 +126,7 @@ export function resolvePreviewFrame(
     layers.push({
       role,
       kind: asset?.kind === 'image' || isImagePath(src) ? 'image' : 'video',
-      src,
+      src: toPlayableUrl(src, resolve),
       seekSec: Math.max(0, timeSec - clip.startSec) + (clip.sourceStartSec || 0),
       key: `${role}-${clip.id}`,
     });

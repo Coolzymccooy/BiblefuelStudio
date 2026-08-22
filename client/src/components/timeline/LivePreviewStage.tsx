@@ -5,6 +5,7 @@ import {
   GRADE_CSS,
   type PreviewBackground,
 } from '../../lib/livePreview';
+import { api } from '../../lib/api';
 
 /**
  * Live preview of the cut, composited in the browser.
@@ -46,7 +47,12 @@ export function LivePreviewStage({
 
   const totalSec = Math.max(1, project?.targetDurationSec ?? 60);
   const frame = project
-    ? resolvePreviewFrame(project, { timeSec, backgrounds, captionLines, totalSec })
+    ? resolvePreviewFrame(project, {
+        timeSec, backgrounds, captionLines, totalSec,
+        // Stored paths are often bare storage keys (`uploads/bg.jpg`), which a
+        // browser cannot load - that is what produced the broken image.
+        resolveUrl: (p) => api.mediaUrl(p),
+      })
     : { layers: [], isEmpty: true, caption: undefined, grade: undefined };
 
   // Seek each video layer to its offset. Done in an effect, not during render:

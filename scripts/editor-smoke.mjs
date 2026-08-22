@@ -147,6 +147,21 @@ const get=p=>new Promise((res,rej)=>{http.get({host:'127.0.0.1',port:PORT,path:p
   const w1=await ev(`(()=>{const p=document.querySelector('[role="tabpanel"]');return p?Math.round(p.getBoundingClientRect().width):0;})()`);
   check('panel divider resizes the panel', handle==='ok'&&w1>w0, `${w0}->${w1}`);
 
+  // ---- multi-upload + the two renderers ----
+  await boot(1900,1000,SEED_MEDIA);
+  await clickTool('Background');
+  await waitFor(`/Upload from device|From library/.test(document.body.innerText)`);
+  check('background upload accepts multiple files',
+    (await ev(`[...document.querySelectorAll('input[type=file]')].some(i=>i.multiple&&/jpg|png|mp4/.test(i.accept||''))`))===true);
+  check('backgrounds can be pushed to the timeline in bulk',
+    (await ev(`[...document.querySelectorAll('button')].some(b=>/Add all to timeline/i.test(b.textContent))`))===true);
+  check('the timeline renderer is reachable from the editor',
+    (await ev(`[...document.querySelectorAll('button')].some(b=>/Render timeline/i.test(b.textContent))`))===true);
+  check('preview resolves media through the media base (no bare storage keys)',
+    (await ev(`[...document.querySelectorAll('[data-testid="live-preview-canvas"] img, [data-testid="live-preview-canvas"] video')]
+       .every(e=>{const s=e.getAttribute('src')||'';
+         return !s || s.startsWith('/') || s.startsWith('http') || s.startsWith('blob:') || s.startsWith('data:');})`))===true);
+
   // ---- portrait ----
   await boot(390,844,SEED_MEDIA);
   const railP=await ev(`(()=>{const r=document.querySelector('[aria-label="Editor tools"]');const b=r&&r.getBoundingClientRect();return b?Math.round(b.height):0;})()`);

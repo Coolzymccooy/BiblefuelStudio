@@ -616,6 +616,30 @@ export function TimelinePage() {
         }
     };
 
+    /**
+     * Upload several backgrounds from one file picker.
+     *
+     * Both background inputs took files[0] and had no `multiple`, so the
+     * operator could add exactly one clip per trip through the dialog.
+     * Sequential rather than parallel: the single-file handler owns a shared
+     * progress bar and isUploading flag, and the MAX_BACKGROUNDS check must see
+     * each addition before deciding on the next.
+     */
+    const handleLocalBackgroundUploads = async (files: File[]) => {
+        const room = MAX_BACKGROUNDS - backgroundItems.length;
+        if (room <= 0) {
+            toast.error(`Max ${MAX_BACKGROUNDS} backgrounds reached. Remove one to add another.`);
+            return;
+        }
+        const take = files.slice(0, room);
+        if (files.length > room) {
+            toast.error(`Only ${room} slot${room === 1 ? '' : 's'} left — adding the first ${room}.`);
+        }
+        for (const f of take) {
+            await handleLocalBackgroundUpload(f);
+        }
+    };
+
     const handleLocalBackgroundUpload = async (file: File) => {
         if (backgroundItems.length >= MAX_BACKGROUNDS) {
             toast.error(`Max ${MAX_BACKGROUNDS} backgrounds reached. Remove one to add another.`);
@@ -1135,6 +1159,47 @@ export function TimelinePage() {
         }
     };
 
+    /**
+     * Push every selected background onto the B-roll track in one action.
+     *
+     * Insert only ever placed sourceMediaPath - the single loaded sermon - so
+     * there was no way to get several images onto the timeline without
+     * uploading them one at a time as source media. Backgrounds are already a
+     * multi-select list; this is the missing bridge from that list to the
+     * timeline.
+     */
+    const handleInsertBackgroundsIntoTimeline = () => {
+        if (!documentaryProject) {
+            toast.error('Create a documentary timeline first');
+            return;
+        }
+        if (backgroundItems.length === 0) {
+            toast.error('Pick some backgrounds first');
+            return;
+        }
+        // Fold with a PURE helper and set once, rather than calling setState per
+        // item: React batches updates, so a loop of setDocumentaryProject calls
+        // would each start from the same stale project and only the last would
+        // survive.
+        let next = documentaryProject;
+        for (const item of backgroundItems) {
+            const url = item.previewUrl || item.image || item.url;
+            if (!url) continue;
+            next = insertSourceMediaOnTimeline(next, {
+                label: (url.split(/[\/]/).pop() || 'background').split('?')[0],
+                path: url,
+                kind: item.kind === 'image' ? 'image' : 'video',
+                durationSec: item.kind === 'image' ? 5 : 10,
+            });
+        }
+        if (next === documentaryProject) {
+            toast.error('Nothing could be inserted');
+            return;
+        }
+        setDocumentaryProject(next);
+        toast.success(`${backgroundItems.length} background${backgroundItems.length === 1 ? '' : 's'} added to the timeline`);
+    };
+
     const handleInsertSourceMediaIntoDocumentary = () => {
         if (!documentaryProject) {
             toast.error('Create a documentary timeline first');
@@ -1502,9 +1567,10 @@ export function TimelinePage() {
                                                     className="hidden"
                                                     accept=".mp4,.mov,.webm,.m4v,.jpg,.jpeg,.png,.webp"
                                                     disabled={backgroundItems.length >= MAX_BACKGROUNDS || isUploading}
+                                                    multiple
                                                     onChange={(e) => {
-                                                        const f = e.target.files?.[0];
-                                                        if (f) handleLocalBackgroundUpload(f);
+                                                        const fs = Array.from(e.target.files || []);
+                                                        if (fs.length) void handleLocalBackgroundUploads(fs);
                                                         e.target.value = ''; // allow re-picking the same file
                                                     }}
                                                 />
@@ -1524,6 +1590,15 @@ export function TimelinePage() {
                                                 </div>
                                             </div>
                                         )}
+                                        <Button
+                                            onClick={handleInsertBackgroundsIntoTimeline}
+                                            variant="secondary"
+                                            className="w-full h-9 text-[10px]"
+                                            title="Put every selected background on the B-roll track"
+                                        >
+                                            <Plus size={14} className="mr-2" />
+                                            Add all to timeline
+                                        </Button>
                                         <Button
                                             onClick={handlePreview}
                                             isLoading={isPreviewing}
@@ -1553,9 +1628,10 @@ export function TimelinePage() {
                                                     className="hidden"
                                                     accept=".mp4,.mov,.webm,.m4v,.jpg,.jpeg,.png,.webp"
                                                     disabled={isUploading}
+                                                    multiple
                                                     onChange={(e) => {
-                                                        const f = e.target.files?.[0];
-                                                        if (f) handleLocalBackgroundUpload(f);
+                                                        const fs = Array.from(e.target.files || []);
+                                                        if (fs.length) void handleLocalBackgroundUploads(fs);
                                                         e.target.value = '';
                                                     }}
                                                 />
@@ -1775,9 +1851,29 @@ export function TimelinePage() {
                         <Button variant="secondary" className="h-8 text-xs" onClick={() => setEditorLayout(false)}>
                             Classic view
                         </Button>
-                        <Button className="h-8 text-xs" onClick={handleRenderCaptionedVideo} disabled={isRenderingVideo}>
+                        {/* TWO renderers exist and they are not interchangeable.
+                            "Render" is the captioned-video pipeline: source media
+                            + captions + backgrounds. It knows nothing about the
+                            timeline's tracks, so B-roll, images and EFFECTS are
+                            silently absent from its output - which is exactly
+                            what the operator hit. "Render timeline" drives
+                            proofRenderer, which composes every track including
+                            effects. Both are reachable from the editor now, and
+                            the labels say which is which. */}
+                        <Button className="h-8 text-xs" onClick={handleRenderCaptionedVideo} disabled={isRenderingVideo}
+                            title="Source media + captions + backgrounds. Does not include timeline tracks or effects.">
                             {isRenderingVideo ? 'Rendering…' : 'Render'}
                         </Button>
+                        {documentaryProject && (
+                            <Button
+                                className="h-8 text-xs"
+                                onClick={handleRenderDocumentaryTimeline}
+                                disabled={isRenderingDocumentaryTimeline}
+                                title="Composes every timeline track: real footage, B-roll, voice-over, music, captions and effects."
+                            >
+                                {isRenderingDocumentaryTimeline ? 'Rendering timeline…' : 'Render timeline'}
+                            </Button>
+                        )}
                     </>
                 )}
                 tools={[
