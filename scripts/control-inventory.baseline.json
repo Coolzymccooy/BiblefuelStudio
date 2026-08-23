@@ -1,458 +1,571 @@
 {
  "render": [
   {
-   "line": 820,
-   "label": "(unidentified)"
+   "line": 797,
+   "label": "(unidentified)",
+   "handler": "() => { const url = toOutputUrl(completedRen"
   },
   {
-   "line": 832,
-   "label": "sets ShareVideoPath"
+   "line": 809,
+   "label": "sets ShareVideoPath",
+   "handler": "() => { setShareVideoPath(completedRender.fi"
   },
   {
-   "line": 842,
-   "label": "Dismiss"
+   "line": 819,
+   "label": "Dismiss",
+   "handler": "() => setCompletedRender(null)"
   },
   {
-   "line": 888,
-   "label": "sets AutoBackground"
+   "line": 865,
+   "label": "sets AutoBackground",
+   "handler": "(e) => setAutoBackground(e.target.checked)"
   },
   {
-   "line": 917,
-   "label": "Clear all"
+   "line": 894,
+   "label": "Clear all",
+   "handler": "clearAllBackgrounds"
   },
   {
-   "line": 958,
-   "label": "Move up"
+   "line": 935,
+   "label": "Move up",
+   "handler": "() => moveBackgroundUp(idx)"
   },
   {
-   "line": 966,
-   "label": "Move up"
+   "line": 943,
+   "label": "Move up",
+   "handler": "() => moveBackgroundDown(idx)"
   },
   {
-   "line": 974,
-   "label": "Move down"
+   "line": 951,
+   "label": "Move down",
+   "handler": "() => removeBackground(idx)"
   },
   {
-   "line": 983,
-   "label": "Trim this clip"
+   "line": 960,
+   "label": "Trim this clip",
+   "handler": "() => setTrimTarget({"
   },
   {
-   "line": 1007,
-   "label": "openLibrary()"
+   "line": 984,
+   "label": "openLibrary()",
+   "handler": "openLibrary"
   },
   {
-   "line": 1025,
-   "label": "(unidentified)"
+   "line": 1002,
+   "label": "(unidentified)",
+   "handler": "(e) => { const f = e.target.file"
   },
   {
-   "line": 1047,
-   "label": "Pick a background video or image"
+   "line": 1024,
+   "label": "Pick a background video or image",
+   "handler": "(e) => setBackgroundPath(e.target.value)"
   },
   {
-   "line": 1052,
-   "label": "From library"
+   "line": 1029,
+   "label": "From library",
+   "handler": "openLibrary"
   },
   {
-   "line": 1066,
-   "label": "(unidentified)"
+   "line": 1043,
+   "label": "(unidentified)",
+   "handler": "(e) => { const f = e.target.file"
   },
   {
-   "line": 1088,
-   "label": "Alongside my backgrounds"
+   "line": 1065,
+   "label": "Alongside my backgrounds",
+   "handler": "(e) => setGenVisualsMode(e.target.value as GenerateMode)"
   },
   {
-   "line": 1092,
-   "label": "Alongside my backgrounds"
+   "line": 1069,
+   "label": "Alongside my backgrounds",
+   "handler": "(e) => setGenVisualsCount(Number(e.target.value))"
   },
   {
-   "line": 1095,
-   "label": "Only AI visuals"
+   "line": 1072,
+   "label": "Only AI visuals",
+   "handler": "handleGenerateVisuals"
   },
   {
-   "line": 1101,
-   "label": "Captions"
+   "line": 1078,
+   "label": "Captions",
+   "handler": "(e) => setKenBurns(e.target.checked)"
   },
   {
-   "line": 1114,
-   "label": "Enter your script lines here..."
+   "line": 1091,
+   "label": "Enter your script lines here...",
+   "handler": "(e) => setLines(e.target.value)"
   },
   {
-   "line": 1122,
-   "label": "Format for Video"
+   "line": 1099,
+   "label": "Format for Video",
+   "handler": "() => { const next = buildSpeakableLines(lines, { maxLines: 6, maxChars: 72"
   },
   {
-   "line": 1129,
-   "label": "Pick From Scripts"
+   "line": 1106,
+   "label": "Pick From Scripts",
+   "handler": "() => setShowScriptsModal(true)"
   },
   {
-   "line": 1138,
-   "label": "Use Latest Script"
+   "line": 1115,
+   "label": "Use Latest Script",
+   "handler": "() => setLines(buildLinesFromScript(scripts[0]))"
+  },
+  {
+   "line": 1126,
+   "label": "Caption animation",
+   "handler": "(e: ChangeEvent<HTMLSelectElement>) => setTypographyPreset(e.target.value)"
   },
   {
    "line": 1149,
-   "label": "Caption animation"
+   "label": "Text layout",
+   "handler": "(e: ChangeEvent<HTMLSelectElement>) => setLayout(e.target.value)"
   },
   {
-   "line": 1172,
-   "label": "Text layout"
+   "line": 1159,
+   "label": "Layered depth (ghost shadow behind each word)",
+   "handler": "(e) => setDepth(e.target.checked)"
   },
   {
-   "line": 1182,
-   "label": "Layered depth (ghost shadow behind each word)"
+   "line": 1169,
+   "label": "Output & Timing",
+   "handler": "(e: ChangeEvent<HTMLSelectElement>) => setAspect(e.target.value as any)"
   },
   {
-   "line": 1192,
-   "label": "Output & Timing"
+   "line": 1176,
+   "label": "Duration",
+   "handler": "(e: ChangeEvent<HTMLSelectElement>) => setDurationSec(Number(e.target.value))"
   },
   {
    "line": 1199,
-   "label": "Duration"
+   "label": "Audio",
+   "handler": "(e) => setCaptionWidth(Number(e.target.value))"
   },
   {
-   "line": 1222,
-   "label": "Audio"
+   "line": 1213,
+   "label": "Pick a narration track or generate one in Voice & Audio",
+   "handler": "(e) => setAudioPath(e.target.value)"
   },
   {
-   "line": 1236,
-   "label": "Pick a narration track or generate one in Voice & Audio"
+   "line": 1220,
+   "label": "Trim",
+   "handler": "() => setTrimTarget({ kind: 'audio', path: audioPath.trim(), apply: setAudioPath"
   },
   {
-   "line": 1243,
-   "label": "Trim"
+   "line": 1231,
+   "label": "sets AudioPath",
+   "handler": "() => setAudioPath(item.path)"
   },
   {
-   "line": 1254,
-   "label": "sets AudioPath"
+   "line": 1242,
+   "label": "sets MusicPath",
+   "handler": "(m) => { setMusicPath(m.path || '');"
   },
   {
-   "line": 1265,
-   "label": "sets MusicPath"
+   "line": 1256,
+   "label": "Render in background",
+   "handler": "(e) => setRenderInBackground(e.target.checked)"
   },
   {
-   "line": 1279,
-   "label": "Render in background"
+   "line": 1276,
+   "label": "Kinetic captions",
+   "handler": "(e) => setKineticCaptions(e.target.checked)"
   },
   {
-   "line": 1299,
-   "label": "Kinetic captions"
+   "line": 1293,
+   "label": "ElevenLabs voice ID",
+   "handler": "(e) => setTtsVoiceId(e.target.value)"
   },
   {
-   "line": 1316,
-   "label": "ElevenLabs voice ID"
+   "line": 1309,
+   "label": "handleRender()",
+   "handler": "() => handleRender('video')"
   },
   {
-   "line": 1332,
-   "label": "handleRender()"
+   "line": 1318,
+   "label": "handleRender()",
+   "handler": "() => handleRender('waveform')"
   },
   {
-   "line": 1342,
-   "label": "handleRender()"
+   "line": 1358,
+   "label": "Latest Instant Render",
+   "handler": "(e) => setShareVideoPath(e.target.value)"
   },
   {
-   "line": 1383,
-   "label": "Latest Instant Render"
+   "line": 1376,
+   "label": "outputs/video-xyz.mp4",
+   "handler": "(e) => setShareVideoPath(e.target.value)"
   },
   {
-   "line": 1401,
-   "label": "outputs/video-xyz.mp4"
+   "line": 1386,
+   "label": "Refresh Rendered Videos",
+   "handler": "loadJobVideos"
   },
   {
-   "line": 1411,
-   "label": "Refresh Rendered Videos"
+   "line": 1398,
+   "label": "Copy Caption",
+   "handler": "() => { navigator.clipboard.writeText(lines."
   },
   {
-   "line": 1423,
-   "label": "Copy Caption"
+   "line": 1410,
+   "label": "Webhook (Zapier/Make)",
+   "handler": "(e) => setPostDestination(e.target.value as any)"
   },
   {
-   "line": 1435,
-   "label": "Webhook (Zapier/Make)"
+   "line": 1418,
+   "label": "Select webhook...",
+   "handler": "(e) => setSelectedWebhook(e.target.value)"
   },
   {
-   "line": 1443,
-   "label": "Select webhook..."
+   "line": 1425,
+   "label": "Select profile...",
+   "handler": "(e) => setSelectedProfile(e.target.value)"
   },
   {
-   "line": 1450,
-   "label": "Select profile..."
+   "line": 1432,
+   "label": "YouTube Private",
+   "handler": "(e) => setYoutubePrivacy(e.target.value as any)"
   },
   {
-   "line": 1457,
-   "label": "YouTube Private"
+   "line": 1442,
+   "label": "Direct API requires OAuth setup",
+   "handler": "handleShare"
   },
   {
-   "line": 1467,
-   "label": "Direct API requires OAuth setup"
+   "line": 1475,
+   "label": "Scripts Library",
+   "handler": "() => setShowScriptsModal(false)"
   },
   {
-   "line": 1500,
-   "label": "Scripts Library"
+   "line": 1479,
+   "label": "Scripts Library",
+   "handler": "() => setShowScriptsModal(false)"
   },
   {
-   "line": 1504,
-   "label": "Scripts Library"
+   "line": 1501,
+   "label": "sets Lines",
+   "handler": "() => { const text = bui"
   },
   {
-   "line": 1526,
-   "label": "sets Lines"
-  },
-  {
-   "line": 1538,
-   "label": "(unidentified)"
+   "line": 1513,
+   "label": "(unidentified)",
+   "handler": "() => { const text = bui"
   }
  ],
  "voice": [
   {
    "line": 1030,
-   "label": "sets Provider"
+   "label": "sets Provider",
+   "handler": "() => setProvider('elevenlabs')"
   },
   {
    "line": 1042,
-   "label": "ElevenLabs"
+   "label": "ElevenLabs",
+   "handler": "() => setProvider('azure')"
   },
   {
    "line": 1057,
-   "label": "Azure"
+   "label": "Azure",
+   "handler": "() => setProvider('fish')"
   },
   {
    "line": 1072,
-   "label": "Fish"
+   "label": "Fish",
+   "handler": "() => setProvider('chatterbox')"
   },
   {
    "line": 1085,
-   "label": "Chatterbox"
+   "label": "Chatterbox",
+   "handler": "() => setProvider('edge')"
   },
   {
    "line": 1116,
-   "label": "/path/to/reference.wav"
+   "label": "/path/to/reference.wav",
+   "handler": "(e) => setChatterboxAudioPrompt(e.target.value)"
   },
   {
    "line": 1130,
-   "label": "sets ChatterboxStyle"
+   "label": "sets ChatterboxStyle",
+   "handler": "(e) => setChatterboxStyle(Number(e.target.value))"
   },
   {
    "line": 1144,
-   "label": "sets ChatterboxCfg"
+   "label": "sets ChatterboxCfg",
+   "handler": "(e) => setChatterboxCfg(Number(e.target.value))"
   },
   {
    "line": 1158,
-   "label": "sets EdgeVoiceId"
+   "label": "sets EdgeVoiceId",
+   "handler": "(e) => provider === 'edge'"
   },
   {
    "line": 1182,
-   "label": "sets Stability"
+   "label": "sets Stability",
+   "handler": "(e) => setStability(Number(e.target.value))"
   },
   {
    "line": 1199,
-   "label": "sets Similarity"
+   "label": "sets Similarity",
+   "handler": "(e) => setSimilarity(Number(e.target.value))"
   },
   {
    "line": 1207,
-   "label": "Load Voices"
+   "label": "Load Voices",
+   "handler": "loadVoices"
   },
   {
    "line": 1214,
-   "label": "Select a voice..."
+   "label": "Select a voice...",
+   "handler": "(e) => provider === 'edge'"
   },
   {
    "line": 1229,
-   "label": "handleTTS()"
+   "label": "handleTTS()",
+   "handler": "handleTTS"
   },
   {
    "line": 1285,
-   "label": "Start Recording"
+   "label": "Start Recording",
+   "handler": "handleStartRecording"
   },
   {
    "line": 1290,
-   "label": "Stop Recording"
+   "label": "Stop Recording",
+   "handler": "handleStopRecording"
   },
   {
    "line": 1301,
-   "label": "(unidentified)"
+   "label": "(unidentified)",
+   "handler": "(e) => { const file = e.target.files?.[0];"
   },
   {
    "line": 1383,
-   "label": "Audio Treatment Guide"
+   "label": "Audio Treatment Guide",
+   "handler": "() => setShowGuide((v) => !v)"
   },
   {
    "line": 1412,
-   "label": "Clean voice (recommended)"
+   "label": "Clean voice (recommended)",
+   "handler": "(e) => setPreset(e.target.value)"
   },
   {
    "line": 1428,
-   "label": "sets Denoise"
+   "label": "sets Denoise",
+   "handler": "(e) => setDenoise(Number(e.target.value))"
   },
   {
    "line": 1442,
-   "label": "sets Gate"
+   "label": "sets Gate",
+   "handler": "(e) => setGate(Number(e.target.value))"
   },
   {
    "line": 1456,
-   "label": "sets Highpass"
+   "label": "sets Highpass",
+   "handler": "(e) => setHighpass(Number(e.target.value))"
   },
   {
    "line": 1470,
-   "label": "sets Lowpass"
+   "label": "sets Lowpass",
+   "handler": "(e) => setLowpass(Number(e.target.value))"
   },
   {
    "line": 1484,
-   "label": "sets CompRatio"
+   "label": "sets CompRatio",
+   "handler": "(e) => setCompRatio(Number(e.target.value))"
   },
   {
    "line": 1498,
-   "label": "sets CompThreshold"
+   "label": "sets CompThreshold",
+   "handler": "(e) => setCompThreshold(Number(e.target.value))"
   },
   {
    "line": 1512,
-   "label": "sets Lufs"
+   "label": "sets Lufs",
+   "handler": "(e) => setLufs(Number(e.target.value))"
   },
   {
    "line": 1525,
-   "label": "Yes"
+   "label": "Yes",
+   "handler": "(e) => setRemoveSilence(e.target.value === 'true')"
   },
   {
    "line": 1535,
-   "label": "Advanced Effects"
+   "label": "Advanced Effects",
+   "handler": "() => setShowAdvanced((v) => !v)"
   },
   {
    "line": 1550,
-   "label": "sets DeesserAmount"
+   "label": "sets DeesserAmount",
+   "handler": "(e) => setDeesserAmount(Number(e.target.value))"
   },
   {
    "line": 1564,
-   "label": "sets LimiterCeiling"
+   "label": "sets LimiterCeiling",
+   "handler": "(e) => setLimiterCeiling(Number(e.target.value))"
   },
   {
    "line": 1578,
-   "label": "sets PresenceGain"
+   "label": "sets PresenceGain",
+   "handler": "(e) => setPresenceGain(Number(e.target.value))"
   },
   {
    "line": 1592,
-   "label": "sets PresenceFreq"
+   "label": "sets PresenceFreq",
+   "handler": "(e) => setPresenceFreq(Number(e.target.value))"
   },
   {
    "line": 1606,
-   "label": "sets PresenceQ"
+   "label": "sets PresenceQ",
+   "handler": "(e) => setPresenceQ(Number(e.target.value))"
   },
   {
    "line": 1616,
-   "label": "Process Audio"
+   "label": "Process Audio",
+   "handler": "handleProcessAudio"
   },
   {
    "line": 1632,
-   "label": "Load Music Library"
+   "label": "Load Music Library",
+   "handler": "loadMusicLibrary"
   },
   {
    "line": 1655,
-   "label": "Use in Render"
+   "label": "Use in Render",
+   "handler": "() => useAsSoundtrack(item.path)"
   },
   {
    "line": 1683,
-   "label": "e.g. server/outputs/audio.mp3"
+   "label": "e.g. server/outputs/audio.mp3",
+   "handler": "(e) => setAudioPath(e.target.value)"
   },
   {
    "line": 1696,
-   "label": "(unidentified)"
+   "label": "(unidentified)",
+   "handler": "() => { navigator.clipboard.writeText(au"
   },
   {
    "line": 1737,
-   "label": "Provider"
+   "label": "Provider",
+   "handler": "() => setCloneProvider('elevenlabs')"
   },
   {
    "line": 1748,
-   "label": "ElevenLabs"
+   "label": "ElevenLabs",
+   "handler": "() => setCloneProvider('chatterbox')"
   },
   {
    "line": 1785,
-   "label": "Clone name (e.g. Segun Narrator)"
+   "label": "Clone name (e.g. Segun Narrator)",
+   "handler": "(e) => setCloneVoiceName(e.target.value)"
   },
   {
    "line": 1790,
-   "label": "Clone name (e.g. Segun Narrator)"
+   "label": "Clone name (e.g. Segun Narrator)",
+   "handler": "(e) => setCloneSamplePath(e.target.value)"
   },
   {
    "line": 1796,
-   "label": "Sample audio path (e.g. server/outputs/user-audio-xxx.wav)"
+   "label": "Sample audio path (e.g. server/outputs/user-audio-xxx.wav)",
+   "handler": "(e) => setCloneVoiceDescription(e.target.value)"
   },
   {
    "line": 1801,
-   "label": "Optional description"
+   "label": "Optional description",
+   "handler": "(e) => setCloneHasRights(e.target.checked)"
   },
   {
    "line": 1805,
-   "label": "sets CloneHasRights"
+   "label": "sets CloneHasRights",
+   "handler": "(e) => setCloneNoImpersonation(e.target.checked)"
   },
   {
    "line": 1809,
-   "label": "sets CloneNoImpersonation"
+   "label": "sets CloneNoImpersonation",
+   "handler": "(e) => setCloneTermsAccepted(e.target.checked)"
   },
   {
    "line": 1817,
-   "label": "sets CloneSamplePath"
+   "label": "sets CloneSamplePath",
+   "handler": "() => { setCloneSamplePath(audioPath);"
   },
   {
    "line": 1826,
-   "label": "Clone Voice"
+   "label": "Clone Voice",
+   "handler": "handleCloneVoice"
   },
   {
    "line": 1851,
-   "label": "sets Provider"
+   "label": "sets Provider",
+   "handler": "() => { setProvider('cha"
   },
   {
    "line": 1861,
-   "label": "Delete this saved clone"
+   "label": "Delete this saved clone",
+   "handler": "() => deleteChatterboxVoice(cv.id)"
   },
   {
    "line": 1880,
-   "label": "Voice presets"
+   "label": "Voice presets",
+   "handler": "(e) => setPresetLabel(e.target.value)"
   },
   {
    "line": 1885,
-   "label": "Preset label (e.g. Narrator)"
+   "label": "Preset label (e.g. Narrator)",
+   "handler": "(e) => setPresetVoiceId(e.target.value)"
   },
   {
    "line": 1891,
-   "label": "Voice ID (optional)"
+   "label": "Voice ID (optional)",
+   "handler": "(e) => setPresetStability(Number(e.target.value))"
   },
   {
    "line": 1900,
-   "label": "Stability"
+   "label": "Stability",
+   "handler": "(e) => setPresetSimilarity(Number(e.target.value))"
   },
   {
    "line": 1907,
-   "label": "Save Preset"
+   "label": "Save Preset",
+   "handler": "addPreset"
   },
   {
    "line": 1918,
-   "label": "Add IDs"
+   "label": "Add IDs",
+   "handler": "(e) => setQuickIds(e.target.value)"
   },
   {
    "line": 1921,
-   "label": "Add IDs"
+   "label": "Add IDs",
+   "handler": "addQuickIds"
   },
   {
    "line": 1935,
-   "label": "Use"
+   "label": "Use",
+   "handler": "() => { applyPreset(p);"
   },
   {
    "line": 1941,
-   "label": "Use"
+   "label": "Use",
+   "handler": "() => removePreset(p.id)"
   },
   {
    "line": 2014,
-   "label": "sets AudioPath"
+   "label": "sets AudioPath",
+   "handler": "() => { setAudioPath(item.path);"
   },
   {
    "line": 2023,
-   "label": "toast()"
+   "label": "toast()",
+   "handler": "() => toast.dismiss(t.id)"
   },
   {
    "line": 2040,
-   "label": "(unidentified)"
+   "label": "(unidentified)",
+   "handler": "() => { navigator.clipboard.writ"
   },
   {
    "line": 2057,
-   "label": "sets ShowAllRecent"
+   "label": "sets ShowAllRecent",
+   "handler": "() => setShowAllRecent((v) => !v)"
   }
  ]
 }

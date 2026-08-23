@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type ChangeEvent, type SyntheticEvent } from 'react';
+import { useEffect, useRef, useState, type SyntheticEvent } from 'react';
+import { RenderOutputPanel } from '../components/render/RenderOutputPanel';
 import { RenderCaptionsPanel } from '../components/render/RenderCaptionsPanel';
 import { checkRenderReadiness } from '../lib/renderReadiness';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -1132,42 +1133,15 @@ export function RenderPage() {
                     </Section>
 
                     <Section title="Output & Timing">
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                            <Field label="Output frame" tooltip="Aspect ratio of the output video. Captions auto-wrap to the selected frame.">
-                                <Select value={aspect} onChange={(e: ChangeEvent<HTMLSelectElement>) => setAspect(e.target.value as any)}>
-                                    <option value="portrait">Portrait (9:16)</option>
-                                    <option value="landscape">Landscape (16:9)</option>
-                                    <option value="square">Square (1:1)</option>
-                                </Select>
-                            </Field>
-                            <Field label="Duration">
-                                <Select value={String(durationSec)} onChange={(e: ChangeEvent<HTMLSelectElement>) => setDurationSec(Number(e.target.value))}>
-                                    <option value="20">20s (default)</option>
-                                    <option value="60">60s</option>
-                                    <option value="120">120s</option>
-                                    <option value="180">180s</option>
-                                </Select>
-                                {isLongRender && (
-                                    <div className="mt-2 text-[0.6875rem] text-yellow-300 bg-yellow-500/10 border border-yellow-500/20 rounded-md px-2 py-1 inline-block">
-                                        Long renders run in the background
-                                    </div>
-                                )}
-                            </Field>
-                        </div>
-                        <Field
-                            label={`Caption width (${captionWidth}%)`}
-                            tooltip="Width of the caption block relative to the frame. Lower values add more padding around the text and force tighter line wrapping."
-                        >
-                            <input
-                                type="range"
-                                min="60"
-                                max="100"
-                                step="2"
-                                value={captionWidth}
-                                onChange={(e) => setCaptionWidth(Number(e.target.value))}
-                                className="w-full accent-primary-500"
-                            />
-                        </Field>
+                        <RenderOutputPanel
+                            aspect={aspect}
+                            onAspectChange={(v) => setAspect(v as typeof aspect)}
+                            durationSec={durationSec}
+                            onDurationChange={setDurationSec}
+                            captionWidth={captionWidth}
+                            onCaptionWidthChange={setCaptionWidth}
+                            isLongRender={isLongRender}
+                        />
                     </Section>
 
                     <Section title="Audio">

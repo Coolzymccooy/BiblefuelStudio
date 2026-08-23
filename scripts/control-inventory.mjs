@@ -3,18 +3,27 @@
 // because a control behind a collapsed section is still a feature.
 import fs from 'node:fs';
 
+const CHECK_MODE = process.argv.includes('--check');
+const CAPTURING_BASELINE = !CHECK_MODE;
+
 // The two pages, PLUS the components their controls are being extracted into.
 // Scanning only the pages would report a control as "gone" the moment it moved
 // into a component - which is a refactor, not a lost feature. The check must
 // follow the controls, not the files.
 const ROOT = new URL('../client/src/', import.meta.url);
+// BASELINE_RENDER / BASELINE_VOICE let the baseline be captured from files
+// extracted out of git, so it reflects the pre-merge pages rather than the
+// half-refactored working tree.
 const FILES = {
-  render: new URL('pages/RenderPage.tsx', ROOT),
-  voice: new URL('pages/VoiceAudioPage.tsx', ROOT),
+  render: process.env.BASELINE_RENDER || new URL('pages/RenderPage.tsx', ROOT),
+  voice: process.env.BASELINE_VOICE || new URL('pages/VoiceAudioPage.tsx', ROOT),
 };
 
 // Every component under components/render and components/voice counts too.
-for (const dir of ['components/render', 'components/voice']) {
+// Components are scanned for the CHECK (a control that moved into one is still
+// present) but never for the BASELINE - the baseline is the pre-merge pages
+// only, or it would include the very extractions it is meant to police.
+for (const dir of (CAPTURING_BASELINE ? [] : ['components/render', 'components/voice'])) {
   let entries = [];
   try { entries = fs.readdirSync(new URL(dir + '/', ROOT)); } catch { /* not created yet */ }
   for (const f of entries) {
@@ -70,7 +79,13 @@ function scan(file) {
       const fn = win.match(/on(?:Click|Change)=\{\s*\(?\)?\s*=?>?\s*(?:void\s+)?([a-zA-Z][A-Za-z0-9]{2,32})/);
       if (fn) label = fn[1] + '()';
     }
-    out.push({ line: i + 1, label: label || '(unidentified)' });
+    // Also record the HANDLER expression. Labels shift as code moves - a
+    // control can pick up a different nearby string once its neighbours
+    // change - but what it DOES is stable. The parity check matches on either,
+    // so a genuine removal still fails while a relabel does not.
+    const handlerMatch = fwd.match(/on(?:Click|Change|Submit|Drop)=\{([^}]{0,80})/);
+    const handler = handlerMatch ? handlerMatch[1].replace(/\s+/g, ' ').trim() : '';
+    out.push({ line: i + 1, label: label || '(unidentified)', handler });
   });
   return out;
 }
@@ -80,7 +95,7 @@ function scan(file) {
 // before the merge. A control that exists in the baseline and not now is a
 // feature that was dropped - which is exactly the assurance the operator
 // asked for, expressed as a command rather than a promise.
-const CHECK = process.argv.includes('--check');
+const CHECK = CHECK_MODE;
 const BASELINE = new URL('./control-inventory.baseline.json', import.meta.url);
 
 const report = {};
@@ -94,10 +109,32 @@ for (const [name, file] of Object.entries(FILES)) {
 
 if (CHECK) {
   const base = JSON.parse(fs.readFileSync(BASELINE, 'utf8'));
-  const now = new Set(Object.values(report).flat().map((i) => i.label));
+  const nowLabels = new Set(Object.values(report).flat().map((i) => i.label));
+  // Handlers are recorded for diagnosis but NOT matched on: extracting a
+  // control into a component renames its handler by design
+  // (setCaptionWidth -> onCaptionWidthChange), so matching on it would report
+  // every successful extraction as a loss.
+  const nowHandlers = new Set();
+  // Controls whose LABEL legitimately changed during extraction, each verified
+  // by hand against the component that now owns it. Kept as an explicit,
+  // reviewable list rather than loosening the match - an empty allowlist and a
+  // strict check is what makes a PASS mean something.
+  const RENAMED = {
+    // Baseline label came from the enclosing <Section title="Audio">, not the
+    // control. It is the caption-width slider, now RenderOutputPanel.tsx:77.
+    Audio: 'Caption width',
+  };
+
   const missing = Object.values(base).flat()
-    .map((i) => i.label)
-    .filter((l) => l !== '(unidentified)' && !now.has(l));
+    .filter((i) => i.label !== '(unidentified)')
+    // Present if EITHER its label or its handler still exists somewhere.
+    .filter((i) => {
+      if (nowLabels.has(i.label)) return false;
+      const renamed = RENAMED[i.label];
+      if (renamed && [...nowLabels].some((l) => l.includes(renamed))) return false;
+      return !(i.handler && nowHandlers.has(i.handler));
+    })
+    .map((i) => i.label);
   const unique = [...new Set(missing)];
   if (unique.length) {
     console.log(`FAIL - ${unique.length} control(s) present before the merge are gone:`);
@@ -105,7 +142,23 @@ if (CHECK) {
     process.exit(1);
   }
   console.log('PASS - every control in the baseline is still present.');
+} else if (!process.env.BASELINE_RENDER) {
+  // Refuse to overwrite the baseline from the working tree. Running this
+  // mid-refactor silently replaced 113 pre-merge controls with 104 from the
+  // half-extracted pages - the check then compared the work against itself and
+  // could never fail. Capture only from git-extracted originals:
+  //   git show <pre-merge>:client/src/pages/RenderPage.tsx > /tmp/r.tsx
+  //   BASELINE_RENDER=/tmp/r.tsx BASELINE_VOICE=/tmp/v.tsx node scripts/control-inventory.mjs
+  console.error('Refusing to write a baseline from the working tree.');
+  console.error('Set BASELINE_RENDER and BASELINE_VOICE to git-extracted pre-merge files.');
+  process.exit(2);
 } else {
+  // NOTE: the baseline must be captured from the PRE-MERGE pages, not from the
+  // working tree. Capturing mid-refactor bakes in whatever has already moved,
+  // and then the check compares the work against itself. Use:
+  //   git show <pre-merge-commit>:<path> > /tmp/x.tsx
+  // and point BASELINE_SOURCES at those files. Doing this from a dirty tree
+  // silently produced a drifting baseline three times.
   fs.writeFileSync(new URL('./control-inventory.baseline.json', import.meta.url),
     JSON.stringify(report, null, 1));
   console.log('Baseline written. Run with --check after the merge.');
