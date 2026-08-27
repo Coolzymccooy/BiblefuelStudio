@@ -2052,6 +2052,10 @@ export function TimelinePage() {
                                 setSourceMediaKind('video');
                                 toast.success('Story video loaded as source media');
                             }}
+                            onPreviewVideo={(path) => {
+                                setRenderedVideo(path);
+                                setRenderedThisSession(true);
+                            }}
                         />
                     ),
                     series: (
@@ -2062,6 +2066,10 @@ export function TimelinePage() {
                                     : 'portrait'
                             }
                             onViewJobs={() => navigate('/app/queue')}
+                            onPreviewVideo={(path) => {
+                                setRenderedVideo(path);
+                                setRenderedThisSession(true);
+                            }}
                         />
                     ),
                     media: (

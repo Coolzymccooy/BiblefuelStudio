@@ -31,7 +31,7 @@ const DONE_PROJECT = {
 
 describe('StoryQuickPanel', () => {
   it('offers the entry form when no project is active', () => {
-    renderWith(<StoryQuickPanel onUseVideo={() => {}} />);
+    renderWith(<StoryQuickPanel onUseVideo={() => {}} onPreviewVideo={() => {}} />);
     expect(screen.getByPlaceholderText('Trusting God in the waiting')).toBeInTheDocument();
     expect(screen.getByRole('group', { name: /visual style/i })).toBeInTheDocument();
     expect(screen.getByText(/Upload a sermon/i)).toBeInTheDocument();
@@ -41,7 +41,7 @@ describe('StoryQuickPanel', () => {
     // The styled drop area LOOKED clickable but was not - regression guard.
     const user = userEvent.setup();
     const clickSpy = vi.spyOn(HTMLInputElement.prototype, 'click');
-    renderWith(<StoryQuickPanel onUseVideo={() => {}} />);
+    renderWith(<StoryQuickPanel onUseVideo={() => {}} onPreviewVideo={() => {}} />);
     await user.click(screen.getByRole('button', { name: /upload a sermon/i }));
     expect(clickSpy).toHaveBeenCalled();
   });
@@ -49,7 +49,7 @@ describe('StoryQuickPanel', () => {
   it('tracks the SAME active project as the Story page (shared key)', async () => {
     localStorage.setItem('BF_STORY_ACTIVE', 'p1');
     vi.spyOn(storyApi, 'getProject').mockResolvedValue(DONE_PROJECT as any);
-    renderWith(<StoryQuickPanel onUseVideo={() => {}} />);
+    renderWith(<StoryQuickPanel onUseVideo={() => {}} onPreviewVideo={() => {}} />);
     expect(await screen.findByText('Trusting God in the waiting')).toBeInTheDocument();
   });
 
@@ -58,9 +58,21 @@ describe('StoryQuickPanel', () => {
     localStorage.setItem('BF_STORY_ACTIVE', 'p1');
     vi.spyOn(storyApi, 'getProject').mockResolvedValue(DONE_PROJECT as any);
     const onUseVideo = vi.fn();
-    renderWith(<StoryQuickPanel onUseVideo={onUseVideo} />);
+    renderWith(<StoryQuickPanel onUseVideo={onUseVideo} onPreviewVideo={() => {}} />);
     await user.click(await screen.findByRole('button', { name: /use as source media/i }));
-    expect(onUseVideo).toHaveBeenCalledWith('outputs/story/p1/video.mp4');
+    // Leading slash: mediaUrl keeps /outputs/ paths intact; a bare relative
+    // path is stripped to its basename - a 404 for this nested dir.
+    expect(onUseVideo).toHaveBeenCalledWith('/outputs/story/p1/video.mp4');
+  });
+
+  it('previews the finished render ON THE STAGE, without leaving the editor', async () => {
+    const user = userEvent.setup();
+    localStorage.setItem('BF_STORY_ACTIVE', 'p1');
+    vi.spyOn(storyApi, 'getProject').mockResolvedValue(DONE_PROJECT as any);
+    const onPreviewVideo = vi.fn();
+    renderWith(<StoryQuickPanel onUseVideo={() => {}} onPreviewVideo={onPreviewVideo} />);
+    await user.click(await screen.findByRole('button', { name: /preview on stage/i }));
+    expect(onPreviewVideo).toHaveBeenCalledWith('/outputs/story/p1/video.mp4');
   });
 
   it('offers the real recovery actions when the pipeline errored', async () => {
@@ -71,7 +83,7 @@ describe('StoryQuickPanel', () => {
       error: 'cancelled by user',
       render: {},
     } as any);
-    renderWith(<StoryQuickPanel onUseVideo={() => {}} />);
+    renderWith(<StoryQuickPanel onUseVideo={() => {}} onPreviewVideo={() => {}} />);
     expect(await screen.findByText(/pick up where you left off/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /retry failed images/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /re-segment/i })).toBeInTheDocument();
@@ -89,7 +101,7 @@ describe('StoryQuickPanel', () => {
         { id: 'sc2', text: 'z', imagePrompt: 'w', imageStatus: 'error', startMs: 9000, endMs: 18000 },
       ],
     } as any);
-    renderWith(<StoryQuickPanel onUseVideo={() => {}} />);
+    renderWith(<StoryQuickPanel onUseVideo={() => {}} onPreviewVideo={() => {}} />);
     const btn = await screen.findByRole('button', { name: /waiting for all images/i });
     expect(btn).toBeDisabled();
   });

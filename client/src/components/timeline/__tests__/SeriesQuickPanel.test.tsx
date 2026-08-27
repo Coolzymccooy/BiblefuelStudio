@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import React from 'react';
 import { seriesApi } from '../../../lib/bibleApi';
+import { api } from '../../../lib/api';
 import { SeriesQuickPanel, type SeriesQuickPanelProps } from '../SeriesQuickPanel';
 
 beforeEach(() => vi.restoreAllMocks());
@@ -25,6 +26,7 @@ function setup(over: Partial<SeriesQuickPanelProps> = {}) {
   const props: SeriesQuickPanelProps = {
     defaultAspect: 'portrait',
     onViewJobs: vi.fn(),
+    onPreviewVideo: vi.fn(),
     ...over,
   };
   render(React.createElement(SeriesQuickPanel, props));
@@ -71,9 +73,31 @@ describe('SeriesQuickPanel', () => {
     vi.spyOn(seriesApi, 'list').mockResolvedValue({ series: [
       { seriesId: 's0', userId: 'u', chapterReference: 'Psalms 91', book: 'Psalms', chapter: 91, translation: 'kjv', totalParts: 5, jobIds: ['a', 'b', 'c', 'd', 'e'], createdAt: new Date().toISOString() },
     ] } as any);
-    const props: SeriesQuickPanelProps = { defaultAspect: 'portrait', onViewJobs: vi.fn() };
+    const props: SeriesQuickPanelProps = { defaultAspect: 'portrait', onViewJobs: vi.fn(), onPreviewVideo: vi.fn() };
     render(React.createElement(SeriesQuickPanel, props));
     await user.click(await screen.findByRole('button', { name: /watch the jobs in queue/i }));
     expect(props.onViewJobs).toHaveBeenCalled();
+  });
+
+  it('tracks the queued parts LIVE and previews a ready part on the stage', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(seriesApi, 'preview').mockResolvedValue({ plan: PLAN } as any);
+    vi.spyOn(seriesApi, 'generate').mockResolvedValue({
+      series: { seriesId: 's1', userId: 'u', chapterReference: 'John 3', book: 'John', chapter: 3, translation: 'kjv', totalParts: 2, jobIds: ['j1', 'j2'], createdAt: new Date().toISOString() },
+      plan: PLAN,
+      jobIds: ['j1', 'j2'],
+    } as any);
+    // The poller's first tick is immediate; j1 is already rendered, j2 still going.
+    vi.spyOn(api, 'get').mockResolvedValue({ ok: true, data: { jobs: [
+      { id: 'j1', status: 'done', result: { outFile: 'C:/srv/outputs/video-part1.mp4' } },
+      { id: 'j2', status: 'running' },
+    ] } } as any);
+    const props = setup();
+    await user.click(screen.getByRole('button', { name: /preview segments/i }));
+    await screen.findByText('John 3:1-7');
+    await user.click(screen.getByRole('button', { name: /generate series/i }));
+    await user.click(await screen.findByRole('button', { name: /preview on stage/i }));
+    expect(props.onPreviewVideo).toHaveBeenCalledWith('C:/srv/outputs/video-part1.mp4');
+    expect(screen.getByText('Rendering')).toBeInTheDocument();
   });
 });

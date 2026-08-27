@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
-import { Sparkles, ListOrdered } from 'lucide-react';
+import { Sparkles, ListOrdered, Play } from 'lucide-react';
 import { seriesApi, type SeriesPlan, type SeriesRecord } from '../../lib/bibleApi';
+import { api } from '../../lib/api';
 import { toastError } from '../../lib/errors';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
@@ -32,9 +33,21 @@ export interface SeriesQuickPanelProps {
   /** Mapped from the project's Output frame so parts match the timeline. */
   defaultAspect: 'portrait' | 'square' | 'landscape';
   onViewJobs: () => void;
+  /** Plays a finished part center-stage, right here in the editor. */
+  onPreviewVideo: (outputPath: string) => void;
 }
 
-export function SeriesQuickPanel({ defaultAspect, onViewJobs }: SeriesQuickPanelProps) {
+interface TrackedJob {
+  id: string;
+  partNumber: number;
+  status: string;
+  outFile?: string;
+}
+
+const TERMINAL = new Set(['done', 'failed', 'error']);
+const POLL_MS = 4000;
+
+export function SeriesQuickPanel({ defaultAspect, onViewJobs, onPreviewVideo }: SeriesQuickPanelProps) {
   const [reference, setReference] = useState('John 3');
   const [parts, setParts] = useState(5);
   const [translation, setTranslation] = useState('kjv');
@@ -42,10 +55,40 @@ export function SeriesQuickPanel({ defaultAspect, onViewJobs }: SeriesQuickPanel
   const [history, setHistory] = useState<SeriesRecord[]>([]);
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  // Part jobs being watched LIVE, so a generated series shows up here - on
+  // the fly - instead of sending the operator to the Jobs page to find out.
+  const [trackedLabel, setTrackedLabel] = useState('');
+  const [trackedJobs, setTrackedJobs] = useState<TrackedJob[]>([]);
 
   useEffect(() => {
     seriesApi.list(5).then(({ series }) => setHistory(series)).catch(() => setHistory([]));
   }, []);
+
+  const track = (label: string, jobIds: string[]) => {
+    setTrackedLabel(label);
+    setTrackedJobs(jobIds.map((id, i) => ({ id, partNumber: i + 1, status: 'queued' })));
+  };
+
+  // Poll the jobs API while any tracked part is still working. First tick is
+  // immediate so a just-finished part shows without waiting a full interval.
+  useEffect(() => {
+    if (trackedJobs.length === 0) return;
+    if (trackedJobs.every((j) => TERMINAL.has(j.status))) return;
+    let cancelled = false;
+    const tick = async () => {
+      const res = await api.get<{ jobs?: Array<{ id: string; status: string; result?: { outFile?: string; file?: string } }> }>('/api/jobs');
+      if (cancelled || !res.ok || !res.data?.jobs) return;
+      const byId = new Map(res.data.jobs.map((j) => [j.id, j]));
+      setTrackedJobs((prev) => prev.map((t) => {
+        const j = byId.get(t.id);
+        return j ? { ...t, status: j.status, outFile: j.result?.outFile || j.result?.file } : t;
+      }));
+    };
+    tick();
+    const iv = window.setInterval(tick, POLL_MS);
+    return () => { cancelled = true; window.clearInterval(iv); };
+    // Re-arm when the set of tracked ids changes or all become terminal.
+  }, [trackedJobs.length, trackedJobs.every((j) => TERMINAL.has(j.status))]);
 
   const handlePreview = async () => {
     if (!reference.trim()) {
@@ -79,8 +122,9 @@ export function SeriesQuickPanel({ defaultAspect, onViewJobs }: SeriesQuickPanel
         aspect: defaultAspect,
         durationSec: 22,
       });
-      toast.success(`${result.jobIds.length} part job${result.jobIds.length === 1 ? '' : 's'} queued`);
+      toast.success(`${result.jobIds.length} part job${result.jobIds.length === 1 ? '' : 's'} queued — watch them below`);
       setHistory((prev) => [result.series, ...prev].slice(0, 5));
+      track(result.series.chapterReference, result.jobIds);
       setPlan(null);
     } catch (err) {
       toastError(err);
@@ -146,6 +190,36 @@ export function SeriesQuickPanel({ defaultAspect, onViewJobs }: SeriesQuickPanel
         </div>
       )}
 
+      {trackedJobs.length > 0 && (
+        <div className="space-y-1.5 border-t border-editor-line pt-2.5">
+          <p className="text-[9px] font-bold uppercase tracking-[.1em] text-editor-faint">
+            Parts · {trackedLabel}
+          </p>
+          {trackedJobs.map((j) => (
+            <div key={j.id} className="flex items-center gap-2">
+              <span className="w-9 shrink-0 text-[10px] font-bold text-editor-accent">Pt {j.partNumber}</span>
+              <span className={`flex-1 text-[10px] font-semibold uppercase tracking-wide ${
+                j.status === 'done' ? 'text-bf-success'
+                  : TERMINAL.has(j.status) ? 'text-bf-danger'
+                  : j.status === 'queued' ? 'text-editor-faint' : 'text-editor-accent'
+              }`}>
+                {j.status === 'done' ? 'Ready' : TERMINAL.has(j.status) ? 'Failed' : j.status === 'queued' ? 'Queued' : 'Rendering'}
+              </span>
+              {j.status === 'done' && j.outFile && (
+                <button
+                  type="button"
+                  onClick={() => onPreviewVideo(j.outFile as string)}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-md border border-editor-line px-2 py-1 text-[10px] font-semibold text-editor-accent hover:bg-editor-hover"
+                >
+                  <Play size={10} />
+                  Preview on stage
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
       {history.length > 0 && (
         <div className="space-y-1.5 border-t border-editor-line pt-2.5">
           <p className="text-[9px] font-bold uppercase tracking-[.1em] text-editor-faint">Recent series</p>
@@ -155,6 +229,13 @@ export function SeriesQuickPanel({ defaultAspect, onViewJobs }: SeriesQuickPanel
                 <span className="font-semibold text-editor-text">{s.chapterReference}</span>
                 {' '}· {s.totalParts} part{s.totalParts === 1 ? '' : 's'} · {s.translation.toUpperCase()} · {s.jobIds.length} job{s.jobIds.length === 1 ? '' : 's'}
               </span>
+              <button
+                type="button"
+                onClick={() => track(s.chapterReference, s.jobIds)}
+                className="shrink-0 rounded-md border border-editor-line px-2 py-0.5 text-[10px] text-editor-dim hover:text-editor-accent"
+              >
+                Track parts
+              </button>
             </div>
           ))}
           <button

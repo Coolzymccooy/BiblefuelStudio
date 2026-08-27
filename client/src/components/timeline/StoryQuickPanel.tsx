@@ -29,9 +29,11 @@ const ACTIVE_KEY = 'BF_STORY_ACTIVE';
 export interface StoryQuickPanelProps {
   /** Lands the finished render on the timeline as source media. */
   onUseVideo: (outputPath: string) => void;
+  /** Plays the finished render center-stage, right here in the editor. */
+  onPreviewVideo: (outputPath: string) => void;
 }
 
-export function StoryQuickPanel({ onUseVideo }: StoryQuickPanelProps) {
+export function StoryQuickPanel({ onUseVideo, onPreviewVideo }: StoryQuickPanelProps) {
   const qc = useQueryClient();
   const [projectId, setProjectId] = useState<string | null>(() => localStorage.getItem(ACTIVE_KEY));
   const [title, setTitle] = useState('');
@@ -195,9 +197,13 @@ export function StoryQuickPanel({ onUseVideo }: StoryQuickPanelProps) {
   const transient = isTransientStatus(project.status);
   const stalled = isStalled(project, Date.now());
   const counts = imageCounts(project.scenes);
+  // Leading slash matters: mediaUrl keeps a /outputs/ path INTACT, while a
+  // bare relative path is stripped to its basename - a 404 for this nested
+  // story dir.
   const doneVideo = project.status === 'done' && project.render?.outputPath
-    ? `outputs/story/${project.projectId}/video.mp4`
+    ? `/outputs/story/${project.projectId}/video.mp4`
     : null;
+  const renderPct = typeof project.render?.percent === 'number' ? project.render.percent : undefined;
 
   return (
     <div className="space-y-3">
@@ -269,18 +275,34 @@ export function StoryQuickPanel({ onUseVideo }: StoryQuickPanelProps) {
         </div>
       )}
 
+      {project.status === 'rendering' && renderPct !== undefined && (
+        <div className="space-y-1.5">
+          <p className="text-[11px] text-editor-dim">Rendering… <span className="font-mono text-editor-text">{Math.round(renderPct)}%</span></p>
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+            <div className="h-full bg-primary-500 transition-all duration-150" style={{ width: `${Math.max(2, renderPct)}%` }} />
+          </div>
+        </div>
+      )}
+
       {doneVideo && (
         <div className="space-y-2 rounded-xl border border-editor-line bg-white/[0.02] p-3">
           <p className="text-[11px] font-semibold text-editor-text">Render done.</p>
           <Button
-            onClick={() => onUseVideo(doneVideo)}
+            onClick={() => onPreviewVideo(doneVideo)}
             className="h-9 w-full text-xs"
+          >
+            Preview on stage
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => onUseVideo(doneVideo)}
+            className="h-9 w-full border-editor-line text-xs"
           >
             <ArrowDownToLine size={14} className="mr-1.5" />
             Use as source media
           </Button>
           <p className="text-[10px] leading-relaxed text-editor-faint">
-            Loads the finished video onto THIS timeline — captions, music and effects here layer on top.
+            Preview plays it center-stage right here. Use-as-source loads it onto THIS timeline — captions, music and effects layer on top.
           </p>
         </div>
       )}
