@@ -156,6 +156,7 @@ const TYPOGRAPHY_PRESETS = Object.freeze({
     boxBorderW: 18,
     lineBoxOpacity: 0.92, lineBoxColor: "0xF5C518", lineSizeMult: 0.026,
     lineEnter: "fade", wordReveal: "scale-fade", wordRevealMs: 260,
+    captionMode: "lines",
     uppercase: false,
   },
 
@@ -168,6 +169,7 @@ const TYPOGRAPHY_PRESETS = Object.freeze({
     heroSizeMult: 0.070, heroColor: "0xFFF8D0",
     borderWidth: 10, wordBox: false, lineBoxOpacity: 0, lineSizeMult: 0.028,
     lineEnter: "rise-fade", wordReveal: "scale-fade", wordRevealMs: 240,
+    captionMode: "lines",
     uppercase: false,
     shadow: { color: "black@0.55", x: 0, y: 6 },
   },
@@ -180,6 +182,7 @@ const TYPOGRAPHY_PRESETS = Object.freeze({
     heroSizeMult: 0.105, heroColor: "0xFFF8D0",
     borderWidth: 8, wordBox: false, lineBoxOpacity: 0, lineSizeMult: 0.034,
     lineEnter: "rise-fade", wordReveal: "scale-fade", wordRevealMs: 220,
+    captionMode: "lines",
     uppercase: false, layout: "center",
     shadow: { color: "black@0.45", x: 0, y: 8 },
   },
@@ -460,6 +463,25 @@ const MONO_ADVANCE_EM = 0.6;
 const LINE_WIDTH_BUDGET = 0.88;
 const MIN_LINE_FONT_SIZE = 22;
 
+// Target width for a wrapped block line. Short lines are what let paced
+// captions render large: the frame-width budget caps a 49-char line at ~32px
+// but allows ~99px at 16 chars.
+const BLOCK_MAX_CHARS = 16;
+
+/** Greedy word wrap to a character budget. Never splits a word. */
+function wrapToBlock(text, maxChars) {
+  const words = String(text).split(/\s+/).filter(Boolean);
+  const rows = [];
+  let cur = "";
+  for (const word of words) {
+    const next = cur ? `${cur} ${word}` : word;
+    if (next.length <= maxChars || !cur) cur = next;
+    else { rows.push(cur); cur = word; }
+  }
+  if (cur) rows.push(cur);
+  return rows.length > 0 ? rows : [String(text)];
+}
+
 /**
  * Cap a line font size so the LONGEST line still fits the frame width.
  *
@@ -482,21 +504,77 @@ export function fitLineFontSize(lines, w, preferred) {
   return Math.max(MIN_LINE_FONT_SIZE, Math.min(preferred, maxSize));
 }
 
-export function buildLineDrawtext({ lines, w, h, preset }) {
+export function buildLineDrawtext({ lines, w, h, preset, duration, block }) {
   const safeLines = Array.isArray(lines) ? lines.filter(Boolean) : [];
   if (safeLines.length === 0) return null;
   const style = resolveTypographyPreset(preset);
-  const startY = Math.round(h * 0.22);
   const lineGap = Math.round(h * 0.06);
   const fontSize = fitLineFontSize(safeLines, w, Math.round(h * (style.lineSizeMult || 0.033)));
   const boxOpacity = Number.isFinite(style.lineBoxOpacity) ? style.lineBoxOpacity : 0.35;
   const color = style.baseColor || BASE_TEXT_COLOR;
+  const lineBoxCol = style.lineBoxColor || style.boxColor || "black";
+
+  // PACED mode. Given a video duration, split it evenly across the lines and
+  // show one at a time, all at the same y. Without this every line drew for
+  // the whole video, stacked down the frame - a whole script on screen at
+  // once, running off the bottom. Word mode has always been timed; line mode
+  // was not, which is why picking a style and getting a wall of text looked
+  // identical to the static "preview mode" captions.
+  const total = Number(duration);
+
+  // BLOCK mode: wrap each caption into a short stack shown as one unit. A
+  // single 49-character line caps at ~32px on a 1080 frame because the width
+  // budget binds; wrapping the same text to ~16 characters reaches ~99px. The
+  // reference video shows short phrase blocks, not one long line.
+  if (block && Number.isFinite(total) && total > 0) {
+    const slot = total / safeLines.length;
+    const preferred = Math.round(h * (style.baseSizeMult || 0.07));
+    const blocks = safeLines.map((t) => wrapToBlock(String(t), BLOCK_MAX_CHARS));
+    // One size for every block, so type does not jump between phrases.
+    const widest = blocks.flat();
+    const fontSize = fitLineFontSize(widest, w, preferred);
+    const lead = Math.round(fontSize * 1.25);
+    return blocks.map((rows, bi) => {
+      const from = bi * slot;
+      const to = bi === blocks.length - 1 ? total : (bi + 1) * slot;
+      const enable = `:enable='between(t,${from.toFixed(3)},${to.toFixed(3)})'`;
+      // Centre the stack on the frame's middle band rather than hanging it
+      // from a fixed top, or a tall block runs off the bottom.
+      const top = Math.round(h * 0.5 - (rows.length * lead) / 2);
+      return rows.map((row, ri) => {
+        const y = top + ri * lead;
+        return `drawtext=text='${escapeDrawText(row)}':x=(w-text_w)/2:y=${y}:fontsize=${fontSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=18${enable}`;
+      }).join(",");
+    }).join(",");
+  }
+
+  if (Number.isFinite(total) && total > 0) {
+    const slot = total / safeLines.length;
+    const y = Math.round(h * 0.42);
+    // A paced line has the frame to itself, so it gets the preset's WORD size
+    // rather than the much smaller stacked-block size. lineSizeMult exists to
+    // fit several lines at once; using it here rendered captions a third the
+    // size of kinetic text and illegible over a bright sky. fitLineFontSize
+    // still caps it to the frame width, so long lines shrink as needed.
+    const pacedSize = fitLineFontSize(safeLines, w, Math.round(h * (style.baseSizeMult || 0.07)));
+    return safeLines.map((t, i) => {
+      const from = i * slot;
+      // End the last line exactly on `duration` so rounding cannot leave a
+      // silent gap of uncaptioned video at the tail.
+      const to = i === safeLines.length - 1 ? total : (i + 1) * slot;
+      const enable = `:enable='between(t,${from.toFixed(3)},${to.toFixed(3)})'`;
+      return `drawtext=text='${escapeDrawText(t)}':x=(w-text_w)/2:y=${y}:fontsize=${pacedSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=18${enable}`;
+    }).join(",");
+  }
+
+  // Unpaced (legacy) mode: callers that pass no duration keep the stacked
+  // block they already render, rather than getting invented timings.
+  const startY = Math.round(h * 0.22);
   return safeLines.map((t, i) => {
     const y = startY + i * lineGap;
     const escaped = escapeDrawText(t);
     // Same reasoning as the word box: honour the preset's colour so a marker
     // line keeps its highlighter block instead of reverting to a black panel.
-    const lineBoxCol = style.lineBoxColor || style.boxColor || "black";
     return `drawtext=text='${escaped}':x=(w-text_w)/2:y=${y}:fontsize=${fontSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=18`;
   }).join(",");
 }

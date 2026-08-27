@@ -199,3 +199,136 @@ test('each new preset is offered by the animations endpoint the picker reads', (
     assert.equal(entry.renderable, true, `${id} is flagged preview-only`);
   }
 });
+
+// ---------------------------------------------------------------------------
+// Line PACING.
+//
+// The operator selected Headline with Azure TTS and got the entire script
+// stacked on screen at once, lines running off the bottom of the frame -
+// indistinguishable from the "static preview mode caption" complaint that
+// started this work. Cause: buildLineDrawtext emitted no `enable=` window at
+// all, so every line drew for the whole video. buildWordDrawtext has always
+// timed its words; line mode never did.
+//
+// Line mode is only usable if lines appear in sequence, like the reference.
+
+const SCRIPT = [
+  'When life feels chaotic, remember this:',
+  'Jesus is your anchor in every storm.',
+  'His presence brings calm to your heart.',
+  'Save this for when you need a reminder.',
+];
+
+test('each line gets its own enable window - they do NOT all draw at once', () => {
+  const out = buildLineDrawtext({ lines: SCRIPT, w: W, h: H, preset: 'headline', duration: 12 });
+  const enables = out.match(/enable=/g) || [];
+  assert.equal(enables.length, SCRIPT.length,
+    `${enables.length} enable windows for ${SCRIPT.length} lines - unpaced lines stack on screen`);
+});
+
+test('the windows are sequential and cover the whole video', () => {
+  const duration = 12;
+  const out = buildLineDrawtext({ lines: SCRIPT, w: W, h: H, preset: 'headline', duration });
+  const spans = [...out.matchAll(/between\(t,([\d.]+),([\d.]+)\)/g)]
+    .map((m) => [Number(m[1]), Number(m[2])]);
+  assert.equal(spans.length, SCRIPT.length);
+  assert.equal(spans[0][0], 0, 'first line should start at t=0');
+  for (let i = 1; i < spans.length; i++) {
+    assert.ok(spans[i][0] >= spans[i - 1][1] - 0.001,
+      `line ${i} starts at ${spans[i][0]} before line ${i - 1} ends at ${spans[i - 1][1]}`);
+  }
+  assert.ok(Math.abs(spans[spans.length - 1][1] - duration) < 0.05,
+    `last line ends at ${spans[spans.length - 1][1]}, not ${duration}`);
+});
+
+test('a paced line sits at ONE y position, not stacked down the frame', () => {
+  // Once lines are sequential they should share a position - stacking them is
+  // what pushed the operator's text off the bottom of the frame.
+  const out = buildLineDrawtext({ lines: SCRIPT, w: W, h: H, preset: 'headline', duration: 12 });
+  const ys = [...out.matchAll(/:y=(\d+)/g)].map((m) => Number(m[1]));
+  assert.equal(new Set(ys).size, 1, `paced lines drew at ${new Set(ys).size} different y values`);
+});
+
+test('without a duration, behaviour is unchanged (no false timing)', () => {
+  // Callers that never pass a duration must not get invented windows.
+  const out = buildLineDrawtext({ lines: SCRIPT, w: W, h: H, preset: 'headline' });
+  assert.doesNotMatch(out, /enable=/);
+});
+
+// ---------------------------------------------------------------------------
+// Caption MODE carried by the preset.
+//
+// Operator's decision: the three new styles should render PACED LINE BLOCKS
+// (matching the reference video), while every pre-existing preset keeps
+// word-by-word. Kinetic captions previously forced word mode for every style,
+// so picking Marker/Soft Glow/Headline changed only the look - all three still
+// rendered one word at a time, which is not what those styles are.
+//
+// Per-word must remain available: this ADDS a mode, it does not replace one.
+
+test('the three new styles declare line mode', () => {
+  for (const id of NEW_PRESETS) {
+    assert.equal(resolveTypographyPreset(id).captionMode, 'lines',
+      `${id} should render paced lines, not word-by-word`);
+  }
+});
+
+test('existing presets keep word mode - this adds a mode, it replaces none', () => {
+  for (const id of ['cinematic-default', 'word-boxes', 'hero-bold']) {
+    const mode = resolveTypographyPreset(id).captionMode;
+    assert.notEqual(mode, 'lines', `${id} must stay word-by-word`);
+  }
+});
+
+// --- paced line BLOCKS -----------------------------------------------------
+// One line at a time is too slow to read and wastes the frame; the reference
+// shows a short phrase block. Blocks also let type be far larger: a 49-char
+// line caps at 32px on a 1080 frame, while a 16-char line reaches ~99px.
+
+const BLOCK_SCRIPT = [
+  "Life's storms can feel overwhelming.",
+  'In the midst of the storm, Jesus offers us peace.',
+  'Trust that His presence calms the chaos around you.',
+];
+
+test('a long line is wrapped into a block of short lines', () => {
+  const out = buildLineDrawtext({
+    lines: BLOCK_SCRIPT, w: W, h: H, preset: 'headline', duration: 15, block: true,
+  });
+  // Each drawn line must be short enough to render large.
+  const texts = [...out.matchAll(/text='([^']*)'/g)].map((m) => m[1]);
+  for (const t of texts) {
+    assert.ok(t.length <= 24, `"${t}" is ${t.length} chars - too wide to render large`);
+  }
+});
+
+test('block mode renders type far larger than one long line', () => {
+  const flat = buildLineDrawtext({ lines: BLOCK_SCRIPT, w: W, h: H, preset: 'headline', duration: 15 });
+  const block = buildLineDrawtext({ lines: BLOCK_SCRIPT, w: W, h: H, preset: 'headline', duration: 15, block: true });
+  const sizeOf = (s) => Number((s.match(/fontsize=(\d+)/) || [])[1]);
+  assert.ok(sizeOf(block) > sizeOf(flat) * 1.8,
+    `block ${sizeOf(block)}px should dwarf flat ${sizeOf(flat)}px - the whole point of wrapping`);
+});
+
+test('lines of one block share a window and stack; blocks are sequential', () => {
+  const out = buildLineDrawtext({
+    lines: BLOCK_SCRIPT, w: W, h: H, preset: 'headline', duration: 15, block: true,
+  });
+  const spans = [...out.matchAll(/between\(t,([\d.]+),([\d.]+)\)/g)].map((m) => m[1] + '-' + m[2]);
+  const groups = [...new Set(spans)];
+  assert.equal(groups.length, BLOCK_SCRIPT.length, 'one window per block');
+  // Within a block the lines stack, so several drawtexts share one window.
+  assert.ok(spans.length > groups.length, 'block lines should share their window');
+});
+
+test('a block sits centred as a group, not drifting down the frame', () => {
+  const out = buildLineDrawtext({
+    lines: ['Trust that His presence calms the chaos around you.'],
+    w: W, h: H, preset: 'headline', duration: 6, block: true,
+  });
+  const ys = [...out.matchAll(/:y=(\d+)/g)].map((m) => Number(m[1]));
+  // Wrapped lines stack, so the block must straddle the centre band rather
+  // than starting at it and running off the bottom.
+  assert.ok(Math.min(...ys) < H * 0.5 && Math.max(...ys) < H * 0.8,
+    `block spans y ${Math.min(...ys)}..${Math.max(...ys)} on a ${H} frame`);
+});

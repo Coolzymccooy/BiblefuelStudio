@@ -15,7 +15,7 @@ import { isPostizConfigured, postVideo as postizPostVideo } from "../lib/postizC
 import { pickBestBackground, classifyText } from "../lib/categorize.js";
 import { charsToWords, captionWordsFromNativeWords, annotatePhrasedTiers, groupWordsByBeat } from "../lib/captions.js";
 import { alignAudioWithText, isForcedAlignmentAvailable } from "../lib/voice/alignment.js";
-import { buildWordDrawtext, buildLineDrawtext, buildSceneGraph, resolveKineticAnimation, buildEndingFade } from "../lib/videoFilters.js";
+import { buildWordDrawtext, buildLineDrawtext, buildSceneGraph, resolveKineticAnimation, resolveTypographyPreset, buildEndingFade } from "../lib/videoFilters.js";
 import { buildSocialCaption } from "../lib/socialCaption.js";
 import { pickScriptType } from "../lib/highPerformerProfile.js";
 import { ensureLocalPath } from "../lib/remoteCache.js";
@@ -756,17 +756,7 @@ async function renderVideoCore(payload, jobId) {
   if (safeLines.length === 0) throw new Error("lines[] required");
 
   const outFile = path.join(currentOutDir(), `video-${uuid()}.mp4`);
-  const filters = buildLineDrawtext({ lines: safeLines, w, h, preset: typographyPreset });
-  if (!filters) throw new Error("lines[] required");
 
-  const args = ["-y", "-stream_loop", "-1", "-i", resolvedBackground];
-  if (resolvedAudio) args.push("-i", resolvedAudio);
-  if (resolvedMusic) args.push("-i", resolvedMusic);
-
-  const vf = `scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},${filters}`;
-  const preset = process.env.FFMPEG_PRESET || "fast";
-  const hwaccel = process.env.FFMPEG_HWACCEL;
-  const vcodec = hwaccel === 'nvenc' ? 'h264_nvenc' : hwaccel === 'qsv' ? 'h264_qsv' : 'libx264';
   // Honour the audio's full length when it's longer than the requested
   // durationSec — otherwise -shortest truncates the narration mid-sentence.
   // Padding is harmless; truncation is the bug we're fixing.
@@ -782,6 +772,26 @@ async function renderVideoCore(payload, jobId) {
     }
   }
 
+  // Pace the lines across the real video length. `t` is resolved above (not
+  // below, where it used to live) precisely because the caption filter needs
+  // it: without a duration every line draws for the whole video and the
+  // entire script stacks on screen at once.
+  // Same rule as the advanced path: a line-mode preset renders paced blocks,
+  // wrapping the raw lines itself so type can be large.
+  const legacyWantsBlocks = resolveTypographyPreset(typographyPreset)?.captionMode === "lines";
+  const filters = legacyWantsBlocks
+    ? buildLineDrawtext({ lines: rawLines, w, h, preset: typographyPreset, duration: t, block: true })
+    : buildLineDrawtext({ lines: safeLines, w, h, preset: typographyPreset, duration: t });
+  if (!filters) throw new Error("lines[] required");
+
+  const args = ["-y", "-stream_loop", "-1", "-i", resolvedBackground];
+  if (resolvedAudio) args.push("-i", resolvedAudio);
+  if (resolvedMusic) args.push("-i", resolvedMusic);
+
+  const vf = `scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},${filters}`;
+  const preset = process.env.FFMPEG_PRESET || "fast";
+  const hwaccel = process.env.FFMPEG_HWACCEL;
+  const vcodec = hwaccel === 'nvenc' ? 'h264_nvenc' : hwaccel === 'qsv' ? 'h264_qsv' : 'libx264';
   const musicVol = Math.min(1, Math.max(0, Number(musicVolume ?? 0.3)));
   const duck = Boolean(autoDuck) && Boolean(resolvedMusic) && Boolean(resolvedAudio);
 
@@ -1042,9 +1052,23 @@ async function renderAdvancedVideo(payload, jobId) {
   const wrappedLines = Array.isArray(lines)
     ? wrapTextLines(lines.map((s) => cleanCaptionLine(String(s).slice(0, 140))).filter(Boolean), maxChars, 12)
     : [];
-  const drawtextChain = Array.isArray(words) && words.length > 0
+  // The preset decides word-vs-line. Marker / Soft Glow / Headline are paced
+  // LINE styles: before this, kinetic captions forced word mode for every
+  // style, so picking one of them changed the look but still rendered one
+  // word at a time - not what those styles are. Every other preset keeps
+  // word-by-word, so this adds a mode rather than replacing one.
+  const wantsLines = resolveTypographyPreset(resolvedPreset)?.captionMode === "lines";
+  const hasWordTimings = Array.isArray(words) && words.length > 0;
+  // Block mode wraps the ORIGINAL lines itself (to ~16 chars, so type can be
+  // large); handing it the pre-wrapped copy would double-wrap.
+  const rawCaptionLines = Array.isArray(lines)
+    ? lines.map((s) => cleanCaptionLine(String(s).slice(0, 280))).filter(Boolean)
+    : [];
+  const drawtextChain = hasWordTimings && !wantsLines
     ? buildWordDrawtext({ words, w, h, preset: resolvedPreset, layout, depth })
-    : buildLineDrawtext({ lines: wrappedLines, w, h, preset: resolvedPreset });
+    : wantsLines
+      ? buildLineDrawtext({ lines: rawCaptionLines, w, h, preset: resolvedPreset, duration: totalDuration, block: true })
+      : buildLineDrawtext({ lines: wrappedLines, w, h, preset: resolvedPreset, duration: totalDuration });
 
   const filterParts = graph.filterParts.slice();
   let videoLabel = graph.videoLabel;
