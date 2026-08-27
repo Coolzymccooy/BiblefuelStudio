@@ -1,4 +1,6 @@
 import { spawn } from "child_process";
+import fs from "fs";
+import path from "path";
 import { buildWordDrawtext, escapeDrawText } from "../videoFilters.js";
 import { kenBurnsFilter } from "../kenBurns.js";
 import { kenBurnsVariedFilter, moveForIndex } from "../kenBurnsVaried.js";
@@ -247,6 +249,30 @@ export function buildStoryFfmpegArgs({ scenes, words, audioPath, musicPath, musi
 }
 
 /**
+ * Move the (potentially enormous) -filter_complex graph into a script file
+ * next to the output, returning args that use -filter_complex_script.
+ *
+ * An 8-scene kinetic render's graph blew past Windows' ~32K command-line
+ * limit: spawn threw ENAMETOOLONG synchronously and (via the uncaught
+ * rejection in the route's fire-and-forget) took the WHOLE server down.
+ * Same fix the captioned-video and timeline renderers already use.
+ *
+ * @returns {{ args: string[], scriptFile: string | null }}
+ */
+export function toFilterScriptArgs(args, outPath) {
+  const idx = args.indexOf("-filter_complex");
+  if (idx < 0 || idx + 1 >= args.length) return { args, scriptFile: null };
+  const scriptFile = path.join(
+    path.dirname(outPath),
+    `filter-${path.basename(outPath, ".mp4")}.txt`,
+  );
+  fs.writeFileSync(scriptFile, args[idx + 1], "utf8");
+  const next = args.slice();
+  next.splice(idx, 2, "-filter_complex_script", scriptFile);
+  return { args: next, scriptFile };
+}
+
+/**
  * Spawn FFmpeg for a story render, wiring progress into the job registry.
  * Resolves with { ok, file } / { ok:false, error }.
  */
@@ -261,7 +287,16 @@ export function runStoryRender({ jobId, scenes, words, audioPath, musicPath, mus
     }
     markRunning(jobId);
     const ff = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
-    const proc = spawn(ff, built.args);
+    // spawn can throw SYNCHRONOUSLY (ENAMETOOLONG, ENOENT) - a throw here must
+    // become a failed job, never a dead server.
+    let proc;
+    try {
+      const scripted = toFilterScriptArgs(built.args, outPath);
+      proc = spawn(ff, scripted.args);
+    } catch (err) {
+      markError(jobId, err?.message || err);
+      return resolve({ ok: false, error: String(err?.message || err) });
+    }
     // Register so a user cancel (cancelJob) can SIGKILL this render.
     attachProc(jobId, proc);
     let stderrTail = "";

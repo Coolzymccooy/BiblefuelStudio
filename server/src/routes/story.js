@@ -645,6 +645,22 @@ router.post("/:id/render", async (req, res) => {
         render: { jobId: job.jobId, outputPath: done ? outPath : null, status: done ? "done" : "error" },
       });
       persistJob(req.ctx.dataDir, { ...job, projectId: project.projectId, status: done ? "done" : "error", outputPath: done ? outPath : null });
+    }).catch((err) => {
+      // A rejected fire-and-forget is an UNHANDLED rejection - under Node's
+      // default policy it killed the whole server when spawn threw
+      // ENAMETOOLONG. Record the failure on the project instead.
+      try {
+        const fresh = readProject(req.ctx.dataDir, project.projectId);
+        if (fresh) {
+          writeProject(req.ctx.dataDir, {
+            ...fresh,
+            status: STORY_STATUS.ERROR,
+            error: String(err?.message || err || "render failed"),
+            render: { jobId: job.jobId, outputPath: null, status: "error" },
+          });
+        }
+        persistJob(req.ctx.dataDir, { ...job, projectId: project.projectId, status: "error", outputPath: null });
+      } catch { /* the error is already logged by the job registry */ }
     });
 
     return res.json({ ok: true, jobId: job.jobId, project: readProject(req.ctx.dataDir, project.projectId) });

@@ -1,6 +1,9 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { buildStoryFfmpegArgs, sceneSegmentsSec, groupWordsIntoCues, buildSubtitleDrawtext, wrapCue } from "./storyRender.js";
+import fs from "fs";
+import os from "os";
+import path from "path";
+import { buildStoryFfmpegArgs, sceneSegmentsSec, groupWordsIntoCues, buildSubtitleDrawtext, wrapCue, toFilterScriptArgs } from "./storyRender.js";
 
 function countDrawtext(args) {
   const fc = args[args.indexOf("-filter_complex") + 1] || "";
@@ -22,6 +25,34 @@ const WORDS = [
   { text: "hello", startMs: 0, endMs: 500 },
   { text: "world", startMs: 600, endMs: 1200 },
 ];
+
+describe("toFilterScriptArgs — Windows command-line limit", () => {
+  test("moves the -filter_complex graph into a script file", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "story-filter-"));
+    const outPath = path.join(dir, "video.mp4");
+    const graph = "[0:v]scale=720:1280[v0];[v0]drawtext=text='x'[vout]";
+    const args = ["-i", "a.mp3", "-filter_complex", graph, "-map", "[vout]", outPath];
+
+    const { args: next, scriptFile } = toFilterScriptArgs(args, outPath);
+
+    assert.ok(scriptFile, "script file path returned");
+    assert.equal(fs.readFileSync(scriptFile, "utf8"), graph);
+    const idx = next.indexOf("-filter_complex_script");
+    assert.ok(idx >= 0, "uses -filter_complex_script");
+    assert.equal(next[idx + 1], scriptFile);
+    assert.equal(next.includes("-filter_complex"), false);
+    // Everything else is untouched, in order.
+    assert.deepEqual([next[0], next[1], next.at(-1)], ["-i", "a.mp3", outPath]);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("args without a filtergraph pass through unchanged", () => {
+    const args = ["-i", "a.mp3", "out.mp4"];
+    const res = toFilterScriptArgs(args, path.join(os.tmpdir(), "out.mp4"));
+    assert.deepEqual(res.args, args);
+    assert.equal(res.scriptFile, null);
+  });
+});
 
 describe("storyRender arg building", () => {
   test("sceneSegmentsSec converts scene ms windows to second durations", () => {
