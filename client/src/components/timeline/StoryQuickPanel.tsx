@@ -8,6 +8,7 @@ import {
   deriveStep, progressLabel, imageCounts, isTransientStatus, isStalled, canRender, STORY_STYLES,
 } from '../../lib/storyWizard';
 import { ScriptForm } from '../story/ScriptForm';
+import { StoryScenePreview } from '../story/StoryScenePreview';
 import { StoryStepper } from '../story/StoryStepper';
 import { DropZone } from '../ui/DropZone';
 import { Button } from '../ui/Button';
@@ -218,6 +219,13 @@ export function StoryQuickPanel({ onUseVideo, onPreviewVideo }: StoryQuickPanelP
         </button>
       </div>
       <StoryStepper project={project} />
+
+      {/* The classic page shows the current scene ON THE FLY while scenes and
+          images generate - same component, docked. Hidden once the final
+          render exists (the stage preview takes over). */}
+      {project.scenes.length > 0 && !doneVideo && (
+        <StoryScenePreview scenes={project.scenes} />
+      )}
 
       {transient && !stalled && (
         <div className="flex items-center justify-between gap-2 rounded-xl border border-primary-500/30 bg-primary-500/[0.08] px-3 py-2">

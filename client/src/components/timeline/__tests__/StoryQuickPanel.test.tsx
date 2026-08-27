@@ -104,5 +104,8 @@ describe('StoryQuickPanel', () => {
     renderWith(<StoryQuickPanel onUseVideo={() => {}} onPreviewVideo={() => {}} />);
     const btn = await screen.findByRole('button', { name: /waiting for all images/i });
     expect(btn).toBeDisabled();
+    // The classic page's on-the-fly scene preview is here too, before the
+    // final render exists.
+    expect(screen.getByText(/Scene 1 \/ 2/)).toBeInTheDocument();
   });
 });
