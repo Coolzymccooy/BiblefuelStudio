@@ -80,6 +80,43 @@ function toAspectRatio(aspect) {
  * @param {AbortSignal} [args.signal]
  * @returns {Promise<import("./cloudflare.js").ImageGenResult>}
  */
+/**
+ * Model id discovered via ListModels after the configured default 404'd.
+ * Google retires/renames Imagen ids under v1beta faster than this codebase
+ * ships (imagen-3.0 retired May 2026; imagen-4.0-fast-generate-001 started
+ * 404ing Aug 2026) - so on a model-not-found we ask the API what IS there
+ * instead of hardcoding a new name that will rot the same way.
+ */
+let discoveredModel = null;
+
+/** Test hook: forget the discovered model. */
+export function _resetImagenDiscovery() { discoveredModel = null; }
+
+/**
+ * Ask ListModels for a current Imagen model that supports predict.
+ * Prefers a "fast" variant (cheapest per image).
+ *
+ * @param {string} apiKey
+ * @param {AbortSignal} [signal]
+ * @returns {Promise<string | null>}
+ */
+async function discoverImagenModel(apiKey, signal) {
+  try {
+    const resp = await fetch(`${ENDPOINT_BASE}?key=${encodeURIComponent(apiKey)}&pageSize=200`, { signal });
+    if (!resp.ok) return null;
+    const data = await resp.json().catch(() => null);
+    const models = Array.isArray(data?.models) ? data.models : [];
+    const imagen = models.filter((m) =>
+      String(m?.name || "").includes("imagen")
+      && (Array.isArray(m?.supportedGenerationMethods) ? m.supportedGenerationMethods : []).includes("predict"));
+    if (imagen.length === 0) return null;
+    const pick = imagen.find((m) => String(m.name).includes("fast")) || imagen[0];
+    return String(pick.name).replace(/^models\//, "");
+  } catch {
+    return null;
+  }
+}
+
 export async function generateImageImagen({ prompt, aspect, model, signal }) {
   if (!isImagenConfigured()) {
     return {
@@ -93,8 +130,9 @@ export async function generateImageImagen({ prompt, aspect, model, signal }) {
   }
 
   const apiKey = readApiKey();
-  const modelId = String(model || process.env.IMAGEN_MODEL || DEFAULT_MODEL).trim();
-  const url = `${ENDPOINT_BASE}/${encodeURIComponent(modelId)}:predict?key=${encodeURIComponent(apiKey)}`;
+  // An EXPLICIT model (arg or env) is respected verbatim - discovery only
+  // replaces our own shipped default, never the operator's pin.
+  const forced = String(model || process.env.IMAGEN_MODEL || "").trim();
 
   const body = {
     instances: [{ prompt: prompt.trim().slice(0, 2048) }],
@@ -104,51 +142,69 @@ export async function generateImageImagen({ prompt, aspect, model, signal }) {
     },
   };
 
-  const ctrl = new AbortController();
-  const timeoutTimer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
-  if (signal) {
-    if (signal.aborted) ctrl.abort();
-    else signal.addEventListener("abort", () => ctrl.abort(), { once: true });
-  }
+  let modelId = forced || discoveredModel || DEFAULT_MODEL;
 
-  try {
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify(body),
-      signal: ctrl.signal,
-    });
+  // At most two attempts: the configured model, then (on a model-not-found
+  // 404 with no explicit pin) a ListModels-discovered replacement.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const url = `${ENDPOINT_BASE}/${encodeURIComponent(modelId)}:predict?key=${encodeURIComponent(apiKey)}`;
 
-    if (!resp.ok) {
-      const text = await resp.text().catch(() => "");
+    const ctrl = new AbortController();
+    const timeoutTimer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+    if (signal) {
+      if (signal.aborted) ctrl.abort();
+      else signal.addEventListener("abort", () => ctrl.abort(), { once: true });
+    }
+
+    try {
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify(body),
+        signal: ctrl.signal,
+      });
+
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => "");
+        const modelGone = resp.status === 404 && /is not found for API version|not supported for predict/i.test(text);
+        if (modelGone && !forced && attempt === 0) {
+          const found = await discoverImagenModel(apiKey, ctrl.signal);
+          if (found && found !== modelId) {
+            discoveredModel = found;
+            modelId = found;
+            continue; // retry once with the live model id
+          }
+        }
+        return {
+          ok: false,
+          provider: "imagen",
+          model: modelId,
+          status: resp.status,
+          error: `Imagen ${resp.status}: ${text.slice(0, 300)}`,
+        };
+      }
+
+      const data = await resp.json();
+      const pred = Array.isArray(data?.predictions) ? data.predictions[0] : null;
+      const b64 = pred?.bytesBase64Encoded;
+      if (typeof b64 !== "string" || b64.length === 0) {
+        const filtered = pred?.raiFilteredReason || pred?.safetyAttributes?.categories?.join(",");
+        const reason = filtered ? `safety filter (${filtered})` : "missing predictions[0].bytesBase64Encoded";
+        return { ok: false, provider: "imagen", model: modelId, error: `Imagen response: ${reason}` };
+      }
       return {
-        ok: false,
+        ok: true,
         provider: "imagen",
         model: modelId,
-        status: resp.status,
-        error: `Imagen ${resp.status}: ${text.slice(0, 300)}`,
+        imageBuffer: Buffer.from(b64, "base64"),
+        contentType: String(pred?.mimeType || "image/png"),
       };
+    } catch (err) {
+      const msg = err?.name === "AbortError" ? "Imagen request timed out" : String(err?.message || err);
+      return { ok: false, provider: "imagen", model: modelId, error: msg };
+    } finally {
+      clearTimeout(timeoutTimer);
     }
-
-    const data = await resp.json();
-    const pred = Array.isArray(data?.predictions) ? data.predictions[0] : null;
-    const b64 = pred?.bytesBase64Encoded;
-    if (typeof b64 !== "string" || b64.length === 0) {
-      const filtered = pred?.raiFilteredReason || pred?.safetyAttributes?.categories?.join(",");
-      const reason = filtered ? `safety filter (${filtered})` : "missing predictions[0].bytesBase64Encoded";
-      return { ok: false, provider: "imagen", model: modelId, error: `Imagen response: ${reason}` };
-    }
-    return {
-      ok: true,
-      provider: "imagen",
-      model: modelId,
-      imageBuffer: Buffer.from(b64, "base64"),
-      contentType: String(pred?.mimeType || "image/png"),
-    };
-  } catch (err) {
-    const msg = err?.name === "AbortError" ? "Imagen request timed out" : String(err?.message || err);
-    return { ok: false, provider: "imagen", model: modelId, error: msg };
-  } finally {
-    clearTimeout(timeoutTimer);
   }
+  return { ok: false, provider: "imagen", model: modelId, error: "Imagen: model discovery retry exhausted" };
 }

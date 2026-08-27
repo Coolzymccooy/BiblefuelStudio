@@ -41,6 +41,8 @@ export function StoryQuickPanel({ onUseVideo, onPreviewVideo }: StoryQuickPanelP
   const [style, setStyle] = useState('cinematic-bible');
   const [entryMode, setEntryMode] = useState<'upload' | 'script'>('upload');
   const [busy, setBusy] = useState(false);
+  // Per-scene regenerate: only the clicked row spins, like the classic page.
+  const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: project } = useStoryProject(projectId);
@@ -95,6 +97,25 @@ export function StoryQuickPanel({ onUseVideo, onPreviewVideo }: StoryQuickPanelP
     try { await fn(); refresh(); if (done) toast.success(done); }
     catch (e) { toast.error((e as Error).message); }
     finally { setBusy(false); }
+  };
+
+  // Regenerate ONE scene's image and report the truth: the request succeeds
+  // even when the image itself failed (e.g. quota), so check the scene's
+  // actual status - same lesson the classic page carries.
+  const regenerateScene = async (sceneId: string) => {
+    if (!projectId || regeneratingId) return;
+    setRegeneratingId(sceneId);
+    try {
+      const updated = await storyApi.regenerateScene(projectId, sceneId);
+      refresh();
+      const sc = updated.scenes.find((s) => s.id === sceneId);
+      if (sc && sc.imageStatus === 'error') toast.error(sc.imageError || 'Image generation failed');
+      else toast.success('Image regenerated');
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setRegeneratingId(null);
+    }
   };
 
   // ---- No project: the entry form ----------------------------------------
@@ -225,6 +246,54 @@ export function StoryQuickPanel({ onUseVideo, onPreviewVideo }: StoryQuickPanelP
           render exists (the stage preview takes over). */}
       {project.scenes.length > 0 && !doneVideo && (
         <StoryScenePreview scenes={project.scenes} />
+      )}
+
+      {/* Per-scene insight, like classic's scene cards: WHICH image failed and
+          WHY, with a targeted retry - a bulk retry that fails again otherwise
+          just looks dead. */}
+      {project.scenes.length > 0 && !doneVideo && (
+        <div className="space-y-1">
+          <p className="text-[9px] font-bold uppercase tracking-[.1em] text-editor-faint">
+            Scenes · {counts.done}/{counts.total} images ready
+            {counts.total - counts.done > 0 && <span className="text-bf-danger"> · {counts.total - counts.done} failed</span>}
+          </p>
+          <div className="max-h-44 space-y-1 overflow-y-auto pr-1">
+            {project.scenes.map((s, i) => (
+              <div key={s.id} className="rounded-lg border border-editor-line bg-white/[0.02] px-2 py-1.5">
+                <div className="flex items-center gap-2">
+                  <span className="w-4 shrink-0 text-[10px] font-bold tabular-nums text-editor-accent">{i + 1}</span>
+                  <span className={`flex-1 text-[9.5px] font-semibold uppercase tracking-wide ${
+                    s.imageStatus === 'done' ? 'text-bf-success'
+                      : s.imageStatus === 'generating' ? 'text-editor-accent'
+                      : s.imageStatus === 'error' ? 'text-bf-danger'
+                      : 'text-editor-faint'
+                  }`}>
+                    {s.imageStatus === 'done' ? 'Ready'
+                      : s.imageStatus === 'generating' ? 'Rendering'
+                      : s.imageStatus === 'error' ? 'Failed'
+                      : 'Queued'}
+                  </span>
+                  {s.imageStatus === 'error' && (
+                    <button
+                      type="button"
+                      onClick={() => regenerateScene(s.id)}
+                      disabled={busy || regeneratingId !== null}
+                      className="inline-flex shrink-0 items-center gap-1 rounded-md border border-editor-line px-1.5 py-0.5 text-[9.5px] font-semibold text-editor-accent hover:bg-editor-hover disabled:opacity-50"
+                    >
+                      {regeneratingId === s.id
+                        ? <Loader2 size={9} className="animate-spin" />
+                        : <RefreshCw size={9} />}
+                      Regenerate
+                    </button>
+                  )}
+                </div>
+                {s.imageStatus === 'error' && s.imageError && (
+                  <p className="mt-1 break-words text-[9px] leading-snug text-bf-danger/80">{s.imageError}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
       )}
 
       {transient && !stalled && (

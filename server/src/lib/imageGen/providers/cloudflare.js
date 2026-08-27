@@ -25,12 +25,30 @@ const DEFAULT_MODEL = "@cf/black-forest-labs/flux-1-schnell";
 const REQUEST_TIMEOUT_MS = 45_000;
 
 /**
+ * Reads the Workers AI token. Three env names are accepted: the documented
+ * CLOUDFLARE_WORKERS_AI_TOKEN, plus the CLOUDFLARE_AI_API_TOKEN /
+ * CLOUDFLARE_API_TOKEN names real deployments already carry - the operator
+ * HAD Cloudflare configured under those names while every story scene fell
+ * through to a retired Imagen model, because this predicate said "not
+ * configured".
+ *
+ * @returns {string}
+ */
+function readToken() {
+  return String(
+    process.env.CLOUDFLARE_WORKERS_AI_TOKEN
+    || process.env.CLOUDFLARE_AI_API_TOKEN
+    || process.env.CLOUDFLARE_API_TOKEN
+    || "",
+  ).trim();
+}
+
+/**
  * @returns {boolean}
  */
 export function isCloudflareConfigured() {
   const accountId = String(process.env.CLOUDFLARE_ACCOUNT_ID || "").trim();
-  const token = String(process.env.CLOUDFLARE_WORKERS_AI_TOKEN || "").trim();
-  return accountId.length > 0 && token.length > 0;
+  return accountId.length > 0 && readToken().length > 0;
 }
 
 /**
@@ -64,7 +82,7 @@ export async function generateImageCloudflare({ prompt, seed, steps, model, sign
   }
 
   const accountId = String(process.env.CLOUDFLARE_ACCOUNT_ID).trim();
-  const token = String(process.env.CLOUDFLARE_WORKERS_AI_TOKEN).trim();
+  const token = readToken();
   const modelId = String(model || process.env.CLOUDFLARE_IMAGE_MODEL || DEFAULT_MODEL).trim();
   const url = `${ENDPOINT_BASE}/${encodeURIComponent(accountId)}/ai/run/${modelId}`;
 

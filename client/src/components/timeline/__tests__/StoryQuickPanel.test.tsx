@@ -108,4 +108,29 @@ describe('StoryQuickPanel', () => {
     // final render exists.
     expect(screen.getByText(/Scene 1 \/ 2/)).toBeInTheDocument();
   });
+
+  it('shows WHICH image failed and WHY, with a targeted regenerate', async () => {
+    const user = userEvent.setup();
+    localStorage.setItem('BF_STORY_ACTIVE', 'p1');
+    const project = {
+      ...DONE_PROJECT,
+      status: 'ready_to_render',
+      render: {},
+      scenes: [
+        { id: 'sc1', text: 'x', imagePrompt: 'y', imageStatus: 'done', startMs: 0, endMs: 9000 },
+        { id: 'sc2', text: 'z', imagePrompt: 'w', imageStatus: 'error', imageError: 'Daily image quota reached', startMs: 9000, endMs: 18000 },
+      ],
+    };
+    vi.spyOn(storyApi, 'getProject').mockResolvedValue(project as any);
+    const regen = vi.spyOn(storyApi, 'regenerateScene').mockResolvedValue({
+      ...project,
+      scenes: project.scenes.map((s) => (s.id === 'sc2' ? { ...s, imageStatus: 'done' } : s)),
+    } as any);
+    renderWith(<StoryQuickPanel onUseVideo={() => {}} onPreviewVideo={() => {}} />);
+    // Insight: the actual failure reason is visible, not just a dead button.
+    expect(await screen.findByText('Daily image quota reached')).toBeInTheDocument();
+    expect(screen.getAllByText(/1 failed/).length).toBeGreaterThan(0);
+    await user.click(screen.getByRole('button', { name: /regenerate/i }));
+    expect(regen).toHaveBeenCalledWith('p1', 'sc2');
+  });
 });
