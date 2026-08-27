@@ -9,6 +9,7 @@ import {
 } from '../../lib/storyWizard';
 import { ScriptForm } from '../story/ScriptForm';
 import { StoryScenePreview } from '../story/StoryScenePreview';
+import { MusicPicker } from '../MusicPicker';
 import { StoryStepper } from '../story/StoryStepper';
 import { DropZone } from '../ui/DropZone';
 import { Button } from '../ui/Button';
@@ -319,8 +320,26 @@ export function StoryQuickPanel({ onUseVideo, onPreviewVideo }: StoryQuickPanelP
               : 'Interrupted. Pick up where it left off:'}
           </p>
           <div className="flex flex-wrap gap-1.5">
+            <button
+              onClick={act(async () => {
+                // Re-drive the pipeline from whatever stage it died in - the
+                // same resume the Story page has.
+                const audioPath = project.source?.audioPath;
+                if (!audioPath) {
+                  toast.error('Upload was interrupted — please start again.');
+                  setActive(null);
+                  return;
+                }
+                if (project.status === 'rendering') await storyApi.render(project.projectId);
+                else await storyApi.process(project.projectId, audioPath);
+              }, 'Resumed')}
+              disabled={busy}
+              className="rounded-md bg-amber-500 px-2 py-1 text-[10px] font-semibold text-dark-900 disabled:opacity-50"
+            >
+              Resume
+            </button>
             {project.scenes.length > 0 && (
-              <button onClick={act(() => storyApi.generateImages(project.projectId), 'Retrying failed images…')} disabled={busy} className="inline-flex items-center gap-1 rounded-md bg-amber-500 px-2 py-1 text-[10px] font-semibold text-dark-900 disabled:opacity-50">
+              <button onClick={act(() => storyApi.generateImages(project.projectId), 'Retrying failed images…')} disabled={busy} className="inline-flex items-center gap-1 rounded-md border border-amber-400/40 px-2 py-1 text-[10px] text-amber-200 disabled:opacity-50">
                 <RefreshCw size={10} /> Retry failed images
               </button>
             )}
@@ -336,12 +355,25 @@ export function StoryQuickPanel({ onUseVideo, onPreviewVideo }: StoryQuickPanelP
         </div>
       )}
 
-      {step === 2 && !transient && (
+      {/* Step 2 controls show whenever scenes exist and no render is done -
+          NOT gated on a quiet status. Classic shows music + the render gate
+          even while a stale "generating_images" status lingers; hiding them
+          here left 8/8 READY with no way forward. */}
+      {step === 2 && (
         <div className="space-y-2">
-          <p className="text-[11px] text-editor-dim">
-            Images: <span className="font-mono text-editor-text">{counts.done}/{counts.total}</span> ready
-            {counts.total - counts.done > 0 && <span className="text-red-300/80"> · {counts.total - counts.done} failed</span>}
-          </p>
+          <div role="group" aria-label="Background music">
+            <MusicPicker
+              value={project.music ?? { path: null, volume: 0.3, autoDuck: true }}
+              onChange={(m) => act(async () => {
+                await storyApi.setMusic(project.projectId, {
+                  path: m.path || null,
+                  volume: m.volume,
+                  autoDuck: m.autoDuck ?? true,
+                });
+              })()}
+              busy={busy}
+            />
+          </div>
           <Button
             onClick={act(() => storyApi.render(project.projectId), 'Render started — it lands here when done')}
             disabled={!canRender(project) || busy}

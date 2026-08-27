@@ -85,6 +85,7 @@ describe('StoryQuickPanel', () => {
     } as any);
     renderWith(<StoryQuickPanel onUseVideo={() => {}} onPreviewVideo={() => {}} />);
     expect(await screen.findByText(/pick up where you left off/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /resume/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /retry failed images/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /re-segment/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /start over/i })).toBeInTheDocument();
@@ -104,6 +105,8 @@ describe('StoryQuickPanel', () => {
     renderWith(<StoryQuickPanel onUseVideo={() => {}} onPreviewVideo={() => {}} />);
     const btn = await screen.findByRole('button', { name: /waiting for all images/i });
     expect(btn).toBeDisabled();
+    // Classic parity: the music config is available at step 2, not hidden.
+    expect(screen.getByRole('group', { name: /background music/i })).toBeInTheDocument();
     // The classic page's on-the-fly scene preview is here too, before the
     // final render exists.
     expect(screen.getByText(/Scene 1 \/ 2/)).toBeInTheDocument();
