@@ -15,7 +15,7 @@ import { isPostizConfigured, postVideo as postizPostVideo } from "../lib/postizC
 import { pickBestBackground, classifyText } from "../lib/categorize.js";
 import { charsToWords, captionWordsFromNativeWords, annotatePhrasedTiers, groupWordsByBeat } from "../lib/captions.js";
 import { alignAudioWithText, isForcedAlignmentAvailable } from "../lib/voice/alignment.js";
-import { buildWordDrawtext, buildLineDrawtext, buildSceneGraph, resolveKineticAnimation, resolveTypographyPreset, buildEndingFade } from "../lib/videoFilters.js";
+import { buildWordDrawtext, buildLineDrawtext, buildSceneGraph, resolveKineticAnimation, resolveTypographyPreset, resolveCaptionMotion, buildEndingFade } from "../lib/videoFilters.js";
 import { buildSocialCaption } from "../lib/socialCaption.js";
 import { pickScriptType } from "../lib/highPerformerProfile.js";
 import { ensureLocalPath } from "../lib/remoteCache.js";
@@ -1057,7 +1057,14 @@ async function renderAdvancedVideo(payload, jobId) {
   // style, so picking one of them changed the look but still rendered one
   // word at a time - not what those styles are. Every other preset keeps
   // word-by-word, so this adds a mode rather than replacing one.
-  const wantsLines = resolveTypographyPreset(resolvedPreset)?.captionMode === "lines";
+  // The operator's Caption motion choice wins; the style decides only when no
+  // motion was sent (renders predating the control).
+  const motion = resolveCaptionMotion(
+    payload?.captionMotion,
+    { stagger: payload?.captionStagger === true, highlight: payload?.captionHighlight === true },
+    resolveTypographyPreset(resolvedPreset),
+  );
+  const wantsLines = !motion.useWords;
   const hasWordTimings = Array.isArray(words) && words.length > 0;
   // Block mode wraps the ORIGINAL lines itself (to ~16 chars, so type can be
   // large); handing it the pre-wrapped copy would double-wrap.
@@ -1067,7 +1074,12 @@ async function renderAdvancedVideo(payload, jobId) {
   const drawtextChain = hasWordTimings && !wantsLines
     ? buildWordDrawtext({ words, w, h, preset: resolvedPreset, layout, depth })
     : wantsLines
-      ? buildLineDrawtext({ lines: rawCaptionLines, w, h, preset: resolvedPreset, duration: totalDuration, block: true })
+      ? buildLineDrawtext({
+          lines: rawCaptionLines, w, h, preset: resolvedPreset, duration: totalDuration,
+          block: motion.block, reveal: motion.reveal, stagger: motion.stagger,
+          // Highlight needs real word timings; without them it is inert.
+          highlightWords: motion.highlight && hasWordTimings ? words : undefined,
+        })
       : buildLineDrawtext({ lines: wrappedLines, w, h, preset: resolvedPreset, duration: totalDuration });
 
   const filterParts = graph.filterParts.slice();

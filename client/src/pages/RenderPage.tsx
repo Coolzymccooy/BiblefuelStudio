@@ -3,7 +3,7 @@ const CAPTION_LINE_SEP = String.fromCharCode(10);
 import { EditorShell } from '../components/editor/EditorShell';
 import { RenderAudioPanel } from '../components/render/RenderAudioPanel';
 import { RenderOutputPanel } from '../components/render/RenderOutputPanel';
-import { RenderCaptionsPanel } from '../components/render/RenderCaptionsPanel';
+import { RenderCaptionsPanel, type CaptionMotionOption } from '../components/render/RenderCaptionsPanel';
 import { RenderBackgroundsPanel } from '../components/render/RenderBackgroundsPanel';
 import { RenderDeliveryPanel } from '../components/render/RenderDeliveryPanel';
 import { RenderSharePanel } from '../components/render/RenderSharePanel';
@@ -116,6 +116,11 @@ export function RenderPage() {
     const [isGeneratingVisuals, setIsGeneratingVisuals] = useState(false);
     const [kenBurns, setKenBurns] = useState(false);
     const [typographyPreset, setTypographyPreset] = useState<string>('cinematic-default');
+    // Caption MOTION - how captions are timed, independent of the style's look.
+    const [captionMotion, setCaptionMotion] = useState<string>('words');
+    const [captionStagger, setCaptionStagger] = useState<boolean>(false);
+    const [captionHighlight, setCaptionHighlight] = useState<boolean>(false);
+    const [captionMotions, setCaptionMotions] = useState<CaptionMotionOption[]>([]);
     const [layout, setLayout] = useState<string>('center');
     const [depth, setDepth] = useState<boolean>(false);
     const [animations, setAnimations] = useState<Array<{ id: string; label: string; renderable: boolean }>>([]);
@@ -221,10 +226,16 @@ export function RenderPage() {
     useEffect(() => {
         let cancelled = false;
         (async () => {
-            const res = await api.get<{ ok: boolean; animations: Array<{ id: string; label: string; renderable: boolean }> }>(
-                '/api/tts/animations',
-            );
-            if (!cancelled && res.ok && res.data?.animations) setAnimations(res.data.animations);
+            const res = await api.get<{
+                ok: boolean;
+                animations: Array<{ id: string; label: string; renderable: boolean }>;
+                motions?: CaptionMotionOption[];
+            }>('/api/tts/animations');
+            if (cancelled || !res.ok) return;
+            if (res.data?.animations) setAnimations(res.data.animations);
+            // Motions come from the same endpoint so the picker can never offer
+            // a timing the renderer does not implement.
+            if (Array.isArray(res.data?.motions)) setCaptionMotions(res.data.motions);
         })();
         return () => {
             cancelled = true;
@@ -443,6 +454,9 @@ export function RenderPage() {
                 musicVolume,
                 autoDuck,
                 typographyPreset,
+                captionMotion,
+                captionStagger,
+                captionHighlight,
                 kenBurns,
                 layout,
                 depth,
@@ -1032,6 +1046,13 @@ export function RenderPage() {
                             onLinesChange={setLines}
                             typographyPreset={typographyPreset}
                             onTypographyPresetChange={setTypographyPreset}
+                            motions={captionMotions}
+                            captionMotion={captionMotion}
+                            onCaptionMotionChange={setCaptionMotion}
+                            captionStagger={captionStagger}
+                            onCaptionStaggerChange={setCaptionStagger}
+                            captionHighlight={captionHighlight}
+                            onCaptionHighlightChange={setCaptionHighlight}
                             layout={layout}
                             onLayoutChange={setLayout}
                             layoutOptions={LAYOUT_OPTIONS}
@@ -1250,6 +1271,13 @@ export function RenderPage() {
                             onLinesChange={setLines}
                             typographyPreset={typographyPreset}
                             onTypographyPresetChange={setTypographyPreset}
+                            motions={captionMotions}
+                            captionMotion={captionMotion}
+                            onCaptionMotionChange={setCaptionMotion}
+                            captionStagger={captionStagger}
+                            onCaptionStaggerChange={setCaptionStagger}
+                            captionHighlight={captionHighlight}
+                            onCaptionHighlightChange={setCaptionHighlight}
                             layout={layout}
                             onLayoutChange={setLayout}
                             layoutOptions={LAYOUT_OPTIONS}

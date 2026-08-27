@@ -517,6 +517,9 @@ const MIN_LINE_FONT_SIZE = 22;
 // but allows ~99px at 16 chars.
 const BLOCK_MAX_CHARS = 16;
 
+// How far apart staggered rows arrive, before the per-block cap.
+const STAGGER_STEP_SECONDS = 0.28;
+
 /** Greedy word wrap to a character budget. Never splits a word. */
 function wrapToBlock(text, maxChars) {
   const words = String(text).split(/\s+/).filter(Boolean);
@@ -553,7 +556,7 @@ export function fitLineFontSize(lines, w, preferred) {
   return Math.max(MIN_LINE_FONT_SIZE, Math.min(preferred, maxSize));
 }
 
-export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal, highlightWords }) {
+export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal, highlightWords, stagger }) {
   const safeLines = Array.isArray(lines) ? lines.filter(Boolean) : [];
   if (safeLines.length === 0) return null;
   const style = resolveTypographyPreset(preset);
@@ -634,9 +637,20 @@ export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal
       // Centre the stack on the frame's middle band rather than hanging it
       // from a fixed top, or a tall block runs off the bottom.
       const top = Math.round(h * 0.5 - (rows.length * lead) / 2);
+      // STAGGER: rows arrive a beat apart instead of popping in together.
+      // The step is capped to a fraction of the block so the LAST row still
+      // has time on screen - without the cap a short block would stagger past
+      // its own window and that row would never appear.
+      const step = stagger
+        ? Math.min(STAGGER_STEP_SECONDS, ((to - from) * 0.5) / Math.max(1, rows.length))
+        : 0;
       return rows.map((row, ri) => {
         const y = top + ri * lead;
-        return `drawtext=text='${escapeDrawText(row)}':x=(w-text_w)/2:y=${y}${fontArg(style)}:fontsize=${fontSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=18${enable}`;
+        const rowFrom = from + ri * step;
+        const rowEnable = step > 0
+          ? `:enable='between(t,${rowFrom.toFixed(3)},${to.toFixed(3)})'`
+          : enable;
+        return `drawtext=text='${escapeDrawText(row)}':x=(w-text_w)/2:y=${y}${fontArg(style)}:fontsize=${fontSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=18${rowEnable}`;
       }).join(",");
     }).join(",");
   }
@@ -670,6 +684,46 @@ export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal
     // line keeps its highlighter block instead of reverting to a black panel.
     return `drawtext=text='${escaped}':x=(w-text_w)/2:y=${y}${fontArg(style)}:fontsize=${fontSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=18`;
   }).join(",");
+}
+
+/**
+ * Caption MOTION: how captions are timed, independent of how they LOOK.
+ *
+ * Base modes are mutually exclusive - a caption cannot be per-word and a line
+ * block at once - while highlight and stagger are modifiers that layer on top.
+ * The picker and the renderer both read this list, so a mode can never appear
+ * in the UI that the renderer cannot draw.
+ */
+const CAPTION_MOTIONS = Object.freeze([
+  { id: "words", label: "Per word", description: "One word at a time, synced to the voice." },
+  { id: "lines", label: "Per line", description: "One line at a time, full size." },
+  { id: "block", label: "Line block", description: "A short phrase on screen together." },
+]);
+
+export function listCaptionMotions() {
+  return CAPTION_MOTIONS;
+}
+
+/**
+ * Turn a motion id + modifiers into the flags the builders take.
+ *
+ * @param {string} [motion] one of CAPTION_MOTIONS ids
+ * @param {{stagger?: boolean, highlight?: boolean}} [mods]
+ * @param {object} [style] resolved preset, used only when no motion is given
+ */
+export function resolveCaptionMotion(motion, mods = {}, style = null) {
+  const known = CAPTION_MOTIONS.some((m) => m.id === motion);
+  // No explicit motion: fall back to what the STYLE asks for, so renders made
+  // before this control existed keep behaving exactly as they did.
+  const id = known ? motion : (style?.captionMode === "lines" ? "block" : "words");
+  return {
+    id,
+    useWords: id === "words",
+    block: id === "block",
+    reveal: id === "lines",
+    stagger: Boolean(mods.stagger),
+    highlight: Boolean(mods.highlight),
+  };
 }
 
 /**

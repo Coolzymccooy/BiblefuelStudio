@@ -24,6 +24,9 @@ function setup(over: Partial<RenderCaptionsPanelProps> = {}) {
     maxLines: 6,
     hasScripts: true,
     onUseLatestScript: vi.fn(),
+    onCaptionMotionChange: vi.fn(),
+    onCaptionStaggerChange: vi.fn(),
+    onCaptionHighlightChange: vi.fn(),
     ...over,
   };
   render(<RenderCaptionsPanel {...props} />);
@@ -103,5 +106,53 @@ describe('RenderCaptionsPanel', () => {
   it('reflects depth being already on', () => {
     setup({ depth: true });
     expect(screen.getByRole('checkbox', { name: /layered depth/i })).toBeChecked();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Caption motion: HOW captions are timed, independent of how they look.
+//
+// Base modes are mutually exclusive; highlight and stagger are modifiers that
+// layer on. The operator asked for multi-select, and this is the honest shape
+// of it - "per word AND line block" is a contradiction the UI must not offer.
+describe('RenderCaptionsPanel — caption motion', () => {
+  const MOTIONS = [
+    { id: 'words', label: 'Per word', description: 'One word at a time.' },
+    { id: 'lines', label: 'Per line', description: 'One line at a time.' },
+    { id: 'block', label: 'Line block', description: 'A phrase together.' },
+  ];
+
+  it('offers every motion the server implements', () => {
+    setup({ motions: MOTIONS, captionMotion: 'words' });
+    for (const m of MOTIONS) {
+      expect(screen.getByRole('option', { name: new RegExp(m.label, 'i') })).toBeInTheDocument();
+    }
+  });
+
+  it('reports a motion change upward', async () => {
+    const user = userEvent.setup();
+    const props = setup({ motions: MOTIONS, captionMotion: 'words' });
+    await user.selectOptions(screen.getByRole('combobox', { name: /caption motion/i }), 'block');
+    expect(props.onCaptionMotionChange).toHaveBeenCalledWith('block');
+  });
+
+  it('lets stagger and highlight be ticked together', async () => {
+    const user = userEvent.setup();
+    const props = setup({ motions: MOTIONS, captionMotion: 'block' });
+    await user.click(screen.getByLabelText(/stagger/i));
+    await user.click(screen.getByLabelText(/highlight/i));
+    expect(props.onCaptionStaggerChange).toHaveBeenCalledWith(true);
+    expect(props.onCaptionHighlightChange).toHaveBeenCalledWith(true);
+  });
+
+  it('hides word highlight for per-word, where it is meaningless', () => {
+    setup({ motions: MOTIONS, captionMotion: 'words' });
+    expect(screen.queryByLabelText(/highlight/i)).not.toBeInTheDocument();
+  });
+
+  it('renders without motions rather than crashing', () => {
+    // The panel must survive a server that predates the motions field.
+    setup({ motions: undefined });
+    expect(screen.getByText(/overlay text/i)).toBeInTheDocument();
   });
 });

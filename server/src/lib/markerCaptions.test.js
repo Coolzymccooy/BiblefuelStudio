@@ -495,3 +495,98 @@ test('captions leave breathing room - not edge to edge', () => {
   const drawn = widest * size * 0.6;
   assert.ok(drawn <= W * 0.75, `draws ~${Math.round(drawn)}px of ${W} - too wide`);
 });
+
+// ---------------------------------------------------------------------------
+// STAGGER modifier.
+//
+// In the reference the rows of a block do not pop in together - they arrive a
+// beat apart, which is what gives it the "designed" feel. Stagger is a
+// MODIFIER: it layers onto a base mode rather than replacing one.
+
+test('staggered block rows start at different times', () => {
+  const out = buildLineDrawtext({
+    lines: ['Trust that His presence calms the chaos around you.'],
+    w: W, h: H, preset: 'headline', duration: 9, block: true, stagger: true,
+  });
+  const starts = [...out.matchAll(/between\(t,([\d.]+),/g)].map((m) => Number(m[1]));
+  assert.ok(new Set(starts).size > 1, 'every row started at the same instant - not staggered');
+});
+
+test('staggered rows still all end with their block', () => {
+  // Rows enter late but must not vanish early, or the block reads as broken.
+  const duration = 9;
+  const out = buildLineDrawtext({
+    lines: ['Trust that His presence calms the chaos around you.'],
+    w: W, h: H, preset: 'headline', duration, block: true, stagger: true,
+  });
+  const ends = [...out.matchAll(/between\(t,[\d.]+,([\d.]+)\)/g)].map((m) => Number(m[1]));
+  assert.equal(new Set(ends).size, 1, `rows end at ${new Set(ends).size} different times`);
+});
+
+test('stagger never pushes a row past the end of its block', () => {
+  // A short block with many rows must not stagger beyond its own window,
+  // or the last row would never appear at all.
+  const out = buildLineDrawtext({
+    lines: ['Trust that His presence calms the chaos around you completely today'],
+    w: W, h: H, preset: 'headline', duration: 2, block: true, stagger: true,
+  });
+  const spans = [...out.matchAll(/between\(t,([\d.]+),([\d.]+)\)/g)].map((m) => [Number(m[1]), Number(m[2])]);
+  for (const [a, b] of spans) assert.ok(b > a, `row window ${a}..${b} is empty - row never shows`);
+});
+
+test('without stagger, block rows still share one window', () => {
+  const out = buildLineDrawtext({
+    lines: ['Trust that His presence calms the chaos around you.'],
+    w: W, h: H, preset: 'headline', duration: 9, block: true,
+  });
+  const starts = [...out.matchAll(/between\(t,([\d.]+),/g)].map((m) => m[1]);
+  assert.equal(new Set(starts).size, 1, 'stagger leaked into plain block mode');
+});
+
+// ---------------------------------------------------------------------------
+// The caption-motion contract shared by the route and the UI.
+//
+// Base modes are mutually exclusive (a caption cannot be per-word AND a line
+// block); highlight and stagger are modifiers that layer on. Encoding that in
+// ONE place stops the picker and the renderer drifting apart.
+
+import { listCaptionMotions, resolveCaptionMotion } from './videoFilters.js';
+
+test('the picker is offered every base mode', () => {
+  const ids = listCaptionMotions().map((m) => m.id);
+  for (const want of ['words', 'lines', 'block']) {
+    assert.ok(ids.includes(want), `${want} missing from the motion list`);
+  }
+});
+
+test('every motion carries a label for the dropdown', () => {
+  for (const m of listCaptionMotions()) {
+    assert.ok(m.label && m.label.length > 0, `${m.id} has no label`);
+  }
+});
+
+test('words mode does not request line rendering', () => {
+  const r = resolveCaptionMotion('words');
+  assert.equal(r.useWords, true);
+  assert.equal(r.block, false);
+  assert.equal(r.reveal, false);
+});
+
+test('modifiers layer onto a base without changing it', () => {
+  const plain = resolveCaptionMotion('block');
+  const fancy = resolveCaptionMotion('block', { stagger: true, highlight: true });
+  assert.equal(fancy.block, plain.block, 'modifier changed the base mode');
+  assert.equal(fancy.stagger, true);
+  assert.equal(fancy.highlight, true);
+});
+
+test('an unknown motion falls back rather than rendering nothing', () => {
+  const r = resolveCaptionMotion('not-a-mode');
+  assert.ok(r.useWords || r.block || r.reveal, 'unknown motion produced no renderable mode');
+});
+
+test('a line-mode preset still decides when no motion is chosen', () => {
+  // Backwards compatibility: existing renders pass no motion at all.
+  const r = resolveCaptionMotion(undefined, {}, resolveTypographyPreset('marker'));
+  assert.equal(r.useWords, false, 'marker is a line style; it must not default to words');
+});

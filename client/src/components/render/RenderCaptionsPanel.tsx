@@ -26,6 +26,12 @@ export interface LayoutOption {
   label: string;
 }
 
+export interface CaptionMotionOption {
+  id: string;
+  label: string;
+  description?: string;
+}
+
 export interface RenderCaptionsPanelProps {
   lines: string;
   onLinesChange: (next: string) => void;
@@ -38,6 +44,14 @@ export interface RenderCaptionsPanelProps {
   onDepthChange: (next: boolean) => void;
   /** Caption animations from the server; may be empty while loading. */
   animations?: CaptionAnimationOption[];
+  /** Caption MOTION options from the server (how captions are timed). */
+  motions?: CaptionMotionOption[];
+  captionMotion?: string;
+  onCaptionMotionChange?: (next: string) => void;
+  captionStagger?: boolean;
+  onCaptionStaggerChange?: (next: boolean) => void;
+  captionHighlight?: boolean;
+  onCaptionHighlightChange?: (next: boolean) => void;
   /** True when a saved script is available to pull in. */
   hasScripts?: boolean;
   onOpenScripts: () => void;
@@ -51,6 +65,13 @@ export function RenderCaptionsPanel({
   onLinesChange,
   typographyPreset,
   onTypographyPresetChange,
+  motions,
+  captionMotion,
+  onCaptionMotionChange,
+  captionStagger,
+  onCaptionStaggerChange,
+  captionHighlight,
+  onCaptionHighlightChange,
   layout,
   onLayoutChange,
   layoutOptions,
@@ -92,6 +113,48 @@ export function RenderCaptionsPanel({
           )}
         </div>
       </Field>
+
+      {Array.isArray(motions) && motions.length > 0 && (
+        <Field
+          label="Caption motion"
+          tooltip="How captions are TIMED, independent of how they look. Pick one base mode; stagger and highlight layer on top."
+        >
+          <Select
+            aria-label="Caption motion"
+            value={captionMotion || motions[0].id}
+            onChange={(e: ChangeEvent<HTMLSelectElement>) => onCaptionMotionChange?.(e.target.value)}
+          >
+            {motions.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.label}
+              </option>
+            ))}
+          </Select>
+          <div className="mt-2 space-y-1.5">
+            <label className="flex items-center gap-2 text-[12px] text-content-secondary">
+              <input
+                type="checkbox"
+                checked={Boolean(captionStagger)}
+                onChange={(e) => onCaptionStaggerChange?.(e.target.checked)}
+              />
+              Stagger lines (arrive a beat apart)
+            </label>
+            {/* Highlighting the spoken word only means something when a whole
+                line is on screen - in per-word mode there is nothing to
+                highlight it against. */}
+            {captionMotion !== 'words' && (
+              <label className="flex items-center gap-2 text-[12px] text-content-secondary">
+                <input
+                  type="checkbox"
+                  checked={Boolean(captionHighlight)}
+                  onChange={(e) => onCaptionHighlightChange?.(e.target.checked)}
+                />
+                Highlight each word on the line
+              </label>
+            )}
+          </div>
+        </Field>
+      )}
 
       <Field
         label="Caption animation"
