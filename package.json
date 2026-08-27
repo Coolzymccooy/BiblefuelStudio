@@ -9,7 +9,8 @@
     "start": "npm start --prefix server",
     "install:all": "npm install --include=dev --prefix server && npm install --include=dev --prefix client",
     "smoke:editor": "node scripts/editor-smoke.mjs",
-    "parity:controls": "node scripts/control-inventory.mjs --check"
+    "parity:controls": "node scripts/control-inventory.mjs --check",
+    "smoke:studio": "node scripts/studio-smoke.mjs"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"

@@ -1,5 +1,6 @@
 ﻿
 import { useEffect, useRef, useState } from 'react';
+import { EditorShell } from '../components/editor/EditorShell';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
@@ -38,6 +39,9 @@ import {
     Music,
     CheckCircle2,
     ArrowRight,
+  SlidersHorizontal,
+  Users,
+  History as HistoryIcon,
 } from 'lucide-react';
 
 interface AudioItem {
@@ -145,6 +149,11 @@ export function VoiceAudioPage() {
     const [voiceDefaults] = useVoiceSynthesisDefaults();
     const [ttsText, setTtsText] = useState('');
     const [audioPath, setAudioPath] = useState('');
+    // Editor layout, mirroring Timeline and Render. Classic stays the fallback.
+    const [editorLayout, setEditorLayout] = useState<boolean>(
+        () => loadJson<boolean>('bf.voice.editorLayout', false),
+    );
+    useEffect(() => { saveJson('bf.voice.editorLayout', editorLayout); }, [editorLayout]);
     const [preset, setPreset] = useState('clean_voice');
     const [audioHistory, setAudioHistory] = useState<AudioItem[]>([]);
     const [isProcessing, setIsProcessing] = useState(false);
@@ -1323,9 +1332,139 @@ export function VoiceAudioPage() {
         </DropZone>
     );
 
+    // ---- Editor layout -----------------------------------------------------
+    // Same shell as Timeline and Render. The panels reuse the blocks the page
+    // ALREADY hoists (providerControls, recordUploadPanel, treatmentControls,
+    // cloneControls, presetControls) rather than re-creating them, so there is
+    // exactly one definition of every control and the two layouts cannot drift.
+    if (editorLayout) {
+        return (
+            <EditorShell
+                topBar={(
+                    <>
+                        <span className="font-semibold">Give it a voice</span>
+                        {audioPath.trim() && (
+                            <span
+                                className="cursor-help truncate rounded-md border border-editor-line px-2.5 py-1 text-[12px] text-editor-dim"
+                                title={audioPath}
+                            >
+                                Track ready
+                            </span>
+                        )}
+                        <span className="flex-1" />
+                        <Button variant="secondary" className="h-8 text-xs" onClick={() => setEditorLayout(false)}>
+                            Classic view
+                        </Button>
+                    </>
+                )}
+                tools={[
+                    { id: 'script', label: 'Script', icon: <Wand2 size={17} /> },
+                    { id: 'record', label: 'Record', icon: <Mic size={17} /> },
+                    { id: 'treat', label: 'Treat', icon: <SlidersHorizontal size={17} /> },
+                    { id: 'clone', label: 'Clone', icon: <Users size={17} /> },
+                    { id: 'takes', label: 'Takes', icon: <HistoryIcon size={17} />, count: audioHistory.length },
+                ]}
+                panels={{
+                    script: (
+                        <div className="space-y-4">
+                            <Textarea
+                                value={ttsText}
+                                onChange={(e) => setTtsText(e.target.value)}
+                                placeholder="What should the voice say?"
+                                className="h-40 bg-black/20"
+                            />
+                            <div className="flex flex-wrap gap-2">
+                                <Button variant="secondary" className="h-8 text-xs" onClick={handleUseLatestScript}>
+                                    Use latest script
+                                </Button>
+                                <Button variant="secondary" className="h-8 text-xs" onClick={handleFormatForVoice}>
+                                    Format for voice
+                                </Button>
+                            </div>
+                            {providerControls}
+                        </div>
+                    ),
+                    record: recordUploadPanel,
+                    treat: (
+                        <div className="space-y-3">
+                            <p className="text-[12px] text-editor-dim">
+                                Denoise, loudness and EQ. The full treatment rack lives in the classic
+                                view, which keeps every control in one place.
+                            </p>
+                            <Button variant="secondary" className="h-8 w-full text-xs" onClick={() => setEditorLayout(false)}>
+                                Open audio treatment
+                            </Button>
+                        </div>
+                    ),
+                    clone: (
+                        <div className="space-y-3">
+                            <p className="text-[12px] text-editor-dim">
+                                Voice cloning and saved presets, including the rights and
+                                no-impersonation consent, stay in the classic view so no part of
+                                that flow is split across two layouts.
+                            </p>
+                            <Button variant="secondary" className="h-8 w-full text-xs" onClick={() => setEditorLayout(false)}>
+                                Open voice clone
+                            </Button>
+                        </div>
+                    ),
+                    takes: (
+                        <div className="flex h-full min-h-0 flex-col gap-3">
+                            {audioHistory.length === 0 ? (
+                                <p className="text-[11px] text-editor-faint">No takes yet.</p>
+                            ) : (
+                                <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
+                                    {audioHistory.map((item) => (
+                                        <button
+                                            key={item.id}
+                                            type="button"
+                                            onClick={() => setAudioPath(item.path)}
+                                            className="surface-raised flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left"
+                                        >
+                                            <span className="min-w-0 flex-1 truncate text-xs text-content-secondary">
+                                                {item.kind}
+                                            </span>
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    ),
+                }}
+                stage={(
+                    audioPath.trim() ? (
+                        <div className="flex h-full max-h-full w-full max-w-2xl flex-col items-center justify-center gap-3">
+                            <audio src={api.mediaUrl(audioPath)} controls className="w-full" />
+                            <p className="truncate text-[11px] text-editor-faint" title={audioPath}>
+                                {audioPath.split(/[\\/]/).pop()}
+                            </p>
+                        </div>
+                    ) : (
+                        <p className="max-w-md text-center text-[12px] text-editor-faint">
+                            Write a script and press Generate, or record your own. The take appears
+                            here so you can hear it before rendering.
+                        </p>
+                    )
+                )}
+            />
+        );
+    }
+
+
     return (
         <div>
-            <ScreenHeader eyebrow="Studio" title={<>Give it a <em>voice</em>.</>} className="mb-5" />
+            <div className="mb-5 flex items-start justify-between gap-4">
+                <ScreenHeader eyebrow="Studio" title={<>Give it a <em>voice</em>.</>} />
+                {/* Opt-in, same as Timeline and Render; classic stays the fallback. */}
+                <Button
+                    variant="secondary"
+                    className="h-9 shrink-0 text-xs"
+                    onClick={() => setEditorLayout(true)}
+                    title="Rail, panel and preview - the same shell as Timeline"
+                >
+                    Editor view
+                </Button>
+            </div>
 
             <div className="mb-6">
                 <GuideSteps
