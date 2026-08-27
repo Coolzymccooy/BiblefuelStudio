@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  fitLineFontSize,
   resolveTypographyPreset,
   listTypographyPresets,
   listKineticAnimations,
@@ -432,4 +433,65 @@ test('without word timings, highlight mode is inert (no invented emphasis)', () 
   });
   const texts = [...plain.matchAll(/text='([^']*)'/g)].map((m) => m[1]);
   assert.deepEqual(texts, ['Trust that His'], 'no word overlays without timings');
+});
+
+// ---------------------------------------------------------------------------
+// Typography: real fonts.
+//
+// Every caption rendered in ffmpeg's default monospace, which is why our
+// output read as "generated" next to the reference: that ad uses a script
+// face, a marker face and a serif italic. Motion was never the gap - the
+// typeface was.
+//
+// Fonts are bundled under server/assets/fonts (all OFL/Apache, redistributable
+// - system fonts are NOT, and would be absent on the Linux server anyway).
+
+import fs from 'node:fs';
+import path from 'node:path';
+import { fontFileFor, FONT_DIR } from './videoFilters.js';
+
+test('every preset font resolves to a file that exists', () => {
+  for (const id of [...NEW_PRESETS, 'cinematic-default']) {
+    const file = fontFileFor(resolveTypographyPreset(id));
+    if (!file) continue; // monospace default is allowed
+    assert.ok(fs.existsSync(file), `${id} points at a missing font: ${file}`);
+  }
+});
+
+test('bundled fonts are real TTFs, not error pages', () => {
+  // A 404 from a font CDN saves as an HTML page with a .ttf name and fails
+  // silently at render time - drawtext just falls back to monospace.
+  for (const f of fs.readdirSync(FONT_DIR).filter((n) => n.endsWith('.ttf'))) {
+    const fd = fs.openSync(path.join(FONT_DIR, f), 'r');
+    const buf = Buffer.alloc(4);
+    fs.readSync(fd, buf, 0, 4, 0);
+    fs.closeSync(fd);
+    const sig = buf.toString('hex');
+    assert.ok(sig === '00010000' || sig === '74727565' || sig === '4f54544f',
+      `${f} is not a TTF (signature ${sig})`);
+  }
+});
+
+test('the marker style uses a marker face, not monospace', () => {
+  const out = buildWordDrawtext({ words: WORDS, w: W, h: H, preset: 'marker' });
+  assert.match(out, /fontfile=/);
+});
+
+test('a font path is escaped for ffmpeg (Windows drive colon)', () => {
+  // An unescaped "C:" terminates the drawtext option and kills the graph.
+  const out = buildWordDrawtext({ words: WORDS, w: W, h: H, preset: 'marker' });
+  const m = out.match(/fontfile='([^']*)'/);
+  if (m && /^[A-Za-z]:/.test(m[1].split(String.fromCharCode(92)).join(''))) {
+    assert.match(m[1], new RegExp(String.fromCharCode(92)+':'), `drive colon not escaped in ${m[1]}`);
+  }
+});
+
+test('captions leave breathing room - not edge to edge', () => {
+  // Operator: "we should make the line smarter, it currently feels too big".
+  // 88% of frame width filled the frame; the reference sits well inside it.
+  const rows = ['Trust that His', 'presence calms'];
+  const size = fitLineFontSize(rows, W, 400);
+  const widest = Math.max(...rows.map((r) => r.length));
+  const drawn = widest * size * 0.6;
+  assert.ok(drawn <= W * 0.75, `draws ~${Math.round(drawn)}px of ${W} - too wide`);
 });

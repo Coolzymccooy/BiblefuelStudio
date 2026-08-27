@@ -3,6 +3,52 @@
 // returns plain strings (or arrays of strings) the caller assembles into
 // the final ffmpeg invocation.
 
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+
+/**
+ * Bundled caption fonts. Every caption used to render in ffmpeg's default
+ * monospace, which is what made our output read as "generated" beside a
+ * reference ad using script, marker and serif-italic faces. Motion was never
+ * the gap; the typeface was.
+ *
+ * These live in the repo (OFL / Apache) rather than being read from the OS:
+ * system fonts are not redistributable and do not exist on the Linux server.
+ */
+const BACKSLASH = String.fromCharCode(92);
+
+export const FONT_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "assets", "fonts");
+
+const FONT_FILES = Object.freeze({
+  marker: "PermanentMarker.ttf",
+  script: "Caveat-Bold.ttf",
+  serif: "PlayfairDisplay-BoldItalic.ttf",
+  poster: "Anton.ttf",
+});
+
+/**
+ * Escape a path for use inside a drawtext option. An unescaped Windows drive
+ * colon terminates the option and takes the whole filtergraph down with it.
+ */
+export function escapeFontPath(p) {
+  // ffmpeg needs the drive colon escaped: a bare "C:" ends the drawtext
+  // option and the whole filtergraph is rejected.
+  return String(p).split(BACKSLASH).join("/").split(":").join(BACKSLASH + ":");
+}
+
+/** Absolute, ffmpeg-escaped font path for a preset, or "" for monospace. */
+export function fontFileFor(style) {
+  const key = style?.fontFamily;
+  const file = key && FONT_FILES[key];
+  if (!file) return "";
+  return path.join(FONT_DIR, file);
+}
+
+function fontArg(style) {
+  const f = fontFileFor(style);
+  return f ? `:fontfile='${escapeFontPath(f)}'` : "";
+}
+
 const DEFAULT_XFADE_SECONDS = 0.5;
 const EMPHASIS_COLOR = "#F59E0B";
 const BASE_TEXT_COLOR = "white";
@@ -156,6 +202,7 @@ const TYPOGRAPHY_PRESETS = Object.freeze({
     boxBorderW: 18,
     lineBoxOpacity: 0.92, lineBoxColor: "0xF5C518", lineSizeMult: 0.026,
     lineEnter: "fade", wordReveal: "scale-fade", wordRevealMs: 260,
+    fontFamily: "marker",
     captionMode: "lines",
     uppercase: false,
   },
@@ -169,6 +216,7 @@ const TYPOGRAPHY_PRESETS = Object.freeze({
     heroSizeMult: 0.070, heroColor: "0xFFF8D0",
     borderWidth: 10, wordBox: false, lineBoxOpacity: 0, lineSizeMult: 0.028,
     lineEnter: "rise-fade", wordReveal: "scale-fade", wordRevealMs: 240,
+    fontFamily: "script",
     captionMode: "lines",
     uppercase: false,
     shadow: { color: "black@0.55", x: 0, y: 6 },
@@ -182,6 +230,7 @@ const TYPOGRAPHY_PRESETS = Object.freeze({
     heroSizeMult: 0.105, heroColor: "0xFFF8D0",
     borderWidth: 8, wordBox: false, lineBoxOpacity: 0, lineSizeMult: 0.034,
     lineEnter: "rise-fade", wordReveal: "scale-fade", wordRevealMs: 220,
+    fontFamily: "serif",
     captionMode: "lines",
     uppercase: false, layout: "center",
     shadow: { color: "black@0.45", x: 0, y: 8 },
@@ -436,12 +485,12 @@ export function buildWordDrawtext({ words, w, h, preset, layout, depth }) {
     if (depthCfg) {
       const depthYBase = `(${yBase}+${depthDy})`;
       filters.push(
-        `drawtext=text='${text}':x=${xExpr}+${depthDx}:${yClauseFor(depthYBase)}:fontsize=${size}:fontcolor=${depthColor}@${depthOpacity}:borderw=0${alphaClause}${enableClause}`
+        `drawtext=text='${text}':x=${xExpr}+${depthDx}:${yClauseFor(depthYBase)}${fontArg(style)}:fontsize=${size}:fontcolor=${depthColor}@${depthOpacity}:borderw=0${alphaClause}${enableClause}`
       );
     }
 
     filters.push(
-      `drawtext=text='${text}':x=${xExpr}:${yClauseFor(yBase)}:fontsize=${size}:fontcolor=${color}:borderw=${borderWidth}:bordercolor=black@0.85${shadowClause}${wordBox}${alphaClause}${enableClause}`
+      `drawtext=text='${text}':x=${xExpr}:${yClauseFor(yBase)}${fontArg(style)}:fontsize=${size}:fontcolor=${color}:borderw=${borderWidth}:bordercolor=black@0.85${shadowClause}${wordBox}${alphaClause}${enableClause}`
     );
   }
   if (filters.length === 0) return null;
@@ -460,7 +509,7 @@ export function buildWordDrawtext({ words, w, h, preset, layout, depth }) {
 // ffmpeg's default monospace face; LINE_WIDTH_BUDGET leaves a margin so text
 // never touches the frame edge (soft-glow previously did, with zero room).
 const MONO_ADVANCE_EM = 0.6;
-const LINE_WIDTH_BUDGET = 0.88;
+const LINE_WIDTH_BUDGET = 0.72;
 const MIN_LINE_FONT_SIZE = 22;
 
 // Target width for a wrapped block line. Short lines are what let paced
@@ -537,7 +586,7 @@ export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal
       const from = i * slot;
       const to = i === rows.length - 1 ? total : (i + 1) * slot;
       const enable = `:enable='between(t,${from.toFixed(3)},${to.toFixed(3)})'`;
-      parts.push(`drawtext=text='${escapeDrawText(row)}':x=(w-text_w)/2:y=${y}:fontsize=${fontSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=18${enable}`);
+      parts.push(`drawtext=text='${escapeDrawText(row)}':x=(w-text_w)/2:y=${y}${fontArg(style)}:fontsize=${fontSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=18${enable}`);
 
       // Karaoke overlay: keep the whole row on screen and re-draw just the
       // spoken word in the emphasis colour on top of it. Only the words that
@@ -559,7 +608,7 @@ export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal
           // monospace advance the fit already assumes.
           const before = row.slice(0, row.indexOf(text));
           const dx = Math.round((before.length - row.length / 2 + text.length / 2) * fontSize * MONO_ADVANCE_EM);
-          parts.push(`drawtext=text='${escapeDrawText(text)}':x=(w-text_w)/2+${dx}:y=${y}:fontsize=${fontSize}:fontcolor=${emph}:enable='between(t,${a.toFixed(3)},${b.toFixed(3)})'`);
+          parts.push(`drawtext=text='${escapeDrawText(text)}':x=(w-text_w)/2+${dx}:y=${y}${fontArg(style)}:fontsize=${fontSize}:fontcolor=${emph}:enable='between(t,${a.toFixed(3)},${b.toFixed(3)})'`);
         }
       }
     });
@@ -587,7 +636,7 @@ export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal
       const top = Math.round(h * 0.5 - (rows.length * lead) / 2);
       return rows.map((row, ri) => {
         const y = top + ri * lead;
-        return `drawtext=text='${escapeDrawText(row)}':x=(w-text_w)/2:y=${y}:fontsize=${fontSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=18${enable}`;
+        return `drawtext=text='${escapeDrawText(row)}':x=(w-text_w)/2:y=${y}${fontArg(style)}:fontsize=${fontSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=18${enable}`;
       }).join(",");
     }).join(",");
   }
@@ -607,7 +656,7 @@ export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal
       // silent gap of uncaptioned video at the tail.
       const to = i === safeLines.length - 1 ? total : (i + 1) * slot;
       const enable = `:enable='between(t,${from.toFixed(3)},${to.toFixed(3)})'`;
-      return `drawtext=text='${escapeDrawText(t)}':x=(w-text_w)/2:y=${y}:fontsize=${pacedSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=18${enable}`;
+      return `drawtext=text='${escapeDrawText(t)}':x=(w-text_w)/2:y=${y}${fontArg(style)}:fontsize=${pacedSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=18${enable}`;
     }).join(",");
   }
 
@@ -619,7 +668,7 @@ export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal
     const escaped = escapeDrawText(t);
     // Same reasoning as the word box: honour the preset's colour so a marker
     // line keeps its highlighter block instead of reverting to a black panel.
-    return `drawtext=text='${escaped}':x=(w-text_w)/2:y=${y}:fontsize=${fontSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=18`;
+    return `drawtext=text='${escaped}':x=(w-text_w)/2:y=${y}${fontArg(style)}:fontsize=${fontSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=18`;
   }).join(",");
 }
 
