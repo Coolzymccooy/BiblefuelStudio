@@ -332,3 +332,104 @@ test('a block sits centred as a group, not drifting down the frame', () => {
   assert.ok(Math.min(...ys) < H * 0.5 && Math.max(...ys) < H * 0.8,
     `block spans y ${Math.min(...ys)}..${Math.max(...ys)} on a ${H} frame`);
 });
+
+// ---------------------------------------------------------------------------
+// TRUE line-by-line ("reveal") mode.
+//
+// Block mode shows a wrapped phrase as a stack - the operator correctly
+// pointed out that is "almost 4 lines", not line-by-line. Reveal mode shows
+// ONE wrapped row at a time.
+//
+// The reason rows are used rather than whole sentences: a 51-character
+// sentence caps at 31px on a 1080 frame (the width budget binds), while a
+// wrapped row holds 99px. Line-by-line on raw sentences would be unreadable.
+
+test('reveal mode shows exactly one row at a time', () => {
+  const out = buildLineDrawtext({
+    lines: ['Trust that His presence calms the chaos around you.'],
+    w: W, h: H, preset: 'headline', duration: 8, reveal: true,
+  });
+  const spans = [...out.matchAll(/between\(t,([\d.]+),([\d.]+)\)/g)];
+  const texts = [...out.matchAll(/text='([^']*)'/g)].map((m) => m[1]);
+  assert.equal(spans.length, texts.length, 'every row needs its own window');
+  // Each window must be unique - sharing one is block mode, not reveal.
+  assert.equal(new Set(spans.map((s) => s[1] + '-' + s[2])).size, texts.length);
+  assert.ok(texts.length >= 3, `expected the sentence split into rows, got ${texts.length}`);
+});
+
+test('reveal keeps type large - the point of wrapping first', () => {
+  const out = buildLineDrawtext({
+    lines: ['Trust that His presence calms the chaos around you.'],
+    w: W, h: H, preset: 'headline', duration: 8, reveal: true,
+  });
+  const size = Number((out.match(/fontsize=(\d+)/) || [])[1]);
+  assert.ok(size >= 80, `${size}px is too small - revealing raw sentences caps near 31px`);
+});
+
+test('reveal rows sit at one position and cover the duration', () => {
+  const duration = 8;
+  const out = buildLineDrawtext({
+    lines: ['Trust that His presence calms the chaos around you.'],
+    w: W, h: H, preset: 'headline', duration, reveal: true,
+  });
+  assert.equal(new Set([...out.matchAll(/:y=(\d+)/g)].map((m) => m[1])).size, 1,
+    'revealed rows should not drift down the frame');
+  const spans = [...out.matchAll(/between\(t,([\d.]+),([\d.]+)\)/g)].map((m) => [Number(m[1]), Number(m[2])]);
+  assert.equal(spans[0][0], 0);
+  assert.ok(Math.abs(spans[spans.length - 1][1] - duration) < 0.05);
+});
+
+test('block mode still stacks - reveal ADDS a mode, replaces none', () => {
+  const out = buildLineDrawtext({
+    lines: ['Trust that His presence calms the chaos around you.'],
+    w: W, h: H, preset: 'headline', duration: 8, block: true,
+  });
+  assert.equal(new Set([...out.matchAll(/between\(t,([\d.]+),([\d.]+)\)/g)].map((m) => m[1])).size, 1,
+    'block mode shows its rows together');
+});
+
+// ---------------------------------------------------------------------------
+// Word highlight WITHIN a line ("karaoke" over paced lines).
+//
+// Operator: "then each word can highlight even on the line". This is the third
+// mode, not a replacement - the full line stays on screen for context while
+// the currently-spoken word is emphasised, rather than words appearing alone.
+//
+// It needs word timings, so it only applies when the caller has them.
+
+const HL_WORDS = [
+  { text: 'Trust', start: 0.0, end: 0.6 },
+  { text: 'that', start: 0.6, end: 1.0 },
+  { text: 'His', start: 1.0, end: 1.6 },
+];
+
+test('highlight mode keeps the whole line on screen', () => {
+  const out = buildLineDrawtext({
+    lines: ['Trust that His'], w: W, h: H, preset: 'marker',
+    duration: 2, reveal: true, highlightWords: HL_WORDS,
+  });
+  // The base line must be drawn, not just the individual words.
+  assert.match(out, /text='Trust that His'/);
+});
+
+test('highlight mode emphasises one word at a time', () => {
+  const out = buildLineDrawtext({
+    lines: ['Trust that His'], w: W, h: H, preset: 'marker',
+    duration: 2, reveal: true, highlightWords: HL_WORDS,
+  });
+  // Each word needs its own timed overlay on top of the line.
+  for (const wd of HL_WORDS) {
+    assert.ok(out.includes(`text='${wd.text}'`), `no highlight overlay for "${wd.text}"`);
+  }
+  const windows = [...out.matchAll(/between\(t,([\d.]+),([\d.]+)\)/g)];
+  assert.ok(windows.length > HL_WORDS.length,
+    'expected per-word windows plus the line window');
+});
+
+test('without word timings, highlight mode is inert (no invented emphasis)', () => {
+  const plain = buildLineDrawtext({
+    lines: ['Trust that His'], w: W, h: H, preset: 'marker', duration: 2, reveal: true,
+  });
+  const texts = [...plain.matchAll(/text='([^']*)'/g)].map((m) => m[1]);
+  assert.deepEqual(texts, ['Trust that His'], 'no word overlays without timings');
+});

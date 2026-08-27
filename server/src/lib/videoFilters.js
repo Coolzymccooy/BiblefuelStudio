@@ -504,7 +504,7 @@ export function fitLineFontSize(lines, w, preferred) {
   return Math.max(MIN_LINE_FONT_SIZE, Math.min(preferred, maxSize));
 }
 
-export function buildLineDrawtext({ lines, w, h, preset, duration, block }) {
+export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal, highlightWords }) {
   const safeLines = Array.isArray(lines) ? lines.filter(Boolean) : [];
   if (safeLines.length === 0) return null;
   const style = resolveTypographyPreset(preset);
@@ -521,6 +521,50 @@ export function buildLineDrawtext({ lines, w, h, preset, duration, block }) {
   // was not, which is why picking a style and getting a wall of text looked
   // identical to the static "preview mode" captions.
   const total = Number(duration);
+
+  // REVEAL mode: true line-by-line. Wrap first, then show ONE row at a time.
+  // Revealing raw sentences would be unreadable - a 51-character line caps at
+  // 31px on a 1080 frame because the width budget binds - whereas a wrapped
+  // row holds ~99px, the same size as a block.
+  if (reveal && Number.isFinite(Number(duration)) && Number(duration) > 0) {
+    const total = Number(duration);
+    const rows = safeLines.flatMap((t) => wrapToBlock(String(t), BLOCK_MAX_CHARS));
+    const fontSize = fitLineFontSize(rows, w, Math.round(h * (style.baseSizeMult || 0.07)));
+    const slot = total / rows.length;
+    const y = Math.round(h * 0.45);
+    const parts = [];
+    rows.forEach((row, i) => {
+      const from = i * slot;
+      const to = i === rows.length - 1 ? total : (i + 1) * slot;
+      const enable = `:enable='between(t,${from.toFixed(3)},${to.toFixed(3)})'`;
+      parts.push(`drawtext=text='${escapeDrawText(row)}':x=(w-text_w)/2:y=${y}:fontsize=${fontSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=18${enable}`);
+
+      // Karaoke overlay: keep the whole row on screen and re-draw just the
+      // spoken word in the emphasis colour on top of it. Only the words that
+      // belong to THIS row are considered, and only while the row is showing,
+      // so a word never lights up over a line it is not part of.
+      if (Array.isArray(highlightWords) && highlightWords.length > 0) {
+        const emph = style.emphasisColor || style.heroColor || color;
+        for (const wd of highlightWords) {
+          const text = String(wd?.text || "").trim();
+          if (!text || !row.includes(text)) continue;
+          const ws = Number(wd.start);
+          const we = Number(wd.end);
+          if (!Number.isFinite(ws) || !Number.isFinite(we) || we <= ws) continue;
+          // Clip the word's window to the row's own window.
+          const a = Math.max(ws, from);
+          const b = Math.min(we, to);
+          if (b <= a) continue;
+          // Offset the word to its position within the row, measured in the
+          // monospace advance the fit already assumes.
+          const before = row.slice(0, row.indexOf(text));
+          const dx = Math.round((before.length - row.length / 2 + text.length / 2) * fontSize * MONO_ADVANCE_EM);
+          parts.push(`drawtext=text='${escapeDrawText(text)}':x=(w-text_w)/2+${dx}:y=${y}:fontsize=${fontSize}:fontcolor=${emph}:enable='between(t,${a.toFixed(3)},${b.toFixed(3)})'`);
+        }
+      }
+    });
+    return parts.join(",");
+  }
 
   // BLOCK mode: wrap each caption into a short stack shown as one unit. A
   // single 49-character line caps at ~32px on a 1080 frame because the width
