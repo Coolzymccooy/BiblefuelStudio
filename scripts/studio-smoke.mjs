@@ -60,7 +60,18 @@ await boot('/app/render', `localStorage.setItem('bf.render.editorLayout','true')
 const rShell = await shellHeight();
 check('R/editor shell fills viewport', rShell === 1000, `h=${rShell}`);
 const rTools = await ev(`[...document.querySelectorAll('[role="tab"]')].map(b=>b.textContent.trim())`);
-check('R/editor has 4 tools', Array.isArray(rTools) && rTools.length === 4, (rTools || []).join(' | '));
+// Captions · Visuals · Audio · Output · Share. Share arrived when the Share
+// Kit stopped being classic-only.
+check('R/editor has 5 tools', Array.isArray(rTools) && rTools.length === 5, (rTools || []).join(' | '));
+await clickTool('Visuals'); await waitFor(`/Auto|background/i.test((document.querySelector('[role="tabpanel"]')||{}).innerText||'')`);
+check('R/editor visuals panel holds the real background picker',
+  (await ev(`[...document.querySelectorAll('[role="tabpanel"] button, [role="tabpanel"] label')].some(b=>/From library|Upload from device/i.test(b.textContent))`)) === true);
+check('R/editor visuals panel keeps Generate visuals',
+  /Generate visuals from my script/i.test(await panelText()));
+await clickTool('Share'); await waitFor(`/caption|share/i.test((document.querySelector('[role="tabpanel"]')||{}).innerText||'')`);
+check('R/editor share panel holds the Share Kit',
+  (await ev(`[...document.querySelectorAll('[role="tabpanel"] button')].some(b=>/Copy Caption/i.test(b.textContent))`)) === true);
+await clickTool('Captions'); await waitFor(`/Overlay text/.test((document.querySelector('[role="tabpanel"]')||{}).innerText||'')`);
 check('R/editor captions panel', /Overlay text/.test(await panelText()));
 
 await clickTool('Audio'); await waitFor(`/Voice track/.test((document.querySelector('[role="tabpanel"]')||{}).innerText||'')`);
@@ -94,20 +105,33 @@ await boot('/app/voice-audio', `localStorage.setItem('bf.voice.editorLayout','tr
 const vShell = await shellHeight();
 check('V/editor shell fills viewport', vShell === 1000, `h=${vShell}`);
 const vTools = await ev(`[...document.querySelectorAll('[role="tab"]')].map(b=>b.textContent.trim())`);
-check('V/editor has 5 tools', Array.isArray(vTools) && vTools.length === 5, (vTools || []).join(' | '));
+// Script · Record · Treat · Clone · Music · Takes. Music arrived when the
+// soundtrack library stopped being classic-only.
+check('V/editor has 6 tools', Array.isArray(vTools) && vTools.length === 6, (vTools || []).join(' | '));
 check('V/editor script panel has the text box',
   (await ev(`!!document.querySelector('[role="tabpanel"] textarea')`)) === true);
 
 await clickTool('Record'); await new Promise(r => setTimeout(r, 1200));
 check('V/editor record panel loads', ((await panelText()) || '').length > 0);
 
-await clickTool('Treat'); await waitFor(`/treatment/i.test((document.querySelector('[role="tabpanel"]')||{}).innerText||'')`);
-check('V/editor treat routes to classic',
-  (await ev(`[...document.querySelectorAll('button')].some(b=>/Open audio treatment/i.test(b.textContent))`)) === true);
+await clickTool('Treat'); await waitFor(`/Process Audio/i.test((document.querySelector('[role="tabpanel"]')||{}).innerText||'')`);
+// The treatment rack itself, not a "go to classic" stub.
+check('V/editor treat holds the full treatment rack',
+  (await ev(`[...document.querySelectorAll('[role="tabpanel"] button')].some(b=>/Process Audio/i.test(b.textContent))`)) === true);
+check('V/editor treat keeps the preset select',
+  (await ev(`[...document.querySelectorAll('[role="tabpanel"] option')].some(o=>/Clean voice/i.test(o.textContent))`)) === true);
 
 await clickTool('Clone'); await waitFor(`/clone/i.test((document.querySelector('[role="tabpanel"]')||{}).innerText||'')`);
-check('V/editor clone routes to classic',
-  (await ev(`[...document.querySelectorAll('button')].some(b=>/Open voice clone/i.test(b.textContent))`)) === true);
+// The clone flow with its consent checkboxes - a legal control, so its
+// presence is asserted, not assumed.
+check('V/editor clone holds the consent checkboxes',
+  (await ev(`/rights and consent to clone/i.test((document.querySelector('[role="tabpanel"]')||{}).innerText||'')`)) === true);
+check('V/editor clone offers Clone Voice',
+  (await ev(`[...document.querySelectorAll('[role="tabpanel"] button')].some(b=>/^Clone Voice$/i.test(b.textContent.trim()))`)) === true);
+
+await clickTool('Music'); await waitFor(`/Music Library|soundtrack/i.test((document.querySelector('[role="tabpanel"]')||{}).innerText||'')`);
+check('V/editor music panel holds the soundtrack library',
+  (await ev(`[...document.querySelectorAll('[role="tabpanel"] button')].some(b=>/Load Music Library/i.test(b.textContent))`)) === true);
 
 const vShot = await send('Page.captureScreenshot', { format: 'png' });
 fs.writeFileSync('voice-editor-view.png', Buffer.from(vShot.data, 'base64'));

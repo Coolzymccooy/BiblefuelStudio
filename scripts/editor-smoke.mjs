@@ -96,6 +96,29 @@ const get=p=>new Promise((res,rej)=>{http.get({host:'127.0.0.1',port:PORT,path:p
   await clickTool('Captions'); await new Promise(r=>setTimeout(r,1200));
   check('caption lines visible in editor', (await ev(`/Caption lines/.test(document.body.innerText)`))===true);
 
+  // Reset to a known state before measuring clip bleed. The project persists
+  // SERVER-side per user (timelineApi wins over localStorage), so the Grade
+  // effect this suite adds accumulated run over run until the effects lane
+  // "overlapped" on state no user action produced. Strip them through the
+  // app's own Remove buttons; create the project through the editor's Scenes
+  // panel when this user has none yet (that create affordance used to be
+  // classic-only).
+  await boot(1900,1000,SEED_MEDIA);
+  await clickTool('Scenes');
+  await waitFor(`/Opening \\/ Arrival|Create worship documentary timeline/.test((document.querySelector('[role="tabpanel"]')||{}).innerText||'')`);
+  await ev(`(()=>{const b=[...document.querySelectorAll('button')].find(x=>/Create worship documentary timeline/i.test(x.textContent));if(b)b.click();})()`);
+  await waitFor(`/Opening \\/ Arrival/.test((document.querySelector('[role="tabpanel"]')||{}).innerText||'')`);
+  check('scenes panel reaches a project from the editor',
+    (await ev(`/Opening \\/ Arrival/.test((document.querySelector('[role="tabpanel"]')||{}).innerText||'')`))===true);
+  await ev(`(()=>{const b=[...document.querySelectorAll('[role="tabpanel"] button')].find(x=>/Opening/.test(x.textContent));if(b)b.click();})()`);
+  await waitFor(`document.querySelectorAll('[aria-pressed="true"]').length>0`);
+  for(let i=0;i<40;i++){
+    const removed=await ev(`(()=>{const b=document.querySelector('[aria-label^="Remove "]');if(!b)return false;b.click();return true;})()`);
+    if(!removed) break;
+    await new Promise(r=>setTimeout(r,250));
+  }
+  await new Promise(r=>setTimeout(r,1600)); // let the debounced autosave PUT the cleaned project
+
   const overlaps=await ev(`(()=>{
     const b=[...document.querySelectorAll('[aria-label^="Timeline clip"]')].map(e=>{
       const r=e.getBoundingClientRect();
@@ -169,6 +192,20 @@ const get=p=>new Promise((res,rej)=>{http.get({host:'127.0.0.1',port:PORT,path:p
   check('a single Render button is present and enabled',
     (await ev(`(()=>{const b=[...document.querySelectorAll('button')].filter(x=>/^Render$/i.test(x.textContent.trim()));
        return b.length===1 && !b[0].disabled;})()`))===true);
+
+  // ---- clips tool (the legacy audio assembly reached the editor) ----
+  await clickTool('Clips');
+  await waitFor(`/Add Clip/.test((document.querySelector('[role="tabpanel"]')||{}).innerText||'')`);
+  check('clips panel offers Add Clip, Save Project and Render Audio',
+    (await ev(`(()=>{const t=(document.querySelector('[role="tabpanel"]')||{}).innerText||'';
+       return /Add Clip/.test(t)&&/Save Project/.test(t)&&/Render Audio/.test(t);})()`))===true);
+  await ev(`(()=>{const b=[...document.querySelectorAll('[role="tabpanel"] button')].find(x=>/Add Clip/.test(x.textContent));if(b)b.click();})()`);
+  await waitFor(`/Manual audio path/.test(document.body.innerText)`);
+  check('Add Clip opens the modal from the editor',
+    (await ev(`/Manual audio path/.test(document.body.innerText)`))===true);
+  // Close via the backdrop so the next section starts clean.
+  await ev(`(()=>{const back=document.querySelector('.fixed.inset-0.z-50 > .absolute.inset-0');if(back)back.click();})()`);
+  await new Promise(r=>setTimeout(r,800));
 
   // ---- vertical timeline resize ----
   await boot(1900,1000,SEED_MEDIA+`localStorage.setItem('bf.editor.stripPct','38');`);
