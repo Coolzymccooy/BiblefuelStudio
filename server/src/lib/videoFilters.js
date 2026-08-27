@@ -131,6 +131,58 @@ const TYPOGRAPHY_PRESETS = Object.freeze({
     lineEnter: "fade", wordReveal: "fade", wordRevealMs: 120, uppercase: true,
     shadow: { color: "black@0.85", x: 0, y: 3 },
   },
+
+  // ---- Marker family -----------------------------------------------------
+  // Modelled on the reference the operator supplied. Three distinct looks that
+  // appear across it, each usable per-word OR per-line.
+
+  // MARKER: dark text on a saturated highlighter block. The block is the
+  // style, so wordBox and a high lineBoxOpacity are load-bearing here - drop
+  // either and it degrades to plain yellow text on video.
+  //
+  // Text is near-black rather than white: a bright block needs dark type, and
+  // white-on-yellow fails contrast on any frame.
+  //
+  // NOT uppercase. The reference sets lowercase script, and uppercasing it
+  // loses the handwritten feel that distinguishes this from word-boxes.
+  "marker": {
+    // Sizing verified by rendering a real frame, not by reading the numbers:
+    // 0.082 put a single word edge-to-edge on a 1080x1920 portrait frame. The
+    // reference block is roughly a third of the frame width.
+    baseSizeMult: 0.042, emphasisSizeMult: 0.048, baseColor: "0x141210",
+    emphasisColor: "0x141210",
+    heroSizeMult: 0.056, heroColor: "0x141210",
+    borderWidth: 0, wordBox: true, boxColor: "0xF5C518", boxOpacity: 0.95,
+    boxBorderW: 18,
+    lineBoxOpacity: 0.92, lineBoxColor: "0xF5C518", lineSizeMult: 0.026,
+    lineEnter: "fade", wordReveal: "scale-fade", wordRevealMs: 260,
+    uppercase: false,
+  },
+
+  // SOFT-GLOW: pale butter-yellow with a heavy dark outline and no block.
+  // Reads over busy footage without a panel, which is what makes it feel
+  // lighter than marker.
+  "soft-glow": {
+    baseSizeMult: 0.052, emphasisSizeMult: 0.060, baseColor: "0xFAE58C",
+    emphasisColor: "0xFFF3B0",
+    heroSizeMult: 0.070, heroColor: "0xFFF8D0",
+    borderWidth: 10, wordBox: false, lineBoxOpacity: 0, lineSizeMult: 0.028,
+    lineEnter: "rise-fade", wordReveal: "scale-fade", wordRevealMs: 240,
+    uppercase: false,
+    shadow: { color: "black@0.55", x: 0, y: 6 },
+  },
+
+  // HEADLINE: the same palette at poster scale. Sits high in frame, so it does
+  // not fight a face in the lower two-thirds of a portrait video.
+  "headline": {
+    baseSizeMult: 0.085, emphasisSizeMult: 0.095, baseColor: "0xFAE58C",
+    emphasisColor: "0xFFF3B0",
+    heroSizeMult: 0.105, heroColor: "0xFFF8D0",
+    borderWidth: 8, wordBox: false, lineBoxOpacity: 0, lineSizeMult: 0.034,
+    lineEnter: "rise-fade", wordReveal: "scale-fade", wordRevealMs: 220,
+    uppercase: false, layout: "center",
+    shadow: { color: "black@0.45", x: 0, y: 8 },
+  },
 });
 
 // The lumina-presenter design-animation catalog, ported. Browser-only effects
@@ -140,6 +192,11 @@ const TYPOGRAPHY_PRESETS = Object.freeze({
 // maps to a real `presetId` so non-renderable picks degrade to a close style
 // instead of crashing.
 const KINETIC_ANIMATIONS = Object.freeze([
+  // Marker family. Fully renderable server-side: no browser-only effects, so
+  // what the picker previews is what ffmpeg burns.
+  { id: "marker", label: "Marker", description: "Dark handwriting on a yellow highlighter block. Works per word or per line.", presetId: "marker", renderable: true, unsupported: [] },
+  { id: "soft-glow", label: "Soft Glow", description: "Pale butter type with a heavy dark outline. No block, reads over busy footage.", presetId: "soft-glow", renderable: true, unsupported: [] },
+  { id: "headline", label: "Headline", description: "Poster-scale pale type set high in frame, clear of faces.", presetId: "headline", renderable: true, unsupported: [] },
   { id: "cinematic-worship", label: "Cinematic Worship", description: "Centered large worship typography; lines rise in, words fade one at a time.", presetId: "cinematic-worship", renderable: true, unsupported: [] },
   { id: "cinematic-reactive", label: "Cinematic Reactive", description: "Cinematic worship type that glows/pulses to audio with drifting particles (audio-reactivity is browser-only).", presetId: "cinematic-reactive", renderable: true, unsupported: ["audio-reactive", "particles"] },
   { id: "scripture-reveal", label: "Scripture Reveal", description: "Slow, reverent verse reveal; long dwell, gentle fade.", presetId: "scripture-reveal", renderable: true, unsupported: [] },
@@ -305,7 +362,15 @@ export function buildWordDrawtext({ words, w, h, preset, layout, depth }) {
   const emphasisColor = style.emphasisColor || EMPHASIS_COLOR;
   const heroColor = style.heroColor || emphasisColor;
   const borderWidth = Number.isFinite(style.borderWidth) ? style.borderWidth : 5;
-  const wordBox = style.wordBox ? ":box=1:boxcolor=black@0.35:boxborderw=12" : "";
+  // Box colour comes from the preset. It used to be hardcoded black@0.35, so a
+  // preset could ask for a highlighter block and still get a grey panel - the
+  // marker style is defined by that colour, not by having a box at all.
+  const boxCol = style.boxColor || "black";
+  const boxOp = Number.isFinite(style.boxOpacity) ? style.boxOpacity : 0.35;
+  const boxPad = Number.isFinite(style.boxBorderW) ? style.boxBorderW : 12;
+  const wordBox = style.wordBox
+    ? `:box=1:boxcolor=${boxCol}@${boxOp.toFixed(2)}:boxborderw=${boxPad}`
+    : "";
 
   // Motion model ported from lumina: per-word reveal animation synced to the
   // word's real start time. Legacy presets omit wordReveal → hard-cut (no alpha).
@@ -388,19 +453,51 @@ export function buildWordDrawtext({ words, w, h, preset, layout, depth }) {
  * @param {{ lines: string[], w: number, h: number }} opts
  * @returns {string | null}
  */
+// Line-fitting constants. MONO_ADVANCE_EM is the per-glyph advance of
+// ffmpeg's default monospace face; LINE_WIDTH_BUDGET leaves a margin so text
+// never touches the frame edge (soft-glow previously did, with zero room).
+const MONO_ADVANCE_EM = 0.6;
+const LINE_WIDTH_BUDGET = 0.88;
+const MIN_LINE_FONT_SIZE = 22;
+
+/**
+ * Cap a line font size so the LONGEST line still fits the frame width.
+ *
+ * `lineSizeMult` is multiplied by frame HEIGHT, but the text runs across the
+ * frame WIDTH - so a fixed multiplier silently shears long lines off both
+ * edges. That is not theoretical: at 0.034 the headline preset rendered
+ * "d is close to the brokenheart" on a 1080px frame, and the stock
+ * cinematic-default preset draws a 60-character line to ~2306px. Filter
+ * strings look correct in every one of those cases; only the pixels show it.
+ *
+ * Captions use ffmpeg's default monospace face (no preset sets `fontfile`), so
+ * glyph advance is a dependable ~0.6em and the fit is computable without
+ * measuring. This only ever shrinks: a short line keeps its preset size.
+ */
+export function fitLineFontSize(lines, w, preferred) {
+  const longest = lines.reduce((n, t) => Math.max(n, String(t).length), 0);
+  if (longest === 0) return Math.max(MIN_LINE_FONT_SIZE, preferred);
+  const budget = w * LINE_WIDTH_BUDGET;
+  const maxSize = Math.floor(budget / (longest * MONO_ADVANCE_EM));
+  return Math.max(MIN_LINE_FONT_SIZE, Math.min(preferred, maxSize));
+}
+
 export function buildLineDrawtext({ lines, w, h, preset }) {
   const safeLines = Array.isArray(lines) ? lines.filter(Boolean) : [];
   if (safeLines.length === 0) return null;
   const style = resolveTypographyPreset(preset);
   const startY = Math.round(h * 0.22);
   const lineGap = Math.round(h * 0.06);
-  const fontSize = Math.max(28, Math.round(h * (style.lineSizeMult || 0.033)));
+  const fontSize = fitLineFontSize(safeLines, w, Math.round(h * (style.lineSizeMult || 0.033)));
   const boxOpacity = Number.isFinite(style.lineBoxOpacity) ? style.lineBoxOpacity : 0.35;
   const color = style.baseColor || BASE_TEXT_COLOR;
   return safeLines.map((t, i) => {
     const y = startY + i * lineGap;
     const escaped = escapeDrawText(t);
-    return `drawtext=text='${escaped}':x=(w-text_w)/2:y=${y}:fontsize=${fontSize}:fontcolor=${color}:box=1:boxcolor=black@${boxOpacity.toFixed(2)}:boxborderw=18`;
+    // Same reasoning as the word box: honour the preset's colour so a marker
+    // line keeps its highlighter block instead of reverting to a black panel.
+    const lineBoxCol = style.lineBoxColor || style.boxColor || "black";
+    return `drawtext=text='${escaped}':x=(w-text_w)/2:y=${y}:fontsize=${fontSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=18`;
   }).join(",");
 }
 
