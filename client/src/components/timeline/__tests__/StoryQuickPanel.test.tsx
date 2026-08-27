@@ -37,6 +37,15 @@ describe('StoryQuickPanel', () => {
     expect(screen.getByText(/Upload a sermon/i)).toBeInTheDocument();
   });
 
+  it('the upload button actually opens the file picker', async () => {
+    // The styled drop area LOOKED clickable but was not - regression guard.
+    const user = userEvent.setup();
+    const clickSpy = vi.spyOn(HTMLInputElement.prototype, 'click');
+    renderWith(<StoryQuickPanel onUseVideo={() => {}} />);
+    await user.click(screen.getByRole('button', { name: /upload a sermon/i }));
+    expect(clickSpy).toHaveBeenCalled();
+  });
+
   it('tracks the SAME active project as the Story page (shared key)', async () => {
     localStorage.setItem('BF_STORY_ACTIVE', 'p1');
     vi.spyOn(storyApi, 'getProject').mockResolvedValue(DONE_PROJECT as any);

@@ -1,13 +1,12 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { Loader2, Upload, X, RefreshCw, ArrowDownToLine } from 'lucide-react';
 import { storyApi } from '../../lib/storyApi';
 import { useStoryProject } from '../../hooks/useStoryProject';
 import {
-  deriveStep, progressLabel, imageCounts, isTransientStatus, isStalled, canRender,
+  deriveStep, progressLabel, imageCounts, isTransientStatus, isStalled, canRender, STORY_STYLES,
 } from '../../lib/storyWizard';
-import { StylePicker } from '../story/StylePicker';
 import { ScriptForm } from '../story/ScriptForm';
 import { StoryStepper } from '../story/StoryStepper';
 import { DropZone } from '../ui/DropZone';
@@ -39,6 +38,7 @@ export function StoryQuickPanel({ onUseVideo }: StoryQuickPanelProps) {
   const [style, setStyle] = useState('cinematic-bible');
   const [entryMode, setEntryMode] = useState<'upload' | 'script'>('upload');
   const [busy, setBusy] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: project } = useStoryProject(projectId);
   const refresh = () => { if (projectId) qc.invalidateQueries({ queryKey: ['story-project', projectId] }); };
@@ -110,7 +110,26 @@ export function StoryQuickPanel({ onUseVideo }: StoryQuickPanelProps) {
             className="mt-1 bg-black/20"
           />
         </label>
-        <StylePicker value={style} onChange={setStyle} />
+        {/* Compact style chips - the page's big cards ate half the panel.
+            Same STORY_STYLES source; the blurb survives as the tooltip. */}
+        <div className="grid grid-cols-2 gap-1.5" role="group" aria-label="Visual style">
+          {STORY_STYLES.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              aria-pressed={s.id === style}
+              title={s.blurb}
+              onClick={() => setStyle(s.id)}
+              className={`rounded-lg border px-2 py-1.5 text-left text-[10.5px] font-semibold transition-colors ${
+                s.id === style
+                  ? 'border-editor-accent/50 bg-editor-hover text-editor-accent'
+                  : 'border-editor-line text-editor-dim hover:text-editor-text'
+              }`}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
         <div className="inline-flex rounded-lg border border-editor-line p-0.5 text-xs">
           <button
             type="button"
@@ -141,10 +160,27 @@ export function StoryQuickPanel({ onUseVideo }: StoryQuickPanelProps) {
             disabled={busy}
             overlayLabel="Drop a sermon file"
           >
-            <div className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-editor-line px-3 py-6 text-xs text-editor-dim">
+            {/* Click opens the picker; drop still works. A styled div alone
+                LOOKED clickable but was not - the operator hit it first. */}
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-editor-line px-3 py-5 text-xs text-editor-dim transition-colors hover:border-editor-accent/50 hover:text-editor-text"
+            >
               <Upload size={15} />
               Upload a sermon (MP3/M4A/MP4)
-            </div>
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="audio/*,video/*"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) handlePickFile(f);
+                e.target.value = '';
+              }}
+            />
           </DropZone>
         )}
         <p className="text-[10px] leading-relaxed text-editor-faint">
