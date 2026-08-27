@@ -207,6 +207,24 @@ const get=p=>new Promise((res,rej)=>{http.get({host:'127.0.0.1',port:PORT,path:p
   await ev(`(()=>{const back=document.querySelector('.fixed.inset-0.z-50 > .absolute.inset-0');if(back)back.click();})()`);
   await new Promise(r=>setTimeout(r,800));
 
+  // ---- unified-editor additions: Output frame, right rail, Script tool ----
+  await boot(1900,1000,SEED_MEDIA+`localStorage.setItem('BF_SCRIPTS', JSON.stringify([{title:'Peace in the Storm',hook:'In the chaos, calm awaits you.',verse:'Jesus is in your boat with you.',reference:'Mark 4:39',reflection:'His presence brings peace.',cta:'Save this for when you need peace.'}]));`);
+  check('Output frame control is in the topbar (3 frames)',
+    (await ev(`(()=>{const s=document.querySelector('select[aria-label="Output frame"]');return !!s&&s.options.length===3;})()`))===true);
+  check('properties rail has a visible resize handle',
+    (await ev(`!!document.querySelector('[role="separator"][aria-label="Resize properties"]')`))===true);
+  check('properties rail has a maximize toggle',
+    (await ev(`!!document.querySelector('button[aria-label="Maximize properties panel"], button[aria-label="Restore properties panel"]')`))===true);
+
+  await clickTool('Script');
+  await waitFor(`/Add to Captions lane/.test((document.querySelector('[role="tabpanel"]')||{}).innerText||'')`);
+  check('Script quick tool docks in the editor with the shared library',
+    (await ev(`/Peace in the Storm/.test((document.querySelector('[role="tabpanel"]')||{}).innerText||'')`))===true);
+  await ev(`(()=>{const b=[...document.querySelectorAll('[role="tabpanel"] button')].find(x=>/Add to Captions lane/.test(x.textContent));if(b)b.click();})()`);
+  await waitFor(`/caption clip/.test(document.body.innerText)||JSON.parse(localStorage.getItem('BF_SCL_EDITED_LINES')||'[]').length>0`);
+  check('the script LANDS as caption clips on this timeline',
+    (await ev(`JSON.parse(localStorage.getItem('BF_SCL_EDITED_LINES')||'[]').length`))>=3);
+
   // ---- vertical timeline resize ----
   await boot(1900,1000,SEED_MEDIA+`localStorage.setItem('bf.editor.stripPct','38');`);
   const measure=`(()=>{

@@ -29,6 +29,7 @@ import {
     
     ChevronUp,
     ChevronDown,
+    Wand2,
 } from 'lucide-react';
 import { loadJson, saveJson, STORAGE_KEYS } from '../lib/storage';
 import { LAYOUT_OPTIONS } from '../lib/layoutOptions';
@@ -56,6 +57,7 @@ import { InfoTooltip } from '../components/ui/InfoTooltip';
 import { BusyBar } from '../components/ui/BusyBar';
 import { DropZone } from '../components/ui/DropZone';
 import { buildSpeakableLines, cleanCaptionLine } from '../lib/speakableScript';
+import { ScriptQuickPanel, type QuickScript, type ScriptQuickConfig } from '../components/timeline/ScriptQuickPanel';
 import type { TimelineProject } from '../lib/timelineProject';
 import {
     insertAssetOnTrack,
@@ -1732,6 +1734,44 @@ export function TimelinePage() {
         )
     );
 
+    // ---- Script QUICK job ---------------------------------------------------
+    // The Scripts page's generator, docked in the editor. Output lands on THIS
+    // timeline; the library (STORAGE_KEYS.scripts) is the same one the Scripts
+    // page and Voice's "Use Latest Script" read - one library, many doors.
+    const [quickScripts, setQuickScripts] = useState<QuickScript[]>(
+        () => loadJson<QuickScript[]>(STORAGE_KEYS.scripts, []),
+    );
+    const [isGeneratingScript, setIsGeneratingScript] = useState(false);
+
+    const handleGenerateQuickScript = async (cfg: ScriptQuickConfig) => {
+        setIsGeneratingScript(true);
+        try {
+            const response = await api.post('/api/scripts/generate', cfg);
+            if (response.ok && response.data?.scripts) {
+                setQuickScripts(response.data.scripts);
+                saveJson(STORAGE_KEYS.scripts, response.data.scripts);
+                toast.success(`Generated ${response.data.scripts.length} script${response.data.scripts.length === 1 ? '' : 's'}`);
+            } else {
+                toast.error(response.error || 'Failed to generate scripts');
+            }
+        } finally {
+            setIsGeneratingScript(false);
+        }
+    };
+
+    const handleAddScriptToCaptions = (script: QuickScript) => {
+        const lines = [script.hook, script.verse, script.reflection, script.cta]
+            .map((l) => cleanCaptionLine(l || ''))
+            .filter(Boolean);
+        if (lines.length === 0) {
+            toast.error('This script has no lines to add');
+            return;
+        }
+        setEditedLines(lines);
+        setKineticCaptions(true);
+        toast.success(`${lines.length} caption clip${lines.length === 1 ? '' : 's'} landed on the Captions lane`);
+    };
+
     const overlays = (
         <>
             {/* Library Picker Modal — multi-select up to MAX_BACKGROUNDS.
@@ -1927,6 +1967,27 @@ export function TimelinePage() {
                             </span>
                         )}
                         <span className="flex-1" />
+                        {/* Output frame - ONE project-level setting, visible while
+                            editing because it changes what you SEE. The stage
+                            re-letterboxes live; the render plan reads the same
+                            value (project.aspect), so nothing is re-picked at
+                            render time. */}
+                        {documentaryProject && (
+                            <select
+                                aria-label="Output frame"
+                                title="Output frame - one setting for preview, timeline and render"
+                                value={documentaryProject.aspect}
+                                onChange={(e) => setDocumentaryProject({
+                                    ...documentaryProject,
+                                    aspect: e.target.value as typeof documentaryProject.aspect,
+                                })}
+                                className="h-8 rounded-md border border-editor-line bg-black/25 px-2 font-mono text-[11px] text-editor-text"
+                            >
+                                <option value="9:16">Portrait 9:16</option>
+                                <option value="1:1">Square 1:1</option>
+                                <option value="16:9">Landscape 16:9</option>
+                            </select>
+                        )}
                         <Button variant="secondary" className="h-8 text-xs" onClick={() => setEditorLayout(false)}>
                             Classic view
                         </Button>
@@ -1951,6 +2012,10 @@ export function TimelinePage() {
                     </>
                 )}
                 tools={[
+                    // QUICK group: create-from-nothing jobs whose output lands
+                    // on this timeline. Everything below Media is the EDIT
+                    // group, unchanged.
+                    { id: 'script', label: 'Script', icon: <Wand2 size={17} /> },
                     { id: 'media', label: 'Media', icon: <Film size={17} /> },
                     { id: 'clips', label: 'Clips', icon: <Layers size={17} />, count: clips.length },
                     { id: 'captions', label: 'Captions', icon: <Type size={17} /> },
@@ -1960,7 +2025,18 @@ export function TimelinePage() {
                     { id: 'background', label: 'Background', icon: <ImageIcon size={17} />, count: backgroundItems.length },
                     { id: 'renders', label: 'Renders', icon: <Clapperboard size={17} />, count: renderHistory.length },
                 ]}
+                // Media stays the landing tool - adding Script to the rail must
+                // not change what the editor opens on.
+                initialToolId="media"
                 panels={{
+                    script: (
+                        <ScriptQuickPanel
+                            isGenerating={isGeneratingScript}
+                            scripts={quickScripts}
+                            onGenerate={handleGenerateQuickScript}
+                            onAddToCaptions={handleAddScriptToCaptions}
+                        />
+                    ),
                     media: (
                         <PanelSection
                             title="Source media"

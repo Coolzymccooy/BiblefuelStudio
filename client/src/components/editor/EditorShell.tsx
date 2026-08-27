@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { Maximize2, Minimize2 } from 'lucide-react';
 
 /**
  * CapCut-style editor shell: icon rail, docked panel, stage, bottom strip.
@@ -83,6 +84,12 @@ const MIN_STRIP_PCT = 15;
 const MAX_STRIP_PCT = 65;
 const DEFAULT_STRIP_PCT = 38;
 const STRIP_HEIGHT_KEY = 'bf.editor.stripPct';
+/** Properties (right) rail bounds — the operator asked for the same resize +
+ *  maximize the left panel has; 216 is today's fixed width, kept as default. */
+const MIN_PROP_W = 216;
+const MAX_PROP_W = 560;
+const PROP_WIDTH_KEY = 'bf.editor.propWidth';
+const PROP_MAX_KEY = 'bf.editor.propMax';
 const APP_NAV_W = 240;
 const RAIL_W = 60;
 
@@ -126,6 +133,35 @@ export function EditorShell({
   const draggingStrip = useRef(false);
   const shellRef = useRef<HTMLDivElement | null>(null);
 
+  // Properties (right) rail: draggable width + a maximize toggle, mirroring
+  // the left panel. Both persist so the workspace comes back as arranged.
+  const [propWidth, setPropWidth] = useState<number>(() => {
+    const saved = Number(localStorage.getItem(PROP_WIDTH_KEY));
+    return Number.isFinite(saved) && saved >= MIN_PROP_W && saved <= MAX_PROP_W
+      ? saved
+      : MIN_PROP_W;
+  });
+  const [propMax, setPropMax] = useState<boolean>(
+    () => localStorage.getItem(PROP_MAX_KEY) === 'true',
+  );
+  const draggingProp = useRef(false);
+
+  const onPropDragStart = useCallback((e: React.PointerEvent) => {
+    draggingProp.current = true;
+    // Dragging while maximized means "I want manual control" — drop out of
+    // max so the handle tracks the cursor instead of fighting it.
+    setPropMax(false);
+    localStorage.setItem(PROP_MAX_KEY, 'false');
+    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+  }, []);
+
+  const togglePropMax = useCallback(() => {
+    setPropMax((v) => {
+      localStorage.setItem(PROP_MAX_KEY, String(!v));
+      return !v;
+    });
+  }, []);
+
   const onStripDragStart = useCallback((e: React.PointerEvent) => {
     draggingStrip.current = true;
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
@@ -150,6 +186,17 @@ export function EditorShell({
         }
         return;
       }
+      if (draggingProp.current) {
+        // Measured from the shell's RIGHT edge minus the 56px tool rail, so
+        // the handle tracks the cursor exactly - same principle as the left
+        // panel, mirrored.
+        const box = shellRef.current?.getBoundingClientRect();
+        if (box) {
+          const next = Math.round(box.right - 56 - e.clientX);
+          setPropWidth(Math.min(MAX_PROP_W, Math.max(MIN_PROP_W, next)));
+        }
+        return;
+      }
       if (!dragging.current) return;
       // Width is measured from the shell's left edge minus the rail, so the
       // handle tracks the cursor exactly rather than drifting.
@@ -161,6 +208,11 @@ export function EditorShell({
       if (draggingStrip.current) {
         draggingStrip.current = false;
         setStripPct((p) => { localStorage.setItem(STRIP_HEIGHT_KEY, String(p)); return p; });
+        return;
+      }
+      if (draggingProp.current) {
+        draggingProp.current = false;
+        setPropWidth((w) => { localStorage.setItem(PROP_WIDTH_KEY, String(w)); return w; });
         return;
       }
       if (!dragging.current) return;
@@ -300,8 +352,32 @@ export function EditorShell({
         </div>
 
         {propertyTools && propertyTools.length > 0 && (
-          <div className="flex shrink-0 max-lg:hidden">
-            <div className="w-[216px] overflow-auto border-l border-editor-line bg-editor-panel p-3.5">
+          <div className="flex min-w-0 shrink-0 max-lg:hidden">
+            {/* Same visible-grip divider as the left panel, mirrored. */}
+            <div
+              role="separator"
+              aria-label="Resize properties"
+              aria-orientation="vertical"
+              onPointerDown={onPropDragStart}
+              className="group flex w-1.5 shrink-0 cursor-col-resize items-center justify-center transition-colors hover:bg-primary-400/30"
+            >
+              <div className="pointer-events-none h-9 w-[3px] rounded-full bg-editor-accent/35 transition-colors group-hover:bg-editor-accent" />
+            </div>
+            <div
+              className={`overflow-auto border-l border-editor-line bg-editor-panel p-3.5 ${propMax ? 'w-[min(720px,46vw)]' : ''}`}
+              style={propMax ? undefined : { width: propWidth }}
+            >
+              <div className="mb-1.5 flex justify-end">
+                <button
+                  type="button"
+                  aria-label={propMax ? 'Restore properties panel' : 'Maximize properties panel'}
+                  title={propMax ? 'Restore properties panel' : 'Maximize properties panel'}
+                  onClick={togglePropMax}
+                  className="grid h-7 w-7 place-items-center rounded-md text-editor-faint transition hover:bg-editor-hover hover:text-editor-text"
+                >
+                  {propMax ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+                </button>
+              </div>
               {propertyPanels?.[activePropId] ?? (
                 <p className="text-[11px] text-editor-faint">Select a clip to edit it.</p>
               )}
