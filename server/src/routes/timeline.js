@@ -13,6 +13,19 @@ const __dirname = path.dirname(__filename);
 const SERVER_ROOT = path.resolve(__dirname, '../..');
 
 const jobs = new Map();
+
+/**
+ * The proof renderer's `error` is either raw ffmpeg stderr or an already-human
+ * message ("Chatterbox unavailable"). Translate the former; pass the latter
+ * through untouched — flattening it into friendlyRenderError's generic
+ * fallback erased actionable messages from the job record.
+ */
+function presentRenderError(raw) {
+  const text = String(raw || '').trim();
+  if (!text) return null;
+  const friendly = friendlyRenderError('timeline-render', text);
+  return /\(ref: render-exit-/.test(friendly) ? text : friendly;
+}
 let _renderTimelineProof = renderTimelineProof;
 
 function timelineJobsDir(dataDir) {
@@ -158,7 +171,7 @@ async function runTimelineJob(job) {
     } else {
       job.status = 'failed';
       job.phase = 'failed';
-      job.error = friendlyRenderError('timeline-render', proofResult.error) || 'Timeline proof render failed';
+      job.error = presentRenderError(proofResult.error) || 'Timeline proof render failed';
       job.note = 'Timeline proof render failed before producing a playable MP4.';
     }
     persistTimelineJob(job);

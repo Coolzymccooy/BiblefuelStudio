@@ -1829,6 +1829,68 @@ export function TimelinePage() {
                 </div>
             )}
 
+{/* Add Clip Modal */}
+            {showAddClipModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                    <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShowAddClipModal(false)} />
+                    {/* Plain div (not <Card>) — Card wraps children in an extra
+                        <div> that breaks flex flex-col, leaving the inner
+                        overflow-y-auto section with no flex parent. Same fix
+                        applied to all modals on this page + RenderPage. */}
+                    <div className="relative w-full max-w-3xl max-h-[80vh] flex flex-col rounded-xl bg-dark-900/95 backdrop-blur-xl border border-white/20 shadow-2xl overflow-hidden">
+                        <div className="flex items-center justify-between p-4 border-b border-white/10 shrink-0">
+                            <h3 className="font-bold text-lg text-white">Add Clip</h3>
+                            <button onClick={() => setShowAddClipModal(false)} className="text-gray-500 hover:text-white">
+                                <X size={24} />
+                            </button>
+                        </div>
+                        <div className="flex-1 min-h-0 p-4 space-y-4 overflow-y-auto overscroll-contain">
+                            {currentAudioPath && (
+                                <div className="flex items-center justify-between bg-black/30 border border-white/10 rounded-lg p-3">
+                                    <div className="text-xs text-gray-300 break-all">{currentAudioPath}</div>
+                                    <Button onClick={() => handleAddClip(currentAudioPath, 'current')} className="text-xs h-8">
+                                        Add Current
+                                    </Button>
+                                </div>
+                            )}
+
+                            <div>
+                                <label className="block text-xs text-gray-400 mb-1">Manual audio path</label>
+                                <div className="flex flex-col sm:flex-row gap-2">
+                                    <input
+                                        value={manualPath}
+                                        onChange={(e) => setManualPath(e.target.value)}
+                                        placeholder="Pick an audio file from your library"
+                                        className="flex-1 bg-black/30 border border-white/10 rounded px-3 py-2 text-sm text-gray-200"
+                                    />
+                                    <Button onClick={() => handleAddClip(manualPath, 'manual')} className="text-xs h-9">
+                                        Add
+                                    </Button>
+                                </div>
+                            </div>
+
+                            <div>
+                                <h4 className="text-caption mb-2">Recent Audio</h4>
+                                {audioHistory.length === 0 ? (
+                                    <p className="text-help">No recent audio found.</p>
+                                ) : (
+                                    <div className="space-y-2">
+                                        {audioHistory.map((item) => (
+                                            <div key={item.id} className="flex items-center gap-2 bg-black/20 border border-white/10 rounded-lg p-2">
+                                                <div className="flex-1 text-xs text-gray-300 break-all">{item.path}</div>
+                                                <Button onClick={() => handleAddClip(item.path, item.kind)} className="text-xs h-8">
+                                                    Add
+                                                </Button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {trimTarget && (
                 <MediaTrimmer
                     serverPath={trimTarget.path}
@@ -1890,6 +1952,7 @@ export function TimelinePage() {
                 )}
                 tools={[
                     { id: 'media', label: 'Media', icon: <Film size={17} /> },
+                    { id: 'clips', label: 'Clips', icon: <Layers size={17} />, count: clips.length },
                     { id: 'captions', label: 'Captions', icon: <Type size={17} /> },
                     { id: 'music', label: 'Music', icon: <Music size={17} /> },
                     { id: 'voice', label: 'Voice', icon: <Waves size={17} />, count: audioHistory.length },
@@ -1931,6 +1994,92 @@ export function TimelinePage() {
                             onInsertVoiceoverPlaceholder={handleInsertVoiceoverPlaceholder}
                         />
                         </PanelSection>
+                    ),
+                    // The legacy audio assembly: ordered clips, per-clip trim,
+                    // Render Audio. Lived only in classic ("Main Assembly"),
+                    // so the editor could not stitch or master audio at all.
+                    clips: (
+                        <div className="flex h-full min-h-0 flex-col gap-3">
+                            <div className="flex flex-wrap gap-2">
+                                <Button variant="secondary" className="h-8 text-xs" onClick={() => setShowAddClipModal(true)}>
+                                    <Plus size={14} className="mr-1.5" />
+                                    Add Clip
+                                </Button>
+                                <Button variant="secondary" className="h-8 text-xs" onClick={() => toast.success('Saved')}>
+                                    <Save size={14} className="mr-1.5" />
+                                    Save Project
+                                </Button>
+                                <Button className="h-8 text-xs" onClick={handleRender}>
+                                    <Play size={14} className="mr-1.5" />
+                                    Render Audio
+                                </Button>
+                            </div>
+                            <p className="text-[10px] text-editor-faint">
+                                {clips.length} clip{clips.length === 1 ? '' : 's'} · {totalDuration.toFixed(2)}s total
+                            </p>
+                            {renderedAudio && (
+                                <div className="shrink-0 space-y-1.5">
+                                    <p className="text-[10px] uppercase tracking-[.12em] text-editor-faint">Rendered audio</p>
+                                    <audio controls src={renderedAudio} className="w-full" />
+                                    <Button
+                                        variant="secondary"
+                                        className="h-8 w-full text-xs"
+                                        onClick={() => { void api.downloadMedia(renderedAudio, `biblefuel-${(renderedAudio.split('/').pop() || 'audio').replace(/\.[^.]+$/, '').slice(0, 24)}.mp3`); }}
+                                    >
+                                        <Download size={14} className="mr-1.5" />
+                                        Download
+                                    </Button>
+                                </div>
+                            )}
+                            {clips.length === 0 ? (
+                                <p className="text-[11px] text-editor-faint">No clips yet. Add clips from your processed audio.</p>
+                            ) : (
+                                <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
+                                    {clips.map((clip, idx) => (
+                                        <div key={clip.id} className="surface-raised rounded-lg p-2">
+                                            <div className="flex items-center gap-1.5">
+                                                <span className="shrink-0 text-[10px] font-bold text-editor-faint">{idx + 1}</span>
+                                                <span className="min-w-0 flex-1 truncate text-xs text-content-secondary" title={clip.path}>
+                                                    {clip.label || clip.path.split('/').pop()}
+                                                </span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleRemoveClip(clip.id)}
+                                                    aria-label="Remove clip"
+                                                    className="shrink-0 rounded p-1 text-editor-faint hover:text-red-300"
+                                                >
+                                                    <Trash2 size={12} />
+                                                </button>
+                                            </div>
+                                            <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+                                                <label className="text-[10px] text-editor-faint">
+                                                    Start (sec)
+                                                    <input
+                                                        type="number"
+                                                        value={clip.startSec ?? ''}
+                                                        onChange={(e) => handleUpdateClip(clip.id, { startSec: e.target.value === '' ? null : Number(e.target.value) })}
+                                                        className="mt-0.5 w-full rounded border border-editor-line bg-black/30 px-1.5 py-1 text-[11px] text-editor-text"
+                                                        min={0}
+                                                        step={0.1}
+                                                    />
+                                                </label>
+                                                <label className="text-[10px] text-editor-faint">
+                                                    Duration (sec)
+                                                    <input
+                                                        type="number"
+                                                        value={clip.durationSec ?? ''}
+                                                        onChange={(e) => handleUpdateClip(clip.id, { durationSec: e.target.value === '' ? null : Number(e.target.value) })}
+                                                        className="mt-0.5 w-full rounded border border-editor-line bg-black/30 px-1.5 py-1 text-[11px] text-editor-text"
+                                                        min={0}
+                                                        step={0.1}
+                                                    />
+                                                </label>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
                     ),
                     captions: (
                         <div className="space-y-4">
@@ -2022,7 +2171,7 @@ export function TimelinePage() {
                             onUseAsMusicBed={useAsMusicBed}
                         />
                     ),
-                    scenes: (
+                    scenes: documentaryProject ? (
                         <ScenesPanel
                             project={documentaryProject}
                             selectedSceneId={selectedSceneId}
@@ -2033,6 +2182,17 @@ export function TimelinePage() {
                             onEffectOptionChange={(fx, value) =>
                                 setEffectOption((prev) => ({ ...prev, [fx]: value }))
                             }
+                        />
+                    ) : (
+                        // Without a project the panel said "create a documentary
+                        // timeline first" with no way to do it - the create
+                        // action lived only in classic. Same component, both
+                        // layouts.
+                        <AIDocumentaryTimelinePanel
+                            onCreateProject={(project) => {
+                                setDocumentaryProject(project);
+                                toast.success('AI documentary timeline created');
+                            }}
                         />
                     ),
                     background: videoBackgroundContent,
@@ -2072,16 +2232,27 @@ export function TimelinePage() {
                                 ) : (
                                     <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
                                         {renderHistory.map((item) => (
-                                            <button
+                                            <div
                                                 key={item.jobId}
-                                                type="button"
-                                                onClick={() => { setRenderedVideo(item.file); setRenderedThisSession(true); }}
-                                                className="surface-raised flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left"
+                                                className="surface-raised flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5"
                                             >
-                                                <span className="min-w-0 flex-1 truncate text-xs text-content-secondary">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => { setRenderedVideo(item.file); setRenderedThisSession(true); }}
+                                                    className="min-w-0 flex-1 truncate text-left text-xs text-content-secondary"
+                                                >
                                                     {(item.file || '').split(/[\\/]/).pop()}
-                                                </span>
-                                            </button>
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setShareUrl(api.mediaUrl(item.file.split(/[\\/]/).pop() || ''))}
+                                                    title="Share this render"
+                                                    aria-label="Share this render"
+                                                    className="shrink-0 rounded p-1 text-editor-faint hover:text-white"
+                                                >
+                                                    <Share2 size={12} />
+                                                </button>
+                                            </div>
                                         ))}
                                     </div>
                                 )}
@@ -2872,68 +3043,6 @@ export function TimelinePage() {
 
                 </div>
             </div>
-
-            {/* Add Clip Modal */}
-            {showAddClipModal && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-                    <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShowAddClipModal(false)} />
-                    {/* Plain div (not <Card>) — Card wraps children in an extra
-                        <div> that breaks flex flex-col, leaving the inner
-                        overflow-y-auto section with no flex parent. Same fix
-                        applied to all modals on this page + RenderPage. */}
-                    <div className="relative w-full max-w-3xl max-h-[80vh] flex flex-col rounded-xl bg-dark-900/95 backdrop-blur-xl border border-white/20 shadow-2xl overflow-hidden">
-                        <div className="flex items-center justify-between p-4 border-b border-white/10 shrink-0">
-                            <h3 className="font-bold text-lg text-white">Add Clip</h3>
-                            <button onClick={() => setShowAddClipModal(false)} className="text-gray-500 hover:text-white">
-                                <X size={24} />
-                            </button>
-                        </div>
-                        <div className="flex-1 min-h-0 p-4 space-y-4 overflow-y-auto overscroll-contain">
-                            {currentAudioPath && (
-                                <div className="flex items-center justify-between bg-black/30 border border-white/10 rounded-lg p-3">
-                                    <div className="text-xs text-gray-300 break-all">{currentAudioPath}</div>
-                                    <Button onClick={() => handleAddClip(currentAudioPath, 'current')} className="text-xs h-8">
-                                        Add Current
-                                    </Button>
-                                </div>
-                            )}
-
-                            <div>
-                                <label className="block text-xs text-gray-400 mb-1">Manual audio path</label>
-                                <div className="flex flex-col sm:flex-row gap-2">
-                                    <input
-                                        value={manualPath}
-                                        onChange={(e) => setManualPath(e.target.value)}
-                                        placeholder="Pick an audio file from your library"
-                                        className="flex-1 bg-black/30 border border-white/10 rounded px-3 py-2 text-sm text-gray-200"
-                                    />
-                                    <Button onClick={() => handleAddClip(manualPath, 'manual')} className="text-xs h-9">
-                                        Add
-                                    </Button>
-                                </div>
-                            </div>
-
-                            <div>
-                                <h4 className="text-caption mb-2">Recent Audio</h4>
-                                {audioHistory.length === 0 ? (
-                                    <p className="text-help">No recent audio found.</p>
-                                ) : (
-                                    <div className="space-y-2">
-                                        {audioHistory.map((item) => (
-                                            <div key={item.id} className="flex items-center gap-2 bg-black/20 border border-white/10 rounded-lg p-2">
-                                                <div className="flex-1 text-xs text-gray-300 break-all">{item.path}</div>
-                                                <Button onClick={() => handleAddClip(item.path, item.kind)} className="text-xs h-8">
-                                                    Add
-                                                </Button>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            )}
 
             {overlays}
         </div>
