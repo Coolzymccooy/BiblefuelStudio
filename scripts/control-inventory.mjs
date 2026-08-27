@@ -129,6 +129,28 @@ if (CHECK) {
     // RenderAudioPanel, where it is labelled "Music bed". Verified by reading
     // both sites: the control and its wiring are intact.
     'sets MusicPath': 'Music bed',
+    // The auto-background checkbox. Baseline label came from its inline
+    // `setAutoBackground(...)`; the control moved into RenderBackgroundsPanel
+    // and gained an aria-label. Verified: same checkbox, same wiring.
+    'sets AutoBackground': 'Auto background',
+    // The "From library" picker button (single-background state). Baseline
+    // label was its bare handler name; the button moved into
+    // RenderBackgroundsPanel where its own text identifies it.
+    'openLibrary()': 'From library',
+    // The generate-visuals MODE select. Baseline label was its second
+    // <option>; the scanner now derives its FIRST option after the move into
+    // RenderBackgroundsPanel. Both options ("Alongside my backgrounds" /
+    // "Only AI visuals") verified present in the component.
+    'Only AI visuals': 'Alongside my backgrounds',
+    // The Ken Burns checkbox. Its baseline label was STOLEN from the
+    // neighbouring <Section title="Captions"> - the control never had a name
+    // of its own, the same defect as the caption-width slider. It moved into
+    // RenderBackgroundsPanel and now carries an aria-label.
+    'Captions': 'Ken Burns motion',
+    // The two render buttons (video + waveform). Baseline label was the bare
+    // handler; they moved into RenderDeliveryPanel and gained aria-labels
+    // ("Render the video" / "Render a waveform video"). Both verified.
+    'handleRender()': 'Render the video',
   };
 
   const missing = Object.values(base).flat()

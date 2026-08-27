@@ -4,20 +4,19 @@ import { EditorShell } from '../components/editor/EditorShell';
 import { RenderAudioPanel } from '../components/render/RenderAudioPanel';
 import { RenderOutputPanel } from '../components/render/RenderOutputPanel';
 import { RenderCaptionsPanel } from '../components/render/RenderCaptionsPanel';
+import { RenderBackgroundsPanel } from '../components/render/RenderBackgroundsPanel';
+import { RenderDeliveryPanel } from '../components/render/RenderDeliveryPanel';
+import { RenderSharePanel } from '../components/render/RenderSharePanel';
 import { checkRenderReadiness } from '../lib/renderReadiness';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
-import { Input } from '../components/ui/Input';
-import { Select } from '../components/ui/Select';
-import { Field } from '../components/ui/Field';
 import { Section } from '../components/ui/Section';
 import { GuideSteps, type GuideStep } from '../components/ui/GuideSteps';
 import { api, DIRECT_UPLOAD_MAX_BYTES, RESUMABLE_UPLOAD_MAX_BYTES } from '../lib/api';
 import { uploadMedia } from '../lib/mediaUpload';
-import { DropZone } from '../components/ui/DropZone';
 import toast from 'react-hot-toast';
-import { Play, Library, Type, Video, CheckCircle2, ClipboardList, AudioLines, Share2, X as XIcon, Plus, ChevronUp, ChevronDown, Trash2, Sparkles, Scissors } from 'lucide-react';
+import { Play, Library, Type, Video, CheckCircle2, ClipboardList, AudioLines, Share2, X as XIcon } from 'lucide-react';
 import { loadJson, saveJson, STORAGE_KEYS, toOutputUrl } from '../lib/storage';
 import { LAYOUT_OPTIONS } from '../lib/layoutOptions';
 import { usePersistedState } from '../lib/usePersistedState';
@@ -797,750 +796,97 @@ export function RenderPage() {
             }))),
     ];
 
-    // ---- Editor layout -----------------------------------------------------
-    // The same shell Timeline uses: icon rail, docked panel, stage. Classic
-    // view stays as the fallback, and BOTH layouts render the same extracted
-    // panels - two copies of a control is exactly how Timeline's overlays
-    // became unreachable in one layout.
-    if (editorLayout) {
-        return (
-            <EditorShell
-                topBar={(
-                    <>
-                        <span className="font-semibold">Send it to the world</span>
-                        {audioPath.trim() && (
-                            <span
-                                className="cursor-help truncate rounded-md border border-editor-line px-2.5 py-1 text-[12px] text-editor-dim"
-                                title={audioPath}
-                            >
-                                Voice loaded
-                            </span>
-                        )}
-                        <span className="flex-1" />
-                        <Button variant="secondary" className="h-8 text-xs" onClick={() => setEditorLayout(false)}>
-                            Classic view
-                        </Button>
-                        <Button
-                            className="h-8 text-xs"
-                            onClick={() => handleRender('video')}
-                            disabled={isRendering}
-                            title={videoReadiness.blockers[0]?.message || 'Render the video'}
-                        >
-                            {isRendering ? 'Rendering...' : 'Render'}
-                        </Button>
-                    </>
-                )}
-                tools={[
-                    { id: 'captions', label: 'Captions', icon: <Type size={17} /> },
-                    { id: 'visuals', label: 'Visuals', icon: <Library size={17} /> },
-                    { id: 'audio', label: 'Audio', icon: <AudioLines size={17} /> },
-                    { id: 'output', label: 'Output', icon: <Video size={17} /> },
-                ]}
-                panels={{
-                    captions: (
-                        <RenderCaptionsPanel
-                            lines={lines}
-                            onLinesChange={setLines}
-                            typographyPreset={typographyPreset}
-                            onTypographyPresetChange={setTypographyPreset}
-                            layout={layout}
-                            onLayoutChange={setLayout}
-                            layoutOptions={LAYOUT_OPTIONS}
-                            depth={depth}
-                            onDepthChange={setDepth}
-                            animations={animations}
-                            hasScripts={scripts.length > 0}
-                            onOpenScripts={() => setShowScriptsModal(true)}
-                            onUseLatestScript={() => setLines(buildLinesFromScript(scripts[0]))}
-                            onFormatForVideo={() => {
-                                const next = buildSpeakableLines(lines, { maxLines: 6, maxChars: 72 }).join(CAPTION_LINE_SEP);
-                                setLines(next);
-                                toast.success('Formatted for video');
-                            }}
-                            maxLines={6}
-                        />
-                    ),
-                    visuals: (
-                        <div className="space-y-3">
-                            <p className="text-[12px] text-editor-dim">
-                                {backgroundItems.length > 0
-                                    ? backgroundItems.length + ' background(s) selected.'
-                                    : autoBackground
-                                        ? 'Auto is on - BibleFuel will choose backgrounds for you.'
-                                        : 'No backgrounds selected yet.'}
-                            </p>
-                            {/* Backgrounds is a 235-line block with deeply nested
-                                state. Rather than risk dropping one of its 15
-                                controls in a rushed extraction, the editor sends
-                                the operator to the classic view for it. */}
-                            <Button variant="secondary" className="h-8 w-full text-xs" onClick={() => setEditorLayout(false)}>
-                                Open background picker
-                            </Button>
-                        </div>
-                    ),
-                    audio: (
-                        <RenderAudioPanel
-                            audioPath={audioPath}
-                            onAudioPathChange={setAudioPath}
-                            audioHistory={audioHistory}
-                            onTrim={(p) => setTrimTarget({ kind: 'audio', path: p, apply: setAudioPath })}
-                            musicPath={musicPath}
-                            musicVolume={musicVolume}
-                            autoDuck={autoDuck}
-                            onMusicChange={(m) => {
-                                setMusicPath(m.path);
-                                setMusicVolume(m.volume);
-                                setAutoDuck(m.autoDuck);
-                            }}
-                        />
-                    ),
-                    output: (
-                        <RenderOutputPanel
-                            aspect={aspect}
-                            onAspectChange={(v) => setAspect(v as typeof aspect)}
-                            durationSec={durationSec}
-                            onDurationChange={setDurationSec}
-                            captionWidth={captionWidth}
-                            onCaptionWidthChange={setCaptionWidth}
-                            isLongRender={isLongRender}
-                        />
-                    ),
-                }}
-                stage={(
-                    result?.file ? (
-                        <div className="flex h-full max-h-full flex-col items-center justify-center gap-2">
-                            <video
-                                src={toMediaUrl(result.file)}
-                                controls
-                                className="max-h-[calc(100%-3.5rem)] max-w-full rounded-lg"
-                            />
-                            <div className="flex shrink-0 flex-wrap items-center justify-center gap-2">
-                                <a
-                                    href={toMediaUrl(result.file)}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="inline-flex h-8 items-center rounded-md border border-editor-line px-2.5 text-xs text-editor-dim transition-colors hover:bg-editor-hover"
-                                >
-                                    Open
-                                </a>
-                                <button
-                                    type="button"
-                                    onClick={() => setResult(null)}
-                                    className="text-[11px] text-editor-faint underline-offset-2 hover:underline"
-                                >
-                                    Back to setup
-                                </button>
-                            </div>
-                        </div>
-                    ) : (
-                        <div className="max-w-md text-center">
-                            <p className="text-[12px] text-editor-faint">
-                                {videoReadiness.ready
-                                    ? 'Ready to render. Your video appears here when it is done.'
-                                    : 'Finish the steps on the left, then press Render.'}
-                            </p>
-                            {videoReadiness.blockers.length > 0 && (
-                                <ul className="mt-3 space-y-1 text-left">
-                                    {videoReadiness.blockers.map((b) => (
-                                        <li key={b.field} className="text-[11px] text-editor-dim">{b.message}</li>
-                                    ))}
-                                </ul>
-                            )}
-                        </div>
-                    )
-                )}
-            />
-        );
-    }
+    // ---- Shared across layouts ---------------------------------------------
+    // Panels used by BOTH the editor shell and the classic view, built once so
+    // the two layouts cannot drift. The modals and the progress overlay are
+    // here for the same reason: a button that opens a modal which only the
+    // classic return renders is a control that silently does nothing in the
+    // editor - the exact defect this refactor exists to prevent.
+    const backgroundsPanel = (
+        <RenderBackgroundsPanel
+            autoBackground={autoBackground}
+            onAutoBackgroundChange={setAutoBackground}
+            backgroundPath={backgroundPath}
+            onBackgroundPathChange={setBackgroundPath}
+            backgroundItems={backgroundItems}
+            isUploading={isUploadingBackground}
+            maxBackgrounds={MAX_BACKGROUNDS}
+            maxUploadMb={MAX_UPLOAD_MB}
+            durationSec={durationSec}
+            onDropFiles={handleDroppedBackgrounds}
+            onUploadFile={handleLocalBackgroundUpload}
+            onOpenLibrary={openLibrary}
+            onClearAll={clearAllBackgrounds}
+            onMoveUp={moveBackgroundUp}
+            onMoveDown={moveBackgroundDown}
+            onRemove={removeBackground}
+            onTrimItem={(item) => setTrimTarget({
+                kind: 'video',
+                path: item.id,
+                apply: (p) => setBackgroundItems(backgroundItems.map((b) => b.id === item.id ? { ...b, id: p, url: api.mediaUrl(p), previewUrl: api.mediaUrl(p), image: api.mediaUrl(p) } : b)),
+            })}
+            getImageSrc={getImageSrc}
+            onImageError={handleImageError}
+            genVisualsMode={genVisualsMode}
+            onGenVisualsModeChange={setGenVisualsMode}
+            genVisualsCount={genVisualsCount}
+            onGenVisualsCountChange={setGenVisualsCount}
+            onGenerateVisuals={handleGenerateVisuals}
+            isGeneratingVisuals={isGeneratingVisuals}
+            kenBurns={kenBurns}
+            onKenBurnsChange={setKenBurns}
+        />
+    );
 
+    const deliveryPanel = (
+        <RenderDeliveryPanel
+            renderInBackground={renderInBackground}
+            onRenderInBackgroundChange={setRenderInBackground}
+            isLongRender={isLongRender}
+            kineticCaptions={kineticCaptions}
+            onKineticCaptionsChange={setKineticCaptions}
+            ttsVoiceId={ttsVoiceId}
+            onTtsVoiceIdChange={setTtsVoiceId}
+            renderEnabled={renderEnabled}
+            isRendering={isRendering}
+            onRenderVideo={() => handleRender('video')}
+            onRenderWaveform={() => handleRender('waveform')}
+            videoBlockerMessage={videoReadiness.blockers[0]?.message}
+            waveformBlockerMessage={waveformReadiness.blockers[0]?.message}
+        />
+    );
 
-    return (
-        <div className="space-y-6 animate-fade-in">
-            <div className="flex items-start justify-between gap-4">
-                <div>
-                <div className="bf-eyebrow">Studio</div>
-                <h2 className="font-displaySerif text-[28px] leading-[1.08] font-semibold text-bf-cream mt-1.5">Send it to <em className="italic font-medium text-bf-gold">the world</em>.</h2>
-                </div>
-                {/* Same affordance as Timeline: the editor is opt-in and the
-                    classic view remains the fallback. */}
-                <Button
-                    variant="secondary"
-                    className="h-9 shrink-0 text-xs"
-                    onClick={() => setEditorLayout(true)}
-                    title="Rail, panel and preview - the same shell as Timeline"
-                >
-                    Editor view
-                </Button>
-            </div>
+    const sharePanel = (
+        <RenderSharePanel
+            lines={lines}
+            latestRenderFile={result?.file}
+            jobVideoOptions={jobVideoOptions}
+            shareVideoPath={shareVideoPath}
+            onShareVideoPathChange={setShareVideoPath}
+            onRefreshVideos={loadJobVideos}
+            postDestination={postDestination}
+            onPostDestinationChange={setPostDestination}
+            selectedWebhook={selectedWebhook}
+            onSelectedWebhookChange={setSelectedWebhook}
+            webhookOptions={webhookOptions}
+            selectedProfile={selectedProfile}
+            onSelectedProfileChange={setSelectedProfile}
+            bufferProfiles={bufferProfiles}
+            youtubePrivacy={youtubePrivacy}
+            onYoutubePrivacyChange={setYoutubePrivacy}
+            onShare={handleShare}
+            isSharing={isSharing}
+        />
+    );
 
+    const sharedOverlays = (
+        <>
             <RenderProgressOverlay
                 active={isRenderInFlight && !completedRender && !result?.file}
                 progress={overlayProgress}
                 kind={overlayKind}
                 mode={overlayMode}
             />
-
-            {completedRender && (
-                <div ref={renderDoneRef} className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 shadow-[0_10px_40px_rgba(16,185,129,0.15)] animate-fade-in">
-                    <div className="flex items-start gap-3 flex-1 min-w-0">
-                        <CheckCircle2 size={20} className="text-emerald-400 flex-shrink-0 mt-0.5" />
-                        <div className="min-w-0">
-                            <p className="text-sm font-semibold text-white">Render complete</p>
-                            {completedRender.file && (
-                                <p className="text-[10px] font-mono text-emerald-200/80 truncate">{completedRender.file}</p>
-                            )}
-                        </div>
-                    </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                        {completedRender.file && (
-                            <Button
-                                variant="secondary"
-                                className="h-9 text-xs border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20"
-                                onClick={() => {
-                                    const url = toOutputUrl(completedRender.file, api.mediaBaseUrl);
-                                    window.open(url, '_blank');
-                                }}
-                            >
-                                <Play size={14} className="mr-1.5" />
-                                Open
-                            </Button>
-                        )}
-                        {completedRender.file && (
-                            <Button
-                                className="h-9 text-xs"
-                                onClick={() => {
-                                    setShareVideoPath(completedRender.file);
-                                    document.getElementById('share-kit')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                                }}
-                            >
-                                <Share2 size={14} className="mr-1.5" />
-                                Share
-                            </Button>
-                        )}
-                        <button
-                            onClick={() => setCompletedRender(null)}
-                            className="p-2 text-gray-400 hover:text-white transition-colors"
-                            aria-label="Dismiss"
-                        >
-                            <XIcon size={16} />
-                        </button>
-                    </div>
-                </div>
-            )}
-
-            {completedRender?.file && !result?.file && (
-                <Card title="Share your video" className="border-emerald-500/20 bg-emerald-500/[0.03]">
-                    <ShareSheet
-                        videoUrl={toOutputUrl(completedRender.file, api.mediaBaseUrl)}
-                        caption={lines.split('\n').filter(Boolean).join(' ')}
-                        title={lines.split('\n').filter(Boolean)[0]}
-                        filename={`biblefuel-${new Date().toISOString().slice(0, 10)}`}
-                    />
-                </Card>
-            )}
-
-            <GuideSteps
-                storageKey="render"
-                title="What you need to render"
-                steps={renderSteps}
-                tip={<>Soundtrack, frame size and duration are optional — set them below. Long renders (60s+) and kinetic captions run in the background and notify you when ready.</>}
-            />
-
-            <Card title="Configuration">
-                {!renderEnabled && (
-                    <div className="mb-4 text-xs text-yellow-200 bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3">
-                        Rendering is disabled because FFmpeg was not detected on the server.
-                    </div>
-                )}
-                <div className="space-y-4">
-                    <Field
-                        label="Background"
-                        tooltip={`Pick 1–${MAX_BACKGROUNDS} clips or images. With more than one, the render hard-cuts between them at equal slots (durationSec/N each) and automatically queues as a background job. Use the arrows to reorder.`}
-                    >
-                        {/* Auto background (video): default on. BibleFuel picks one
-                            clip per overlay line from your library, generating one if
-                            the library is empty. Picking clips below overrides it. */}
-                        <label className="flex items-start gap-2 mb-3 p-2 rounded-xl border border-primary-500/20 bg-primary-500/5 cursor-pointer">
-                            <input
-                                type="checkbox"
-                                checked={autoBackground}
-                                onChange={(e) => setAutoBackground(e.target.checked)}
-                                className="mt-0.5 accent-primary-500"
-                            />
-                            <span className="flex-1">
-                                <span className="flex items-center gap-1.5 text-xs font-semibold text-primary-200">
-                                    <Sparkles size={13} />
-                                    Auto — let BibleFuel choose (video)
-                                </span>
-                                <span className="block text-[10px] text-content-secondary mt-0.5">
-                                    {backgroundItems.length > 0 || backgroundPath
-                                        ? 'Overridden — your selected background will be used.'
-                                        : 'Picks a mood-matched clip per line from your library. Generates one if it’s empty.'}
-                                </span>
-                            </span>
-                        </label>
-                        {backgroundItems.length > 0 ? (
-                            <DropZone
-                                className="space-y-2"
-                                onFiles={handleDroppedBackgrounds}
-                                accept={['image/*', 'video/*', '.jpg', '.jpeg', '.png', '.webp', '.mp4', '.mov', '.webm', '.m4v']}
-                                disabled={isUploadingBackground}
-                                overlayLabel="Drop image or video backgrounds"
-                            >
-                                <div className="flex items-center justify-between mb-1">
-                                    <span className="text-[10px] text-content-tertiary">
-                                        {backgroundItems.length} background{backgroundItems.length === 1 ? '' : 's'} selected
-                                    </span>
-                                    <button
-                                        type="button"
-                                        onClick={clearAllBackgrounds}
-                                        className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded-md text-gray-400 hover:text-red-300 hover:bg-red-500/15"
-                                        aria-label="Clear all backgrounds"
-                                    >
-                                        <Trash2 size={12} /> Clear all
-                                    </button>
-                                </div>
-                                <ul className="space-y-2 max-h-[22rem] overflow-y-auto pr-1">
-                                    {backgroundItems.map((item, idx) => {
-                                        const isImage = item.kind === 'image';
-                                        return (
-                                            <li
-                                                key={`${item.id}-${idx}`}
-                                                className="flex items-center gap-2 p-2 rounded-lg border border-white/10 bg-white/[0.03]"
-                                            >
-                                                <div className="relative w-12 h-16 bg-black rounded overflow-hidden flex-shrink-0">
-                                                    <img
-                                                        src={getImageSrc(item)}
-                                                        className="w-full h-full object-cover"
-                                                        alt=""
-                                                        loading="lazy"
-                                                        onError={(e) => handleImageError(e, item)}
-                                                    />
-                                                </div>
-                                                <div className="flex-1 min-w-0">
-                                                    <div className="flex items-center gap-1.5">
-                                                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary-500/20 text-primary-200 font-semibold">
-                                                            {idx + 1}/{backgroundItems.length}
-                                                        </span>
-                                                        {isImage && (
-                                                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-200">
-                                                                img
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                    <p className="text-[10px] font-mono text-content-tertiary truncate mt-0.5">
-                                                        {String(item.id).split(/[\\/]/).pop()}
-                                                    </p>
-                                                </div>
-                                                <div className="flex items-center gap-1 flex-shrink-0">
-                                                    <button
-                                                        onClick={() => moveBackgroundUp(idx)}
-                                                        disabled={idx === 0}
-                                                        className="p-1.5 rounded hover:bg-white/10 text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
-                                                        aria-label="Move up"
-                                                    >
-                                                        <ChevronUp size={14} />
-                                                    </button>
-                                                    <button
-                                                        onClick={() => moveBackgroundDown(idx)}
-                                                        disabled={idx === backgroundItems.length - 1}
-                                                        className="p-1.5 rounded hover:bg-white/10 text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
-                                                        aria-label="Move down"
-                                                    >
-                                                        <ChevronDown size={14} />
-                                                    </button>
-                                                    <button
-                                                        onClick={() => removeBackground(idx)}
-                                                        className="p-1.5 rounded hover:bg-red-500/20 text-gray-400 hover:text-red-300"
-                                                        aria-label="Remove"
-                                                    >
-                                                        <Trash2 size={14} />
-                                                    </button>
-                                                    {item.kind === 'video' && item.id && (
-                                                      <button
-                                                        type="button"
-                                                        onClick={() => setTrimTarget({
-                                                          kind: 'video',
-                                                          path: item.id,
-                                                          apply: (p) => setBackgroundItems(backgroundItems.map((b) => b.id === item.id ? { ...b, id: p, url: api.mediaUrl(p), previewUrl: api.mediaUrl(p), image: api.mediaUrl(p) } : b)),
-                                                        })}
-                                                        className="inline-flex items-center justify-center h-7 w-7 rounded-md bg-black/50 text-primary-200 hover:bg-black/70"
-                                                        title="Trim this clip"
-                                                        aria-label="Trim this clip"
-                                                      >
-                                                        <Scissors size={13} />
-                                                      </button>
-                                                    )}
-                                                </div>
-                                            </li>
-                                        );
-                                    })}
-                                </ul>
-                                {backgroundItems.length > 1 && (
-                                    <p className="text-[10px] text-amber-300/80">
-                                        Hard cuts between {backgroundItems.length} clips, ~{(durationSec / backgroundItems.length).toFixed(1)}s each. Auto-queues as background job.
-                                    </p>
-                                )}
-                                <div className="grid grid-cols-2 gap-2">
-                                    <Button
-                                        onClick={openLibrary}
-                                        variant="secondary"
-                                        className="h-9 text-xs border-dashed border-white/10"
-                                        disabled={backgroundItems.length >= MAX_BACKGROUNDS}
-                                    >
-                                        <Library size={14} className="mr-1.5" />
-                                        {backgroundItems.length >= MAX_BACKGROUNDS ? 'Library' : 'Add from library'}
-                                    </Button>
-                                    <label
-                                        className={`inline-flex items-center justify-center gap-1.5 h-9 text-xs rounded-md border cursor-pointer border-primary-500/30 bg-primary-500/10 text-primary-200 hover:bg-primary-500/20 ${backgroundItems.length >= MAX_BACKGROUNDS || isUploadingBackground ? 'opacity-50 cursor-not-allowed' : ''}`}
-                                    >
-                                        <Plus size={14} />
-                                        {isUploadingBackground ? 'Uploading…' : 'Upload from device'}
-                                        <input
-                                            type="file"
-                                            className="hidden"
-                                            accept=".mp4,.mov,.webm,.m4v,.jpg,.jpeg,.png,.webp"
-                                            disabled={backgroundItems.length >= MAX_BACKGROUNDS || isUploadingBackground}
-                                            onChange={(e) => {
-                                                const f = e.target.files?.[0];
-                                                if (f) handleLocalBackgroundUpload(f);
-                                                e.target.value = '';
-                                            }}
-                                        />
-                                    </label>
-                                </div>
-                                <p className="text-help">
-                                    Up to {MAX_UPLOAD_MB} MB per file. Video (mp4/mov/webm) or image (jpg/png/webp).
-                                </p>
-                            </DropZone>
-                        ) : (
-                            <DropZone
-                                className="flex flex-col gap-2"
-                                onFiles={handleDroppedBackgrounds}
-                                accept={['image/*', 'video/*', '.jpg', '.jpeg', '.png', '.webp', '.mp4', '.mov', '.webm', '.m4v']}
-                                disabled={isUploadingBackground}
-                                overlayLabel="Drop image or video backgrounds"
-                            >
-                                <Input
-                                    value={backgroundPath}
-                                    onChange={(e) => setBackgroundPath(e.target.value)}
-                                    placeholder="Pick a background video or image"
-                                    className="bg-black/20"
-                                />
-                                <div className="grid grid-cols-2 gap-2">
-                                    <Button onClick={openLibrary} variant="secondary" className="h-10 border-dashed border-white/10 text-xs">
-                                        <Library size={14} className="mr-1.5" />
-                                        From library
-                                    </Button>
-                                    <label
-                                        className={`inline-flex items-center justify-center gap-1.5 h-10 text-xs rounded-md border cursor-pointer border-primary-500/30 bg-primary-500/10 text-primary-200 hover:bg-primary-500/20 ${isUploadingBackground ? 'opacity-50 cursor-not-allowed' : ''}`}
-                                    >
-                                        <Plus size={14} />
-                                        {isUploadingBackground ? 'Uploading…' : 'Upload from device'}
-                                        <input
-                                            type="file"
-                                            className="hidden"
-                                            accept=".mp4,.mov,.webm,.m4v,.jpg,.jpeg,.png,.webp"
-                                            disabled={isUploadingBackground}
-                                            onChange={(e) => {
-                                                const f = e.target.files?.[0];
-                                                if (f) handleLocalBackgroundUpload(f);
-                                                e.target.value = '';
-                                            }}
-                                        />
-                                    </label>
-                                </div>
-                                <p className="text-help">
-                                    Pick up to {MAX_BACKGROUNDS}. Video (mp4/mov/webm) or image (jpg/png/webp). Up to {MAX_UPLOAD_MB} MB each.
-                                </p>
-                            </DropZone>
-                        )}
-                    </Field>
-
-                    <div className="mt-3 rounded-xl border border-primary-500/20 bg-primary-500/[0.04] p-3 space-y-2">
-                        <div className="flex items-center gap-2">
-                            <Sparkles size={14} className="text-primary-300" />
-                            <span className="text-content-secondary text-xs font-medium">Generate visuals from my script</span>
-                        </div>
-                        <p className="text-meta">Bible-safe AI imagery (landscapes &amp; symbols) created from your lines. Uses your daily AI-image allowance.</p>
-                        <div className="flex flex-wrap items-center gap-2">
-                            <select value={genVisualsMode} onChange={(e) => setGenVisualsMode(e.target.value as GenerateMode)} className="h-9 text-xs rounded-md bg-dark-900/70 border border-white/10 px-2 text-gray-200">
-                                <option value="alongside">Alongside my backgrounds</option>
-                                <option value="replace">Only AI visuals</option>
-                            </select>
-                            <select value={genVisualsCount} onChange={(e) => setGenVisualsCount(Number(e.target.value))} className="h-9 text-xs rounded-md bg-dark-900/70 border border-white/10 px-2 text-gray-200">
-                                {[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n} image{n === 1 ? '' : 's'}</option>)}
-                            </select>
-                            <Button onClick={handleGenerateVisuals} disabled={isGeneratingVisuals} className="h-9 text-xs">
-                                <Sparkles size={14} className="mr-1.5" />
-                                {isGeneratingVisuals ? 'Generating…' : 'Generate'}
-                            </Button>
-                        </div>
-                        <label className="flex items-center gap-2 text-xs text-content-secondary cursor-pointer pt-1">
-                            <input type="checkbox" checked={kenBurns} onChange={(e) => setKenBurns(e.target.checked)} className="rounded border-white/10 bg-black/50 checked:bg-primary-500" />
-                            Add subtle motion (Ken Burns) to image backgrounds
-                        </label>
-                    </div>
-
-                    <Section title="Captions" defaultOpen={true} collapsible={false}>
-                        {/* Extracted so the editor shell and the classic layout
-                            render the SAME panel. Two copies would drift apart the
-                            first time either was touched - that is exactly how the
-                            Timeline's overlays became unreachable in one layout. */}
-                        <RenderCaptionsPanel
-                            lines={lines}
-                            onLinesChange={setLines}
-                            typographyPreset={typographyPreset}
-                            onTypographyPresetChange={setTypographyPreset}
-                            layout={layout}
-                            onLayoutChange={setLayout}
-                            layoutOptions={LAYOUT_OPTIONS}
-                            depth={depth}
-                            onDepthChange={setDepth}
-                            animations={animations}
-                            hasScripts={scripts.length > 0}
-                            onOpenScripts={() => setShowScriptsModal(true)}
-                            onUseLatestScript={() => setLines(buildLinesFromScript(scripts[0]))}
-                            onFormatForVideo={() => {
-                                const next = buildSpeakableLines(lines, { maxLines: 6, maxChars: 72 }).join(String.fromCharCode(10));
-                                setLines(next);
-                                toast.success('Formatted for video');
-                            }}
-                            maxLines={6}
-                        />
-                    </Section>
-
-                    <Section title="Output & Timing">
-                        <RenderOutputPanel
-                            aspect={aspect}
-                            onAspectChange={(v) => setAspect(v as typeof aspect)}
-                            durationSec={durationSec}
-                            onDurationChange={setDurationSec}
-                            captionWidth={captionWidth}
-                            onCaptionWidthChange={setCaptionWidth}
-                            isLongRender={isLongRender}
-                        />
-                    </Section>
-
-                    <Section title="Audio">
-                        <RenderAudioPanel
-                            audioPath={audioPath}
-                            onAudioPathChange={setAudioPath}
-                            audioHistory={audioHistory}
-                            onTrim={(p) => setTrimTarget({ kind: 'audio', path: p, apply: setAudioPath })}
-                            musicPath={musicPath}
-                            musicVolume={musicVolume}
-                            autoDuck={autoDuck}
-                            onMusicChange={(m) => {
-                                setMusicPath(m.path);
-                                setMusicVolume(m.volume);
-                                setAutoDuck(m.autoDuck);
-                            }}
-                        />
-                    </Section>
-
-                    <div className="flex items-center gap-2">
-                        <input
-                            type="checkbox"
-                            id="background"
-                            checked={renderInBackground}
-                            onChange={(e) => setRenderInBackground(e.target.checked)}
-                            className="rounded border-white/10 bg-black/50 checked:bg-primary-500"
-                            disabled={isLongRender || kineticCaptions}
-                        />
-                        <label htmlFor="background" className="text-[0.875rem] text-gray-300">
-                            Render in background
-                        </label>
-                        {isLongRender && (
-                            <span className="text-[0.6875rem] text-yellow-300/90">Required for 60s+</span>
-                        )}
-                        {kineticCaptions && (
-                            <span className="text-[0.6875rem] text-amber-300/90">Forced on by kinetic captions</span>
-                        )}
-                    </div>
-
-                    <div className="rounded-xl border border-amber-500/25 bg-amber-500/[0.05] p-4 space-y-3">
-                        <label className="flex items-start gap-2.5 cursor-pointer">
-                            <input
-                                type="checkbox"
-                                checked={kineticCaptions}
-                                onChange={(e) => setKineticCaptions(e.target.checked)}
-                                className="mt-0.5 rounded border-white/10 bg-black/50 checked:bg-amber-500"
-                            />
-                            <div className="flex-1 min-w-0">
-                                <div className="text-[0.9375rem] font-semibold text-white">Kinetic captions</div>
-                                <p className="text-help mt-0.5 leading-relaxed">
-                                    Word-by-word reveal synced to voice. Generates audio from your script
-                                    via ElevenLabs and highlights each word as it's spoken. Overrides the
-                                    voice track above.
-                                </p>
-                            </div>
-                        </label>
-                        {kineticCaptions && (
-                            <div className="pl-6">
-                                <Field label="ElevenLabs voice ID" badge="Optional">
-                                    <Input
-                                        value={ttsVoiceId}
-                                        onChange={(e) => setTtsVoiceId(e.target.value)}
-                                        placeholder="Leave blank to use the server default (Sarah)"
-                                        className="font-mono text-[0.8125rem]"
-                                    />
-                                </Field>
-                                <p className="field-help">
-                                    Auto-fills from the voice saved on the Voice & Audio page. If blank,
-                                    falls back to <code className="text-gray-400 bg-white/[0.04] px-1 py-0.5 rounded">ELEVENLABS_VOICE_ID</code> in
-                                    <code className="text-gray-400 bg-white/[0.04] px-1 py-0.5 rounded ml-1">.env</code>, then to ElevenLabs' default.
-                                </p>
-                            </div>
-                        )}
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        <Button
-                            onClick={() => handleRender('video')}
-                            isLoading={isRendering}
-                            className="w-full h-12 text-md"
-                            disabled={!renderEnabled || (isLongRender && !renderInBackground)}
-                            title={videoReadiness.blockers[0]?.message || 'Render the video'}
-                        >
-                            <Video size={18} className="mr-2" />
-                            {renderInBackground ? 'Queue Video Render' : 'Start Instant Render'}
-                        </Button>
-                        <Button
-                            onClick={() => handleRender('waveform')}
-                            isLoading={isRendering}
-                            variant="secondary"
-                            className="w-full h-12 text-md"
-                            disabled={!renderEnabled || (isLongRender && !renderInBackground)}
-                            title={waveformReadiness.blockers[0]?.message || 'Render a waveform video'}
-                        >
-                            <AudioLines size={18} className="mr-2" />
-                            {renderInBackground ? 'Queue Waveform Render' : 'Render Waveform MP4'}
-                        </Button>
-                    </div>
-                </div>
-            </Card>
-
-            {result?.file && (
-                <Card title="Render Result" className="border-green-500/20 bg-green-500/5">
-                    <ShareSheet
-                        videoUrl={toOutputUrl(result.file, api.mediaBaseUrl)}
-                        caption={lines.split('\n').filter(Boolean).join(' ')}
-                        title={lines.split('\n').filter(Boolean)[0]}
-                        filename={`biblefuel-${new Date().toISOString().slice(0, 10)}`}
-                    />
-                </Card>
-            )}
-
-            {lines && (
-                <div id="share-kit">
-                <Card
-                    title="Share Kit"
-                    className="border-white/10 bg-white/[0.03]"
-                    collapsible
-                    defaultOpen={false}
-                    tooltip="One-click captions + downloads for TikTok, IG Reels and YouTube Shorts. Pick a rendered video above, then copy/paste straight into your scheduler."
-                >
-                    <div className="space-y-3">
-                        <p className="text-help">
-                            Copy your caption and upload the rendered file to TikTok/IG/YouTube Shorts.
-                        </p>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                            <div>
-                                <label className="field-label">Video to share</label>
-                                <Select value={shareVideoPath} onChange={(e) => setShareVideoPath(e.target.value)}>
-                                    {result?.file && <option value={result.file}>Latest Instant Render</option>}
-                                    {jobVideoOptions.length > 0 && (
-                                        <optgroup label="Completed Jobs">
-                                            {jobVideoOptions.map((item) => (
-                                                <option key={item.id} value={item.path}>{item.label}</option>
-                                            ))}
-                                        </optgroup>
-                                    )}
-                                    {!result?.file && jobVideoOptions.length === 0 && (
-                                        <option value="">No rendered videos found</option>
-                                    )}
-                                </Select>
-                            </div>
-                            <div>
-                                <label className="field-label">Or paste a path</label>
-                                <Input
-                                    value={shareVideoPath}
-                                    onChange={(e) => setShareVideoPath(e.target.value)}
-                                    placeholder="outputs/video-xyz.mp4"
-                                    className="bg-black/20"
-                                />
-                            </div>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                            <Button
-                                variant="secondary"
-                                className="text-xs h-8"
-                                onClick={loadJobVideos}
-                            >
-                                Refresh Rendered Videos
-                            </Button>
-                        </div>
-                        <div className="bg-black/30 border border-white/10 rounded-lg p-3 text-xs text-gray-200 whitespace-pre-wrap">
-                            {lines.split('\n').filter(Boolean).join(' ')}
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                            <Button
-                                variant="secondary"
-                                className="text-xs h-8 w-full sm:w-auto"
-                                onClick={() => {
-                                    navigator.clipboard.writeText(lines.split('\n').filter(Boolean).join(' '));
-                                    toast.success('Caption copied');
-                                }}
-                            >
-                                Copy Caption
-                            </Button>
-                        </div>
-
-                        <div className="pt-2 border-t border-white/10 space-y-2">
-                            <div className="text-[0.8125rem] font-medium text-gray-300">Auto-post</div>
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                                <Select value={postDestination} onChange={(e) => setPostDestination(e.target.value as any)}>
-                                    <option value="webhook">Webhook (Zapier/Make)</option>
-                                    <option value="buffer">Buffer (Legacy)</option>
-                                    <option value="youtube">YouTube (Direct)</option>
-                                    <option value="instagram">Instagram (Direct)</option>
-                                    <option value="tiktok">TikTok (Direct)</option>
-                                </Select>
-                                {postDestination === 'webhook' ? (
-                                    <Select value={selectedWebhook} onChange={(e) => setSelectedWebhook(e.target.value)}>
-                                        <option value="">Select webhook...</option>
-                                        {webhookOptions.map((w) => (
-                                            <option key={w.id} value={w.id}>{w.name}</option>
-                                        ))}
-                                    </Select>
-                                ) : postDestination === 'buffer' ? (
-                                    <Select value={selectedProfile} onChange={(e) => setSelectedProfile(e.target.value)}>
-                                        <option value="">Select profile...</option>
-                                        {bufferProfiles.map((id) => (
-                                            <option key={id} value={id}>{id}</option>
-                                        ))}
-                                    </Select>
-                                ) : postDestination === 'youtube' ? (
-                                    <Select value={youtubePrivacy} onChange={(e) => setYoutubePrivacy(e.target.value as any)}>
-                                        <option value="private">YouTube Private</option>
-                                        <option value="unlisted">YouTube Unlisted</option>
-                                        <option value="public">YouTube Public</option>
-                                    </Select>
-                                ) : (
-                                    <div className="text-[10px] text-yellow-300 bg-yellow-500/10 border border-yellow-500/20 rounded-md px-2 py-1">
-                                        Direct API requires OAuth setup
-                                    </div>
-                                )}
-                                <Button onClick={handleShare} isLoading={isSharing} disabled={isSharing} className="text-xs h-8">
-                                    {isSharing ? 'Sharing…' : 'Share Now'}
-                                </Button>
-                            </div>
-                        </div>
-                    </div>
-                </Card>
-                </div>
-            )}
 
             <BackgroundLibraryModal
                 open={showLibraryModal}
@@ -1635,6 +981,352 @@ export function RenderPage() {
                 onApply={(newPath) => { trimTarget.apply(newPath); setTrimTarget(null); }}
               />
             )}
+        </>
+    );
+
+    // ---- Editor layout -----------------------------------------------------
+    // The same shell Timeline uses: icon rail, docked panel, stage. Classic
+    // view stays as the fallback, and BOTH layouts render the same extracted
+    // panels - two copies of a control is exactly how Timeline's overlays
+    // became unreachable in one layout.
+    if (editorLayout) {
+        return (
+            <>
+            <EditorShell
+                topBar={(
+                    <>
+                        <span className="font-semibold">Send it to the world</span>
+                        {audioPath.trim() && (
+                            <span
+                                className="cursor-help truncate rounded-md border border-editor-line px-2.5 py-1 text-[12px] text-editor-dim"
+                                title={audioPath}
+                            >
+                                Voice loaded
+                            </span>
+                        )}
+                        <span className="flex-1" />
+                        <Button variant="secondary" className="h-8 text-xs" onClick={() => setEditorLayout(false)}>
+                            Classic view
+                        </Button>
+                        <Button
+                            className="h-8 text-xs"
+                            onClick={() => handleRender('video')}
+                            disabled={isRendering}
+                            title={videoReadiness.blockers[0]?.message || 'Render the video'}
+                        >
+                            {isRendering ? 'Rendering...' : 'Render'}
+                        </Button>
+                    </>
+                )}
+                tools={[
+                    { id: 'captions', label: 'Captions', icon: <Type size={17} /> },
+                    { id: 'visuals', label: 'Visuals', icon: <Library size={17} /> },
+                    { id: 'audio', label: 'Audio', icon: <AudioLines size={17} /> },
+                    { id: 'output', label: 'Output', icon: <Video size={17} /> },
+                    { id: 'share', label: 'Share', icon: <Share2 size={17} /> },
+                ]}
+                panels={{
+                    captions: (
+                        <RenderCaptionsPanel
+                            lines={lines}
+                            onLinesChange={setLines}
+                            typographyPreset={typographyPreset}
+                            onTypographyPresetChange={setTypographyPreset}
+                            layout={layout}
+                            onLayoutChange={setLayout}
+                            layoutOptions={LAYOUT_OPTIONS}
+                            depth={depth}
+                            onDepthChange={setDepth}
+                            animations={animations}
+                            hasScripts={scripts.length > 0}
+                            onOpenScripts={() => setShowScriptsModal(true)}
+                            onUseLatestScript={() => setLines(buildLinesFromScript(scripts[0]))}
+                            onFormatForVideo={() => {
+                                const next = buildSpeakableLines(lines, { maxLines: 6, maxChars: 72 }).join(CAPTION_LINE_SEP);
+                                setLines(next);
+                                toast.success('Formatted for video');
+                            }}
+                            maxLines={6}
+                        />
+                    ),
+                    visuals: backgroundsPanel,
+                    audio: (
+                        <RenderAudioPanel
+                            audioPath={audioPath}
+                            onAudioPathChange={setAudioPath}
+                            audioHistory={audioHistory}
+                            onTrim={(p) => setTrimTarget({ kind: 'audio', path: p, apply: setAudioPath })}
+                            musicPath={musicPath}
+                            musicVolume={musicVolume}
+                            autoDuck={autoDuck}
+                            onMusicChange={(m) => {
+                                setMusicPath(m.path);
+                                setMusicVolume(m.volume);
+                                setAutoDuck(m.autoDuck);
+                            }}
+                        />
+                    ),
+                    output: (
+                        <div className="space-y-4">
+                            <RenderOutputPanel
+                                aspect={aspect}
+                                onAspectChange={(v) => setAspect(v as typeof aspect)}
+                                durationSec={durationSec}
+                                onDurationChange={setDurationSec}
+                                captionWidth={captionWidth}
+                                onCaptionWidthChange={setCaptionWidth}
+                                isLongRender={isLongRender}
+                            />
+                            {deliveryPanel}
+                        </div>
+                    ),
+                    share: (
+                        <div className="space-y-4">
+                            {(result?.file || completedRender?.file) && (
+                                <ShareSheet
+                                    videoUrl={toOutputUrl(result?.file || completedRender?.file, api.mediaBaseUrl)}
+                                    caption={lines.split('\n').filter(Boolean).join(' ')}
+                                    title={lines.split('\n').filter(Boolean)[0]}
+                                    filename={`biblefuel-${new Date().toISOString().slice(0, 10)}`}
+                                />
+                            )}
+                            {sharePanel}
+                        </div>
+                    ),
+                }}
+                stage={(
+                    (result?.file || completedRender?.file) ? (
+                        <div className="flex h-full max-h-full flex-col items-center justify-center gap-2">
+                            <video
+                                src={toMediaUrl(result?.file || completedRender?.file)}
+                                controls
+                                className="max-h-[calc(100%-3.5rem)] max-w-full rounded-lg"
+                            />
+                            <div className="flex shrink-0 flex-wrap items-center justify-center gap-2">
+                                <a
+                                    href={toMediaUrl(result?.file || completedRender?.file)}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="inline-flex h-8 items-center rounded-md border border-editor-line px-2.5 text-xs text-editor-dim transition-colors hover:bg-editor-hover"
+                                >
+                                    Open
+                                </a>
+                                <button
+                                    type="button"
+                                    onClick={() => { setResult(null); setCompletedRender(null); }}
+                                    className="text-[11px] text-editor-faint underline-offset-2 hover:underline"
+                                >
+                                    Back to setup
+                                </button>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="max-w-md text-center">
+                            <p className="text-[12px] text-editor-faint">
+                                {videoReadiness.ready
+                                    ? 'Ready to render. Your video appears here when it is done.'
+                                    : 'Finish the steps on the left, then press Render.'}
+                            </p>
+                            {videoReadiness.blockers.length > 0 && (
+                                <ul className="mt-3 space-y-1 text-left">
+                                    {videoReadiness.blockers.map((b) => (
+                                        <li key={b.field} className="text-[11px] text-editor-dim">{b.message}</li>
+                                    ))}
+                                </ul>
+                            )}
+                        </div>
+                    )
+                )}
+            />
+            {sharedOverlays}
+            </>
+        );
+    }
+
+
+    return (
+        <div className="space-y-6 animate-fade-in">
+            <div className="flex items-start justify-between gap-4">
+                <div>
+                <div className="bf-eyebrow">Studio</div>
+                <h2 className="font-displaySerif text-[28px] leading-[1.08] font-semibold text-bf-cream mt-1.5">Send it to <em className="italic font-medium text-bf-gold">the world</em>.</h2>
+                </div>
+                {/* Same affordance as Timeline: the editor is opt-in and the
+                    classic view remains the fallback. */}
+                <Button
+                    variant="secondary"
+                    className="h-9 shrink-0 text-xs"
+                    onClick={() => setEditorLayout(true)}
+                    title="Rail, panel and preview - the same shell as Timeline"
+                >
+                    Editor view
+                </Button>
+            </div>
+
+            
+
+            {completedRender && (
+                <div ref={renderDoneRef} className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 shadow-[0_10px_40px_rgba(16,185,129,0.15)] animate-fade-in">
+                    <div className="flex items-start gap-3 flex-1 min-w-0">
+                        <CheckCircle2 size={20} className="text-emerald-400 flex-shrink-0 mt-0.5" />
+                        <div className="min-w-0">
+                            <p className="text-sm font-semibold text-white">Render complete</p>
+                            {completedRender.file && (
+                                <p className="text-[10px] font-mono text-emerald-200/80 truncate">{completedRender.file}</p>
+                            )}
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                        {completedRender.file && (
+                            <Button
+                                variant="secondary"
+                                className="h-9 text-xs border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20"
+                                onClick={() => {
+                                    const url = toOutputUrl(completedRender.file, api.mediaBaseUrl);
+                                    window.open(url, '_blank');
+                                }}
+                            >
+                                <Play size={14} className="mr-1.5" />
+                                Open
+                            </Button>
+                        )}
+                        {completedRender.file && (
+                            <Button
+                                className="h-9 text-xs"
+                                onClick={() => {
+                                    setShareVideoPath(completedRender.file);
+                                    document.getElementById('share-kit')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                }}
+                            >
+                                <Share2 size={14} className="mr-1.5" />
+                                Share
+                            </Button>
+                        )}
+                        <button
+                            onClick={() => setCompletedRender(null)}
+                            className="p-2 text-gray-400 hover:text-white transition-colors"
+                            aria-label="Dismiss"
+                        >
+                            <XIcon size={16} />
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {completedRender?.file && !result?.file && (
+                <Card title="Share your video" className="border-emerald-500/20 bg-emerald-500/[0.03]">
+                    <ShareSheet
+                        videoUrl={toOutputUrl(completedRender.file, api.mediaBaseUrl)}
+                        caption={lines.split('\n').filter(Boolean).join(' ')}
+                        title={lines.split('\n').filter(Boolean)[0]}
+                        filename={`biblefuel-${new Date().toISOString().slice(0, 10)}`}
+                    />
+                </Card>
+            )}
+
+            <GuideSteps
+                storageKey="render"
+                title="What you need to render"
+                steps={renderSteps}
+                tip={<>Soundtrack, frame size and duration are optional — set them below. Long renders (60s+) and kinetic captions run in the background and notify you when ready.</>}
+            />
+
+            <Card title="Configuration">
+                {!renderEnabled && (
+                    <div className="mb-4 text-xs text-yellow-200 bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3">
+                        Rendering is disabled because FFmpeg was not detected on the server.
+                    </div>
+                )}
+                <div className="space-y-4">
+                    {backgroundsPanel}
+
+                    <Section title="Captions" defaultOpen={true} collapsible={false}>
+                        {/* Extracted so the editor shell and the classic layout
+                            render the SAME panel. Two copies would drift apart the
+                            first time either was touched - that is exactly how the
+                            Timeline's overlays became unreachable in one layout. */}
+                        <RenderCaptionsPanel
+                            lines={lines}
+                            onLinesChange={setLines}
+                            typographyPreset={typographyPreset}
+                            onTypographyPresetChange={setTypographyPreset}
+                            layout={layout}
+                            onLayoutChange={setLayout}
+                            layoutOptions={LAYOUT_OPTIONS}
+                            depth={depth}
+                            onDepthChange={setDepth}
+                            animations={animations}
+                            hasScripts={scripts.length > 0}
+                            onOpenScripts={() => setShowScriptsModal(true)}
+                            onUseLatestScript={() => setLines(buildLinesFromScript(scripts[0]))}
+                            onFormatForVideo={() => {
+                                const next = buildSpeakableLines(lines, { maxLines: 6, maxChars: 72 }).join(String.fromCharCode(10));
+                                setLines(next);
+                                toast.success('Formatted for video');
+                            }}
+                            maxLines={6}
+                        />
+                    </Section>
+
+                    <Section title="Output & Timing">
+                        <RenderOutputPanel
+                            aspect={aspect}
+                            onAspectChange={(v) => setAspect(v as typeof aspect)}
+                            durationSec={durationSec}
+                            onDurationChange={setDurationSec}
+                            captionWidth={captionWidth}
+                            onCaptionWidthChange={setCaptionWidth}
+                            isLongRender={isLongRender}
+                        />
+                    </Section>
+
+                    <Section title="Audio">
+                        <RenderAudioPanel
+                            audioPath={audioPath}
+                            onAudioPathChange={setAudioPath}
+                            audioHistory={audioHistory}
+                            onTrim={(p) => setTrimTarget({ kind: 'audio', path: p, apply: setAudioPath })}
+                            musicPath={musicPath}
+                            musicVolume={musicVolume}
+                            autoDuck={autoDuck}
+                            onMusicChange={(m) => {
+                                setMusicPath(m.path);
+                                setMusicVolume(m.volume);
+                                setAutoDuck(m.autoDuck);
+                            }}
+                        />
+                    </Section>
+
+                    {deliveryPanel}
+                </div>
+            </Card>
+
+            {result?.file && (
+                <Card title="Render Result" className="border-green-500/20 bg-green-500/5">
+                    <ShareSheet
+                        videoUrl={toOutputUrl(result.file, api.mediaBaseUrl)}
+                        caption={lines.split('\n').filter(Boolean).join(' ')}
+                        title={lines.split('\n').filter(Boolean)[0]}
+                        filename={`biblefuel-${new Date().toISOString().slice(0, 10)}`}
+                    />
+                </Card>
+            )}
+
+            {lines && (
+                <div id="share-kit">
+                <Card
+                    title="Share Kit"
+                    className="border-white/10 bg-white/[0.03]"
+                    collapsible
+                    defaultOpen={false}
+                    tooltip="One-click captions + downloads for TikTok, IG Reels and YouTube Shorts. Pick a rendered video above, then copy/paste straight into your scheduler."
+                >
+                    {sharePanel}
+                </Card>
+                </div>
+            )}
+
+            {sharedOverlays}
         </div>
     );
 }
