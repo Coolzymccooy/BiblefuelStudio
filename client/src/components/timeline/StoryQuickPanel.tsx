@@ -298,12 +298,12 @@ export function StoryQuickPanel({ onUseVideo, onPreviewVideo }: StoryQuickPanelP
       )}
 
       {transient && !stalled && (
-        <div className="flex items-center justify-between gap-2 rounded-xl border border-primary-500/30 bg-primary-500/[0.08] px-3 py-2">
-          <span className="flex min-w-0 items-center gap-2 text-[11px] text-primary-100">
-            <Loader2 className="shrink-0 animate-spin text-primary-400" size={13} />
+        <div className="flex items-center justify-between gap-2 rounded-xl border border-editor-line bg-editor-hover px-3 py-2">
+          <span className="flex min-w-0 items-center gap-2 text-[11px] text-editor-text">
+            <Loader2 className="shrink-0 animate-spin text-editor-accent" size={13} />
             <span className="min-w-0 break-words">{progressLabel(project.status)}</span>
             {project.status === 'generating_images' && (
-              <span className="shrink-0 text-primary-300/80">{counts.done}/{counts.total}</span>
+              <span className="shrink-0 font-mono text-editor-dim">{counts.done}/{counts.total}</span>
             )}
           </span>
           <button onClick={act(() => storyApi.cancel(project.projectId), 'Cancelled')} disabled={busy} aria-label="Cancel" className="shrink-0 rounded p-1 text-editor-faint hover:text-red-300">
@@ -312,12 +312,15 @@ export function StoryQuickPanel({ onUseVideo, onPreviewVideo }: StoryQuickPanelP
         </div>
       )}
 
+      {/* Calm, on-palette recovery - not an amber alarm box. The state is
+          ordinary ("pick up where you left off"), so it dresses like the rest
+          of the editor: cream text, gold primary, hairline secondaries. */}
       {(stalled || project.status === 'error') && (
-        <div className="space-y-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3">
-          <p className="break-words text-[11px] text-amber-200">
+        <div className="space-y-2 rounded-xl border border-editor-line bg-white/[0.03] p-3">
+          <p className="break-words text-[11px] leading-relaxed text-editor-text">
             {project.status === 'error'
-              ? (/^cancelled/i.test(project.error || '') ? 'Cancelled. Pick up where you left off:' : (project.error || 'Something went wrong.'))
-              : 'Interrupted. Pick up where it left off:'}
+              ? (/^cancelled/i.test(project.error || '') ? 'Cancelled — pick up where you left off.' : (project.error || 'Something went wrong.'))
+              : 'Interrupted — pick up where it left off.'}
           </p>
           <div className="flex flex-wrap gap-1.5">
             <button
@@ -334,17 +337,17 @@ export function StoryQuickPanel({ onUseVideo, onPreviewVideo }: StoryQuickPanelP
                 else await storyApi.process(project.projectId, audioPath);
               }, 'Resumed')}
               disabled={busy}
-              className="rounded-md bg-amber-500 px-2 py-1 text-[10px] font-semibold text-dark-900 disabled:opacity-50"
+              className="rounded-md bg-editor-accent px-2.5 py-1 text-[10px] font-bold text-editor-chrome disabled:opacity-50"
             >
               Resume
             </button>
             {project.scenes.length > 0 && (
-              <button onClick={act(() => storyApi.generateImages(project.projectId), 'Retrying failed images…')} disabled={busy} className="inline-flex items-center gap-1 rounded-md border border-amber-400/40 px-2 py-1 text-[10px] text-amber-200 disabled:opacity-50">
+              <button onClick={act(() => storyApi.generateImages(project.projectId), 'Retrying failed images…')} disabled={busy} className="inline-flex items-center gap-1 rounded-md border border-editor-line px-2 py-1 text-[10px] text-editor-dim hover:text-editor-text disabled:opacity-50">
                 <RefreshCw size={10} /> Retry failed images
               </button>
             )}
             {(project.transcript?.words?.length ?? 0) > 0 && (
-              <button onClick={act(() => storyApi.resegment(project.projectId), 'Rebuilding with fewer scenes…')} disabled={busy} className="rounded-md border border-amber-400/40 px-2 py-1 text-[10px] text-amber-200 disabled:opacity-50">
+              <button onClick={act(() => storyApi.resegment(project.projectId), 'Rebuilding with fewer scenes…')} disabled={busy} className="rounded-md border border-editor-line px-2 py-1 text-[10px] text-editor-dim hover:text-editor-text disabled:opacity-50">
                 Re-segment
               </button>
             )}
