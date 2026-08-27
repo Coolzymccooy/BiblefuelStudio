@@ -1,6 +1,7 @@
 ﻿
 import { useEffect, useRef, useState } from 'react';
 import { EditorShell } from '../components/editor/EditorShell';
+import { PanelSection } from '../components/editor/PanelSection';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
@@ -1332,186 +1333,13 @@ export function VoiceAudioPage() {
         </DropZone>
     );
 
-    // ---- Editor layout -----------------------------------------------------
-    // Same shell as Timeline and Render. The panels reuse the blocks the page
-    // ALREADY hoists (providerControls, recordUploadPanel, treatmentControls,
-    // cloneControls, presetControls) rather than re-creating them, so there is
-    // exactly one definition of every control and the two layouts cannot drift.
-    if (editorLayout) {
-        return (
-            <EditorShell
-                topBar={(
-                    <>
-                        <span className="font-semibold">Give it a voice</span>
-                        {audioPath.trim() && (
-                            <span
-                                className="cursor-help truncate rounded-md border border-editor-line px-2.5 py-1 text-[12px] text-editor-dim"
-                                title={audioPath}
-                            >
-                                Track ready
-                            </span>
-                        )}
-                        <span className="flex-1" />
-                        <Button variant="secondary" className="h-8 text-xs" onClick={() => setEditorLayout(false)}>
-                            Classic view
-                        </Button>
-                    </>
-                )}
-                tools={[
-                    { id: 'script', label: 'Script', icon: <Wand2 size={17} /> },
-                    { id: 'record', label: 'Record', icon: <Mic size={17} /> },
-                    { id: 'treat', label: 'Treat', icon: <SlidersHorizontal size={17} /> },
-                    { id: 'clone', label: 'Clone', icon: <Users size={17} /> },
-                    { id: 'takes', label: 'Takes', icon: <HistoryIcon size={17} />, count: audioHistory.length },
-                ]}
-                panels={{
-                    script: (
-                        <div className="space-y-4">
-                            <Textarea
-                                value={ttsText}
-                                onChange={(e) => setTtsText(e.target.value)}
-                                placeholder="What should the voice say?"
-                                className="h-40 bg-black/20"
-                            />
-                            <div className="flex flex-wrap gap-2">
-                                <Button variant="secondary" className="h-8 text-xs" onClick={handleUseLatestScript}>
-                                    Use latest script
-                                </Button>
-                                <Button variant="secondary" className="h-8 text-xs" onClick={handleFormatForVoice}>
-                                    Format for voice
-                                </Button>
-                            </div>
-                            {providerControls}
-                        </div>
-                    ),
-                    record: recordUploadPanel,
-                    treat: (
-                        <div className="space-y-3">
-                            <p className="text-[12px] text-editor-dim">
-                                Denoise, loudness and EQ. The full treatment rack lives in the classic
-                                view, which keeps every control in one place.
-                            </p>
-                            <Button variant="secondary" className="h-8 w-full text-xs" onClick={() => setEditorLayout(false)}>
-                                Open audio treatment
-                            </Button>
-                        </div>
-                    ),
-                    clone: (
-                        <div className="space-y-3">
-                            <p className="text-[12px] text-editor-dim">
-                                Voice cloning and saved presets, including the rights and
-                                no-impersonation consent, stay in the classic view so no part of
-                                that flow is split across two layouts.
-                            </p>
-                            <Button variant="secondary" className="h-8 w-full text-xs" onClick={() => setEditorLayout(false)}>
-                                Open voice clone
-                            </Button>
-                        </div>
-                    ),
-                    takes: (
-                        <div className="flex h-full min-h-0 flex-col gap-3">
-                            {audioHistory.length === 0 ? (
-                                <p className="text-[11px] text-editor-faint">No takes yet.</p>
-                            ) : (
-                                <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
-                                    {audioHistory.map((item) => (
-                                        <button
-                                            key={item.id}
-                                            type="button"
-                                            onClick={() => setAudioPath(item.path)}
-                                            className="surface-raised flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left"
-                                        >
-                                            <span className="min-w-0 flex-1 truncate text-xs text-content-secondary">
-                                                {item.kind}
-                                            </span>
-                                        </button>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
-                    ),
-                }}
-                stage={(
-                    audioPath.trim() ? (
-                        <div className="flex h-full max-h-full w-full max-w-2xl flex-col items-center justify-center gap-3">
-                            <audio src={api.mediaUrl(audioPath)} controls className="w-full" />
-                            <p className="truncate text-[11px] text-editor-faint" title={audioPath}>
-                                {audioPath.split(/[\\/]/).pop()}
-                            </p>
-                        </div>
-                    ) : (
-                        <p className="max-w-md text-center text-[12px] text-editor-faint">
-                            Write a script and press Generate, or record your own. The take appears
-                            here so you can hear it before rendering.
-                        </p>
-                    )
-                )}
-            />
-        );
-    }
-
-
-    return (
-        <div>
-            <div className="mb-5 flex items-start justify-between gap-4">
-                <ScreenHeader eyebrow="Studio" title={<>Give it a <em>voice</em>.</>} />
-                {/* Opt-in, same as Timeline and Render; classic stays the fallback. */}
-                <Button
-                    variant="secondary"
-                    className="h-9 shrink-0 text-xs"
-                    onClick={() => setEditorLayout(true)}
-                    title="Rail, panel and preview - the same shell as Timeline"
-                >
-                    Editor view
-                </Button>
-            </div>
-
-            <div className="mb-6">
-                <GuideSteps
-                    storageKey="voiceAudio"
-                    title="Make a voice track in 4 steps"
-                    steps={[
-                        {
-                            label: <>Pick a provider and press <strong>Generate</strong> — or record / upload your own under <strong>Record / Upload</strong>.</>,
-                        },
-                        {
-                            label: <>Optional: clean it up under <strong>Audio Treatment</strong> (denoise, loudness, EQ).</>,
-                        },
-                        {
-                            label: <>Your newest clip automatically becomes <strong>Current Audio</strong> — that's the track Render uses.</>,
-                            detail: <>To switch back to an earlier clip, click <strong>Use</strong> on it under <em>Recent Audio</em>.</>,
-                        },
-                        {
-                            label: <>Head to <strong>Render</strong> to turn it into a video.</>,
-                        },
-                    ]}
-                    tip={<>Want background music? Open <strong>Soundtrack Library</strong> and click <strong>Use in Render</strong> on a track.</>}
-                />
-            </div>
-
-            <div className="space-y-6">
-                {/* Sticky now-playing player — pins under the app header (above the mobile
-                    nav) so preview + "Use in Render" stay reachable while scrolling. z-20
-                    keeps it under the app shell header/nav (z-30+) but over page content. */}
-                {currentAudioUrl && (
-                    <div className="sticky top-2 z-20 -mx-1 px-1">
-                        <VoicePlayer src={currentAudioUrl} label={currentTrackLabel} kindLabel={currentTrackKind} />
-                    </div>
-                )}
-
-                <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] lg:gap-6">
-                    <div className="space-y-4 min-w-0">
-                        <CreateVoiceHero
-                    ttsText={ttsText}
-                    onTtsTextChange={setTtsText}
-                    onUseLatestScript={handleUseLatestScript}
-                    onFormatForVoice={handleFormatForVoice}
-                    onInsertTemplate={handleInsertTemplate}
-                    providerControls={providerControls}
-                    recordUploadPanel={recordUploadPanel}
-                />
-
-                <RevealSection title="Audio treatment" storageKey="va.treatment">
+    // ---- Hoisted control blocks --------------------------------------------
+    // The treatment rack, soundtrack library, voice clone and preset blocks,
+    // hoisted the same way as providerControls/recordUploadPanel so the editor
+    // panels and the classic RevealSections render the SAME nodes. One
+    // definition per control; the two layouts cannot drift.
+    const treatmentControls = (
+        <>
                     <p className="text-sm text-gray-200 mb-4">
                         Choose a preset, then tweak controls. Click <strong>Process Audio</strong> to generate a
                         cleaned MP3 and auto-fill Audio Path.
@@ -1756,13 +1584,11 @@ export function VoiceAudioPage() {
                             Process Audio
                         </Button>
                     </div>
-                </RevealSection>
+                </>
+    );
 
-                <RevealSection
-                    title="Soundtrack library"
-                    storageKey="va.soundtrack"
-                    info="Use any audio file from outputs as a soundtrack for Render."
-                >
+    const soundtrackControls = (
+        <>
                     <div className="space-y-3">
                         <div className="flex flex-wrap items-center gap-2">
                             <Button
@@ -1805,55 +1631,11 @@ export function VoiceAudioPage() {
                             <p className="text-sm text-gray-300">No audio files found. Upload or process audio first.</p>
                         )}
                     </div>
-                </RevealSection>
+                </>
+    );
 
-                <RevealSection title="Current audio" storageKey="va.current" defaultOpen>
-                    <Card
-                        title="Current Audio"
-                        headerExtra={audioPath.trim() ? (
-                            <span className="inline-flex items-center gap-1 text-[0.6875rem] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/25">
-                                <CheckCircle2 size={12} />
-                                Used in Render
-                            </span>
-                        ) : undefined}
-                    >
-                        <Input
-                            value={audioPath}
-                            onChange={(e) => setAudioPath(e.target.value)}
-                            placeholder="e.g. server/outputs/audio.mp3"
-                        />
-                        <p className="text-help mt-2">
-                            {audioPath.trim()
-                                ? 'This is the track the Render and Timeline pages will use. Generate, record, or click Use on a Recent Audio clip to change it.'
-                                : 'No track selected yet. Generate a voice above, record/upload, or click Use on a Recent Audio clip — it will appear here.'}
-                        </p>
-                        {currentAudioUrl && (
-                            <div className="mt-3 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-                                <audio controls src={currentAudioUrl} className="w-full" />
-                                <Button
-                                    variant="secondary"
-                                    onClick={() => {
-                                        navigator.clipboard.writeText(audioPath);
-                                        toast.success('Audio path copied');
-                                    }}
-                                    className="text-xs h-9"
-                                >
-                                    <Clipboard size={14} className="mr-2" />
-                                    Copy
-                                </Button>
-                                <Link
-                                    to="/app/render"
-                                    className="inline-flex items-center justify-center gap-1.5 text-xs h-9 px-4 rounded-lg font-medium bg-primary-500 text-white hover:bg-primary-400 transition-colors whitespace-nowrap"
-                                >
-                                    Go to Render
-                                    <ArrowRight size={14} />
-                                </Link>
-                            </div>
-                        )}
-                    </Card>
-                </RevealSection>
-
-                <RevealSection title="Voice clone" storageKey="va.clone">
+    const cloneControls = (
+        <>
                         <div className="space-y-4">
                             <div className="rounded-lg border border-amber-500/25 bg-amber-500/[0.06] px-3 py-2 text-[0.8125rem] text-amber-100/90 leading-relaxed flex items-start gap-2">
                                 <InfoTooltip
@@ -2009,9 +1791,11 @@ export function VoiceAudioPage() {
                                 </div>
                             )}
                         </div>
-                </RevealSection>
+                </>
+    );
 
-                <RevealSection title="Voice presets" storageKey="va.presets">
+    const presetControls = (
+        <>
                     <div className="space-y-4">
                         <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                             <Input
@@ -2085,6 +1869,278 @@ export function VoiceAudioPage() {
                             ))}
                         </div>
                     </div>
+                </>
+    );
+
+    // ---- Editor layout -----------------------------------------------------
+    // Same shell as Timeline and Render. The panels reuse the blocks the page
+    // ALREADY hoists (providerControls, recordUploadPanel, treatmentControls,
+    // cloneControls, presetControls) rather than re-creating them, so there is
+    // exactly one definition of every control and the two layouts cannot drift.
+    if (editorLayout) {
+        return (
+            <EditorShell
+                topBar={(
+                    <>
+                        <span className="font-semibold">Give it a voice</span>
+                        {audioPath.trim() && (
+                            <span
+                                className="cursor-help truncate rounded-md border border-editor-line px-2.5 py-1 text-[12px] text-editor-dim"
+                                title={audioPath}
+                            >
+                                Track ready
+                            </span>
+                        )}
+                        <span className="flex-1" />
+                        <Button variant="secondary" className="h-8 text-xs" onClick={() => setEditorLayout(false)}>
+                            Classic view
+                        </Button>
+                    </>
+                )}
+                tools={[
+                    { id: 'script', label: 'Script', icon: <Wand2 size={17} /> },
+                    { id: 'record', label: 'Record', icon: <Mic size={17} /> },
+                    { id: 'treat', label: 'Treat', icon: <SlidersHorizontal size={17} /> },
+                    { id: 'clone', label: 'Clone', icon: <Users size={17} /> },
+                    { id: 'music', label: 'Music', icon: <Music size={17} /> },
+                    { id: 'takes', label: 'Takes', icon: <HistoryIcon size={17} />, count: audioHistory.length },
+                ]}
+                panels={{
+                    script: (
+                        <div className="space-y-4">
+                            <Textarea
+                                value={ttsText}
+                                onChange={(e) => setTtsText(e.target.value)}
+                                placeholder="What should the voice say?"
+                                className="h-40 bg-black/20"
+                            />
+                            <div className="flex flex-wrap gap-2">
+                                <Button variant="secondary" className="h-8 text-xs" onClick={handleUseLatestScript}>
+                                    Use latest script
+                                </Button>
+                                <Button variant="secondary" className="h-8 text-xs" onClick={handleFormatForVoice}>
+                                    Format for voice
+                                </Button>
+                            </div>
+                            {providerControls}
+                        </div>
+                    ),
+                    record: recordUploadPanel,
+                    treat: (
+                        <div className="space-y-3">{treatmentControls}</div>
+                    ),
+                    clone: (
+                        <div className="space-y-1">
+                            <PanelSection title="Voice clone" defaultOpen>
+                                <div className="space-y-4">{cloneControls}</div>
+                            </PanelSection>
+                            <PanelSection title="Voice presets" count={voicePresets.length}>
+                                <div className="space-y-4">{presetControls}</div>
+                            </PanelSection>
+                        </div>
+                    ),
+                    music: (
+                        <div className="space-y-3">{soundtrackControls}</div>
+                    ),
+                    takes: (
+                        <div className="flex h-full min-h-0 flex-col gap-3">
+                            {/* The current track IS the contract with Render - keep it
+                                visible and editable here, same as classic's Current
+                                Audio card. */}
+                            <div>
+                                <label className="field-label">Current audio</label>
+                                <Input
+                                    value={audioPath}
+                                    onChange={(e) => setAudioPath(e.target.value)}
+                                    placeholder="e.g. server/outputs/audio.mp3"
+                                    className="bg-black/20"
+                                />
+                            </div>
+                            {audioHistory.length === 0 ? (
+                                <p className="text-[11px] text-editor-faint">No takes yet.</p>
+                            ) : (
+                                <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
+                                    {audioHistory.map((item) => {
+                                        const isCurrent = item.path === audioPath;
+                                        return (
+                                        <div
+                                            key={item.id}
+                                            className={`surface-raised flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 ${isCurrent ? 'border border-emerald-500/25' : ''}`}
+                                        >
+                                            <button
+                                                type="button"
+                                                onClick={() => setAudioPath(item.path)}
+                                                className="min-w-0 flex-1 truncate text-left text-xs text-content-secondary"
+                                                title={item.path}
+                                            >
+                                                {item.kind}
+                                            </button>
+                                            {isCurrent && (
+                                                <CheckCircle2 size={12} className="shrink-0 text-emerald-300" aria-label="Current take" />
+                                            )}
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    navigator.clipboard.writeText(item.path);
+                                                    toast.success('Copied');
+                                                }}
+                                                aria-label="Copy path"
+                                                className="shrink-0 rounded p-1 text-editor-faint hover:text-white"
+                                            >
+                                                <Clipboard size={12} />
+                                            </button>
+                                        </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+                    ),
+                }}
+                stage={(
+                    audioPath.trim() ? (
+                        <div className="flex h-full max-h-full w-full max-w-2xl flex-col items-center justify-center gap-3">
+                            <audio src={api.mediaUrl(audioPath)} controls className="w-full" />
+                            <p className="truncate text-[11px] text-editor-faint" title={audioPath}>
+                                {audioPath.split(/[\\/]/).pop()}
+                            </p>
+                        </div>
+                    ) : (
+                        <p className="max-w-md text-center text-[12px] text-editor-faint">
+                            Write a script and press Generate, or record your own. The take appears
+                            here so you can hear it before rendering.
+                        </p>
+                    )
+                )}
+            />
+        );
+    }
+
+
+    return (
+        <div>
+            <div className="mb-5 flex items-start justify-between gap-4">
+                <ScreenHeader eyebrow="Studio" title={<>Give it a <em>voice</em>.</>} />
+                {/* Opt-in, same as Timeline and Render; classic stays the fallback. */}
+                <Button
+                    variant="secondary"
+                    className="h-9 shrink-0 text-xs"
+                    onClick={() => setEditorLayout(true)}
+                    title="Rail, panel and preview - the same shell as Timeline"
+                >
+                    Editor view
+                </Button>
+            </div>
+
+            <div className="mb-6">
+                <GuideSteps
+                    storageKey="voiceAudio"
+                    title="Make a voice track in 4 steps"
+                    steps={[
+                        {
+                            label: <>Pick a provider and press <strong>Generate</strong> — or record / upload your own under <strong>Record / Upload</strong>.</>,
+                        },
+                        {
+                            label: <>Optional: clean it up under <strong>Audio Treatment</strong> (denoise, loudness, EQ).</>,
+                        },
+                        {
+                            label: <>Your newest clip automatically becomes <strong>Current Audio</strong> — that's the track Render uses.</>,
+                            detail: <>To switch back to an earlier clip, click <strong>Use</strong> on it under <em>Recent Audio</em>.</>,
+                        },
+                        {
+                            label: <>Head to <strong>Render</strong> to turn it into a video.</>,
+                        },
+                    ]}
+                    tip={<>Want background music? Open <strong>Soundtrack Library</strong> and click <strong>Use in Render</strong> on a track.</>}
+                />
+            </div>
+
+            <div className="space-y-6">
+                {/* Sticky now-playing player — pins under the app header (above the mobile
+                    nav) so preview + "Use in Render" stay reachable while scrolling. z-20
+                    keeps it under the app shell header/nav (z-30+) but over page content. */}
+                {currentAudioUrl && (
+                    <div className="sticky top-2 z-20 -mx-1 px-1">
+                        <VoicePlayer src={currentAudioUrl} label={currentTrackLabel} kindLabel={currentTrackKind} />
+                    </div>
+                )}
+
+                <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] lg:gap-6">
+                    <div className="space-y-4 min-w-0">
+                        <CreateVoiceHero
+                    ttsText={ttsText}
+                    onTtsTextChange={setTtsText}
+                    onUseLatestScript={handleUseLatestScript}
+                    onFormatForVoice={handleFormatForVoice}
+                    onInsertTemplate={handleInsertTemplate}
+                    providerControls={providerControls}
+                    recordUploadPanel={recordUploadPanel}
+                />
+
+                <RevealSection title="Audio treatment" storageKey="va.treatment">
+                    {treatmentControls}
+                </RevealSection>
+
+                <RevealSection
+                    title="Soundtrack library"
+                    storageKey="va.soundtrack"
+                    info="Use any audio file from outputs as a soundtrack for Render."
+                >
+                    {soundtrackControls}
+                </RevealSection>
+
+                <RevealSection title="Current audio" storageKey="va.current" defaultOpen>
+                    <Card
+                        title="Current Audio"
+                        headerExtra={audioPath.trim() ? (
+                            <span className="inline-flex items-center gap-1 text-[0.6875rem] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/25">
+                                <CheckCircle2 size={12} />
+                                Used in Render
+                            </span>
+                        ) : undefined}
+                    >
+                        <Input
+                            value={audioPath}
+                            onChange={(e) => setAudioPath(e.target.value)}
+                            placeholder="e.g. server/outputs/audio.mp3"
+                        />
+                        <p className="text-help mt-2">
+                            {audioPath.trim()
+                                ? 'This is the track the Render and Timeline pages will use. Generate, record, or click Use on a Recent Audio clip to change it.'
+                                : 'No track selected yet. Generate a voice above, record/upload, or click Use on a Recent Audio clip — it will appear here.'}
+                        </p>
+                        {currentAudioUrl && (
+                            <div className="mt-3 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                                <audio controls src={currentAudioUrl} className="w-full" />
+                                <Button
+                                    variant="secondary"
+                                    onClick={() => {
+                                        navigator.clipboard.writeText(audioPath);
+                                        toast.success('Audio path copied');
+                                    }}
+                                    className="text-xs h-9"
+                                >
+                                    <Clipboard size={14} className="mr-2" />
+                                    Copy
+                                </Button>
+                                <Link
+                                    to="/app/render"
+                                    className="inline-flex items-center justify-center gap-1.5 text-xs h-9 px-4 rounded-lg font-medium bg-primary-500 text-white hover:bg-primary-400 transition-colors whitespace-nowrap"
+                                >
+                                    Go to Render
+                                    <ArrowRight size={14} />
+                                </Link>
+                            </div>
+                        )}
+                    </Card>
+                </RevealSection>
+
+                <RevealSection title="Voice clone" storageKey="va.clone">
+                    {cloneControls}
+                </RevealSection>
+
+                <RevealSection title="Voice presets" storageKey="va.presets">
+                    {presetControls}
                 </RevealSection>
 
                 {/* Caption animation picker — kinetic typography styles ported from lumina,

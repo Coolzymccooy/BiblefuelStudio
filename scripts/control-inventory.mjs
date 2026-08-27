@@ -151,6 +151,11 @@ if (CHECK) {
     // handler; they moved into RenderDeliveryPanel and gained aria-labels
     // ("Render the video" / "Render a waveform video"). Both verified.
     'handleRender()': 'Render the video',
+    // The preset-label Input. Its baseline label was STOLEN from the
+    // enclosing <RevealSection title="Voice presets">; hoisted into
+    // presetControls it now derives its own placeholder. Verified: same
+    // input, same setPresetLabel wiring.
+    'Voice presets': 'Preset label',
   };
 
   const missing = Object.values(base).flat()
