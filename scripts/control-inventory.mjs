@@ -123,6 +123,12 @@ if (CHECK) {
     // Baseline label came from the enclosing <Section title="Audio">, not the
     // control. It is the caption-width slider, now RenderOutputPanel.tsx:77.
     Audio: 'Caption width',
+    // The baseline label came from the inline `setMusicPath(...)` on the page.
+    // That call now lives inside the onMusicChange callback
+    // (RenderPage.tsx:1158) and the picker itself moved into
+    // RenderAudioPanel, where it is labelled "Music bed". Verified by reading
+    // both sites: the control and its wiring are intact.
+    'sets MusicPath': 'Music bed',
   };
 
   const missing = Object.values(base).flat()

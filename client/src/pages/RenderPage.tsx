@@ -1,4 +1,7 @@
 import { useEffect, useRef, useState, type SyntheticEvent } from 'react';
+const CAPTION_LINE_SEP = String.fromCharCode(10);
+import { EditorShell } from '../components/editor/EditorShell';
+import { RenderAudioPanel } from '../components/render/RenderAudioPanel';
 import { RenderOutputPanel } from '../components/render/RenderOutputPanel';
 import { RenderCaptionsPanel } from '../components/render/RenderCaptionsPanel';
 import { checkRenderReadiness } from '../lib/renderReadiness';
@@ -10,12 +13,11 @@ import { Select } from '../components/ui/Select';
 import { Field } from '../components/ui/Field';
 import { Section } from '../components/ui/Section';
 import { GuideSteps, type GuideStep } from '../components/ui/GuideSteps';
-import { MusicPicker } from '../components/MusicPicker';
 import { api, DIRECT_UPLOAD_MAX_BYTES, RESUMABLE_UPLOAD_MAX_BYTES } from '../lib/api';
 import { uploadMedia } from '../lib/mediaUpload';
 import { DropZone } from '../components/ui/DropZone';
 import toast from 'react-hot-toast';
-import { Play, Library, Video, CheckCircle2, ClipboardList, AudioLines, Share2, X as XIcon, Plus, ChevronUp, ChevronDown, Trash2, Sparkles, Scissors } from 'lucide-react';
+import { Play, Library, Type, Video, CheckCircle2, ClipboardList, AudioLines, Share2, X as XIcon, Plus, ChevronUp, ChevronDown, Trash2, Sparkles, Scissors } from 'lucide-react';
 import { loadJson, saveJson, STORAGE_KEYS, toOutputUrl } from '../lib/storage';
 import { LAYOUT_OPTIONS } from '../lib/layoutOptions';
 import { usePersistedState } from '../lib/usePersistedState';
@@ -77,6 +79,13 @@ export function RenderPage() {
     // empty). Picking clips manually overrides it. Video mode only.
     const [autoBackground, setAutoBackground] = useState(true);
     const [result, setResult] = useState<any>(null);
+    // Editor layout, mirroring Timeline. Persisted, and the classic view stays
+    // as the fallback - the operator asked to keep it, and it has been a real
+    // escape hatch more than once during this work.
+    const [editorLayout, setEditorLayout] = useState<boolean>(
+        () => loadJson<boolean>('bf.render.editorLayout', false),
+    );
+    useEffect(() => { saveJson('bf.render.editorLayout', editorLayout); }, [editorLayout]);
     const [showLibraryModal, setShowLibraryModal] = useState(false);
     const [libraryItems, setLibraryItems] = useState<any[]>([]);
     const [isLoadingLibrary, setIsLoadingLibrary] = useState(false);
@@ -788,11 +797,180 @@ export function RenderPage() {
             }))),
     ];
 
+    // ---- Editor layout -----------------------------------------------------
+    // The same shell Timeline uses: icon rail, docked panel, stage. Classic
+    // view stays as the fallback, and BOTH layouts render the same extracted
+    // panels - two copies of a control is exactly how Timeline's overlays
+    // became unreachable in one layout.
+    if (editorLayout) {
+        return (
+            <EditorShell
+                topBar={(
+                    <>
+                        <span className="font-semibold">Send it to the world</span>
+                        {audioPath.trim() && (
+                            <span
+                                className="cursor-help truncate rounded-md border border-editor-line px-2.5 py-1 text-[12px] text-editor-dim"
+                                title={audioPath}
+                            >
+                                Voice loaded
+                            </span>
+                        )}
+                        <span className="flex-1" />
+                        <Button variant="secondary" className="h-8 text-xs" onClick={() => setEditorLayout(false)}>
+                            Classic view
+                        </Button>
+                        <Button
+                            className="h-8 text-xs"
+                            onClick={() => handleRender('video')}
+                            disabled={isRendering}
+                            title={videoReadiness.blockers[0]?.message || 'Render the video'}
+                        >
+                            {isRendering ? 'Rendering...' : 'Render'}
+                        </Button>
+                    </>
+                )}
+                tools={[
+                    { id: 'captions', label: 'Captions', icon: <Type size={17} /> },
+                    { id: 'visuals', label: 'Visuals', icon: <Library size={17} /> },
+                    { id: 'audio', label: 'Audio', icon: <AudioLines size={17} /> },
+                    { id: 'output', label: 'Output', icon: <Video size={17} /> },
+                ]}
+                panels={{
+                    captions: (
+                        <RenderCaptionsPanel
+                            lines={lines}
+                            onLinesChange={setLines}
+                            typographyPreset={typographyPreset}
+                            onTypographyPresetChange={setTypographyPreset}
+                            layout={layout}
+                            onLayoutChange={setLayout}
+                            layoutOptions={LAYOUT_OPTIONS}
+                            depth={depth}
+                            onDepthChange={setDepth}
+                            animations={animations}
+                            hasScripts={scripts.length > 0}
+                            onOpenScripts={() => setShowScriptsModal(true)}
+                            onUseLatestScript={() => setLines(buildLinesFromScript(scripts[0]))}
+                            onFormatForVideo={() => {
+                                const next = buildSpeakableLines(lines, { maxLines: 6, maxChars: 72 }).join(CAPTION_LINE_SEP);
+                                setLines(next);
+                                toast.success('Formatted for video');
+                            }}
+                            maxLines={6}
+                        />
+                    ),
+                    visuals: (
+                        <div className="space-y-3">
+                            <p className="text-[12px] text-editor-dim">
+                                {backgroundItems.length > 0
+                                    ? backgroundItems.length + ' background(s) selected.'
+                                    : autoBackground
+                                        ? 'Auto is on - BibleFuel will choose backgrounds for you.'
+                                        : 'No backgrounds selected yet.'}
+                            </p>
+                            {/* Backgrounds is a 235-line block with deeply nested
+                                state. Rather than risk dropping one of its 15
+                                controls in a rushed extraction, the editor sends
+                                the operator to the classic view for it. */}
+                            <Button variant="secondary" className="h-8 w-full text-xs" onClick={() => setEditorLayout(false)}>
+                                Open background picker
+                            </Button>
+                        </div>
+                    ),
+                    audio: (
+                        <RenderAudioPanel
+                            audioPath={audioPath}
+                            onAudioPathChange={setAudioPath}
+                            audioHistory={audioHistory}
+                            onTrim={(p) => setTrimTarget({ kind: 'audio', path: p, apply: setAudioPath })}
+                            musicPath={musicPath}
+                            musicVolume={musicVolume}
+                            autoDuck={autoDuck}
+                            onMusicChange={(m) => {
+                                setMusicPath(m.path);
+                                setMusicVolume(m.volume);
+                                setAutoDuck(m.autoDuck);
+                            }}
+                        />
+                    ),
+                    output: (
+                        <RenderOutputPanel
+                            aspect={aspect}
+                            onAspectChange={(v) => setAspect(v as typeof aspect)}
+                            durationSec={durationSec}
+                            onDurationChange={setDurationSec}
+                            captionWidth={captionWidth}
+                            onCaptionWidthChange={setCaptionWidth}
+                            isLongRender={isLongRender}
+                        />
+                    ),
+                }}
+                stage={(
+                    result?.file ? (
+                        <div className="flex h-full max-h-full flex-col items-center justify-center gap-2">
+                            <video
+                                src={toMediaUrl(result.file)}
+                                controls
+                                className="max-h-[calc(100%-3.5rem)] max-w-full rounded-lg"
+                            />
+                            <div className="flex shrink-0 flex-wrap items-center justify-center gap-2">
+                                <a
+                                    href={toMediaUrl(result.file)}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="inline-flex h-8 items-center rounded-md border border-editor-line px-2.5 text-xs text-editor-dim transition-colors hover:bg-editor-hover"
+                                >
+                                    Open
+                                </a>
+                                <button
+                                    type="button"
+                                    onClick={() => setResult(null)}
+                                    className="text-[11px] text-editor-faint underline-offset-2 hover:underline"
+                                >
+                                    Back to setup
+                                </button>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="max-w-md text-center">
+                            <p className="text-[12px] text-editor-faint">
+                                {videoReadiness.ready
+                                    ? 'Ready to render. Your video appears here when it is done.'
+                                    : 'Finish the steps on the left, then press Render.'}
+                            </p>
+                            {videoReadiness.blockers.length > 0 && (
+                                <ul className="mt-3 space-y-1 text-left">
+                                    {videoReadiness.blockers.map((b) => (
+                                        <li key={b.field} className="text-[11px] text-editor-dim">{b.message}</li>
+                                    ))}
+                                </ul>
+                            )}
+                        </div>
+                    )
+                )}
+            />
+        );
+    }
+
+
     return (
         <div className="space-y-6 animate-fade-in">
-            <div>
+            <div className="flex items-start justify-between gap-4">
+                <div>
                 <div className="bf-eyebrow">Studio</div>
                 <h2 className="font-displaySerif text-[28px] leading-[1.08] font-semibold text-bf-cream mt-1.5">Send it to <em className="italic font-medium text-bf-gold">the world</em>.</h2>
+                </div>
+                {/* Same affordance as Timeline: the editor is opt-in and the
+                    classic view remains the fallback. */}
+                <Button
+                    variant="secondary"
+                    className="h-9 shrink-0 text-xs"
+                    onClick={() => setEditorLayout(true)}
+                    title="Rail, panel and preview - the same shell as Timeline"
+                >
+                    Editor view
+                </Button>
             </div>
 
             <RenderProgressOverlay
@@ -1145,48 +1323,19 @@ export function RenderPage() {
                     </Section>
 
                     <Section title="Audio">
-                        <Field
-                            label="Voice track"
-                            badge="Required for waveform"
-                            tooltip="Your narration track. Generate one in Voice & Audio, or upload your own. Required for waveform videos; optional when you supply a background video."
-                        >
-                            <Input
-                                value={audioPath}
-                                onChange={(e) => setAudioPath(e.target.value)}
-                                placeholder="Pick a narration track or generate one in Voice & Audio"
-                                className="bg-black/20"
-                            />
-                            {audioPath.trim() && (
-                              <button
-                                type="button"
-                                onClick={() => setTrimTarget({ kind: 'audio', path: audioPath.trim(), apply: setAudioPath })}
-                                className="mt-2 inline-flex items-center gap-1.5 text-[0.6875rem] px-2 py-1 rounded-md bg-white/[0.06] text-primary-200 hover:bg-white/[0.12] transition-colors"
-                              >
-                                <Scissors size={12} /> Trim
-                              </button>
-                            )}
-                            {audioHistory.length > 0 && (
-                                <div className="mt-2 flex flex-wrap gap-1.5">
-                                    {audioHistory.slice(0, 4).map((item) => (
-                                        <button
-                                            key={item.id}
-                                            onClick={() => setAudioPath(item.path)}
-                                            className="text-[0.6875rem] px-2 py-0.5 rounded-full bg-white/[0.06] text-gray-300 hover:bg-white/[0.12] hover:text-white transition-colors"
-                                        >
-                                            {item.kind}
-                                        </button>
-                                    ))}
-                                </div>
-                            )}
-                        </Field>
-                        <MusicPicker
-                          value={{ path: musicPath || null, volume: musicVolume, autoDuck }}
-                          onChange={(m) => {
-                            setMusicPath(m.path || '');
-                            setMusicVolume(m.volume);
-                            setAutoDuck(m.autoDuck ?? true);
-                          }}
-                          busy={false}
+                        <RenderAudioPanel
+                            audioPath={audioPath}
+                            onAudioPathChange={setAudioPath}
+                            audioHistory={audioHistory}
+                            onTrim={(p) => setTrimTarget({ kind: 'audio', path: p, apply: setAudioPath })}
+                            musicPath={musicPath}
+                            musicVolume={musicVolume}
+                            autoDuck={autoDuck}
+                            onMusicChange={(m) => {
+                                setMusicPath(m.path);
+                                setMusicVolume(m.volume);
+                                setAutoDuck(m.autoDuck);
+                            }}
                         />
                     </Section>
 
