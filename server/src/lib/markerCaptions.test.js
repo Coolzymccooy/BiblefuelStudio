@@ -590,3 +590,20 @@ test('a line-mode preset still decides when no motion is chosen', () => {
   const r = resolveCaptionMotion(undefined, {}, resolveTypographyPreset('marker'));
   assert.equal(r.useWords, false, 'marker is a line style; it must not default to words');
 });
+
+test('stacked block rows do not collide', () => {
+  // A contact sheet showed "the chaos around" overlapping "presence calms":
+  // leading of 1.25em is too tight once boxborderw pads each row top AND
+  // bottom. The gap between baselines must clear the drawn row height.
+  const out = buildLineDrawtext({
+    lines: ['Trust that His presence calms the chaos around you'],
+    w: W, h: H, preset: 'headline', duration: 9, block: true,
+  });
+  const ys = [...out.matchAll(/:y=(\d+)/g)].map((m) => Number(m[1])).sort((a, b) => a - b);
+  const size = Number((out.match(/fontsize=(\d+)/) || [])[1]);
+  const gap = ys[1] - ys[0];
+  // Glyphs plus the box padding drawn above and below the text.
+  const drawnHeight = size + 2 * 18;
+  assert.ok(gap >= drawnHeight,
+    `rows are ${gap}px apart but each draws ${drawnHeight}px tall - they overlap`);
+});

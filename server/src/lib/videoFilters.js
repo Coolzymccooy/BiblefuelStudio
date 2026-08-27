@@ -517,6 +517,9 @@ const MIN_LINE_FONT_SIZE = 22;
 // but allows ~99px at 16 chars.
 const BLOCK_MAX_CHARS = 16;
 
+// Padding drawn around boxed caption text, on every side.
+const BOX_BORDER_W = 18;
+
 // How far apart staggered rows arrive, before the per-block cap.
 const STAGGER_STEP_SECONDS = 0.28;
 
@@ -589,7 +592,7 @@ export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal
       const from = i * slot;
       const to = i === rows.length - 1 ? total : (i + 1) * slot;
       const enable = `:enable='between(t,${from.toFixed(3)},${to.toFixed(3)})'`;
-      parts.push(`drawtext=text='${escapeDrawText(row)}':x=(w-text_w)/2:y=${y}${fontArg(style)}:fontsize=${fontSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=18${enable}`);
+      parts.push(`drawtext=text='${escapeDrawText(row)}':x=(w-text_w)/2:y=${y}${fontArg(style)}:fontsize=${fontSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=${BOX_BORDER_W}${enable}`);
 
       // Karaoke overlay: keep the whole row on screen and re-draw just the
       // spoken word in the emphasis colour on top of it. Only the words that
@@ -629,7 +632,10 @@ export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal
     // One size for every block, so type does not jump between phrases.
     const widest = blocks.flat();
     const fontSize = fitLineFontSize(widest, w, preferred);
-    const lead = Math.round(fontSize * 1.25);
+    // Leading must clear the DRAWN row height, not just the glyphs: box=1
+    // pads boxborderw above and below every row, so 1.25em let a boxed
+    // block overlap itself ("the chaos around" sat on "presence calms").
+    const lead = Math.round(fontSize * 1.15) + 2 * BOX_BORDER_W;
     return blocks.map((rows, bi) => {
       const from = bi * slot;
       const to = bi === blocks.length - 1 ? total : (bi + 1) * slot;
@@ -650,7 +656,7 @@ export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal
         const rowEnable = step > 0
           ? `:enable='between(t,${rowFrom.toFixed(3)},${to.toFixed(3)})'`
           : enable;
-        return `drawtext=text='${escapeDrawText(row)}':x=(w-text_w)/2:y=${y}${fontArg(style)}:fontsize=${fontSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=18${rowEnable}`;
+        return `drawtext=text='${escapeDrawText(row)}':x=(w-text_w)/2:y=${y}${fontArg(style)}:fontsize=${fontSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=${BOX_BORDER_W}${rowEnable}`;
       }).join(",");
     }).join(",");
   }
@@ -670,7 +676,7 @@ export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal
       // silent gap of uncaptioned video at the tail.
       const to = i === safeLines.length - 1 ? total : (i + 1) * slot;
       const enable = `:enable='between(t,${from.toFixed(3)},${to.toFixed(3)})'`;
-      return `drawtext=text='${escapeDrawText(t)}':x=(w-text_w)/2:y=${y}${fontArg(style)}:fontsize=${pacedSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=18${enable}`;
+      return `drawtext=text='${escapeDrawText(t)}':x=(w-text_w)/2:y=${y}${fontArg(style)}:fontsize=${pacedSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=${BOX_BORDER_W}${enable}`;
     }).join(",");
   }
 
@@ -682,7 +688,7 @@ export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal
     const escaped = escapeDrawText(t);
     // Same reasoning as the word box: honour the preset's colour so a marker
     // line keeps its highlighter block instead of reverting to a black panel.
-    return `drawtext=text='${escaped}':x=(w-text_w)/2:y=${y}${fontArg(style)}:fontsize=${fontSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=18`;
+    return `drawtext=text='${escaped}':x=(w-text_w)/2:y=${y}${fontArg(style)}:fontsize=${fontSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=${BOX_BORDER_W}`;
   }).join(",");
 }
 
