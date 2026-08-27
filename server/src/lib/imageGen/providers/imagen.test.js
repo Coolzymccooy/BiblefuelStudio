@@ -8,7 +8,7 @@
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { generateImageImagen, _resetImagenDiscovery } from "./imagen.js";
-import { isCloudflareConfigured } from "./cloudflare.js";
+import { isCloudflareConfigured, generateImageCloudflare, _resetCloudflareSchemaMemo } from "./cloudflare.js";
 
 const TINY_PNG_B64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
@@ -33,6 +33,7 @@ beforeEach(() => {
   for (const k of ENV_KEYS) { saved[k] = process.env[k]; delete process.env[k]; }
   originalFetch = globalThis.fetch;
   _resetImagenDiscovery();
+  _resetCloudflareSchemaMemo();
 });
 
 afterEach(() => {
@@ -59,6 +60,42 @@ describe("Cloudflare token aliases", () => {
   test("account id alone is NOT configured", () => {
     process.env.CLOUDFLARE_ACCOUNT_ID = "acct";
     assert.equal(isCloudflareConfigured(), false);
+  });
+});
+
+describe("Cloudflare schema retry", () => {
+  test("a '/seed not allowed' 400 strips seed and retries; the memo skips it next call", async () => {
+    process.env.CLOUDFLARE_ACCOUNT_ID = "acct";
+    process.env.CLOUDFLARE_AI_API_TOKEN = "tok";
+    const bodies = [];
+    globalThis.fetch = async (_url, init) => {
+      const body = JSON.parse(init.body);
+      bodies.push(body);
+      if ("seed" in body) {
+        return json({ errors: [{ message: "AiError: Bad input: Error: Additional or unevaluated properties '/seed' at '/' not allowed", code: 5006 }] }, 400);
+      }
+      return json({ success: true, result: { image: TINY_PNG_B64 } });
+    };
+
+    const first = await generateImageCloudflare({ prompt: "sunrise", seed: 42 });
+    assert.equal(first.ok, true, first.error);
+    assert.equal(bodies.length, 2);
+    assert.ok(!("seed" in bodies[1]));
+
+    // Second scene: the memo means seed is never sent - one call, no 400.
+    const second = await generateImageCloudflare({ prompt: "dove", seed: 43 });
+    assert.equal(second.ok, true, second.error);
+    assert.equal(bodies.length, 3);
+    assert.ok(!("seed" in bodies[2]));
+  });
+
+  test("a 400 that names no property still fails honestly", async () => {
+    process.env.CLOUDFLARE_ACCOUNT_ID = "acct";
+    process.env.CLOUDFLARE_AI_API_TOKEN = "tok";
+    globalThis.fetch = async () => json({ errors: [{ message: "AiError: something else entirely" }] }, 400);
+    const result = await generateImageCloudflare({ prompt: "x", seed: 1 });
+    assert.equal(result.ok, false);
+    assert.match(result.error, /Cloudflare 400/);
   });
 });
 
