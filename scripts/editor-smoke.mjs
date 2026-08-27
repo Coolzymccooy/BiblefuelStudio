@@ -225,6 +225,16 @@ const get=p=>new Promise((res,rej)=>{http.get({host:'127.0.0.1',port:PORT,path:p
   check('the script LANDS as caption clips on this timeline',
     (await ev(`JSON.parse(localStorage.getItem('BF_SCL_EDITED_LINES')||'[]').length`))>=3);
 
+  await clickTool('Story');
+  await waitFor(`/Upload a sermon|Start new/.test((document.querySelector('[role="tabpanel"]')||{}).innerText||'')`);
+  check('Story quick tool docks in the editor',
+    (await ev(`(()=>{const t=(document.querySelector('[role="tabpanel"]')||{}).innerText||'';return /Upload a sermon|Start new/.test(t)&&/Visual style|cinematic|Stepper|Source/i.test(document.body.innerText);})()`))===true);
+
+  await clickTool('Series');
+  await waitFor(`/Generate series/.test((document.querySelector('[role="tabpanel"]')||{}).innerText||'')`);
+  check('Series quick tool docks with preview-first guard',
+    (await ev(`(()=>{const p=document.querySelector('[role="tabpanel"]');if(!p)return false;const gen=[...p.querySelectorAll('button')].find(b=>/Generate series/.test(b.textContent));const prev=[...p.querySelectorAll('button')].some(b=>/Preview segments/.test(b.textContent));return !!gen&&gen.disabled&&prev;})()`))===true);
+
   // ---- vertical timeline resize ----
   await boot(1900,1000,SEED_MEDIA+`localStorage.setItem('bf.editor.stripPct','38');`);
   const measure=`(()=>{

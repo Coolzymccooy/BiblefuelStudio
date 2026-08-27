@@ -30,6 +30,8 @@ import {
     ChevronUp,
     ChevronDown,
     Wand2,
+    Video,
+    BookOpen,
 } from 'lucide-react';
 import { loadJson, saveJson, STORAGE_KEYS } from '../lib/storage';
 import { LAYOUT_OPTIONS } from '../lib/layoutOptions';
@@ -58,6 +60,9 @@ import { BusyBar } from '../components/ui/BusyBar';
 import { DropZone } from '../components/ui/DropZone';
 import { buildSpeakableLines, cleanCaptionLine } from '../lib/speakableScript';
 import { ScriptQuickPanel, type QuickScript, type ScriptQuickConfig } from '../components/timeline/ScriptQuickPanel';
+import { StoryQuickPanel } from '../components/timeline/StoryQuickPanel';
+import { SeriesQuickPanel } from '../components/timeline/SeriesQuickPanel';
+import { useNavigate } from 'react-router-dom';
 import type { TimelineProject } from '../lib/timelineProject';
 import {
     insertAssetOnTrack,
@@ -202,6 +207,7 @@ interface RenderHistoryItem {
 }
 
 export function TimelinePage() {
+    const navigate = useNavigate();
     const [clips, setClips] = useState<TimelineClip[]>([]);
     const [documentaryProject, setDocumentaryProject] = useState<TimelineProject | null>(null);
     // Scene selection is page-level state: the Scenes panel and the scene
@@ -2016,6 +2022,8 @@ export function TimelinePage() {
                     // on this timeline. Everything below Media is the EDIT
                     // group, unchanged.
                     { id: 'script', label: 'Script', icon: <Wand2 size={17} /> },
+                    { id: 'story', label: 'Story', icon: <Video size={17} /> },
+                    { id: 'series', label: 'Series', icon: <BookOpen size={17} /> },
                     { id: 'media', label: 'Media', icon: <Film size={17} /> },
                     { id: 'clips', label: 'Clips', icon: <Layers size={17} />, count: clips.length },
                     { id: 'captions', label: 'Captions', icon: <Type size={17} /> },
@@ -2035,6 +2043,25 @@ export function TimelinePage() {
                             scripts={quickScripts}
                             onGenerate={handleGenerateQuickScript}
                             onAddToCaptions={handleAddScriptToCaptions}
+                        />
+                    ),
+                    story: (
+                        <StoryQuickPanel
+                            onUseVideo={(path) => {
+                                setSourceMediaPath(path);
+                                setSourceMediaKind('video');
+                                toast.success('Story video loaded as source media');
+                            }}
+                        />
+                    ),
+                    series: (
+                        <SeriesQuickPanel
+                            defaultAspect={
+                                documentaryProject?.aspect === '16:9' ? 'landscape'
+                                    : documentaryProject?.aspect === '1:1' ? 'square'
+                                    : 'portrait'
+                            }
+                            onViewJobs={() => navigate('/app/queue')}
                         />
                     ),
                     media: (
