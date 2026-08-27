@@ -282,15 +282,18 @@ export function EditorShell({
             say "Preview appears here after a render", pushing the panel
             and timeline into slivers. Desktop keeps flex-1, where the
             preview genuinely is the main surface. */}
-        {/* Drag handle, desktop only. 6px hit area with a 1px visible line, so
-            it is grabbable without drawing a thick divider. */}
+        {/* Drag handle, desktop only. 6px hit area with an ALWAYS-VISIBLE grip
+            pill - a transparent strip was functionally there but
+            undiscoverable, and the operator read it as a missing feature. */}
         <div
           role="separator"
           aria-label="Resize panel"
           aria-orientation="vertical"
           onPointerDown={onDragStart}
-          className="hidden w-1.5 shrink-0 cursor-col-resize transition-colors hover:bg-primary-400/40 lg:block"
-        />
+          className="group hidden w-1.5 shrink-0 cursor-col-resize items-center justify-center transition-colors hover:bg-primary-400/30 lg:flex"
+        >
+          <div className="pointer-events-none h-9 w-[3px] rounded-full bg-editor-accent/35 transition-colors group-hover:bg-editor-accent" />
+        </div>
 
         <div className="flex min-w-0 items-center justify-center overflow-auto bg-editor-stage p-4 max-lg:shrink-0 lg:flex-1 lg:p-6">
           {stage}
@@ -379,8 +382,11 @@ export function EditorShell({
           aria-label="Resize timeline"
           aria-orientation="horizontal"
           onPointerDown={onStripDragStart}
-          className="h-1.5 shrink-0 cursor-row-resize transition-colors hover:bg-primary-400/40"
-        />
+          className="group flex h-1.5 shrink-0 cursor-row-resize items-center justify-center transition-colors hover:bg-primary-400/30"
+        >
+          {/* Same visible-grip fix as the panel divider. */}
+          <div className="pointer-events-none h-[3px] w-9 rounded-full bg-editor-accent/35 transition-colors group-hover:bg-editor-accent" />
+        </div>
         <div
           className="overflow-hidden border-t border-editor-line bg-editor-chrome min-h-[120px] shrink-0"
           // Height is inline because it is DRAGGED; a Tailwind class cannot
