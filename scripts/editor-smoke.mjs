@@ -235,6 +235,16 @@ const get=p=>new Promise((res,rej)=>{http.get({host:'127.0.0.1',port:PORT,path:p
   check('Series quick tool docks with preview-first guard',
     (await ev(`(()=>{const p=document.querySelector('[role="tabpanel"]');if(!p)return false;const gen=[...p.querySelectorAll('button')].find(b=>/Generate series/.test(b.textContent));const prev=[...p.querySelectorAll('button')].some(b=>/Preview segments/.test(b.textContent));return !!gen&&gen.disabled&&prev;})()`))===true);
 
+  await clickTool('Voice');
+  await waitFor(`/Generate voice|Generate ·/i.test((document.querySelector('[role="tabpanel"]')||{}).innerText||'')`);
+  check('Voice quick tool docks with provider tabs and the shared takes list',
+    (await ev(`(()=>{const p=document.querySelector('[role="tabpanel"]');if(!p)return false;const t=p.innerText||'';return /ElevenLabs/i.test(t)&&/Edge-TTS/i.test(t)&&/Recent audio/i.test(t);})()`))===true);
+
+  await clickTool('Output');
+  await waitFor(`/What you need to render/i.test((document.querySelector('[role="tabpanel"]')||{}).innerText||'')`);
+  check('Output tool shows readiness as visible state with ONE render action and the Share Kit',
+    (await ev(`(()=>{const p=document.querySelector('[role="tabpanel"]');if(!p)return false;const t=p.innerText||'';const btns=[...p.querySelectorAll('button')];return /What you need to render/i.test(t)&&btns.some(b=>/^Render /i.test(b.textContent.trim()))&&/Share Kit/i.test(t);})()`))===true);
+
   // ---- vertical timeline resize ----
   await boot(1900,1000,SEED_MEDIA+`localStorage.setItem('bf.editor.stripPct','38');`);
   const measure=`(()=>{

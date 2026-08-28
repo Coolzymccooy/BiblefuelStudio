@@ -60,6 +60,9 @@ import { BusyBar } from '../components/ui/BusyBar';
 import { DropZone } from '../components/ui/DropZone';
 import { buildSpeakableLines, cleanCaptionLine } from '../lib/speakableScript';
 import { ScriptQuickPanel, type QuickScript, type ScriptQuickConfig } from '../components/timeline/ScriptQuickPanel';
+import { VoiceQuickPanel, type VoiceTake } from '../components/timeline/VoiceQuickPanel';
+import { OutputQuickPanel, type ReadinessItem } from '../components/timeline/OutputQuickPanel';
+import { ShareKitPanel } from '../components/timeline/ShareKitPanel';
 import { StoryQuickPanel } from '../components/timeline/StoryQuickPanel';
 import { SeriesQuickPanel } from '../components/timeline/SeriesQuickPanel';
 import { useNavigate } from 'react-router-dom';
@@ -1790,6 +1793,59 @@ export function TimelinePage() {
         toast.success('Source media cleared — the stage shows your timeline again');
     };
 
+    // Land a generated take on the voice-over lane as a REAL audio asset (a
+    // path the renderer plays), appended after the last VO clip. Also joins
+    // the shared audio history so the Voice page sees the same take.
+    const handleLandVoiceover = (take: VoiceTake) => {
+        if (!documentaryProject) {
+            toast.error('Create a documentary timeline first');
+            return;
+        }
+        const voTrack = documentaryProject.tracks.find((t) => t.kind === 'voiceover');
+        const startSec = voTrack?.clips.length
+            ? Math.max(...voTrack.clips.map((c) => c.startSec + c.durationSec))
+            : 0;
+        const next = insertAssetOnTrack(documentaryProject, {
+            trackKind: 'voiceover',
+            asset: {
+                id: `asset-vo-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                kind: 'audio',
+                source: 'upload',
+                label: take.label,
+                path: take.path,
+                durationSec: take.durationSec,
+                tags: ['voiceover', 'tts'],
+            },
+            startSec,
+            durationSec: take.durationSec ?? 6,
+            fit: 'contain',
+        });
+        setDocumentaryProject(next);
+        pushAudioHistory(take.path, 'tts');
+        toast.success('Voice-over landed on the VO lane');
+    };
+
+    // Readiness for the Output tool - the same refusals handleRender* raise
+    // as toasts, made visible BEFORE the click. Mirrors the guards exactly.
+    const outputReadiness: ReadinessItem[] = timelineHasOwnContent
+        ? [
+            { label: 'Timeline has content', status: 'done', detail: 'Composes every track: footage, B-roll, voice-over, music, captions and effects.' },
+            { label: 'Voice-over', status: documentaryProject?.tracks.some((t) => t.kind === 'voiceover' && t.clips.length > 0) ? 'done' : 'optional', detail: 'Generate one in the Voice tool, or let the sermon audio carry it.' },
+        ]
+        : [
+            { label: sourceMediaPath ? 'Source media loaded' : 'Upload a sermon audio or video', status: sourceMediaPath ? 'done' : 'todo', detail: sourceMediaPath ? undefined : 'Media tool, Choose file. Or build a documentary timeline from the Scenes tool.' },
+            ...(kineticCaptions && !(transcript && transcript.length) && sourceMediaKind !== 'video'
+                ? [{ label: 'Transcribe first, or turn off kinetic captions', status: 'todo' as const, detail: 'Kinetic captions need a transcript (Captions tool, Transcribe).' }]
+                : [{ label: kineticCaptions ? 'Kinetic captions ready' : 'Kinetic captions off', status: (kineticCaptions ? 'done' : 'optional') as ReadinessItem['status'] }]),
+            ...(sourceMediaKind === 'audio' && backgroundItems.length === 0 && !autoBackground
+                ? [{ label: 'Pick a video background, or turn on Auto', status: 'todo' as const, detail: 'Audio sources need a visual layer (Background tool).' }]
+                : [{ label: sourceMediaKind === 'audio' ? (autoBackground && backgroundItems.length === 0 ? 'Background: Auto' : 'Background ready') : 'Video brings its own picture', status: 'done' as const }]),
+            ...(kineticCaptions && transcript && transcript.length > MAX_CAPTION_WORDS
+                ? [{ label: 'Too long for kinetic captions', status: 'todo' as const, detail: `${transcript.length} words - max ~${MAX_CAPTION_WORDS}. Trim the clip, use Series, or turn captions off.` }]
+                : []),
+            { label: musicPath ? 'Music bed set' : 'Music bed', status: musicPath ? 'done' : 'optional' },
+        ];
+
     const overlays = (
         <>
             {/* Library Picker Modal — multi-select up to MAX_BACKGROUNDS.
@@ -2044,6 +2100,7 @@ export function TimelinePage() {
                     { id: 'scenes', label: 'Scenes', icon: <Sparkles size={17} /> },
                     { id: 'background', label: 'Background', icon: <ImageIcon size={17} />, count: backgroundItems.length },
                     { id: 'renders', label: 'Renders', icon: <Clapperboard size={17} />, count: renderHistory.length },
+                    { id: 'output', label: 'Output', icon: <Share2 size={17} /> },
                 ]}
                 // Media stays the landing tool - adding Script to the rail must
                 // not change what the editor opens on.
@@ -2288,11 +2345,38 @@ export function TimelinePage() {
                         </>
                     ),
                     voice: (
-                        <RecentAudioPanel
-                            items={audioHistory}
-                            onAddClip={handleAddClip}
-                            onUseAsSource={useAsSource}
-                            onUseAsMusicBed={useAsMusicBed}
+                        <div className="space-y-2">
+                            <VoiceQuickPanel
+                                hasProject={Boolean(documentaryProject)}
+                                onLandVoiceover={handleLandVoiceover}
+                                onUseAsSource={useAsSource}
+                            />
+                            {/* Unchanged - the pre-existing takes list stays exactly as it was. */}
+                            <PanelSection title="Recent audio" count={audioHistory.length}>
+                                <RecentAudioPanel
+                                    items={audioHistory}
+                                    onAddClip={handleAddClip}
+                                    onUseAsSource={useAsSource}
+                                    onUseAsMusicBed={useAsMusicBed}
+                                />
+                            </PanelSection>
+                        </div>
+                    ),
+                    output: (
+                        <OutputQuickPanel
+                            items={outputReadiness}
+                            renderLabel={timelineHasOwnContent ? 'Render timeline' : (kineticCaptions && transcript?.length ? 'Render captioned video' : 'Render video')}
+                            renderHint={timelineHasOwnContent
+                                ? 'Composes every timeline track: footage, B-roll, voice-over, music, captions and effects.'
+                                : 'Renders your source media with captions and backgrounds.'}
+                            onRender={handleRenderFromEditor}
+                            isRendering={isRenderingVideo || isRenderingDocumentaryTimeline}
+                            progress={isRenderingDocumentaryTimeline ? documentaryRenderProgress : renderProgress}
+                            renderedVideo={renderedVideo}
+                            onPreviewOnStage={() => setRenderedThisSession(true)}
+                            onShare={() => renderedVideo && setShareUrl(renderedVideo)}
+                            onDownload={() => { if (renderedVideo) void api.downloadMedia(renderedVideo, `biblefuel-${(renderedVideo.split('/').pop() || 'video').replace(/\.[^.]+$/, '').slice(0, 24)}.mp4`); }}
+                            shareKit={<ShareKitPanel lines={editedLines.join('\n')} latestRenderFile={renderedVideo || undefined} />}
                         />
                     ),
                     scenes: documentaryProject ? (
