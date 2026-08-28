@@ -18,9 +18,12 @@ if (!secret) {
 }
 
 const token = jwt.sign(
-  { sub: 'smoke-test-user', email: 'smoke@local.test', role: 'user', emailVerified: true },
+  // SMOKE_SUB / SMOKE_EMAIL let a probe run as another local user (e.g. the
+  // super-admin email from server/.env) to reproduce plan-specific paths.
+  { sub: process.env.SMOKE_SUB || 'smoke-test-user', email: process.env.SMOKE_EMAIL || 'smoke@local.test', role: 'user', emailVerified: true },
   secret,
   { expiresIn: '12h' },
 );
-fs.writeFileSync(path.join(root, 'tok.txt'), token);
-console.log('token written to tok.txt (12h expiry)');
+const out = process.env.SMOKE_OUT || 'tok.txt';
+fs.writeFileSync(path.join(root, out), token);
+console.log(`token written to ${out} (12h expiry)`);

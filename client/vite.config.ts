@@ -32,6 +32,22 @@ export default defineConfig(({ mode }) => {
         '/api': {
           target: apiTarget,
           changeOrigin: true,
+          // The API runs under `node --watch` and restarts on every server
+          // file save; a request in flight at that moment used to surface as
+          // a bare "Request failed with status code 500" from the proxy.
+          // Answer with a clear, retryable 503 the client can explain.
+          configure: (proxy) => {
+            proxy.on('error', (err, _req, res) => {
+              const r = res as import('http').ServerResponse;
+              if (!r || r.headersSent || typeof r.writeHead !== 'function') return;
+              r.writeHead(503, { 'Content-Type': 'application/json' });
+              r.end(JSON.stringify({
+                ok: false,
+                error: 'API_UNREACHABLE',
+                hint: `The local API was restarting or unreachable (${(err as NodeJS.ErrnoException).code || 'proxy error'}). Try again in a moment.`,
+              }));
+            });
+          },
         },
         '/outputs': {
           target: apiTarget,

@@ -248,3 +248,37 @@ describe('proofRenderer — multi-track composition', () => {
     assert.doesNotMatch(filter, /text='It's/, 'raw apostrophe would terminate the string early');
   });
 });
+
+// End to end from the PROJECT the client saves: per-line caption clips carry
+// their text through the planner into drawtext filters. This is the path that
+// produced a render with the picture and the voice but no captions.
+import { buildTimelineRenderPlan } from './planner.js';
+describe('captions reach ffmpeg', () => {
+  test('per-line caption clips are burned in as drawtext, timed to their slots', () => {
+    const project = {
+      id: 'p', title: 't', targetDurationSec: 10, aspect: '16:9', renderSettings: { quality: 'proof_720p' },
+      assets: {
+        v: { id: 'v', kind: 'video', source: 'upload', label: 'main', path: 'uploads/main.mp4' },
+        cap: { id: 'cap', kind: 'caption', source: 'system', label: '2 caption lines' },
+      },
+      tracks: [
+        { id: 'tv', kind: 'video', label: 'Video', clips: [{ id: 'v1', assetId: 'v', startSec: 0, durationSec: 10, transform: { fit: 'cover' } }] },
+        { id: 'tc', kind: 'captions', label: 'Captions', clips: [
+          { id: 'c0', assetId: 'cap', startSec: 0, durationSec: 5, transform: { fit: 'cover' }, text: 'He is worthy' },
+          { id: 'c1', assetId: 'cap', startSec: 5, durationSec: 5, transform: { fit: 'cover' }, text: 'of all praise' },
+        ] },
+      ],
+    };
+    const plan = buildTimelineRenderPlan(project, { quality: 'proof_720p' });
+    assert.equal(plan.ok, true);
+    const cmd = buildProofRenderCommand(plan, {
+      outputPath: path.resolve('/tmp/biblefuel-server/outputs/timeline/out.mp4'),
+      serverRoot: path.resolve('/tmp/biblefuel-server'),
+      outputDir: path.resolve('/tmp/biblefuel-server/outputs'),
+    });
+    assert.equal(cmd.ok, true);
+    const graph = cmd.args.join(' ');
+    assert.match(graph, /drawtext=text='He is worthy'.*enable='between\(t,0,5\)'/);
+    assert.match(graph, /drawtext=text='of all praise'.*enable='between\(t,5,10\)'/);
+  });
+});
