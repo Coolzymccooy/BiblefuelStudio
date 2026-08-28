@@ -627,3 +627,16 @@ input:-webkit-autofill:focus {
   -webkit-box-shadow: 0 0 0px 1000px #161009 inset;
   transition: background-color 5000s ease-in-out 0s;
 }
+
+/* Classic control blocks docked inside an editor panel (~320px): their
+   viewport-based md: grids would cram 3 columns into the panel, so stack. */
+.editor-embed [class*="md:grid-cols-"] { grid-template-columns: minmax(0, 1fr) !important; }
+.editor-embed [class*="lg:grid-cols-"] { grid-template-columns: minmax(0, 1fr) !important; }
+/* Embedded lab: providers as full-width rows (name left, note right) so the
+   muscular labels never truncate in a ~300px panel; classic controls shrink
+   to editor scale. */
+.editor-embed .provider-grid { grid-template-columns: minmax(0, 1fr) !important; }
+.editor-embed .provider-btn { display: flex; align-items: baseline; justify-content: space-between; gap: .5rem; padding-top: .45rem; padding-bottom: .45rem; }
+.editor-embed .provider-btn > span { overflow: visible; white-space: normal; }
+.editor-embed .input { font-size: 12px; padding: 6px 10px; border-radius: 8px; }
+.editor-embed .field-label { font-size: 11px; }

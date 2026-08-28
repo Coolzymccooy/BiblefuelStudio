@@ -133,7 +133,35 @@ const AUDIO_PRESET_DEFAULTS: Record<string, AudioPresetValues> = {
 
 type TTSProvider = 'elevenlabs' | 'azure' | 'fish' | 'edge' | 'chatterbox';
 
+type LabTabId = 'generate' | 'record' | 'treat' | 'music' | 'clone' | 'compare' | 'animation' | 'takes';
+
+/** A take the Timeline can land on its voice-over lane. */
+export interface VoiceTake {
+    path: string;
+    label: string;
+    durationSec?: number;
+}
+
+/**
+ * Embedded mode: the whole lab docked inside another editor (the Timeline
+ * Voice tool). Every control block is the SAME one classic renders, so the
+ * two surfaces cannot drift and the parity gate covers both.
+ */
+export interface VoiceLabEmbed {
+    /** Script handed over from the Script tool ("Voice this"). */
+    seedText?: string;
+    /** Landing needs a documentary timeline to have a lane to land on. */
+    hasProject: boolean;
+    onLandVoiceover: (take: VoiceTake) => void;
+    /** Next step after a take has landed: the Output tool. */
+    onNext: () => void;
+}
+
 export function VoiceAudioPage() {
+    return <VoiceLab />;
+}
+
+export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
     const { config } = useConfig();
     const ttsEnabled = config.features.tts;
     const elevenlabsAvailable = config.features.elevenlabs !== false;
@@ -150,6 +178,12 @@ export function VoiceAudioPage() {
     const [voiceDefaults] = useVoiceSynthesisDefaults();
     const [ttsText, setTtsText] = useState('');
     const [audioPath, setAudioPath] = useState('');
+    // Embedded: which lab tab is open, and whether a take has landed (gates Next).
+    const [labTab, setLabTab] = useState<LabTabId>('generate');
+    const [landed, setLanded] = useState(false);
+    useEffect(() => {
+        if (embedded?.seedText) setTtsText(embedded.seedText);
+    }, [embedded?.seedText]);
     // Editor layout, mirroring Timeline and Render. Classic stays the fallback.
     const [editorLayout, setEditorLayout] = useState<boolean>(
         () => loadJson<boolean>('bf.voice.editorLayout', false),
@@ -1000,6 +1034,16 @@ export function VoiceAudioPage() {
         };
     }, []);
 
+    // Provider buttons with muscle: bold name + one-line note; disabled ones
+    // say "not configured" and carry the real reason in their tooltip.
+    const providerBtnClass = (id: TTSProvider) => `provider-btn min-w-0 rounded-lg border px-2.5 py-2 text-left transition ${
+        provider === id
+            ? 'border-editor-accent/70 bg-editor-accent/15 shadow-[inset_0_0_0_1px_rgba(230,201,138,.35)]'
+            : 'border-white/10 bg-white/[0.03] hover:border-white/20 hover:bg-white/[0.06]'
+    } disabled:cursor-not-allowed disabled:opacity-40`;
+    const providerNameClass = (id: TTSProvider) => `block truncate text-[12.5px] font-bold ${provider === id ? 'text-editor-accent' : 'text-content-primary'}`;
+    const PROVIDER_NOTE_CLASS = 'block truncate text-[10px] text-content-tertiary';
+
     const providerControls = (
         <>
             {voiceDefaults.enabled && (
@@ -1034,73 +1078,63 @@ export function VoiceAudioPage() {
                         }
                     />
                 </label>
-                <div className="inline-flex rounded-lg border border-white/10 overflow-hidden mt-0">
+                <div className="provider-grid grid grid-cols-2 gap-1.5 sm:grid-cols-3" role="group" aria-label="Voice provider">
+                    {/* Five explicit buttons (not a map): the parity scanner counts
+                        each provider as its own control, as the baseline did. */}
                     <button
                         type="button"
                         onClick={() => setProvider('elevenlabs')}
                         disabled={!elevenlabsAvailable}
-                        className={`px-3 py-1.5 text-xs font-medium transition ${
-                            provider === 'elevenlabs'
-                                ? 'bg-primary-500 text-white'
-                                : 'bg-transparent text-gray-300 hover:bg-white/5'
-                        } disabled:opacity-40 disabled:cursor-not-allowed`}
+                        aria-pressed={provider === 'elevenlabs'}
+                        title={elevenlabsAvailable ? 'ElevenLabs · premium · cloning' : 'ELEVENLABS_API_KEY not set'}
+                        className={providerBtnClass('elevenlabs')}
                     >
-                        ElevenLabs <span className="opacity-60">· premium</span>
+                        <span className={providerNameClass('elevenlabs')}>ElevenLabs</span>
+                        <span className={PROVIDER_NOTE_CLASS}>{elevenlabsAvailable ? 'premium · cloning' : 'not configured'}</span>
                     </button>
                     <button
                         type="button"
                         onClick={() => setProvider('azure')}
                         disabled={!azureAvailable}
-                        title={azureAvailable
-                            ? ''
-                            : (azureReason || 'AZURE_SPEECH_KEY / AZURE_SPEECH_REGION not set — see docs/AZURE_SPEECH_SETUP.md')}
-                        className={`px-3 py-1.5 text-xs font-medium transition border-l border-white/10 ${
-                            provider === 'azure'
-                                ? 'bg-primary-500 text-white'
-                                : 'bg-transparent text-gray-300 hover:bg-white/5'
-                        } disabled:opacity-40 disabled:cursor-not-allowed`}
+                        aria-pressed={provider === 'azure'}
+                        title={azureAvailable ? 'Azure · word-sync captions' : (azureReason || 'AZURE_SPEECH_KEY / AZURE_SPEECH_REGION not set — see docs/AZURE_SPEECH_SETUP.md')}
+                        className={providerBtnClass('azure')}
                     >
-                        Azure <span className="opacity-60">· word-sync</span>
+                        <span className={providerNameClass('azure')}>Azure</span>
+                        <span className={PROVIDER_NOTE_CLASS}>{azureAvailable ? 'word-sync captions' : 'not configured'}</span>
                     </button>
                     <button
                         type="button"
                         onClick={() => setProvider('fish')}
                         disabled={!fishAvailable}
-                        title={fishAvailable
-                            ? ''
-                            : (fishReason || 'FISH_API_KEY not set — see docs/FISH_AUDIO_SETUP.md')}
-                        className={`px-3 py-1.5 text-xs font-medium transition border-l border-white/10 ${
-                            provider === 'fish'
-                                ? 'bg-primary-500 text-white'
-                                : 'bg-transparent text-gray-300 hover:bg-white/5'
-                        } disabled:opacity-40 disabled:cursor-not-allowed`}
+                        aria-pressed={provider === 'fish'}
+                        title={fishAvailable ? 'Fish · premium · multilingual' : (fishReason || 'FISH_API_KEY not set — see docs/FISH_AUDIO_SETUP.md')}
+                        className={providerBtnClass('fish')}
                     >
-                        Fish <span className="opacity-60">· premium</span>
+                        <span className={providerNameClass('fish')}>Fish</span>
+                        <span className={PROVIDER_NOTE_CLASS}>{fishAvailable ? 'premium · multilingual' : 'not configured'}</span>
                     </button>
                     <button
                         type="button"
                         onClick={() => setProvider('chatterbox')}
                         disabled={!chatterboxAvailable}
-                        title={chatterboxAvailable ? '' : 'CHATTERBOX_URL not set — point it at a Chatterbox HTTP server (self-hosted bridge, e.g. https://chatterbox.tiwaton.co.uk).'}
-                        className={`px-3 py-1.5 text-xs font-medium transition border-l border-white/10 ${
-                            provider === 'chatterbox'
-                                ? 'bg-[#7fb5aa]/15 text-[#a5cec6]'
-                                : 'text-gray-300 hover:bg-white/5'
-                        } disabled:opacity-40 disabled:cursor-not-allowed`}
+                        aria-pressed={provider === 'chatterbox'}
+                        title={chatterboxAvailable ? 'Chatterbox · self-hosted · free' : 'CHATTERBOX_URL not set — point it at a Chatterbox HTTP server (self-hosted bridge, e.g. https://chatterbox.tiwaton.co.uk).'}
+                        className={providerBtnClass('chatterbox')}
                     >
-                        Chatterbox <span className="opacity-60">· self-hosted</span>
+                        <span className={providerNameClass('chatterbox')}>Chatterbox</span>
+                        <span className={PROVIDER_NOTE_CLASS}>{chatterboxAvailable ? 'self-hosted · free' : 'not configured'}</span>
                     </button>
                     <button
                         type="button"
                         onClick={() => setProvider('edge')}
                         disabled={!edgeAvailable}
-                        className={`px-3 py-1.5 text-xs font-medium transition border-l border-white/10 ${
-                            provider === 'edge'
-                                ? 'bg-primary-500 text-white'
-                                : 'bg-transparent text-gray-300 hover:bg-white/5'
-                        } disabled:opacity-40 disabled:cursor-not-allowed`}
+                        aria-pressed={provider === 'edge'}
+                        title={edgeAvailable ? 'Edge-TTS · free · stock voices' : 'EDGE_TTS_ENABLED is off'}
+                        className={providerBtnClass('edge')}
                     >
-                        Edge-TTS <span className="opacity-60">· free</span>
+                        <span className={providerNameClass('edge')}>Edge-TTS</span>
+                        <span className={PROVIDER_NOTE_CLASS}>{edgeAvailable ? 'free · stock voices' : 'not configured'}</span>
                     </button>
                 </div>
                 {(!azureAvailable && azureReason) || (!fishAvailable && fishReason) ? (
@@ -1872,6 +1906,154 @@ export function VoiceAudioPage() {
                 </>
     );
 
+    const takesPanel = (
+                        <div className="flex h-full min-h-0 flex-col gap-3">
+                            {/* The current track IS the contract with Render - keep it
+                                visible and editable here, same as classic's Current
+                                Audio card. */}
+                            <div>
+                                <label className="field-label">Current audio</label>
+                                <Input
+                                    value={audioPath}
+                                    onChange={(e) => setAudioPath(e.target.value)}
+                                    placeholder="e.g. server/outputs/audio.mp3"
+                                    className="bg-black/20"
+                                />
+                            </div>
+                            {audioHistory.length === 0 ? (
+                                <p className="text-[11px] text-editor-faint">No takes yet.</p>
+                            ) : (
+                                <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
+                                    {audioHistory.map((item) => {
+                                        const isCurrent = item.path === audioPath;
+                                        return (
+                                        <div
+                                            key={item.id}
+                                            className={`surface-raised flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 ${isCurrent ? 'border border-[#7fb5aa]/25' : ''}`}
+                                        >
+                                            <button
+                                                type="button"
+                                                onClick={() => setAudioPath(item.path)}
+                                                className="min-w-0 flex-1 truncate text-left text-xs text-content-secondary"
+                                                title={item.path}
+                                            >
+                                                {item.kind}
+                                            </button>
+                                            {isCurrent && (
+                                                <CheckCircle2 size={12} className="shrink-0 text-[#8fc2b8]" aria-label="Current take" />
+                                            )}
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    navigator.clipboard.writeText(item.path);
+                                                    toast.success('Copied');
+                                                }}
+                                                aria-label="Copy path"
+                                                className="shrink-0 rounded p-1 text-editor-faint hover:text-white"
+                                            >
+                                                <Clipboard size={12} />
+                                            </button>
+                                        </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+    );
+
+    // ---- Embedded (inside the Timeline editor) ------------------------------
+    // Sub-tabs over the SAME hoisted blocks; a pinned footer carries the take
+    // onto the timeline: Current audio -> Land on VO lane -> Next: Render.
+    if (embedded) {
+        const tabs: Array<{ id: LabTabId; label: string; count?: number }> = [
+            { id: 'generate', label: 'Generate' },
+            { id: 'record', label: 'Record' },
+            { id: 'treat', label: 'Treat' },
+            { id: 'music', label: 'Music' },
+            { id: 'clone', label: 'Clone', count: voicePresets.length || undefined },
+            { id: 'compare', label: 'Compare' },
+            { id: 'animation', label: 'Animation' },
+            { id: 'takes', label: 'Takes', count: audioHistory.length || undefined },
+        ];
+        const canLand = Boolean(audioPath.trim()) && embedded.hasProject;
+        const landTitle = !audioPath.trim()
+            ? 'Generate, record or pick a take first'
+            : !embedded.hasProject ? 'Create a documentary timeline first (Scenes tool)' : 'Add the current audio as a clip on the voice-over lane';
+        return (
+            <div className="editor-embed flex h-full min-h-0 flex-col">
+                <div role="tablist" aria-label="Voice lab" className="mb-2 flex flex-wrap gap-1">
+                    {tabs.map((t) => (
+                        <button
+                            key={t.id}
+                            type="button"
+                            role="tab"
+                            aria-selected={labTab === t.id}
+                            onClick={() => setLabTab(t.id)}
+                            className={`rounded-md border px-2 py-1 text-[11px] font-semibold transition ${
+                                labTab === t.id ? 'border-editor-accent/60 bg-editor-accent/10 text-editor-accent' : 'border-editor-line text-editor-dim hover:text-editor-text'
+                            }`}
+                        >
+                            {t.label}{t.count ? <span className="ml-1 text-[10px] opacity-70">{t.count}</span> : null}
+                        </button>
+                    ))}
+                </div>
+                <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-0.5">
+                    {labTab === 'generate' && (
+                        <div className="space-y-3">
+                            <Textarea
+                                value={ttsText}
+                                onChange={(e) => setTtsText(e.target.value)}
+                                placeholder="What should the voice say?"
+                                aria-label="Voice script"
+                                className="h-28 bg-black/20 text-xs"
+                            />
+                            <div className="flex flex-wrap gap-1.5">
+                                <Button variant="secondary" className="h-7 text-[11px]" onClick={handleUseLatestScript}>Use latest script</Button>
+                                <Button variant="secondary" className="h-7 text-[11px]" onClick={handleFormatForVoice}>Format for voice</Button>
+                            </div>
+                            {providerControls}
+                        </div>
+                    )}
+                    {labTab === 'record' && recordUploadPanel}
+                    {labTab === 'treat' && <div className="space-y-3">{treatmentControls}</div>}
+                    {labTab === 'music' && <div className="space-y-3">{soundtrackControls}</div>}
+                    {labTab === 'clone' && (
+                        <div className="space-y-1">
+                            <PanelSection title="Voice clone" defaultOpen>
+                                <div className="space-y-4">{cloneControls}</div>
+                            </PanelSection>
+                            <PanelSection title="Voice presets" count={voicePresets.length}>
+                                <div className="space-y-4">{presetControls}</div>
+                            </PanelSection>
+                        </div>
+                    )}
+                    {labTab === 'compare' && <CompareVoices />}
+                    {labTab === 'animation' && <AnimationPicker />}
+                    {labTab === 'takes' && takesPanel}
+                </div>
+                <div className="mt-2 shrink-0 space-y-1.5 border-t border-editor-line pt-2">
+                    <p className="truncate text-[10px] text-editor-faint" title={audioPath || undefined}>
+                        {audioPath.trim() ? `Current audio · ${currentTrackLabel}` : 'No current audio yet — generate, record or pick a take.'}
+                    </p>
+                    {currentAudioUrl && <audio controls src={currentAudioUrl} className="h-8 w-full" />}
+                    <Button
+                        onClick={() => { embedded.onLandVoiceover({ path: audioPath, label: currentTrackLabel }); setLanded(true); }}
+                        disabled={!canLand}
+                        title={landTitle}
+                        className="h-9 w-full text-xs"
+                    >
+                        Land on VO lane
+                    </Button>
+                    {landed && (
+                        <Button variant="secondary" onClick={embedded.onNext} className="h-9 w-full border-editor-line text-xs">
+                            Next: Render → Output tool
+                        </Button>
+                    )}
+                </div>
+            </div>
+        );
+    }
+
     // ---- Editor layout -----------------------------------------------------
     // Same shell as Timeline and Render. The panels reuse the blocks the page
     // ALREADY hoists (providerControls, recordUploadPanel, treatmentControls,
@@ -1942,60 +2124,7 @@ export function VoiceAudioPage() {
                     music: (
                         <div className="space-y-3">{soundtrackControls}</div>
                     ),
-                    takes: (
-                        <div className="flex h-full min-h-0 flex-col gap-3">
-                            {/* The current track IS the contract with Render - keep it
-                                visible and editable here, same as classic's Current
-                                Audio card. */}
-                            <div>
-                                <label className="field-label">Current audio</label>
-                                <Input
-                                    value={audioPath}
-                                    onChange={(e) => setAudioPath(e.target.value)}
-                                    placeholder="e.g. server/outputs/audio.mp3"
-                                    className="bg-black/20"
-                                />
-                            </div>
-                            {audioHistory.length === 0 ? (
-                                <p className="text-[11px] text-editor-faint">No takes yet.</p>
-                            ) : (
-                                <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
-                                    {audioHistory.map((item) => {
-                                        const isCurrent = item.path === audioPath;
-                                        return (
-                                        <div
-                                            key={item.id}
-                                            className={`surface-raised flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 ${isCurrent ? 'border border-[#7fb5aa]/25' : ''}`}
-                                        >
-                                            <button
-                                                type="button"
-                                                onClick={() => setAudioPath(item.path)}
-                                                className="min-w-0 flex-1 truncate text-left text-xs text-content-secondary"
-                                                title={item.path}
-                                            >
-                                                {item.kind}
-                                            </button>
-                                            {isCurrent && (
-                                                <CheckCircle2 size={12} className="shrink-0 text-[#8fc2b8]" aria-label="Current take" />
-                                            )}
-                                            <button
-                                                type="button"
-                                                onClick={() => {
-                                                    navigator.clipboard.writeText(item.path);
-                                                    toast.success('Copied');
-                                                }}
-                                                aria-label="Copy path"
-                                                className="shrink-0 rounded p-1 text-editor-faint hover:text-white"
-                                            >
-                                                <Clipboard size={12} />
-                                            </button>
-                                        </div>
-                                        );
-                                    })}
-                                </div>
-                            )}
-                        </div>
-                    ),
+                    takes: takesPanel,
                 }}
                 stage={(
                     audioPath.trim() ? (

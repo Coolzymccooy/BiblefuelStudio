@@ -60,7 +60,7 @@ import { BusyBar } from '../components/ui/BusyBar';
 import { DropZone } from '../components/ui/DropZone';
 import { buildSpeakableLines, cleanCaptionLine } from '../lib/speakableScript';
 import { ScriptQuickPanel, type QuickScript, type ScriptQuickConfig } from '../components/timeline/ScriptQuickPanel';
-import { VoiceQuickPanel, type VoiceTake } from '../components/timeline/VoiceQuickPanel';
+import { VoiceLab, type VoiceTake } from './VoiceAudioPage';
 import { OutputQuickPanel, type ReadinessItem } from '../components/timeline/OutputQuickPanel';
 import { ShareKitPanel } from '../components/timeline/ShareKitPanel';
 import { StoryQuickPanel } from '../components/timeline/StoryQuickPanel';
@@ -2391,12 +2391,16 @@ export function TimelinePage() {
                     ),
                     voice: (
                         <div className="space-y-2">
-                            <VoiceQuickPanel
-                                hasProject={Boolean(documentaryProject)}
-                                onLandVoiceover={handleLandVoiceover}
-                                seedText={voiceSeedText}
-                                onNext={() => setActiveTool('output')}
-                                onUseAsSource={useAsSource}
+{/* The WHOLE Voice lab, embedded: Generate / Record / Treat / Music /
+                                Clone & Presets / Compare / Animation / Takes - the same
+                                blocks classic renders, so nothing is lost between views. */}
+                            <VoiceLab
+                                embedded={{
+                                    seedText: voiceSeedText,
+                                    hasProject: Boolean(documentaryProject),
+                                    onLandVoiceover: handleLandVoiceover,
+                                    onNext: () => setActiveTool('output'),
+                                }}
                             />
                             {/* Unchanged - the pre-existing takes list stays exactly as it was. */}
                             <PanelSection title="Recent audio" count={audioHistory.length}>

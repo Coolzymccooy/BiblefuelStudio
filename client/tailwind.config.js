@@ -106,7 +106,7 @@ export default {
           sub2: 'var(--bf-sub2, #a99f8b)',
           muted: 'var(--bf-muted, #8a7f6b)',
           faint: 'var(--bf-faint, #6f6654)',
-          success: 'var(--bf-success, #6fcf97)',
+          success: 'var(--bf-success, #7fb5aa)',
           danger: 'var(--bf-danger, #e08a8a)',
         },
         glass: {

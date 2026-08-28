@@ -240,9 +240,14 @@ const get=p=>new Promise((res,rej)=>{http.get({host:'127.0.0.1',port:PORT,path:p
     (await ev(`(()=>{const p=document.querySelector('[role="tabpanel"]');if(!p)return false;const gen=[...p.querySelectorAll('button')].find(b=>/Generate series/.test(b.textContent));const prev=[...p.querySelectorAll('button')].some(b=>/Preview segments/.test(b.textContent));return !!gen&&gen.disabled&&prev;})()`))===true);
 
   await clickTool('Voice');
-  await waitFor(`/Generate voice|Generate ·/i.test((document.querySelector('[role="tabpanel"]')||{}).innerText||'')`);
-  check('Voice quick tool docks with provider tabs and the shared takes list',
-    (await ev(`(()=>{const p=document.querySelector('[role="tabpanel"]');if(!p)return false;const t=p.innerText||'';return /ElevenLabs/i.test(t)&&/Edge-TTS/i.test(t)&&/Recent audio/i.test(t);})()`))===true);
+  await waitFor(`/Land on VO lane/i.test((document.querySelector('[role="tabpanel"]')||{}).innerText||'')`);
+  check('Voice tool docks the WHOLE lab: sub-tabs, muscular providers, landing footer, shared takes list',
+    (await ev(`(()=>{const p=document.querySelector('[role="tabpanel"]');if(!p)return false;const t=p.innerText||'';const tabs=[...p.querySelectorAll('[role="tablist"][aria-label="Voice lab"] [role="tab"]')].map(b=>b.textContent.trim());const want=['Generate','Record','Treat','Music','Clone','Compare','Animation','Takes'];return want.every(w=>tabs.some(x=>x.startsWith(w)))&&/ElevenLabs/i.test(t)&&/Edge-TTS/i.test(t)&&/Land on VO lane/i.test(t)&&/Recent audio/i.test(t);})()`))===true);
+  // Click, then let React commit before reading the panel.
+  await ev(`[...document.querySelectorAll('[role="tablist"][aria-label="Voice lab"] [role="tab"]')].find(x=>/^Treat/.test(x.textContent.trim()))?.click(); 'ok'`);
+  await waitFor(`document.querySelector('[role="tablist"][aria-label="Voice lab"] [role="tab"][aria-selected="true"]')?.textContent.trim().startsWith('Treat')`);
+  check('Voice lab sub-tabs switch without leaving the editor (Treat shows audio treatment)',
+    (await ev(`(()=>{const t=(document.querySelector('[role="tabpanel"]')||{}).innerText||'';return /denoise|loudness|treatment|preset|normali/i.test(t);})()`))===true);
 
   await clickTool('Output');
   await waitFor(`/What you need to render/i.test((document.querySelector('[role="tabpanel"]')||{}).innerText||'')`);
