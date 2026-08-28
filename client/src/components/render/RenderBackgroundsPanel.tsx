@@ -53,6 +53,8 @@ export interface RenderBackgroundsPanelProps {
   isGeneratingVisuals: boolean;
   kenBurns: boolean;
   onKenBurnsChange: (next: boolean) => void;
+  /** Docked in an editor panel: icon actions with tooltips, notes in tooltips. */
+  compact?: boolean;
 }
 
 const ACCEPT = ['image/*', 'video/*', '.jpg', '.jpeg', '.png', '.webp', '.mp4', '.mov', '.webm', '.m4v'];
@@ -85,6 +87,7 @@ export function RenderBackgroundsPanel({
   isGeneratingVisuals,
   kenBurns,
   onKenBurnsChange,
+  compact = false,
 }: RenderBackgroundsPanelProps) {
   return (
     <div className="space-y-4">
@@ -209,25 +212,28 @@ export function RenderBackgroundsPanel({
               })}
             </ul>
             {backgroundItems.length > 1 && (
-              <p className="text-[10px] text-content-secondary">
-                Hard cuts between {backgroundItems.length} clips, ~{(durationSec / backgroundItems.length).toFixed(1)}s each. Auto-queues as background job.
+              <p className="text-[10px] text-content-secondary" title="Hard cuts between the clips; long renders queue as a background job">
+                {backgroundItems.length} clips · ~{(durationSec / backgroundItems.length).toFixed(1)}s each
               </p>
             )}
-            <div className="grid grid-cols-2 gap-2">
+            <div className={compact ? "flex items-center gap-1.5" : "grid grid-cols-2 gap-2"}>
               <Button
                 onClick={onOpenLibrary}
                 variant="secondary"
-                className="h-9 text-xs border-dashed border-white/10"
+                className={compact ? "h-8 flex-1 text-xs border-dashed border-white/10" : "h-9 text-xs border-dashed border-white/10"}
                 disabled={backgroundItems.length >= maxBackgrounds}
+                title={`Add from library — pick up to ${maxBackgrounds} videos or images`}
               >
-                <Library size={14} className="mr-1.5" />
-                {backgroundItems.length >= maxBackgrounds ? 'Library' : 'Add from library'}
+                <Library size={14} className={compact ? "mr-1" : "mr-1.5"} />
+                {compact ? 'Library' : (backgroundItems.length >= maxBackgrounds ? 'Library' : 'Add from library')}
               </Button>
               <label
-                className={`inline-flex items-center justify-center gap-1.5 h-9 text-xs rounded-md border cursor-pointer border-primary-500/30 bg-primary-500/10 text-primary-200 hover:bg-primary-500/20 ${backgroundItems.length >= maxBackgrounds || isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                aria-label="Upload from device"
+                title={`Upload from device — up to ${maxUploadMb} MB per file; mp4 / mov / webm or jpg / png / webp`}
+                className={`inline-flex items-center justify-center gap-1.5 ${compact ? 'h-8 flex-1' : 'h-9'} text-xs rounded-md border cursor-pointer border-primary-500/30 bg-primary-500/10 text-primary-200 hover:bg-primary-500/20 ${backgroundItems.length >= maxBackgrounds || isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
               >
                 <Plus size={14} />
-                {isUploading ? 'Uploading…' : 'Upload from device'}
+                {isUploading ? 'Uploading…' : (compact ? 'Upload' : 'Upload from device')}
                 <input
                   type="file"
                   className="hidden"
@@ -241,9 +247,11 @@ export function RenderBackgroundsPanel({
                 />
               </label>
             </div>
-            <p className="text-help">
-              Up to {maxUploadMb} MB per file. Video (mp4/mov/webm) or image (jpg/png/webp).
-            </p>
+            {!compact && (
+              <p className="text-help">
+                Up to {maxUploadMb} MB per file. Video (mp4/mov/webm) or image (jpg/png/webp).
+              </p>
+            )}
           </DropZone>
         ) : (
           <DropZone

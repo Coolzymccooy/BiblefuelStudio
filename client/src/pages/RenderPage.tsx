@@ -86,6 +86,8 @@ export interface RenderLabEmbed {
     onBackgroundsChange?: (items: Array<{ id: string; url: string; previewUrl?: string; image?: string; kind?: 'image' | 'video' }>) => void;
     onLinesChange?: (lines: string) => void;
     onInsertMusicBed?: (path: string) => void;
+    /** The caption look (preset / motion / highlight / layout), for the host's live stage. */
+    onCaptionStyleChange?: (style: { preset: string; motion: string; highlight: boolean; layout: string }) => void;
 }
 
 export function RenderPage() {
@@ -142,14 +144,14 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
     const [genVisualsCount, setGenVisualsCount] = useState(2);
     const [isGeneratingVisuals, setIsGeneratingVisuals] = useState(false);
     const [kenBurns, setKenBurns] = useState(false);
-    const [typographyPreset, setTypographyPreset] = useState<string>('cinematic-default');
+    const [typographyPreset, setTypographyPreset] = useState<string>(() => loadJson<string>(STORAGE_KEYS.renderTypographyPreset, 'cinematic-default'));
     // Caption MOTION - how captions are timed, independent of the style's look.
     const [captionMotion, setCaptionMotion] = useState<string>('words');
     const [captionStagger, setCaptionStagger] = useState<boolean>(false);
     const [captionHighlight, setCaptionHighlight] = useState<boolean>(false);
     const [captionMotions, setCaptionMotions] = useState<CaptionMotionOption[]>([]);
-    const [layout, setLayout] = useState<string>('center');
-    const [depth, setDepth] = useState<boolean>(false);
+    const [layout, setLayout] = useState<string>(() => loadJson<string>(STORAGE_KEYS.renderLayout, 'center'));
+    const [depth, setDepth] = useState<boolean>(() => loadJson<boolean>(STORAGE_KEYS.renderDepth, false));
     const [animations, setAnimations] = useState<Array<{ id: string; label: string; renderable: boolean }>>([]);
     const [postDestination, setPostDestination] = useState<'webhook' | 'buffer' | 'youtube' | 'instagram' | 'tiktok'>('webhook');
     const [youtubePrivacy, setYoutubePrivacy] = useState<'private' | 'unlisted' | 'public'>('private');
@@ -182,6 +184,10 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
         embedded?.onBackgroundsChange?.(backgroundItems);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [backgroundItems]);
+    useEffect(() => {
+        embedded?.onCaptionStyleChange?.({ preset: typographyPreset, motion: captionMotion, highlight: captionHighlight, layout });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [typographyPreset, captionMotion, captionHighlight, layout]);
     const finishedFile = result?.file || completedRender?.file;
     useEffect(() => {
         if (finishedFile && embedded?.onRendered) embedded.onRendered(finishedFile);
@@ -874,6 +880,7 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
     // editor - the exact defect this refactor exists to prevent.
     const backgroundsPanel = (
         <RenderBackgroundsPanel
+            compact={Boolean(embedded)}
             autoBackground={autoBackground}
             onAutoBackgroundChange={setAutoBackground}
             backgroundPath={backgroundPath}

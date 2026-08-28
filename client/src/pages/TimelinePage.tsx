@@ -218,6 +218,8 @@ export function TimelinePage() {
     const [voiceSeedText, setVoiceSeedText] = useState('');
     // The docked Render lab's background picks, mirrored on the stage live.
     const [labBackgrounds, setLabBackgrounds] = useState<Array<{ id: string; url: string; previewUrl?: string; image?: string; kind?: 'image' | 'video' }>>([]);
+    // The docked Render lab's caption look, previewed on the stage live.
+    const [labCaptionStyle, setLabCaptionStyle] = useState<{ preset: string; motion: string; highlight: boolean; layout: string } | null>(null);
     const [clips, setClips] = useState<TimelineClip[]>([]);
     const [documentaryProject, setDocumentaryProject] = useState<TimelineProject | null>(null);
     // Scene selection is page-level state: the Scenes panel and the scene
@@ -2483,6 +2485,12 @@ export function TimelinePage() {
                                         onBackgroundsChange: setLabBackgrounds,
                                         onLinesChange: (text) => setEditedLines(text.split('\n')),
                                         onInsertMusicBed: useAsMusicBed,
+                                        onCaptionStyleChange: (style) => {
+                                            setLabCaptionStyle(style);
+                                            // One look: the timeline's own render uses the preset you previewed.
+                                            if (style.preset !== typographyPreset) setTypographyPreset(style.preset);
+                                            if (style.layout !== layout) setLayout(style.layout);
+                                        },
                                         onAspectChange: (a) => {
                                             if (!documentaryProject) return;
                                             setDocumentaryProject({ ...documentaryProject, aspect: a === 'landscape' ? '16:9' : a === 'square' ? '1:1' : '9:16', updatedAt: new Date().toISOString() });
@@ -2684,6 +2692,7 @@ export function TimelinePage() {
                             timeSec={previewTimeSec}
                             onTimeChange={setPreviewTimeSec}
                             aspect={documentaryProject?.aspect || '16:9'}
+                            captionStyle={labCaptionStyle ?? { preset: typographyPreset, layout }}
                         />
                     )
                 )}

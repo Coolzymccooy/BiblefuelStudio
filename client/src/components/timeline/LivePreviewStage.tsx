@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { CaptionPreview, type CaptionStyle } from './CaptionPreview';
 import type { TimelineProject } from '../../lib/timelineProject';
 import {
   resolvePreviewFrame,
@@ -27,6 +28,8 @@ export interface LivePreviewStageProps {
   timeSec: number;
   onTimeChange: (sec: number) => void;
   aspect?: '16:9' | '9:16' | '1:1';
+  /** How captions LOOK (preset / motion / highlight / layout) - previewed live. */
+  captionStyle?: CaptionStyle;
 }
 
 const ASPECT_CLASS: Record<string, string> = {
@@ -42,6 +45,7 @@ export function LivePreviewStage({
   timeSec,
   onTimeChange,
   aspect = '16:9',
+  captionStyle,
 }: LivePreviewStageProps) {
   const videoRefs = useRef<Record<string, HTMLVideoElement | null>>({});
 
@@ -77,6 +81,9 @@ export function LivePreviewStage({
   }
 
   const gradeFilter = frame.grade ? GRADE_CSS[frame.grade] : undefined;
+  const lineCount = (captionLines || []).length;
+  const slot = lineCount > 0 ? Math.max(1, totalSec) / lineCount : 1;
+  const captionProgress = lineCount > 0 ? (timeSec % slot) / slot : 0;
 
   return (
     <div className="flex h-full w-full flex-col items-center justify-center gap-2">
@@ -85,7 +92,7 @@ export function LivePreviewStage({
         style={gradeFilter ? { filter: gradeFilter } : undefined}
         data-testid="live-preview-canvas"
       >
-        {frame.isEmpty ? (
+        {frame.isEmpty && !frame.caption ? (
           <div className="absolute inset-0 grid place-items-center px-4 text-center">
             <p className="text-[12px] text-editor-faint">
               Add media, a background or captions — they appear here as you build.
@@ -115,11 +122,7 @@ export function LivePreviewStage({
         )}
 
         {frame.caption && (
-          <div className="absolute inset-x-0 bottom-0 p-4 text-center">
-            <span className="inline-block rounded bg-black/60 px-2 py-1 text-sm font-semibold text-white">
-              {frame.caption}
-            </span>
-          </div>
+          <CaptionPreview text={frame.caption} style={captionStyle} progress={captionProgress} />
         )}
       </div>
 
