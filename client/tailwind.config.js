@@ -14,6 +14,12 @@ export default {
         // Inside extend on purpose: a top-level `screens` REPLACES the defaults
         // and would kill every lg:/sm: class in the app.
         short: { raw: '(max-height: 500px)' },
+        // Phones and small tablets. NOTE: Tailwind only generates its built-in
+        // `max-lg:` variants when every screen is a plain min-width; the raw
+        // `short` screen above turns them OFF for the whole project, so every
+        // `max-lg:` rule the editor ever had compiled to nothing and phones got
+        // the desktop layout crammed into 390px. `phone:` is explicit.
+        phone: { max: '1023px' },
       },
       fontFamily: {
         // Quiet-studio identity: Instrument Sans for UI/body, Cormorant Garamond

@@ -297,7 +297,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                             onClick={() => onEmptyLaneClick?.(track.kind)}
                             disabled={!onEmptyLaneClick}
                             title={onEmptyLaneClick ? 'Open the tool that fills this lane' : undefined}
-                            className={`flex ${d.emptyRow} w-full items-center justify-center rounded-md bg-black/20 px-2 text-center text-[11px] text-content-tertiary transition enabled:hover:bg-white/[0.04] enabled:hover:text-content-secondary`}
+                            className={`flex ${d.emptyRow} w-full items-center justify-center rounded-md bg-black/20 px-2 text-center text-[11px] text-content-tertiary transition enabled:hover:bg-white/[0.04] enabled:hover:text-content-secondary phone:sticky phone:left-1 phone:w-[calc(100vw-190px)] phone:justify-start phone:text-left phone:text-[10px] phone:leading-tight`}
                           >
                             {EMPTY_HINT[track.kind]}
                           </button>
@@ -430,13 +430,13 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
   // actions. Split/Remove are icon-only here — the label is in the tooltip and
   // aria-label, which is the trade that buys the lanes their height.
   const compactToolbar = (
-    <div className="flex flex-wrap items-center gap-2 border-b border-editor-line px-3 py-2 text-[11px]">
+    <div className="flex flex-wrap items-center gap-2 border-b border-editor-line px-3 py-2 text-[11px] phone:flex-nowrap phone:overflow-x-auto phone:py-1.5 phone:[&>span]:whitespace-nowrap">
       <span className="font-semibold text-editor-text">{project.title}</span>
-      <span className="text-editor-faint">
+      <span className="text-editor-faint phone:hidden">
         {project.scenes.length} scenes · {project.tracks.length} tracks · {formatDuration(project.targetDurationSec)}
       </span>
-      <span className="text-editor-faint">·</span>
-      <span className="text-editor-dim">
+      <span className="text-editor-faint phone:hidden">·</span>
+      <span className="text-editor-dim phone:hidden">
         {project.renderSettings.voiceProvider} VO · {project.aspect}
       </span>
       <span className="flex-1" />
@@ -446,7 +446,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
           <span className="text-editor-faint"> · {Math.round(selection.clip.durationSec)}s</span>
         </span>
       ) : (
-        <span className="text-editor-faint">Select a clip to split or remove</span>
+        <span className="text-editor-faint phone:hidden">Select a clip to split or remove</span>
       )}
       <button
         type="button"

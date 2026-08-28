@@ -32,6 +32,8 @@ import {
     Wand2,
     Video,
     BookOpen,
+    Eraser,
+    LayoutTemplate,
 } from 'lucide-react';
 import { loadJson, saveJson, STORAGE_KEYS } from '../lib/storage';
 import { LAYOUT_OPTIONS } from '../lib/layoutOptions';
@@ -2181,7 +2183,7 @@ export function TimelinePage() {
             <EditorShell
                 topBar={(
                     <>
-                        <span className="font-semibold">Arrange the cut</span>
+                        <span className="truncate whitespace-nowrap font-semibold phone:text-sm">Arrange the cut</span>
                         {sourceMediaPath && (
                             /* The stored filename is a UUID storage key the
                                operator never chose and cannot act on. Showing it
@@ -2191,7 +2193,7 @@ export function TimelinePage() {
                                (or tap, via the native title tooltip) away, for
                                matching a file on disk. */
                             <span
-                                className="cursor-help truncate rounded-md border border-editor-line px-2.5 py-1 text-[12px] text-editor-dim"
+                                className="cursor-help truncate rounded-md border border-editor-line px-2.5 py-1 text-[12px] text-editor-dim phone:hidden"
                                 title={sourceMediaPath.split(/[\\/]/).pop()}
                             >
                                 {sourceMediaKind === 'audio' ? 'Audio loaded'
@@ -2210,8 +2212,10 @@ export function TimelinePage() {
                             className="h-8 text-xs"
                             onClick={handleClearCanvas}
                             title="Unload the source media, empty the Real footage and B-roll lanes, and drop the backgrounds"
+                            aria-label="Clear canvas"
                         >
-                            Clear canvas
+                            <Eraser size={14} className="lg:mr-1.5" />
+                            <span className="phone:hidden">Clear canvas</span>
                         </Button>
                         {documentaryProject && (
                             <select
@@ -2222,15 +2226,16 @@ export function TimelinePage() {
                                     ...documentaryProject,
                                     aspect: e.target.value as typeof documentaryProject.aspect,
                                 })}
-                                className="h-8 rounded-md border border-editor-line bg-black/25 px-2 font-mono text-[11px] text-editor-text"
+                                className="h-8 rounded-md border border-editor-line bg-black/25 px-2 font-mono text-[11px] text-editor-text phone:max-w-[118px]"
                             >
                                 <option value="9:16">Portrait 9:16</option>
                                 <option value="1:1">Square 1:1</option>
                                 <option value="16:9">Landscape 16:9</option>
                             </select>
                         )}
-                        <Button variant="secondary" className="h-8 text-xs" onClick={() => setEditorLayout(false)}>
-                            Classic view
+                        <Button variant="secondary" className="h-8 text-xs" onClick={() => setEditorLayout(false)} aria-label="Classic view" title="Switch to the classic page layout">
+                            <LayoutTemplate size={14} className="lg:mr-1.5" />
+                            <span className="phone:hidden">Classic view</span>
                         </Button>
                         {/* ONE Render button. Two renderers exist, but which one
                             is correct is decidable from the timeline itself, so

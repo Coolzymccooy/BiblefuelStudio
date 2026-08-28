@@ -42,7 +42,7 @@ const ASPECT_RATIO: Record<string, number> = {
   '1:1': 1,
 };
 // Slider row + note under the canvas.
-const CONTROLS_PX = 56;
+const CONTROLS_PX = typeof window !== 'undefined' && window.matchMedia?.('(max-height: 500px)').matches ? 34 : 56;
 
 export function LivePreviewStage({
   project,
@@ -167,7 +167,7 @@ export function LivePreviewStage({
       </div>
 
       {/* Honest about what this is. The render is the source of truth. */}
-      <p className="text-[10px] text-editor-faint">
+      <p className="text-[10px] text-editor-faint short:hidden">
         Live preview · approximate. Transitions and glow appear in the render.
       </p>
     </div>

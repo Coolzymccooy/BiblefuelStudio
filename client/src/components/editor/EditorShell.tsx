@@ -1,6 +1,21 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { Maximize2, Minimize2 } from 'lucide-react';
+import { Maximize2, Minimize2, ChevronDown } from 'lucide-react';
+
+/** Below the lg breakpoint the editor is a phone layout: stage on top, tools
+ *  as a bar, the tool panel as a sheet, the timeline as the working surface. */
+function usePhoneLayout(): boolean {
+  const query = '(max-width: 1023px)';
+  const [phone, setPhone] = useState<boolean>(() => typeof window !== 'undefined' && window.matchMedia?.(query).matches);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mq = window.matchMedia(query);
+    const onChange = () => setPhone(mq.matches);
+    mq.addEventListener?.('change', onChange);
+    return () => mq.removeEventListener?.('change', onChange);
+  }, []);
+  return phone;
+}
 
 /**
  * CapCut-style editor shell: icon rail, docked panel, stage, bottom strip.
@@ -121,6 +136,11 @@ export function EditorShell({
     // rail clicks must not snap back.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeToolId]);
+
+  const phone = usePhoneLayout();
+  // On phones the tool panel is a SHEET over the timeline; tapping the active
+  // tool again (or the chevron) folds it away so the whole timeline is usable.
+  const [sheetOpen, setSheetOpen] = useState(true);
 
   const [activePropId, setActivePropId] = useState<string>(
     () => propertyTools?.[0]?.id || '',
@@ -244,7 +264,9 @@ export function EditorShell({
   }, []);
 
   const select = (id: string) => {
+    if (phone && id === activeId) { setSheetOpen((o) => !o); return; }
     setActiveId(id);
+    setSheetOpen(true);
     onToolChange?.(id);
   };
 
@@ -261,7 +283,7 @@ export function EditorShell({
   return createPortal(
     <div
       ref={shellRef}
-      className="fixed inset-0 z-30 flex h-screen flex-col overflow-hidden bg-editor-chrome text-editor-text lg:left-[240px]"
+      className="fixed inset-0 z-30 flex h-screen flex-col overflow-hidden bg-editor-chrome text-editor-text phone:bottom-[calc(64px+env(safe-area-inset-bottom))] phone:h-auto lg:left-[240px]"
       // h-screen is NOT redundant with inset-0. Measured in the live DOM: with
       // position:fixed, top:0 AND bottom:0, the element still computed to
       // 106.75px, because it is a flex ITEM of the app's <main> column and that
@@ -278,7 +300,7 @@ export function EditorShell({
       // lanes inside it scroll. overflow-hidden makes that structural.
     >
       {topBar && (
-        <div className="flex shrink-0 items-center gap-3 border-b border-editor-line px-4 short:h-[36px] h-[52px]">
+        <div className="flex shrink-0 items-center gap-3 border-b border-editor-line px-4 short:h-[36px] h-[52px] phone:h-[44px] phone:gap-2 phone:px-2 phone:[&>*]:shrink-0 phone:overflow-x-auto">
           {topBar}
         </div>
       )}
@@ -288,13 +310,13 @@ export function EditorShell({
           horizontal layout: measured at 390px the rail stretched to
           471px tall and the panel sat at x=390, completely off-screen.
           That is the empty-editor look on mobile. */}
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden phone:flex-none lg:flex-row">
         {/* Icon rail. Horizontal-scrolling strip on phones, where a 72px
             vertical rail would eat a fifth of the screen. */}
         <div
           role="tablist"
           aria-label="Editor tools"
-          className="flex w-full shrink-0 flex-row gap-1 overflow-x-auto border-b border-editor-line px-2 py-1.5 lg:w-[60px] lg:flex-col lg:items-center lg:border-b-0 lg:border-r lg:px-0 lg:py-1.5"
+          className="flex w-full shrink-0 flex-row gap-1 overflow-x-auto border-b border-editor-line px-2 py-1 phone:[scrollbar-width:none] lg:w-[60px] lg:flex-col lg:items-center lg:border-b-0 lg:border-r lg:px-0 lg:py-1.5"
         >
           {tools.map((tool) => {
             const active = tool.id === activeId;
@@ -306,7 +328,7 @@ export function EditorShell({
                 aria-controls={`panel-${tool.id}`}
                 onClick={() => select(tool.id)}
                 title={tool.label}
-                className={`flex min-w-[64px] shrink-0 flex-col items-center justify-center gap-1 rounded-lg px-2 py-1.5 text-[10px] transition lg:h-[52px] lg:w-[52px] lg:min-w-0 lg:px-0 lg:py-0 ${
+                className={`flex min-w-[56px] shrink-0 flex-col items-center justify-center gap-0.5 rounded-lg px-1.5 py-1 text-[10px] transition lg:h-[52px] lg:w-[52px] lg:min-w-0 lg:px-0 lg:py-0 ${
                   active
                     ? 'bg-editor-accent/10 text-editor-accent ring-1 ring-inset ring-editor-accent/35 font-semibold'
                     : 'text-[#b7ac97] font-semibold hover:bg-white/5 hover:text-editor-text'
@@ -332,12 +354,27 @@ export function EditorShell({
         <div
           id={`panel-${activeId}`}
           role="tabpanel"
-          className="min-h-0 w-full shrink-0 overflow-auto border-b border-editor-line bg-editor-panel p-3.5 max-h-[38vh] short:max-h-[40%] short:p-2 lg:max-h-none lg:border-b-0 lg:border-r"
+          className={`min-h-0 w-full shrink-0 overflow-auto border-b border-editor-line bg-editor-panel p-3.5 short:p-2 lg:max-h-none lg:border-b-0 lg:border-r phone:absolute phone:inset-x-0 phone:top-[54px] phone:z-20 phone:max-h-[min(60vh,calc(100%-54px))] phone:rounded-b-2xl phone:shadow-[0_18px_40px_rgba(0,0,0,.55)] phone:p-3 ${phone && !sheetOpen ? 'phone:hidden' : ''}`}
           // Width is inline because it is DRAGGED: a Tailwind class cannot
           // express a runtime value. Desktop only - on mobile the panel is
           // full-width and stacked, so a horizontal drag has no meaning.
           style={typeof window !== 'undefined' && window.innerWidth >= 1024 ? { width: panelWidth } : undefined}
         >
+          {/* Sheet header, phones only: which tool, and a fold-away. */}
+          {phone && (
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-[11px] font-semibold uppercase tracking-[.1em] text-editor-dim">{tools.find((t) => t.id === activeId)?.label}</span>
+              <button
+                type="button"
+                onClick={() => setSheetOpen(false)}
+                aria-label="Hide panel"
+                title="Hide this panel and see the whole timeline"
+                className="grid h-7 w-7 place-items-center rounded-md text-editor-dim hover:bg-editor-hover hover:text-editor-text"
+              >
+                <ChevronDown size={15} />
+              </button>
+            </div>
+          )}
           {activePanel ?? (
             <p className="text-[11px] text-editor-faint">Nothing here yet.</p>
           )}
@@ -361,12 +398,12 @@ export function EditorShell({
           <div className="pointer-events-none h-9 w-[3px] rounded-full bg-editor-accent/35 transition-colors group-hover:bg-editor-accent" />
         </div>
 
-        <div className="flex min-w-0 items-center justify-center overflow-auto bg-editor-stage p-4 max-lg:shrink-0 lg:flex-1 lg:p-6">
+        <div className="flex min-w-0 items-center justify-center overflow-auto bg-editor-stage p-4 phone:h-[32vh] short:phone:h-[36vh] phone:shrink-0 phone:p-2 lg:flex-1 lg:p-6">
           {stage}
         </div>
 
         {propertyTools && propertyTools.length > 0 && (
-          <div className="flex min-w-0 shrink-0 max-lg:hidden">
+          <div className="flex min-w-0 shrink-0 phone:hidden">
             {/* Same visible-grip divider as the left panel, mirrored. */}
             <div
               role="separator"
@@ -457,7 +494,7 @@ export function EditorShell({
         // the timeline is the working surface there. Without flex-1 that
         // space became a ~450px dead gap between stage and timeline.
         // Desktop keeps the fixed 38% ceiling so the preview stays king.
-        // max-lg:flex-1 is right in PORTRAIT, where the timeline is the
+        // phone:flex-1 is right in PORTRAIT, where the timeline is the
         // working surface. In landscape it grew to 350px of a 390px
         // viewport and starved the rail/panel row to h=0 - the same
         // starvation pattern as the render player. A short-viewport
@@ -472,16 +509,16 @@ export function EditorShell({
           aria-label="Resize timeline"
           aria-orientation="horizontal"
           onPointerDown={onStripDragStart}
-          className="group flex h-1.5 shrink-0 cursor-row-resize items-center justify-center transition-colors hover:bg-primary-400/30"
+          className="group flex h-1.5 shrink-0 cursor-row-resize items-center justify-center transition-colors hover:bg-primary-400/30 phone:hidden"
         >
           {/* Same visible-grip fix as the panel divider. */}
           <div className="pointer-events-none h-[3px] w-9 rounded-full bg-editor-accent/35 transition-colors group-hover:bg-editor-accent" />
         </div>
         <div
-          className="overflow-hidden border-t border-editor-line bg-editor-chrome min-h-[120px] shrink-0"
+          className="overflow-hidden border-t border-editor-line bg-editor-chrome min-h-[120px] shrink-0 phone:min-h-[110px] phone:flex-1"
           // Height is inline because it is DRAGGED; a Tailwind class cannot
           // express a runtime value.
-          style={{ height: `${stripPct}%` }}
+          style={phone ? undefined : { height: `${stripPct}%` }}
         >
           {strip}
         </div>
