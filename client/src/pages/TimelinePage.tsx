@@ -2183,7 +2183,7 @@ export function TimelinePage() {
             <EditorShell
                 topBar={(
                     <>
-                        <span className="truncate whitespace-nowrap font-semibold phone:text-sm">Arrange the cut</span>
+                        <span className="truncate whitespace-nowrap font-semibold phone:hidden">Arrange the cut</span>
                         {sourceMediaPath && (
                             /* The stored filename is a UUID storage key the
                                operator never chose and cannot act on. Showing it
