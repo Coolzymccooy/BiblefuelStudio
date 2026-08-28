@@ -84,3 +84,32 @@ describe('syncSidecarTracks', () => {
     expect(next.assets[clip.assetId].label).toMatch(/hopeful-bed/);
   });
 });
+
+describe('captions follow the voice', () => {
+  it('shares the voice span in proportion to line length when only the span is known', () => {
+    const next = syncSidecarTracks(project(), {
+      musicPaths: [], captionLines: ['short', 'a much much longer line'],
+      voice: { startSec: 10, durationSec: 20 },
+    });
+    const clips = track(next, 'captions').clips;
+    expect(clips[0].startSec).toBeCloseTo(10, 2);
+    expect(clips[0].durationSec).toBeLessThan(clips[1].durationSec);
+    expect(clips[1].startSec + clips[1].durationSec).toBeCloseTo(30, 1);
+  });
+
+  it('aligns each line to the words the provider timed, in order', () => {
+    const words = [
+      { text: 'You', startMs: 50, endMs: 250 }, { text: 'are', startMs: 263, endMs: 376 }, { text: 'loved', startMs: 400, endMs: 900 },
+      { text: 'Rest', startMs: 2800, endMs: 3100 }, { text: 'now', startMs: 3150, endMs: 3600 },
+    ];
+    const next = syncSidecarTracks(project(), {
+      musicPaths: [], captionLines: ['You are loved', 'Rest now'],
+      voice: { startSec: 5, durationSec: 4, words },
+    });
+    const clips = track(next, 'captions').clips;
+    expect(clips[0].startSec).toBeCloseTo(5.05, 2);
+    expect(clips[0].startSec + clips[0].durationSec).toBeCloseTo(5.9, 2);
+    expect(clips[1].startSec).toBeCloseTo(7.8, 2);
+    expect(clips[1].startSec + clips[1].durationSec).toBeCloseTo(8.6, 2);
+  });
+});

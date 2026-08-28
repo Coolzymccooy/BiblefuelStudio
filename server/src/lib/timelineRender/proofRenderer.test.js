@@ -280,5 +280,17 @@ describe('captions reach ffmpeg', () => {
     const graph = cmd.args.join(' ');
     assert.match(graph, /drawtext=text='He is worthy'.*enable='between\(t,0,5\)'/);
     assert.match(graph, /drawtext=text='of all praise'.*enable='between\(t,5,10\)'/);
+    // Default look still carries a readability scrim.
+    assert.match(graph, /box=1:boxcolor=black@0\.\d+/);
+
+    // The chosen preset drives colour and scrim: Soft Glow is pale butter type.
+    const glow = buildProofRenderCommand(plan, {
+      outputPath: path.resolve('/tmp/biblefuel-server/outputs/timeline/out.mp4'),
+      serverRoot: path.resolve('/tmp/biblefuel-server'),
+      outputDir: path.resolve('/tmp/biblefuel-server/outputs'),
+      typographyPreset: 'soft-glow',
+    });
+    assert.match(glow.args.join(' '), /fontcolor=0xFAE58C/);
+    assert.match(glow.args.join(' '), /boxcolor=black@0\.28/);
   });
 });

@@ -140,6 +140,8 @@ export interface VoiceTake {
     path: string;
     label: string;
     durationSec?: number;
+    /** Word timings from the provider, when it returned them (Azure, ElevenLabs). */
+    words?: Array<{ text: string; startMs: number; endMs: number }>;
 }
 
 /**
@@ -181,6 +183,9 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
     // Embedded: which lab tab is open, and whether a take has landed (gates Next).
     const [labTab, setLabTab] = useState<LabTabId>('generate');
     const [landed, setLanded] = useState(false);
+    // Word timings of the latest generated take - captions align to them.
+    const [lastWords, setLastWords] = useState<Array<{ text: string; startMs: number; endMs: number }> | null>(null);
+    const footerAudioRef = useRef<HTMLAudioElement | null>(null);
     useEffect(() => {
         if (embedded?.seedText) setTtsText(embedded.seedText);
     }, [embedded?.seedText]);
@@ -490,6 +495,7 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
 
             if (response.ok && response.data?.file) {
                 setAudioPath(response.data.file);
+                setLastWords(Array.isArray(response.data.words) ? response.data.words : null);
                 // When the server falls back (e.g. Chatterbox 500 → Edge-TTS),
                 // it returns `fallbackProvider` so we can show what actually
                 // produced the audio instead of misleading the user.
@@ -2035,9 +2041,19 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
                     <p className="truncate text-[10px] text-editor-faint" title={audioPath || undefined}>
                         {audioPath.trim() ? `Current audio · ${currentTrackLabel}` : 'No current audio yet — generate, record or pick a take.'}
                     </p>
-                    {currentAudioUrl && <audio controls src={currentAudioUrl} className="h-8 w-full" />}
+                    {currentAudioUrl && <audio ref={footerAudioRef} controls src={currentAudioUrl} className="h-8 w-full" />}
                     <Button
-                        onClick={() => { embedded.onLandVoiceover({ path: audioPath, label: currentTrackLabel }); setLanded(true); }}
+                        onClick={() => {
+                            // Real duration from the player, and the words when this is the take we just generated.
+                            const d = footerAudioRef.current?.duration;
+                            embedded.onLandVoiceover({
+                                path: audioPath,
+                                label: currentTrackLabel,
+                                durationSec: Number.isFinite(d) && (d as number) > 0 ? Math.round((d as number) * 100) / 100 : undefined,
+                                words: lastWords || undefined,
+                            });
+                            setLanded(true);
+                        }}
                         disabled={!canLand}
                         title={landTitle}
                         className="h-9 w-full text-xs"

@@ -28,6 +28,13 @@ export interface TimelineEffectOptions {
   angle?: number;
 }
 
+/** A spoken word with its timing, as TTS providers return it. */
+export interface TimelineWord {
+  text: string;
+  startMs: number;
+  endMs: number;
+}
+
 export interface TimelineAsset {
   id: string;
   kind: TimelineAssetKind;
@@ -40,6 +47,8 @@ export interface TimelineAsset {
   aspect?: TimelineAspect;
   prompt?: string;
   tags?: string[];
+  /** Word timings of a voice take - captions align to these. */
+  words?: TimelineWord[];
 }
 
 export interface TimelineClipTransform {

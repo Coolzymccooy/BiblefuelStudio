@@ -1288,7 +1288,7 @@ export function TimelinePage() {
         setDocumentaryRenderProgress(0);
         setDocumentaryRenderStatus('queued');
         try {
-            const response = await timelineApi.render(documentaryProject, documentaryProject.renderSettings?.quality || 'proof_720p');
+            const response = await timelineApi.render(documentaryProject, documentaryProject.renderSettings?.quality || 'proof_720p', typographyPreset);
             if (!response.ok || !response.data?.ok || !response.data.jobId) {
                 toast.error(response.error || response.data?.error || 'Timeline render rejected', { id: toastId });
                 setDocumentaryRenderStatus('failed');
@@ -1351,9 +1351,20 @@ export function TimelinePage() {
     // nothing changed, which is what stops this effect from looping.
     useEffect(() => {
         if (!documentaryProject) return;
+        // Captions follow the voice-over lane: its span, and its word timings
+        // when the take carried them.
+        const voClips = (documentaryProject.tracks.find((t) => t.kind === 'voiceover')?.clips || []).filter((c) => documentaryProject.assets[c.assetId]?.path);
+        const voice = voClips.length > 0 ? (() => {
+            const startSec = Math.min(...voClips.map((c) => c.startSec));
+            const endSec = Math.max(...voClips.map((c) => c.startSec + c.durationSec));
+            const first = [...voClips].sort((a, b) => a.startSec - b.startSec)[0];
+            const words = voClips.length === 1 ? documentaryProject.assets[first.assetId]?.words : undefined;
+            return { startSec, durationSec: Math.max(0.1, endSec - startSec), words };
+        })() : null;
         const next = syncSidecarTracks(documentaryProject, {
             musicPaths,
             captionLines: editedLines,
+            voice,
         });
         if (next !== documentaryProject) setDocumentaryProject(next);
     }, [documentaryProject, musicPaths, editedLines]);
@@ -1823,6 +1834,7 @@ export function TimelinePage() {
                 label: take.label,
                 path: take.path,
                 durationSec: take.durationSec,
+                words: take.words,
                 tags: ['voiceover', 'tts'],
             },
             startSec,

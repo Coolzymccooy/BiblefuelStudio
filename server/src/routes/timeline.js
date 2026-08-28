@@ -155,6 +155,7 @@ async function runTimelineJob(job) {
       serverRoot: SERVER_ROOT,
       outputDir: OUTPUT_DIR,
       outputPath: path.join(OUTPUT_DIR, 'timeline', `${job.jobId}.mp4`),
+      typographyPreset: job.typographyPreset || undefined,
     });
 
     job.progress = 100;
@@ -237,6 +238,7 @@ router.post('/render', (req, res) => {
       phase: 'queued',
       progress: 0,
       plan,
+      typographyPreset: typeof req.body?.typographyPreset === 'string' ? req.body.typographyPreset : (project?.renderSettings?.typographyPreset || null),
       publicUrl: null,
       file: null,
       ignoredPlaceholders: 0,

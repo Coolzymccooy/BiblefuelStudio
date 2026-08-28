@@ -214,7 +214,9 @@ const TYPOGRAPHY_PRESETS = Object.freeze({
     baseSizeMult: 0.052, emphasisSizeMult: 0.060, baseColor: "0xFAE58C",
     emphasisColor: "0xFFF3B0",
     heroSizeMult: 0.070, heroColor: "0xFFF8D0",
-    borderWidth: 10, wordBox: false, lineBoxOpacity: 0, lineSizeMult: 0.028,
+    // A translucent scrim behind each line: pale butter type over a bright
+    // sky was unreadable even with the heavy outline (operator render, 2026-08).
+    borderWidth: 10, wordBox: false, lineBoxOpacity: 0.28, lineSizeMult: 0.028,
     lineEnter: "rise-fade", wordReveal: "scale-fade", wordRevealMs: 240,
     fontFamily: "script",
     captionMode: "lines",

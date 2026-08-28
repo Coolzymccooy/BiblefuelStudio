@@ -12,11 +12,19 @@
  * truth. It is PURE and IDEMPOTENT: same input, same project reference back, so
  * it is safe to call from an effect without looping.
  */
-import type { TimelineProject, TimelineClip, TimelineAsset } from './timelineProject';
+import type { TimelineProject, TimelineClip, TimelineAsset, TimelineWord } from './timelineProject';
+
+/** The voice the captions should follow: where it sits, and its words if known. */
+export interface SidecarVoice {
+  startSec: number;
+  durationSec: number;
+  words?: TimelineWord[];
+}
 
 export interface SidecarState {
   musicPaths: string[];
   captionLines: string[];
+  voice?: SidecarVoice | null;
 }
 
 /** Assets this module owns. Anything else on these lanes is left alone. */
@@ -63,17 +71,69 @@ function buildMusic(paths: string[], targetSec: number) {
   return { assets, clips };
 }
 
-function buildCaptions(lines: string[], targetSec: number) {
+const MIN_CAPTION_SEC = 0.8;
+
+/**
+ * Time caption lines to the VOICE, not to the whole runtime. A 4:30
+ * timeline with a 20-second take spread four lines over 270 seconds, so the
+ * words on screen never matched the words being spoken.
+ *
+ *  - with word timings: each line claims as many timed words as it has
+ *    words, in order (the way Azure/ElevenLabs return them);
+ *  - with just a span: lines share the voice span in proportion to length;
+ *  - with no voice at all: even split across the runtime (the old rule).
+ */
+export function timeCaptionLines(lines: string[], targetSec: number, voice?: SidecarVoice | null): Array<{ startSec: number; durationSec: number }> {
+  const n = lines.length;
+  if (n === 0) return [];
+  const round = (v: number) => Math.round(v * 1000) / 1000;
+  const words = voice?.words?.filter((w) => Number.isFinite(w.startMs) && Number.isFinite(w.endMs)) || [];
+  if (voice && words.length > 0) {
+    const out: Array<{ startSec: number; durationSec: number }> = [];
+    let cursor = 0;
+    let lastEnd = voice.startSec;
+    lines.forEach((line, i) => {
+      const count = Math.max(1, line.split(/\s+/).filter(Boolean).length);
+      const slice = words.slice(cursor, cursor + count);
+      cursor += count;
+      if (slice.length === 0) {
+        // Ran out of timed words: park the rest after the voice, evenly.
+        const rest = n - i;
+        const tail = Math.max(MIN_CAPTION_SEC, (voice.startSec + voice.durationSec - lastEnd) / rest);
+        out.push({ startSec: round(lastEnd), durationSec: round(tail) });
+        lastEnd += tail;
+        return;
+      }
+      const startSec = Math.max(lastEnd, voice.startSec + slice[0].startMs / 1000);
+      const endSec = Math.max(startSec + MIN_CAPTION_SEC, voice.startSec + slice[slice.length - 1].endMs / 1000);
+      out.push({ startSec: round(startSec), durationSec: round(endSec - startSec) });
+      lastEnd = endSec;
+    });
+    return out;
+  }
+  if (voice && voice.durationSec > 0) {
+    const weights = lines.map((l) => Math.max(1, l.trim().length));
+    const total = weights.reduce((a, b) => a + b, 0);
+    let t = voice.startSec;
+    return weights.map((w) => {
+      const d = Math.max(MIN_CAPTION_SEC, (voice.durationSec * w) / total);
+      const item = { startSec: round(t), durationSec: round(d) };
+      t += d;
+      return item;
+    });
+  }
+  const slot = targetSec / n;
+  return lines.map((_, i) => ({ startSec: round(i * slot), durationSec: round(slot) }));
+}
+
+function buildCaptions(lines: string[], targetSec: number, voice?: SidecarVoice | null) {
   const assets: TimelineAsset[] = [];
   const clips: TimelineClip[] = [];
   if (lines.length === 0) return { assets, clips };
 
-  // One clip PER LINE, each carrying its text. The renderer burns
-  // `clip.text` between the clip's start and end; a single lane-wide clip
-  // with only a label rendered NO captions at all (the picture played, the
-  // words never appeared). Lines split the runtime evenly - the same slots
-  // the live stage uses, so preview and render agree. The one shared asset
-  // keeps the lane header's count ("N caption lines").
+  // One clip PER LINE, each carrying its text: the renderer burns
+  // `clip.text` between the clip start and end. Timed to the voice (see
+  // timeCaptionLines) so the words on screen are the words being spoken.
   assets.push({
     id: assetId('captions', 'all'),
     kind: 'caption',
@@ -81,27 +141,26 @@ function buildCaptions(lines: string[], targetSec: number) {
     label: `${lines.length} caption line${lines.length === 1 ? '' : 's'}`,
     tags: [OWNED_TAG, 'captions'],
   });
-  const slot = targetSec / lines.length;
+  const timing = timeCaptionLines(lines, targetSec, voice);
   lines.forEach((line, i) => {
     clips.push({
       id: clipId('captions', String(i)),
       assetId: assetId('captions', 'all'),
-      startSec: Math.round(i * slot * 1000) / 1000,
-      durationSec: Math.round(slot * 1000) / 1000,
+      startSec: timing[i].startSec,
+      durationSec: timing[i].durationSec,
       transform: { fit: 'cover' },
       text: line,
     });
   });
   return { assets, clips };
 }
-
 export function syncSidecarTracks(
   project: TimelineProject,
   state: SidecarState,
 ): TimelineProject {
   const targetSec = Math.max(1, project.targetDurationSec);
   const music = buildMusic(state.musicPaths, targetSec);
-  const captions = buildCaptions(state.captionLines, targetSec);
+  const captions = buildCaptions(state.captionLines, targetSec, state.voice);
 
   const desired: Record<string, { assets: TimelineAsset[]; clips: TimelineClip[] }> = {
     music,
@@ -129,6 +188,7 @@ export function syncSidecarTracks(
           c.id === want.id &&
           c.durationSec === want.durationSec &&
           (c.text || '') === (want.text || '') &&
+          c.startSec === want.startSec &&
           have?.path === wantAsset?.path &&
           have?.label === wantAsset?.label
         );
