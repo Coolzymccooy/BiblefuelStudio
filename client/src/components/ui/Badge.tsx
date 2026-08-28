@@ -8,7 +8,7 @@ export function Badge({ children, variant = 'default', className = '' }: BadgePr
     const variantStyles = {
         default: 'bg-white/10 text-gray-200 border border-white/10',
         success: 'bg-[#7fb5aa]/15 text-[#8fc2b8] border border-[#7fb5aa]/20',
-        warning: 'bg-yellow-500/15 text-yellow-200 border border-yellow-500/25',
+        warning: 'bg-editor-accent/10 text-editor-accent border border-editor-accent/25',
         danger: 'bg-red-500/15 text-red-300 border border-red-500/25',
     };
 

@@ -1138,7 +1138,7 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
                     </button>
                 </div>
                 {(!azureAvailable && azureReason) || (!fishAvailable && fishReason) ? (
-                    <ul className="mt-2 space-y-1 text-[0.6875rem] text-amber-300/90">
+                    <ul className="mt-2 space-y-1 text-[0.6875rem] text-content-secondary">
                         {!azureAvailable && azureReason && (
                             <li><span className="font-semibold">Azure disabled:</span> {azureReason}</li>
                         )}
@@ -1297,7 +1297,7 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
                         </div>
                         <div className="w-full h-1 bg-white/10 rounded overflow-hidden">
                             <div
-                                className={`h-full transition-all duration-1000 ${overrun ? 'bg-amber-400/70' : 'bg-primary-500/70'}`}
+                                className={`h-full transition-all duration-1000 ${overrun ? 'bg-editor-accent/60' : 'bg-primary-500/70'}`}
                                 style={{ width: `${progress}%` }}
                             />
                         </div>
@@ -1305,7 +1305,7 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
                 );
             })()}
             {!ttsEnabled && (
-                <p className="text-xs text-yellow-600">
+                <p className="text-xs text-content-secondary">
                     TTS disabled. Set `ELEVENLABS_API_KEY` or `EDGE_TTS_ENABLED=true` in `server/.env`.
                 </p>
             )}
@@ -1642,7 +1642,7 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
                                     <div key={item.path || item.name} className="flex flex-col md:flex-row md:items-center gap-3 bg-dark-900/60 border border-white/[0.06] rounded-lg p-3">
                                         <div className="flex-1 min-w-0">
                                             <p className="text-[0.8125rem] font-medium text-primary-300">{item.name || 'Audio'}</p>
-                                            <p className="text-[0.75rem] font-mono text-gray-300 break-all mt-0.5">{item.path}</p>
+                                            <p className="text-[0.75rem] font-mono text-gray-300 truncate mt-0.5" title={item.path}>{item.path}</p>
                                             {item.mtime && (
                                                 <p className="field-help">{new Date(item.mtime).toLocaleString()}</p>
                                             )}
@@ -1671,10 +1671,10 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
     const cloneControls = (
         <>
                         <div className="space-y-4">
-                            <div className="rounded-lg border border-amber-500/25 bg-amber-500/[0.06] px-3 py-2 text-[0.8125rem] text-amber-100/90 leading-relaxed flex items-start gap-2">
+                            <div className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-[0.8125rem] text-content-secondary leading-relaxed flex items-start gap-2">
                                 <InfoTooltip
                                     width="lg"
-                                    iconClassName="!text-amber-300 !w-4 !h-4 mt-0.5 shrink-0"
+                                    iconClassName="!text-content-tertiary !w-4 !h-4 mt-0.5 shrink-0"
                                     content="Cloning is governed by the chosen provider's usage policy. Make sure you have explicit recorded consent before cloning any voice that isn't your own."
                                 />
                                 <span>Consent required — clone only voices you own or have explicit permission to use. Provide at least one clear sample file path from your outputs.</span>
@@ -1866,7 +1866,7 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
                             Save Preset
                         </Button>
 
-                        <div className="bg-gray-50 rounded-lg p-3 space-y-2">
+                        <div className="rounded-lg border border-white/10 bg-white/[0.04] p-3 space-y-2">
                             <p className="text-help">
                                 Quick add multiple IDs: one per line. Format: <code>Label|voiceId</code> or just <code>voiceId</code>.
                             </p>
@@ -2028,7 +2028,7 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
                         </div>
                     )}
                     {labTab === 'compare' && <CompareVoices />}
-                    {labTab === 'animation' && <AnimationPicker />}
+                    {labTab === 'animation' && <AnimationPicker defaultOpen />}
                     {labTab === 'takes' && takesPanel}
                 </div>
                 <div className="mt-2 shrink-0 space-y-1.5 border-t border-editor-line pt-2">
