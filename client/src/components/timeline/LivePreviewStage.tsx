@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { CaptionPreview, type CaptionStyle } from './CaptionPreview';
 import type { TimelineProject } from '../../lib/timelineProject';
 import {
@@ -32,11 +32,17 @@ export interface LivePreviewStageProps {
   captionStyle?: CaptionStyle;
 }
 
-const ASPECT_CLASS: Record<string, string> = {
-  '16:9': 'aspect-video',
-  '9:16': 'aspect-[9/16]',
-  '1:1': 'aspect-square',
+// Width / height of each frame. The canvas is sized in JS to FIT the stage
+// area on both axes: a Tailwind aspect class alone let the flex column
+// squash a 1:1 or 9:16 frame back into a wide box (measured 720x409 for
+// every frame), so Square and Portrait never looked square or portrait.
+const ASPECT_RATIO: Record<string, number> = {
+  '16:9': 16 / 9,
+  '9:16': 9 / 16,
+  '1:1': 1,
 };
+// Slider row + note under the canvas.
+const CONTROLS_PX = 56;
 
 export function LivePreviewStage({
   project,
@@ -48,6 +54,24 @@ export function LivePreviewStage({
   captionStyle,
 }: LivePreviewStageProps) {
   const videoRefs = useRef<Record<string, HTMLVideoElement | null>>({});
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const [hostBox, setHostBox] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+  useEffect(() => {
+    const el = hostRef.current?.parentElement ?? hostRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver((entries) => {
+      const r = entries[0]?.contentRect;
+      if (r) setHostBox({ w: r.width, h: r.height });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [Boolean(project)]);
+  const ratio = ASPECT_RATIO[aspect] ?? 16 / 9;
+  // Fit: as wide as the host allows, unless the height would not fit - then
+  // the height rules and the width follows the ratio.
+  const fitWidth = hostBox.w > 0
+    ? Math.max(120, Math.min(hostBox.w, Math.max(120, hostBox.h - CONTROLS_PX) * ratio))
+    : undefined;
 
   const totalSec = Math.max(1, project?.targetDurationSec ?? 60);
   const frame = project
@@ -86,10 +110,10 @@ export function LivePreviewStage({
   const captionProgress = lineCount > 0 ? (timeSec % slot) / slot : 0;
 
   return (
-    <div className="flex h-full w-full flex-col items-center justify-center gap-2">
+    <div ref={hostRef} className="flex h-full w-full flex-col items-center justify-center gap-2">
       <div
-        className={`stage-ground relative w-full max-w-3xl overflow-hidden rounded-lg ${ASPECT_CLASS[aspect]}`}
-        style={gradeFilter ? { filter: gradeFilter } : undefined}
+        className="stage-ground relative max-w-full shrink-0 overflow-hidden rounded-lg"
+        style={{ aspectRatio: String(ratio), width: fitWidth ?? '100%', ...(gradeFilter ? { filter: gradeFilter } : undefined) }}
         data-testid="live-preview-canvas"
       >
         {frame.isEmpty && !frame.caption ? (
@@ -126,7 +150,7 @@ export function LivePreviewStage({
         )}
       </div>
 
-      <div className="flex w-full max-w-3xl items-center gap-2">
+      <div className="flex items-center gap-2" style={{ width: fitWidth ?? '100%' }}>
         <input
           type="range"
           min={0}

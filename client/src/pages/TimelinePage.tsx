@@ -219,7 +219,7 @@ export function TimelinePage() {
     // The docked Render lab's background picks, mirrored on the stage live.
     const [labBackgrounds, setLabBackgrounds] = useState<Array<{ id: string; url: string; previewUrl?: string; image?: string; kind?: 'image' | 'video' }>>([]);
     // The docked Render lab's caption look, previewed on the stage live.
-    const [labCaptionStyle, setLabCaptionStyle] = useState<{ preset: string; motion: string; highlight: boolean; layout: string } | null>(null);
+    const [labCaptionStyle, setLabCaptionStyle] = useState<{ preset: string; motion: string; highlight: boolean; stagger: boolean; layout: string; depth: boolean } | null>(null);
     const [clips, setClips] = useState<TimelineClip[]>([]);
     const [documentaryProject, setDocumentaryProject] = useState<TimelineProject | null>(null);
     // Scene selection is page-level state: the Scenes panel and the scene
@@ -2692,7 +2692,7 @@ export function TimelinePage() {
                             timeSec={previewTimeSec}
                             onTimeChange={setPreviewTimeSec}
                             aspect={documentaryProject?.aspect || '16:9'}
-                            captionStyle={labCaptionStyle ?? { preset: typographyPreset, layout }}
+                            captionStyle={labCaptionStyle ?? { preset: typographyPreset, layout, depth }}
                         />
                     )
                 )}

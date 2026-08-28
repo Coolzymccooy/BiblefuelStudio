@@ -19,6 +19,10 @@ export interface CaptionStyle {
   highlight?: boolean;
   /** Layout id from LAYOUT_OPTIONS ('center', 'top', 'bottom', ...). */
   layout?: string;
+  /** Stagger lines: rows arrive a beat apart, the second offset. */
+  stagger?: boolean;
+  /** Layered depth: a ghost shadow behind each word. */
+  depth?: boolean;
 }
 
 export interface CaptionPreviewProps {
@@ -33,7 +37,7 @@ type Look = {
   word: CSSProperties;
   activeWord?: CSSProperties;
   uppercase?: boolean;
-  place?: 'top' | 'center' | 'bottom' | 'lower-left';
+  place?: 'top' | 'center' | 'center-large' | 'bottom' | 'lower-left' | 'staggered';
   scale: number;
   fade?: boolean;
 };
@@ -57,14 +61,17 @@ const LOOKS: Record<string, Look> = {
   'minimal-lower-third': { wrap: { fontFamily: SANS, color: '#fff', fontWeight: 600, borderLeft: '3px solid #e6c98a', paddingLeft: '.5em', textShadow: '0 1px 6px rgba(0,0,0,.7)' }, word: {}, scale: 0.75, place: 'lower-left' },
 };
 // Browser-only picks degrade to their closest renderable look, as the server does.
-const ALIAS: Record<string, string> = { 'tiled-repeat': 'hero-bold', 'glass-chrome': 'cinematic-worship', 'webgl-bloom': 'cinematic-reactive', 'video-text': 'hero-bold', 'cinematic-default': 'cinematic-worship', default: 'cinematic-worship' };
+const ALIAS: Record<string, string> = { 'worship-cinematic': 'cinematic-worship', 'intimate-fade': 'scripture-reveal', 'scripture-emphasis': 'soft-glow', 'playful-pop': 'music-video', 'tiled-repeat': 'hero-bold', 'glass-chrome': 'cinematic-worship', 'webgl-bloom': 'cinematic-reactive', 'video-text': 'hero-bold', 'cinematic-default': 'cinematic-worship', default: 'cinematic-worship' };
 
 function placeFor(look: Look, layout?: string): NonNullable<Look['place']> {
   if (look.place) return look.place;
-  const l = String(layout || 'center').toLowerCase();
-  if (l.includes('top')) return 'top';
-  if (l.includes('bottom') || l.includes('lower')) return 'bottom';
-  return 'center';
+  switch (String(layout || 'center')) {
+    case 'bottom-center': return 'bottom';
+    case 'bottom-left': return 'lower-left';
+    case 'staggered': return 'staggered';
+    case 'center-large': return 'center-large';
+    default: return 'center';
+  }
 }
 
 const PLACE_CLASS: Record<NonNullable<Look['place']>, string> = {
@@ -72,6 +79,9 @@ const PLACE_CLASS: Record<NonNullable<Look['place']>, string> = {
   center: 'top-1/2 -translate-y-1/2 inset-x-0 text-center',
   bottom: 'bottom-[8%] inset-x-0 text-center',
   'lower-left': 'bottom-[8%] left-[6%] text-left',
+  'center-large': 'top-1/2 -translate-y-1/2 inset-x-0 text-center',
+  // Staggered sits a little high, off-centre, rows alternating sides in the render.
+  staggered: 'top-[30%] left-[10%] text-left',
 };
 
 export function CaptionPreview({ text, style, progress }: CaptionPreviewProps) {
@@ -82,33 +92,48 @@ export function CaptionPreview({ text, style, progress }: CaptionPreviewProps) {
   // Per-word reveal follows the playhead while scrubbing; at rest (playhead at
   // the line start) the whole line shows, so the look can be judged.
   const perWord = style?.motion === 'words' && p > 0;
+  const scrubbing = p > 0;
   const visible = perWord ? Math.max(1, Math.ceil(p * words.length)) : words.length;
+  // Highlight follows the playhead while scrubbing; at rest the first word
+  // carries it, so the modifier is visible the moment it is ticked.
   const active = style?.highlight || id === 'karaoke-pop' ? Math.min(words.length - 1, Math.floor(p * words.length)) : -1;
   const place = placeFor(look, style?.layout);
-  const opacity = look.fade ? Math.min(1, 0.35 + p * 2.5) : 1;
+  const indexed = words.map((w, i) => ({ w, i }));
+  const rows = style?.stagger && indexed.length >= 4
+    ? [indexed.slice(0, Math.ceil(indexed.length / 2)), indexed.slice(Math.ceil(indexed.length / 2))]
+    : [indexed];
+  const opacity = look.fade && scrubbing ? Math.min(1, 0.35 + p * 2.5) : 1;
 
   return (
     <div
       className={`pointer-events-none absolute px-[6%] ${PLACE_CLASS[place]}`}
       data-testid="caption-preview"
       data-preset={id}
-      style={{ fontSize: `calc(${look.scale} * (0.9vw + 7px))`, lineHeight: 1.25, opacity, ...look.wrap }}
+      style={{ fontSize: `calc(${look.scale * (place === 'center-large' ? 1.35 : 1)} * (0.9vw + 7px))`, lineHeight: 1.25, opacity, ...look.wrap, ...(style?.depth ? { textShadow: `${look.wrap.textShadow ? look.wrap.textShadow + ', ' : ''}0.12em 0.12em 0 rgba(0,0,0,.55)` } : undefined) }}
     >
-      {words.map((w, i) => (
-        // A real space between words: innerText / copy / screen readers read a sentence, not one glued word.
-        <span
-          key={`${w}-${i}`}
-          className="inline-block transition-opacity duration-150"
-          style={{
-            marginRight: '.28em',
-            opacity: i < visible ? 1 : 0,
-            ...look.word,
-            ...(i === active ? look.activeWord : undefined),
-          }}
+      {rows.map((row, r) => (
+        <div
+          key={r}
+          className={r > 0 ? 'mt-[.15em]' : undefined}
+          style={r > 0 ? { marginLeft: '1.6em', opacity: scrubbing && p < 0.5 ? 0.25 : 1, transition: 'opacity 150ms' } : undefined}
         >
-          {look.uppercase ? w.toUpperCase() : w}
-        </span>
-      )).flatMap((el, i) => (i === 0 ? [el] : [" ", el]))}
+          {row.map(({ w, i }) => (
+            // A real space between words: innerText / copy / screen readers read a sentence, not one glued word.
+            <span
+              key={`${w}-${i}`}
+              className="inline-block transition-opacity duration-150"
+              style={{
+                marginRight: '.28em',
+                opacity: i < visible ? 1 : 0,
+                ...look.word,
+                ...(i === active ? (look.activeWord || { color: '#e6c98a' }) : undefined),
+              }}
+            >
+              {look.uppercase ? w.toUpperCase() : w}
+            </span>
+          )).flatMap((el, i) => (i === 0 ? [el] : [' ', el]))}
+        </div>
+      ))}
     </div>
   );
 }

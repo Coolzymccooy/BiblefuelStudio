@@ -87,7 +87,7 @@ export interface RenderLabEmbed {
     onLinesChange?: (lines: string) => void;
     onInsertMusicBed?: (path: string) => void;
     /** The caption look (preset / motion / highlight / layout), for the host's live stage. */
-    onCaptionStyleChange?: (style: { preset: string; motion: string; highlight: boolean; layout: string }) => void;
+    onCaptionStyleChange?: (style: { preset: string; motion: string; highlight: boolean; stagger: boolean; layout: string; depth: boolean }) => void;
 }
 
 export function RenderPage() {
@@ -185,9 +185,9 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [backgroundItems]);
     useEffect(() => {
-        embedded?.onCaptionStyleChange?.({ preset: typographyPreset, motion: captionMotion, highlight: captionHighlight, layout });
+        embedded?.onCaptionStyleChange?.({ preset: typographyPreset, motion: captionMotion, highlight: captionHighlight, stagger: captionStagger, layout, depth });
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [typographyPreset, captionMotion, captionHighlight, layout]);
+    }, [typographyPreset, captionMotion, captionHighlight, captionStagger, layout, depth]);
     const finishedFile = result?.file || completedRender?.file;
     useEffect(() => {
         if (finishedFile && embedded?.onRendered) embedded.onRendered(finishedFile);

@@ -184,6 +184,7 @@ export function RenderCaptionsPanel({
         tooltip="Word-synced motion applies when Kinetic captions are on. The list matches the Voice Lab picker."
       >
         <Select
+          aria-label="Caption animation"
           value={typographyPreset}
           onChange={(e: ChangeEvent<HTMLSelectElement>) => onTypographyPresetChange(e.target.value)}
         >
@@ -211,6 +212,7 @@ export function RenderCaptionsPanel({
         tooltip="Where word captions sit on the frame. Bottom layouts keep text in the safe band above the TikTok/Reels caption strip; staggered alternates left/centre/right per phrase."
       >
         <Select
+          aria-label="Text layout"
           value={layout}
           onChange={(e: ChangeEvent<HTMLSelectElement>) => onLayoutChange(e.target.value)}
         >
