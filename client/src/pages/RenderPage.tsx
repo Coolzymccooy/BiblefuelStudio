@@ -82,6 +82,10 @@ export interface RenderLabEmbed {
     /** Host-owned output frame, so the lab and the topbar never disagree. */
     aspect?: 'portrait' | 'landscape' | 'square';
     onAspectChange?: (next: 'portrait' | 'landscape' | 'square') => void;
+    /** Live mirror: the host stage draws the lab's picks and text as they change. */
+    onBackgroundsChange?: (items: Array<{ id: string; url: string; previewUrl?: string; image?: string; kind?: 'image' | 'video' }>) => void;
+    onLinesChange?: (lines: string) => void;
+    onInsertMusicBed?: (path: string) => void;
 }
 
 export function RenderPage() {
@@ -174,6 +178,10 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
         if (embedded?.aspect && embedded.aspect !== aspect) setAspect(embedded.aspect);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [embedded?.aspect, aspect]);
+    useEffect(() => {
+        embedded?.onBackgroundsChange?.(backgroundItems);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [backgroundItems]);
     const finishedFile = result?.file || completedRender?.file;
     useEffect(() => {
         if (finishedFile && embedded?.onRendered) embedded.onRendered(finishedFile);
@@ -1058,7 +1066,7 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
                         <RenderCaptionsPanel
                             compact={Boolean(embedded)}
                             lines={lines}
-                            onLinesChange={setLines}
+                            onLinesChange={(next) => { setLines(next); embedded?.onLinesChange?.(next); }}
                             typographyPreset={typographyPreset}
                             onTypographyPresetChange={setTypographyPreset}
                             motions={captionMotions}
@@ -1076,7 +1084,7 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
                             animations={animations}
                             hasScripts={scripts.length > 0}
                             onOpenScripts={() => setShowScriptsModal(true)}
-                            onUseLatestScript={() => setLines(buildLinesFromScript(scripts[0]))}
+                            onUseLatestScript={() => { setLines(buildLinesFromScript(scripts[0])); toast.success('Latest script loaded'); }}
                             onFormatForVideo={() => {
                                 const next = buildSpeakableLines(lines, { maxLines: 6, maxChars: 72 }).join(CAPTION_LINE_SEP);
                                 setLines(next);
@@ -1095,6 +1103,7 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
                             musicPath={musicPath}
                             musicVolume={musicVolume}
                             autoDuck={autoDuck}
+                            onInsertMusicBed={embedded?.onInsertMusicBed}
                             onMusicChange={(m) => {
                                 setMusicPath(m.path);
                                 setMusicVolume(m.volume);
@@ -1372,7 +1381,7 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
                             animations={animations}
                             hasScripts={scripts.length > 0}
                             onOpenScripts={() => setShowScriptsModal(true)}
-                            onUseLatestScript={() => setLines(buildLinesFromScript(scripts[0]))}
+                            onUseLatestScript={() => { setLines(buildLinesFromScript(scripts[0])); toast.success('Latest script loaded'); }}
                             onFormatForVideo={() => {
                                 const next = buildSpeakableLines(lines, { maxLines: 6, maxChars: 72 }).join(String.fromCharCode(10));
                                 setLines(next);

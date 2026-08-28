@@ -6,6 +6,9 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { buildTimelineRenderPlan } from '../lib/timelineRender/planner.js';
 import { renderTimelineProof } from '../lib/timelineRender/proofRenderer.js';
+import { resolveProjectAssets } from '../lib/timelineRender/resolveProjectAssets.js';
+import { resolveAssetPath } from './jobs.js';
+import { resolveOutputAlias } from '../lib/mediaThumb.js';
 import { OUTPUT_DIR } from '../lib/paths.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -212,7 +215,12 @@ router.get('/projects/:projectId', (req, res) => {
 
 router.post('/render', (req, res) => {
   try {
-    const plan = buildTimelineRenderPlan(req.body?.project, {
+    // Library ids (from 'Send backgrounds to B-roll') become real media here.
+    const project = resolveProjectAssets(req.body?.project, {
+      exists: (v) => { try { return fs.existsSync(resolveOutputAlias(v)); } catch { return false; } },
+      resolve: (v) => { try { return resolveAssetPath(v); } catch { return null; } },
+    });
+    const plan = buildTimelineRenderPlan(project, {
       quality: req.body?.quality || req.body?.project?.renderSettings?.quality || 'proof_720p',
     });
 

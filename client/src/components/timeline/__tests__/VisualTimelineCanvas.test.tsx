@@ -16,7 +16,7 @@ describe('VisualTimelineCanvas', () => {
     expect(screen.getByLabelText('Scene block: Opening / Arrival')).toHaveAttribute('draggable', 'true');
 
     const videoTrack = screen.getByLabelText('Track lane: Real footage');
-    expect(within(videoTrack).getByText('Inserted videos appear here in sequence')).toBeInTheDocument();
+    expect(within(videoTrack).getByText(/No footage yet/)).toBeInTheDocument();
     expect(screen.getByLabelText('Track lane: AI B-roll / cutaways')).toBeInTheDocument();
     expect(screen.getByLabelText('Track lane: Voice-over')).toBeInTheDocument();
     expect(screen.getByText(/target 4:30/i)).toBeInTheDocument();

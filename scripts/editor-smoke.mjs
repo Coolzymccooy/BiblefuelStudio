@@ -250,9 +250,9 @@ const get=p=>new Promise((res,rej)=>{http.get({host:'127.0.0.1',port:PORT,path:p
     (await ev(`(()=>{const t=(document.querySelector('[role="tabpanel"]')||{}).innerText||'';return /denoise|loudness|treatment|preset|normali/i.test(t);})()`))===true);
 
   await clickTool('Output');
-  await waitFor(`/What you need to render/i.test((document.querySelector('[role="tabpanel"]')||{}).innerText||'')`);
+  await waitFor(`/Before you render/i.test((document.querySelector('[role="tabpanel"]')||{}).innerText||'')`);
   check('Output tool shows readiness as visible state with ONE render action and the Share Kit',
-    (await ev(`(()=>{const p=document.querySelector('[role="tabpanel"]');if(!p)return false;const t=p.innerText||'';const btns=[...p.querySelectorAll('button')];return /What you need to render/i.test(t)&&btns.some(b=>/^Render /i.test(b.textContent.trim()))&&/Share Kit/i.test(t);})()`))===true);
+    (await ev(`(()=>{const p=document.querySelector('[role="tabpanel"]');if(!p)return false;const t=p.innerText||'';const btns=[...p.querySelectorAll('button')];return /Before you render/i.test(t)&&btns.some(b=>/^Render /i.test(b.textContent.trim()))&&/Share Kit/i.test(t);})()`))===true);
   check('Output tool docks the WHOLE render lab: Captions / Visuals / Audio / Output / Share tabs',
     (await ev(`(()=>{const tabs=[...document.querySelectorAll('[role="tablist"][aria-label="Render lab"] [role="tab"]')].map(b=>b.textContent.trim());return ['Captions','Visuals','Audio','Output','Share'].every(w=>tabs.includes(w));})()`))===true);
   await ev(`[...document.querySelectorAll('[role="tablist"][aria-label="Render lab"] [role="tab"]')].find(x=>x.textContent.trim()==='Output')?.click(); 'ok'`);

@@ -38,6 +38,8 @@ interface VisualTimelineCanvasProps {
    * the lanes get the height instead.
    */
   compact?: boolean;
+  /** Clicking an empty lane opens the tool that fills it. */
+  onEmptyLaneClick?: (kind: TimelineTrackKind) => void;
 }
 
 /**
@@ -72,13 +74,15 @@ const MIN_CLIP_WIDTH_PCT = 5;
 // overflowing the block. Selecting the clip reveals them regardless.
 const CONTROLS_MIN_WIDTH_PCT = 4;
 
+// Each empty lane says WHERE its content comes from, and clicking it opens
+// that tool - the lane itself is the way in.
 const EMPTY_HINT: Record<TimelineTrackKind, string> = {
-  video: 'Inserted videos appear here in sequence',
-  broll: 'Add images, uploaded cutaways, or configured AI B-roll here',
-  voiceover: 'Add Chatterbox/Fish scene briefs',
-  music: 'Add soundtrack bed or worship-safe music',
-  captions: 'Add kinetic captions and scripture callouts',
-  effects: 'Add transitions, glow, grade and light leaks',
+  video: 'No footage yet — Media tool: Insert source media, or Story / Series output',
+  broll: 'No B-roll yet — Background tool, or Output → Send backgrounds to B-roll',
+  voiceover: 'No voice-over yet — Voice tool: Generate, then Land on VO lane',
+  music: 'No music bed yet — Music tool',
+  captions: 'No captions yet — Script tool: Captions, or Captions tool',
+  effects: 'No effects yet — Scenes tool: pick a scene, then add a transition, grade, glow or light leak',
 };
 
 function formatDuration(sec: number): string {
@@ -163,7 +167,7 @@ function buildVeoPrompt(project: TimelineProject): VeoBrollRequest {
   };
 }
 
-export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBroll, compact = false, selectedSceneId = null, onSelectScene }: VisualTimelineCanvasProps) {
+export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBroll, compact = false, selectedSceneId = null, onSelectScene, onEmptyLaneClick }: VisualTimelineCanvasProps) {
   const target = Math.max(1, project.targetDurationSec);
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   const selection = useMemo(() => findClip(project, selectedClipId), [project, selectedClipId]);
@@ -273,9 +277,15 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
   
                       <div className={`relative ${d.lane} rounded-lg border border-dashed border-white/10 bg-white/[0.02] ${d.lanePad}`}>
                         {track.clips.length === 0 ? (
-                          <div className={`flex ${d.emptyRow} items-center justify-center rounded-md bg-black/20 text-[11px] text-content-tertiary`}>
+                          <button
+                            type="button"
+                            onClick={() => onEmptyLaneClick?.(track.kind)}
+                            disabled={!onEmptyLaneClick}
+                            title={onEmptyLaneClick ? 'Open the tool that fills this lane' : undefined}
+                            className={`flex ${d.emptyRow} w-full items-center justify-center rounded-md bg-black/20 px-2 text-center text-[11px] text-content-tertiary transition enabled:hover:bg-white/[0.04] enabled:hover:text-content-secondary`}
+                          >
                             {EMPTY_HINT[track.kind]}
-                          </div>
+                          </button>
                         ) : (
                           <div className={`relative ${d.clipRow}`}>
                             {track.clips.map((clip) => {

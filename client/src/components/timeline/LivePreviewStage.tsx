@@ -81,7 +81,7 @@ export function LivePreviewStage({
   return (
     <div className="flex h-full w-full flex-col items-center justify-center gap-2">
       <div
-        className={`relative w-full max-w-3xl overflow-hidden rounded-lg bg-black ${ASPECT_CLASS[aspect]}`}
+        className={`stage-ground relative w-full max-w-3xl overflow-hidden rounded-lg ${ASPECT_CLASS[aspect]}`}
         style={gradeFilter ? { filter: gradeFilter } : undefined}
         data-testid="live-preview-canvas"
       >

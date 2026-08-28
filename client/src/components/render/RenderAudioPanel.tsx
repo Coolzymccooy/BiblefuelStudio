@@ -26,6 +26,8 @@ export interface RenderAudioPanelProps {
   musicVolume: number;
   autoDuck: boolean;
   onMusicChange: (next: { path: string; volume: number; autoDuck: boolean }) => void;
+  /** Host timeline: put the chosen track on the Music bed lane. */
+  onInsertMusicBed?: (path: string) => void;
 }
 
 export function RenderAudioPanel({
@@ -37,6 +39,7 @@ export function RenderAudioPanel({
   musicVolume,
   autoDuck,
   onMusicChange,
+  onInsertMusicBed,
 }: RenderAudioPanelProps) {
   return (
     <div className="space-y-4">
@@ -87,6 +90,7 @@ export function RenderAudioPanel({
           autoDuck: m.autoDuck ?? true,
         })}
         busy={false}
+        onInsertToLane={onInsertMusicBed}
       />
       </div>
     </div>

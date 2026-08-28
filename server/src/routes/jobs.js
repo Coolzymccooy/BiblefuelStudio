@@ -321,7 +321,7 @@ function safeUpdateJob(id, patch) {
   }
 }
 
-function resolveAssetPath(pathOrId) {
+export function resolveAssetPath(pathOrId) {
   if (pathOrId == null) return null;
   const normalized = String(pathOrId).trim();
   if (!normalized) return null;

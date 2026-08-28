@@ -673,3 +673,13 @@ input:-webkit-autofill:focus {
 .editor-embed .text-\[12px\] { font-size: 11px; }
 .editor-embed textarea.input { min-height: 4.5rem; }
 .editor-embed label.field-label, .editor-embed .field-label { font-size: 11px; margin-bottom: .25rem; }
+/* The stage's ground is a transparency checkerboard (editor palette), so an
+   empty canvas reads as "nothing placed yet" and alpha in images shows. */
+.stage-ground {
+  background-color: #0e0b06;
+  background-image:
+    linear-gradient(45deg, rgba(255,255,255,.045) 25%, transparent 25%, transparent 75%, rgba(255,255,255,.045) 75%),
+    linear-gradient(45deg, rgba(255,255,255,.045) 25%, transparent 25%, transparent 75%, rgba(255,255,255,.045) 75%);
+  background-size: 18px 18px;
+  background-position: 0 0, 9px 9px;
+}

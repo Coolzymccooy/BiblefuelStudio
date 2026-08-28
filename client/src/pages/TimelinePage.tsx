@@ -216,6 +216,8 @@ export function TimelinePage() {
     // next tool: Script -> Voice this -> Voice -> Next: Render -> Output.
     const [activeTool, setActiveTool] = useState('media');
     const [voiceSeedText, setVoiceSeedText] = useState('');
+    // The docked Render lab's background picks, mirrored on the stage live.
+    const [labBackgrounds, setLabBackgrounds] = useState<Array<{ id: string; url: string; previewUrl?: string; image?: string; kind?: 'image' | 'video' }>>([]);
     const [clips, setClips] = useState<TimelineClip[]>([]);
     const [documentaryProject, setDocumentaryProject] = useState<TimelineProject | null>(null);
     // Scene selection is page-level state: the Scenes panel and the scene
@@ -2477,6 +2479,10 @@ export function TimelinePage() {
                                         onRendered: (file) => { setRenderedVideo(api.mediaUrl(file)); setRenderedThisSession(true); },
                                         // One output frame: the topbar select and the lab agree.
                                         aspect: documentaryProject ? (documentaryProject.aspect === '16:9' ? 'landscape' : documentaryProject.aspect === '1:1' ? 'square' : 'portrait') : undefined,
+                                        // Live mirror: picks and overlay text land on the stage as you work.
+                                        onBackgroundsChange: setLabBackgrounds,
+                                        onLinesChange: (text) => setEditedLines(text.split('\n')),
+                                        onInsertMusicBed: useAsMusicBed,
                                         onAspectChange: (a) => {
                                             if (!documentaryProject) return;
                                             setDocumentaryProject({ ...documentaryProject, aspect: a === 'landscape' ? '16:9' : a === 'square' ? '1:1' : '9:16', updatedAt: new Date().toISOString() });
@@ -2669,7 +2675,7 @@ export function TimelinePage() {
                         // and the cut could not be judged before rendering.
                         <LivePreviewStage
                             project={documentaryProject}
-                            backgrounds={backgroundItems.map((b) => ({
+                            backgrounds={[...backgroundItems, ...labBackgrounds.filter((l) => !backgroundItems.some((b) => String(b.id) === String(l.id)))].map((b) => ({
                                 id: b.id,
                                 url: b.previewUrl || b.image || b.url,
                                 kind: b.kind,
@@ -2689,6 +2695,7 @@ export function TimelinePage() {
                     <div className="h-full">
                         <VisualTimelineCanvas
                             compact
+                            onEmptyLaneClick={(kind) => setActiveTool(kind === 'video' ? 'media' : kind === 'broll' ? 'background' : kind === 'voiceover' ? 'voice' : kind === 'music' ? 'music' : kind === 'captions' ? 'captions' : 'scenes')}
                             project={documentaryProject}
                             onProjectChange={setDocumentaryProject}
                             onRequestVeoBroll={handleRequestVeoBroll}

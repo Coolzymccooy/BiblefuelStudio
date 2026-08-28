@@ -43,10 +43,18 @@ export function OutputQuickPanel({
   return (
     <div className="space-y-3">
       <div>
-        <p className="mb-1.5 text-[9px] font-bold uppercase tracking-[.1em] text-editor-faint">What you need to render</p>
+        {/* The answer to "when do I press Render?": a status line, then the
+            steps in order. Ready = every required step ticked. */}
+        <div className="mb-1.5 flex items-baseline justify-between gap-2">
+          <p className="text-[9px] font-bold uppercase tracking-[.1em] text-editor-faint">Before you render</p>
+          <p className={`text-[10px] font-semibold ${blockers.length === 0 ? 'text-editor-accent' : 'text-editor-dim'}`}>
+            {blockers.length === 0 ? 'Ready — press Render' : `${blockers.length} step${blockers.length === 1 ? '' : 's'} left`}
+          </p>
+        </div>
         <ul className="space-y-1.5">
-          {items.map((item) => (
+          {items.map((item, idx) => (
             <li key={item.label} className="flex items-start gap-2">
+              <span className="mt-0.5 w-3 shrink-0 text-[9px] font-bold tabular-nums text-editor-faint">{idx + 1}</span>
               {item.status === 'done'
                 ? <CheckCircle2 size={13} className="mt-0.5 shrink-0 text-bf-success" />
                 : <Circle size={13} className={`mt-0.5 shrink-0 ${item.status === 'todo' ? 'text-editor-accent' : 'text-editor-faint'}`} />}
