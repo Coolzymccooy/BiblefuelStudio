@@ -1049,6 +1049,9 @@ export function TimelinePage() {
     const useAsMusicBed = (p: string) => {
         if (!p) return;
         setMusicPath(p);
+        // The Music bed LANE mirrors musicPaths; musicPath alone never reached
+        // it, so 'Music bed lane' from the lab and the Media tool did nothing visible.
+        setMusicPaths((prev) => (prev.includes(p) ? prev : [...prev, p]));
         toast.success('Using as music bed');
     };
 
@@ -1880,6 +1883,31 @@ export function TimelinePage() {
         toast.success(`${picks.length} background${picks.length === 1 ? '' : 's'} placed on the B-roll lane`);
     };
 
+    // Canvas edits (trash on a clip, split, drag) go through here so a removed
+    // MIRRORED clip also leaves its source; otherwise the sidecar sync
+    // re-created it on the next render and the trash looked broken.
+    const handleCanvasProjectChange = (next: TimelineProject) => {
+        if (documentaryProject) {
+            const gone = (kind: TimelineTrackKind) => {
+                const before = documentaryProject.tracks.find((t) => t.kind === kind)?.clips || [];
+                const after = new Set((next.tracks.find((t) => t.kind === kind)?.clips || []).map((c) => c.id));
+                return before.filter((c) => !after.has(c.id));
+            };
+            const goneMusic = gone('music');
+            if (goneMusic.length > 0) {
+                const paths = new Set(goneMusic.map((c) => documentaryProject.assets[c.assetId]?.path).filter(Boolean));
+                setMusicPaths((prev) => prev.filter((p) => !paths.has(p)));
+                setMusicPath((prev) => (prev && paths.has(prev) ? null : prev));
+            }
+            const goneCaptions = gone('captions');
+            if (goneCaptions.length > 0) {
+                const texts = new Set(goneCaptions.map((c) => c.text).filter(Boolean));
+                setEditedLines((prev) => prev.filter((l) => !texts.has(l)));
+            }
+        }
+        setDocumentaryProject(next);
+    };
+
     // Clear ONE lane. Captions and music are mirrored from page state by the
     // sidecar sync, so those clear at the source; the others drop their clips
     // and any asset nothing else references. Stale clips from earlier
@@ -1887,8 +1915,8 @@ export function TimelinePage() {
     const handleClearLane = (kind: TimelineTrackKind) => {
         const label = documentaryProject?.tracks.find((t) => t.kind === kind)?.label || kind;
         if (!window.confirm(`Clear the ${label} lane? Every clip on it is removed.`)) return;
-        if (kind === 'captions') { setEditedLines([]); toast.success('Captions lane cleared'); return; }
-        if (kind === 'music') { setMusicPaths([]); setMusicPath(null); toast.success('Music bed cleared'); return; }
+        if (kind === 'captions') setEditedLines([]);
+        if (kind === 'music') { setMusicPaths([]); setMusicPath(null); }
         if (!documentaryProject) return;
         const tracks = documentaryProject.tracks.map((t) => (t.kind === kind ? { ...t, clips: [] } : t));
         const used = new Set(tracks.flatMap((t) => t.clips.map((c) => c.assetId)));
@@ -2781,7 +2809,7 @@ export function TimelinePage() {
                             compact
                             onEmptyLaneClick={(kind) => setActiveTool(kind === 'video' ? 'media' : kind === 'broll' ? 'background' : kind === 'voiceover' ? 'voice' : kind === 'music' ? 'music' : kind === 'captions' ? 'captions' : 'scenes')}
                             project={documentaryProject}
-                            onProjectChange={setDocumentaryProject}
+                            onProjectChange={handleCanvasProjectChange}
                             onRequestVeoBroll={handleRequestVeoBroll}
                             selectedSceneId={selectedSceneId}
                             onSelectScene={setSelectedSceneId}
@@ -2954,7 +2982,7 @@ export function TimelinePage() {
                     onClearLane={handleClearLane}
                     onWipeAll={handleWipeAllLanes}
                     project={documentaryProject}
-                    onProjectChange={setDocumentaryProject}
+                    onProjectChange={handleCanvasProjectChange}
                     onRequestVeoBroll={handleRequestVeoBroll}
                     selectedSceneId={selectedSceneId}
                     onSelectScene={setSelectedSceneId}
