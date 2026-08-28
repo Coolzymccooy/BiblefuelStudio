@@ -18,7 +18,7 @@ import { markRead } from '../lib/notifications';
 const TONE = {
     success: {
         Icon: CheckCircle2,
-        wrap: 'border-[#e8f2f0]0/40 bg-[#e8f2f0]0/10',
+        wrap: 'border-[#7fb5aa]/40 bg-[#7fb5aa]/10',
         icon: 'text-[#8fc2b8]',
         title: 'text-[#c4ddd8]',
     },

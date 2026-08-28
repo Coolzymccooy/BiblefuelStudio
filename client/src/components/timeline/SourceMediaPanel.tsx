@@ -1,4 +1,4 @@
-import { Film, Play, Music, Scissors, Plus, Sparkles } from 'lucide-react';
+import { Film, Play, Music, Scissors, Plus, Sparkles, X } from 'lucide-react';
 import { DropZone } from '../ui/DropZone';
 
 /**
@@ -32,6 +32,8 @@ export interface SourceMediaPanelProps {
   onTrim: () => void;
   onInsertSourceMedia: () => void;
   onInsertVoiceoverPlaceholder: () => void;
+  /** Unloads the source media so the stage stops showing it. */
+  onClear: () => void;
 }
 
 const ACCEPT_ATTR =
@@ -44,7 +46,7 @@ const ACCEPT_LIST = [
 ];
 
 const PROXY_TONE: Record<string, string> = {
-  ready: 'bg-[#e8f2f0]0/15 text-[#a5cec6]',
+  ready: 'bg-[#7fb5aa]/15 text-[#a5cec6]',
   failed: 'bg-red-500/15 text-red-200',
 };
 
@@ -68,6 +70,7 @@ export function SourceMediaPanel({
   onTrim,
   onInsertSourceMedia,
   onInsertVoiceoverPlaceholder,
+  onClear,
 }: SourceMediaPanelProps) {
   const fileName = sourceMediaPath?.split(/[\/]/).pop();
 
@@ -202,6 +205,16 @@ export function SourceMediaPanel({
                 }
               >
                 <Sparkles size={12} /> VO
+              </button>
+
+              <button
+                type="button"
+                onClick={onClear}
+                aria-label="Clear source media"
+                className="inline-flex items-center gap-1 rounded-md bg-white/[0.06] px-1.5 py-1 text-[11px] text-content-tertiary transition-colors hover:bg-red-500/15 hover:text-red-200"
+                title="Unload this file — the stage goes back to your timeline. The upload itself is kept in your library."
+              >
+                <X size={12} /> Clear
               </button>
             </div>
           </div>

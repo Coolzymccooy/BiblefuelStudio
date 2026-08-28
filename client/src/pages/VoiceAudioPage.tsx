@@ -1003,7 +1003,7 @@ export function VoiceAudioPage() {
     const providerControls = (
         <>
             {voiceDefaults.enabled && (
-                <div className="rounded-xl border border-[#e8f2f0]0/30 bg-[#e8f2f0]0/10 p-3 flex flex-wrap items-center gap-3 text-xs">
+                <div className="rounded-xl border border-[#7fb5aa]/30 bg-[#7fb5aa]/10 p-3 flex flex-wrap items-center gap-3 text-xs">
                     <Wand2 size={14} className="text-[#8fc2b8] shrink-0" />
                     <span className="text-[#a5cec6]">
                         Voice Synthesis defaults active —{' '}
@@ -1084,7 +1084,7 @@ export function VoiceAudioPage() {
                         title={chatterboxAvailable ? '' : 'CHATTERBOX_URL not set — point it at a Chatterbox HTTP server (self-hosted bridge, e.g. https://chatterbox.tiwaton.co.uk).'}
                         className={`px-3 py-1.5 text-xs font-medium transition border-l border-white/10 ${
                             provider === 'chatterbox'
-                                ? 'bg-[#e8f2f0]0/15 text-[#a5cec6]'
+                                ? 'bg-[#7fb5aa]/15 text-[#a5cec6]'
                                 : 'text-gray-300 hover:bg-white/5'
                         } disabled:opacity-40 disabled:cursor-not-allowed`}
                     >
@@ -1670,7 +1670,7 @@ export function VoiceAudioPage() {
                                         disabled={!chatterboxAvailable}
                                         title={chatterboxAvailable ? '' : 'CHATTERBOX_URL not set or bridge unreachable.'}
                                         className={`px-3 py-1.5 text-xs font-medium rounded transition ${cloneProvider === 'chatterbox'
-                                            ? 'bg-[#e8f2f0]0/20 text-[#a5cec6]'
+                                            ? 'bg-[#7fb5aa]/20 text-[#a5cec6]'
                                             : 'text-gray-300 hover:bg-white/5'
                                             } disabled:opacity-40 disabled:cursor-not-allowed`}
                                     >
@@ -1965,7 +1965,7 @@ export function VoiceAudioPage() {
                                         return (
                                         <div
                                             key={item.id}
-                                            className={`surface-raised flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 ${isCurrent ? 'border border-[#e8f2f0]0/25' : ''}`}
+                                            className={`surface-raised flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 ${isCurrent ? 'border border-[#7fb5aa]/25' : ''}`}
                                         >
                                             <button
                                                 type="button"
@@ -2093,7 +2093,7 @@ export function VoiceAudioPage() {
                     <Card
                         title="Current Audio"
                         headerExtra={audioPath.trim() ? (
-                            <span className="inline-flex items-center gap-1 text-[0.6875rem] font-semibold px-2 py-0.5 rounded-full bg-[#e8f2f0]0/15 text-[#8fc2b8] border border-[#e8f2f0]0/25">
+                            <span className="inline-flex items-center gap-1 text-[0.6875rem] font-semibold px-2 py-0.5 rounded-full bg-[#7fb5aa]/15 text-[#8fc2b8] border border-[#7fb5aa]/25">
                                 <CheckCircle2 size={12} />
                                 Used in Render
                             </span>
@@ -2168,7 +2168,7 @@ export function VoiceAudioPage() {
                                     // overlapping the timestamp, buttons and File path toggle.
                                     className={`flex flex-col gap-2 rounded-lg p-3 border ${
                                         isCurrent
-                                            ? 'bg-[#e8f2f0]0/[0.06] border-[#e8f2f0]0/25'
+                                            ? 'bg-[#7fb5aa]/[0.06] border-[#7fb5aa]/25'
                                             : 'bg-dark-900/60 border-white/5'
                                     }`}
                                 >
@@ -2176,7 +2176,7 @@ export function VoiceAudioPage() {
                                         <p className="text-[0.8125rem] font-medium text-primary-300 flex items-center gap-1.5">
                                             {item.kind}
                                             {isCurrent && (
-                                                <span className="inline-flex items-center gap-1 text-[0.625rem] font-semibold px-1.5 py-0.5 rounded-full bg-[#e8f2f0]0/15 text-[#8fc2b8]">
+                                                <span className="inline-flex items-center gap-1 text-[0.625rem] font-semibold px-1.5 py-0.5 rounded-full bg-[#7fb5aa]/15 text-[#8fc2b8]">
                                                     <CheckCircle2 size={10} />
                                                     Current
                                                 </span>
@@ -2198,7 +2198,7 @@ export function VoiceAudioPage() {
                                     </div>
                                     <div className="flex flex-wrap items-center gap-2">
                                         {isCurrent ? (
-                                            <span className="inline-flex items-center gap-1.5 text-xs h-8 px-3 rounded-lg text-[#8fc2b8] bg-[#e8f2f0]0/10 border border-[#e8f2f0]0/20 whitespace-nowrap">
+                                            <span className="inline-flex items-center gap-1.5 text-xs h-8 px-3 rounded-lg text-[#8fc2b8] bg-[#7fb5aa]/10 border border-[#7fb5aa]/20 whitespace-nowrap">
                                                 <CheckCircle2 size={14} />
                                                 In use
                                             </span>

@@ -16,6 +16,7 @@ function setup(over: Partial<SourceMediaPanelProps> = {}) {
     onTrim: vi.fn(),
     onInsertSourceMedia: vi.fn(),
     onInsertVoiceoverPlaceholder: vi.fn(),
+    onClear: vi.fn(),
     ...over,
   };
   render(<SourceMediaPanel {...props} />);
@@ -23,6 +24,17 @@ function setup(over: Partial<SourceMediaPanelProps> = {}) {
 }
 
 describe('SourceMediaPanel', () => {
+  it('offers Clear once media is loaded, so a stale image never sticks on the stage', async () => {
+    const user = userEvent.setup();
+    const props = setup({ sourceMediaPath: 'uploads/bg-image-1.jpg', sourceMediaKind: 'image' });
+    await user.click(screen.getByRole('button', { name: /clear source media/i }));
+    expect(props.onClear).toHaveBeenCalled();
+  });
+
+  it('hides Clear when nothing is loaded', () => {
+    setup({ sourceMediaPath: null, sourceMediaKind: null });
+    expect(screen.queryByRole('button', { name: /clear source media/i })).not.toBeInTheDocument();
+  });
   it('states the upload limit so the user knows before choosing a file', () => {
     setup({ maxUploadMb: 512 });
     expect(screen.getByText(/512 MB/)).toBeInTheDocument();

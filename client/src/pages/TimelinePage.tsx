@@ -1778,6 +1778,18 @@ export function TimelinePage() {
         toast.success(`${lines.length} caption clip${lines.length === 1 ? '' : 's'} landed on the Captions lane`);
     };
 
+    // Clear the loaded source file. The stage's live preview is driven by
+    // sourceMediaPath, so with no way to unload it a stale image sat on the
+    // canvas forever - the operator had to ask for "a clear canvas button".
+    // The upload itself stays in the library; only the pointer is dropped.
+    const handleClearSourceMedia = () => {
+        setSourceMediaPath(null);
+        setSourceMediaKind(null);
+        setSourceMediaProxyPath(null);
+        setSourceMediaProxyStatus(null);
+        toast.success('Source media cleared — the stage shows your timeline again');
+    };
+
     const overlays = (
         <>
             {/* Library Picker Modal — multi-select up to MAX_BACKGROUNDS.
@@ -2103,6 +2115,7 @@ export function TimelinePage() {
                             })}
                             onInsertSourceMedia={handleInsertSourceMediaIntoDocumentary}
                             onInsertVoiceoverPlaceholder={handleInsertVoiceoverPlaceholder}
+                            onClear={handleClearSourceMedia}
                         />
                         </PanelSection>
                     ),
@@ -2614,7 +2627,7 @@ export function TimelinePage() {
                                 {renderCoverage.included.map((i) => (
                                     <span
                                         key={i.kind}
-                                        className="rounded-full border border-[#e8f2f0]0/30 bg-[#e8f2f0]0/10 px-2 py-0.5 text-[11px] text-[#a5cec6]"
+                                        className="rounded-full border border-[#7fb5aa]/30 bg-[#7fb5aa]/10 px-2 py-0.5 text-[11px] text-[#a5cec6]"
                                     >
                                         {i.label} · {i.used}/{i.total}
                                     </span>
@@ -2699,6 +2712,7 @@ export function TimelinePage() {
                 })}
                 onInsertSourceMedia={handleInsertSourceMediaIntoDocumentary}
                 onInsertVoiceoverPlaceholder={handleInsertVoiceoverPlaceholder}
+                            onClear={handleClearSourceMedia}
               />
             </Card>
 

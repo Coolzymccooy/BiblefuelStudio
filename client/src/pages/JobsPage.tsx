@@ -393,7 +393,7 @@ export function JobsPage() {
                                                             e.stopPropagation();
                                                             setShareJob(job);
                                                         }}
-                                                        className="text-xs px-3 py-1 bg-[#e8f2f0]0/10 hover:bg-[#e8f2f0]0/20 text-[#8fc2b8] border-[#e8f2f0]0/20 h-auto justify-center"
+                                                        className="text-xs px-3 py-1 bg-[#7fb5aa]/10 hover:bg-[#7fb5aa]/20 text-[#8fc2b8] border-[#7fb5aa]/20 h-auto justify-center"
                                                     >
                                                         <Share2 size={14} className="mr-1.5" />
                                                         Share
@@ -444,7 +444,7 @@ export function JobsPage() {
                                                     </span>
                                                     <pre className={`p-3 rounded-lg overflow-auto border font-mono max-h-40 custom-scrollbar ${job.error
                                                         ? 'bg-red-500/5 border-red-500/20 text-red-300'
-                                                        : 'bg-[#e8f2f0]0/5 border-[#e8f2f0]0/20 text-[#8fc2b8]'
+                                                        : 'bg-[#7fb5aa]/5 border-[#7fb5aa]/20 text-[#8fc2b8]'
                                                         }`}>
                                                         {job.error || JSON.stringify(job.result, null, 2)}
                                                     </pre>

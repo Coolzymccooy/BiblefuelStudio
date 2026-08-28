@@ -246,7 +246,7 @@ export function VoiceSynthesisPanel() {
                                 onClick={() => setCinematicMode((v) => !v)}
                                 className={`w-full h-9 rounded-lg text-xs font-medium transition-colors border ${
                                     cinematicMode
-                                        ? 'bg-[#e8f2f0]0/15 border-[#e8f2f0]0/30 text-[#a5cec6]'
+                                        ? 'bg-[#7fb5aa]/15 border-[#7fb5aa]/30 text-[#a5cec6]'
                                         : 'bg-white/5 border-white/10 text-gray-400'
                                 }`}
                             >
@@ -280,7 +280,7 @@ export function VoiceSynthesisPanel() {
                     <div
                         className={`mt-2 rounded-xl border p-3 flex flex-wrap items-center gap-3 transition-colors ${
                             enabled
-                                ? 'bg-[#e8f2f0]0/10 border-[#e8f2f0]0/30'
+                                ? 'bg-[#7fb5aa]/10 border-[#7fb5aa]/30'
                                 : 'bg-white/5 border-white/10'
                         }`}
                     >
@@ -289,7 +289,7 @@ export function VoiceSynthesisPanel() {
                             onClick={() => setEnabled(!enabled)}
                             className={`h-8 px-3 rounded-lg text-xs font-medium border transition-colors ${
                                 enabled
-                                    ? 'bg-[#e8f2f0]0 text-black border-[#e8f2f0]0'
+                                    ? 'bg-[#7fb5aa] text-black border-[#7fb5aa]'
                                     : 'bg-white/5 text-gray-300 border-white/10 hover:border-white/20'
                             }`}
                         >

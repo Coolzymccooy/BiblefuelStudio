@@ -228,7 +228,7 @@ export function CompareVoices({ className = '' }: { className?: string }) {
             type="button"
             onClick={runCompare}
             disabled={!canRun}
-            className="inline-flex items-center gap-2 rounded-lg px-4 py-2 bg-[#e8f2f0]0/90 hover:bg-[#e8f2f0]0 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium"
+            className="inline-flex items-center gap-2 rounded-lg px-4 py-2 bg-[#7fb5aa]/90 hover:bg-[#7fb5aa] disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium"
           >
             {loading ? <Loader2 size={14} className="animate-spin" /> : <GitCompare size={14} />}
             {loading ? 'Synthesising…' : 'Compare'}

@@ -1187,7 +1187,7 @@ export function RenderPage() {
             
 
             {completedRender && (
-                <div ref={renderDoneRef} className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 rounded-2xl border border-[#e8f2f0]0/30 bg-[#e8f2f0]0/10 shadow-[0_10px_40px_rgba(127,181,170,0.15)] animate-fade-in">
+                <div ref={renderDoneRef} className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 rounded-2xl border border-[#7fb5aa]/30 bg-[#7fb5aa]/10 shadow-[0_10px_40px_rgba(127,181,170,0.15)] animate-fade-in">
                     <div className="flex items-start gap-3 flex-1 min-w-0">
                         <CheckCircle2 size={20} className="text-[#7fb5aa] flex-shrink-0 mt-0.5" />
                         <div className="min-w-0">
@@ -1201,7 +1201,7 @@ export function RenderPage() {
                         {completedRender.file && (
                             <Button
                                 variant="secondary"
-                                className="h-9 text-xs border-[#e8f2f0]0/30 bg-[#e8f2f0]0/10 hover:bg-[#e8f2f0]0/20"
+                                className="h-9 text-xs border-[#7fb5aa]/30 bg-[#7fb5aa]/10 hover:bg-[#7fb5aa]/20"
                                 onClick={() => {
                                     const url = toOutputUrl(completedRender.file, api.mediaBaseUrl);
                                     window.open(url, '_blank');
@@ -1235,7 +1235,7 @@ export function RenderPage() {
             )}
 
             {completedRender?.file && !result?.file && (
-                <Card title="Share your video" className="border-[#e8f2f0]0/20 bg-[#e8f2f0]0/[0.03]">
+                <Card title="Share your video" className="border-[#7fb5aa]/20 bg-[#7fb5aa]/[0.03]">
                     <ShareSheet
                         videoUrl={toOutputUrl(completedRender.file, api.mediaBaseUrl)}
                         caption={lines.split('\n').filter(Boolean).join(' ')}

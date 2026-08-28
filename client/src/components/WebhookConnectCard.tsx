@@ -176,7 +176,7 @@ export function WebhookConnectCard() {
                                         <div className="flex items-center gap-2 flex-wrap">
                                             <span className="text-sm font-semibold text-white">{w.name}</span>
                                             {showOkBadge && (
-                                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#e8f2f0]0/15 border border-[#e8f2f0]0/30 text-[#a5cec6] text-[10px] font-semibold">
+                                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#7fb5aa]/15 border border-[#7fb5aa]/30 text-[#a5cec6] text-[10px] font-semibold">
                                                     <CheckCircle2 size={10} /> Healthy
                                                 </span>
                                             )}
@@ -400,7 +400,7 @@ function AddWebhookModal({ onClose, onSaved }: AddWebhookModalProps) {
                         </>
                     ) : (
                         <>
-                            <div className="rounded-xl border border-[#e8f2f0]0/20 bg-[#e8f2f0]0/[0.05] p-4">
+                            <div className="rounded-xl border border-[#7fb5aa]/20 bg-[#7fb5aa]/[0.05] p-4">
                                 <p className="text-sm text-[#a5cec6] leading-relaxed">
                                     Paste the webhook URL Make / Zapier gave you. We'll save it AND fire a test ping
                                     so you can confirm it lands in your scenario's history before any real video runs through it.
@@ -438,7 +438,7 @@ function AddWebhookModal({ onClose, onSaved }: AddWebhookModalProps) {
                                 </div>
                             )}
                             {testResult?.ok && (
-                                <div className="rounded-lg border border-[#e8f2f0]0/30 bg-[#e8f2f0]0/[0.08] p-3 text-xs text-[#a5cec6]">
+                                <div className="rounded-lg border border-[#7fb5aa]/30 bg-[#7fb5aa]/[0.08] p-3 text-xs text-[#a5cec6]">
                                     <strong>✓ Test ping accepted.</strong> Now open your Make / Zapier <strong>scenario run history</strong> and confirm the test event appears there. If it doesn't, your scenario isn't turned on — that's the most common gotcha.
                                 </div>
                             )}

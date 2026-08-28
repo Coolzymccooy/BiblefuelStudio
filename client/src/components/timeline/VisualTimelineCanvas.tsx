@@ -40,6 +40,21 @@ interface VisualTimelineCanvasProps {
   compact?: boolean;
 }
 
+/**
+ * Per-lane clip tints from the approved palette. Green was never semantic
+ * here; the de-green pass left clips as faint outlines, and the operator
+ * asked for "muscle". Hue tells you the lane at a glance, fill gives the
+ * block weight, and gold stays reserved for the SELECTED clip.
+ */
+const CLIP_TONE: Record<TimelineTrackKind, string> = {
+  video: 'border-[#e6c98a]/45 bg-[#e6c98a]/15 text-[#f4ecdc]',
+  broll: 'border-[#93a7bd]/55 bg-[#93a7bd]/18 text-[#e3e9ef]',
+  voiceover: 'border-[#7fb5aa]/60 bg-[#7fb5aa]/20 text-[#e6f1ee]',
+  music: 'border-[#b09ac0]/55 bg-[#b09ac0]/18 text-[#eee7f2]',
+  captions: 'border-[#f4ecdc]/40 bg-[#f4ecdc]/14 text-[#f4ecdc]',
+  effects: 'border-[#c89a8a]/55 bg-[#c89a8a]/18 text-[#f3e6e1]',
+};
+
 const TRACK_ICON: Record<TimelineTrackKind, typeof Film> = {
   video: Film,
   broll: Sparkles,
@@ -299,7 +314,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                                   // Split/Remove toolbar stayed disabled.
                                   onClick={() => setSelectedClipId(clip.id)}
                                   aria-label={`Timeline clip: ${asset?.label || clip.assetId}`}
-                                  className={`absolute top-1 ${d.clipHeight} rounded-md border px-2 py-1 text-left text-[10px] shadow-sm transition ${selected ? 'border-editor-accent bg-editor-accent/25 text-white ring-2 ring-editor-accent/40' : 'border-editor-line bg-white/[0.05] text-editor-text hover:border-editor-accent/60'}`}
+                                  className={`absolute top-1 ${d.clipHeight} rounded-md border px-2 py-1 text-left text-[10px] font-medium shadow-md transition ${selected ? 'border-editor-accent bg-editor-accent/30 text-white ring-2 ring-editor-accent/50' : `${CLIP_TONE[track.kind]} hover:brightness-125`}`}
                                   style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
                                   title={`${asset?.label || clip.assetId} · ${sourceLabel(asset)} · ${Math.round(clip.durationSec)}s · ${previewMode}`}
                                 >
@@ -343,7 +358,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                                             ),
                                           });
                                         }}
-                                        className={`rounded px-1.5 py-0.5 transition ${clip.muted ? 'bg-amber-400/30 text-amber-100' : 'bg-black/30 text-editor-dim hover:bg-black/50'}`}
+                                        className={`rounded px-1.5 py-0.5 transition ${clip.muted ? 'bg-amber-400/30 text-amber-100' : 'bg-black/40 text-editor-text/90 hover:bg-black/60'}`}
                                         title={clip.muted ? 'Unmute clip' : 'Mute clip'}
                                       >
                                         {clip.muted ? 'Muted' : 'Mute'}
@@ -361,7 +376,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                                           onProjectChange(removeClip(project, track, clip));
                                           if (selectedClipId === clip.id) setSelectedClipId(null);
                                         }}
-                                        className="rounded bg-black/30 px-1.5 py-0.5 text-editor-dim hover:bg-red-500/20 hover:text-red-200 transition"
+                                        className="rounded bg-black/40 px-1.5 py-0.5 text-editor-text/90 hover:bg-red-500/20 hover:text-red-200 transition"
                                         // Distinct from the toolbar's "Remove clip" so
                                         // accessible-name queries stay unambiguous.
                                         aria-label={`Delete clip: ${asset?.label || clip.assetId}`}

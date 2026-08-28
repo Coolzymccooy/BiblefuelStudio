@@ -165,7 +165,7 @@ export function PlanAndUsageCard() {
                                     className={`h-full transition-all ${over
                                             ? 'bg-red-500/70'
                                             : b.unlimited
-                                                ? 'bg-[#e8f2f0]0/40'
+                                                ? 'bg-[#7fb5aa]/40'
                                                 : pct > 80
                                                     ? 'bg-amber-400/70'
                                                     : 'bg-primary-400/70'

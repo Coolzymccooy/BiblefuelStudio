@@ -227,7 +227,7 @@ export function ReportIssueWidget() {
     const sevPill = (s: Severity) => {
         if (s === 'high') return 'bg-red-500/20 text-red-300 border-red-500/30';
         if (s === 'medium') return 'bg-amber-500/20 text-amber-300 border-amber-500/30';
-        return 'bg-[#e8f2f0]0/20 text-[#8fc2b8] border-[#e8f2f0]0/30';
+        return 'bg-[#7fb5aa]/20 text-[#8fc2b8] border-[#7fb5aa]/30';
     };
 
     return (
@@ -434,7 +434,7 @@ export function ReportIssueWidget() {
                                                     </span>
                                                     <span className="font-semibold text-gray-100 text-sm break-all">{issue.title}</span>
                                                     {issue.status === 'resolved'
-                                                        ? <span className="text-[10px] bg-[#e8f2f0]0/20 text-[#8fc2b8] border border-[#e8f2f0]0/30 px-1.5 py-0.5 rounded">RESOLVED</span>
+                                                        ? <span className="text-[10px] bg-[#7fb5aa]/20 text-[#8fc2b8] border border-[#7fb5aa]/30 px-1.5 py-0.5 rounded">RESOLVED</span>
                                                         : <span className="text-[10px] bg-red-500/20 text-red-300 border border-red-500/30 px-1.5 py-0.5 rounded">OPEN</span>}
                                                 </div>
                                                 <div className="text-[10px] text-content-tertiary mb-2">
