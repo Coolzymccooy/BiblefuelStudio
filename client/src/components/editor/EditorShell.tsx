@@ -272,6 +272,78 @@ export function EditorShell({
 
   const activePanel = panels[activeId];
 
+  // One tool button for both rails (desktop column, phone bottom bar).
+  const toolButton = (tool: EditorTool) => {
+    const active = tool.id === activeId;
+    return (
+      <button
+        key={tool.id}
+        role="tab"
+        aria-selected={active}
+        aria-controls={`panel-${tool.id}`}
+        onClick={() => select(tool.id)}
+        title={tool.label}
+        className={`flex min-w-[56px] shrink-0 flex-col items-center justify-center gap-0.5 rounded-lg px-1.5 py-1 text-[10px] transition lg:h-[52px] lg:w-[52px] lg:min-w-0 lg:px-0 lg:py-0 ${
+          active
+            ? 'bg-editor-accent/10 text-editor-accent ring-1 ring-inset ring-editor-accent/35 font-semibold'
+            : 'text-[#b7ac97] font-semibold hover:bg-white/5 hover:text-editor-text'
+        }`}
+      >
+        <span className="text-[16px] leading-none">{tool.icon}</span>
+        <span className="max-w-full truncate leading-tight">
+          {tool.label}
+          {typeof tool.count === 'number' && tool.count > 0 && (
+            <span className="text-editor-accent/80"> {tool.count}</span>
+          )}
+        </span>
+      </button>
+    );
+  };
+
+  // ---- Phone body (the design canvas: stage on top, timeline as the working
+  // surface, tools as a bottom bar, the tool panel as a sheet over the
+  // TIMELINE - the stage is never covered) -----------------------------
+  const phoneBody = (
+    <>
+      <div className="flex h-[30vh] short:h-[38vh] min-w-0 shrink-0 items-center justify-center overflow-hidden bg-editor-stage p-2">
+        {stage}
+      </div>
+      <div className="relative min-h-0 flex-1 overflow-hidden border-t border-editor-line bg-editor-chrome">
+        <div className="h-full overflow-hidden">{strip}</div>
+        {sheetOpen && (
+          <div
+            id={`panel-${activeId}`}
+            role="tabpanel"
+            className="absolute inset-0 z-20 flex flex-col bg-editor-panel"
+          >
+            <div className="flex shrink-0 items-center justify-between border-b border-editor-line px-3 py-1.5">
+              <span className="text-[11px] font-semibold uppercase tracking-[.1em] text-editor-dim">{tools.find((t) => t.id === activeId)?.label}</span>
+              <button
+                type="button"
+                onClick={() => setSheetOpen(false)}
+                aria-label="Hide panel"
+                title="Hide this panel and see the timeline"
+                className="grid h-7 w-7 place-items-center rounded-md text-editor-dim hover:bg-editor-hover hover:text-editor-text"
+              >
+                <ChevronDown size={15} />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-auto p-3">
+              {activePanel ?? <p className="text-[11px] text-editor-faint">Nothing here yet.</p>}
+            </div>
+          </div>
+        )}
+      </div>
+      <div
+        role="tablist"
+        aria-label="Editor tools"
+        className="flex w-full shrink-0 flex-row gap-1 overflow-x-auto border-t border-editor-line bg-editor-chrome px-2 py-1 [scrollbar-width:none]"
+      >
+        {tools.map(toolButton)}
+      </div>
+    </>
+  );
+
   // Portalled to <body> ON PURPOSE. The app's page wrapper carries
   // `animate-bffade`, whose keyframes animate `transform` with fill-mode
   // `both` — so a transform stays applied forever. A transformed ancestor
@@ -305,6 +377,8 @@ export function EditorShell({
         </div>
       )}
 
+      {phone ? phoneBody : (
+      <>
       {/* Column on phones, row on desktop. As a row, the full-width
           mobile tool strip and the panel became SIBLINGS in a
           horizontal layout: measured at 390px the rail stretched to
@@ -318,35 +392,7 @@ export function EditorShell({
           aria-label="Editor tools"
           className="flex w-full shrink-0 flex-row gap-1 overflow-x-auto border-b border-editor-line px-2 py-1 phone:[scrollbar-width:none] lg:w-[60px] lg:flex-col lg:items-center lg:border-b-0 lg:border-r lg:px-0 lg:py-1.5"
         >
-          {tools.map((tool) => {
-            const active = tool.id === activeId;
-            return (
-              <button
-                key={tool.id}
-                role="tab"
-                aria-selected={active}
-                aria-controls={`panel-${tool.id}`}
-                onClick={() => select(tool.id)}
-                title={tool.label}
-                className={`flex min-w-[56px] shrink-0 flex-col items-center justify-center gap-0.5 rounded-lg px-1.5 py-1 text-[10px] transition lg:h-[52px] lg:w-[52px] lg:min-w-0 lg:px-0 lg:py-0 ${
-                  active
-                    ? 'bg-editor-accent/10 text-editor-accent ring-1 ring-inset ring-editor-accent/35 font-semibold'
-                    : 'text-[#b7ac97] font-semibold hover:bg-white/5 hover:text-editor-text'
-                }`}
-              >
-                <span className="text-[16px] leading-none">{tool.icon}</span>
-                {/* Count rides ON the label rather than taking a third line —
-                    that third line is what forced the rail to 62px and pushed
-                    the last tool out of view. */}
-                <span className="max-w-full truncate leading-tight">
-                  {tool.label}
-                  {typeof tool.count === 'number' && tool.count > 0 && (
-                    <span className="text-editor-accent/80"> {tool.count}</span>
-                  )}
-                </span>
-              </button>
-            );
-          })}
+          {tools.map(toolButton)}
         </div>
 
         {/* Docked panel. Below lg it becomes a normal block above the stage
@@ -354,27 +400,12 @@ export function EditorShell({
         <div
           id={`panel-${activeId}`}
           role="tabpanel"
-          className={`min-h-0 w-full shrink-0 overflow-auto border-b border-editor-line bg-editor-panel p-3.5 short:p-2 lg:max-h-none lg:border-b-0 lg:border-r phone:absolute phone:inset-x-0 phone:top-[54px] phone:z-20 phone:max-h-[min(60vh,calc(100%-54px))] phone:rounded-b-2xl phone:shadow-[0_18px_40px_rgba(0,0,0,.55)] phone:p-3 ${phone && !sheetOpen ? 'phone:hidden' : ''}`}
+          className={`min-h-0 w-full shrink-0 overflow-auto border-b border-editor-line bg-editor-panel p-3.5 short:p-2 lg:max-h-none lg:border-b-0 lg:border-r`}
           // Width is inline because it is DRAGGED: a Tailwind class cannot
           // express a runtime value. Desktop only - on mobile the panel is
           // full-width and stacked, so a horizontal drag has no meaning.
           style={typeof window !== 'undefined' && window.innerWidth >= 1024 ? { width: panelWidth } : undefined}
         >
-          {/* Sheet header, phones only: which tool, and a fold-away. */}
-          {phone && (
-            <div className="mb-2 flex items-center justify-between">
-              <span className="text-[11px] font-semibold uppercase tracking-[.1em] text-editor-dim">{tools.find((t) => t.id === activeId)?.label}</span>
-              <button
-                type="button"
-                onClick={() => setSheetOpen(false)}
-                aria-label="Hide panel"
-                title="Hide this panel and see the whole timeline"
-                className="grid h-7 w-7 place-items-center rounded-md text-editor-dim hover:bg-editor-hover hover:text-editor-text"
-              >
-                <ChevronDown size={15} />
-              </button>
-            </div>
-          )}
           {activePanel ?? (
             <p className="text-[11px] text-editor-faint">Nothing here yet.</p>
           )}
@@ -523,6 +554,8 @@ export function EditorShell({
           {strip}
         </div>
         </>
+      )}
+      </>
       )}
     </div>,
     document.body,
