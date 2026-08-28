@@ -156,6 +156,10 @@ if (CHECK) {
     // presetControls it now derives its own placeholder. Verified: same
     // input, same setPresetLabel wiring.
     'Voice presets': 'Preset label',
+    // The depth checkbox label is now compact-aware (an expression, not a
+    // bare string); its tooltip carries the words. Same checkbox, same
+    // onDepthChange wiring - RenderCaptionsPanel.tsx.
+    'Layered depth (ghost shadow behind each word)': 'Ghost shadow behind each word',
   };
 
   const missing = Object.values(base).flat()

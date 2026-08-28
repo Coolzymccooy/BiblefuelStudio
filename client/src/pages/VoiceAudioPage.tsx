@@ -1048,14 +1048,14 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
         <>
             {voiceDefaults.enabled && (
                 <div className="rounded-xl border border-[#7fb5aa]/30 bg-[#7fb5aa]/10 p-3 flex flex-wrap items-center gap-3 text-xs">
-                    <Wand2 size={14} className="text-[#8fc2b8] shrink-0" />
-                    <span className="text-[#a5cec6]">
+                    <Wand2 size={14} className="text-content-secondary shrink-0" />
+                    <span className="text-content-secondary">
                         Voice Synthesis defaults active —{' '}
                         <span className="font-semibold">{voiceDefaults.category}</span>
                         {voiceDefaults.providerOverride ? ` · ${voiceDefaults.providerOverride}` : ' · auto-provider'}
                         {voiceDefaults.cinematicMode ? ' · cinematic timings' : ''}.
                     </span>
-                    <Link to="/app/settings" className="ml-auto text-[0.75rem] text-[#8fc2b8] hover:text-[#a5cec6] underline">
+                    <Link to="/app/settings" className="ml-auto text-[0.75rem] text-content-secondary hover:text-content-secondary underline">
                         Edit in Settings
                     </Link>
                 </div>
@@ -1335,7 +1335,7 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
                         Stop Recording
                     </Button>
                 )}
-                <label className="text-xs h-9 px-4 rounded-lg font-medium transition-all duration-200 bg-gray-200 text-gray-800 hover:bg-gray-300 flex items-center gap-2 cursor-pointer">
+                <label className="text-xs h-9 px-4 rounded-lg font-medium transition-all duration-200 bg-dark-900/70 text-gray-200 border border-white/10 hover:bg-dark-900/90 hover:border-white/20 flex items-center gap-2 cursor-pointer">
                     <Upload size={14} />
                     Upload Audio
                     <input
@@ -1641,7 +1641,7 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
                                 {musicItems.slice(0, 20).map((item: any) => (
                                     <div key={item.path || item.name} className="flex flex-col md:flex-row md:items-center gap-3 bg-dark-900/60 border border-white/[0.06] rounded-lg p-3">
                                         <div className="flex-1 min-w-0">
-                                            <p className="text-[0.8125rem] font-medium text-primary-300">{item.name || 'Audio'}</p>
+                                            <p className="text-[0.8125rem] font-medium text-content-secondary">{item.name || 'Audio'}</p>
                                             <p className="text-[0.75rem] font-mono text-gray-300 truncate mt-0.5" title={item.path}>{item.path}</p>
                                             {item.mtime && (
                                                 <p className="field-help">{new Date(item.mtime).toLocaleString()}</p>
@@ -1704,7 +1704,7 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
                                         disabled={!chatterboxAvailable}
                                         title={chatterboxAvailable ? '' : 'CHATTERBOX_URL not set or bridge unreachable.'}
                                         className={`px-3 py-1.5 text-xs font-medium rounded transition ${cloneProvider === 'chatterbox'
-                                            ? 'bg-[#7fb5aa]/20 text-[#a5cec6]'
+                                            ? 'bg-[#7fb5aa]/20 text-content-secondary'
                                             : 'text-gray-300 hover:bg-white/5'
                                             } disabled:opacity-40 disabled:cursor-not-allowed`}
                                     >
@@ -1797,7 +1797,7 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
                                         {chatterboxVoices.map((cv) => (
                                             <div key={cv.id} className="flex items-center gap-2 bg-dark-900/40 border border-white/[0.06] rounded-lg p-2">
                                                 <div className="flex-1 min-w-0">
-                                                    <div className="text-[0.875rem] font-medium text-[#8fc2b8]/90 truncate">{cv.name}</div>
+                                                    <div className="text-[0.875rem] font-medium text-content-secondary truncate">{cv.name}</div>
                                                     <div className="text-meta font-mono truncate">{cv.refFilename || cv.refPath}</div>
                                                 </div>
                                                 <Button
@@ -1940,7 +1940,7 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
                                                 {item.kind}
                                             </button>
                                             {isCurrent && (
-                                                <CheckCircle2 size={12} className="shrink-0 text-[#8fc2b8]" aria-label="Current take" />
+                                                <CheckCircle2 size={12} className="shrink-0 text-content-secondary" aria-label="Current take" />
                                             )}
                                             <button
                                                 type="button"
@@ -1997,7 +1997,7 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
                         </button>
                     ))}
                 </div>
-                <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-0.5">
+                <div className="lab-body min-h-0 flex-1 space-y-3 overflow-y-auto pr-0.5">
                     {labTab === 'generate' && (
                         <div className="space-y-3">
                             <Textarea
@@ -2222,7 +2222,7 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
                     <Card
                         title="Current Audio"
                         headerExtra={audioPath.trim() ? (
-                            <span className="inline-flex items-center gap-1 text-[0.6875rem] font-semibold px-2 py-0.5 rounded-full bg-[#7fb5aa]/15 text-[#8fc2b8] border border-[#7fb5aa]/25">
+                            <span className="inline-flex items-center gap-1 text-[0.6875rem] font-semibold px-2 py-0.5 rounded-full bg-[#7fb5aa]/15 text-content-secondary border border-[#7fb5aa]/25">
                                 <CheckCircle2 size={12} />
                                 Used in Render
                             </span>
@@ -2302,10 +2302,10 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
                                     }`}
                                 >
                                     <div className="flex-1 min-w-0">
-                                        <p className="text-[0.8125rem] font-medium text-primary-300 flex items-center gap-1.5">
+                                        <p className="text-[0.8125rem] font-medium text-content-secondary flex items-center gap-1.5">
                                             {item.kind}
                                             {isCurrent && (
-                                                <span className="inline-flex items-center gap-1 text-[0.625rem] font-semibold px-1.5 py-0.5 rounded-full bg-[#7fb5aa]/15 text-[#8fc2b8]">
+                                                <span className="inline-flex items-center gap-1 text-[0.625rem] font-semibold px-1.5 py-0.5 rounded-full bg-[#7fb5aa]/15 text-content-secondary">
                                                     <CheckCircle2 size={10} />
                                                     Current
                                                 </span>
@@ -2327,7 +2327,7 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
                                     </div>
                                     <div className="flex flex-wrap items-center gap-2">
                                         {isCurrent ? (
-                                            <span className="inline-flex items-center gap-1.5 text-xs h-8 px-3 rounded-lg text-[#8fc2b8] bg-[#7fb5aa]/10 border border-[#7fb5aa]/20 whitespace-nowrap">
+                                            <span className="inline-flex items-center gap-1.5 text-xs h-8 px-3 rounded-lg text-content-secondary bg-[#7fb5aa]/10 border border-[#7fb5aa]/20 whitespace-nowrap">
                                                 <CheckCircle2 size={14} />
                                                 In use
                                             </span>

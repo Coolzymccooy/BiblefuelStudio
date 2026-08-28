@@ -159,7 +159,7 @@ export function RenderBackgroundsPanel({
                           {idx + 1}/{backgroundItems.length}
                         </span>
                         {isImage && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-200">
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.04] text-content-secondary">
                             img
                           </span>
                         )}
@@ -209,7 +209,7 @@ export function RenderBackgroundsPanel({
               })}
             </ul>
             {backgroundItems.length > 1 && (
-              <p className="text-[10px] text-amber-300/80">
+              <p className="text-[10px] text-content-secondary">
                 Hard cuts between {backgroundItems.length} clips, ~{(durationSec / backgroundItems.length).toFixed(1)}s each. Auto-queues as background job.
               </p>
             )}

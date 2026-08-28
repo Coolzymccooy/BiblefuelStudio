@@ -660,3 +660,16 @@ input:-webkit-autofill:focus {
 .editor-embed [class*="md:flex-row"] { flex-direction: column !important; align-items: stretch !important; }
 .editor-embed [class*="md:w-64"] { width: 100% !important; }
 .editor-embed .max-h-80 { max-height: 22rem; }
+/* Helper-text model for the whole app: the Share Kit summary size
+   ("copy caption · auto-post") is the reference. Notes stay muted, never a
+   colour of their own. */
+.text-help { font-size: 11px; }
+.field-help, .text-meta { font-size: 10.5px; }
+/* Inside a docked lab only the footer action (Land / Render) stays solid
+   gold; every other primary button becomes a calm gold outline. */
+.editor-embed .lab-body .bg-primary-500 { background: rgba(230,201,138,.10); color: #e6c98a; border-color: rgba(230,201,138,.45); box-shadow: none; }
+.editor-embed .lab-body .bg-primary-500:hover { background: rgba(230,201,138,.18); }
+.editor-embed .text-help, .editor-embed .field-help { font-size: 10.5px; }
+.editor-embed .text-\[12px\] { font-size: 11px; }
+.editor-embed textarea.input { min-height: 4.5rem; }
+.editor-embed label.field-label, .editor-embed .field-label { font-size: 11px; margin-bottom: .25rem; }

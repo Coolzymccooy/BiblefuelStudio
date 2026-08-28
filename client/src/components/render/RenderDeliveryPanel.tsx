@@ -61,14 +61,14 @@ export function RenderDeliveryPanel({
           Render in background
         </label>
         {isLongRender && (
-          <span className="text-[0.6875rem] text-yellow-300/90">Required for 60s+</span>
+          <span className="text-[0.6875rem] text-content-secondary">Required for 60s+</span>
         )}
         {kineticCaptions && (
-          <span className="text-[0.6875rem] text-amber-300/90">Forced on by kinetic captions</span>
+          <span className="text-[0.6875rem] text-content-secondary">Forced on by kinetic captions</span>
         )}
       </div>
 
-      <div className="rounded-xl border border-amber-500/25 bg-amber-500/[0.05] p-4 space-y-3">
+      <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4 space-y-3">
         <label className="flex items-start gap-2.5 cursor-pointer">
           <input
             type="checkbox"

@@ -393,7 +393,7 @@ export function JobsPage() {
                                                             e.stopPropagation();
                                                             setShareJob(job);
                                                         }}
-                                                        className="text-xs px-3 py-1 bg-[#7fb5aa]/10 hover:bg-[#7fb5aa]/20 text-[#8fc2b8] border-[#7fb5aa]/20 h-auto justify-center"
+                                                        className="text-xs px-3 py-1 bg-[#7fb5aa]/10 hover:bg-[#7fb5aa]/20 text-content-secondary border-[#7fb5aa]/20 h-auto justify-center"
                                                     >
                                                         <Share2 size={14} className="mr-1.5" />
                                                         Share
@@ -413,7 +413,7 @@ export function JobsPage() {
                                                     isLoading={retryingJobIds.has(job.id)}
                                                     className={`text-xs px-3 py-1 h-auto justify-center ${
                                                         job.status === 'failed'
-                                                            ? 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border-amber-500/20'
+                                                            ? 'bg-white/[0.04] hover:bg-white/[0.04] text-content-secondary border-white/10'
                                                             : 'bg-white/5 hover:bg-white/10 text-gray-300 border-white/10'
                                                     }`}
                                                     title={job.status === 'failed' ? 'Re-enqueue this failed job' : 'Re-run this job with the same payload'}
@@ -444,7 +444,7 @@ export function JobsPage() {
                                                     </span>
                                                     <pre className={`p-3 rounded-lg overflow-auto border font-mono max-h-40 custom-scrollbar ${job.error
                                                         ? 'bg-red-500/5 border-red-500/20 text-red-300'
-                                                        : 'bg-[#7fb5aa]/5 border-[#7fb5aa]/20 text-[#8fc2b8]'
+                                                        : 'bg-[#7fb5aa]/5 border-[#7fb5aa]/20 text-content-secondary'
                                                         }`}>
                                                         {job.error || JSON.stringify(job.result, null, 2)}
                                                     </pre>

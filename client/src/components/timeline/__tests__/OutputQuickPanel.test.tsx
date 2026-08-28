@@ -36,6 +36,14 @@ describe('OutputQuickPanel', () => {
     expect(btn).toHaveAttribute('title', 'Kinetic captions need a transcript.');
   });
 
+  it('offers a one-click fix on a blocker (Send backgrounds to B-roll)', async () => {
+    const user = userEvent.setup();
+    const onClick = vi.fn();
+    setup({ items: [{ label: 'Add a video or B-roll clip', status: 'todo', detail: 'The renderer needs a picture.', action: { label: 'Send backgrounds to B-roll', onClick } }] });
+    await user.click(screen.getByRole('button', { name: 'Send backgrounds to B-roll' }));
+    expect(onClick).toHaveBeenCalled();
+  });
+
   it('renders when every blocker is cleared', async () => {
     const user = userEvent.setup();
     const props = setup({ items: [{ label: 'Source media loaded', status: 'done' }, { label: 'Music bed', status: 'optional' }] });

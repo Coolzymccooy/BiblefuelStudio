@@ -358,7 +358,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                                             ),
                                           });
                                         }}
-                                        className={`rounded px-1.5 py-0.5 transition ${clip.muted ? 'bg-amber-400/30 text-amber-100' : 'bg-black/40 text-editor-text/90 hover:bg-black/60'}`}
+                                        className={`rounded px-1.5 py-0.5 transition ${clip.muted ? 'bg-white/[0.04] text-content-secondary' : 'bg-black/40 text-editor-text/90 hover:bg-black/60'}`}
                                         title={clip.muted ? 'Unmute clip' : 'Mute clip'}
                                       >
                                         {clip.muted ? 'Muted' : 'Mute'}

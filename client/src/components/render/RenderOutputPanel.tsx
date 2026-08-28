@@ -62,7 +62,7 @@ export function RenderOutputPanel({
             <option value="180">180s</option>
           </Select>
           {isLongRender && (
-            <div className="mt-2 text-[0.6875rem] text-yellow-300 bg-yellow-500/10 border border-yellow-500/20 rounded-md px-2 py-1 inline-block">
+            <div className="mt-2 text-[0.6875rem] text-content-secondary bg-white/[0.04] border border-white/10 rounded-md px-2 py-1 inline-block">
               Long renders run in the background
             </div>
           )}

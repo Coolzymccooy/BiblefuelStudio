@@ -72,9 +72,9 @@ export function BibleVerseLookup({
     }, [catalog]);
 
     const apiBibleNote = catalog && !catalog.apiBibleConfigured ? (
-        <p className="text-xs text-amber-300/80 mt-2">
+        <p className="text-xs text-content-secondary mt-2">
             Copyrighted translations (NIV, NKJV, NLT) are unavailable —{' '}
-            <code className="text-amber-200">SCRIPTURE_API_BIBLE_KEY</code> is not set on the server.
+            <code className="text-content-secondary">SCRIPTURE_API_BIBLE_KEY</code> is not set on the server.
             Public domain (KJV, WEB, ASV, BBE, YLT) works without a key.
         </p>
     ) : null;
@@ -127,7 +127,7 @@ export function BibleVerseLookup({
                         {result.source === 'cache' && <span className="ml-2 text-xs text-content-tertiary">(cached)</span>}
                     </div>
                     {result.warning && (
-                        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                        <div className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-content-secondary">
                             {result.warning}
                         </div>
                     )}

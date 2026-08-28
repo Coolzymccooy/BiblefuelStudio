@@ -401,7 +401,7 @@ export function BackgroundsPage() {
                         {isLibrary && Array.isArray(video.categories) && video.categories.length > 0 && (
                             <div className="absolute top-2 left-2 flex flex-wrap gap-1 max-w-[70%]">
                                 {video.categories.slice(0, 3).map((cat) => (
-                                    <span key={cat} className="text-[9px] px-1.5 py-0.5 bg-amber-500/80 text-black font-bold rounded-full backdrop-blur-sm">
+                                    <span key={cat} className="text-[9px] px-1.5 py-0.5 bg-white/[0.04] text-black font-bold rounded-full backdrop-blur-sm">
                                         {cat}
                                     </span>
                                 ))}
@@ -426,7 +426,7 @@ export function BackgroundsPage() {
                                         <Button
                                             onClick={() => setEditingCategoriesFor(video.id)}
                                             variant="secondary"
-                                            className="h-9 px-3 bg-amber-500/10 border-amber-500/20 hover:bg-amber-500/20 text-amber-300"
+                                            className="h-9 px-3 bg-white/[0.04] border-white/10 hover:bg-white/[0.04] text-content-secondary"
                                             title="Edit categories"
                                         >
                                             <Tag size={14} />
@@ -514,7 +514,7 @@ export function BackgroundsPage() {
             {activeTab === 'search' ? (
                 <>
                     {!pexelsEnabled && (
-                        <Card className="bg-yellow-500/10 border-yellow-500/20 text-yellow-200 text-xs">
+                        <Card className="bg-white/[0.04] border-white/10 text-content-secondary text-xs">
                             Pexels is disabled. Set `PEXELS_API_KEY` in `server/.env`.
                         </Card>
                     )}
@@ -561,7 +561,7 @@ export function BackgroundsPage() {
             ) : activeTab === 'animated' ? (
                 <>
                     {!pixabayEnabled && (
-                        <Card className="bg-yellow-500/10 border-yellow-500/20 text-yellow-200 text-xs">
+                        <Card className="bg-white/[0.04] border-white/10 text-content-secondary text-xs">
                             Pixabay is disabled. Set `PIXABAY_API_KEY` in `server/.env`.
                         </Card>
                     )}
@@ -692,7 +692,7 @@ export function BackgroundsPage() {
                     <Card className="relative w-full max-w-md border-white/20 shadow-2xl">
                         <div className="flex items-center justify-between mb-3">
                             <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                                <Tag size={14} className="text-amber-300" /> Edit categories
+                                <Tag size={14} className="text-content-secondary" /> Edit categories
                             </h3>
                             <button onClick={() => setEditingCategoriesFor(null)} className="text-gray-500 hover:text-white">
                                 <X size={18} />

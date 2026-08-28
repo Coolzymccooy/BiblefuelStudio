@@ -270,11 +270,11 @@ export function CompareVoices({ className = '' }: { className?: string }) {
                             type="button"
                             onClick={() => rateResult(r, n)}
                             aria-label={`Rate ${n} stars`}
-                            className="p-0.5 text-content-tertiary hover:text-yellow-300"
+                            className="p-0.5 text-content-tertiary hover:text-content-secondary"
                           >
                             <Star
                               size={16}
-                              className={n <= rating.stars ? 'text-yellow-400 fill-yellow-400' : ''}
+                              className={n <= rating.stars ? 'text-content-secondary fill-yellow-400' : ''}
                             />
                           </button>
                         ))}

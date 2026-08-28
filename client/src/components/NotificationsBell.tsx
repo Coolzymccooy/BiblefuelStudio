@@ -92,14 +92,14 @@ export function NotificationsBell() {
                                     <li key={n.id}>
                                         <button
                                             onClick={() => handleClick(n)}
-                                            className={`w-full text-left p-3 transition-colors flex items-start gap-2 ${isCampaign ? 'bg-amber-500/[0.04] hover:bg-amber-500/[0.08]' : 'hover:bg-white/5'}`}
+                                            className={`w-full text-left p-3 transition-colors flex items-start gap-2 ${isCampaign ? 'bg-white/[0.04] hover:bg-white/[0.04]' : 'hover:bg-white/5'}`}
                                         >
                                             {n.kind === 'campaign_done' ? (
-                                                <Rocket size={16} className="text-amber-300 flex-shrink-0 mt-0.5" />
+                                                <Rocket size={16} className="text-content-secondary flex-shrink-0 mt-0.5" />
                                             ) : n.kind === 'campaign_render_only' ? (
-                                                <Film size={16} className="text-[#8fc2b8] flex-shrink-0 mt-0.5" />
+                                                <Film size={16} className="text-content-secondary flex-shrink-0 mt-0.5" />
                                             ) : n.kind === 'campaign_failed' ? (
-                                                <XCircle size={16} className="text-amber-400 flex-shrink-0 mt-0.5" />
+                                                <XCircle size={16} className="text-content-secondary flex-shrink-0 mt-0.5" />
                                             ) : n.kind === 'job_done' ? (
                                                 <CheckCircle2 size={16} className="text-[#7fb5aa] flex-shrink-0 mt-0.5" />
                                             ) : n.kind === 'job_failed' ? (

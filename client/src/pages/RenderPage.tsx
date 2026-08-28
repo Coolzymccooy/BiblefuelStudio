@@ -1056,6 +1056,7 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
     const labPanels: Record<RenderLabTabId, ReactNode> = {
                     captions: (
                         <RenderCaptionsPanel
+                            compact={Boolean(embedded)}
                             lines={lines}
                             onLinesChange={setLines}
                             typographyPreset={typographyPreset}
@@ -1157,7 +1158,7 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
                         </button>
                     ))}
                 </div>
-                <div className="min-h-0 space-y-3">{labPanels[labTab]}</div>
+                <div className="lab-body min-h-0 space-y-3">{labPanels[labTab]}</div>
                 {sharedOverlays}
             </div>
         );
@@ -1278,7 +1279,7 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
                         <div className="min-w-0">
                             <p className="text-sm font-semibold text-white">Render complete</p>
                             {completedRender.file && (
-                                <p className="text-[10px] font-mono text-[#a5cec6]/80 truncate">{completedRender.file}</p>
+                                <p className="text-[10px] font-mono text-content-secondary truncate">{completedRender.file}</p>
                             )}
                         </div>
                     </div>
@@ -1339,7 +1340,7 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
 
             <Card title="Configuration">
                 {!renderEnabled && (
-                    <div className="mb-4 text-xs text-yellow-200 bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3">
+                    <div className="mb-4 text-xs text-content-secondary bg-white/[0.04] border border-white/10 rounded-lg p-3">
                         Rendering is disabled because FFmpeg was not detected on the server.
                     </div>
                 )}

@@ -146,7 +146,7 @@ export function RenderSharePanel({
               <option value="public">YouTube Public</option>
             </Select>
           ) : (
-            <div className="text-[10px] text-yellow-300 bg-yellow-500/10 border border-yellow-500/20 rounded-md px-2 py-1">
+            <div className="text-[10px] text-content-secondary bg-white/[0.04] border border-white/10 rounded-md px-2 py-1">
               Direct API requires OAuth setup
             </div>
           )}

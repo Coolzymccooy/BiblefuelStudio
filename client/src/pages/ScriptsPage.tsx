@@ -205,12 +205,12 @@ export function ScriptsPage() {
                                 </div>
 
                                 <div>
-                                    <p className="text-[0.75rem] font-medium text-primary-300">Hook</p>
+                                    <p className="text-[0.75rem] font-medium text-content-secondary">Hook</p>
                                     <p className="text-gray-100">{script.hook}</p>
                                 </div>
 
                                 <div>
-                                    <p className="text-[0.75rem] font-medium text-primary-300">Verse</p>
+                                    <p className="text-[0.75rem] font-medium text-content-secondary">Verse</p>
                                     <p className="text-gray-100">
                                         {script.verse}{' '}
                                         <span className="text-gray-300 text-sm italic">{script.reference}</span>
@@ -218,12 +218,12 @@ export function ScriptsPage() {
                                 </div>
 
                                 <div>
-                                    <p className="text-[0.75rem] font-medium text-primary-300">Reflection</p>
+                                    <p className="text-[0.75rem] font-medium text-content-secondary">Reflection</p>
                                     <p className="text-gray-100">{script.reflection}</p>
                                 </div>
 
                                 <div>
-                                    <p className="text-[0.75rem] font-medium text-primary-300">CTA</p>
+                                    <p className="text-[0.75rem] font-medium text-content-secondary">CTA</p>
                                     <p className="text-gray-100">{script.cta}</p>
                                 </div>
 

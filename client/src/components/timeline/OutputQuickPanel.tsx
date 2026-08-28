@@ -14,6 +14,8 @@ export interface ReadinessItem {
   label: string;
   status: 'done' | 'todo' | 'optional';
   detail?: string;
+  /** One-click fix for a blocker, e.g. "Send backgrounds to B-roll". */
+  action?: { label: string; onClick: () => void };
 }
 
 export interface OutputQuickPanelProps {
@@ -51,6 +53,15 @@ export function OutputQuickPanel({
               <div className="min-w-0">
                 <p className={`text-[11px] ${item.status === 'todo' ? 'font-semibold text-editor-text' : 'text-editor-dim'}`}>{item.label}</p>
                 {item.detail && <p className="break-words text-[10px] leading-snug text-editor-faint">{item.detail}</p>}
+                {item.action && (
+                  <button
+                    type="button"
+                    onClick={item.action.onClick}
+                    className="mt-1 rounded-md border border-editor-accent/40 bg-editor-accent/10 px-2 py-0.5 text-[10px] font-semibold text-editor-accent transition hover:bg-editor-accent/20"
+                  >
+                    {item.action.label}
+                  </button>
+                )}
               </div>
             </li>
           ))}

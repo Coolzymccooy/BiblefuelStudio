@@ -19,14 +19,14 @@ const TONE = {
     success: {
         Icon: CheckCircle2,
         wrap: 'border-[#7fb5aa]/40 bg-[#7fb5aa]/10',
-        icon: 'text-[#8fc2b8]',
+        icon: 'text-content-secondary',
         title: 'text-[#c4ddd8]',
     },
     warning: {
         Icon: AlertTriangle,
-        wrap: 'border-amber-500/40 bg-amber-500/10',
-        icon: 'text-amber-300',
-        title: 'text-amber-100',
+        wrap: 'border-white/10 bg-white/[0.04]',
+        icon: 'text-content-secondary',
+        title: 'text-content-secondary',
     },
     error: {
         Icon: XCircle,

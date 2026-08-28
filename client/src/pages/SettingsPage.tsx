@@ -257,11 +257,11 @@ export function SettingsPage() {
                             </span>
                             {authEmail && (
                                 emailVerified ? (
-                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[#7fb5aa]/15 border border-[#7fb5aa]/30 text-[#a5cec6] text-[10px]">
+                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[#7fb5aa]/15 border border-[#7fb5aa]/30 text-content-secondary text-[10px]">
                                         <BadgeCheck size={10} /> Verified
                                     </span>
                                 ) : (
-                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-200 text-[10px]">
+                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-white/[0.04] border border-white/10 text-content-secondary text-[10px]">
                                         <Mail size={10} /> Unverified
                                     </span>
                                 )
@@ -533,7 +533,7 @@ export function SettingsPage() {
                                 <div className="text-help">No schedules yet.</div>
                             )}
                             {schedules.map((s) => (
-                                <div key={s.id} className={`rounded-xl border p-3 space-y-2 ${s.type === 'auto_generate' ? 'border-amber-500/30 bg-amber-500/[0.04]' : 'border-white/10 bg-white/[0.03]'}`}>
+                                <div key={s.id} className={`rounded-xl border p-3 space-y-2 ${s.type === 'auto_generate' ? 'border-white/10 bg-white/[0.04]' : 'border-white/10 bg-white/[0.03]'}`}>
                                     <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
                                         <Input
                                             value={s.name}
@@ -673,7 +673,7 @@ export function SettingsPage() {
                                         </div>
                                     )}
                                     {s.type === 'auto_generate' && (
-                                        <p className="text-[10px] text-amber-200/80">
+                                        <p className="text-[10px] text-content-secondary">
                                             On each cron tick this generates a NEW script + voice + video and posts via the destination above. Requires at least one background in your Library.
                                         </p>
                                     )}

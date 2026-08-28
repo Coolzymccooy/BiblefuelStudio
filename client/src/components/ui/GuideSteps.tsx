@@ -125,7 +125,7 @@ function StepMarker({ status, index }: { status?: GuideStep['status']; index: nu
         return <CheckCircle2 size={16} className="text-[#7fb5aa] shrink-0 mt-0.5" />;
     }
     if (status === 'todo') {
-        return <Circle size={16} className="text-amber-300/80 shrink-0 mt-0.5" />;
+        return <Circle size={16} className="text-content-secondary shrink-0 mt-0.5" />;
     }
     if (status === 'optional') {
         return <Circle size={16} className="text-gray-500/60 shrink-0 mt-0.5" />;

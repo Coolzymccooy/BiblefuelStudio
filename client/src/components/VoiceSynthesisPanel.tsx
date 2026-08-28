@@ -246,7 +246,7 @@ export function VoiceSynthesisPanel() {
                                 onClick={() => setCinematicMode((v) => !v)}
                                 className={`w-full h-9 rounded-lg text-xs font-medium transition-colors border ${
                                     cinematicMode
-                                        ? 'bg-[#7fb5aa]/15 border-[#7fb5aa]/30 text-[#a5cec6]'
+                                        ? 'bg-[#7fb5aa]/15 border-[#7fb5aa]/30 text-content-secondary'
                                         : 'bg-white/5 border-white/10 text-gray-400'
                                 }`}
                             >

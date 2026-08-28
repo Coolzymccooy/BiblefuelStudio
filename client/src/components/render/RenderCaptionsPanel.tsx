@@ -1,5 +1,5 @@
 import type { ChangeEvent } from 'react';
-import { ClipboardList, Type } from 'lucide-react';
+import { ClipboardList, Type, Sparkles } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Select } from '../ui/Select';
 import { Textarea } from '../ui/Textarea';
@@ -58,6 +58,8 @@ export interface RenderCaptionsPanelProps {
   onUseLatestScript?: () => void;
   onFormatForVideo: () => void;
   maxLines: number;
+  /** Docked in an editor panel: icon actions with tooltips, short labels. */
+  compact?: boolean;
 }
 
 export function RenderCaptionsPanel({
@@ -83,6 +85,7 @@ export function RenderCaptionsPanel({
   onUseLatestScript,
   onFormatForVideo,
   maxLines,
+  compact = false,
 }: RenderCaptionsPanelProps) {
   return (
     <div className="space-y-4">
@@ -95,20 +98,40 @@ export function RenderCaptionsPanel({
           value={lines}
           onChange={(e: ChangeEvent<HTMLTextAreaElement>) => onLinesChange(e.target.value)}
           placeholder="Enter your script lines here..."
-          className="bg-black/20 h-32"
+          className={compact ? "bg-black/20 h-24 !text-[12px] leading-snug" : "bg-black/20 h-32"}
         />
-        <div className="mt-2 flex flex-wrap gap-2">
-          <Button variant="secondary" className="h-8 text-xs" onClick={onFormatForVideo}>
-            <Type size={14} className="mr-2" />
-            Format for Video
+        {/* Compact: one row of icon actions, the words live in tooltips. */}
+        <div className={compact ? "mt-1.5 flex items-center gap-1.5" : "mt-2 flex flex-wrap gap-2"}>
+          <Button
+            variant="secondary"
+            className={compact ? "h-7 w-8 !px-0 text-xs" : "h-8 text-xs"}
+            onClick={onFormatForVideo}
+            aria-label="Format for Video"
+            title="Format for video — tidy the lines into short, speakable captions"
+          >
+            <Type size={14} className={compact ? "" : "mr-2"} />
+            {!compact && 'Format for Video'}
           </Button>
-          <Button variant="secondary" className="h-8 text-xs" onClick={onOpenScripts}>
-            <ClipboardList size={14} className="mr-2" />
-            Pick From Scripts
+          <Button
+            variant="secondary"
+            className={compact ? "h-7 w-8 !px-0 text-xs" : "h-8 text-xs"}
+            onClick={onOpenScripts}
+            aria-label="Pick From Scripts"
+            title="Pick from scripts — choose a saved script from your library"
+          >
+            <ClipboardList size={14} className={compact ? "" : "mr-2"} />
+            {!compact && 'Pick From Scripts'}
           </Button>
           {hasScripts && onUseLatestScript && (
-            <Button variant="secondary" className="h-8 text-xs" onClick={onUseLatestScript}>
-              Use Latest Script
+            <Button
+              variant="secondary"
+              className={compact ? "h-7 w-8 !px-0 text-xs" : "h-8 text-xs"}
+              onClick={onUseLatestScript}
+              aria-label="Use Latest Script"
+              title="Use latest script — drop in the newest script from your library"
+            >
+              <Sparkles size={14} className={compact ? "" : "mr-2"} />
+              {!compact && 'Use Latest Script'}
             </Button>
           )}
         </div>
@@ -131,13 +154,13 @@ export function RenderCaptionsPanel({
             ))}
           </Select>
           <div className="mt-2 space-y-1.5">
-            <label className="flex items-center gap-2 text-[12px] text-content-secondary">
+            <label className="flex items-center gap-2 text-[12px] text-content-secondary" title="Lines arrive a beat apart">
               <input
                 type="checkbox"
                 checked={Boolean(captionStagger)}
                 onChange={(e) => onCaptionStaggerChange?.(e.target.checked)}
               />
-              Stagger lines (arrive a beat apart)
+              {compact ? 'Stagger lines' : 'Stagger lines (arrive a beat apart)'}
             </label>
             {/* Highlighting the spoken word only means something when a whole
                 line is on screen - in per-word mode there is nothing to
@@ -149,7 +172,7 @@ export function RenderCaptionsPanel({
                   checked={Boolean(captionHighlight)}
                   onChange={(e) => onCaptionHighlightChange?.(e.target.checked)}
                 />
-                Highlight each word on the line
+                {compact ? 'Highlight words' : 'Highlight each word on the line'}
               </label>
             )}
           </div>
@@ -197,14 +220,14 @@ export function RenderCaptionsPanel({
         </Select>
       </Field>
 
-      <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+      <label className={`flex items-center gap-2 cursor-pointer ${compact ? 'text-[12px] text-content-secondary' : 'text-sm text-gray-300'}`} title="Ghost shadow behind each word">
         <input
           type="checkbox"
           checked={depth}
           onChange={(e) => onDepthChange(e.target.checked)}
           className="rounded border-white/10 bg-black/50 checked:bg-primary-500"
         />
-        Layered depth (ghost shadow behind each word)
+        {compact ? 'Layered depth' : 'Layered depth (ghost shadow behind each word)'}
       </label>
     </div>
   );

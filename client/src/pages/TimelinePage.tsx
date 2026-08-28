@@ -1830,11 +1830,46 @@ export function TimelinePage() {
         toast.success('Voice-over landed on the VO lane');
     };
 
+    // The proof renderer refuses a timeline with no visual clip ('No video or
+    // B-roll clip with a media path found'). Backgrounds already picked - in the
+    // Background tool or the docked Render lab - become B-roll clips spread
+    // evenly across the cut, so voice + captions timelines can render.
+    const handleSendBackgroundsToBroll = () => {
+        if (!documentaryProject) { toast.error('Create a documentary timeline first'); return; }
+        const labPicks = loadJson<Array<{ id?: string; url?: string; kind?: string }>>(STORAGE_KEYS.renderBackgrounds, []);
+        const seen = new Set<string>();
+        const picks = [...backgroundItems, ...labPicks]
+            .map((b: any) => ({ path: String(b.path || b.id || b.url || ''), kind: b.kind === 'image' ? 'image' as const : 'video' as const, label: String(b.label || b.name || (b.id ?? '')).slice(0, 40) }))
+            .filter((b) => b.path && !seen.has(b.path) && seen.add(b.path));
+        if (picks.length === 0) { toast.error('Pick backgrounds first — Background tool, or Render lab → Visuals'); return; }
+        const total = Math.max(1, documentaryProject.targetDurationSec);
+        const each = total / picks.length;
+        let next = documentaryProject;
+        picks.forEach((b, i) => {
+            next = insertAssetOnTrack(next, {
+                trackKind: 'broll',
+                asset: { id: `asset-bg-${Date.now()}-${i}`, kind: b.kind, source: 'upload', label: b.label || `Background ${i + 1}`, path: b.path, tags: ['background'] },
+                startSec: i * each,
+                durationSec: each,
+                fit: 'cover',
+            });
+        });
+        setDocumentaryProject(next);
+        toast.success(`${picks.length} background${picks.length === 1 ? '' : 's'} placed on the B-roll lane`);
+    };
+
     // Readiness for the Output tool - the same refusals handleRender* raise
     // as toasts, made visible BEFORE the click. Mirrors the guards exactly.
     const outputReadiness: ReadinessItem[] = timelineHasOwnContent
         ? [
-            { label: 'Timeline has content', status: 'done', detail: 'Composes every track: footage, B-roll, voice-over, music, captions and effects.' },
+            ...(documentaryProject?.tracks.some((t) => (t.kind === 'video' || t.kind === 'broll') && t.clips.some((c) => Boolean(documentaryProject.assets[c.assetId]?.path)))
+                ? [{ label: 'Timeline has a picture', status: 'done' as const, detail: 'Composes every track: footage, B-roll, voice-over, music, captions and effects.' }]
+                : [{
+                    label: 'Add a video or B-roll clip',
+                    status: 'todo' as const,
+                    detail: 'The renderer needs a clip with media on Real footage or B-roll. Send your picked backgrounds to the B-roll lane, or insert source media (Media tool).',
+                    action: { label: 'Send backgrounds to B-roll', onClick: handleSendBackgroundsToBroll },
+                }]),
             { label: 'Voice-over', status: documentaryProject?.tracks.some((t) => t.kind === 'voiceover' && t.clips.length > 0) ? 'done' : 'optional', detail: 'Generate one in the Voice tool, or let the sermon audio carry it.' },
         ]
         : [
@@ -1877,6 +1912,7 @@ export function TimelinePage() {
         }
         toast.success('Canvas cleared');
     };
+
 
     const overlays = (
         <>
@@ -2782,7 +2818,7 @@ export function TimelinePage() {
                                 {renderCoverage.included.map((i) => (
                                     <span
                                         key={i.kind}
-                                        className="rounded-full border border-[#7fb5aa]/30 bg-[#7fb5aa]/10 px-2 py-0.5 text-[11px] text-[#a5cec6]"
+                                        className="rounded-full border border-[#7fb5aa]/30 bg-[#7fb5aa]/10 px-2 py-0.5 text-[11px] text-content-secondary"
                                     >
                                         {i.label} · {i.used}/{i.total}
                                     </span>
@@ -2791,7 +2827,7 @@ export function TimelinePage() {
                             {renderCoverage.omitted.length > 0 && (
                                 <ul className="mt-2 space-y-1">
                                     {renderCoverage.omitted.map((o, idx) => (
-                                        <li key={`${o.kind}-${idx}`} className="text-[11px] text-amber-200/90">
+                                        <li key={`${o.kind}-${idx}`} className="text-[11px] text-content-secondary">
                                             ⚠ {o.count} {o.label} clip{o.count === 1 ? '' : 's'} left out — {o.reason}.
                                         </li>
                                     ))}

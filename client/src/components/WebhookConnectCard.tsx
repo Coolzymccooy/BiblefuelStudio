@@ -133,15 +133,15 @@ export function WebhookConnectCard() {
                     </div>
                 ) : webhooks.length === 0 ? (
                     <div className="rounded-xl border border-dashed border-white/10 bg-white/[0.02] p-6 text-center">
-                        <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3 inline-flex">
-                            <Zap size={22} className="text-amber-300" />
+                        <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-3 inline-flex">
+                            <Zap size={22} className="text-content-secondary" />
                         </div>
                         <p className="text-sm font-semibold text-white mt-3">Not connected yet</p>
                         <p className="text-xs text-content-secondary mt-1 mb-4 max-w-md mx-auto">
                             One connection handles TikTok + Instagram + X + LinkedIn — all at once. Takes about 5 minutes to set up, and Make &amp; Zapier both offer free tiers for testing.
                         </p>
                         <Button
-                            className="text-xs h-9 px-4 bg-amber-500 hover:bg-amber-400 text-black font-semibold border-amber-500/40"
+                            className="text-xs h-9 px-4 bg-amber-500 hover:bg-amber-400 text-black font-semibold border-white/10"
                             onClick={() => setShowAddModal(true)}
                         >
                             <Plug size={14} className="mr-1.5" /> Connect now
@@ -169,14 +169,14 @@ export function WebhookConnectCard() {
                                     key={w.id}
                                     className="rounded-xl border border-white/10 bg-white/[0.02] p-3 flex flex-col sm:flex-row sm:items-center gap-3"
                                 >
-                                    <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-2 flex-shrink-0">
-                                        <Zap size={18} className="text-amber-300" />
+                                    <div className="rounded-xl border border-white/10 bg-white/[0.04] p-2 flex-shrink-0">
+                                        <Zap size={18} className="text-content-secondary" />
                                     </div>
                                     <div className="flex-1 min-w-0">
                                         <div className="flex items-center gap-2 flex-wrap">
                                             <span className="text-sm font-semibold text-white">{w.name}</span>
                                             {showOkBadge && (
-                                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#7fb5aa]/15 border border-[#7fb5aa]/30 text-[#a5cec6] text-[10px] font-semibold">
+                                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#7fb5aa]/15 border border-[#7fb5aa]/30 text-content-secondary text-[10px] font-semibold">
                                                     <CheckCircle2 size={10} /> Healthy
                                                 </span>
                                             )}
@@ -195,7 +195,7 @@ export function WebhookConnectCard() {
                                             <p className="text-[10px] text-content-tertiary mt-1">
                                                 {everSucceeded && (
                                                     <>
-                                                        Last delivery: <span className={recentFailure ? 'text-gray-400' : 'text-[#8fc2b8]/90'}>{timeAgo(w.lastSuccessAt || '')}</span>
+                                                        Last delivery: <span className={recentFailure ? 'text-gray-400' : 'text-content-secondary'}>{timeAgo(w.lastSuccessAt || '')}</span>
                                                     </>
                                                 )}
                                                 {recentFailure && (
@@ -318,8 +318,8 @@ function AddWebhookModal({ onClose, onSaved }: AddWebhookModalProps) {
             <div className="relative w-full max-w-2xl max-h-[88vh] flex flex-col rounded-xl bg-dark-900/95 backdrop-blur-xl border border-white/20 shadow-2xl overflow-hidden">
                 <div className="flex items-center justify-between p-4 border-b border-white/10 shrink-0">
                     <div className="flex items-center gap-3">
-                        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-2">
-                            <Zap size={18} className="text-amber-300" />
+                        <div className="rounded-xl border border-white/10 bg-white/[0.04] p-2">
+                            <Zap size={18} className="text-content-secondary" />
                         </div>
                         <div>
                             <h3 className="text-lg font-bold text-white">Connect Make / Zapier</h3>
@@ -355,11 +355,11 @@ function AddWebhookModal({ onClose, onSaved }: AddWebhookModalProps) {
                                         href="https://zapier.com/sign-up"
                                         target="_blank"
                                         rel="noopener noreferrer"
-                                        className="rounded-xl border border-orange-500/30 bg-orange-500/5 hover:bg-orange-500/10 p-4 transition-colors group"
+                                        className="rounded-xl border border-white/10 bg-white/[0.04] hover:bg-white/[0.04] p-4 transition-colors group"
                                     >
                                         <div className="flex items-center justify-between mb-1">
                                             <strong className="text-white">Zapier</strong>
-                                            <ExternalLink size={14} className="text-orange-300 group-hover:translate-x-0.5 transition-transform" />
+                                            <ExternalLink size={14} className="text-content-secondary group-hover:translate-x-0.5 transition-transform" />
                                         </div>
                                         <p className="text-[11px] text-content-secondary">Simpler interface. Free tier available for testing.</p>
                                     </a>
@@ -375,19 +375,19 @@ function AddWebhookModal({ onClose, onSaved }: AddWebhookModalProps) {
                                 </h4>
                                 <ol className="space-y-3 text-sm text-gray-300">
                                     <li className="flex gap-3">
-                                        <span className="rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-200 w-6 h-6 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">1</span>
+                                        <span className="rounded-full bg-white/[0.04] border border-white/10 text-content-secondary w-6 h-6 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">1</span>
                                         <div className="flex-1">
                                             <strong className="text-white">Create a scenario.</strong> In Make, click <code className="text-[11px] bg-white/10 px-1.5 py-0.5 rounded">Create a new scenario</code>.
                                         </div>
                                     </li>
                                     <li className="flex gap-3">
-                                        <span className="rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-200 w-6 h-6 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">2</span>
+                                        <span className="rounded-full bg-white/[0.04] border border-white/10 text-content-secondary w-6 h-6 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">2</span>
                                         <div className="flex-1">
                                             <strong className="text-white">Add a webhook trigger.</strong> Search modules for <code className="text-[11px] bg-white/10 px-1.5 py-0.5 rounded">Webhooks</code> → choose <code className="text-[11px] bg-white/10 px-1.5 py-0.5 rounded">Custom webhook</code>. Click <code className="text-[11px] bg-white/10 px-1.5 py-0.5 rounded">Add</code> to create one.
                                         </div>
                                     </li>
                                     <li className="flex gap-3">
-                                        <span className="rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-200 w-6 h-6 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">3</span>
+                                        <span className="rounded-full bg-white/[0.04] border border-white/10 text-content-secondary w-6 h-6 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">3</span>
                                         <div className="flex-1">
                                             <strong className="text-white">Copy the URL.</strong> Make shows the webhook URL (looks like <code className="text-[11px] bg-white/10 px-1.5 py-0.5 rounded break-all">https://hook.eu1.make.com/abc...</code>). Copy it. Then add your next module — TikTok, Instagram, etc.
                                         </div>
@@ -401,7 +401,7 @@ function AddWebhookModal({ onClose, onSaved }: AddWebhookModalProps) {
                     ) : (
                         <>
                             <div className="rounded-xl border border-[#7fb5aa]/20 bg-[#7fb5aa]/[0.05] p-4">
-                                <p className="text-sm text-[#a5cec6] leading-relaxed">
+                                <p className="text-sm text-content-secondary leading-relaxed">
                                     Paste the webhook URL Make / Zapier gave you. We'll save it AND fire a test ping
                                     so you can confirm it lands in your scenario's history before any real video runs through it.
                                 </p>
@@ -426,7 +426,7 @@ function AddWebhookModal({ onClose, onSaved }: AddWebhookModalProps) {
                                     placeholder="https://hook.eu1.make.com/..."
                                     className="bg-black/20 font-mono text-xs"
                                 />
-                                <p className="text-[10px] text-content-tertiary">Starts with <code className="text-amber-200">https://hook.</code> for Make, or <code className="text-amber-200">https://hooks.zapier.com/</code> for Zapier.</p>
+                                <p className="text-[10px] text-content-tertiary">Starts with <code className="text-content-secondary">https://hook.</code> for Make, or <code className="text-content-secondary">https://hooks.zapier.com/</code> for Zapier.</p>
                             </div>
 
                             {testResult && !testResult.ok && (
@@ -438,7 +438,7 @@ function AddWebhookModal({ onClose, onSaved }: AddWebhookModalProps) {
                                 </div>
                             )}
                             {testResult?.ok && (
-                                <div className="rounded-lg border border-[#7fb5aa]/30 bg-[#7fb5aa]/[0.08] p-3 text-xs text-[#a5cec6]">
+                                <div className="rounded-lg border border-[#7fb5aa]/30 bg-[#7fb5aa]/[0.08] p-3 text-xs text-content-secondary">
                                     <strong>✓ Test ping accepted.</strong> Now open your Make / Zapier <strong>scenario run history</strong> and confirm the test event appears there. If it doesn't, your scenario isn't turned on — that's the most common gotcha.
                                 </div>
                             )}

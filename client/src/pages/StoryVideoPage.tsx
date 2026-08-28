@@ -293,8 +293,8 @@ export function StoryVideoPage() {
       {/* Interrupted (server died mid-run): offer to pick up or rebuild.
           Suppressed while a render is genuinely live (it has its own % card). */}
       {stalled && !renderLive && (
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">
-          <span className="text-sm text-amber-200">This project was interrupted. Pick up where it left off.</span>
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3">
+          <span className="text-sm text-content-secondary">This project was interrupted. Pick up where it left off.</span>
           <div className="flex shrink-0 flex-wrap gap-2">
             <button
               onClick={resume}
@@ -308,7 +308,7 @@ export function StoryVideoPage() {
                 onClick={retryFailedImages}
                 disabled={busy}
                 title="Reuse the transcript and scenes — just retry the images that failed."
-                className="rounded-lg border border-amber-400/40 px-3 py-1.5 text-sm text-amber-200 hover:border-amber-300 disabled:opacity-50"
+                className="rounded-lg border border-white/10 px-3 py-1.5 text-sm text-content-secondary hover:border-amber-300 disabled:opacity-50"
               >
                 Retry failed images
               </button>
@@ -318,7 +318,7 @@ export function StoryVideoPage() {
                 onClick={resegment}
                 disabled={busy}
                 title="Discard the current scenes and rebuild with fewer, longer scenes — faster, and recovers a render stuck on hundreds of images."
-                className="rounded-lg border border-amber-400/40 px-3 py-1.5 text-sm text-amber-200 hover:border-amber-300 disabled:opacity-50"
+                className="rounded-lg border border-white/10 px-3 py-1.5 text-sm text-content-secondary hover:border-amber-300 disabled:opacity-50"
               >
                 Re-segment (fewer scenes)
               </button>

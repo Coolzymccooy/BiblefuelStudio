@@ -46,7 +46,7 @@ const ACCEPT_LIST = [
 ];
 
 const PROXY_TONE: Record<string, string> = {
-  ready: 'bg-[#7fb5aa]/15 text-[#a5cec6]',
+  ready: 'bg-[#7fb5aa]/15 text-content-secondary',
   failed: 'bg-red-500/15 text-red-200',
 };
 
@@ -129,7 +129,7 @@ export function SourceMediaPanel({
               {sourceMediaKind === 'video' && sourceMediaProxyPath && (
                 <span
                   className={`ml-2 rounded-full px-2 py-0.5 text-[10px] ${
-                    PROXY_TONE[sourceMediaProxyStatus || ''] || 'bg-amber-500/15 text-amber-200'
+                    PROXY_TONE[sourceMediaProxyStatus || ''] || 'bg-white/[0.04] text-content-secondary'
                   }`}
                 >
                   Proxy{' '}
