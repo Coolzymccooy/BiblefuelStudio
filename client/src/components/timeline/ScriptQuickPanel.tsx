@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Wand2, ArrowDownToLine, Mic, Info } from 'lucide-react';
+import { Wand2, ArrowDownToLine, Mic, ArrowRight } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Select } from '../ui/Select';
@@ -140,19 +140,21 @@ export function ScriptQuickPanel({
                     </div>
                   ))}
               </div>
-              {/* Two actions, side by side: the long explanations live in
-                  tooltips (button + info glyph) so the card stays compact. */}
-              <div className="mt-2.5 grid grid-cols-2 gap-1.5">
+              {/* Next steps, in order. Full words that never truncate (they
+                  collapsed to one letter at panel width), each with a direction:
+                  Captions lands BELOW on the timeline, Voice moves ON to the next
+                  tool. Side by side when there is room, two rows when not. */}
+              <div className="mt-2.5 flex flex-wrap gap-1.5">
                 <Button
                   variant="secondary"
                   onClick={() => onAddToCaptions(script)}
                   aria-label="Add to Captions lane"
                   title="Adds every line of this script as caption clips on the Captions lane, timed across the cut and editable like any other clip."
-                  className="h-9 min-w-0 border-editor-line px-2 text-xs text-editor-accent"
+                  className="h-9 min-w-[132px] flex-1 whitespace-nowrap border-editor-line px-2 text-xs text-editor-accent"
                 >
+                  <span className="mr-1.5 text-[10px] font-bold opacity-60">1</span>
                   <ArrowDownToLine size={14} className="mr-1.5 shrink-0" />
-                  <span className="truncate">Captions</span>
-                  <Info size={11} className="ml-1.5 shrink-0 opacity-60" aria-hidden="true" />
+                  Captions lane
                 </Button>
                 {onVoiceScript && (
                   <Button
@@ -160,11 +162,12 @@ export function ScriptQuickPanel({
                     onClick={() => onVoiceScript(script)}
                     aria-label="Voice this → Voice tool"
                     title="Opens the Voice tool with this script loaded; the generated take lands on the VO lane."
-                    className="h-9 min-w-0 border-editor-line px-2 text-xs"
+                    className="h-9 min-w-[132px] flex-1 whitespace-nowrap border-editor-line px-2 text-xs"
                   >
+                    <span className="mr-1.5 text-[10px] font-bold opacity-60">2</span>
                     <Mic size={14} className="mr-1.5 shrink-0" />
-                    <span className="truncate">Voice</span>
-                    <Info size={11} className="ml-1.5 shrink-0 opacity-60" aria-hidden="true" />
+                    Voice this
+                    <ArrowRight size={12} className="ml-1.5 shrink-0 opacity-70" />
                   </Button>
                 )}
               </div>

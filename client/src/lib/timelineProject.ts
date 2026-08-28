@@ -69,6 +69,8 @@ export interface TimelineClip {
   /** Set on clips of the `effects` track. Sent to the renderer as-is. */
   effect?: TimelineEffectKind;
   effectOptions?: TimelineEffectOptions;
+  /** Set on clips of the `captions` track: the line the renderer burns in. */
+  text?: string;
 }
 
 export interface TimelineTrack {

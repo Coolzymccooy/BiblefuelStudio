@@ -64,6 +64,17 @@ export function buildTimelineRenderPlan(project, options = {}) {
             startSec: Math.max(0, Number(clip.startSec || 0)),
             durationSec: Math.max(0.1, Number(clip.durationSec || asset.durationSec || 5)),
             transform: clip.transform || { fit: 'cover' },
+            // Track-specific payloads the renderer reads from the PLAN. The
+            // whitelist above used to drop them, so caption clips arrived
+            // without their text (nothing burned in) and effect clips without
+            // their kind (nothing applied).
+            ...(typeof clip.text === 'string' ? { text: clip.text } : {}),
+            ...(clip.effect ? { effect: clip.effect } : {}),
+            ...(clip.effectOptions ? { effectOptions: clip.effectOptions } : {}),
+            ...(clip.muted ? { muted: true } : {}),
+            ...(clip.transitionIn ? { transitionIn: clip.transitionIn } : {}),
+            ...(clip.transitionOut ? { transitionOut: clip.transitionOut } : {}),
+            ...(Number.isFinite(Number(clip.sourceStartSec)) && clip.sourceStartSec != null ? { sourceStartSec: Number(clip.sourceStartSec) } : {}),
           };
         })
         .filter(Boolean)

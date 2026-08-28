@@ -65,3 +65,29 @@ describe('timelineRender planner', () => {
     assert.equal(plan.tracks[2].clips[0].placeholder, true);
   });
 });
+
+test('plan clips keep the payloads the renderer reads: caption text, effect kind/options', () => {
+  const project = {
+    id: 'p', title: 't', targetDurationSec: 10, renderSettings: { quality: 'proof_720p' },
+    assets: {
+      cap: { id: 'cap', kind: 'caption', source: 'system', label: '2 caption lines' },
+      fx: { id: 'fx', kind: 'effect', source: 'system', label: 'grade' },
+      v: { id: 'v', kind: 'video', source: 'upload', label: 'main', path: 'outputs/main.mp4' },
+    },
+    tracks: [
+      { id: 'tv', kind: 'video', label: 'Video', clips: [{ id: 'v1', assetId: 'v', startSec: 0, durationSec: 10, transform: { fit: 'cover' } }] },
+      { id: 'tc', kind: 'captions', label: 'Captions', clips: [
+        { id: 'c1', assetId: 'cap', startSec: 0, durationSec: 5, transform: { fit: 'cover' }, text: 'He is worthy' },
+        { id: 'c2', assetId: 'cap', startSec: 5, durationSec: 5, transform: { fit: 'cover' }, text: 'of all praise' },
+      ] },
+      { id: 'te', kind: 'effects', label: 'Effects', clips: [{ id: 'e1', assetId: 'fx', startSec: 0, durationSec: 10, transform: { fit: 'cover' }, effect: 'grade', effectOptions: { look: 'warm' } }] },
+    ],
+  };
+  const plan = buildTimelineRenderPlan(project, { quality: 'proof_720p' });
+  assert.equal(plan.ok, true);
+  const caps = plan.tracks.find((t) => t.kind === 'captions').clips;
+  assert.deepEqual(caps.map((c) => c.text), ['He is worthy', 'of all praise']);
+  const fx = plan.tracks.find((t) => t.kind === 'effects').clips[0];
+  assert.equal(fx.effect, 'grade');
+  assert.deepEqual(fx.effectOptions, { look: 'warm' });
+});

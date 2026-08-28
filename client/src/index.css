@@ -683,3 +683,16 @@ input:-webkit-autofill:focus {
   background-size: 18px 18px;
   background-position: 0 0, 9px 9px;
 }
+/* Voice lab, embedded: firm and compact. Provider rows at 30px, the
+   disabled-reason list folded into the rows' tooltips, the tuning sliders
+   side by side under a full-width Voice ID. */
+.editor-embed .provider-btn { padding: .3rem .6rem; }
+.editor-embed .provider-btn > span:first-child { font-size: 12px; }
+.editor-embed .provider-btn > span:last-child { font-size: 10px; }
+.editor-embed .provider-grid { gap: .3rem; }
+.editor-embed .provider-reasons { display: none; }
+.editor-embed .voice-tuning { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr) !important; gap: .5rem .75rem !important; }
+.editor-embed .voice-tuning > :first-child { grid-column: 1 / -1; }
+.editor-embed .voice-tuning input[type="range"] { margin-top: .15rem; }
+.editor-embed .space-y-4 > * + * { margin-top: .5rem; }
+.editor-embed .space-y-3 > * + * { margin-top: .5rem; }

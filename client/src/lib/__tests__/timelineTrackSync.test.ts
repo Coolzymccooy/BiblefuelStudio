@@ -21,13 +21,25 @@ describe('syncSidecarTracks', () => {
     expect(clips[0].startSec).toBeLessThanOrEqual(clips[1].startSec);
   });
 
-  it('represents captions as a single lane clip, not one per line', () => {
+  it('represents captions as one clip PER LINE carrying its text, timed like the stage', () => {
     const next = syncSidecarTracks(project(), {
       musicPaths: [], captionLines: ['one', 'two', 'three'],
     });
-    // The lane answers "are there captions", not "how many lines" - a clip per
-    // line would render as unreadable slivers.
-    expect(track(next, 'captions').clips).toHaveLength(1);
+    // The renderer burns `clip.text` between start and end; a lane-wide
+    // clip with only a label rendered no captions at all.
+    const clips = track(next, 'captions').clips;
+    expect(clips).toHaveLength(3);
+    expect(clips.map((c) => c.text)).toEqual(['one', 'two', 'three']);
+    const total = project().targetDurationSec;
+    expect(clips[1].startSec).toBeCloseTo(total / 3, 2);
+    expect(clips[2].durationSec).toBeCloseTo(total / 3, 2);
+  });
+
+  it('sees a changed line as a change (same ids, new text)', () => {
+    const a = syncSidecarTracks(project(), { musicPaths: [], captionLines: ['one'] });
+    const b = syncSidecarTracks(a, { musicPaths: [], captionLines: ['uno'] });
+    expect(b).not.toBe(a);
+    expect(track(b, 'captions').clips[0].text).toBe('uno');
   });
 
   it('clears the lane when the source is emptied', () => {

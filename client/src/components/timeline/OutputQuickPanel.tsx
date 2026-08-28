@@ -45,9 +45,9 @@ export function OutputQuickPanel({
       <div>
         {/* The answer to "when do I press Render?": a status line, then the
             steps in order. Ready = every required step ticked. */}
-        <div className="mb-1.5 flex items-baseline justify-between gap-2">
+        <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5">
           <p className="text-[9px] font-bold uppercase tracking-[.1em] text-editor-faint">Before you render</p>
-          <p className={`text-[10px] font-semibold ${blockers.length === 0 ? 'text-editor-accent' : 'text-editor-dim'}`}>
+          <p className={`whitespace-nowrap text-[10px] font-semibold ${blockers.length === 0 ? 'text-editor-accent' : 'text-editor-dim'}`}>
             {blockers.length === 0 ? 'Ready — press Render' : `${blockers.length} step${blockers.length === 1 ? '' : 's'} left`}
           </p>
         </div>
@@ -96,9 +96,9 @@ export function OutputQuickPanel({
       {renderedVideo && !isRendering && (
         <div className="space-y-2 rounded-xl border border-editor-line bg-white/[0.02] p-3">
           <p className="text-[11px] font-semibold text-editor-text">Latest render</p>
-          <div className="grid grid-cols-2 gap-1.5">
-            <Button onClick={onPreviewOnStage} className="h-8 text-[11px]">Preview on stage</Button>
-            <Button variant="secondary" onClick={onShare} className="h-8 border-editor-line text-[11px]"><Share2 size={12} className="mr-1" />Share</Button>
+          <div className="flex flex-wrap gap-1.5">
+            <Button onClick={onPreviewOnStage} className="h-8 min-w-[120px] flex-1 whitespace-nowrap text-[11px]" title="Play the finished render on the stage">Preview on stage</Button>
+            <Button variant="secondary" onClick={onShare} className="h-8 min-w-[88px] flex-1 whitespace-nowrap border-editor-line text-[11px]"><Share2 size={12} className="mr-1" />Share</Button>
           </div>
           <button type="button" onClick={onDownload} className="w-full text-center text-[10px] text-editor-dim underline-offset-2 hover:underline">Download MP4</button>
         </div>

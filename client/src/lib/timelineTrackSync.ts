@@ -68,9 +68,12 @@ function buildCaptions(lines: string[], targetSec: number) {
   const clips: TimelineClip[] = [];
   if (lines.length === 0) return { assets, clips };
 
-  // ONE clip spanning the timeline, not one per line: a 60-line transcript
-  // would render as sixty unreadable slivers. The lane answers "are there
-  // captions, and how many lines", which the label carries.
+  // One clip PER LINE, each carrying its text. The renderer burns
+  // `clip.text` between the clip's start and end; a single lane-wide clip
+  // with only a label rendered NO captions at all (the picture played, the
+  // words never appeared). Lines split the runtime evenly - the same slots
+  // the live stage uses, so preview and render agree. The one shared asset
+  // keeps the lane header's count ("N caption lines").
   assets.push({
     id: assetId('captions', 'all'),
     kind: 'caption',
@@ -78,12 +81,16 @@ function buildCaptions(lines: string[], targetSec: number) {
     label: `${lines.length} caption line${lines.length === 1 ? '' : 's'}`,
     tags: [OWNED_TAG, 'captions'],
   });
-  clips.push({
-    id: clipId('captions', 'all'),
-    assetId: assetId('captions', 'all'),
-    startSec: 0,
-    durationSec: targetSec,
-    transform: { fit: 'cover' },
+  const slot = targetSec / lines.length;
+  lines.forEach((line, i) => {
+    clips.push({
+      id: clipId('captions', String(i)),
+      assetId: assetId('captions', 'all'),
+      startSec: Math.round(i * slot * 1000) / 1000,
+      durationSec: Math.round(slot * 1000) / 1000,
+      transform: { fit: 'cover' },
+      text: line,
+    });
   });
   return { assets, clips };
 }
@@ -121,6 +128,7 @@ export function syncSidecarTracks(
         return (
           c.id === want.id &&
           c.durationSec === want.durationSec &&
+          (c.text || '') === (want.text || '') &&
           have?.path === wantAsset?.path &&
           have?.label === wantAsset?.label
         );

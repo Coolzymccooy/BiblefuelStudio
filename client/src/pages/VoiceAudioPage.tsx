@@ -1138,7 +1138,7 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
                     </button>
                 </div>
                 {(!azureAvailable && azureReason) || (!fishAvailable && fishReason) ? (
-                    <ul className="mt-2 space-y-1 text-[0.6875rem] text-content-secondary">
+                    <ul className="provider-reasons mt-2 space-y-1 text-[0.6875rem] text-content-secondary">
                         {!azureAvailable && azureReason && (
                             <li><span className="font-semibold">Azure disabled:</span> {azureReason}</li>
                         )}
@@ -1149,7 +1149,7 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
                 ) : null}
             </div>
             {provider === 'chatterbox' ? (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="voice-tuning grid grid-cols-1 md:grid-cols-3 gap-4">
                     <Field
                         label="Reference voice"
                         badge="Optional"
@@ -1191,7 +1191,7 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
                     </Field>
                 </div>
             ) : (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="voice-tuning grid grid-cols-1 md:grid-cols-3 gap-4">
                     <Field
                         label="Voice ID"
                         badge="Optional"
@@ -1418,7 +1418,7 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
                             </Select>
                         </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="voice-tuning grid grid-cols-1 md:grid-cols-3 gap-4">
                             <div>
                                 <label className="field-label">
                                     Denoise (0-1)
@@ -2008,8 +2008,8 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
                                 className="h-28 bg-black/20 text-xs"
                             />
                             <div className="flex flex-wrap gap-1.5">
-                                <Button variant="secondary" className="h-7 text-[11px]" onClick={handleUseLatestScript}>Use latest script</Button>
-                                <Button variant="secondary" className="h-7 text-[11px]" onClick={handleFormatForVoice}>Format for voice</Button>
+                                <Button variant="secondary" className="h-7 text-[11px]" onClick={handleUseLatestScript} title="Use latest script — drop in the newest script from your library">Latest script</Button>
+                                <Button variant="secondary" className="h-7 text-[11px]" onClick={handleFormatForVoice} title="Format for voice — tidy the text into short speakable lines">Format</Button>
                             </div>
                             {providerControls}
                         </div>
