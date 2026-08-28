@@ -47,7 +47,7 @@ import { ScenesPanel } from '../components/timeline/ScenesPanel';
 import { LivePreviewStage } from '../components/timeline/LivePreviewStage';
 import { addEffectToScene, removeEffectClip } from '../lib/timelineEffects';
 import { syncSidecarTracks } from '../lib/timelineTrackSync';
-import type { TimelineEffectKind } from '../lib/timelineProject';
+import type { TimelineEffectKind, TimelineTrackKind } from '../lib/timelineProject';
 import { MasteringPanel } from '../components/timeline/MasteringPanel';
 import { RecentAudioPanel } from '../components/timeline/RecentAudioPanel';
 import { TranscriptActions } from '../components/timeline/TranscriptActions';
@@ -1874,6 +1874,45 @@ export function TimelinePage() {
         toast.success(`${picks.length} background${picks.length === 1 ? '' : 's'} placed on the B-roll lane`);
     };
 
+    // Clear ONE lane. Captions and music are mirrored from page state by the
+    // sidecar sync, so those clear at the source; the others drop their clips
+    // and any asset nothing else references. Stale clips from earlier
+    // sessions (a dozen caption clips on one lane) were confusing the cut.
+    const handleClearLane = (kind: TimelineTrackKind) => {
+        const label = documentaryProject?.tracks.find((t) => t.kind === kind)?.label || kind;
+        if (!window.confirm(`Clear the ${label} lane? Every clip on it is removed.`)) return;
+        if (kind === 'captions') { setEditedLines([]); toast.success('Captions lane cleared'); return; }
+        if (kind === 'music') { setMusicPaths([]); setMusicPath(null); toast.success('Music bed cleared'); return; }
+        if (!documentaryProject) return;
+        const tracks = documentaryProject.tracks.map((t) => (t.kind === kind ? { ...t, clips: [] } : t));
+        const used = new Set(tracks.flatMap((t) => t.clips.map((c) => c.assetId)));
+        const assets = Object.fromEntries(Object.entries(documentaryProject.assets).filter(([id]) => used.has(id)));
+        setDocumentaryProject({ ...documentaryProject, tracks, assets, updatedAt: new Date().toISOString() });
+        toast.success(`${label} lane cleared`);
+    };
+
+    // Start fresh: every lane, the source media and the backgrounds. The
+    // project (scenes, settings) stays.
+    const handleWipeAllLanes = () => {
+        if (!window.confirm('Start fresh? This clears every lane (footage, B-roll, voice-over, music, captions, effects), unloads the source media and drops the backgrounds. Scenes and settings stay.')) return;
+        setEditedLines([]);
+        setMusicPaths([]);
+        setMusicPath(null);
+        handleClearSourceMedia();
+        setBackgroundItems([]);
+        setAutoBackground(false);
+        setPreviewTimeSec(0);
+        if (documentaryProject) {
+            setDocumentaryProject({
+                ...documentaryProject,
+                tracks: documentaryProject.tracks.map((t) => ({ ...t, clips: [] })),
+                assets: {},
+                updatedAt: new Date().toISOString(),
+            });
+        }
+        toast.success('All lanes wiped - fresh start');
+    };
+
     // Readiness for the Output tool - the same refusals handleRender* raise
     // as toasts, made visible BEFORE the click. Mirrors the guards exactly.
     const outputReadiness: ReadinessItem[] = timelineHasOwnContent
@@ -2715,6 +2754,8 @@ export function TimelinePage() {
                     // chrome into one toolbar row to make that fit.
                     <div className="h-full">
                         <VisualTimelineCanvas
+                            onClearLane={handleClearLane}
+                            onWipeAll={handleWipeAllLanes}
                             compact
                             onEmptyLaneClick={(kind) => setActiveTool(kind === 'video' ? 'media' : kind === 'broll' ? 'background' : kind === 'voiceover' ? 'voice' : kind === 'music' ? 'music' : kind === 'captions' ? 'captions' : 'scenes')}
                             project={documentaryProject}
@@ -2888,6 +2929,8 @@ export function TimelinePage() {
                     </div>
                 </Card>
                 <VisualTimelineCanvas
+                    onClearLane={handleClearLane}
+                    onWipeAll={handleWipeAllLanes}
                     project={documentaryProject}
                     onProjectChange={setDocumentaryProject}
                     onRequestVeoBroll={handleRequestVeoBroll}

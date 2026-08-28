@@ -224,6 +224,8 @@ const get=p=>new Promise((res,rej)=>{http.get({host:'127.0.0.1',port:PORT,path:p
     (await ev(`[...document.querySelectorAll('[role="tabpanel"] button')].some(b=>/Voice this/i.test(b.getAttribute('aria-label')||b.textContent))`))===true);
   check('Clear canvas is one click away in the topbar',
     (await ev(`[...document.querySelectorAll('button')].some(b=>/^Clear canvas$/i.test(b.textContent.trim()))`))===true);
+  check('Wipe all lanes sits in the strip toolbar for a fresh start',
+    (await ev(`!!document.querySelector('button[aria-label="Wipe all lanes"]')`))===true);
   await ev(`(()=>{const b=[...document.querySelectorAll('[role="tabpanel"] button')].find(x=>/Add to Captions lane/i.test(x.getAttribute('aria-label')||x.textContent));if(b)b.click();})()`);
   await waitFor(`/caption clip/.test(document.body.innerText)||JSON.parse(localStorage.getItem('BF_SCL_EDITED_LINES')||'[]').length>0`);
   check('the script LANDS as caption clips on this timeline',

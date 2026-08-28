@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, within, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, test, vi } from 'vitest';
 import { buildWorshipDocumentaryProject, insertAssetOnTrack } from '../../../lib/timelineProject';
@@ -130,3 +130,23 @@ describe('VisualTimelineCanvas', () => {
   });
 });
 
+
+describe('clearing lanes', () => {
+  it('offers Clear on a lane that has clips, and Wipe all in the toolbar', async () => {
+    const { buildWorshipDocumentaryProject, insertAssetOnTrack } = await import('../../../lib/timelineProject');
+    const base = buildWorshipDocumentaryProject({ title: 'T' });
+    const project = insertAssetOnTrack(base, {
+      trackKind: 'broll',
+      asset: { id: 'a1', kind: 'image', source: 'upload', label: 'sky', path: 'uploads/sky.jpg' },
+      startSec: 0, durationSec: 5,
+    });
+    const onClearLane = vi.fn();
+    const onWipeAll = vi.fn();
+    render(<VisualTimelineCanvas project={project} compact onClearLane={onClearLane} onWipeAll={onWipeAll} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Clear AI B-roll / cutaways lane' }));
+    expect(onClearLane).toHaveBeenCalledWith('broll');
+    expect(screen.queryByRole('button', { name: 'Clear Real footage lane' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Wipe all lanes' }));
+    expect(onWipeAll).toHaveBeenCalled();
+  });
+});

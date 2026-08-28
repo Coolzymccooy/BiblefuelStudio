@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Film, Mic2, Music, Scissors, Sparkles, Subtitles, Trash2, Wand2 } from 'lucide-react';
+import { Film, Mic2, Music, Scissors, Sparkles, Subtitles, Trash2, Wand2, Eraser } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 import type { TimelineAsset, TimelineClip, TimelineProject, TimelineTrack, TimelineTrackKind } from '../../lib/timelineProject';
@@ -40,6 +40,10 @@ interface VisualTimelineCanvasProps {
   compact?: boolean;
   /** Clicking an empty lane opens the tool that fills it. */
   onEmptyLaneClick?: (kind: TimelineTrackKind) => void;
+  /** Clear one lane. Captions and music clear at their SOURCE on the page, or the sync would put them back. */
+  onClearLane?: (kind: TimelineTrackKind) => void;
+  /** Start fresh: every lane, the source media and the backgrounds. */
+  onWipeAll?: () => void;
 }
 
 /**
@@ -167,7 +171,7 @@ function buildVeoPrompt(project: TimelineProject): VeoBrollRequest {
   };
 }
 
-export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBroll, compact = false, selectedSceneId = null, onSelectScene, onEmptyLaneClick }: VisualTimelineCanvasProps) {
+export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBroll, compact = false, selectedSceneId = null, onSelectScene, onEmptyLaneClick, onClearLane, onWipeAll }: VisualTimelineCanvasProps) {
   const target = Math.max(1, project.targetDurationSec);
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   const selection = useMemo(() => findClip(project, selectedClipId), [project, selectedClipId]);
@@ -273,6 +277,17 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                           <p className="truncate text-xs font-semibold text-gray-100">{track.label}</p>
                           <p className="text-[10px] text-content-tertiary">{track.clips.length} clip{track.clips.length === 1 ? '' : 's'}</p>
                         </div>
+                        {onClearLane && track.clips.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); onClearLane(track.kind); }}
+                            className="ml-auto shrink-0 rounded p-1 text-content-tertiary transition hover:bg-white/10 hover:text-white"
+                            aria-label={`Clear ${track.label} lane`}
+                            title={`Clear this lane - removes all ${track.clips.length} clip${track.clips.length === 1 ? '' : 's'} from ${track.label}`}
+                          >
+                            <Eraser size={12} />
+                          </button>
+                        )}
                       </div>
   
                       <div className={`relative ${d.lane} rounded-lg border border-dashed border-white/10 bg-white/[0.02] ${d.lanePad}`}>
@@ -462,6 +477,17 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
       >
         <Sparkles size={14} />
       </button>
+      {onWipeAll && (
+        <button
+          type="button"
+          onClick={onWipeAll}
+          className="icon-btn-danger"
+          aria-label="Wipe all lanes"
+          title="Start fresh - clears every lane, the source media and the backgrounds"
+        >
+          <Eraser size={14} />
+        </button>
+      )}
     </div>
   );
 
