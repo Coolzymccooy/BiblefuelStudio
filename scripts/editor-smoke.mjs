@@ -220,7 +220,11 @@ const get=p=>new Promise((res,rej)=>{http.get({host:'127.0.0.1',port:PORT,path:p
   await waitFor(`/Add to Captions lane/.test((document.querySelector('[role="tabpanel"]')||{}).innerText||'')`);
   check('Script quick tool docks in the editor with the shared library',
     (await ev(`/Peace in the Storm/.test((document.querySelector('[role="tabpanel"]')||{}).innerText||'')`))===true);
-  await ev(`(()=>{const b=[...document.querySelectorAll('[role="tabpanel"] button')].find(x=>/Add to Captions lane/.test(x.textContent));if(b)b.click();})()`);
+  check('Script panel offers the next step - Voice this',
+    (await ev(`[...document.querySelectorAll('[role="tabpanel"] button')].some(b=>/Voice this/i.test(b.getAttribute('aria-label')||b.textContent))`))===true);
+  check('Clear canvas is one click away in the topbar',
+    (await ev(`[...document.querySelectorAll('button')].some(b=>/^Clear canvas$/i.test(b.textContent.trim()))`))===true);
+  await ev(`(()=>{const b=[...document.querySelectorAll('[role="tabpanel"] button')].find(x=>/Add to Captions lane/i.test(x.getAttribute('aria-label')||x.textContent));if(b)b.click();})()`);
   await waitFor(`/caption clip/.test(document.body.innerText)||JSON.parse(localStorage.getItem('BF_SCL_EDITED_LINES')||'[]').length>0`);
   check('the script LANDS as caption clips on this timeline',
     (await ev(`JSON.parse(localStorage.getItem('BF_SCL_EDITED_LINES')||'[]').length`))>=3);

@@ -42,6 +42,10 @@ export interface VoiceQuickPanelProps {
   onUseAsSource: (path: string) => void;
   /** Landing needs a documentary timeline to have a lane to land on. */
   hasProject: boolean;
+  /** Script handed over from the Script tool ("Voice this"). */
+  seedText?: string;
+  /** Next step after a take has landed: the Output tool. */
+  onNext?: () => void;
 }
 
 function latestScriptText(): string {
@@ -78,8 +82,19 @@ function probeDurationSec(url: string): Promise<number | undefined> {
   });
 }
 
-export function VoiceQuickPanel({ onLandVoiceover, onUseAsSource, hasProject }: VoiceQuickPanelProps) {
-  const [text, setText] = useState<string>(() => latestScriptText());
+export function VoiceQuickPanel({ onLandVoiceover, onUseAsSource, hasProject, seedText, onNext }: VoiceQuickPanelProps) {
+  const [text, setText] = useState<string>(() => seedText || latestScriptText());
+  const [landed, setLanded] = useState(false);
+
+  // "Voice this" from the Script tool replaces the draft with that script.
+  useEffect(() => {
+    if (seedText) setText(seedText);
+  }, [seedText]);
+
+  const land = (take: VoiceTake) => {
+    onLandVoiceover(take);
+    setLanded(true);
+  };
   const [provider, setProvider] = useState<Provider>('elevenlabs');
   const [availability, setAvailability] = useState<Record<string, ProviderInfo>>({});
   const [voiceId, setVoiceId] = useState('');
@@ -231,7 +246,7 @@ export function VoiceQuickPanel({ onLandVoiceover, onUseAsSource, hasProject }: 
           <p className="break-words text-[11px] font-semibold text-editor-text">{lastTake.label}</p>
           <audio controls src={api.mediaUrl(lastTake.path)} className="w-full" aria-label="Play the take" />
           <Button
-            onClick={() => onLandVoiceover(lastTake)}
+            onClick={() => land(lastTake)}
             disabled={!hasProject}
             className="h-9 w-full text-xs"
             title={hasProject ? 'Add this take as a clip on the voice-over lane' : 'Create a documentary timeline first (Scenes tool)'}
@@ -239,6 +254,11 @@ export function VoiceQuickPanel({ onLandVoiceover, onUseAsSource, hasProject }: 
             <ArrowDownToLine size={13} className="mr-1.5" />
             Land on VO lane
           </Button>
+          {landed && onNext && (
+            <Button variant="secondary" onClick={onNext} className="h-9 w-full border-editor-line text-xs">
+              Next: Render → Output tool
+            </Button>
+          )}
           <button type="button" onClick={() => onUseAsSource(lastTake.path)} className="w-full text-center text-[10px] text-editor-dim underline-offset-2 hover:underline">
             or use as source media
           </button>
@@ -253,7 +273,7 @@ export function VoiceQuickPanel({ onLandVoiceover, onUseAsSource, hasProject }: 
               <span className="min-w-0 flex-1 truncate text-[10.5px] text-editor-dim" title={item.path}>{item.label || item.kind}</span>
               <button
                 type="button"
-                onClick={() => onLandVoiceover({ path: item.path, label: item.label || item.kind })}
+                onClick={() => land({ path: item.path, label: item.label || item.kind })}
                 disabled={!hasProject}
                 className="shrink-0 rounded-md border border-editor-line px-1.5 py-0.5 text-[9.5px] font-semibold text-editor-accent hover:bg-editor-hover disabled:opacity-40"
               >

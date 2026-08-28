@@ -41,6 +41,16 @@ describe('EditorShell', () => {
     expect(screen.queryByText('audio panel body')).not.toBeInTheDocument();
   });
 
+  it('follows a controlled activeToolId so a quick job can hand off to the next tool', () => {
+    const { rerender } = setup({ activeToolId: 'media' });
+    expect(screen.getByText('media panel body')).toBeInTheDocument();
+    rerender(
+      <EditorShell tools={tools} panels={panels} stage={<div>stage content</div>} strip={<div>timeline strip</div>} topBar={<div>top bar</div>} activeToolId="audio" />,
+    );
+    expect(screen.getByText('audio panel body')).toBeInTheDocument();
+    expect(screen.queryByText('media panel body')).not.toBeInTheDocument();
+  });
+
   it('honours initialToolId over the first tool', () => {
     setup({ initialToolId: 'audio' });
     expect(screen.getByText('audio panel body')).toBeInTheDocument();

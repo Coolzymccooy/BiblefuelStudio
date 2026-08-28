@@ -68,6 +68,18 @@ describe('VoiceQuickPanel', () => {
     expect(props.onLandVoiceover).toHaveBeenCalledWith(expect.objectContaining({ path: 'outputs/tts-2.mp3' }));
   });
 
+  it('takes the script handed over from the Script tool, and offers Next after landing', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(api, 'post').mockResolvedValue({ ok: true, data: { file: 'outputs/tts-4.mp3' } } as any);
+    const onNext = vi.fn();
+    setup({ seedText: 'You are more than just your struggles.', onNext });
+    expect(screen.getByLabelText('Voice script')).toHaveValue('You are more than just your struggles.');
+    await user.click(screen.getByRole('button', { name: /generate voice/i }));
+    await user.click(await screen.findByRole('button', { name: /land on vo lane/i }));
+    await user.click(screen.getByRole('button', { name: /next: render/i }));
+    expect(onNext).toHaveBeenCalled();
+  });
+
   it('refuses to land without a timeline, and says why', async () => {
     const user = userEvent.setup();
     vi.spyOn(api, 'post').mockResolvedValue({ ok: true, data: { file: 'outputs/tts-3.mp3' } } as any);

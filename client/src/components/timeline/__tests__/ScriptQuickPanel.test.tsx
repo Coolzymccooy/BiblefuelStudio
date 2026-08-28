@@ -60,6 +60,17 @@ describe('ScriptQuickPanel', () => {
     expect(props.onAddToCaptions).toHaveBeenCalledWith(SCRIPT);
   });
 
+  it('offers the next step - Voice this - carrying the script along', async () => {
+    const user = userEvent.setup();
+    const onVoiceScript = vi.fn();
+    setup({ scripts: [SCRIPT], onVoiceScript });
+    await user.click(screen.getByRole('button', { name: /voice this/i }));
+    expect(onVoiceScript).toHaveBeenCalledWith(SCRIPT);
+    // Compact labels: the explanation lives in the tooltip, not the card.
+    expect(screen.getByRole('button', { name: /voice this/i })).toHaveAttribute('title', expect.stringMatching(/lands on the VO lane/i));
+    expect(screen.getByRole('button', { name: /add to captions lane/i })).toHaveAttribute('title', expect.stringMatching(/caption clips/i));
+  });
+
   it('clamps the count to the same 1-5 bound the Scripts page uses', async () => {
     const user = userEvent.setup();
     const props = setup();

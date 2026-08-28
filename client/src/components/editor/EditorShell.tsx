@@ -55,6 +55,12 @@ export interface EditorShellProps {
   /** Notified when the user switches tool, for pages that need to react. */
   onToolChange?: (toolId: string) => void;
   /**
+   * Optional controlled tool. Lets the page drive the rail - "Voice this" in
+   * the Script panel jumps to the Voice tool with the script carried along -
+   * without owning the rail's click handling.
+   */
+  activeToolId?: string;
+  /**
    * Right-hand properties rail, shown only when there is something to inspect.
    * CapCut reveals this once a clip is selected; keeping it hidden otherwise is
    * what leaves the centre free for the preview.
@@ -101,6 +107,7 @@ export function EditorShell({
   topBar,
   initialToolId,
   onToolChange,
+  activeToolId,
   propertyTools,
   propertyPanels,
   clipActions,
@@ -108,6 +115,13 @@ export function EditorShell({
   const [activeId, setActiveId] = useState<string>(
     () => initialToolId || tools[0]?.id || '',
   );
+  useEffect(() => {
+    if (activeToolId && activeToolId !== activeId) setActiveId(activeToolId);
+    // Only the controlled value should re-run this; activeId changes from
+    // rail clicks must not snap back.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeToolId]);
+
   const [activePropId, setActivePropId] = useState<string>(
     () => propertyTools?.[0]?.id || '',
   );

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Wand2, ArrowDownToLine } from 'lucide-react';
+import { Wand2, ArrowDownToLine, Mic, Info } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Select } from '../ui/Select';
@@ -34,6 +34,8 @@ export interface ScriptQuickPanelProps {
   scripts: QuickScript[];
   onGenerate: (cfg: ScriptQuickConfig) => void;
   onAddToCaptions: (script: QuickScript) => void;
+  /** Next step: carry the script into the Voice tool. */
+  onVoiceScript?: (script: QuickScript) => void;
 }
 
 export function ScriptQuickPanel({
@@ -41,6 +43,7 @@ export function ScriptQuickPanel({
   scripts,
   onGenerate,
   onAddToCaptions,
+  onVoiceScript,
 }: ScriptQuickPanelProps) {
   const [count, setCount] = useState(1);
   const [ctaStyle, setCtaStyle] = useState('save');
@@ -48,12 +51,13 @@ export function ScriptQuickPanel({
   const [scriptType, setScriptType] = useState('peace');
 
   return (
-    <div className="space-y-3">
-      <p className="text-[11px] leading-relaxed text-editor-dim">
-        Topic in, a scroll-stopping script out — landing straight on this timeline.
+    <div className="space-y-2.5">
+      {/* Compact config: one tight 2x2 grid, small controls, the blurb folded
+          into a tooltip on the heading - the card below is the point. */}
+      <p className="text-[10px] font-semibold uppercase tracking-[.12em] text-editor-dim" title="Topic in, a scroll-stopping script out — landing straight on this timeline.">
+        Script setup
       </p>
-
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-2 gap-x-2 gap-y-1.5">
         <label className="min-w-0 text-[10px] font-semibold text-editor-dim">
           Count
           <Input
@@ -62,12 +66,12 @@ export function ScriptQuickPanel({
             max={5}
             value={count}
             onChange={(e) => setCount(Math.min(5, Math.max(1, Number(e.target.value) || 1)))}
-            className="mt-1 bg-black/20"
+            className="mt-0.5 h-8 !rounded-lg bg-black/20 px-2 !py-1 !text-xs"
           />
         </label>
         <label className="min-w-0 text-[10px] font-semibold text-editor-dim">
           CTA Style
-          <Select value={ctaStyle} onChange={(e) => setCtaStyle(e.target.value)} className="mt-1">
+          <Select value={ctaStyle} onChange={(e) => setCtaStyle(e.target.value)} className="mt-0.5 h-8 !rounded-lg px-2 !py-1 !text-xs">
             <option value="save">save</option>
             <option value="follow">follow</option>
             <option value="share">share</option>
@@ -75,19 +79,19 @@ export function ScriptQuickPanel({
           </Select>
         </label>
         <label className="min-w-0 text-[10px] font-semibold text-editor-dim">
-          Length (seconds)
+          Length (s)
           <Input
             type="number"
             min={8}
             max={60}
             value={lengthSeconds}
             onChange={(e) => setLengthSeconds(Math.min(60, Math.max(8, Number(e.target.value) || 20)))}
-            className="mt-1 bg-black/20"
+            className="mt-0.5 h-8 !rounded-lg bg-black/20 px-2 !py-1 !text-xs"
           />
         </label>
         <label className="min-w-0 text-[10px] font-semibold text-editor-dim">
           Script type
-          <Select value={scriptType} onChange={(e) => setScriptType(e.target.value)} className="mt-1">
+          <Select value={scriptType} onChange={(e) => setScriptType(e.target.value)} className="mt-0.5 h-8 !rounded-lg px-2 !py-1 !text-xs">
             <option value="peace">Peace / storm</option>
             <option value="strength">Strength / battles</option>
             <option value="anxiety">Anxiety / fear</option>
@@ -136,19 +140,36 @@ export function ScriptQuickPanel({
                     </div>
                   ))}
               </div>
-              <Button
-                variant="secondary"
-                onClick={() => onAddToCaptions(script)}
-                className="mt-2.5 h-9 w-full border-editor-line text-xs text-editor-accent"
-              >
-                <ArrowDownToLine size={14} className="mr-1.5" />
-                Add to Captions lane
-              </Button>
+              {/* Two actions, side by side: the long explanations live in
+                  tooltips (button + info glyph) so the card stays compact. */}
+              <div className="mt-2.5 grid grid-cols-2 gap-1.5">
+                <Button
+                  variant="secondary"
+                  onClick={() => onAddToCaptions(script)}
+                  aria-label="Add to Captions lane"
+                  title="Adds every line of this script as caption clips on the Captions lane, timed across the cut and editable like any other clip."
+                  className="h-9 min-w-0 border-editor-line px-2 text-xs text-editor-accent"
+                >
+                  <ArrowDownToLine size={14} className="mr-1.5 shrink-0" />
+                  <span className="truncate">Captions</span>
+                  <Info size={11} className="ml-1.5 shrink-0 opacity-60" aria-hidden="true" />
+                </Button>
+                {onVoiceScript && (
+                  <Button
+                    variant="secondary"
+                    onClick={() => onVoiceScript(script)}
+                    aria-label="Voice this → Voice tool"
+                    title="Opens the Voice tool with this script loaded; the generated take lands on the VO lane."
+                    className="h-9 min-w-0 border-editor-line px-2 text-xs"
+                  >
+                    <Mic size={14} className="mr-1.5 shrink-0" />
+                    <span className="truncate">Voice</span>
+                    <Info size={11} className="ml-1.5 shrink-0 opacity-60" aria-hidden="true" />
+                  </Button>
+                )}
+              </div>
             </div>
           ))}
-          <p className="text-[10px] leading-relaxed text-editor-faint">
-            Adding turns each line into a caption clip, timed across the cut — editable like any other clip. To voice it, open the Voice tool: Use Latest Script reads this same library.
-          </p>
         </div>
       )}
     </div>

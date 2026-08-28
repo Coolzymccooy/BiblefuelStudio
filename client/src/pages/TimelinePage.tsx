@@ -211,6 +211,10 @@ interface RenderHistoryItem {
 
 export function TimelinePage() {
     const navigate = useNavigate();
+    // The rail is controlled from here so a quick job can hand off to the
+    // next tool: Script -> Voice this -> Voice -> Next: Render -> Output.
+    const [activeTool, setActiveTool] = useState('media');
+    const [voiceSeedText, setVoiceSeedText] = useState('');
     const [clips, setClips] = useState<TimelineClip[]>([]);
     const [documentaryProject, setDocumentaryProject] = useState<TimelineProject | null>(null);
     // Scene selection is page-level state: the Scenes panel and the scene
@@ -1846,6 +1850,33 @@ export function TimelinePage() {
             { label: musicPath ? 'Music bed set' : 'Music bed', status: musicPath ? 'done' : 'optional' },
         ];
 
+    // Clear the CANVAS, not just the source file: after Clear source media
+    // the stage kept painting the source clip that had been inserted on the
+    // Real footage lane, so the operator could not wipe the picture. This
+    // empties the visual lanes too; voice-over, music, captions and effects
+    // are kept - they are work, not the picture.
+    const handleClearCanvas = () => {
+        const ok = window.confirm('Clear the canvas? This unloads the source media, removes every clip from the Real footage and B-roll lanes, and drops the selected backgrounds. Voice-over, music, captions and effects stay.');
+        if (!ok) return;
+        // Everything the stage can paint: source media, the visual lanes, AND
+        // the backgrounds (they sit behind every layer, so a stray background
+        // kept the picture on screen after the clips were gone).
+        handleClearSourceMedia();
+        setBackgroundItems([]);
+        setAutoBackground(false);
+        setPreviewTimeSec(0);
+        if (documentaryProject) {
+            setDocumentaryProject({
+                ...documentaryProject,
+                tracks: documentaryProject.tracks.map((t) => (
+                    t.kind === 'video' || t.kind === 'broll' ? { ...t, clips: [] } : t
+                )),
+                updatedAt: new Date().toISOString(),
+            });
+        }
+        toast.success('Canvas cleared');
+    };
+
     const overlays = (
         <>
             {/* Library Picker Modal — multi-select up to MAX_BACKGROUNDS.
@@ -2046,6 +2077,14 @@ export function TimelinePage() {
                             re-letterboxes live; the render plan reads the same
                             value (project.aspect), so nothing is re-picked at
                             render time. */}
+                        <Button
+                            variant="secondary"
+                            className="h-8 text-xs"
+                            onClick={handleClearCanvas}
+                            title="Unload the source media, empty the Real footage and B-roll lanes, and drop the backgrounds"
+                        >
+                            Clear canvas
+                        </Button>
                         {documentaryProject && (
                             <select
                                 aria-label="Output frame"
@@ -2105,6 +2144,8 @@ export function TimelinePage() {
                 // Media stays the landing tool - adding Script to the rail must
                 // not change what the editor opens on.
                 initialToolId="media"
+                activeToolId={activeTool}
+                onToolChange={setActiveTool}
                 panels={{
                     script: (
                         <ScriptQuickPanel
@@ -2112,6 +2153,10 @@ export function TimelinePage() {
                             scripts={quickScripts}
                             onGenerate={handleGenerateQuickScript}
                             onAddToCaptions={handleAddScriptToCaptions}
+                            onVoiceScript={(script) => {
+                                setVoiceSeedText([script.hook, script.verse, script.reflection, script.cta].filter(Boolean).join('\n\n'));
+                                setActiveTool('voice');
+                            }}
                         />
                     ),
                     story: (
@@ -2349,6 +2394,8 @@ export function TimelinePage() {
                             <VoiceQuickPanel
                                 hasProject={Boolean(documentaryProject)}
                                 onLandVoiceover={handleLandVoiceover}
+                                seedText={voiceSeedText}
+                                onNext={() => setActiveTool('output')}
                                 onUseAsSource={useAsSource}
                             />
                             {/* Unchanged - the pre-existing takes list stays exactly as it was. */}
