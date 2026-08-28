@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type SyntheticEvent } from 'react';
+import { useEffect, useRef, useState, type ReactNode, type SyntheticEvent } from 'react';
 const CAPTION_LINE_SEP = String.fromCharCode(10);
 import { EditorShell } from '../components/editor/EditorShell';
 import { RenderAudioPanel } from '../components/render/RenderAudioPanel';
@@ -65,7 +65,27 @@ interface AudioItem {
     createdAt: string;
 }
 
+type RenderLabTabId = 'captions' | 'visuals' | 'audio' | 'output' | 'share';
+
+/**
+ * Embedded mode: the whole render lab docked inside the Timeline editor
+ * (its Output tool). Same hoisted panels as the page's own editor layout, so
+ * every render control exists exactly once and the parity gate covers both.
+ */
+export interface RenderLabEmbed {
+    /** Caption lines from the host, used when the lab has none of its own yet. */
+    seedLines?: string;
+    /** Source audio from the host, used when the lab has no audio yet. */
+    seedAudioPath?: string;
+    /** A finished render (server output path) - the host previews it on stage. */
+    onRendered?: (file: string) => void;
+}
+
 export function RenderPage() {
+    return <RenderLab />;
+}
+
+export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
     const { config } = useConfig();
     const renderEnabled = config.features.render;
     const [backgroundPath, setBackgroundPath] = useState('');
@@ -133,6 +153,23 @@ export function RenderPage() {
     const [jobVideoOptions, setJobVideoOptions] = useState<{ id: string; label: string; path: string }[]>([]);
     const [shareVideoPath, setShareVideoPath] = useState('');
     const [completedRender, setCompletedRender] = useState<{ jobId: string; file: string; jobType?: string } | null>(null);
+    // Embedded: which lab tab is open.
+    const [labTab, setLabTab] = useState<RenderLabTabId>('captions');
+    // Seeds from the host apply ONCE, and only into empty state - the lab's
+    // own persisted values win when present.
+    const seededRef = useRef(false);
+    useEffect(() => {
+        if (!embedded || seededRef.current) return;
+        seededRef.current = true;
+        if (embedded.seedLines && !lines.trim()) setLines(embedded.seedLines);
+        if (embedded.seedAudioPath && !audioPath.trim()) setAudioPath(embedded.seedAudioPath);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [embedded?.seedLines, embedded?.seedAudioPath]);
+    const finishedFile = result?.file || completedRender?.file;
+    useEffect(() => {
+        if (finishedFile && embedded?.onRendered) embedded.onRendered(finishedFile);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [finishedFile]);
     // When a background render finishes, bring the "Render complete" banner into
     // view so the user lands on the result instead of the config they left.
     const renderDoneRef = useRef<HTMLDivElement>(null);
@@ -1003,43 +1040,9 @@ export function RenderPage() {
     // view stays as the fallback, and BOTH layouts render the same extracted
     // panels - two copies of a control is exactly how Timeline's overlays
     // became unreachable in one layout.
-    if (editorLayout) {
-        return (
-            <>
-            <EditorShell
-                topBar={(
-                    <>
-                        <span className="font-semibold">Send it to the world</span>
-                        {audioPath.trim() && (
-                            <span
-                                className="cursor-help truncate rounded-md border border-editor-line px-2.5 py-1 text-[12px] text-editor-dim"
-                                title={audioPath}
-                            >
-                                Voice loaded
-                            </span>
-                        )}
-                        <span className="flex-1" />
-                        <Button variant="secondary" className="h-8 text-xs" onClick={() => setEditorLayout(false)}>
-                            Classic view
-                        </Button>
-                        <Button
-                            className="h-8 text-xs"
-                            onClick={() => handleRender('video')}
-                            disabled={isRendering}
-                            title={videoReadiness.blockers[0]?.message || 'Render the video'}
-                        >
-                            {isRendering ? 'Rendering...' : 'Render'}
-                        </Button>
-                    </>
-                )}
-                tools={[
-                    { id: 'captions', label: 'Captions', icon: <Type size={17} /> },
-                    { id: 'visuals', label: 'Visuals', icon: <Library size={17} /> },
-                    { id: 'audio', label: 'Audio', icon: <AudioLines size={17} /> },
-                    { id: 'output', label: 'Output', icon: <Video size={17} /> },
-                    { id: 'share', label: 'Share', icon: <Share2 size={17} /> },
-                ]}
-                panels={{
+    // The five render panels, defined ONCE for the editor layout and the
+    // embedded lab.
+    const labPanels: Record<RenderLabTabId, ReactNode> = {
                     captions: (
                         <RenderCaptionsPanel
                             lines={lines}
@@ -1114,7 +1117,78 @@ export function RenderPage() {
                             {sharePanel}
                         </div>
                     ),
-                }}
+    };
+
+    // ---- Embedded (inside the Timeline editor) ------------------------------
+    if (embedded) {
+        const tabs: Array<{ id: RenderLabTabId; label: string }> = [
+            { id: 'captions', label: 'Captions' },
+            { id: 'visuals', label: 'Visuals' },
+            { id: 'audio', label: 'Audio' },
+            { id: 'output', label: 'Output' },
+            { id: 'share', label: 'Share' },
+        ];
+        return (
+            <div className="editor-embed flex min-h-0 flex-col">
+                <div role="tablist" aria-label="Render lab" className="mb-2 flex flex-wrap gap-1">
+                    {tabs.map((t) => (
+                        <button
+                            key={t.id}
+                            type="button"
+                            role="tab"
+                            aria-selected={labTab === t.id}
+                            onClick={() => setLabTab(t.id)}
+                            className={`rounded-md border px-2 py-1 text-[11px] font-semibold transition ${
+                                labTab === t.id ? 'border-editor-accent/60 bg-editor-accent/10 text-editor-accent' : 'border-editor-line text-editor-dim hover:text-editor-text'
+                            }`}
+                        >
+                            {t.label}
+                        </button>
+                    ))}
+                </div>
+                <div className="min-h-0 space-y-3">{labPanels[labTab]}</div>
+                {sharedOverlays}
+            </div>
+        );
+    }
+
+    if (editorLayout) {
+        return (
+            <>
+            <EditorShell
+                topBar={(
+                    <>
+                        <span className="font-semibold">Send it to the world</span>
+                        {audioPath.trim() && (
+                            <span
+                                className="cursor-help truncate rounded-md border border-editor-line px-2.5 py-1 text-[12px] text-editor-dim"
+                                title={audioPath}
+                            >
+                                Voice loaded
+                            </span>
+                        )}
+                        <span className="flex-1" />
+                        <Button variant="secondary" className="h-8 text-xs" onClick={() => setEditorLayout(false)}>
+                            Classic view
+                        </Button>
+                        <Button
+                            className="h-8 text-xs"
+                            onClick={() => handleRender('video')}
+                            disabled={isRendering}
+                            title={videoReadiness.blockers[0]?.message || 'Render the video'}
+                        >
+                            {isRendering ? 'Rendering...' : 'Render'}
+                        </Button>
+                    </>
+                )}
+                tools={[
+                    { id: 'captions', label: 'Captions', icon: <Type size={17} /> },
+                    { id: 'visuals', label: 'Visuals', icon: <Library size={17} /> },
+                    { id: 'audio', label: 'Audio', icon: <AudioLines size={17} /> },
+                    { id: 'output', label: 'Output', icon: <Video size={17} /> },
+                    { id: 'share', label: 'Share', icon: <Share2 size={17} /> },
+                ]}
+                panels={labPanels}
                 stage={(
                     (result?.file || completedRender?.file) ? (
                         <div className="flex h-full max-h-full flex-col items-center justify-center gap-2">

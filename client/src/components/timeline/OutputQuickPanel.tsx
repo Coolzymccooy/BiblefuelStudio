@@ -29,11 +29,13 @@ export interface OutputQuickPanelProps {
   onShare: () => void;
   onDownload: () => void;
   shareKit: ReactNode;
+  /** The full render configuration (classic Render's panels), docked below. */
+  config?: ReactNode;
 }
 
 export function OutputQuickPanel({
   items, renderLabel, renderHint, onRender, isRendering, progress, renderedVideo,
-  onPreviewOnStage, onShare, onDownload, shareKit,
+  onPreviewOnStage, onShare, onDownload, shareKit, config,
 }: OutputQuickPanelProps) {
   const blockers = items.filter((i) => i.status === 'todo');
   return (
@@ -81,6 +83,12 @@ export function OutputQuickPanel({
           </div>
           <button type="button" onClick={onDownload} className="w-full text-center text-[10px] text-editor-dim underline-offset-2 hover:underline">Download MP4</button>
         </div>
+      )}
+
+      {config && (
+        <PanelSection title="Render lab" summary="captions · visuals · audio · output · share" defaultOpen>
+          {config}
+        </PanelSection>
       )}
 
       <PanelSection title="Share Kit" summary="copy caption · auto-post">

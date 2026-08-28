@@ -62,6 +62,7 @@ import { buildSpeakableLines, cleanCaptionLine } from '../lib/speakableScript';
 import { ScriptQuickPanel, type QuickScript, type ScriptQuickConfig } from '../components/timeline/ScriptQuickPanel';
 import { VoiceLab, type VoiceTake } from './VoiceAudioPage';
 import { OutputQuickPanel, type ReadinessItem } from '../components/timeline/OutputQuickPanel';
+import { RenderLab } from './RenderPage';
 import { ShareKitPanel } from '../components/timeline/ShareKitPanel';
 import { StoryQuickPanel } from '../components/timeline/StoryQuickPanel';
 import { SeriesQuickPanel } from '../components/timeline/SeriesQuickPanel';
@@ -2428,6 +2429,19 @@ export function TimelinePage() {
                             onShare={() => renderedVideo && setShareUrl(renderedVideo)}
                             onDownload={() => { if (renderedVideo) void api.downloadMedia(renderedVideo, `biblefuel-${(renderedVideo.split('/').pop() || 'video').replace(/\.[^.]+$/, '').slice(0, 24)}.mp4`); }}
                             shareKit={<ShareKitPanel lines={editedLines.join('\n')} latestRenderFile={renderedVideo || undefined} />}
+                            config={(
+                                // The WHOLE render lab (classic Render's captions,
+                                // visuals, audio, output & timing, delivery, share),
+                                // seeded from this timeline; a finished render lands
+                                // on the stage like any other output.
+                                <RenderLab
+                                    embedded={{
+                                        seedLines: editedLines.join('\n'),
+                                        seedAudioPath: sourceMediaKind === 'audio' ? (sourceMediaPath || undefined) : undefined,
+                                        onRendered: (file) => { setRenderedVideo(api.mediaUrl(file)); setRenderedThisSession(true); },
+                                    }}
+                                />
+                            )}
                         />
                     ),
                     scenes: documentaryProject ? (
