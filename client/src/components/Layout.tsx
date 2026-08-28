@@ -126,19 +126,20 @@ export function Layout() {
                             <Link
                                 key={item.path}
                                 to={item.path}
-                                className={`flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all group ${active
-                                    ? 'bg-[rgba(216,184,120,0.08)] text-bf-gold border border-[rgba(216,184,120,0.18)]'
-                                    : 'text-content-secondary hover:bg-[rgba(216,184,120,0.05)] hover:text-bf-cream border border-transparent'}`}
+                                className={`relative flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all group ${active
+                                    ? 'bg-[rgba(230,201,138,0.08)] text-bf-gold font-semibold border border-[rgba(230,201,138,0.22)]'
+                                    : 'text-bf-cream/[.88] hover:bg-white/[0.04] hover:text-bf-cream border border-transparent'}`}
                             >
-                                <Icon size={19} className={active ? 'text-bf-gold' : 'text-bf-muted group-hover:text-bf-goldDeep'} />
+                                {/* One signal for "you are here": a gold bar on the left. */}
+                                {active && <span aria-hidden="true" className="absolute left-0 top-2 bottom-2 w-0.5 rounded-full bg-bf-gold" />}
+                                <Icon size={19} className={active ? 'text-bf-gold' : 'text-bf-sub group-hover:text-bf-cream'} />
                                 <span className="font-medium text-sm tracking-wide">{item.label}</span>
-                                {active && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-bf-gold animate-bfpulse" />}
                             </Link>
                         );
                     })}
                     {isSuperAdmin && (
-                        <Link to="/app/admin" className={`flex items-center gap-3 px-4 py-2.5 rounded-xl mt-2 border-t border-[rgba(216,184,120,0.08)] pt-4 transition-all ${isActive('/app/admin') ? 'text-bf-gold' : 'text-content-secondary hover:text-bf-cream'}`}>
-                            <ShieldCheck size={19} className="text-bf-goldDeep" />
+                        <Link to="/app/admin" className={`flex items-center gap-3 px-4 py-2.5 rounded-xl mt-2 border-t border-[rgba(216,184,120,0.08)] pt-4 transition-all ${isActive('/app/admin') ? 'text-bf-gold font-semibold' : 'text-bf-cream/[.88] hover:text-bf-cream'}`}>
+                            <ShieldCheck size={19} className={isActive('/app/admin') ? 'text-bf-gold' : 'text-bf-sub'} />
                             <span className="font-medium text-sm tracking-wide">Admin</span>
                         </Link>
                     )}

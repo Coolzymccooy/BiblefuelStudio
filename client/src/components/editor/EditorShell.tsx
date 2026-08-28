@@ -308,8 +308,8 @@ export function EditorShell({
                 title={tool.label}
                 className={`flex min-w-[64px] shrink-0 flex-col items-center justify-center gap-1 rounded-lg px-2 py-1.5 text-[10px] transition lg:h-[52px] lg:w-[52px] lg:min-w-0 lg:px-0 lg:py-0 ${
                   active
-                    ? 'bg-editor-hover text-editor-accent'
-                    : 'text-editor-faint hover:bg-editor-hover hover:text-editor-dim'
+                    ? 'bg-editor-accent/10 text-editor-accent ring-1 ring-inset ring-editor-accent/35 font-semibold'
+                    : 'text-[#b7ac97] font-semibold hover:bg-white/5 hover:text-editor-text'
                 }`}
               >
                 <span className="text-[16px] leading-none">{tool.icon}</span>
@@ -319,7 +319,7 @@ export function EditorShell({
                 <span className="max-w-full truncate leading-tight">
                   {tool.label}
                   {typeof tool.count === 'number' && tool.count > 0 && (
-                    <span className="text-editor-faint"> {tool.count}</span>
+                    <span className="text-editor-accent/80"> {tool.count}</span>
                   )}
                 </span>
               </button>

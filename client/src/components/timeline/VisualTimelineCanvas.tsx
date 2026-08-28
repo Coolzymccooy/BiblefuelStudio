@@ -274,7 +274,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                       <div className={`sticky left-0 z-10 flex items-center gap-2 rounded-lg border border-white/10 bg-[#141210] ${d.headPad}`}>
                         <Icon size={15} className="text-primary-200" />
                         <div className="min-w-0">
-                          <p className="truncate text-xs font-semibold text-gray-100">{track.label}</p>
+                          <p className="truncate text-xs font-semibold text-editor-text">{track.label}</p>
                           <p className="text-[10px] text-content-tertiary">{track.clips.length} clip{track.clips.length === 1 ? '' : 's'}</p>
                         </div>
                         {onClearLane && track.clips.length > 0 && (

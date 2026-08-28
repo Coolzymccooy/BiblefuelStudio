@@ -132,7 +132,7 @@ describe('VisualTimelineCanvas', () => {
 
 
 describe('clearing lanes', () => {
-  it('offers Clear on a lane that has clips, and Wipe all in the toolbar', async () => {
+  test('offers Clear on a lane that has clips, and Wipe all in the toolbar', async () => {
     const { buildWorshipDocumentaryProject, insertAssetOnTrack } = await import('../../../lib/timelineProject');
     const base = buildWorshipDocumentaryProject({ title: 'T' });
     const project = insertAssetOnTrack(base, {
