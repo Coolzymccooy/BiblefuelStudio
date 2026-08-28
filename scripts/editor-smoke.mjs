@@ -257,6 +257,8 @@ const get=p=>new Promise((res,rej)=>{http.get({host:'127.0.0.1',port:PORT,path:p
     (await ev(`(()=>{const p=document.querySelector('[role="tabpanel"]');if(!p)return false;const t=p.innerText||'';const btns=[...p.querySelectorAll('button')];return /Before you render/i.test(t)&&btns.some(b=>/^Render /i.test(b.textContent.trim()))&&/Share Kit/i.test(t);})()`))===true);
   check('Output tool docks the WHOLE render lab: Captions / Visuals / Audio / Output / Share tabs',
     (await ev(`(()=>{const tabs=[...document.querySelectorAll('[role="tablist"][aria-label="Render lab"] [role="tab"]')].map(b=>b.textContent.trim());return ['Captions','Visuals','Audio','Output','Share'].every(w=>tabs.includes(w));})()`))===true);
+  check('Render lab Captions tab offers an explicit Send to Captions lane',
+    (await ev(`!!document.querySelector('button[aria-label="Send to Captions lane"]')`))===true);
   await ev(`[...document.querySelectorAll('[role="tablist"][aria-label="Render lab"] [role="tab"]')].find(x=>x.textContent.trim()==='Output')?.click(); 'ok'`);
   await waitFor(`document.querySelector('[role="tablist"][aria-label="Render lab"] [role="tab"][aria-selected="true"]')?.textContent.trim()==='Output'`);
   check('Render lab Output tab carries frame, duration, caption width and delivery',

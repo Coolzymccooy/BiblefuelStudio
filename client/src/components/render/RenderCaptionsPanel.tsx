@@ -1,5 +1,5 @@
 import type { ChangeEvent } from 'react';
-import { ClipboardList, Type, Sparkles } from 'lucide-react';
+import { ClipboardList, Type, Sparkles, ArrowDownToLine } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Select } from '../ui/Select';
 import { Textarea } from '../ui/Textarea';
@@ -60,6 +60,8 @@ export interface RenderCaptionsPanelProps {
   maxLines: number;
   /** Docked in an editor panel: icon actions with tooltips, short labels. */
   compact?: boolean;
+  /** Host timeline: put these lines on the Captions lane (explicit, not only as you type). */
+  onSendToLane?: () => void;
 }
 
 export function RenderCaptionsPanel({
@@ -86,6 +88,7 @@ export function RenderCaptionsPanel({
   onFormatForVideo,
   maxLines,
   compact = false,
+  onSendToLane,
 }: RenderCaptionsPanelProps) {
   return (
     <div className="space-y-4">
@@ -122,6 +125,18 @@ export function RenderCaptionsPanel({
             <ClipboardList size={14} className={compact ? "" : "mr-2"} />
             {!compact && 'Pick From Scripts'}
           </Button>
+          {onSendToLane && (
+            <Button
+              onClick={onSendToLane}
+              disabled={!lines.trim()}
+              aria-label="Send to Captions lane"
+              title="Put these lines on the Captions lane of the timeline"
+              className={compact ? "ml-auto h-7 whitespace-nowrap px-2 text-[11px]" : "h-8 text-xs"}
+            >
+              <ArrowDownToLine size={13} className="mr-1" />
+              Captions lane
+            </Button>
+          )}
           {hasScripts && onUseLatestScript && (
             <Button
               variant="secondary"

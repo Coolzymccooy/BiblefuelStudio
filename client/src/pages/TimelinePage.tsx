@@ -220,6 +220,12 @@ export function TimelinePage() {
     const [labBackgrounds, setLabBackgrounds] = useState<Array<{ id: string; url: string; previewUrl?: string; image?: string; kind?: 'image' | 'video' }>>([]);
     // The docked Render lab's caption look, previewed on the stage live.
     const [labCaptionStyle, setLabCaptionStyle] = useState<{ preset: string; motion: string; highlight: boolean; stagger: boolean; layout: string; depth: boolean } | null>(null);
+    // The stage shows the LAST RENDER only until the next edit: any change
+    // to the cut returns the stage to the live preview. Otherwise a preset
+    // change, a new line or a wipe looked like nothing happened.
+    const backToCut = () => setRenderedThisSession(false);
+    const labStyleSeenRef = useRef(false);
+    const labBackgroundsSeenRef = useRef(false);
     const [clips, setClips] = useState<TimelineClip[]>([]);
     const [documentaryProject, setDocumentaryProject] = useState<TimelineProject | null>(null);
     // Scene selection is page-level state: the Scenes panel and the scene
@@ -1910,6 +1916,7 @@ export function TimelinePage() {
                 updatedAt: new Date().toISOString(),
             });
         }
+        backToCut();
         toast.success('All lanes wiped - fresh start');
     };
 
@@ -1965,6 +1972,7 @@ export function TimelinePage() {
                 updatedAt: new Date().toISOString(),
             });
         }
+        backToCut();
         toast.success('Canvas cleared');
     };
 
@@ -2516,7 +2524,10 @@ export function TimelinePage() {
                             isRendering={isRenderingVideo || isRenderingDocumentaryTimeline}
                             progress={isRenderingDocumentaryTimeline ? documentaryRenderProgress : renderProgress}
                             renderedVideo={renderedVideo}
-                            onPreviewOnStage={() => setRenderedThisSession(true)}
+                            onPreviewOnStage={() => {
+                                if (!renderedVideo) { toast.error('No render yet - press Render first'); return; }
+                                setRenderedThisSession(true);
+                            }}
                             onShare={() => renderedVideo && setShareUrl(renderedVideo)}
                             onDownload={() => { if (renderedVideo) void api.downloadMedia(renderedVideo, `biblefuel-${(renderedVideo.split('/').pop() || 'video').replace(/\.[^.]+$/, '').slice(0, 24)}.mp4`); }}
                             shareKit={<ShareKitPanel lines={editedLines.join('\n')} latestRenderFile={renderedVideo || undefined} />}
@@ -2533,11 +2544,22 @@ export function TimelinePage() {
                                         // One output frame: the topbar select and the lab agree.
                                         aspect: documentaryProject ? (documentaryProject.aspect === '16:9' ? 'landscape' : documentaryProject.aspect === '1:1' ? 'square' : 'portrait') : undefined,
                                         // Live mirror: picks and overlay text land on the stage as you work.
-                                        onBackgroundsChange: setLabBackgrounds,
-                                        onLinesChange: (text) => setEditedLines(text.split('\n')),
+                                        onBackgroundsChange: (items) => {
+                                            setLabBackgrounds(items);
+                                            if (labBackgroundsSeenRef.current) backToCut();
+                                            labBackgroundsSeenRef.current = true;
+                                        },
+                                        onLinesChange: (text) => {
+                                            const next = text.split('\n').map((l) => l.trim()).filter(Boolean);
+                                            setEditedLines(next);
+                                            setKineticCaptions(true);
+                                            backToCut();
+                                        },
                                         onInsertMusicBed: useAsMusicBed,
                                         onCaptionStyleChange: (style) => {
                                             setLabCaptionStyle(style);
+                                            if (labStyleSeenRef.current) backToCut();
+                                            labStyleSeenRef.current = true;
                                             // One look: the timeline's own render uses the preset you previewed.
                                             if (style.preset !== typographyPreset) setTypographyPreset(style.preset);
                                             if (style.layout !== layout) setLayout(style.layout);

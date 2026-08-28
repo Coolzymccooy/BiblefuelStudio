@@ -1074,6 +1074,7 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
                             compact={Boolean(embedded)}
                             lines={lines}
                             onLinesChange={(next) => { setLines(next); embedded?.onLinesChange?.(next); }}
+                            onSendToLane={embedded?.onLinesChange ? () => embedded.onLinesChange?.(lines) : undefined}
                             typographyPreset={typographyPreset}
                             onTypographyPresetChange={setTypographyPreset}
                             motions={captionMotions}
