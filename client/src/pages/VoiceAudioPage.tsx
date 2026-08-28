@@ -1003,15 +1003,15 @@ export function VoiceAudioPage() {
     const providerControls = (
         <>
             {voiceDefaults.enabled && (
-                <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 flex flex-wrap items-center gap-3 text-xs">
-                    <Wand2 size={14} className="text-emerald-300 shrink-0" />
-                    <span className="text-emerald-200">
+                <div className="rounded-xl border border-[#e8f2f0]0/30 bg-[#e8f2f0]0/10 p-3 flex flex-wrap items-center gap-3 text-xs">
+                    <Wand2 size={14} className="text-[#8fc2b8] shrink-0" />
+                    <span className="text-[#a5cec6]">
                         Voice Synthesis defaults active —{' '}
                         <span className="font-semibold">{voiceDefaults.category}</span>
                         {voiceDefaults.providerOverride ? ` · ${voiceDefaults.providerOverride}` : ' · auto-provider'}
                         {voiceDefaults.cinematicMode ? ' · cinematic timings' : ''}.
                     </span>
-                    <Link to="/app/settings" className="ml-auto text-[0.75rem] text-emerald-300 hover:text-emerald-200 underline">
+                    <Link to="/app/settings" className="ml-auto text-[0.75rem] text-[#8fc2b8] hover:text-[#a5cec6] underline">
                         Edit in Settings
                     </Link>
                 </div>
@@ -1084,7 +1084,7 @@ export function VoiceAudioPage() {
                         title={chatterboxAvailable ? '' : 'CHATTERBOX_URL not set — point it at a Chatterbox HTTP server (self-hosted bridge, e.g. https://chatterbox.tiwaton.co.uk).'}
                         className={`px-3 py-1.5 text-xs font-medium transition border-l border-white/10 ${
                             provider === 'chatterbox'
-                                ? 'bg-emerald-500/15 text-emerald-200'
+                                ? 'bg-[#e8f2f0]0/15 text-[#a5cec6]'
                                 : 'text-gray-300 hover:bg-white/5'
                         } disabled:opacity-40 disabled:cursor-not-allowed`}
                     >
@@ -1670,7 +1670,7 @@ export function VoiceAudioPage() {
                                         disabled={!chatterboxAvailable}
                                         title={chatterboxAvailable ? '' : 'CHATTERBOX_URL not set or bridge unreachable.'}
                                         className={`px-3 py-1.5 text-xs font-medium rounded transition ${cloneProvider === 'chatterbox'
-                                            ? 'bg-emerald-500/20 text-emerald-200'
+                                            ? 'bg-[#e8f2f0]0/20 text-[#a5cec6]'
                                             : 'text-gray-300 hover:bg-white/5'
                                             } disabled:opacity-40 disabled:cursor-not-allowed`}
                                     >
@@ -1763,7 +1763,7 @@ export function VoiceAudioPage() {
                                         {chatterboxVoices.map((cv) => (
                                             <div key={cv.id} className="flex items-center gap-2 bg-dark-900/40 border border-white/[0.06] rounded-lg p-2">
                                                 <div className="flex-1 min-w-0">
-                                                    <div className="text-[0.875rem] font-medium text-emerald-300/90 truncate">{cv.name}</div>
+                                                    <div className="text-[0.875rem] font-medium text-[#8fc2b8]/90 truncate">{cv.name}</div>
                                                     <div className="text-meta font-mono truncate">{cv.refFilename || cv.refPath}</div>
                                                 </div>
                                                 <Button
@@ -1965,7 +1965,7 @@ export function VoiceAudioPage() {
                                         return (
                                         <div
                                             key={item.id}
-                                            className={`surface-raised flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 ${isCurrent ? 'border border-emerald-500/25' : ''}`}
+                                            className={`surface-raised flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 ${isCurrent ? 'border border-[#e8f2f0]0/25' : ''}`}
                                         >
                                             <button
                                                 type="button"
@@ -1976,7 +1976,7 @@ export function VoiceAudioPage() {
                                                 {item.kind}
                                             </button>
                                             {isCurrent && (
-                                                <CheckCircle2 size={12} className="shrink-0 text-emerald-300" aria-label="Current take" />
+                                                <CheckCircle2 size={12} className="shrink-0 text-[#8fc2b8]" aria-label="Current take" />
                                             )}
                                             <button
                                                 type="button"
@@ -2093,7 +2093,7 @@ export function VoiceAudioPage() {
                     <Card
                         title="Current Audio"
                         headerExtra={audioPath.trim() ? (
-                            <span className="inline-flex items-center gap-1 text-[0.6875rem] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/25">
+                            <span className="inline-flex items-center gap-1 text-[0.6875rem] font-semibold px-2 py-0.5 rounded-full bg-[#e8f2f0]0/15 text-[#8fc2b8] border border-[#e8f2f0]0/25">
                                 <CheckCircle2 size={12} />
                                 Used in Render
                             </span>
@@ -2168,7 +2168,7 @@ export function VoiceAudioPage() {
                                     // overlapping the timestamp, buttons and File path toggle.
                                     className={`flex flex-col gap-2 rounded-lg p-3 border ${
                                         isCurrent
-                                            ? 'bg-emerald-500/[0.06] border-emerald-500/25'
+                                            ? 'bg-[#e8f2f0]0/[0.06] border-[#e8f2f0]0/25'
                                             : 'bg-dark-900/60 border-white/5'
                                     }`}
                                 >
@@ -2176,7 +2176,7 @@ export function VoiceAudioPage() {
                                         <p className="text-[0.8125rem] font-medium text-primary-300 flex items-center gap-1.5">
                                             {item.kind}
                                             {isCurrent && (
-                                                <span className="inline-flex items-center gap-1 text-[0.625rem] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300">
+                                                <span className="inline-flex items-center gap-1 text-[0.625rem] font-semibold px-1.5 py-0.5 rounded-full bg-[#e8f2f0]0/15 text-[#8fc2b8]">
                                                     <CheckCircle2 size={10} />
                                                     Current
                                                 </span>
@@ -2198,7 +2198,7 @@ export function VoiceAudioPage() {
                                     </div>
                                     <div className="flex flex-wrap items-center gap-2">
                                         {isCurrent ? (
-                                            <span className="inline-flex items-center gap-1.5 text-xs h-8 px-3 rounded-lg text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 whitespace-nowrap">
+                                            <span className="inline-flex items-center gap-1.5 text-xs h-8 px-3 rounded-lg text-[#8fc2b8] bg-[#e8f2f0]0/10 border border-[#e8f2f0]0/20 whitespace-nowrap">
                                                 <CheckCircle2 size={14} />
                                                 In use
                                             </span>

@@ -33,7 +33,9 @@
     --bf-sub2: #a99f8b;
     --bf-muted: #8a7f6b;
     --bf-faint: #6f6654;
-    --bf-success: #6fcf97;
+    /* Dusty teal, not signal green - the professional "ready" tone from the
+       approved editor palette (gold = action, teal = ready/voice). */
+    --bf-success: #7fb5aa;
     --bf-danger: #e08a8a;
     /* Card/glass surfaces. Hardcoding these is what kept light mode muddy:
        .card painted rgba(17,14,10,.6) regardless of theme. */
@@ -90,7 +92,7 @@
     --bf-sub2: #5c5548;      /* 7.37:1 */
     --bf-muted: #6b6456;     /* 5.86:1 */
     --bf-faint: #7a7264;     /* 4.75:1 */
-    --bf-success: #1a7f4f;   /* 5.01:1 */
+    --bf-success: #2a6f66;   /* muted teal, 5.1:1 on white */
     --bf-danger: #b03b3b;    /* 5.94:1 */
     /* Opaque white cards. A translucent surface over a cream page produced the
        muddy brown panels; light mode wants clean white with a real border. */

@@ -257,7 +257,7 @@ export function SettingsPage() {
                             </span>
                             {authEmail && (
                                 emailVerified ? (
-                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-200 text-[10px]">
+                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[#e8f2f0]0/15 border border-[#e8f2f0]0/30 text-[#a5cec6] text-[10px]">
                                         <BadgeCheck size={10} /> Verified
                                     </span>
                                 ) : (

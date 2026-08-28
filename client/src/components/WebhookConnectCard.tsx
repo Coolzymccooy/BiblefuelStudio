@@ -176,7 +176,7 @@ export function WebhookConnectCard() {
                                         <div className="flex items-center gap-2 flex-wrap">
                                             <span className="text-sm font-semibold text-white">{w.name}</span>
                                             {showOkBadge && (
-                                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-200 text-[10px] font-semibold">
+                                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#e8f2f0]0/15 border border-[#e8f2f0]0/30 text-[#a5cec6] text-[10px] font-semibold">
                                                     <CheckCircle2 size={10} /> Healthy
                                                 </span>
                                             )}
@@ -195,7 +195,7 @@ export function WebhookConnectCard() {
                                             <p className="text-[10px] text-content-tertiary mt-1">
                                                 {everSucceeded && (
                                                     <>
-                                                        Last delivery: <span className={recentFailure ? 'text-gray-400' : 'text-emerald-300/90'}>{timeAgo(w.lastSuccessAt || '')}</span>
+                                                        Last delivery: <span className={recentFailure ? 'text-gray-400' : 'text-[#8fc2b8]/90'}>{timeAgo(w.lastSuccessAt || '')}</span>
                                                     </>
                                                 )}
                                                 {recentFailure && (
@@ -400,8 +400,8 @@ function AddWebhookModal({ onClose, onSaved }: AddWebhookModalProps) {
                         </>
                     ) : (
                         <>
-                            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.05] p-4">
-                                <p className="text-sm text-emerald-200 leading-relaxed">
+                            <div className="rounded-xl border border-[#e8f2f0]0/20 bg-[#e8f2f0]0/[0.05] p-4">
+                                <p className="text-sm text-[#a5cec6] leading-relaxed">
                                     Paste the webhook URL Make / Zapier gave you. We'll save it AND fire a test ping
                                     so you can confirm it lands in your scenario's history before any real video runs through it.
                                 </p>
@@ -438,7 +438,7 @@ function AddWebhookModal({ onClose, onSaved }: AddWebhookModalProps) {
                                 </div>
                             )}
                             {testResult?.ok && (
-                                <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/[0.08] p-3 text-xs text-emerald-200">
+                                <div className="rounded-lg border border-[#e8f2f0]0/30 bg-[#e8f2f0]0/[0.08] p-3 text-xs text-[#a5cec6]">
                                     <strong>✓ Test ping accepted.</strong> Now open your Make / Zapier <strong>scenario run history</strong> and confirm the test event appears there. If it doesn't, your scenario isn't turned on — that's the most common gotcha.
                                 </div>
                             )}

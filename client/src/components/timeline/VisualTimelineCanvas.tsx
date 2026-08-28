@@ -299,7 +299,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                                   // Split/Remove toolbar stayed disabled.
                                   onClick={() => setSelectedClipId(clip.id)}
                                   aria-label={`Timeline clip: ${asset?.label || clip.assetId}`}
-                                  className={`absolute top-1 ${d.clipHeight} rounded-md border px-2 py-1 text-left text-[10px] shadow-sm transition ${selected ? 'border-emerald-200 bg-emerald-400/30 text-white ring-2 ring-emerald-300/40' : 'border-emerald-400/40 bg-emerald-500/15 text-emerald-50 hover:border-emerald-200/70'}`}
+                                  className={`absolute top-1 ${d.clipHeight} rounded-md border px-2 py-1 text-left text-[10px] shadow-sm transition ${selected ? 'border-editor-accent bg-editor-accent/25 text-white ring-2 ring-editor-accent/40' : 'border-editor-line bg-white/[0.05] text-editor-text hover:border-editor-accent/60'}`}
                                   style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
                                   title={`${asset?.label || clip.assetId} · ${sourceLabel(asset)} · ${Math.round(clip.durationSec)}s · ${previewMode}`}
                                 >
@@ -314,7 +314,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                                           button and read as broken. */}
                                       <p className="truncate font-semibold leading-tight">{asset?.label || clip.assetId}</p>
                                       {!compact && (
-                                        <p className="truncate text-emerald-100/75">{sourceLabel(asset)} · {Math.round(clip.durationSec)}s{proxy ? ` · ${proxy}` : ''}</p>
+                                        <p className="truncate text-editor-dim">{sourceLabel(asset)} · {Math.round(clip.durationSec)}s{proxy ? ` · ${proxy}` : ''}</p>
                                       )}
                                     </button>
                                     {/* Controls need ~70px. On a clip narrower
@@ -343,7 +343,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                                             ),
                                           });
                                         }}
-                                        className={`rounded px-1.5 py-0.5 transition ${clip.muted ? 'bg-amber-400/30 text-amber-100' : 'bg-black/30 text-emerald-100 hover:bg-black/50'}`}
+                                        className={`rounded px-1.5 py-0.5 transition ${clip.muted ? 'bg-amber-400/30 text-amber-100' : 'bg-black/30 text-editor-dim hover:bg-black/50'}`}
                                         title={clip.muted ? 'Unmute clip' : 'Mute clip'}
                                       >
                                         {clip.muted ? 'Muted' : 'Mute'}
@@ -361,7 +361,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                                           onProjectChange(removeClip(project, track, clip));
                                           if (selectedClipId === clip.id) setSelectedClipId(null);
                                         }}
-                                        className="rounded bg-black/30 px-1.5 py-0.5 text-emerald-100 hover:bg-red-500/20 hover:text-red-200 transition"
+                                        className="rounded bg-black/30 px-1.5 py-0.5 text-editor-dim hover:bg-red-500/20 hover:text-red-200 transition"
                                         // Distinct from the toolbar's "Remove clip" so
                                         // accessible-name queries stay unambiguous.
                                         aria-label={`Delete clip: ${asset?.label || clip.assetId}`}
@@ -483,16 +483,16 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
           </div>
         </div>
 
-        <div className="flex flex-col gap-3 rounded-xl border border-emerald-400/25 bg-emerald-500/10 p-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-3 rounded-xl border border-editor-accent/35 bg-editor-hover p-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-emerald-100">Selected clip</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-editor-dim">Selected clip</p>
             {selection ? (
               <>
-                <p className="mt-1 text-sm text-emerald-50">{selection.asset?.label || selection.clip.assetId}</p>
-                <p className="text-[11px] text-emerald-100/70">{selection.track.label} · starts {formatDuration(selection.clip.startSec)} · {Math.round(selection.clip.durationSec)}s</p>
+                <p className="mt-1 text-sm text-editor-text">{selection.asset?.label || selection.clip.assetId}</p>
+                <p className="text-[11px] text-editor-dim">{selection.track.label} · starts {formatDuration(selection.clip.startSec)} · {Math.round(selection.clip.durationSec)}s</p>
               </>
             ) : (
-              <p className="mt-1 text-sm text-emerald-50/80">Click a clip block in any lane first, then split or remove it here.</p>
+              <p className="mt-1 text-sm text-editor-dim">Click a clip block in any lane first, then split or remove it here.</p>
             )}
           </div>
           <div className="flex gap-2">

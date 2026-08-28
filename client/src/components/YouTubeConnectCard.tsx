@@ -141,7 +141,7 @@ export function YouTubeConnectCard() {
                     <div className="flex items-center gap-2 flex-wrap">
                         <h4 className="text-sm font-semibold text-white">YouTube</h4>
                         {status?.connected ? (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-200 text-[10px] font-semibold">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#e8f2f0]0/15 border border-[#e8f2f0]0/30 text-[#a5cec6] text-[10px] font-semibold">
                                 <CheckCircle2 size={10} /> Connected
                             </span>
                         ) : status?.serverConfigured ? (

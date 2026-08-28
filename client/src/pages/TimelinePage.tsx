@@ -2614,7 +2614,7 @@ export function TimelinePage() {
                                 {renderCoverage.included.map((i) => (
                                     <span
                                         key={i.kind}
-                                        className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] text-emerald-200"
+                                        className="rounded-full border border-[#e8f2f0]0/30 bg-[#e8f2f0]0/10 px-2 py-0.5 text-[11px] text-[#a5cec6]"
                                     >
                                         {i.label} · {i.used}/{i.total}
                                     </span>

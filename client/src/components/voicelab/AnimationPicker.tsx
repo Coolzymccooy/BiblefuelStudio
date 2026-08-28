@@ -99,9 +99,9 @@ export function AnimationPicker({ value, onChange, className = '' }: AnimationPi
                 onClick={() => pick(a)}
                 aria-pressed={active}
                 title={tip}
-                className={`text-left rounded-lg px-3 py-2 border transition focus:outline-none focus:ring-2 focus:ring-emerald-400/40 ${
+                className={`text-left rounded-lg px-3 py-2 border transition focus:outline-none focus:ring-2 focus:ring-[#7fb5aa]/40 ${
                   active
-                    ? 'border-emerald-400/60 bg-emerald-500/10 ring-1 ring-emerald-400/40'
+                    ? 'border-[#7fb5aa]/60 bg-[#e8f2f0]0/10 ring-1 ring-[#7fb5aa]/40'
                     : 'border-white/10 bg-white/5 hover:bg-white/10'
                 }`}
               >

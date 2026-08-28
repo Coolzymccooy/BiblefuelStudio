@@ -114,7 +114,7 @@ export function PlanAndUsageCard() {
                 <div>
                     <div className="flex items-center gap-2">
                         {state.isSuperAdmin ? (
-                            <ShieldCheck size={18} className="text-emerald-400" />
+                            <ShieldCheck size={18} className="text-[#7fb5aa]" />
                         ) : state.plan === 'premium' ? (
                             <Zap size={18} className="text-amber-400" />
                         ) : (
@@ -165,7 +165,7 @@ export function PlanAndUsageCard() {
                                     className={`h-full transition-all ${over
                                             ? 'bg-red-500/70'
                                             : b.unlimited
-                                                ? 'bg-emerald-500/40'
+                                                ? 'bg-[#e8f2f0]0/40'
                                                 : pct > 80
                                                     ? 'bg-amber-400/70'
                                                     : 'bg-primary-400/70'

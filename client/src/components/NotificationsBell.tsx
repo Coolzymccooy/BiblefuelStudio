@@ -97,11 +97,11 @@ export function NotificationsBell() {
                                             {n.kind === 'campaign_done' ? (
                                                 <Rocket size={16} className="text-amber-300 flex-shrink-0 mt-0.5" />
                                             ) : n.kind === 'campaign_render_only' ? (
-                                                <Film size={16} className="text-emerald-300 flex-shrink-0 mt-0.5" />
+                                                <Film size={16} className="text-[#8fc2b8] flex-shrink-0 mt-0.5" />
                                             ) : n.kind === 'campaign_failed' ? (
                                                 <XCircle size={16} className="text-amber-400 flex-shrink-0 mt-0.5" />
                                             ) : n.kind === 'job_done' ? (
-                                                <CheckCircle2 size={16} className="text-emerald-400 flex-shrink-0 mt-0.5" />
+                                                <CheckCircle2 size={16} className="text-[#7fb5aa] flex-shrink-0 mt-0.5" />
                                             ) : n.kind === 'job_failed' ? (
                                                 <XCircle size={16} className="text-rose-400 flex-shrink-0 mt-0.5" />
                                             ) : (

@@ -44,7 +44,7 @@ const ACCEPT_LIST = [
 ];
 
 const PROXY_TONE: Record<string, string> = {
-  ready: 'bg-emerald-500/15 text-emerald-200',
+  ready: 'bg-[#e8f2f0]0/15 text-[#a5cec6]',
   failed: 'bg-red-500/15 text-red-200',
 };
 

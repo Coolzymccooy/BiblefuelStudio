@@ -18,9 +18,9 @@ import { markRead } from '../lib/notifications';
 const TONE = {
     success: {
         Icon: CheckCircle2,
-        wrap: 'border-emerald-500/40 bg-emerald-500/10',
-        icon: 'text-emerald-300',
-        title: 'text-emerald-100',
+        wrap: 'border-[#e8f2f0]0/40 bg-[#e8f2f0]0/10',
+        icon: 'text-[#8fc2b8]',
+        title: 'text-[#c4ddd8]',
     },
     warning: {
         Icon: AlertTriangle,
