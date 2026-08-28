@@ -2439,6 +2439,12 @@ export function TimelinePage() {
                                         seedLines: editedLines.join('\n'),
                                         seedAudioPath: sourceMediaKind === 'audio' ? (sourceMediaPath || undefined) : undefined,
                                         onRendered: (file) => { setRenderedVideo(api.mediaUrl(file)); setRenderedThisSession(true); },
+                                        // One output frame: the topbar select and the lab agree.
+                                        aspect: documentaryProject ? (documentaryProject.aspect === '16:9' ? 'landscape' : documentaryProject.aspect === '1:1' ? 'square' : 'portrait') : undefined,
+                                        onAspectChange: (a) => {
+                                            if (!documentaryProject) return;
+                                            setDocumentaryProject({ ...documentaryProject, aspect: a === 'landscape' ? '16:9' : a === 'square' ? '1:1' : '9:16', updatedAt: new Date().toISOString() });
+                                        },
                                     }}
                                 />
                             )}

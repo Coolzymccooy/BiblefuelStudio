@@ -79,6 +79,9 @@ export interface RenderLabEmbed {
     seedAudioPath?: string;
     /** A finished render (server output path) - the host previews it on stage. */
     onRendered?: (file: string) => void;
+    /** Host-owned output frame, so the lab and the topbar never disagree. */
+    aspect?: 'portrait' | 'landscape' | 'square';
+    onAspectChange?: (next: 'portrait' | 'landscape' | 'square') => void;
 }
 
 export function RenderPage() {
@@ -165,6 +168,12 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
         if (embedded.seedAudioPath && !audioPath.trim()) setAudioPath(embedded.seedAudioPath);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [embedded?.seedLines, embedded?.seedAudioPath]);
+    useEffect(() => {
+        // Host-owned frame wins, including over the cached value the page
+        // restores after mount - so the topbar and the lab never disagree.
+        if (embedded?.aspect && embedded.aspect !== aspect) setAspect(embedded.aspect);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [embedded?.aspect, aspect]);
     const finishedFile = result?.file || completedRender?.file;
     useEffect(() => {
         if (finishedFile && embedded?.onRendered) embedded.onRendered(finishedFile);
@@ -224,7 +233,9 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
         const cachedBgMode = loadJson<boolean>(STORAGE_KEYS.renderInBackground, false);
         if (cachedBgMode) setRenderInBackground(cachedBgMode);
         const cachedAspect = loadJson<'portrait' | 'landscape' | 'square'>(STORAGE_KEYS.renderAspect, 'portrait');
-        setAspect(cachedAspect);
+        // Embedded: the host owns the frame; the cache must not clobber it in the
+        // same mount commit (both setters batch, last one would win).
+        setAspect(embedded?.aspect ?? cachedAspect);
         const cachedCaptionWidth = loadJson<number>(STORAGE_KEYS.renderCaptionWidth, 90);
         setCaptionWidth(cachedCaptionWidth);
         const cachedMusicPath = loadJson<string>(STORAGE_KEYS.renderMusicPath, '');
@@ -1094,7 +1105,7 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
                         <div className="space-y-4">
                             <RenderOutputPanel
                                 aspect={aspect}
-                                onAspectChange={(v) => setAspect(v as typeof aspect)}
+                                onAspectChange={(v) => { setAspect(v as typeof aspect); embedded?.onAspectChange?.(v as typeof aspect); }}
                                 durationSec={durationSec}
                                 onDurationChange={setDurationSec}
                                 captionWidth={captionWidth}
