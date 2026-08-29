@@ -147,7 +147,7 @@ export function EditorShell({
   const [stagePct, setStagePct] = useState<number>(() => {
     const raw = typeof window !== 'undefined' ? window.localStorage.getItem('bf.editor.phoneStagePct') : null;
     const n = raw ? Number(raw) : NaN;
-    return Number.isFinite(n) ? Math.min(52, Math.max(14, n)) : 32;
+    return Number.isFinite(n) ? Math.min(62, Math.max(14, n)) : 42;
   });
   useEffect(() => {
     try { window.localStorage.setItem('bf.editor.phoneStagePct', String(stagePct)); } catch { /* private mode */ }
@@ -160,7 +160,7 @@ export function EditorShell({
     const rect = host.getBoundingClientRect();
     const move = (ev: PointerEvent) => {
       const pct = ((ev.clientY - rect.top) / Math.max(1, rect.height)) * 100;
-      setStagePct(Math.min(52, Math.max(14, pct)));
+      setStagePct(Math.min(62, Math.max(14, pct)));
     };
     const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
     window.addEventListener('pointermove', move);
@@ -342,7 +342,7 @@ export function EditorShell({
         aria-label="Resize preview"
         aria-orientation="horizontal"
         onPointerDown={onPhoneDragStart}
-        onDoubleClick={() => setStagePct(32)}
+        onDoubleClick={() => setStagePct(42)}
         title="Drag to resize the preview · double-tap to reset"
         className="flex h-5 shrink-0 cursor-row-resize touch-none items-center justify-center border-y border-editor-line bg-editor-chrome"
       >

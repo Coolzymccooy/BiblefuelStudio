@@ -302,7 +302,11 @@ const get=p=>new Promise((res,rej)=>{http.get({host:'127.0.0.1',port:PORT,path:p
   await boot(844,390,SEED_MEDIA);
   const mid=await ev(`(()=>{const r=document.querySelector('[aria-label="Editor tools"]');const m=r&&r.parentElement;const b=m&&m.getBoundingClientRect();return b?Math.round(b.height):0;})()`);
   check('landscape mid row has height', mid>80, `midRow h=${mid}`);
-  check('landscape sticky header holds', (await ev(`(()=>{const c=document.querySelector('div[class*="sticky"][class*="left-0"]');if(!c)return false;let s=c.parentElement;while(s&&getComputedStyle(s).overflowX!=='auto')s=s.parentElement;if(!s)return false;const x0=Math.round(c.getBoundingClientRect().x);s.scrollLeft=200;const moved=s.scrollLeft;const x1=Math.round(c.getBoundingClientRect().x);s.scrollLeft=0;return moved>50&&x0===x1;})()`))===true);
+  // Phones no longer scroll the lanes sideways - a desktop-width strip inside a
+  // 390px screen is what made the headers overlap the clips. The contract is now
+  // the opposite: the lanes FIT, so nothing can collide.
+  check('phone lanes fit the screen (no horizontal scroll)',
+    (await ev(`(()=>{const l=document.querySelector('[aria-label^="Track lane"]');if(!l)return false;let s=l.parentElement;while(s&&getComputedStyle(s).overflowY!=='auto')s=s.parentElement;if(!s)return false;return s.scrollWidth<=s.clientWidth+2;})()`))===true);
 
   const pass=results.filter(r=>r.pass).length;
   console.log('\n=== EDITOR SMOKE ===');
