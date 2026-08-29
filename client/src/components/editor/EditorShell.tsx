@@ -355,7 +355,7 @@ export function EditorShell({
   return createPortal(
     <div
       ref={shellRef}
-      className="fixed inset-0 z-30 flex h-screen flex-col overflow-hidden bg-editor-chrome text-editor-text phone:bottom-[calc(64px+env(safe-area-inset-bottom))] phone:h-auto lg:left-[240px]"
+      className="fixed inset-0 z-30 flex h-screen flex-col overflow-hidden bg-editor-chrome text-editor-text phone:bottom-[calc(64px_+_env(safe-area-inset-bottom))] phone:h-[calc(100dvh_-_64px_-_env(safe-area-inset-bottom))] lg:left-[240px]"
       // h-screen is NOT redundant with inset-0. Measured in the live DOM: with
       // position:fixed, top:0 AND bottom:0, the element still computed to
       // 106.75px, because it is a flex ITEM of the app's <main> column and that
