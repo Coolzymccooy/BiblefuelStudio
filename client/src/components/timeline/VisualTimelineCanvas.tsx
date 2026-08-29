@@ -241,7 +241,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
   const headW = phone ? '6.5rem' : '9rem';
   const lanes = (
           <div className={`min-h-0 flex-1 overflow-x-auto overflow-y-auto rounded-xl border border-white/10 bg-black/25 ${d.wrap}`}>
-            <div className={`${phone ? 'min-w-[720px]' : 'min-w-[920px]'} ${d.stack}`}>
+            <div className={`${phone ? 'min-w-[min(1100px,_max(720px,_140vw))]' : 'min-w-[920px]'} ${d.stack}`}>
               <div className={`flex ${d.ruler} items-stretch gap-1`} style={{ marginLeft: headW }} aria-label="Scene ruler">
                 {project.scenes.map((scene) => {
                   const widthPct = Math.max(8, (scene.targetDurationSec / target) * 100);
