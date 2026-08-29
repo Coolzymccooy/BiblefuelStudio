@@ -36,15 +36,15 @@ export default {
         // the preview stays the brightest thing on screen. Only `stage`
         // follows the theme.
         editor: {
-          chrome: '#14100a',
-          panel: '#1a150d',
+          chrome: 'var(--editor-chrome, #14100a)',
+          panel: 'var(--editor-panel, #1a150d)',
           stage: 'var(--editor-stage, #080604)',
-          hover: 'rgba(216, 184, 120, 0.10)',
-          line: 'rgba(216, 184, 120, 0.14)',
-          text: '#f0e6d3',
-          dim: '#a99f8b',
-          faint: '#6f6654',
-          accent: '#e6c98a',
+          hover: 'var(--editor-hover, rgba(216, 184, 120, 0.10))',
+          line: 'var(--editor-line, rgba(216, 184, 120, 0.14))',
+          text: 'var(--editor-text, #f0e6d3)',
+          dim: 'var(--editor-dim, #a99f8b)',
+          faint: 'var(--editor-faint, #6f6654)',
+          accent: 'var(--editor-accent, #e6c98a)',
         },
         // Tailwind's default gray scale, routed through CSS variables.
         // 387 hardcoded text-gray-*/text-white usages across 49 files were

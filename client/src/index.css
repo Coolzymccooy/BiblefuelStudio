@@ -116,6 +116,17 @@
     --g-500:#5c5548; --g-600:#6b6456; --g-700:#7a7264; --g-800:#8a8272; --g-900:#9a9280;
     --ink:#1c1a15;
     --editor-stage:#e9e4db;
+    /* Editor chrome in light mode: white panels, near-black text, and the
+       darker gold that clears 4.5:1 on white. Without these the docked
+       sheet stayed dark on a light page and its labels vanished. */
+    --editor-chrome:#f4f0e8;
+    --editor-panel:#ffffff;
+    --editor-hover:rgba(28, 26, 21, 0.06);
+    --editor-line:rgba(28, 26, 21, 0.12);
+    --editor-text:#1c1a15;
+    --editor-dim:#4a4438;
+    --editor-faint:#6b6456;
+    --editor-accent:#8a6d33;
 
     --surface-bg: #faf7f2;
     --surface-card: #ffffff;
@@ -696,3 +707,55 @@ input:-webkit-autofill:focus {
 .editor-embed .voice-tuning input[type="range"] { margin-top: .15rem; }
 .editor-embed .space-y-4 > * + * { margin-top: .5rem; }
 .editor-embed .space-y-3 > * + * { margin-top: .5rem; }
+
+/* ---------------------------------------------------------------------------
+   Phone panel density. The docked labs were tuned for a ~300px desktop rail;
+   on a 390px phone the same markup reads as desktop-scale. `.editor-phone` is
+   the phone sheet. These are written with a doubled class so they beat the
+   `.editor-embed` rules that live INSIDE the sheet (equal specificity would
+   lose on source order).
+   Floor: 11px secondary, 12px content.
+--------------------------------------------------------------------------- */
+.editor-phone.editor-phone { font-size: 12px; }
+.editor-phone.editor-phone h2, .editor-phone.editor-phone h3 { font-size: 12.5px; line-height: 1.25; }
+.editor-phone.editor-phone .card { padding: 8px 10px; border-radius: 10px; }
+.editor-phone.editor-phone .card h3 { font-size: 12px; }
+.editor-phone.editor-phone .input { font-size: 12px; padding: 5px 8px; border-radius: 8px; min-height: 32px; }
+.editor-phone.editor-phone select.input, .editor-phone.editor-phone input.input { height: 32px; }
+.editor-phone.editor-phone textarea.input { min-height: 3.5rem; line-height: 1.35; font-size: 12px; }
+.editor-phone.editor-phone .field-label { font-size: 11px; margin-bottom: 2px; }
+.editor-phone.editor-phone .text-help,
+.editor-phone.editor-phone .field-help,
+.editor-phone.editor-phone .text-meta { font-size: 11px; line-height: 1.3; }
+.editor-phone.editor-phone button { font-size: 12px; }
+.editor-phone.editor-phone .provider-btn { padding: .28rem .5rem; }
+.editor-phone.editor-phone .provider-btn > span:first-child { font-size: 11.5px; }
+.editor-phone.editor-phone .provider-btn > span:last-child { font-size: 10px; }
+/* Tailwind text utilities the panels use directly. */
+.editor-phone.editor-phone [class*="text-xs"] { font-size: 11.5px; }
+.editor-phone.editor-phone [class*="text-sm"] { font-size: 12px; }
+.editor-phone.editor-phone [class*="text-base"] { font-size: 12.5px; }
+.editor-phone.editor-phone [class*="text-lg"] { font-size: 13px; }
+.editor-phone.editor-phone [class*="text-[11px]"] { font-size: 11px; }
+.editor-phone.editor-phone [class*="text-[12px]"] { font-size: 11.5px; }
+.editor-phone.editor-phone [class*="text-[13px]"] { font-size: 12px; }
+.editor-phone.editor-phone [class*="text-[15px]"] { font-size: 12.5px; }
+/* Control heights: 32-34px is still a comfortable tap target inside a sheet. */
+.editor-phone.editor-phone [class*="h-9"] { height: 32px; }
+.editor-phone.editor-phone [class*="h-10"] { height: 34px; }
+/* Rhythm. */
+.editor-phone.editor-phone .space-y-4 > * + * { margin-top: .4rem; }
+.editor-phone.editor-phone .space-y-3 > * + * { margin-top: .4rem; }
+.editor-phone.editor-phone .space-y-2 > * + * { margin-top: .3rem; }
+.editor-phone.editor-phone [class*="p-3"] { padding: .4rem .5rem; }
+.editor-phone.editor-phone [class*="p-4"] { padding: .5rem .625rem; }
+.editor-phone.editor-phone audio { height: 28px; }
+.editor-phone.editor-phone input[type="range"] { height: 3px; }
+/* Two controls per row instead of one full-width stack. */
+.editor-phone.editor-phone .lab-body > div > .flex-wrap { gap: .3rem; }
+/* Section chrome inside the phone sheet. RevealSection is a page-level block
+   (14px title, 14px/56px header row) and it was eating a third of the sheet
+   before any control appeared. */
+.editor-phone.editor-phone .reveal-head { padding: .375rem .625rem; gap: .5rem; }
+.editor-phone.editor-phone .reveal-title { font-size: 12px; }
+.editor-phone.editor-phone .reveal-head svg { width: 14px; height: 14px; }

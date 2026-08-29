@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { Film, Mic2, Music, Scissors, Sparkles, Subtitles, Trash2, Wand2, Eraser } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
@@ -172,6 +172,14 @@ function buildVeoPrompt(project: TimelineProject): VeoBrollRequest {
 }
 
 export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBroll, compact = false, selectedSceneId = null, onSelectScene, onEmptyLaneClick, onClearLane, onWipeAll }: VisualTimelineCanvasProps) {
+  const [phone, setPhone] = useState<boolean>(() => typeof window !== 'undefined' && window.matchMedia?.('(max-width: 1023px)').matches);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mq = window.matchMedia('(max-width: 1023px)');
+    const onChange = () => setPhone(mq.matches);
+    mq.addEventListener?.('change', onChange);
+    return () => mq.removeEventListener?.('change', onChange);
+  }, []);
   const target = Math.max(1, project.targetDurationSec);
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   const selection = useMemo(() => findClip(project, selectedClipId), [project, selectedClipId]);
@@ -225,10 +233,16 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
 
   // Hoisted so the compact strip and the full card render the SAME lanes.
   // Duplicating this block would guarantee the two drift apart.
+  // The strip was authored at desktop scale: a 9rem sticky header column, an
+  // ml-36 ruler offset to match it, and a 920px minimum width. On a 390px
+  // phone that made the ruler and the lanes sit on different grids - the
+  // overlap the operator photographed. Phone uses a 6.5rem column, a matching
+  // offset, and no width floor, so the lanes scroll instead of colliding.
+  const headW = phone ? '6.5rem' : '9rem';
   const lanes = (
           <div className={`min-h-0 flex-1 overflow-x-auto overflow-y-auto rounded-xl border border-white/10 bg-black/25 ${d.wrap}`}>
-            <div className={`min-w-[920px] ${d.stack}`}>
-              <div className={`ml-36 flex ${d.ruler} items-stretch gap-1`} aria-label="Scene ruler">
+            <div className={`${phone ? 'min-w-[720px]' : 'min-w-[920px]'} ${d.stack}`}>
+              <div className={`flex ${d.ruler} items-stretch gap-1`} style={{ marginLeft: headW }} aria-label="Scene ruler">
                 {project.scenes.map((scene) => {
                   const widthPct = Math.max(8, (scene.targetDurationSec / target) * 100);
                   return (
@@ -264,7 +278,8 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                     <div
                       key={track.id}
                       aria-label={`Track lane: ${track.label}`}
-                      className={`grid grid-cols-[9rem_1fr] items-stretch ${d.laneGap}`}
+                      className={`grid items-stretch ${d.laneGap}`}
+                      style={{ gridTemplateColumns: `${headW} 1fr` }}
                     >
                       {/* Sticky so the track headers - the clip counts the
                           operator reads while scrubbing - stay in view while
@@ -272,10 +287,10 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                           OPAQUE background, not bg-white/[0.03], or the clips
                           show through as they pass behind it. */}
                       <div className={`sticky left-0 z-10 flex items-center gap-2 rounded-lg border border-white/10 bg-[#141210] ${d.headPad}`}>
-                        <Icon size={15} className="text-primary-200" />
+                        <Icon size={phone ? 13 : 15} className="shrink-0 text-primary-200" />
                         <div className="min-w-0">
-                          <p className="truncate text-xs font-semibold text-editor-text">{track.label}</p>
-                          <p className="text-[10px] text-content-tertiary">{track.clips.length} clip{track.clips.length === 1 ? '' : 's'}</p>
+                          <p className={`truncate font-semibold text-editor-text ${phone ? 'text-[11px] leading-tight' : 'text-xs'}`}>{track.label}</p>
+                          <p className={`text-content-tertiary ${phone ? 'text-[10px] leading-tight' : 'text-[10px]'}`}>{track.clips.length} clip{track.clips.length === 1 ? '' : 's'}</p>
                         </div>
                         {onClearLane && track.clips.length > 0 && (
                           <button
@@ -297,7 +312,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                             onClick={() => onEmptyLaneClick?.(track.kind)}
                             disabled={!onEmptyLaneClick}
                             title={onEmptyLaneClick ? 'Open the tool that fills this lane' : undefined}
-                            className={`flex ${d.emptyRow} w-full items-center justify-center rounded-md bg-black/20 px-2 text-center text-[11px] text-content-tertiary transition enabled:hover:bg-white/[0.04] enabled:hover:text-content-secondary phone:sticky phone:left-1 phone:w-[calc(100vw-190px)] phone:justify-start phone:text-left phone:text-[10px] phone:leading-tight`}
+                            className={`flex ${d.emptyRow} w-full items-center justify-center rounded-md bg-black/20 px-2 text-center text-[11px] text-content-tertiary transition enabled:hover:bg-white/[0.04] enabled:hover:text-content-secondary phone:sticky phone:left-1 phone:w-[calc(100vw-8.5rem)] phone:justify-start phone:text-left phone:text-[10px] phone:leading-tight`}
                           >
                             {EMPTY_HINT[track.kind]}
                           </button>

@@ -69,6 +69,9 @@ export function LivePreviewStage({
   const ratio = ASPECT_RATIO[aspect] ?? 16 / 9;
   // Fit: as wide as the host allows, unless the height would not fit - then
   // the height rules and the width follows the ratio.
+  // Phones: the canvas takes the full width the stage band offers and the
+  // height follows the frame - the previous fit left dead margins left and
+  // right on a 390px screen (the operator marked them in red).
   const fitWidth = hostBox.w > 0
     ? Math.max(120, Math.min(hostBox.w, Math.max(120, hostBox.h - CONTROLS_PX) * ratio))
     : undefined;

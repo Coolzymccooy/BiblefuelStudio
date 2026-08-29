@@ -141,6 +141,31 @@ export function EditorShell({
   // On phones the tool panel is a SHEET over the timeline; tapping the active
   // tool again (or the chevron) folds it away so the whole timeline is usable.
   const [sheetOpen, setSheetOpen] = useState(true);
+  // How much of the phone screen the stage keeps. Dragged by the grip
+  // between stage and timeline, clamped so neither can be squeezed away
+  // (the operator could pull the timeline up and then not pull it back).
+  const [stagePct, setStagePct] = useState<number>(() => {
+    const raw = typeof window !== 'undefined' ? window.localStorage.getItem('bf.editor.phoneStagePct') : null;
+    const n = raw ? Number(raw) : NaN;
+    return Number.isFinite(n) ? Math.min(52, Math.max(14, n)) : 32;
+  });
+  useEffect(() => {
+    try { window.localStorage.setItem('bf.editor.phoneStagePct', String(stagePct)); } catch { /* private mode */ }
+  }, [stagePct]);
+  const phoneBodyRef = useRef<HTMLDivElement | null>(null);
+  const onPhoneDragStart = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    const host = phoneBodyRef.current;
+    if (!host) return;
+    const rect = host.getBoundingClientRect();
+    const move = (ev: PointerEvent) => {
+      const pct = ((ev.clientY - rect.top) / Math.max(1, rect.height)) * 100;
+      setStagePct(Math.min(52, Math.max(14, pct)));
+    };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  }, []);
 
   const [activePropId, setActivePropId] = useState<string>(
     () => propertyTools?.[0]?.id || '',
@@ -304,17 +329,32 @@ export function EditorShell({
   // surface, tools as a bottom bar, the tool panel as a sheet over the
   // TIMELINE - the stage is never covered) -----------------------------
   const phoneBody = (
-    <>
-      <div className="flex h-[30vh] short:h-[38vh] min-w-0 shrink-0 items-center justify-center overflow-hidden bg-editor-stage p-2">
+    <div ref={phoneBodyRef} className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div
+        className="flex min-w-0 shrink-0 items-center justify-center overflow-hidden bg-editor-stage px-1 py-1.5"
+        style={{ height: `${stagePct}%` }}
+      >
         {stage}
       </div>
-      <div className="relative min-h-0 flex-1 overflow-hidden border-t border-editor-line bg-editor-chrome">
+      {/* Grip: drag to trade stage for timeline, in BOTH directions. */}
+      <div
+        role="separator"
+        aria-label="Resize preview"
+        aria-orientation="horizontal"
+        onPointerDown={onPhoneDragStart}
+        onDoubleClick={() => setStagePct(32)}
+        title="Drag to resize the preview · double-tap to reset"
+        className="flex h-5 shrink-0 cursor-row-resize touch-none items-center justify-center border-y border-editor-line bg-editor-chrome"
+      >
+        <div className="pointer-events-none h-[3px] w-10 rounded-full bg-editor-accent/45" />
+      </div>
+      <div className="relative min-h-0 flex-1 overflow-hidden bg-editor-chrome">
         <div className="h-full overflow-hidden">{strip}</div>
         {sheetOpen && (
           <div
             id={`panel-${activeId}`}
             role="tabpanel"
-            className="absolute inset-0 z-20 flex flex-col bg-editor-panel"
+            className="editor-phone absolute inset-0 z-20 flex flex-col bg-editor-panel"
           >
             <div className="flex shrink-0 items-center justify-between border-b border-editor-line px-3 py-1.5">
               <span className="text-[11px] font-semibold uppercase tracking-[.1em] text-editor-dim">{tools.find((t) => t.id === activeId)?.label}</span>
@@ -328,7 +368,7 @@ export function EditorShell({
                 <ChevronDown size={15} />
               </button>
             </div>
-            <div className="min-h-0 flex-1 overflow-auto p-3">
+            <div className="min-h-0 flex-1 overflow-auto p-2.5">
               {activePanel ?? <p className="text-[11px] text-editor-faint">Nothing here yet.</p>}
             </div>
           </div>
@@ -341,7 +381,7 @@ export function EditorShell({
       >
         {tools.map(toolButton)}
       </div>
-    </>
+    </div>
   );
 
   // Portalled to <body> ON PURPOSE. The app's page wrapper carries
