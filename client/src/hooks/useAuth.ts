@@ -10,6 +10,12 @@ const readStoredToken = (): string | null => {
 
 const FIREBASE_ENABLED_CACHE_KEY = 'BF_FIREBASE_ENABLED';
 const HAS_USER_CACHE_KEY = 'BF_HAS_USER';
+// Last known-good verification for THIS token. A failed /auth/me (the API
+// restarting, a flaky phone connection) used to leave emailVerified at its
+// initial false, which shows the Verify-email gate - a screen with no nav,
+// no drawer and no editor. The operator reads that as "every button is
+// dead". Trust the cached answer until a 401 actually says otherwise.
+const VERIFIED_CACHE_KEY = 'BF_EMAIL_VERIFIED';
 
 const readCachedBool = (key: string, fallback: boolean): boolean => {
     if (typeof window === 'undefined') return fallback;
@@ -63,7 +69,7 @@ export const useAuth = create<AuthState>((set, get) => ({
     // forever, which is exactly the bug we hit.
     hasUser: readCachedBool(HAS_USER_CACHE_KEY, false),
     firebaseEnabled: readCachedBool(FIREBASE_ENABLED_CACHE_KEY, false),
-    emailVerified: false,
+    emailVerified: readCachedBool(VERIFIED_CACHE_KEY, false),
     email: null,
     role: null,
     isSuperAdmin: false,
@@ -111,6 +117,7 @@ export const useAuth = create<AuthState>((set, get) => ({
             if (!meResponse.ok) {
                 if (meResponse.status === 401) {
                     api.setToken(null);
+                    writeCachedBool(VERIFIED_CACHE_KEY, false);
                     set({
                         token: null,
                         hasUser,
@@ -123,9 +130,13 @@ export const useAuth = create<AuthState>((set, get) => ({
                         error: 'Session expired. Please login again.',
                     });
                 } else {
+                    // Could not REACH the check - not a rejection. Keep the
+                    // session and the last known verification so the app stays
+                    // usable offline / mid-restart.
                     set({
                         hasUser,
                         firebaseEnabled,
+                        emailVerified: readCachedBool(VERIFIED_CACHE_KEY, false),
                         isLoading: false,
                         error: meResponse.error || 'Failed to validate session',
                     });
@@ -142,6 +153,7 @@ export const useAuth = create<AuthState>((set, get) => ({
             // Firebase-created accounts even when they match the env).
             const admin = Boolean(me.isSuperAdmin) || me.role === 'super_admin';
             const verified = Boolean(me.emailVerified) || admin;
+            writeCachedBool(VERIFIED_CACHE_KEY, verified);
             set({
                 token,
                 hasUser,

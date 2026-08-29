@@ -39,10 +39,19 @@ const studioGroup = ['/app/studio', '/app/voice-audio', '/app/timeline', '/app/b
 
 export function Layout() {
     const [drawerOpen, setDrawerOpen] = useState(false);
-    const { token, emailVerified, isSuperAdmin, isLoading, logout, checkStatus } = useAuth();
+    const { token, emailVerified, isSuperAdmin, isLoading, error: authError, logout, checkStatus } = useAuth();
+    // A validation failure that is NOT a rejection: the app stays usable.
+    const sessionCheckFailed = Boolean(authError) && !/expired|login again/i.test(String(authError));
     const location = useLocation();
     const navigate = useNavigate();
     const [loadingExpired, setLoadingExpired] = useState(false);
+    // Give validation a few seconds, then show the app anyway. A stalled
+    // check must never cost the operator their navigation.
+    useEffect(() => {
+        if (!isLoading) { setLoadingExpired(false); return; }
+        const t = window.setTimeout(() => setLoadingExpired(true), 4000);
+        return () => window.clearTimeout(t);
+    }, [isLoading]);
 
     useEffect(() => {
         const t = setTimeout(() => setLoadingExpired(true), 2500);
@@ -92,10 +101,25 @@ export function Layout() {
     }
 
     if (token && isLoading && !loadingExpired) {
-        return <div className="min-h-screen bg-bf-bg" />;
+        return (
+            <div className="min-h-screen bg-bf-bg flex flex-col items-center justify-center gap-4 px-6 text-center">
+                <div className="h-7 w-7 rounded-full border-2 border-bf-gold/30 border-t-bf-gold animate-spin" />
+                <p className="text-sm text-content-secondary">Checking your session…</p>
+                <button
+                    type="button"
+                    onClick={() => setLoadingExpired(true)}
+                    className="text-sm font-semibold text-bf-gold underline-offset-4 hover:underline"
+                >
+                    Continue anyway
+                </button>
+            </div>
+        );
     }
 
-    if (token && !emailVerified) {
+    // Only gate on a verification we actually CONFIRMED. If the check could
+    // not reach the API (restart, flaky phone connection), showing this gate
+    // takes away the nav, the drawer and the editor for no reason.
+    if (token && !emailVerified && !sessionCheckFailed) {
         return <VerifyEmailGate />;
     }
 
