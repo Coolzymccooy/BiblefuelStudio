@@ -197,7 +197,7 @@ export function BackgroundLibraryModal<T extends LibraryPickerItem>({
                                         />
                                     )}
                                     {isSelected && (
-                                        <div className="absolute top-2 right-2 w-6 h-6 rounded-full bg-primary-500 text-white text-[11px] font-bold flex items-center justify-center shadow-lg">
+                                        <div className="absolute top-2 right-2 w-6 h-6 rounded-full bg-primary-500 text-black text-[11px] font-bold flex items-center justify-center shadow-lg">
                                             {selectedIdx + 1}
                                         </div>
                                     )}

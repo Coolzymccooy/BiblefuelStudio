@@ -417,7 +417,7 @@ export function EditorShell({
           <button
             type="button"
             onClick={() => setSheetOpen(true)}
-            className="absolute inset-x-0 bottom-0 z-20 flex items-center justify-center gap-2 border-t border-editor-line bg-editor-panel/95 py-2 text-[11px] font-semibold text-editor-dim backdrop-blur"
+            className="absolute inset-x-0 bottom-0 z-20 flex items-center justify-center gap-2 border-t border-editor-line bg-editor-panel/95 py-2 text-[13px] font-semibold text-editor-dim backdrop-blur"
           >
             <ChevronUp size={14} />
             {tools.find((t) => t.id === activeId)?.label}
@@ -430,7 +430,11 @@ export function EditorShell({
             className="editor-phone absolute inset-0 z-20 flex flex-col bg-editor-panel"
           >
             <div className="flex shrink-0 items-center justify-between border-b border-editor-line px-3 py-1.5">
-              <span className="text-[11px] font-semibold uppercase tracking-[.1em] text-editor-dim">{tools.find((t) => t.id === activeId)?.label}</span>
+              {/* 13px, not 11px: the operator could not read these on a phone.
+                  Contrast was never the problem - editor-dim measures 9.65:1
+                  on the light panel - the type was simply too small against a
+                  15px root. */}
+              <span className="text-[13px] font-semibold uppercase tracking-[.1em] text-editor-dim">{tools.find((t) => t.id === activeId)?.label}</span>
               <button
                 type="button"
                 onClick={() => setSheetOpen(false)}
@@ -442,7 +446,7 @@ export function EditorShell({
               </button>
             </div>
             <div className="min-h-0 flex-1 overflow-auto p-2.5">
-              {activePanel ?? <p className="text-[11px] text-editor-faint">Nothing here yet.</p>}
+              {activePanel ?? <p className="text-[13px] text-editor-faint">Nothing here yet.</p>}
             </div>
           </div>
         )}

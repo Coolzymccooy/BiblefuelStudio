@@ -2209,7 +2209,7 @@ export function TimelinePage() {
                             render time. */}
                         <Button
                             variant="secondary"
-                            className="h-8 text-xs"
+                            className="h-9 rounded-xl border border-editor-line bg-editor-hover/40 px-2.5 text-editor-dim transition hover:border-editor-accent/40 hover:text-editor-text text-xs"
                             onClick={handleClearCanvas}
                             title="Unload the source media, empty the Real footage and B-roll lanes, and drop the backgrounds"
                             aria-label="Clear canvas"
@@ -2226,14 +2226,14 @@ export function TimelinePage() {
                                     ...documentaryProject,
                                     aspect: e.target.value as typeof documentaryProject.aspect,
                                 })}
-                                className="h-8 rounded-md border border-editor-line bg-black/25 px-2 font-mono text-[11px] text-editor-text phone:max-w-[118px]"
+                                className="h-9 rounded-xl border border-editor-line bg-editor-hover/40 px-2.5 text-editor-dim transition hover:border-editor-accent/40 hover:text-editor-text font-mono text-[11px] phone:max-w-[124px]"
                             >
                                 <option value="9:16">Portrait 9:16</option>
                                 <option value="1:1">Square 1:1</option>
                                 <option value="16:9">Landscape 16:9</option>
                             </select>
                         )}
-                        <Button variant="secondary" className="h-8 text-xs" onClick={() => setEditorLayout(false)} aria-label="Classic view" title="Switch to the classic page layout">
+                        <Button variant="secondary" className="h-9 rounded-xl border border-editor-line bg-editor-hover/40 px-2.5 text-editor-dim transition hover:border-editor-accent/40 hover:text-editor-text text-xs" onClick={() => setEditorLayout(false)} aria-label="Classic view" title="Switch to the classic page layout">
                             <LayoutTemplate size={14} className="lg:mr-1.5" />
                             <span className="phone:hidden">Classic view</span>
                         </Button>
@@ -2246,7 +2246,7 @@ export function TimelinePage() {
                             source media, use the renderer that composes every
                             track; otherwise the captioned-video pipeline. */}
                         <Button
-                            className="h-8 text-xs"
+                            className="h-9 rounded-xl px-4 text-xs font-bold shadow-[0_10px_22px_-12px_rgba(122,98,46,0.55)]"
                             onClick={handleRenderFromEditor}
                             disabled={isRenderingVideo || isRenderingDocumentaryTimeline}
                             title={timelineHasOwnContent

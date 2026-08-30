@@ -68,18 +68,23 @@ export default {
         // breaks Tailwind's opacity modifiers (bg-white/10, via-white/10 …),
         // which cannot alpha-composite a var(). The ~112 `text-white` usages
         // are handled by a targeted rule in index.css instead.
+        // Gold, not chocolate. The old mid-scale sat around 36% saturation
+        // (500 was #b08d57), which reads as muddy brown - and white text on
+        // it measured only 3.09:1, failing WCAG outright. Filled controls now
+        // carry DARK ink, which is what allows a properly saturated gold
+        // (500 is 8.4:1 against ink). The dark end stays for text on light.
         primary: {
-          50: '#fbf7ef',
-          100: '#f3ead6',
-          200: '#e3d3a8',
-          300: '#d2bb7c',
-          400: '#c1a257',
-          500: '#b08d57',
-          600: '#9a7a4b',
-          700: '#7f633d',
-          800: '#5f4a2d',
-          900: '#3f3120',
-          950: '#241b11',
+          50: '#fdf9ef',
+          100: '#f9edcd',
+          200: '#f2dc9f',
+          300: '#e9c86e',
+          400: '#e2ba57',
+          500: '#dcae4a',
+          600: '#bd9130',
+          700: '#8f6a14',
+          800: '#6f5726',
+          900: '#4a3a19',
+          950: '#2a2010',
         },
         // Warm near-black surfaces (quiet-studio). Remapped from the old cool
         // greys so every existing `bg-dark-*` shifts to the new identity.

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { EditorShell, type EditorTool } from '../EditorShell';
@@ -160,5 +160,83 @@ describe('EditorShell', () => {
   it('renders without a strip or top bar', () => {
     render(<EditorShell tools={tools} panels={panels} stage={<div>only stage</div>} />);
     expect(screen.getByText('only stage')).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phone legibility.
+//
+// The operator marked several editor labels as unreadable on a phone. Contrast
+// was NOT the cause and darkening the colour would not have fixed it:
+// editor-dim measures 9.65:1 and editor-faint 5.86:1 on the light panel, both
+// well past the 4.5 threshold. The cause is SIZE - those labels are 11px
+// against a 15px root, which is below comfortable reading size on a handset.
+//
+// So the rule under test is a floor on label size, not a colour.
+
+describe('EditorShell — phone legibility', () => {
+  const PHONE = '(max-width: 1023px)';
+
+  function asPhone(matches: boolean) {
+    // usePhoneLayout reads window.matchMedia, so stub it THERE - a bare global
+    // stub leaves window.matchMedia untouched and the component stays desktop.
+    vi.stubGlobal('matchMedia', (q: string) => ({
+      matches: q === PHONE ? matches : false,
+      media: q,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      onchange: null,
+      dispatchEvent: vi.fn(),
+    }));
+    window.matchMedia = globalThis.matchMedia;
+  }
+
+  afterEach(() => {
+    // Leaking a stubbed matchMedia breaks unrelated files - it has happened
+    // in this suite before.
+    vi.unstubAllGlobals();
+  });
+
+  it('gives the phone reopen button a readable size', async () => {
+    // Closed sheet: this bar is the operator's way back to the tool, and was
+    // one of the labels marked unreadable. The sheet starts OPEN, so fold it
+    // away first - the bar only exists once it is closed.
+    asPhone(true);
+    const user = userEvent.setup();
+    setup();
+    await user.click(screen.getByRole('button', { name: /hide panel/i }));
+    const bar = document.body.querySelector('button.absolute.inset-x-0');
+    const barPx = Number(((bar?.className as string) || '').match(/text-\[(\d+)px\]/)?.[1]);
+    expect(barPx).toBeGreaterThanOrEqual(13);
+  });
+
+  it('gives the phone sheet header a readable size', async () => {
+    asPhone(true);
+    setup();
+    // The sheet is open by default on a phone, so its header is already here.
+    // Target the sheet header by its distinctive uppercase tracking, not by
+    // position - the rail renders spans of its own.
+    const header = [...document.body.querySelectorAll('span')]
+      .find((el) => el.className.includes('uppercase') && el.className.includes('tracking-'));
+    const px = Number(((header?.className as string) || '').match(/text-\[(\d+)px\]/)?.[1]);
+    expect(px).toBeGreaterThanOrEqual(13);
+  });
+
+  it('keeps empty-state copy readable on phones', () => {
+    asPhone(true);
+    setup({ panels: {} });
+    const empty = screen.getByText(/nothing here yet/i);
+    const px = Number((empty.className.match(/text-\[(\d+)px\]/) || [])[1]);
+    expect(px).toBeGreaterThanOrEqual(13);
+  });
+
+  it('leaves the desktop layout alone', () => {
+    // Desktop had no complaint; this fix must not inflate that layout. The
+    // phone sheet simply does not exist there.
+    asPhone(false);
+    setup();
+    expect(document.body.querySelector('.editor-phone')).toBeNull();
   });
 });

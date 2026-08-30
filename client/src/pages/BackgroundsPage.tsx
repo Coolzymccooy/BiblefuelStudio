@@ -481,7 +481,7 @@ export function BackgroundsPage() {
                     <button
                         onClick={() => setActiveTab('search')}
                         disabled={!pexelsEnabled}
-                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${activeTab === 'search' ? 'bg-primary-500 text-white shadow-lg' : 'text-gray-400 hover:text-white'} ${!pexelsEnabled ? 'opacity-40 cursor-not-allowed' : ''}`}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${activeTab === 'search' ? 'bg-primary-500 text-black shadow-lg' : 'text-gray-400 hover:text-black'} ${!pexelsEnabled ? 'opacity-40 cursor-not-allowed' : ''}`}
                     >
                         <Search size={14} />
                         Search
@@ -489,21 +489,21 @@ export function BackgroundsPage() {
                     <button
                         onClick={() => setActiveTab('animated')}
                         disabled={!pixabayEnabled}
-                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${activeTab === 'animated' ? 'bg-primary-500 text-white shadow-lg' : 'text-gray-400 hover:text-white'} ${!pixabayEnabled ? 'opacity-40 cursor-not-allowed' : ''}`}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${activeTab === 'animated' ? 'bg-primary-500 text-black shadow-lg' : 'text-gray-400 hover:text-black'} ${!pixabayEnabled ? 'opacity-40 cursor-not-allowed' : ''}`}
                     >
                         <Sparkles size={14} />
                         Animated
                     </button>
                     <button
                         onClick={() => setActiveTab('local')}
-                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${activeTab === 'local' ? 'bg-primary-500 text-white shadow-lg' : 'text-gray-400 hover:text-white'}`}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${activeTab === 'local' ? 'bg-primary-500 text-black shadow-lg' : 'text-gray-400 hover:text-black'}`}
                     >
                         <FolderUp size={14} />
                         Local Packs
                     </button>
                     <button
                         onClick={() => setActiveTab('library')}
-                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${activeTab === 'library' ? 'bg-primary-500 text-white shadow-lg' : 'text-gray-400 hover:text-white'}`}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${activeTab === 'library' ? 'bg-primary-500 text-black shadow-lg' : 'text-gray-400 hover:text-black'}`}
                     >
                         <Library size={14} />
                         Library
@@ -654,7 +654,7 @@ export function BackgroundsPage() {
                         <div className="flex flex-wrap gap-1.5 px-2">
                             <button
                                 onClick={() => setCategoryFilter('')}
-                                className={`text-[10px] px-2.5 py-1 rounded-full transition-all ${categoryFilter === '' ? 'bg-primary-500 text-white' : 'bg-white/5 text-gray-400 hover:bg-white/10'}`}
+                                className={`text-[10px] px-2.5 py-1 rounded-full transition-all ${categoryFilter === '' ? 'bg-primary-500 text-black' : 'bg-white/5 text-gray-400 hover:bg-white/10'}`}
                             >
                                 All
                             </button>

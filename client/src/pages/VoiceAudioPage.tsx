@@ -1698,7 +1698,7 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
                                         onClick={() => setCloneProvider('elevenlabs')}
                                         disabled={!ttsEnabled}
                                         className={`px-3 py-1.5 text-xs font-medium rounded transition ${cloneProvider === 'elevenlabs'
-                                            ? 'bg-primary-500 text-white'
+                                            ? 'bg-primary-500 text-black'
                                             : 'text-gray-300 hover:bg-white/5'
                                             } disabled:opacity-40 disabled:cursor-not-allowed`}
                                     >
@@ -2270,7 +2270,7 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
                                 </Button>
                                 <Link
                                     to="/app/render"
-                                    className="inline-flex items-center justify-center gap-1.5 text-xs h-9 px-4 rounded-lg font-medium bg-primary-500 text-white hover:bg-primary-400 transition-colors whitespace-nowrap"
+                                    className="inline-flex items-center justify-center gap-1.5 text-xs h-9 px-4 rounded-lg font-medium bg-primary-500 text-black hover:bg-primary-400 transition-colors whitespace-nowrap"
                                 >
                                     Go to Render
                                     <ArrowRight size={14} />

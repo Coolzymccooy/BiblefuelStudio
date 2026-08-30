@@ -68,6 +68,11 @@
     --text-primary: #f4ecdc;
     --accent: #e6c98a;
     --accent-deep: #cba85f;
+    /* Dark mode already had a light gold, so the fill is that same gold with
+       dark ink - the pair must exist in BOTH themes or a filled button loses
+       its text colour when the theme flips. */
+    --accent-fill: #e6c98a;
+    --accent-ink: #1c1a15;
     --tone-success: #6fcf97;
     --tone-danger: #e08a8a;
   }
@@ -126,7 +131,11 @@
     --editor-text:#1c1a15;
     --editor-dim:#4a4438;
     --editor-faint:#6b6456;
-    --editor-accent:#8a6d33;
+    /* Gold, not brown. The old #8a6d33 sat at 46% saturation because it had
+       been darkened to carry WHITE text; it read as chocolate. This keeps the
+       same legibility (4.95:1 on white) at 75% saturation, and filled
+       surfaces use --accent-fill with dark ink instead. */
+    --editor-accent:#8f6a14;
     --stage-ground:#efeae1;
     --stage-check:rgba(28, 26, 21, 0.05);
 
@@ -137,9 +146,15 @@
     --border-subtle: rgba(28, 26, 21, 0.10);
     --border-strong: rgba(28, 26, 21, 0.22);
     --text-primary: #1c1a15;
-    /* Darkened so gold still reads as gold at 4.87:1 on white. */
-    --accent: #8a6d33;
+    /* Two golds, two jobs. --accent is TEXT and thin rules on light chrome, so
+       it must clear 4.5:1 on white (4.95:1 here). --accent-fill paints filled
+       surfaces like the Render button and carries DARK ink, which is what
+       lets it stay a rich, saturated gold (8.4:1 with ink) instead of the
+       muddy brown that chasing white-on-gold contrast produced. */
+    --accent: #8f6a14;
     --accent-deep: #6f5726;
+    --accent-fill: #dcae4a;
+    --accent-ink: #1c1a15;
     --tone-success: #1a7f4f;
     --tone-danger: #b03b3b;
     /* Secondary text follows the theme, else it stays a dark-mode cream. */
