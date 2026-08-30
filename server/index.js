@@ -380,7 +380,13 @@ app.use("/api/tts",       requireAuth, withUserScope, requireVerifiedEmail, quot
 app.use("/api/abi",       abiRouter);
 app.use("/api/render",    requireAuth, withUserScope, requireVerifiedEmail, quota("render"),     renderRouter);
 app.use("/api/story",     requireAuth, withUserScope, requireVerifiedEmail, quota("render"),     storyRouter);
-app.use("/api/timeline",  requireAuth, withUserScope, requireVerifiedEmail, quota("render"),     timelineRouter);
+// NOTE: no quota("render") on the whole router. The timeline router also
+// serves GET /projects, the autosave PUT, and GET /render/:jobId - which the
+// client polls about once a second. Charging render quota per REQUEST meant a
+// free user (limit 5) exhausted their own quota within seconds of starting a
+// render, and every later poll 429'd, so the finished video never appeared.
+// The quota belongs on the render POST alone; see routes/timeline.js.
+app.use("/api/timeline",  requireAuth, withUserScope, requireVerifiedEmail,                      timelineRouter);
 app.use("/api/pexels",    requireAuth, withUserScope, requireVerifiedEmail,                       pexelsRouter);
 app.use("/api/pixabay",   requireAuth, withUserScope, requireVerifiedEmail,                       pixabayRouter);
 app.use("/api/gumroad",   requireAuth, withUserScope, featureGate("gumroad"),                     gumroadRouter);

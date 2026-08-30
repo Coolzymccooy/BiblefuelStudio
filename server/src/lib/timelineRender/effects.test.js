@@ -28,13 +28,49 @@ describe('normalizeEffectClip', () => {
     assert.equal(c.startSec, 0);
     assert.ok(c.durationSec >= 0.1);
   });
+
+  test('reads effectOptions, the property the PLANNER actually emits', () => {
+    // planner.js emits `effectOptions`; this normalizer only read `options`,
+    // so every look / intensity / colour the operator picked in the UI was
+    // dropped and the render silently used server defaults. The two names
+    // must stay reconciled - assert on the planner's name specifically.
+    const c = normalizeEffectClip({
+      effect: 'grade',
+      effectOptions: { look: 'cinematic', intensity: 0.9 },
+    });
+    assert.equal(c.options.look, 'cinematic');
+    assert.equal(c.options.intensity, 0.9);
+  });
+
+  test('still honours the legacy options property', () => {
+    const c = normalizeEffectClip({ effect: 'grade', options: { look: 'warm' } });
+    assert.equal(c.options.look, 'warm');
+  });
+
+  test('effectOptions wins over a stale options object', () => {
+    const c = normalizeEffectClip({
+      effect: 'grade',
+      effectOptions: { look: 'cinematic' },
+      options: { look: 'warm' },
+    });
+    assert.equal(c.options.look, 'cinematic');
+  });
 });
 
 describe('isSupportedEffect', () => {
-  test('accepts the four documented effects', () => {
-    for (const k of ['transition', 'glow', 'grade', 'lightleak']) {
+  test('accepts the effects the renderer actually composes', () => {
+    for (const k of ['glow', 'grade', 'lightleak']) {
       assert.equal(isSupportedEffect({ effect: k }), true, `${k} should be supported`);
     }
+  });
+
+  test('does NOT claim transitions are composed until xfade is wired in', () => {
+    // buildTransitionFilter exists and is tested below, but the proof
+    // renderer's B-roll chain never calls it - a transition currently comes
+    // out as a hard cut. Reporting it as supported told the operator their
+    // transition had been rendered when it had not. Flip this back in the
+    // same commit that composes transitions for real.
+    assert.equal(isSupportedEffect({ effect: 'transition' }), false);
   });
 
   test('rejects anything else so it can be reported, not ignored', () => {

@@ -14,7 +14,13 @@
 // that silently does nothing is exactly the problem this replaces.
 
 /** Effect kinds this renderer can compose. */
-export const SUPPORTED_EFFECTS = Object.freeze(['transition', 'glow', 'grade', 'lightleak']);
+// Effects the proof renderer ACTUALLY composes. 'transition' is deliberately
+// absent: buildTransitionFilter exists and is tested, but the B-roll/scene
+// chain composes plain timed overlays and never invokes it, so a transition
+// renders as a hard cut. Listing it here told the operator the transition had
+// been included when it had not — coverage must report what the renderer does,
+// not what the UI accepts. Re-add it in the same commit that wires xfade in.
+export const SUPPORTED_EFFECTS = Object.freeze(['glow', 'grade', 'lightleak']);
 
 /** Transition styles, mapped to their ffmpeg xfade transition name. */
 export const TRANSITION_STYLES = Object.freeze({
@@ -69,7 +75,11 @@ export function normalizeEffectClip(clip) {
     0.1,
     num(clip?.durationSec, kind === 'transition' ? DEFAULT_TRANSITION_SEC : DEFAULT_EFFECT_SEC),
   );
-  return { kind, startSec, durationSec, options: clip?.options || clip || {} };
+  // The planner emits the operator's chosen look / intensity / colour as
+  // `effectOptions`; reading only `options` silently dropped every one of
+  // them, so a cinematic grade rendered as the warm default and a gold light
+  // leak came out warm. Accept both names.
+  return { kind, startSec, durationSec, options: clip?.effectOptions || clip?.options || clip || {} };
 }
 
 /**

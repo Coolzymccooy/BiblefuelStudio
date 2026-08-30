@@ -230,6 +230,20 @@ describe('proofRenderer — multi-track composition', () => {
     assert.match(filter, /alimiter/, 'peaks must be limited once normalization is off');
   });
 
+  test('amix uses duration=longest so a LATER voice-over is not cut off', () => {
+    // With duration=first the mix ended when the SHORTEST input ended. On a
+    // still-image timeline with no base audio the first input is voice-over
+    // #1, so a second reading placed later in the service was silent while
+    // the picture kept running. The output already carries a hard `-t`, so
+    // `longest` cannot let a looped music bed run away.
+    const cmd = buildProofRenderCommand(richPlan(), richOpts);
+    const filter = cmd.args[cmd.args.indexOf('-filter_complex') + 1];
+    assert.match(filter, /amix=[^;]*duration=longest/);
+    assert.doesNotMatch(filter, /amix=[^;]*duration=first/);
+    // The bound that makes `longest` safe must actually be present.
+    assert.ok(cmd.args.includes('-t'), 'output must keep its hard duration cap');
+  });
+
   test('a plan with no music or captions still builds a valid command', () => {
     const cmd = buildProofRenderCommand(plan(), richOpts);
     assert.equal(cmd.ok, true);

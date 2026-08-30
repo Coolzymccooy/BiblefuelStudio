@@ -10,6 +10,7 @@ import { resolveProjectAssets } from '../lib/timelineRender/resolveProjectAssets
 import { resolveAssetPath } from './jobs.js';
 import { resolveOutputAlias } from '../lib/mediaThumb.js';
 import { OUTPUT_DIR } from '../lib/paths.js';
+import { quota } from '../middleware/quota.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -214,12 +215,19 @@ router.get('/projects/:projectId', (req, res) => {
   return res.json({ ok: true, project });
 });
 
-router.post('/render', (req, res) => {
+// The render quota lives HERE, not on the router, so that listing projects,
+// autosaving and polling job status stay free. Starting a render is the only
+// action that costs one.
+router.post('/render', quota('render'), (req, res) => {
   try {
     // Library ids (from 'Send backgrounds to B-roll') become real media here.
     const project = resolveProjectAssets(req.body?.project, {
       exists: (v) => { try { return fs.existsSync(resolveOutputAlias(v)); } catch { return false; } },
-      resolve: (v) => { try { return resolveAssetPath(v); } catch { return null; } },
+      // Scope library lookups to THIS user's data dir. Without it the helper
+      // falls back to the global DATA_DIR (there is no job context in a
+      // request), so a tenant's 'Send backgrounds to B-roll' either found
+      // nothing or picked up an item belonging to someone else.
+      resolve: (v) => { try { return resolveAssetPath(v, req.ctx?.dataDir); } catch { return null; } },
     });
     const plan = buildTimelineRenderPlan(project, {
       quality: req.body?.quality || req.body?.project?.renderSettings?.quality || 'proof_720p',

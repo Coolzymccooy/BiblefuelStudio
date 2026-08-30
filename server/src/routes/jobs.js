@@ -321,7 +321,16 @@ function safeUpdateJob(id, patch) {
   }
 }
 
-export function resolveAssetPath(pathOrId) {
+/**
+ * Resolve a stored path or library id to something ffmpeg can open.
+ *
+ * `dataDir` MUST be passed when calling from an HTTP request handler. Inside a
+ * job there is a `currentJobCtx` to fall back on, but a request has none, so
+ * the fallback lands on the GLOBAL DATA_DIR - which searches the wrong
+ * tenant's library and either misses the user's own item or matches a
+ * different tenant's item that happens to share an id.
+ */
+export function resolveAssetPath(pathOrId, dataDir) {
   if (pathOrId == null) return null;
   const normalized = String(pathOrId).trim();
   if (!normalized) return null;
@@ -332,7 +341,7 @@ export function resolveAssetPath(pathOrId) {
   if (fs.existsSync(direct)) return direct;
 
   // Try to find in library
-  const lib = readLibrary(currentDataDir());
+  const lib = readLibrary(dataDir || currentDataDir());
   const item = lib.items.find(x => String(x.id) === normalized);
   if (item) {
     if (Array.isArray(item.files) && item.files.length > 0) {

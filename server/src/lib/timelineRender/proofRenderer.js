@@ -420,8 +420,12 @@ export function buildProofRenderCommand(plan, opts = {}) {
     audioLabels.push('[bed]');
   }
 
-  // duration=first keeps the mix tied to the event audio rather than the
-  // looped bed, which would otherwise run forever.
+  // duration=longest, NOT first. With `first` the mix ended when the shortest
+  // input did: on a still-image timeline with no base audio, input #1 is the
+  // FIRST voice-over, so a second VO placed later in the service was silent
+  // even though the picture kept running. The looped bed cannot run away here
+  // because the output carries a hard `-t duration` (see the args below), so
+  // `longest` is bounded by the timeline length either way.
   //
   // normalize=0 is essential: amix DIVIDES every input by the input count, so
   // a service with narration + bed + several VO clips came out progressively
@@ -432,7 +436,7 @@ export function buildProofRenderCommand(plan, opts = {}) {
   const mixNeeded = audioLabels.length > 1;
   if (mixNeeded) {
     audioParts.push(
-      `${audioLabels.join('')}amix=inputs=${audioLabels.length}:duration=first:dropout_transition=1:normalize=0[amixed]`,
+      `${audioLabels.join('')}amix=inputs=${audioLabels.length}:duration=longest:dropout_transition=1:normalize=0[amixed]`,
     );
     audioParts.push('[amixed]alimiter=limit=0.95[a]');
   }
