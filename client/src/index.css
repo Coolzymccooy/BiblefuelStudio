@@ -171,6 +171,16 @@
      Tailwind config, because that would break bg-white/10 opacity modifiers. */
   :root[data-theme='light'] .text-white { color: #1c1a15; }
 
+  /* Pale gold is a DARK-mode colour. The 300-500 steps exist for gold on near
+     black; reused as text on a light ground they measure 1.6-2.1:1 and simply
+     vanish (the operator's "Choose file / Preview / Trim" row). Light mode
+     therefore remaps gold TEXT to the deep gold that clears 4.5:1, while
+     backgrounds keep the rich fill - so a filled gold button is unaffected. */
+  :root[data-theme='light'] .text-primary-300,
+  :root[data-theme='light'] .text-primary-400,
+  :root[data-theme='light'] .text-primary-500,
+  :root[data-theme='light'] .text-primary-600 { color: #8f6a14; }
+
   /* Type on a pale ground reads THINNER than the same weight on dark. Light
      mode therefore steps every label/heading class up a weight so the UI feels
      as solid as the dark theme rather than washed out. */
