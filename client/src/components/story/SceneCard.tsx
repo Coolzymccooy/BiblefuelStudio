@@ -35,7 +35,9 @@ export function SceneCard({ scene, index = 0, onPatch, onRegenerate, busy, regen
     if (clean !== text) setText(clean);
     if (clean && clean !== scene.text) onPatch(scene.id, { text: clean });
   };
-  const commitPrompt = () => { if (prompt !== scene.imagePrompt) onPatch(scene.id, { imagePrompt: prompt }); };
+  const commitPrompt = () => {
+    if (prompt !== scene.imagePrompt) onPatch(scene.id, { imagePrompt: prompt });
+  };
 
   const st = STATUS[scene.imageStatus] ?? STATUS.pending;
 
