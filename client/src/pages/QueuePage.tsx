@@ -4,7 +4,6 @@ import { Button } from '../components/ui/Button';
 import { ScreenHeader } from '../components/ui/ScreenHeader';
 import { BackgroundLibraryModal } from '../components/BackgroundLibraryModal';
 import { api } from '../lib/api';
-import { BackgroundLibraryModal } from '../components/BackgroundLibraryModal';
 import toast from 'react-hot-toast';
 import { Trash2, RefreshCcw, Download, Archive, Trash, Mic, Video, Library, Layers } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
