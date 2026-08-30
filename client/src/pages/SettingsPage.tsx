@@ -9,6 +9,8 @@ import { ScreenHeader } from '../components/ui/ScreenHeader';
 import { api } from '../lib/api';
 import toast from 'react-hot-toast';
 import { useConfig } from '../lib/config';
+import { describeCron } from '../lib/cronDescribe';
+import { ThemeToggle } from '../components/ThemeToggle';
 import { useAuth } from '../hooks/useAuth';
 import { VoiceSynthesisPanel } from '../components/VoiceSynthesisPanel';
 import { PlanAndUsageCard } from '../components/PlanAndUsageCard';
@@ -39,6 +41,16 @@ type SocialSchedule = {
     voiceId?: string;
     backgroundQuery?: string;
 };
+
+// Posting cadence presets. Cron is `m h dom mon dow`; the timezone below is
+// what makes 06:00 mean 06:00 locally all year (UTC drifts an hour under BST).
+const SCHEDULE_TIMEZONE = 'Europe/London';
+
+const SCHEDULE_PRESETS: Array<{ key: string; label: string; hint: string; cron: string }> = [
+    { key: 'morning', label: 'Morning', hint: '6:00am daily', cron: '0 6 * * *' },
+    { key: 'night', label: 'Night', hint: '10:00pm daily', cron: '0 22 * * *' },
+    { key: 'sunday', label: 'Sunday', hint: '9:00am Sundays', cron: '0 9 * * 0' },
+];
 
 export function SettingsPage() {
     const { config } = useConfig();
@@ -167,9 +179,12 @@ export function SettingsPage() {
             id: `sch_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
             name: 'Auto Post',
             enabled: true,
-            type: 'replay',
-            cron: '0 */1 * * *',
-            timezone: 'UTC',
+            // Auto-Generate is the default: it creates a fresh video each run and
+            // needs no caption/videoUrl. Defaulting to 'replay' made every new
+            // schedule fail validation on save (caption + videoUrl required).
+            type: 'auto_generate',
+            cron: '0 6 * * *',
+            timezone: SCHEDULE_TIMEZONE,
             destination: 'webhook',
             caption: '',
             videoUrl: '',
@@ -242,11 +257,11 @@ export function SettingsPage() {
                             </span>
                             {authEmail && (
                                 emailVerified ? (
-                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-200 text-[10px]">
+                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[#7fb5aa]/15 border border-[#7fb5aa]/30 text-content-secondary text-[10px]">
                                         <BadgeCheck size={10} /> Verified
                                     </span>
                                 ) : (
-                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-200 text-[10px]">
+                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-white/[0.04] border border-white/10 text-content-secondary text-[10px]">
                                         <Mail size={10} /> Unverified
                                     </span>
                                 )
@@ -267,6 +282,12 @@ export function SettingsPage() {
                         </Button>
                     )}
                 </div>
+            </Card>
+
+            <Card>
+
+                <ThemeToggle />
+
             </Card>
 
             <PlanAndUsageCard />
@@ -505,13 +526,14 @@ export function SettingsPage() {
                                 </div>
                             </div>
                             <p className="text-help">
-                                Cron format: <code>m h dom mon dow</code>. Example: <code>0 */2 * * *</code> runs every 2 hours.
+                                Pick a preset per schedule, or type a cron expression (<code>m h dom mon dow</code>) for a custom time.
+                                Times run in {SCHEDULE_TIMEZONE}. For twice-daily posting add two schedules: Morning and Night.
                             </p>
                             {schedules.length === 0 && (
                                 <div className="text-help">No schedules yet.</div>
                             )}
                             {schedules.map((s) => (
-                                <div key={s.id} className={`rounded-xl border p-3 space-y-2 ${s.type === 'auto_generate' ? 'border-amber-500/30 bg-amber-500/[0.04]' : 'border-white/10 bg-white/[0.03]'}`}>
+                                <div key={s.id} className={`rounded-xl border p-3 space-y-2 ${s.type === 'auto_generate' ? 'border-white/10 bg-white/[0.04]' : 'border-white/10 bg-white/[0.03]'}`}>
                                     <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
                                         <Input
                                             value={s.name}
@@ -529,7 +551,8 @@ export function SettingsPage() {
                                         <Input
                                             value={s.cron}
                                             onChange={(e) => updateSchedule(s.id, { cron: e.target.value })}
-                                            placeholder="0 */1 * * *"
+                                            placeholder="0 6 * * *"
+                                            title="Cron expression. Use the preset buttons below for common times."
                                         />
                                         <Input
                                             value={s.timezone}
@@ -543,6 +566,21 @@ export function SettingsPage() {
                                             <option value="true">Enabled</option>
                                             <option value="false">Disabled</option>
                                         </Select>
+                                    </div>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <span className="text-help">Presets:</span>
+                                        {SCHEDULE_PRESETS.map((p) => (
+                                            <Button
+                                                key={p.key}
+                                                variant={s.cron === p.cron ? 'primary' : 'secondary'}
+                                                className="text-xs h-7 px-2"
+                                                title={p.hint}
+                                                onClick={() => updateSchedule(s.id, { cron: p.cron, timezone: SCHEDULE_TIMEZONE })}
+                                            >
+                                                {p.label}
+                                            </Button>
+                                        ))}
+                                        <span className="text-help ml-auto">{describeCron(s.cron, s.timezone)}</span>
                                     </div>
                                     <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                                         <Select
@@ -635,7 +673,7 @@ export function SettingsPage() {
                                         </div>
                                     )}
                                     {s.type === 'auto_generate' && (
-                                        <p className="text-[10px] text-amber-200/80">
+                                        <p className="text-[10px] text-content-secondary">
                                             On each cron tick this generates a NEW script + voice + video and posts via the destination above. Requires at least one background in your Library.
                                         </p>
                                     )}

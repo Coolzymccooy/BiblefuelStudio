@@ -52,6 +52,15 @@ function mapApiError(err: ApiError): FriendlyError {
     };
   }
 
+  // The dev proxy could not reach the API (it restarts on every server file
+  // save). Retryable - say so instead of a bare status code.
+  if (code === 'API_UNREACHABLE') {
+    return {
+      title: 'The API was restarting — try again',
+      detail: String(p.hint || 'Wait a moment and press the button again.'),
+    };
+  }
+
   // Library is empty — Auto-Publish can't pick a background.
   if (code.includes('requires at least one background')) {
     return {

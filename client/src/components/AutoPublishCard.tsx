@@ -121,7 +121,7 @@ export function AutoPublishCard() {
     return (
         <Card>
             <div className="flex items-center gap-2 mb-1">
-                <Zap size={18} className="text-amber-400" />
+                <Zap size={18} className="text-content-secondary" />
                 <h3 className="text-lg font-semibold text-gray-100">Auto-publish on render</h3>
             </div>
             <p className="text-xs text-content-secondary mb-4">
@@ -129,7 +129,7 @@ export function AutoPublishCard() {
             </p>
 
             {!hasConnections && (
-                <p className="text-xs text-yellow-300 bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3 mb-3">
+                <p className="text-xs text-content-secondary bg-white/[0.04] border border-white/10 rounded-lg p-3 mb-3">
                     Connect at least one platform above before turning on auto-publish.
                 </p>
             )}
@@ -157,7 +157,7 @@ export function AutoPublishCard() {
                                 onClick={() => togglePlatform(platform)}
                                 className={`flex items-center gap-2 p-2 rounded-lg border text-xs transition-colors ${
                                     selected
-                                        ? 'border-amber-500/40 bg-amber-500/10 text-gray-100'
+                                        ? 'border-white/10 bg-white/[0.04] text-gray-100'
                                         : 'border-white/10 bg-dark-900/40 hover:bg-white/5 text-gray-300'
                                 }`}
                             >
@@ -182,7 +182,7 @@ export function AutoPublishCard() {
                     Save settings
                 </Button>
                 {config?.enabled && config.platforms.length === 0 && (
-                    <span className="text-[11px] text-yellow-300">Pick at least one platform to auto-post to.</span>
+                    <span className="text-[11px] text-content-secondary">Pick at least one platform to auto-post to.</span>
                 )}
             </div>
         </Card>

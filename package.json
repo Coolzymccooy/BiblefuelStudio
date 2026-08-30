@@ -1,15 +1,18 @@
 {
-    "name": "biblefuel-studio",
-    "version": "3.0.0",
-    "private": true,
-    "scripts": {
-        "dev": "concurrently --names server,client -c blue,magenta --prefix \"[{name}]\" \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
-        "dev:all": "npm run dev",
-        "build": "npm run install:all && npm run build --prefix client",
-        "start": "npm start --prefix server",
-        "install:all": "npm install --include=dev --prefix server && npm install --include=dev --prefix client"
-    },
-    "devDependencies": {
-        "concurrently": "^8.2.2"
-    }
+  "name": "biblefuel-studio",
+  "version": "3.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently --names server,client -c blue,magenta --prefix \"[{name}]\" \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
+    "dev:all": "npm run dev",
+    "build": "npm run install:all && npm run build --prefix client",
+    "start": "npm start --prefix server",
+    "install:all": "npm install --include=dev --prefix server && npm install --include=dev --prefix client",
+    "smoke:editor": "node scripts/editor-smoke.mjs",
+    "parity:controls": "node scripts/control-inventory.mjs --check",
+    "smoke:studio": "node scripts/studio-smoke.mjs"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
 }

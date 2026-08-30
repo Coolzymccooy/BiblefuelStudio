@@ -268,7 +268,7 @@ export function AdminPage() {
                     >
                         {TAB_LABELS[t]}
                         {t === 'access-requests' && requestCounts.pending > 0 && (
-                            <span className="bg-amber-500/20 text-amber-300 text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                            <span className="bg-white/[0.04] text-content-secondary text-[10px] font-bold px-1.5 py-0.5 rounded-full">
                                 {requestCounts.pending}
                             </span>
                         )}
@@ -284,10 +284,10 @@ export function AdminPage() {
             {tab === 'access-requests' && (
                 <Card>
                     <div className="flex items-center gap-3 mb-4 text-xs">
-                        <span className="flex items-center gap-1.5 text-amber-300">
+                        <span className="flex items-center gap-1.5 text-content-secondary">
                             <Clock size={12} /> {requestCounts.pending} pending
                         </span>
-                        <span className="flex items-center gap-1.5 text-emerald-300">
+                        <span className="flex items-center gap-1.5 text-content-secondary">
                             <CheckCircle2 size={12} /> {requestCounts.approved} approved
                         </span>
                         <span className="flex items-center gap-1.5 text-red-300">
@@ -337,7 +337,7 @@ export function AdminPage() {
                                                     onClick={() => decide(r, 'approve')}
                                                     isLoading={isBusy}
                                                     disabled={!isPending && r.status === 'approved'}
-                                                    className="text-xs py-1.5 px-3 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border-emerald-500/20"
+                                                    className="text-xs py-1.5 px-3 bg-[#7fb5aa]/10 hover:bg-[#7fb5aa]/20 text-content-secondary border-[#7fb5aa]/20"
                                                     title={r.status === 'approved' ? 'Already approved' : `Approve ${r.email} for signup`}
                                                 >
                                                     <Check size={13} className="mr-1.5" />
@@ -370,7 +370,7 @@ export function AdminPage() {
                         <span className="flex items-center gap-1.5 text-red-300">
                             <Bug size={12} /> {issueCounts.open} open
                         </span>
-                        <span className="flex items-center gap-1.5 text-emerald-300">
+                        <span className="flex items-center gap-1.5 text-content-secondary">
                             <CheckCircle2 size={12} /> {issueCounts.resolved} resolved
                         </span>
                     </div>
@@ -384,8 +384,8 @@ export function AdminPage() {
                             {issues.map((issue) => {
                                 const sevColor =
                                     issue.severity === 'high' ? 'bg-red-500/20 text-red-300 border-red-500/30'
-                                    : issue.severity === 'medium' ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
-                                    : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30';
+                                    : issue.severity === 'medium' ? 'bg-white/[0.04] text-content-secondary border-white/10'
+                                    : 'bg-[#7fb5aa]/20 text-content-secondary border-[#7fb5aa]/30';
                                 const isOpen = issue.status === 'open';
                                 return (
                                     <div
@@ -412,7 +412,7 @@ export function AdminPage() {
                                                     )}
                                                     <span>{new Date(issue.createdAt).toLocaleString()}</span>
                                                     {issue.resolvedAt && (
-                                                        <span className="text-emerald-400/80">
+                                                        <span className="text-[#7fb5aa]/80">
                                                             resolved {new Date(issue.resolvedAt).toLocaleString()} by {issue.resolvedBy}
                                                         </span>
                                                     )}
@@ -431,7 +431,7 @@ export function AdminPage() {
                                                     </div>
                                                 )}
                                                 {issue.resolutionNote && (
-                                                    <div className="mt-2 text-xs text-emerald-400/80 italic">
+                                                    <div className="mt-2 text-xs text-[#7fb5aa]/80 italic">
                                                         Note: {issue.resolutionNote}
                                                     </div>
                                                 )}
@@ -486,8 +486,8 @@ export function AdminPage() {
                                                     variant="secondary"
                                                     className={`text-xs py-1.5 px-3 ${
                                                         isOpen
-                                                            ? 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border-emerald-500/20'
-                                                            : 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border-amber-500/20'
+                                                            ? 'bg-[#7fb5aa]/10 hover:bg-[#7fb5aa]/20 text-content-secondary border-[#7fb5aa]/20'
+                                                            : 'bg-white/[0.04] hover:bg-white/[0.04] text-content-secondary border-white/10'
                                                     }`}
                                                     title={isOpen ? 'Mark this issue resolved' : 'Reopen this issue'}
                                                 >
@@ -542,11 +542,11 @@ export function AdminPage() {
                                                 </div>
                                                 <div className="flex items-center gap-3 mt-1 text-[0.75rem] text-content-tertiary">
                                                     {u.emailVerified ? (
-                                                        <span className="flex items-center gap-1 text-emerald-400/80">
+                                                        <span className="flex items-center gap-1 text-[#7fb5aa]/80">
                                                             <CheckCircle2 size={11} /> verified
                                                         </span>
                                                     ) : (
-                                                        <span className="flex items-center gap-1 text-amber-400/80">
+                                                        <span className="flex items-center gap-1 text-content-secondary">
                                                             <XCircle size={11} /> unverified
                                                         </span>
                                                     )}

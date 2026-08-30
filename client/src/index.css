@@ -3,6 +3,226 @@
 @tailwind utilities;
 
 @layer base {
+  /* -- Theme tokens ---------------------------------------------------------
+     Every surface and text colour resolves through these so a `data-theme`
+     attribute can repaint the app. DARK is the default and stays exactly as it
+     was; the light values are additive, not a rewrite.
+
+     LIGHT is NOT an inversion. Gold at the dark theme's saturation reads as
+     muddy yellow on white, so the accent darkens for contrast while keeping the
+     warm identity, and surfaces stay cream-tinted rather than clinical white so
+     both themes feel like the same product. Every light value is measured at
+     >= 4.5:1 against its surface (WCAG AA body text).
+     ----------------------------------------------------------------------- */
+  :root,
+  :root[data-theme='dark'] {
+    /* The bf.* Tailwind tokens resolve to these, so one attribute repaints
+       every component that uses them. Dark keeps the original values exactly. */
+    --bf-bg: #0b0906;
+    --bf-bg2: #080604;
+    --bf-card: #140f09;
+    --bf-card2: #17130c;
+    --bf-input: #161009;
+    --bf-input2: #0f0b07;
+    --bf-gold: #e6c98a;
+    --bf-goldDeep: #cba85f;
+    --bf-goldDim: #a8894f;
+    --bf-cream: #f4ecdc;
+    --bf-cream2: #f0e6d3;
+    --bf-sub: #b7ac97;
+    --bf-sub2: #a99f8b;
+    --bf-muted: #8a7f6b;
+    --bf-faint: #6f6654;
+    /* Dusty teal, not signal green - the professional "ready" tone from the
+       approved editor palette (gold = action, teal = ready/voice). */
+    --bf-success: #7fb5aa;
+    --bf-danger: #e08a8a;
+    /* Card/glass surfaces. Hardcoding these is what kept light mode muddy:
+       .card painted rgba(17,14,10,.6) regardless of theme. */
+    --bf-cardSurface: rgba(17, 14, 10, 0.60);
+    --bf-cardBorder: rgba(255, 255, 255, 0.06);
+    --bf-cardBorderHover: rgba(255, 255, 255, 0.12);
+    --bf-cardShadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 10px 30px -14px rgba(0, 0, 0, 0.5);
+    --bf-cardSolid: #140f09;
+    --bf-hoverTint: rgba(255, 255, 255, 0.07);
+    /* Pale gold fill -> near-black label (11.81:1). */
+    --bf-btnPrimaryFill: linear-gradient(180deg, #e9cd8d, #cba85f);
+    --bf-btnPrimaryInk: #221703;
+    --bf-btnPrimaryShadow: 0 14px 28px -10px rgba(216, 184, 120, 0.5);
+    --bf-btnSecondaryInk: #cdbfa6;
+    --bf-btnSecondaryBorder: rgba(216, 184, 120, 0.16);
+    --bf-btnSecondaryBorderHover: rgba(216, 184, 120, 0.30);
+    /* Tailwind gray, unchanged in dark. */
+    --g-100:#f3f4f6; --g-200:#e5e7eb; --g-300:#d1d5db; --g-400:#9ca3af;
+    --g-500:#6b7280; --g-600:#4b5563; --g-700:#374151; --g-800:#1f2937; --g-900:#111827;
+    --ink:#ffffff;
+    /* Stage is the only editor surface that follows the theme. */
+    --editor-stage:#080604;
+
+    --surface-bg: #0b0906;
+    --surface-card: #140f09;
+    --surface-card2: #17130c;
+    --surface-input: #161009;
+    --border-subtle: rgba(216, 184, 120, 0.08);
+    --border-strong: rgba(216, 184, 120, 0.20);
+    --text-primary: #f4ecdc;
+    --accent: #e6c98a;
+    --accent-deep: #cba85f;
+    /* Dark mode already had a light gold, so the fill is that same gold with
+       dark ink - the pair must exist in BOTH themes or a filled button loses
+       its text colour when the theme flips. */
+    --accent-fill: #e6c98a;
+    --accent-ink: #1c1a15;
+    --tone-success: #6fcf97;
+    --tone-danger: #e08a8a;
+  }
+
+  :root[data-theme='light'] {
+    /* Light is NOT an inversion. `cream` is the PRIMARY TEXT token, so in light
+       mode it must become near-black — leaving it cream is what made headings
+       and sidebar labels invisible. Every value below was measured against the
+       white card surface and passes WCAG AA (>= 4.5:1). */
+    --bf-bg: #faf7f2;
+    --bf-bg2: #f2ede4;
+    --bf-card: #ffffff;
+    --bf-card2: #f7f3ec;
+    --bf-input: #ffffff;
+    --bf-input2: #f7f3ec;
+    --bf-gold: #8a6d33;      /* 4.87:1 — still reads gold, not yellow */
+    --bf-goldDeep: #6f5726;  /* 6.85:1 */
+    --bf-goldDim: #82683a;   /* 5.26:1 */
+    --bf-cream: #1c1a15;     /* 17.38:1 — primary text */
+    --bf-cream2: #2a2620;    /* 15.04:1 */
+    --bf-sub: #4a4438;       /* 9.65:1 */
+    --bf-sub2: #5c5548;      /* 7.37:1 */
+    --bf-muted: #6b6456;     /* 5.86:1 */
+    --bf-faint: #7a7264;     /* 4.75:1 */
+    --bf-success: #2a6f66;   /* muted teal, 5.1:1 on white */
+    --bf-danger: #b03b3b;    /* 5.94:1 */
+    /* Opaque white cards. A translucent surface over a cream page produced the
+       muddy brown panels; light mode wants clean white with a real border. */
+    --bf-cardSurface: #ffffff;
+    --bf-cardBorder: rgba(28, 26, 21, 0.10);
+    --bf-cardBorderHover: rgba(28, 26, 21, 0.20);
+    --bf-cardShadow: 0 1px 2px rgba(28, 26, 21, 0.04), 0 8px 24px -12px rgba(28, 26, 21, 0.14);
+    --bf-cardSolid: #ffffff;
+    --bf-hoverTint: rgba(28, 26, 21, 0.06);
+    /* Deeper gold fill so the button reads as a solid action against white
+       cards, with a WHITE label (4.87:1). Near-black here would be 3.9:1. */
+    --bf-btnPrimaryFill: linear-gradient(180deg, #8a6d33, #745c2c);
+    --bf-btnPrimaryInk: #ffffff;
+    --bf-btnPrimaryShadow: 0 10px 22px -12px rgba(122, 98, 46, 0.55);
+    --bf-btnSecondaryInk: #4a4438;      /* 9.65:1 on white */
+    --bf-btnSecondaryBorder: rgba(28, 26, 21, 0.18);
+    --bf-btnSecondaryBorderHover: rgba(28, 26, 21, 0.34);
+    /* INVERTED: 100-300 are heading/label colours, so they go near-black.
+       Measured on white — 18.7, 17.4, 14.2, 9.7, 7.4, 5.9, 4.8 : 1. */
+    --g-100:#141210; --g-200:#1c1a15; --g-300:#2f2a22; --g-400:#4a4438;
+    --g-500:#5c5548; --g-600:#6b6456; --g-700:#7a7264; --g-800:#8a8272; --g-900:#9a9280;
+    --ink:#1c1a15;
+    --editor-stage:#e9e4db;
+    /* Editor chrome in light mode: white panels, near-black text, and the
+       darker gold that clears 4.5:1 on white. Without these the docked
+       sheet stayed dark on a light page and its labels vanished. */
+    --editor-chrome:#f4f0e8;
+    --editor-panel:#ffffff;
+    --editor-hover:rgba(28, 26, 21, 0.06);
+    --editor-line:rgba(28, 26, 21, 0.12);
+    --editor-text:#1c1a15;
+    --editor-dim:#4a4438;
+    --editor-faint:#6b6456;
+    /* Gold, not brown. The old #8a6d33 sat at 46% saturation because it had
+       been darkened to carry WHITE text; it read as chocolate. This keeps the
+       same legibility (4.95:1 on white) at 75% saturation, and filled
+       surfaces use --accent-fill with dark ink instead. */
+    --editor-accent:#8f6a14;
+    --stage-ground:#efeae1;
+    --stage-check:rgba(28, 26, 21, 0.05);
+
+    --surface-bg: #faf7f2;
+    --surface-card: #ffffff;
+    --surface-card2: #f5f1e9;
+    --surface-input: #ffffff;
+    --border-subtle: rgba(28, 26, 21, 0.10);
+    --border-strong: rgba(28, 26, 21, 0.22);
+    --text-primary: #1c1a15;
+    /* Two golds, two jobs. --accent is TEXT and thin rules on light chrome, so
+       it must clear 4.5:1 on white (4.95:1 here). --accent-fill paints filled
+       surfaces like the Render button and carries DARK ink, which is what
+       lets it stay a rich, saturated gold (8.4:1 with ink) instead of the
+       muddy brown that chasing white-on-gold contrast produced. */
+    --accent: #8f6a14;
+    --accent-deep: #6f5726;
+    --accent-fill: #dcae4a;
+    --accent-ink: #1c1a15;
+    --tone-success: #1a7f4f;
+    --tone-danger: #b03b3b;
+    /* Secondary text follows the theme, else it stays a dark-mode cream. */
+    --content-secondary: #5c5548;
+    --content-tertiary: #7a7264;
+    /* Native controls (select popups, scrollbars) must follow too, or the
+       OS-drawn option list renders dark-on-light. */
+    color-scheme: light;
+  }
+
+  /* `text-white` is used ~112 times as the PRIMARY heading colour. On a white
+     card that is invisible. Remapping the utility itself is the only way to
+     fix them all without touching 49 files — and it cannot be done in the
+     Tailwind config, because that would break bg-white/10 opacity modifiers. */
+  :root[data-theme='light'] .text-white { color: #1c1a15; }
+
+  /* Type on a pale ground reads THINNER than the same weight on dark. Light
+     mode therefore steps every label/heading class up a weight so the UI feels
+     as solid as the dark theme rather than washed out. */
+  :root[data-theme='light'] .field-label,
+  :root[data-theme='light'] .text-caption,
+  :root[data-theme='light'] .bf-eyebrow { font-weight: 700; }
+
+  :root[data-theme='light'] .card-title,
+  :root[data-theme='light'] h1,
+  :root[data-theme='light'] h2,
+  :root[data-theme='light'] h3 { font-weight: 650; }
+
+  /* Gold on a pale ground is the thinnest-reading combination in the app, so
+     it gets the biggest bump — this is the "make the gold bolder" fix. */
+  :root[data-theme='light'] .text-bf-gold,
+  :root[data-theme='light'] .text-bf-goldDeep,
+  :root[data-theme='light'] .text-bf-goldDim { font-weight: 600; }
+
+  /* MOBILE SAFETY NET
+     body has overflow-x-hidden, which stops the PAGE scrolling sideways but
+     silently CLIPS anything wider than the viewport — a w-[600px] panel on a
+     375px phone loses its right-hand content with no scrollbar to reveal it.
+     Below the lg breakpoint, fixed-width boxes shrink to fit and long strings
+     (file paths, job ids, URLs) wrap instead of pushing the layout wide. */
+  @media (max-width: 1023px) {
+    [class*="w-["] { max-width: 100%; }
+    pre, code, .font-mono { overflow-wrap: anywhere; }
+    table { display: block; overflow-x: auto; }
+  }
+
+  /* Phones: desktop card padding (20-24px each side) eats a third of a 390px
+     screen, so content is squeezed and long labels wrap awkwardly. Tighten it
+     and let flex rows wrap rather than overflow. */
+  @media (max-width: 639px) {
+    .card { padding: 14px; border-radius: 14px; }
+    .input { padding-left: 12px; padding-right: 12px; }
+  }
+
+  :root[data-theme='light'] select { color-scheme: light; }
+
+  :root[data-theme='light'] option,
+  :root[data-theme='light'] optgroup {
+    background-color: #ffffff;
+    color: #1c1a15;
+  }
+
+  :root[data-theme='light'] body {
+    background-color: var(--surface-bg);
+    background-image: none;
+    color: var(--text-primary);
+  }
+
   :root {
     /* Secondary-text system, brightened for legibility — small/light subtext at
        the old #A8B0BC/#8A929E read as washed-out on the near-black UI and made
@@ -36,7 +256,7 @@
   body {
     @apply text-gray-200 overflow-x-hidden font-sans;
     /* Quiet-studio: warm gold-on-near-black wash. */
-    background-color: #0b0906;
+    background-color: var(--bf-bg);
     background-image:
       radial-gradient(1200px 700px at 20% -10%, rgba(216, 184, 120, 0.10), transparent 55%),
       radial-gradient(900px 600px at 110% 110%, rgba(107, 79, 31, 0.16), transparent 55%),
@@ -94,15 +314,15 @@
      surface). Gold stays an accent elsewhere, never a surface wash. */
   .card {
     @apply relative rounded-bf p-5 sm:p-6 transition-all duration-300 overflow-hidden;
-    background: rgba(17, 14, 10, 0.60);
+    background: var(--bf-cardSurface);
     backdrop-filter: blur(16px);
     -webkit-backdrop-filter: blur(16px);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 10px 30px -14px rgba(0, 0, 0, 0.5);
+    border: 1px solid var(--bf-cardBorder);
+    box-shadow: var(--bf-cardShadow);
   }
 
   .card:hover {
-    border-color: rgba(255, 255, 255, 0.12);
+    border-color: var(--bf-cardBorderHover);
   }
 
   .card-glow::before {
@@ -120,18 +340,31 @@
   }
 
   /* Gold gradient CTA on ink text — the quiet-studio primary action. */
+  /* The label colour MUST flip with the theme. Measured on the actual button
+     fill: near-black on pale gold is 11.8:1, but on the DARKENED light-mode
+     gold it is only 3.9:1 — a fail. White on that darker gold is 4.87:1.
+     Using one fixed label colour makes the button illegible in one theme. */
   .btn-primary {
-    @apply text-[#221703] border-none font-semibold hover:-translate-y-0.5;
-    background-image: linear-gradient(180deg, #e9cd8d, #cba85f);
-    box-shadow: 0 14px 28px -10px rgba(216, 184, 120, 0.5);
+    @apply border-none font-semibold hover:-translate-y-0.5;
+    color: var(--bf-btnPrimaryInk);
+    background-image: var(--bf-btnPrimaryFill);
+    box-shadow: var(--bf-btnPrimaryShadow);
   }
 
   .btn-primary:hover {
     filter: brightness(1.03);
   }
 
+  /* Secondary label was a fixed pale #cdbfa6 — fine on a dark card, nearly
+     invisible on a white one. Follows the theme now. */
   .btn-secondary {
-    @apply bg-bf-card text-[#cdbfa6] border border-[rgba(216,184,120,0.16)] hover:bg-bf-card2 hover:border-[rgba(216,184,120,0.30)] hover:text-bf-cream;
+    @apply bg-bf-card2 border hover:bg-bf-card hover:text-bf-cream;
+    color: var(--bf-btnSecondaryInk);
+    border-color: var(--bf-btnSecondaryBorder);
+  }
+
+  .btn-secondary:hover {
+    border-color: var(--bf-btnSecondaryBorderHover);
   }
 
   .btn-danger {
@@ -147,9 +380,61 @@
     @apply border-[rgba(216,184,120,0.24)];
   }
 
+  /* ── Surface + icon-button vocabulary ────────────────────────────────────
+     TimelinePage alone had NINE different surface treatments (bg-black at five
+     opacities, bg-white at four, plus tinted one-offs) because each control
+     invented its own. That reads as unfinished however good the palette is.
+
+     CapCut's discipline is the fix: ONE accent, used sparingly, and everything
+     else neutral. These three surfaces and two icon-button styles are the whole
+     vocabulary — a new control picks one rather than inventing a tenth. */
+
+  /* Recessed: inputs, wells, anything you type or drop into. */
+  .surface-sunken {
+    background: var(--bf-input);
+    border: 1px solid var(--bf-cardBorder);
+  }
+
+  /* Raised: list rows, thumbnails, chips — a step above the card. */
+  .surface-raised {
+    background: var(--bf-card2);
+    border: 1px solid var(--bf-cardBorder);
+  }
+
+  /* Overlay: floats above content (badges over media, hover controls). */
+  .surface-overlay {
+    background: rgba(0, 0, 0, 0.62);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+  }
+
+  /* Neutral icon button. The DEFAULT for icon actions: no colour until hover,
+     so a row of them reads as one control group rather than a fruit salad. */
+  .icon-btn {
+    @apply inline-grid place-items-center rounded-md p-1.5 transition-colors;
+    color: var(--content-tertiary);
+  }
+  .icon-btn:hover:not(:disabled) {
+    color: var(--bf-cream);
+    background: var(--bf-hoverTint);
+  }
+  .icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* Destructive icon button. The ONLY icon variant that carries colour, and it
+     stays neutral until hover — a delete that is permanently red shouts on
+     every row, and the shouting stops being read. */
+  .icon-btn-danger {
+    @apply inline-grid place-items-center rounded-md p-1.5 transition-colors;
+    color: var(--content-tertiary);
+  }
+  .icon-btn-danger:hover:not(:disabled) {
+    color: #f87171;
+    background: rgba(248, 113, 113, 0.12);
+  }
+
   /* Field primitives - the building blocks for forms */
   .field-label {
-    @apply block text-[0.8125rem] font-medium text-gray-300 mb-1.5;
+    @apply block text-[0.8125rem] font-semibold text-gray-300 mb-1.5;
   }
 
   .field-help {
@@ -331,11 +616,11 @@
   /* Neutral dark frost matched to the production card surface (bf-card #140f09),
      NOT a gold wash — no saturate (it amplifies the warm background), neutral
      white hairline rim. Gold stays an accent (buttons, active chips, waveform). */
-  background: rgba(17, 14, 10, 0.60);
+  background: var(--bf-cardSurface);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 10px 30px -14px rgba(0, 0, 0, 0.5);
+  border: 1px solid var(--bf-cardBorder);
+  box-shadow: var(--bf-cardShadow);
 }
 
 .glass-float {
@@ -349,7 +634,7 @@
 /* Respect users who don't want the blur (perf / vestibular) — fall back to a
    solid tint so panels stay legible. */
 @media (prefers-reduced-transparency: reduce) {
-  .glass, .card { background: #140f09; backdrop-filter: none; -webkit-backdrop-filter: none; }
+  .glass, .card { background: var(--bf-cardSolid); backdrop-filter: none; -webkit-backdrop-filter: none; }
   .glass-float { background: #0c0a07; backdrop-filter: none; -webkit-backdrop-filter: none; }
 }
 
@@ -370,3 +655,125 @@ input:-webkit-autofill:focus {
   -webkit-box-shadow: 0 0 0px 1000px #161009 inset;
   transition: background-color 5000s ease-in-out 0s;
 }
+
+/* Classic control blocks docked inside an editor panel (~320px): their
+   viewport-based md: grids would cram 3 columns into the panel, so stack. */
+.editor-embed [class*="md:grid-cols-"] { grid-template-columns: minmax(0, 1fr) !important; }
+.editor-embed [class*="lg:grid-cols-"] { grid-template-columns: minmax(0, 1fr) !important; }
+/* Embedded lab: providers as full-width rows (name left, note right) so the
+   muscular labels never truncate in a ~300px panel; classic controls shrink
+   to editor scale. */
+.editor-embed .provider-grid { grid-template-columns: minmax(0, 1fr) !important; }
+.editor-embed .provider-btn { display: flex; align-items: baseline; justify-content: space-between; gap: .5rem; padding-top: .45rem; padding-bottom: .45rem; }
+.editor-embed .provider-btn > span { overflow: visible; white-space: normal; }
+.editor-embed .input { font-size: 12px; padding: 6px 10px; border-radius: 8px; }
+.editor-embed .field-label { font-size: 11px; }
+/* Embedded classic blocks: editor scale. Compact, nothing enlarged, nothing
+   clipped - the classic page keeps its own sizes. */
+.editor-embed .card { padding: 10px 12px; border-radius: 12px; }
+.editor-embed .card h3 { font-size: 13px; line-height: 1.2; }
+.editor-embed .card svg.text-primary-400 { width: 15px; height: 15px; }
+.editor-embed button { font-size: 12px; }
+.editor-embed button[class*="px-4"] { padding: 6px 12px; }
+.editor-embed .text-help, .editor-embed .field-help, .editor-embed .text-meta { font-size: 11px; line-height: 1.35; }
+.editor-embed .text-sm { font-size: 12px; }
+.editor-embed .text-\[0\.9375rem\] { font-size: 12.5px; }
+.editor-embed .text-\[0\.8125rem\] { font-size: 11.5px; }
+.editor-embed textarea.input { font-size: 12px; min-height: 5rem; }
+.editor-embed input[type="range"] { height: 4px; }
+.editor-embed .space-y-4 > * + * { margin-top: .625rem; }
+.editor-embed .p-3 { padding: .5rem .625rem; }
+.editor-embed audio { height: 32px; }
+.editor-embed [class*="sm:grid-cols-"]:not(.provider-grid) { grid-template-columns: minmax(0, 1fr) !important; }
+.editor-embed [class*="md:flex-row"] { flex-direction: column !important; align-items: stretch !important; }
+.editor-embed [class*="md:w-64"] { width: 100% !important; }
+.editor-embed .max-h-80 { max-height: 22rem; }
+/* Helper-text model for the whole app: the Share Kit summary size
+   ("copy caption · auto-post") is the reference. Notes stay muted, never a
+   colour of their own. */
+.text-help { font-size: 11px; }
+.field-help, .text-meta { font-size: 10.5px; }
+/* Inside a docked lab only the footer action (Land / Render) stays solid
+   gold; every other primary button becomes a calm gold outline. */
+.editor-embed .lab-body .bg-primary-500 { background: rgba(230,201,138,.10); color: #e6c98a; border-color: rgba(230,201,138,.45); box-shadow: none; }
+.editor-embed .lab-body .bg-primary-500:hover { background: rgba(230,201,138,.18); }
+.editor-embed .text-help, .editor-embed .field-help { font-size: 10.5px; }
+.editor-embed .text-\[12px\] { font-size: 11px; }
+.editor-embed textarea.input { min-height: 4.5rem; }
+.editor-embed label.field-label, .editor-embed .field-label { font-size: 11px; margin-bottom: .25rem; }
+/* The stage's ground is a transparency checkerboard (editor palette), so an
+   empty canvas reads as "nothing placed yet" and alpha in images shows. */
+.stage-ground {
+  /* Theme-aware: the dark checkerboard read as a black hole on a light page. */
+  background-color: var(--stage-ground, #0e0b06);
+  background-image:
+    linear-gradient(45deg, var(--stage-check, rgba(255,255,255,.045)) 25%, transparent 25%, transparent 75%, var(--stage-check, rgba(255,255,255,.045)) 75%),
+    linear-gradient(45deg, var(--stage-check, rgba(255,255,255,.045)) 25%, transparent 25%, transparent 75%, var(--stage-check, rgba(255,255,255,.045)) 75%);
+  background-size: 18px 18px;
+  background-position: 0 0, 9px 9px;
+}
+/* Voice lab, embedded: firm and compact. Provider rows at 30px, the
+   disabled-reason list folded into the rows' tooltips, the tuning sliders
+   side by side under a full-width Voice ID. */
+.editor-embed .provider-btn { padding: .3rem .6rem; }
+.editor-embed .provider-btn > span:first-child { font-size: 12px; }
+.editor-embed .provider-btn > span:last-child { font-size: 10px; }
+.editor-embed .provider-grid { gap: .3rem; }
+.editor-embed .provider-reasons { display: none; }
+.editor-embed .voice-tuning { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr) !important; gap: .5rem .75rem !important; }
+.editor-embed .voice-tuning > :first-child { grid-column: 1 / -1; }
+.editor-embed .voice-tuning input[type="range"] { margin-top: .15rem; }
+.editor-embed .space-y-4 > * + * { margin-top: .5rem; }
+.editor-embed .space-y-3 > * + * { margin-top: .5rem; }
+
+/* ---------------------------------------------------------------------------
+   Phone panel density. The docked labs were tuned for a ~300px desktop rail;
+   on a 390px phone the same markup reads as desktop-scale. `.editor-phone` is
+   the phone sheet. These are written with a doubled class so they beat the
+   `.editor-embed` rules that live INSIDE the sheet (equal specificity would
+   lose on source order).
+   Floor: 11px secondary, 12px content.
+--------------------------------------------------------------------------- */
+.editor-phone.editor-phone { font-size: 12px; }
+.editor-phone.editor-phone h2, .editor-phone.editor-phone h3 { font-size: 12.5px; line-height: 1.25; }
+.editor-phone.editor-phone .card { padding: 8px 10px; border-radius: 10px; }
+.editor-phone.editor-phone .card h3 { font-size: 12px; }
+.editor-phone.editor-phone .input { font-size: 12px; padding: 5px 8px; border-radius: 8px; min-height: 32px; }
+.editor-phone.editor-phone select.input, .editor-phone.editor-phone input.input { height: 32px; }
+.editor-phone.editor-phone textarea.input { min-height: 3.5rem; line-height: 1.35; font-size: 12px; }
+.editor-phone.editor-phone .field-label { font-size: 11px; margin-bottom: 2px; }
+.editor-phone.editor-phone .text-help,
+.editor-phone.editor-phone .field-help,
+.editor-phone.editor-phone .text-meta { font-size: 11px; line-height: 1.3; }
+.editor-phone.editor-phone button { font-size: 12px; }
+.editor-phone.editor-phone .provider-btn { padding: .28rem .5rem; }
+.editor-phone.editor-phone .provider-btn > span:first-child { font-size: 11.5px; }
+.editor-phone.editor-phone .provider-btn > span:last-child { font-size: 10px; }
+/* Tailwind text utilities the panels use directly. */
+.editor-phone.editor-phone [class*="text-xs"] { font-size: 11.5px; }
+.editor-phone.editor-phone [class*="text-sm"] { font-size: 12px; }
+.editor-phone.editor-phone [class*="text-base"] { font-size: 12.5px; }
+.editor-phone.editor-phone [class*="text-lg"] { font-size: 13px; }
+.editor-phone.editor-phone [class*="text-[11px]"] { font-size: 11px; }
+.editor-phone.editor-phone [class*="text-[12px]"] { font-size: 11.5px; }
+.editor-phone.editor-phone [class*="text-[13px]"] { font-size: 12px; }
+.editor-phone.editor-phone [class*="text-[15px]"] { font-size: 12.5px; }
+/* Control heights: 32-34px is still a comfortable tap target inside a sheet. */
+.editor-phone.editor-phone [class*="h-9"] { height: 32px; }
+.editor-phone.editor-phone [class*="h-10"] { height: 34px; }
+/* Rhythm. */
+.editor-phone.editor-phone .space-y-4 > * + * { margin-top: .4rem; }
+.editor-phone.editor-phone .space-y-3 > * + * { margin-top: .4rem; }
+.editor-phone.editor-phone .space-y-2 > * + * { margin-top: .3rem; }
+.editor-phone.editor-phone [class*="p-3"] { padding: .4rem .5rem; }
+.editor-phone.editor-phone [class*="p-4"] { padding: .5rem .625rem; }
+.editor-phone.editor-phone audio { height: 28px; }
+.editor-phone.editor-phone input[type="range"] { height: 3px; }
+/* Two controls per row instead of one full-width stack. */
+.editor-phone.editor-phone .lab-body > div > .flex-wrap { gap: .3rem; }
+/* Section chrome inside the phone sheet. RevealSection is a page-level block
+   (14px title, 14px/56px header row) and it was eating a third of the sheet
+   before any control appeared. */
+.editor-phone.editor-phone .reveal-head { padding: .375rem .625rem; gap: .5rem; }
+.editor-phone.editor-phone .reveal-title { font-size: 12px; }
+.editor-phone.editor-phone .reveal-head svg { width: 14px; height: 14px; }

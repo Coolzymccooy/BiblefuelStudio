@@ -1,6 +1,10 @@
 import { spawn } from "child_process";
+import fs from "fs";
+import path from "path";
 import { buildWordDrawtext, escapeDrawText } from "../videoFilters.js";
 import { kenBurnsFilter } from "../kenBurns.js";
+import { kenBurnsVariedFilter, moveForIndex } from "../kenBurnsVaried.js";
+import { buildXfadeChain } from "./sceneTransitions.js";
 import { markRunning, markProgress, markDone, markError, attachProc } from "../renderJobs.js";
 
 /**
@@ -154,8 +158,19 @@ export function buildStoryFfmpegArgs({ scenes, words, audioPath, musicPath, musi
 
   const sceneLabels = [];
   const filterParts = [];
+  // Crossfade instead of hard-cutting between scenes. xfade OVERLAPS its
+  // inputs, so each scene (bar the last) is rendered slightly longer and the
+  // extra frames are what the dissolve consumes — total runtime is unchanged,
+  // which keeps the visuals locked to the narration audio.
+  const xfade = buildXfadeChain(segs);
   segs.forEach((seg, i) => {
-    const kb = kenBurnsFilter(width, height, seg.durationSec, 30);
+    // Ken Burns spans the PADDED duration so the move still completes across
+    // the whole clip, including the frames the crossfade eats.
+    const kbDuration = xfade.paddedDurations[i] ?? seg.durationSec;
+    // Alternate the move per scene; a uniform push-in across 30 stills is what
+    // makes a sequence feel mechanical. Deterministic on index so re-renders
+    // match the approved video.
+    const kb = kenBurnsVariedFilter(width, height, kbDuration, 30, moveForIndex(i));
     // trim=end_frame=1 collapses the looped still to a SINGLE frame before
     // zoompan. Without it, `-loop 1` feeds an endless frame stream into
     // zoompan (which emits d frames per input frame), causing a runaway encode
@@ -167,7 +182,12 @@ export function buildStoryFfmpegArgs({ scenes, words, audioPath, musicPath, musi
     );
     sceneLabels.push(`[s${i}]`);
   });
-  filterParts.push(`${sceneLabels.join("")}concat=n=${segs.length}:v=1:a=0[vcat]`);
+  if (xfade.filters.length > 0) {
+    filterParts.push(...xfade.filters);
+  } else {
+    // Single scene: nothing to cross into, so alias it straight to [vcat].
+    filterParts.push(`${sceneLabels.join("")}null[vcat]`);
+  }
 
   const drawWords = words
     .filter((w) => w && w.text && Number.isFinite(w.startMs) && Number.isFinite(w.endMs))
@@ -229,6 +249,30 @@ export function buildStoryFfmpegArgs({ scenes, words, audioPath, musicPath, musi
 }
 
 /**
+ * Move the (potentially enormous) -filter_complex graph into a script file
+ * next to the output, returning args that use -filter_complex_script.
+ *
+ * An 8-scene kinetic render's graph blew past Windows' ~32K command-line
+ * limit: spawn threw ENAMETOOLONG synchronously and (via the uncaught
+ * rejection in the route's fire-and-forget) took the WHOLE server down.
+ * Same fix the captioned-video and timeline renderers already use.
+ *
+ * @returns {{ args: string[], scriptFile: string | null }}
+ */
+export function toFilterScriptArgs(args, outPath) {
+  const idx = args.indexOf("-filter_complex");
+  if (idx < 0 || idx + 1 >= args.length) return { args, scriptFile: null };
+  const scriptFile = path.join(
+    path.dirname(outPath),
+    `filter-${path.basename(outPath, ".mp4")}.txt`,
+  );
+  fs.writeFileSync(scriptFile, args[idx + 1], "utf8");
+  const next = args.slice();
+  next.splice(idx, 2, "-filter_complex_script", scriptFile);
+  return { args: next, scriptFile };
+}
+
+/**
  * Spawn FFmpeg for a story render, wiring progress into the job registry.
  * Resolves with { ok, file } / { ok:false, error }.
  */
@@ -243,7 +287,16 @@ export function runStoryRender({ jobId, scenes, words, audioPath, musicPath, mus
     }
     markRunning(jobId);
     const ff = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
-    const proc = spawn(ff, built.args);
+    // spawn can throw SYNCHRONOUSLY (ENAMETOOLONG, ENOENT) - a throw here must
+    // become a failed job, never a dead server.
+    let proc;
+    try {
+      const scripted = toFilterScriptArgs(built.args, outPath);
+      proc = spawn(ff, scripted.args);
+    } catch (err) {
+      markError(jobId, err?.message || err);
+      return resolve({ ok: false, error: String(err?.message || err) });
+    }
     // Register so a user cancel (cancelJob) can SIGKILL this render.
     attachProc(jobId, proc);
     let stderrTail = "";

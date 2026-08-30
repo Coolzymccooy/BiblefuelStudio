@@ -20,6 +20,8 @@ interface AnimationPickerProps {
   value?: string;
   onChange?: (id: string, animation: KineticAnimation) => void;
   className?: string;
+  /** Open on mount (the embedded lab shows it as its own tab). */
+  defaultOpen?: boolean;
 }
 
 /**
@@ -29,7 +31,7 @@ interface AnimationPickerProps {
  * The chosen id is the `typographyPreset` passed to renders, and is persisted
  * to localStorage so the render flow can pick it up.
  */
-export function AnimationPicker({ value, onChange, className = '' }: AnimationPickerProps) {
+export function AnimationPicker({ value, onChange, className = '', defaultOpen = false }: AnimationPickerProps) {
   const [animations, setAnimations] = useState<KineticAnimation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -74,7 +76,7 @@ export function AnimationPicker({ value, onChange, className = '' }: AnimationPi
       icon={Wand2}
       className={className}
       collapsible
-      defaultOpen={false}
+      defaultOpen={defaultOpen}
       tooltip="Word-synced motion styles applied to kinetic captions. Renderable presets bake into the final MP4 via ffmpeg; preview-only ones are browser previews while the renderer support catches up."
     >
       {loading ? (
@@ -82,7 +84,7 @@ export function AnimationPicker({ value, onChange, className = '' }: AnimationPi
           <Loader2 size={16} className="animate-spin" /> Loading animations…
         </div>
       ) : error ? (
-        <div className="text-red-300 text-sm">{error}</div>
+        <div className="text-[11px] text-content-secondary">Animations unavailable right now — {error}</div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-80 overflow-y-auto pr-1">
           {animations.map((a) => {
@@ -99,16 +101,16 @@ export function AnimationPicker({ value, onChange, className = '' }: AnimationPi
                 onClick={() => pick(a)}
                 aria-pressed={active}
                 title={tip}
-                className={`text-left rounded-lg px-3 py-2 border transition focus:outline-none focus:ring-2 focus:ring-emerald-400/40 ${
+                className={`text-left rounded-lg px-3 py-2 border transition focus:outline-none focus:ring-2 focus:ring-editor-accent/40 ${
                   active
-                    ? 'border-emerald-400/60 bg-emerald-500/10 ring-1 ring-emerald-400/40'
+                    ? 'border-editor-accent/60 bg-editor-accent/10 ring-1 ring-editor-accent/40'
                     : 'border-white/10 bg-white/5 hover:bg-white/10'
                 }`}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-sm font-semibold text-gray-100 truncate">{a.label}</span>
-                  <Badge variant={a.renderable ? 'success' : 'warning'}>
-                    {a.renderable ? 'Renderable' : 'Preview'}
+                  <span className="min-w-0 truncate text-sm font-semibold text-gray-100" title={a.label}>{a.label}</span>
+                  <Badge variant={a.renderable ? 'default' : 'warning'} className="shrink-0 !px-1.5 !py-0.5 !text-[10px]">
+                    {a.renderable ? 'Renders' : 'Preview only'}
                   </Badge>
                 </div>
                 <p className="mt-0.5 text-[11px] leading-snug text-content-secondary truncate">{a.description}</p>

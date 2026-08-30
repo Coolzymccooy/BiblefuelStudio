@@ -30,12 +30,17 @@ function projectPath(baseDir, projectId) {
  * @param {string} baseDir  the caller's req.ctx.dataDir
  * @param {{title?:string, style?:string}} opts
  */
-export function createProject(baseDir, { title = "Untitled", style = "cinematic-bible" } = {}) {
+export function createProject(baseDir, { title = "Untitled", style = "cinematic-bible", cast = [] } = {}) {
   const now = Date.now();
   const project = {
     projectId: uuid(),
     title: String(title).slice(0, 200),
     style: String(style),
+    // Project-level cast: which known biblical figures appear in THIS story.
+    // Applied to every scene prompt so a recurring character keeps the same
+    // face and dress. Set once per project rather than per scene, because a
+    // story's cast does not change halfway through.
+    cast: Array.isArray(cast) ? cast.map(String) : [],
     status: STORY_STATUS.DRAFT,
     source: { audioPath: null, durationMs: 0 },
     transcript: { words: [], hash: null },

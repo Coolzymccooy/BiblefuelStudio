@@ -5,6 +5,8 @@ import { spawn } from "child_process";
 import { extractAudioToMp3 } from "../lib/transcode.js";
 import {
   transcribeAudio,
+} from "../lib/stt/index.js";
+import {
   chunkAudioForTranscription,
   stitchTranscriptions,
 } from "../lib/voice/alignment.js";
@@ -64,6 +66,10 @@ router.post("/", async (req, res) => {
       chunks.map(async (c) => ({ offsetMs: c.offsetMs, transcription: await _transcribeFn(c.path) })),
     );
     const stitched = stitchTranscriptions(transcribed);
+    const sttProvidersUsed = [...new Set(transcribed.map((c) => c.transcription?.provider).filter(Boolean))];
+    const sttFallbacks = transcribed
+      .filter((c) => c.transcription?.fallbackFrom)
+      .map((c) => ({ from: c.transcription.fallbackFrom, to: c.transcription.provider, error: c.transcription.fallbackError || '' }));
 
     // Best-effort cleanup of the transcription-only temp files (the compact
     // `-whisper.mp3` / `-chunk-NNN.mp3` we just generated). Never touch the
@@ -78,7 +84,7 @@ router.post("/", async (req, res) => {
       return res.status(502).json({ ok: false, error: "Transcription returned no words — the audio may be silent or have no clear speech, or the server's OPENAI_API_KEY may be missing/invalid." });
     }
 
-    return res.json({ ok: true, audioPath, durationMs, words: stitched.words });
+    return res.json({ ok: true, audioPath, durationMs, sttProvider: sttProvidersUsed[0] || null, sttProvidersUsed, sttFallbacks, words: stitched.words });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e?.message || e) });
   }

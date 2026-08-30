@@ -107,12 +107,14 @@ function App() {
             containerStyle={{ top: 'calc(env(safe-area-inset-top, 0px) + 64px)' }}
             toastOptions={{
               duration: 3000,
-              style: { maxWidth: 'min(92vw, 480px)', wordBreak: 'break-word' },
+              // Editor palette, not the library's green/red defaults.
+              style: { maxWidth: 'min(92vw, 480px)', wordBreak: 'break-word', background: '#1a150d', color: '#f3ead6', border: '1px solid rgba(216,184,120,.22)', fontSize: '13px' },
+              success: { duration: 2500, iconTheme: { primary: '#e6c98a', secondary: '#14100a' } },
               error: {
                 duration: 5000,
-                style: { maxWidth: 'min(92vw, 480px)', wordBreak: 'break-word' },
+                style: { maxWidth: 'min(92vw, 480px)', wordBreak: 'break-word', background: '#1a150d', color: '#f3ead6', border: '1px solid rgba(216,184,120,.22)', fontSize: '13px' },
+                iconTheme: { primary: '#c9a17f', secondary: '#14100a' },
               },
-              success: { duration: 2500 },
             }}
           >
             {(t) => (
@@ -124,7 +126,7 @@ function App() {
                     <button
                       onClick={() => toast.dismiss(t.id)}
                       aria-label="Dismiss notification"
-                      className="-mr-1 shrink-0 rounded-md p-1 text-gray-400 hover:text-gray-700 hover:bg-black/5 transition-colors"
+                      className="-mr-1 shrink-0 rounded-md p-1 text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
                     >
                       <X size={15} />
                     </button>

@@ -502,7 +502,7 @@ export function HomePage() {
                             </p>
 
                             {firebaseEnabled && !useFirebaseAuth && (
-                                <div className="mt-4 rounded-xl border border-yellow-500/20 bg-yellow-500/10 p-3 text-xs text-yellow-200">
+                                <div className="mt-4 rounded-xl border border-white/10 bg-white/[0.04] p-3 text-xs text-content-secondary">
                                     Firebase server auth is enabled, but client Firebase keys are missing. Using local auth fallback.
                                 </div>
                             )}
@@ -696,21 +696,21 @@ export function HomePage() {
                                     lower.includes('not approved');
                                 if (isApprovalBlocked) {
                                     return (
-                                        <div className="mt-4 rounded-xl border-2 border-amber-400/60 bg-amber-400/[0.15] p-4 backdrop-blur-sm">
+                                        <div className="mt-4 rounded-xl border-2 border-white/10 bg-white/[0.04] p-4 backdrop-blur-sm">
                                             <div className="flex items-start gap-3">
-                                                <div className="w-8 h-8 rounded-full bg-amber-400/30 flex items-center justify-center flex-shrink-0 mt-0.5">
-                                                    <span className="text-amber-100 font-bold text-lg leading-none">!</span>
+                                                <div className="w-8 h-8 rounded-full bg-white/[0.04] flex items-center justify-center flex-shrink-0 mt-0.5">
+                                                    <span className="text-content-secondary font-bold text-lg leading-none">!</span>
                                                 </div>
                                                 <div className="text-left">
-                                                    <div className="text-amber-100 font-semibold text-sm mb-1">
+                                                    <div className="text-content-secondary font-semibold text-sm mb-1">
                                                         Account not approved yet
                                                     </div>
-                                                    <div className="text-amber-100/90 text-[13px] leading-relaxed mb-3">
+                                                    <div className="text-content-secondary text-[13px] leading-relaxed mb-3">
                                                         {error}
                                                     </div>
                                                     <a
                                                         href="/#request-access"
-                                                        className="inline-flex items-center gap-1.5 text-amber-200 hover:text-amber-100 text-[13px] font-medium underline underline-offset-2"
+                                                        className="inline-flex items-center gap-1.5 text-content-secondary hover:text-content-secondary text-[13px] font-medium underline underline-offset-2"
                                                     >
                                                         Go to request access form →
                                                     </a>
@@ -723,7 +723,7 @@ export function HomePage() {
                                     ? 'Too many attempts in a short window. Please wait a minute and try again.'
                                     : error;
                                 return (
-                                    <div className="mt-4 rounded-xl border border-amber-300/30 bg-amber-300/[0.07] p-3 text-sm text-amber-100 text-center backdrop-blur-sm">
+                                    <div className="mt-4 rounded-xl border border-white/10 bg-white/[0.04] p-3 text-sm text-content-secondary text-center backdrop-blur-sm">
                                         {message}
                                     </div>
                                 );

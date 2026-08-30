@@ -1,4 +1,4 @@
-import { anchorFor } from "./styleAnchors.js";
+import { anchorFor, composeScenePrompt } from "./styleAnchors.js";
 
 // Injected LLM completion: (prompt:string) => Promise<string>. Default does the
 // gpt-4o-mini -> gemini-2.0-flash fallback. Mockable in tests via _setLlmImpl
@@ -22,7 +22,7 @@ const MAX_SCENES = Math.max(8, Number(process.env.STORY_MAX_SCENES) || 60);
  * @param {number} [args.targetSec=8]
  * @returns {Promise<Array<object>>} scene objects
  */
-export async function segmentScenes({ words, style, targetSec = TARGET_SEC_DEFAULT }) {
+export async function segmentScenes({ words, style, targetSec = TARGET_SEC_DEFAULT, cast = [] }) {
   if (!Array.isArray(words) || words.length === 0) return [];
   const baseTargetSec = Number(targetSec) > 0 ? Number(targetSec) : TARGET_SEC_DEFAULT;
   // Widen scenes for long audio so the count never exceeds MAX_SCENES. The
@@ -64,7 +64,12 @@ export async function segmentScenes({ words, style, targetSec = TARGET_SEC_DEFAU
       text,
       startMs: words[start].startMs,
       endMs: words[end].endMs,
-      imagePrompt: `${prompt}, ${anchor}`,
+      // composeScenePrompt orders subject -> cast -> style. The project-level
+      // cast is applied to EVERY scene: a recurring figure regenerated from
+      // scratch each scene is the main reason AI-assembled stories look
+      // incoherent. With no cast this is byte-identical to the previous
+      // `${prompt}, ${anchor}` output.
+      imagePrompt: composeScenePrompt(prompt, { style, characters: cast }),
       imagePath: null,
       imageStatus: "pending",
       promptEditedByUser: false,

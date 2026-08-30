@@ -97,6 +97,10 @@ export function pushNotification(n: Omit<Notification, 'id' | 'createdAt' | 'rea
     cache = [next, ...cache].slice(0, MAX_NOTIFICATIONS);
     persist();
     emit();
+    // Job end-states also raise a sticky banner. Writing only to the bell's
+    // list meant a finished — or FAILED — render produced no visible signal
+    // until the user thought to check.
+    void import('./completionAlert').then((m) => m.considerForAlert(next)).catch(() => {});
     return next;
 }
 
@@ -173,7 +177,12 @@ async function pollJobs(): Promise<void> {
                     // captions surfaces the reason (instead of just the file
                     // path) so the user understands why captions aren't animated.
                     const captionFallback = typeof job.captionFallback === 'string' ? job.captionFallback : '';
-                    const finalTitle = (job.status === 'done' && captionFallback && !isCampaign)
+                    // Campaign jobs are NOT excluded any more. A scheduled post
+                    // publishes unreviewed, so a silent downgrade from
+                    // word-by-word to static captions is exactly the case the
+                    // operator most needs told about — they see the result on a
+                    // public feed, not in the editor.
+                    const finalTitle = (job.status === 'done' && captionFallback)
                         ? `${prettyType(job.type)} ready — captions are static`
                         : title;
                     const body = isRenderOnly

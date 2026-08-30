@@ -112,7 +112,7 @@ export function PostizConnectCard() {
                                     <span className="text-sm font-medium text-gray-200">{label}</span>
                                 </div>
                                 {connected && (
-                                    <span className="text-[10px] uppercase tracking-wide text-emerald-400 font-semibold">
+                                    <span className="text-[10px] uppercase tracking-wide text-[#7fb5aa] font-semibold">
                                         Connected
                                     </span>
                                 )}

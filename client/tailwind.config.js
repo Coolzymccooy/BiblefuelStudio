@@ -6,6 +6,21 @@ export default {
   ],
   theme: {
     extend: {
+      screens: {
+        // Short viewports - landscape phones, split-screen. The editor's chrome
+        // (topbar + rail + panel) totals ~242px, leaving almost nothing for the
+        // stage and timeline on a 390px-tall screen. `short:` collapses the
+        // chrome to give the content surfaces their room back.
+        // Inside extend on purpose: a top-level `screens` REPLACES the defaults
+        // and would kill every lg:/sm: class in the app.
+        short: { raw: '(max-height: 500px)' },
+        // Phones and small tablets. NOTE: Tailwind only generates its built-in
+        // `max-lg:` variants when every screen is a plain min-width; the raw
+        // `short` screen above turns them OFF for the whole project, so every
+        // `max-lg:` rule the editor ever had compiled to nothing and phones got
+        // the desktop layout crammed into 390px. `phone:` is explicit.
+        phone: { max: '1023px' },
+      },
       fontFamily: {
         // Quiet-studio identity: Instrument Sans for UI/body, Cormorant Garamond
         // for display serif titles, JetBrains Mono for IDs/durations/dB/filenames.
@@ -16,18 +31,60 @@ export default {
         mono: ['"JetBrains Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
       },
       colors: {
+        // Editor chrome (rail, panel, bottom strip). Deliberately NOT
+        // theme-switched: CapCut keeps its chrome dark even on a light page so
+        // the preview stays the brightest thing on screen. Only `stage`
+        // follows the theme.
+        editor: {
+          chrome: 'var(--editor-chrome, #14100a)',
+          panel: 'var(--editor-panel, #1a150d)',
+          stage: 'var(--editor-stage, #080604)',
+          hover: 'var(--editor-hover, rgba(216, 184, 120, 0.10))',
+          line: 'var(--editor-line, rgba(216, 184, 120, 0.14))',
+          text: 'var(--editor-text, #f0e6d3)',
+          dim: 'var(--editor-dim, #a99f8b)',
+          faint: 'var(--editor-faint, #6f6654)',
+          accent: 'var(--editor-accent, #e6c98a)',
+        },
+        // Tailwind's default gray scale, routed through CSS variables.
+        // 387 hardcoded text-gray-*/text-white usages across 49 files were
+        // baked to DARK-mode values, so on a light background headings, field
+        // labels and card titles rendered pale-on-white and vanished.
+        // In light mode the scale INVERTS: gray-100..300 are heading/label
+        // colours, so they become near-black. Every light value is >= 4.5:1 on
+        // white. Fallbacks are Tailwind's originals.
+        gray: {
+          100: 'var(--g-100, #f3f4f6)',
+          200: 'var(--g-200, #e5e7eb)',
+          300: 'var(--g-300, #d1d5db)',
+          400: 'var(--g-400, #9ca3af)',
+          500: 'var(--g-500, #6b7280)',
+          600: 'var(--g-600, #4b5563)',
+          700: 'var(--g-700, #374151)',
+          800: 'var(--g-800, #1f2937)',
+          900: 'var(--g-900, #111827)',
+        },
+        // NOTE: `white` is deliberately NOT overridden. Making it a CSS variable
+        // breaks Tailwind's opacity modifiers (bg-white/10, via-white/10 …),
+        // which cannot alpha-composite a var(). The ~112 `text-white` usages
+        // are handled by a targeted rule in index.css instead.
+        // Gold, not chocolate. The old mid-scale sat around 36% saturation
+        // (500 was #b08d57), which reads as muddy brown - and white text on
+        // it measured only 3.09:1, failing WCAG outright. Filled controls now
+        // carry DARK ink, which is what allows a properly saturated gold
+        // (500 is 8.4:1 against ink). The dark end stays for text on light.
         primary: {
-          50: '#fbf7ef',
-          100: '#f3ead6',
-          200: '#e3d3a8',
-          300: '#d2bb7c',
-          400: '#c1a257',
-          500: '#b08d57',
-          600: '#9a7a4b',
-          700: '#7f633d',
-          800: '#5f4a2d',
-          900: '#3f3120',
-          950: '#241b11',
+          50: '#fdf9ef',
+          100: '#f9edcd',
+          200: '#f2dc9f',
+          300: '#e9c86e',
+          400: '#e2ba57',
+          500: '#dcae4a',
+          600: '#bd9130',
+          700: '#8f6a14',
+          800: '#6f5726',
+          900: '#4a3a19',
+          950: '#2a2010',
         },
         // Warm near-black surfaces (quiet-studio). Remapped from the old cool
         // greys so every existing `bg-dark-*` shifts to the new identity.
@@ -37,25 +94,31 @@ export default {
           800: '#140f09',
           700: '#17130c',
         },
-        // Exact quiet-studio tokens from the mobile redesign handoff.
+        // Quiet-studio tokens, resolved through CSS variables so a single
+        // `data-theme` attribute repaints all ~150 usages at once. Hardcoding
+        // the hex values here baked the dark theme into every component, which
+        // is why light mode rendered cream text on cream cards.
+        //
+        // The fallbacks are the original dark values, so anything rendering
+        // before the variables load still looks correct.
         bf: {
-          bg: '#0b0906',
-          bg2: '#080604',
-          card: '#140f09',
-          card2: '#17130c',
-          input: '#161009',
-          input2: '#0f0b07',
-          gold: '#e6c98a',
-          goldDeep: '#cba85f',
-          goldDim: '#a8894f',
-          cream: '#f4ecdc',
-          cream2: '#f0e6d3',
-          sub: '#b7ac97',
-          sub2: '#a99f8b',
-          muted: '#8a7f6b',
-          faint: '#6f6654',
-          success: '#6fcf97',
-          danger: '#e08a8a',
+          bg: 'var(--bf-bg, #0b0906)',
+          bg2: 'var(--bf-bg2, #080604)',
+          card: 'var(--bf-card, #140f09)',
+          card2: 'var(--bf-card2, #17130c)',
+          input: 'var(--bf-input, #161009)',
+          input2: 'var(--bf-input2, #0f0b07)',
+          gold: 'var(--bf-gold, #e6c98a)',
+          goldDeep: 'var(--bf-goldDeep, #cba85f)',
+          goldDim: 'var(--bf-goldDim, #a8894f)',
+          cream: 'var(--bf-cream, #f4ecdc)',
+          cream2: 'var(--bf-cream2, #f0e6d3)',
+          sub: 'var(--bf-sub, #b7ac97)',
+          sub2: 'var(--bf-sub2, #a99f8b)',
+          muted: 'var(--bf-muted, #8a7f6b)',
+          faint: 'var(--bf-faint, #6f6654)',
+          success: 'var(--bf-success, #7fb5aa)',
+          danger: 'var(--bf-danger, #e08a8a)',
         },
         glass: {
           100: 'rgba(255, 255, 255, 0.03)',

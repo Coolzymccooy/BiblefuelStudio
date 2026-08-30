@@ -168,7 +168,7 @@ export function CompareVoices({ className = '' }: { className?: string }) {
             value={text}
             onChange={(e) => setText(e.target.value)}
             rows={2}
-            className="w-full rounded-lg bg-black/30 border border-white/10 px-3 py-2 text-gray-100 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400/40"
+            className="w-full rounded-lg bg-black/30 border border-white/10 px-3 py-2 text-gray-100 text-sm focus:outline-none focus:ring-2 focus:ring-[#7fb5aa]/40"
             placeholder="Type the line you want all candidates to speak…"
           />
         </div>
@@ -228,7 +228,7 @@ export function CompareVoices({ className = '' }: { className?: string }) {
             type="button"
             onClick={runCompare}
             disabled={!canRun}
-            className="inline-flex items-center gap-2 rounded-lg px-4 py-2 bg-emerald-500/90 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium"
+            className="inline-flex items-center gap-2 rounded-lg px-4 py-2 bg-[#7fb5aa]/90 hover:bg-[#7fb5aa] disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium"
           >
             {loading ? <Loader2 size={14} className="animate-spin" /> : <GitCompare size={14} />}
             {loading ? 'Synthesising…' : 'Compare'}
@@ -270,11 +270,11 @@ export function CompareVoices({ className = '' }: { className?: string }) {
                             type="button"
                             onClick={() => rateResult(r, n)}
                             aria-label={`Rate ${n} stars`}
-                            className="p-0.5 text-content-tertiary hover:text-yellow-300"
+                            className="p-0.5 text-content-tertiary hover:text-content-secondary"
                           >
                             <Star
                               size={16}
-                              className={n <= rating.stars ? 'text-yellow-400 fill-yellow-400' : ''}
+                              className={n <= rating.stars ? 'text-content-secondary fill-yellow-400' : ''}
                             />
                           </button>
                         ))}
@@ -293,7 +293,7 @@ export function CompareVoices({ className = '' }: { className?: string }) {
                         onChange={(e) => setNotes(r, e.target.value)}
                         rows={2}
                         placeholder="notes (e.g. too robotic, perfect for narration…)"
-                        className="w-full mt-2 rounded bg-black/30 border border-white/10 px-2 py-1.5 text-gray-100 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-400/40"
+                        className="w-full mt-2 rounded bg-black/30 border border-white/10 px-2 py-1.5 text-gray-100 text-xs focus:outline-none focus:ring-1 focus:ring-[#7fb5aa]/40"
                       />
                     </>
                   ) : (

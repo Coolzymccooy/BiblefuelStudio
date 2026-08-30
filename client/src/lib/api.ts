@@ -22,7 +22,7 @@ export const UPLOAD_TIMEOUT_MS = 10 * 60_000;
 // resumable direct-to-storage path (see storyApi.uploadAudio / resumableUpload).
 // Mirror of the server's `directMaxMb` in routes/media.js.
 export const DIRECT_UPLOAD_MAX_BYTES = 90 * 1024 * 1024;
-export const RESUMABLE_UPLOAD_MAX_BYTES = 400 * 1024 * 1024;
+export const RESUMABLE_UPLOAD_MAX_BYTES = 1024 * 1024 * 1024;
 
 // Server-side FFmpeg media ops (trim re-encode, master) are synchronous and
 // run far past the 15s default — accurately re-encoding a 25-minute selection
@@ -91,7 +91,18 @@ class ApiClient {
 
     /** Absolute URL for a file under /outputs, served from the media origin. */
     mediaUrl(fileNameOrPath: string | undefined | null): string {
-        const name = String(fileNameOrPath || '').split(/[\\/]/).pop() || '';
+        const raw = String(fileNameOrPath || '').trim();
+        if (!raw) return '';
+        // Already a URL: hand it back. Mangling a Veo/Pexels link into
+        // /outputs/<basename> pointed at a file that does not exist locally.
+        if (/^(https?:|blob:|data:)/i.test(raw)) return raw;
+        // Already served from /outputs: keep the path INTACT. The timeline
+        // renderer writes to /outputs/timeline/<file>.mp4, and stripping to
+        // the basename produced /outputs/<file>.mp4 - a 404, so a render that
+        // had completed successfully played nothing.
+        if (raw.startsWith('/outputs/')) return `${this.mediaBaseUrl}${raw}`;
+        // Anything else is a storage key; the server serves it by basename.
+        const name = raw.split(/[\\/]/).pop() || '';
         if (!name) return '';
         return `${this.mediaBaseUrl}/outputs/${name}`;
     }
@@ -359,3 +370,60 @@ class ApiClient {
 }
 
 export const api = new ApiClient();
+
+export interface GenerateTimelineVideoRequest {
+    projectId?: string;
+    prompt: string;
+    aspect?: '16:9' | '9:16' | '1:1';
+    durationSec?: number;
+    style?: string;
+    seedImagePath?: string;
+}
+
+export interface GenerateTimelineVideoResponse {
+    ok: boolean;
+    provider?: string;
+    publicUrl?: string;
+    path?: string;
+    error?: string;
+    code?: string;
+    skipped?: boolean;
+}
+
+export const videoGenApi = {
+    status: () => api.get<{ ok: boolean; enabled: boolean }>('/api/video-gen/status'),
+    generate: (body: GenerateTimelineVideoRequest) => api.post<GenerateTimelineVideoResponse>('/api/video-gen/generate', body, undefined, { timeout: GENERATE_TIMEOUT_MS }),
+};
+
+export interface TimelineRenderResponse {
+    ok: boolean;
+    jobId?: string;
+    status?: 'queued' | 'running' | 'completed' | 'failed' | string;
+    progress?: number;
+    phase?: string;
+    plan?: any;
+    publicUrl?: string;
+    file?: string;
+    ignoredPlaceholders?: number;
+    /** Which tracks the renderer composed, and which it left out. */
+    coverage?: {
+        included: Array<{ kind: string; label: string; used: number; total: number }>;
+        omitted: Array<{ kind: string; label: string; count: number; reason: string }>;
+        warnings: string[];
+    } | null;
+    /** Human-readable omissions, ready to show without further formatting. */
+    warnings?: string[];
+    generatedVoiceovers?: Array<{ clipId?: string; path?: string; outputPath?: string; provider?: string; fallbacks?: Array<{ provider: string; error: string }> }>;
+    voiceProvidersUsed?: string[];
+    voiceFallbacks?: Array<{ provider: string; error: string }>;
+    note?: string;
+    error?: string;
+}
+
+export const timelineApi = {
+    render: (project: any, quality = 'proof_720p', typographyPreset?: string) => api.post<TimelineRenderResponse>('/api/timeline/render', { project, quality, ...(typographyPreset ? { typographyPreset } : {}) }, undefined, { timeout: DEFAULT_TIMEOUT_MS }),
+    getRenderJob: (jobId: string) => api.get<TimelineRenderResponse>(`/api/timeline/render/${encodeURIComponent(jobId)}`),
+    saveProject: (project: any) => api.put<{ ok: boolean; project: any }>(`/api/timeline/projects/${encodeURIComponent(project.id)}`, { project }),
+    getProject: (projectId: string) => api.get<{ ok: boolean; project: any }>(`/api/timeline/projects/${encodeURIComponent(projectId)}`),
+    listProjects: () => api.get<{ ok: boolean; projects: any[] }>('/api/timeline/projects'),
+};

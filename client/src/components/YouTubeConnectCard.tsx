@@ -141,7 +141,7 @@ export function YouTubeConnectCard() {
                     <div className="flex items-center gap-2 flex-wrap">
                         <h4 className="text-sm font-semibold text-white">YouTube</h4>
                         {status?.connected ? (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-200 text-[10px] font-semibold">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#7fb5aa]/15 border border-[#7fb5aa]/30 text-content-secondary text-[10px] font-semibold">
                                 <CheckCircle2 size={10} /> Connected
                             </span>
                         ) : status?.serverConfigured ? (
@@ -149,7 +149,7 @@ export function YouTubeConnectCard() {
                                 Not connected
                             </span>
                         ) : (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-200 text-[10px] font-semibold">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/[0.04] border border-white/10 text-content-secondary text-[10px] font-semibold">
                                 <AlertCircle size={10} /> Server setup needed
                             </span>
                         )}
@@ -172,8 +172,8 @@ export function YouTubeConnectCard() {
                             One-click sign in with Google. Auto-Publish will upload Shorts to your channel as Private by default.
                         </p>
                     ) : (
-                        <p className="text-xs text-amber-200/80 mt-1">
-                            YouTube connection isn't available on this server. The operator needs to set <code className="text-amber-200">YOUTUBE_CLIENT_ID</code> and <code className="text-amber-200">YOUTUBE_CLIENT_SECRET</code> in environment variables.
+                        <p className="text-xs text-content-secondary mt-1">
+                            YouTube connection isn't available on this server. The operator needs to set <code className="text-content-secondary">YOUTUBE_CLIENT_ID</code> and <code className="text-content-secondary">YOUTUBE_CLIENT_SECRET</code> in environment variables.
                         </p>
                     )}
                 </div>

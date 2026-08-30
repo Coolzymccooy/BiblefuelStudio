@@ -136,3 +136,51 @@ describe("segmentScenes", () => {
     assert.equal(scenes[0].endMs, WORDS[WORDS.length - 1].endMs);
   });
 });
+
+describe("character anchors in scene prompts", () => {
+  const words = [
+    { text: "David", startMs: 0, endMs: 400 },
+    { text: "faced", startMs: 400, endMs: 800 },
+    { text: "the", startMs: 800, endMs: 1000 },
+    { text: "giant", startMs: 1000, endMs: 1600 },
+  ];
+
+  test("appends the project cast so a recurring figure stays consistent", async () => {
+    const scenes = await segmentScenes({ words, style: "cinematic-bible", cast: ["david_young"] });
+    assert.ok(scenes.length > 0);
+    for (const s of scenes) {
+      assert.match(s.imagePrompt, /young shepherd boy/i,
+        "every scene must carry the cast description, or the character drifts between scenes");
+    }
+  });
+
+  test("still appends the style anchor alongside the cast", async () => {
+    const scenes = await segmentScenes({ words, style: "cinematic-bible", cast: ["david_young"] });
+    assert.match(scenes[0].imagePrompt, /cinematic biblical scene/i);
+  });
+
+  test("orders subject before character before style", async () => {
+    const scenes = await segmentScenes({ words, style: "cinematic-bible", cast: ["david_young"] });
+    const p = scenes[0].imagePrompt;
+    assert.ok(p.indexOf("shepherd boy") < p.indexOf("cinematic biblical"),
+      "style anchor must close the prompt");
+  });
+
+  test("behaves exactly as before when no cast is given", async () => {
+    const withCast = await segmentScenes({ words, style: "cinematic-bible", cast: [] });
+    const without = await segmentScenes({ words, style: "cinematic-bible" });
+    assert.equal(withCast[0].imagePrompt, without[0].imagePrompt);
+    assert.doesNotMatch(without[0].imagePrompt, /shepherd boy/i);
+  });
+
+  test("ignores unknown cast keys rather than injecting empty text", async () => {
+    const scenes = await segmentScenes({ words, style: "cinematic-bible", cast: ["gandalf"] });
+    assert.doesNotMatch(scenes[0].imagePrompt, /,\s*,/, "no empty prompt segments");
+  });
+
+  test("supports several characters in one scene", async () => {
+    const scenes = await segmentScenes({ words, style: "cinematic-bible", cast: ["david_young", "goliath"] });
+    assert.match(scenes[0].imagePrompt, /shepherd boy/i);
+    assert.match(scenes[0].imagePrompt, /armoured warrior/i);
+  });
+});

@@ -58,7 +58,7 @@ export function WizardPage() {
                                 key={step.id}
                                 onClick={() => setActiveStep(index)}
                                 className={`text-left p-4 rounded-xl border transition-all ${isActive
-                                    ? 'border-primary-500/40 bg-primary-500/10 text-white'
+                                    ? 'border-primary-500/40 bg-primary-500/10 text-black'
                                     : 'border-white/10 bg-black/20 text-content-secondary hover:border-primary-500/20'
                                     }`}
                             >

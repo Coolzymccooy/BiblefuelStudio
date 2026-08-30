@@ -348,7 +348,15 @@ async function postToYoutube({ caption, videoUrl, title, privacyStatus }, req, s
   const clientSecret = String(yt.clientSecret || "").trim();
   const refreshToken = String(yt.refreshToken || "").trim();
   if (!clientId || !clientSecret || !refreshToken) {
-    throw new Error("YouTube direct config missing. Set clientId, clientSecret, and refreshToken in Settings.");
+    // Name the MISSING piece. A scheduled post that fails here is invisible
+    // until someone reads the job log, so the message has to say exactly what
+    // to do rather than listing all three fields generically.
+    const missing = [
+      !clientId && "client ID",
+      !clientSecret && "client secret",
+      !refreshToken && "refresh token (click Connect YouTube in Settings)",
+    ].filter(Boolean).join(", ");
+    throw new Error(`YouTube is not connected — missing ${missing}. Posts to YouTube will keep failing until this is fixed.`);
   }
 
   const upload = await resolveVideoInputForUpload(videoUrl, req);
@@ -449,6 +457,12 @@ export async function runScheduledPost(schedule, ctx, deps = {}) {
         durationSec: schedule.durationSec,
         voiceId: schedule.voiceId,
         backgroundQuery: schedule.backgroundQuery,
+        // Carry the caption style through. Without this the payload reached
+        // renderVideoCore with kineticCaptions undefined, so the word-by-word
+        // branch never ran and every scheduled post rendered the flat, boxed
+        // static captions - the "preview mode" look the operator reported.
+        // Default true: these go to a public feed unreviewed.
+        kineticCaptions: schedule.kineticCaptions !== false,
       }, ctx);
       console.log(`[SOCIAL][CRON] Schedule ${schedule.id} enqueued auto_generate job ${job?.id} (owner=${ctx?.userId ?? "root"})`);
       return;
@@ -619,7 +633,12 @@ router.post("/config", (req, res) => {
   };
 
   writeSocialStore(req.ctx.dataDir, next);
-  if (req.ctx.isSuperAdmin) refreshScheduleTasks();
+  // Refresh for EVERY tenant, not just super-admins. refreshScheduleTasks
+  // re-reads all schedule sources anyway, so the old isSuperAdmin guard
+  // prevented nothing — it just meant a regular user's saved schedule sat
+  // inert until the next server restart, which reads as "my schedule never
+  // ran". Matches the /schedules route, which already refreshes unconditionally.
+  refreshScheduleTasks();
   res.json({ ok: true });
 });
 
@@ -659,7 +678,7 @@ router.post("/schedules", (req, res) => {
       return res.status(400).json({ ok: false, error: "Invalid cron expression" });
     }
     if (schedule.type === "replay" && (!schedule.caption || !schedule.videoUrl)) {
-      return res.status(400).json({ ok: false, error: "caption and videoUrl are required for replay schedules" });
+      return res.status(400).json({ ok: false, error: "Replay schedules need a caption and a video URL. For a fresh post every run, switch the type to Auto-Generate instead." });
     }
 
     const store = readSocialStore(req.ctx.dataDir);

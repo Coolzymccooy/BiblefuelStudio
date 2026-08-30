@@ -1,5 +1,5 @@
-import { useRef, useState } from 'react';
-import { Music, X, Loader2, Play } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Music, X, Loader2, Play, Square, ArrowDownToLine } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { api } from '../lib/api';
 import { storyApi } from '../lib/storyApi';
@@ -19,12 +19,18 @@ interface MusicPickerProps {
   busy: boolean;
   /** Allow an ordered list of tracks (played back-to-back, then looped). */
   multiple?: boolean;
+  /** Host timeline: put the chosen track on the Music bed lane. */
+  onInsertToLane?: (path: string) => void;
 }
 
-export function MusicPicker({ value, onChange, busy, multiple = false }: MusicPickerProps) {
+export function MusicPicker({ value, onChange, busy, multiple = false, onInsertToLane }: MusicPickerProps) {
   const { data: tracks } = useMusicLibrary();
   const inputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  // Which track is currently previewing. Without this the button could only
+  // ever start playback: clicking the same track again just built a second
+  // Audio element, so a preview could not be stopped.
+  const [playingId, setPlayingId] = useState<string | null>(null);
   const autoDuck = value.autoDuck ?? true;
   const [isUploading, setIsUploading] = useState(false);
   const defaultTrack = (tracks || []).find((t) => t.default);
@@ -57,14 +63,41 @@ export function MusicPicker({ value, onChange, busy, multiple = false }: MusicPi
     finally { setIsUploading(false); }
   };
 
+  const stopPreview = () => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      audioRef.current = null;
+    }
+    setPlayingId(null);
+  };
+
+  // Toggle, not play-only. Clicking the playing track stops it; clicking a
+  // different one switches to it.
   const preview = (id: string) => {
+    if (playingId === id) { stopPreview(); return; }
     const t = (tracks || []).find((x) => x.id === id);
     if (!t) return;
-    if (audioRef.current) audioRef.current.pause();
+    stopPreview();
     const el = new Audio(`${api.baseUrl}${t.previewUrl}`);
     audioRef.current = el;
-    el.play().catch(() => {});
+    // Reset the control when the clip finishes on its own, or fails to load -
+    // otherwise the button would sit on "stop" with nothing playing.
+    el.addEventListener('ended', () => setPlayingId(null));
+    el.addEventListener('error', () => setPlayingId(null));
+    setPlayingId(id);
+    // A rejected play() (autoplay policy, blocked output) used to silently
+    // snap the button back, which read as 'preview does nothing'. Say so.
+    const attempt = el.play();
+    if (attempt && typeof attempt.catch === 'function') {
+      attempt.catch(() => { setPlayingId(null); toast.error("Couldn't play the preview - check your audio output and try again"); });
+    }
   };
+
+  // Never leave audio playing after the picker unmounts.
+  useEffect(() => () => {
+    if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
+  }, []);
 
   if (multiple) {
     return (
@@ -87,7 +120,14 @@ export function MusicPicker({ value, onChange, busy, multiple = false }: MusicPi
                 <span className="w-4 text-center text-[10px] text-content-tertiary">{idx + 1}</span>
                 <span className="flex-1 truncate">{trackLabel(p)}</span>
                 {p.startsWith('library:') && (
-                  <button type="button" onClick={() => preview(p.slice('library:'.length))} className="text-gray-400 hover:text-primary-300" aria-label="preview"><Play size={12} /></button>
+                  <button
+                    type="button"
+                    onClick={() => preview(p.slice('library:'.length))}
+                    className="text-gray-400 hover:text-primary-300"
+                    aria-label={playingId === p.slice('library:'.length) ? 'Stop preview' : 'Preview'}
+                  >
+                    {playingId === p.slice('library:'.length) ? <Square size={12} /> : <Play size={12} />}
+                  </button>
                 )}
                 <button type="button" onClick={() => emitPaths(paths.filter((_, i) => i !== idx))} className="text-gray-400 hover:text-red-300" aria-label="remove track"><X size={12} /></button>
               </li>
@@ -132,9 +172,22 @@ export function MusicPicker({ value, onChange, busy, multiple = false }: MusicPi
       disabled={busy || isUploading}
       overlayLabel="Drop a music track"
     >
-      <div className="flex items-center gap-2"><Music size={14} /> <span className="font-medium">Background music</span></div>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2"><Music size={14} className="shrink-0" /> <span className="truncate font-medium">Background music</span></div>
+        {value.path && (
+          <button
+            type="button"
+            onClick={() => { stopPreview(); onChange({ path: null, volume: value.volume, autoDuck }); }}
+            aria-label="Remove music"
+            title="Remove music — the render goes out without a music bed"
+            className="shrink-0 rounded-md border border-white/10 p-1 text-gray-400 transition hover:border-white/20 hover:text-white"
+          >
+            <X size={12} />
+          </button>
+        )}
+      </div>
 
-      <label className="flex items-center gap-2">
+      <label className="flex items-center gap-2" title={defaultTrack ? `Use the default bed: ${defaultTrack.label}` : undefined}>
         <input
           type="checkbox"
           checked={isLibrary && currentId === defaultTrack?.id}
@@ -143,42 +196,62 @@ export function MusicPicker({ value, onChange, busy, multiple = false }: MusicPi
             ? { path: `library:${defaultTrack.id}`, volume: value.volume ?? 0.3, autoDuck }
             : { path: null, volume: value.volume ?? 0.3, autoDuck })}
         />
-        Use default audio{defaultTrack ? ` (${defaultTrack.label})` : ''}
+        <span className="truncate">Use default{defaultTrack ? ` (${defaultTrack.label})` : ''}</span>
       </label>
 
-      <label className="flex items-center gap-2">
-        <span>Music library</span>
+      <div className="flex items-center gap-1.5">
         <select
           aria-label="music library"
+          title="Music library"
           value={currentId}
           onChange={(e) => {
             const id = e.target.value;
+            stopPreview();
             onChange(id ? { path: `library:${id}`, volume: value.volume ?? 0.3, autoDuck } : { path: null, volume: value.volume ?? 0.3, autoDuck });
           }}
-          className="rounded-md border border-white/10 bg-transparent px-2 py-1 text-white"
+          className="min-w-0 flex-1 rounded-md border border-white/10 bg-transparent px-2 py-1 text-white"
         >
-          <option value="">— none —</option>
+          <option value="">— pick from the library —</option>
           {(tracks || []).map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
         </select>
         {currentId && (
-          <button type="button" onClick={() => preview(currentId)} className="inline-flex items-center gap-1 text-gray-400 hover:text-primary-300"><Play size={12} /> preview</button>
+          <button
+            type="button"
+            onClick={() => preview(currentId)}
+            aria-label={playingId === currentId ? 'Stop preview' : 'Preview'}
+            aria-pressed={playingId === currentId}
+            title={playingId === currentId ? 'Stop' : 'Preview this track'}
+            className={`shrink-0 rounded-md border p-1.5 transition ${playingId === currentId ? 'border-editor-accent/60 bg-editor-accent/15 text-editor-accent' : 'border-white/10 text-gray-400 hover:border-white/20 hover:text-white'}`}
+          >
+            {playingId === currentId ? <Square size={12} /> : <Play size={12} />}
+          </button>
         )}
-      </label>
+      </div>
 
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center gap-2">
         <button type="button" disabled={busy || isUploading} onClick={() => inputRef.current?.click()} className="rounded-md border border-white/15 px-2 py-1 hover:border-primary-400 disabled:opacity-50">{isUploading ? 'Uploading…' : 'Upload your own'}</button>
         <input ref={inputRef} type="file" accept="audio/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f); e.target.value = ''; }} />
-        {value.path && (
-          <>
-            <label className="inline-flex items-center gap-1">Vol
-              <input type="range" min={0} max={1} step={0.05} value={value.volume} onChange={(e) => onChange({ ...value, autoDuck, volume: Number(e.target.value) })} className="accent-primary-500" />
-            </label>
-            <label className="inline-flex items-center gap-1"><input type="checkbox" checked={autoDuck} aria-label="autoduck" onChange={(e) => onChange({ ...value, autoDuck: e.target.checked })} /> Autoduck</label>
-            <button type="button" onClick={() => onChange({ path: null, volume: value.volume, autoDuck })} className="inline-flex items-center gap-1 text-gray-400 hover:text-red-300"><X size={12} /> Remove music</button>
-          </>
-        )}
         {(busy || isUploading) && <Loader2 size={12} className="animate-spin" />}
       </div>
+
+      {value.path && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+          <label className="inline-flex min-w-0 flex-1 items-center gap-1" title="Music volume under the voice">Vol
+            <input type="range" min={0} max={1} step={0.05} value={value.volume} onChange={(e) => onChange({ ...value, autoDuck, volume: Number(e.target.value) })} className="min-w-0 flex-1 accent-primary-500" />
+          </label>
+          <label className="inline-flex items-center gap-1" title="Lower the music automatically while the voice speaks"><input type="checkbox" checked={autoDuck} aria-label="autoduck" onChange={(e) => onChange({ ...value, autoDuck: e.target.checked })} /> Autoduck</label>
+          {onInsertToLane && (
+            <button
+              type="button"
+              onClick={() => value.path && onInsertToLane(value.path)}
+              title="Place this track on the Music bed lane of the timeline"
+              className="inline-flex items-center gap-1 rounded-md border border-editor-accent/40 bg-editor-accent/10 px-2 py-0.5 text-[11px] font-semibold text-editor-accent transition hover:bg-editor-accent/20"
+            >
+              <ArrowDownToLine size={11} /> Music bed lane
+            </button>
+          )}
+        </div>
+      )}
     </DropZone>
   );
 }

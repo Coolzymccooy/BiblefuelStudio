@@ -17,6 +17,8 @@ export interface UploadResult {
     /** Background videos only: URL of the first-frame poster. */
     thumb?: string;
     mime?: string;
+    proxyPath?: string;
+    proxyStatus?: 'pending' | 'ready' | 'failed' | string;
 }
 
 const DIRECT_ENDPOINT: Record<UploadKind, string> = {
@@ -24,6 +26,40 @@ const DIRECT_ENDPOINT: Record<UploadKind, string> = {
     'source-video': '/api/media/upload-source-video',
     background: '/api/media/upload-background',
 };
+
+interface UploadConfig {
+    resumable: boolean;
+    directMaxBytes: number;
+    maxBytes: number;
+    maxMb: number;
+}
+
+let uploadConfigCache: UploadConfig | null = null;
+
+export async function getUploadConfig(): Promise<UploadConfig> {
+    if (uploadConfigCache) return uploadConfigCache;
+    const fallback: UploadConfig = {
+        resumable: true,
+        directMaxBytes: DIRECT_UPLOAD_MAX_BYTES,
+        maxBytes: RESUMABLE_UPLOAD_MAX_BYTES,
+        maxMb: Math.floor(RESUMABLE_UPLOAD_MAX_BYTES / 1024 / 1024),
+    };
+    const res = await api.get<Partial<UploadConfig> & { directMaxMb?: number }>('/api/media/upload-config');
+    if (!res.ok || !res.data) return fallback;
+    const directMaxBytes = Number(res.data.directMaxBytes || (res.data.directMaxMb || 90) * 1024 * 1024);
+    const maxBytes = Number(res.data.maxBytes || (res.data.maxMb || fallback.maxMb) * 1024 * 1024);
+    uploadConfigCache = {
+        resumable: Boolean(res.data.resumable),
+        directMaxBytes: Number.isFinite(directMaxBytes) && directMaxBytes > 0 ? directMaxBytes : fallback.directMaxBytes,
+        maxBytes: Number.isFinite(maxBytes) && maxBytes > 0 ? maxBytes : fallback.maxBytes,
+        maxMb: Number(res.data.maxMb || Math.floor(maxBytes / 1024 / 1024) || fallback.maxMb),
+    };
+    return uploadConfigCache;
+}
+
+export function _resetUploadConfigCacheForTest() {
+    uploadConfigCache = null;
+}
 
 function mb(bytes: number): string {
     return (bytes / 1024 / 1024).toFixed(0);
@@ -64,10 +100,14 @@ export async function uploadMedia(
     kind: UploadKind,
     onProgress?: (pct: number) => void,
 ): Promise<UploadResult> {
-    if (file.size > RESUMABLE_UPLOAD_MAX_BYTES) {
-        throw new Error(`File is ${mb(file.size)} MB. The maximum is ${mb(RESUMABLE_UPLOAD_MAX_BYTES)} MB.`);
+    const config = await getUploadConfig();
+    if (file.size > config.maxBytes) {
+        throw new Error(`File is ${mb(file.size)} MB. The maximum is ${config.maxMb || mb(config.maxBytes)} MB.`);
     }
-    if (file.size > DIRECT_UPLOAD_MAX_BYTES) {
+    if (file.size > config.directMaxBytes) {
+        if (!config.resumable) {
+            throw new Error('Large uploads are not available on this server right now.');
+        }
         return resumable(file, filename, kind, onProgress);
     }
     const res = await api.uploadRaw<UploadResult>(DIRECT_ENDPOINT[kind], file, {

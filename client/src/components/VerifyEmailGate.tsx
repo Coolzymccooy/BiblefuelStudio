@@ -59,7 +59,7 @@ export function VerifyEmailGate() {
                 </div>
 
                 {error && (
-                    <div className="mt-5 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-[12px] text-amber-200">
+                    <div className="mt-5 p-3 rounded-lg bg-white/[0.04] border border-white/10 text-[12px] text-content-secondary">
                         {error}
                     </div>
                 )}

@@ -18,6 +18,8 @@ import { templateById } from "../lib/story/scriptTemplates.js";
 import { synthesizeEdgeTts } from "../lib/edgeTts.js";
 import { resolveLibraryTrack } from "../lib/musicLibrary.js";
 import { cleanCaptionLine, cleanSpeakableText } from "../lib/speakableScript.js";
+import { buildImportedTranscript } from "../lib/story/scriptImport.js";
+import { CHARACTER_ANCHORS } from "../lib/story/styleAnchors.js";
 
 // Mockable seams (mirror routes/transcribe.js).
 let _transcribeFn = transcribeAudio;
@@ -80,7 +82,7 @@ async function segmentStage(ctx, projectId) {
   }
   const words = project.transcript?.words || [];
   if (!words.length) throw new Error("no transcript to segment");
-  const scenes = await segmentScenes({ words, style: project.style });
+  const scenes = await segmentScenes({ words, style: project.style, cast: project.cast || [] });
   return writeProject(ctx.dataDir, { ...project, scenes, status: STORY_STATUS.GENERATING_IMAGES });
 }
 
@@ -217,8 +219,8 @@ function storyOutDir(outputDir, projectId) {
 
 router.post("/", (req, res) => {
   try {
-    const { title, style } = req.body || {};
-    const project = createProject(req.ctx.dataDir, { title, style });
+    const { title, style, cast } = req.body || {};
+    const project = createProject(req.ctx.dataDir, { title, style, cast });
     return res.json({ ok: true, project });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
@@ -227,6 +229,17 @@ router.post("/", (req, res) => {
 
 router.get("/", (req, res) => {
   return res.json({ ok: true, projects: listProjects(req.ctx.dataDir) });
+});
+
+// NOTE: must precede the "/:id" route below — Express matches in declaration
+// order, so a dynamic ":id" placed first would swallow "/characters".
+// GET /characters — the cast options the UI offers. Returned from the server
+// so the list stays in one place; adding a character needs no client change.
+router.get("/characters", (_req, res) => {
+  res.json({
+    ok: true,
+    characters: Object.entries(CHARACTER_ANCHORS).map(([key, description]) => ({ key, description })),
+  });
 });
 
 router.get("/:id", (req, res) => {
@@ -307,6 +320,90 @@ router.post("/script-to-audio", async (req, res) => {
     const msg = String(e?.message || e);
     const status = /disabled|required/i.test(msg) ? 400 : 500;
     return res.status(status).json({ ok: false, error: msg });
+  }
+});
+
+// POST /import-script — create a Story project from text that is ALREADY
+// written (a Gumroad devotional day, a Series part), rather than from uploaded
+// media.
+//
+// Unlike /script-to-audio this does NOT run the text through refineScript: the
+// caller's words are authoritative. A devotional the operator generated and
+// reviewed should not be silently rewritten on its way to video.
+//
+// The narration's own word timings are written straight into the project, so
+// transcribeStage short-circuits and the pipeline resumes at segmentation —
+// no lossy speech-recognition round trip over words we already have.
+//
+// Body: { script, audioPath, durationMs, words?, title?, style? }
+// Returns a project already at SEGMENTING; the client then calls
+// /:id/segment and /:id/images exactly as the media path does.
+// PATCH /:id/cast — set which figures appear in this story.
+//
+// Changing the cast only affects prompts built AFTERWARDS, so scenes already
+// generated keep their old images until they are regenerated. The response
+// says so explicitly rather than leaving the operator to wonder why the
+// existing images did not change.
+router.patch("/:id/cast", (req, res) => {
+  const project = readProject(req.ctx.dataDir, req.params.id);
+  if (!project) return res.status(404).json({ ok: false, error: "project not found" });
+
+  const incoming = req.body?.cast;
+  if (!Array.isArray(incoming)) {
+    return res.status(400).json({ ok: false, error: "cast must be an array of character keys" });
+  }
+
+  const known = new Set(Object.keys(CHARACTER_ANCHORS));
+  const cast = [...new Set(incoming.map((k) => String(k).trim().toLowerCase()))].filter((k) => known.has(k));
+  const rejected = incoming.filter((k) => !known.has(String(k).trim().toLowerCase()));
+
+  const updated = writeProject(req.ctx.dataDir, { ...project, cast });
+  const generated = (updated.scenes || []).filter((s) => s.imageStatus === "done").length;
+  return res.json({
+    ok: true,
+    project: updated,
+    rejected,
+    note: generated > 0
+      ? `${generated} scene image(s) already generated — regenerate them to apply the new cast.`
+      : "",
+  });
+});
+
+router.post("/import-script", (req, res) => {
+  try {
+    const script = String(req.body?.script || "").trim();
+    if (script.length < 3) return res.status(400).json({ ok: false, error: "script is required" });
+
+    const audioPath = String(req.body?.audioPath || "").trim();
+    if (!audioPath) return res.status(400).json({ ok: false, error: "audioPath is required" });
+
+    const durationMs = Number(req.body?.durationMs);
+    if (!Number.isFinite(durationMs) || durationMs <= 0) {
+      return res.status(400).json({ ok: false, error: "durationMs must be a positive number" });
+    }
+
+    let patch;
+    try {
+      patch = buildImportedTranscript({ script, audioPath, durationMs, words: req.body?.words });
+    } catch (e) {
+      return res.status(400).json({ ok: false, error: String(e?.message || e) });
+    }
+
+    const project = createProject(req.ctx.dataDir, {
+      title: req.body?.title || script.slice(0, 60),
+      style: req.body?.style,
+      cast: req.body?.cast,
+    });
+
+    const ready = writeProject(req.ctx.dataDir, {
+      ...project,
+      ...patch,
+      status: STORY_STATUS.SEGMENTING,
+    });
+
+    return res.json({ ok: true, project: ready });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
 
@@ -548,6 +645,22 @@ router.post("/:id/render", async (req, res) => {
         render: { jobId: job.jobId, outputPath: done ? outPath : null, status: done ? "done" : "error" },
       });
       persistJob(req.ctx.dataDir, { ...job, projectId: project.projectId, status: done ? "done" : "error", outputPath: done ? outPath : null });
+    }).catch((err) => {
+      // A rejected fire-and-forget is an UNHANDLED rejection - under Node's
+      // default policy it killed the whole server when spawn threw
+      // ENAMETOOLONG. Record the failure on the project instead.
+      try {
+        const fresh = readProject(req.ctx.dataDir, project.projectId);
+        if (fresh) {
+          writeProject(req.ctx.dataDir, {
+            ...fresh,
+            status: STORY_STATUS.ERROR,
+            error: String(err?.message || err || "render failed"),
+            render: { jobId: job.jobId, outputPath: null, status: "error" },
+          });
+        }
+        persistJob(req.ctx.dataDir, { ...job, projectId: project.projectId, status: "error", outputPath: null });
+      } catch { /* the error is already logged by the job registry */ }
     });
 
     return res.json({ ok: true, jobId: job.jobId, project: readProject(req.ctx.dataDir, project.projectId) });

@@ -24,13 +24,37 @@ const ENDPOINT_BASE = "https://api.cloudflare.com/client/v4/accounts";
 const DEFAULT_MODEL = "@cf/black-forest-labs/flux-1-schnell";
 const REQUEST_TIMEOUT_MS = 45_000;
 
+/** Per-model set of body properties the API 400'd as "not allowed". */
+const rejectedProps = new Map();
+
+/** Test hook: forget learned schema rejections. */
+export function _resetCloudflareSchemaMemo() { rejectedProps.clear(); }
+
+/**
+ * Reads the Workers AI token. Three env names are accepted: the documented
+ * CLOUDFLARE_WORKERS_AI_TOKEN, plus the CLOUDFLARE_AI_API_TOKEN /
+ * CLOUDFLARE_API_TOKEN names real deployments already carry - the operator
+ * HAD Cloudflare configured under those names while every story scene fell
+ * through to a retired Imagen model, because this predicate said "not
+ * configured".
+ *
+ * @returns {string}
+ */
+function readToken() {
+  return String(
+    process.env.CLOUDFLARE_WORKERS_AI_TOKEN
+    || process.env.CLOUDFLARE_AI_API_TOKEN
+    || process.env.CLOUDFLARE_API_TOKEN
+    || "",
+  ).trim();
+}
+
 /**
  * @returns {boolean}
  */
 export function isCloudflareConfigured() {
   const accountId = String(process.env.CLOUDFLARE_ACCOUNT_ID || "").trim();
-  const token = String(process.env.CLOUDFLARE_WORKERS_AI_TOKEN || "").trim();
-  return accountId.length > 0 && token.length > 0;
+  return accountId.length > 0 && readToken().length > 0;
 }
 
 /**
@@ -64,7 +88,7 @@ export async function generateImageCloudflare({ prompt, seed, steps, model, sign
   }
 
   const accountId = String(process.env.CLOUDFLARE_ACCOUNT_ID).trim();
-  const token = String(process.env.CLOUDFLARE_WORKERS_AI_TOKEN).trim();
+  const token = readToken();
   const modelId = String(model || process.env.CLOUDFLARE_IMAGE_MODEL || DEFAULT_MODEL).trim();
   const url = `${ENDPOINT_BASE}/${encodeURIComponent(accountId)}/ai/run/${modelId}`;
 
@@ -75,7 +99,15 @@ export async function generateImageCloudflare({ prompt, seed, steps, model, sign
     const clamped = Math.min(8, Math.max(1, Math.floor(Number(steps))));
     body.steps = clamped;
   }
+  // Drop properties this model is KNOWN to reject (learned from earlier 400s)
+  // so later scenes don't pay an extra round-trip each.
+  for (const p of rejectedProps.get(modelId) || []) delete body[p];
 
+  // Up to 3 attempts: Cloudflare's schema varies by model and tightens over
+  // time - the operator's model rejected `seed` outright ("Additional or
+  // unevaluated properties '/seed' not allowed"). On that 400, strip the
+  // named property and retry rather than failing the whole scene.
+  for (let attempt = 0; attempt < 3; attempt++) {
   const ctrl = new AbortController();
   const timeoutTimer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
   if (signal) {
@@ -97,6 +129,16 @@ export async function generateImageCloudflare({ prompt, seed, steps, model, sign
 
     if (!resp.ok) {
       const text = await resp.text().catch(() => "");
+      const rejected = resp.status === 400
+        ? /properties\s+'\/(\w+)'/.exec(text)
+        : null;
+      if (rejected && rejected[1] !== "prompt" && rejected[1] in body) {
+        const prop = rejected[1];
+        delete body[prop];
+        if (!rejectedProps.has(modelId)) rejectedProps.set(modelId, new Set());
+        rejectedProps.get(modelId).add(prop);
+        continue;
+      }
       return {
         ok: false,
         provider: "cloudflare",
@@ -148,4 +190,6 @@ export async function generateImageCloudflare({ prompt, seed, steps, model, sign
   } finally {
     clearTimeout(timeoutTimer);
   }
+  }
+  return { ok: false, provider: "cloudflare", model: modelId, error: "Cloudflare: schema retry exhausted" };
 }

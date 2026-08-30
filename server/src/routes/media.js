@@ -84,15 +84,66 @@ function isPlayableAudio(filePath) {
   }
 }
 
-// Mirror the client-side cap (MAX_UPLOAD_MB). Belt-and-braces: the raw stream
+const MB = 1024 * 1024;
+
+function parsePositiveIntEnv(name, fallback) {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+}
+
+export function getUploadLimits() {
+  const directMaxMb = parsePositiveIntEnv("DIRECT_UPLOAD_MAX_MB", 200);
+  const directClientMaxMb = parsePositiveIntEnv("DIRECT_CLIENT_UPLOAD_MAX_MB", 90);
+  const resumableMaxMb = parsePositiveIntEnv("RESUMABLE_UPLOAD_MAX_MB", 1024);
+  const minFreeAfterUploadMb = parsePositiveIntEnv("MIN_FREE_AFTER_UPLOAD_MB", 1024);
+  const directMaxBytes = directMaxMb * MB;
+  const directClientMaxBytes = Math.min(directClientMaxMb, directMaxMb) * MB;
+  const resumableMaxBytes = resumableMaxMb * MB;
+  return {
+    directMaxMb,
+    directMaxBytes,
+    directClientMaxMb: Math.floor(directClientMaxBytes / MB),
+    directClientMaxBytes,
+    resumableMaxMb,
+    resumableMaxBytes,
+    minFreeAfterUploadMb,
+    minFreeAfterUploadBytes: minFreeAfterUploadMb * MB,
+    allowsLargeFileBytes: (bytes) => Number(bytes) > 0 && Number(bytes) <= resumableMaxBytes,
+  };
+}
+
+// Mirror the client-side fast path cap. Belt-and-braces: the raw stream
 // path enforces it byte-by-byte and the base64 path checks the decoded length,
 // so an oversized upload can never fill the disk regardless of transport.
-const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
+const MAX_UPLOAD_BYTES = getUploadLimits().directMaxBytes;
 
-// Ceiling for the resumable direct-to-GCS path (files too big for Cloudflare's
-// 100MB origin cap). The client mirrors this so the user gets an instant "too
-// large" message instead of a doomed upload.
-const RESUMABLE_MAX_BYTES = 400 * 1024 * 1024;
+// Ceiling for the resumable direct-to-GCS path. Defaults to 1GB so a 700MB
+// source video can use the large-upload path when storage is configured.
+const RESUMABLE_MAX_BYTES = getUploadLimits().resumableMaxBytes;
+
+export function hasDiskHeadroomForUpload(outputDir, incomingBytes, opts = {}) {
+  const size = Number(incomingBytes || 0);
+  if (!Number.isFinite(size) || size <= 0) return { ok: true, availableBytes: null };
+  const minFreeAfterBytes = opts.minFreeAfterBytes ?? getUploadLimits().minFreeAfterUploadBytes;
+  const statfs = opts.statfs || fs.statfsSync?.bind(fs);
+  if (!statfs) return { ok: true, availableBytes: null, warning: "Disk headroom check unavailable" };
+  try {
+    const probeDir = fs.existsSync(outputDir) ? outputDir : path.dirname(outputDir);
+    const stat = statfs(probeDir);
+    const availableBytes = Number(stat.bavail ?? stat.f_bavail ?? 0) * Number(stat.bsize ?? stat.f_bsize ?? 0);
+    if (availableBytes > 0 && availableBytes - size < minFreeAfterBytes) {
+      return {
+        ok: false,
+        availableBytes,
+        requiredBytes: size + minFreeAfterBytes,
+        error: `Not enough disk space to finalize this upload. Free ${(availableBytes / MB).toFixed(0)} MB; need at least ${((size + minFreeAfterBytes) / MB).toFixed(0)} MB including safety reserve.`,
+      };
+    }
+    return { ok: true, availableBytes };
+  } catch {
+    return { ok: true, availableBytes: null, warning: "Disk headroom check failed" };
+  }
+}
 
 // Audio container/codec → file extension. Pulled out of the route so the raw
 // streaming path (mime from the request's Content-Type header) and the legacy
@@ -202,6 +253,49 @@ function resolveUploadMeta(req) {
   return { ok: true, mime: String(req.headers["content-type"] || "application/octet-stream"), b64: null };
 }
 
+function videoProxyPathFor(sourcePath) {
+  const parsed = path.parse(sourcePath);
+  return path.join(parsed.dir, `${parsed.name}-proxy.mp4`).replace(/\\/g, "/");
+}
+
+export function getVideoProxyStatus(proxyPath) {
+  try {
+    const stat = fs.statSync(proxyPath);
+    if (stat.isFile() && stat.size > 1024) return { proxyPath: String(proxyPath).replace(/\\/g, "/"), status: "ready", size: stat.size };
+  } catch {}
+  return { proxyPath: String(proxyPath || '').replace(/\\/g, "/"), status: "pending" };
+}
+
+export function startVideoProxyGeneration(sourcePath, opts = {}) {
+  const proxyPath = opts.proxyPath || videoProxyPathFor(sourcePath);
+  const ffmpeg = opts.ffmpeg || process.env.FFMPEG_PATH?.trim() || "ffmpeg";
+  const spawnImpl = opts.spawnImpl || spawn;
+  const args = [
+    "-y",
+    "-i", sourcePath,
+    "-vf", "scale=854:480:force_original_aspect_ratio=decrease,pad=854:480:(ow-iw)/2:(oh-ih)/2,setsar=1",
+    "-r", "24",
+    "-c:v", "libx264",
+    "-preset", "veryfast",
+    "-crf", "32",
+    "-an",
+    "-movflags", "+faststart",
+    proxyPath,
+  ];
+  try {
+    const proc = spawnImpl(ffmpeg, args, { windowsHide: true });
+    let stderr = "";
+    proc.stderr?.on?.("data", (d) => { if (stderr.length < 4000) stderr += d.toString(); });
+    proc.on?.("close", (code) => {
+      if (code !== 0) console.warn(`[media] proxy generation failed for ${sourcePath}: ${stderr.slice(-500)}`);
+    });
+    proc.on?.("error", (err) => console.warn(`[media] proxy generation launch failed: ${err?.message || err}`));
+    return { proxyPath, status: "pending" };
+  } catch (error) {
+    return { proxyPath, status: "failed", error: String(error?.message || error) };
+  }
+}
+
 // Shared post-receive audio handling for BOTH the direct one-shot upload
 // (/upload-audio) and the resumable path (/upload-finalize). Extracted verbatim
 // so the two transports produce identical results: validate playability, return
@@ -308,14 +402,27 @@ router.post("/upload-audio", async (req, res) => {
 // path exists on this server (Firebase configured) and the size ceiling — so it
 // can branch and show accurate limits instead of attempting a doomed upload.
 router.get("/upload-config", (req, res) => {
+  const limits = getUploadLimits();
   res.json({
     ok: true,
     resumable: isFirebaseAdminEnabled(),
-    // Files at/under this stay on the fast one-shot path (well under Cloudflare's
-    // 100MB cap); larger ones need the resumable path.
-    directMaxMb: 90,
-    maxMb: Math.floor(RESUMABLE_MAX_BYTES / (1024 * 1024)),
+    directMaxMb: limits.directClientMaxMb,
+    directMaxBytes: limits.directClientMaxBytes,
+    maxMb: limits.resumableMaxMb,
+    maxBytes: limits.resumableMaxBytes,
+    minFreeAfterUploadMb: limits.minFreeAfterUploadMb,
   });
+});
+
+router.get("/proxy-status", (req, res) => {
+  const proxyPath = String(req.query?.proxyPath || "").trim();
+  if (!proxyPath) return res.status(400).json({ ok: false, error: "proxyPath required" });
+  const resolved = path.resolve(proxyPath);
+  const outputRoot = path.resolve(req.ctx.outputDir);
+  if (!resolved.startsWith(outputRoot + path.sep) && resolved !== outputRoot) {
+    return res.status(403).json({ ok: false, error: "Proxy path is outside your media folder" });
+  }
+  return res.json({ ok: true, ...getVideoProxyStatus(resolved) });
 });
 
 // Resumable upload — step 1: mint a GCS session the browser PUTs chunks to
@@ -371,6 +478,11 @@ router.post("/upload-finalize", async (req, res) => {
     const extHint = filename ? path.extname(filename).replace(".", "").toLowerCase() : "";
     const outDir = req.ctx.outputDir;
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+    const headroom = hasDiskHeadroomForUpload(outDir, size);
+    if (!headroom.ok) {
+      deleteUploadObject(objectPath).catch(() => {});
+      return res.status(507).json({ ok: false, error: headroom.error, availableBytes: headroom.availableBytes, requiredBytes: headroom.requiredBytes });
+    }
     const cleanupGcs = () => deleteUploadObject(objectPath).catch(() => {}); // local copy becomes source of truth
 
     if (kind === "background") {
@@ -387,7 +499,8 @@ router.post("/upload-finalize", async (req, res) => {
       const outFile = path.join(outDir, `source-video-${uuid()}.${ext}`);
       await downloadUploadToLocal(objectPath, outFile);
       cleanupGcs();
-      return res.json({ ok: true, file: outFile.replace(/\\/g, "/"), mime: contentType || `video/${ext}` });
+      const proxy = startVideoProxyGeneration(outFile);
+      return res.json({ ok: true, file: outFile.replace(/\\/g, "/"), mime: contentType || `video/${ext}`, proxyPath: proxy.proxyPath, proxyStatus: proxy.status });
     }
 
     // default: audio — validate + native/transcode exactly like /upload-audio.
@@ -516,7 +629,8 @@ router.post("/upload-source-video", async (req, res) => {
     const recv = await receiveUploadToFile(req, outFile, { b64: meta.b64, mime: meta.mime });
     if (!recv.ok) return res.status(recv.status || 400).json({ ok: false, error: recv.error });
 
-    return res.json({ ok: true, file: outFile.replace(/\\/g, "/"), mime: meta.mime || `video/${ext}` });
+    const proxy = startVideoProxyGeneration(outFile);
+    return res.json({ ok: true, file: outFile.replace(/\\/g, "/"), mime: meta.mime || `video/${ext}`, proxyPath: proxy.proxyPath, proxyStatus: proxy.status });
   } catch (e) {
     res.status(400).json({ ok: false, error: String(e?.message || e) });
   }

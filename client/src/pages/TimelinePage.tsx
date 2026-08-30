@@ -1,16 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
-import { api, TRANSCRIBE_TIMEOUT_MS, MEDIA_OP_TIMEOUT_MS } from '../lib/api';
+import { api, TRANSCRIBE_TIMEOUT_MS, MEDIA_OP_TIMEOUT_MS, videoGenApi, timelineApi, RESUMABLE_UPLOAD_MAX_BYTES } from '../lib/api';
 import { uploadMedia } from '../lib/mediaUpload';
 import toast from 'react-hot-toast';
 import {
     Play,
     Save,
+    Type,
+    Volume2,
+    Layers,
+    Image as ImageIcon,
+    Clapperboard,
     Trash2,
     Plus,
     Music,
-    Volume2,
+    
     Waves,
     Library,
     Film,
@@ -18,25 +23,60 @@ import {
     Sparkles,
     X,
     Share2,
-    Scissors,
-    History as HistoryIcon,
-    RotateCcw,
+    ExternalLink,
+    
+    
+    
     ChevronUp,
     ChevronDown,
+    Wand2,
+    Video,
+    BookOpen,
+    Eraser,
+    LayoutTemplate,
 } from 'lucide-react';
 import { loadJson, saveJson, STORAGE_KEYS } from '../lib/storage';
 import { LAYOUT_OPTIONS } from '../lib/layoutOptions';
 import { usePersistedState } from '../lib/usePersistedState';
 import { pickTranscribeAction, baseName, type TranscriptRecord } from '../lib/transcribeAction';
-import { AnimationPicker } from '../components/voicelab/AnimationPicker';
 import { ShareSheet } from '../components/ShareSheet';
 import { MediaTrimmer } from '../components/MediaTrimmer';
 import { MusicPicker } from '../components/MusicPicker';
 import { BackgroundLibraryModal } from '../components/BackgroundLibraryModal';
+import { SourceMediaPanel } from '../components/timeline/SourceMediaPanel';
+import { CaptionStylePanel } from '../components/timeline/CaptionStylePanel';
+import { ScenesPanel } from '../components/timeline/ScenesPanel';
+import { LivePreviewStage } from '../components/timeline/LivePreviewStage';
+import { addEffectToScene, removeEffectClip } from '../lib/timelineEffects';
+import { syncSidecarTracks } from '../lib/timelineTrackSync';
+import type { TimelineEffectKind, TimelineTrackKind } from '../lib/timelineProject';
+import { MasteringPanel } from '../components/timeline/MasteringPanel';
+import { RecentAudioPanel } from '../components/timeline/RecentAudioPanel';
+import { TranscriptActions } from '../components/timeline/TranscriptActions';
+import { EditorShell } from '../components/editor/EditorShell';
+import { PanelSection } from '../components/editor/PanelSection';
+import { AIDocumentaryTimelinePanel } from '../components/timeline/AIDocumentaryTimelinePanel';
+import { VisualTimelineCanvas } from '../components/timeline/VisualTimelineCanvas';
 import { InfoTooltip } from '../components/ui/InfoTooltip';
 import { BusyBar } from '../components/ui/BusyBar';
 import { DropZone } from '../components/ui/DropZone';
 import { buildSpeakableLines, cleanCaptionLine } from '../lib/speakableScript';
+import { ScriptQuickPanel, type QuickScript, type ScriptQuickConfig } from '../components/timeline/ScriptQuickPanel';
+import { VoiceLab, type VoiceTake } from './VoiceAudioPage';
+import { OutputQuickPanel, type ReadinessItem } from '../components/timeline/OutputQuickPanel';
+import { RenderLab } from './RenderPage';
+import { ShareKitPanel } from '../components/timeline/ShareKitPanel';
+import { StoryQuickPanel } from '../components/timeline/StoryQuickPanel';
+import { SeriesQuickPanel } from '../components/timeline/SeriesQuickPanel';
+import { useNavigate } from 'react-router-dom';
+import type { TimelineProject } from '../lib/timelineProject';
+import {
+    insertAssetOnTrack,
+    insertSourceMediaOnTimeline,
+    insertVoiceoverPlaceholderOnTimeline,
+    loadTimelineProject,
+    saveTimelineProject,
+} from '../lib/timelineProject';
 
 interface TranscriptWord {
     text: string;
@@ -159,7 +199,7 @@ const MAX_CAPTION_WORDS = 1500;
  * in a generic server 413/400.
  */
 // Client-side ceiling; large files (>90MB) go via the resumable path (uploadMedia).
-const MAX_UPLOAD_MB = 400;
+const MAX_UPLOAD_MB = Math.floor(RESUMABLE_UPLOAD_MAX_BYTES / 1024 / 1024);
 
 /** Server-recorded captioned-video render — shape mirrors renderHistory.js. */
 interface RenderHistoryItem {
@@ -173,8 +213,43 @@ interface RenderHistoryItem {
 }
 
 export function TimelinePage() {
+    const navigate = useNavigate();
+    // The rail is controlled from here so a quick job can hand off to the
+    // next tool: Script -> Voice this -> Voice -> Next: Render -> Output.
+    const [activeTool, setActiveTool] = useState('media');
+    const [voiceSeedText, setVoiceSeedText] = useState('');
+    // The docked Render lab's background picks, mirrored on the stage live.
+    const [labBackgrounds, setLabBackgrounds] = useState<Array<{ id: string; url: string; previewUrl?: string; image?: string; kind?: 'image' | 'video' }>>([]);
+    // The docked Render lab's caption look, previewed on the stage live.
+    const [labCaptionStyle, setLabCaptionStyle] = useState<{ preset: string; motion: string; highlight: boolean; stagger: boolean; layout: string; depth: boolean } | null>(null);
+    // The stage shows the LAST RENDER only until the next edit: any change
+    // to the cut returns the stage to the live preview. Otherwise a preset
+    // change, a new line or a wipe looked like nothing happened.
+    const backToCut = () => setRenderedThisSession(false);
+    const labStyleSeenRef = useRef(false);
+    const labBackgroundsSeenRef = useRef(false);
     const [clips, setClips] = useState<TimelineClip[]>([]);
-    // Backgrounds are part of the captioned-video flow (Sermon Clip Studio).
+    const [documentaryProject, setDocumentaryProject] = useState<TimelineProject | null>(null);
+    // Scene selection is page-level state: the Scenes panel and the scene
+    // blocks in the strip are separate components that must agree on it.
+    const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null);
+    // Playhead for the live preview. Not persisted: where you were scrubbing
+    // is a within-session concern, not project state.
+    const [previewTimeSec, setPreviewTimeSec] = useState(0);
+    // Which option each effect is configured with, e.g. { grade: 'cinematic' }.
+    const [effectOption, setEffectOption] = useState<Partial<Record<TimelineEffectKind, string>>>({});
+    const [isRequestingVeoBroll, setIsRequestingVeoBroll] = useState(false);
+    const [isRenderingDocumentaryTimeline, setIsRenderingDocumentaryTimeline] = useState(false);
+    // What the last proof render included / omitted, straight from the server.
+    const [renderCoverage, setRenderCoverage] = useState<{
+        included: Array<{ kind: string; label: string; used: number; total: number }>;
+        omitted: Array<{ kind: string; label: string; count: number; reason: string }>;
+        warnings: string[];
+    } | null>(null);
+    const [documentaryRenderJobId, setDocumentaryRenderJobId] = useState<string | null>(null);
+    const [documentaryRenderStatus, setDocumentaryRenderStatus] = useState<string | null>(null);
+    const [documentaryRenderProgress, setDocumentaryRenderProgress] = useState(0);
+    // Backgrounds are part
     // Persisted as an ORDERED array of up to MAX_BACKGROUNDS items — the
     // render route hard-cuts between them at durationSec/N each. See the
     // server's MAX_BACKGROUNDS constant for the matching cap.
@@ -214,10 +289,12 @@ export function TimelinePage() {
         STORAGE_KEYS.sclSourcePath,
         null,
     );
-    const [sourceMediaKind, setSourceMediaKind] = usePersistedState<'audio' | 'video' | null>(
+    const [sourceMediaKind, setSourceMediaKind] = usePersistedState<'audio' | 'video' | 'image' | null>(
         STORAGE_KEYS.sclSourceKind,
         null,
     );
+    const [sourceMediaProxyPath, setSourceMediaProxyPath] = useState<string | null>(null);
+    const [sourceMediaProxyStatus, setSourceMediaProxyStatus] = useState<string | null>(null);
     const [isUploading, setIsUploading] = useState(false);
     // 0..100 while a media upload is in flight, null when idle. Drives the
     // upload progress bar so large background/music files don't look frozen.
@@ -275,6 +352,13 @@ export function TimelinePage() {
         STORAGE_KEYS.sclRenderedVideo,
         null,
     );
+    // renderedVideo is PERSISTED (the Renders list, download and share all read
+    // it), but the STAGE must not open onto a finished video from a previous
+    // session. The stage is where the operator works on the cut; greeting them
+    // with last week's export hides the editor behind an artefact they did not
+    // ask to see. This flag is deliberately NOT persisted, so the playback
+    // surface appears only for a render completed in THIS session.
+    const [renderedThisSession, setRenderedThisSession] = useState(false);
     const [isRenderingVideo, setIsRenderingVideo] = useState(false);
     // Determinate progress for the captioned-video render. Fed by the server's
     // SSE stream of ffmpeg `time=` parses; runs 0..100 and freezes at 100 once
@@ -314,7 +398,56 @@ export function TimelinePage() {
             requestAnimationFrame(() => resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
         }
     }, [isRenderingVideo, renderedVideo]);
-    // Recent Renders — the user's last N captioned-video renders, fetched
+
+    useEffect(() => {
+        const restored = loadTimelineProject();
+        if (restored) {
+            setDocumentaryProject(restored);
+        }
+        timelineApi.listProjects().then((response) => {
+            const latest = response.data?.projects?.[0];
+            if (response.ok && latest) setDocumentaryProject(latest);
+        }).catch(() => {
+            // Local storage remains the offline fallback.
+        });
+    }, []);
+
+    useEffect(() => {
+        if (documentaryProject) {
+            saveTimelineProject(documentaryProject);
+            const timer = window.setTimeout(() => {
+                timelineApi.saveProject(documentaryProject).catch(() => {
+                    // Keep editing uninterrupted; localStorage is already saved.
+                });
+            }, 750);
+            return () => window.clearTimeout(timer);
+        }
+        return undefined;
+    }, [documentaryProject]);
+
+    useEffect(() => {
+        if (!sourceMediaProxyPath || sourceMediaProxyStatus === 'ready') return;
+        let cancelled = false;
+        const checkProxy = async () => {
+            const response = await api.get<{ status?: string; proxyPath?: string }>(`/api/media/proxy-status?proxyPath=${encodeURIComponent(sourceMediaProxyPath)}`);
+            if (cancelled || !response.ok || !response.data?.status) return;
+            setSourceMediaProxyStatus(response.data.status);
+            if (response.data.status === 'ready' && documentaryProject) {
+                setDocumentaryProject({
+                    ...documentaryProject,
+                    assets: Object.fromEntries(Object.entries(documentaryProject.assets).map(([id, asset]) => [
+                        id,
+                        asset.proxyPath === sourceMediaProxyPath ? { ...asset, proxyStatus: 'ready' } : asset,
+                    ])),
+                    updatedAt: new Date().toISOString(),
+                });
+            }
+        };
+        checkProxy();
+        const timer = window.setInterval(checkProxy, 5000);
+        return () => { cancelled = true; window.clearInterval(timer); };
+    }, [sourceMediaProxyPath, sourceMediaProxyStatus, documentaryProject]);
+    // Recent Renders
     // from the server on mount and refetched after each successful render so
     // the panel stays in sync without manual refresh.
     const [renderHistory, setRenderHistory] = useState<RenderHistoryItem[]>([]);
@@ -334,6 +467,12 @@ export function TimelinePage() {
     );
     const [transcriptHistory, setTranscriptHistory] = useState<TranscriptRecord[]>([]);
     const [showHistory, setShowHistory] = useState(false);
+    // Editor layout is opt-in and persisted. The classic stacked view stays the
+    // default until the shell has been used in anger — a layout switch should
+    // never be something the operator discovers mid-Sunday.
+    const [editorLayout, setEditorLayout] = usePersistedState<boolean>(
+        'bf.timeline.editorLayout', false,
+    );
 
     // Drives a single compact toast through an upload's two phases: byte
     // transfer (determinate %) then server-side processing (indeterminate).
@@ -357,21 +496,26 @@ export function TimelinePage() {
             return;
         }
         const isVideo = /\.(mp4|mov|webm|m4v)$/i.test(file.name);
+        const isImage = /\.(png|jpe?g|webp|gif)$/i.test(file.name) || file.type.startsWith('image/');
+        const mediaKind: 'video' | 'image' | 'audio' = isVideo ? 'video' : isImage ? 'image' : 'audio';
+        const uploadKind = isVideo ? 'source-video' : isImage ? 'background' : 'audio';
         const toastId = 'scl-source-upload';
         setIsUploading(true);
         try {
             setUploadProgress(0);
-            toast.loading(isVideo ? 'Uploading video… 0%' : 'Uploading sermon… 0%', { id: toastId });
+            toast.loading(isVideo ? 'Uploading video… 0%' : isImage ? 'Uploading image… 0%' : 'Uploading sermon… 0%', { id: toastId });
             // Small files stream one-shot; large files (which Cloudflare would
             // reject) go resumable → storage. uploadMedia picks the transport.
             const data = await uploadMedia(
                 file,
                 file.name,
-                isVideo ? 'source-video' : 'audio',
-                makeUploadToast(toastId, isVideo ? 'Uploading video…' : 'Uploading sermon…'),
+                uploadKind,
+                makeUploadToast(toastId, isVideo ? 'Uploading video…' : isImage ? 'Uploading image…' : 'Uploading sermon…'),
             );
             setSourceMediaPath(data.file);
-            setSourceMediaKind(isVideo ? 'video' : 'audio');
+            setSourceMediaKind(mediaKind);
+            setSourceMediaProxyPath(isVideo ? data.proxyPath || null : null);
+            setSourceMediaProxyStatus(isVideo ? data.proxyStatus || null : null);
             setTranscript(null);
             setEditedLines([]);
             // Audio uploads feed the legacy "Main Assembly" clip list so the
@@ -385,7 +529,7 @@ export function TimelinePage() {
             // path tries to concat both the old (possibly stale) clip and
             // the new one, throws an ffmpeg validation error, and the user
             // has to manually delete the duplicate to recover.
-            if (!isVideo) {
+            if (mediaKind === 'audio') {
                 const clip: TimelineClip = {
                     id: `clip_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
                     path: data.file,
@@ -398,7 +542,7 @@ export function TimelinePage() {
                 saveClipsToCache(next);
                 pushAudioHistory(data.file, 'source');
             }
-            toast.success(`${isVideo ? 'Video' : 'Audio'} uploaded`, { id: toastId });
+            toast.success(`${mediaKind === 'video' ? 'Video' : mediaKind === 'image' ? 'Image' : 'Audio'} uploaded`, { id: toastId });
         } catch (e) {
             toast.error((e as Error).message || 'Upload failed', { id: toastId });
         } finally {
@@ -454,10 +598,11 @@ export function TimelinePage() {
                 return;
             }
             const words: TranscriptWord[] = response.data.words;
+            const provider = response.data?.sttProvider ? ` via ${response.data.sttProvider}` : '';
             const lines = groupWordsIntoLines(words, 8);
             setTranscript(words);
             setEditedLines(lines);
-            toast.success(`Transcribed ${words.length} words`, { id: toastId });
+            toast.success(`Transcribed ${words.length} words${provider}`, { id: toastId });
             void saveTranscript(words, lines);
         } catch {
             toast.error('Transcription failed', { id: toastId });
@@ -497,6 +642,30 @@ export function TimelinePage() {
         }
         for (const file of toUpload) {
             await handleLocalBackgroundUpload(file);
+        }
+    };
+
+    /**
+     * Upload several backgrounds from one file picker.
+     *
+     * Both background inputs took files[0] and had no `multiple`, so the
+     * operator could add exactly one clip per trip through the dialog.
+     * Sequential rather than parallel: the single-file handler owns a shared
+     * progress bar and isUploading flag, and the MAX_BACKGROUNDS check must see
+     * each addition before deciding on the next.
+     */
+    const handleLocalBackgroundUploads = async (files: File[]) => {
+        const room = MAX_BACKGROUNDS - backgroundItems.length;
+        if (room <= 0) {
+            toast.error(`Max ${MAX_BACKGROUNDS} backgrounds reached. Remove one to add another.`);
+            return;
+        }
+        const take = files.slice(0, room);
+        if (files.length > room) {
+            toast.error(`Only ${room} slot${room === 1 ? '' : 's'} left — adding the first ${room}.`);
+        }
+        for (const f of take) {
+            await handleLocalBackgroundUpload(f);
         }
     };
 
@@ -575,6 +744,7 @@ export function TimelinePage() {
             toast.error('Transcribe the sermon first, or turn off kinetic captions');
             return;
         }
+
         // Audio sources need a background. In Auto mode BibleFuel supplies one
         // from the user's library (or AI-generates it), so a manual pick is only
         // required when Auto is off. Video sources bring their own visual layer.
@@ -747,6 +917,7 @@ export function TimelinePage() {
                 if (data.file) {
                     const fileName = String(data.file).split(/[\\/]/).pop();
                     setRenderedVideo(api.mediaUrl(fileName));
+                    setRenderedThisSession(true);
                     toast.success('Captioned video ready');
                 }
                 finish();
@@ -880,6 +1051,9 @@ export function TimelinePage() {
     const useAsMusicBed = (p: string) => {
         if (!p) return;
         setMusicPath(p);
+        // The Music bed LANE mirrors musicPaths; musicPath alone never reached
+        // it, so 'Music bed lane' from the lab and the Media tool did nothing visible.
+        setMusicPaths((prev) => (prev.includes(p) ? prev : [...prev, p]));
         toast.success('Using as music bed');
     };
 
@@ -949,8 +1123,25 @@ export function TimelinePage() {
     };
 
     const handlePreview = async () => {
-        if (clips.length === 0) {
-            toast.error('Timeline is empty');
+        // Two timeline models coexist on this page: the legacy `clips` array
+        // (what this preview endpoint consumes) and `documentaryProject.tracks`
+        // (what the operator actually SEES in the strip). Guarding on `clips`
+        // alone reported "Timeline is empty" over a visibly full timeline,
+        // because loading source media populates sourceMediaPath without
+        // touching `clips`. Fall back to the source media, which is the same
+        // audio this preview would have used anyway.
+        const previewClips = clips.length > 0
+            ? clips.map((c) => ({
+                path: c.path,
+                startSec: c.startSec != null ? c.startSec : undefined,
+                durationSec: c.durationSec != null ? c.durationSec : undefined,
+            }))
+            : sourceMediaPath
+                ? [{ path: sourceMediaPath, startSec: undefined, durationSec: undefined }]
+                : [];
+
+        if (previewClips.length === 0) {
+            toast.error('Load a sermon or add a clip first');
             return;
         }
         if (backgroundItems.length === 0) {
@@ -964,11 +1155,7 @@ export function TimelinePage() {
             // Use the FIRST selection so this quick-preview UI keeps working
             // even when the captioned-video flow has 4 backgrounds queued.
             const response = await api.post('/api/audio-adv/timeline-preview', {
-                clips: clips.map((c) => ({
-                    path: c.path,
-                    startSec: c.startSec != null ? c.startSec : undefined,
-                    durationSec: c.durationSec != null ? c.durationSec : undefined,
-                })),
+                clips: previewClips,
                 backgroundPath: backgroundItems[0].id,
                 normalizeLUFS,
                 fades: { inMs: fadeIn, outMs: fadeOut },
@@ -1004,9 +1191,1641 @@ export function TimelinePage() {
         }
     };
 
+    /**
+     * Push every selected background onto the B-roll track in one action.
+     *
+     * Insert only ever placed sourceMediaPath - the single loaded sermon - so
+     * there was no way to get several images onto the timeline without
+     * uploading them one at a time as source media. Backgrounds are already a
+     * multi-select list; this is the missing bridge from that list to the
+     * timeline.
+     */
+    /**
+     * Does the timeline carry anything the captioned-video pipeline cannot
+     * render? That pipeline knows only source media, captions and backgrounds,
+     * so B-roll, extra footage, voice-over, music and effects would silently
+     * vanish from its output - which is exactly what the operator hit.
+     */
+    const timelineHasOwnContent = Boolean(documentaryProject?.tracks?.some(
+        (t) => t.kind !== 'captions' && (t.clips?.length || 0) > 0,
+    ));
+
+    /** One Render button; the timeline decides which renderer is correct. */
+    const handleRenderFromEditor = () => {
+        if (timelineHasOwnContent) return void handleRenderDocumentaryTimeline();
+        return void handleRenderCaptionedVideo();
+    };
+
+    const handleInsertBackgroundsIntoTimeline = () => {
+        if (!documentaryProject) {
+            toast.error('Create a documentary timeline first');
+            return;
+        }
+        if (backgroundItems.length === 0) {
+            toast.error('Pick some backgrounds first');
+            return;
+        }
+        // Fold with a PURE helper and set once, rather than calling setState per
+        // item: React batches updates, so a loop of setDocumentaryProject calls
+        // would each start from the same stale project and only the last would
+        // survive.
+        let next = documentaryProject;
+        for (const item of backgroundItems) {
+            const url = item.previewUrl || item.image || item.url;
+            if (!url) continue;
+            next = insertSourceMediaOnTimeline(next, {
+                label: (url.split(/[\/]/).pop() || 'background').split('?')[0],
+                path: url,
+                kind: item.kind === 'image' ? 'image' : 'video',
+                durationSec: item.kind === 'image' ? 5 : 10,
+            });
+        }
+        if (next === documentaryProject) {
+            toast.error('Nothing could be inserted');
+            return;
+        }
+        setDocumentaryProject(next);
+        toast.success(`${backgroundItems.length} background${backgroundItems.length === 1 ? '' : 's'} added to the timeline`);
+    };
+
+    const handleInsertSourceMediaIntoDocumentary = () => {
+        if (!documentaryProject) {
+            toast.error('Create a documentary timeline first');
+            return;
+        }
+        if (!sourceMediaPath || !sourceMediaKind) {
+            toast.error('Upload source media first');
+            return;
+        }
+        const label = sourceMediaPath.split(/[\\/]/).pop() || (sourceMediaKind === 'video' ? 'Uploaded video' : sourceMediaKind === 'image' ? 'Uploaded image' : 'Uploaded audio');
+        const nextProject = insertSourceMediaOnTimeline(documentaryProject, {
+            label,
+            path: sourceMediaPath,
+            proxyPath: sourceMediaKind === 'video' ? sourceMediaProxyPath || undefined : undefined,
+            proxyStatus: sourceMediaKind === 'video' ? sourceMediaProxyStatus || undefined : undefined,
+            kind: sourceMediaKind,
+            durationSec: sourceMediaKind === 'image' ? 5 : 30,
+        });
+        setDocumentaryProject(nextProject);
+        toast.success(sourceMediaKind === 'video' ? 'Inserted into Real footage track' : sourceMediaKind === 'image' ? 'Inserted into AI B-roll / cutaways track' : 'Inserted into Music bed track');
+    };
+
+    const handleInsertVoiceoverPlaceholder = () => {
+        if (!documentaryProject) {
+            toast.error('Create a documentary timeline first');
+            return;
+        }
+        const firstScene = documentaryProject.scenes[0];
+        const text = editedLines[0] || firstScene?.voiceoverBrief || 'Opening narration placeholder.';
+        const nextProject = insertVoiceoverPlaceholderOnTimeline(documentaryProject, {
+            label: `${firstScene?.label || 'Opening'} narration`,
+            text,
+            startSec: firstScene?.startSec || 0,
+            durationSec: 6,
+        });
+        setDocumentaryProject(nextProject);
+        toast.success('Inserted Chatterbox VO placeholder');
+    };
+
+    const handleRenderDocumentaryTimeline = async () => {
+        if (!documentaryProject) {
+            toast.error('Create a documentary timeline first');
+            return;
+        }
+        if (isRenderingDocumentaryTimeline) return;
+
+        const toastId = toast.loading('Queued timeline render…');
+        setIsRenderingDocumentaryTimeline(true);
+        setDocumentaryRenderProgress(0);
+        setDocumentaryRenderStatus('queued');
+        try {
+            const response = await timelineApi.render(documentaryProject, documentaryProject.renderSettings?.quality || 'proof_720p', typographyPreset);
+            if (!response.ok || !response.data?.ok || !response.data.jobId) {
+                toast.error(response.error || response.data?.error || 'Timeline render rejected', { id: toastId });
+                setDocumentaryRenderStatus('failed');
+                return;
+            }
+
+            const jobId = response.data.jobId;
+            setDocumentaryRenderJobId(jobId);
+            setDocumentaryRenderStatus(response.data.status || 'queued');
+            setDocumentaryRenderProgress(response.data.progress ?? 0);
+            toast.loading('Timeline render running…', { id: toastId });
+
+            for (let attempt = 0; attempt < 120; attempt += 1) {
+                await new Promise((resolve) => setTimeout(resolve, attempt < 5 ? 1000 : 2000));
+                const job = await timelineApi.getRenderJob(jobId);
+                if (!job.ok || !job.data?.ok) continue;
+                const data = job.data;
+                setDocumentaryRenderStatus(data.status || null);
+                setDocumentaryRenderProgress(data.progress ?? 0);
+
+                if (data.status === 'completed') {
+                    const proof = data.publicUrl || '';
+                    if (proof) { setRenderedVideo(proof); setRenderedThisSession(true); }
+                    const providers = data.voiceProvidersUsed?.length ? ` · VO: ${data.voiceProvidersUsed.join(', ')}` : '';
+                    const fallbackNote = data.voiceFallbacks?.length ? ' (fallback used)' : '';
+                    toast.success(`Timeline proof MP4 ready (${data.plan?.durationSec || 0}s)${providers}${fallbackNote}`, { id: toastId });
+
+                    // Anything the renderer could NOT include is stated outright.
+                    // Silently dropping a track the user filled in makes the
+                    // output impossible to trust, so surface it every time.
+                    setRenderCoverage(data.coverage || null);
+                    const warnings: string[] = data.warnings || [];
+                    if (warnings.length > 0) {
+                        toast(warnings.join(' '), { icon: '⚠️', duration: 9000 });
+                    }
+                    return;
+                }
+
+                if (data.status === 'failed') {
+                    toast.error(data.error || 'Timeline render failed', { id: toastId });
+                    return;
+                }
+            }
+
+            toast('Timeline render is still running. Check the job status again shortly.', { id: toastId, icon: 'ℹ️' });
+        } catch (error) {
+            toast.error((error as Error).message || 'Timeline render failed', { id: toastId });
+            setDocumentaryRenderStatus('failed');
+        } finally {
+            setIsRenderingDocumentaryTimeline(false);
+        }
+    };
+
+    // Effects are computed by a PURE helper, then set as a separate statement.
+    // Never inside a state updater: React invokes updaters twice under
+    // StrictMode, which would add the effect twice.
+    // Mirror the sidecar state onto the timeline's own lanes, so the Music bed
+    // and Captions lanes stop reading "0 clips" when the operator has added
+    // both. syncSidecarTracks is pure and returns the SAME reference when
+    // nothing changed, which is what stops this effect from looping.
+    useEffect(() => {
+        if (!documentaryProject) return;
+        // Captions follow the voice-over lane: its span, and its word timings
+        // when the take carried them.
+        const voClips = (documentaryProject.tracks.find((t) => t.kind === 'voiceover')?.clips || []).filter((c) => documentaryProject.assets[c.assetId]?.path);
+        const voice = voClips.length > 0 ? (() => {
+            const startSec = Math.min(...voClips.map((c) => c.startSec));
+            const endSec = Math.max(...voClips.map((c) => c.startSec + c.durationSec));
+            const first = [...voClips].sort((a, b) => a.startSec - b.startSec)[0];
+            const words = voClips.length === 1 ? documentaryProject.assets[first.assetId]?.words : undefined;
+            return { startSec, durationSec: Math.max(0.1, endSec - startSec), words };
+        })() : null;
+        const next = syncSidecarTracks(documentaryProject, {
+            musicPaths,
+            captionLines: editedLines,
+            voice,
+        });
+        if (next !== documentaryProject) setDocumentaryProject(next);
+    }, [documentaryProject, musicPaths, editedLines]);
+
+    const handleAddEffect = (sceneId: string, effect: TimelineEffectKind, option?: string) => {
+        if (!documentaryProject) return;
+        const options = option
+            ? { [effect === 'transition' ? 'style' : effect === 'grade' ? 'look' : 'colour']: option }
+            : undefined;
+        const next = addEffectToScene(documentaryProject, { sceneId, effect, options });
+        if (next === documentaryProject) return;   // unknown scene; nothing to do
+        setDocumentaryProject(next);
+        toast.success(`${effect} added`);
+    };
+
+    const handleRemoveEffect = (clipId: string) => {
+        if (!documentaryProject) return;
+        const next = removeEffectClip(documentaryProject, clipId);
+        if (next === documentaryProject) return;
+        setDocumentaryProject(next);
+    };
+
+    const handleRequestVeoBroll = async (request: { prompt: string; aspect: '16:9' | '9:16' | '1:1'; durationSec: number; targetTrackKind: 'broll'; startSec: number }) => {
+        if (!documentaryProject || isRequestingVeoBroll) return;
+        const toastId = toast.loading('Requesting Veo B-roll…');
+        setIsRequestingVeoBroll(true);
+        try {
+            const response = await videoGenApi.generate({
+                projectId: documentaryProject.id,
+                prompt: request.prompt,
+                aspect: request.aspect,
+                durationSec: request.durationSec,
+                style: 'worship-documentary-broll',
+            });
+
+            if (response.ok && response.data?.ok && (response.data.publicUrl || response.data.path)) {
+                const publicUrl = response.data.publicUrl || response.data.path || '';
+                const nextProject = insertAssetOnTrack(documentaryProject, {
+                    trackKind: request.targetTrackKind,
+                    asset: {
+                        id: `veo-${Date.now()}`,
+                        kind: 'video',
+                        source: 'veo',
+                        label: 'Veo worship B-roll',
+                        path: publicUrl,
+                        durationSec: request.durationSec,
+                        aspect: request.aspect,
+                        prompt: request.prompt,
+                        tags: ['ai_broll', 'veo', 'worship-documentary'],
+                    },
+                    startSec: request.startSec,
+                    durationSec: request.durationSec,
+                    fit: 'contain',
+                });
+                setDocumentaryProject(nextProject);
+                toast.success('Veo B-roll inserted on AI B-roll track', { id: toastId });
+                return;
+            }
+
+            const code = response.data?.code || response.error || 'NOT_READY';
+            const message = code === 'PROVIDER_NOT_IMPLEMENTED'
+                ? 'Veo provider seam is ready; real Google Veo generation is not wired yet.'
+                : (response.error || response.data?.error || 'Veo generation is not configured yet.');
+            toast(message, { id: toastId, icon: 'ℹ️' });
+        } catch (error) {
+            toast.error((error as Error).message || 'Veo request failed', { id: toastId });
+        } finally {
+            setIsRequestingVeoBroll(false);
+        }
+    };
+
     const totalDuration = useMemo(() => {
         return clips.reduce((acc, c) => acc + (c.durationSec || 0), 0);
     }, [clips]);
+
+    const sourceMediaPreviewPath = sourceMediaKind === 'video' && sourceMediaProxyPath && sourceMediaProxyStatus === 'ready'
+        ? sourceMediaProxyPath
+        : sourceMediaKind === 'video'
+            ? ''
+            : sourceMediaPath;
+
+    const handlePreviewSource = () => {
+        const target = (sourceMediaKind === 'video' && sourceMediaProxyStatus !== 'ready') ? sourceMediaPath : sourceMediaPreviewPath;
+        if (!target) {
+            toast.error('Source media preview is not ready yet');
+            return;
+        }
+        setPreviewUrl(target);
+    };
+
+    // Hoisted so the classic card AND the editor panel render the SAME
+    // JSX. Duplicating a 200-line block would guarantee the two layouts
+    // drift apart the first time either is touched.
+    const videoBackgroundContent = (
+        <>
+                            <DropZone
+                                className="p-2"
+                                onFiles={handleDroppedBackgrounds}
+                                accept={['image/*', 'video/*', '.jpg', '.jpeg', '.png', '.webp', '.mp4', '.mov', '.webm', '.m4v']}
+                                disabled={isUploading}
+                                overlayLabel="Drop image or video backgrounds"
+                            >
+                                {/* Auto background: default on. BibleFuel picks a
+                                    mood-matched clip per beat from the user's library
+                                    (AI-generates one if the pool is empty). Picking
+                                    clips manually below overrides Auto. */}
+                                <label className="flex items-start gap-2 mb-3 p-2 rounded-xl border border-primary-500/20 bg-primary-500/5 cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={autoBackground}
+                                        onChange={(e) => setAutoBackground(e.target.checked)}
+                                        className="mt-0.5 accent-primary-500"
+                                    />
+                                    <span className="flex-1">
+                                        <span className="flex items-center gap-1.5 text-xs font-semibold text-primary-200">
+                                            <Sparkles size={13} />
+                                            Auto — let BibleFuel choose
+                                        </span>
+                                        <span className="block text-[10px] text-content-secondary mt-0.5">
+                                            {backgroundItems.length > 0
+                                                ? `Blended — your ${backgroundItems.length} clip${backgroundItems.length > 1 ? 's' : ''} first, then auto-picked clips fill the rest.`
+                                                : 'Picks a mood-matched background per beat from your library. Generates one if your library is empty.'}
+                                        </span>
+                                    </span>
+                                </label>
+                                {backgroundItems.length > 0 ? (
+                                    <div className="space-y-2">
+                                        {/* Scroll-cap the clip list so a long selection
+                                            (up to MAX_BACKGROUNDS) never drags the panel
+                                            down — the Sync + add controls stay below. */}
+                                        <div className="space-y-2 max-h-[22rem] overflow-y-auto pr-1">
+                                        {backgroundItems.map((item, idx) => (
+                                            <div
+                                                key={`${item.id}-${idx}`}
+                                                className="flex items-center gap-2.5 bg-black/30 rounded-lg p-1.5 border border-white/5"
+                                            >
+                                                <div className="relative w-12 aspect-[9/16] bg-black rounded-md overflow-hidden shrink-0">
+                                                    {item.kind === 'image' ? (
+                                                        <img
+                                                            src={item.previewUrl || item.url}
+                                                            alt=""
+                                                            className="w-full h-full object-cover"
+                                                        />
+                                                    ) : (
+                                                        <video
+                                                            src={item.previewUrl || item.url}
+                                                            muted
+                                                            loop
+                                                            autoPlay
+                                                            playsInline
+                                                            className="w-full h-full object-cover"
+                                                        />
+                                                    )}
+                                                    <span className="absolute top-0.5 left-0.5 w-4 h-4 grid place-items-center rounded bg-primary-500/85 text-[9px] font-bold text-black">
+                                                        {idx + 1}
+                                                    </span>
+                                                </div>
+                                                <span
+                                                    className="flex-1 min-w-0 truncate text-[11px] text-content-tertiary"
+                                                    title={`ID: ${item.id}${item.kind === 'image' ? ' (image)' : ''}`}
+                                                >
+                                                    {item.id}
+                                                </span>
+                                                <div className="flex items-center gap-1 shrink-0">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            if (idx === 0) return;
+                                                            const next = [...backgroundItems];
+                                                            [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
+                                                            setBackgroundItems(next);
+                                                        }}
+                                                        disabled={idx === 0}
+                                                        aria-label="Move up"
+                                                        className="h-7 w-7 grid place-items-center rounded-md bg-white/5 text-gray-300 hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-white/5 transition-colors"
+                                                    >
+                                                        <ChevronUp size={14} />
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            if (idx === backgroundItems.length - 1) return;
+                                                            const next = [...backgroundItems];
+                                                            [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
+                                                            setBackgroundItems(next);
+                                                        }}
+                                                        disabled={idx === backgroundItems.length - 1}
+                                                        aria-label="Move down"
+                                                        className="h-7 w-7 grid place-items-center rounded-md bg-white/5 text-gray-300 hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-white/5 transition-colors"
+                                                    >
+                                                        <ChevronDown size={14} />
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() =>
+                                                            setBackgroundItems(
+                                                                backgroundItems.filter((_, i) => i !== idx),
+                                                            )
+                                                        }
+                                                        aria-label="Remove"
+                                                        className="h-7 w-7 grid place-items-center rounded-md bg-red-500/10 text-red-300 hover:bg-red-500/20 transition-colors"
+                                                    >
+                                                        <Trash2 size={13} />
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                        </div>
+                                        {backgroundItems.length > 1 && (
+                                            <label className="flex items-start gap-2 px-1 cursor-pointer">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={syncBackgrounds}
+                                                    onChange={(e) => setSyncBackgrounds(e.target.checked)}
+                                                    className="mt-0.5 accent-primary-500"
+                                                />
+                                                <span className="text-[10px] text-help">
+                                                    Sync cuts to speech + crossfade
+                                                    <span className="block text-content-tertiary">
+                                                        {syncBackgrounds
+                                                            ? `${backgroundItems.length} clips change on spoken phrases, blended.`
+                                                            : `Hard cuts between ${backgroundItems.length} clips, ~equal slots.`}
+                                                    </span>
+                                                </span>
+                                            </label>
+                                        )}
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <Button
+                                                onClick={openLibrary}
+                                                disabled={backgroundItems.length >= MAX_BACKGROUNDS}
+                                                variant="secondary"
+                                                className="h-9 text-[10px]"
+                                            >
+                                                <Library size={14} className="mr-1" />
+                                                {backgroundItems.length >= MAX_BACKGROUNDS ? 'Library' : 'From library'}
+                                            </Button>
+                                            <label
+                                                className={`inline-flex items-center justify-center gap-1 h-9 text-[10px] rounded-md border ${
+                                                    backgroundItems.length >= MAX_BACKGROUNDS
+                                                        ? 'opacity-40 cursor-not-allowed border-white/10 text-gray-500'
+                                                        : 'cursor-pointer border-white/10 text-gray-200 hover:bg-white/5'
+                                                }`}
+                                            >
+                                                <Plus size={14} />
+                                                Upload from device
+                                                <input
+                                                    type="file"
+                                                    className="hidden"
+                                                    accept=".mp4,.mov,.webm,.m4v,.jpg,.jpeg,.png,.webp"
+                                                    disabled={backgroundItems.length >= MAX_BACKGROUNDS || isUploading}
+                                                    multiple
+                                                    onChange={(e) => {
+                                                        const fs = Array.from(e.target.files || []);
+                                                        if (fs.length) void handleLocalBackgroundUploads(fs);
+                                                        e.target.value = ''; // allow re-picking the same file
+                                                    }}
+                                                />
+                                            </label>
+                                        </div>
+                                        {uploadProgress !== null && (
+                                            <div className="space-y-1 px-1">
+                                                <div className="flex justify-between text-[10px] text-meta">
+                                                    <span>{uploadProgress < 100 ? 'Uploading…' : 'Processing…'}</span>
+                                                    <span>{uploadProgress}%</span>
+                                                </div>
+                                                <div className="h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
+                                                    <div
+                                                        className="h-full bg-primary-500 transition-all duration-150"
+                                                        style={{ width: `${uploadProgress}%` }}
+                                                    />
+                                                </div>
+                                            </div>
+                                        )}
+                                        <Button
+                                            onClick={handleInsertBackgroundsIntoTimeline}
+                                            variant="secondary"
+                                            className="w-full h-9 text-[10px]"
+                                            title="Put every selected background on the B-roll track"
+                                        >
+                                            <Plus size={14} className="mr-2" />
+                                            Add all to timeline
+                                        </Button>
+                                        <Button
+                                            onClick={handlePreview}
+                                            isLoading={isPreviewing}
+                                            variant="secondary"
+                                            className="w-full h-9 text-[10px] border-primary-500/20 text-primary-400"
+                                        >
+                                            <Film size={14} className="mr-2" />
+                                            Preview with First Background
+                                        </Button>
+                                    </div>
+                                ) : (
+                                    <div className="py-10 border-2 border-dashed border-white/10 rounded-xl flex flex-col items-center justify-center text-center px-4 space-y-3">
+                                        <Library size={32} className="text-gray-600" />
+                                        <p className="text-help">No backgrounds selected</p>
+                                        <div className="grid grid-cols-2 gap-2 w-full">
+                                            <Button onClick={openLibrary} className="h-9 text-[10px]">
+                                                <Library size={14} className="mr-1" />
+                                                From library
+                                            </Button>
+                                            <label
+                                                className={`inline-flex items-center justify-center gap-1 h-9 text-[10px] rounded-md border cursor-pointer border-primary-500/30 bg-primary-500/10 text-primary-200 hover:bg-primary-500/20 ${isUploading ? 'opacity-50' : ''}`}
+                                            >
+                                                <Plus size={14} />
+                                                Upload from device
+                                                <input
+                                                    type="file"
+                                                    className="hidden"
+                                                    accept=".mp4,.mov,.webm,.m4v,.jpg,.jpeg,.png,.webp"
+                                                    disabled={isUploading}
+                                                    multiple
+                                                    onChange={(e) => {
+                                                        const fs = Array.from(e.target.files || []);
+                                                        if (fs.length) void handleLocalBackgroundUploads(fs);
+                                                        e.target.value = '';
+                                                    }}
+                                                />
+                                            </label>
+                                        </div>
+                                        {uploadProgress !== null && (
+                                            <div className="space-y-1 w-full px-1">
+                                                <div className="flex justify-between text-[10px] text-meta">
+                                                    <span>{uploadProgress < 100 ? 'Uploading…' : 'Processing…'}</span>
+                                                    <span>{uploadProgress}%</span>
+                                                </div>
+                                                <div className="h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
+                                                    <div
+                                                        className="h-full bg-primary-500 transition-all duration-150"
+                                                        style={{ width: `${uploadProgress}%` }}
+                                                    />
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </DropZone>
+        </>
+    );
+
+    // ── Editor layout (CapCut-style shell) ──────────────────────────────────
+    // Same state, same handlers, different arrangement: tools in a rail,
+    // preview centre, timeline across the bottom. Rendering it as an
+    // alternative BRANCH rather than replacing the page means the classic view
+    // stays available if anything here is wrong.
+    // Overlays live in ONE place and both layouts render them.
+    //
+    // They used to sit only in the classic branch, AFTER the editor branch's
+    // early `return`. In editor mode React therefore never reached them: the
+    // Preview, Trim, Share and background-Library buttons all set their state
+    // correctly and then nothing rendered it, so every one of them looked dead
+    // on click. Anything mounted for one layout must be mounted for both.
+    // The transcript's editable caption lines. Shared by both layouts: this
+    // rendered ONLY in the classic branch, after the editor branch's early
+    // return, so transcribing in editor mode gave a success toast and no
+    // visible words - no way to tell it had worked.
+    const captionLinesEditor = (
+        kineticCaptions && editedLines.length > 0 && (
+            <div className="mt-1">
+                <button
+                    type="button"
+                    onClick={() => setShowCaptionLines((v) => !v)}
+                    aria-expanded={showCaptionLines}
+                    className="flex w-full items-center gap-2 py-1 text-xs text-gray-400 hover:text-gray-200"
+                >
+                    <ChevronDown size={14} className={`shrink-0 transition-transform ${showCaptionLines ? 'rotate-180' : ''}`} />
+                    <span>Caption lines ({editedLines.length})</span>
+                    <span className="ml-auto text-[0.6875rem] text-gray-500">tap to {showCaptionLines ? 'collapse' : 'edit'}</span>
+                </button>
+                {showCaptionLines && (
+                    <div className="mt-2 space-y-2 max-h-96 overflow-y-auto pr-2">
+                        {editedLines.map((line, idx) => (
+                            <input
+                                key={idx}
+                                type="text"
+                                value={line}
+                                onChange={(e) => {
+                                    const next = [...editedLines];
+                                    next[idx] = e.target.value;
+                                    setEditedLines(next);
+                                }}
+                                onBlur={() => {
+                                    const clean = cleanCaptionLine(editedLines[idx]);
+                                    if (clean !== editedLines[idx]) {
+                                        const next = [...editedLines];
+                                        next[idx] = clean;
+                                        setEditedLines(next.filter(Boolean));
+                                    }
+                                }}
+                                className="w-full bg-white/[0.03] border border-white/10 rounded-lg px-3 py-2 text-sm text-gray-200 focus:border-primary-500/40 focus:outline-none"
+                            />
+                        ))}
+                    </div>
+                )}
+            </div>
+        )
+    );
+
+    // ---- Script QUICK job ---------------------------------------------------
+    // The Scripts page's generator, docked in the editor. Output lands on THIS
+    // timeline; the library (STORAGE_KEYS.scripts) is the same one the Scripts
+    // page and Voice's "Use Latest Script" read - one library, many doors.
+    const [quickScripts, setQuickScripts] = useState<QuickScript[]>(
+        () => loadJson<QuickScript[]>(STORAGE_KEYS.scripts, []),
+    );
+    const [isGeneratingScript, setIsGeneratingScript] = useState(false);
+
+    const handleGenerateQuickScript = async (cfg: ScriptQuickConfig) => {
+        setIsGeneratingScript(true);
+        try {
+            const response = await api.post('/api/scripts/generate', cfg);
+            if (response.ok && response.data?.scripts) {
+                setQuickScripts(response.data.scripts);
+                saveJson(STORAGE_KEYS.scripts, response.data.scripts);
+                toast.success(`Generated ${response.data.scripts.length} script${response.data.scripts.length === 1 ? '' : 's'}`);
+            } else {
+                toast.error(response.error || 'Failed to generate scripts');
+            }
+        } finally {
+            setIsGeneratingScript(false);
+        }
+    };
+
+    const handleAddScriptToCaptions = (script: QuickScript) => {
+        const lines = [script.hook, script.verse, script.reflection, script.cta]
+            .map((l) => cleanCaptionLine(l || ''))
+            .filter(Boolean);
+        if (lines.length === 0) {
+            toast.error('This script has no lines to add');
+            return;
+        }
+        setEditedLines(lines);
+        setKineticCaptions(true);
+        toast.success(`${lines.length} caption clip${lines.length === 1 ? '' : 's'} landed on the Captions lane`);
+    };
+
+    // Clear the loaded source file. The stage's live preview is driven by
+    // sourceMediaPath, so with no way to unload it a stale image sat on the
+    // canvas forever - the operator had to ask for "a clear canvas button".
+    // The upload itself stays in the library; only the pointer is dropped.
+    const handleClearSourceMedia = () => {
+        setSourceMediaPath(null);
+        setSourceMediaKind(null);
+        setSourceMediaProxyPath(null);
+        setSourceMediaProxyStatus(null);
+        toast.success('Source media cleared — the stage shows your timeline again');
+    };
+
+    // Land a generated take on the voice-over lane as a REAL audio asset (a
+    // path the renderer plays), appended after the last VO clip. Also joins
+    // the shared audio history so the Voice page sees the same take.
+    const handleLandVoiceover = (take: VoiceTake) => {
+        if (!documentaryProject) {
+            toast.error('Create a documentary timeline first');
+            return;
+        }
+        const voTrack = documentaryProject.tracks.find((t) => t.kind === 'voiceover');
+        const startSec = voTrack?.clips.length
+            ? Math.max(...voTrack.clips.map((c) => c.startSec + c.durationSec))
+            : 0;
+        const next = insertAssetOnTrack(documentaryProject, {
+            trackKind: 'voiceover',
+            asset: {
+                id: `asset-vo-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                kind: 'audio',
+                source: 'upload',
+                label: take.label,
+                path: take.path,
+                durationSec: take.durationSec,
+                words: take.words,
+                tags: ['voiceover', 'tts'],
+            },
+            startSec,
+            durationSec: take.durationSec ?? 6,
+            fit: 'contain',
+        });
+        setDocumentaryProject(next);
+        pushAudioHistory(take.path, 'tts');
+        toast.success('Voice-over landed on the VO lane');
+    };
+
+    // The proof renderer refuses a timeline with no visual clip ('No video or
+    // B-roll clip with a media path found'). Backgrounds already picked - in the
+    // Background tool or the docked Render lab - become B-roll clips spread
+    // evenly across the cut, so voice + captions timelines can render.
+    const handleSendBackgroundsToBroll = () => {
+        if (!documentaryProject) { toast.error('Create a documentary timeline first'); return; }
+        const labPicks = loadJson<Array<{ id?: string; url?: string; kind?: string }>>(STORAGE_KEYS.renderBackgrounds, []);
+        const seen = new Set<string>();
+        const picks = [...backgroundItems, ...labPicks]
+            .map((b: any) => ({ path: String(b.path || b.id || b.url || ''), kind: b.kind === 'image' ? 'image' as const : 'video' as const, label: String(b.label || b.name || (b.id ?? '')).slice(0, 40) }))
+            .filter((b) => b.path && !seen.has(b.path) && seen.add(b.path));
+        if (picks.length === 0) { toast.error('Pick backgrounds first — Background tool, or Render lab → Visuals'); return; }
+        const total = Math.max(1, documentaryProject.targetDurationSec);
+        const each = total / picks.length;
+        let next = documentaryProject;
+        picks.forEach((b, i) => {
+            next = insertAssetOnTrack(next, {
+                trackKind: 'broll',
+                asset: { id: `asset-bg-${Date.now()}-${i}`, kind: b.kind, source: 'upload', label: b.label || `Background ${i + 1}`, path: b.path, tags: ['background'] },
+                startSec: i * each,
+                durationSec: each,
+                fit: 'cover',
+            });
+        });
+        setDocumentaryProject(next);
+        toast.success(`${picks.length} background${picks.length === 1 ? '' : 's'} placed on the B-roll lane`);
+    };
+
+    // Canvas edits (trash on a clip, split, drag) go through here so a removed
+    // MIRRORED clip also leaves its source; otherwise the sidecar sync
+    // re-created it on the next render and the trash looked broken.
+    const handleCanvasProjectChange = (next: TimelineProject) => {
+        if (documentaryProject) {
+            const gone = (kind: TimelineTrackKind) => {
+                const before = documentaryProject.tracks.find((t) => t.kind === kind)?.clips || [];
+                const after = new Set((next.tracks.find((t) => t.kind === kind)?.clips || []).map((c) => c.id));
+                return before.filter((c) => !after.has(c.id));
+            };
+            const goneMusic = gone('music');
+            if (goneMusic.length > 0) {
+                const paths = new Set(goneMusic.map((c) => documentaryProject.assets[c.assetId]?.path).filter(Boolean));
+                setMusicPaths((prev) => prev.filter((p) => !paths.has(p)));
+                setMusicPath((prev) => (prev && paths.has(prev) ? null : prev));
+            }
+            const goneCaptions = gone('captions');
+            if (goneCaptions.length > 0) {
+                const texts = new Set(goneCaptions.map((c) => c.text).filter(Boolean));
+                setEditedLines((prev) => prev.filter((l) => !texts.has(l)));
+            }
+        }
+        setDocumentaryProject(next);
+    };
+
+    // Clear ONE lane. Captions and music are mirrored from page state by the
+    // sidecar sync, so those clear at the source; the others drop their clips
+    // and any asset nothing else references. Stale clips from earlier
+    // sessions (a dozen caption clips on one lane) were confusing the cut.
+    const handleClearLane = (kind: TimelineTrackKind) => {
+        const label = documentaryProject?.tracks.find((t) => t.kind === kind)?.label || kind;
+        if (!window.confirm(`Clear the ${label} lane? Every clip on it is removed.`)) return;
+        if (kind === 'captions') setEditedLines([]);
+        if (kind === 'music') { setMusicPaths([]); setMusicPath(null); }
+        if (!documentaryProject) return;
+        const tracks = documentaryProject.tracks.map((t) => (t.kind === kind ? { ...t, clips: [] } : t));
+        const used = new Set(tracks.flatMap((t) => t.clips.map((c) => c.assetId)));
+        const assets = Object.fromEntries(Object.entries(documentaryProject.assets).filter(([id]) => used.has(id)));
+        setDocumentaryProject({ ...documentaryProject, tracks, assets, updatedAt: new Date().toISOString() });
+        toast.success(`${label} lane cleared`);
+    };
+
+    // Start fresh: every lane, the source media and the backgrounds. The
+    // project (scenes, settings) stays.
+    const handleWipeAllLanes = () => {
+        if (!window.confirm('Start fresh? This clears every lane (footage, B-roll, voice-over, music, captions, effects), unloads the source media and drops the backgrounds. Scenes and settings stay.')) return;
+        setEditedLines([]);
+        setMusicPaths([]);
+        setMusicPath(null);
+        handleClearSourceMedia();
+        setBackgroundItems([]);
+        setAutoBackground(false);
+        setPreviewTimeSec(0);
+        if (documentaryProject) {
+            setDocumentaryProject({
+                ...documentaryProject,
+                tracks: documentaryProject.tracks.map((t) => ({ ...t, clips: [] })),
+                assets: {},
+                updatedAt: new Date().toISOString(),
+            });
+        }
+        backToCut();
+        toast.success('All lanes wiped - fresh start');
+    };
+
+    // Readiness for the Output tool - the same refusals handleRender* raise
+    // as toasts, made visible BEFORE the click. Mirrors the guards exactly.
+    const outputReadiness: ReadinessItem[] = timelineHasOwnContent
+        ? [
+            ...(documentaryProject?.tracks.some((t) => (t.kind === 'video' || t.kind === 'broll') && t.clips.some((c) => Boolean(documentaryProject.assets[c.assetId]?.path)))
+                ? [{ label: 'Timeline has a picture', status: 'done' as const, detail: 'Composes every track: footage, B-roll, voice-over, music, captions and effects.' }]
+                : [{
+                    label: 'Add a video or B-roll clip',
+                    status: 'todo' as const,
+                    detail: 'The renderer needs a clip with media on Real footage or B-roll. Send your picked backgrounds to the B-roll lane, or insert source media (Media tool).',
+                    action: { label: 'Send backgrounds to B-roll', onClick: handleSendBackgroundsToBroll },
+                }]),
+            { label: 'Voice-over', status: documentaryProject?.tracks.some((t) => t.kind === 'voiceover' && t.clips.length > 0) ? 'done' : 'optional', detail: 'Generate one in the Voice tool, or let the sermon audio carry it.' },
+        ]
+        : [
+            { label: sourceMediaPath ? 'Source media loaded' : 'Upload a sermon audio or video', status: sourceMediaPath ? 'done' : 'todo', detail: sourceMediaPath ? undefined : 'Media tool, Choose file. Or build a documentary timeline from the Scenes tool.' },
+            ...(kineticCaptions && !(transcript && transcript.length) && sourceMediaKind !== 'video'
+                ? [{ label: 'Transcribe first, or turn off kinetic captions', status: 'todo' as const, detail: 'Kinetic captions need a transcript (Captions tool, Transcribe).' }]
+                : [{ label: kineticCaptions ? 'Kinetic captions ready' : 'Kinetic captions off', status: (kineticCaptions ? 'done' : 'optional') as ReadinessItem['status'] }]),
+            ...(sourceMediaKind === 'audio' && backgroundItems.length === 0 && !autoBackground
+                ? [{ label: 'Pick a video background, or turn on Auto', status: 'todo' as const, detail: 'Audio sources need a visual layer (Background tool).' }]
+                : [{ label: sourceMediaKind === 'audio' ? (autoBackground && backgroundItems.length === 0 ? 'Background: Auto' : 'Background ready') : 'Video brings its own picture', status: 'done' as const }]),
+            ...(kineticCaptions && transcript && transcript.length > MAX_CAPTION_WORDS
+                ? [{ label: 'Too long for kinetic captions', status: 'todo' as const, detail: `${transcript.length} words - max ~${MAX_CAPTION_WORDS}. Trim the clip, use Series, or turn captions off.` }]
+                : []),
+            { label: musicPath ? 'Music bed set' : 'Music bed', status: musicPath ? 'done' : 'optional' },
+        ];
+
+    // Clear the CANVAS, not just the source file: after Clear source media
+    // the stage kept painting the source clip that had been inserted on the
+    // Real footage lane, so the operator could not wipe the picture. This
+    // empties the visual lanes too; voice-over, music, captions and effects
+    // are kept - they are work, not the picture.
+    const handleClearCanvas = () => {
+        const ok = window.confirm('Clear the canvas? This unloads the source media, removes every clip from the Real footage and B-roll lanes, and drops the selected backgrounds. Voice-over, music, captions and effects stay.');
+        if (!ok) return;
+        // Everything the stage can paint: source media, the visual lanes, AND
+        // the backgrounds (they sit behind every layer, so a stray background
+        // kept the picture on screen after the clips were gone).
+        handleClearSourceMedia();
+        setBackgroundItems([]);
+        setAutoBackground(false);
+        setPreviewTimeSec(0);
+        if (documentaryProject) {
+            setDocumentaryProject({
+                ...documentaryProject,
+                tracks: documentaryProject.tracks.map((t) => (
+                    t.kind === 'video' || t.kind === 'broll' ? { ...t, clips: [] } : t
+                )),
+                updatedAt: new Date().toISOString(),
+            });
+        }
+        backToCut();
+        toast.success('Canvas cleared');
+    };
+
+
+    const overlays = (
+        <>
+            {/* Library Picker Modal — multi-select up to MAX_BACKGROUNDS.
+                Clicking a tile toggles its inclusion in the ordered list;
+                selection order = render sequence. Done closes the modal. */}
+            <BackgroundLibraryModal
+                open={showLibraryModal}
+                onClose={() => setShowLibraryModal(false)}
+                items={libraryItems}
+                isLoading={isLoadingLibrary}
+                mode="multi"
+                max={MAX_BACKGROUNDS}
+                selectedIds={backgroundItems.map((b) => b.id)}
+                onPick={(item) => {
+                    const isSelected = backgroundItems.some((b) => b.id === item.id);
+                    if (isSelected) {
+                        setBackgroundItems(backgroundItems.filter((b) => b.id !== item.id));
+                    } else if (backgroundItems.length < MAX_BACKGROUNDS) {
+                        // Append so order matches the click sequence (= render sequence).
+                        setBackgroundItems([...backgroundItems, item]);
+                    } else {
+                        toast.error(`Max ${MAX_BACKGROUNDS} backgrounds. Remove one to add another.`, { id: 'bg-cap' });
+                    }
+                }}
+                onClear={() => setBackgroundItems([])}
+                onDone={() => {
+                    setShowLibraryModal(false);
+                    if (backgroundItems.length > 0) {
+                        toast.success(`${backgroundItems.length} background${backgroundItems.length === 1 ? '' : 's'} selected`);
+                    }
+                }}
+            />
+
+            {/* Preview Result Modal */}
+            {previewUrl && (
+                <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+                    <div className="absolute inset-0 bg-black/90 backdrop-blur-md" onClick={() => setPreviewUrl(null)} />
+                    <div className="relative w-full max-w-xl animate-in zoom-in-95 duration-200">
+                        <Card className="border-primary-500/30 shadow-[0_0_50px_rgba(var(--primary-500-rgb),0.3)]">
+                            <div className="aspect-[9/16] bg-black rounded-xl overflow-hidden mb-4 relative">
+                                {/* Must go through api.mediaUrl: previewUrl holds a
+                                    server PATH, not a servable URL. Passing it raw
+                                    opened the modal but never played, while Download
+                                    (api.downloadMedia) and Trim (api.mediaUrl) both
+                                    worked from the same value. */}
+                                <video
+                                    src={api.mediaUrl(previewUrl)}
+                                    controls
+                                    autoPlay
+                                    className="w-full h-full object-contain"
+                                />
+                            </div>
+                            <div className="flex gap-2">
+                                <Button
+                                    onClick={() => { void api.downloadMedia(previewUrl, `biblefuel-${(previewUrl.split('/').pop() || 'preview').replace(/\.[^.]+$/, '').slice(0, 24)}.mp4`); }}
+                                    className="flex-1"
+                                >
+                                    <Download size={16} className="mr-2" />
+                                    Download Preview
+                                </Button>
+                                <Button
+                                    variant="secondary"
+                                    onClick={() => setPreviewUrl(null)}
+                                >
+                                    Close
+                                </Button>
+                            </div>
+                        </Card>
+                    </div>
+                </div>
+            )}
+
+            {shareUrl && (
+                // Scroll the whole overlay (not an inner max-h box) so the share
+                // buttons can never be clipped, and pad the bottom on mobile so
+                // the last row clears the fixed bottom nav bar.
+                <div className="fixed inset-0 z-50 overflow-y-auto">
+                    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShareUrl(null)} />
+                    <div className="relative flex min-h-full items-start sm:items-center justify-center p-4 pb-28 sm:pb-4">
+                        <div className="relative w-full max-w-2xl">
+                            <div className="flex items-center justify-between mb-3 px-1">
+                                <h3 className="font-bold text-lg text-white">Share your video</h3>
+                                <button onClick={() => setShareUrl(null)} className="text-gray-400 hover:text-white p-1" aria-label="Close">
+                                    <X size={20} />
+                                </button>
+                            </div>
+                            <ShareSheet
+                                videoUrl={shareUrl}
+                                caption={editedLines.join(' ').trim()}
+                                title={editedLines[0] || ''}
+                                filename={`biblefuel-${(shareUrl.split('/').pop() || 'video').replace(/\.[^.]+$/, '').slice(0, 24)}`}
+                            />
+                        </div>
+                    </div>
+                </div>
+            )}
+
+{/* Add Clip Modal */}
+            {showAddClipModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                    <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShowAddClipModal(false)} />
+                    {/* Plain div (not <Card>) — Card wraps children in an extra
+                        <div> that breaks flex flex-col, leaving the inner
+                        overflow-y-auto section with no flex parent. Same fix
+                        applied to all modals on this page + RenderPage. */}
+                    <div className="relative w-full max-w-3xl max-h-[80vh] flex flex-col rounded-xl bg-dark-900/95 backdrop-blur-xl border border-white/20 shadow-2xl overflow-hidden">
+                        <div className="flex items-center justify-between p-4 border-b border-white/10 shrink-0">
+                            <h3 className="font-bold text-lg text-white">Add Clip</h3>
+                            <button onClick={() => setShowAddClipModal(false)} className="text-gray-500 hover:text-white">
+                                <X size={24} />
+                            </button>
+                        </div>
+                        <div className="flex-1 min-h-0 p-4 space-y-4 overflow-y-auto overscroll-contain">
+                            {currentAudioPath && (
+                                <div className="flex items-center justify-between bg-black/30 border border-white/10 rounded-lg p-3">
+                                    <div className="text-xs text-gray-300 break-all">{currentAudioPath}</div>
+                                    <Button onClick={() => handleAddClip(currentAudioPath, 'current')} className="text-xs h-8">
+                                        Add Current
+                                    </Button>
+                                </div>
+                            )}
+
+                            <div>
+                                <label className="block text-xs text-gray-400 mb-1">Manual audio path</label>
+                                <div className="flex flex-col sm:flex-row gap-2">
+                                    <input
+                                        value={manualPath}
+                                        onChange={(e) => setManualPath(e.target.value)}
+                                        placeholder="Pick an audio file from your library"
+                                        className="flex-1 bg-black/30 border border-white/10 rounded px-3 py-2 text-sm text-gray-200"
+                                    />
+                                    <Button onClick={() => handleAddClip(manualPath, 'manual')} className="text-xs h-9">
+                                        Add
+                                    </Button>
+                                </div>
+                            </div>
+
+                            <div>
+                                <h4 className="text-caption mb-2">Recent Audio</h4>
+                                {audioHistory.length === 0 ? (
+                                    <p className="text-help">No recent audio found.</p>
+                                ) : (
+                                    <div className="space-y-2">
+                                        {audioHistory.map((item) => (
+                                            <div key={item.id} className="flex items-center gap-2 bg-black/20 border border-white/10 rounded-lg p-2">
+                                                <div className="flex-1 text-xs text-gray-300 break-all">{item.path}</div>
+                                                <Button onClick={() => handleAddClip(item.path, item.kind)} className="text-xs h-8">
+                                                    Add
+                                                </Button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {trimTarget && (
+                <MediaTrimmer
+                    serverPath={trimTarget.path}
+                    kind={trimTarget.kind}
+                    onCancel={() => setTrimTarget(null)}
+                    onApply={(newPath) => { trimTarget.apply(newPath); setTrimTarget(null); }}
+                />
+            )}
+        </>
+    );
+
+    if (editorLayout) {
+        return (
+            <>
+            <EditorShell
+                topBar={(
+                    <>
+                        <span className="truncate whitespace-nowrap font-semibold phone:hidden">Arrange the cut</span>
+                        {sourceMediaPath && (
+                            /* The stored filename is a UUID storage key the
+                               operator never chose and cannot act on. Showing it
+                               by default spent the most valuable strip of the
+                               topbar on noise; the KIND is what identifies the
+                               media at a glance. The exact name stays one hover
+                               (or tap, via the native title tooltip) away, for
+                               matching a file on disk. */
+                            <span
+                                className="cursor-help truncate rounded-md border border-editor-line px-2.5 py-1 text-[12px] text-editor-dim phone:hidden"
+                                title={sourceMediaPath.split(/[\\/]/).pop()}
+                            >
+                                {sourceMediaKind === 'audio' ? 'Audio loaded'
+                                    : sourceMediaKind === 'image' ? 'Image loaded'
+                                    : 'Video loaded'}
+                            </span>
+                        )}
+                        <span className="flex-1" />
+                        {/* Output frame - ONE project-level setting, visible while
+                            editing because it changes what you SEE. The stage
+                            re-letterboxes live; the render plan reads the same
+                            value (project.aspect), so nothing is re-picked at
+                            render time. */}
+                        <Button
+                            variant="secondary"
+                            className="h-9 rounded-xl border border-editor-line bg-editor-hover/40 px-2.5 text-editor-dim transition hover:border-editor-accent/40 hover:text-editor-text text-xs"
+                            onClick={handleClearCanvas}
+                            title="Unload the source media, empty the Real footage and B-roll lanes, and drop the backgrounds"
+                            aria-label="Clear canvas"
+                        >
+                            <Eraser size={14} className="lg:mr-1.5" />
+                            <span className="phone:hidden">Clear canvas</span>
+                        </Button>
+                        {documentaryProject && (
+                            <select
+                                aria-label="Output frame"
+                                title="Output frame - one setting for preview, timeline and render"
+                                value={documentaryProject.aspect}
+                                onChange={(e) => setDocumentaryProject({
+                                    ...documentaryProject,
+                                    aspect: e.target.value as typeof documentaryProject.aspect,
+                                })}
+                                className="h-9 rounded-xl border border-editor-line bg-editor-hover/40 px-2.5 text-editor-dim transition hover:border-editor-accent/40 hover:text-editor-text font-mono text-[11px] phone:max-w-[124px]"
+                            >
+                                <option value="9:16">Portrait 9:16</option>
+                                <option value="1:1">Square 1:1</option>
+                                <option value="16:9">Landscape 16:9</option>
+                            </select>
+                        )}
+                        <Button variant="secondary" className="h-9 rounded-xl border border-editor-line bg-editor-hover/40 px-2.5 text-editor-dim transition hover:border-editor-accent/40 hover:text-editor-text text-xs" onClick={() => setEditorLayout(false)} aria-label="Classic view" title="Switch to the classic page layout">
+                            <LayoutTemplate size={14} className="lg:mr-1.5" />
+                            <span className="phone:hidden">Classic view</span>
+                        </Button>
+                        {/* ONE Render button. Two renderers exist, but which one
+                            is correct is decidable from the timeline itself, so
+                            making the operator choose was pushing our
+                            implementation detail onto them - and choosing wrong
+                            silently dropped B-roll, images and effects from the
+                            output. When the timeline has content beyond the
+                            source media, use the renderer that composes every
+                            track; otherwise the captioned-video pipeline. */}
+                        <Button
+                            className="h-9 rounded-xl px-4 text-xs font-bold shadow-[0_10px_22px_-12px_rgba(122,98,46,0.55)]"
+                            onClick={handleRenderFromEditor}
+                            disabled={isRenderingVideo || isRenderingDocumentaryTimeline}
+                            title={timelineHasOwnContent
+                                ? 'Composes every timeline track: footage, B-roll, voice-over, music, captions and effects.'
+                                : 'Renders your source media with captions and backgrounds.'}
+                        >
+                            {isRenderingVideo || isRenderingDocumentaryTimeline ? 'Rendering…' : 'Render'}
+                        </Button>
+                    </>
+                )}
+                tools={[
+                    // QUICK group: create-from-nothing jobs whose output lands
+                    // on this timeline. Everything below Media is the EDIT
+                    // group, unchanged.
+                    { id: 'script', label: 'Script', icon: <Wand2 size={17} /> },
+                    { id: 'story', label: 'Story', icon: <Video size={17} /> },
+                    { id: 'series', label: 'Series', icon: <BookOpen size={17} /> },
+                    { id: 'media', label: 'Media', icon: <Film size={17} /> },
+                    { id: 'clips', label: 'Clips', icon: <Layers size={17} />, count: clips.length },
+                    { id: 'captions', label: 'Captions', icon: <Type size={17} /> },
+                    { id: 'music', label: 'Music', icon: <Music size={17} /> },
+                    { id: 'voice', label: 'Voice', icon: <Waves size={17} />, count: audioHistory.length },
+                    { id: 'scenes', label: 'Scenes', icon: <Sparkles size={17} /> },
+                    { id: 'background', label: 'Background', icon: <ImageIcon size={17} />, count: backgroundItems.length },
+                    { id: 'renders', label: 'Renders', icon: <Clapperboard size={17} />, count: renderHistory.length },
+                    { id: 'output', label: 'Output', icon: <Share2 size={17} /> },
+                ]}
+                // Media stays the landing tool - adding Script to the rail must
+                // not change what the editor opens on.
+                initialToolId="media"
+                activeToolId={activeTool}
+                onToolChange={setActiveTool}
+                panels={{
+                    script: (
+                        <ScriptQuickPanel
+                            isGenerating={isGeneratingScript}
+                            scripts={quickScripts}
+                            onGenerate={handleGenerateQuickScript}
+                            onAddToCaptions={handleAddScriptToCaptions}
+                            onVoiceScript={(script) => {
+                                setVoiceSeedText([script.hook, script.verse, script.reflection, script.cta].filter(Boolean).join('\n\n'));
+                                setActiveTool('voice');
+                            }}
+                        />
+                    ),
+                    story: (
+                        <StoryQuickPanel
+                            onUseVideo={(path) => {
+                                setSourceMediaPath(path);
+                                setSourceMediaKind('video');
+                                toast.success('Story video loaded as source media');
+                            }}
+                            onPreviewVideo={(path) => {
+                                setRenderedVideo(path);
+                                setRenderedThisSession(true);
+                            }}
+                        />
+                    ),
+                    series: (
+                        <SeriesQuickPanel
+                            defaultAspect={
+                                documentaryProject?.aspect === '16:9' ? 'landscape'
+                                    : documentaryProject?.aspect === '1:1' ? 'square'
+                                    : 'portrait'
+                            }
+                            onViewJobs={() => navigate('/app/queue')}
+                            onPreviewVideo={(path) => {
+                                setRenderedVideo(path);
+                                setRenderedThisSession(true);
+                            }}
+                        />
+                    ),
+                    media: (
+                        <PanelSection
+                            title="Source media"
+                            defaultOpen
+                            // Same reasoning as the topbar chip: a collapsed summary
+                            // should say what is loaded, not recite a storage key.
+                            summary={sourceMediaPath
+                                ? sourceMediaKind === 'audio' ? 'Audio loaded'
+                                    : sourceMediaKind === 'image' ? 'Image loaded'
+                                    : 'Video loaded'
+                                : undefined}
+                        >
+                        <SourceMediaPanel
+                            sourceMediaPath={sourceMediaPath}
+                            sourceMediaKind={sourceMediaKind}
+                            sourceMediaPreviewPath={sourceMediaPreviewPath}
+                            sourceMediaProxyPath={sourceMediaProxyPath}
+                            sourceMediaProxyStatus={sourceMediaProxyStatus}
+                            isUploading={isUploading}
+                            hasProject={Boolean(documentaryProject)}
+                            maxUploadMb={MAX_UPLOAD_MB}
+                            onUpload={handleSourceUpload}
+                            onPreviewSource={handlePreviewSource}
+                            onUseAsMusicBed={useAsMusicBed}
+                            onTrim={() => sourceMediaPath && setTrimTarget({
+                                kind: sourceMediaKind === 'video' ? 'video' : 'audio',
+                                path: sourceMediaPath,
+                                apply: (np) => setSourceMediaPath(np),
+                            })}
+                            onInsertSourceMedia={handleInsertSourceMediaIntoDocumentary}
+                            onInsertVoiceoverPlaceholder={handleInsertVoiceoverPlaceholder}
+                            onClear={handleClearSourceMedia}
+                        />
+                        </PanelSection>
+                    ),
+                    // The legacy audio assembly: ordered clips, per-clip trim,
+                    // Render Audio. Lived only in classic ("Main Assembly"),
+                    // so the editor could not stitch or master audio at all.
+                    clips: (
+                        <div className="flex h-full min-h-0 flex-col gap-3">
+                            <div className="flex flex-wrap gap-2">
+                                <Button variant="secondary" className="h-8 text-xs" onClick={() => setShowAddClipModal(true)}>
+                                    <Plus size={14} className="mr-1.5" />
+                                    Add Clip
+                                </Button>
+                                <Button variant="secondary" className="h-8 text-xs" onClick={() => toast.success('Saved')}>
+                                    <Save size={14} className="mr-1.5" />
+                                    Save Project
+                                </Button>
+                                <Button className="h-8 text-xs" onClick={handleRender}>
+                                    <Play size={14} className="mr-1.5" />
+                                    Render Audio
+                                </Button>
+                            </div>
+                            <p className="text-[10px] text-editor-faint">
+                                {clips.length} clip{clips.length === 1 ? '' : 's'} · {totalDuration.toFixed(2)}s total
+                            </p>
+                            {renderedAudio && (
+                                <div className="shrink-0 space-y-1.5">
+                                    <p className="text-[10px] uppercase tracking-[.12em] text-editor-faint">Rendered audio</p>
+                                    <audio controls src={renderedAudio} className="w-full" />
+                                    <Button
+                                        variant="secondary"
+                                        className="h-8 w-full text-xs"
+                                        onClick={() => { void api.downloadMedia(renderedAudio, `biblefuel-${(renderedAudio.split('/').pop() || 'audio').replace(/\.[^.]+$/, '').slice(0, 24)}.mp3`); }}
+                                    >
+                                        <Download size={14} className="mr-1.5" />
+                                        Download
+                                    </Button>
+                                </div>
+                            )}
+                            {clips.length === 0 ? (
+                                <p className="text-[11px] text-editor-faint">No clips yet. Add clips from your processed audio.</p>
+                            ) : (
+                                <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
+                                    {clips.map((clip, idx) => (
+                                        <div key={clip.id} className="surface-raised rounded-lg p-2">
+                                            <div className="flex items-center gap-1.5">
+                                                <span className="shrink-0 text-[10px] font-bold text-editor-faint">{idx + 1}</span>
+                                                <span className="min-w-0 flex-1 truncate text-xs text-content-secondary" title={clip.path}>
+                                                    {clip.label || clip.path.split('/').pop()}
+                                                </span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleRemoveClip(clip.id)}
+                                                    aria-label="Remove clip"
+                                                    className="shrink-0 rounded p-1 text-editor-faint hover:text-red-300"
+                                                >
+                                                    <Trash2 size={12} />
+                                                </button>
+                                            </div>
+                                            <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+                                                <label className="text-[10px] text-editor-faint">
+                                                    Start (sec)
+                                                    <input
+                                                        type="number"
+                                                        value={clip.startSec ?? ''}
+                                                        onChange={(e) => handleUpdateClip(clip.id, { startSec: e.target.value === '' ? null : Number(e.target.value) })}
+                                                        className="mt-0.5 w-full rounded border border-editor-line bg-black/30 px-1.5 py-1 text-[11px] text-editor-text"
+                                                        min={0}
+                                                        step={0.1}
+                                                    />
+                                                </label>
+                                                <label className="text-[10px] text-editor-faint">
+                                                    Duration (sec)
+                                                    <input
+                                                        type="number"
+                                                        value={clip.durationSec ?? ''}
+                                                        onChange={(e) => handleUpdateClip(clip.id, { durationSec: e.target.value === '' ? null : Number(e.target.value) })}
+                                                        className="mt-0.5 w-full rounded border border-editor-line bg-black/30 px-1.5 py-1 text-[11px] text-editor-text"
+                                                        min={0}
+                                                        step={0.1}
+                                                    />
+                                                </label>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    ),
+                    captions: (
+                        <div className="space-y-4">
+                            <TranscriptActions
+                                hasTranscript={Boolean(transcript && transcript.length > 0)}
+                                isTranscribing={isTranscribing}
+                                canTranscribe={Boolean(sourceMediaPath)}
+                                history={transcriptHistory}
+                                showHistory={showHistory}
+                                onToggleHistory={() => setShowHistory((v) => !v)}
+                                onTranscribe={handleTranscribe}
+                                onReTranscribe={runFreshTranscribe}
+                                onFormatCaptions={formatTimelineCaptions}
+                                onClear={() => { setTranscript(null); setEditedLines([]); }}
+                                onApplyRecord={applyTranscriptRecord}
+                                onDeleteRecord={(id) => void deleteTranscriptRecord(id)}
+                            />
+                            <label className="flex cursor-pointer items-start gap-2 text-xs text-editor-dim">
+                                <input
+                                    type="checkbox"
+                                    checked={kineticCaptions}
+                                    onChange={(e) => setKineticCaptions(e.target.checked)}
+                                    className="mt-0.5"
+                                />
+                                Burn kinetic captions
+                            </label>
+                            <CaptionStylePanel
+                                enabled={kineticCaptions}
+                                typographyPreset={typographyPreset}
+                                onTypographyPresetChange={setTypographyPreset}
+                                layout={layout}
+                                onLayoutChange={setLayout}
+                                layoutOptions={LAYOUT_OPTIONS}
+                                depth={depth}
+                                onDepthChange={setDepth}
+                            />
+                            {captionLinesEditor}
+                        </div>
+                    ),
+                    music: (
+                        <>
+                            <PanelSection
+                                title="Background music"
+                                defaultOpen
+                                count={musicPaths.length}
+                                summary={musicPaths[0]?.split(/[\\/]/).pop()}
+                            >
+                                <MusicPicker
+                                    multiple
+                                    value={{ path: musicPath || null, paths: musicPaths, volume: musicVolume, autoDuck }}
+                                    onChange={(m) => {
+                                        const next = m.paths ?? (m.path ? [m.path] : []);
+                                        setMusicPaths(next);
+                                        setMusicPath(next[0] || null);
+                                        setMusicVolume(m.volume);
+                                        setAutoDuck(m.autoDuck ?? true);
+                                    }}
+                                    busy={isUploading}
+                                />
+                            </PanelSection>
+                            <PanelSection title="Mastering" summary={`${normalizeLUFS} LUFS`}>
+                                <MasteringPanel
+                                    layout="column"
+                                    normalizeLUFS={normalizeLUFS}
+                                    onNormalizeLUFSChange={setNormalizeLUFS}
+                                    fadeInMs={fadeIn}
+                                    onFadeInChange={setFadeIn}
+                                    fadeOutMs={fadeOut}
+                                    onFadeOutChange={setFadeOut}
+                                    deEsser={deess}
+                                    onDeEsserChange={setDeess}
+                                />
+                            </PanelSection>
+                            <PanelSection title="Recent audio" count={audioHistory.length}>
+                                <RecentAudioPanel
+                                    items={audioHistory}
+                                    onAddClip={handleAddClip}
+                                    onUseAsSource={useAsSource}
+                                    onUseAsMusicBed={useAsMusicBed}
+                                />
+                            </PanelSection>
+                        </>
+                    ),
+                    voice: (
+                        <div className="space-y-2">
+{/* The WHOLE Voice lab, embedded: Generate / Record / Treat / Music /
+                                Clone & Presets / Compare / Animation / Takes - the same
+                                blocks classic renders, so nothing is lost between views. */}
+                            <VoiceLab
+                                embedded={{
+                                    seedText: voiceSeedText,
+                                    hasProject: Boolean(documentaryProject),
+                                    onLandVoiceover: handleLandVoiceover,
+                                    onNext: () => setActiveTool('output'),
+                                }}
+                            />
+                            {/* Unchanged - the pre-existing takes list stays exactly as it was. */}
+                            <PanelSection title="Recent audio" count={audioHistory.length}>
+                                <RecentAudioPanel
+                                    items={audioHistory}
+                                    onAddClip={handleAddClip}
+                                    onUseAsSource={useAsSource}
+                                    onUseAsMusicBed={useAsMusicBed}
+                                />
+                            </PanelSection>
+                        </div>
+                    ),
+                    output: (
+                        <OutputQuickPanel
+                            items={outputReadiness}
+                            renderLabel={timelineHasOwnContent ? 'Render timeline' : (kineticCaptions && transcript?.length ? 'Render captioned video' : 'Render video')}
+                            renderHint={timelineHasOwnContent
+                                ? 'Composes every timeline track: footage, B-roll, voice-over, music, captions and effects.'
+                                : 'Renders your source media with captions and backgrounds.'}
+                            onRender={handleRenderFromEditor}
+                            isRendering={isRenderingVideo || isRenderingDocumentaryTimeline}
+                            progress={isRenderingDocumentaryTimeline ? documentaryRenderProgress : renderProgress}
+                            renderedVideo={renderedVideo}
+                            onPreviewOnStage={() => {
+                                if (!renderedVideo) { toast.error('No render yet - press Render first'); return; }
+                                setRenderedThisSession(true);
+                            }}
+                            onShare={() => renderedVideo && setShareUrl(renderedVideo)}
+                            onDownload={() => { if (renderedVideo) void api.downloadMedia(renderedVideo, `biblefuel-${(renderedVideo.split('/').pop() || 'video').replace(/\.[^.]+$/, '').slice(0, 24)}.mp4`); }}
+                            shareKit={<ShareKitPanel lines={editedLines.join('\n')} latestRenderFile={renderedVideo || undefined} />}
+                            config={(
+                                // The WHOLE render lab (classic Render's captions,
+                                // visuals, audio, output & timing, delivery, share),
+                                // seeded from this timeline; a finished render lands
+                                // on the stage like any other output.
+                                <RenderLab
+                                    embedded={{
+                                        seedLines: editedLines.join('\n'),
+                                        seedAudioPath: sourceMediaKind === 'audio' ? (sourceMediaPath || undefined) : undefined,
+                                        onRendered: (file) => { setRenderedVideo(api.mediaUrl(file)); setRenderedThisSession(true); },
+                                        // One output frame: the topbar select and the lab agree.
+                                        aspect: documentaryProject ? (documentaryProject.aspect === '16:9' ? 'landscape' : documentaryProject.aspect === '1:1' ? 'square' : 'portrait') : undefined,
+                                        // Live mirror: picks and overlay text land on the stage as you work.
+                                        onBackgroundsChange: (items) => {
+                                            setLabBackgrounds(items);
+                                            if (labBackgroundsSeenRef.current) backToCut();
+                                            labBackgroundsSeenRef.current = true;
+                                        },
+                                        onLinesChange: (text) => {
+                                            const next = text.split('\n').map((l) => l.trim()).filter(Boolean);
+                                            setEditedLines(next);
+                                            setKineticCaptions(true);
+                                            backToCut();
+                                        },
+                                        onInsertMusicBed: useAsMusicBed,
+                                        onCaptionStyleChange: (style) => {
+                                            setLabCaptionStyle(style);
+                                            if (labStyleSeenRef.current) backToCut();
+                                            labStyleSeenRef.current = true;
+                                            // One look: the timeline's own render uses the preset you previewed.
+                                            if (style.preset !== typographyPreset) setTypographyPreset(style.preset);
+                                            if (style.layout !== layout) setLayout(style.layout);
+                                        },
+                                        onAspectChange: (a) => {
+                                            if (!documentaryProject) return;
+                                            setDocumentaryProject({ ...documentaryProject, aspect: a === 'landscape' ? '16:9' : a === 'square' ? '1:1' : '9:16', updatedAt: new Date().toISOString() });
+                                        },
+                                    }}
+                                />
+                            )}
+                        />
+                    ),
+                    scenes: documentaryProject ? (
+                        <ScenesPanel
+                            project={documentaryProject}
+                            selectedSceneId={selectedSceneId}
+                            onSelectScene={setSelectedSceneId}
+                            onAddEffect={handleAddEffect}
+                            onRemoveEffect={handleRemoveEffect}
+                            effectOption={effectOption}
+                            onEffectOptionChange={(fx, value) =>
+                                setEffectOption((prev) => ({ ...prev, [fx]: value }))
+                            }
+                        />
+                    ) : (
+                        // Without a project the panel said "create a documentary
+                        // timeline first" with no way to do it - the create
+                        // action lived only in classic. Same component, both
+                        // layouts.
+                        <AIDocumentaryTimelinePanel
+                            onCreateProject={(project) => {
+                                setDocumentaryProject(project);
+                                toast.success('AI documentary timeline created');
+                            }}
+                        />
+                    ),
+                    background: videoBackgroundContent,
+                    renders: (
+                        <div
+                            // Fixed-height column: the latest render PINS at the top and
+                            // only the history list scrolls. The whole panel used to
+                            // scroll as one, so paging the render list carried the
+                            // player off-screen, exactly when it is wanted to compare.
+                            className="flex h-full min-h-0 flex-col gap-3"
+                        >
+                            {renderedVideo && (
+                                <div className="shrink-0">
+                                    <p className="mb-1.5 text-[10px] uppercase tracking-[.12em] text-editor-faint">Latest render</p>
+                                    <video
+                                        src={api.mediaUrl(renderedVideo)}
+                                        controls
+                                        // Height CAP, not just w-full. A 9:16 render in a
+                                        // ~300px panel computes to ~530px tall and ate the
+                                        // whole column, so the history list below it had no
+                                        // room left and read as empty even with 11 renders.
+                                        // A vh cap (not %) because the wrapper is auto-height,
+                                        // so a percentage would have nothing to resolve against.
+                                        // guaranteeing the list its share; object-contain
+                                        // letterboxes rather than distorting the frame.
+                                        className="max-h-[34vh] w-full rounded-lg object-contain"
+                                    />
+                                </div>
+                            )}
+                            <div className="flex min-h-0 flex-1 flex-col">
+                                <p className="mb-1.5 shrink-0 text-[10px] uppercase tracking-[.12em] text-editor-faint">
+                                    Recent renders
+                                    <span className="ml-1.5">{renderHistory.length}</span>
+                                </p>
+                                {renderHistory.length === 0 ? (
+                                    <p className="text-[11px] text-editor-faint">No renders yet.</p>
+                                ) : (
+                                    <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
+                                        {renderHistory.map((item) => (
+                                            <div
+                                                key={item.jobId}
+                                                className="surface-raised flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5"
+                                            >
+                                                <button
+                                                    type="button"
+                                                    onClick={() => { setRenderedVideo(item.file); setRenderedThisSession(true); }}
+                                                    className="min-w-0 flex-1 truncate text-left text-xs text-content-secondary"
+                                                >
+                                                    {(item.file || '').split(/[\\/]/).pop()}
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setShareUrl(api.mediaUrl(item.file.split(/[\\/]/).pop() || ''))}
+                                                    title="Share this render"
+                                                    aria-label="Share this render"
+                                                    className="shrink-0 rounded p-1 text-editor-faint hover:text-white"
+                                                >
+                                                    <Share2 size={12} />
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    ),
+                }}
+                // The properties rail appears only when there is something to
+                // apply it to. Mastering controls sitting permanently on screen
+                // with no audio loaded imply an effect on nothing — CapCut
+                // reveals properties on selection for the same reason.
+                propertyTools={sourceMediaPath
+                    ? [{ id: 'audio', label: 'Audio', icon: <Volume2 size={15} /> }]
+                    : undefined}
+                propertyPanels={{
+                    audio: (
+                        <MasteringPanel
+                            layout="column"
+                            normalizeLUFS={normalizeLUFS}
+                            onNormalizeLUFSChange={setNormalizeLUFS}
+                            fadeInMs={fadeIn}
+                            onFadeInChange={setFadeIn}
+                            fadeOutMs={fadeOut}
+                            onFadeOutChange={setFadeOut}
+                            deEsser={deess}
+                            onDeEsserChange={setDeess}
+                        />
+                    ),
+                }}
+                stage={(
+                    isRenderingVideo ? (
+                        // Progress stays on the STAGE, not in a panel: a render in
+                        // flight must remain visible whichever tool is open.
+                        <div className="w-full max-w-md text-center">
+                            <p className="text-[13px] text-editor-text">
+                                {renderPhase === 'preparing' && renderProgress < 1 ? 'Preparing…' : `Rendering… ${Math.round(renderProgress)}%`}
+                            </p>
+                            <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                                <div
+                                    className="h-full bg-primary-500 transition-all duration-150"
+                                    style={{ width: `${Math.max(2, renderProgress)}%` }}
+                                />
+                            </div>
+                            <Button
+                                variant="secondary"
+                                className="mt-4 h-8 text-xs"
+                                onClick={cancelRender}
+                            >
+                                Cancel render
+                            </Button>
+                        </div>
+                    ) : renderedVideo && renderedThisSession ? (
+                        <div className="flex h-full max-h-full flex-col items-center justify-center gap-2">
+                            <video src={api.mediaUrl(renderedVideo)} controls className="max-h-[calc(100%-3.5rem)] max-w-full rounded-lg" />
+                            {/* Share / Download / Export lived only in the classic
+                                branch, past the editor's early return - so a render
+                                finished in the editor could be watched and nothing
+                                else. The operator had to switch layouts to get the
+                                file out. */}
+                            <div className="flex shrink-0 flex-wrap items-center justify-center gap-2">
+                                <Button
+                                    onClick={() => setShareUrl(renderedVideo)}
+                                    className="h-8 text-xs"
+                                >
+                                    <Share2 size={14} className="mr-1.5" />
+                                    Share
+                                </Button>
+                                <Button
+                                    variant="secondary"
+                                    onClick={() => { void api.downloadMedia(renderedVideo, `biblefuel-${(renderedVideo.split('/').pop() || 'video').replace(/\.[^.]+$/, '').slice(0, 24)}.mp4`); }}
+                                    className="h-8 text-xs"
+                                >
+                                    <Download size={14} className="mr-1.5" />
+                                    Download
+                                </Button>
+                                <a
+                                    href={api.mediaUrl(renderedVideo)}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="inline-flex h-8 items-center rounded-md border border-editor-line px-2.5 text-xs text-editor-dim transition-colors hover:bg-editor-hover"
+                                    title="Open the file in a new tab"
+                                >
+                                    <ExternalLink size={14} className="mr-1.5" />
+                                    Open
+                                </a>
+                                <button
+                                    type="button"
+                                    onClick={() => setRenderedThisSession(false)}
+                                    className="text-[11px] text-editor-faint underline-offset-2 hover:underline"
+                                >
+                                    Back to the cut
+                                </button>
+                            </div>
+                        </div>
+                    ) : (
+                        // Live composite instead of a dead end. The stage used to
+                        // say "Preview appears here after a render", so adding a
+                        // clip, background or caption changed nothing on screen
+                        // and the cut could not be judged before rendering.
+                        <LivePreviewStage
+                            project={documentaryProject}
+                            backgrounds={[...backgroundItems, ...labBackgrounds.filter((l) => !backgroundItems.some((b) => String(b.id) === String(l.id)))].map((b) => ({
+                                id: b.id,
+                                url: b.previewUrl || b.image || b.url,
+                                kind: b.kind,
+                            }))}
+                            captionLines={kineticCaptions ? editedLines : []}
+                            timeSec={previewTimeSec}
+                            onTimeChange={setPreviewTimeSec}
+                            aspect={documentaryProject?.aspect || '16:9'}
+                            captionStyle={labCaptionStyle ?? { preset: typographyPreset, layout, depth }}
+                        />
+                    )
+                )}
+                strip={documentaryProject ? (
+                    // Fixed height, not max-height: the strip should always
+                    // claim its share of the viewport so all six lanes are
+                    // visible at once. Compact mode folds ~180px of header
+                    // chrome into one toolbar row to make that fit.
+                    <div className="h-full">
+                        <VisualTimelineCanvas
+                            onClearLane={handleClearLane}
+                            onWipeAll={handleWipeAllLanes}
+                            compact
+                            onEmptyLaneClick={(kind) => setActiveTool(kind === 'video' ? 'media' : kind === 'broll' ? 'background' : kind === 'voiceover' ? 'voice' : kind === 'music' ? 'music' : kind === 'captions' ? 'captions' : 'scenes')}
+                            project={documentaryProject}
+                            onProjectChange={handleCanvasProjectChange}
+                            onRequestVeoBroll={handleRequestVeoBroll}
+                            selectedSceneId={selectedSceneId}
+                            onSelectScene={setSelectedSceneId}
+                        />
+                    </div>
+                ) : undefined}
+            />
+            {overlays}
+            </>
+        );
+    }
 
     return (
         <div className="space-y-5 animate-fade-in">
@@ -1017,6 +2836,15 @@ export function TimelinePage() {
                     <p className="text-help mt-2">Assemble and master your audio clips with precision.</p>
                 </div>
                 <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
+                    <Button
+                        variant="secondary"
+                        onClick={() => setEditorLayout(true)}
+                        className="w-full sm:w-auto"
+                        title="Switch to the editor layout — tools in a rail, preview centre, timeline across the bottom"
+                    >
+                        <Layers size={16} className="mr-2" />
+                        Editor view
+                    </Button>
                     <Button variant="secondary" onClick={() => toast.success('Saved')} className="w-full sm:w-auto">
                         <Save size={16} className="mr-2" />
                         Save Project
@@ -1045,76 +2873,164 @@ export function TimelinePage() {
                 </div>
             </div>
 
-            <Card
-                title="Source Media"
-                tooltip={`Drop in a finished sermon — audio (MP3, WAV, M4A) or video (MP4, MOV, WEBM), up to ${MAX_UPLOAD_MB} MB. Audio is mastered into the assembly for an audio render; video keeps its frames for a captioned-video render.`}
-            >
-              <DropZone
-                onFiles={(files) => handleSourceUpload(files[0])}
-                accept={['audio/*', 'video/*', '.mp3', '.wav', '.m4a', '.mp4', '.mov', '.webm', '.m4v']}
-                multiple={false}
-                disabled={isUploading}
-                overlayLabel="Drop sermon audio or video"
-              >
-                <label className="inline-flex items-center gap-3 px-4 py-2 rounded-lg bg-primary-500/10 border border-primary-500/30 text-primary-200 cursor-pointer hover:bg-primary-500/20">
-                    <Film size={16} />
-                    <span className="text-sm">{isUploading ? 'Uploading...' : 'Choose file'}</span>
-                    <input
-                        type="file"
-                        className="hidden"
-                        accept=".mp3,.wav,.m4a,.mp4,.mov,.webm,.m4v"
-                        disabled={isUploading}
-                        onChange={(e) => {
-                            const f = e.target.files?.[0];
-                            if (f) handleSourceUpload(f);
-                        }}
-                    />
-                </label>
-                {sourceMediaPath && (
-                    <div className="mt-3 flex items-center justify-between gap-2 text-xs text-gray-300">
-                        <span>
-                            <span className="text-content-tertiary">Loaded ({sourceMediaKind}):</span>{' '}
-                            <span className="font-mono break-all">{sourceMediaPath.split(/[\\/]/).pop()}</span>
-                        </span>
-                        <div className="shrink-0 flex items-center gap-2">
-                            {sourceMediaKind !== 'video' && (
-                                <button
-                                    type="button"
-                                    onClick={() => useAsMusicBed(sourceMediaPath)}
-                                    className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-white/[0.06] text-primary-200 hover:bg-white/[0.12] transition-colors"
-                                >
-                                    <Music size={12} /> Use as Music Bed
-                                </button>
-                            )}
-                            <button
-                                type="button"
-                                onClick={() => setTrimTarget({
-                                    kind: sourceMediaKind === 'video' ? 'video' : 'audio',
-                                    path: sourceMediaPath,
-                                    apply: (p) => {
-                                        setSourceMediaPath(p);
-                                        if (sourceMediaKind !== 'video') {
-                                            const clip: TimelineClip = {
-                                                id: `clip_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-                                                path: p,
-                                                label: p.split(/[\\/]/).pop() || 'clip',
-                                                startSec: null,
-                                                durationSec: null,
-                                            };
-                                            setClips([clip]);
-                                            saveClipsToCache([clip]);
-                                            pushAudioHistory(p, 'source');
-                                        }
-                                    },
-                                })}
-                                className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-white/[0.06] text-primary-200 hover:bg-white/[0.12] transition-colors"
-                            >
-                                <Scissors size={12} /> Trim
-                            </button>
+            <AIDocumentaryTimelinePanel
+                onCreateProject={(project) => {
+                    setDocumentaryProject(project);
+                    toast.success('AI documentary timeline created');
+                }}
+            />
+
+            {documentaryProject && (
+                <>
+                    <Card
+                        title="Active documentary backbone"
+                        tooltip="This is the new multi-track project model. The current render controls below still work; this backbone is the foundation for the richer CapCut-like editor and Veo B-roll insertion."
+                    >
+                    <div className="grid gap-3 md:grid-cols-3">
+                        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                            <p className="text-caption">Template</p>
+                            <p className="mt-1 text-sm font-semibold text-gray-100">{documentaryProject.template}</p>
+                            <p className="mt-1 text-meta">{documentaryProject.aspect} · target {Math.round(documentaryProject.targetDurationSec / 60)} min max</p>
+                        </div>
+                        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                            <p className="text-caption">Tracks</p>
+                            <p className="mt-1 text-sm font-semibold text-gray-100">{documentaryProject.tracks.length} layered tracks</p>
+                            <p className="mt-1 text-meta">Video, B-roll, VO, music, captions, effects</p>
+                        </div>
+                        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                            <p className="text-caption">AI rules</p>
+                            <p className="mt-1 text-sm font-semibold text-gray-100">Face-safe + Chatterbox</p>
+                            <p className="mt-1 text-meta">Real event audio stays for praise/worship/dance</p>
                         </div>
                     </div>
-                )}
-              </DropZone>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                        <Button
+                            variant="secondary"
+                            className="text-xs px-3 py-1.5"
+                            onClick={handleInsertSourceMediaIntoDocumentary}
+                            disabled={!sourceMediaPath || !sourceMediaKind}
+                        >
+                            <Plus size={14} className="mr-1.5" />
+                            Insert uploaded source media
+                        </Button>
+                        <Button
+                            variant="secondary"
+                            className="text-xs px-3 py-1.5"
+                            onClick={handleInsertVoiceoverPlaceholder}
+                        >
+                            <Sparkles size={14} className="mr-1.5" />
+                            Insert Chatterbox VO placeholder
+                        </Button>
+                        <Button
+                            className="text-xs px-3 py-1.5"
+                            onClick={handleRenderDocumentaryTimeline}
+                            disabled={isRenderingDocumentaryTimeline}
+                        >
+                            <Film size={14} className="mr-1.5" />
+                            {isRenderingDocumentaryTimeline ? 'Rendering proof…' : 'Render documentary proof'}
+                        </Button>
+                        <span className="self-center text-[11px] text-content-tertiary">Autosaved locally; restored after refresh.</span>
+                    </div>
+
+                    {/* What the last render actually used. A toast disappears;
+                        this stays, so the operator can check before publishing
+                        rather than discovering an omission on playback. */}
+                    {renderCoverage && (
+                        <div className="mt-3 rounded-lg border border-white/10 bg-black/20 p-3">
+                            <p className="text-xs font-semibold text-gray-200 mb-2">What went into this render</p>
+                            <div className="flex flex-wrap gap-1.5">
+                                {renderCoverage.included.map((i) => (
+                                    <span
+                                        key={i.kind}
+                                        className="rounded-full border border-[#7fb5aa]/30 bg-[#7fb5aa]/10 px-2 py-0.5 text-[11px] text-content-secondary"
+                                    >
+                                        {i.label} · {i.used}/{i.total}
+                                    </span>
+                                ))}
+                            </div>
+                            {renderCoverage.omitted.length > 0 && (
+                                <ul className="mt-2 space-y-1">
+                                    {renderCoverage.omitted.map((o, idx) => (
+                                        <li key={`${o.kind}-${idx}`} className="text-[11px] text-content-secondary">
+                                            ⚠ {o.count} {o.label} clip{o.count === 1 ? '' : 's'} left out — {o.reason}.
+                                        </li>
+                                    ))}
+                                </ul>
+                            )}
+                        </div>
+                    )}
+                    {documentaryRenderStatus && (
+                        <div className="mt-3 rounded-lg border border-primary-500/20 bg-primary-500/5 p-3">
+                            <div className="flex items-center justify-between gap-3 text-xs">
+                                <span className="font-semibold text-primary-100">Render job: {documentaryRenderStatus}</span>
+                                <span className="text-content-secondary">{Math.round(documentaryRenderProgress)}%</span>
+                            </div>
+                            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
+                                <div
+                                    className="h-full rounded-full bg-primary-400 transition-all"
+                                    style={{ width: `${Math.max(0, Math.min(100, documentaryRenderProgress))}%` }}
+                                />
+                            </div>
+                            {documentaryRenderJobId && <p className="mt-2 text-[11px] text-content-tertiary">Job ID: {documentaryRenderJobId}</p>}
+                        </div>
+                    )}
+                    <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+                        {documentaryProject.scenes.map((scene) => (
+                            <div key={scene.id} className="min-w-44 rounded-lg border border-primary-500/20 bg-primary-500/5 p-3">
+                                <p className="text-xs font-semibold text-primary-100">{scene.label}</p>
+                                <p className="mt-1 text-[10px] leading-relaxed text-content-secondary">{scene.voiceoverBrief}</p>
+                            </div>
+                        ))}
+                    </div>
+                </Card>
+                <VisualTimelineCanvas
+                    onClearLane={handleClearLane}
+                    onWipeAll={handleWipeAllLanes}
+                    project={documentaryProject}
+                    onProjectChange={handleCanvasProjectChange}
+                    onRequestVeoBroll={handleRequestVeoBroll}
+                    selectedSceneId={selectedSceneId}
+                    onSelectScene={setSelectedSceneId}
+                />
+            </>
+            )}
+
+            <Card title="Source Media">
+              <SourceMediaPanel
+                sourceMediaPath={sourceMediaPath}
+                sourceMediaKind={sourceMediaKind}
+                sourceMediaPreviewPath={sourceMediaPreviewPath}
+                sourceMediaProxyPath={sourceMediaProxyPath}
+                sourceMediaProxyStatus={sourceMediaProxyStatus}
+                isUploading={isUploading}
+                hasProject={Boolean(documentaryProject)}
+                maxUploadMb={MAX_UPLOAD_MB}
+                onUpload={handleSourceUpload}
+                onPreviewSource={handlePreviewSource}
+                onUseAsMusicBed={useAsMusicBed}
+                onTrim={() => sourceMediaPath && setTrimTarget({
+                    kind: sourceMediaKind === 'video' ? 'video' : 'audio',
+                    path: sourceMediaPath,
+                    apply: (p) => {
+                        setSourceMediaPath(p);
+                        if (sourceMediaKind !== 'video') {
+                            const clip: TimelineClip = {
+                                id: `clip_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                                path: p,
+                                label: p.split(/[\/]/).pop() || 'clip',
+                                startSec: null,
+                                durationSec: null,
+                            };
+                            setClips([clip]);
+                            saveClipsToCache([clip]);
+                            pushAudioHistory(p, 'source');
+                        }
+                    },
+                })}
+                onInsertSourceMedia={handleInsertSourceMediaIntoDocumentary}
+                onInsertVoiceoverPlaceholder={handleInsertVoiceoverPlaceholder}
+                            onClear={handleClearSourceMedia}
+              />
             </Card>
 
             <Card
@@ -1122,84 +3038,20 @@ export function TimelinePage() {
                 tooltip="Sends the uploaded sermon through Whisper to extract a word-level transcript with timings. Long sermons are auto-chunked. Edit the lines below — word timings redistribute uniformly across edited spans, so fix transcription errors freely. Pick a kinetic style to control how each word animates on screen."
             >
                 <div className="flex justify-end mb-4">
-                    <div className="flex flex-wrap items-center gap-2 relative">
-                        {transcript && transcript.length > 0 && (
-                            <>
-                                <Button
-                                    variant="secondary"
-                                    onClick={formatTimelineCaptions}
-                                    className="h-9 text-xs"
-                                    title="Remove markdown symbols and hashtags from caption lines"
-                                >
-                                    Format captions
-                                </Button>
-                                <Button
-                                    variant="secondary"
-                                    onClick={() => { setTranscript(null); setEditedLines([]); }}
-                                    className="h-9 text-xs"
-                                    title="Clear the working transcript (saved history is kept)"
-                                >
-                                    Clear
-                                </Button>
-                                <Button
-                                    variant="secondary"
-                                    onClick={runFreshTranscribe}
-                                    disabled={isTranscribing || !sourceMediaPath}
-                                    className="h-9 text-xs"
-                                    title="Run a fresh Whisper pass (uses render quota)"
-                                >
-                                    <RotateCcw size={14} className="mr-1.5" />
-                                    Re-transcribe
-                                </Button>
-                            </>
-                        )}
-                        {transcriptHistory.length > 0 && (
-                            <Button
-                                variant="secondary"
-                                onClick={() => setShowHistory((v) => !v)}
-                                className="h-9 text-xs"
-                                title="Saved transcripts"
-                            >
-                                <HistoryIcon size={14} className="mr-1.5" />
-                                History
-                            </Button>
-                        )}
-                        <Button
-                            onClick={handleTranscribe}
-                            disabled={!sourceMediaPath || isTranscribing}
-                            className="h-9 text-xs"
-                        >
-                            <Waves size={14} className="mr-2" />
-                            {isTranscribing ? 'Transcribing...' : 'Transcribe'}
-                        </Button>
-
-                        {showHistory && (
-                            <div className="absolute right-0 top-full mt-1 z-30 w-80 max-w-[calc(100vw-3rem)] max-h-80 overflow-y-auto rounded-xl border border-white/15 bg-dark-900/98 backdrop-blur-xl shadow-2xl p-2">
-                                <p className="text-caption px-2 py-1">Saved transcripts</p>
-                                {transcriptHistory.map((h) => (
-                                    <div key={h.id} className="group flex items-center gap-2 rounded-lg px-2 py-2 hover:bg-white/5">
-                                        <button
-                                            type="button"
-                                            onClick={() => applyTranscriptRecord(h)}
-                                            className="flex-1 min-w-0 text-left"
-                                        >
-                                            <p className="text-content-secondary text-xs truncate">{h.label}</p>
-                                            <p className="text-meta">{h.sourceFile} · {h.lineCount} lines</p>
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={() => void deleteTranscriptRecord(h.id)}
-                                            className="shrink-0 p-1.5 rounded-md text-gray-500 hover:text-red-400 hover:bg-white/5"
-                                            aria-label="Delete saved transcript"
-                                            title="Delete"
-                                        >
-                                            <Trash2 size={14} />
-                                        </button>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </div>
+                    <TranscriptActions
+                        hasTranscript={Boolean(transcript && transcript.length > 0)}
+                        isTranscribing={isTranscribing}
+                        canTranscribe={Boolean(sourceMediaPath)}
+                        history={transcriptHistory}
+                        showHistory={showHistory}
+                        onToggleHistory={() => setShowHistory((v) => !v)}
+                        onTranscribe={handleTranscribe}
+                        onReTranscribe={runFreshTranscribe}
+                        onFormatCaptions={formatTimelineCaptions}
+                        onClear={() => { setTranscript(null); setEditedLines([]); }}
+                        onApplyRecord={applyTranscriptRecord}
+                        onDeleteRecord={(id) => void deleteTranscriptRecord(id)}
+                    />
                 </div>
                 {isTranscribing && (
                     <BusyBar
@@ -1224,36 +3076,16 @@ export function TimelinePage() {
                         </span>
                     </span>
                 </label>
-                {kineticCaptions && (
-                <div className="mb-4">
-                    <p className="text-xs text-gray-400 mb-2">Kinetic typography style</p>
-                    <AnimationPicker
-                        value={typographyPreset}
-                        onChange={(id) => setTypographyPreset(id)}
-                    />
-                    <div className="mt-3">
-                        <p className="text-xs text-gray-400 mb-2">Text layout</p>
-                        <select
-                            value={layout}
-                            onChange={(e) => setLayout(e.target.value)}
-                            className="w-full bg-white/[0.03] border border-white/10 rounded-lg px-3 py-2 text-sm text-gray-200 focus:border-primary-500/40 focus:outline-none"
-                        >
-                            {LAYOUT_OPTIONS.map((o) => (
-                                <option key={o.value} value={o.value}>{o.label}</option>
-                            ))}
-                        </select>
-                        <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer mt-3">
-                            <input
-                                type="checkbox"
-                                checked={depth}
-                                onChange={(e) => setDepth(e.target.checked)}
-                                className="rounded border-white/10 bg-black/50 checked:bg-primary-500"
-                            />
-                            Layered depth (ghost shadow behind each word)
-                        </label>
-                    </div>
-                </div>
-                )}
+                <CaptionStylePanel
+                    enabled={kineticCaptions}
+                    typographyPreset={typographyPreset}
+                    onTypographyPresetChange={setTypographyPreset}
+                    layout={layout}
+                    onLayoutChange={setLayout}
+                    layoutOptions={LAYOUT_OPTIONS}
+                    depth={depth}
+                    onDepthChange={setDepth}
+                />
                 {kineticCaptions && editedLines.length > 0 && (
                     <div className="mt-1">
                         <button
@@ -1384,7 +3216,11 @@ export function TimelinePage() {
                     <div className="flex justify-center rounded-xl bg-black/60 border border-white/[0.06] py-3 px-2">
                         <video
                             controls
-                            src={renderedVideo}
+                            // Through mediaUrl, like every other player. A raw
+                            // /outputs/timeline/... path is servable, but a bare
+                            // storage key is not - the classic view had the same
+                            // 404 the editor stage did.
+                            src={api.mediaUrl(renderedVideo)}
                             className="block rounded-lg max-h-[360px] w-auto max-w-full bg-black shadow-lg shadow-black/40"
                         />
                     </div>
@@ -1427,7 +3263,7 @@ export function TimelinePage() {
                                     {/* Full-area button loads this render back into the preview. */}
                                     <button
                                         type="button"
-                                        onClick={() => setRenderedVideo(url)}
+                                        onClick={() => { setRenderedVideo(url); setRenderedThisSession(true); }}
                                         className="absolute inset-0 h-full w-full"
                                         title={fileName}
                                     >
@@ -1595,59 +3431,16 @@ export function TimelinePage() {
 
                     {/* Master Controls */}
                     <Card title="Mastering & Filters">
-                        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 p-2">
-                            <div className="space-y-4">
-                                <label className="text-caption font-bold flex items-center gap-2">
-                                    <Volume2 size={14} /> Normalize (LUFS)
-                                </label>
-                                <div className="flex items-center gap-3">
-                                    <input
-                                        type="range"
-                                        min="-24"
-                                        max="-6"
-                                        value={normalizeLUFS}
-                                        onChange={(e) => setNormalizeLUFS(Number(e.target.value))}
-                                        className="flex-1 accent-primary-500"
-                                    />
-                                    <span className="text-xs font-mono w-8">{normalizeLUFS}</span>
-                                </div>
-                            </div>
-
-                            <div className="space-y-4">
-                                <label className="text-caption font-bold flex items-center gap-2">
-                                    Fade In (ms)
-                                </label>
-                                <input
-                                    type="number"
-                                    className="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs w-full font-mono"
-                                    value={fadeIn}
-                                    onChange={(e) => setFadeIn(Number(e.target.value))}
-                                />
-                            </div>
-
-                            <div className="space-y-4">
-                                <label className="text-caption font-bold flex items-center gap-2">
-                                    Fade Out (ms)
-                                </label>
-                                <input
-                                    type="number"
-                                    className="bg-black/20 border border-white/10 rounded px-2 py-1 text-xs w-full font-mono"
-                                    value={fadeOut}
-                                    onChange={(e) => setFadeOut(Number(e.target.value))}
-                                />
-                            </div>
-
-                            <div className="flex items-center gap-3 pt-6">
-                                <input
-                                    type="checkbox"
-                                    id="deess"
-                                    checked={deess}
-                                    onChange={(e) => setDeess(e.target.checked)}
-                                    className="rounded border-white/10 bg-black/50 checked:bg-primary-500"
-                                />
-                                <label htmlFor="deess" className="text-xs text-gray-400">Enable De-esser</label>
-                            </div>
-                        </div>
+                        <MasteringPanel
+                            normalizeLUFS={normalizeLUFS}
+                            onNormalizeLUFSChange={setNormalizeLUFS}
+                            fadeInMs={fadeIn}
+                            onFadeInChange={setFadeIn}
+                            fadeOutMs={fadeOut}
+                            onFadeOutChange={setFadeOut}
+                            deEsser={deess}
+                            onDeEsserChange={setDeess}
+                        />
                     </Card>
 
                     {/* Stats + Recent Audio sit side-by-side under Mastering &
@@ -1670,54 +3463,12 @@ export function TimelinePage() {
                         </Card>
 
                         <Card title="Recent Audio">
-                            {audioHistory.length === 0 ? (
-                                <p className="text-help">No audio history yet.</p>
-                            ) : (
-                                <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
-                                    {audioHistory.slice(0, 25).map((item) => {
-                                        const name = item.path.split(/[\\/]/).pop() || item.path;
-                                        return (
-                                            <div
-                                                key={item.id}
-                                                className="flex items-center gap-2 rounded-lg bg-black/20 border border-white/5 px-2 py-1.5"
-                                            >
-                                                <span
-                                                    className="flex-1 min-w-0 truncate text-xs text-content-secondary"
-                                                    title={item.path}
-                                                >
-                                                    {name}
-                                                </span>
-                                                <div className="flex items-center gap-0.5 shrink-0">
-                                                    <button
-                                                        onClick={() => handleAddClip(item.path, item.kind)}
-                                                        title="Add to assembly"
-                                                        aria-label="Add to assembly"
-                                                        className="p-1 rounded-md text-content-tertiary hover:text-primary-300 hover:bg-white/5 transition-colors"
-                                                    >
-                                                        <Plus size={13} />
-                                                    </button>
-                                                    <button
-                                                        onClick={() => useAsSource(item.path)}
-                                                        title="Use as source"
-                                                        aria-label="Use as source"
-                                                        className="p-1 rounded-md text-content-tertiary hover:text-primary-300 hover:bg-white/5 transition-colors"
-                                                    >
-                                                        <Waves size={13} />
-                                                    </button>
-                                                    <button
-                                                        onClick={() => useAsMusicBed(item.path)}
-                                                        title="Use as music bed"
-                                                        aria-label="Use as music bed"
-                                                        className="p-1 rounded-md text-content-tertiary hover:text-primary-300 hover:bg-white/5 transition-colors"
-                                                    >
-                                                        <Music size={13} />
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            )}
+                            <RecentAudioPanel
+                                items={audioHistory}
+                                onAddClip={handleAddClip}
+                                onUseAsSource={useAsSource}
+                                onUseAsMusicBed={useAsMusicBed}
+                            />
                         </Card>
                     </div>
                 </div>
@@ -1729,402 +3480,13 @@ export function TimelinePage() {
                         title="Video Background"
                         tooltip={`Pick 1–${MAX_BACKGROUNDS} background clips. With more than one, the render hard-cuts between them at equal slots (1/N of the sermon duration each); use the arrows to reorder. Each clip up to ${MAX_UPLOAD_MB} MB — video (mp4/mov/webm) or image (jpg/png/webp).`}
                     >
-                        <DropZone
-                            className="p-2"
-                            onFiles={handleDroppedBackgrounds}
-                            accept={['image/*', 'video/*', '.jpg', '.jpeg', '.png', '.webp', '.mp4', '.mov', '.webm', '.m4v']}
-                            disabled={isUploading}
-                            overlayLabel="Drop image or video backgrounds"
-                        >
-                            {/* Auto background: default on. BibleFuel picks a
-                                mood-matched clip per beat from the user's library
-                                (AI-generates one if the pool is empty). Picking
-                                clips manually below overrides Auto. */}
-                            <label className="flex items-start gap-2 mb-3 p-2 rounded-xl border border-primary-500/20 bg-primary-500/5 cursor-pointer">
-                                <input
-                                    type="checkbox"
-                                    checked={autoBackground}
-                                    onChange={(e) => setAutoBackground(e.target.checked)}
-                                    className="mt-0.5 accent-primary-500"
-                                />
-                                <span className="flex-1">
-                                    <span className="flex items-center gap-1.5 text-xs font-semibold text-primary-200">
-                                        <Sparkles size={13} />
-                                        Auto — let BibleFuel choose
-                                    </span>
-                                    <span className="block text-[10px] text-content-secondary mt-0.5">
-                                        {backgroundItems.length > 0
-                                            ? `Blended — your ${backgroundItems.length} clip${backgroundItems.length > 1 ? 's' : ''} first, then auto-picked clips fill the rest.`
-                                            : 'Picks a mood-matched background per beat from your library. Generates one if your library is empty.'}
-                                    </span>
-                                </span>
-                            </label>
-                            {backgroundItems.length > 0 ? (
-                                <div className="space-y-2">
-                                    {/* Scroll-cap the clip list so a long selection
-                                        (up to MAX_BACKGROUNDS) never drags the panel
-                                        down — the Sync + add controls stay below. */}
-                                    <div className="space-y-2 max-h-[22rem] overflow-y-auto pr-1">
-                                    {backgroundItems.map((item, idx) => (
-                                        <div
-                                            key={`${item.id}-${idx}`}
-                                            className="flex items-center gap-2.5 bg-black/30 rounded-lg p-1.5 border border-white/5"
-                                        >
-                                            <div className="relative w-12 aspect-[9/16] bg-black rounded-md overflow-hidden shrink-0">
-                                                {item.kind === 'image' ? (
-                                                    <img
-                                                        src={item.previewUrl || item.url}
-                                                        alt=""
-                                                        className="w-full h-full object-cover"
-                                                    />
-                                                ) : (
-                                                    <video
-                                                        src={item.previewUrl || item.url}
-                                                        muted
-                                                        loop
-                                                        autoPlay
-                                                        playsInline
-                                                        className="w-full h-full object-cover"
-                                                    />
-                                                )}
-                                                <span className="absolute top-0.5 left-0.5 w-4 h-4 grid place-items-center rounded bg-primary-500/85 text-[9px] font-bold text-black">
-                                                    {idx + 1}
-                                                </span>
-                                            </div>
-                                            <span
-                                                className="flex-1 min-w-0 truncate text-[11px] text-content-tertiary"
-                                                title={`ID: ${item.id}${item.kind === 'image' ? ' (image)' : ''}`}
-                                            >
-                                                {item.id}
-                                            </span>
-                                            <div className="flex items-center gap-1 shrink-0">
-                                                <button
-                                                    type="button"
-                                                    onClick={() => {
-                                                        if (idx === 0) return;
-                                                        const next = [...backgroundItems];
-                                                        [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
-                                                        setBackgroundItems(next);
-                                                    }}
-                                                    disabled={idx === 0}
-                                                    aria-label="Move up"
-                                                    className="h-7 w-7 grid place-items-center rounded-md bg-white/5 text-gray-300 hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-white/5 transition-colors"
-                                                >
-                                                    <ChevronUp size={14} />
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => {
-                                                        if (idx === backgroundItems.length - 1) return;
-                                                        const next = [...backgroundItems];
-                                                        [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
-                                                        setBackgroundItems(next);
-                                                    }}
-                                                    disabled={idx === backgroundItems.length - 1}
-                                                    aria-label="Move down"
-                                                    className="h-7 w-7 grid place-items-center rounded-md bg-white/5 text-gray-300 hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-white/5 transition-colors"
-                                                >
-                                                    <ChevronDown size={14} />
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={() =>
-                                                        setBackgroundItems(
-                                                            backgroundItems.filter((_, i) => i !== idx),
-                                                        )
-                                                    }
-                                                    aria-label="Remove"
-                                                    className="h-7 w-7 grid place-items-center rounded-md bg-red-500/10 text-red-300 hover:bg-red-500/20 transition-colors"
-                                                >
-                                                    <Trash2 size={13} />
-                                                </button>
-                                            </div>
-                                        </div>
-                                    ))}
-                                    </div>
-                                    {backgroundItems.length > 1 && (
-                                        <label className="flex items-start gap-2 px-1 cursor-pointer">
-                                            <input
-                                                type="checkbox"
-                                                checked={syncBackgrounds}
-                                                onChange={(e) => setSyncBackgrounds(e.target.checked)}
-                                                className="mt-0.5 accent-primary-500"
-                                            />
-                                            <span className="text-[10px] text-help">
-                                                Sync cuts to speech + crossfade
-                                                <span className="block text-content-tertiary">
-                                                    {syncBackgrounds
-                                                        ? `${backgroundItems.length} clips change on spoken phrases, blended.`
-                                                        : `Hard cuts between ${backgroundItems.length} clips, ~equal slots.`}
-                                                </span>
-                                            </span>
-                                        </label>
-                                    )}
-                                    <div className="grid grid-cols-2 gap-2">
-                                        <Button
-                                            onClick={openLibrary}
-                                            disabled={backgroundItems.length >= MAX_BACKGROUNDS}
-                                            variant="secondary"
-                                            className="h-9 text-[10px]"
-                                        >
-                                            <Library size={14} className="mr-1" />
-                                            {backgroundItems.length >= MAX_BACKGROUNDS ? 'Library' : 'From library'}
-                                        </Button>
-                                        <label
-                                            className={`inline-flex items-center justify-center gap-1 h-9 text-[10px] rounded-md border ${
-                                                backgroundItems.length >= MAX_BACKGROUNDS
-                                                    ? 'opacity-40 cursor-not-allowed border-white/10 text-gray-500'
-                                                    : 'cursor-pointer border-white/10 text-gray-200 hover:bg-white/5'
-                                            }`}
-                                        >
-                                            <Plus size={14} />
-                                            Upload from device
-                                            <input
-                                                type="file"
-                                                className="hidden"
-                                                accept=".mp4,.mov,.webm,.m4v,.jpg,.jpeg,.png,.webp"
-                                                disabled={backgroundItems.length >= MAX_BACKGROUNDS || isUploading}
-                                                onChange={(e) => {
-                                                    const f = e.target.files?.[0];
-                                                    if (f) handleLocalBackgroundUpload(f);
-                                                    e.target.value = ''; // allow re-picking the same file
-                                                }}
-                                            />
-                                        </label>
-                                    </div>
-                                    {uploadProgress !== null && (
-                                        <div className="space-y-1 px-1">
-                                            <div className="flex justify-between text-[10px] text-meta">
-                                                <span>{uploadProgress < 100 ? 'Uploading…' : 'Processing…'}</span>
-                                                <span>{uploadProgress}%</span>
-                                            </div>
-                                            <div className="h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
-                                                <div
-                                                    className="h-full bg-primary-500 transition-all duration-150"
-                                                    style={{ width: `${uploadProgress}%` }}
-                                                />
-                                            </div>
-                                        </div>
-                                    )}
-                                    <Button
-                                        onClick={handlePreview}
-                                        isLoading={isPreviewing}
-                                        variant="secondary"
-                                        className="w-full h-9 text-[10px] border-primary-500/20 text-primary-400"
-                                    >
-                                        <Film size={14} className="mr-2" />
-                                        Preview with First Background
-                                    </Button>
-                                </div>
-                            ) : (
-                                <div className="py-10 border-2 border-dashed border-white/10 rounded-xl flex flex-col items-center justify-center text-center px-4 space-y-3">
-                                    <Library size={32} className="text-gray-600" />
-                                    <p className="text-help">No backgrounds selected</p>
-                                    <div className="grid grid-cols-2 gap-2 w-full">
-                                        <Button onClick={openLibrary} className="h-9 text-[10px]">
-                                            <Library size={14} className="mr-1" />
-                                            From library
-                                        </Button>
-                                        <label
-                                            className={`inline-flex items-center justify-center gap-1 h-9 text-[10px] rounded-md border cursor-pointer border-primary-500/30 bg-primary-500/10 text-primary-200 hover:bg-primary-500/20 ${isUploading ? 'opacity-50' : ''}`}
-                                        >
-                                            <Plus size={14} />
-                                            Upload from device
-                                            <input
-                                                type="file"
-                                                className="hidden"
-                                                accept=".mp4,.mov,.webm,.m4v,.jpg,.jpeg,.png,.webp"
-                                                disabled={isUploading}
-                                                onChange={(e) => {
-                                                    const f = e.target.files?.[0];
-                                                    if (f) handleLocalBackgroundUpload(f);
-                                                    e.target.value = '';
-                                                }}
-                                            />
-                                        </label>
-                                    </div>
-                                    {uploadProgress !== null && (
-                                        <div className="space-y-1 w-full px-1">
-                                            <div className="flex justify-between text-[10px] text-meta">
-                                                <span>{uploadProgress < 100 ? 'Uploading…' : 'Processing…'}</span>
-                                                <span>{uploadProgress}%</span>
-                                            </div>
-                                            <div className="h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
-                                                <div
-                                                    className="h-full bg-primary-500 transition-all duration-150"
-                                                    style={{ width: `${uploadProgress}%` }}
-                                                />
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
-                            )}
-                        </DropZone>
+                        {videoBackgroundContent}
                     </Card>
 
                 </div>
             </div>
 
-            {/* Add Clip Modal */}
-            {showAddClipModal && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-                    <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShowAddClipModal(false)} />
-                    {/* Plain div (not <Card>) — Card wraps children in an extra
-                        <div> that breaks flex flex-col, leaving the inner
-                        overflow-y-auto section with no flex parent. Same fix
-                        applied to all modals on this page + RenderPage. */}
-                    <div className="relative w-full max-w-3xl max-h-[80vh] flex flex-col rounded-xl bg-dark-900/95 backdrop-blur-xl border border-white/20 shadow-2xl overflow-hidden">
-                        <div className="flex items-center justify-between p-4 border-b border-white/10 shrink-0">
-                            <h3 className="font-bold text-lg text-white">Add Clip</h3>
-                            <button onClick={() => setShowAddClipModal(false)} className="text-gray-500 hover:text-white">
-                                <X size={24} />
-                            </button>
-                        </div>
-                        <div className="flex-1 min-h-0 p-4 space-y-4 overflow-y-auto overscroll-contain">
-                            {currentAudioPath && (
-                                <div className="flex items-center justify-between bg-black/30 border border-white/10 rounded-lg p-3">
-                                    <div className="text-xs text-gray-300 break-all">{currentAudioPath}</div>
-                                    <Button onClick={() => handleAddClip(currentAudioPath, 'current')} className="text-xs h-8">
-                                        Add Current
-                                    </Button>
-                                </div>
-                            )}
-
-                            <div>
-                                <label className="block text-xs text-gray-400 mb-1">Manual audio path</label>
-                                <div className="flex flex-col sm:flex-row gap-2">
-                                    <input
-                                        value={manualPath}
-                                        onChange={(e) => setManualPath(e.target.value)}
-                                        placeholder="Pick an audio file from your library"
-                                        className="flex-1 bg-black/30 border border-white/10 rounded px-3 py-2 text-sm text-gray-200"
-                                    />
-                                    <Button onClick={() => handleAddClip(manualPath, 'manual')} className="text-xs h-9">
-                                        Add
-                                    </Button>
-                                </div>
-                            </div>
-
-                            <div>
-                                <h4 className="text-caption mb-2">Recent Audio</h4>
-                                {audioHistory.length === 0 ? (
-                                    <p className="text-help">No recent audio found.</p>
-                                ) : (
-                                    <div className="space-y-2">
-                                        {audioHistory.map((item) => (
-                                            <div key={item.id} className="flex items-center gap-2 bg-black/20 border border-white/10 rounded-lg p-2">
-                                                <div className="flex-1 text-xs text-gray-300 break-all">{item.path}</div>
-                                                <Button onClick={() => handleAddClip(item.path, item.kind)} className="text-xs h-8">
-                                                    Add
-                                                </Button>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* Library Picker Modal — multi-select up to MAX_BACKGROUNDS.
-                Clicking a tile toggles its inclusion in the ordered list;
-                selection order = render sequence. Done closes the modal. */}
-            <BackgroundLibraryModal
-                open={showLibraryModal}
-                onClose={() => setShowLibraryModal(false)}
-                items={libraryItems}
-                isLoading={isLoadingLibrary}
-                mode="multi"
-                max={MAX_BACKGROUNDS}
-                selectedIds={backgroundItems.map((b) => b.id)}
-                onPick={(item) => {
-                    const isSelected = backgroundItems.some((b) => b.id === item.id);
-                    if (isSelected) {
-                        setBackgroundItems(backgroundItems.filter((b) => b.id !== item.id));
-                    } else if (backgroundItems.length < MAX_BACKGROUNDS) {
-                        // Append so order matches the click sequence (= render sequence).
-                        setBackgroundItems([...backgroundItems, item]);
-                    } else {
-                        toast.error(`Max ${MAX_BACKGROUNDS} backgrounds. Remove one to add another.`, { id: 'bg-cap' });
-                    }
-                }}
-                onClear={() => setBackgroundItems([])}
-                onDone={() => {
-                    setShowLibraryModal(false);
-                    if (backgroundItems.length > 0) {
-                        toast.success(`${backgroundItems.length} background${backgroundItems.length === 1 ? '' : 's'} selected`);
-                    }
-                }}
-            />
-
-            {/* Preview Result Modal */}
-            {previewUrl && (
-                <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-                    <div className="absolute inset-0 bg-black/90 backdrop-blur-md" onClick={() => setPreviewUrl(null)} />
-                    <div className="relative w-full max-w-xl animate-in zoom-in-95 duration-200">
-                        <Card className="border-primary-500/30 shadow-[0_0_50px_rgba(var(--primary-500-rgb),0.3)]">
-                            <div className="aspect-[9/16] bg-black rounded-xl overflow-hidden mb-4 relative">
-                                <video
-                                    src={previewUrl}
-                                    controls
-                                    autoPlay
-                                    className="w-full h-full object-contain"
-                                />
-                            </div>
-                            <div className="flex gap-2">
-                                <Button
-                                    onClick={() => { void api.downloadMedia(previewUrl, `biblefuel-${(previewUrl.split('/').pop() || 'preview').replace(/\.[^.]+$/, '').slice(0, 24)}.mp4`); }}
-                                    className="flex-1"
-                                >
-                                    <Download size={16} className="mr-2" />
-                                    Download Preview
-                                </Button>
-                                <Button
-                                    variant="secondary"
-                                    onClick={() => setPreviewUrl(null)}
-                                >
-                                    Close
-                                </Button>
-                            </div>
-                        </Card>
-                    </div>
-                </div>
-            )}
-
-            {shareUrl && (
-                // Scroll the whole overlay (not an inner max-h box) so the share
-                // buttons can never be clipped, and pad the bottom on mobile so
-                // the last row clears the fixed bottom nav bar.
-                <div className="fixed inset-0 z-50 overflow-y-auto">
-                    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShareUrl(null)} />
-                    <div className="relative flex min-h-full items-start sm:items-center justify-center p-4 pb-28 sm:pb-4">
-                        <div className="relative w-full max-w-2xl">
-                            <div className="flex items-center justify-between mb-3 px-1">
-                                <h3 className="font-bold text-lg text-white">Share your video</h3>
-                                <button onClick={() => setShareUrl(null)} className="text-gray-400 hover:text-white p-1" aria-label="Close">
-                                    <X size={20} />
-                                </button>
-                            </div>
-                            <ShareSheet
-                                videoUrl={shareUrl}
-                                caption={editedLines.join(' ').trim()}
-                                title={editedLines[0] || ''}
-                                filename={`biblefuel-${(shareUrl.split('/').pop() || 'video').replace(/\.[^.]+$/, '').slice(0, 24)}`}
-                            />
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {trimTarget && (
-                <MediaTrimmer
-                    serverPath={trimTarget.path}
-                    kind={trimTarget.kind}
-                    onCancel={() => setTrimTarget(null)}
-                    onApply={(newPath) => { trimTarget.apply(newPath); setTrimTarget(null); }}
-                />
-            )}
+            {overlays}
         </div>
     );
 }

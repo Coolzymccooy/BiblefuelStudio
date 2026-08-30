@@ -7,11 +7,19 @@ const fakeProject = { projectId: 'p', title: 'T', status: 'draft', scenes: [] };
 beforeEach(() => { vi.restoreAllMocks(); });
 
 describe('storyApi', () => {
-  it('createProject posts title+style and returns the project', async () => {
+  it('createProject posts title+style+cast and returns the project', async () => {
     const spy = vi.spyOn(api, 'post').mockResolvedValue({ ok: true, status: 200, data: { ok: true, project: fakeProject } });
     const p = await storyApi.createProject('T', 'cinematic-bible');
-    expect(spy).toHaveBeenCalledWith('/api/story', { title: 'T', style: 'cinematic-bible' });
+    // cast defaults to [] — the server treats an empty cast as "no character
+    // anchors", which reproduces the pre-cast prompt exactly.
+    expect(spy).toHaveBeenCalledWith('/api/story', { title: 'T', style: 'cinematic-bible', cast: [] });
     expect(p.projectId).toBe('p');
+  });
+
+  it('createProject forwards an explicit cast', async () => {
+    const spy = vi.spyOn(api, 'post').mockResolvedValue({ ok: true, status: 200, data: { ok: true, project: fakeProject } });
+    await storyApi.createProject('T', 'cinematic-bible', ['david_young']);
+    expect(spy).toHaveBeenCalledWith('/api/story', { title: 'T', style: 'cinematic-bible', cast: ['david_young'] });
   });
 
   it('getProject GETs by id', async () => {

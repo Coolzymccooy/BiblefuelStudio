@@ -226,8 +226,8 @@ export function ReportIssueWidget() {
 
     const sevPill = (s: Severity) => {
         if (s === 'high') return 'bg-red-500/20 text-red-300 border-red-500/30';
-        if (s === 'medium') return 'bg-amber-500/20 text-amber-300 border-amber-500/30';
-        return 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30';
+        if (s === 'medium') return 'bg-white/[0.04] text-content-secondary border-white/10';
+        return 'bg-[#7fb5aa]/20 text-content-secondary border-[#7fb5aa]/30';
     };
 
     return (
@@ -252,7 +252,7 @@ export function ReportIssueWidget() {
                         <div className="flex items-start justify-between mb-4">
                             <div>
                                 <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                                    <Bug size={18} className="text-amber-400" />
+                                    <Bug size={18} className="text-content-secondary" />
                                     Issues
                                 </h3>
                                 <p className="text-xs text-content-secondary mt-1">
@@ -275,7 +275,7 @@ export function ReportIssueWidget() {
                                 onClick={() => setTab('new')}
                                 className={`pb-2 px-1 text-sm font-medium transition-colors ${
                                     tab === 'new'
-                                        ? 'text-amber-300 border-b-2 border-amber-500'
+                                        ? 'text-content-secondary border-b-2 border-amber-500'
                                         : 'text-content-tertiary hover:text-gray-300'
                                 }`}
                             >
@@ -286,7 +286,7 @@ export function ReportIssueWidget() {
                                 onClick={() => setTab('mine')}
                                 className={`pb-2 px-1 text-sm font-medium transition-colors flex items-center gap-1.5 ${
                                     tab === 'mine'
-                                        ? 'text-amber-300 border-b-2 border-amber-500'
+                                        ? 'text-content-secondary border-b-2 border-amber-500'
                                         : 'text-content-tertiary hover:text-gray-300'
                                 }`}
                             >
@@ -311,7 +311,7 @@ export function ReportIssueWidget() {
                                             onChange={(e) => setTitle(e.target.value)}
                                             maxLength={140}
                                             placeholder="One-line summary"
-                                            className="w-full bg-dark-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-amber-500/50 focus:outline-none"
+                                            className="w-full bg-dark-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-white/10 focus:outline-none"
                                         />
                                     </div>
                                     <div>
@@ -322,7 +322,7 @@ export function ReportIssueWidget() {
                                             maxLength={4000}
                                             rows={5}
                                             placeholder="Steps to reproduce, what you expected, what happened instead."
-                                            className="w-full bg-dark-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-amber-500/50 focus:outline-none resize-y"
+                                            className="w-full bg-dark-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-white/10 focus:outline-none resize-y"
                                         />
                                         <div className="text-[10px] text-content-tertiary mt-1 text-right">{body.length} / 4000</div>
                                     </div>
@@ -376,7 +376,7 @@ export function ReportIssueWidget() {
                                             {staged.length < MAX_ATTACHMENTS && (
                                                 <label
                                                     htmlFor="bf-issue-files"
-                                                    className="h-16 w-16 rounded border border-dashed border-white/15 hover:border-amber-500/50 text-content-tertiary hover:text-amber-300 flex items-center justify-center cursor-pointer transition-colors"
+                                                    className="h-16 w-16 rounded border border-dashed border-white/15 hover:border-white/10 text-content-tertiary hover:text-content-secondary flex items-center justify-center cursor-pointer transition-colors"
                                                     title="Add a screenshot (PNG/JPEG/GIF/WEBP, max 5MB)"
                                                 >
                                                     <ImagePlus size={20} />
@@ -434,7 +434,7 @@ export function ReportIssueWidget() {
                                                     </span>
                                                     <span className="font-semibold text-gray-100 text-sm break-all">{issue.title}</span>
                                                     {issue.status === 'resolved'
-                                                        ? <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-1.5 py-0.5 rounded">RESOLVED</span>
+                                                        ? <span className="text-[10px] bg-[#7fb5aa]/20 text-content-secondary border border-[#7fb5aa]/30 px-1.5 py-0.5 rounded">RESOLVED</span>
                                                         : <span className="text-[10px] bg-red-500/20 text-red-300 border border-red-500/30 px-1.5 py-0.5 rounded">OPEN</span>}
                                                 </div>
                                                 <div className="text-[10px] text-content-tertiary mb-2">
@@ -457,7 +457,7 @@ export function ReportIssueWidget() {
                                                 )}
 
                                                 {issue.resolutionNote && (
-                                                    <div className="mt-2 text-xs text-emerald-400/80 italic">Note: {issue.resolutionNote}</div>
+                                                    <div className="mt-2 text-xs text-[#7fb5aa]/80 italic">Note: {issue.resolutionNote}</div>
                                                 )}
 
                                                 {(issue.replies?.length || 0) > 0 && (
@@ -481,7 +481,7 @@ export function ReportIssueWidget() {
                                                         onChange={(e) => setReplyDraft((prev) => ({ ...prev, [issue.id]: e.target.value }))}
                                                         placeholder={issue.status === 'resolved' ? 'Add a follow-up note…' : 'Reply or add more detail…'}
                                                         rows={2}
-                                                        className="flex-1 bg-dark-950 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-gray-100 placeholder-gray-600 focus:outline-none focus:border-amber-500/50 resize-y"
+                                                        className="flex-1 bg-dark-950 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-gray-100 placeholder-gray-600 focus:outline-none focus:border-white/10 resize-y"
                                                     />
                                                     <button
                                                         type="button"

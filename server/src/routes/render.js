@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { backgroundTooLargeMessage, remoteContentLength } from '../lib/backgroundLimits.js';
 import fs from "fs";
 import path from "path";
 import { v4 as uuid } from "uuid";
@@ -747,15 +748,27 @@ router.post("/captioned-video", async (req, res) => {
         // whole render.
         let local = resolved;
         if (isRemoteUrl(resolved)) {
+          // Ask for the SIZE first. Downloading a 4K stock clip in full only to
+          // reject it wastes bandwidth and minutes of the operator's time; a
+          // HEAD is cheap and fails fast.
+          const remoteBytes = await remoteContentLength(resolved);
+          if (remoteBytes && remoteBytes > MAX_INPUT_MB * 1024 * 1024) {
+            return res.status(400).json({
+              ok: false,
+              error: backgroundTooLargeMessage(i, rawBackgroundPaths[i], remoteBytes, MAX_INPUT_MB),
+            });
+          }
           try { local = await localizeRemote(resolved, `bg${i}`); }
           catch (e) {
             return res.status(502).json({ ok: false, error: `Failed to fetch background ${i + 1}: ${e?.message || e}` });
           }
         }
         if (isFileTooLarge(local)) {
+          let bytes = 0;
+          try { bytes = fs.statSync(local).size; } catch {}
           return res.status(400).json({
             ok: false,
-            error: `backgroundPaths[${i}] too large (>${MAX_INPUT_MB}MB)`,
+            error: backgroundTooLargeMessage(i, rawBackgroundPaths[i], bytes, MAX_INPUT_MB),
           });
         }
         backgroundPaths.push(local);

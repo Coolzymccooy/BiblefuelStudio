@@ -10,8 +10,29 @@ export function getElevenLabsApiKey() {
 }
 
 export function isElevenLabsConfigured() {
+  return describeElevenLabsKeyProblem() === "";
+}
+
+/**
+ * Explain why the configured ElevenLabs key is unusable, or "" when it looks fine.
+ *
+ * The dashboard shows a key ID beside every key, and pasting that instead of the
+ * key itself is an easy mistake — ElevenLabs then rejects EVERY request with
+ * "API key ID used as API key", which surfaced here only as a bare 502. Checking
+ * the documented `sk_` prefix catches it before a request is spent, and names
+ * the actual mistake instead of a generic failure.
+ *
+ * @returns {string} human-readable problem, or "" if the key looks valid
+ */
+export function describeElevenLabsKeyProblem() {
   const key = getElevenLabsApiKey();
-  return Boolean(key) && !key.startsWith("your-");
+  if (!key) return "ELEVENLABS_API_KEY is not set.";
+  if (key.startsWith("your-")) return "ELEVENLABS_API_KEY is still the placeholder value.";
+  if (!key.startsWith("sk_")) {
+    return "ELEVENLABS_API_KEY looks like a key ID rather than the key itself — "
+      + "real ElevenLabs keys start with 'sk_' and are shown only when created or rotated.";
+  }
+  return "";
 }
 
 export function defaultElevenLabsVoiceId() {
@@ -27,7 +48,7 @@ export function defaultElevenLabsVoiceId() {
  */
 export async function synthesizeElevenLabs({ text, voiceId, voiceSettings, modelId } = {}) {
   if (!isElevenLabsConfigured()) {
-    throw new Error("ELEVENLABS_API_KEY missing or invalid");
+    throw new Error(describeElevenLabsKeyProblem());
   }
   if (!text || String(text).trim().length < 3) {
     throw new Error("text required (min 3 chars)");
@@ -90,7 +111,7 @@ export async function synthesizeElevenLabs({ text, voiceId, voiceSettings, model
  */
 export async function synthesizeElevenLabsWithTimestamps({ text, voiceId, voiceSettings, modelId } = {}) {
   if (!isElevenLabsConfigured()) {
-    throw new Error("ELEVENLABS_API_KEY missing or invalid");
+    throw new Error(describeElevenLabsKeyProblem());
   }
   if (!text || String(text).trim().length < 3) {
     throw new Error("text required (min 3 chars)");

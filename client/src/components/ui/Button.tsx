@@ -15,7 +15,7 @@ export function Button({
     className = '',
     ...props
 }: ButtonProps) {
-    const baseStyles = 'px-4 py-2 rounded-lg font-semibold transition-all duration-200 flex items-center justify-center gap-2';
+    const baseStyles = 'px-4 py-2 rounded-lg font-semibold transition-all duration-200 flex items-center justify-center gap-2 active:scale-[.97]';
 
     const variantStyles = {
         primary: 'bg-primary-500 text-black hover:bg-primary-400 border border-primary-400/40 shadow-lg shadow-black/30',

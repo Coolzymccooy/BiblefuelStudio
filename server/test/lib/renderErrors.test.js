@@ -27,8 +27,17 @@ describe("friendlyRenderError — maps ffmpeg failures to human messages", () =>
     assert.match(msg, /ref: render-captions/);
   });
 
-  test("filtergraph wiring errors -> compose message", () => {
+  test("stream-wiring errors -> invalid-setup message", () => {
+    // "matches no streams" is deliberately intercepted by the earlier
+    // render-filtergraph branch (image-only timelines referencing [0:a]) —
+    // see renderErrors.filtergraph.test.js for the full scenario.
     const msg = friendlyRenderError(1, "Stream specifier 'a1' matches no streams.");
+    assert.match(msg, /combination of clips/i);
+    assert.match(msg, /ref: render-filtergraph/);
+  });
+
+  test("compose failures -> combine message", () => {
+    const msg = friendlyRenderError(1, "Error reinitializing filters!");
     assert.match(msg, /combine|background/i);
     assert.match(msg, /ref: render-compose/);
   });

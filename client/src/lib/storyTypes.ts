@@ -24,6 +24,8 @@ export interface StoryProject {
   projectId: string;
   title: string;
   style: string;
+  /** Biblical figures appearing in this story; applied to every scene prompt. */
+  cast?: string[];
   status: StoryStatus;
   source: { audioPath: string | null; durationMs: number };
   transcript: { words: StoryWord[]; hash: string | null };

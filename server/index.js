@@ -27,7 +27,10 @@ import seriesRouter from "./src/routes/series.js";
 import transcribeRouter from "./src/routes/transcribe.js";
 import transcriptsRouter from "./src/routes/transcripts.js";
 import imagegenRouter from "./src/routes/imagegen.js";
+import videogenRouter from "./src/routes/videogen.js";
 import storyRouter from "./src/routes/story.js";
+import timelineRouter from "./src/routes/timeline.js";
+import abiRouter from "./src/routes/abi.js";
 import musicRouter from "./src/routes/music.js";
 import { requireAuth } from "./src/auth.js";
 import { createAccessRequestsRouter } from "./src/routes/accessRequests.js";
@@ -288,6 +291,17 @@ app.get('/api/health', async (req, res) => {
       ffmpeg: ffmpegVersion,
       platform: process.platform,
       node: process.version
+    },
+    // Which capabilities are actually configured HERE. Booleans only - never
+    // the values. Word-by-word captions need either an ElevenLabs voice (which
+    // returns word timings directly) or OPENAI_API_KEY (Whisper aligns the
+    // audio afterwards). Without both, a scheduled render silently produces
+    // static captions, and there was no way to tell from outside which box was
+    // missing the key.
+    capabilities: {
+      elevenlabs: Boolean(process.env.ELEVENLABS_API_KEY),
+      openai: Boolean(process.env.OPENAI_API_KEY),
+      kineticCaptions: Boolean(process.env.ELEVENLABS_API_KEY || process.env.OPENAI_API_KEY),
     }
   });
 });
@@ -363,8 +377,16 @@ app.use("/api/billing",   billingRouter);
 app.use("/api/scripts",   requireAuth, withUserScope, requireVerifiedEmail, quota("scripts"),    scriptsRouter);
 app.use("/api/queue",     requireAuth, withUserScope,                                              queueRouter);
 app.use("/api/tts",       requireAuth, withUserScope, requireVerifiedEmail, quota("tts"),        ttsRouter);
+app.use("/api/abi",       abiRouter);
 app.use("/api/render",    requireAuth, withUserScope, requireVerifiedEmail, quota("render"),     renderRouter);
 app.use("/api/story",     requireAuth, withUserScope, requireVerifiedEmail, quota("render"),     storyRouter);
+// NOTE: no quota("render") on the whole router. The timeline router also
+// serves GET /projects, the autosave PUT, and GET /render/:jobId - which the
+// client polls about once a second. Charging render quota per REQUEST meant a
+// free user (limit 5) exhausted their own quota within seconds of starting a
+// render, and every later poll 429'd, so the finished video never appeared.
+// The quota belongs on the render POST alone; see routes/timeline.js.
+app.use("/api/timeline",  requireAuth, withUserScope, requireVerifiedEmail,                      timelineRouter);
 app.use("/api/pexels",    requireAuth, withUserScope, requireVerifiedEmail,                       pexelsRouter);
 app.use("/api/pixabay",   requireAuth, withUserScope, requireVerifiedEmail,                       pixabayRouter);
 app.use("/api/gumroad",   requireAuth, withUserScope, featureGate("gumroad"),                     gumroadRouter);
@@ -372,6 +394,7 @@ app.use("/api/media",     requireAuth, withUserScope,                           
 app.use("/api/transcribe", requireAuth, withUserScope, requireVerifiedEmail, quota("render"),     transcribeRouter);
 app.use("/api/transcripts", requireAuth, withUserScope, transcriptsRouter);
 app.use("/api/imagegen",   requireAuth, withUserScope, requireVerifiedEmail, imagegenRouter);
+app.use("/api/video-gen",  requireAuth, withUserScope, requireVerifiedEmail, videogenRouter);
 app.use("/api/audio",     requireAuth, withUserScope, requireVerifiedEmail,                       audioRouter);
 app.use("/api/audio-adv", requireAuth, withUserScope, requireVerifiedEmail,                       audioAdvancedRouter);
 app.use("/api/library",   requireAuth, withUserScope,                                              libraryRouter);

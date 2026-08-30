@@ -334,7 +334,7 @@ export function JobsPage() {
                                                     {new Date(job.createdAt).toLocaleString()}
                                                 </div>
                                                 {job.finishedAt && (
-                                                    <div className="text-emerald-400/80 font-medium">
+                                                    <div className="text-[#7fb5aa]/80 font-medium">
                                                         Duration: {Math.round((new Date(job.finishedAt).getTime() - (job.startedAt ? new Date(job.startedAt).getTime() : new Date(job.createdAt).getTime())) / 1000)}s
                                                     </div>
                                                 )}
@@ -393,7 +393,7 @@ export function JobsPage() {
                                                             e.stopPropagation();
                                                             setShareJob(job);
                                                         }}
-                                                        className="text-xs px-3 py-1 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border-emerald-500/20 h-auto justify-center"
+                                                        className="text-xs px-3 py-1 bg-[#7fb5aa]/10 hover:bg-[#7fb5aa]/20 text-content-secondary border-[#7fb5aa]/20 h-auto justify-center"
                                                     >
                                                         <Share2 size={14} className="mr-1.5" />
                                                         Share
@@ -413,7 +413,7 @@ export function JobsPage() {
                                                     isLoading={retryingJobIds.has(job.id)}
                                                     className={`text-xs px-3 py-1 h-auto justify-center ${
                                                         job.status === 'failed'
-                                                            ? 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border-amber-500/20'
+                                                            ? 'bg-white/[0.04] hover:bg-white/[0.04] text-content-secondary border-white/10'
                                                             : 'bg-white/5 hover:bg-white/10 text-gray-300 border-white/10'
                                                     }`}
                                                     title={job.status === 'failed' ? 'Re-enqueue this failed job' : 'Re-run this job with the same payload'}
@@ -439,12 +439,12 @@ export function JobsPage() {
                                             )}
                                             {(job.result || job.error) && (
                                                 <div className="space-y-2">
-                                                    <span className={`font-semibold ${job.error ? 'text-red-400' : 'text-emerald-400'}`}>
+                                                    <span className={`font-semibold ${job.error ? 'text-red-400' : 'text-[#7fb5aa]'}`}>
                                                         {job.error ? 'Error Log:' : 'Result Output:'}
                                                     </span>
                                                     <pre className={`p-3 rounded-lg overflow-auto border font-mono max-h-40 custom-scrollbar ${job.error
                                                         ? 'bg-red-500/5 border-red-500/20 text-red-300'
-                                                        : 'bg-emerald-500/5 border-emerald-500/20 text-emerald-300'
+                                                        : 'bg-[#7fb5aa]/5 border-[#7fb5aa]/20 text-content-secondary'
                                                         }`}>
                                                         {job.error || JSON.stringify(job.result, null, 2)}
                                                     </pre>

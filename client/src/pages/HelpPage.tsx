@@ -122,10 +122,10 @@ export function HelpPage() {
                         </ul>
                     </div>
                     <div className="w-full md:w-80 bg-black/40 rounded-2xl border border-white/10 p-6 flex flex-col items-center justify-center text-center">
-                        <FileSpreadsheet size={64} className="text-emerald-400/50 mb-4" />
+                        <FileSpreadsheet size={64} className="text-[#7fb5aa]/50 mb-4" />
                         <h4 className="text-white font-bold mb-2">Export Pro-Tip</h4>
                         <p className="text-content-tertiary mb-6">Always export after a large generation session. Use the Script ID column as your master reference.</p>
-                        <button className="w-full py-2 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-lg text-sm font-bold">Download Sample CSV</button>
+                        <button className="w-full py-2 bg-[#7fb5aa]/10 border border-[#7fb5aa]/20 text-[#7fb5aa] rounded-lg text-sm font-bold">Download Sample CSV</button>
                     </div>
                 </div>
             </section>

@@ -257,7 +257,7 @@ export function ShareSheet({ videoUrl, caption = '', title, filename = 'biblefue
                                     onClick={() => handlePostizShare(id)}
                                     disabled={busyPlatform === id}
                                     className={`flex flex-col items-center gap-1 p-2 rounded-lg border text-xs transition-colors disabled:opacity-50 ${connected
-                                        ? 'border-emerald-500/30 bg-emerald-500/5 hover:bg-emerald-500/10 text-gray-100'
+                                        ? 'border-[#7fb5aa]/30 bg-[#7fb5aa]/5 hover:bg-[#7fb5aa]/10 text-gray-100'
                                         : 'border-white/10 bg-dark-900/40 hover:bg-white/5 text-gray-300'
                                         }`}
                                     title={connected ? `Post to ${label}` : `Connect ${label} & post`}

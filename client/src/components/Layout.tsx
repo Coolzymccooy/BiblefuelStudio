@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { pageWidthClass } from '../lib/pageWidth';
+import { CompletionBanner } from './CompletionBanner';
 import {
     Menu, X, FileText, List, Briefcase, Image, Mic, Film, Video, Package, LogOut, LogIn,
     Settings, HelpCircle, Wand2, BookOpen, Home, ShieldCheck, Clapperboard, Sparkles, ChevronRight,
@@ -37,10 +39,19 @@ const studioGroup = ['/app/studio', '/app/voice-audio', '/app/timeline', '/app/b
 
 export function Layout() {
     const [drawerOpen, setDrawerOpen] = useState(false);
-    const { token, emailVerified, isSuperAdmin, isLoading, logout, checkStatus } = useAuth();
+    const { token, emailVerified, isSuperAdmin, isLoading, error: authError, logout, checkStatus } = useAuth();
+    // A validation failure that is NOT a rejection: the app stays usable.
+    const sessionCheckFailed = Boolean(authError) && !/expired|login again/i.test(String(authError));
     const location = useLocation();
     const navigate = useNavigate();
     const [loadingExpired, setLoadingExpired] = useState(false);
+    // Give validation a few seconds, then show the app anyway. A stalled
+    // check must never cost the operator their navigation.
+    useEffect(() => {
+        if (!isLoading) { setLoadingExpired(false); return; }
+        const t = window.setTimeout(() => setLoadingExpired(true), 4000);
+        return () => window.clearTimeout(t);
+    }, [isLoading]);
 
     useEffect(() => {
         const t = setTimeout(() => setLoadingExpired(true), 2500);
@@ -90,10 +101,25 @@ export function Layout() {
     }
 
     if (token && isLoading && !loadingExpired) {
-        return <div className="min-h-screen bg-bf-bg" />;
+        return (
+            <div className="min-h-screen bg-bf-bg flex flex-col items-center justify-center gap-4 px-6 text-center">
+                <div className="h-7 w-7 rounded-full border-2 border-bf-gold/30 border-t-bf-gold animate-spin" />
+                <p className="text-sm text-content-secondary">Checking your session…</p>
+                <button
+                    type="button"
+                    onClick={() => setLoadingExpired(true)}
+                    className="text-sm font-semibold text-bf-gold underline-offset-4 hover:underline"
+                >
+                    Continue anyway
+                </button>
+            </div>
+        );
     }
 
-    if (token && !emailVerified) {
+    // Only gate on a verification we actually CONFIRMED. If the check could
+    // not reach the API (restart, flaky phone connection), showing this gate
+    // takes away the nav, the drawer and the editor for no reason.
+    if (token && !emailVerified && !sessionCheckFailed) {
         return <VerifyEmailGate />;
     }
 
@@ -124,19 +150,20 @@ export function Layout() {
                             <Link
                                 key={item.path}
                                 to={item.path}
-                                className={`flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all group ${active
-                                    ? 'bg-[rgba(216,184,120,0.08)] text-bf-gold border border-[rgba(216,184,120,0.18)]'
-                                    : 'text-content-secondary hover:bg-[rgba(216,184,120,0.05)] hover:text-bf-cream border border-transparent'}`}
+                                className={`relative flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all group ${active
+                                    ? 'bg-[rgba(230,201,138,0.08)] text-bf-gold font-semibold border border-[rgba(230,201,138,0.22)]'
+                                    : 'text-bf-cream/[.88] hover:bg-white/[0.04] hover:text-bf-cream border border-transparent'}`}
                             >
-                                <Icon size={19} className={active ? 'text-bf-gold' : 'text-bf-muted group-hover:text-bf-goldDeep'} />
+                                {/* One signal for "you are here": a gold bar on the left. */}
+                                {active && <span aria-hidden="true" className="absolute left-0 top-2 bottom-2 w-0.5 rounded-full bg-bf-gold" />}
+                                <Icon size={19} className={active ? 'text-bf-gold' : 'text-bf-sub group-hover:text-bf-cream'} />
                                 <span className="font-medium text-sm tracking-wide">{item.label}</span>
-                                {active && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-bf-gold animate-bfpulse" />}
                             </Link>
                         );
                     })}
                     {isSuperAdmin && (
-                        <Link to="/app/admin" className={`flex items-center gap-3 px-4 py-2.5 rounded-xl mt-2 border-t border-[rgba(216,184,120,0.08)] pt-4 transition-all ${isActive('/app/admin') ? 'text-bf-gold' : 'text-content-secondary hover:text-bf-cream'}`}>
-                            <ShieldCheck size={19} className="text-bf-goldDeep" />
+                        <Link to="/app/admin" className={`flex items-center gap-3 px-4 py-2.5 rounded-xl mt-2 border-t border-[rgba(216,184,120,0.08)] pt-4 transition-all ${isActive('/app/admin') ? 'text-bf-gold font-semibold' : 'text-bf-cream/[.88] hover:text-bf-cream'}`}>
+                            <ShieldCheck size={19} className={isActive('/app/admin') ? 'text-bf-gold' : 'text-bf-sub'} />
                             <span className="font-medium text-sm tracking-wide">Admin</span>
                         </Link>
                     )}
@@ -165,13 +192,14 @@ export function Layout() {
                 {/* key on pathname replays the bffade screen entrance on navigate */}
                 <div
                     key={location.pathname}
-                    className={`mx-auto w-full ${
-                        // Voice & Audio is a two-pane layout (create column + recent-audio
-                        // rail); it needs more room than the single-column default, which
-                        // otherwise crushes the hero and leaves big desktop side-gaps.
-                        location.pathname.startsWith('/app/voice-audio') ? 'max-w-6xl' : 'max-w-3xl'
-                    } px-[18px] pt-5 lg:pt-8 lg:px-8 pb-[calc(88px+env(safe-area-inset-bottom))] lg:pb-16 animate-bffade`}
+                    // Width is per-screen: editing surfaces (timeline, studio) get
+                    // near-full width on desktop, two-pane screens get a wider
+                    // column, and reading/form screens stay narrow. See pageWidth.
+                    className={`mx-auto w-full ${pageWidthClass(location.pathname)} px-[18px] pt-5 lg:pt-8 lg:px-8 pb-[calc(88px+env(safe-area-inset-bottom))] lg:pb-16 animate-bffade`}
                 >
+                    {/* Job outcomes announce themselves here rather than only
+                        in the bell, so a finished or failed render is seen. */}
+                    <CompletionBanner />
                     <Outlet />
                 </div>
             </main>

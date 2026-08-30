@@ -22,10 +22,32 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 5174,
       strictPort: true,
+      // Opt-in LAN exposure for testing on a phone / second laptop:
+      //   npm run dev -- --host        (or set VITE_EXPOSE=1)
+      // Off by default: binding 0.0.0.0 puts the dev server, and the API it
+      // proxies, on every network the machine is joined to. Deliberate, not
+      // automatic.
+      host: env.VITE_EXPOSE ? true : undefined,
       proxy: {
         '/api': {
           target: apiTarget,
           changeOrigin: true,
+          // The API runs under `node --watch` and restarts on every server
+          // file save; a request in flight at that moment used to surface as
+          // a bare "Request failed with status code 500" from the proxy.
+          // Answer with a clear, retryable 503 the client can explain.
+          configure: (proxy) => {
+            proxy.on('error', (err, _req, res) => {
+              const r = res as import('http').ServerResponse;
+              if (!r || r.headersSent || typeof r.writeHead !== 'function') return;
+              r.writeHead(503, { 'Content-Type': 'application/json' });
+              r.end(JSON.stringify({
+                ok: false,
+                error: 'API_UNREACHABLE',
+                hint: `The local API was restarting or unreachable (${(err as NodeJS.ErrnoException).code || 'proxy error'}). Try again in a moment.`,
+              }));
+            });
+          },
         },
         '/outputs': {
           target: apiTarget,

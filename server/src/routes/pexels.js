@@ -5,6 +5,7 @@ import { addToLibrary } from "../lib/library.js";
 import { classifySearchQuery, normalizeCategories } from "../lib/categorize.js";
 import { deriveOutputJpgPathFromVideo, generateVideoThumbnail, normalizePathSlashes, resolveOutputAlias, toOutputPublicPath } from "../lib/mediaThumb.js";
 import { mirrorOutputToFirebaseIfEnabled } from "../lib/firebaseAdmin.js";
+import { safeSearchQuery } from "../lib/faithFilter.js";
 
 const router = Router();
 
@@ -15,8 +16,17 @@ router.get("/search", async (req, res) => {
     if (!key || key.startsWith("your-")) {
       return res.status(400).json({ ok: false, error: "PEXELS_API_KEY missing or invalid" });
     }
-    const q = String(req.query.q || "").trim();
-    if (!q) return res.status(400).json({ ok: false, error: "q required" });
+    const rawQ = String(req.query.q || "").trim();
+    if (!rawQ) return res.status(400).json({ ok: false, error: "q required" });
+    // Faith screen at the SOURCE. Blocking non-Christian religious searches here
+    // keeps that imagery out of the library entirely, which is far safer than
+    // filtering it at publish time. Ambiguous terms ("prayer", "worship") get a
+    // Christian qualifier so the provider's own ranking works for us.
+    const safe = safeSearchQuery(rawQ);
+    if (!safe.ok) {
+      return res.status(400).json({ ok: false, error: `Search refused — ${safe.reason}. This is a Christian content library.` });
+    }
+    const q = safe.query;
     const videos = await pexelsSearchVideos(q, 24);
     res.json({ ok: true, videos });
   } catch (e) {

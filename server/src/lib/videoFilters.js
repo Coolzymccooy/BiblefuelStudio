@@ -3,6 +3,52 @@
 // returns plain strings (or arrays of strings) the caller assembles into
 // the final ffmpeg invocation.
 
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+
+/**
+ * Bundled caption fonts. Every caption used to render in ffmpeg's default
+ * monospace, which is what made our output read as "generated" beside a
+ * reference ad using script, marker and serif-italic faces. Motion was never
+ * the gap; the typeface was.
+ *
+ * These live in the repo (OFL / Apache) rather than being read from the OS:
+ * system fonts are not redistributable and do not exist on the Linux server.
+ */
+const BACKSLASH = String.fromCharCode(92);
+
+export const FONT_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "assets", "fonts");
+
+const FONT_FILES = Object.freeze({
+  marker: "PermanentMarker.ttf",
+  script: "Caveat-Bold.ttf",
+  serif: "PlayfairDisplay-BoldItalic.ttf",
+  poster: "Anton.ttf",
+});
+
+/**
+ * Escape a path for use inside a drawtext option. An unescaped Windows drive
+ * colon terminates the option and takes the whole filtergraph down with it.
+ */
+export function escapeFontPath(p) {
+  // ffmpeg needs the drive colon escaped: a bare "C:" ends the drawtext
+  // option and the whole filtergraph is rejected.
+  return String(p).split(BACKSLASH).join("/").split(":").join(BACKSLASH + ":");
+}
+
+/** Absolute, ffmpeg-escaped font path for a preset, or "" for monospace. */
+export function fontFileFor(style) {
+  const key = style?.fontFamily;
+  const file = key && FONT_FILES[key];
+  if (!file) return "";
+  return path.join(FONT_DIR, file);
+}
+
+function fontArg(style) {
+  const f = fontFileFor(style);
+  return f ? `:fontfile='${escapeFontPath(f)}'` : "";
+}
+
 const DEFAULT_XFADE_SECONDS = 0.5;
 const EMPHASIS_COLOR = "#F59E0B";
 const BASE_TEXT_COLOR = "white";
@@ -107,6 +153,90 @@ const TYPOGRAPHY_PRESETS = Object.freeze({
     borderWidth: 5, wordBox: false, lineBoxOpacity: 0.4, lineSizeMult: 0.035,
     lineEnter: "rise-fade", wordReveal: "fade", wordRevealMs: 240, uppercase: false,
   },
+  // Short-form social karaoke: the whole phrase sits on screen in heavy white
+  // uppercase and the word being spoken flips to magenta. Distinct from the
+  // single-hero-word styles above — the viewer reads ahead while the highlight
+  // tracks the voice, which holds attention through longer narration.
+  //
+  // emphasisSizeMult INTENTIONALLY equals baseSizeMult: karaoke highlighting
+  // recolours a word in place. Growing it would reflow the line and make the
+  // surrounding words jitter on every syllable.
+  //
+  // No backdrop box (lineBoxOpacity 0) — a thick outline carries legibility
+  // over busy footage, which is what the reference style does.
+  //
+  // KNOWN LIMITATION: buildWordDrawtext renders ONE word at a time, so this
+  // preset currently gives the reference's colour/weight treatment but not its
+  // full phrase context (reference keeps the whole 2-line phrase on screen and
+  // recolours the spoken word in place). True karaoke needs a phrase-layout
+  // builder that positions each word within a measured line — a larger change
+  // than a preset. Tracked as follow-up work.
+  "karaoke-pop": {
+    baseSizeMult: 0.078, emphasisSizeMult: 0.078, baseColor: "white", emphasisColor: "#FF00FF",
+    borderWidth: 8, wordBox: false, lineBoxOpacity: 0, lineSizeMult: 0.038,
+    lineEnter: "fade", wordReveal: "fade", wordRevealMs: 120, uppercase: true,
+    shadow: { color: "black@0.85", x: 0, y: 3 },
+  },
+
+  // ---- Marker family -----------------------------------------------------
+  // Modelled on the reference the operator supplied. Three distinct looks that
+  // appear across it, each usable per-word OR per-line.
+
+  // MARKER: dark text on a saturated highlighter block. The block is the
+  // style, so wordBox and a high lineBoxOpacity are load-bearing here - drop
+  // either and it degrades to plain yellow text on video.
+  //
+  // Text is near-black rather than white: a bright block needs dark type, and
+  // white-on-yellow fails contrast on any frame.
+  //
+  // NOT uppercase. The reference sets lowercase script, and uppercasing it
+  // loses the handwritten feel that distinguishes this from word-boxes.
+  "marker": {
+    // Sizing verified by rendering a real frame, not by reading the numbers:
+    // 0.082 put a single word edge-to-edge on a 1080x1920 portrait frame. The
+    // reference block is roughly a third of the frame width.
+    baseSizeMult: 0.042, emphasisSizeMult: 0.048, baseColor: "0x141210",
+    emphasisColor: "0x141210",
+    heroSizeMult: 0.056, heroColor: "0x141210",
+    borderWidth: 0, wordBox: true, boxColor: "0xF5C518", boxOpacity: 0.95,
+    boxBorderW: 18,
+    lineBoxOpacity: 0.92, lineBoxColor: "0xF5C518", lineSizeMult: 0.026,
+    lineEnter: "fade", wordReveal: "scale-fade", wordRevealMs: 260,
+    fontFamily: "marker",
+    captionMode: "lines",
+    uppercase: false,
+  },
+
+  // SOFT-GLOW: pale butter-yellow with a heavy dark outline and no block.
+  // Reads over busy footage without a panel, which is what makes it feel
+  // lighter than marker.
+  "soft-glow": {
+    baseSizeMult: 0.052, emphasisSizeMult: 0.060, baseColor: "0xFAE58C",
+    emphasisColor: "0xFFF3B0",
+    heroSizeMult: 0.070, heroColor: "0xFFF8D0",
+    // A translucent scrim behind each line: pale butter type over a bright
+    // sky was unreadable even with the heavy outline (operator render, 2026-08).
+    borderWidth: 10, wordBox: false, lineBoxOpacity: 0.28, lineSizeMult: 0.028,
+    lineEnter: "rise-fade", wordReveal: "scale-fade", wordRevealMs: 240,
+    fontFamily: "script",
+    captionMode: "lines",
+    uppercase: false,
+    shadow: { color: "black@0.55", x: 0, y: 6 },
+  },
+
+  // HEADLINE: the same palette at poster scale. Sits high in frame, so it does
+  // not fight a face in the lower two-thirds of a portrait video.
+  "headline": {
+    baseSizeMult: 0.085, emphasisSizeMult: 0.095, baseColor: "0xFAE58C",
+    emphasisColor: "0xFFF3B0",
+    heroSizeMult: 0.105, heroColor: "0xFFF8D0",
+    borderWidth: 8, wordBox: false, lineBoxOpacity: 0, lineSizeMult: 0.034,
+    lineEnter: "rise-fade", wordReveal: "scale-fade", wordRevealMs: 220,
+    fontFamily: "serif",
+    captionMode: "lines",
+    uppercase: false, layout: "center",
+    shadow: { color: "black@0.45", x: 0, y: 8 },
+  },
 });
 
 // The lumina-presenter design-animation catalog, ported. Browser-only effects
@@ -116,12 +246,18 @@ const TYPOGRAPHY_PRESETS = Object.freeze({
 // maps to a real `presetId` so non-renderable picks degrade to a close style
 // instead of crashing.
 const KINETIC_ANIMATIONS = Object.freeze([
+  // Marker family. Fully renderable server-side: no browser-only effects, so
+  // what the picker previews is what ffmpeg burns.
+  { id: "marker", label: "Marker", description: "Dark handwriting on a yellow highlighter block. Works per word or per line.", presetId: "marker", renderable: true, unsupported: [] },
+  { id: "soft-glow", label: "Soft Glow", description: "Pale butter type with a heavy dark outline. No block, reads over busy footage.", presetId: "soft-glow", renderable: true, unsupported: [] },
+  { id: "headline", label: "Headline", description: "Poster-scale pale type set high in frame, clear of faces.", presetId: "headline", renderable: true, unsupported: [] },
   { id: "cinematic-worship", label: "Cinematic Worship", description: "Centered large worship typography; lines rise in, words fade one at a time.", presetId: "cinematic-worship", renderable: true, unsupported: [] },
   { id: "cinematic-reactive", label: "Cinematic Reactive", description: "Cinematic worship type that glows/pulses to audio with drifting particles (audio-reactivity is browser-only).", presetId: "cinematic-reactive", renderable: true, unsupported: ["audio-reactive", "particles"] },
   { id: "scripture-reveal", label: "Scripture Reveal", description: "Slow, reverent verse reveal; long dwell, gentle fade.", presetId: "scripture-reveal", renderable: true, unsupported: [] },
   { id: "word-boxes", label: "Word Boxes", description: "Bold uppercase words on backdrop panels (per-word colour grid + 3D extrude are browser-only).", presetId: "word-boxes", renderable: true, unsupported: ["per-word-colour-grid", "3d-extrude"] },
   { id: "hero-bold", label: "Hero Bold", description: "Huge bold uppercase words that rise and fade in.", presetId: "hero-bold", renderable: true, unsupported: [] },
   { id: "music-video", label: "Music Video", description: "Snappy, fast-paced word reveals.", presetId: "music-video", renderable: true, unsupported: [] },
+  { id: "karaoke-pop", label: "Karaoke Pop", description: "Bold white uppercase phrase with the spoken word highlighted magenta — the short-form social caption style.", presetId: "karaoke-pop", renderable: true, unsupported: [] },
   { id: "minimal-lower-third", label: "Minimal Lower Third", description: "Small lower-third captions (bottom-anchor layout is not yet ported).", presetId: "cinematic-worship", renderable: false, unsupported: ["bottom-anchor-layout"] },
   { id: "tiled-repeat", label: "Tiled Repeat", description: "Repeated tiled text grid (tiled layout is browser-only).", presetId: "hero-bold", renderable: false, unsupported: ["tiled-layout"] },
   { id: "glass-chrome", label: "Glass Chrome", description: "Glass/metal material text (material fills are browser-only).", presetId: "cinematic-worship", renderable: false, unsupported: ["glass-fill", "metal-fill"] },
@@ -280,7 +416,15 @@ export function buildWordDrawtext({ words, w, h, preset, layout, depth }) {
   const emphasisColor = style.emphasisColor || EMPHASIS_COLOR;
   const heroColor = style.heroColor || emphasisColor;
   const borderWidth = Number.isFinite(style.borderWidth) ? style.borderWidth : 5;
-  const wordBox = style.wordBox ? ":box=1:boxcolor=black@0.35:boxborderw=12" : "";
+  // Box colour comes from the preset. It used to be hardcoded black@0.35, so a
+  // preset could ask for a highlighter block and still get a grey panel - the
+  // marker style is defined by that colour, not by having a box at all.
+  const boxCol = style.boxColor || "black";
+  const boxOp = Number.isFinite(style.boxOpacity) ? style.boxOpacity : 0.35;
+  const boxPad = Number.isFinite(style.boxBorderW) ? style.boxBorderW : 12;
+  const wordBox = style.wordBox
+    ? `:box=1:boxcolor=${boxCol}@${boxOp.toFixed(2)}:boxborderw=${boxPad}`
+    : "";
 
   // Motion model ported from lumina: per-word reveal animation synced to the
   // word's real start time. Legacy presets omit wordReveal → hard-cut (no alpha).
@@ -343,12 +487,12 @@ export function buildWordDrawtext({ words, w, h, preset, layout, depth }) {
     if (depthCfg) {
       const depthYBase = `(${yBase}+${depthDy})`;
       filters.push(
-        `drawtext=text='${text}':x=${xExpr}+${depthDx}:${yClauseFor(depthYBase)}:fontsize=${size}:fontcolor=${depthColor}@${depthOpacity}:borderw=0${alphaClause}${enableClause}`
+        `drawtext=text='${text}':x=${xExpr}+${depthDx}:${yClauseFor(depthYBase)}${fontArg(style)}:fontsize=${size}:fontcolor=${depthColor}@${depthOpacity}:borderw=0${alphaClause}${enableClause}`
       );
     }
 
     filters.push(
-      `drawtext=text='${text}':x=${xExpr}:${yClauseFor(yBase)}:fontsize=${size}:fontcolor=${color}:borderw=${borderWidth}:bordercolor=black@0.85${shadowClause}${wordBox}${alphaClause}${enableClause}`
+      `drawtext=text='${text}':x=${xExpr}:${yClauseFor(yBase)}${fontArg(style)}:fontsize=${size}:fontcolor=${color}:borderw=${borderWidth}:bordercolor=black@0.85${shadowClause}${wordBox}${alphaClause}${enableClause}`
     );
   }
   if (filters.length === 0) return null;
@@ -363,20 +507,231 @@ export function buildWordDrawtext({ words, w, h, preset, layout, depth }) {
  * @param {{ lines: string[], w: number, h: number }} opts
  * @returns {string | null}
  */
-export function buildLineDrawtext({ lines, w, h, preset }) {
+// Line-fitting constants. MONO_ADVANCE_EM is the per-glyph advance of
+// ffmpeg's default monospace face; LINE_WIDTH_BUDGET leaves a margin so text
+// never touches the frame edge (soft-glow previously did, with zero room).
+const MONO_ADVANCE_EM = 0.6;
+const LINE_WIDTH_BUDGET = 0.72;
+const MIN_LINE_FONT_SIZE = 22;
+
+// Target width for a wrapped block line. Short lines are what let paced
+// captions render large: the frame-width budget caps a 49-char line at ~32px
+// but allows ~99px at 16 chars.
+const BLOCK_MAX_CHARS = 16;
+
+// Padding drawn around boxed caption text, on every side.
+const BOX_BORDER_W = 18;
+
+// How far apart staggered rows arrive, before the per-block cap.
+const STAGGER_STEP_SECONDS = 0.28;
+
+/** Greedy word wrap to a character budget. Never splits a word. */
+function wrapToBlock(text, maxChars) {
+  const words = String(text).split(/\s+/).filter(Boolean);
+  const rows = [];
+  let cur = "";
+  for (const word of words) {
+    const next = cur ? `${cur} ${word}` : word;
+    if (next.length <= maxChars || !cur) cur = next;
+    else { rows.push(cur); cur = word; }
+  }
+  if (cur) rows.push(cur);
+  return rows.length > 0 ? rows : [String(text)];
+}
+
+/**
+ * Cap a line font size so the LONGEST line still fits the frame width.
+ *
+ * `lineSizeMult` is multiplied by frame HEIGHT, but the text runs across the
+ * frame WIDTH - so a fixed multiplier silently shears long lines off both
+ * edges. That is not theoretical: at 0.034 the headline preset rendered
+ * "d is close to the brokenheart" on a 1080px frame, and the stock
+ * cinematic-default preset draws a 60-character line to ~2306px. Filter
+ * strings look correct in every one of those cases; only the pixels show it.
+ *
+ * Captions use ffmpeg's default monospace face (no preset sets `fontfile`), so
+ * glyph advance is a dependable ~0.6em and the fit is computable without
+ * measuring. This only ever shrinks: a short line keeps its preset size.
+ */
+export function fitLineFontSize(lines, w, preferred) {
+  const longest = lines.reduce((n, t) => Math.max(n, String(t).length), 0);
+  if (longest === 0) return Math.max(MIN_LINE_FONT_SIZE, preferred);
+  const budget = w * LINE_WIDTH_BUDGET;
+  const maxSize = Math.floor(budget / (longest * MONO_ADVANCE_EM));
+  return Math.max(MIN_LINE_FONT_SIZE, Math.min(preferred, maxSize));
+}
+
+export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal, highlightWords, stagger }) {
   const safeLines = Array.isArray(lines) ? lines.filter(Boolean) : [];
   if (safeLines.length === 0) return null;
   const style = resolveTypographyPreset(preset);
-  const startY = Math.round(h * 0.22);
   const lineGap = Math.round(h * 0.06);
-  const fontSize = Math.max(28, Math.round(h * (style.lineSizeMult || 0.033)));
+  const fontSize = fitLineFontSize(safeLines, w, Math.round(h * (style.lineSizeMult || 0.033)));
   const boxOpacity = Number.isFinite(style.lineBoxOpacity) ? style.lineBoxOpacity : 0.35;
   const color = style.baseColor || BASE_TEXT_COLOR;
+  const lineBoxCol = style.lineBoxColor || style.boxColor || "black";
+
+  // PACED mode. Given a video duration, split it evenly across the lines and
+  // show one at a time, all at the same y. Without this every line drew for
+  // the whole video, stacked down the frame - a whole script on screen at
+  // once, running off the bottom. Word mode has always been timed; line mode
+  // was not, which is why picking a style and getting a wall of text looked
+  // identical to the static "preview mode" captions.
+  const total = Number(duration);
+
+  // REVEAL mode: true line-by-line. Wrap first, then show ONE row at a time.
+  // Revealing raw sentences would be unreadable - a 51-character line caps at
+  // 31px on a 1080 frame because the width budget binds - whereas a wrapped
+  // row holds ~99px, the same size as a block.
+  if (reveal && Number.isFinite(Number(duration)) && Number(duration) > 0) {
+    const total = Number(duration);
+    const rows = safeLines.flatMap((t) => wrapToBlock(String(t), BLOCK_MAX_CHARS));
+    const fontSize = fitLineFontSize(rows, w, Math.round(h * (style.baseSizeMult || 0.07)));
+    const slot = total / rows.length;
+    const y = Math.round(h * 0.45);
+    const parts = [];
+    rows.forEach((row, i) => {
+      const from = i * slot;
+      const to = i === rows.length - 1 ? total : (i + 1) * slot;
+      const enable = `:enable='between(t,${from.toFixed(3)},${to.toFixed(3)})'`;
+      parts.push(`drawtext=text='${escapeDrawText(row)}':x=(w-text_w)/2:y=${y}${fontArg(style)}:fontsize=${fontSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=${BOX_BORDER_W}${enable}`);
+
+      // Karaoke overlay: keep the whole row on screen and re-draw just the
+      // spoken word in the emphasis colour on top of it. Only the words that
+      // belong to THIS row are considered, and only while the row is showing,
+      // so a word never lights up over a line it is not part of.
+      if (Array.isArray(highlightWords) && highlightWords.length > 0) {
+        const emph = style.emphasisColor || style.heroColor || color;
+        for (const wd of highlightWords) {
+          const text = String(wd?.text || "").trim();
+          if (!text || !row.includes(text)) continue;
+          const ws = Number(wd.start);
+          const we = Number(wd.end);
+          if (!Number.isFinite(ws) || !Number.isFinite(we) || we <= ws) continue;
+          // Clip the word's window to the row's own window.
+          const a = Math.max(ws, from);
+          const b = Math.min(we, to);
+          if (b <= a) continue;
+          // Offset the word to its position within the row, measured in the
+          // monospace advance the fit already assumes.
+          const before = row.slice(0, row.indexOf(text));
+          const dx = Math.round((before.length - row.length / 2 + text.length / 2) * fontSize * MONO_ADVANCE_EM);
+          parts.push(`drawtext=text='${escapeDrawText(text)}':x=(w-text_w)/2+${dx}:y=${y}${fontArg(style)}:fontsize=${fontSize}:fontcolor=${emph}:enable='between(t,${a.toFixed(3)},${b.toFixed(3)})'`);
+        }
+      }
+    });
+    return parts.join(",");
+  }
+
+  // BLOCK mode: wrap each caption into a short stack shown as one unit. A
+  // single 49-character line caps at ~32px on a 1080 frame because the width
+  // budget binds; wrapping the same text to ~16 characters reaches ~99px. The
+  // reference video shows short phrase blocks, not one long line.
+  if (block && Number.isFinite(total) && total > 0) {
+    const slot = total / safeLines.length;
+    const preferred = Math.round(h * (style.baseSizeMult || 0.07));
+    const blocks = safeLines.map((t) => wrapToBlock(String(t), BLOCK_MAX_CHARS));
+    // One size for every block, so type does not jump between phrases.
+    const widest = blocks.flat();
+    const fontSize = fitLineFontSize(widest, w, preferred);
+    // Leading must clear the DRAWN row height, not just the glyphs: box=1
+    // pads boxborderw above and below every row, so 1.25em let a boxed
+    // block overlap itself ("the chaos around" sat on "presence calms").
+    const lead = Math.round(fontSize * 1.15) + 2 * BOX_BORDER_W;
+    return blocks.map((rows, bi) => {
+      const from = bi * slot;
+      const to = bi === blocks.length - 1 ? total : (bi + 1) * slot;
+      const enable = `:enable='between(t,${from.toFixed(3)},${to.toFixed(3)})'`;
+      // Centre the stack on the frame's middle band rather than hanging it
+      // from a fixed top, or a tall block runs off the bottom.
+      const top = Math.round(h * 0.5 - (rows.length * lead) / 2);
+      // STAGGER: rows arrive a beat apart instead of popping in together.
+      // The step is capped to a fraction of the block so the LAST row still
+      // has time on screen - without the cap a short block would stagger past
+      // its own window and that row would never appear.
+      const step = stagger
+        ? Math.min(STAGGER_STEP_SECONDS, ((to - from) * 0.5) / Math.max(1, rows.length))
+        : 0;
+      return rows.map((row, ri) => {
+        const y = top + ri * lead;
+        const rowFrom = from + ri * step;
+        const rowEnable = step > 0
+          ? `:enable='between(t,${rowFrom.toFixed(3)},${to.toFixed(3)})'`
+          : enable;
+        return `drawtext=text='${escapeDrawText(row)}':x=(w-text_w)/2:y=${y}${fontArg(style)}:fontsize=${fontSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=${BOX_BORDER_W}${rowEnable}`;
+      }).join(",");
+    }).join(",");
+  }
+
+  if (Number.isFinite(total) && total > 0) {
+    const slot = total / safeLines.length;
+    const y = Math.round(h * 0.42);
+    // A paced line has the frame to itself, so it gets the preset's WORD size
+    // rather than the much smaller stacked-block size. lineSizeMult exists to
+    // fit several lines at once; using it here rendered captions a third the
+    // size of kinetic text and illegible over a bright sky. fitLineFontSize
+    // still caps it to the frame width, so long lines shrink as needed.
+    const pacedSize = fitLineFontSize(safeLines, w, Math.round(h * (style.baseSizeMult || 0.07)));
+    return safeLines.map((t, i) => {
+      const from = i * slot;
+      // End the last line exactly on `duration` so rounding cannot leave a
+      // silent gap of uncaptioned video at the tail.
+      const to = i === safeLines.length - 1 ? total : (i + 1) * slot;
+      const enable = `:enable='between(t,${from.toFixed(3)},${to.toFixed(3)})'`;
+      return `drawtext=text='${escapeDrawText(t)}':x=(w-text_w)/2:y=${y}${fontArg(style)}:fontsize=${pacedSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=${BOX_BORDER_W}${enable}`;
+    }).join(",");
+  }
+
+  // Unpaced (legacy) mode: callers that pass no duration keep the stacked
+  // block they already render, rather than getting invented timings.
+  const startY = Math.round(h * 0.22);
   return safeLines.map((t, i) => {
     const y = startY + i * lineGap;
     const escaped = escapeDrawText(t);
-    return `drawtext=text='${escaped}':x=(w-text_w)/2:y=${y}:fontsize=${fontSize}:fontcolor=${color}:box=1:boxcolor=black@${boxOpacity.toFixed(2)}:boxborderw=18`;
+    // Same reasoning as the word box: honour the preset's colour so a marker
+    // line keeps its highlighter block instead of reverting to a black panel.
+    return `drawtext=text='${escaped}':x=(w-text_w)/2:y=${y}${fontArg(style)}:fontsize=${fontSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=${BOX_BORDER_W}`;
   }).join(",");
+}
+
+/**
+ * Caption MOTION: how captions are timed, independent of how they LOOK.
+ *
+ * Base modes are mutually exclusive - a caption cannot be per-word and a line
+ * block at once - while highlight and stagger are modifiers that layer on top.
+ * The picker and the renderer both read this list, so a mode can never appear
+ * in the UI that the renderer cannot draw.
+ */
+const CAPTION_MOTIONS = Object.freeze([
+  { id: "words", label: "Per word", description: "One word at a time, synced to the voice." },
+  { id: "lines", label: "Per line", description: "One line at a time, full size." },
+  { id: "block", label: "Line block", description: "A short phrase on screen together." },
+]);
+
+export function listCaptionMotions() {
+  return CAPTION_MOTIONS;
+}
+
+/**
+ * Turn a motion id + modifiers into the flags the builders take.
+ *
+ * @param {string} [motion] one of CAPTION_MOTIONS ids
+ * @param {{stagger?: boolean, highlight?: boolean}} [mods]
+ * @param {object} [style] resolved preset, used only when no motion is given
+ */
+export function resolveCaptionMotion(motion, mods = {}, style = null) {
+  const known = CAPTION_MOTIONS.some((m) => m.id === motion);
+  // No explicit motion: fall back to what the STYLE asks for, so renders made
+  // before this control existed keep behaving exactly as they did.
+  const id = known ? motion : (style?.captionMode === "lines" ? "block" : "words");
+  return {
+    id,
+    useWords: id === "words",
+    block: id === "block",
+    reveal: id === "lines",
+    stagger: Boolean(mods.stagger),
+    highlight: Boolean(mods.highlight),
+  };
 }
 
 /**

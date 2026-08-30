@@ -46,10 +46,10 @@ export function RevealSection({ title, storageKey, defaultOpen = false, icon: Ic
                     type="button"
                     onClick={toggle}
                     aria-expanded={open}
-                    className="flex flex-1 min-w-0 items-center gap-3 px-4 py-3.5 text-left"
+                    className="reveal-head flex flex-1 min-w-0 items-center gap-3 px-4 py-3.5 text-left"
                 >
                     {Icon && <Icon size={18} className="shrink-0 text-bf-gold" />}
-                    <span className="flex-1 min-w-0 truncate font-semibold text-[14px] text-bf-cream">{title}</span>
+                    <span className="reveal-title flex-1 min-w-0 truncate font-semibold text-[14px] text-bf-cream">{title}</span>
                     {hint && <span className="text-help shrink-0">{hint}</span>}
                     <ChevronDown size={18} className={`shrink-0 text-bf-faint transition-transform ${open ? 'rotate-180' : ''}`} />
                 </button>

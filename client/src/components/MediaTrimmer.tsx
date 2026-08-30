@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Scissors, Play, Pause, Loader2 } from 'lucide-react';
 import { Button } from './ui/Button';
 import { BusyBar } from './ui/BusyBar';
@@ -149,8 +150,12 @@ export function MediaTrimmer({ serverPath, kind, onApply, onCancel }: MediaTrimm
 
   const selDur = Math.max(0, sel.end - sel.start);
 
-  return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center p-3 sm:p-4">
+  // Portaled, like BackgroundLibraryModal: an animated/transformed ancestor
+  // in the editor layout becomes the containing block for `fixed`, so the
+  // trimmer rendered inline landed off-screen behind the shell - "Trim does
+  // nothing". Body-level, above the fixed editor shell (z-30).
+  return createPortal(
+    <div className="fixed inset-0 z-[1000] flex items-center justify-center p-3 sm:p-4">
       <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={onCancel} />
       <div className="relative w-full max-w-2xl max-h-[88dvh] flex flex-col rounded-xl bg-dark-900/95 backdrop-blur-xl border border-white/20 shadow-2xl overflow-hidden">
         <div className="flex items-center justify-between p-4 border-b border-white/10 shrink-0">
@@ -262,5 +267,5 @@ export function MediaTrimmer({ serverPath, kind, onApply, onCancel }: MediaTrimm
         </div>
       </div>
     </div>
-  );
+  , document.body);
 }

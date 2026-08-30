@@ -13,3 +13,6 @@ tests/selenium/
 .playwright-mcp/
 make-*.png
 .superpowers/
+
+tok.txt
+tok-admin.txt

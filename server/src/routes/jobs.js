@@ -15,8 +15,9 @@ import { isPostizConfigured, postVideo as postizPostVideo } from "../lib/postizC
 import { pickBestBackground, classifyText } from "../lib/categorize.js";
 import { charsToWords, captionWordsFromNativeWords, annotatePhrasedTiers, groupWordsByBeat } from "../lib/captions.js";
 import { alignAudioWithText, isForcedAlignmentAvailable } from "../lib/voice/alignment.js";
-import { buildWordDrawtext, buildLineDrawtext, buildSceneGraph, resolveKineticAnimation, buildEndingFade } from "../lib/videoFilters.js";
+import { buildWordDrawtext, buildLineDrawtext, buildSceneGraph, resolveKineticAnimation, resolveTypographyPreset, resolveCaptionMotion, buildEndingFade } from "../lib/videoFilters.js";
 import { buildSocialCaption } from "../lib/socialCaption.js";
+import { pickScriptType } from "../lib/highPerformerProfile.js";
 import { ensureLocalPath } from "../lib/remoteCache.js";
 import { resolveAutoBackgrounds } from "../lib/autoBackground.js";
 import { generateBibleImage } from "../lib/imageGen/index.js";
@@ -120,6 +121,29 @@ function logMemory(tag) {
 let currentJobCtx = null;
 function currentOutDir() { return currentJobCtx?.outputDir || OUTPUT_DIR; }
 function currentDataDir() { return currentJobCtx?.dataDir || DATA_DIR; }
+
+// Monotonic counter backing the script-type rotation. Persisted per-tenant so
+// the rotation survives restarts — an in-memory counter would reset to the
+// first bucket on every deploy, which is how the page ends up looking
+// repetitive again. Failure to read or write is non-fatal: a bad counter must
+// never stop a post from going out, so we fall back to a time-derived index.
+function nextScriptTypeIndex() {
+  const file = path.join(currentDataDir(), "script-rotation.json");
+  try {
+    let current = 0;
+    if (fs.existsSync(file)) {
+      const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+      if (Number.isFinite(Number(parsed?.index))) current = Number(parsed.index);
+    }
+    const next = current + 1;
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ index: next }, null, 2));
+    return current;
+  } catch (e) {
+    console.warn("[JOBS] script rotation counter unavailable, using time-derived index:", e?.message || e);
+    return Math.floor(Date.now() / 60000);
+  }
+}
 function currentIsSuperAdmin() { return Boolean(currentJobCtx?.isSuperAdmin); }
 
 /**
@@ -297,7 +321,16 @@ function safeUpdateJob(id, patch) {
   }
 }
 
-function resolveAssetPath(pathOrId) {
+/**
+ * Resolve a stored path or library id to something ffmpeg can open.
+ *
+ * `dataDir` MUST be passed when calling from an HTTP request handler. Inside a
+ * job there is a `currentJobCtx` to fall back on, but a request has none, so
+ * the fallback lands on the GLOBAL DATA_DIR - which searches the wrong
+ * tenant's library and either misses the user's own item or matches a
+ * different tenant's item that happens to share an id.
+ */
+export function resolveAssetPath(pathOrId, dataDir) {
   if (pathOrId == null) return null;
   const normalized = String(pathOrId).trim();
   if (!normalized) return null;
@@ -308,7 +341,7 @@ function resolveAssetPath(pathOrId) {
   if (fs.existsSync(direct)) return direct;
 
   // Try to find in library
-  const lib = readLibrary(currentDataDir());
+  const lib = readLibrary(dataDir || currentDataDir());
   const item = lib.items.find(x => String(x.id) === normalized);
   if (item) {
     if (Array.isArray(item.files) && item.files.length > 0) {
@@ -732,17 +765,7 @@ async function renderVideoCore(payload, jobId) {
   if (safeLines.length === 0) throw new Error("lines[] required");
 
   const outFile = path.join(currentOutDir(), `video-${uuid()}.mp4`);
-  const filters = buildLineDrawtext({ lines: safeLines, w, h, preset: typographyPreset });
-  if (!filters) throw new Error("lines[] required");
 
-  const args = ["-y", "-stream_loop", "-1", "-i", resolvedBackground];
-  if (resolvedAudio) args.push("-i", resolvedAudio);
-  if (resolvedMusic) args.push("-i", resolvedMusic);
-
-  const vf = `scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},${filters}`;
-  const preset = process.env.FFMPEG_PRESET || "fast";
-  const hwaccel = process.env.FFMPEG_HWACCEL;
-  const vcodec = hwaccel === 'nvenc' ? 'h264_nvenc' : hwaccel === 'qsv' ? 'h264_qsv' : 'libx264';
   // Honour the audio's full length when it's longer than the requested
   // durationSec — otherwise -shortest truncates the narration mid-sentence.
   // Padding is harmless; truncation is the bug we're fixing.
@@ -758,6 +781,26 @@ async function renderVideoCore(payload, jobId) {
     }
   }
 
+  // Pace the lines across the real video length. `t` is resolved above (not
+  // below, where it used to live) precisely because the caption filter needs
+  // it: without a duration every line draws for the whole video and the
+  // entire script stacks on screen at once.
+  // Same rule as the advanced path: a line-mode preset renders paced blocks,
+  // wrapping the raw lines itself so type can be large.
+  const legacyWantsBlocks = resolveTypographyPreset(typographyPreset)?.captionMode === "lines";
+  const filters = legacyWantsBlocks
+    ? buildLineDrawtext({ lines: rawLines, w, h, preset: typographyPreset, duration: t, block: true })
+    : buildLineDrawtext({ lines: safeLines, w, h, preset: typographyPreset, duration: t });
+  if (!filters) throw new Error("lines[] required");
+
+  const args = ["-y", "-stream_loop", "-1", "-i", resolvedBackground];
+  if (resolvedAudio) args.push("-i", resolvedAudio);
+  if (resolvedMusic) args.push("-i", resolvedMusic);
+
+  const vf = `scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},${filters}`;
+  const preset = process.env.FFMPEG_PRESET || "fast";
+  const hwaccel = process.env.FFMPEG_HWACCEL;
+  const vcodec = hwaccel === 'nvenc' ? 'h264_nvenc' : hwaccel === 'qsv' ? 'h264_qsv' : 'libx264';
   const musicVol = Math.min(1, Math.max(0, Number(musicVolume ?? 0.3)));
   const duck = Boolean(autoDuck) && Boolean(resolvedMusic) && Boolean(resolvedAudio);
 
@@ -1018,9 +1061,35 @@ async function renderAdvancedVideo(payload, jobId) {
   const wrappedLines = Array.isArray(lines)
     ? wrapTextLines(lines.map((s) => cleanCaptionLine(String(s).slice(0, 140))).filter(Boolean), maxChars, 12)
     : [];
-  const drawtextChain = Array.isArray(words) && words.length > 0
+  // The preset decides word-vs-line. Marker / Soft Glow / Headline are paced
+  // LINE styles: before this, kinetic captions forced word mode for every
+  // style, so picking one of them changed the look but still rendered one
+  // word at a time - not what those styles are. Every other preset keeps
+  // word-by-word, so this adds a mode rather than replacing one.
+  // The operator's Caption motion choice wins; the style decides only when no
+  // motion was sent (renders predating the control).
+  const motion = resolveCaptionMotion(
+    payload?.captionMotion,
+    { stagger: payload?.captionStagger === true, highlight: payload?.captionHighlight === true },
+    resolveTypographyPreset(resolvedPreset),
+  );
+  const wantsLines = !motion.useWords;
+  const hasWordTimings = Array.isArray(words) && words.length > 0;
+  // Block mode wraps the ORIGINAL lines itself (to ~16 chars, so type can be
+  // large); handing it the pre-wrapped copy would double-wrap.
+  const rawCaptionLines = Array.isArray(lines)
+    ? lines.map((s) => cleanCaptionLine(String(s).slice(0, 280))).filter(Boolean)
+    : [];
+  const drawtextChain = hasWordTimings && !wantsLines
     ? buildWordDrawtext({ words, w, h, preset: resolvedPreset, layout, depth })
-    : buildLineDrawtext({ lines: wrappedLines, w, h, preset: resolvedPreset });
+    : wantsLines
+      ? buildLineDrawtext({
+          lines: rawCaptionLines, w, h, preset: resolvedPreset, duration: totalDuration,
+          block: motion.block, reveal: motion.reveal, stagger: motion.stagger,
+          // Highlight needs real word timings; without them it is inert.
+          highlightWords: motion.highlight && hasWordTimings ? words : undefined,
+        })
+      : buildLineDrawtext({ lines: wrappedLines, w, h, preset: resolvedPreset, duration: totalDuration });
 
   const filterParts = graph.filterParts.slice();
   let videoLabel = graph.videoLabel;
@@ -1229,6 +1298,13 @@ async function runCampaignAutoPost(payload, jobId) {
       title: String(prebuiltScript.title || "").trim(),
     };
   } else {
+    // scriptType was previously omitted here, so generateScripts fell back to
+    // its "peace" default on EVERY auto-publish and every scheduled run — one
+    // narrow bucket feeding the whole page. Rotate through the problem-led
+    // types instead (see highPerformerProfile), keyed off the run counter so
+    // consecutive posts land in different territory. An explicit payload
+    // scriptType still wins, so Series Mode and manual runs are unaffected.
+    const rotatedScriptType = payload?.scriptType || pickScriptType(nextScriptTypeIndex());
     const scripts = await generateScripts({
       niche: niche || "Christian / Bible encouragement",
       tone: tone || "warm, encouraging, simple",
@@ -1236,6 +1312,7 @@ async function runCampaignAutoPost(payload, jobId) {
       lengthSeconds: Math.max(8, Math.min(90, Number(lengthSeconds) || 20)),
       includeVerseReference: Boolean(includeVerseReference),
       ctaStyle,
+      scriptType: rotatedScriptType,
     });
     script = Array.isArray(scripts) ? scripts[0] : null;
     if (!script) throw new Error("campaign: script generation produced 0 results");
@@ -1393,7 +1470,17 @@ async function runCampaignAutoPost(payload, jobId) {
       autoDuck: payload.autoDuck,
     }, jobId);
   } else {
+    // Tell the OPERATOR, not just the console. A scheduled post publishes
+    // unreviewed, so a silent downgrade to static captions is discovered by
+    // watching the finished video on a public feed. Word timings come from the
+    // TTS provider's alignment, and only ElevenLabs returns it - so the honest
+    // message names the cause and the fix.
     console.warn("[CAMPAIGN] no alignment from TTS (Edge-TTS fallback?) — using legacy line captions");
+    safeUpdateJob(jobId, {
+      captionFallback:
+        "Word-by-word captions need an ElevenLabs voice — this schedule's voice returned no word timings, "
+        + "so static captions were used. Set an ElevenLabs voice on the schedule to get animated captions.",
+    });
     const hasGenImage = typeof generatedImage === "string" && generatedImage.trim().length > 0;
     if (hasGenImage) {
       // Route through the advanced renderer (scenes[]) so the image gets

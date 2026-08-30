@@ -13,9 +13,9 @@ interface ProjectHistoryProps {
 }
 
 const TONE_CLASS: Record<StatusTone, string> = {
-  done: 'bg-green-500/15 text-green-300 border-green-500/30',
+  done: 'bg-[#7fb5aa]/15 text-content-secondary border-[#7fb5aa]/30',
   error: 'bg-red-500/15 text-red-300 border-red-500/30',
-  busy: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
+  busy: 'bg-white/[0.04] text-content-secondary border-white/10',
   idle: 'bg-white/10 text-gray-300 border-white/15',
 };
 

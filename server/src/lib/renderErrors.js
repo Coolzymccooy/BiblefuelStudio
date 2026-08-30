@@ -28,6 +28,18 @@ export function friendlyRenderError(code, stderr = "") {
     );
   }
 
+  // A filtergraph the renderer built that ffmpeg refused. This is OUR bug, not
+  // the operator's files - they saw a 20-line filter dump and could do nothing
+  // with it. The commonest cause was referencing [0:a] on an image-only
+  // timeline, where input 0 has no audio stream.
+  if (/matches no streams|error binding filtergraph|invalid argument.*filter|filtergraph description/.test(s)) {
+    return ref(
+      "The renderer built an invalid setup for this combination of clips — your files are fine. "
+      + "Try adding a video or an audio track, or report this so we can fix it.",
+      "render-filtergraph",
+    );
+  }
+
   // An input file couldn't be opened or decoded.
   if (/no such file|could not open file|error opening input|invalid data found|does not contain any stream/.test(s)) {
     return ref(
