@@ -154,7 +154,12 @@ describe('gold text in light mode', () => {
   it('light mode overrides the pale gold text steps', () => {
     // The override is one comma-separated selector list, so match each
     // selector on its own rather than trying to span the whole list.
-    for (const step of ['300', '400', '500']) {
+    // 100 and 200 matter MOST, not least: they are the palest steps and are
+    // what SourceMediaPanel uses for "Choose file", Preview, Trim and Insert -
+    // the exact row the operator reported. They measure 1.17:1 and 1.35:1 on
+    // a near-white panel. Codex caught this omission on PR #3; the first
+    // version of this rule started at 300 and left those controls invisible.
+    for (const step of ['100', '200', '300', '400', '500']) {
       const sel = "[data-theme='light'] .text-primary-" + step;
       expect(css.includes(sel), 'no light-mode override for text-primary-' + step).toBe(true);
     }
