@@ -1,5 +1,0 @@
-<<<<<<<< HEAD:server/public/assets/usePersistedState-Cw6JL0dB.js
-import{r as a}from"./index-BQuY_AfD.js";import{l as o,s}from"./storage-DxWTohjL.js";const u=[{value:"center",label:"Center (default)"},{value:"center-large",label:"Center — large"},{value:"bottom-center",label:"Bottom center"},{value:"bottom-left",label:"Bottom left"},{value:"staggered",label:"Staggered"}];u.map(e=>e.value);function m(e,l){const[t,r]=a.useState(()=>o(e,l));return a.useEffect(()=>{s(e,t)},[e,t]),[t,r]}export{u as L,m as u};
-========
-import{r as a}from"./index-BJjfJ-fy.js";import{l as o,s}from"./storage-DxWTohjL.js";const u=[{value:"center",label:"Center (default)"},{value:"center-large",label:"Center — large"},{value:"bottom-center",label:"Bottom center"},{value:"bottom-left",label:"Bottom left"},{value:"staggered",label:"Staggered"}];u.map(e=>e.value);function m(e,l){const[t,r]=a.useState(()=>o(e,l));return a.useEffect(()=>{s(e,t)},[e,t]),[t,r]}export{u as L,m as u};
->>>>>>>> origin/master:server/public/assets/usePersistedState-oErgeSTA.js
