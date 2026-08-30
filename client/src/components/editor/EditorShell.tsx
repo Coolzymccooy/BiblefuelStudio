@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { Maximize2, Minimize2, ChevronDown } from 'lucide-react';
+import { Maximize2, Minimize2, ChevronDown, ChevronUp, ChevronLeft, ChevronRight } from 'lucide-react';
 
 /** Below the lg breakpoint the editor is a phone layout: stage on top, tools
  *  as a bar, the tool panel as a sheet, the timeline as the working surface. */
@@ -153,6 +153,47 @@ export function EditorShell({
     try { window.localStorage.setItem('bf.editor.phoneStagePct', String(stagePct)); } catch { /* private mode */ }
   }, [stagePct]);
   const phoneBodyRef = useRef<HTMLDivElement | null>(null);
+  // Landscape phones split side by side; portrait stacks.
+  const [shortScreenLayout, setShortScreenLayout] = useState<boolean>(() => typeof window !== 'undefined' && !!window.matchMedia?.('(max-height: 500px)').matches);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mq = window.matchMedia('(max-height: 500px)');
+    const onChange = () => setShortScreenLayout(mq.matches);
+    onChange();
+    mq.addEventListener?.('change', onChange);
+    return () => mq.removeEventListener?.('change', onChange);
+  }, []);
+  // Does the tools bar have more off-screen either way? Without a hint the
+  // operator cannot tell that half the tools exist.
+  const toolsRef = useRef<HTMLDivElement | null>(null);
+  const [toolsEdge, setToolsEdge] = useState({ left: false, right: false });
+  const measureTools = useCallback(() => {
+    const el = toolsRef.current;
+    if (!el) return;
+    setToolsEdge({
+      left: el.scrollLeft > 4,
+      right: el.scrollLeft + el.clientWidth < el.scrollWidth - 4,
+    });
+  }, []);
+  useEffect(() => {
+    measureTools();
+    if (typeof ResizeObserver === 'undefined') return;
+    const el = toolsRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(measureTools);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [measureTools, phone, tools.length]);
+  const scrollTools = (dir: 1 | -1) => {
+    toolsRef.current?.scrollBy({ left: dir * Math.max(150, (toolsRef.current?.clientWidth || 300) * 0.7), behavior: 'smooth' });
+  };
+  // The preview drawer folds away entirely, so the lanes get the screen.
+  const [stageCollapsed, setStageCollapsed] = useState<boolean>(() => {
+    try { return window.localStorage.getItem('bf.editor.phoneStageCollapsed') === '1'; } catch { return false; }
+  });
+  useEffect(() => {
+    try { window.localStorage.setItem('bf.editor.phoneStageCollapsed', stageCollapsed ? '1' : '0'); } catch { /* private mode */ }
+  }, [stageCollapsed]);
   const onPhoneDragStart = useCallback((e: React.PointerEvent) => {
     e.preventDefault();
     const host = phoneBodyRef.current;
@@ -329,27 +370,59 @@ export function EditorShell({
   // surface, tools as a bottom bar, the tool panel as a sheet over the
   // TIMELINE - the stage is never covered) -----------------------------
   const phoneBody = (
-    <div ref={phoneBodyRef} className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <div
-        className="flex min-w-0 shrink-0 items-center justify-center overflow-hidden bg-editor-stage px-1 py-1.5"
-        style={{ height: `${stagePct}%` }}
-      >
-        {stage}
-      </div>
+    <div ref={phoneBodyRef} className="flex min-h-0 flex-1 flex-col overflow-hidden short:flex-row">
+      {!stageCollapsed && (
+        <div
+          className="flex min-w-0 flex-col items-center justify-center overflow-hidden bg-editor-stage px-1 py-1.5"
+          style={shortScreenLayout
+            ? { flex: '0 0 52%', minWidth: 0, height: '100%' }
+            : { flex: `0 1 min(${stagePct}dvh, ${stagePct}%)`, minHeight: '96px', maxHeight: '46dvh', width: '100%' }}
+        >
+          {stage}
+        </div>
+      )}
       {/* Grip: drag to trade stage for timeline, in BOTH directions. */}
-      <div
-        role="separator"
-        aria-label="Resize preview"
-        aria-orientation="horizontal"
-        onPointerDown={onPhoneDragStart}
-        onDoubleClick={() => setStagePct(42)}
-        title="Drag to resize the preview · double-tap to reset"
-        className="flex h-5 shrink-0 cursor-row-resize touch-none items-center justify-center border-y border-editor-line bg-editor-chrome"
-      >
-        <div className="pointer-events-none h-[3px] w-10 rounded-full bg-editor-accent/45" />
+      <div className="flex h-7 shrink-0 items-center gap-2 border-y border-editor-line bg-editor-chrome px-2 short:hidden">
+        <button
+          type="button"
+          aria-label={stageCollapsed ? 'Show preview' : 'Hide preview'}
+          title={stageCollapsed ? 'Show the preview' : 'Hide the preview and give the lanes the screen'}
+          onClick={() => setStageCollapsed((v) => !v)}
+          className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-editor-dim transition hover:bg-editor-hover hover:text-editor-text"
+        >
+          {stageCollapsed ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
+          Preview
+        </button>
+        {/* The drag grip only means something while the preview is showing. */}
+        {!stageCollapsed && (
+          <div
+            role="separator"
+            aria-label="Resize preview"
+            aria-orientation="horizontal"
+            onPointerDown={onPhoneDragStart}
+            onDoubleClick={() => setStagePct(42)}
+            title="Drag to resize the preview · double-tap to reset"
+            className="flex h-full flex-1 cursor-row-resize touch-none items-center justify-center"
+          >
+            <div className="pointer-events-none h-[3px] w-10 rounded-full bg-editor-accent/45" />
+          </div>
+        )}
+        {stageCollapsed && <span className="flex-1" />}
       </div>
-      <div className="relative min-h-0 flex-1 overflow-hidden bg-editor-chrome">
+      <div className="relative min-h-0 flex-1 overflow-hidden bg-editor-chrome short:min-w-0 short:basis-0">
         <div className="h-full overflow-hidden">{strip}</div>
+        {/* Bring the panel back. Without this the sheet could only be
+            closed - the operator had no way back to the tool. */}
+        {!sheetOpen && (
+          <button
+            type="button"
+            onClick={() => setSheetOpen(true)}
+            className="absolute inset-x-0 bottom-0 z-20 flex items-center justify-center gap-2 border-t border-editor-line bg-editor-panel/95 py-2 text-[11px] font-semibold text-editor-dim backdrop-blur"
+          >
+            <ChevronUp size={14} />
+            {tools.find((t) => t.id === activeId)?.label}
+          </button>
+        )}
         {sheetOpen && (
           <div
             id={`panel-${activeId}`}
@@ -374,12 +447,36 @@ export function EditorShell({
           </div>
         )}
       </div>
-      <div
-        role="tablist"
-        aria-label="Editor tools"
-        className="flex w-full shrink-0 flex-row gap-1 overflow-x-auto border-t border-editor-line bg-editor-chrome px-2 py-1 [scrollbar-width:none]"
-      >
-        {tools.map(toolButton)}
+      <div className="relative shrink-0 border-t border-editor-line bg-editor-chrome short:w-[76px] short:overflow-y-auto short:border-l short:border-t-0">
+        <div
+          ref={toolsRef}
+          role="tablist"
+          aria-label="Editor tools"
+          onScroll={measureTools}
+          className="flex w-full flex-row gap-1 overflow-x-auto px-2 py-1 [scrollbar-width:none] short:flex-col short:overflow-x-hidden"
+        >
+          {tools.map(toolButton)}
+        </div>
+        {toolsEdge.left && (
+          <button
+            type="button"
+            aria-label="Scroll tools left"
+            onClick={() => scrollTools(-1)}
+            className="absolute inset-y-0 left-0 grid w-7 place-items-center bg-gradient-to-r from-editor-chrome via-editor-chrome/95 to-transparent text-editor-accent"
+          >
+            <ChevronLeft size={16} />
+          </button>
+        )}
+        {toolsEdge.right && (
+          <button
+            type="button"
+            aria-label="Scroll tools right"
+            onClick={() => scrollTools(1)}
+            className="absolute inset-y-0 right-0 grid w-7 place-items-center bg-gradient-to-l from-editor-chrome via-editor-chrome/95 to-transparent text-editor-accent"
+          >
+            <ChevronRight size={16} />
+          </button>
+        )}
       </div>
     </div>
   );

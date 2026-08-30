@@ -300,13 +300,16 @@ const get=p=>new Promise((res,rej)=>{http.get({host:'127.0.0.1',port:PORT,path:p
 
   // ---- landscape ----
   await boot(844,390,SEED_MEDIA);
-  const mid=await ev(`(()=>{const r=document.querySelector('[aria-label="Editor tools"]');const m=r&&r.parentElement;const b=m&&m.getBoundingClientRect();return b?Math.round(b.height):0;})()`);
+  const mid=await ev(`(()=>{const l=document.querySelector('[aria-label^="Track lane"]');let s=l&&l.parentElement;while(s&&getComputedStyle(s).overflowY!=='auto')s=s.parentElement;const b=s&&s.getBoundingClientRect();return b?Math.round(b.height):0;})()`);
   check('landscape mid row has height', mid>80, `midRow h=${mid}`);
   // Phones no longer scroll the lanes sideways - a desktop-width strip inside a
   // 390px screen is what made the headers overlap the clips. The contract is now
   // the opposite: the lanes FIT, so nothing can collide.
-  check('phone lanes fit the screen (no horizontal scroll)',
-    (await ev(`(()=>{const l=document.querySelector('[aria-label^="Track lane"]');if(!l)return false;let s=l.parentElement;while(s&&getComputedStyle(s).overflowY!=='auto')s=s.parentElement;if(!s)return false;return s.scrollWidth<=s.clientWidth+2;})()`))===true);
+  // The LANE LIST fits the screen (no desktop-width strip); an individual lane
+  // with clips scrolls inside its own row, because a clip narrower than ~7rem
+  // cannot show its label - four unreadable blocks was the operator's report.
+  check('phone lane list fits the screen (lane headers are not off-screen)',
+    (await ev(`(()=>{const l=document.querySelector('[aria-label^="Track lane"]');if(!l)return false;const r=l.getBoundingClientRect();return r.left>=-1 && r.right<=innerWidth+1;})()`))===true);
 
   const pass=results.filter(r=>r.pass).length;
   console.log('\n=== EDITOR SMOKE ===');

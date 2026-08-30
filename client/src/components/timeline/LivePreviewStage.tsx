@@ -56,6 +56,25 @@ export function LivePreviewStage({
   const videoRefs = useRef<Record<string, HTMLVideoElement | null>>({});
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [hostBox, setHostBox] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+  const controlsRef = useRef<HTMLDivElement | null>(null);
+  const [controlsH, setControlsH] = useState(CONTROLS_PX);
+  useEffect(() => {
+    if (typeof ResizeObserver === 'undefined') return;
+    const el = controlsRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      const parent = el.parentElement;
+      if (!parent) return;
+      let used = 0;
+      for (const child of Array.from(parent.children)) {
+        if (child.getAttribute('data-testid') === 'live-preview-canvas') continue;
+        used += (child as HTMLElement).getBoundingClientRect().height;
+      }
+      setControlsH(Math.max(24, Math.round(used) + 12));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [Boolean(project)]);
   useEffect(() => {
     const el = hostRef.current?.parentElement ?? hostRef.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
@@ -67,13 +86,26 @@ export function LivePreviewStage({
     return () => ro.disconnect();
   }, [Boolean(project)]);
   const ratio = ASPECT_RATIO[aspect] ?? 16 / 9;
-  // Fit: as wide as the host allows, unless the height would not fit - then
-  // the height rules and the width follows the ratio.
-  // Phones: the canvas takes the full width the stage band offers and the
-  // height follows the frame - the previous fit left dead margins left and
-  // right on a 390px screen (the operator marked them in red).
+  // Fit the canvas to the room it ACTUALLY has. The old maths subtracted a
+  // fixed CONTROLS_PX for the scrubber and caption note, but those are
+  // siblings below the canvas - so on a phone the canvas shrank while the
+  // stage band stayed tall, leaving the big empty margins the operator
+  // marked. `controlsH` is measured, and the canvas takes whichever of
+  // width / remaining height binds first.
+  // Short screens lay the controls out beside the canvas (see below), so the
+  // canvas keeps the full height; tall screens stack them.
+  const [shortScreen, setShortScreen] = useState<boolean>(() => typeof window !== 'undefined' && !!window.matchMedia?.('(max-height: 500px)').matches);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mq = window.matchMedia('(max-height: 500px)');
+    const onChange = () => setShortScreen(mq.matches);
+    onChange();
+    mq.addEventListener?.('change', onChange);
+    return () => mq.removeEventListener?.('change', onChange);
+  }, []);
+  const availH = Math.max(80, hostBox.h - (shortScreen ? 8 : controlsH));
   const fitWidth = hostBox.w > 0
-    ? Math.max(120, Math.min(hostBox.w, Math.max(120, hostBox.h - CONTROLS_PX) * ratio))
+    ? Math.max(120, Math.min(hostBox.w, availH * ratio))
     : undefined;
 
   const totalSec = Math.max(1, project?.targetDurationSec ?? 60);
@@ -113,7 +145,7 @@ export function LivePreviewStage({
   const captionProgress = lineCount > 0 ? (timeSec % slot) / slot : 0;
 
   return (
-    <div ref={hostRef} className="flex h-full w-full flex-col items-center justify-center gap-2">
+    <div ref={hostRef} className={`flex h-full w-full items-center justify-center gap-2 ${shortScreen ? 'flex-row' : 'flex-col'}`}>
       <div
         className="stage-ground relative max-w-full shrink-0 overflow-hidden rounded-lg"
         style={{ aspectRatio: String(ratio), width: fitWidth ?? '100%', ...(gradeFilter ? { filter: gradeFilter } : undefined) }}
@@ -153,7 +185,11 @@ export function LivePreviewStage({
         )}
       </div>
 
-      <div className="flex items-center gap-2" style={{ width: fitWidth ?? '100%' }}>
+      <div
+        ref={controlsRef}
+        className={shortScreen ? 'flex min-w-0 flex-1 flex-col items-stretch gap-1' : 'flex items-center gap-2'}
+        style={shortScreen ? undefined : { width: fitWidth ?? '100%' }}
+      >
         <input
           type="range"
           min={0}

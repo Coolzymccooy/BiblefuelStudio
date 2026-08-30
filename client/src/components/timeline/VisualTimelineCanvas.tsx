@@ -52,13 +52,17 @@ interface VisualTimelineCanvasProps {
  * asked for "muscle". Hue tells you the lane at a glance, fill gives the
  * block weight, and gold stays reserved for the SELECTED clip.
  */
+// Per-lane clip colour. The ink is a THEME variable, not a fixed cream:
+// on a light timeline white-on-pale was unreadable (the operator could not
+// read the Real footage clips at all). Fills stay tinted so lanes remain
+// distinguishable at a glance in both themes.
 const CLIP_TONE: Record<TimelineTrackKind, string> = {
-  video: 'border-[#e6c98a]/45 bg-[#e6c98a]/15 text-[#f4ecdc]',
-  broll: 'border-[#93a7bd]/55 bg-[#93a7bd]/18 text-[#e3e9ef]',
-  voiceover: 'border-[#7fb5aa]/60 bg-[#7fb5aa]/20 text-[#e6f1ee]',
-  music: 'border-[#b09ac0]/55 bg-[#b09ac0]/18 text-[#eee7f2]',
-  captions: 'border-[#f4ecdc]/40 bg-[#f4ecdc]/14 text-[#f4ecdc]',
-  effects: 'border-[#c89a8a]/55 bg-[#c89a8a]/18 text-[#f3e6e1]',
+  video: 'border-[#c9a961]/70 bg-[#e6c98a]/35 text-editor-text',
+  broll: 'border-[#7d94ad]/70 bg-[#93a7bd]/35 text-editor-text',
+  voiceover: 'border-[#5f9d90]/70 bg-[#7fb5aa]/35 text-editor-text',
+  music: 'border-[#9a83ab]/70 bg-[#b09ac0]/35 text-editor-text',
+  captions: 'border-editor-line bg-editor-hover text-editor-text',
+  effects: 'border-[#b5867a]/70 bg-[#c89a8a]/35 text-editor-text',
 };
 
 const TRACK_ICON: Record<TimelineTrackKind, typeof Film> = {
@@ -261,7 +265,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                       style={{ flexBasis: `${widthPct}%` }}
                       title={scene.voiceoverBrief}
                     >
-                      <p className="truncate text-[11px] font-semibold text-primary-100">{scene.label}</p>
+                      <p className="truncate text-[11px] font-semibold text-editor-text">{scene.label}</p>
                       {!compact && (
                       <p className="mt-1 text-[10px] text-content-tertiary">{formatDuration(scene.startSec)} · {Math.round(scene.targetDurationSec)}s</p>
                     )}
@@ -287,7 +291,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                           OPAQUE background, not bg-white/[0.03], or the clips
                           show through as they pass behind it. */}
                       <div className={phone ? `flex items-center gap-1.5 px-0.5 py-0.5` : `sticky left-0 z-10 flex items-center gap-2 rounded-lg border border-white/10 bg-[#141210] ${d.headPad}`}>
-                        <Icon size={phone ? 13 : 15} className="shrink-0 text-primary-200" />
+                        <Icon size={phone ? 15 : 15} className="shrink-0 text-editor-accent" />
                         <div className="min-w-0">
                           <p className={`truncate font-semibold text-editor-text ${phone ? 'text-[11px] leading-none' : 'text-xs'}`}>
                             {track.label}
@@ -308,19 +312,19 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                         )}
                       </div>
   
-                      <div className={`relative ${d.lane} rounded-lg border border-dashed border-editor-line bg-editor-hover/40 ${d.lanePad}`}>
+                      <div className={`relative ${d.lane} rounded-lg border border-editor-line/70 bg-editor-hover/30 ${d.lanePad}`}>
                         {track.clips.length === 0 ? (
                           <button
                             type="button"
                             onClick={() => onEmptyLaneClick?.(track.kind)}
                             disabled={!onEmptyLaneClick}
                             title={onEmptyLaneClick ? 'Open the tool that fills this lane' : undefined}
-                            className={`flex ${d.emptyRow} w-full items-center justify-center rounded-md bg-editor-hover px-2 text-center text-[11px] text-editor-faint transition enabled:hover:bg-editor-accent/10 enabled:hover:text-editor-dim phone:justify-start phone:text-left phone:text-[10px] phone:leading-tight`}
+                            className={`flex ${d.emptyRow} w-full items-center justify-center rounded-md border border-dashed border-editor-line/80 bg-transparent px-2 text-center text-[11px] text-editor-faint transition enabled:hover:border-editor-accent/50 enabled:hover:text-editor-dim phone:justify-start phone:text-left phone:text-[10px] phone:leading-tight`}
                           >
                             {EMPTY_HINT[track.kind]}
                           </button>
                         ) : (
-                          <div className={`relative ${d.clipRow}`}>
+                          <div className={phone ? `flex ${d.clipRow} gap-1 overflow-x-auto [scrollbar-width:none]` : `relative ${d.clipRow}`}>
                             {track.clips.map((clip) => {
                               const asset = project.assets[clip.assetId];
                               const proxy = proxyLabel(asset);
@@ -357,8 +361,8 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                                   // Split/Remove toolbar stayed disabled.
                                   onClick={() => setSelectedClipId(clip.id)}
                                   aria-label={`Timeline clip: ${asset?.label || clip.assetId}`}
-                                  className={`absolute top-1 ${d.clipHeight} rounded-md border px-2 py-1 text-left text-[10px] font-medium shadow-md transition ${selected ? 'border-editor-accent bg-editor-accent/30 text-white ring-2 ring-editor-accent/50' : `${CLIP_TONE[track.kind]} hover:brightness-125`}`}
-                                  style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                                  className={`${phone ? '' : 'absolute top-1'} ${d.clipHeight} rounded-md border px-2 py-1 text-left text-[10px] font-medium shadow-md transition ${selected ? 'border-editor-accent bg-editor-accent/30 text-white ring-2 ring-editor-accent/50' : `${CLIP_TONE[track.kind]} hover:brightness-125`}`}
+                                  style={phone ? { minWidth: '7.5rem', flex: '0 0 auto' } : { left: `${leftPct}%`, width: `${widthPct}%` }}
                                   title={`${asset?.label || clip.assetId} · ${sourceLabel(asset)} · ${Math.round(clip.durationSec)}s · ${previewMode}`}
                                 >
                                   <div className="flex h-full items-center gap-1 overflow-hidden">
@@ -538,7 +542,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
             </p>
           </div>
           <div className="flex flex-col gap-2 sm:items-end">
-            <div className="rounded-full border border-primary-500/20 bg-primary-500/10 px-3 py-1 text-xs text-primary-100">
+            <div className="rounded-full border border-editor-accent/25 bg-editor-accent/10 px-3 py-1 text-xs text-editor-text">
               Face-safe default · {project.renderSettings.voiceProvider} VO · {project.aspect}
             </div>
             <Button
