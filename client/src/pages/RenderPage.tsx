@@ -822,10 +822,17 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
                   const results = res.data?.results || [];
                   const failed = results.filter((r) => !r.ok);
                   const drafted = results.filter((r) => r.ok && r.draft);
+                  // A failure must NOT hide a successful draft. Reporting only the failure
+                  // leaves the operator unaware the video is sitting in the Creator Inbox,
+                  // so they re-share and duplicate the post. Both facts get said.
+                  const draftNote = drafted.length > 0
+                    ? `${drafted.map((r) => r.destination).join(', ')} saved to your inbox as a draft`
+                    : '';
                   if (failed.length > 0) {
-                    toast.error(`${failed.map((r) => r.destination).join(', ')} failed: ${failed[0].error || 'unknown error'}`);
-                  } else if (drafted.length > 0) {
-                    toast.success(`Sent to your ${drafted.map((r) => r.destination).join(', ')} inbox as a draft — TikTok was at capacity`);
+                    const failNote = `${failed.map((r) => r.destination).join(', ')} failed: ${failed[0].error || 'unknown error'}`;
+                    toast.error(draftNote ? `${failNote} — ${draftNote}` : failNote);
+                  } else if (draftNote) {
+                    toast.success(`${draftNote} — TikTok was at capacity`);
                   } else {
                     toast.success('Share triggered');
                   }
