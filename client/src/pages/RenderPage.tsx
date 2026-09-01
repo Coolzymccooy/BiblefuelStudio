@@ -174,7 +174,8 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
         if (embedded.seedAudioPath && !audioPath.trim()) setAudioPath(embedded.seedAudioPath);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [embedded?.seedLines, embedded?.seedAudioPath]);
-    useEffect(() => {
+    useEffect(() => {
+
         // Host-owned frame wins, including over the cached value the page
         // restores after mount - so the topbar and the lab never disagree.
         if (embedded?.aspect && embedded.aspect !== aspect) setAspect(embedded.aspect);
@@ -813,9 +814,28 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
 
         setIsSharing(true);
         try {
-            const res = await api.post('/api/social/post', payload);
-            if (res.ok) toast.success('Share triggered');
-            else toast.error(res.error || 'Share failed');
+      const res = await api.post<{ partial?: boolean; results?: Array<{ destination: string; ok: boolean; error?: string; draft?: boolean }> }>('/api/social/post', payload);
+                  if (!res.ok) { toast.error(res.error || 'Share failed'); return; }
+                  // Report EACH destination. A single "Share triggered" hid a real
+                  // failure for days - the webhook succeeded while every TikTok post
+                  // failed, and the toast was green every time.
+                  const results = res.data?.results || [];
+                  const failed = results.filter((r) => !r.ok);
+                  const drafted = results.filter((r) => r.ok && r.draft);
+                  // A failure must NOT hide a successful draft. Reporting only the failure
+                  // leaves the operator unaware the video is sitting in the Creator Inbox,
+                  // so they re-share and duplicate the post. Both facts get said.
+                  const draftNote = drafted.length > 0
+                    ? `${drafted.map((r) => r.destination).join(', ')} saved to your inbox as a draft`
+                    : '';
+                  if (failed.length > 0) {
+                    const failNote = `${failed.map((r) => r.destination).join(', ')} failed: ${failed[0].error || 'unknown error'}`;
+                    toast.error(draftNote ? `${failNote} — ${draftNote}` : failNote);
+                  } else if (draftNote) {
+                    toast.success(`${draftNote} — TikTok was at capacity`);
+                  } else {
+                    toast.success('Share triggered');
+                  }
         } finally {
             setIsSharing(false);
         }

@@ -6,6 +6,7 @@ import { v4 as uuid } from "uuid";
 import cron from "node-cron";
 import { google } from "googleapis";
 import jwt from "jsonwebtoken";
+import { buildZernioPost, isTikTokCapacityError } from "../lib/zernioPayload.js";
 import { readSocialStore, writeSocialStore } from "../lib/socialStore.js";
 import { scheduleOwnerCtx, listScheduleSources } from "../lib/social/scheduleSources.js";
 // DATA_DIR is used ONLY by the boot-time cron rehydrator below, which operates
@@ -147,29 +148,39 @@ async function publishToZernioTikTok({ caption, videoUrl, title }) {
     return { skipped: true, reason: "ZERNIO_API_KEY or ZERNIO_TIKTOK_ACCOUNT_ID not set" };
   }
 
-  const resp = await fetch("https://zernio.com/api/v1/posts", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      content: caption,
-      title,
-      publishNow: true,
-      isDraft: false,
-      platforms: [{ platform: "tiktok", accountId }],
-      mediaItems: [{ type: "video", url: videoUrl }],
-    }),
-  });
+  const send = async (draft) => {
+    const resp = await fetch("https://zernio.com/api/v1/posts", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(buildZernioPost({ caption, title, videoUrl, accountId, draft })),
+    });
+    return { resp, text: await resp.text() };
+  };
 
-  const text = await resp.text();
+  let { resp, text } = await send(false);
+
+  // TikTok's direct-posting API is rate limited at TikTok's end. When it is
+  // saturated Zernio answers "TikTok direct posting is at capacity right now.
+  // Use tiktokSettings.draft: true to deliver via Creator Inbox". Retrying the
+  // same way just fails again - the operator lost six posts over three days to
+  // exactly this. Falling back to draft delivery puts the video in the TikTok
+  // Creator Inbox, where it is one tap from posting, instead of losing it.
+  let deliveredAsDraft = false;
+  if (!resp.ok && isTikTokCapacityError(text)) {
+    console.warn("[SOCIAL] TikTok direct posting at capacity — retrying as a Creator Inbox draft");
+    ({ resp, text } = await send(true));
+    deliveredAsDraft = resp.ok;
+  }
+
   if (!resp.ok) {
     throw new Error(`Zernio publish failed: ${resp.status} ${text.slice(0, 500)}`);
   }
   let data = null;
   try { data = JSON.parse(text); } catch {}
-  return { ok: true, data };
+  return { ok: true, data, deliveredAsDraft };
 }
 
 // Webhook delivery timeout. The webhook itself should ACCEPT the payload
@@ -306,7 +317,25 @@ async function postToWebhook({ caption, videoUrl, title, webhookId, webhookUrl }
   }
 
   const success = (make?.ok === true) || (zernio?.ok === true);
-  return { ok: success, videoUrl: mediaUrl, title: resolvedTitle, make, zernio };
+  // Per-destination summary. `ok` stays true when EITHER path worked, but a
+  // single green toast hid a real failure for days: the operator's Make
+  // webhook (which uploads to YouTube) kept succeeding while every TikTok
+  // post failed, so the UI said "Share triggered" each time. The caller needs
+  // to know WHICH destination worked, not just that something did.
+  const results = [];
+  if (make) results.push({ destination: "webhook", ok: make.ok === true, error: make.error || "" });
+  if (zernio) {
+    results.push({
+      destination: "tiktok",
+      ok: zernio.ok === true,
+      error: zernio.error || "",
+      // Delivered to the Creator Inbox rather than posted outright, because
+      // TikTok's direct-posting API was at capacity.
+      draft: zernio.deliveredAsDraft === true,
+    });
+  }
+  const partial = results.some((r) => r.ok) && results.some((r) => !r.ok);
+  return { ok: success, partial, results, videoUrl: mediaUrl, title: resolvedTitle, make, zernio };
 }
 
 async function postToBuffer({ caption, videoUrl, profileIds }, req, store) {
