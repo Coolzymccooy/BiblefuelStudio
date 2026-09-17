@@ -1,4 +1,5 @@
 import { useMemo, useState, useEffect } from 'react';
+import { useTimelineScale } from '../../lib/useTimelineScale';
 import { Film, Mic2, Music, Scissors, Sparkles, Subtitles, Trash2, Wand2, Eraser } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
@@ -211,6 +212,10 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
     return () => mq.removeEventListener?.('change', onChange);
   }, []);
   const target = Math.max(1, project.targetDurationSec);
+  // F1: the timecode axis. Zoom is fixed at 1 here — F2 makes it a control.
+  // Everything that turns seconds into pixels goes through this one scale, so
+  // the ruler cannot drift from the clips the way it did on the 390px phone.
+  const { ref: scaleRef, scale } = useTimelineScale({ durationSec: target, zoom: 1 });
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   const selection = useMemo(() => findClip(project, selectedClipId), [project, selectedClipId]);
 
@@ -272,6 +277,31 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
   const lanes = (
           <div className={`min-h-0 flex-1 overflow-y-auto rounded-xl bg-editor-panel ${phone ? 'overflow-x-hidden' : 'overflow-x-auto'} ${d.wrap}`}>
             <div className={`${phone ? 'w-full' : 'min-w-[920px]'} ${d.stack}`}>
+              {/* F1 — the timecode axis.
+                  Shares headW with the scene strip and the lane grid below, so
+                  0:00 sits exactly above clip x=0. The offset is read from ONE
+                  constant; duplicating it is what put the ruler and the lanes
+                  on different grids before. Hidden on phone, as the scene strip
+                  is, rather than rendered misaligned. */}
+              <div
+                ref={scaleRef}
+                className={`${phone ? 'hidden' : 'block'} relative h-5 select-none`}
+                style={{ marginLeft: headW }}
+                aria-label="Time ruler"
+              >
+                {scale.ticks.map((tick) => (
+                  <div
+                    key={tick.sec}
+                    className="absolute top-0 flex h-full flex-col items-start"
+                    style={{ left: `${(tick.sec / target) * 100}%` }}
+                  >
+                    <span className="h-1.5 w-px bg-editor-text/25" aria-hidden="true" />
+                    <span className="mt-0.5 pl-1 text-[9px] font-medium leading-none tabular-nums text-editor-faint">
+                      {tick.label}
+                    </span>
+                  </div>
+                ))}
+              </div>
               <div className={`${phone ? 'hidden' : 'flex'} ${d.ruler} items-stretch gap-1`} style={{ marginLeft: headW }} aria-label="Scene ruler">
                 {project.scenes.map((scene, index) => {
                   const widthPct = Math.max(8, (scene.targetDurationSec / target) * 100);
