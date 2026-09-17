@@ -1,5 +1,6 @@
 import { useMemo, useState, useEffect } from 'react';
 import { useTimelineScale } from '../../lib/useTimelineScale';
+import { timelineAssetThumbPath } from '../../lib/timelineThumb';
 import { Film, Mic2, Music, Scissors, Sparkles, Subtitles, Trash2, Wand2, Eraser } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
@@ -385,6 +386,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                               const asset = project.assets[clip.assetId];
                               const proxy = proxyLabel(asset);
                               const previewMode = previewModeLabel(asset);
+                              const thumb = timelineAssetThumbPath(asset);
                               const leftPct = Math.max(0, Math.min(96, (clip.startSec / target) * 100));
                               // The 5% minimum width used to be unconditional, which
                               // made short clips WIDER than their own slot: three 5s
@@ -426,9 +428,25 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                                         clip is identifiable even when its block is
                                         too narrow to show the label. */}
                                     {!compact && (
-                                      <span className={`grid h-5 w-5 shrink-0 place-items-center rounded ${LANE_CHIP[track.kind]}`} aria-hidden="true">
-                                        <Icon size={11} />
-                                      </span>
+                                      thumb ? (
+                                        /* F5 — the poster frame the server already
+                                           extracted at upload. A broken load falls
+                                           back to the chip rather than leaving the
+                                           browser's torn-image icon in the lane. */
+                                        <img
+                                          src={thumb}
+                                          alt=""
+                                          aria-hidden="true"
+                                          loading="lazy"
+                                          decoding="async"
+                                          onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                                          className="h-5 w-7 shrink-0 rounded object-cover"
+                                        />
+                                      ) : (
+                                        <span className={`grid h-5 w-5 shrink-0 place-items-center rounded ${LANE_CHIP[track.kind]}`} aria-hidden="true">
+                                          <Icon size={11} />
+                                        </span>
+                                      )
                                     )}
                                     <button
                                       type="button"
