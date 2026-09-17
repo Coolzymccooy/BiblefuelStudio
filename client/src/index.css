@@ -58,6 +58,10 @@
     --ink:#ffffff;
     /* Stage is the only editor surface that follows the theme. */
     --editor-stage:#080604;
+    /* 11px hint text ("No footage yet ...") measured 3.2:1 on the editor
+       panel - under AA. #8a8070 clears it at 4.67:1 and still reads as the
+       faint tier, below --editor-dim. */
+    --editor-faint:#8a8070;
 
     --surface-bg: #0b0906;
     --surface-card: #140f09;

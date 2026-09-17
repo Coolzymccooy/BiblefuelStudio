@@ -52,29 +52,31 @@ interface VisualTimelineCanvasProps {
  * asked for "muscle". Hue tells you the lane at a glance, fill gives the
  * block weight, and gold stays reserved for the SELECTED clip.
  */
-// ONE HUE, FOUR WEIGHTS - not a palette.
+// NEUTRAL LANES. Gold is not a lane colour.
 //
-// This was five unrelated hues (tan / blue-grey / teal / mauve / clay) plus a
-// neutral, and Music and Captions had drifted close enough to read as the same
-// colour - so the coding did not even work. Six rows wearing five colours
-// looks busy, not informative.
+// Gold is doing three jobs already: the brand mark, the Render button, and
+// clip SELECTION. Spending it on every clip as well meant the one block that
+// is actually selected had nothing left to distinguish it, and the Render
+// button stopped being the loudest thing on screen.
 //
-// Lanes are now told apart by WEIGHT of the theme's own accent, which is how
-// a real NLE does it: picture lanes read heaviest, sound lighter, support
-// lightest. That survives a theme change for free (the accent is a variable),
-// keeps the timeline monochrome and calm, and leaves colour free to mean
-// something - selection, and only selection.
+// So lanes are grey, separated by WEIGHT the way an NLE does it - picture
+// heaviest, sound lighter, support lightest. This is why Premiere, Resolve
+// and Final Cut are all near-monochrome: the FOOTAGE is the content, and any
+// chrome colour competes with the thing you are judging.
 //
-// `clip-tone` (index.css) lifts the fill in light mode, where a low-alpha
-// wash over white would otherwise disappear.
+// Selection (below) is the only gold in the timeline, so it now reads
+// instantly against any lane.
+//
+// `clip-tone` (index.css) lifts these in light mode, where a low-alpha wash
+// over white would disappear.
 const CLIP_TONE: Record<TimelineTrackKind, string> = {
-  // Picture: the heaviest blocks, because they carry the cut.
-  video: 'clip-tone border-editor-accent/55 bg-editor-accent/[0.22] text-editor-text',
-  broll: 'clip-tone border-editor-accent/40 bg-editor-accent/[0.14] text-editor-text',
-  // Sound: lighter, so the eye separates picture from audio by weight alone.
-  voiceover: 'clip-tone border-editor-accent/32 bg-editor-accent/[0.10] text-editor-text',
-  music: 'clip-tone border-editor-accent/24 bg-editor-accent/[0.07] text-editor-text',
-  // Support: near-neutral. Present, never competing.
+  // Picture: heaviest, because these carry the cut.
+  video: 'clip-tone border-editor-text/25 bg-editor-text/[0.13] text-editor-text',
+  broll: 'clip-tone border-editor-text/18 bg-editor-text/[0.09] text-editor-text',
+  // Sound: lighter, so the eye splits picture from audio by weight alone.
+  voiceover: 'clip-tone border-editor-text/14 bg-editor-text/[0.06] text-editor-text',
+  music: 'clip-tone border-editor-text/11 bg-editor-text/[0.04] text-editor-text',
+  // Support: quietest. Present, never competing.
   captions: 'clip-tone border-editor-line bg-editor-hover text-editor-text',
   effects: 'clip-tone border-editor-line bg-editor-hover text-editor-text',
 };
@@ -317,7 +319,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                           <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); onClearLane(track.kind); }}
-                            className="ml-auto shrink-0 rounded p-1 text-content-tertiary transition hover:bg-white/10 hover:text-white"
+                            className="ml-auto shrink-0 rounded p-1 text-content-tertiary transition hover:bg-editor-hover hover:text-editor-text"
                             aria-label={`Clear ${track.label} lane`}
                             title={`Clear this lane - removes all ${track.clips.length} clip${track.clips.length === 1 ? '' : 's'} from ${track.label}`}
                           >
@@ -375,7 +377,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                                   // Split/Remove toolbar stayed disabled.
                                   onClick={() => setSelectedClipId(clip.id)}
                                   aria-label={`Timeline clip: ${asset?.label || clip.assetId}`}
-                                  className={`${phone ? '' : 'absolute top-1'} ${d.clipHeight} rounded-md border px-2 py-1 text-left text-[10px] font-medium shadow-md transition ${selected ? 'border-editor-accent bg-editor-accent/30 text-white ring-2 ring-editor-accent/50' : `${CLIP_TONE[track.kind]} hover:brightness-125`}`}
+                                  className={`${phone ? '' : 'absolute top-1'} ${d.clipHeight} rounded-md border px-2 py-1 text-left text-[10px] font-medium shadow-md transition ${selected ? 'border-editor-accent bg-editor-accent/30 text-editor-text ring-2 ring-editor-accent/50' : `${CLIP_TONE[track.kind]} hover:brightness-125`}`}
                                   style={phone ? { minWidth: '7.5rem', flex: '0 0 auto' } : { left: `${leftPct}%`, width: `${widthPct}%` }}
                                   title={`${asset?.label || clip.assetId} · ${sourceLabel(asset)} · ${Math.round(clip.durationSec)}s · ${previewMode}`}
                                 >
