@@ -3377,15 +3377,15 @@ export function TimelinePage() {
                                     {clips.map((clip, idx) => (
                                         <div
                                             key={clip.id}
-                                            className="group relative bg-white/[0.02] border border-white/5 rounded-xl p-4 hover:border-primary-500/30 hover:bg-white/[0.04] transition-all"
+                                            className="group relative rounded-xl border border-editor-line bg-editor-panel p-4 transition-all hover:border-editor-text/25"
                                         >
                                             <div className="flex items-start justify-between gap-4">
                                                 <div className="flex items-start gap-4 flex-1">
-                                                    <div className="h-8 w-8 rounded-lg bg-black/40 flex items-center justify-center text-xs font-bold text-gray-500">
+                                                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-editor-hover text-xs font-bold tabular-nums text-editor-dim">
                                                         {idx + 1}
                                                     </div>
                                                     <div className="flex-1 min-w-0">
-                                                        <p className="text-sm font-medium text-gray-200 truncate">
+                                                        <p className="truncate text-sm font-semibold text-editor-text">
                                                             {clip.label || clip.path.split('/').pop()}
                                                         </p>
                                                         <p className="text-[10px] text-content-tertiary font-mono break-all">{clip.path}</p>

@@ -276,16 +276,16 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                       className={`group relative min-w-24 rounded-lg border text-left ${d.lanePad} shadow-inner outline-none transition ${
                         selectedSceneId === scene.id
                           ? 'border-editor-accent bg-editor-hover ring-2 ring-editor-accent/40'
-                          : 'border-editor-line bg-editor-panel hover:border-editor-accent/60'
+                          : 'border-editor-line bg-editor-panel hover:border-editor-text/25'
                       }`}
                       style={{ flexBasis: `${widthPct}%` }}
                       title={scene.voiceoverBrief}
                     >
-                      <p className="truncate text-[11px] font-semibold text-editor-text">{scene.label}</p>
+                      <p className="truncate text-xs font-semibold tracking-tight text-editor-text">{scene.label}</p>
                       {!compact && (
-                      <p className="mt-1 text-[10px] text-content-tertiary">{formatDuration(scene.startSec)} · {Math.round(scene.targetDurationSec)}s</p>
+                      <p className="mt-0.5 text-[10px] font-medium tabular-nums text-content-tertiary">{formatDuration(scene.startSec)} · {Math.round(scene.targetDurationSec)}s</p>
                     )}
-                      {!compact && <div className="absolute inset-x-2 bottom-2 h-1 rounded-full bg-editor-accent/40" />}
+                      {!compact && <div className="absolute inset-x-2 bottom-2 h-1 rounded-full bg-editor-text/15" />}
                     </button>
                   );
                 })}
@@ -307,13 +307,13 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                           OPAQUE background, not bg-white/[0.03], or the clips
                           show through as they pass behind it. */}
                       <div className={phone ? `flex items-center gap-1.5 px-0.5 py-0.5` : `sticky left-0 z-10 flex items-center gap-2 rounded-lg border border-editor-line bg-editor-panel ${d.headPad}`}>
-                        <Icon size={phone ? 15 : 15} className="shrink-0 text-editor-accent" />
+                        <Icon size={phone ? 15 : 15} className="shrink-0 text-editor-dim" />
                         <div className="min-w-0">
                           <p className={`truncate font-semibold text-editor-text ${phone ? 'text-[11px] leading-none' : 'text-xs'}`}>
                             {track.label}
                             {phone && <span className="ml-1.5 font-normal text-content-tertiary">{track.clips.length}</span>}
                           </p>
-                          {!phone && <p className="text-[10px] text-content-tertiary">{track.clips.length} clip{track.clips.length === 1 ? '' : 's'}</p>}
+                          {!phone && <p className="text-[10px] font-medium tabular-nums text-content-tertiary">{track.clips.length} clip{track.clips.length === 1 ? '' : 's'}</p>}
                         </div>
                         {onClearLane && track.clips.length > 0 && (
                           <button
@@ -335,7 +335,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                             onClick={() => onEmptyLaneClick?.(track.kind)}
                             disabled={!onEmptyLaneClick}
                             title={onEmptyLaneClick ? 'Open the tool that fills this lane' : undefined}
-                            className={`flex ${d.emptyRow} w-full items-center justify-center rounded-md border border-dashed border-editor-line/80 bg-transparent px-2 text-center text-[11px] text-editor-faint transition enabled:hover:border-editor-accent/50 enabled:hover:text-editor-dim phone:justify-start phone:text-left phone:text-[10px] phone:leading-tight`}
+                            className={`flex ${d.emptyRow} w-full items-center justify-center rounded-md border border-dashed border-editor-line/80 bg-transparent px-2 text-center text-[11px] text-editor-faint transition enabled:hover:border-editor-text/30 enabled:hover:text-editor-dim phone:justify-start phone:text-left phone:text-[10px] phone:leading-tight`}
                           >
                             {EMPTY_HINT[track.kind]}
                           </button>
@@ -377,7 +377,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                                   // Split/Remove toolbar stayed disabled.
                                   onClick={() => setSelectedClipId(clip.id)}
                                   aria-label={`Timeline clip: ${asset?.label || clip.assetId}`}
-                                  className={`${phone ? '' : 'absolute top-1'} ${d.clipHeight} rounded-md border px-2 py-1 text-left text-[10px] font-medium shadow-md transition ${selected ? 'border-editor-accent bg-editor-accent/30 text-editor-text ring-2 ring-editor-accent/50' : `${CLIP_TONE[track.kind]} hover:brightness-125`}`}
+                                  className={`${phone ? '' : 'absolute top-1'} ${d.clipHeight} rounded-md border px-2 py-1 text-left text-[10px] font-semibold tracking-tight shadow-sm transition ${selected ? 'border-editor-accent bg-editor-accent/30 text-editor-text ring-2 ring-editor-accent/50' : `${CLIP_TONE[track.kind]} hover:brightness-125`}`}
                                   style={phone ? { minWidth: '7.5rem', flex: '0 0 auto' } : { left: `${leftPct}%`, width: `${widthPct}%` }}
                                   title={`${asset?.label || clip.assetId} · ${sourceLabel(asset)} · ${Math.round(clip.durationSec)}s · ${previewMode}`}
                                 >
