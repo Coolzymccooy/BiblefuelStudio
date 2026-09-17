@@ -26,20 +26,33 @@ export function isTikTokCapacityError(message) {
 }
 
 /**
- * @param {{caption: string, title: string, videoUrl: string, accountId: string, draft?: boolean}} opts
+ * @param {{caption: string, title: string, videoUrl: string, accountId: string,
+ *          draft?: boolean, privacyLevel?: string}} opts
  */
-export function buildZernioPost({ caption, title, videoUrl, accountId, draft = false }) {
-  const post = {
+export function buildZernioPost({ caption, title, videoUrl, accountId, draft = false, privacyLevel }) {
+  // TikTok requires these on EVERY post (Zernio's TikTok platform page marks
+  // each "Required"); content_preview_confirmed and express_consent_given are
+  // a legal requirement from TikTok and must be true. The original payload
+  // omitted all of them.
+  const tiktokSettings = {
+    privacy_level: String(privacyLevel || "PUBLIC_TO_EVERYONE"),
+    allow_comment: true,
+    allow_duet: true,
+    allow_stitch: true,
+    content_preview_confirmed: true,
+    express_consent_given: true,
+  };
+  // Creator Inbox delivery. Exempt from the direct-posting capacity cap, so
+  // this is what rescues a post TikTok would otherwise reject outright.
+  if (draft) tiktokSettings.draft = true;
+
+  return {
     content: caption,
     title,
     publishNow: !draft,
     isDraft: false,
     platforms: [{ platform: "tiktok", accountId }],
     mediaItems: [{ type: "video", url: videoUrl }],
+    tiktokSettings,
   };
-  // Only send tiktokSettings when falling back: passing draft:false explicitly
-  // is not the same as omitting it, and we do not want to change the happy
-  // path's behaviour.
-  if (draft) post.tiktokSettings = { draft: true };
-  return post;
 }
