@@ -913,3 +913,73 @@ input:-webkit-autofill:focus {
   --tw-bg-opacity: 1.9;
   --tw-border-opacity: 1.35;
 }
+
+/* ===================================================================
+   TIMELINE LANE FAMILIES
+
+   Each lane gets a fill, a border and an ink that move together, so the
+   colour is a SYSTEM rather than five unrelated hues. (The palette this
+   replaced had drifted until Music and Captions were the same colour, which
+   is why lane colour had stopped carrying any information.)
+
+   Defined per theme, because a pastel that reads as a calm tint on white
+   glows on a dark ground. Light gets pale fills with saturated ink; dark and
+   calm get deep muted fills with light ink. Every pair is measured at >= 4.5:1
+   against its own fill, in both directions.
+
+   Lanes that share a job share a family on purpose: Real footage and Music
+   bed are both "the spine of the cut" (blue), so the eye groups them.
+   =================================================================== */
+:root,
+:root[data-theme='dark'] {
+  --lane-video-fill:#1b2740;   --lane-video-ink:#9dbcf0;   --lane-video-line:#31456b;
+  --lane-broll-fill:#261f3d;   --lane-broll-ink:#bda9f0;   --lane-broll-line:#3f3564;
+  --lane-vo-fill:#14301f;      --lane-vo-ink:#8ed9b0;      --lane-vo-line:#255339;
+  --lane-music-fill:#1b2740;   --lane-music-ink:#9dbcf0;   --lane-music-line:#31456b;
+  --lane-caption-fill:#211f3d; --lane-caption-ink:#aaa4f0; --lane-caption-line:#393465;
+  --lane-fx-fill:#24242a;      --lane-fx-ink:#b8b8c0;      --lane-fx-line:#3a3a43;
+}
+:root[data-theme='calm'] {
+  /* Same families, pulled toward the calm ground so they sit IN it. */
+  --lane-video-fill:#1c2430;   --lane-video-ink:#a6c0e0;   --lane-video-line:#32425a;
+  --lane-broll-fill:#251f33;   --lane-broll-ink:#c0aee0;   --lane-broll-line:#3d3352;
+  --lane-vo-fill:#182b21;      --lane-vo-ink:#93ccae;      --lane-vo-line:#284a38;
+  --lane-music-fill:#1c2430;   --lane-music-ink:#a6c0e0;   --lane-music-line:#32425a;
+  --lane-caption-fill:#221f33; --lane-caption-ink:#ada7e0; --lane-caption-line:#393353;
+  --lane-fx-fill:#232429;      --lane-fx-ink:#b5b3ad;      --lane-fx-line:#383940;
+}
+:root[data-theme='light'] {
+  --lane-video-fill:#e8effb;   --lane-video-ink:#1e4fa3;   --lane-video-line:#b9cdec;
+  --lane-broll-fill:#eee9fb;   --lane-broll-ink:#5b3fa8;   --lane-broll-line:#cfc4ee;
+  --lane-vo-fill:#e3f5ec;      --lane-vo-ink:#1f6b4a;      --lane-vo-line:#b4dfc9;
+  --lane-music-fill:#e8effb;   --lane-music-ink:#1e4fa3;   --lane-music-line:#b9cdec;
+  --lane-caption-fill:#eceafb; --lane-caption-ink:#4338a8; --lane-caption-line:#c8c4ee;
+  --lane-fx-fill:#f2f2f4;      --lane-fx-ink:#3d3d42;      --lane-fx-line:#d8d8dd;
+}
+
+/* Lane clip block: fill, border and ink all come from the lane family, so a
+   clip re-tints itself when the theme changes with no JS involved. */
+.lane { background: var(--lane-fill); border-color: var(--lane-line); color: var(--lane-ink); }
+.lane-video   { --lane-fill:var(--lane-video-fill);   --lane-line:var(--lane-video-line);   --lane-ink:var(--lane-video-ink); }
+.lane-broll   { --lane-fill:var(--lane-broll-fill);   --lane-line:var(--lane-broll-line);   --lane-ink:var(--lane-broll-ink); }
+.lane-vo      { --lane-fill:var(--lane-vo-fill);      --lane-line:var(--lane-vo-line);      --lane-ink:var(--lane-vo-ink); }
+.lane-music   { --lane-fill:var(--lane-music-fill);   --lane-line:var(--lane-music-line);   --lane-ink:var(--lane-music-ink); }
+.lane-caption { --lane-fill:var(--lane-caption-fill); --lane-line:var(--lane-caption-line); --lane-ink:var(--lane-caption-ink); }
+.lane-fx      { --lane-fill:var(--lane-fx-fill);      --lane-line:var(--lane-fx-line);      --lane-ink:var(--lane-fx-ink); }
+
+/* The icon chip: the lane's ink at full strength on a slightly deeper fill,
+   so it reads as a label mark rather than another block of colour. */
+.chip {
+  /* Fallback first: any browser without color-mix still gets a visible chip
+     (Safari < 16.2, older Chromium). The mix simply overrides it where
+     supported. */
+  background: var(--lane-line);
+  background: color-mix(in srgb, var(--lane-ink) 18%, transparent);
+  color: var(--lane-ink);
+}
+.chip-video   { --lane-ink:var(--lane-video-ink); }
+.chip-broll   { --lane-ink:var(--lane-broll-ink); }
+.chip-vo      { --lane-ink:var(--lane-vo-ink); }
+.chip-music   { --lane-ink:var(--lane-music-ink); }
+.chip-caption { --lane-ink:var(--lane-caption-ink); }
+.chip-fx      { --lane-ink:var(--lane-fx-ink); }

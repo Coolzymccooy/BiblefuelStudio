@@ -52,33 +52,43 @@ interface VisualTimelineCanvasProps {
  * asked for "muscle". Hue tells you the lane at a glance, fill gives the
  * block weight, and gold stays reserved for the SELECTED clip.
  */
-// NEUTRAL LANES. Gold is not a lane colour.
+// LANE FAMILIES — a system, not five loose hues.
 //
-// Gold is doing three jobs already: the brand mark, the Render button, and
-// clip SELECTION. Spending it on every clip as well meant the one block that
-// is actually selected had nothing left to distinguish it, and the Render
-// button stopped being the loudest thing on screen.
+// Each lane carries a fill, a border and an ink that move together, defined
+// per theme in index.css (pale fill + saturated ink on light; deep muted fill
+// + light ink on dark and calm). Every pair is measured at >= 4.5:1 against
+// its own fill in BOTH directions, so a clip label is legible whichever
+// theme is on.
 //
-// So lanes are grey, separated by WEIGHT the way an NLE does it - picture
-// heaviest, sound lighter, support lightest. This is why Premiere, Resolve
-// and Final Cut are all near-monochrome: the FOOTAGE is the content, and any
-// chrome colour competes with the thing you are judging.
+// Real footage and Music bed deliberately share the blue family: both are
+// the spine of the cut, so the eye groups them.
 //
-// Selection (below) is the only gold in the timeline, so it now reads
-// instantly against any lane.
-//
-// `clip-tone` (index.css) lifts these in light mode, where a low-alpha wash
-// over white would disappear.
+// Gold is still not here. It remains SELECTION only.
 const CLIP_TONE: Record<TimelineTrackKind, string> = {
-  // Picture: heaviest, because these carry the cut.
-  video: 'clip-tone border-editor-text/25 bg-editor-text/[0.13] text-editor-text',
-  broll: 'clip-tone border-editor-text/18 bg-editor-text/[0.09] text-editor-text',
-  // Sound: lighter, so the eye splits picture from audio by weight alone.
-  voiceover: 'clip-tone border-editor-text/14 bg-editor-text/[0.06] text-editor-text',
-  music: 'clip-tone border-editor-text/11 bg-editor-text/[0.04] text-editor-text',
-  // Support: quietest. Present, never competing.
-  captions: 'clip-tone border-editor-line bg-editor-hover text-editor-text',
-  effects: 'clip-tone border-editor-line bg-editor-hover text-editor-text',
+  video: 'lane lane-video',
+  broll: 'lane lane-broll',
+  voiceover: 'lane lane-vo',
+  music: 'lane lane-music',
+  captions: 'lane lane-caption',
+  effects: 'lane lane-fx',
+};
+
+/**
+ * Scene-header families, cycled by scene index. Scenes have no inherent kind,
+ * but giving each a stable colour from the SAME six families makes the ruler
+ * read as part of the timeline rather than a separate grey strip — and it is
+ * deterministic, so a scene keeps its colour between renders.
+ */
+const SCENE_FAMILY = ['lane-video', 'lane-caption', 'lane-vo', 'lane-broll', 'lane-music', 'lane-fx'] as const;
+
+/** Icon chip tint per lane — the small square before each clip label. */
+const LANE_CHIP: Record<TimelineTrackKind, string> = {
+  video: 'chip chip-video',
+  broll: 'chip chip-broll',
+  voiceover: 'chip chip-vo',
+  music: 'chip chip-music',
+  captions: 'chip chip-caption',
+  effects: 'chip chip-fx',
 };
 
 const TRACK_ICON: Record<TimelineTrackKind, typeof Film> = {
@@ -263,7 +273,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
           <div className={`min-h-0 flex-1 overflow-y-auto rounded-xl border border-editor-line bg-black/10 ${phone ? 'overflow-x-hidden' : 'overflow-x-auto'} ${d.wrap}`}>
             <div className={`${phone ? 'w-full' : 'min-w-[920px]'} ${d.stack}`}>
               <div className={`${phone ? 'hidden' : 'flex'} ${d.ruler} items-stretch gap-1`} style={{ marginLeft: headW }} aria-label="Scene ruler">
-                {project.scenes.map((scene) => {
+                {project.scenes.map((scene, index) => {
                   const widthPct = Math.max(8, (scene.targetDurationSec / target) * 100);
                   return (
                     <button
@@ -276,7 +286,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                       className={`group relative min-w-24 rounded-lg border text-left ${d.lanePad} shadow-inner outline-none transition ${
                         selectedSceneId === scene.id
                           ? 'border-editor-accent bg-editor-hover ring-2 ring-editor-accent/40'
-                          : 'border-editor-line bg-editor-panel hover:border-editor-text/25'
+                          : `lane ${SCENE_FAMILY[index % SCENE_FAMILY.length]} hover:brightness-[0.97]`
                       }`}
                       style={{ flexBasis: `${widthPct}%` }}
                       title={scene.voiceoverBrief}
@@ -381,7 +391,15 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                                   style={phone ? { minWidth: '7.5rem', flex: '0 0 auto' } : { left: `${leftPct}%`, width: `${widthPct}%` }}
                                   title={`${asset?.label || clip.assetId} · ${sourceLabel(asset)} · ${Math.round(clip.durationSec)}s · ${previewMode}`}
                                 >
-                                  <div className="flex h-full items-center gap-1 overflow-hidden">
+                                  <div className="flex h-full items-center gap-1.5 overflow-hidden">
+                                    {/* Lane mark. Carries the lane's own ink, so a
+                                        clip is identifiable even when its block is
+                                        too narrow to show the label. */}
+                                    {!compact && (
+                                      <span className={`grid h-5 w-5 shrink-0 place-items-center rounded ${LANE_CHIP[track.kind]}`} aria-hidden="true">
+                                        <Icon size={11} />
+                                      </span>
+                                    )}
                                     <button
                                       type="button"
                                       onClick={() => setSelectedClipId(clip.id)}
@@ -392,7 +410,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                                           button and read as broken. */}
                                       <p className="truncate font-semibold leading-tight">{asset?.label || clip.assetId}</p>
                                       {!compact && (
-                                        <p className="truncate text-editor-dim">{sourceLabel(asset)} · {Math.round(clip.durationSec)}s{proxy ? ` · ${proxy}` : ''}</p>
+                                        <p className="truncate opacity-70">{sourceLabel(asset)} · {Math.round(clip.durationSec)}s{proxy ? ` · ${proxy}` : ''}</p>
                                       )}
                                     </button>
                                     {/* Controls need ~70px. On a clip narrower
