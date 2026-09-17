@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-17
 **Branch:** `fix/timeline-light-legibility`
-**Status:** approved 2026-09-17 — building all five, order F1 → F5 → F3 → F2 → F4
+**Status:** BUILT 2026-09-17 — all five shipped in order F1 → F5 → F3 → F2 → F4
 **Reference:** the CapCut-style mockup the operator supplied (7 scenes, 6 tracks, 4:30)
 
 The visual layer is already shipped on this branch: lane colour families, icon
@@ -193,3 +193,51 @@ Each feature ships with unit tests for its pure logic, in the existing style:
 
 Contrast for any new surface is verified against **all three themes** before
 commit, as on the rest of this branch.
+
+
+---
+
+## Built — what differed from this spec
+
+Recorded 2026-09-17, after implementation. The spec was accurate about
+sequencing and cost; these are the places reality differed.
+
+| Spec said | Reality |
+|---|---|
+| `thumbPathFor()` exists in mediaThumb.js | It does not. The real helper is `deriveOutputJpgPathFromVideo()`. |
+| F5 = add `thumbPath` to TimelineAsset | Not needed. The client DERIVES the path, so assets uploaded before today get frames with no backfill. A stored `thumbPath` still wins if one ever appears. |
+| F3 = add `hidden` and `locked` | `locked` and `muted` already existed on TimelineTrack but were **dead fields** — nothing read either. Only `hidden` was new; `locked` is now wired for the first time. |
+| F4 tick ladder to 300s | Already extended to 3600s during F1's property testing (a 90-minute sermon on a phone). |
+
+### Two bugs the unit tests could not have caught
+
+Both were found by driving the feature in a browser, and both are recorded in
+code comments so they are not reintroduced:
+
+1. **Measurement feedback loop (F2).** `scaleRef` was attached to the ruler —
+   an element whose width the scale then sets. Measure → widen → measure the
+   wider thing: `contentWidth` reached **67 million pixels** after one click of
+   `+`. The ref must sit on the scrolling *viewport*, which is the only stable
+   reference and does not grow with its content.
+
+2. **Sticky gutter (F2).** The ruler and scene strip used a plain `marginLeft`,
+   which is correct at zoom 1 but slides them under the sticky lane headers as
+   soon as content scrolls. Both now use the lane rows' own structure — sticky
+   gutter cell plus content cell — rather than a second mechanism that would
+   drift from the first.
+
+A third issue was caught visually: F3's eye and lock left only 44px of text in
+the 9rem header and five of six lane names truncated. `headW` went to 11.5rem,
+and because it is the one constant the ruler, scene strip and lane grid all
+read, all three moved together.
+
+### Still open
+
+- **Thumbnails and waveforms are unverified in a rendered clip block.** Both
+  were proven at the layer below — thumb derivation by unit test, peaks by
+  running real TTS audio through the actual ffmpeg pipeline (2s → 1024
+  buckets, peaks +0.45/-0.51, silence between words reading near zero) — but
+  the test project has no clips, so neither has been *seen* in a lane. First
+  real project with media will confirm or contradict.
+- The non-goals below are unchanged: no drag/trim, no snapping, no
+  multi-select, no transport wiring.
