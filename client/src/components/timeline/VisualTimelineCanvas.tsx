@@ -52,22 +52,31 @@ interface VisualTimelineCanvasProps {
  * asked for "muscle". Hue tells you the lane at a glance, fill gives the
  * block weight, and gold stays reserved for the SELECTED clip.
  */
-// Per-lane clip colour. The ink is a THEME variable, not a fixed cream:
-// on a light timeline white-on-pale was unreadable (the operator could not
-// read the Real footage clips at all). Fills stay tinted so lanes remain
-// distinguishable at a glance in both themes.
-// A 35% tint reads as a solid block on a near-black stage but washes out to
-// near-white on a white one, which is why the light timeline lost its lane
-// colours. `clip-tone` (index.css) raises the fill and darkens the border in
-// light mode only, so a lane is identifiable in BOTH themes while the ink
-// stays on the theme's own text token.
+// ONE HUE, FOUR WEIGHTS - not a palette.
+//
+// This was five unrelated hues (tan / blue-grey / teal / mauve / clay) plus a
+// neutral, and Music and Captions had drifted close enough to read as the same
+// colour - so the coding did not even work. Six rows wearing five colours
+// looks busy, not informative.
+//
+// Lanes are now told apart by WEIGHT of the theme's own accent, which is how
+// a real NLE does it: picture lanes read heaviest, sound lighter, support
+// lightest. That survives a theme change for free (the accent is a variable),
+// keeps the timeline monochrome and calm, and leaves colour free to mean
+// something - selection, and only selection.
+//
+// `clip-tone` (index.css) lifts the fill in light mode, where a low-alpha
+// wash over white would otherwise disappear.
 const CLIP_TONE: Record<TimelineTrackKind, string> = {
-  video: 'clip-tone border-[#c9a961]/70 bg-[#e6c98a]/35 text-editor-text',
-  broll: 'clip-tone border-[#7d94ad]/70 bg-[#93a7bd]/35 text-editor-text',
-  voiceover: 'clip-tone border-[#5f9d90]/70 bg-[#7fb5aa]/35 text-editor-text',
-  music: 'clip-tone border-[#9a83ab]/70 bg-[#b09ac0]/35 text-editor-text',
+  // Picture: the heaviest blocks, because they carry the cut.
+  video: 'clip-tone border-editor-accent/55 bg-editor-accent/[0.22] text-editor-text',
+  broll: 'clip-tone border-editor-accent/40 bg-editor-accent/[0.14] text-editor-text',
+  // Sound: lighter, so the eye separates picture from audio by weight alone.
+  voiceover: 'clip-tone border-editor-accent/32 bg-editor-accent/[0.10] text-editor-text',
+  music: 'clip-tone border-editor-accent/24 bg-editor-accent/[0.07] text-editor-text',
+  // Support: near-neutral. Present, never competing.
   captions: 'clip-tone border-editor-line bg-editor-hover text-editor-text',
-  effects: 'clip-tone border-[#b5867a]/70 bg-[#c89a8a]/35 text-editor-text',
+  effects: 'clip-tone border-editor-line bg-editor-hover text-editor-text',
 };
 
 const TRACK_ICON: Record<TimelineTrackKind, typeof Film> = {

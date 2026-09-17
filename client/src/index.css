@@ -891,7 +891,11 @@ input:-webkit-autofill:focus {
    theme keeps the values it was designed with. Saturation, not new hues, so
    the palette stays the same five lanes. */
 :root[data-theme='light'] .clip-tone {
-  --tw-bg-opacity: 0.62;
-  --tw-border-opacity: 1;
-  filter: saturate(1.08);
+  /* The lane weights are alpha over the accent. On a white ground the same
+     alpha reads far lighter than on a dark one, so the whole ladder flattens
+     and the lanes stop being distinguishable. Lift every step together - the
+     RATIO between lanes is what carries the meaning, so it must be preserved,
+     not equalised. */
+  --tw-bg-opacity: 1.9;
+  --tw-border-opacity: 1.35;
 }
