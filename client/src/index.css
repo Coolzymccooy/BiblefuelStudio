@@ -60,7 +60,13 @@
     --bf-btnSecondaryBorderHover: rgba(216, 184, 120, 0.30);
     /* Tailwind gray, unchanged in dark. */
     --g-100:#f3f4f6; --g-200:#e5e7eb; --g-300:#d1d5db; --g-400:#9ca3af;
-    --g-500:#6b7280; --g-600:#4b5563; --g-700:#374151; --g-800:#1f2937; --g-900:#111827;
+    /* 500 and 600 are LIFTED from Tailwind's own values. text-gray-500 is used
+       for empty states ("No jobs in the queue") and meta text; at Tailwind's
+       #6b7280 it measures 4.11:1 on this ground and 3.78:1 on calm's lighter
+       one — under AA in BOTH dark themes. #828997 clears it on both (5.66:1
+       dark, 5.20:1 calm) while staying clearly the quiet tier below g-400.
+       600 was worse still at 2.63:1 and gets the same treatment. */
+    --g-500:#828997; --g-600:#6f7684; --g-700:#374151; --g-800:#1f2937; --g-900:#111827;
     --ink:#ffffff;
     /* Stage is the only editor surface that follows the theme. */
     --editor-stage:#080604;
@@ -157,7 +163,9 @@
     --bf-btnSecondaryBorder: rgba(200, 179, 137, 0.18);
     --bf-btnSecondaryBorderHover: rgba(200, 179, 137, 0.34);
     --g-100:#f3f4f6; --g-200:#e5e7eb; --g-300:#d1d5db; --g-400:#9ca3af;
-    --g-500:#6b7280; --g-600:#4b5563; --g-700:#374151; --g-800:#1f2937; --g-900:#111827;
+    /* Same lift as dark, and needed more here: calm's ground is LIGHTER, so
+       Tailwind's #6b7280 fell to 3.78:1. */
+    --g-500:#828997; --g-600:#6f7684; --g-700:#374151; --g-800:#1f2937; --g-900:#111827;
     --ink:#d2cfc8;
     --editor-stage:#0e1116;
     --editor-chrome:#161a20;
