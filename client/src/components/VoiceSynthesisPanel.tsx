@@ -289,7 +289,7 @@ export function VoiceSynthesisPanel() {
                             onClick={() => setEnabled(!enabled)}
                             className={`h-8 px-3 rounded-lg text-xs font-medium border transition-colors ${
                                 enabled
-                                    ? 'bg-[#7fb5aa] text-black border-[#7fb5aa]'
+                                    ? 'bg-tone-success text-accent-ink border-tone-success'
                                     : 'bg-white/5 text-gray-300 border-white/10 hover:border-white/20'
                             }`}
                         >
