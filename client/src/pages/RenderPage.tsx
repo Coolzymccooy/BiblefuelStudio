@@ -1312,7 +1312,7 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
             {completedRender && (
                 <div ref={renderDoneRef} className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 rounded-2xl border border-[#7fb5aa]/30 bg-[#7fb5aa]/10 shadow-[0_10px_40px_rgba(127,181,170,0.15)] animate-fade-in">
                     <div className="flex items-start gap-3 flex-1 min-w-0">
-                        <CheckCircle2 size={20} className="text-[#7fb5aa] flex-shrink-0 mt-0.5" />
+                        <CheckCircle2 size={20} className="text-tone-success flex-shrink-0 mt-0.5" />
                         <div className="min-w-0">
                             <p className="text-sm font-semibold text-white">Render complete</p>
                             {completedRender.file && (

@@ -352,7 +352,7 @@ export function EditorShell({
         className={`flex min-w-[56px] shrink-0 flex-col items-center justify-center gap-0.5 rounded-lg px-1.5 py-1 text-[10px] transition lg:h-[52px] lg:w-[52px] lg:min-w-0 lg:px-0 lg:py-0 ${
           active
             ? 'bg-editor-accent/10 text-editor-accent ring-1 ring-inset ring-editor-accent/35 font-semibold'
-            : 'text-[#b7ac97] font-semibold hover:bg-white/5 hover:text-editor-text'
+            : 'text-editor-dim font-semibold hover:bg-editor-hover hover:text-editor-text'
         }`}
       >
         <span className="text-[16px] leading-none">{tool.icon}</span>

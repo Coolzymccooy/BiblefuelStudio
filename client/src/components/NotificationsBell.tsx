@@ -101,7 +101,7 @@ export function NotificationsBell() {
                                             ) : n.kind === 'campaign_failed' ? (
                                                 <XCircle size={16} className="text-content-secondary flex-shrink-0 mt-0.5" />
                                             ) : n.kind === 'job_done' ? (
-                                                <CheckCircle2 size={16} className="text-[#7fb5aa] flex-shrink-0 mt-0.5" />
+                                                <CheckCircle2 size={16} className="text-tone-success flex-shrink-0 mt-0.5" />
                                             ) : n.kind === 'job_failed' ? (
                                                 <XCircle size={16} className="text-rose-400 flex-shrink-0 mt-0.5" />
                                             ) : (
