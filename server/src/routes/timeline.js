@@ -10,6 +10,8 @@ import { resolveProjectAssets } from '../lib/timelineRender/resolveProjectAssets
 import { resolveAssetPath } from './jobs.js';
 import { resolveOutputAlias } from '../lib/mediaThumb.js';
 import { OUTPUT_DIR } from '../lib/paths.js';
+import { spawn } from 'child_process';
+import { downsamplePeaks, peaksCacheKey, PEAK_BUCKETS } from '../lib/audioPeaks.js';
 import { quota } from '../middleware/quota.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -192,6 +194,102 @@ async function runTimelineJob(job) {
 }
 
 const router = Router();
+
+/**
+ * Decode an audio (or video) file to mono 8kHz PCM and reduce it to peaks.
+ *
+ * 8kHz because we are drawing an envelope, not listening: it is ~5x less data
+ * to move than 44.1k for a trace that is at most a few hundred pixels wide.
+ * The PCM is streamed and reduced, never held as a decoded file.
+ */
+function extractPeaks(absPath) {
+  return new Promise((resolve, reject) => {
+    const ffmpeg = process.env.FFMPEG_PATH?.trim() || 'ffmpeg';
+    const child = spawn(ffmpeg, [
+      '-v', 'error',
+      '-i', absPath,
+      '-ac', '1',          // mono
+      '-ar', '8000',       // 8kHz is plenty for an envelope
+      '-f', 's16le',       // raw signed 16-bit little-endian
+      '-',
+    ]);
+
+    const chunks = [];
+    let bytes = 0;
+    // A 90-minute sermon at 8kHz mono is ~86MB of PCM. Cap the buffer so a
+    // long file cannot exhaust memory; the envelope of the first portion is
+    // still an honest trace, and the cap is far beyond any clip length.
+    const MAX_BYTES = 200 * 1024 * 1024;
+
+    child.stdout.on('data', (c) => {
+      if (bytes >= MAX_BYTES) return;
+      bytes += c.length;
+      chunks.push(c);
+    });
+
+    let stderr = '';
+    child.stderr.on('data', (c) => { stderr += String(c); });
+
+    child.on('error', (err) => reject(new Error(`ffmpeg unavailable: ${err.message}`)));
+    child.on('close', (code) => {
+      if (code !== 0 && chunks.length === 0) {
+        return reject(new Error(stderr.trim() || `ffmpeg exited ${code}`));
+      }
+      resolve(downsamplePeaks(Buffer.concat(chunks), PEAK_BUCKETS));
+    });
+  });
+}
+
+/**
+ * Audio peaks for a timeline clip's waveform, cached on disk.
+ *
+ * GET /api/timeline/peaks?path=<asset path>
+ *   -> { ok: true, peaks: [[min,max], ...], buckets, cached }
+ *
+ * JSON rather than the existing /waveform.png: the client draws these to a
+ * canvas, so zoom costs nothing (F2 would otherwise re-request a raster at
+ * every step) and the trace takes its colour from the lane's ink in whichever
+ * theme is on.
+ */
+router.get('/peaks', async (req, res) => {
+  try {
+    const raw = String(req.query?.path || '').trim();
+    if (!raw) return res.status(400).json({ ok: false, error: 'path required' });
+
+    const resolved = resolveOutputAlias(raw);
+    if (!resolved || /^https?:\/\//i.test(resolved)) {
+      return res.status(400).json({ ok: false, error: 'local asset path required' });
+    }
+
+    // Confine to OUTPUT_DIR. The query string is user input, and without this
+    // a ../.. would read any file the process can reach.
+    const abs = path.resolve(resolved);
+    const root = path.resolve(OUTPUT_DIR);
+    if (abs !== root && !abs.startsWith(root + path.sep)) {
+      return res.status(400).json({ ok: false, error: 'asset outside the output directory' });
+    }
+    if (!fs.existsSync(abs)) return res.status(404).json({ ok: false, error: 'asset not found' });
+
+    const stat = fs.statSync(abs);
+    const key = peaksCacheKey({ size: stat.size, mtimeMs: stat.mtimeMs });
+    const cacheFile = path.join(OUTPUT_DIR, `${path.basename(abs).replace(/\.[^.]+$/, '')}.${key}.peaks.json`);
+
+    if (fs.existsSync(cacheFile)) {
+      const cached = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+      return res.json({ ok: true, peaks: cached.peaks, buckets: cached.peaks.length, cached: true });
+    }
+
+    const peaks = await extractPeaks(abs);
+    // Cache write failure must not fail the request — the trace still draws.
+    try {
+      fs.writeFileSync(cacheFile, JSON.stringify({ peaks }));
+    } catch { /* read-only volume, or full disk */ }
+
+    return res.json({ ok: true, peaks, buckets: peaks.length, cached: false });
+  } catch (e) {
+    return res.status(400).json({ ok: false, error: String(e?.message || e) });
+  }
+});
 
 router.get('/projects', (req, res) => {
   return res.json({ ok: true, projects: listTimelineProjects(req.ctx?.dataDir) });

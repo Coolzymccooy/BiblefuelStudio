@@ -4,6 +4,7 @@ import { clampZoom, MIN_ZOOM, MAX_ZOOM } from '../../lib/timelineScale';
 import { loadZoom, saveZoom, nextZoomIn, nextZoomOut, scrollLeftPreservingAnchor } from '../../lib/timelineZoom';
 import { timelineAssetThumbPath } from '../../lib/timelineThumb';
 import { setTrackFlag } from '../../lib/hiddenLanes';
+import { ClipWaveform } from './ClipWaveform';
 import { Eye, EyeOff, Film, Lock, Mic2, Minus, Music, Plus, Scissors, Sparkles, Subtitles, Trash2, Unlock, Wand2, Eraser } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
@@ -543,7 +544,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                                   style={phone ? { minWidth: '7.5rem', flex: '0 0 auto' } : { left: `${leftPct}%`, width: `${widthPct}%` }}
                                   title={`${asset?.label || clip.assetId} · ${sourceLabel(asset)} · ${Math.round(clip.durationSec)}s · ${previewMode}`}
                                 >
-                                  <div className="flex h-full items-center gap-1.5 overflow-hidden">
+                                  <div className="relative flex h-full items-center gap-1.5 overflow-hidden">
                                     {/* Lane mark. Carries the lane's own ink, so a
                                         clip is identifiable even when its block is
                                         too narrow to show the label. */}
@@ -568,10 +569,22 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                                         </span>
                                       )
                                     )}
+                                    {/* F4 — the peak trace, for audio only.
+                                        Behind the label so the name stays
+                                        readable, and absent entirely when the
+                                        clip has no peaks: a missing waveform
+                                        degrades to the flat clip, it never
+                                        blocks. */}
+                                    {!compact && asset?.kind === 'audio' && asset.path && (
+                                      <ClipWaveform
+                                        assetPath={asset.path}
+                                        className="pointer-events-none absolute inset-y-1 left-7 right-1 h-auto w-auto opacity-40"
+                                      />
+                                    )}
                                     <button
                                       type="button"
                                       onClick={() => setSelectedClipId(clip.id)}
-                                      className="min-w-0 flex-1 text-left"
+                                      className="relative min-w-0 flex-1 text-left"
                                     >
                                       {/* ONE line, not two. A stacked label inside a
                                           28px compact clip wrapped under the Mute
