@@ -17,7 +17,7 @@ describe('VisualTimelineCanvas', () => {
 
     const videoTrack = screen.getByLabelText('Track lane: Real footage');
     expect(within(videoTrack).getByText(/No footage yet/)).toBeInTheDocument();
-    expect(screen.getByLabelText('Track lane: AI B-roll / cutaways')).toBeInTheDocument();
+    expect(screen.getByLabelText('Track lane: AI B-roll / GFX')).toBeInTheDocument();
     expect(screen.getByLabelText('Track lane: Voice-over')).toBeInTheDocument();
     expect(screen.getByText(/target 4:30/i)).toBeInTheDocument();
   });
@@ -143,7 +143,7 @@ describe('clearing lanes', () => {
     const onClearLane = vi.fn();
     const onWipeAll = vi.fn();
     render(<VisualTimelineCanvas project={project} compact onClearLane={onClearLane} onWipeAll={onWipeAll} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Clear AI B-roll / cutaways lane' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Clear AI B-roll / GFX lane' }));
     expect(onClearLane).toHaveBeenCalledWith('broll');
     expect(screen.queryByRole('button', { name: 'Clear Real footage lane' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Wipe all lanes' }));

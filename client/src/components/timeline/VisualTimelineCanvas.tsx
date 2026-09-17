@@ -281,7 +281,13 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
   // phone that made the ruler and the lanes sit on different grids - the
   // overlap the operator photographed. Phone uses a 6.5rem column, a matching
   // offset, and no width floor, so the lanes scroll instead of colliding.
-  const headW = phone ? '6.5rem' : '9rem';
+  // The header now carries the lane name, the clip count, and F3's eye/lock/
+  // clear controls. At 9rem the controls left only 44px for text and five of
+  // six lane names truncated ("Real f...", "AI B-r..."), which the design
+  // shows in full. 11.5rem fits every default lane name.
+  // This is ONE constant shared by the ruler, the scene strip and the lane
+  // grid, so widening it keeps all three on the same axis.
+  const headW = phone ? '6.5rem' : '11.5rem';
   const lanes = (
           <div className={`min-h-0 flex-1 overflow-y-auto rounded-xl bg-editor-panel ${phone ? 'overflow-x-hidden' : 'overflow-x-auto'} ${d.wrap}`}>
             <div className={`${phone ? 'w-full' : 'min-w-[920px]'} ${d.stack}`}>
@@ -357,7 +363,12 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                       <div className={phone ? `flex items-center gap-1.5 px-0.5 py-0.5` : `sticky left-0 z-10 flex items-center gap-2 rounded-lg bg-lane-bed ${d.headPad}`}>
                         <Icon size={phone ? 15 : 15} className="shrink-0 text-editor-dim" />
                         <div className="min-w-0">
-                          <p className={`truncate font-semibold text-editor-text ${phone ? 'text-[11px] leading-none' : 'text-xs'}`}>
+                          {/* Stored labels can be longer than the column (an
+                              existing project still says "AI B-roll /
+                              cutaways"), and renaming one in code would not
+                              migrate saved projects — so the full name is
+                              always available on hover. */}
+                          <p title={track.label} className={`truncate font-semibold text-editor-text ${phone ? 'text-[11px] leading-none' : 'text-xs'}`}>
                             {track.label}
                             {phone && <span className="ml-1.5 font-normal text-content-tertiary">{track.clips.length}</span>}
                           </p>
