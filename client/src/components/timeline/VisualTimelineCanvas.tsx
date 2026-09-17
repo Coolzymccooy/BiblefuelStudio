@@ -56,13 +56,18 @@ interface VisualTimelineCanvasProps {
 // on a light timeline white-on-pale was unreadable (the operator could not
 // read the Real footage clips at all). Fills stay tinted so lanes remain
 // distinguishable at a glance in both themes.
+// A 35% tint reads as a solid block on a near-black stage but washes out to
+// near-white on a white one, which is why the light timeline lost its lane
+// colours. `clip-tone` (index.css) raises the fill and darkens the border in
+// light mode only, so a lane is identifiable in BOTH themes while the ink
+// stays on the theme's own text token.
 const CLIP_TONE: Record<TimelineTrackKind, string> = {
-  video: 'border-[#c9a961]/70 bg-[#e6c98a]/35 text-editor-text',
-  broll: 'border-[#7d94ad]/70 bg-[#93a7bd]/35 text-editor-text',
-  voiceover: 'border-[#5f9d90]/70 bg-[#7fb5aa]/35 text-editor-text',
-  music: 'border-[#9a83ab]/70 bg-[#b09ac0]/35 text-editor-text',
-  captions: 'border-editor-line bg-editor-hover text-editor-text',
-  effects: 'border-[#b5867a]/70 bg-[#c89a8a]/35 text-editor-text',
+  video: 'clip-tone border-[#c9a961]/70 bg-[#e6c98a]/35 text-editor-text',
+  broll: 'clip-tone border-[#7d94ad]/70 bg-[#93a7bd]/35 text-editor-text',
+  voiceover: 'clip-tone border-[#5f9d90]/70 bg-[#7fb5aa]/35 text-editor-text',
+  music: 'clip-tone border-[#9a83ab]/70 bg-[#b09ac0]/35 text-editor-text',
+  captions: 'clip-tone border-editor-line bg-editor-hover text-editor-text',
+  effects: 'clip-tone border-[#b5867a]/70 bg-[#c89a8a]/35 text-editor-text',
 };
 
 const TRACK_ICON: Record<TimelineTrackKind, typeof Film> = {
@@ -259,8 +264,8 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                       onClick={() => onSelectScene?.(scene.id)}
                       className={`group relative min-w-24 rounded-lg border text-left ${d.lanePad} shadow-inner outline-none transition ${
                         selectedSceneId === scene.id
-                          ? 'border-primary-300 bg-gradient-to-br from-primary-500/35 to-amber-500/25 ring-2 ring-primary-300/40'
-                          : 'border-primary-500/25 bg-gradient-to-br from-primary-500/15 to-amber-500/10 hover:border-primary-300/60'
+                          ? 'border-editor-accent bg-editor-hover ring-2 ring-editor-accent/40'
+                          : 'border-editor-line bg-editor-panel hover:border-editor-accent/60'
                       }`}
                       style={{ flexBasis: `${widthPct}%` }}
                       title={scene.voiceoverBrief}
@@ -269,7 +274,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                       {!compact && (
                       <p className="mt-1 text-[10px] text-content-tertiary">{formatDuration(scene.startSec)} · {Math.round(scene.targetDurationSec)}s</p>
                     )}
-                      {!compact && <div className="absolute inset-x-2 bottom-2 h-1 rounded-full bg-primary-400/30" />}
+                      {!compact && <div className="absolute inset-x-2 bottom-2 h-1 rounded-full bg-editor-accent/40" />}
                     </button>
                   );
                 })}
@@ -290,7 +295,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                           the clips scroll horizontally underneath. Needs an
                           OPAQUE background, not bg-white/[0.03], or the clips
                           show through as they pass behind it. */}
-                      <div className={phone ? `flex items-center gap-1.5 px-0.5 py-0.5` : `sticky left-0 z-10 flex items-center gap-2 rounded-lg border border-white/10 bg-[#141210] ${d.headPad}`}>
+                      <div className={phone ? `flex items-center gap-1.5 px-0.5 py-0.5` : `sticky left-0 z-10 flex items-center gap-2 rounded-lg border border-editor-line bg-editor-panel ${d.headPad}`}>
                         <Icon size={phone ? 15 : 15} className="shrink-0 text-editor-accent" />
                         <div className="min-w-0">
                           <p className={`truncate font-semibold text-editor-text ${phone ? 'text-[11px] leading-none' : 'text-xs'}`}>

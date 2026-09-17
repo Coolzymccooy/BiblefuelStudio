@@ -728,6 +728,11 @@ input:-webkit-autofill:focus {
     linear-gradient(45deg, var(--stage-check, rgba(255,255,255,.045)) 25%, transparent 25%, transparent 75%, var(--stage-check, rgba(255,255,255,.045)) 75%);
   background-size: 18px 18px;
   background-position: 0 0, 9px 9px;
+  /* The frame edge. Without it the pale light-mode stage dissolves into the
+     pale page and you lose the one boundary that tells you what is IN shot -
+     the most important spatial reference in the editor. Dark mode keeps a
+     faint edge for the same reason. */
+  box-shadow: inset 0 0 0 1px var(--editor-line, rgba(216,184,120,.14));
 }
 /* Voice lab, embedded: firm and compact. Provider rows at 30px, the
    disabled-reason list folded into the rows' tooltips, the tuning sliders
@@ -794,3 +799,15 @@ input:-webkit-autofill:focus {
 .editor-phone.editor-phone .reveal-head { padding: .375rem .625rem; gap: .5rem; }
 .editor-phone.editor-phone .reveal-title { font-size: 12px; }
 .editor-phone.editor-phone .reveal-head svg { width: 14px; height: 14px; }
+
+/* Timeline clip blocks in LIGHT mode.
+   The lane tints are authored for a near-black stage: a /35 fill over white
+   is almost white, so every lane looked identical and the timeline lost its
+   colour coding. Deepen the fill and the border in light mode ONLY - the dark
+   theme keeps the values it was designed with. Saturation, not new hues, so
+   the palette stays the same five lanes. */
+:root[data-theme='light'] .clip-tone {
+  --tw-bg-opacity: 0.62;
+  --tw-border-opacity: 1;
+  filter: saturate(1.08);
+}
