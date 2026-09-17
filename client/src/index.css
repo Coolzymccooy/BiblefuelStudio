@@ -109,59 +109,63 @@
     --bf-gold: #c8b389;
     --bf-goldDeep: #a89772;
     --bf-goldDim: #8b7d60;
-    --bf-cream: #e8e9ea;
-    --bf-cream2: #dfe1e4;
-    --bf-sub: #b3b8bf;
-    --bf-sub2: #a2a8b0;
-    --bf-muted: #8b919a;
-    --bf-faint: #6b7079;
+    /* Warm-neutral ink, NOT a cool near-white. The cool #e8e9ea sat at the
+       same ~14:1 as the dark theme, but dark's ink is a warm cream, which is
+       what keeps it comfortable. Cool white on a cool slate ground has
+       nothing to soften it and reads as glare. 10.86:1 - still AAA. */
+    --bf-cream: #d2cfc8;
+    --bf-cream2: #c9c5bd;
+    --bf-sub: #aba79f;
+    --bf-sub2: #a39f97;
+    --bf-muted: #948f86;
+    --bf-faint: #8b8680;
     /* Desaturated to match: status should register, not shout. */
     --bf-success: #8fb3a8;
     --bf-danger: #cf9494;
     --bf-cardSurface: rgba(25, 29, 36, 0.66);
-    --bf-cardBorder: rgba(255, 255, 255, 0.07);
-    --bf-cardBorderHover: rgba(255, 255, 255, 0.14);
-    --bf-cardShadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 10px 30px -14px rgba(0, 0, 0, 0.55);
+    --bf-cardBorder: rgba(210, 207, 200, 0.09);
+    --bf-cardBorderHover: rgba(210, 207, 200, 0.17);
+    --bf-cardShadow: inset 0 1px 0 rgba(210, 207, 200, 0.05), 0 10px 30px -14px rgba(0, 0, 0, 0.55);
     --bf-cardSolid: #191d24;
-    --bf-hoverTint: rgba(255, 255, 255, 0.06);
+    --bf-hoverTint: rgba(210, 207, 200, 0.07);
     /* Flat fill, no gradient: the gradient is what made the gold button
        read as "deep". Dark ink on sand measures 8.26:1. */
     --bf-btnPrimaryFill: linear-gradient(180deg, #c8b389, #b8a37a);
     --bf-btnPrimaryInk: #1a1d22;
     --bf-btnPrimaryShadow: 0 14px 28px -12px rgba(200, 179, 137, 0.34);
-    --bf-btnSecondaryInk: #c3c8cf;
+    --bf-btnSecondaryInk: #b8b4ab;
     --bf-btnSecondaryBorder: rgba(200, 179, 137, 0.18);
     --bf-btnSecondaryBorderHover: rgba(200, 179, 137, 0.34);
     --g-100:#f3f4f6; --g-200:#e5e7eb; --g-300:#d1d5db; --g-400:#9ca3af;
     --g-500:#6b7280; --g-600:#4b5563; --g-700:#374151; --g-800:#1f2937; --g-900:#111827;
-    --ink:#ffffff;
+    --ink:#d2cfc8;
     --editor-stage:#0e1116;
     --editor-chrome:#161a20;
     --editor-panel:#191d24;
-    --editor-hover:rgba(255, 255, 255, 0.06);
-    --editor-line:rgba(255, 255, 255, 0.10);
-    --editor-text:#e8e9ea;
-    --editor-dim:#b3b8bf;
-    --editor-faint:#8b919a;
+    --editor-hover:rgba(210, 207, 200, 0.07);
+    --editor-line:rgba(210, 207, 200, 0.12);
+    --editor-text:#d2cfc8;
+    --editor-dim:#aba79f;
+    --editor-faint:#948f86;
     --editor-accent:#c8b389;
     --stage-ground:#0e1116;
-    --stage-check:rgba(255, 255, 255, 0.035);
+    --stage-check:rgba(210, 207, 200, 0.04);
 
     --surface-bg: #12151a;
     --surface-card: #191d24;
     --surface-card2: #1e232b;
     --surface-input: #161a20;
-    --border-subtle: rgba(255, 255, 255, 0.08);
-    --border-strong: rgba(255, 255, 255, 0.18);
-    --text-primary: #e8e9ea;
+    --border-subtle: rgba(210, 207, 200, 0.10);
+    --border-strong: rgba(210, 207, 200, 0.22);
+    --text-primary: #d2cfc8;
     --accent: #c8b389;
     --accent-deep: #a89772;
     --accent-fill: #c8b389;
     --accent-ink: #1a1d22;
     --tone-success: #8fb3a8;
     --tone-danger: #cf9494;
-    --content-secondary: #b3b8bf;
-    --content-tertiary: #8b919a;
+    --content-secondary: #aba79f;
+    --content-tertiary: #948f86;
     color-scheme: dark;
   }
 
