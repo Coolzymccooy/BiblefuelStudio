@@ -50,6 +50,7 @@ import { LivePreviewStage } from '../components/timeline/LivePreviewStage';
 import { addEffectToScene, removeEffectClip } from '../lib/timelineEffects';
 import { syncSidecarTracks } from '../lib/timelineTrackSync';
 import type { TimelineEffectKind, TimelineTrackKind } from '../lib/timelineProject';
+import { hiddenLaneWarning } from '../lib/hiddenLanes';
 import { MasteringPanel } from '../components/timeline/MasteringPanel';
 import { RecentAudioPanel } from '../components/timeline/RecentAudioPanel';
 import { TranscriptActions } from '../components/timeline/TranscriptActions';
@@ -1293,6 +1294,16 @@ export function TimelinePage() {
             return;
         }
         if (isRenderingDocumentaryTimeline) return;
+
+        // F3 — hiding a lane EXCLUDES it from the render. That is the one
+        // editorial setting that can ship the wrong video with no error at
+        // all: hide the music bed to check a cut, forget, render next week,
+        // and the sermon goes out silent. So say so, name the lanes, and make
+        // the operator confirm. Lanes with no clips are not mentioned —
+        // nothing is lost there, and a dialog that cries wolf gets dismissed
+        // unread.
+        const hidden = hiddenLaneWarning(documentaryProject);
+        if (hidden && !window.confirm(hidden.message)) return;
 
         const toastId = toast.loading('Queued timeline render…');
         setIsRenderingDocumentaryTimeline(true);

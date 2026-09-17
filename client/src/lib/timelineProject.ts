@@ -87,8 +87,16 @@ export interface TimelineTrack {
   kind: TimelineTrackKind;
   label: string;
   clips: TimelineClip[];
+  /** Locked = clips visible and selectable for inspection, but not editable. */
   locked?: boolean;
   muted?: boolean;
+  /**
+   * Hidden = EXCLUDED from the render, not merely dimmed (decided 2026-09-17).
+   * The server honours this in both validateTimelineProjectForRender and
+   * buildTimelineRenderPlan; the client warns before rendering, via
+   * hiddenLaneWarning() in lib/hiddenLanes.ts.
+   */
+  hidden?: boolean;
 }
 
 export interface TimelineSceneMarker {

@@ -1,7 +1,8 @@
 import { useMemo, useState, useEffect } from 'react';
 import { useTimelineScale } from '../../lib/useTimelineScale';
 import { timelineAssetThumbPath } from '../../lib/timelineThumb';
-import { Film, Mic2, Music, Scissors, Sparkles, Subtitles, Trash2, Wand2, Eraser } from 'lucide-react';
+import { setTrackFlag } from '../../lib/hiddenLanes';
+import { Eye, EyeOff, Film, Lock, Mic2, Music, Scissors, Sparkles, Subtitles, Trash2, Unlock, Wand2, Eraser } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 import type { TimelineAsset, TimelineClip, TimelineProject, TimelineTrack, TimelineTrackKind } from '../../lib/timelineProject';
@@ -220,13 +221,19 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   const selection = useMemo(() => findClip(project, selectedClipId), [project, selectedClipId]);
 
+  // F3 — a locked lane is inspectable but not editable. Gating the HANDLERS
+  // rather than each button means every present and future caller is covered
+  // by one rule; the buttons below disable themselves off the same flag so
+  // the state is visible, not just enforced.
+  const selectionLocked = selection?.track.locked === true;
+
   const handleSplit = () => {
-    if (!selection || !onProjectChange) return;
+    if (!selection || !onProjectChange || selectionLocked) return;
     onProjectChange(splitClip(project, selection.track, selection.clip));
   };
 
   const handleRemove = () => {
-    if (!selection || !onProjectChange) return;
+    if (!selection || !onProjectChange || selectionLocked) return;
     onProjectChange(removeClip(project, selection.track, selection.clip));
     setSelectedClipId(null);
   };
@@ -356,11 +363,39 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                           </p>
                           {!phone && <p className="text-[10px] font-medium tabular-nums text-content-tertiary">{track.clips.length} clip{track.clips.length === 1 ? '' : 's'}</p>}
                         </div>
-                        {onClearLane && track.clips.length > 0 && (
+                        {/* F3 — lane controls. Eye and lock come before the
+                            eraser so the destructive action stays last.
+                            ml-auto is on the FIRST of them, so the group sits
+                            right whichever buttons are present. */}
+                        {onProjectChange && (
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); onProjectChange(setTrackFlag(project, track.id, 'hidden', !track.hidden)); }}
+                            className={`ml-auto shrink-0 rounded p-1 transition hover:bg-editor-hover ${track.hidden ? 'text-editor-accent' : 'text-content-tertiary hover:text-editor-text'}`}
+                            aria-label={track.hidden ? `Show ${track.label} lane` : `Hide ${track.label} lane`}
+                            aria-pressed={track.hidden === true}
+                            title={track.hidden ? `${track.label} is hidden — it will NOT appear in the render. Click to show.` : `Hide ${track.label} — hidden lanes are left out of the render`}
+                          >
+                            {track.hidden ? <EyeOff size={12} /> : <Eye size={12} />}
+                          </button>
+                        )}
+                        {onProjectChange && (
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); onProjectChange(setTrackFlag(project, track.id, 'locked', !track.locked)); }}
+                            className={`shrink-0 rounded p-1 transition hover:bg-editor-hover ${track.locked ? 'text-editor-accent' : 'text-content-tertiary hover:text-editor-text'}`}
+                            aria-label={track.locked ? `Unlock ${track.label} lane` : `Lock ${track.label} lane`}
+                            aria-pressed={track.locked === true}
+                            title={track.locked ? `${track.label} is locked — clips still render, but cannot be edited. Click to unlock.` : `Lock ${track.label} — clips stay visible and still render, but cannot be edited`}
+                          >
+                            {track.locked ? <Lock size={12} /> : <Unlock size={12} />}
+                          </button>
+                        )}
+                        {onClearLane && track.clips.length > 0 && !track.locked && (
                           <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); onClearLane(track.kind); }}
-                            className="ml-auto shrink-0 rounded p-1 text-content-tertiary transition hover:bg-editor-hover hover:text-editor-text"
+                            className="shrink-0 rounded p-1 text-content-tertiary transition hover:bg-editor-hover hover:text-editor-text"
                             aria-label={`Clear ${track.label} lane`}
                             title={`Clear this lane - removes all ${track.clips.length} clip${track.clips.length === 1 ? '' : 's'} from ${track.label}`}
                           >
@@ -369,7 +404,10 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                         )}
                       </div>
   
-                      <div className={`relative ${d.lane} rounded-lg bg-lane-bed ${d.lanePad}`}>
+                      {/* A hidden lane dims so the exclusion is visible at a
+                          glance, and stops taking pointer events so a clip
+                          cannot be edited into a lane that will not render. */}
+                      <div className={`relative ${d.lane} rounded-lg bg-lane-bed ${d.lanePad} ${track.hidden ? 'opacity-40' : ''}`}>
                         {track.clips.length === 0 ? (
                           <button
                             type="button"
@@ -412,7 +450,11 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                               return (
                                 <div
                                   key={clip.id}
-                                  draggable
+                                  // Locked = inspect, do not edit. The clip is
+                                  // still clickable (so the operator can read
+                                  // it and the toolbar can show its details)
+                                  // but cannot be dragged.
+                                  draggable={!track.locked}
                                   // Selection lives on the CONTAINER: the refactor
                                   // moved it to an inner button, so clicking the
                                   // clip block itself no longer selected it and the
@@ -467,7 +509,11 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                                         one stack of Mute buttons. Below the threshold
                                         the clip is still selectable and the toolbar
                                         above the lanes acts on the selection. */}
-                                    <div className={`flex shrink-0 gap-1 ${widthPct < CONTROLS_MIN_WIDTH_PCT && !selected ? 'hidden' : ''}`}>
+                                    {/* A locked lane hides its per-clip edit
+                                        controls entirely: the clip stays
+                                        selectable for inspection, but Mute and
+                                        Delete are not offered at all. */}
+                                    <div className={`flex shrink-0 gap-1 ${track.locked || (widthPct < CONTROLS_MIN_WIDTH_PCT && !selected) ? 'hidden' : ''}`}>
                                       <button
                                         type="button"
                                         onClick={(e) => {
@@ -555,20 +601,20 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
       <button
         type="button"
         onClick={handleSplit}
-        disabled={!selection || !onProjectChange || (selection?.clip.durationSec ?? 0) < 1}
+        disabled={!selection || !onProjectChange || selectionLocked || (selection?.clip.durationSec ?? 0) < 1}
         className="icon-btn"
         aria-label="Split clip"
-        title="Split clip"
+        title={selectionLocked ? 'This lane is locked — unlock it to edit' : 'Split clip'}
       >
         <Scissors size={14} />
       </button>
       <button
         type="button"
         onClick={handleRemove}
-        disabled={!selection || !onProjectChange}
+        disabled={!selection || !onProjectChange || selectionLocked}
         className="icon-btn-danger"
         aria-label="Remove clip"
-        title="Remove clip"
+        title={selectionLocked ? 'This lane is locked — unlock it to edit' : 'Remove clip'}
       >
         <Trash2 size={14} />
       </button>
@@ -651,7 +697,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
             )}
           </div>
           <div className="flex gap-2">
-            <Button variant="secondary" className="text-xs px-3 py-1.5" onClick={handleSplit} disabled={!selection || !onProjectChange || selection.clip.durationSec < 1}>
+            <Button variant="secondary" className="text-xs px-3 py-1.5" onClick={handleSplit} disabled={!selection || !onProjectChange || selectionLocked || selection.clip.durationSec < 1}>
               <Scissors size={14} className="mr-1.5" /> Split clip
             </Button>
             <Button variant="ghost" className="text-xs px-3 py-1.5" onClick={handleRemove} disabled={!selection || !onProjectChange}>

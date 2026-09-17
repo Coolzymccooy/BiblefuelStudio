@@ -28,6 +28,11 @@ export function validateTimelineProjectForRender(project) {
   let renderable = 0;
   for (const track of project.tracks) {
     if (!track || !RENDERABLE_TRACKS.has(track.kind) || !Array.isArray(track.clips)) continue;
+    // A hidden lane is excluded from the render, so its clips are not
+    // renderable. The validator and the builder below MUST agree about this:
+    // if only the builder honoured it, a project whose only footage lane was
+    // hidden would validate and then render nothing.
+    if (track.hidden === true) continue;
     for (const clip of track.clips) {
       const asset = project.assets[clip?.assetId];
       if (assetIsRenderable(asset) && Number(clip?.durationSec || 0) > 0) renderable += 1;
@@ -43,7 +48,7 @@ export function buildTimelineRenderPlan(project, options = {}) {
   if (!valid.ok) return valid;
 
   const tracks = project.tracks
-    .filter((track) => RENDERABLE_TRACKS.has(track.kind) && Array.isArray(track.clips))
+    .filter((track) => RENDERABLE_TRACKS.has(track.kind) && Array.isArray(track.clips) && track.hidden !== true)
     .map((track) => ({
       id: track.id,
       kind: track.kind,
