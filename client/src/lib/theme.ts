@@ -1,5 +1,5 @@
 /**
- * Light / dark theme switching.
+ * Light / dark / calm theme switching.
  *
  * The app was built dark-only: colours are baked into ~177 Tailwind token
  * usages that resolve at build time. Making them switchable means routing every
@@ -13,8 +13,15 @@
  * the same product.
  */
 
-export type ThemeChoice = 'light' | 'dark' | 'system';
-export type ResolvedTheme = 'light' | 'dark';
+export type ThemeChoice = 'light' | 'dark' | 'calm' | 'system';
+export type ResolvedTheme = 'light' | 'dark' | 'calm';
+
+/**
+ * Themes that paint a DARK ground. `color-scheme` only understands
+ * 'light' | 'dark', so calm must map to dark or the OS draws white select
+ * popups and scrollbars on a dark page.
+ */
+const DARK_GROUND: ReadonlySet<string> = new Set(['dark', 'calm']);
 
 const STORAGE_KEY = 'bf_theme_v1';
 
@@ -22,7 +29,7 @@ const STORAGE_KEY = 'bf_theme_v1';
 export function getStoredChoice(): ThemeChoice {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    return raw === 'light' || raw === 'dark' || raw === 'system' ? raw : 'system';
+    return raw === 'light' || raw === 'dark' || raw === 'calm' || raw === 'system' ? raw : 'system';
   } catch {
     return 'system';
   }
@@ -42,6 +49,9 @@ export function storeChoice(choice: ThemeChoice): void {
 export function resolveTheme(choice: ThemeChoice, prefersDark: boolean): ResolvedTheme {
   if (choice === 'light') return 'light';
   if (choice === 'dark') return 'dark';
+  // Calm is an explicit choice only. The OS reports light-or-dark and has no
+  // way to ask for it, so `system` must never resolve here.
+  if (choice === 'calm') return 'calm';
   return prefersDark ? 'dark' : 'light';
 }
 
@@ -65,7 +75,7 @@ export function applyTheme(theme: ResolvedTheme, root?: HTMLElement): void {
   const el = root || (typeof document !== 'undefined' ? document.documentElement : null);
   if (!el) return;
   el.setAttribute('data-theme', theme);
-  el.style.colorScheme = theme;
+  el.style.colorScheme = DARK_GROUND.has(theme) ? 'dark' : 'light';
 }
 
 /** Read the stored choice, resolve it, and apply. Returns what was applied. */
