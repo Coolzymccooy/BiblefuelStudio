@@ -270,7 +270,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
   // offset, and no width floor, so the lanes scroll instead of colliding.
   const headW = phone ? '6.5rem' : '9rem';
   const lanes = (
-          <div className={`min-h-0 flex-1 overflow-y-auto rounded-xl border border-editor-line bg-black/10 ${phone ? 'overflow-x-hidden' : 'overflow-x-auto'} ${d.wrap}`}>
+          <div className={`min-h-0 flex-1 overflow-y-auto rounded-xl bg-editor-panel ${phone ? 'overflow-x-hidden' : 'overflow-x-auto'} ${d.wrap}`}>
             <div className={`${phone ? 'w-full' : 'min-w-[920px]'} ${d.stack}`}>
               <div className={`${phone ? 'hidden' : 'flex'} ${d.ruler} items-stretch gap-1`} style={{ marginLeft: headW }} aria-label="Scene ruler">
                 {project.scenes.map((scene, index) => {
@@ -283,7 +283,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                       aria-pressed={selectedSceneId === scene.id}
                       draggable
                       onClick={() => onSelectScene?.(scene.id)}
-                      className={`group relative min-w-24 rounded-lg border text-left ${d.lanePad} shadow-inner outline-none transition ${
+                      className={`group relative min-w-24 rounded-lg border text-left ${d.lanePad} outline-none transition ${
                         selectedSceneId === scene.id
                           ? 'border-editor-accent bg-editor-hover ring-2 ring-editor-accent/40'
                           : `lane ${SCENE_FAMILY[index % SCENE_FAMILY.length]} hover:brightness-[0.97]`
@@ -316,7 +316,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                           the clips scroll horizontally underneath. Needs an
                           OPAQUE background, not bg-white/[0.03], or the clips
                           show through as they pass behind it. */}
-                      <div className={phone ? `flex items-center gap-1.5 px-0.5 py-0.5` : `sticky left-0 z-10 flex items-center gap-2 rounded-lg border border-editor-line bg-editor-panel ${d.headPad}`}>
+                      <div className={phone ? `flex items-center gap-1.5 px-0.5 py-0.5` : `sticky left-0 z-10 flex items-center gap-2 rounded-lg bg-editor-panel ${d.headPad}`}>
                         <Icon size={phone ? 15 : 15} className="shrink-0 text-editor-dim" />
                         <div className="min-w-0">
                           <p className={`truncate font-semibold text-editor-text ${phone ? 'text-[11px] leading-none' : 'text-xs'}`}>
@@ -338,7 +338,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                         )}
                       </div>
   
-                      <div className={`relative ${d.lane} rounded-lg border border-editor-line/70 bg-editor-hover/30 ${d.lanePad}`}>
+                      <div className={`relative ${d.lane} rounded-lg bg-editor-hover/50 ${d.lanePad}`}>
                         {track.clips.length === 0 ? (
                           <button
                             type="button"
@@ -387,7 +387,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                                   // Split/Remove toolbar stayed disabled.
                                   onClick={() => setSelectedClipId(clip.id)}
                                   aria-label={`Timeline clip: ${asset?.label || clip.assetId}`}
-                                  className={`${phone ? '' : 'absolute top-1'} ${d.clipHeight} rounded-md border px-2 py-1 text-left text-[10px] font-semibold tracking-tight shadow-sm transition ${selected ? 'border-editor-accent bg-editor-accent/30 text-editor-text ring-2 ring-editor-accent/50' : `${CLIP_TONE[track.kind]} hover:brightness-125`}`}
+                                  className={`${phone ? '' : 'absolute top-1'} ${d.clipHeight} rounded-md border px-2 py-1 text-left text-[10px] font-semibold tracking-tight transition ${selected ? 'border-editor-accent bg-editor-accent/30 text-editor-text ring-2 ring-editor-accent/50' : `${CLIP_TONE[track.kind]} hover:brightness-125`}`}
                                   style={phone ? { minWidth: '7.5rem', flex: '0 0 auto' } : { left: `${leftPct}%`, width: `${widthPct}%` }}
                                   title={`${asset?.label || clip.assetId} · ${sourceLabel(asset)} · ${Math.round(clip.durationSec)}s · ${previewMode}`}
                                 >
@@ -439,7 +439,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                                             ),
                                           });
                                         }}
-                                        className={`rounded px-1.5 py-0.5 transition ${clip.muted ? 'bg-white/[0.04] text-content-secondary' : 'bg-black/40 text-editor-text/90 hover:bg-black/60'}`}
+                                        className={`rounded px-1.5 py-0.5 transition ${clip.muted ? 'opacity-45 hover:opacity-70' : 'opacity-70 hover:opacity-100'}`}
                                         title={clip.muted ? 'Unmute clip' : 'Mute clip'}
                                       >
                                         {clip.muted ? 'Muted' : 'Mute'}
@@ -457,7 +457,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                                           onProjectChange(removeClip(project, track, clip));
                                           if (selectedClipId === clip.id) setSelectedClipId(null);
                                         }}
-                                        className="rounded bg-black/40 px-1.5 py-0.5 text-editor-text/90 hover:bg-red-500/20 hover:text-red-200 transition"
+                                        className="rounded px-1.5 py-0.5 opacity-70 transition hover:bg-red-500/20 hover:text-red-200 hover:opacity-100"
                                         // Distinct from the toolbar's "Remove clip" so
                                         // accessible-name queries stay unambiguous.
                                         aria-label={`Delete clip: ${asset?.label || clip.assetId}`}

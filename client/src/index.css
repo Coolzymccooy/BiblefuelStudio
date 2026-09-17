@@ -58,6 +58,9 @@
     --ink:#ffffff;
     /* Stage is the only editor surface that follows the theme. */
     --editor-stage:#080604;
+    /* Declared explicitly: dark relied on the Tailwind fallback, so the shell
+       chrome was never actually part of the theme it belongs to. */
+    --editor-chrome:#14100a;
     /* 11px hint text ("No footage yet ...") measured 3.2:1 on the editor
        panel - under AA. #8a8070 clears it at 4.67:1 and still reads as the
        faint tier, below --editor-dim. */

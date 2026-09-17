@@ -451,7 +451,7 @@ export function EditorShell({
           </div>
         )}
       </div>
-      <div className="relative shrink-0 border-t border-editor-line bg-editor-chrome short:w-[76px] short:overflow-y-auto short:border-l short:border-t-0">
+      <div className="relative shrink-0 bg-editor-panel short:w-[76px] short:overflow-y-auto">
         <div
           ref={toolsRef}
           role="tablist"
