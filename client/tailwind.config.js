@@ -53,6 +53,7 @@ export default {
         'accent-ink': 'var(--accent-ink, #1c1a15)',
         'tone-danger': 'var(--tone-danger, #e08a8a)',
         'tone-success': 'var(--tone-success, #7fb5aa)',
+        'lane-bed': 'var(--lane-bed, #221c12)',
         // Tailwind's default gray scale, routed through CSS variables.
         // 387 hardcoded text-gray-*/text-white usages across 49 files were
         // baked to DARK-mode values, so on a light background headings, field

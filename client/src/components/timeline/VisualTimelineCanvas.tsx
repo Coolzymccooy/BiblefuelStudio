@@ -316,7 +316,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                           the clips scroll horizontally underneath. Needs an
                           OPAQUE background, not bg-white/[0.03], or the clips
                           show through as they pass behind it. */}
-                      <div className={phone ? `flex items-center gap-1.5 px-0.5 py-0.5` : `sticky left-0 z-10 flex items-center gap-2 rounded-lg bg-editor-panel ${d.headPad}`}>
+                      <div className={phone ? `flex items-center gap-1.5 px-0.5 py-0.5` : `sticky left-0 z-10 flex items-center gap-2 rounded-lg bg-lane-bed ${d.headPad}`}>
                         <Icon size={phone ? 15 : 15} className="shrink-0 text-editor-dim" />
                         <div className="min-w-0">
                           <p className={`truncate font-semibold text-editor-text ${phone ? 'text-[11px] leading-none' : 'text-xs'}`}>
@@ -338,14 +338,14 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                         )}
                       </div>
   
-                      <div className={`relative ${d.lane} rounded-lg bg-editor-hover/50 ${d.lanePad}`}>
+                      <div className={`relative ${d.lane} rounded-lg bg-lane-bed ${d.lanePad}`}>
                         {track.clips.length === 0 ? (
                           <button
                             type="button"
                             onClick={() => onEmptyLaneClick?.(track.kind)}
                             disabled={!onEmptyLaneClick}
                             title={onEmptyLaneClick ? 'Open the tool that fills this lane' : undefined}
-                            className={`flex ${d.emptyRow} w-full items-center justify-center rounded-md border border-dashed border-editor-line/80 bg-transparent px-2 text-center text-[11px] text-editor-faint transition enabled:hover:border-editor-text/30 enabled:hover:text-editor-dim phone:justify-start phone:text-left phone:text-[10px] phone:leading-tight`}
+                            className={`flex ${d.emptyRow} w-full items-center justify-center rounded-md bg-transparent px-2 text-center text-[11px] text-editor-faint transition enabled:hover:text-editor-dim phone:justify-start phone:text-left phone:text-[10px] phone:leading-tight`}
                           >
                             {EMPTY_HINT[track.kind]}
                           </button>

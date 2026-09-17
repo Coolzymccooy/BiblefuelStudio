@@ -61,10 +61,14 @@
     /* Declared explicitly: dark relied on the Tailwind fallback, so the shell
        chrome was never actually part of the theme it belongs to. */
     --editor-chrome:#14100a;
+    /* Lane bed: the strip a row's clips sit ON, visible for the full width
+       of the lane including the empty space after the last clip. */
+    --lane-bed:#221c12;
     /* 11px hint text ("No footage yet ...") measured 3.2:1 on the editor
-       panel - under AA. #8a8070 clears it at 4.67:1 and still reads as the
-       faint tier, below --editor-dim. */
-    --editor-faint:#8a8070;
+       panel - under AA. Raised until it clears AA on the LANE BED too, which
+       is darker than the panel and is what this text actually sits on:
+       4.78:1 on the bed, 5.14:1 on the panel. Still the faint tier. */
+    --editor-faint:#918779;
 
     --surface-bg: #0b0906;
     --surface-card: #140f09;
@@ -144,6 +148,7 @@
     --ink:#d2cfc8;
     --editor-stage:#0e1116;
     --editor-chrome:#161a20;
+    --lane-bed:#22252c;
     --editor-panel:#191d24;
     --editor-hover:rgba(210, 207, 200, 0.07);
     --editor-line:rgba(210, 207, 200, 0.12);
@@ -226,6 +231,7 @@
        darker gold that clears 4.5:1 on white. Without these the docked
        sheet stayed dark on a light page and its labels vanished. */
     --editor-chrome:#f4f0e8;
+    --lane-bed:#f1f2f4;
     --editor-panel:#ffffff;
     --editor-hover:rgba(28, 26, 21, 0.06);
     --editor-line:rgba(28, 26, 21, 0.12);
