@@ -1,8 +1,10 @@
 import { useMemo, useState, useEffect } from 'react';
 import { useTimelineScale } from '../../lib/useTimelineScale';
+import { clampZoom, MIN_ZOOM, MAX_ZOOM } from '../../lib/timelineScale';
+import { loadZoom, saveZoom, nextZoomIn, nextZoomOut, scrollLeftPreservingAnchor } from '../../lib/timelineZoom';
 import { timelineAssetThumbPath } from '../../lib/timelineThumb';
 import { setTrackFlag } from '../../lib/hiddenLanes';
-import { Eye, EyeOff, Film, Lock, Mic2, Music, Scissors, Sparkles, Subtitles, Trash2, Unlock, Wand2, Eraser } from 'lucide-react';
+import { Eye, EyeOff, Film, Lock, Mic2, Minus, Music, Plus, Scissors, Sparkles, Subtitles, Trash2, Unlock, Wand2, Eraser } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 import type { TimelineAsset, TimelineClip, TimelineProject, TimelineTrack, TimelineTrackKind } from '../../lib/timelineProject';
@@ -217,7 +219,44 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
   // F1: the timecode axis. Zoom is fixed at 1 here — F2 makes it a control.
   // Everything that turns seconds into pixels goes through this one scale, so
   // the ruler cannot drift from the clips the way it did on the 390px phone.
-  const { ref: scaleRef, scale } = useTimelineScale({ durationSec: target, zoom: 1 });
+  // F2 — zoom. A multiplier on the SAME scale the ruler uses, remembered per
+  // project. Loaded lazily so a remount does not reset the operator's view.
+  const [zoom, setZoom] = useState<number>(() => loadZoom(project.id));
+  useEffect(() => { setZoom(loadZoom(project.id)); }, [project.id]);
+  const { ref: scaleRef, scale } = useTimelineScale({ durationSec: target, zoom });
+
+  // The element that actually scrolls. Zoom has to adjust its scrollLeft in
+  // the same frame the scale changes, or the view jumps.
+  // scaleRef and scrollRef are the SAME element: the scrolling viewport.
+  //
+  // This must never be an element whose width the scale then sets. Attaching
+  // it to the ruler created a feedback loop - measure, widen from the
+  // measurement, measure the wider thing - and contentWidth reached 67 MILLION
+  // pixels after one click of +. The viewport is the only stable reference:
+  // "fits" is defined against it, and it does not grow with its content.
+  const scrollRef = scaleRef;
+
+  const applyZoom = (next: number) => {
+    const clamped = clampZoom(next);
+    if (clamped === zoom) return;
+
+    // Keep the moment under the viewport's left edge where it is. Scaling the
+    // scroll origin instead makes the timeline feel like it jumps away.
+    const el = scrollRef.current;
+    const anchorSec = el && scale.pxPerSecond > 0 ? el.scrollLeft / scale.pxPerSecond : 0;
+
+    setZoom(clamped);
+    saveZoom(project.id, clamped);
+
+    if (el) {
+      const nextPxPerSecond = scale.pxPerSecond * (clamped / zoom);
+      // After React has laid out the wider content, or the assignment is
+      // clamped against the OLD scrollWidth and silently lost.
+      requestAnimationFrame(() => {
+        el.scrollLeft = scrollLeftPreservingAnchor({ anchorSec, anchorOffsetPx: 0, nextPxPerSecond });
+      });
+    }
+  };
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   const selection = useMemo(() => findClip(project, selectedClipId), [project, selectedClipId]);
 
@@ -287,20 +326,41 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
   // shows in full. 11.5rem fits every default lane name.
   // This is ONE constant shared by the ruler, the scene strip and the lane
   // grid, so widening it keeps all three on the same axis.
-  const headW = phone ? '6.5rem' : '11.5rem';
+  // ONE source for the header column, in rem and in px. The px value is
+  // DERIVED from the rem value rather than typed twice: the measured viewport
+  // includes this column, so the lane area is that much narrower, and a pair
+  // that drifted apart would put the ruler back on its own grid — the exact
+  // failure this module exists to prevent.
+  const HEAD_W_REM = phone ? 6.5 : 11.5;
+  const headW = `${HEAD_W_REM}rem`;
+  const HEAD_W_PX = HEAD_W_REM * 16;
   const lanes = (
-          <div className={`min-h-0 flex-1 overflow-y-auto rounded-xl bg-editor-panel ${phone ? 'overflow-x-hidden' : 'overflow-x-auto'} ${d.wrap}`}>
-            <div className={`${phone ? 'w-full' : 'min-w-[920px]'} ${d.stack}`}>
+          <div ref={scrollRef} className={`min-h-0 flex-1 overflow-y-auto rounded-xl bg-editor-panel ${phone ? 'overflow-x-hidden' : 'overflow-x-auto'} ${d.wrap}`}>
+            {/* At zoom > 1 the content is WIDER than the viewport, which is
+                what makes the container scroll. The width comes from the same
+                scale as the ruler, so they cannot disagree. */}
+            <div
+              className={`${phone ? 'w-full' : 'min-w-[920px]'} ${d.stack}`}
+              style={phone || zoom === 1 ? undefined : { width: `calc(${headW} + ${Math.round(scale.contentWidth - HEAD_W_PX)}px)` }}
+            >
               {/* F1 — the timecode axis.
                   Shares headW with the scene strip and the lane grid below, so
                   0:00 sits exactly above clip x=0. The offset is read from ONE
                   constant; duplicating it is what put the ruler and the lanes
                   on different grids before. Hidden on phone, as the scene strip
                   is, rather than rendered misaligned. */}
+              {/* Laid out as the LANE ROWS are: a sticky gutter cell plus the
+                  content cell. The ruler used a plain marginLeft, which works
+                  at zoom 1 but slides under the lane headers as soon as the
+                  content scrolls. Reusing the row structure means the gutter
+                  stays covered by the same mechanism that already works. */}
               <div
-                ref={scaleRef}
-                className={`${phone ? 'hidden' : 'block'} relative h-5 select-none`}
-                style={{ marginLeft: headW }}
+                className={`${phone ? 'hidden' : 'grid'} items-stretch`}
+                style={{ gridTemplateColumns: `${headW} 1fr` }}
+              >
+              <div className="sticky left-0 z-20 bg-editor-panel" aria-hidden="true" />
+              <div
+                className="relative h-5 select-none"
                 aria-label="Time ruler"
               >
                 {scale.ticks.map((tick) => (
@@ -316,7 +376,13 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                   </div>
                 ))}
               </div>
-              <div className={`${phone ? 'hidden' : 'flex'} ${d.ruler} items-stretch gap-1`} style={{ marginLeft: headW }} aria-label="Scene ruler">
+              </div>
+              <div
+                className={`${phone ? 'hidden' : 'grid'} items-stretch`}
+                style={{ gridTemplateColumns: `${headW} 1fr` }}
+              >
+              <div className="sticky left-0 z-20 bg-editor-panel" aria-hidden="true" />
+              <div className={`flex ${d.ruler} items-stretch gap-1`} aria-label="Scene ruler">
                 {project.scenes.map((scene, index) => {
                   const widthPct = Math.max(8, (scene.targetDurationSec / target) * 100);
                   return (
@@ -344,6 +410,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                   );
                 })}
               </div>
+              </div>
   
               <div className={d.stack}>
                 {project.tracks.map((track) => {
@@ -360,7 +427,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                           the clips scroll horizontally underneath. Needs an
                           OPAQUE background, not bg-white/[0.03], or the clips
                           show through as they pass behind it. */}
-                      <div className={phone ? `flex items-center gap-1.5 px-0.5 py-0.5` : `sticky left-0 z-10 flex items-center gap-2 rounded-lg bg-lane-bed ${d.headPad}`}>
+                      <div className={phone ? `flex items-center gap-1.5 px-0.5 py-0.5` : `sticky left-0 z-20 flex items-center gap-2 rounded-lg bg-lane-bed ${d.headPad}`}>
                         <Icon size={phone ? 15 : 15} className="shrink-0 text-editor-dim" />
                         <div className="min-w-0">
                           {/* Stored labels can be longer than the column (an
@@ -608,6 +675,43 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
         </span>
       ) : (
         <span className="text-editor-faint phone:hidden">Select a clip to split or remove</span>
+      )}
+      {/* F2 — zoom. Reads as one control: minus, the level, plus. The level
+          is a button because it is also Fit — the fastest way back to seeing
+          the whole project, and the reason 1 is on the step ladder. */}
+      {!phone && (
+        <span className="flex items-center gap-0.5 phone:hidden">
+          <button
+            type="button"
+            onClick={() => applyZoom(nextZoomOut(zoom))}
+            disabled={zoom <= MIN_ZOOM}
+            className="icon-btn"
+            aria-label="Zoom out"
+            title="Zoom out"
+          >
+            <Minus size={14} />
+          </button>
+          <button
+            type="button"
+            onClick={() => applyZoom(1)}
+            disabled={zoom === 1}
+            className="min-w-11 rounded px-1 text-[10px] font-semibold tabular-nums text-content-tertiary transition hover:text-editor-text disabled:hover:text-content-tertiary"
+            aria-label={`Zoom ${zoom}x. Fit the whole project`}
+            title={zoom === 1 ? 'Whole project fits' : 'Fit the whole project'}
+          >
+            {zoom}x
+          </button>
+          <button
+            type="button"
+            onClick={() => applyZoom(nextZoomIn(zoom))}
+            disabled={zoom >= MAX_ZOOM}
+            className="icon-btn"
+            aria-label="Zoom in"
+            title="Zoom in"
+          >
+            <Plus size={14} />
+          </button>
+        </span>
       )}
       <button
         type="button"
