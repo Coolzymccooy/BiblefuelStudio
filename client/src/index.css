@@ -183,7 +183,13 @@
     --bf-gold: #8a6d33;      /* 4.87:1 — still reads gold, not yellow */
     --bf-goldDeep: #6f5726;  /* 6.85:1 */
     --bf-goldDim: #82683a;   /* 5.26:1 */
-    --bf-cream: #1c1a15;     /* 17.38:1 — primary text */
+    /* A WARM GROUND WANTS A NEUTRAL INK. The ground here (#faf7f2) is already
+       warm, and #1c1a15 added a 14% brown cast on top of it - warm-on-warm is
+       what made light mode read muddy rather than crisp. Apple Music's light
+       surface is the same warm off-white (#faf6f1) with a fully NEUTRAL ink
+       (#000000, 0% saturation), which is why its black looks calm instead of
+       harsh. #111111 takes that neutrality without the full-black hardness. */
+    --bf-cream: #111111;     /* 17.67:1 on the warm ground */
     --bf-cream2: #2a2620;    /* 15.04:1 */
     --bf-sub: #4a4438;       /* 9.65:1 */
     --bf-sub2: #5c5548;      /* 7.37:1 */
@@ -209,9 +215,9 @@
     --bf-btnSecondaryBorderHover: rgba(28, 26, 21, 0.34);
     /* INVERTED: 100-300 are heading/label colours, so they go near-black.
        Measured on white — 18.7, 17.4, 14.2, 9.7, 7.4, 5.9, 4.8 : 1. */
-    --g-100:#141210; --g-200:#1c1a15; --g-300:#2f2a22; --g-400:#4a4438;
+    --g-100:#0d0d0d; --g-200:#111111; --g-300:#2f2a22; --g-400:#4a4438;
     --g-500:#5c5548; --g-600:#6b6456; --g-700:#7a7264; --g-800:#8a8272; --g-900:#9a9280;
-    --ink:#1c1a15;
+    --ink:#111111;
     --editor-stage:#e9e4db;
     /* Editor chrome in light mode: white panels, near-black text, and the
        darker gold that clears 4.5:1 on white. Without these the docked
@@ -220,9 +226,9 @@
     --editor-panel:#ffffff;
     --editor-hover:rgba(28, 26, 21, 0.06);
     --editor-line:rgba(28, 26, 21, 0.12);
-    --editor-text:#1c1a15;
-    --editor-dim:#4a4438;
-    --editor-faint:#6b6456;
+    --editor-text:#111111;
+    --editor-dim:#3d3d3d;
+    --editor-faint:#6e6a66;
     /* Gold, not brown. The old #8a6d33 sat at 46% saturation because it had
        been darkened to carry WHITE text; it read as chocolate. This keeps the
        same legibility (4.95:1 on white) at 75% saturation, and filled
@@ -237,7 +243,7 @@
     --surface-input: #ffffff;
     --border-subtle: rgba(28, 26, 21, 0.10);
     --border-strong: rgba(28, 26, 21, 0.22);
-    --text-primary: #1c1a15;
+    --text-primary: #111111;
     /* Two golds, two jobs. --accent is TEXT and thin rules on light chrome, so
        it must clear 4.5:1 on white (4.95:1 here). --accent-fill paints filled
        surfaces like the Render button and carries DARK ink, which is what
@@ -246,12 +252,12 @@
     --accent: #8f6a14;
     --accent-deep: #6f5726;
     --accent-fill: #dcae4a;
-    --accent-ink: #1c1a15;
+    --accent-ink: #111111;
     --tone-success: #1a7f4f;
     --tone-danger: #b03b3b;
     /* Secondary text follows the theme, else it stays a dark-mode cream. */
-    --content-secondary: #5c5548;
-    --content-tertiary: #7a7264;
+    --content-secondary: #5c5a57;
+    --content-tertiary: #6e6a66;
     /* Native controls (select popups, scrollbars) must follow too, or the
        OS-drawn option list renders dark-on-light. */
     color-scheme: light;
@@ -261,7 +267,7 @@
      card that is invisible. Remapping the utility itself is the only way to
      fix them all without touching 49 files — and it cannot be done in the
      Tailwind config, because that would break bg-white/10 opacity modifiers. */
-  :root[data-theme='light'] .text-white { color: #1c1a15; }
+  :root[data-theme='light'] .text-white { color: #111111; }
 
   /* Pale gold is a DARK-mode colour. These steps exist for gold on near black;
      reused as text on a light ground they measure 1.2-2.9:1 and simply vanish.
@@ -323,7 +329,7 @@
   :root[data-theme='light'] option,
   :root[data-theme='light'] optgroup {
     background-color: #ffffff;
-    color: #1c1a15;
+    color: #111111;
   }
 
   :root[data-theme='light'] body {
