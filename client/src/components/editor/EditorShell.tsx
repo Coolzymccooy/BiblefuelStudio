@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { Maximize2, Minimize2, ChevronDown, ChevronUp, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Maximize2, Minimize2 } from 'lucide-react';
+import { scrollAffordance, scrollStep } from '../../lib/scrollAffordance';
 
 /** Below the lg breakpoint the editor is a phone layout: stage on top, tools
  *  as a bar, the tool panel as a sheet, the timeline as the working surface. */
@@ -165,27 +166,89 @@ export function EditorShell({
   }, []);
   // Does the tools bar have more off-screen either way? Without a hint the
   // operator cannot tell that half the tools exist.
+  //
+  // This was horizontal-only, which covered the phone rail and left the
+  // DESKTOP one silent — and that is the worse case: 12 tools, 6 visible on an
+  // 800px window, so Voice, Scenes, Backgrounds, Renders and Output were
+  // undiscoverable unless someone told you. The arithmetic now lives in
+  // lib/scrollAffordance and takes an axis, so one implementation serves both
+  // rails instead of a second one drifting alongside the first.
   const toolsRef = useRef<HTMLDivElement | null>(null);
-  const [toolsEdge, setToolsEdge] = useState({ left: false, right: false });
+  const [toolsEdge, setToolsEdge] = useState({ start: false, end: false, overflows: false });
+  // The phone rail is a horizontal strip; the desktop rail is a vertical
+  // column. One flag, read in both places, so they cannot disagree.
+  const toolsAxis: 'vertical' | 'horizontal' = phone ? 'horizontal' : 'vertical';
   const measureTools = useCallback(() => {
     const el = toolsRef.current;
     if (!el) return;
-    setToolsEdge({
-      left: el.scrollLeft > 4,
-      right: el.scrollLeft + el.clientWidth < el.scrollWidth - 4,
-    });
+    const vertical = el.scrollHeight > el.clientHeight + 2;
+    const a = scrollAffordance(
+      vertical
+        ? { scrollPos: el.scrollTop, viewport: el.clientHeight, content: el.scrollHeight }
+        : { scrollPos: el.scrollLeft, viewport: el.clientWidth, content: el.scrollWidth },
+    );
+    setToolsEdge({ start: a.atStart, end: a.atEnd, overflows: a.overflows });
   }, []);
   useEffect(() => {
     measureTools();
-    if (typeof ResizeObserver === 'undefined') return;
+    // Measure again after layout settles. On first paint the rail has not yet
+    // taken its final height, so the very first measurement said "fits" and
+    // the hint stayed hidden until the operator happened to scroll — which is
+    // exactly the person who did not know there was anything to scroll to.
+    const settle = requestAnimationFrame(measureTools);
+    const settleLate = window.setTimeout(measureTools, 250);
+
+    if (typeof ResizeObserver === 'undefined') {
+      return () => { cancelAnimationFrame(settle); window.clearTimeout(settleLate); };
+    }
     const el = toolsRef.current;
-    if (!el) return;
+    if (!el) return () => { cancelAnimationFrame(settle); window.clearTimeout(settleLate); };
     const ro = new ResizeObserver(measureTools);
     ro.observe(el);
-    return () => ro.disconnect();
+    // Also watch the CHILDREN: a tool's count badge appearing changes the
+    // content length without resizing the rail itself.
+    for (const child of Array.from(el.children)) ro.observe(child);
+    return () => {
+      cancelAnimationFrame(settle);
+      window.clearTimeout(settleLate);
+      ro.disconnect();
+    };
   }, [measureTools, phone, tools.length]);
   const scrollTools = (dir: 1 | -1) => {
-    toolsRef.current?.scrollBy({ left: dir * Math.max(150, (toolsRef.current?.clientWidth || 300) * 0.7), behavior: 'smooth' });
+    const el = toolsRef.current;
+    if (!el) return;
+    const vertical = el.scrollHeight > el.clientHeight + 2;
+    const delta = dir * scrollStep(vertical ? el.clientHeight : el.clientWidth);
+
+    // `behavior: 'smooth'` is IGNORED when the user (or the OS) asks for
+    // reduced motion — the scroll simply does not happen, and the chevron
+    // reads as a broken button. Honour the preference with an instant jump
+    // instead of losing the action.
+    let reduced = false;
+    try { reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { /* no matchMedia */ }
+    const behavior: ScrollBehavior = reduced ? 'auto' : 'smooth';
+
+    el.scrollBy(vertical ? { top: delta, behavior } : { left: delta, behavior });
+
+    // Some engines drop a smooth scroll entirely rather than degrading it.
+    // If nothing moved by the next frames, fall back so the click always does
+    // something visible.
+    const before = vertical ? el.scrollTop : el.scrollLeft;
+    if (!reduced) {
+      window.setTimeout(() => {
+        const after = vertical ? el.scrollTop : el.scrollLeft;
+        if (Math.abs(after - before) < 1) {
+          if (vertical) el.scrollTop = before + delta;
+          else el.scrollLeft = before + delta;
+        }
+      }, 200);
+    }
+
+    // Re-measure once the animation has settled. A smooth scroll's LAST frame
+    // can land after React's onScroll has already run, which left the rail at
+    // its maximum still showing "more below" — a hint that lies is worse than
+    // no hint, because the operator stops trusting it.
+    window.setTimeout(measureTools, 450);
   };
   // The preview drawer folds away entirely, so the lanes get the screen.
   const [stageCollapsed, setStageCollapsed] = useState<boolean>(() => {
@@ -461,24 +524,31 @@ export function EditorShell({
         >
           {tools.map(toolButton)}
         </div>
-        {toolsEdge.left && (
+        {/* Chevrons follow the rail's AXIS: this strip is horizontal on a
+            phone but becomes a vertical column on a short window, and a
+            left-arrow on a column points nowhere. */}
+        {toolsEdge.start && (
           <button
             type="button"
-            aria-label="Scroll tools left"
+            aria-label={toolsAxis === 'vertical' ? 'Scroll tools up' : 'Scroll tools left'}
             onClick={() => scrollTools(-1)}
-            className="absolute inset-y-0 left-0 grid w-7 place-items-center bg-gradient-to-r from-editor-chrome via-editor-chrome/95 to-transparent text-editor-accent"
+            className={toolsAxis === 'vertical'
+              ? 'absolute inset-x-0 top-0 grid h-7 place-items-center bg-gradient-to-b from-editor-chrome via-editor-chrome/95 to-transparent text-editor-accent'
+              : 'absolute inset-y-0 left-0 grid w-7 place-items-center bg-gradient-to-r from-editor-chrome via-editor-chrome/95 to-transparent text-editor-accent'}
           >
-            <ChevronLeft size={16} />
+            {toolsAxis === 'vertical' ? <ChevronUp size={16} /> : <ChevronLeft size={16} />}
           </button>
         )}
-        {toolsEdge.right && (
+        {toolsEdge.end && (
           <button
             type="button"
-            aria-label="Scroll tools right"
+            aria-label={toolsAxis === 'vertical' ? 'Scroll tools down — more tools below' : 'Scroll tools right — more tools'}
             onClick={() => scrollTools(1)}
-            className="absolute inset-y-0 right-0 grid w-7 place-items-center bg-gradient-to-l from-editor-chrome via-editor-chrome/95 to-transparent text-editor-accent"
+            className={toolsAxis === 'vertical'
+              ? 'absolute inset-x-0 bottom-0 grid h-7 place-items-center bg-gradient-to-t from-editor-chrome via-editor-chrome/95 to-transparent text-editor-accent'
+              : 'absolute inset-y-0 right-0 grid w-7 place-items-center bg-gradient-to-l from-editor-chrome via-editor-chrome/95 to-transparent text-editor-accent'}
           >
-            <ChevronRight size={16} />
+            {toolsAxis === 'vertical' ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
           </button>
         )}
       </div>
@@ -528,12 +598,41 @@ export function EditorShell({
       <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden phone:flex-none lg:flex-row">
         {/* Icon rail. Horizontal-scrolling strip on phones, where a 72px
             vertical rail would eat a fifth of the screen. */}
-        <div
-          role="tablist"
-          aria-label="Editor tools"
-          className="flex w-full shrink-0 flex-row gap-1 overflow-x-auto border-b border-editor-line px-2 py-1 phone:[scrollbar-width:none] lg:w-[60px] lg:flex-col lg:items-center lg:border-b-0 lg:border-r lg:px-0 lg:py-1.5"
-        >
-          {tools.map(toolButton)}
+        {/* 12 tools; on an 800px-tall window only 6 fit and the rail scrolled
+            in SILENCE, so Voice, Scenes, Backgrounds, Renders and Output were
+            undiscoverable unless someone told you they were there. The phone
+            rail had a hint for this since it was built; the desktop one never
+            did. Wrapper is the positioning context for the chevrons. */}
+        <div className="relative shrink-0 lg:h-full lg:w-[60px]">
+          <div
+            ref={toolsRef}
+            role="tablist"
+            aria-label="Editor tools"
+            onScroll={measureTools}
+            className="flex h-full w-full shrink-0 flex-row gap-1 overflow-x-auto border-b border-editor-line px-2 py-1 phone:[scrollbar-width:none] lg:w-[60px] lg:flex-col lg:items-center lg:overflow-x-hidden lg:overflow-y-auto lg:border-b-0 lg:border-r lg:px-0 lg:py-1.5 lg:[scrollbar-width:none]"
+          >
+            {tools.map(toolButton)}
+          </div>
+          {toolsEdge.start && (
+            <button
+              type="button"
+              aria-label="Scroll tools up"
+              onClick={() => scrollTools(-1)}
+              className="absolute inset-x-0 top-0 z-20 grid h-9 place-items-center bg-gradient-to-b from-editor-panel via-editor-panel to-transparent text-editor-accent"
+            >
+              <ChevronUp size={16} />
+            </button>
+          )}
+          {toolsEdge.end && (
+            <button
+              type="button"
+              aria-label="Scroll tools down — more tools below"
+              onClick={() => scrollTools(1)}
+              className="absolute inset-x-0 bottom-0 z-20 grid h-9 place-items-center bg-gradient-to-t from-editor-panel via-editor-panel to-transparent text-editor-accent"
+            >
+              <ChevronDown size={16} />
+            </button>
+          )}
         </div>
 
         {/* Docked panel. Below lg it becomes a normal block above the stage
