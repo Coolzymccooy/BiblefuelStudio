@@ -114,6 +114,13 @@ const MIN_CLIP_WIDTH_PCT = 5;
 // overflowing the block. Selecting the clip reveals them regardless.
 const CONTROLS_MIN_WIDTH_PCT = 4;
 
+// A waveform needs room of its own BESIDE the label. Splitting a narrow clip
+// between the two leaves neither usable — a 77px voice-over clip truncated its
+// name to a single character and gave the trace 0px. Under this width the
+// label keeps the whole block and the waveform is dropped, which is the same
+// bargain the controls above already make.
+const WAVEFORM_MIN_WIDTH_PCT = 12;
+
 // Each empty lane says WHERE its content comes from, and clicking it opens
 // that tool - the lane itself is the way in.
 const EMPTY_HINT: Record<TimelineTrackKind, string> = {
@@ -525,6 +532,15 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                                 Math.min(MIN_CLIP_WIDTH_PCT, roomPct),
                                 Math.min(100 - leftPct, trueWidthPct),
                               );
+                              // Audio clips carry a peak trace beside the label.
+                              // Derived once, because both the label's width and
+                              // the trace itself depend on it: the label only
+                              // gives up flex-1 when there is something to give
+                              // it up to. Width matters as much as kind — see
+                              // WAVEFORM_MIN_WIDTH_PCT.
+                              const waveform = asset?.kind === 'audio'
+                                && Boolean(asset.path)
+                                && widthPct >= WAVEFORM_MIN_WIDTH_PCT;
                               const selected = selectedClipId === clip.id;
                               return (
                                 <div
@@ -569,47 +585,44 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                                         </span>
                                       )
                                     )}
-                                    {/* F4 — the peak trace, for audio only.
-                                        Behind the label so the name stays
-                                        readable, and absent entirely when the
-                                        clip has no peaks: a missing waveform
-                                        degrades to the flat clip, it never
-                                        blocks.
+                                    {/* F4 — the peak trace, for audio only, and
+                                        absent entirely when the clip has no
+                                        peaks: a missing waveform degrades to
+                                        the flat clip, it never blocks.
 
                                         Drawn in compact too. It was gated on
                                         !compact alongside the second text
                                         line, but the two are not the same
                                         problem: a stacked LABEL wrapped and
-                                        broke the 28px row, while a trace
-                                        painted behind the text costs no
-                                        height at all. Since the timeline
-                                        renders compact by default, gating it
-                                        out meant the waveform never appeared
-                                        on the screen the operator uses.
+                                        broke the 28px row, while the trace
+                                        costs no height at all. Since the
+                                        timeline renders compact by default,
+                                        gating it out meant the waveform never
+                                        appeared on the screen the operator
+                                        uses.
 
-                                        The insets differ because compact
-                                        draws no icon chip: left-7 clears the
-                                        chip in the full row, and would leave
-                                        a stray gap without one. */}
-                                    {asset?.kind === 'audio' && asset.path && (
-                                      <ClipWaveform
-                                        assetPath={asset.path}
-                                        /* Sized by the insets ALONE. It used to
-                                           carry h-auto/w-auto, but <canvas> is
-                                           a replaced element: `auto` resolves
-                                           to its intrinsic 300x150 and wins
-                                           over the insets, so the trace was a
-                                           fixed 300x150 box spilling out of a
-                                           17px clip row. With no width/height
-                                           declared, top+bottom and left+right
-                                           resolve the box to the clip. */
-                                        className={`pointer-events-none absolute opacity-40 ${compact ? 'inset-y-0.5 left-1 right-1' : 'inset-y-1 left-7 right-1'}`}
-                                      />
-                                    )}
+                                        BESIDE the label, not under it. Running
+                                        the trace the full width of the clip
+                                        put peaks directly behind the filename,
+                                        and the two read as one smeared line.
+                                        In the reference the label sits on its
+                                        own solid ground at the head of the
+                                        clip and the waveform takes the space
+                                        that is left, so neither competes: the
+                                        label keeps its own bed below, and this
+                                        flows after it in normal document
+                                        order rather than being positioned over
+                                        the whole row. */}
                                     <button
                                       type="button"
                                       onClick={() => setSelectedClipId(clip.id)}
-                                      className="relative min-w-0 flex-1 text-left"
+                                      /* flex-1 only when nothing else wants
+                                         the room. With a waveform beside it the
+                                         label shrinks to its own width so the
+                                         trace gets the remainder — the label
+                                         stretching full-width is what put peaks
+                                         behind the text. */
+                                      className={`relative min-w-0 text-left ${waveform ? 'max-w-[45%] shrink' : 'flex-1'}`}
                                     >
                                       {/* ONE line, not two. A stacked label inside a
                                           28px compact clip wrapped under the Mute
@@ -619,6 +632,21 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                                         <p className="truncate opacity-70">{sourceLabel(asset)} · {Math.round(clip.durationSec)}s{proxy ? ` · ${proxy}` : ''}</p>
                                       )}
                                     </button>
+                                    {waveform && (
+                                      <ClipWaveform
+                                        assetPath={asset!.path!}
+                                        /* Sized by its flex box, not by
+                                           intrinsic size. It used to carry
+                                           h-auto/w-auto, but <canvas> is a
+                                           replaced element: `auto` resolves to
+                                           its intrinsic 300x150 and wins over
+                                           any positioning, so the trace was a
+                                           fixed 300x150 block spilling out of
+                                           a 17px clip row. ClipWaveform now
+                                           pins its own CSS size to 100%. */
+                                        className={`pointer-events-none min-w-0 flex-1 self-stretch opacity-40 ${compact ? 'my-0.5' : 'my-1'}`}
+                                      />
+                                    )}
                                     {/* Controls need ~70px. On a clip narrower
                                         than that they were shrink-0, so they spilled
                                         OUTSIDE the block and three short clips read as

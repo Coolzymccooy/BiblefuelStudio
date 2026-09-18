@@ -173,7 +173,9 @@ describe('audio clip waveform (F4)', () => {
       trackKind: 'voiceover',
       asset: AUDIO,
       startSec: 0,
-      durationSec: 16.7,
+      // Comfortably past WAVEFORM_MIN_WIDTH_PCT (12% of the 270s target).
+      // A 16.7s clip is ~6% wide and is deliberately NOT given a trace.
+      durationSec: 90,
     });
   }
 
@@ -209,17 +211,39 @@ describe('audio clip waveform (F4)', () => {
     });
   });
 
-  test('clears the icon-chip offset in compact, where there is no chip', async () => {
-    // left-7 exists to clear the lane icon. Compact draws no icon, so reusing
-    // that offset would leave a stray gap at the head of every audio clip.
+  test('drops the trace on a clip too narrow to hold it and the label', async () => {
+    // A 2s clip on a 270s timeline is ~0.7% wide. Splitting that between the
+    // label and a trace left the name truncated to one character and the
+    // canvas at 0px — both useless, which is worse than no waveform.
+    const { api } = await import('../../../lib/api');
+    vi.spyOn(api, 'get').mockResolvedValue({
+      ok: true,
+      data: { ok: true, peaks: [[-0.8, 0.8], [-0.4, 0.4]] },
+    } as never);
+    const base = buildWorshipDocumentaryProject({ title: 'Narrow' });
+    const project = insertAssetOnTrack(base, {
+      trackKind: 'voiceover',
+      asset: { ...AUDIO, id: 'vo-narrow', path: 'C:/outputs/narrow.mp3' },
+      startSec: 0,
+      durationSec: 2,
+    });
+    const { container } = render(<VisualTimelineCanvas project={project} compact />);
+    await screen.findByText('Edge-TTS');
+    expect(container.querySelector('canvas')).not.toBeInTheDocument();
+  });
+
+  test('sits BESIDE the label, not stacked over it', async () => {
+    // The trace used to be absolutely positioned across the whole clip, which
+    // put peaks directly behind the filename and the two read as one smeared
+    // line. It is now a flex sibling that takes the room left after the label.
     const { container } = await renderWithPeaks(true);
     const canvas = await vi.waitFor(() => {
       const c = container.querySelector('canvas');
       expect(c).toBeInTheDocument();
       return c!;
     });
-    expect(canvas.className).toContain('left-1');
-    expect(canvas.className).not.toContain('left-7');
+    expect(canvas.className).not.toContain('absolute');
+    expect(canvas.className).toContain('flex-1');
   });
 
   test('a clip with no peaks stays exactly as it was', async () => {

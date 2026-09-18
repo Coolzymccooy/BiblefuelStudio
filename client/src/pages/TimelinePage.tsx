@@ -1480,6 +1480,35 @@ export function TimelinePage() {
     // Hoisted so the classic card AND the editor panel render the SAME
     // JSX. Duplicating a 200-line block would guarantee the two layouts
     // drift apart the first time either is touched.
+    // Defined ABOVE videoBackgroundContent, which calls it. As a const arrow
+    // function it is in the temporal dead zone until this line runs, and the
+    // panel below is built during render — declaring it later threw
+    // "Cannot access 'handleSendBackgroundsToBroll' before initialization" and
+    // took the whole page to the error boundary. tsc does not catch this.
+    const handleSendBackgroundsToBroll = () => {
+        if (!documentaryProject) { toast.error('Create a documentary timeline first'); return; }
+        const labPicks = loadJson<Array<{ id?: string; url?: string; kind?: string }>>(STORAGE_KEYS.renderBackgrounds, []);
+        const seen = new Set<string>();
+        const picks = [...backgroundItems, ...labPicks]
+            .map((b: any) => ({ path: String(b.path || b.id || b.url || ''), kind: b.kind === 'image' ? 'image' as const : 'video' as const, label: String(b.label || b.name || (b.id ?? '')).slice(0, 40) }))
+            .filter((b) => b.path && !seen.has(b.path) && seen.add(b.path));
+        if (picks.length === 0) { toast.error('Pick backgrounds first — Background tool, or Render lab → Visuals'); return; }
+        const total = Math.max(1, documentaryProject.targetDurationSec);
+        const each = total / picks.length;
+        let next = documentaryProject;
+        picks.forEach((b, i) => {
+            next = insertAssetOnTrack(next, {
+                trackKind: 'broll',
+                asset: { id: `asset-bg-${Date.now()}-${i}`, kind: b.kind, source: 'upload', label: b.label || `Background ${i + 1}`, path: b.path, tags: ['background'] },
+                startSec: i * each,
+                durationSec: each,
+                fit: 'cover',
+            });
+        });
+        setDocumentaryProject(next);
+        toast.success(`${picks.length} background${picks.length === 1 ? '' : 's'} placed on the B-roll lane`);
+    };
+
     const videoBackgroundContent = (
         <>
                             <DropZone
@@ -1646,6 +1675,28 @@ export function TimelinePage() {
                                                 />
                                             </label>
                                         </div>
+                                        {/* Placing picked backgrounds on the
+                                            B-roll lane had exactly ONE entry
+                                            point: a blocker row in the Output
+                                            panel, shown only while the timeline
+                                            had no video or B-roll clip at all.
+                                            Add any real footage and the blocker
+                                            cleared, taking the only route to
+                                            B-roll with it — so a timeline with
+                                            footage could no longer receive the
+                                            images the operator had just picked.
+                                            The Background tool is where the
+                                            empty B-roll lane already sends
+                                            people, so the action belongs here,
+                                            unconditionally. */}
+                                        <Button
+                                            onClick={handleSendBackgroundsToBroll}
+                                            variant="secondary"
+                                            className="w-full h-9 text-[10px]"
+                                        >
+                                            <Layers size={14} className="mr-1" />
+                                            Place {backgroundItems.length} on B-roll lane
+                                        </Button>
                                         {uploadProgress !== null && (
                                             <div className="space-y-1 px-1">
                                                 <div className="flex justify-between text-[10px] text-meta">
@@ -1872,29 +1923,6 @@ export function TimelinePage() {
     // B-roll clip with a media path found'). Backgrounds already picked - in the
     // Background tool or the docked Render lab - become B-roll clips spread
     // evenly across the cut, so voice + captions timelines can render.
-    const handleSendBackgroundsToBroll = () => {
-        if (!documentaryProject) { toast.error('Create a documentary timeline first'); return; }
-        const labPicks = loadJson<Array<{ id?: string; url?: string; kind?: string }>>(STORAGE_KEYS.renderBackgrounds, []);
-        const seen = new Set<string>();
-        const picks = [...backgroundItems, ...labPicks]
-            .map((b: any) => ({ path: String(b.path || b.id || b.url || ''), kind: b.kind === 'image' ? 'image' as const : 'video' as const, label: String(b.label || b.name || (b.id ?? '')).slice(0, 40) }))
-            .filter((b) => b.path && !seen.has(b.path) && seen.add(b.path));
-        if (picks.length === 0) { toast.error('Pick backgrounds first — Background tool, or Render lab → Visuals'); return; }
-        const total = Math.max(1, documentaryProject.targetDurationSec);
-        const each = total / picks.length;
-        let next = documentaryProject;
-        picks.forEach((b, i) => {
-            next = insertAssetOnTrack(next, {
-                trackKind: 'broll',
-                asset: { id: `asset-bg-${Date.now()}-${i}`, kind: b.kind, source: 'upload', label: b.label || `Background ${i + 1}`, path: b.path, tags: ['background'] },
-                startSec: i * each,
-                durationSec: each,
-                fit: 'cover',
-            });
-        });
-        setDocumentaryProject(next);
-        toast.success(`${picks.length} background${picks.length === 1 ? '' : 's'} placed on the B-roll lane`);
-    };
 
     // Canvas edits (trash on a clip, split, drag) go through here so a removed
     // MIRRORED clip also leaves its source; otherwise the sidecar sync
