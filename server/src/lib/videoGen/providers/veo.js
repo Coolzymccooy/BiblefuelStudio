@@ -14,8 +14,49 @@ function apiKey() {
   return String(process.env.VEO_API_KEY || process.env.GOOGLE_AI_API_KEY || process.env.GEMINI_API_KEY || '').trim();
 }
 
-function veoModel() {
-  return String(process.env.VEO_MODEL || 'veo-3.0-generate-preview').trim();
+const DEFAULT_VEO_MODEL = 'veo-3.1-generate-preview';
+
+/**
+ * Model ids for a preview API move, and a hardcoded default silently rots:
+ * this shipped pinned to veo-3.0-generate-preview, which Google no longer
+ * serves, so every single request died on
+ *   "models/veo-3.0-generate-preview is not found for API version v1beta"
+ * while /status still cheerfully reported enabled:true.
+ *
+ * VEO_MODEL still wins when set — an operator pinning a specific model is a
+ * deliberate choice. Otherwise we ASK the API which veo models this key can
+ * actually drive, and prefer the newest non-lite one. The lookup is cached for
+ * the process: it costs one request, and a wrong guess costs every request.
+ */
+let modelCachePromise = null;
+
+async function discoverVeoModel(fetcher, key) {
+  const response = await fetcher(`${GEMINI_API_BASE}/models?key=${encodeURIComponent(key)}&pageSize=200`, {
+    headers: { Accept: 'application/json' },
+  });
+  if (!response.ok) return null;
+  const json = await parseJsonResponse(response);
+  const usable = (json?.models || [])
+    .filter((m) => /veo/i.test(m?.name || ''))
+    .filter((m) => (m?.supportedGenerationMethods || []).includes('predictLongRunning'))
+    .map((m) => String(m.name).replace(/^models\//, ''));
+  if (usable.length === 0) return null;
+  // Newest first, and a full model ahead of fast/lite: this is the default for
+  // someone who did not choose, so quality beats latency.
+  const rank = (id) => (/lite/i.test(id) ? 2 : /fast/i.test(id) ? 1 : 0);
+  usable.sort((a, b) => rank(a) - rank(b) || b.localeCompare(a, undefined, { numeric: true }));
+  return usable[0];
+}
+
+async function veoModel(fetcher) {
+  const pinned = String(process.env.VEO_MODEL || '').trim();
+  if (pinned) return pinned;
+  if (!modelCachePromise) {
+    modelCachePromise = discoverVeoModel(fetcher, apiKey())
+      .catch(() => null)
+      .then((found) => found || DEFAULT_VEO_MODEL);
+  }
+  return modelCachePromise;
 }
 
 function clampDuration(value) {
@@ -69,14 +110,19 @@ async function generateViaGeminiApi(request, { fetcher, r2Config } = {}) {
   const key = apiKey();
   if (!key) return { ok: false, provider: 'veo', code: 'NOT_CONFIGURED', error: 'Missing GOOGLE_AI_API_KEY/GEMINI_API_KEY/VEO_API_KEY' };
 
-  const model = veoModel();
+  const model = await veoModel(fetcher);
   const predictUrl = `${GEMINI_API_BASE}/models/${encodeURIComponent(model)}:predictLongRunning?key=${encodeURIComponent(key)}`;
   const predictBody = {
     instances: [{ prompt: request.prompt }],
     parameters: {
       aspectRatio: request.aspect,
       durationSeconds: request.durationSec,
-      personGeneration: 'allow_adult',
+      // Veo 3.1 rejects both 'allow_adult' and 'dont_allow' outright
+      // ("...is currently not supported"), so the 3.0-era value here failed
+      // every request with a 400 even once the model id was right. 'allow_all'
+      // is what this model accepts. Overridable because the accepted set is
+      // clearly still moving between preview releases.
+      personGeneration: String(process.env.VEO_PERSON_GENERATION || 'allow_all').trim(),
     },
   };
   const predict = await fetcher(predictUrl, {
