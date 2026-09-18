@@ -256,23 +256,49 @@ router.get('/peaks', async (req, res) => {
     const raw = String(req.query?.path || '').trim();
     if (!raw) return res.status(400).json({ ok: false, error: 'path required' });
 
-    const resolved = resolveOutputAlias(raw);
-    if (!resolved || /^https?:\/\//i.test(resolved)) {
+    if (/^https?:\/\//i.test(raw)) {
       return res.status(400).json({ ok: false, error: 'local asset path required' });
     }
 
-    // Confine to OUTPUT_DIR. The query string is user input, and without this
-    // a ../.. would read any file the process can reach.
-    const abs = path.resolve(resolved);
-    const root = path.resolve(OUTPUT_DIR);
-    if (abs !== root && !abs.startsWith(root + path.sep)) {
-      return res.status(400).json({ ok: false, error: 'asset outside the output directory' });
+    // Multi-tenant is the DEFAULT: a non-admin's uploads live in
+    // DATA_DIR/users/<id>/outputs, not the global OUTPUT_DIR. Resolving the
+    // `/outputs/...` alias against the global dir (which is what
+    // resolveOutputAlias does) pointed every ordinary user's request at a file
+    // that is not theirs — 404 on the alias, 400 on the absolute path — so
+    // waveforms only ever loaded for the super-admin. Both the lookup and the
+    // cache write have to follow req.ctx, the way every sibling route does.
+    const roots = [];
+    if (req.ctx?.outputDir) roots.push(path.resolve(req.ctx.outputDir));
+    // The global dir stays readable: shared library audio and anything a
+    // single-tenant install wrote still lives there.
+    if (!roots.some((r) => r === path.resolve(OUTPUT_DIR))) roots.push(path.resolve(OUTPUT_DIR));
+
+    const aliasMatch = String(raw).replace(/\\/g, '/').match(/^\.?\/?outputs\/(.+)$/i);
+    const candidates = aliasMatch
+      ? roots.map((root) => path.resolve(path.join(root, aliasMatch[1])))
+      : [path.resolve(resolveOutputAlias(raw))];
+
+    // Confine to a root we own. The query string is user input, and without
+    // this a ../.. would read any file the process can reach.
+    const abs = candidates.find((candidate) => roots.some(
+      (root) => candidate === root || candidate.startsWith(root + path.sep),
+    ) && fs.existsSync(candidate));
+
+    if (!abs) {
+      const inRoot = candidates.some((candidate) => roots.some(
+        (root) => candidate === root || candidate.startsWith(root + path.sep),
+      ));
+      return inRoot
+        ? res.status(404).json({ ok: false, error: 'asset not found' })
+        : res.status(400).json({ ok: false, error: 'asset outside the output directory' });
     }
-    if (!fs.existsSync(abs)) return res.status(404).json({ ok: false, error: 'asset not found' });
 
     const stat = fs.statSync(abs);
     const key = peaksCacheKey({ size: stat.size, mtimeMs: stat.mtimeMs });
-    const cacheFile = path.join(OUTPUT_DIR, `${path.basename(abs).replace(/\.[^.]+$/, '')}.${key}.peaks.json`);
+    // Cache beside the caller's own outputs, not in the shared dir: two tenants
+    // can hold same-named files, and the key only covers size+mtime.
+    const cacheDir = req.ctx?.outputDir || OUTPUT_DIR;
+    const cacheFile = path.join(cacheDir, `${path.basename(abs).replace(/\.[^.]+$/, '')}.${key}.peaks.json`);
 
     if (fs.existsSync(cacheFile)) {
       const cached = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));

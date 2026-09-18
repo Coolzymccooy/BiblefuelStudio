@@ -347,8 +347,16 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
             {/* At zoom > 1 the content is WIDER than the viewport, which is
                 what makes the container scroll. The width comes from the same
                 scale as the ruler, so they cannot disagree. */}
+            {/* The 920px floor keeps six lanes usable at default zoom on a
+                narrow desktop. But as a Tailwind min-width it ALWAYS beat the
+                inline width, and contentWidth is containerWidth x zoom — so on
+                a 1200px timeline zoom 0.5 asked for 600px and 0.25 for 300px,
+                both clamped to 920. Zoom Out simply stopped doing anything
+                below 1x, and at narrow widths even Fit stayed scrollable.
+                Below 1x the operator has explicitly asked for less width, so
+                the floor steps aside; at 1x and above it still applies. */}
             <div
-              className={`${phone ? 'w-full' : 'min-w-[920px]'} ${d.stack}`}
+              className={`${phone || zoom < 1 ? 'w-full' : 'min-w-[920px]'} ${d.stack}`}
               style={phone || zoom === 1 ? undefined : { width: `calc(${headW} + ${Math.round(scale.contentWidth - HEAD_W_PX)}px)` }}
             >
               {/* F1 — the timecode axis.
@@ -492,8 +500,17 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
   
                       {/* A hidden lane dims so the exclusion is visible at a
                           glance, and stops taking pointer events so a clip
-                          cannot be edited into a lane that will not render. */}
-                      <div className={`relative ${d.lane} rounded-lg bg-lane-bed ${d.lanePad} ${track.hidden ? 'opacity-40' : ''}`}>
+                          cannot be edited into a lane that will not render.
+
+                          The pointer-events half was described here but never
+                          implemented — the branch only dimmed. Clips stayed
+                          selectable, Mute/Delete still fired, and an empty
+                          hidden lane still opened its insertion tool, so an
+                          edit could land in a lane the renderer then drops.
+                          The eye control sits in the HEADER, outside this
+                          element, so making the lane inert never leaves the
+                          operator without a way to bring it back. */}
+                      <div className={`relative ${d.lane} rounded-lg bg-lane-bed ${d.lanePad} ${track.hidden ? 'opacity-40 pointer-events-none' : ''}`}>
                         {track.clips.length === 0 ? (
                           <button
                             type="button"

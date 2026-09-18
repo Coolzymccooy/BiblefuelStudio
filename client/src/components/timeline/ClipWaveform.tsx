@@ -69,33 +69,48 @@ export function ClipWaveform({ assetPath, className }: ClipWaveformProps) {
     const canvas = canvasRef.current;
     if (!canvas || !peaks || peaks.length === 0) return;
 
-    // Draw at device resolution: a 1x canvas upscaled on a retina screen
-    // makes the trace look like a smear.
-    const dpr = Math.min(3, window.devicePixelRatio || 1);
-    const rect = canvas.getBoundingClientRect();
-    const w = Math.max(1, Math.round(rect.width));
-    const h = Math.max(1, Math.round(rect.height));
-    canvas.width = Math.round(w * dpr);
-    canvas.height = Math.round(h * dpr);
+    const draw = () => {
+      // Draw at device resolution: a 1x canvas upscaled on a retina screen
+      // makes the trace look like a smear.
+      const dpr = Math.min(3, window.devicePixelRatio || 1);
+      const rect = canvas.getBoundingClientRect();
+      const w = Math.max(1, Math.round(rect.width));
+      const h = Math.max(1, Math.round(rect.height));
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
 
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.scale(dpr, dpr);
-    ctx.clearRect(0, 0, w, h);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.scale(dpr, dpr);
+      ctx.clearRect(0, 0, w, h);
 
-    // currentColor, so the trace IS the lane's ink and follows the theme.
-    ctx.fillStyle = getComputedStyle(canvas).color;
+      // currentColor, so the trace IS the lane's ink and follows the theme.
+      ctx.fillStyle = getComputedStyle(canvas).color;
 
-    const mid = h / 2;
-    // One column per pixel: sampling the peaks to the available width rather
-    // than drawing all 1024 keeps a narrow clip from turning into a solid bar.
-    for (let x = 0; x < w; x += 1) {
-      const idx = Math.min(peaks.length - 1, Math.floor((x / w) * peaks.length));
-      const [min, max] = peaks[idx];
-      const top = mid - Math.max(0, max) * mid;
-      const bottom = mid - Math.min(0, min) * mid;
-      ctx.fillRect(x, top, 1, Math.max(1, bottom - top));
-    }
+      const mid = h / 2;
+      // One column per pixel: sampling the peaks to the available width rather
+      // than drawing all 1024 keeps a narrow clip from turning into a solid bar.
+      for (let x = 0; x < w; x += 1) {
+        const idx = Math.min(peaks.length - 1, Math.floor((x / w) * peaks.length));
+        const [min, max] = peaks[idx];
+        const top = mid - Math.max(0, max) * mid;
+        const bottom = mid - Math.min(0, min) * mid;
+        ctx.fillRect(x, top, 1, Math.max(1, bottom - top));
+      }
+    };
+
+    draw();
+
+    // Peaks alone are NOT enough to trigger a redraw. Zoom (F2) and a window
+    // resize change the canvas's CSS width without changing its data, so the
+    // backing store kept its old pixel width and the browser simply stretched
+    // the previous bitmap — a blurred, wrongly-sampled trace after every zoom
+    // step. Redraw whenever the element's box changes, not only when new peaks
+    // arrive.
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => draw());
+    observer.observe(canvas);
+    return () => observer.disconnect();
   }, [peaks]);
 
   // Nothing yet, or nothing available: the clip stays exactly as it was.

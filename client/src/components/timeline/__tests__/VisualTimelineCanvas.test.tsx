@@ -265,3 +265,100 @@ describe('audio clip waveform (F4)', () => {
     expect(container.querySelector('canvas')).not.toBeInTheDocument();
   });
 });
+
+// Codex caught this on PR #6. Hiding a lane EXCLUDES it from the render, and
+// the code comment beside the branch already claimed the lane "stops taking
+// pointer events so a clip cannot be edited into a lane that will not render"
+// — but the branch only set opacity-40. Clips in a hidden lane stayed
+// selectable, their Mute/Delete controls still worked, and an empty hidden lane
+// still opened its insertion tool. So an edit could be made to a lane whose
+// content the renderer then silently drops, which is the exact failure mode
+// hiddenLanes.ts exists to prevent.
+describe('hidden lanes are not editable', () => {
+  function hiddenVoiceover() {
+    const base = buildWorshipDocumentaryProject({ title: 'Hidden' });
+    const withClip = insertAssetOnTrack(base, {
+      trackKind: 'voiceover',
+      asset: { id: 'vo-h', kind: 'audio', source: 'upload', label: 'Hidden VO', path: 'C:/outputs/h.mp3' },
+      startSec: 0,
+      durationSec: 30,
+    });
+    return {
+      ...withClip,
+      tracks: withClip.tracks.map((t) => (t.kind === 'voiceover' ? { ...t, hidden: true } : t)),
+    };
+  }
+
+  test('a hidden lane does not accept pointer events', () => {
+    // onProjectChange is required for the lane controls to render at all, and
+    // the eye control is the way back from hidden — so this test asserts both
+    // halves against the same render.
+    render(<VisualTimelineCanvas project={hiddenVoiceover()} compact onProjectChange={vi.fn()} />);
+    // The aria-labelled wrapper holds the HEADER as well as the clips, and the
+    // header must stay live — that is where the eye control that un-hides the
+    // lane lives. So the inert element is the lane BODY inside it, identified
+    // by its bed class.
+    const wrapper = screen.getByLabelText('Track lane: Voice-over');
+    // The HEADER also carries .bg-lane-bed, and it comes first in the DOM, so
+    // querySelector alone returns the header — which must stay interactive.
+    // Take the last one: the lane body.
+    const beds = [...wrapper.querySelectorAll('.bg-lane-bed')];
+    const body = beds[beds.length - 1];
+    expect(body, 'the lane body should render').toBeTruthy();
+    expect(body.className).toMatch(/pointer-events-none/);
+    // The header is a SIBLING of the body, not a parent, which is what keeps
+    // the eye control clickable while the clips are inert.
+    expect(beds[0].className).not.toMatch(/pointer-events-none/);
+    // And the header alongside it is NOT inert.
+    expect(screen.getByRole('button', { name: 'Show Voice-over lane' })).toBeInTheDocument();
+  });
+
+  test('the eye control still works, so the lane can be shown again', async () => {
+    const onProjectChange = vi.fn();
+    render(<VisualTimelineCanvas project={hiddenVoiceover()} compact onProjectChange={onProjectChange} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Show Voice-over lane' }));
+    expect(onProjectChange).toHaveBeenCalled();
+    const next = onProjectChange.mock.calls[0][0];
+    expect(next.tracks.find((t: { kind: string }) => t.kind === 'voiceover').hidden).toBe(false);
+  });
+
+  test('a visible lane is left interactive', () => {
+    const base = buildWorshipDocumentaryProject({ title: 'Visible' });
+    render(<VisualTimelineCanvas project={base} compact />);
+    const beds = [...screen.getByLabelText('Track lane: Voice-over').querySelectorAll('.bg-lane-bed')];
+    expect(beds[beds.length - 1].className).not.toMatch(/pointer-events-none/);
+  });
+});
+
+// Codex caught this on PR #6. The 920px floor is a Tailwind min-width, so it
+// ALWAYS won over the inline width computed from the zoom. contentWidth is
+// containerWidth x zoom, so on a 1200px timeline zoom 0.5 asked for ~600px and
+// 0.25 for ~300px — both clamped to 920px. Successive Zoom Out clicks stopped
+// changing anything below 1x, and on narrower desktops even Fit stayed
+// horizontally scrollable.
+describe('zoom-out is not swallowed by the minimum width', () => {
+  function widthClassesAtZoom(zoom: number) {
+    window.localStorage.setItem(`bf.timeline.zoom.${'zoomfloor'}`, String(zoom));
+    const base = buildWorshipDocumentaryProject({ title: 'Zoom' });
+    const project = { ...base, id: 'zoomfloor' };
+    const { container, unmount } = render(<VisualTimelineCanvas project={project} compact />);
+    const scroller = container.querySelector('.overflow-x-auto');
+    const inner = scroller?.firstElementChild as HTMLElement | null;
+    const cls = inner?.className ?? '';
+    unmount();
+    return cls;
+  }
+
+  test('keeps the floor at default zoom, where it protects the lanes', () => {
+    expect(widthClassesAtZoom(1)).toMatch(/min-w-\[920px\]/);
+  });
+
+  test('drops the floor below 1x, where the operator asked for less width', () => {
+    expect(widthClassesAtZoom(0.5)).not.toMatch(/min-w-\[920px\]/);
+    expect(widthClassesAtZoom(0.25)).not.toMatch(/min-w-\[920px\]/);
+  });
+
+  test('keeps the floor when zoomed IN, where content is wider anyway', () => {
+    expect(widthClassesAtZoom(2)).toMatch(/min-w-\[920px\]/);
+  });
+});

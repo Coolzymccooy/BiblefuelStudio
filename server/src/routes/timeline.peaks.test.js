@@ -16,11 +16,18 @@ let app;
 let server;
 let baseUrl;
 let secretPath;
+let currentCtx;
+let tenantDir;
 
 before(async () => {
   const { default: timelineRouter } = await import('./timeline.js');
   app = express();
   app.use(express.json());
+  // Multi-tenant is the DEFAULT in production, so the tests have to be able to
+  // act as an ordinary user, not only as the super-admin whose ctx.outputDir
+  // happens to equal the global OUTPUT_DIR. Without this the suite only ever
+  // exercised the admin path — which is how the tenant bug below shipped.
+  app.use((req, _res, next) => { req.ctx = currentCtx; next(); });
   app.use('/api/timeline', timelineRouter);
   server = app.listen(0);
   await new Promise((r) => server.once('listening', r));
@@ -30,11 +37,17 @@ before(async () => {
   // on the same disk.
   secretPath = path.join(os.tmpdir(), `peaks-guard-${Date.now()}.txt`);
   fs.writeFileSync(secretPath, 'do not read me');
+
+  // Stands in for DATA_DIR/users/<id>/outputs, where a non-admin's uploads
+  // actually live.
+  tenantDir = fs.mkdtempSync(path.join(os.tmpdir(), 'peaks-tenant-'));
+  currentCtx = { userId: 'admin', outputDir: OUTPUT_DIR };
 });
 
 after(() => {
   server?.close();
   try { fs.unlinkSync(secretPath); } catch { /* already gone */ }
+  try { fs.rmSync(tenantDir, { recursive: true, force: true }); } catch { /* already gone */ }
 });
 
 async function getPeaks(query) {
@@ -82,5 +95,65 @@ describe('GET /api/timeline/peaks — guards', () => {
     // reconnaissance.
     const { body } = await getPeaks(`path=${encodeURIComponent(secretPath)}`);
     assert.ok(!body.error.includes(secretPath), body.error);
+  });
+});
+
+// Codex caught this on PR #6, and it was real: the endpoint confined requests
+// and wrote caches against the module-global OUTPUT_DIR while every sibling
+// route in this file uses req.ctx. Multi-tenant is the default, so a non-admin's
+// audio — which lives in DATA_DIR/users/<id>/outputs — was rejected as "outside
+// the output directory" on an absolute path and resolved into the WRONG global
+// directory on its /outputs/ alias. Waveforms loaded for the super-admin only.
+describe('GET /api/timeline/peaks — per-tenant output directories', () => {
+  test('resolves an /outputs/ alias inside the CALLER own output directory', async () => {
+    const name = `tenant-audio-${Date.now()}.txt`;
+    fs.writeFileSync(path.join(tenantDir, name), 'not really audio');
+    currentCtx = { userId: 'tenant-1', outputDir: tenantDir };
+
+    // Not 400 ("outside the output directory") and not 404 ("asset not found"):
+    // the file IS found, so the request gets as far as decoding it, which fails
+    // on a text file. Any of those two statuses would mean the tenant's own file
+    // was invisible to the endpoint.
+    const res = await getPeaks(`path=${encodeURIComponent('/outputs/' + name)}`);
+    assert.notEqual(res.status, 404, 'the tenant own file must be found');
+    assert.notEqual(res.body.error, 'asset outside the output directory');
+
+    currentCtx = { userId: 'admin', outputDir: OUTPUT_DIR };
+  });
+
+  test('accepts an absolute path inside the caller own output directory', async () => {
+    const abs = path.join(tenantDir, `tenant-abs-${Date.now()}.txt`);
+    fs.writeFileSync(abs, 'not really audio');
+    currentCtx = { userId: 'tenant-1', outputDir: tenantDir };
+
+    const res = await getPeaks(`path=${encodeURIComponent(abs)}`);
+    assert.notEqual(res.body.error, 'asset outside the output directory');
+
+    currentCtx = { userId: 'admin', outputDir: OUTPUT_DIR };
+  });
+
+  test('still refuses a path outside BOTH roots', async () => {
+    // Widening the roots must not widen the guard: confinement is the reason
+    // this endpoint has tests at all.
+    currentCtx = { userId: 'tenant-1', outputDir: tenantDir };
+    const res = await getPeaks(`path=${encodeURIComponent(secretPath)}`);
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error, 'asset outside the output directory');
+
+    currentCtx = { userId: 'admin', outputDir: OUTPUT_DIR };
+  });
+
+  test('a tenant cannot reach another tenant outputs by absolute path', async () => {
+    const otherDir = fs.mkdtempSync(path.join(os.tmpdir(), 'peaks-other-'));
+    const victim = path.join(otherDir, 'private.txt');
+    fs.writeFileSync(victim, 'another tenant file');
+    currentCtx = { userId: 'tenant-1', outputDir: tenantDir };
+
+    const res = await getPeaks(`path=${encodeURIComponent(victim)}`);
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error, 'asset outside the output directory');
+
+    currentCtx = { userId: 'admin', outputDir: OUTPUT_DIR };
+    fs.rmSync(otherDir, { recursive: true, force: true });
   });
 });
