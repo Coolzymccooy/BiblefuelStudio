@@ -92,3 +92,55 @@ test('privacy level can be overridden', () => {
   const s = buildZernioPost({ ...BASE, privacyLevel: 'SELF_ONLY' }).tiktokSettings;
   assert.equal(s.privacy_level, 'SELF_ONLY');
 });
+
+// Codex flagged this on PR #5: the builder hardcoded PUBLIC_TO_EVERYONE and the
+// sole production caller passes no privacyLevel, so a private or otherwise
+// restricted TikTok account would have EVERY post rejected — direct posting and
+// the Creator Inbox fallback alike — with no way to override it.
+test('privacy level defaults to public, which suits a normal creator account', () => {
+  const post = buildZernioPost({ caption: 'c', title: 't', videoUrl: 'u', accountId: 'a' });
+  assert.equal(post.tiktokSettings.privacy_level, 'PUBLIC_TO_EVERYONE');
+});
+
+test('a restricted account can be configured via the environment', () => {
+  const prev = process.env.ZERNIO_TIKTOK_PRIVACY_LEVEL;
+  process.env.ZERNIO_TIKTOK_PRIVACY_LEVEL = 'SELF_ONLY';
+  try {
+    const post = buildZernioPost({ caption: 'c', title: 't', videoUrl: 'u', accountId: 'a' });
+    assert.equal(post.tiktokSettings.privacy_level, 'SELF_ONLY');
+  } finally {
+    if (prev === undefined) delete process.env.ZERNIO_TIKTOK_PRIVACY_LEVEL;
+    else process.env.ZERNIO_TIKTOK_PRIVACY_LEVEL = prev;
+  }
+});
+
+test('an explicit argument beats the environment', () => {
+  const prev = process.env.ZERNIO_TIKTOK_PRIVACY_LEVEL;
+  process.env.ZERNIO_TIKTOK_PRIVACY_LEVEL = 'SELF_ONLY';
+  try {
+    const post = buildZernioPost({
+      caption: 'c', title: 't', videoUrl: 'u', accountId: 'a',
+      privacyLevel: 'MUTUAL_FOLLOW_FRIENDS',
+    });
+    assert.equal(post.tiktokSettings.privacy_level, 'MUTUAL_FOLLOW_FRIENDS');
+  } finally {
+    if (prev === undefined) delete process.env.ZERNIO_TIKTOK_PRIVACY_LEVEL;
+    else process.env.ZERNIO_TIKTOK_PRIVACY_LEVEL = prev;
+  }
+});
+
+test('the draft fallback carries the same privacy level', () => {
+  // The Creator Inbox route is subject to the SAME rejection, so a fix that
+  // only covered direct posting would still lose every post for a restricted
+  // account — which is the failure mode that matters here.
+  const prev = process.env.ZERNIO_TIKTOK_PRIVACY_LEVEL;
+  process.env.ZERNIO_TIKTOK_PRIVACY_LEVEL = 'SELF_ONLY';
+  try {
+    const post = buildZernioPost({ caption: 'c', title: 't', videoUrl: 'u', accountId: 'a', draft: true });
+    assert.equal(post.tiktokSettings.privacy_level, 'SELF_ONLY');
+    assert.equal(post.tiktokSettings.draft, true);
+  } finally {
+    if (prev === undefined) delete process.env.ZERNIO_TIKTOK_PRIVACY_LEVEL;
+    else process.env.ZERNIO_TIKTOK_PRIVACY_LEVEL = prev;
+  }
+});

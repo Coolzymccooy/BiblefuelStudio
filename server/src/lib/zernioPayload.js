@@ -28,14 +28,37 @@ export function isTikTokCapacityError(message) {
 /**
  * @param {{caption: string, title: string, videoUrl: string, accountId: string,
  *          draft?: boolean, privacyLevel?: string}} opts
+ *   privacyLevel - TikTok privacy for the post. Defaults to
+ *   ZERNIO_TIKTOK_PRIVACY_LEVEL, then PUBLIC_TO_EVERYONE. Set the env var to
+ *   SELF_ONLY (or MUTUAL_FOLLOW_FRIENDS / FOLLOWER_OF_CREATOR) when the
+ *   connected account cannot post publicly — TikTok rejects a level the
+ *   account does not allow, on direct posting AND Creator Inbox drafts.
  */
 export function buildZernioPost({ caption, title, videoUrl, accountId, draft = false, privacyLevel }) {
   // TikTok requires these on EVERY post (Zernio's TikTok platform page marks
   // each "Required"); content_preview_confirmed and express_consent_given are
   // a legal requirement from TikTok and must be true. The original payload
   // omitted all of them.
+  //
+  // PRIVACY LEVEL. TikTok rejects a privacy_level the connected account does
+  // not allow: a private or otherwise restricted account cannot post
+  // PUBLIC_TO_EVERYONE, and the rejection hits BOTH direct posting and the
+  // Creator Inbox fallback — so hardcoding public would break every post for
+  // such an account, with no way to override it (the sole production caller
+  // passes no privacyLevel). Codex flagged this on PR #5.
+  //
+  // The proper fix is to read the account's allowed options from TikTok's
+  // creator_info endpoint, which Zernio does not surface here and which
+  // cannot be exercised without a restricted test account. So: keep the
+  // public default that suits a normal creator account, and make it
+  // configurable the same way every other Zernio setting already is.
+  // SELF_ONLY is the safe value for a private account.
   const tiktokSettings = {
-    privacy_level: String(privacyLevel || "PUBLIC_TO_EVERYONE"),
+    privacy_level: String(
+      privacyLevel
+        || process.env.ZERNIO_TIKTOK_PRIVACY_LEVEL
+        || "PUBLIC_TO_EVERYONE",
+    ).trim(),
     allow_comment: true,
     allow_duet: true,
     allow_stitch: true,
