@@ -150,3 +150,94 @@ describe('clearing lanes', () => {
     expect(onWipeAll).toHaveBeenCalled();
   });
 });
+
+// The waveform was gated on `!compact`, alongside the second text line of the
+// clip label. But the two are not the same problem — a stacked LABEL wrapped
+// and broke the 28px compact row, while a trace painted BEHIND the text costs
+// no height at all. Since the timeline renders compact by default, that gate
+// meant F4 never appeared on the screen the operator actually uses: the page
+// showed zero <canvas> elements with an audio clip sitting right there.
+describe('audio clip waveform (F4)', () => {
+  const AUDIO = {
+    id: 'vo-1',
+    kind: 'audio' as const,
+    source: 'upload' as const,
+    label: 'Edge-TTS',
+    path: 'C:/outputs/tts-edge.mp3',
+    durationSec: 16.7,
+  };
+
+  function projectWithVoiceover() {
+    const base = buildWorshipDocumentaryProject({ title: 'Waveform' });
+    return insertAssetOnTrack(base, {
+      trackKind: 'voiceover',
+      asset: AUDIO,
+      startSec: 0,
+      durationSec: 16.7,
+    });
+  }
+
+  async function renderWithPeaks(compact: boolean) {
+    const { api } = await import('../../../lib/api');
+    // Two buckets is enough: the draw loop samples peaks to the pixel width,
+    // so the trace does not depend on how many it is given.
+    vi.spyOn(api, 'get').mockResolvedValue({
+      ok: true,
+      data: { ok: true, peaks: [[-0.8, 0.8], [-0.4, 0.4]] },
+    } as never);
+    const view = render(
+      compact
+        ? <VisualTimelineCanvas project={projectWithVoiceover()} compact />
+        : <VisualTimelineCanvas project={projectWithVoiceover()} />,
+    );
+    // The canvas only mounts once peaks resolve.
+    await screen.findByText('Edge-TTS');
+    return view;
+  }
+
+  test('draws the trace on a COMPACT clip — the default timeline view', async () => {
+    const { container } = await renderWithPeaks(true);
+    await vi.waitFor(() => {
+      expect(container.querySelector('canvas')).toBeInTheDocument();
+    });
+  });
+
+  test('still draws it on the full-size clip', async () => {
+    const { container } = await renderWithPeaks(false);
+    await vi.waitFor(() => {
+      expect(container.querySelector('canvas')).toBeInTheDocument();
+    });
+  });
+
+  test('clears the icon-chip offset in compact, where there is no chip', async () => {
+    // left-7 exists to clear the lane icon. Compact draws no icon, so reusing
+    // that offset would leave a stray gap at the head of every audio clip.
+    const { container } = await renderWithPeaks(true);
+    const canvas = await vi.waitFor(() => {
+      const c = container.querySelector('canvas');
+      expect(c).toBeInTheDocument();
+      return c!;
+    });
+    expect(canvas.className).toContain('left-1');
+    expect(canvas.className).not.toContain('left-7');
+  });
+
+  test('a clip with no peaks stays exactly as it was', async () => {
+    const { api } = await import('../../../lib/api');
+    vi.spyOn(api, 'get').mockResolvedValue({ ok: true, data: { ok: true, peaks: null } } as never);
+    // A DIFFERENT path than the other tests in this file: ClipWaveform keeps a
+    // module-level cache keyed by asset path, deliberately, so that the same
+    // audio in several clips costs one request. Reusing the path here would
+    // hand this test the peaks an earlier test cached and assert nothing.
+    const base = buildWorshipDocumentaryProject({ title: 'Silent' });
+    const project = insertAssetOnTrack(base, {
+      trackKind: 'voiceover',
+      asset: { ...AUDIO, id: 'vo-silent', path: 'C:/outputs/no-peaks.mp3' },
+      startSec: 0,
+      durationSec: 16.7,
+    });
+    const { container } = render(<VisualTimelineCanvas project={project} compact />);
+    await screen.findByText('Edge-TTS');
+    expect(container.querySelector('canvas')).not.toBeInTheDocument();
+  });
+});

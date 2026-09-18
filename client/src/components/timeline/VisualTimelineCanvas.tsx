@@ -574,11 +574,36 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                                         readable, and absent entirely when the
                                         clip has no peaks: a missing waveform
                                         degrades to the flat clip, it never
-                                        blocks. */}
-                                    {!compact && asset?.kind === 'audio' && asset.path && (
+                                        blocks.
+
+                                        Drawn in compact too. It was gated on
+                                        !compact alongside the second text
+                                        line, but the two are not the same
+                                        problem: a stacked LABEL wrapped and
+                                        broke the 28px row, while a trace
+                                        painted behind the text costs no
+                                        height at all. Since the timeline
+                                        renders compact by default, gating it
+                                        out meant the waveform never appeared
+                                        on the screen the operator uses.
+
+                                        The insets differ because compact
+                                        draws no icon chip: left-7 clears the
+                                        chip in the full row, and would leave
+                                        a stray gap without one. */}
+                                    {asset?.kind === 'audio' && asset.path && (
                                       <ClipWaveform
                                         assetPath={asset.path}
-                                        className="pointer-events-none absolute inset-y-1 left-7 right-1 h-auto w-auto opacity-40"
+                                        /* Sized by the insets ALONE. It used to
+                                           carry h-auto/w-auto, but <canvas> is
+                                           a replaced element: `auto` resolves
+                                           to its intrinsic 300x150 and wins
+                                           over the insets, so the trace was a
+                                           fixed 300x150 box spilling out of a
+                                           17px clip row. With no width/height
+                                           declared, top+bottom and left+right
+                                           resolve the box to the clip. */
+                                        className={`pointer-events-none absolute opacity-40 ${compact ? 'inset-y-0.5 left-1 right-1' : 'inset-y-1 left-7 right-1'}`}
                                       />
                                     )}
                                     <button

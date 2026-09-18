@@ -101,5 +101,20 @@ export function ClipWaveform({ assetPath, className }: ClipWaveformProps) {
   // Nothing yet, or nothing available: the clip stays exactly as it was.
   if (!peaks) return null;
 
-  return <canvas ref={canvasRef} className={className} aria-hidden="true" />;
+  // width/height are set on the ELEMENT by the draw effect, at device
+  // resolution. Those attributes are also a replaced element's intrinsic size,
+  // so without an explicit CSS size the canvas lays out at them (300x150 by
+  // default, or whatever the last draw set) and the positioning insets never
+  // get to size it — the trace rendered as a 300x150 block spilling out of a
+  // 17px clip row. Pinning the CSS size to 100% of the inset-positioned box
+  // keeps layout and backing store independent, which is what lets the draw
+  // effect read a real rect instead of feeding its own attributes back in.
+  return (
+    <canvas
+      ref={canvasRef}
+      className={className}
+      style={{ width: '100%', height: '100%' }}
+      aria-hidden="true"
+    />
+  );
 }
