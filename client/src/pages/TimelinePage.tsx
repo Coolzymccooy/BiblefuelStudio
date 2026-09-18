@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { api, TRANSCRIBE_TIMEOUT_MS, MEDIA_OP_TIMEOUT_MS, videoGenApi, timelineApi, RESUMABLE_UPLOAD_MAX_BYTES } from '../lib/api';
@@ -1485,9 +1486,18 @@ export function TimelinePage() {
     // panel below is built during render — declaring it later threw
     // "Cannot access 'handleSendBackgroundsToBroll' before initialization" and
     // took the whole page to the error boundary. tsc does not catch this.
-    const handleSendBackgroundsToBroll = () => {
+    /**
+     * @param includeLabPicks Merge in backgrounds picked in the Render lab.
+     *   True from the Output panel's blocker, which shows no list and is a
+     *   "use everything I have" rescue. FALSE from the Background tool, whose
+     *   button names a count taken from the visible list — placing 7 when the
+     *   button says "Place 3" is a bug, not a bonus.
+     */
+    const handleSendBackgroundsToBroll = (includeLabPicks = true) => {
         if (!documentaryProject) { toast.error('Create a documentary timeline first'); return; }
-        const labPicks = loadJson<Array<{ id?: string; url?: string; kind?: string }>>(STORAGE_KEYS.renderBackgrounds, []);
+        const labPicks = includeLabPicks
+            ? loadJson<Array<{ id?: string; url?: string; kind?: string }>>(STORAGE_KEYS.renderBackgrounds, [])
+            : [];
         const seen = new Set<string>();
         const picks = [...backgroundItems, ...labPicks]
             .map((b: any) => ({ path: String(b.path || b.id || b.url || ''), kind: b.kind === 'image' ? 'image' as const : 'video' as const, label: String(b.label || b.name || (b.id ?? '')).slice(0, 40) }))
@@ -1690,7 +1700,7 @@ export function TimelinePage() {
                                             people, so the action belongs here,
                                             unconditionally. */}
                                         <Button
-                                            onClick={handleSendBackgroundsToBroll}
+                                            onClick={() => handleSendBackgroundsToBroll(false)}
                                             variant="secondary"
                                             className="w-full h-9 text-[10px]"
                                         >
@@ -1999,7 +2009,7 @@ export function TimelinePage() {
                     label: 'Add a video or B-roll clip',
                     status: 'todo' as const,
                     detail: 'The renderer needs a clip with media on Real footage or B-roll. Send your picked backgrounds to the B-roll lane, or insert source media (Media tool).',
-                    action: { label: 'Send backgrounds to B-roll', onClick: handleSendBackgroundsToBroll },
+                    action: { label: 'Send backgrounds to B-roll', onClick: () => handleSendBackgroundsToBroll(true) },
                 }]),
             { label: 'Voice-over', status: documentaryProject?.tracks.some((t) => t.kind === 'voiceover' && t.clips.length > 0) ? 'done' : 'optional', detail: 'Generate one in the Voice tool, or let the sermon audio carry it.' },
         ]
@@ -2046,7 +2056,22 @@ export function TimelinePage() {
     };
 
 
-    const overlays = (
+    // PORTALLED to document.body, not rendered in place.
+    //
+    // These overlays are `position: fixed; inset-0`, which normally means "the
+    // viewport". But an ancestor here — div.mx-auto.max-w-[1600px] — carries a
+    // CSS transform, and a transformed ancestor becomes the containing block
+    // for fixed descendants. So the backdrop and the modal were being sized and
+    // stacked INSIDE that wrapper: z-[60] competed only with its siblings, and
+    // the live-preview stage painted straight over the preview modal. The video
+    // was mounted, on-screen and playing — elementFromPoint at its centre
+    // returned the stage's <video> instead, which is why clicking Preview
+    // looked like nothing happened.
+    //
+    // Portalling escapes the transformed ancestor so `fixed` means the viewport
+    // again. Note this is about the DOM parent only: React context and state
+    // still flow normally through the portal.
+    const overlays = createPortal((
         <>
             {/* Library Picker Modal — multi-select up to MAX_BACKGROUNDS.
                 Clicking a tile toggles its inclusion in the ordered list;
@@ -2081,11 +2106,24 @@ export function TimelinePage() {
 
             {/* Preview Result Modal */}
             {previewUrl && (
-                <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+                <div className="fixed inset-0 z-[60] flex items-center justify-center overflow-y-auto p-4">
                     <div className="absolute inset-0 bg-black/90 backdrop-blur-md" onClick={() => setPreviewUrl(null)} />
-                    <div className="relative w-full max-w-xl animate-in zoom-in-95 duration-200">
+                    {/* max-h + my-auto, not just centring. The card was a fixed
+                        9:16 box: on a 16:9 sermon at max-w-xl that computes to
+                        ~1024px of video plus chrome, taller than a 784px
+                        viewport, so flex centring pushed the top of the modal
+                        to y=-444 and it rendered off-screen entirely. Clicking
+                        Preview then looked like nothing happened at all. */}
+                    <div className="relative my-auto w-full max-w-xl animate-in zoom-in-95 duration-200">
                         <Card className="border-primary-500/30 shadow-[0_0_50px_rgba(var(--primary-500-rgb),0.3)]">
-                            <div className="aspect-[9/16] bg-black rounded-xl overflow-hidden mb-4 relative">
+                            {/* Follow the project's aspect instead of assuming
+                                portrait — this modal previews the SOURCE media,
+                                which is landscape as often as not — and cap the
+                                height so the modal always fits the screen. */}
+                            <div
+                                className="bg-black rounded-xl overflow-hidden mb-4 relative max-h-[70vh]"
+                                style={{ aspectRatio: documentaryProject?.aspect === '9:16' ? '9 / 16' : documentaryProject?.aspect === '1:1' ? '1 / 1' : '16 / 9' }}
+                            >
                                 {/* Must go through api.mediaUrl: previewUrl holds a
                                     server PATH, not a servable URL. Passing it raw
                                     opened the modal but never played, while Download
@@ -2214,7 +2252,7 @@ export function TimelinePage() {
                 />
             )}
         </>
-    );
+    ), document.body);
 
     if (editorLayout) {
         return (
