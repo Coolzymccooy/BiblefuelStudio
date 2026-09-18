@@ -308,7 +308,7 @@ export function RenderBackgroundsPanel({
             value={genVisualsMode}
             onChange={(e) => onGenVisualsModeChange(e.target.value as GenerateMode)}
             aria-label="How generated visuals combine with your backgrounds"
-            className="h-9 text-xs rounded-md bg-dark-900/70 border border-white/10 px-2 text-gray-200"
+            className="h-9 text-xs rounded-md bg-editor-panel border border-editor-line px-2 text-editor-text"
           >
             <option value="alongside">Alongside my backgrounds</option>
             <option value="replace">Only AI visuals</option>
@@ -317,7 +317,7 @@ export function RenderBackgroundsPanel({
             value={genVisualsCount}
             onChange={(e) => onGenVisualsCountChange(Number(e.target.value))}
             aria-label="How many images to generate"
-            className="h-9 text-xs rounded-md bg-dark-900/70 border border-white/10 px-2 text-gray-200"
+            className="h-9 text-xs rounded-md bg-editor-panel border border-editor-line px-2 text-editor-text"
           >
             {[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n} image{n === 1 ? '' : 's'}</option>)}
           </select>
