@@ -55,7 +55,13 @@ export function NotificationsBell() {
             >
                 <Bell size={20} />
                 {unread > 0 && (
-                    <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-[9px] font-bold text-white flex items-center justify-center shadow-lg shadow-rose-500/40">
+                    /* The badge's ground is ALWAYS red, in every theme, so its
+                       ink is pinned white rather than tokenised. `text-white`
+                       cannot be used: light mode remaps that utility to #111111
+                       (right for a heading on a pale card, wrong on red — it
+                       measured 4.02:1). rose-600 rather than rose-500 puts
+                       white at 4.70:1 instead of 3.67:1. */
+                    <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-rose-600 text-[9px] font-bold text-[#ffffff] flex items-center justify-center shadow-lg shadow-rose-500/40">
                         {unread > 9 ? '9+' : unread}
                     </span>
                 )}
@@ -101,7 +107,7 @@ export function NotificationsBell() {
                                             ) : n.kind === 'campaign_failed' ? (
                                                 <XCircle size={16} className="text-content-secondary flex-shrink-0 mt-0.5" />
                                             ) : n.kind === 'job_done' ? (
-                                                <CheckCircle2 size={16} className="text-[#7fb5aa] flex-shrink-0 mt-0.5" />
+                                                <CheckCircle2 size={16} className="text-tone-success flex-shrink-0 mt-0.5" />
                                             ) : n.kind === 'job_failed' ? (
                                                 <XCircle size={16} className="text-rose-400 flex-shrink-0 mt-0.5" />
                                             ) : (

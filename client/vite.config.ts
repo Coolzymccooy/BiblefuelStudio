@@ -28,6 +28,11 @@ export default defineConfig(({ mode }) => {
       // proxies, on every network the machine is joined to. Deliberate, not
       // automatic.
       host: env.VITE_EXPOSE ? true : undefined,
+      // Vite rejects requests whose Host header it does not recognise, which
+      // an ngrok/tunnel domain never is. Allowed ONLY under the same opt-in
+      // flag as host binding above, so a tunnel stays as deliberate as LAN
+      // exposure rather than becoming the default.
+      allowedHosts: env.VITE_EXPOSE ? ['.ngrok-free.app', '.ngrok-free.dev', '.ngrok.app', '.ngrok.io', '.trycloudflare.com'] : undefined,
       proxy: {
         '/api': {
           target: apiTarget,

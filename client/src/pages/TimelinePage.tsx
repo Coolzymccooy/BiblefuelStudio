@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { api, TRANSCRIBE_TIMEOUT_MS, MEDIA_OP_TIMEOUT_MS, videoGenApi, timelineApi, RESUMABLE_UPLOAD_MAX_BYTES } from '../lib/api';
@@ -50,6 +51,7 @@ import { LivePreviewStage } from '../components/timeline/LivePreviewStage';
 import { addEffectToScene, removeEffectClip } from '../lib/timelineEffects';
 import { syncSidecarTracks } from '../lib/timelineTrackSync';
 import type { TimelineEffectKind, TimelineTrackKind } from '../lib/timelineProject';
+import { hiddenLaneWarning } from '../lib/hiddenLanes';
 import { MasteringPanel } from '../components/timeline/MasteringPanel';
 import { RecentAudioPanel } from '../components/timeline/RecentAudioPanel';
 import { TranscriptActions } from '../components/timeline/TranscriptActions';
@@ -1294,6 +1296,16 @@ export function TimelinePage() {
         }
         if (isRenderingDocumentaryTimeline) return;
 
+        // F3 — hiding a lane EXCLUDES it from the render. That is the one
+        // editorial setting that can ship the wrong video with no error at
+        // all: hide the music bed to check a cut, forget, render next week,
+        // and the sermon goes out silent. So say so, name the lanes, and make
+        // the operator confirm. Lanes with no clips are not mentioned —
+        // nothing is lost there, and a dialog that cries wolf gets dismissed
+        // unread.
+        const hidden = hiddenLaneWarning(documentaryProject);
+        if (hidden && !window.confirm(hidden.message)) return;
+
         const toastId = toast.loading('Queued timeline render…');
         setIsRenderingDocumentaryTimeline(true);
         setDocumentaryRenderProgress(0);
@@ -1469,6 +1481,44 @@ export function TimelinePage() {
     // Hoisted so the classic card AND the editor panel render the SAME
     // JSX. Duplicating a 200-line block would guarantee the two layouts
     // drift apart the first time either is touched.
+    // Defined ABOVE videoBackgroundContent, which calls it. As a const arrow
+    // function it is in the temporal dead zone until this line runs, and the
+    // panel below is built during render — declaring it later threw
+    // "Cannot access 'handleSendBackgroundsToBroll' before initialization" and
+    // took the whole page to the error boundary. tsc does not catch this.
+    /**
+     * @param includeLabPicks Merge in backgrounds picked in the Render lab.
+     *   True from the Output panel's blocker, which shows no list and is a
+     *   "use everything I have" rescue. FALSE from the Background tool, whose
+     *   button names a count taken from the visible list — placing 7 when the
+     *   button says "Place 3" is a bug, not a bonus.
+     */
+    const handleSendBackgroundsToBroll = (includeLabPicks = true) => {
+        if (!documentaryProject) { toast.error('Create a documentary timeline first'); return; }
+        const labPicks = includeLabPicks
+            ? loadJson<Array<{ id?: string; url?: string; kind?: string }>>(STORAGE_KEYS.renderBackgrounds, [])
+            : [];
+        const seen = new Set<string>();
+        const picks = [...backgroundItems, ...labPicks]
+            .map((b: any) => ({ path: String(b.path || b.id || b.url || ''), kind: b.kind === 'image' ? 'image' as const : 'video' as const, label: String(b.label || b.name || (b.id ?? '')).slice(0, 40) }))
+            .filter((b) => b.path && !seen.has(b.path) && seen.add(b.path));
+        if (picks.length === 0) { toast.error('Pick backgrounds first — Background tool, or Render lab → Visuals'); return; }
+        const total = Math.max(1, documentaryProject.targetDurationSec);
+        const each = total / picks.length;
+        let next = documentaryProject;
+        picks.forEach((b, i) => {
+            next = insertAssetOnTrack(next, {
+                trackKind: 'broll',
+                asset: { id: `asset-bg-${Date.now()}-${i}`, kind: b.kind, source: 'upload', label: b.label || `Background ${i + 1}`, path: b.path, tags: ['background'] },
+                startSec: i * each,
+                durationSec: each,
+                fit: 'cover',
+            });
+        });
+        setDocumentaryProject(next);
+        toast.success(`${picks.length} background${picks.length === 1 ? '' : 's'} placed on the B-roll lane`);
+    };
+
     const videoBackgroundContent = (
         <>
                             <DropZone
@@ -1635,6 +1685,28 @@ export function TimelinePage() {
                                                 />
                                             </label>
                                         </div>
+                                        {/* Placing picked backgrounds on the
+                                            B-roll lane had exactly ONE entry
+                                            point: a blocker row in the Output
+                                            panel, shown only while the timeline
+                                            had no video or B-roll clip at all.
+                                            Add any real footage and the blocker
+                                            cleared, taking the only route to
+                                            B-roll with it — so a timeline with
+                                            footage could no longer receive the
+                                            images the operator had just picked.
+                                            The Background tool is where the
+                                            empty B-roll lane already sends
+                                            people, so the action belongs here,
+                                            unconditionally. */}
+                                        <Button
+                                            onClick={() => handleSendBackgroundsToBroll(false)}
+                                            variant="secondary"
+                                            className="w-full h-9 text-[10px]"
+                                        >
+                                            <Layers size={14} className="mr-1" />
+                                            Place {backgroundItems.length} on B-roll lane
+                                        </Button>
                                         {uploadProgress !== null && (
                                             <div className="space-y-1 px-1">
                                                 <div className="flex justify-between text-[10px] text-meta">
@@ -1861,29 +1933,6 @@ export function TimelinePage() {
     // B-roll clip with a media path found'). Backgrounds already picked - in the
     // Background tool or the docked Render lab - become B-roll clips spread
     // evenly across the cut, so voice + captions timelines can render.
-    const handleSendBackgroundsToBroll = () => {
-        if (!documentaryProject) { toast.error('Create a documentary timeline first'); return; }
-        const labPicks = loadJson<Array<{ id?: string; url?: string; kind?: string }>>(STORAGE_KEYS.renderBackgrounds, []);
-        const seen = new Set<string>();
-        const picks = [...backgroundItems, ...labPicks]
-            .map((b: any) => ({ path: String(b.path || b.id || b.url || ''), kind: b.kind === 'image' ? 'image' as const : 'video' as const, label: String(b.label || b.name || (b.id ?? '')).slice(0, 40) }))
-            .filter((b) => b.path && !seen.has(b.path) && seen.add(b.path));
-        if (picks.length === 0) { toast.error('Pick backgrounds first — Background tool, or Render lab → Visuals'); return; }
-        const total = Math.max(1, documentaryProject.targetDurationSec);
-        const each = total / picks.length;
-        let next = documentaryProject;
-        picks.forEach((b, i) => {
-            next = insertAssetOnTrack(next, {
-                trackKind: 'broll',
-                asset: { id: `asset-bg-${Date.now()}-${i}`, kind: b.kind, source: 'upload', label: b.label || `Background ${i + 1}`, path: b.path, tags: ['background'] },
-                startSec: i * each,
-                durationSec: each,
-                fit: 'cover',
-            });
-        });
-        setDocumentaryProject(next);
-        toast.success(`${picks.length} background${picks.length === 1 ? '' : 's'} placed on the B-roll lane`);
-    };
 
     // Canvas edits (trash on a clip, split, drag) go through here so a removed
     // MIRRORED clip also leaves its source; otherwise the sidecar sync
@@ -1960,7 +2009,7 @@ export function TimelinePage() {
                     label: 'Add a video or B-roll clip',
                     status: 'todo' as const,
                     detail: 'The renderer needs a clip with media on Real footage or B-roll. Send your picked backgrounds to the B-roll lane, or insert source media (Media tool).',
-                    action: { label: 'Send backgrounds to B-roll', onClick: handleSendBackgroundsToBroll },
+                    action: { label: 'Send backgrounds to B-roll', onClick: () => handleSendBackgroundsToBroll(true) },
                 }]),
             { label: 'Voice-over', status: documentaryProject?.tracks.some((t) => t.kind === 'voiceover' && t.clips.length > 0) ? 'done' : 'optional', detail: 'Generate one in the Voice tool, or let the sermon audio carry it.' },
         ]
@@ -2007,7 +2056,22 @@ export function TimelinePage() {
     };
 
 
-    const overlays = (
+    // PORTALLED to document.body, not rendered in place.
+    //
+    // These overlays are `position: fixed; inset-0`, which normally means "the
+    // viewport". But an ancestor here — div.mx-auto.max-w-[1600px] — carries a
+    // CSS transform, and a transformed ancestor becomes the containing block
+    // for fixed descendants. So the backdrop and the modal were being sized and
+    // stacked INSIDE that wrapper: z-[60] competed only with its siblings, and
+    // the live-preview stage painted straight over the preview modal. The video
+    // was mounted, on-screen and playing — elementFromPoint at its centre
+    // returned the stage's <video> instead, which is why clicking Preview
+    // looked like nothing happened.
+    //
+    // Portalling escapes the transformed ancestor so `fixed` means the viewport
+    // again. Note this is about the DOM parent only: React context and state
+    // still flow normally through the portal.
+    const overlays = createPortal((
         <>
             {/* Library Picker Modal — multi-select up to MAX_BACKGROUNDS.
                 Clicking a tile toggles its inclusion in the ordered list;
@@ -2042,11 +2106,24 @@ export function TimelinePage() {
 
             {/* Preview Result Modal */}
             {previewUrl && (
-                <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+                <div className="fixed inset-0 z-[60] flex items-center justify-center overflow-y-auto p-4">
                     <div className="absolute inset-0 bg-black/90 backdrop-blur-md" onClick={() => setPreviewUrl(null)} />
-                    <div className="relative w-full max-w-xl animate-in zoom-in-95 duration-200">
+                    {/* max-h + my-auto, not just centring. The card was a fixed
+                        9:16 box: on a 16:9 sermon at max-w-xl that computes to
+                        ~1024px of video plus chrome, taller than a 784px
+                        viewport, so flex centring pushed the top of the modal
+                        to y=-444 and it rendered off-screen entirely. Clicking
+                        Preview then looked like nothing happened at all. */}
+                    <div className="relative my-auto w-full max-w-xl animate-in zoom-in-95 duration-200">
                         <Card className="border-primary-500/30 shadow-[0_0_50px_rgba(var(--primary-500-rgb),0.3)]">
-                            <div className="aspect-[9/16] bg-black rounded-xl overflow-hidden mb-4 relative">
+                            {/* Follow the project's aspect instead of assuming
+                                portrait — this modal previews the SOURCE media,
+                                which is landscape as often as not — and cap the
+                                height so the modal always fits the screen. */}
+                            <div
+                                className="bg-black rounded-xl overflow-hidden mb-4 relative max-h-[70vh]"
+                                style={{ aspectRatio: documentaryProject?.aspect === '9:16' ? '9 / 16' : documentaryProject?.aspect === '1:1' ? '1 / 1' : '16 / 9' }}
+                            >
                                 {/* Must go through api.mediaUrl: previewUrl holds a
                                     server PATH, not a servable URL. Passing it raw
                                     opened the modal but never played, while Download
@@ -2175,7 +2252,7 @@ export function TimelinePage() {
                 />
             )}
         </>
-    );
+    ), document.body);
 
     if (editorLayout) {
         return (
@@ -3377,15 +3454,15 @@ export function TimelinePage() {
                                     {clips.map((clip, idx) => (
                                         <div
                                             key={clip.id}
-                                            className="group relative bg-white/[0.02] border border-white/5 rounded-xl p-4 hover:border-primary-500/30 hover:bg-white/[0.04] transition-all"
+                                            className="group relative rounded-xl border border-editor-line bg-editor-panel p-4 transition-all hover:border-editor-text/25"
                                         >
                                             <div className="flex items-start justify-between gap-4">
                                                 <div className="flex items-start gap-4 flex-1">
-                                                    <div className="h-8 w-8 rounded-lg bg-black/40 flex items-center justify-center text-xs font-bold text-gray-500">
+                                                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-editor-hover text-xs font-bold tabular-nums text-editor-dim">
                                                         {idx + 1}
                                                     </div>
                                                     <div className="flex-1 min-w-0">
-                                                        <p className="text-sm font-medium text-gray-200 truncate">
+                                                        <p className="truncate text-sm font-semibold text-editor-text">
                                                             {clip.label || clip.path.split('/').pop()}
                                                         </p>
                                                         <p className="text-[10px] text-content-tertiary font-mono break-all">{clip.path}</p>

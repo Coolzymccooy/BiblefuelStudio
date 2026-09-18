@@ -31,7 +31,7 @@ export function HowItWorks() {
           whileInView="visible"
           viewport={{ once: true, amount: 0.4 }}
           variants={m.fadeUp}
-          className="mb-10 mt-3 max-w-[600px] font-bodyserif text-[14px] leading-[1.55] text-[#a8a098] sm:mb-12 sm:text-[15px]"
+          className="mb-10 mt-3 max-w-[600px] font-bodyserif text-[14px] leading-[1.55] text-content-tertiary sm:mb-12 sm:text-[15px]"
         >
           The studio was built around a simple liturgy of making.
         </motion.p>
@@ -47,7 +47,7 @@ export function HowItWorks() {
             <motion.div key={s.num} variants={m.fadeUp} className="border-t border-editorial-goldLite/20 pt-5 sm:pt-6">
               <div className="font-sans text-[11px] uppercase tracking-[2px] text-editorial-goldLite">{s.num}</div>
               <h3 className="mt-2 font-displaySerif text-[22px] sm:text-[26px]">{s.title}</h3>
-              <p className="mt-3 font-bodyserif text-[14px] leading-[1.6] text-[#a8a098]">{s.body}</p>
+              <p className="mt-3 font-bodyserif text-[14px] leading-[1.6] text-content-tertiary">{s.body}</p>
             </motion.div>
           ))}
         </motion.div>

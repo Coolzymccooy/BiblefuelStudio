@@ -114,7 +114,7 @@ export function PlanAndUsageCard() {
                 <div>
                     <div className="flex items-center gap-2">
                         {state.isSuperAdmin ? (
-                            <ShieldCheck size={18} className="text-[#7fb5aa]" />
+                            <ShieldCheck size={18} className="text-tone-success" />
                         ) : state.plan === 'premium' ? (
                             <Zap size={18} className="text-content-secondary" />
                         ) : (

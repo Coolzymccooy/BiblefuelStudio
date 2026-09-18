@@ -87,8 +87,16 @@ export interface TimelineTrack {
   kind: TimelineTrackKind;
   label: string;
   clips: TimelineClip[];
+  /** Locked = clips visible and selectable for inspection, but not editable. */
   locked?: boolean;
   muted?: boolean;
+  /**
+   * Hidden = EXCLUDED from the render, not merely dimmed (decided 2026-09-17).
+   * The server honours this in both validateTimelineProjectForRender and
+   * buildTimelineRenderPlan; the client warns before rendering, via
+   * hiddenLaneWarning() in lib/hiddenLanes.ts.
+   */
+  hidden?: boolean;
 }
 
 export interface TimelineSceneMarker {
@@ -130,7 +138,7 @@ export interface BuildWorshipDocumentaryProjectInput {
 
 const TRACKS: Array<{ kind: TimelineTrackKind; label: string }> = [
   { kind: 'video', label: 'Real footage' },
-  { kind: 'broll', label: 'AI B-roll / cutaways' },
+  { kind: 'broll', label: 'AI B-roll / GFX' },
   { kind: 'voiceover', label: 'Voice-over' },
   { kind: 'music', label: 'Music bed' },
   { kind: 'captions', label: 'Captions' },

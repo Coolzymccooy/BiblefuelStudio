@@ -237,7 +237,7 @@ export function ReportIssueWidget() {
                 onClick={() => setOpen(true)}
                 title="Report an issue"
                 aria-label="Report an issue"
-                className="fixed right-4 lg:right-6 lg:bottom-6 z-30 w-11 h-11 rounded-full bg-bf-goldDeep/90 hover:bg-bf-gold text-[#221703] shadow-lg shadow-black/40 flex items-center justify-center transition-transform hover:scale-105 active:scale-95 bottom-[calc(92px+env(safe-area-inset-bottom))]"
+                className="fixed right-4 lg:right-6 lg:bottom-6 z-30 w-11 h-11 rounded-full bg-bf-goldDeep/90 hover:bg-bf-gold text-accent-ink shadow-lg shadow-black/40 flex items-center justify-center transition-transform hover:scale-105 active:scale-95 bottom-[calc(92px+env(safe-area-inset-bottom))]"
             >
                 <Bug size={20} strokeWidth={2.5} />
             </button>
@@ -457,7 +457,7 @@ export function ReportIssueWidget() {
                                                 )}
 
                                                 {issue.resolutionNote && (
-                                                    <div className="mt-2 text-xs text-[#7fb5aa]/80 italic">Note: {issue.resolutionNote}</div>
+                                                    <div className="mt-2 text-xs text-tone-success/80 italic">Note: {issue.resolutionNote}</div>
                                                 )}
 
                                                 {(issue.replies?.length || 0) > 0 && (

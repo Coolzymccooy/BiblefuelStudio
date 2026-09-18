@@ -20,7 +20,7 @@ const TONE = {
         Icon: CheckCircle2,
         wrap: 'border-[#7fb5aa]/40 bg-[#7fb5aa]/10',
         icon: 'text-content-secondary',
-        title: 'text-[#c4ddd8]',
+        title: 'text-tone-success',
     },
     warning: {
         Icon: AlertTriangle,
