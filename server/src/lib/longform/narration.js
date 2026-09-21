@@ -36,9 +36,28 @@ async function synthChunk({ text, voiceId, template, chunksDir, synthesize }) {
   if (fs.existsSync(cached) && fs.statSync(cached).size > 0) return { file: cached, provider: null };
   const r = await synthesize({ text, voiceId, prosody: { rate: template.voice.rate }, preferredProvider: provider, scriptureMode: true });
   if (!r?.ok || !r.file) throw new Error(`narration: synthesis returned no file for chunk "${text.slice(0, 40)}…"`);
-  fs.copyFileSync(r.file, cached);
+  // Copy to a sibling temp file then rename: rename is atomic on the same
+  // filesystem, so a hard kill mid-copy can never leave a truncated file at
+  // the cache path. The cache-hit check above only ever looks at `cached`,
+  // so a stray `.tmp` left by an interrupted run is simply ignored.
+  const tmp = `${cached}.tmp`;
+  fs.copyFileSync(r.file, tmp);
+  fs.renameSync(tmp, cached);
   // The orchestrator may have fallen through to another provider; report the real one.
   return { file: cached, provider: r.provider || provider };
+}
+
+/**
+ * Resolve a probed duration into a positive integer millisecond count, or
+ * throw a named error. The real probeAudioDurationSec returns `null` (not a
+ * throw) on ffprobe failure or a non-positive duration — left unguarded that
+ * silently contributes 0ms and corrupts every later section's timing.
+ */
+async function measureMs(probe, file, label) {
+  const sec = await probe(file);
+  const ms = Number(sec) * 1000;
+  if (!Number.isFinite(ms) || ms <= 0) throw new Error(`narration: could not measure duration of ${label}`);
+  return Math.round(ms);
 }
 
 function concatListLine(file) {
@@ -74,7 +93,7 @@ export async function narrateSections({ sections, template, voiceId, workDir }, 
       const { file, provider } = await synthChunk({ text, voiceId, template, chunksDir, synthesize });
       if (provider && !usedProvider) usedProvider = provider;
       entries.push(file);
-      cursorMs += Math.round((await probe(file)) * 1000);
+      cursorMs += await measureMs(probe, file, path.basename(file));
     }
     timed.push({ ...sections[i], startMs, endMs: cursorMs });
   }

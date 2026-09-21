@@ -5,6 +5,7 @@ import os from "os";
 import path from "path";
 import { narrateSections, chunkCacheKey } from "./narration.js";
 import { longformTemplateById } from "./templates.js";
+import { splitForProvider } from "./chunker.js";
 
 function harness({ secondsPerChunk = 2, failOnCall = -1 } = {}) {
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "narr-"));
@@ -73,5 +74,44 @@ describe("narrateSections", () => {
   test("rejects empty sections with a named error", async () => {
     const { workDir, deps } = harness();
     await assert.rejects(() => narrateSections({ sections: [], template, voiceId: "v", workDir }, deps), /no sections/i);
+  });
+  test("rejects with a named error when a chunk's duration cannot be measured", async () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "narr-"));
+    let chunkProbeCalls = 0;
+    const deps = {
+      synthesize: async (req) => {
+        const f = path.join(workDir, `tts-${Math.random().toString(36).slice(2)}.mp3`);
+        fs.writeFileSync(f, "audio");
+        return { ok: true, file: f, provider: "azure", voice: req.voiceId };
+      },
+      // Mirrors the real probeAudioDurationSec: returns null (not a throw) on
+      // ffprobe failure for the second chunk, everything else measures fine.
+      probeDurationSec: async (p) => {
+        if (path.basename(p).startsWith("silence-")) return 5;
+        chunkProbeCalls += 1;
+        return chunkProbeCalls === 2 ? null : 2;
+      },
+      runFfmpeg: async (args) => {
+        const out = args[args.length - 1];
+        fs.writeFileSync(out, "made");
+      },
+    };
+    await assert.rejects(
+      () => narrateSections({ sections, template, voiceId: "v1", workDir }, deps),
+      /could not measure duration/
+    );
+  });
+  test("ignores a stray .tmp cache file left by an interrupted run", async () => {
+    const { workDir, calls, deps } = harness();
+    const chunksDir = path.join(workDir, "chunks");
+    fs.mkdirSync(chunksDir, { recursive: true });
+    const provider = template.voice.preferredProviders[0];
+    const firstChunkText = splitForProvider(sections[0].text, template.voice.maxChunkChars)[0];
+    const key = chunkCacheKey({ provider, voiceId: "v1", rate: template.voice.rate, text: firstChunkText });
+    // A truncated leftover from a hard-killed prior run — must NOT be treated as a cache hit.
+    fs.writeFileSync(path.join(chunksDir, `${key}.mp3.tmp`), "partial-leftover");
+    await narrateSections({ sections, template, voiceId: "v1", workDir }, deps);
+    assert.equal(calls.synth[0].text, firstChunkText, "a fresh synth happened for the first chunk despite the stray .tmp file");
+    assert.ok(fs.existsSync(path.join(chunksDir, `${key}.mp3`)), "the real cache file was written after synth");
   });
 });
