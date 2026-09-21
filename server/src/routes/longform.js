@@ -18,6 +18,14 @@ let _pipeline = runStoryPipeline;
 export function _setPipelineImpl(fn) { _pipeline = fn; }
 export function _resetPipelineImpl() { _pipeline = runStoryPipeline; }
 
+// Projects with a narration run currently in flight (same pattern as
+// story.js's cancelledProjects). Without this, a double-click or an
+// impatient "Resume" click during a stalled-but-actually-still-running
+// narration would start a second `_narrate` over the same chunk cache
+// directory concurrently. A server restart empties the set, so a genuinely
+// stalled project (the process died) can still be resumed.
+const activeNarrations = new Set();
+
 const router = Router();
 
 router.get("/templates", (_req, res) => {
@@ -79,6 +87,13 @@ async function runNarration(ctx, projectId, voiceId) {
   const project = readProject(ctx.dataDir, projectId);
   const template = longformTemplateById(project?.longform?.templateId);
   const workDir = path.join(ctx.outputDir, "longform", projectId);
+  // The route persists whatever voice was chosen onto longform.voiceId before
+  // calling this function, so a resume (no voiceId in the request body, e.g.
+  // the client's stalled-narration Resume path) still uses the voice the user
+  // originally picked. This matters beyond consistency: the TTS chunk cache
+  // key includes voiceId, so resuming with a different (or missing) voice
+  // would silently miss every cached chunk and re-synthesise the whole thing.
+  const resolvedVoiceId = voiceId || project?.longform?.voiceId || undefined;
   // Heartbeat: a 30-60 min session can take several minutes to narrate, one
   // provider call at a time. Persisting done/total (and bumping updatedAt)
   // after every chunk keeps the client's stall detector from firing on a
@@ -92,14 +107,14 @@ async function runNarration(ctx, projectId, voiceId) {
       }
     } catch { /* progress persistence is best-effort */ }
   };
-  const narrated = await _narrate({ sections: project.longform.sections, template, voiceId, workDir }, { onProgress });
+  const narrated = await _narrate({ sections: project.longform.sections, template, voiceId: resolvedVoiceId, workDir }, { onProgress });
   const words = wordsFromSections(narrated.sections);
   const patch = buildImportedTranscript({ script: narrated.sections.map((s) => s.text).join(" "), audioPath: narrated.audioPath, durationMs: narrated.durationMs, words });
   const fresh = readProject(ctx.dataDir, projectId);
   writeProject(ctx.dataDir, {
     ...fresh,
     ...patch,
-    longform: { ...fresh.longform, sections: narrated.sections, provider: narrated.provider, voiceId: voiceId || null },
+    longform: { ...fresh.longform, sections: narrated.sections, provider: narrated.provider, voiceId: resolvedVoiceId || null },
     status: STORY_STATUS.SEGMENTING,
   });
   await _pipeline({ dataDir: ctx.dataDir, outputDir: ctx.outputDir }, projectId, narrated.audioPath);
@@ -110,13 +125,27 @@ router.post("/:id/narrate", (req, res) => {
   if (!project) return res.status(404).json({ ok: false, error: "project not found" });
   if (!project.longform?.sections?.length) return res.status(400).json({ ok: false, error: "project has no sections to narrate" });
   if (!longformTemplateById(project.longform.templateId)) return res.status(400).json({ ok: false, error: "project's template is unknown" });
+  if (activeNarrations.has(project.projectId)) {
+    return res.status(409).json({ ok: false, error: "narration is already running for this project" });
+  }
   const voiceId = req.body?.voiceId ? String(req.body.voiceId) : undefined;
-  const started = writeProject(req.ctx.dataDir, { ...project, status: STORY_STATUS.NARRATING, error: null });
-  const ctx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir };
-  runNarration(ctx, project.projectId, voiceId).catch((e) => {
-    const fresh = readProject(ctx.dataDir, project.projectId);
-    if (fresh) writeProject(ctx.dataDir, { ...fresh, status: STORY_STATUS.ERROR, error: String(e?.message || e) });
+  // Persist the chosen voice immediately (not just once narration finishes) so
+  // a resume call made with no voiceId — before this run has completed even
+  // once — can still fall back to it via runNarration's own resolution.
+  const started = writeProject(req.ctx.dataDir, {
+    ...project,
+    longform: { ...project.longform, voiceId: voiceId || project.longform?.voiceId || null },
+    status: STORY_STATUS.NARRATING,
+    error: null,
   });
+  const ctx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir };
+  activeNarrations.add(project.projectId);
+  runNarration(ctx, project.projectId, voiceId)
+    .catch((e) => {
+      const fresh = readProject(ctx.dataDir, project.projectId);
+      if (fresh) writeProject(ctx.dataDir, { ...fresh, status: STORY_STATUS.ERROR, error: String(e?.message || e) });
+    })
+    .finally(() => { activeNarrations.delete(project.projectId); });
   return res.json({ ok: true, project: started });
 });
 

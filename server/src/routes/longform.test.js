@@ -124,6 +124,67 @@ describe("POST /api/longform/:id/narrate", () => {
     assert.equal(p.longform.progress.total, 3);
     assert.equal(p.longform.progress.done, p.longform.progress.total);
   });
+  test("resume (no voiceId in the request) reuses the voice from the first narrate call", async () => {
+    const { body } = await request(app).post("/api/longform/draft").send({ idea: "x", templateId: "sleep-30" });
+    const id = body.project.projectId;
+    const receivedVoiceIds = [];
+    _setNarrateImpl(async ({ sections, voiceId, workDir }) => {
+      receivedVoiceIds.push(voiceId);
+      fs.mkdirSync(workDir, { recursive: true });
+      const audioPath = path.join(workDir, "narration.mp3"); fs.writeFileSync(audioPath, "a");
+      let t = 0;
+      const timed = sections.map((s) => { const out = { ...s, startMs: t, endMs: t + s.targetSec * 1000 }; t = out.endMs + 5000; return out; });
+      return { audioPath, durationMs: timed[timed.length - 1].endMs, sections: timed, provider: "azure" };
+    });
+    const pipelineCalls = [];
+    _setPipelineImpl(async (ctx, projectId, mediaPath) => { pipelineCalls.push({ projectId, mediaPath }); });
+
+    const first = await request(app).post(`/api/longform/${id}/narrate`).send({ voiceId: "v1" });
+    assert.equal(first.status, 200, JSON.stringify(first.body));
+    // The chosen voice is persisted immediately, in the same response — not
+    // only once the run finishes.
+    assert.equal(first.body.project.longform.voiceId, "v1");
+    await waitFor(id, () => pipelineCalls.length === 1);
+
+    // A resume call (the client's Resume button) sends no voiceId at all.
+    const second = await request(app).post(`/api/longform/${id}/narrate`).send({});
+    assert.equal(second.status, 200, JSON.stringify(second.body));
+    assert.equal(second.body.project.longform.voiceId, "v1", "restored from the project, not the empty request body");
+    await waitFor(id, () => pipelineCalls.length === 2);
+
+    // The TTS chunk cache is keyed by voiceId — resuming with a different (or
+    // missing) voice would silently miss every cached chunk.
+    assert.deepEqual(receivedVoiceIds, ["v1", "v1"]);
+  });
+  test("rejects a concurrent narrate call for the same project, and allows a new one once the first finishes", async () => {
+    const { body } = await request(app).post("/api/longform/draft").send({ idea: "x", templateId: "sleep-30" });
+    const id = body.project.projectId;
+    let resolveDeferred;
+    const deferred = new Promise((resolve) => { resolveDeferred = resolve; });
+    _setNarrateImpl(async ({ sections, workDir }) => {
+      fs.mkdirSync(workDir, { recursive: true });
+      await deferred;
+      const audioPath = path.join(workDir, "narration.mp3"); fs.writeFileSync(audioPath, "a");
+      let t = 0;
+      const timed = sections.map((s) => { const out = { ...s, startMs: t, endMs: t + s.targetSec * 1000 }; t = out.endMs + 5000; return out; });
+      return { audioPath, durationMs: timed[timed.length - 1].endMs, sections: timed, provider: "azure" };
+    });
+    const pipelineCalls = [];
+    _setPipelineImpl(async (ctx, projectId, mediaPath) => { pipelineCalls.push({ projectId, mediaPath }); });
+
+    const first = await request(app).post(`/api/longform/${id}/narrate`).send({ voiceId: "v1" });
+    assert.equal(first.status, 200, JSON.stringify(first.body));
+
+    const second = await request(app).post(`/api/longform/${id}/narrate`).send({});
+    assert.equal(second.status, 409);
+    assert.match(second.body.error, /already running/i);
+
+    resolveDeferred();
+    await waitFor(id, () => pipelineCalls.length === 1);
+
+    const third = await request(app).post(`/api/longform/${id}/narrate`).send({});
+    assert.equal(third.status, 200, JSON.stringify(third.body));
+  });
   test("refuses when the project has no sections", async () => {
     const { createProject, writeProject } = await import("../lib/story/projectStore.js");
     const p = writeProject(dataDir, { ...createProject(dataDir, { title: "bare" }), status: "draft_script" });
