@@ -29,7 +29,20 @@ function fakeGoogle() {
     google: {
       auth: { OAuth2 },
       youtube: () => ({
-        videos: { insert: async (args) => { calls.insert.push(args); return { data: { id: "vid1" } }; } },
+        videos: {
+          insert: async (args) => {
+            calls.insert.push(args);
+            // The real Google API client fully reads the upload stream over
+            // HTTP before this promise resolves. Drain it here too, so this
+            // fake doesn't leave an unconsumed fs.createReadStream dangling
+            // when postToYoutube's finally-block cleanup deletes the file.
+            const body = args?.media?.body;
+            if (body && typeof body[Symbol.asyncIterator] === "function") {
+              for await (const _chunk of body) { /* drain */ }
+            }
+            return { data: { id: "vid1" } };
+          },
+        },
         thumbnails: { set: async (args) => { calls.set.push(args); return { data: {} }; } },
       }),
     },
@@ -78,6 +91,22 @@ describe("POST /api/social/post destination=youtube", () => {
     assert.equal(body.snippet.title, "Be still");
     assert.equal(body.snippet.description, "Be still\nPsalm 46:10");
     assert.equal(body.status.privacyStatus, "unlisted");
+
+    // A caption-derived title (no explicit `title` sent) with a first line
+    // over 100 chars must be truncated, not rejected — unlike an explicitly
+    // provided over-length `title`, which validateYoutubeMetadata rejects by
+    // name (see "names the validation failure" below). Existing Timeline/
+    // Shorts shares regularly have a first caption line longer than 100
+    // chars and must keep working exactly as before this change.
+    fs.writeFileSync(path.join(outputDir, "clip2.mp4"), "vid");
+    const longFirstLine = "y".repeat(150);
+    const res2 = await request(a).post("/api/social/post").send({
+      destination: "youtube", videoUrl: "/outputs/clip2.mp4", caption: `${longFirstLine}\nmore caption text`,
+    });
+    assert.equal(res2.status, 200, JSON.stringify(res2.body));
+    const body2 = fake.calls.insert[1].requestBody;
+    assert.equal(body2.snippet.title, "y".repeat(100));
+    assert.equal(body2.snippet.title.length, 100);
   });
 
   test("names the validation failure and never calls YouTube", async () => {

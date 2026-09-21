@@ -120,26 +120,22 @@ async function resolveVideoInputForUpload(videoUrl, req) {
   return {
     filePath: outFile,
     cleanup: async () => {
-      // fs.createReadStream(outFile) (used to upload this file) opens its fd
-      // asynchronously on the next event-loop turn regardless of whether the
-      // caller ever reads from it. Deleting the file from a synchronous
-      // continuation of the same promise chain can race that open() and
-      // surface an unhandled ENOENT on the stream. Yielding to the event
-      // loop once first lets that open (or its consumption) settle before
-      // we remove the file.
-      await new Promise((resolve) => setImmediate(resolve));
       try { fs.unlinkSync(outFile); } catch {}
     },
   };
 }
 
-// Note: intentionally does NOT truncate to 100 chars here — the YouTube path
-// (validateYoutubeMetadata) must see the untruncated title so an over-length
-// title fails with a named error instead of being silently cut down.
+// An explicitly provided title is passed through UNTRUNCATED so
+// validateYoutubeMetadata can reject an over-length one by name instead of
+// it being silently cut down. The caption-derived fallback (Timeline/Shorts
+// shares, which send only a caption) keeps the 100-char truncation it always
+// had — those captions are prose, not something the user is asking YouTube
+// to title verbatim, so truncating instead of failing is the right default.
 function titleFromCaption(title, caption) {
   const provided = String(title || "").trim();
   if (provided) return provided;
-  return String(caption || "").trim().split("\n").find(Boolean) || "Biblefuel Studio Upload";
+  const fromCaption = String(caption || "").trim().split("\n").find(Boolean) || "Biblefuel Studio Upload";
+  return fromCaption.slice(0, 100);
 }
 
 const BIBLE_REFERENCE_REGEX = /\b(?:[1-3]\s+)?[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\s+\d+:\d+(?:[-–]\d+)?\b/;
