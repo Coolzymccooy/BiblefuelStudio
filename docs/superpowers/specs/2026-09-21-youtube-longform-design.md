@@ -138,11 +138,20 @@ Each chunk cached by content hash so a failure at chunk 40/60 resumes.
 
 ### Integration
 Result flows into Story `import-script` with `sections` (each carrying its measured
-`startMs`/`endMs`) and `captions: "none"`. Today an import without `words` falls through to
-the Whisper transcribe stage; the import path must **skip transcription when captions are
-`none`** and segment on section timings instead of word timings. `segmentScenes` takes
-per-project `targetSec` / `maxScenes` overrides (instead of the global cap); `storyRender`
-honours captions `none`. Story project gains
+`startMs`/`endMs`) and `captions: "none"`. `import-script` already short-circuits
+transcription: `buildImportedTranscript` spreads word timings evenly across `durationMs` when
+none are supplied. For long-form we do better than even-across-the-whole-file: words are
+spread evenly **within each section's measured window** (`lib/longform/sectionTimings.js`),
+so scene segmentation lands on real section boundaries. `segmentScenes` takes per-project
+`targetSec` / `maxScenes` overrides (instead of the global cap); `storyRender` honours
+captions `none`.
+
+**Aspect (found during planning):** Story renders are vertical by env default
+(`STORY_RENDER_WIDTH/HEIGHT` = 720×1280) and scene images are requested as `portrait`. The
+Story project gains `aspect: "portrait" | "landscape"` (default `portrait`, unchanged for
+existing projects); long-form projects are `landscape`, which drives both the image-gen
+aspect (`16:9`) and the render size (1280×720 by default, env-overridable via
+`STORY_RENDER_LANDSCAPE_WIDTH/HEIGHT`). Story project gains
 `longform: { templateId, sections }`. **No changes to the render engine.**
 
 ### UI
