@@ -43,7 +43,7 @@ function clean(s) {
   return t;
 }
 
-async function defaultLlmComplete(prompt) {
+export async function defaultLlmComplete(prompt) {
   return (await openaiComplete(prompt)) ?? (await geminiComplete(prompt)) ?? "";
 }
 async function openaiComplete(prompt) {
