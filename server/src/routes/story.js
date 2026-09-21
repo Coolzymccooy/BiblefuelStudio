@@ -82,7 +82,10 @@ async function segmentStage(ctx, projectId) {
   }
   const words = project.transcript?.words || [];
   if (!words.length) throw new Error("no transcript to segment");
-  const scenes = await segmentScenes({ words, style: project.style, cast: project.cast || [] });
+  const scenes = await segmentScenes({
+    words, style: project.style, cast: project.cast || [],
+    targetSec: project.scene?.targetSceneSec, maxScenes: project.scene?.maxScenes,
+  });
   return writeProject(ctx.dataDir, { ...project, scenes, status: STORY_STATUS.GENERATING_IMAGES });
 }
 
@@ -176,7 +179,7 @@ async function imagesStage(ctx, projectId, opts = {}) {
       let result;
       try {
         result = await withTimeout(
-          _imageGenFn({ seriesId: project.projectId, partNumber: i + 1, rawPrompt: scenes[i].imagePrompt, aspect: "portrait" }),
+          _imageGenFn({ seriesId: project.projectId, partNumber: i + 1, rawPrompt: scenes[i].imagePrompt, aspect: project.aspect === "landscape" ? "landscape" : "portrait" }),
           timeoutMs,
           `image gen for scene ${i + 1} timed out after ${timeoutMs}ms`,
         );
@@ -219,8 +222,8 @@ function storyOutDir(outputDir, projectId) {
 
 router.post("/", (req, res) => {
   try {
-    const { title, style, cast } = req.body || {};
-    const project = createProject(req.ctx.dataDir, { title, style, cast });
+    const { title, style, cast, aspect, captions, scene, longform } = req.body || {};
+    const project = createProject(req.ctx.dataDir, { title, style, cast, aspect, captions, scene, longform });
     return res.json({ ok: true, project });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
@@ -393,6 +396,10 @@ router.post("/import-script", (req, res) => {
       title: req.body?.title || script.slice(0, 60),
       style: req.body?.style,
       cast: req.body?.cast,
+      aspect: req.body?.aspect,
+      captions: req.body?.captions,
+      scene: req.body?.scene,
+      longform: req.body?.longform,
     });
 
     const ready = writeProject(req.ctx.dataDir, {
@@ -587,6 +594,9 @@ router.post("/:id/render", async (req, res) => {
     if (!fs.existsSync(out)) fs.mkdirSync(out, { recursive: true });
     const outPath = path.join(out, "video.mp4");
     const durationSec = scenes[scenes.length - 1].endMs / 1000;
+    const landscape = project.aspect === "landscape";
+    const width = Math.max(240, Number(landscape ? process.env.STORY_RENDER_LANDSCAPE_WIDTH : process.env.STORY_RENDER_WIDTH) || (landscape ? 1280 : 720));
+    const height = Math.max(240, Number(landscape ? process.env.STORY_RENDER_LANDSCAPE_HEIGHT : process.env.STORY_RENDER_HEIGHT) || (landscape ? 720 : 1280));
     const job = createJob(req.ctx.userId, { durationSec });
     persistJob(req.ctx.dataDir, { ...job, projectId: project.projectId, status: "running" });
     writeProject(req.ctx.dataDir, {
@@ -630,8 +640,11 @@ router.post("/:id/render", async (req, res) => {
       // social-ready) keeps long videos renderable on a modest CPU box — full
       // 1080×1920 over a 27-min kinetic render pegs CPU/RAM and stalls the
       // server. Bump STORY_RENDER_WIDTH/HEIGHT once on bigger hardware.
-      width: Math.max(240, Number(process.env.STORY_RENDER_WIDTH) || 720),
-      height: Math.max(240, Number(process.env.STORY_RENDER_HEIGHT) || 1280),
+      // Landscape projects use the separate STORY_RENDER_LANDSCAPE_WIDTH/HEIGHT
+      // envs (default 1280×720) so portrait defaults/tuning stay untouched.
+      width,
+      height,
+      captions: project.captions || "kinetic",
       outPath,
       audioDurationSec: audioDurationSec || undefined,
     }).then((r) => {

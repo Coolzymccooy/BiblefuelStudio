@@ -10,7 +10,7 @@ import storyRouter, {
 } from "./story.js";
 import { _setLlmImpl, _resetLlmImpl } from "../lib/story/sceneSegmenter.js";
 import { _setLlmImpl as _setScriptLlmImpl, _resetLlmImpl as _resetScriptLlmImpl } from "../lib/story/scriptRefine.js";
-import { readProject, writeProject } from "../lib/story/projectStore.js";
+import { readProject, writeProject, createProject } from "../lib/story/projectStore.js";
 
 function handlerFor(method, routePath) {
   const layer = storyRouter.stack.find(
@@ -507,6 +507,21 @@ describe("story routes", () => {
     const { req, res } = mockReqRes({ params: { id: "nope" }, body: {}, dataDir, outputDir });
     await handlerFor("post", "/:id/resegment")(req, res);
     assert.equal(res.statusCode, 404);
+  });
+
+  test("landscape projects request landscape images", async () => {
+    const seen = [];
+    _setImageGenImpl(async (args) => { seen.push(args); return { ok: true, path: path.join(outputDir, "x.png"), publicUrl: "/x.png" }; });
+    fs.writeFileSync(path.join(outputDir, "x.png"), "img");
+    const project = writeProject(dataDir, {
+      ...createProject(dataDir, { title: "L", aspect: "landscape" }),
+      scenes: [{ id: "s1", text: "t", startMs: 0, endMs: 1000, imagePrompt: "p", imagePath: null, imageStatus: "pending", promptEditedByUser: false }],
+      status: "generating_images",
+    });
+    const { req, res } = mockReqRes({ params: { id: project.projectId }, dataDir, outputDir });
+    await handlerFor("post", "/:id/images")(req, res);
+    await waitForProject(dataDir, project.projectId, (p) => p.scenes[0].imageStatus === "done");
+    assert.equal(seen[0].aspect, "landscape");
   });
 
   test("POST /:id/process returns ok immediately and rejects an out-of-scope mediaPath", async () => {

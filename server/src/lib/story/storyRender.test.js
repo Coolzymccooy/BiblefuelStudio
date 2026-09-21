@@ -221,6 +221,32 @@ describe("buildSubtitleDrawtext", () => {
   });
 });
 
+describe("captions option", () => {
+  test("captions:none emits no drawtext even for short word lists", () => {
+    const fixture = () => ({
+      scenes: [
+        { id: "scene-001", startMs: 0, endMs: 4000, imagePath: "/tmp/a.png" },
+        { id: "scene-002", startMs: 4000, endMs: 8000, imagePath: "/tmp/b.png" },
+      ],
+      words: [
+        { text: "one", startMs: 0, endMs: 400 },
+        { text: "two", startMs: 400, endMs: 800 },
+        { text: "three", startMs: 800, endMs: 1200 },
+        { text: "four", startMs: 1200, endMs: 1600 },
+        { text: "five", startMs: 1600, endMs: 2000 },
+      ],
+      audioPath: "a.mp3",
+      width: 1280,
+      height: 720,
+      outPath: "o.mp4",
+    });
+    const { args } = buildStoryFfmpegArgs({ ...fixture(), captions: "none" });
+    const graph = args.join(" ");
+    assert.doesNotMatch(graph, /drawtext/);
+    assert.match(graph, /\[vcat\]copy\[vout\]/);
+  });
+});
+
 describe("groupWordsIntoCues", () => {
   test("groups by word count", () => {
     const cues = groupWordsIntoCues(makeWords(16, 16).map((w) => ({ text: w.text, start: w.startMs / 1000, end: w.endMs / 1000 })), { maxWords: 8, maxSec: 999 });

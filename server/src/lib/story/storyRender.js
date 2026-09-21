@@ -134,7 +134,7 @@ export function buildSubtitleDrawtext(words, w, h) {
  * Build the FFmpeg argv for an N-scene story video.
  * @returns {{args:string[], totalDurationSec:number}}
  */
-export function buildStoryFfmpegArgs({ scenes, words, audioPath, musicPath, musicVolume, autoDuck, width, height, outPath, audioDurationSec }) {
+export function buildStoryFfmpegArgs({ scenes, words, audioPath, musicPath, musicVolume, autoDuck, width, height, outPath, audioDurationSec, captions }) {
   if (!scenes.length) throw new Error("story render: no scenes");
   for (const s of scenes) {
     if (!s.imagePath) throw new Error(`story render: scene ${s.id} missing image`);
@@ -200,9 +200,9 @@ export function buildStoryFfmpegArgs({ scenes, words, audioPath, musicPath, musi
   // wrapped, lower-third SUBTITLE (a few hundred filters, renders in minutes,
   // and no edge-clipping).
   const kineticMaxWords = Math.max(0, Number(process.env.STORY_KINETIC_MAX_WORDS) || 1500);
-  const drawtext = drawWords.length > kineticMaxWords
-    ? buildSubtitleDrawtext(drawWords, width, height)
-    : buildWordDrawtext({ words: drawWords, w: width, h: height });
+  const drawtext = captions === "none"
+    ? ""
+    : (drawWords.length > kineticMaxWords ? buildSubtitleDrawtext(drawWords, width, height) : buildWordDrawtext({ words: drawWords, w: width, h: height }));
   if (drawtext) {
     filterParts.push(`[vcat]${drawtext}[vout]`);
   } else {
@@ -276,11 +276,11 @@ export function toFilterScriptArgs(args, outPath) {
  * Spawn FFmpeg for a story render, wiring progress into the job registry.
  * Resolves with { ok, file } / { ok:false, error }.
  */
-export function runStoryRender({ jobId, scenes, words, audioPath, musicPath, musicVolume, autoDuck, width, height, outPath, audioDurationSec, onProgress }) {
+export function runStoryRender({ jobId, scenes, words, audioPath, musicPath, musicVolume, autoDuck, width, height, outPath, audioDurationSec, onProgress, captions }) {
   return new Promise((resolve) => {
     let built;
     try {
-      built = buildStoryFfmpegArgs({ scenes, words, audioPath, musicPath, musicVolume, autoDuck, width, height, outPath, audioDurationSec });
+      built = buildStoryFfmpegArgs({ scenes, words, audioPath, musicPath, musicVolume, autoDuck, width, height, outPath, audioDurationSec, captions });
     } catch (err) {
       markError(jobId, err?.message || err);
       return resolve({ ok: false, error: String(err?.message || err) });
