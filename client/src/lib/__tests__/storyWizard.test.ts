@@ -113,6 +113,12 @@ describe('isStalled', () => {
     expect(isStalled(project({ status: 'done', updatedAt: 0 }), now)).toBe(false);
     expect(isStalled(project({ status: 'error', updatedAt: 0 }), now)).toBe(false);
   });
+  it('gives narrating a much longer stall threshold (a slow self-hosted TTS chunk can exceed 90s)', () => {
+    // Past the generic 90s threshold but well within narration's leash: not stalled.
+    expect(isStalled(project({ status: 'narrating', updatedAt: now - 200_000 }), now)).toBe(false);
+    // Past narration's own (much longer) threshold: stalled.
+    expect(isStalled(project({ status: 'narrating', updatedAt: now - 11 * 60_000 }), now)).toBe(true);
+  });
 });
 
 describe('relativeTime', () => {

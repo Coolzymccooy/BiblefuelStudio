@@ -55,6 +55,32 @@ describe("narrateSections", () => {
     assert.match(list, /silence-5000\.mp3/);
     assert.equal(list.match(/silence-5000\.mp3/g).length, 1, "one pause between two sections");
   });
+  test("reports onProgress once per chunk, with done increasing up to total", async () => {
+    const { workDir, deps } = harness();
+    const progress = [];
+    await narrateSections(
+      { sections, template: { ...template, voice: { ...template.voice, maxChunkChars: 25 } }, voiceId: "v1", workDir },
+      { ...deps, onProgress: (p) => progress.push(p) },
+    );
+    assert.ok(progress.length >= 4, "expected a progress call per chunk");
+    const total = progress[0].total;
+    assert.ok(total > 0);
+    progress.forEach((p, idx) => {
+      assert.equal(p.total, total, "total stays stable across the whole run");
+      assert.equal(p.done, idx + 1, "done increases by one per chunk");
+    });
+    assert.equal(progress[progress.length - 1].done, total, "final call reports done === total");
+  });
+  test("still fires onProgress for every chunk on a fully cached resume", async () => {
+    const { workDir, calls, deps } = harness();
+    await narrateSections({ sections, template, voiceId: "v1", workDir }, deps);
+    const firstRunSynths = calls.synth.length;
+    const progress = [];
+    await narrateSections({ sections, template, voiceId: "v1", workDir }, { ...deps, onProgress: (p) => progress.push(p) });
+    assert.equal(calls.synth.length, firstRunSynths, "second run was fully served from cache");
+    assert.ok(progress.length > 0, "onProgress still fired even though every chunk was a cache hit");
+    assert.equal(progress[progress.length - 1].done, progress[progress.length - 1].total);
+  });
   test("resumes from cached chunks after a provider failure", async () => {
     const { workDir, calls, deps } = harness({ failOnCall: 2 });
     await assert.rejects(() => narrateSections({ sections, template, voiceId: "v1", workDir }, deps), /provider hiccup/);

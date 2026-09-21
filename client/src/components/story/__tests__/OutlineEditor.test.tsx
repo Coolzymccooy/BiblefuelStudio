@@ -14,6 +14,17 @@ const project: any = {
   ] },
 };
 
+// A section that HAS verseText but whose stored `text` was never built from
+// that verse prefix (e.g. hand-edited, or produced by an older planner). The
+// editor must not assume the prefix is there — matching it naively and
+// stripping/re-adding it would duplicate the scripture on the next save.
+const projectMismatchedPrefix: any = {
+  projectId: 'p2', title: 'Psalms for Rest', status: 'draft_script',
+  longform: { templateId: 'sleep-30', sections: [
+    { heading: 'Psalm 23', reference: 'Psalm 23:1', verseText: 'The LORD is my shepherd.', text: 'just a reflection', targetSec: 300 },
+  ] },
+};
+
 describe('OutlineEditor', () => {
   it('shows every section, saves edits and starts narration with the chosen voice', async () => {
     const user = userEvent.setup();
@@ -30,5 +41,21 @@ describe('OutlineEditor', () => {
     expect(onSaved).toHaveBeenCalled();
     await user.click(screen.getByRole('button', { name: /generate narration/i }));
     expect(onNarrate).toHaveBeenCalledWith(expect.any(String));
+  });
+
+  it('shows text verbatim (no blockquote, no prefix stripped) when it does not start with the verse prefix, and saves the edit with no prefix prepended', async () => {
+    const user = userEvent.setup();
+    const patch = vi.spyOn(api, 'patch').mockResolvedValue({ ok: true, data: { project: projectMismatchedPrefix } } as any);
+    const onSaved = vi.fn(); const onNarrate = vi.fn();
+    render(<OutlineEditor project={projectMismatchedPrefix} onSaved={onSaved} onNarrate={onNarrate} busy={false} />);
+    // No scripture prefix in `text`, so the blockquote (which would otherwise
+    // repeat the verse) is suppressed and the textarea shows the raw text.
+    expect(screen.queryByText(/The LORD is my shepherd/)).not.toBeInTheDocument();
+    const textarea = screen.getByRole('textbox');
+    expect(textarea).toHaveValue('just a reflection');
+    await user.clear(textarea);
+    await user.type(textarea, 'edited reflection');
+    await user.click(screen.getByRole('button', { name: /save outline/i }));
+    expect(patch).toHaveBeenCalledWith('/api/longform/p2/sections', expect.objectContaining({ sections: expect.arrayContaining([expect.objectContaining({ text: 'edited reflection' })]) }));
   });
 });

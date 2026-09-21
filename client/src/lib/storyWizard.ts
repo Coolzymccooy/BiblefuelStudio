@@ -56,6 +56,13 @@ export function progressLabel(status: StoryStatus): string {
 
 const STALL_MS = 90_000; // a transient status older than this looks stuck (server died)
 
+// Narration synthesises a 30-60 min session chunk by chunk, one provider call
+// at a time; a single slow self-hosted TTS request can comfortably exceed 90s
+// with nothing wrong at all. The server bumps updatedAt after every chunk
+// (see longform.js's onProgress heartbeat), so this only fires once even that
+// heartbeat has gone quiet for a genuinely long time.
+const NARRATING_STALL_MS = 10 * 60_000;
+
 /**
  * A project is "stalled" when it's in a transient (in-flight) status but its
  * record hasn't been touched in a while — i.e. no server stage is advancing it
@@ -63,7 +70,9 @@ const STALL_MS = 90_000; // a transient status older than this looks stuck (serv
  * so a fresh transient status just means "working" — NOT stalled.
  */
 export function isStalled(project: StoryProject, nowMs: number): boolean {
-  return isTransientStatus(project.status) && (nowMs - project.updatedAt) > STALL_MS;
+  if (!isTransientStatus(project.status)) return false;
+  const threshold = project.status === 'narrating' ? NARRATING_STALL_MS : STALL_MS;
+  return (nowMs - project.updatedAt) > threshold;
 }
 
 const MIN = 60_000, HOUR = 3_600_000, DAY = 86_400_000;

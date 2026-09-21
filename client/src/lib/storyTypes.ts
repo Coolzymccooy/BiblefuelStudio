@@ -36,6 +36,8 @@ export interface StoryLongform {
   idea?: string;
   summary?: string;
   sections: LongformSection[];
+  /** Chunk-level narration heartbeat while status === 'narrating' (server-persisted, best-effort). */
+  progress?: { done: number; total: number };
 }
 
 export interface StoryProject {

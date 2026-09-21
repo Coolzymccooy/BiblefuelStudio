@@ -75,12 +75,21 @@ export async function narrateSections({ sections, template, voiceId, workDir }, 
   const synthesize = deps.synthesize || realSynthesize;
   const probe = deps.probeDurationSec || probeAudioDurationSec;
   const runFfmpeg = deps.runFfmpeg || defaultRunFfmpeg;
+  const onProgress = typeof deps.onProgress === "function" ? deps.onProgress : null;
 
   const chunksDir = path.join(workDir, "chunks");
   fs.mkdirSync(chunksDir, { recursive: true });
   const pauseMs = template.voice.pauseMs;
   const silence = await ensureSilence(workDir, pauseMs, runFfmpeg);
   const silenceMs = Math.round((await probe(silence)) * 1000) || pauseMs;
+
+  // Computed up front (pure, no I/O) so `onProgress` can report a stable
+  // `total` from the very first chunk — a 30–60 min session narrates over
+  // many minutes, and callers use this heartbeat to keep the project's
+  // `updatedAt` fresh so a slow-but-healthy run isn't mistaken for stalled.
+  const chunksBySection = sections.map((s) => splitForProvider(s.text, template.voice.maxChunkChars));
+  const total = chunksBySection.reduce((n, c) => n + c.length, 0);
+  let done = 0;
 
   const entries = [];
   const timed = [];
@@ -89,11 +98,15 @@ export async function narrateSections({ sections, template, voiceId, workDir }, 
   for (let i = 0; i < sections.length; i++) {
     if (i > 0) { entries.push(silence); cursorMs += silenceMs; }
     const startMs = cursorMs;
-    for (const text of splitForProvider(sections[i].text, template.voice.maxChunkChars)) {
+    for (const text of chunksBySection[i]) {
       const { file, provider } = await synthChunk({ text, voiceId, template, chunksDir, synthesize });
       if (provider && !usedProvider) usedProvider = provider;
       entries.push(file);
       cursorMs += await measureMs(probe, file, path.basename(file));
+      done += 1;
+      // Fires for cache hits too — a resumed run should still bump the
+      // heartbeat even though nothing was actually synthesised this time.
+      if (onProgress) onProgress({ done, total });
     }
     timed.push({ ...sections[i], startMs, endMs: cursorMs });
   }

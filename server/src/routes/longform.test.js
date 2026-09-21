@@ -99,6 +99,31 @@ describe("POST /api/longform/:id/narrate", () => {
     assert.equal(p.transcript.words[0].startMs, 0);
     assert.equal(p.status, "segmenting");
   });
+  test("persists a narration progress heartbeat that survives to completion", async () => {
+    const { body } = await request(app).post("/api/longform/draft").send({ idea: "x", templateId: "sleep-30" });
+    const id = body.project.projectId;
+    _setNarrateImpl(async ({ sections, workDir }, deps) => {
+      fs.mkdirSync(workDir, { recursive: true });
+      const total = sections.length;
+      for (let i = 0; i < sections.length; i++) {
+        deps?.onProgress?.({ done: i + 1, total });
+      }
+      const audioPath = path.join(workDir, "narration.mp3"); fs.writeFileSync(audioPath, "a");
+      let t = 0;
+      const timed = sections.map((s) => { const out = { ...s, startMs: t, endMs: t + s.targetSec * 1000 }; t = out.endMs + 5000; return out; });
+      return { audioPath, durationMs: timed[timed.length - 1].endMs, sections: timed, provider: "azure" };
+    });
+    const pipelineCalls = [];
+    _setPipelineImpl(async (ctx, projectId, mediaPath) => { pipelineCalls.push({ projectId, mediaPath }); });
+
+    const res = await request(app).post(`/api/longform/${id}/narrate`).send({ voiceId: "v1" });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+
+    const p = await waitFor(id, (x) => pipelineCalls.length === 1);
+    assert.equal(p.status, "segmenting");
+    assert.equal(p.longform.progress.total, 3);
+    assert.equal(p.longform.progress.done, p.longform.progress.total);
+  });
   test("refuses when the project has no sections", async () => {
     const { createProject, writeProject } = await import("../lib/story/projectStore.js");
     const p = writeProject(dataDir, { ...createProject(dataDir, { title: "bare" }), status: "draft_script" });

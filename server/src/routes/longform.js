@@ -79,7 +79,20 @@ async function runNarration(ctx, projectId, voiceId) {
   const project = readProject(ctx.dataDir, projectId);
   const template = longformTemplateById(project?.longform?.templateId);
   const workDir = path.join(ctx.outputDir, "longform", projectId);
-  const narrated = await _narrate({ sections: project.longform.sections, template, voiceId, workDir });
+  // Heartbeat: a 30-60 min session can take several minutes to narrate, one
+  // provider call at a time. Persisting done/total (and bumping updatedAt)
+  // after every chunk keeps the client's stall detector from firing on a
+  // slow-but-healthy run. Best-effort, like story.js's persistRenderPct —
+  // never let a progress-write failure interrupt the narration itself.
+  const onProgress = ({ done, total }) => {
+    try {
+      const fresh = readProject(ctx.dataDir, projectId);
+      if (fresh && fresh.status === STORY_STATUS.NARRATING) {
+        writeProject(ctx.dataDir, { ...fresh, longform: { ...fresh.longform, progress: { done, total } }, updatedAt: Date.now() });
+      }
+    } catch { /* progress persistence is best-effort */ }
+  };
+  const narrated = await _narrate({ sections: project.longform.sections, template, voiceId, workDir }, { onProgress });
   const words = wordsFromSections(narrated.sections);
   const patch = buildImportedTranscript({ script: narrated.sections.map((s) => s.text).join(" "), audioPath: narrated.audioPath, durationMs: narrated.durationMs, words });
   const fresh = readProject(ctx.dataDir, projectId);

@@ -192,6 +192,17 @@ export function StoryVideoPage() {
     setBusy(true);
     try {
       const p = await storyApi.getProject(projectId);
+      // A long-form project never has source audio until narration finishes —
+      // it's synthesised, not uploaded. Chunks are cached by content hash, so
+      // re-calling narrate resumes from wherever it left off instead of
+      // re-synthesising everything (and instead of the audioPath dead-end
+      // below, which would otherwise always fire for a stalled narration).
+      if (p.status === 'narrating') {
+        await longformApi.narrate(projectId);
+        qc.invalidateQueries({ queryKey: ['story-project', projectId] });
+        toast.success('Resumed');
+        return;
+      }
       const audioPath = p.source?.audioPath;
       if (!audioPath) {
         toast.error('Upload was interrupted — please start again.');
@@ -282,6 +293,11 @@ export function StoryVideoPage() {
             {progressLabel(project.status)}
             {project.status === 'generating_images' && (
               <span className="text-primary-300/80">{counts.done}/{counts.total}</span>
+            )}
+            {project.status === 'narrating' && project.longform?.progress && (
+              <span className="text-primary-300/80">
+                ({project.longform.progress.done}/{project.longform.progress.total})
+              </span>
             )}
           </span>
           <button
