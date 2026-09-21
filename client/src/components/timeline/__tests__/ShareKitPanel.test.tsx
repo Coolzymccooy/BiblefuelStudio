@@ -84,5 +84,9 @@ describe('ShareKitPanel', () => {
     expect(await screen.findByRole('button', { name: /publish to youtube/i })).toBeInTheDocument();
     expect(screen.getByLabelText(/^title/i)).toHaveValue('Be still');
     expect(screen.getByLabelText(/description/i)).toHaveValue('Be still\nPsalm 46:10');
+    // Regression: the panel has several fields and must not be squeezed into the
+    // one-third-width slot the compact per-destination controls use — it gets its
+    // own full-width row underneath the destination select.
+    expect(screen.getByTestId('youtube-panel-full-width')).toHaveClass('md:col-span-3');
   });
 });

@@ -147,7 +147,7 @@ export function RenderSharePanel({
               ))}
             </Select>
           ) : postDestination === 'youtube' ? (
-            youtubePanel ?? (
+            youtubePanel ? null : (
               <Select value={youtubePrivacy} onChange={(e) => onYoutubePrivacyChange(e.target.value as YoutubePrivacy)}>
                 <option value="private">YouTube Private</option>
                 <option value="unlisted">YouTube Unlisted</option>
@@ -163,6 +163,16 @@ export function RenderSharePanel({
             <Button onClick={onShare} isLoading={isSharing} disabled={isSharing} className="text-xs h-8">
               {isSharing ? 'Sharing…' : 'Share Now'}
             </Button>
+          )}
+          {postDestination === 'youtube' && youtubePanel && (
+            // Full-width row of its own: YoutubePublishPanel has several fields and
+            // doesn't fit the third-of-a-row slot the compact per-destination
+            // controls use. md:col-span-3 can't share row 1 with the destination
+            // select (only 2 columns remain there), so the grid's own auto-placement
+            // pushes it onto a new row spanning the full grid width.
+            <div className="md:col-span-3" data-testid="youtube-panel-full-width">
+              {youtubePanel}
+            </div>
           )}
         </div>
       </div>
