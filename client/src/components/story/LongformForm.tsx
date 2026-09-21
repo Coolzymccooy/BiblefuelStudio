@@ -82,6 +82,7 @@ export function LongformForm({ onDrafted, busy }: Props) {
           disabled={busy || drafting}
           onChange={(e) => {
             const f = e.target.files?.[0];
+            e.target.value = '';
             if (f) draftFromVoiceNote(f);
           }}
         />

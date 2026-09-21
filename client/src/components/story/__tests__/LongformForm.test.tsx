@@ -44,4 +44,22 @@ describe('LongformForm', () => {
     expect(api.post).toHaveBeenCalledWith('/api/longform/draft', { audioPath: '/outputs/note.m4a' }, undefined, expect.anything());
     expect(info).toHaveBeenCalledWith(expect.stringMatching(/hour-long session/));
   });
+
+  it('allows re-selecting the same voice note file after a failed upload', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(api, 'get').mockResolvedValue({ ok: true, data: { templates: [{ id: 'sleep-30', label: 'S30', kind: 'sleep', targetSec: 1800 }] } } as any);
+    const upload = vi.spyOn(storyApi, 'uploadAudio')
+      .mockRejectedValueOnce(new Error('upload failed'))
+      .mockResolvedValueOnce('/outputs/note.m4a');
+    vi.spyOn(api, 'post').mockResolvedValue({ ok: true, data: { project: { projectId: 'p3', status: 'draft_script', longform: { sections: [] } } } } as any);
+    const err = vi.spyOn(toast, 'error');
+    render(<LongformForm onDrafted={() => {}} busy={false} />);
+    await screen.findByRole('option', { name: 'S30' });
+    const file = new File(['aud'], 'note.m4a', { type: 'audio/m4a' });
+    const input = screen.getByLabelText(/voice note/i);
+    await user.upload(input, file);
+    await user.upload(input, file);
+    expect(upload).toHaveBeenCalledTimes(2);
+    expect(err).toHaveBeenCalledTimes(1);
+  });
 });
