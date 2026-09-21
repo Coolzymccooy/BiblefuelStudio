@@ -26,4 +26,8 @@ export const longformApi = {
   async narrate(id: string, voiceId?: string): Promise<StoryProject> {
     return unwrapProject(await api.post(`/api/longform/${id}/narrate`, voiceId ? { voiceId } : {}));
   },
+  /** After a failed narration: back to the outline (draft_script) with the error cleared. */
+  async reopen(id: string): Promise<StoryProject> {
+    return unwrapProject(await api.post(`/api/longform/${id}/reopen`, {}));
+  },
 };

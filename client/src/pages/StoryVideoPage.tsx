@@ -25,6 +25,7 @@ import { StoryScenePreview } from '../components/story/StoryScenePreview';
 import { ScriptForm } from '../components/story/ScriptForm';
 import { LongformForm } from '../components/story/LongformForm';
 import { OutlineEditor } from '../components/story/OutlineEditor';
+import { LongformErrorActions, isFailedLongformNarration } from '../components/story/LongformErrorActions';
 import { cleanSpeakableText } from '../lib/speakableScript';
 
 const ACTIVE_KEY = 'BF_STORY_ACTIVE';
@@ -363,6 +364,12 @@ export function StoryVideoPage() {
             {cancelled ? 'Cancelled. Pick up where you left off:' : (project?.error || 'Something went wrong.')}
           </div>
           <div className="mt-2 flex flex-wrap gap-2">
+            {/* A long-form project that failed (or was cancelled) during
+                narration has an outline but no transcript yet: offer to retry
+                (cached chunks are reused) or go back to the outline. */}
+            {project && isFailedLongformNarration(project) && (
+              <LongformErrorActions project={project} onChanged={refresh} busy={busy} />
+            )}
             {hasScenes && (
               <button onClick={retryFailedImages} disabled={busy} className="inline-flex items-center gap-1 rounded-lg bg-primary-500 px-3 py-1.5 text-sm font-semibold text-dark-900 hover:bg-primary-400 disabled:opacity-50">
                 <RefreshCw size={13} /> Retry failed images
