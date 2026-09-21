@@ -5,7 +5,8 @@ import { Upload, Loader2, Download, X, RefreshCw } from 'lucide-react';
 import { api, DIRECT_UPLOAD_MAX_BYTES } from '../lib/api';
 import { storyApi } from '../lib/storyApi';
 import { useStoryProject } from '../hooks/useStoryProject';
-// StoryProject type no longer referenced here after removing the inline progress widget.
+import type { StoryProject } from '../lib/storyTypes';
+import { YoutubePublishPanel } from '../components/share/YoutubePublishPanel';
 import {
   deriveStep, progressLabel, canRender, imageCounts, isTransientStatus, isStalled,
 } from '../lib/storyWizard';
@@ -570,7 +571,7 @@ export function StoryVideoPage() {
             </>
           )}
           {project.status === 'done' && project.render.outputPath && (
-            <DonePanel projectId={project.projectId} />
+            <DonePanel project={project} />
           )}
           {project.status === 'error' && <ErrorBanner message={project.error || 'Render failed'} />}
         </div>
@@ -587,14 +588,18 @@ function ErrorBanner({ message }: { message: string }) {
   );
 }
 
-function DonePanel({ projectId }: { projectId: string }) {
+function DonePanel({ project }: { project: StoryProject }) {
   // Render output is deterministic: outputs/story/<projectId>/video.mp4.
   // projectId is a uuid (untouched by the server's path sanitiser). Token is
   // appended because <video> can't send an Authorization header and the
   // server's requireAuth accepts ?token= (see api.ts). Harmless if public.
   const token = api.getToken();
-  const base = `${api.mediaBaseUrl}/outputs/story/${projectId}/video.mp4`;
+  const base = `${api.mediaBaseUrl}/outputs/story/${project.projectId}/video.mp4`;
   const url = token ? `${base}?token=${encodeURIComponent(token)}` : base;
+  const thumbnailOptions = (project.scenes || [])
+    .filter((s) => s.imageStatus === 'done' && s.imageUrl)
+    .map((s, i) => ({ label: `Scene ${i + 1}`, path: s.imageUrl as string }));
+  const chapters = (project.longform?.sections || []).map((s) => ({ startMs: s.startMs ?? 0, title: s.heading }));
   return (
     <div className="space-y-3">
       <video src={url} controls className="w-full rounded-xl border border-white/10" />
@@ -604,6 +609,15 @@ function DonePanel({ projectId }: { projectId: string }) {
       >
         <Download size={16} /> Download MP4
       </button>
+      <div className="rounded-xl border border-white/10 p-3">
+        <h3 className="mb-2 text-sm font-medium text-white">Publish to YouTube</h3>
+        <YoutubePublishPanel
+          videoUrl={`/outputs/story/${project.projectId}/video.mp4`}
+          initial={{ title: project.title, description: project.longform?.summary ?? '' }}
+          thumbnailOptions={thumbnailOptions}
+          chapters={chapters.length >= 3 ? chapters : undefined}
+        />
+      </div>
     </div>
   );
 }

@@ -20,6 +20,23 @@ export interface StoryScene {
   promptEditedByUser: boolean;
 }
 
+export interface LongformSection {
+  heading: string;
+  reference?: string | null;
+  verseText?: string;
+  text: string;
+  targetSec: number;
+  startMs?: number;
+  endMs?: number;
+}
+
+export interface StoryLongform {
+  templateId: string;
+  idea?: string;
+  summary?: string;
+  sections: LongformSection[];
+}
+
 export interface StoryProject {
   projectId: string;
   title: string;
@@ -32,6 +49,9 @@ export interface StoryProject {
   scenes: StoryScene[];
   music: { path: string | null; volume: number; autoDuck?: boolean };
   captionPreset: string;
+  longform?: StoryLongform;
+  aspect?: 'portrait' | 'landscape';
+  captions?: 'none' | 'static' | 'kinetic';
   render: {
     jobId: string | null;
     outputPath: string | null;

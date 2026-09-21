@@ -74,4 +74,15 @@ describe('ShareKitPanel', () => {
     expect(said).toMatch(/tiktok/i);
     expect(said).not.toMatch(/inbox/i);
   });
+
+  it('shows the YouTube publish panel with the video and caption prefilled when YouTube is chosen', async () => {
+    const user = userEvent.setup();
+    mockGets();
+    render(<ShareKitPanel lines={'Be still\nPsalm 46:10'} latestRenderFile="C:/srv/outputs/video-1.mp4" />);
+    await screen.findByRole('option', { name: 'Zapier hook' });
+    await user.selectOptions(screen.getByLabelText(/destination/i), 'youtube');
+    expect(await screen.findByRole('button', { name: /publish to youtube/i })).toBeInTheDocument();
+    expect(screen.getByLabelText(/^title/i)).toHaveValue('Be still');
+    expect(screen.getByLabelText(/description/i)).toHaveValue('Be still\nPsalm 46:10');
+  });
 });

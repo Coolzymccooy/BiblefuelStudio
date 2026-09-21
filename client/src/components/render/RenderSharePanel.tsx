@@ -35,6 +35,8 @@ export interface RenderSharePanelProps {
   onYoutubePrivacyChange: (next: YoutubePrivacy) => void;
   onShare: () => void;
   isSharing: boolean;
+  /** When set and `postDestination === 'youtube'`, renders this instead of the privacy <Select>, and hides the generic Share button (the panel has its own). */
+  youtubePanel?: React.ReactNode;
 }
 
 export function RenderSharePanel({
@@ -56,6 +58,7 @@ export function RenderSharePanel({
   onYoutubePrivacyChange,
   onShare,
   isSharing,
+  youtubePanel,
 }: RenderSharePanelProps) {
   const caption = lines.split('\n').filter(Boolean).join(' ');
   return (
@@ -118,7 +121,11 @@ export function RenderSharePanel({
       <div className="pt-2 border-t border-white/10 space-y-2">
         <div className="text-[0.8125rem] font-medium text-gray-300">Auto-post</div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-          <Select value={postDestination} onChange={(e) => onPostDestinationChange(e.target.value as PostDestination)}>
+          <Select
+            aria-label="Destination"
+            value={postDestination}
+            onChange={(e) => onPostDestinationChange(e.target.value as PostDestination)}
+          >
             <option value="webhook">Webhook (Zapier/Make)</option>
             <option value="buffer">Buffer (Legacy)</option>
             <option value="youtube">YouTube (Direct)</option>
@@ -140,19 +147,23 @@ export function RenderSharePanel({
               ))}
             </Select>
           ) : postDestination === 'youtube' ? (
-            <Select value={youtubePrivacy} onChange={(e) => onYoutubePrivacyChange(e.target.value as YoutubePrivacy)}>
-              <option value="private">YouTube Private</option>
-              <option value="unlisted">YouTube Unlisted</option>
-              <option value="public">YouTube Public</option>
-            </Select>
+            youtubePanel ?? (
+              <Select value={youtubePrivacy} onChange={(e) => onYoutubePrivacyChange(e.target.value as YoutubePrivacy)}>
+                <option value="private">YouTube Private</option>
+                <option value="unlisted">YouTube Unlisted</option>
+                <option value="public">YouTube Public</option>
+              </Select>
+            )
           ) : (
             <div className="text-[10px] text-content-secondary bg-white/[0.04] border border-white/10 rounded-md px-2 py-1">
               Direct API requires OAuth setup
             </div>
           )}
-          <Button onClick={onShare} isLoading={isSharing} disabled={isSharing} className="text-xs h-8">
-            {isSharing ? 'Sharing…' : 'Share Now'}
-          </Button>
+          {!(postDestination === 'youtube' && youtubePanel) && (
+            <Button onClick={onShare} isLoading={isSharing} disabled={isSharing} className="text-xs h-8">
+              {isSharing ? 'Sharing…' : 'Share Now'}
+            </Button>
+          )}
         </div>
       </div>
     </div>
