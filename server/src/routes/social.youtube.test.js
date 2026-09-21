@@ -8,6 +8,7 @@ import path from "path";
 import socialRouter, { _setFetchImpl, _resetFetchImpl } from "./social.js";
 import { _setGoogleImpl, _resetGoogleImpl } from "../lib/social/youtubeUpload.js";
 import { writeSocialStore } from "../lib/socialStore.js";
+import { OUTPUT_DIR } from "../lib/paths.js";
 
 function app() {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "social-yt-"));
@@ -118,6 +119,61 @@ describe("POST /api/social/post destination=youtube", () => {
     assert.equal(res.status, 400);
     assert.match(res.body.error, /title must be 100/);
     assert.equal(fake.calls.insert.length, 0);
+  });
+
+  test("rejects a traversing thumbnailPath by name and never calls YouTube", async () => {
+    const { a, outputDir } = app();
+    fs.writeFileSync(path.join(outputDir, "clip.mp4"), "vid");
+    const res = await request(a).post("/api/social/post").send({
+      destination: "youtube", videoUrl: "/outputs/clip.mp4", title: "T", thumbnailPath: "/outputs/../../etc/passwd",
+    });
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /thumbnailPath/);
+    assert.equal(fake.calls.insert.length, 0);
+    assert.equal(fake.calls.set.length, 0);
+  });
+
+  test("rejects an absolute thumbnailPath outside the caller's outputs by name and never calls YouTube", async () => {
+    const { a, outputDir, dataDir } = app();
+    fs.writeFileSync(path.join(outputDir, "clip.mp4"), "vid");
+    const elsewhere = path.join(dataDir, "not-outputs", "thumb.png");
+    fs.mkdirSync(path.dirname(elsewhere), { recursive: true });
+    fs.writeFileSync(elsewhere, "img");
+    const res = await request(a).post("/api/social/post").send({
+      destination: "youtube", videoUrl: "/outputs/clip.mp4", title: "T", thumbnailPath: elsewhere,
+    });
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /thumbnailPath/);
+    assert.equal(fake.calls.insert.length, 0);
+  });
+
+  test("rejects a videoUrl that resolves outside the caller's outputs by name", async () => {
+    const { a, dataDir } = app();
+    const elsewhere = path.join(dataDir, "not-outputs", "clip.mp4");
+    fs.mkdirSync(path.dirname(elsewhere), { recursive: true });
+    fs.writeFileSync(elsewhere, "vid");
+    for (const videoUrl of [elsewhere, "/outputs/../not-outputs/clip.mp4"]) {
+      const res = await request(a).post("/api/social/post").send({ destination: "youtube", videoUrl, title: "T" });
+      assert.equal(res.status, 400, videoUrl);
+      assert.match(res.body.error, /videoUrl must point inside your outputs folder/);
+    }
+    assert.equal(fake.calls.insert.length, 0);
+  });
+
+  test("a non-admin tenant can use a genImg scene image from the global outputs dir as the thumbnail", async (t) => {
+    const { a, outputDir } = app();
+    fs.writeFileSync(path.join(outputDir, "clip.mp4"), "vid");
+    const genImgDir = path.join(OUTPUT_DIR, "genImg", `yt-test-${process.pid}`);
+    fs.mkdirSync(genImgDir, { recursive: true });
+    const scene = path.join(genImgDir, "part-1.png");
+    fs.writeFileSync(scene, "img");
+    t.after(() => { try { fs.rmSync(genImgDir, { recursive: true, force: true }); } catch {} });
+    const res = await request(a).post("/api/social/post").send({
+      destination: "youtube", videoUrl: "/outputs/clip.mp4", title: "T",
+      thumbnailPath: `/outputs/genImg/${path.basename(genImgDir)}/part-1.png`,
+    });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(fake.calls.set.length, 1);
   });
 
   test("streams a remote videoUrl to disk instead of buffering it", async () => {

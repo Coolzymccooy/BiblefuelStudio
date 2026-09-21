@@ -9,6 +9,7 @@ import { transcribeAudio } from "../lib/stt/index.js";
 import { buildImportedTranscript } from "../lib/story/scriptImport.js";
 import { createProject, readProject, writeProject, STORY_STATUS } from "../lib/story/projectStore.js";
 import { runStoryPipeline } from "./story.js";
+import { confineToDir } from "../lib/confinePath.js";
 
 let _plan = planLongformScript;
 export function _setPlanImpl(fn) { _plan = fn; }
@@ -22,17 +23,6 @@ export function _resetPipelineImpl() { _pipeline = runStoryPipeline; }
 let _transcribe = transcribeAudio;
 export function _setTranscribeImpl(fn) { _transcribe = fn; }
 export function _resetTranscribeImpl() { _transcribe = transcribeAudio; }
-
-// Confines a client-supplied audio path to the operator's own output
-// directory. Uses path.resolve (lexical only — it never touches the
-// filesystem or follows symlinks) so a path that merely *names* somewhere
-// outside outputDir, e.g. via `..` segments, is rejected before anything
-// ever tries to read it.
-function confineToOutputDir(ctx, candidate) {
-  const resolved = path.resolve(String(candidate || ""));
-  const root = path.resolve(ctx.outputDir);
-  return resolved.startsWith(root + path.sep) || resolved === root ? resolved : null;
-}
 
 // Projects with a narration run currently in flight (same pattern as
 // story.js's cancelledProjects). Without this, a double-click or an
@@ -66,7 +56,9 @@ router.post("/draft", async (req, res) => {
   try {
     let idea = String(req.body?.idea || "").trim();
     if (!idea && req.body?.audioPath) {
-      const audioPath = confineToOutputDir(req.ctx, req.body.audioPath);
+      // Lexical only — rejects a path that merely names somewhere outside
+      // the caller's outputs before anything tries to read it.
+      const audioPath = confineToDir(req.ctx.outputDir, req.body.audioPath);
       if (!audioPath) return res.status(400).json({ ok: false, error: "audioPath must point inside your outputs folder" });
       const transcribed = await _transcribe(audioPath);
       idea = (transcribed?.words || []).map((w) => w.text).join(" ").trim();

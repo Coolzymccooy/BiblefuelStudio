@@ -20,6 +20,7 @@ import { resolveLibraryTrack } from "../lib/musicLibrary.js";
 import { cleanCaptionLine, cleanSpeakableText } from "../lib/speakableScript.js";
 import { buildImportedTranscript } from "../lib/story/scriptImport.js";
 import { CHARACTER_ANCHORS } from "../lib/story/styleAnchors.js";
+import { confineToDir } from "../lib/confinePath.js";
 
 // Mockable seams (mirror routes/transcribe.js).
 let _transcribeFn = transcribeAudio;
@@ -38,10 +39,8 @@ export function _resetTtsImpl() { _ttsFn = synthesizeEdgeTts; }
 function confineMediaPath(ctx, rawMediaPath) {
   const raw = String(rawMediaPath || "").trim();
   if (!raw) return { ok: false, status: 400, error: "mediaPath required" };
-  const resolved = path.resolve(raw);
-  const roots = [path.resolve(ctx.outputDir), path.resolve(ctx.dataDir)];
-  const within = roots.some((r) => resolved === r || resolved.startsWith(r + path.sep));
-  if (!within) return { ok: false, status: 403, error: "mediaPath is outside the allowed directory" };
+  const resolved = [ctx.outputDir, ctx.dataDir].map((root) => confineToDir(root, raw)).find(Boolean) || null;
+  if (!resolved) return { ok: false, status: 403, error: "mediaPath is outside the allowed directory" };
   if (!fs.existsSync(resolved)) return { ok: false, status: 400, error: "mediaPath not found" };
   return { ok: true, path: resolved };
 }

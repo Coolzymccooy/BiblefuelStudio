@@ -13,6 +13,8 @@ import { readSocialStore, writeSocialStore } from "../lib/socialStore.js";
 import { scheduleOwnerCtx, listScheduleSources } from "../lib/social/scheduleSources.js";
 import { validateYoutubeMetadata, buildYoutubeDescription } from "../lib/social/youtubeMetadata.js";
 import { uploadToYoutube } from "../lib/social/youtubeUpload.js";
+import { resolveThumbnail } from "../lib/social/thumbnailPath.js";
+import { confineToDir } from "../lib/confinePath.js";
 // DATA_DIR is used ONLY by the boot-time cron rehydrator below, which operates
 // on the super-admin's global social.json. Per-user schedule rehydration is
 // Phase 4 work; see specs/2026-05-26-public-multitenancy-design.md §6.
@@ -74,6 +76,18 @@ function resolveOutputAlias(value, outputDir = OUTPUT_DIR) {
   return null;
 }
 
+// A resolved local candidate must live inside the caller's own outputs.
+// resolveOutputAlias happily returns any existing absolute path, so without
+// this a videoUrl of "/etc/passwd" (or another tenant's file) would be
+// uploaded. Null (no local candidate) passes through untouched so the
+// remote-fetch branch still runs.
+function confineLocalVideo(candidate, outputDir) {
+  if (candidate === null || candidate === undefined) return null;
+  const confined = confineToDir(outputDir, candidate);
+  if (!confined) throw new Error("videoUrl must point inside your outputs folder");
+  return confined;
+}
+
 async function resolveVideoInputForUpload(videoUrl, req) {
   const raw = String(videoUrl || "").trim();
   if (!raw) throw new Error("videoUrl required");
@@ -82,19 +96,21 @@ async function resolveVideoInputForUpload(videoUrl, req) {
   // outputDir (req.ctx.outputDir), not the global OUTPUT_DIR.
   const outputDir = req?.ctx?.outputDir || OUTPUT_DIR;
 
-  const local = resolveOutputAlias(raw, outputDir);
+  const local = confineLocalVideo(resolveOutputAlias(raw, outputDir), outputDir);
   if (local && fs.existsSync(local)) {
     return { filePath: local, cleanup: async () => {} };
   }
 
   if (/^https?:\/\//i.test(raw)) {
+    let localFromPath = null;
     try {
       const u = new URL(raw);
-      const localFromPath = resolveOutputAlias(u.pathname, outputDir);
-      if (localFromPath && fs.existsSync(localFromPath)) {
-        return { filePath: localFromPath, cleanup: async () => {} };
-      }
-    } catch {}
+      localFromPath = resolveOutputAlias(u.pathname, outputDir);
+    } catch { localFromPath = null; }
+    const confined = confineLocalVideo(localFromPath, outputDir);
+    if (confined && fs.existsSync(confined)) {
+      return { filePath: confined, cleanup: async () => {} };
+    }
   }
 
   const absoluteUrl = toAbsolutePublicUrl(req, raw);
@@ -418,17 +434,25 @@ async function postToYoutube(payload, req, store) {
   });
   if (!validated.ok) throw new Error(validated.error);
 
+  // Thumbnails live in the caller's per-user outputDir under multitenancy,
+  // with one exception: scene images that image generation wrote to the
+  // GLOBAL OUTPUT_DIR/genImg (served as /outputs/genImg/...). Resolved and
+  // confined BEFORE the video is fetched so a bad thumbnail never costs a
+  // multi-gigabyte download.
+  let thumbLocal;
+  if (thumbnailPath) {
+    const thumb = resolveThumbnail(String(thumbnailPath), req?.ctx?.outputDir || OUTPUT_DIR, OUTPUT_DIR);
+    if (!thumb.ok) throw new Error(thumb.error);
+    thumbLocal = thumb.path;
+  }
+
   const upload = await resolveVideoInputForUpload(videoUrl, req);
   try {
-    // Thumbnails live in the same per-user outputDir as long-form/Story
-    // outputs under multitenancy — never the global OUTPUT_DIR.
-    const outputDir = req?.ctx?.outputDir || OUTPUT_DIR;
-    const thumbLocal = thumbnailPath ? resolveOutputAlias(String(thumbnailPath), outputDir) : null;
     const result = await uploadToYoutube({
       credentials: { clientId, clientSecret, refreshToken },
       filePath: upload.filePath,
       metadata: validated.value,
-      thumbnailPath: thumbLocal || (thumbnailPath ? String(thumbnailPath) : undefined),
+      thumbnailPath: thumbLocal,
     });
     return { ...result, forcedPrivate: validated.value.forcedPrivate };
   } finally {
