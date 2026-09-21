@@ -7,7 +7,7 @@ export const STORY_STYLES: StoryStyleOption[] = [
   { id: 'ancient-scripture', label: 'Ancient Scripture', blurb: 'Weathered, historical desert' },
 ];
 
-const TRANSIENT: StoryStatus[] = ['transcribing', 'segmenting', 'generating_images', 'rendering'];
+const TRANSIENT: StoryStatus[] = ['transcribing', 'segmenting', 'generating_images', 'rendering', 'narrating'];
 
 export function isTransientStatus(status: StoryStatus): boolean {
   return TRANSIENT.includes(status);
@@ -49,6 +49,7 @@ export function progressLabel(status: StoryStatus): string {
     case 'segmenting': return 'Breaking it into scenes…';
     case 'generating_images': return 'Generating images…';
     case 'rendering': return 'Rendering your video…';
+    case 'narrating': return 'Generating narration…';
     default: return 'Working…';
   }
 }
@@ -90,6 +91,8 @@ export function statusMeta(status: StoryStatus): { label: string; tone: StatusTo
     case 'transcribing': return { label: 'Transcribing', tone: 'busy' };
     case 'segmenting': return { label: 'Segmenting', tone: 'busy' };
     case 'ready_to_render': return { label: 'Ready', tone: 'idle' };
+    case 'draft_script': return { label: 'Draft', tone: 'idle' };
+    case 'narrating': return { label: 'Narrating', tone: 'busy' };
     case 'draft':
     default: return { label: 'Draft', tone: 'idle' };
   }

@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import { Upload, Loader2, Download, X, RefreshCw } from 'lucide-react';
 import { api, DIRECT_UPLOAD_MAX_BYTES } from '../lib/api';
 import { storyApi } from '../lib/storyApi';
+import { longformApi } from '../lib/longformApi';
 import { useStoryProject } from '../hooks/useStoryProject';
 import type { StoryProject } from '../lib/storyTypes';
 import { YoutubePublishPanel } from '../components/share/YoutubePublishPanel';
@@ -22,6 +23,8 @@ import { StoryStepper } from '../components/story/StoryStepper';
 import { CastPicker } from '../components/story/CastPicker';
 import { StoryScenePreview } from '../components/story/StoryScenePreview';
 import { ScriptForm } from '../components/story/ScriptForm';
+import { LongformForm } from '../components/story/LongformForm';
+import { OutlineEditor } from '../components/story/OutlineEditor';
 import { cleanSpeakableText } from '../lib/speakableScript';
 
 const ACTIVE_KEY = 'BF_STORY_ACTIVE';
@@ -48,7 +51,7 @@ export function StoryVideoPage() {
   const [showTrimmer, setShowTrimmer] = useState(false);
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
   const [defaultTitle, setDefaultTitle] = useState('');
-  const [entryMode, setEntryMode] = useState<'upload' | 'script'>('upload');
+  const [entryMode, setEntryMode] = useState<'upload' | 'script' | 'longform'>('upload');
 
   const { data: project } = useStoryProject(projectId);
   const refresh = () => { if (projectId) qc.invalidateQueries({ queryKey: ['story-project', projectId] }); };
@@ -361,7 +364,29 @@ export function StoryVideoPage() {
         </div>
       )}
 
-      {step === 1 && !transient && (
+      {project?.status === 'draft_script' && (
+        <div className="mt-6">
+          <OutlineEditor
+            project={project}
+            onSaved={() => refresh()}
+            onNarrate={async (voiceId) => {
+              setBusy(true);
+              try {
+                await longformApi.narrate(project.projectId, voiceId);
+                refresh();
+                toast.success('Narrating on the server — this takes a few minutes');
+              } catch (e) {
+                toast.error((e as Error).message);
+              } finally {
+                setBusy(false);
+              }
+            }}
+            busy={busy}
+          />
+        </div>
+      )}
+
+      {step === 1 && !transient && project?.status !== 'draft_script' && (
         <div className="mt-6 space-y-4">
           {!project && (
             <ProjectHistory
@@ -443,10 +468,25 @@ export function StoryVideoPage() {
                 >
                   Write a script
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setEntryMode('longform')}
+                  className={`rounded-md px-3 py-1 ${entryMode === 'longform' ? 'bg-white/10 text-white' : 'text-gray-400'}`}
+                >
+                  Long-form
+                </button>
               </div>
 
               {entryMode === 'script' ? (
                 <ScriptForm onGenerate={handleGenerateScript} busy={busy} />
+              ) : entryMode === 'longform' ? (
+                <LongformForm
+                  onDrafted={(p) => {
+                    setActive(p.projectId);
+                    qc.invalidateQueries({ queryKey: ['story-project', p.projectId] });
+                  }}
+                  busy={busy}
+                />
               ) : (
                 <DropZone
                   onFiles={(files) => { if (files[0]) handlePickFile(files[0]); }}

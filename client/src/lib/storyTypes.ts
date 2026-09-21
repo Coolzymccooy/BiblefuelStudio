@@ -1,6 +1,7 @@
 export type StoryStatus =
   | 'draft' | 'transcribing' | 'segmenting' | 'generating_images'
-  | 'ready_to_render' | 'rendering' | 'done' | 'error';
+  | 'ready_to_render' | 'rendering' | 'done' | 'error'
+  | 'draft_script' | 'narrating';
 
 export type ImageStatus = 'pending' | 'generating' | 'done' | 'error';
 
