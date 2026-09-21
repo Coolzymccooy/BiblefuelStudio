@@ -46,6 +46,14 @@ function confineMediaPath(ctx, rawMediaPath) {
   return { ok: true, path: resolved };
 }
 
+// Image-gen aspect for a project: landscape projects request landscape
+// images, everything else (including projects predating the field) stays
+// portrait. Shared by imagesStage and the single-scene regenerate route so
+// the two paths can never drift apart.
+function imageAspectFor(project) {
+  return project.aspect === "landscape" ? "landscape" : "portrait";
+}
+
 // --- Pipeline stages (re-entrant). ctx = { dataDir, outputDir }. ---
 async function transcribeStage(ctx, projectId, mediaPath) {
   const project = readProject(ctx.dataDir, projectId);
@@ -179,7 +187,7 @@ async function imagesStage(ctx, projectId, opts = {}) {
       let result;
       try {
         result = await withTimeout(
-          _imageGenFn({ seriesId: project.projectId, partNumber: i + 1, rawPrompt: scenes[i].imagePrompt, aspect: project.aspect === "landscape" ? "landscape" : "portrait" }),
+          _imageGenFn({ seriesId: project.projectId, partNumber: i + 1, rawPrompt: scenes[i].imagePrompt, aspect: imageAspectFor(project) }),
           timeoutMs,
           `image gen for scene ${i + 1} timed out after ${timeoutMs}ms`,
         );
@@ -532,7 +540,7 @@ router.post("/:id/scenes/:sid/regenerate", async (req, res) => {
       seriesId: `${project.projectId}-${req.params.sid}-${Date.now()}`,
       partNumber: 1,
       rawPrompt: scenes[idx].imagePrompt,
-      aspect: "portrait",
+      aspect: imageAspectFor(project),
     });
     scenes[idx] = result?.ok
       ? { ...scenes[idx], imagePath: result.path, imageUrl: result.publicUrl || null, imageStatus: "done", imageError: null }

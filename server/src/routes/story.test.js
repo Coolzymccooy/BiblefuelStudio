@@ -332,6 +332,21 @@ describe("story routes", () => {
     assert.equal(after.scenes[1].imagePath, "/regenerated.png"); // updated
   });
 
+  test("regenerate on a landscape project requests a landscape image", async () => {
+    const project = writeProject(dataDir, {
+      ...createProject(dataDir, { title: "L", aspect: "landscape" }),
+      scenes: [
+        { id: "scene-001", text: "a", startMs: 0, endMs: 8000, imagePrompt: "p1", imagePath: "/old1.png", imageStatus: "done", promptEditedByUser: false },
+      ],
+    });
+    const seen = [];
+    _setImageGenImpl(async (args) => { seen.push(args); return { ok: true, path: "/regenerated.png" }; });
+    const { req, res } = mockReqRes({ params: { id: project.projectId, sid: "scene-001" }, body: {}, dataDir, outputDir });
+    await handlerFor("post", "/:id/scenes/:sid/regenerate")(req, res);
+    assert.equal(res.payload.ok, true);
+    assert.equal(seen[0].aspect, "landscape");
+  });
+
   test("transcribe rejects an empty mediaPath with 400", async () => {
     const create = mockReqRes({ body: { title: "T", style: "cinematic-bible" }, dataDir, outputDir });
     await handlerFor("post", "/")(create.req, create.res);
