@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Loader2, Sparkles } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { longformApi, type LongformTemplateOption } from '../../lib/longformApi';
+import { storyApi } from '../../lib/storyApi';
 import type { StoryProject } from '../../lib/storyTypes';
 
 interface Props { onDrafted: (project: StoryProject) => void; busy: boolean }
@@ -23,17 +24,33 @@ export function LongformForm({ onDrafted, busy }: Props) {
     return () => { cancelled = true; };
   }, []);
 
-  const canDraft = idea.trim().length >= 3 && Boolean(templateId) && !busy && !drafting;
+  const canDraft = idea.trim().length >= 3 && !busy && !drafting;
+
+  const finish = ({ project, suggestion }: Awaited<ReturnType<typeof longformApi.draft>>) => {
+    if (suggestion) toast.success(`Chose ${suggestion.templateId}: ${suggestion.reason}`);
+    else toast.success('Outline written — review it before narration');
+    onDrafted(project);
+  };
 
   const draft = async () => {
     if (!canDraft) return;
     setDrafting(true);
     try {
-      const project = await longformApi.draft({ idea: idea.trim(), templateId });
-      toast.success('Outline written — review it before narration');
-      onDrafted(project);
+      finish(await longformApi.draft({ idea: idea.trim(), templateId }));
     } catch (e) {
       toast.error((e as Error).message || 'Could not write the outline');
+    } finally {
+      setDrafting(false);
+    }
+  };
+
+  const draftFromVoiceNote = async (file: File) => {
+    setDrafting(true);
+    try {
+      const audioPath = await storyApi.uploadAudio(file, file.name);
+      finish(await longformApi.draft({ audioPath, templateId }));
+    } catch (e) {
+      toast.error((e as Error).message || 'Could not use the voice note');
     } finally {
       setDrafting(false);
     }
@@ -44,6 +61,7 @@ export function LongformForm({ onDrafted, busy }: Props) {
       <label className="block text-sm text-gray-300">
         Format
         <select value={templateId} onChange={(e) => setTemplateId(e.target.value)} className={inputCls}>
+          <option value="">Let BibleFuel choose</option>
           {templates.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
         </select>
       </label>
@@ -55,6 +73,19 @@ export function LongformForm({ onDrafted, busy }: Props) {
         {drafting ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
         Write the outline
       </button>
+      <label className="block text-sm text-gray-300">
+        Or a voice note
+        <input
+          type="file"
+          accept="audio/*"
+          className="mt-1 block w-full text-sm text-gray-400"
+          disabled={busy || drafting}
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) draftFromVoiceNote(f);
+          }}
+        />
+      </label>
     </div>
   );
 }

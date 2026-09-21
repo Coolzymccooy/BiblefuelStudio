@@ -15,8 +15,10 @@ export const longformApi = {
     return (res.data?.templates ?? []) as LongformTemplateOption[];
   },
   // Planning calls the LLM once per section; give it the long generate ceiling.
-  async draft(args: { idea: string; templateId: string; targetSec?: number }): Promise<StoryProject> {
-    return unwrapProject(await api.post('/api/longform/draft', args, undefined, { timeout: GENERATE_TIMEOUT_MS }));
+  async draft(args: { idea?: string; audioPath?: string; templateId?: string; targetSec?: number }): Promise<{ project: StoryProject; suggestion?: { templateId: string; reason: string } }> {
+    const clean = Object.fromEntries(Object.entries(args).filter(([, v]) => v !== undefined && v !== ''));
+    const res = await api.post('/api/longform/draft', clean, undefined, { timeout: GENERATE_TIMEOUT_MS });
+    return { project: unwrapProject(res), suggestion: res.data?.suggestion };
   },
   async saveSections(id: string, sections: LongformSection[]): Promise<StoryProject> {
     return unwrapProject(await api.patch(`/api/longform/${id}/sections`, { sections }));
