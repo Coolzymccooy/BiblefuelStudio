@@ -1,0 +1,77 @@
+import { test, describe } from "node:test";
+import assert from "node:assert/strict";
+import fs from "fs";
+import os from "os";
+import path from "path";
+import { narrateSections, chunkCacheKey } from "./narration.js";
+import { longformTemplateById } from "./templates.js";
+
+function harness({ secondsPerChunk = 2, failOnCall = -1 } = {}) {
+  const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "narr-"));
+  const calls = { synth: [], ffmpeg: [] };
+  const deps = {
+    synthesize: async (req) => {
+      calls.synth.push(req);
+      if (calls.synth.length === failOnCall) throw new Error("provider hiccup");
+      const f = path.join(workDir, `tts-${calls.synth.length}.mp3`);
+      fs.writeFileSync(f, "audio");
+      return { ok: true, file: f, provider: "azure", voice: req.voiceId };
+    },
+    probeDurationSec: async (p) => (path.basename(p).startsWith("silence-") ? 5 : secondsPerChunk),
+    runFfmpeg: async (args) => {
+      calls.ffmpeg.push(args);
+      const out = args[args.length - 1];
+      fs.writeFileSync(out, "made");
+    },
+  };
+  return { workDir, calls, deps };
+}
+
+const template = longformTemplateById("sleep-30");
+const sections = [
+  { heading: "Welcome", reference: null, verseText: "", text: "Rest now. You are held. Breathe slowly.", targetSec: 60 },
+  { heading: "Psalm 23", reference: "Psalm 23:1", verseText: "The LORD is my shepherd.", text: "Psalm 23:1. The LORD is my shepherd. Let that settle.", targetSec: 120 },
+];
+
+describe("narrateSections", () => {
+  test("synthesises every chunk, inserts pauses between sections and reports section timings", async () => {
+    const { workDir, calls, deps } = harness();
+    const out = await narrateSections({ sections, template: { ...template, voice: { ...template.voice, maxChunkChars: 25 } }, voiceId: "v1", workDir }, deps);
+    assert.ok(calls.synth.length >= 4, "expected several chunks");
+    for (const req of calls.synth) {
+      assert.equal(req.voiceId, "v1");
+      assert.deepEqual(req.prosody, { rate: "-15%" });
+      assert.equal(req.preferredProvider, "chatterbox");
+    }
+    assert.equal(out.audioPath, path.join(workDir, "narration.mp3"));
+    // section 1 starts at 0; section 2 starts after section-1 chunks + one 5s pause
+    const s1Chunks = calls.synth.filter((r) => sections[0].text.includes(r.text.split(" ")[0])).length;
+    assert.equal(out.sections[0].startMs, 0);
+    assert.equal(out.sections[1].startMs, out.sections[0].endMs + 5000);
+    assert.equal(out.durationMs, out.sections[1].endMs);
+    assert.ok(s1Chunks > 0);
+    const list = fs.readFileSync(path.join(workDir, "concat.txt"), "utf8");
+    assert.match(list, /silence-5000\.mp3/);
+    assert.equal(list.match(/silence-5000\.mp3/g).length, 1, "one pause between two sections");
+  });
+  test("resumes from cached chunks after a provider failure", async () => {
+    const { workDir, calls, deps } = harness({ failOnCall: 2 });
+    await assert.rejects(() => narrateSections({ sections, template, voiceId: "v1", workDir }, deps), /provider hiccup/);
+    const firstRunSynths = calls.synth.length;
+    const out = await narrateSections({ sections, template, voiceId: "v1", workDir }, deps);
+    assert.ok(out.audioPath);
+    // second run re-synthesised only what the first run did not cache
+    assert.ok(calls.synth.length < firstRunSynths * 2, "cached chunks were not re-synthesised");
+  });
+  test("cache key changes with text, voice and rate", () => {
+    const a = chunkCacheKey({ provider: "azure", voiceId: "v", rate: "-15%", text: "hi" });
+    assert.notEqual(a, chunkCacheKey({ provider: "azure", voiceId: "v", rate: "-15%", text: "ho" }));
+    assert.notEqual(a, chunkCacheKey({ provider: "azure", voiceId: "w", rate: "-15%", text: "hi" }));
+    assert.notEqual(a, chunkCacheKey({ provider: "azure", voiceId: "v", rate: "0%", text: "hi" }));
+    assert.match(a, /^[a-f0-9]{40}$/);
+  });
+  test("rejects empty sections with a named error", async () => {
+    const { workDir, deps } = harness();
+    await assert.rejects(() => narrateSections({ sections: [], template, voiceId: "v", workDir }, deps), /no sections/i);
+  });
+});
