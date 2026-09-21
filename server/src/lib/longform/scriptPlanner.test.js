@@ -25,6 +25,17 @@ describe("parseOutline", () => {
   test("throws a named error on garbage", () => {
     assert.throws(() => parseOutline("not json"), /outline/i);
   });
+  test("tolerates null / non-object section items instead of throwing a TypeError", () => {
+    const raw = JSON.stringify({ title: "T", summary: "", sections: [null, { heading: "Psalm 23", reference: "Psalm 23:1", targetSec: 120 }, "junk", { heading: "Close", targetSec: 60 }] });
+    const out = parseOutline(raw);
+    assert.equal(out.sections.length, 4);
+    assert.deepEqual(out.sections[0], { heading: "Section", reference: null, targetSec: 60 });
+    assert.deepEqual(out.sections[2], { heading: "Section", reference: null, targetSec: 60 });
+    assert.equal(out.sections[1].reference, "Psalm 23:1");
+  });
+  test("still requires the minimum section count when every item is null", () => {
+    assert.throws(() => parseOutline(JSON.stringify({ sections: [null, null] })), /at least 3 sections/);
+  });
 });
 
 describe("planLongformScript", () => {
@@ -49,9 +60,12 @@ describe("planLongformScript", () => {
     assert.match(psalm.text, /^Psalm 23:1-4\. The LORD is my shepherd/);
     assert.match(psalm.text, /Rest now\. You are held\.$/);
     assert.equal(plan.sections[0].text, "Rest now. You are held.");
-    // section prompts carry the verse verbatim and the word budget
-    assert.match(prompts[2], /The LORD is my shepherd/);
-    assert.match(prompts[2], /\b\d{2,4} words\b/);
+    // section prompts carry the verse verbatim and the word budget (found by
+    // content: sections are written concurrently, so prompt order is not fixed)
+    const psalmPrompt = prompts.find((p) => /section "Psalm 23"/.test(p));
+    assert.ok(psalmPrompt, "a section prompt was issued for Psalm 23");
+    assert.match(psalmPrompt, /The LORD is my shepherd/);
+    assert.match(psalmPrompt, /\b\d{2,4} words\b/);
     // outline prompt carries the idea, the template structure and the total budget
     assert.match(prompts[0], /can't sleep/);
     assert.match(prompts[0], /falling asleep/);
@@ -64,6 +78,30 @@ describe("planLongformScript", () => {
       () => planLongformScript({ idea: "x", template: longformTemplateById("sleep-30") }),
       /Psalm 23:1-4.*api\.bible down/,
     );
+  });
+  // I6 — /draft has to finish inside Cloudflare's 100 s: sections are written
+  // with bounded concurrency (peak ≤ 4, > 1) and come back in outline order.
+  test("writes sections with bounded concurrency and preserves their order", async () => {
+    const tenSections = JSON.stringify({
+      title: "Ten", summary: "",
+      sections: Array.from({ length: 10 }, (_, i) => ({ heading: `S${i}`, reference: null, targetSec: 60 })),
+    });
+    let inFlight = 0; let peak = 0; let calls = 0;
+    _setLlmImpl(async (prompt) => {
+      calls += 1;
+      if (calls === 1) return tenSections;
+      inFlight += 1; peak = Math.max(peak, inFlight);
+      const m = /section "S(\d+)"/.exec(prompt);
+      // Finish out of order: later sections resolve first.
+      await new Promise((r) => setTimeout(r, 30 - Number(m[1]) * 2));
+      inFlight -= 1;
+      return `text for S${m[1]}`;
+    });
+    const plan = await planLongformScript({ idea: "x", template: longformTemplateById("sleep-30") });
+    assert.ok(peak <= 4, `peak in-flight ${peak} must be ≤ 4`);
+    assert.ok(peak > 1, `peak in-flight ${peak} must be > 1 (not sequential)`);
+    assert.deepEqual(plan.sections.map((s) => s.heading), Array.from({ length: 10 }, (_, i) => `S${i}`));
+    assert.deepEqual(plan.sections.map((s) => s.text), Array.from({ length: 10 }, (_, i) => `text for S${i}`));
   });
   test("targetSec override scales the outline budget", async () => {
     let seen = "";
