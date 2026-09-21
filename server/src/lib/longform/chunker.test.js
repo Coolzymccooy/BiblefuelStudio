@@ -24,4 +24,12 @@ describe("splitForProvider", () => {
     const out = splitForProvider(text, 90);
     assert.equal(out.join(" "), text);
   });
+  test("negative maxChars falls back to default limit and completes promptly", () => {
+    const out = splitForProvider("a b c", -5);
+    assert.deepEqual(out, ["a b c"]);
+  });
+  test("NaN maxChars falls back to default limit and completes promptly", () => {
+    const out = splitForProvider("a b c", NaN);
+    assert.deepEqual(out, ["a b c"]);
+  });
 });

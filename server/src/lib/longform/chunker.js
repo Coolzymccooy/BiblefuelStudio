@@ -18,7 +18,7 @@ function splitLongSentence(sentence, maxChars) {
 }
 
 export function splitForProvider(text, maxChars) {
-  const limit = Number(maxChars) || 1000;
+  const limit = Number(maxChars) > 0 ? Math.floor(Number(maxChars)) : 1000;
   const normalised = String(text || "").replace(/\s+/g, " ").trim();
   if (!normalised) return [];
   const sentences = normalised.split(SENTENCE_END).flatMap((s) => splitLongSentence(s.trim(), limit)).filter(Boolean);
