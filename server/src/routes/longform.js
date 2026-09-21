@@ -8,8 +8,9 @@ import { suggestTemplate } from "../lib/longform/suggestTemplate.js";
 import { transcribeAudio } from "../lib/stt/index.js";
 import { buildImportedTranscript } from "../lib/story/scriptImport.js";
 import { createProject, readProject, writeProject, STORY_STATUS } from "../lib/story/projectStore.js";
-import { runStoryPipeline } from "./story.js";
+import { runStoryPipeline, isCancelled, clearCancelled } from "./story.js";
 import { confineToDir } from "../lib/confinePath.js";
+import { quota } from "../middleware/quota.js";
 
 let _plan = planLongformScript;
 export function _setPlanImpl(fn) { _plan = fn; }
@@ -23,6 +24,13 @@ export function _resetPipelineImpl() { _pipeline = runStoryPipeline; }
 let _transcribe = transcribeAudio;
 export function _setTranscribeImpl(fn) { _transcribe = fn; }
 export function _resetTranscribeImpl() { _transcribe = transcribeAudio; }
+// The render quota is charged on the two expensive POSTs only (draft = LLM
+// calls, narrate = TTS), never on templates/sections/reopen. Injectable so
+// tests can prove which routes carry it without a real usage store.
+let _quota = quota;
+export function _setQuotaImpl(fn) { _quota = fn; }
+export function _resetQuotaImpl() { _quota = quota; }
+function renderQuota(req, res, next) { return _quota("render")(req, res, next); }
 
 // Projects with a narration run currently in flight (same pattern as
 // story.js's cancelledProjects). Without this, a double-click or an
@@ -31,6 +39,10 @@ export function _resetTranscribeImpl() { _transcribe = transcribeAudio; }
 // directory concurrently. A server restart empties the set, so a genuinely
 // stalled project (the process died) can still be resumed.
 const activeNarrations = new Set();
+
+// Matches story.js's cancel wording so the client's "^cancelled" check treats
+// a cancelled narration exactly like a cancelled image run.
+const CANCELLED_MESSAGE = "Cancelled.";
 
 const router = Router();
 
@@ -52,7 +64,7 @@ function normaliseSections(list) {
   return out.every((s) => s.text) ? out : null;
 }
 
-router.post("/draft", async (req, res) => {
+router.post("/draft", renderQuota, async (req, res) => {
   try {
     let idea = String(req.body?.idea || "").trim();
     if (!idea && req.body?.audioPath) {
@@ -121,7 +133,7 @@ async function runNarration(ctx, projectId, voiceId) {
   // after every chunk keeps the client's stall detector from firing on a
   // slow-but-healthy run. Best-effort, like story.js's persistRenderPct —
   // never let a progress-write failure interrupt the narration itself.
-  const onProgress = ({ done, total }) => {
+  const persistProgress = ({ done, total }) => {
     try {
       const fresh = readProject(ctx.dataDir, projectId);
       if (fresh && fresh.status === STORY_STATUS.NARRATING) {
@@ -129,7 +141,20 @@ async function runNarration(ctx, projectId, voiceId) {
       }
     } catch { /* progress persistence is best-effort */ }
   };
+  // Cancel-aware: the shared cancel flag (POST /api/story/:id/cancel) is
+  // checked on every chunk heartbeat, so a 30-60 min narration stops within
+  // one provider call instead of grinding on.
+  const onProgress = (p) => {
+    if (isCancelled(projectId)) throw new Error(CANCELLED_MESSAGE);
+    persistProgress(p);
+  };
   const narrated = await _narrate({ sections: project.longform.sections, template, voiceId: resolvedVoiceId, workDir }, { onProgress });
+  if (isCancelled(projectId)) {
+    clearCancelled(projectId);
+    const cancelled = readProject(ctx.dataDir, projectId);
+    if (cancelled) writeProject(ctx.dataDir, { ...cancelled, status: STORY_STATUS.ERROR, error: CANCELLED_MESSAGE });
+    return;
+  }
   const words = wordsFromSections(narrated.sections);
   const patch = buildImportedTranscript({ script: narrated.sections.map((s) => s.text).join(" "), audioPath: narrated.audioPath, durationMs: narrated.durationMs, words });
   const fresh = readProject(ctx.dataDir, projectId);
@@ -142,7 +167,7 @@ async function runNarration(ctx, projectId, voiceId) {
   await _pipeline({ dataDir: ctx.dataDir, outputDir: ctx.outputDir }, projectId, narrated.audioPath);
 }
 
-router.post("/:id/narrate", (req, res) => {
+router.post("/:id/narrate", renderQuota, (req, res) => {
   const project = readProject(req.ctx.dataDir, req.params.id);
   if (!project) return res.status(404).json({ ok: false, error: "project not found" });
   if (!project.longform?.sections?.length) return res.status(400).json({ ok: false, error: "project has no sections to narrate" });
@@ -162,13 +187,32 @@ router.post("/:id/narrate", (req, res) => {
   });
   const ctx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir };
   activeNarrations.add(project.projectId);
+  clearCancelled(project.projectId); // a fresh run supersedes any earlier cancel
   runNarration(ctx, project.projectId, voiceId)
     .catch((e) => {
-      const fresh = readProject(ctx.dataDir, project.projectId);
-      if (fresh) writeProject(ctx.dataDir, { ...fresh, status: STORY_STATUS.ERROR, error: String(e?.message || e) });
+      // Recording the failure must never itself become an unhandled
+      // rejection (e.g. dataDir unmounted mid-run) — log and move on.
+      try {
+        const fresh = readProject(ctx.dataDir, project.projectId);
+        if (fresh) writeProject(ctx.dataDir, { ...fresh, status: STORY_STATUS.ERROR, error: String(e?.message || e) });
+      } catch (e2) {
+        console.warn("[longform] failed to record narration error:", e2?.message || e2);
+      }
     })
     .finally(() => { activeNarrations.delete(project.projectId); });
   return res.json({ ok: true, project: started });
+});
+
+// POST /:id/reopen — after a failed narration, drop the project back to the
+// outline so the user can edit sections or pick another voice instead of
+// starting over. Only valid for a long-form project that is in error.
+router.post("/:id/reopen", (req, res) => {
+  const project = readProject(req.ctx.dataDir, req.params.id);
+  if (!project) return res.status(404).json({ ok: false, error: "project not found" });
+  if (!project.longform?.sections?.length) return res.status(400).json({ ok: false, error: "only a long-form project with sections can be reopened" });
+  if (project.status !== STORY_STATUS.ERROR) return res.status(400).json({ ok: false, error: "only a project in error can be reopened as a draft" });
+  const updated = writeProject(req.ctx.dataDir, { ...project, status: STORY_STATUS.DRAFT_SCRIPT, error: null });
+  return res.json({ ok: true, project: updated });
 });
 
 export default router;

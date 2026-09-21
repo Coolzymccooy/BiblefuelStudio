@@ -381,7 +381,9 @@ app.use("/api/tts",       requireAuth, withUserScope, requireVerifiedEmail, quot
 app.use("/api/abi",       abiRouter);
 app.use("/api/render",    requireAuth, withUserScope, requireVerifiedEmail, quota("render"),     renderRouter);
 app.use("/api/story",     requireAuth, withUserScope, requireVerifiedEmail, quota("render"),     storyRouter);
-app.use("/api/longform",  requireAuth, withUserScope, requireVerifiedEmail, quota("render"),     longformRouter);
+// Long-form charges quota("render") on POST /draft and POST /:id/narrate
+// only (see routes/longform.js); templates/sections/reopen must not debit.
+app.use("/api/longform",  requireAuth, withUserScope, requireVerifiedEmail,                      longformRouter);
 // NOTE: no quota("render") on the whole router. The timeline router also
 // serves GET /projects, the autosave PUT, and GET /render/:jobId - which the
 // client polls about once a second. Charging render quota per REQUEST meant a

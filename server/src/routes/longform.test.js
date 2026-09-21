@@ -5,8 +5,9 @@ import request from "supertest";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import longformRouter, { _setPlanImpl, _resetPlanImpl, _setNarrateImpl, _resetNarrateImpl, _setPipelineImpl, _resetPipelineImpl, _setTranscribeImpl, _resetTranscribeImpl } from "./longform.js";
-import { readProject } from "../lib/story/projectStore.js";
+import longformRouter, { _setPlanImpl, _resetPlanImpl, _setNarrateImpl, _resetNarrateImpl, _setPipelineImpl, _resetPipelineImpl, _setTranscribeImpl, _resetTranscribeImpl, _setQuotaImpl, _resetQuotaImpl } from "./longform.js";
+import { markCancelled, isCancelled, clearCancelled } from "./story.js";
+import { readProject, writeProject } from "../lib/story/projectStore.js";
 
 let dataDir, outputDir, app;
 beforeEach(() => {
@@ -25,7 +26,17 @@ beforeEach(() => {
     ],
   }));
 });
-afterEach(() => { _resetPlanImpl(); _resetNarrateImpl(); _resetPipelineImpl(); _resetTranscribeImpl(); });
+afterEach(() => { _resetPlanImpl(); _resetNarrateImpl(); _resetPipelineImpl(); _resetTranscribeImpl(); _resetQuotaImpl(); });
+
+const tick = () => new Promise((r) => setImmediate(r));
+
+function fakeNarration({ sections, workDir }) {
+  fs.mkdirSync(workDir, { recursive: true });
+  const audioPath = path.join(workDir, "narration.mp3"); fs.writeFileSync(audioPath, "a");
+  let t = 0;
+  const timed = sections.map((s) => { const out = { ...s, startMs: t, endMs: t + s.targetSec * 1000 }; t = out.endMs + 5000; return out; });
+  return { audioPath, durationMs: timed[timed.length - 1].endMs, sections: timed, provider: "azure" };
+}
 
 async function waitFor(id, pred, ms = 3000) {
   const start = Date.now();
@@ -192,6 +203,86 @@ describe("POST /api/longform/:id/narrate", () => {
     assert.equal(res.status, 400);
     assert.match(res.body.error, /sections/i);
   });
+  // I2 — the shared cancel flag (POST /api/story/:id/cancel → markCancelled)
+  // is honoured between chunks: narration throws, the project ends
+  // "Cancelled." and the pipeline is never started.
+  test("cancel mid-narration ends the project in error with 'Cancelled.' and never starts the pipeline", async () => {
+    const { body } = await request(app).post("/api/longform/draft").send({ idea: "x", templateId: "sleep-30" });
+    const id = body.project.projectId;
+    let progressCalls = 0;
+    _setNarrateImpl(async (args, deps) => {
+      for (let i = 1; i <= 50; i++) {
+        deps.onProgress({ done: i, total: 50 });
+        progressCalls = i;
+        if (i === 3) markCancelled(id);
+        await tick();
+      }
+      return fakeNarration(args);
+    });
+    const pipelineCalls = [];
+    _setPipelineImpl(async () => { pipelineCalls.push(1); });
+
+    const res = await request(app).post(`/api/longform/${id}/narrate`).send({ voiceId: "v1" });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    const p = await waitFor(id, (x) => x.status === "error");
+    assert.equal(p.status, "error");
+    assert.equal(p.error, "Cancelled.");
+    assert.equal(pipelineCalls.length, 0, "pipeline never started");
+    assert.ok(progressCalls < 50, `stopped early at chunk ${progressCalls}`);
+    clearCancelled(id);
+  });
+  test("a cancel that lands after the last chunk still ends the project cancelled and skips the pipeline", async () => {
+    const { body } = await request(app).post("/api/longform/draft").send({ idea: "x", templateId: "sleep-30" });
+    const id = body.project.projectId;
+    _setNarrateImpl(async (args, deps) => {
+      deps.onProgress({ done: 1, total: 1 });
+      markCancelled(id); // after the final heartbeat, before the result is consumed
+      return fakeNarration(args);
+    });
+    const pipelineCalls = [];
+    _setPipelineImpl(async () => { pipelineCalls.push(1); });
+    await request(app).post(`/api/longform/${id}/narrate`).send({ voiceId: "v1" });
+    const p = await waitFor(id, (x) => x.status === "error");
+    assert.equal(p.error, "Cancelled.");
+    assert.equal(pipelineCalls.length, 0);
+    assert.equal(isCancelled(id), false, "flag cleared once honoured");
+  });
+  test("a fresh narrate call clears a stale cancel flag", async () => {
+    const { body } = await request(app).post("/api/longform/draft").send({ idea: "x", templateId: "sleep-30" });
+    const id = body.project.projectId;
+    markCancelled(id);
+    _setNarrateImpl(async (args, deps) => { deps.onProgress({ done: 1, total: 1 }); return fakeNarration(args); });
+    const pipelineCalls = [];
+    _setPipelineImpl(async () => { pipelineCalls.push(1); });
+    await request(app).post(`/api/longform/${id}/narrate`).send({ voiceId: "v1" });
+    await waitFor(id, () => pipelineCalls.length === 1);
+    assert.equal(pipelineCalls.length, 1);
+  });
+  // I8 — a failure while RECORDING the narration error must not escape as an
+  // unhandled rejection; the process keeps running and the warning is logged.
+  test("a failure while recording the narration error is logged, not thrown", async () => {
+    const { body } = await request(app).post("/api/longform/draft").send({ idea: "x", templateId: "sleep-30" });
+    const id = body.project.projectId;
+    const unhandled = [];
+    const onUnhandled = (e) => unhandled.push(e);
+    process.on("unhandledRejection", onUnhandled);
+    const warned = [];
+    const origWarn = console.warn;
+    console.warn = (...a) => warned.push(a.join(" "));
+    try {
+      // A rejection whose stringification itself throws — the catch block's
+      // `String(e?.message || e)` blows up while trying to record the error.
+      _setNarrateImpl(async () => { throw { get message() { throw new Error("poisoned error"); } }; });
+      await request(app).post(`/api/longform/${id}/narrate`).send({});
+      for (let i = 0; i < 20; i++) await tick();
+      await new Promise((r) => setTimeout(r, 30));
+    } finally {
+      console.warn = origWarn;
+      process.off("unhandledRejection", onUnhandled);
+    }
+    assert.equal(unhandled.length, 0, "no unhandled rejection");
+    assert.ok(warned.some((w) => /\[longform\] failed to record narration error/.test(w)), `expected a warning, got: ${warned.join(" | ")}`);
+  });
   test("a narration failure lands the project in error with the reason", async () => {
     const { body } = await request(app).post("/api/longform/draft").send({ idea: "x", templateId: "sleep-30" });
     _setNarrateImpl(async () => { throw new Error("azure quota"); });
@@ -226,5 +317,63 @@ describe("POST /api/longform/draft — inspiration", () => {
     const res = await request(app).post("/api/longform/draft").send({ audioPath: "/etc/passwd", templateId: "sleep-30" });
     assert.equal(res.status, 400);
     assert.match(res.body.error, /audioPath/i);
+  });
+});
+
+describe("POST /api/longform/:id/reopen", () => {
+  test("drops a failed long-form project back to draft_script with the error cleared", async () => {
+    const { body } = await request(app).post("/api/longform/draft").send({ idea: "x", templateId: "sleep-30" });
+    const id = body.project.projectId;
+    _setNarrateImpl(async () => { throw new Error("azure quota"); });
+    await request(app).post(`/api/longform/${id}/narrate`).send({});
+    await waitFor(id, (x) => x.status === "error");
+    const res = await request(app).post(`/api/longform/${id}/reopen`).send({});
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.project.status, "draft_script");
+    assert.equal(res.body.project.error, null);
+    assert.equal(res.body.project.longform.sections.length, 3, "sections preserved");
+    assert.equal(readProject(dataDir, id).status, "draft_script");
+  });
+  test("refuses by name when the project is not in error, or has no sections", async () => {
+    const { body } = await request(app).post("/api/longform/draft").send({ idea: "x", templateId: "sleep-30" });
+    const res = await request(app).post(`/api/longform/${body.project.projectId}/reopen`).send({});
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /in error/i);
+    const { createProject } = await import("../lib/story/projectStore.js");
+    const bare = writeProject(dataDir, { ...createProject(dataDir, { title: "bare" }), status: "error", error: "boom" });
+    const res2 = await request(app).post(`/api/longform/${bare.projectId}/reopen`).send({});
+    assert.equal(res2.status, 400);
+    assert.match(res2.body.error, /sections/i);
+    const res3 = await request(app).post(`/api/longform/nope/reopen`).send({});
+    assert.equal(res3.status, 404);
+  });
+});
+
+describe("render quota placement", () => {
+  // I4 — the render quota is charged on /draft and /:id/narrate only. With a
+  // quota that always 429s, every other route must still work.
+  test("only POST /draft and POST /:id/narrate carry the render quota", async () => {
+    // Set up a project while the quota still passes.
+    const { body } = await request(app).post("/api/longform/draft").send({ idea: "x", templateId: "sleep-30" });
+    const id = body.project.projectId;
+    const buckets = [];
+    _setQuotaImpl((bucket) => (req, res) => { buckets.push(bucket); res.status(429).json({ ok: false, error: "QUOTA_EXCEEDED" }); });
+
+    assert.equal((await request(app).get("/api/longform/templates")).status, 200);
+    const patched = await request(app).patch(`/api/longform/${id}/sections`).send({ sections: body.project.longform.sections });
+    assert.equal(patched.status, 200, JSON.stringify(patched.body));
+    writeProject(dataDir, { ...readProject(dataDir, id), status: "error", error: "boom" });
+    assert.equal((await request(app).post(`/api/longform/${id}/reopen`).send({})).status, 200);
+
+    assert.equal((await request(app).post("/api/longform/draft").send({ idea: "y", templateId: "sleep-30" })).status, 429);
+    assert.equal((await request(app).post(`/api/longform/${id}/narrate`).send({})).status, 429);
+    assert.deepEqual(buckets, ["render", "render"]);
+  });
+  test("the router's layer stack carries the quota handler on exactly those two routes", () => {
+    const withQuota = longformRouter.stack
+      .filter((l) => l.route)
+      .filter((l) => l.route.stack.some((h) => h.name === "renderQuota"))
+      .map((l) => `${Object.keys(l.route.methods).join(",")} ${l.route.path}`);
+    assert.deepEqual(withQuota.sort(), ["post /:id/narrate", "post /draft"]);
   });
 });

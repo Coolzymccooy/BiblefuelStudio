@@ -112,6 +112,15 @@ function imageStageTimeoutMs() {
 // through every remaining scene.
 const cancelledProjects = new Set();
 
+// Tiny helpers over the set so other routers (long-form narration) can take
+// part in the same cancel flag without reaching into this module's state.
+/** @param {string} projectId */
+export function markCancelled(projectId) { cancelledProjects.add(projectId); }
+/** @param {string} projectId */
+export function isCancelled(projectId) { return cancelledProjects.has(projectId); }
+/** @param {string} projectId */
+export function clearCancelled(projectId) { cancelledProjects.delete(projectId); }
+
 // Translate a raw provider error into a short, user-facing reason. The most
 // common real-world failure is the daily free image quota running out — the
 // previous UI just showed "image failed" with no explanation.
@@ -463,7 +472,7 @@ router.post("/:id/images", (req, res) => {
 router.post("/:id/cancel", (req, res) => {
   const project = readProject(req.ctx.dataDir, req.params.id);
   if (!project) return res.status(404).json({ ok: false, error: "project not found" });
-  cancelledProjects.add(req.params.id);
+  markCancelled(req.params.id);
   const jobId = project.render?.jobId;
   if (jobId) { try { cancelRenderJob(jobId, req.ctx.userId); } catch {} }
   const updated = writeProject(req.ctx.dataDir, { ...project, status: STORY_STATUS.ERROR, error: "Cancelled." });
