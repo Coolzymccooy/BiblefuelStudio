@@ -29,6 +29,7 @@ import transcriptsRouter from "./src/routes/transcripts.js";
 import imagegenRouter from "./src/routes/imagegen.js";
 import videogenRouter from "./src/routes/videogen.js";
 import storyRouter from "./src/routes/story.js";
+import longformRouter from "./src/routes/longform.js";
 import timelineRouter from "./src/routes/timeline.js";
 import abiRouter from "./src/routes/abi.js";
 import musicRouter from "./src/routes/music.js";
@@ -380,6 +381,7 @@ app.use("/api/tts",       requireAuth, withUserScope, requireVerifiedEmail, quot
 app.use("/api/abi",       abiRouter);
 app.use("/api/render",    requireAuth, withUserScope, requireVerifiedEmail, quota("render"),     renderRouter);
 app.use("/api/story",     requireAuth, withUserScope, requireVerifiedEmail, quota("render"),     storyRouter);
+app.use("/api/longform",  requireAuth, withUserScope, requireVerifiedEmail, quota("render"),     longformRouter);
 // NOTE: no quota("render") on the whole router. The timeline router also
 // serves GET /projects, the autosave PUT, and GET /render/:jobId - which the
 // client polls about once a second. Charging render quota per REQUEST meant a
