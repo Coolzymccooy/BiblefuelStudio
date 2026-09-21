@@ -5,7 +5,7 @@ import request from "supertest";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import longformRouter, { _setPlanImpl, _resetPlanImpl, _setNarrateImpl, _resetNarrateImpl, _setPipelineImpl, _resetPipelineImpl } from "./longform.js";
+import longformRouter, { _setPlanImpl, _resetPlanImpl, _setNarrateImpl, _resetNarrateImpl, _setPipelineImpl, _resetPipelineImpl, _setTranscribeImpl, _resetTranscribeImpl } from "./longform.js";
 import { readProject } from "../lib/story/projectStore.js";
 
 let dataDir, outputDir, app;
@@ -25,7 +25,7 @@ beforeEach(() => {
     ],
   }));
 });
-afterEach(() => { _resetPlanImpl(); _resetNarrateImpl(); _resetPipelineImpl(); });
+afterEach(() => { _resetPlanImpl(); _resetNarrateImpl(); _resetPipelineImpl(); _resetTranscribeImpl(); });
 
 async function waitFor(id, pred, ms = 3000) {
   const start = Date.now();
@@ -199,5 +199,32 @@ describe("POST /api/longform/:id/narrate", () => {
     const p = await waitFor(body.project.projectId, (x) => x.status === "error");
     assert.equal(p.status, "error");
     assert.match(p.error, /azure quota/);
+  });
+});
+
+describe("POST /api/longform/draft — inspiration", () => {
+  test("suggests a template when none is given and reports it", async () => {
+    const res = await request(app).post("/api/longform/draft").send({ idea: "an hour of psalms" });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.project.longform.templateId, "sleep-60");
+    assert.equal(res.body.suggestion.templateId, "sleep-60");
+  });
+  test("transcribes a voice note into the idea", async () => {
+    const note = path.join(outputDir, "note.m4a"); fs.writeFileSync(note, "aud");
+    let planned = "";
+    _setPlanImpl(async ({ idea }) => { planned = idea; return { title: "T", summary: "", sections: [
+      { heading: "A", reference: null, verseText: "", text: "a", targetSec: 60 },
+      { heading: "B", reference: null, verseText: "", text: "b", targetSec: 60 },
+      { heading: "C", reference: null, verseText: "", text: "c", targetSec: 60 } ] }; });
+    _setTranscribeImpl(async () => ({ provider: "local-whisper", words: [{ text: "when", startMs: 0, endMs: 1 }, { text: "I", startMs: 1, endMs: 2 }, { text: "cannot", startMs: 2, endMs: 3 }, { text: "sleep", startMs: 3, endMs: 4 }] }));
+    const res = await request(app).post("/api/longform/draft").send({ audioPath: note, templateId: "sleep-30" });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(planned, "when I cannot sleep");
+    assert.equal(res.body.project.longform.idea, "when I cannot sleep");
+  });
+  test("rejects a voice note outside the user's output dir", async () => {
+    const res = await request(app).post("/api/longform/draft").send({ audioPath: "/etc/passwd", templateId: "sleep-30" });
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /audioPath/i);
   });
 });

@@ -4,6 +4,8 @@ import { LONGFORM_TEMPLATES, longformTemplateById } from "../lib/longform/templa
 import { planLongformScript } from "../lib/longform/scriptPlanner.js";
 import { narrateSections } from "../lib/longform/narration.js";
 import { wordsFromSections } from "../lib/longform/sectionTimings.js";
+import { suggestTemplate } from "../lib/longform/suggestTemplate.js";
+import { transcribeAudio } from "../lib/stt/index.js";
 import { buildImportedTranscript } from "../lib/story/scriptImport.js";
 import { createProject, readProject, writeProject, STORY_STATUS } from "../lib/story/projectStore.js";
 import { runStoryPipeline } from "./story.js";
@@ -17,6 +19,20 @@ export function _resetNarrateImpl() { _narrate = narrateSections; }
 let _pipeline = runStoryPipeline;
 export function _setPipelineImpl(fn) { _pipeline = fn; }
 export function _resetPipelineImpl() { _pipeline = runStoryPipeline; }
+let _transcribe = transcribeAudio;
+export function _setTranscribeImpl(fn) { _transcribe = fn; }
+export function _resetTranscribeImpl() { _transcribe = transcribeAudio; }
+
+// Confines a client-supplied audio path to the operator's own output
+// directory. Uses path.resolve (lexical only — it never touches the
+// filesystem or follows symlinks) so a path that merely *names* somewhere
+// outside outputDir, e.g. via `..` segments, is rejected before anything
+// ever tries to read it.
+function confineToOutputDir(ctx, candidate) {
+  const resolved = path.resolve(String(candidate || ""));
+  const root = path.resolve(ctx.outputDir);
+  return resolved.startsWith(root + path.sep) || resolved === root ? resolved : null;
+}
 
 // Projects with a narration run currently in flight (same pattern as
 // story.js's cancelledProjects). Without this, a double-click or an
@@ -48,10 +64,24 @@ function normaliseSections(list) {
 
 router.post("/draft", async (req, res) => {
   try {
-    const template = longformTemplateById(req.body?.templateId);
-    if (!template) return res.status(400).json({ ok: false, error: "template is required (unknown templateId)" });
-    const idea = String(req.body?.idea || "").trim();
+    let idea = String(req.body?.idea || "").trim();
+    if (!idea && req.body?.audioPath) {
+      const audioPath = confineToOutputDir(req.ctx, req.body.audioPath);
+      if (!audioPath) return res.status(400).json({ ok: false, error: "audioPath must point inside your outputs folder" });
+      const transcribed = await _transcribe(audioPath);
+      idea = (transcribed?.words || []).map((w) => w.text).join(" ").trim();
+      if (!idea) return res.status(400).json({ ok: false, error: "voice note transcription returned no words" });
+    }
     if (!idea) return res.status(400).json({ ok: false, error: "idea is required" });
+
+    let suggestion = null;
+    let templateId = String(req.body?.templateId || "").trim();
+    if (!templateId) {
+      suggestion = suggestTemplate(idea);
+      templateId = suggestion.templateId;
+    }
+    const template = longformTemplateById(templateId);
+    if (!template) return res.status(400).json({ ok: false, error: "template is required (unknown templateId)" });
 
     const plan = await _plan({ idea, template, translation: req.body?.translation, targetSec: req.body?.targetSec });
     const created = createProject(req.ctx.dataDir, {
@@ -67,7 +97,7 @@ router.post("/draft", async (req, res) => {
       music: { ...created.music, volume: template.music.volume, autoDuck: template.music.autoDuck },
       status: STORY_STATUS.DRAFT_SCRIPT,
     });
-    return res.json({ ok: true, project });
+    return res.json({ ok: true, project, ...(suggestion ? { suggestion } : {}) });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
