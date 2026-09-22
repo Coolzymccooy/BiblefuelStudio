@@ -6,7 +6,7 @@ import { api, DIRECT_UPLOAD_MAX_BYTES } from '../lib/api';
 import { storyApi } from '../lib/storyApi';
 import { longformApi } from '../lib/longformApi';
 import { useStoryProject } from '../hooks/useStoryProject';
-import type { StoryProject } from '../lib/storyTypes';
+import type { StoryCaptionSettings, StoryProject } from '../lib/storyTypes';
 import { YoutubePublishPanel } from '../components/share/YoutubePublishPanel';
 import {
   deriveStep, progressLabel, canRender, imageCounts, isTransientStatus, isStalled, ttsProviderLabel,
@@ -15,6 +15,7 @@ import { StylePicker } from '../components/story/StylePicker';
 import { SceneCard } from '../components/story/SceneCard';
 import { ProjectHistory } from '../components/story/ProjectHistory';
 import { MusicPicker } from '../components/MusicPicker';
+import { StoryCaptionsPanel } from '../components/story/StoryCaptionsPanel';
 import { RenderProgressOverlay } from '../components/RenderProgressOverlay';
 import { MediaTrimmer } from '../components/MediaTrimmer';
 import { DropZone } from '../components/ui/DropZone';
@@ -178,6 +179,16 @@ export function StoryVideoPage() {
     try { await storyApi.cancel(projectId); refresh(); toast.success('Cancelled'); }
     catch (e) { toast.error((e as Error).message); }
     finally { setBusy(false); }
+  };
+
+  // Caption settings are patched one control at a time; the server merges
+  // against the stored project, so nothing else in the project is touched.
+  const onCaptionsChange = async (patch: StoryCaptionSettings) => {
+    if (!projectId) return;
+    try {
+      await storyApi.setCaptions(projectId, patch);
+      refresh();
+    } catch (e) { toast.error((e as Error).message); }
   };
 
   const onMusicChange = async (next: { path: string | null; volume: number; autoDuck?: boolean }) => {
@@ -599,6 +610,11 @@ export function StoryVideoPage() {
               </button>
             </div>
           </div>
+          <StoryCaptionsPanel
+            value={project}
+            onChange={onCaptionsChange}
+            busy={busy}
+          />
           <MusicPicker
             value={project.music ?? { path: null, volume: 0.3, autoDuck: true }}
             onChange={onMusicChange}

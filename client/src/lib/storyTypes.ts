@@ -60,7 +60,26 @@ export interface StoryLongform {
   source?: 'pasted';
 }
 
-export interface StoryProject {
+/**
+ * How a Story render burns its captions. Mirrors the server catalogue
+ * (PATCH /api/story/:id/captions); unknown values are dropped there, so an
+ * older project simply keeps the renderer defaults.
+ */
+export interface StoryCaptionSettings {
+  /** Off, whole lines, or word-synced. */
+  captions?: 'none' | 'static' | 'kinetic';
+  /** Typography/animation preset id — the "Caption animation" picker. */
+  captionPreset?: string;
+  /** How captions are timed: per word, revealed line by line, or as a block. */
+  captionMotion?: 'words' | 'lines' | 'block';
+  captionLayout?: 'center' | 'center-large' | 'bottom-center' | 'bottom-left' | 'staggered';
+  /** Ghost shadow behind each word. */
+  captionDepth?: 'none' | 'soft' | 'hard';
+  captionStagger?: boolean;
+  captionHighlight?: boolean;
+}
+
+export interface StoryProject extends StoryCaptionSettings {
   projectId: string;
   title: string;
   style: string;
@@ -71,10 +90,10 @@ export interface StoryProject {
   transcript: { words: StoryWord[]; hash: string | null };
   scenes: StoryScene[];
   music: { path: string | null; volume: number; autoDuck?: boolean };
-  captionPreset: string;
   longform?: StoryLongform;
   aspect?: 'portrait' | 'landscape';
-  captions?: 'none' | 'static' | 'kinetic';
+  /** Always present on a stored project; the rest of the caption settings are optional. */
+  captionPreset: string;
   render: {
     jobId: string | null;
     outputPath: string | null;

@@ -306,6 +306,29 @@ export function resolveLayout(name) {
 // "ghost" copy BEHIND it — the layered, premium look from the reference clips.
 // `depth` may be `true` (defaults) or `{ dx, dy, color, opacity }` (px + colour
 // overrides). Falsy → no ghost. dx/dy default to ~1% w / ~1.2% h at render time.
+// The Story project store persists depth as one of none/soft/hard (that is
+// the catalogue its captions route validates against). A string is neither
+// `true` nor an object, so it used to resolve to null AND — being non-nullish
+// — shadow the preset’s own depth, meaning "soft" turned the ghost OFF.
+const DEPTH_PRESETS = Object.freeze({
+  none: false,
+  soft: { color: "black", opacity: 0.5 },
+  hard: { color: "black", opacity: 0.8 },
+});
+
+/**
+ * Normalise a caption-depth override into what resolveDepth understands.
+ * Unknown strings return undefined, so the preset’s own depth still wins
+ * rather than being silently cancelled by a typo.
+ *
+ * @param {unknown} depth
+ */
+function depthOverride(depth) {
+  if (typeof depth !== "string") return depth;
+  const key = depth.trim().toLowerCase();
+  return Object.prototype.hasOwnProperty.call(DEPTH_PRESETS, key) ? DEPTH_PRESETS[key] : undefined;
+}
+
 function resolveDepth(depth) {
   if (!depth) return null;
   if (depth === true) return { color: "black", opacity: 0.5 };
@@ -395,7 +418,7 @@ export function buildWordDrawtext({ words, w, h, preset, layout, depth }) {
   // layout arg wins, else the preset may declare one, else "center".
   const resolvedLayout = resolveLayout(layout ?? style.layout);
   // depth arg wins (incl. explicit false), else the preset may declare one.
-  const depthCfg = resolveDepth(depth ?? style.depth);
+  const depthCfg = resolveDepth(depthOverride(depth) ?? style.depth);
   const depthDx = depthCfg ? (Number.isFinite(depthCfg.dx) ? depthCfg.dx : Math.round(w * 0.010)) : 0;
   const depthDy = depthCfg ? (Number.isFinite(depthCfg.dy) ? depthCfg.dy : Math.round(h * 0.012)) : 0;
   const depthColor = depthCfg?.color || "black";
