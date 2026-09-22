@@ -175,6 +175,7 @@ export function buildStoryCaptions({
       block: motion.block,
       reveal: motion.reveal,
       stagger: motion.stagger,
+      layout: captionLayout,
       highlightWords: motion.highlight ? safeWords : undefined,
     }) || "";
   }

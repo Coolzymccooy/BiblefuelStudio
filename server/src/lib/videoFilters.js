@@ -561,7 +561,37 @@ export function fitLineFontSize(lines, w, preferred) {
   return Math.max(MIN_LINE_FONT_SIZE, Math.min(preferred, maxSize));
 }
 
-export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal, highlightWords, stagger }) {
+/**
+ * Where a LINE caption sits, for a given layout.
+ *
+ * Line captions draw at a numeric y (rows stack downward from it), unlike
+ * word captions which use an ffmpeg expression. An absent layout keeps the
+ * historical position for that mode exactly, so existing renders are
+ * unchanged; only an explicit layout moves anything.
+ *
+ * @param {string|null|undefined} layout
+ * @param {number} defaultYFrac the mode\u2019s historical y, as a fraction of h
+ * @returns {{ xExpr: string, yFrac: number }}
+ */
+function lineGeometry(layout, defaultYFrac) {
+  if (layout === undefined || layout === null || layout === "") {
+    return { xExpr: "(w-text_w)/2", yFrac: defaultYFrac };
+  }
+  switch (resolveLayout(layout)) {
+    case "bottom-center":
+      return { xExpr: "(w-text_w)/2", yFrac: SAFE_BAND_Y };
+    case "bottom-left":
+      return { xExpr: "w*0.08", yFrac: SAFE_BAND_Y };
+    case "staggered":
+      return { xExpr: "w*0.10", yFrac: STAGGER_BAND_Y };
+    case "center-large":
+    case "center":
+    default:
+      return { xExpr: "(w-text_w)/2", yFrac: defaultYFrac };
+  }
+}
+
+export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal, highlightWords, stagger, layout }) {
   // A line is either a plain string (short-form callers, paced by an even
   // split of the duration) or { text, start, end } carrying its own window.
   // Long-form narration has real word timings, and an even split drifts
@@ -606,7 +636,8 @@ export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal
     const rows = perLine.flat();
     const fontSize = fitLineFontSize(rows, w, Math.round(h * (style.baseSizeMult || 0.07)));
     const slot = total / rows.length;
-    const y = Math.round(h * 0.45);
+    const geo = lineGeometry(layout ?? style.layout, 0.45);
+    const y = Math.round(h * geo.yFrac);
     const parts = [];
     // Row index -> [from, to], honouring each line’s own window when timed.
     const rowSpans = [];
@@ -623,7 +654,7 @@ export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal
     rows.forEach((row, i) => {
       const [from, to] = rowSpans[i];
       const enable = `:enable='between(t,${from.toFixed(3)},${to.toFixed(3)})'`;
-      parts.push(`drawtext=text='${escapeDrawText(row)}':x=(w-text_w)/2:y=${y}${fontArg(style)}:fontsize=${fontSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=${BOX_BORDER_W}${enable}`);
+      parts.push(`drawtext=text='${escapeDrawText(row)}':x=${geo.xExpr}:y=${y}${fontArg(style)}:fontsize=${fontSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=${BOX_BORDER_W}${enable}`);
 
       // Karaoke overlay: keep the whole row on screen and re-draw just the
       // spoken word in the emphasis colour on top of it. Only the words that
@@ -673,7 +704,8 @@ export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal
       const enable = `:enable='between(t,${from.toFixed(3)},${to.toFixed(3)})'`;
       // Centre the stack on the frame's middle band rather than hanging it
       // from a fixed top, or a tall block runs off the bottom.
-      const top = Math.round(h * 0.5 - (rows.length * lead) / 2);
+      const blockGeo = lineGeometry(layout ?? style.layout, 0.5);
+      const top = Math.round(h * blockGeo.yFrac - (rows.length * lead) / 2);
       // STAGGER: rows arrive a beat apart instead of popping in together.
       // The step is capped to a fraction of the block so the LAST row still
       // has time on screen - without the cap a short block would stagger past
@@ -687,7 +719,7 @@ export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal
         const rowEnable = step > 0
           ? `:enable='between(t,${rowFrom.toFixed(3)},${to.toFixed(3)})'`
           : enable;
-        return `drawtext=text='${escapeDrawText(row)}':x=(w-text_w)/2:y=${y}${fontArg(style)}:fontsize=${fontSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=${BOX_BORDER_W}${rowEnable}`;
+        return `drawtext=text='${escapeDrawText(row)}':x=${blockGeo.xExpr}:y=${y}${fontArg(style)}:fontsize=${fontSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=${BOX_BORDER_W}${rowEnable}`;
       }).join(",");
     }).join(",");
   }
@@ -695,7 +727,8 @@ export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal
   if ((Number.isFinite(total) && total > 0) || timed) {
     const span = (Number.isFinite(total) && total > 0) ? total : entries[entries.length - 1].end;
     const slot = span / safeLines.length;
-    const y = Math.round(h * 0.42);
+    const pacedGeo = lineGeometry(layout ?? style.layout, 0.42);
+    const y = Math.round(h * pacedGeo.yFrac);
     // A paced line has the frame to itself, so it gets the preset's WORD size
     // rather than the much smaller stacked-block size. lineSizeMult exists to
     // fit several lines at once; using it here rendered captions a third the
@@ -707,7 +740,7 @@ export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal
       // silent gap of uncaptioned video at the tail.
       const [from, to] = spanFor(i, i * slot, i === safeLines.length - 1 ? span : (i + 1) * slot);
       const enable = `:enable='between(t,${from.toFixed(3)},${to.toFixed(3)})'`;
-      return `drawtext=text='${escapeDrawText(t)}':x=(w-text_w)/2:y=${y}${fontArg(style)}:fontsize=${pacedSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=${BOX_BORDER_W}${enable}`;
+      return `drawtext=text='${escapeDrawText(t)}':x=${pacedGeo.xExpr}:y=${y}${fontArg(style)}:fontsize=${pacedSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=${BOX_BORDER_W}${enable}`;
     }).join(",");
   }
 

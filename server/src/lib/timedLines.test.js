@@ -59,3 +59,35 @@ test('a timed line with a broken window falls back rather than drawing nothing',
   assert.match(out, /good/);
   assert.doesNotMatch(out, /\[object Object\]/);
 });
+
+// Line captions were always dead centre: buildLineDrawtext ignored the layout
+// catalog entirely, so "Text layout" only ever moved word captions.
+
+test('an explicit layout moves line captions off centre', () => {
+  const lines = ['Be still', 'and know'];
+  const centred = buildLineDrawtext({ lines, w: W, h: H, duration: 10, preset: 'cinematic-default' });
+  for (const [layout, expected] of [['bottom-left', /x=w\*0\.08/], ['staggered', /x=w\*0\.10/]]) {
+    const out = buildLineDrawtext({ lines, w: W, h: H, duration: 10, preset: 'cinematic-default', layout });
+    assert.match(out, expected, `${layout} moved x`);
+    assert.notEqual(out, centred);
+  }
+});
+
+test('bottom-center drops line captions into the lower safe band', () => {
+  const lines = ['Be still', 'and know'];
+  const middle = buildLineDrawtext({ lines, w: W, h: H, duration: 10, preset: 'cinematic-default' });
+  const lower = buildLineDrawtext({ lines, w: W, h: H, duration: 10, preset: 'cinematic-default', layout: 'bottom-center' });
+  const yOf = (s) => Number(/:y=(\d+)/.exec(s)?.[1]);
+  assert.ok(yOf(lower) > yOf(middle), 'bottom-center sits lower than the default band');
+  assert.match(lower, /x=\(w-text_w\)\/2/, 'still horizontally centred');
+});
+
+test('no layout leaves every mode exactly where it was', () => {
+  const lines = ['Be still', 'and know'];
+  for (const mode of [{}, { block: true }, { reveal: true }]) {
+    const before = buildLineDrawtext({ lines, w: W, h: H, duration: 10, preset: 'cinematic-default', ...mode });
+    const after = buildLineDrawtext({ lines, w: W, h: H, duration: 10, preset: 'cinematic-default', layout: undefined, ...mode });
+    assert.equal(after, before);
+    assert.match(before, /x=\(w-text_w\)\/2/);
+  }
+});
