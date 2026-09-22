@@ -152,7 +152,10 @@ export function buildStoryFfmpegArgs({ scenes, words, audioPath, musicPath, musi
   const audioInputIdx = segs.length;
   let musicInputIdx = -1;
   if (musicPath) {
-    args.push("-i", musicPath);
+    // Loop the bed indefinitely: a long-form narration (30-60 min) outlasts
+    // any single track, and without this the music simply stopped after its
+    // first play. amix=duration=first (below) still ends the mix at the voice.
+    args.push("-stream_loop", "-1", "-i", musicPath);
     musicInputIdx = segs.length + 1;
   }
 
