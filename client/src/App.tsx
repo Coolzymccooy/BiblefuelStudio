@@ -8,6 +8,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { ConfigProvider } from './lib/config';
 import { LandingPage } from './pages/LandingPage';
 import { PrivacyPage } from './pages/PrivacyPage';
+import { TermsPage } from './pages/TermsPage';
 import { CookieBanner } from './components/CookieBanner';
 
 const HomePage = lazy(() => import('./pages/HomePage').then((m) => ({ default: m.HomePage })));
@@ -56,6 +57,7 @@ function App() {
                     CTA when a session token is present. */}
                 <Route path="/" element={<LandingPage />} />
                 <Route path="/privacy" element={<PrivacyPage />} />
+                <Route path="/terms" element={<TermsPage />} />
                 <Route path="/app" element={<Layout />}>
                   <Route index element={<HomePage />} />
                   <Route path="create" element={<CreateHubPage />} />

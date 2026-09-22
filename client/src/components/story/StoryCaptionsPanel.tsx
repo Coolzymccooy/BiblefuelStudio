@@ -81,7 +81,10 @@ export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCapti
                 aria-label="Caption motion"
                 value={effectiveMotion}
                 disabled={busy}
-                onChange={(e: ChangeEvent<HTMLSelectElement>) => onChange({ captionMotion: e.target.value })}
+                // The motion list comes from the server catalogue, so TS can't
+                // narrow it to the union; the options rendered below are the
+                // only values reachable here.
+                onChange={(e: ChangeEvent<HTMLSelectElement>) => onChange({ captionMotion: e.target.value as StoryCaptionSettings['captionMotion'] })}
               >
                 {motions.map((m) => (
                   <option key={m.id} value={m.id}>{m.label}</option>
@@ -152,7 +155,7 @@ export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCapti
               aria-label="Text layout"
               value={value.captionLayout || 'center'}
               disabled={busy}
-              onChange={(e: ChangeEvent<HTMLSelectElement>) => onChange({ captionLayout: e.target.value })}
+              onChange={(e: ChangeEvent<HTMLSelectElement>) => onChange({ captionLayout: e.target.value as StoryCaptionSettings['captionLayout'] })}
             >
               {LAYOUT_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>{o.label}</option>

@@ -6,6 +6,7 @@ export function Footer() {
         <span>© Biblefuel · A studio by Tiwaton</span>
         <div className="flex gap-4 sm:gap-5">
           <a href="/privacy" className="hover:text-editorial-ink transition-colors">Privacy</a>
+          <a href="/terms" className="hover:text-editorial-ink transition-colors">Terms</a>
           <a href="mailto:hello@tiwaton.co.uk" className="hover:text-editorial-ink transition-colors">Contact</a>
         </div>
       </div>
