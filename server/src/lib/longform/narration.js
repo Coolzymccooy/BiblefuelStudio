@@ -154,7 +154,9 @@ export async function narrateSections({ sections, template, voiceId, workDir }, 
     const startMs = cursorMs;
     for (const text of chunksBySection[i]) {
       const { file, provider } = await synthChunk({ text, voiceId, template, chunksDir, synthesize, runFfmpeg, providers });
-      if (provider && !usedProvider) usedProvider = provider;
+      // Track the LAST provider that voiced a chunk, so a mid-run fallback
+      // (Azure hiccup → Edge) shows up in the heartbeat and final record.
+      if (provider) usedProvider = provider;
       entries.push(file);
       cursorMs += await measureMs(probe, file, path.basename(file));
       done += 1;

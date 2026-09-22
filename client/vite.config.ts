@@ -29,9 +29,9 @@ export default defineConfig(({ mode }) => {
       // automatic.
       host: env.VITE_EXPOSE ? true : undefined,
       // Remote testing through an ngrok tunnel (`ngrok http 5174`): Vite
-      // refuses unknown Host headers by default, so allow ngrok's domains.
-      // Only meaningful when the server is exposed anyway; harmless otherwise.
-      allowedHosts: ['.ngrok-free.app', '.ngrok-free.dev', '.ngrok.app', '.ngrok.io'],
+      // refuses unknown Host headers by default, so allow ngrok's domains —
+      // but only when the server is deliberately exposed (VITE_EXPOSE=1).
+      allowedHosts: env.VITE_EXPOSE ? ['.ngrok-free.app', '.ngrok-free.dev', '.ngrok.app', '.ngrok.io'] : undefined,
       proxy: {
         '/api': {
           target: apiTarget,
