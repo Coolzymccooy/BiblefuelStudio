@@ -70,6 +70,33 @@ test("transcribeAudio returns provider metadata from the selected provider", asy
   });
 });
 
+test("transcribeAudio falls back to OpenAI when local-whisper transcribes nothing", async () => {
+  // A model that yields no words is as useless as one that throws, and the
+  // caller cannot tell the difference — both must reach OpenAI rather than
+  // returning a null transcript that reads as "this audio is silent".
+  const result = await transcribeAudio("sample.wav", {
+    env: { STT_PROVIDER: "local-whisper", LOCAL_WHISPER_MODEL_DIR: "C:/models" },
+    providers: {
+      'local-whisper': { transcribe: async () => null },
+      openai: {
+        transcribe: async (audioPath) => ({ words: [{ text: "Rescued", startMs: 0, endMs: 300 }], audioPath }),
+      },
+    },
+  });
+  assert.equal(result.provider, "openai");
+  assert.equal(result.fallbackFrom, "local-whisper");
+  assert.match(result.fallbackError, /no words/i);
+  assert.deepEqual(result.words, [{ text: "Rescued", startMs: 0, endMs: 300 }]);
+});
+
+test("transcribeAudio still returns null when OpenAI itself is the empty one", async () => {
+  const result = await transcribeAudio("sample.wav", {
+    env: { STT_PROVIDER: "openai" },
+    providers: { openai: { transcribe: async () => null } },
+  });
+  assert.equal(result, null);
+});
+
 test("transcribeAudio falls back to OpenAI when selected local-whisper fails", async () => {
   const result = await transcribeAudio("sample.wav", {
     env: { STT_PROVIDER: "local-whisper", LOCAL_WHISPER_MODEL_DIR: "C:/models" },
