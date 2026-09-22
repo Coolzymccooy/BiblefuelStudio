@@ -90,6 +90,13 @@ export function YoutubePublishPanel({ videoUrl, initial, thumbnailOptions = [], 
       <label className="block text-sm text-gray-300">
         Description
         <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={4} className={inputCls} />
+        {chapters && chapters.length > 0 && (
+          // Chapters are appended server-side at publish time (see social.js →
+          // buildYoutubeDescription), so the user only ever edits the summary.
+          <span className="mt-1 block text-xs text-gray-500">
+            {chapters.length} chapter timestamps will be added below this description when you publish.
+          </span>
+        )}
       </label>
       <label className="block text-sm text-gray-300">
         Tags (comma separated)

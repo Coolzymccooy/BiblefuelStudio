@@ -39,6 +39,12 @@ describe('YoutubePublishPanel', () => {
     expect(onPublished).toHaveBeenCalledWith(expect.objectContaining({ videoId: 'v1', forcedPrivate: true }));
   });
 
+  it('explains that chapters are appended at publish time, only when there are chapters', () => {
+    const { rerender } = render(<YoutubePublishPanel videoUrl="/outputs/story/p1/video.mp4" chapters={[{ startMs: 0, title: 'Welcome' }, { startMs: 60_000, title: 'Psalm 23' }, { startMs: 120_000, title: 'Closing' }]} />);
+    expect(screen.getByText(/3 chapter timestamps will be added/i)).toBeInTheDocument();
+    rerender(<YoutubePublishPanel videoUrl="/outputs/story/p1/video.mp4" />);
+    expect(screen.queryByText(/chapter timestamps/i)).not.toBeInTheDocument();
+  });
   it('tells the user when a schedule forced the video private', async () => {
     const user = userEvent.setup();
     vi.spyOn(api, 'post').mockResolvedValue({ ok: true, data: { videoId: 'v1', videoUrl: 'u', forcedPrivate: true } } as any);
