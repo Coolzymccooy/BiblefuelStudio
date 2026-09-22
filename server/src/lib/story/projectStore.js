@@ -58,9 +58,14 @@ export function createProject(baseDir, {
     aspect: aspect === "landscape" ? "landscape" : "portrait",
     // Caption rendering mode for storyRender's drawtext chain.
     captions: ["none", "static", "kinetic"].includes(captions) ? captions : "kinetic",
-    // Optional per-project scene-timing overrides (target scene length / cap).
+    // Optional per-project scene policy: timing overrides (target scene length
+    // / cap) and, for long-form, the visual-beat length the render is re-cut to.
     scene: scene && typeof scene === "object"
-      ? { targetSceneSec: Number(scene.targetSceneSec) || undefined, maxScenes: Number(scene.maxScenes) || undefined }
+      ? {
+          targetSceneSec: Number(scene.targetSceneSec) || undefined,
+          maxScenes: Number(scene.maxScenes) || undefined,
+          beatSec: Number(scene.beatSec) > 0 ? Number(scene.beatSec) : undefined,
+        }
       : null,
     // Long-form (script -> chunked narration) metadata; null for the classic flow.
     longform: longform && typeof longform === "object" ? longform : null,

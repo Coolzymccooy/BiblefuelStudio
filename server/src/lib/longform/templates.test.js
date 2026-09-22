@@ -10,6 +10,7 @@ describe("longform templates", () => {
       assert.equal(t.kind, "sleep");
       assert.equal(t.scene.captions, "none");
       assert.ok(t.scene.maxScenes >= 8 && t.scene.maxScenes <= 16);
+      assert.ok(t.scene.beatSec >= 20 && t.scene.beatSec <= 60, "visual beats keep a sparse image set moving");
       assert.ok(t.voice.pauseMs >= 3000);
       assert.ok(t.voice.maxChunkChars >= 300 && t.voice.maxChunkChars <= 4500);
       assert.equal(t.music.autoDuck, false);

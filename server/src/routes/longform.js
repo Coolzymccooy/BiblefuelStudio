@@ -91,7 +91,7 @@ router.post("/draft", renderQuota, async (req, res) => {
       style: req.body?.style,
       aspect: "landscape",
       captions: template.scene.captions,
-      scene: { targetSceneSec: template.scene.targetSceneSec, maxScenes: template.scene.maxScenes },
+      scene: { targetSceneSec: template.scene.targetSceneSec, maxScenes: template.scene.maxScenes, beatSec: template.scene.beatSec },
       longform: { templateId: template.id, idea, summary: plan.summary, sections: plan.sections },
     });
     const project = writeProject(req.ctx.dataDir, {

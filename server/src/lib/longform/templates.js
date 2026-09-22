@@ -19,7 +19,9 @@ const sleep = (id, minutes) => Object.freeze({
   targetSec: minutes * 60,
   wpm: 110,
   structurePrompt: SLEEP_STRUCTURE,
-  scene: { targetSceneSec: Math.round((minutes * 60) / 12), maxScenes: 12, captions: "none" },
+  // 12 images per session keeps image-gen cheap; beatSec re-cuts the render
+  // into ~40 s beats that cycle through them so the picture keeps moving.
+  scene: { targetSceneSec: Math.round((minutes * 60) / 12), maxScenes: 12, captions: "none", beatSec: 40 },
   // Azure first: a 30-60 min session is ~20 chunks, and Chatterbox on a CPU box
   // takes minutes per chunk (hours per video) where Azure takes seconds. Edge is
   // the free fallback; Chatterbox only when neither of those is configured.

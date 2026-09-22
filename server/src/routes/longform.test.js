@@ -60,6 +60,7 @@ describe("POST /api/longform/draft", () => {
     assert.equal(p.aspect, "landscape");
     assert.equal(p.captions, "none");
     assert.equal(p.scene.maxScenes, 12);
+    assert.equal(p.scene.beatSec, 40);
     assert.equal(p.title, "Psalms for Rest");
     assert.equal(p.longform.templateId, "sleep-30");
     assert.equal(p.longform.sections.length, 3);

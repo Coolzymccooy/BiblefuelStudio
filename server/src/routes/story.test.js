@@ -7,6 +7,7 @@ import storyRouter, {
   _setTranscribeImpl, _resetTranscribeImpl,
   _setImageGenImpl, _resetImageGenImpl,
   _setTtsImpl, _resetTtsImpl,
+  _setRenderImpl, _resetRenderImpl,
 } from "./story.js";
 import { _setLlmImpl, _resetLlmImpl } from "../lib/story/sceneSegmenter.js";
 import { _setLlmImpl as _setScriptLlmImpl, _resetLlmImpl as _resetScriptLlmImpl } from "../lib/story/scriptRefine.js";
@@ -48,7 +49,7 @@ beforeEach(() => {
   outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "story-route-out-"));
 });
 afterEach(() => {
-  _resetTranscribeImpl(); _resetImageGenImpl(); _resetLlmImpl(); _resetScriptLlmImpl(); _resetTtsImpl();
+  _resetTranscribeImpl(); _resetImageGenImpl(); _resetLlmImpl(); _resetScriptLlmImpl(); _resetTtsImpl(); _resetRenderImpl();
   fs.rmSync(dataDir, { recursive: true, force: true });
   fs.rmSync(outputDir, { recursive: true, force: true });
 });
@@ -547,5 +548,32 @@ describe("story routes", () => {
     const bad = mockReqRes({ params: { id }, body: { mediaPath: evil }, dataDir, outputDir });
     await handlerFor("post", "/:id/process")(bad.req, bad.res);
     assert.equal(bad.res.statusCode, 403);
+  });
+
+  test("render re-cuts a long-form project into visual beats when scene.beatSec is set, and leaves other projects alone", async () => {
+    const img = path.join(outputDir, "img.png"); fs.writeFileSync(img, "png");
+    const audio = path.join(outputDir, "voice.mp3"); fs.writeFileSync(audio, "mp3");
+    const mkScene = (i, startMs, endMs) => ({ id: `s${i}`, text: `t${i}`, imagePrompt: "", imagePath: img, imageUrl: "/x.png", imageStatus: "done", startMs, endMs, promptEditedByUser: false });
+    const scenes = [mkScene(1, 0, 150_000), mkScene(2, 150_000, 300_000), mkScene(3, 300_000, 450_000)];
+    const calls = [];
+    _setRenderImpl(async (args) => { calls.push(args); return { ok: true, outputPath: args.outPath }; });
+
+    const lf = createProject(dataDir, { title: "beats", aspect: "landscape", captions: "none", scene: { targetSceneSec: 150, maxScenes: 12, beatSec: 40 } });
+    writeProject(dataDir, { ...lf, status: "ready_to_render", scenes, source: { audioPath: audio, durationMs: 450_000 } });
+    const a = mockReqRes({ params: { id: lf.projectId }, dataDir, outputDir });
+    await handlerFor("post", "/:id/render")(a.req, a.res);
+    assert.equal(a.res.statusCode, 200, JSON.stringify(a.res.payload));
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].scenes.length, 11, "450 s at 40 s beats");
+    assert.equal(calls[0].scenes[calls[0].scenes.length - 1].endMs, 450_000);
+    assert.equal(calls[0].width, 1280);
+    assert.equal(calls[0].captions, "none");
+
+    const plain = createProject(dataDir, { title: "short" });
+    writeProject(dataDir, { ...plain, status: "ready_to_render", scenes, source: { audioPath: audio, durationMs: 450_000 } });
+    const b = mockReqRes({ params: { id: plain.projectId }, dataDir, outputDir });
+    await handlerFor("post", "/:id/render")(b.req, b.res);
+    assert.equal(b.res.statusCode, 200, JSON.stringify(b.res.payload));
+    assert.deepEqual(calls[1].scenes, scenes, "no beatSec: the scenes go through untouched");
   });
 });

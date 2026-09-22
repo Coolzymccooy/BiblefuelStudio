@@ -22,6 +22,7 @@ import { buildImportedTranscript } from "../lib/story/scriptImport.js";
 import { CHARACTER_ANCHORS } from "../lib/story/styleAnchors.js";
 import { confineToDir } from "../lib/confinePath.js";
 import { isNarrationActive } from "../lib/longform/narrationRegistry.js";
+import { expandScenesToBeats } from "../lib/story/visualBeats.js";
 
 // Mockable seams (mirror routes/transcribe.js).
 let _transcribeFn = transcribeAudio;
@@ -35,6 +36,10 @@ export function _resetImageGenImpl() { _imageGenFn = generateBibleImage; }
 let _ttsFn = synthesizeEdgeTts;
 export function _setTtsImpl(impl) { _ttsFn = impl; }
 export function _resetTtsImpl() { _ttsFn = synthesizeEdgeTts; }
+
+let _renderFn = runStoryRender;
+export function _setRenderImpl(impl) { _renderFn = impl; }
+export function _resetRenderImpl() { _renderFn = runStoryRender; }
 
 // Confine a user-supplied mediaPath to the caller's own dirs (anti path-traversal).
 function confineMediaPath(ctx, rawMediaPath) {
@@ -652,9 +657,13 @@ router.post("/:id/render", async (req, res) => {
         }
       } catch { /* progress persistence is best-effort */ }
     };
-    runStoryRender({
+    _renderFn({
       jobId: job.jobId,
-      scenes,
+      // Long-form templates set scene.beatSec so a 12-image, 30-minute session
+      // is re-cut into ~40 s beats cycling through the images (each with its
+      // own move + dissolve) instead of one static frame per 2-3 minutes.
+      // Projects without beatSec render their scenes exactly as before.
+      scenes: expandScenesToBeats(scenes, { beatSec: project.scene?.beatSec }),
       words: project.transcript?.words || [],
       audioPath,
       musicPath: resolveLibraryTrack(project.music?.path) || project.music?.path || null,
