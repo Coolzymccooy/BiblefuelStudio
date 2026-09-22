@@ -93,4 +93,26 @@ describe("music route", () => {
     await handlerFor("delete", "/:id")({ ctx, params: { id: "peaceful-worship" } }, bundled);
     assert.equal(bundled.statusCode, 400, "bundled tracks ship with the app and are not the tenant's to delete");
   });
+
+  test("POST /upload refuses a symlink that escapes the tenant's folder", async () => {
+    const { ctx } = tenant();
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "bf-music-outside-"));
+    const outsideFile = path.join(outside, "external.mp3");
+    fs.writeFileSync(outsideFile, "external file");
+    const linkPath = path.join(ctx.outputDir, "evil-link.mp3");
+    try {
+      fs.symlinkSync(outsideFile, linkPath);
+    } catch (e) {
+      if (e.code === "EPERM") {
+        // Windows without developer mode cannot create symlinks; skip gracefully.
+        return;
+      }
+      throw e;
+    }
+    const r = res();
+    await handlerFor("post", "/upload")({ ctx, body: { file: linkPath, label: "Evil" } }, r);
+    assert.equal(r.statusCode, 403, "symlink must not escape the tenant's folder");
+    assert.equal(r.payload.ok, false);
+    fs.rmSync(outside, { recursive: true });
+  });
 });

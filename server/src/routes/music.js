@@ -50,6 +50,18 @@ router.post("/upload", async (req, res) => {
     if (!fs.existsSync(file)) {
       return res.status(400).json({ ok: false, error: "That file is no longer there" });
     }
+    // Canonicalize both paths to reject symlinks that escape the outputDir.
+    // fs.realpathSync throws if the path disappears between checks — treat that as 400.
+    let realFile, realRoot;
+    try {
+      realFile = fs.realpathSync(file);
+      realRoot = fs.realpathSync(root);
+    } catch {
+      return res.status(400).json({ ok: false, error: "That file is no longer there" });
+    }
+    if (realFile !== realRoot && !realFile.startsWith(realRoot + path.sep)) {
+      return res.status(403).json({ ok: false, error: "That file is outside your media folder" });
+    }
     // A duration makes the picker useful ("3:02") and lets a later bed
     // assembly know how many tracks it needs. A probe failure is not fatal.
     // probeAudioDurationSec is declared `function` (storyRender.js:435) and
