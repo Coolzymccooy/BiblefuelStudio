@@ -23,6 +23,7 @@ import { CHARACTER_ANCHORS } from "../lib/story/styleAnchors.js";
 import { confineToDir } from "../lib/confinePath.js";
 import { isNarrationActive } from "../lib/longform/narrationRegistry.js";
 import { expandScenesToBeats } from "../lib/story/visualBeats.js";
+import { findReusableImages, markUsed, registerImage, pruneLibrary } from "../lib/imageGen/imageLibrary.js";
 
 // Mockable seams (mirror routes/transcribe.js).
 let _transcribeFn = transcribeAudio;
@@ -32,6 +33,13 @@ export function _resetTranscribeImpl() { _transcribeFn = transcribeAudio; }
 let _imageGenFn = generateBibleImage;
 export function _setImageGenImpl(impl) { _imageGenFn = impl; }
 export function _resetImageGenImpl() { _imageGenFn = generateBibleImage; }
+
+// The image library, as one injectable bundle so route tests can drive reuse
+// without touching disk or the embedding API.
+const REAL_IMAGE_LIB = { find: findReusableImages, mark: markUsed, register: registerImage };
+let _imageLib = REAL_IMAGE_LIB;
+export function _setImageLibraryImpl(impl) { _imageLib = { ...REAL_IMAGE_LIB, ...impl }; }
+export function _resetImageLibraryImpl() { _imageLib = REAL_IMAGE_LIB; }
 
 let _ttsFn = synthesizeEdgeTts;
 export function _setTtsImpl(impl) { _ttsFn = impl; }
@@ -193,15 +201,55 @@ async function imagesStage(ctx, projectId, opts = {}) {
   writeProject(ctx.dataDir, { ...project, scenes, status: STORY_STATUS.GENERATING_IMAGES });
 
   const timeoutMs = imageStageTimeoutMs();
+  const style = String(project.style || "");
+  const aspect = imageAspectFor(project);
+  // Library images already spoken for by THIS video. Scenes run concurrently,
+  // so a claim is taken synchronously after the await — two workers must never
+  // land on the same picture.
+  const claimedIds = new Set(scenes.map((s) => s.imageLibraryId).filter(Boolean));
   let cursor = 0;
   const worker = async () => {
     while (cursor < pending.length) {
       if (cancelledProjects.has(projectId)) return; // stop promptly on cancel
       const i = pending[cursor++];
+
+      // 1. Ask the library first — a hit costs no image quota.
+      let reused = null;
+      try {
+        const candidates = await _imageLib.find({ dataDir: ctx.dataDir, prompt: scenes[i].imagePrompt, style, aspect, excludeIds: [...claimedIds] });
+        for (const c of candidates || []) {
+          if (!c?.entry?.id || claimedIds.has(c.entry.id)) continue; // a sibling took it while we awaited
+          claimedIds.add(c.entry.id); // claim synchronously
+          reused = c;
+          break;
+        }
+      } catch (err) {
+        console.warn(`[story] scene ${i + 1} library lookup failed: ${err?.message || err}`);
+      }
+
+      if (reused) {
+        // Usage stats are not worth failing a scene over.
+        try { _imageLib.mark({ dataDir: ctx.dataDir, id: reused.entry.id }); } catch { /* ignore */ }
+        console.log(`[story] scene ${i + 1} reused ${reused.entry.id} (score ${Number(reused.score).toFixed(3)})`);
+        scenes[i] = {
+          ...scenes[i],
+          imagePath: reused.entry.path,
+          imageUrl: reused.entry.publicUrl || null,
+          imageStatus: "done",
+          imageError: null,
+          imageSource: "library",
+          imageLibraryId: reused.entry.id,
+          imageReuseScore: reused.score,
+        };
+        writeProject(ctx.dataDir, { ...project, scenes });
+        continue;
+      }
+
+      // 2. Nothing fit — generate, then harvest the result for next time.
       let result;
       try {
         result = await withTimeout(
-          _imageGenFn({ seriesId: project.projectId, partNumber: i + 1, rawPrompt: scenes[i].imagePrompt, aspect: imageAspectFor(project) }),
+          _imageGenFn({ seriesId: project.projectId, partNumber: i + 1, rawPrompt: scenes[i].imagePrompt, aspect }),
           timeoutMs,
           `image gen for scene ${i + 1} timed out after ${timeoutMs}ms`,
         );
@@ -209,15 +257,38 @@ async function imagesStage(ctx, projectId, opts = {}) {
         console.warn(`[story] scene ${i + 1} image gen failed: ${err?.message || err}`);
         result = { ok: false, error: String(err?.message || err) };
       }
-      scenes[i] = result?.ok
-        ? { ...scenes[i], imagePath: result.path, imageUrl: result.publicUrl || null, imageStatus: "done", imageError: null }
-        : { ...scenes[i], imageStatus: "error", imageError: shortImageError(result?.error) };
+
+      if (result?.ok) {
+        let entry = null;
+        try {
+          entry = await _imageLib.register({ dataDir: ctx.dataDir, outputDir: ctx.outputDir, sourcePath: result.path, prompt: scenes[i].imagePrompt, style, aspect, provider: result.provider, projectId: project.projectId });
+          if (entry?.id) claimedIds.add(entry.id);
+        } catch (err) {
+          // The picture exists; the index is only an optimisation.
+          console.warn(`[story] scene ${i + 1} harvest failed: ${err?.message || err}`);
+        }
+        scenes[i] = {
+          ...scenes[i],
+          imagePath: result.path,
+          imageUrl: result.publicUrl || null,
+          imageStatus: "done",
+          imageError: null,
+          imageSource: "generated",
+          imageLibraryId: entry?.id || null,
+          imageReuseScore: null,
+        };
+      } else {
+        scenes[i] = { ...scenes[i], imageStatus: "error", imageError: shortImageError(result?.error) };
+      }
       writeProject(ctx.dataDir, { ...project, scenes });
     }
   };
 
   const workerCount = Math.min(imageStageConcurrency(), Math.max(1, pending.length));
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
+
+  // Housekeeping: keep the library from growing without bound.
+  try { pruneLibrary({ dataDir: ctx.dataDir, outputDir: ctx.outputDir }); } catch { /* ignore */ }
 
   if (cancelledProjects.has(projectId)) {
     cancelledProjects.delete(projectId);

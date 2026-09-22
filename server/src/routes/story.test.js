@@ -8,6 +8,7 @@ import storyRouter, {
   _setImageGenImpl, _resetImageGenImpl,
   _setTtsImpl, _resetTtsImpl,
   _setRenderImpl, _resetRenderImpl,
+  _setImageLibraryImpl, _resetImageLibraryImpl,
 } from "./story.js";
 import { _setLlmImpl, _resetLlmImpl } from "../lib/story/sceneSegmenter.js";
 import { _setLlmImpl as _setScriptLlmImpl, _resetLlmImpl as _resetScriptLlmImpl } from "../lib/story/scriptRefine.js";
@@ -50,6 +51,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   _resetTranscribeImpl(); _resetImageGenImpl(); _resetLlmImpl(); _resetScriptLlmImpl(); _resetTtsImpl(); _resetRenderImpl();
+  _resetImageLibraryImpl();
   fs.rmSync(dataDir, { recursive: true, force: true });
   fs.rmSync(outputDir, { recursive: true, force: true });
 });
@@ -87,6 +89,71 @@ describe("story routes", () => {
     assert.equal(res.payload.ok, true);
     assert.equal(res.payload.project.scenes.length, 2);
     assert.equal(res.payload.project.status, "generating_images");
+  });
+
+  test("a scene reuses a library image instead of generating, and never twice in one video", async () => {
+    const create = mockReqRes({ body: { title: "T", style: "cinematic-bible" }, dataDir, outputDir });
+    await handlerFor("post", "/")(create.req, create.res);
+    const id = create.res.payload.project.projectId;
+    const proj = readProject(dataDir, id);
+    writeProject(dataDir, {
+      ...proj,
+      scenes: [
+        { id: "scene-001", text: "a", startMs: 0, endMs: 8000, imagePrompt: "still waters", imagePath: null, imageStatus: "pending", promptEditedByUser: false },
+        { id: "scene-002", text: "b", startMs: 8000, endMs: 16000, imagePrompt: "still waters at dusk", imagePath: null, imageStatus: "pending", promptEditedByUser: false },
+      ],
+    });
+    const generated = [];
+    _setImageGenImpl(async ({ partNumber }) => { generated.push(partNumber); return { ok: true, path: `/gen-${partNumber}.png`, publicUrl: `/o/gen-${partNumber}.png`, provider: "cloudflare" }; });
+    const claimed = [];
+    _setImageLibraryImpl({
+      // One library image that matches everything: the second scene must not get it.
+      find: async ({ excludeIds }) => (excludeIds.includes("img_a") ? [] : [{ entry: { id: "img_a", path: "/lib/a.png", publicUrl: "/outputs/imageLib/a.png" }, score: 0.91 }]),
+      mark: ({ id: libId }) => claimed.push(libId),
+      register: async () => null,
+    });
+    const { req, res } = mockReqRes({ params: { id }, body: {}, dataDir, outputDir });
+    await handlerFor("post", "/:id/images")(req, res);
+    const after = await waitForProject(dataDir, id, (p) => p.status === "ready_to_render");
+    const fromLibrary = after.scenes.filter((s) => s.imageSource === "library");
+    const fromGen = after.scenes.filter((s) => s.imageSource === "generated");
+    assert.equal(fromLibrary.length, 1, "exactly one scene reused the single library image");
+    assert.equal(fromGen.length, 1, "the other scene had to generate");
+    assert.equal(fromLibrary[0].imageUrl, "/outputs/imageLib/a.png");
+    assert.equal(fromLibrary[0].imagePath, "/lib/a.png");
+    assert.equal(fromLibrary[0].imageReuseScore, 0.91);
+    assert.equal(fromLibrary[0].imageLibraryId, "img_a");
+    assert.deepEqual(claimed, ["img_a"], "the reuse was recorded once");
+    assert.equal(generated.length, 1, "only one scene cost image quota");
+  });
+
+  test("a generated scene is harvested, and a harvest failure still leaves it done", async () => {
+    const create = mockReqRes({ body: { title: "T", style: "cinematic-bible" }, dataDir, outputDir });
+    await handlerFor("post", "/")(create.req, create.res);
+    const id = create.res.payload.project.projectId;
+    const proj = readProject(dataDir, id);
+    writeProject(dataDir, {
+      ...proj,
+      aspect: "landscape",
+      scenes: [{ id: "scene-001", text: "a", startMs: 0, endMs: 8000, imagePrompt: "a candle burning", imagePath: null, imageStatus: "pending", promptEditedByUser: false }],
+    });
+    _setImageGenImpl(async () => ({ ok: true, path: "/gen-1.png", publicUrl: "/o/gen-1.png", provider: "cloudflare" }));
+    const harvested = [];
+    _setImageLibraryImpl({
+      find: async () => [],
+      mark: () => {},
+      register: async (args) => { harvested.push(args); throw new Error("disk full"); },
+    });
+    const { req, res } = mockReqRes({ params: { id }, body: {}, dataDir, outputDir });
+    await handlerFor("post", "/:id/images")(req, res);
+    const after = await waitForProject(dataDir, id, (p) => p.status === "ready_to_render");
+    assert.equal(after.scenes[0].imageStatus, "done", "a harvest failure never fails the scene");
+    assert.equal(after.scenes[0].imageSource, "generated");
+    assert.equal(harvested.length, 1);
+    assert.equal(harvested[0].prompt, "a candle burning");
+    assert.equal(harvested[0].style, "cinematic-bible");
+    assert.equal(harvested[0].aspect, "landscape");
+    assert.equal(harvested[0].provider, "cloudflare");
   });
 
   test("images stage is idempotent — already-done scenes are skipped", async () => {
