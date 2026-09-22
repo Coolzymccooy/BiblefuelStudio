@@ -44,18 +44,24 @@ export async function segmentScenes({ words, style, targetSec = TARGET_SEC_DEFAU
     llmScenes = null;
   }
 
-  // Use the LLM split only when it's present AND respects the cap. If it
-  // over-segments (ignoring the widened target), fall back to bounded
-  // duration windows so we never blow past MAX_SCENES.
-  const ranges =
-    llmScenes && llmScenes.length > 0 && llmScenes.length <= cap
-      ? llmScenes.map((s) => ({
-          text: String(s.text || "").trim(),
-          start: clampIndex(s.startWordIndex, words.length),
-          end: clampIndex(s.endWordIndex, words.length),
-          imagePrompt: String(s.imagePrompt || "").trim(),
-        }))
-      : fallbackRanges(words, effectiveTargetSec);
+  // Use the LLM split only when it's present, respects the cap AND actually
+  // covers the recording. If it over-segments (ignoring the widened target)
+  // OR stops early — on a 14-min narration gpt-4o-mini returned ten ~10 s
+  // scenes over the first two minutes and quit, and the renderer then held
+  // the last image for twelve minutes — fall back to bounded duration
+  // windows so every scene count stays within MAX_SCENES and every word
+  // gets a picture.
+  const llmRanges = llmScenes && llmScenes.length > 0 && llmScenes.length <= cap
+    ? llmScenes.map((s) => ({
+        text: String(s.text || "").trim(),
+        start: clampIndex(s.startWordIndex, words.length),
+        end: clampIndex(s.endWordIndex, words.length),
+        imagePrompt: String(s.imagePrompt || "").trim(),
+      }))
+    : null;
+  const ranges = llmRanges && coversRecording(llmRanges, words)
+    ? llmRanges
+    : fallbackRanges(words, effectiveTargetSec);
 
   return ranges.map((r, i) => {
     const start = Math.min(r.start, r.end);
@@ -78,6 +84,27 @@ export async function segmentScenes({ words, style, targetSec = TARGET_SEC_DEFAU
       promptEditedByUser: false,
     };
   });
+}
+
+// The LLM's scenes must span (nearly) the whole recording: the last scene has
+// to end within the final 5% of the audio, and the scenes together must cover
+// at least 90% of it. Anything less leaves a long tail with no picture.
+const MIN_COVERAGE = 0.9;
+const TAIL_TOLERANCE = 0.05;
+function coversRecording(ranges, words) {
+  const startMs = words[0].startMs;
+  const totalMs = words[words.length - 1].endMs - startMs;
+  if (totalMs <= 0) return true;
+  let coveredMs = 0;
+  let lastEndMs = startMs;
+  for (const r of ranges) {
+    const a = Math.min(r.start, r.end);
+    const b = Math.max(r.start, r.end);
+    coveredMs += Math.max(0, words[b].endMs - words[a].startMs);
+    lastEndMs = Math.max(lastEndMs, words[b].endMs);
+  }
+  const tailOk = (words[words.length - 1].endMs - lastEndMs) <= totalMs * TAIL_TOLERANCE;
+  return tailOk && coveredMs >= totalMs * MIN_COVERAGE;
 }
 
 function clampIndex(idx, len) {
@@ -106,12 +133,17 @@ function fallbackRanges(words, targetSec) {
 
 function buildSegmentPrompt(words, targetSec) {
   const indexed = words.map((w, i) => `${i}:${w.text}`).join(" ");
+  const last = words.length - 1;
+  const totalSec = Math.max(1, Math.round((words[last].endMs - words[0].startMs) / 1000));
+  const approxScenes = Math.max(1, Math.round(totalSec / targetSec));
   return [
-    "You are segmenting a sermon transcript into visual scenes for a short video.",
-    `Group the numbered words below into consecutive scenes, each about ${targetSec} seconds of speech,`,
-    "split on meaning (one image per idea). For each scene return the inclusive startWordIndex and",
-    "endWordIndex (referencing the numbers), the scene's caption text, and a vivid, concrete imagePrompt",
-    "describing a single photographic image for that scene (no text in the image).",
+    "You are segmenting a spoken transcript into visual scenes for a video.",
+    `The transcript is ${words.length} words (indices 0 to ${last}) and runs about ${totalSec} seconds.`,
+    `Group the numbered words into consecutive scenes, each about ${targetSec} seconds of speech (roughly ${approxScenes} scenes in total),`,
+    "split on meaning (one image per idea). Every word must belong to a scene: the first scene starts at index 0,",
+    `the last scene ends at index ${last}, and scenes are contiguous with no gaps. Do not stop early.`,
+    "For each scene return the inclusive startWordIndex and endWordIndex (referencing the numbers), the scene's",
+    "caption text, and a vivid, concrete imagePrompt describing a single photographic image for that scene (no text in the image).",
     'Respond ONLY with JSON: {"scenes":[{"text","startWordIndex","endWordIndex","imagePrompt"}]}.',
     "",
     "Words:",

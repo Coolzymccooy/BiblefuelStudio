@@ -115,6 +115,31 @@ describe("segmentScenes", () => {
     assert.ok(scenes.length <= 60, `expected <= 60 scenes, got ${scenes.length}`);
   });
 
+  test("rejects an LLM split that stops early and leaves most of the audio without scenes", async () => {
+    // A 14-minute narration (2000 words at 0.42 s each ≈ 840 s). The LLM,
+    // told to cut ~150 s scenes, returns 10 tiny scenes over the first 2
+    // minutes and simply stops — the operator's first long-form run. The old
+    // code accepted it (10 <= cap) and the renderer then held the last image
+    // for the remaining 12 minutes.
+    const longWords = Array.from({ length: 2000 }, (_, i) => ({ text: `w${i}`, startMs: i * 420, endMs: i * 420 + 400 }));
+    _setLlmImpl(async () => JSON.stringify({
+      scenes: Array.from({ length: 10 }, (_, i) => ({ text: `s${i}`, startWordIndex: i * 30, endWordIndex: i * 30 + 29, imagePrompt: `p${i}` })),
+    }));
+    const scenes = await segmentScenes({ words: longWords, style: "cinematic-bible", targetSec: 150, maxScenes: 12 });
+    assert.ok(scenes.length >= 5 && scenes.length <= 12, `expected 5-12 widened scenes, got ${scenes.length}`);
+    assert.equal(scenes[0].startMs, 0);
+    assert.equal(scenes[scenes.length - 1].endMs, longWords[longWords.length - 1].endMs, "scenes cover the whole narration");
+    for (let i = 1; i < scenes.length; i++) assert.ok(scenes[i].startMs >= scenes[i - 1].endMs, "scenes are in order");
+  });
+
+  test("tells the LLM the total word count and that every word must be covered", async () => {
+    let prompt = "";
+    _setLlmImpl(async (p) => { prompt = p; return null; });
+    await segmentScenes({ words: WORDS, style: "cinematic-bible", targetSec: 10 });
+    assert.match(prompt, /\b0\b.*\b29\b/s, "prompt states the full index range");
+    assert.match(prompt, /every word|all \d+ words|cover/i);
+  });
+
   test("short audio is unaffected — honours the LLM's scene split", async () => {
     _setLlmImpl(async () =>
       JSON.stringify({ scenes: [
