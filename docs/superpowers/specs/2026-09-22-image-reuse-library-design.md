@@ -51,7 +51,11 @@ every generated picture joins that library. Nothing else changes.
 ### 1. The pool (harvest)
 
 A successful generate is copied into a stable per-tenant pool at
-`<outputDir>/imageLib/<sha256-of-bytes>.png` and indexed.
+`<outputDir>/imagelib-<sha256-of-bytes>.png` and indexed.
+
+The filename is flat, not a subdirectory: index.js serves per-user outputs
+through `GET /outputs/:filename`, which rejects any path containing a slash,
+so a nested URL 404s for every non-admin tenant.
 
 It must be a **copy**. `outputs/genImg/{projectId}/` is purged on every
 re-segment and forced regenerate, so an index pointing into it would lose
