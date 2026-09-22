@@ -63,6 +63,12 @@ movements; multi-language; scheduling or auto-publishing.
 
 - Scripture is **never** LLM-generated. The model may suggest *which*
   references; the words come verbatim from `lookupVerses(reference, translation)`.
+- The default translation is **KJV** (`translation: 'kjv'`), on every new
+  project and on every drop that does not override it. KJV is public domain and
+  resolves through bible-api.com (`server/src/lib/bible/scriptureApi.js`), so a
+  two-hour video carrying spoken scripture ships with no text-licensing exposure
+  on a monetised channel. The operator can still pick another registered
+  translation per project; nothing here hard-codes KJV beyond the default.
 - Production ffmpeg is **5.1**. Use `-filter_complex_script` via
   `toFilterScriptArgs`, never inline `-filter_complex`. Every filter used here
   (`acrossfade`, `adelay`, `amix`, `sidechaincompress`, `zoompan`, `xfade`,
@@ -80,7 +86,8 @@ New module `server/src/lib/ambient/projectStore.js` with the same shape of API
 
 ```js
 {
-  projectId, title, theme, translation,        // theme drives verse suggestion
+  projectId, title, theme,                     // theme drives verse suggestion
+  translation: 'kjv',                          // default; operator may change it
   targetSec: 7200,
   aspect: 'landscape',
   status: 'draft' | 'voicing' | 'assembling' | 'generating_images'
@@ -98,7 +105,7 @@ New module `server/src/lib/ambient/projectStore.js` with the same shape of API
   },
 
   drops: [{
-    id, atMs, reference, translation,
+    id, atMs, reference, translation,           // inherits the project's, default 'kjv'
     text: null,                  // verbatim, filled by lookupVerses
     voiceId, audioPath: null, durationMs: null,
     status: 'pending' | 'done' | 'error', error: null,
