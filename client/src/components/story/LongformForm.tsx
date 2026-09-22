@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Loader2, Sparkles } from 'lucide-react';
+import { Loader2, Sparkles, Mic } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { longformApi, type LongformTemplateOption } from '../../lib/longformApi';
 import { storyApi } from '../../lib/storyApi';
 import type { StoryProject } from '../../lib/storyTypes';
+import { fieldLabelCls, inputCls, primaryBtnCls, dropZoneCls } from './formStyles';
 
 interface Props { onDrafted: (project: StoryProject) => void; busy: boolean }
-const inputCls = 'mt-1 w-full rounded-md border border-white/10 bg-white/[0.03] px-3 py-2 text-white focus:border-primary-400 focus:outline-none';
 
 export function LongformForm({ onDrafted, busy }: Props) {
   const [templates, setTemplates] = useState<LongformTemplateOption[]>([]);
@@ -57,28 +57,31 @@ export function LongformForm({ onDrafted, busy }: Props) {
   };
 
   return (
-    <div className="space-y-3">
-      <label className="block text-sm text-gray-300">
+    <div className="space-y-4">
+      <label className={fieldLabelCls}>
         Format
         <select value={templateId} onChange={(e) => setTemplateId(e.target.value)} className={inputCls}>
           <option value="">Let BibleFuel choose</option>
           {templates.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
         </select>
       </label>
-      <label className="block text-sm text-gray-300">
+      <label className={fieldLabelCls}>
         What's on your heart? (a verse, a theme, a rough idea)
         <textarea value={idea} onChange={(e) => setIdea(e.target.value)} rows={4} placeholder="psalms for when I can't switch my mind off at night" className={inputCls} />
       </label>
-      <button type="button" onClick={draft} disabled={!canDraft} className="inline-flex items-center gap-2 rounded-md bg-primary-500 px-4 py-2 text-sm font-medium text-black disabled:opacity-60">
+      <button type="button" onClick={draft} disabled={!canDraft} className={`${primaryBtnCls} w-full sm:w-auto`}>
         {drafting ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
         Write the outline
       </button>
-      <label className="block text-sm text-gray-300">
+      <label className={fieldLabelCls}>
         Or a voice note
+        <span className={`${dropZoneCls} mt-1.5 py-4 font-normal`}>
+          <Mic size={15} /> Record or pick an audio note — BibleFuel transcribes it into the idea
+        </span>
         <input
           type="file"
           accept="audio/*"
-          className="mt-1 block w-full text-sm text-gray-400"
+          className="sr-only"
           disabled={busy || drafting}
           onChange={(e) => {
             const f = e.target.files?.[0];

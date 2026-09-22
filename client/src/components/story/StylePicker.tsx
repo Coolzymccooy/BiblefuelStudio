@@ -18,12 +18,12 @@ export function StylePicker({ value, onChange }: StylePickerProps) {
             onClick={() => onChange(style.id)}
             className={`text-left rounded-xl border p-3 transition-colors ${
               selected
-                ? 'border-primary-400 bg-primary-500/10'
-                : 'border-white/10 bg-white/[0.03] hover:border-white/20'
+                ? 'border-bf-goldDeep bg-[rgba(216,184,120,0.14)] shadow-sm'
+                : 'border-[rgba(216,184,120,0.22)] bg-bf-card2/60 hover:border-bf-goldDeep'
             }`}
           >
-            <div className="text-sm font-semibold text-white">{style.label}</div>
-            <div className="text-xs text-gray-400 mt-0.5">{style.blurb}</div>
+            <div className="text-sm font-semibold text-bf-cream">{style.label}</div>
+            <div className="mt-0.5 text-xs text-bf-sub">{style.blurb}</div>
           </button>
         );
       })}
