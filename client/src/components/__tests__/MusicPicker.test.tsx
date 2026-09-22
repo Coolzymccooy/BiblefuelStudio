@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, within, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
 import * as api from '../../lib/musicLibraryApi';
+import { storyApi } from '../../lib/storyApi';
 import { MusicPicker } from '../MusicPicker';
 
 const TRACKS = [
@@ -125,6 +126,70 @@ describe('MusicPicker', () => {
       renderWith(<MusicPicker multiple value={{ path: 'mylib:u1', paths: ['mylib:u1'], volume: 0.3, autoDuck: true }} onChange={vi.fn()} busy={false} />);
       expect((await screen.findAllByText('My Bed')).length).toBeGreaterThan(0);
       expect(screen.queryByText('mylib:u1')).not.toBeInTheDocument();
+    });
+
+    // The multi-mode "add from library" select uses the same t.ref pattern as
+    // the single-mode select tested above; regression-test it separately
+    // since it is a distinct code path (emitPaths, not onChange directly).
+    it('multi-mode: selecting a saved upload from the library appends its mylib ref', async () => {
+      const onChange = vi.fn();
+      renderWith(<MusicPicker multiple value={{ path: null, paths: [], volume: 0.3, autoDuck: true }} onChange={onChange} busy={false} />);
+      const select = await screen.findByLabelText(/add music from library/i);
+      await screen.findByRole('option', { name: /my bed/i });
+      await userEvent.selectOptions(select, 'u1');
+      expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
+        paths: ['mylib:u1'],
+        path: 'mylib:u1',
+      }));
+    });
+  });
+
+  describe('upload then save to library', () => {
+    // The riskiest untested path: upload() calls storyApi.uploadAudio, then
+    // tries to save the result to the library, and must emit a usable value
+    // either way. Both branches need direct coverage, not inspection.
+    function renderWithClient(ui: React.ReactElement) {
+      const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const invalidateSpy = vi.spyOn(qc, 'invalidateQueries');
+      const result = render(React.createElement(QueryClientProvider, { client: qc }, ui));
+      return { ...result, invalidateSpy };
+    }
+
+    function fileInput(): HTMLInputElement {
+      return document.querySelector('input[type="file"]') as HTMLInputElement;
+    }
+
+    it('save succeeds: emits the saved track\'s mylib ref, not the raw upload path', async () => {
+      const uploadedPath = '/data/tenant42/uploads/audio/my-bed.mp3';
+      vi.spyOn(storyApi, 'uploadAudio').mockResolvedValue(uploadedPath);
+      const save = vi.spyOn(api, 'saveTrackToLibrary').mockResolvedValue({
+        id: 'u2', label: 'my-bed', mood: 'calm', previewUrl: null, default: false,
+        source: 'upload', licence: 'unknown', durationSec: null, ref: 'mylib:u2',
+      });
+      const onChange = vi.fn();
+      const { invalidateSpy } = renderWithClient(<MusicPicker value={{ path: null, volume: 0.3 }} onChange={onChange} busy={false} />);
+
+      const file = new File(['audio-bytes'], 'my-bed.mp3', { type: 'audio/mpeg' });
+      fireEvent.change(fileInput(), { target: { files: [file] } });
+
+      await waitFor(() => expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ path: 'mylib:u2' })));
+      // Never the raw absolute path once the save succeeded.
+      expect(onChange).not.toHaveBeenCalledWith(expect.objectContaining({ path: uploadedPath }));
+      expect(save).toHaveBeenCalledWith(uploadedPath, { label: 'my-bed' });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['music-library'] });
+    });
+
+    it('save fails: falls back to the raw uploaded path, so the upload is not lost', async () => {
+      const uploadedPath = '/data/tenant42/uploads/audio/my-bed.mp3';
+      vi.spyOn(storyApi, 'uploadAudio').mockResolvedValue(uploadedPath);
+      vi.spyOn(api, 'saveTrackToLibrary').mockRejectedValue(new Error('library save failed'));
+      const onChange = vi.fn();
+      renderWithClient(<MusicPicker value={{ path: null, volume: 0.3 }} onChange={onChange} busy={false} />);
+
+      const file = new File(['audio-bytes'], 'my-bed.mp3', { type: 'audio/mpeg' });
+      fireEvent.change(fileInput(), { target: { files: [file] } });
+
+      await waitFor(() => expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ path: uploadedPath })));
     });
   });
 
