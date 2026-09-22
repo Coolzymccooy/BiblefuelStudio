@@ -13,7 +13,9 @@ import { fieldLabelCls, inputCls, primaryBtnCls, dropZoneCls, segmentedCls, segm
 const SCRIPT_RULES: Array<[string, string]> = [
   ['## Heading  or  ---', 'starts a section; the heading becomes a YouTube chapter and is not spoken'],
   ['Psalm 4:8  (on its own line)', 'fetched verbatim and read as “Psalm four, verse eight …” — never paraphrased'],
-  ['[pause]  or  [pause 8]', 'silence (template default, or 8 s); same chapter continues'],
+  ['[pause]  or  [pause 8]', 'silence (template default, or 8 s — [pause 0] for none); same chapter continues'],
+  ['a blank line, then another', 'a breath in the same chapter, like [pause]'],
+  ['BE STILL  (all caps, first line of a section)', 'read as that section’s heading — a chapter title, not spoken'],
   ['(soft music)  [breathe]  *slowly*', 'notes to you on their own line — dropped, never spoken'],
   ['**bold**  - bullets  #tags  emoji  links', 'stripped; the words stay'],
 ];

@@ -98,6 +98,12 @@ describe("POST /api/longform/draft", () => {
     res = await request(app).post("/api/longform/draft").send({ script: "x".repeat(60_001), templateId: "sleep-30" });
     assert.equal(res.status, 400); assert.match(res.body.error, /too long/);
   });
+  test("a scripture lookup outage is a 502, not a 400 blaming the script", async () => {
+    _setParseImpl(async () => { throw new Error("scripture lookup failed for Psalm 4:8: fetch failed"); });
+    const res = await request(app).post("/api/longform/draft").send({ script: "## A\nPsalm 4:8", templateId: "sleep-30" });
+    assert.equal(res.status, 502, JSON.stringify(res.body));
+    assert.match(res.body.error, /scripture lookup failed/);
+  });
   test("rejects an unknown template and a missing idea by name", async () => {
     let res = await request(app).post("/api/longform/draft").send({ idea: "x", templateId: "nope" });
     assert.equal(res.status, 400); assert.match(res.body.error, /template/i);

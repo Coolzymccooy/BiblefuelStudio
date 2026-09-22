@@ -159,9 +159,14 @@ export async function narrateSections({ sections, template, voiceId, workDir }, 
   let cursorMs = 0;
   for (let i = 0; i < sections.length; i++) {
     if (i > 0) {
-      const wanted = Number(sections[i].pauseBeforeMs) > 0 ? Math.round(Number(sections[i].pauseBeforeMs)) : pauseMs;
-      const silence = await silenceFor(wanted);
-      entries.push(silence.file); cursorMs += silence.ms;
+      // An explicit [pause 0] means "no gap here" — only an absent value
+      // falls back to the template's pause between sections.
+      const asked = Number(sections[i].pauseBeforeMs);
+      const wanted = Number.isFinite(asked) && asked >= 0 ? Math.round(asked) : pauseMs;
+      if (wanted > 0) {
+        const silence = await silenceFor(wanted);
+        entries.push(silence.file); cursorMs += silence.ms;
+      }
     }
     const startMs = cursorMs;
     for (const text of chunksBySection[i]) {

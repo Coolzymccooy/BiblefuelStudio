@@ -81,6 +81,12 @@ Those who wait will not be put to shame. #rest #peace
     assert.equal(out.sections[1].pauseBeforeMs, 5000);
     await assert.rejects(() => parsePastedScript("## A\nJude 1:99", { lookupVerses: lookup }), /Jude 1:99/);
   });
+  test("[pause 0] means no gap, and an absurd pause is capped at 2 minutes", async () => {
+    const zero = await parsePastedScript("## A\nfirst\n[pause 0]\nsecond", { lookupVerses: lookup, defaultPauseMs: 5000 });
+    assert.equal(zero.sections[1].pauseBeforeMs, 0, "an explicit zero survives as zero");
+    const huge = await parsePastedScript("## A\nfirst\n[pause 999999]\nsecond", { lookupVerses: lookup, defaultPauseMs: 5000 });
+    assert.equal(huge.sections[1].pauseBeforeMs, 120_000);
+  });
   test("rejects an empty script by name and never returns an empty section", async () => {
     await assert.rejects(() => parsePastedScript("  \n(only a note)\n", { lookupVerses: lookup }), /nothing to narrate/i);
     const out = await parsePastedScript("## Empty\n\n## Real\nwords", { lookupVerses: lookup });

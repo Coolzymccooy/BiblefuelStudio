@@ -64,7 +64,7 @@ function normaliseSections(list) {
     // its own pause. Dropping these on save would turn every [pause] into a
     // fresh chapter and a default-length gap.
     ...(s?.continuation ? { continuation: true } : {}),
-    ...(Number(s?.pauseBeforeMs) > 0 ? { pauseBeforeMs: Math.round(Number(s.pauseBeforeMs)) } : {}),
+    ...(Number.isFinite(Number(s?.pauseBeforeMs)) && Number(s.pauseBeforeMs) >= 0 ? { pauseBeforeMs: Math.round(Number(s.pauseBeforeMs)) } : {}),
   }));
   return out.every((s) => s.text) ? out : null;
 }
@@ -94,7 +94,11 @@ router.post("/draft", renderQuota, async (req, res) => {
       try {
         parsed = await _parse(script, { lookupVerses: (ref) => verseTextFor(ref, req.body?.translation), defaultPauseMs: template.voice.pauseMs });
       } catch (e) {
-        return res.status(400).json({ ok: false, error: String(e?.message || e) });
+        const message = String(e?.message || e);
+        // A scripture lookup that fell over is our problem, not a bad script:
+        // saying 400 here would read as "your reference is wrong".
+        const upstream = /^scripture lookup failed/.test(message);
+        return res.status(upstream ? 502 : 400).json({ ok: false, error: message });
       }
       const created = createProject(req.ctx.dataDir, {
         title: String(req.body?.title || "").trim() || parsed.title,

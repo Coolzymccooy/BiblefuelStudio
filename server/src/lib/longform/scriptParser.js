@@ -30,6 +30,8 @@ const EMOJI_RX = /[\p{Extended_Pictographic}️]/gu;
 const CAPS_HEADING_RX = /^\s*[A-Z][A-Z0-9' &-]{2,40}\s*$/;
 
 const DEFAULT_WPM = 170;
+// A [pause 999999] typo would otherwise ask ffmpeg for an 11-day silence file.
+const MAX_PAUSE_MS = 120_000;
 
 /** True when the line is nothing but a scripture reference. */
 export function isReferenceLine(line) {
@@ -78,7 +80,12 @@ function tokenise(script) {
     }
     if (RULE_RX.test(line)) { open(""); continue; }
     const p = PAUSE_RX.exec(line);
-    if (p) { ensure(); open(current.heading, { continuation: true, pauseMs: p[1] ? Math.round(Number(p[1]) * 1000) : undefined }); continue; }
+    if (p) {
+      ensure();
+      const asked = p[1] === undefined ? undefined : Math.min(MAX_PAUSE_MS, Math.max(0, Math.round(Number(p[1]) * 1000)));
+      open(current.heading, { continuation: true, pauseMs: asked });
+      continue;
+    }
     if (isReferenceLine(line)) { ensure(); current.lines.push({ kind: "ref", value: referenceOf(line) }); continue; }
     if (NOTE_LINE_RX.test(line)) continue;
     if (CAPS_HEADING_RX.test(line) && current && current.lines.length === 0 && !current.heading) { current.heading = line; continue; }

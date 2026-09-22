@@ -115,6 +115,15 @@ describe("narrateSections", () => {
     assert.equal(out.sections[1].startMs, out.sections[0].endMs + 8000);
     assert.equal(out.sections[2].startMs, out.sections[1].endMs + 5000);
   });
+  test("a section with pauseBeforeMs 0 gets no silence at all", async () => {
+    const { workDir, deps } = harness();
+    const probe = async (p) => { const m = /silence-(\d+)\.mp3$/.exec(path.basename(p)); return m ? Number(m[1]) / 1000 : 2; };
+    const two = [sections[0], { ...sections[1], pauseBeforeMs: 0, continuation: true }];
+    const out = await narrateSections({ sections: two, template, voiceId: "v1", workDir }, { ...deps, probeDurationSec: probe });
+    const list = fs.readFileSync(path.join(workDir, "concat.txt"), "utf8");
+    assert.equal(/silence-/.test(list), false, "no silence file was concatenated");
+    assert.equal(out.sections[1].startMs, out.sections[0].endMs, "the second section starts the moment the first ends");
+  });
   test("cache key changes with text, voice and rate", () => {
     const a = chunkCacheKey({ provider: "azure", voiceId: "v", rate: "-15%", text: "hi" });
     assert.notEqual(a, chunkCacheKey({ provider: "azure", voiceId: "v", rate: "-15%", text: "ho" }));
