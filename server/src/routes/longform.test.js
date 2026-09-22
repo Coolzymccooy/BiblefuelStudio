@@ -5,7 +5,7 @@ import request from "supertest";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import longformRouter, { _setPlanImpl, _resetPlanImpl, _setNarrateImpl, _resetNarrateImpl, _setPipelineImpl, _resetPipelineImpl, _setTranscribeImpl, _resetTranscribeImpl, _setQuotaImpl, _resetQuotaImpl } from "./longform.js";
+import longformRouter, { _setPlanImpl, _resetPlanImpl, _setNarrateImpl, _resetNarrateImpl, _setPipelineImpl, _resetPipelineImpl, _setTranscribeImpl, _resetTranscribeImpl, _setQuotaImpl, _resetQuotaImpl, _setParseImpl, _resetParseImpl } from "./longform.js";
 import { markCancelled, isCancelled, clearCancelled } from "./story.js";
 import { readProject, writeProject } from "../lib/story/projectStore.js";
 
@@ -26,7 +26,7 @@ beforeEach(() => {
     ],
   }));
 });
-afterEach(() => { _resetPlanImpl(); _resetNarrateImpl(); _resetPipelineImpl(); _resetTranscribeImpl(); _resetQuotaImpl(); });
+afterEach(() => { _resetPlanImpl(); _resetNarrateImpl(); _resetPipelineImpl(); _resetTranscribeImpl(); _resetQuotaImpl(); _resetParseImpl(); });
 
 const tick = () => new Promise((r) => setImmediate(r));
 
@@ -66,6 +66,38 @@ describe("POST /api/longform/draft", () => {
     assert.equal(p.longform.sections.length, 3);
     assert.equal(p.source.audioPath, null);
   });
+  test("a pasted script is parsed (never planned) into a draft with verbatim verses and no idea", async () => {
+    let planned = false;
+    _setPlanImpl(async () => { planned = true; throw new Error("planner must not run for a pasted script"); });
+    const parseArgs = [];
+    _setParseImpl(async (script, opts) => {
+      parseArgs.push({ script, opts });
+      return { title: "My Night Psalms", summary: "Rest.", sections: [
+        { heading: "Welcome", reference: null, verseText: "", text: "Settle in.", targetSec: 10 },
+        { heading: "Psalm 4", reference: "Psalm 4:8", verseText: "I will both lay me down in peace.", text: "Psalm 4:8. I will both lay me down in peace.", targetSec: 12 },
+      ] };
+    });
+    const res = await request(app).post("/api/longform/draft").send({ script: "## Welcome\nSettle in.\n## Psalm 4\nPsalm 4:8", templateId: "sleep-30" });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(planned, false);
+    const p = res.body.project;
+    assert.equal(p.status, "draft_script");
+    assert.equal(p.title, "My Night Psalms");
+    assert.equal(p.aspect, "landscape");
+    assert.equal(p.longform.source, "pasted");
+    assert.equal(p.longform.idea, null);
+    assert.equal(p.longform.sections.length, 2);
+    assert.equal(p.longform.sections[1].verseText, "I will both lay me down in peace.");
+    assert.equal(parseArgs[0].opts.defaultPauseMs, 5000, "template pause is the [pause] default");
+    assert.equal(typeof parseArgs[0].opts.lookupVerses, "function");
+  });
+  test("a pasted script that parses to nothing, or is too long, is a 400 with the reason", async () => {
+    _setParseImpl(async () => { throw new Error("script has nothing to narrate — add at least one line"); });
+    let res = await request(app).post("/api/longform/draft").send({ script: "(only a note)", templateId: "sleep-30" });
+    assert.equal(res.status, 400); assert.match(res.body.error, /nothing to narrate/);
+    res = await request(app).post("/api/longform/draft").send({ script: "x".repeat(60_001), templateId: "sleep-30" });
+    assert.equal(res.status, 400); assert.match(res.body.error, /too long/);
+  });
   test("rejects an unknown template and a missing idea by name", async () => {
     let res = await request(app).post("/api/longform/draft").send({ idea: "x", templateId: "nope" });
     assert.equal(res.status, 400); assert.match(res.body.error, /template/i);
@@ -75,6 +107,16 @@ describe("POST /api/longform/draft", () => {
 });
 
 describe("PATCH /api/longform/:id/sections", () => {
+  test("keeps continuation/pauseBeforeMs through a save", async () => {
+    const { body } = await request(app).post("/api/longform/draft").send({ idea: "x", templateId: "sleep-30" });
+    const edited = [...body.project.longform.sections, { heading: "Psalm 23", text: "again", targetSec: 30, continuation: true, pauseBeforeMs: 8000 }];
+    const res = await request(app).patch(`/api/longform/${body.project.projectId}/sections`).send({ sections: edited });
+    assert.equal(res.status, 200);
+    const last = res.body.project.longform.sections[3];
+    assert.equal(last.continuation, true);
+    assert.equal(last.pauseBeforeMs, 8000);
+    assert.equal(res.body.project.longform.sections[0].continuation, undefined);
+  });
   test("replaces section text while still a draft", async () => {
     const { body } = await request(app).post("/api/longform/draft").send({ idea: "x", templateId: "sleep-30" });
     const edited = body.project.longform.sections.map((s, i) => (i === 0 ? { ...s, text: "edited welcome" } : s));

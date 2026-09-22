@@ -21,6 +21,8 @@ export function wordsFromSections(sections) {
 
 export function chaptersFromSections(sections) {
   return (Array.isArray(sections) ? sections : [])
-    .filter((s) => s && String(s.heading || "").trim())
+    // A continuation (the part after a [pause] in a pasted script) shares the
+    // chapter of the section it continues — it must not start a new one.
+    .filter((s) => s && !s.continuation && String(s.heading || "").trim())
     .map((s) => ({ startMs: Number(s.startMs) || 0, title: String(s.heading).trim() }));
 }

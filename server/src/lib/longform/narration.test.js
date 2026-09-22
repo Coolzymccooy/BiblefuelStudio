@@ -103,6 +103,18 @@ describe("narrateSections", () => {
     // second run re-synthesised only what the first run did not cache
     assert.ok(calls.synth.length < firstRunSynths * 2, "cached chunks were not re-synthesised");
   });
+  test("honours a section's pauseBeforeMs (a [pause 8] in a pasted script) instead of the template pause", async () => {
+    const { workDir, calls, deps } = harness();
+    const probe = async (p) => { const m = /silence-(\d+)\.mp3$/.exec(path.basename(p)); return m ? Number(m[1]) / 1000 : 2; };
+    const three = [sections[0], { ...sections[1], pauseBeforeMs: 8000, continuation: true }, { heading: "Close", reference: null, verseText: "", text: "Sleep well now.", targetSec: 30 }];
+    const out = await narrateSections({ sections: three, template, voiceId: "v1", workDir }, { ...deps, probeDurationSec: probe });
+    const list = fs.readFileSync(path.join(workDir, "concat.txt"), "utf8");
+    assert.match(list, /silence-8000\.mp3/);
+    assert.match(list, /silence-5000\.mp3/);
+    assert.ok(calls.ffmpeg.some((a) => a.includes("anullsrc=r=44100:cl=mono") && a.includes("8.000")), "an 8 s silence file was generated");
+    assert.equal(out.sections[1].startMs, out.sections[0].endMs + 8000);
+    assert.equal(out.sections[2].startMs, out.sections[1].endMs + 5000);
+  });
   test("cache key changes with text, voice and rate", () => {
     const a = chunkCacheKey({ provider: "azure", voiceId: "v", rate: "-15%", text: "hi" });
     assert.notEqual(a, chunkCacheKey({ provider: "azure", voiceId: "v", rate: "-15%", text: "ho" }));

@@ -29,6 +29,10 @@ export interface LongformSection {
   targetSec: number;
   startMs?: number;
   endMs?: number;
+  /** Pasted-script [pause]: this section continues the previous chapter rather than starting one. */
+  continuation?: boolean;
+  /** Silence before this section in ms (a [pause N] in a pasted script); template default otherwise. */
+  pauseBeforeMs?: number;
 }
 
 export interface StoryLongform {
@@ -46,6 +50,8 @@ export interface StoryLongform {
   progress?: { done: number; total: number; provider?: string; alive?: boolean };
   /** TTS voice the user picked for narration (persisted at narrate time so Resume reuses it). */
   voiceId?: string | null;
+  /** 'pasted' when the outline came from the operator's own script rather than the planner. */
+  source?: 'pasted';
 }
 
 export interface StoryProject {

@@ -126,8 +126,16 @@ export async function narrateSections({ sections, template, voiceId, workDir }, 
   const chunksDir = path.join(workDir, "chunks");
   fs.mkdirSync(chunksDir, { recursive: true });
   const pauseMs = template.voice.pauseMs;
-  const silence = await ensureSilence(workDir, pauseMs, runFfmpeg);
-  const silenceMs = Math.round((await probe(silence)) * 1000) || pauseMs;
+  // One silence file per distinct pause length: the template's default
+  // between sections, plus any [pause N] a pasted script asked for.
+  const silences = new Map();
+  const silenceFor = async (ms) => {
+    if (!silences.has(ms)) {
+      const file = await ensureSilence(workDir, ms, runFfmpeg);
+      silences.set(ms, { file, ms: Math.round((await probe(file)) * 1000) || ms });
+    }
+    return silences.get(ms);
+  };
 
   // Computed up front (pure, no I/O) so `onProgress` can report a stable
   // `total` from the very first chunk — a 30–60 min session narrates over
@@ -150,7 +158,11 @@ export async function narrateSections({ sections, template, voiceId, workDir }, 
   const timed = [];
   let cursorMs = 0;
   for (let i = 0; i < sections.length; i++) {
-    if (i > 0) { entries.push(silence); cursorMs += silenceMs; }
+    if (i > 0) {
+      const wanted = Number(sections[i].pauseBeforeMs) > 0 ? Math.round(Number(sections[i].pauseBeforeMs)) : pauseMs;
+      const silence = await silenceFor(wanted);
+      entries.push(silence.file); cursorMs += silence.ms;
+    }
     const startMs = cursorMs;
     for (const text of chunksBySection[i]) {
       const { file, provider } = await synthChunk({ text, voiceId, template, chunksDir, synthesize, runFfmpeg, providers });
