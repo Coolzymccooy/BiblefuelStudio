@@ -7,6 +7,16 @@ import * as api from '../../lib/musicLibraryApi';
 import { storyApi } from '../../lib/storyApi';
 import { MusicPicker } from '../MusicPicker';
 
+// Spy on the toast module so a save failure's warning (vs. the old silent
+// "Music added" success) is directly assertable.
+vi.mock('react-hot-toast', () => {
+  const fn: any = vi.fn();
+  fn.success = vi.fn();
+  fn.error = vi.fn();
+  return { __esModule: true, default: fn };
+});
+import toast from 'react-hot-toast';
+
 const TRACKS = [
   { id: 'peaceful-worship', label: 'Peaceful Worship', mood: 'calm', previewUrl: '/music/01.mp3', default: true, source: 'bundled', licence: 'pixabay-cleared', durationSec: null, ref: 'library:peaceful-worship' },
   { id: 'joyful-praise', label: 'Joyful Praise', mood: 'joyful', previewUrl: '/music/06.mp3', default: false, source: 'bundled', licence: 'pixabay-cleared', durationSec: null, ref: 'library:joyful-praise' },
@@ -19,6 +29,12 @@ function renderWith(ui: React.ReactElement) {
 
 beforeEach(() => {
   vi.restoreAllMocks();
+  // toast's members are plain vi.fn()s from the mock factory above, not
+  // vi.spyOn() spies — restoreAllMocks() only resets the latter, so call
+  // history would otherwise leak from one test into the next.
+  (toast as unknown as ReturnType<typeof vi.fn>).mockClear();
+  (toast.success as unknown as ReturnType<typeof vi.fn>).mockClear();
+  (toast.error as unknown as ReturnType<typeof vi.fn>).mockClear();
   vi.spyOn(api, 'fetchMusicLibrary').mockResolvedValue(TRACKS as any);
 });
 
@@ -90,6 +106,32 @@ describe('MusicPicker', () => {
       // Ruling: "not badged" must be checked by counting badges, not by
       // querying a title that no real element would ever have.
       expect(within(list).getAllByTitle(/licence is not recorded/i)).toHaveLength(1);
+    });
+
+    // Finding 6: PATCH /api/music/:id and updateTrack had zero callers, so an
+    // upload was permanently badged with no way to act on the warning. The
+    // badge itself is now the control.
+    it('clicking the licence badge clears it via updateTrack', async () => {
+      const update = vi.spyOn(api, 'updateTrack').mockResolvedValue({
+        id: 'u1', label: 'My Bed', mood: 'calm', previewUrl: null, default: false,
+        source: 'upload', licence: 'cleared', durationSec: 182, ref: 'mylib:u1',
+      });
+      renderWith(<MusicPicker value={{ path: null, volume: 0.3 }} onChange={vi.fn()} busy={false} />);
+      const list = await screen.findByRole('list');
+      const badge = await within(list).findByTitle(/licence is not recorded/i);
+      await userEvent.click(badge);
+      expect(update).toHaveBeenCalledWith('u1', { licence: 'cleared' });
+    });
+
+    it('the licence badge is absent for a track that is already cleared', async () => {
+      vi.spyOn(api, 'fetchMusicLibrary').mockResolvedValue([
+        { id: 'peaceful-worship', label: 'Peaceful Worship', mood: 'calm', previewUrl: '/music/01.mp3', default: true, source: 'bundled', licence: 'pixabay-cleared', durationSec: null, ref: 'library:peaceful-worship' },
+        { id: 'u1', label: 'My Bed', mood: 'calm', previewUrl: null, default: false, source: 'upload', licence: 'cleared', durationSec: 182, ref: 'mylib:u1' },
+      ] as any);
+      renderWith(<MusicPicker value={{ path: null, volume: 0.3 }} onChange={vi.fn()} busy={false} />);
+      const list = await screen.findByRole('list');
+      await within(list).findByText('My Bed');
+      expect(within(list).queryAllByTitle(/licence is not recorded/i)).toHaveLength(0);
     });
 
     it('offers to forget a saved upload but never a bundled track', async () => {
@@ -190,6 +232,27 @@ describe('MusicPicker', () => {
       fireEvent.change(fileInput(), { target: { files: [file] } });
 
       await waitFor(() => expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ path: uploadedPath })));
+    });
+
+    // Finding 4: a failed library save used to be completely silent — the
+    // bare `catch {}` swallowed the error and `toast.success('Music added')`
+    // still fired unconditionally, so the operator had no idea the track
+    // wouldn't be reusable in other projects. The upload itself is fine
+    // (raw-path fallback, covered above), so this must be a warning, not
+    // toast.error.
+    it('save fails: warns the operator instead of silently claiming success', async () => {
+      const uploadedPath = '/data/tenant42/uploads/audio/my-bed.mp3';
+      vi.spyOn(storyApi, 'uploadAudio').mockResolvedValue(uploadedPath);
+      vi.spyOn(api, 'saveTrackToLibrary').mockRejectedValue(new Error('library save failed'));
+      const onChange = vi.fn();
+      renderWithClient(<MusicPicker value={{ path: null, volume: 0.3 }} onChange={onChange} busy={false} />);
+
+      const file = new File(['audio-bytes'], 'my-bed.mp3', { type: 'audio/mpeg' });
+      fireEvent.change(fileInput(), { target: { files: [file] } });
+
+      await waitFor(() => expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ path: uploadedPath })));
+      expect(toast.success).not.toHaveBeenCalled();
+      expect(toast).toHaveBeenCalledWith(expect.stringMatching(/library/i), expect.objectContaining({ icon: expect.any(String) }));
     });
   });
 

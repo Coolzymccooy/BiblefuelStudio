@@ -5,7 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { storyApi } from '../lib/storyApi';
 import { useMusicLibrary } from '../hooks/useMusicLibrary';
-import { saveTrackToLibrary, deleteTrack, type MusicTrack } from '../lib/musicLibraryApi';
+import { saveTrackToLibrary, deleteTrack, updateTrack, type MusicTrack } from '../lib/musicLibraryApi';
 import { DropZone } from './ui/DropZone';
 
 // A stored value is a ref (`library:<id>` for a bundled track, `mylib:<id>`
@@ -73,6 +73,19 @@ export function MusicPicker({ value, onChange, busy, multiple = false, onInsertT
     }
   };
 
+  // Clicking the "licence?" badge is the entire control for clearing it — no
+  // panel, no modal. Only shown for uploads (bundled tracks are always
+  // pixabay-cleared and never badged), so this only ever targets a track the
+  // operator owns.
+  const clearLicence = async (id: string, label: string) => {
+    try {
+      await updateTrack(id, { licence: 'cleared' });
+      qc.invalidateQueries({ queryKey: ['music-library'] });
+    } catch (e) {
+      toast.error((e as Error).message || `Couldn't update the licence for ${label}`);
+    }
+  };
+
   const upload = async (file: File) => {
     if (isUploading) return;
     setIsUploading(true);
@@ -83,16 +96,28 @@ export function MusicPicker({ value, onChange, busy, multiple = false, onInsertT
       // A failed save must not cost the operator their upload — fall back to
       // the raw path exactly as before this track ever reached the library.
       let ref = path;
+      let savedToLibrary = true;
       try {
         const track = await saveTrackToLibrary(path, { label: file.name.replace(/\.[^.]+$/, '') });
         ref = track.ref;
         qc.invalidateQueries({ queryKey: ['music-library'] });
       } catch {
-        // The upload itself succeeded — the project can still use the file.
+        // The upload itself succeeded — the project can still use the file,
+        // it just won't be saved to the reusable library for next time.
+        savedToLibrary = false;
       }
       if (multiple) emitPaths([...paths, ref]);
       else onChange({ path: ref, volume: value.volume ?? 0.3, autoDuck });
-      toast.success('Music added');
+      if (savedToLibrary) {
+        toast.success('Music added');
+      } else {
+        // A silent failure here is the dangerous case: the toast used to say
+        // "Music added" regardless, so the operator had no idea the track
+        // wouldn't show up anywhere else. The upload is still usable in THIS
+        // project (raw path fallback above), so this is a warning, not an
+        // error.
+        toast('Music added to this project, but saving it to your library failed — it won’t show up in other projects.', { icon: '⚠️', duration: 8000 });
+      }
     } catch (e) { toast.error((e as Error).message || 'Music upload failed'); }
     finally { setIsUploading(false); }
   };
@@ -143,13 +168,15 @@ export function MusicPicker({ value, onChange, busy, multiple = false, onInsertT
       {(tracks || []).map((t) => (
         <li key={t.id} className="flex items-center gap-1.5 px-1 py-0.5">
           <span className="flex-1 truncate">{t.label}</span>
-          {t.licence === 'unknown' && (
-            <span
-              className="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-amber-300 bg-amber-500/10"
-              title="This track's licence is not recorded. On a long music-led video a Content ID claim takes the revenue for the whole video."
+          {t.source === 'upload' && t.licence === 'unknown' && (
+            <button
+              type="button"
+              onClick={() => clearLicence(t.id, t.label)}
+              title="This track's licence is not recorded. Click to mark it cleared. On a long music-led video a Content ID claim takes the revenue for the whole video."
+              className="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-amber-300 bg-amber-500/10 hover:bg-amber-500/20"
             >
               licence?
-            </span>
+            </button>
           )}
           {t.source === 'upload' && (
             <button

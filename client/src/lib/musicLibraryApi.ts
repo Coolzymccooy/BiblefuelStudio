@@ -1,4 +1,4 @@
-import { api } from './api';
+import { api, MUSIC_SAVE_TIMEOUT_MS } from './api';
 
 export interface MusicTrack {
   id: string;
@@ -21,12 +21,16 @@ export async function fetchMusicLibrary(): Promise<MusicTrack[]> {
   return (res.data?.tracks ?? []) as MusicTrack[];
 }
 
-/** Remember an already-uploaded file as a reusable track. */
+/**
+ * Remember an already-uploaded file as a reusable track. The server awaits an
+ * ffprobe duration probe synchronously before responding, so this needs more
+ * headroom than the 15s default (see MUSIC_SAVE_TIMEOUT_MS).
+ */
 export async function saveTrackToLibrary(
   file: string,
   meta: { label?: string; mood?: string; licence?: string } = {},
 ): Promise<MusicTrack> {
-  const res = await api.post('/api/music/upload', { file, ...meta });
+  const res = await api.post('/api/music/upload', { file, ...meta }, undefined, { timeout: MUSIC_SAVE_TIMEOUT_MS });
   if (!res.ok || !res.data?.track) throw new Error(res.error || 'Failed to save track');
   return res.data.track as MusicTrack;
 }
