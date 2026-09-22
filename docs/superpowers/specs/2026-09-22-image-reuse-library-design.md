@@ -187,5 +187,8 @@ matching the `_setLlmImpl` seam used elsewhere in the codebase.
 - `server/src/routes/story.js` — ask before generating, harvest after
 - `client/src/components/story/StoryScenePreview.tsx` (or the scene card) —
   a "reused" badge
+
+`lib/library.js` is deliberately **not** touched: the image index is its own
+file, so the video library needs no migration and no `kind` field.
 - `server/.env.example` — `TOGETHER_API_KEY`, `IMAGE_REUSE_THRESHOLD`,
   `IMAGE_REUSE_ENABLED`
