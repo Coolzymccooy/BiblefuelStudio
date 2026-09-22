@@ -62,16 +62,32 @@ router.post("/upload", async (req, res) => {
     if (realFile !== realRoot && !realFile.startsWith(realRoot + path.sep)) {
       return res.status(403).json({ ok: false, error: "That file is outside your media folder" });
     }
+    // Must be a regular file — `file !== root` above lets `file === root`
+    // through (posting the outputDir path itself), and nothing previously
+    // stopped a directory, a .json, or any other non-audio file from being
+    // "registered" as a track.
+    let stat;
+    try {
+      stat = fs.statSync(realFile);
+    } catch {
+      return res.status(400).json({ ok: false, error: "That file is no longer there" });
+    }
+    if (!stat.isFile()) {
+      return res.status(400).json({ ok: false, error: "That path is not a file" });
+    }
     // A duration makes the picker useful ("3:02") and lets a later bed
     // assembly know how many tracks it needs. A probe failure is not fatal.
     // probeAudioDurationSec is declared `function` (storyRender.js:435) and
     // returns a promise; awaiting it is correct, and a rejection must not
     // cost the operator their saved track.
     let durationSec = null;
-    try { durationSec = await probeAudioDurationSec(file); } catch { durationSec = null; }
+    try { durationSec = await probeAudioDurationSec(realFile); } catch { durationSec = null; }
 
+    // Store the canonicalized realFile, not the (possibly symlinked) `file`
+    // the operator posted — otherwise swapping the symlink's target after
+    // registration would silently redirect future reads of this track.
     const track = registerTrack(req.ctx.dataDir, {
-      file,
+      file: realFile,
       label: req.body?.label,
       mood: req.body?.mood,
       licence: req.body?.licence,

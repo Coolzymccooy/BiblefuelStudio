@@ -4,7 +4,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import musicRouter from "./music.js";
-import { registerTrack } from "../lib/musicLibraryStore.js";
+import { registerTrack, readMusicLibrary } from "../lib/musicLibraryStore.js";
 
 function handlerFor(method, routePath) {
   const layer = musicRouter.stack.find((l) => l.route && l.route.path === routePath && l.route.methods[method]);
@@ -94,7 +94,7 @@ describe("music route", () => {
     assert.equal(bundled.statusCode, 400, "bundled tracks ship with the app and are not the tenant's to delete");
   });
 
-  test("POST /upload refuses a symlink that escapes the tenant's folder", async () => {
+  test("POST /upload refuses a symlink that escapes the tenant's folder", async (t) => {
     const { ctx } = tenant();
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), "bf-music-outside-"));
     const outsideFile = path.join(outside, "external.mp3");
@@ -105,6 +105,7 @@ describe("music route", () => {
     } catch (e) {
       if (e.code === "EPERM") {
         // Windows without developer mode cannot create symlinks; skip gracefully.
+        t.skip("cannot create symlinks without developer mode (EPERM)");
         return;
       }
       throw e;
@@ -114,5 +115,47 @@ describe("music route", () => {
     assert.equal(r.statusCode, 403, "symlink must not escape the tenant's folder");
     assert.equal(r.payload.ok, false);
     fs.rmSync(outside, { recursive: true });
+  });
+
+  test("POST /upload refuses the output directory itself (file !== root allows file === root)", async () => {
+    const { ctx } = tenant();
+    const r = res();
+    await handlerFor("post", "/upload")({ ctx, body: { file: ctx.outputDir, label: "Whole folder" } }, r);
+    assert.equal(r.statusCode, 400);
+    assert.equal(r.payload.ok, false);
+  });
+
+  test("POST /upload refuses a non-audio regular file inside the media folder (e.g. a stray .json)", async () => {
+    const { ctx } = tenant();
+    const jsonFile = path.join(ctx.outputDir, "notes.json");
+    fs.writeFileSync(jsonFile, "{}");
+    const r = res();
+    await handlerFor("post", "/upload")({ ctx, body: { file: jsonFile, label: "Notes" } }, r);
+    // Not a security boundary violation (403) — just not the shape of thing
+    // this route registers. Nothing in the route restricts by extension, so
+    // this documents the isFile() guard rather than a content-type check.
+    assert.equal(r.statusCode, 200, "a regular file is accepted regardless of extension");
+    assert.equal(r.payload.ok, true);
+  });
+
+  test("POST /upload stores the canonicalized realpath, not a symlink, so a later swap can't redirect the track", async (t) => {
+    const { ctx } = tenant();
+    const realTarget = path.join(ctx.outputDir, "real-track.mp3");
+    fs.writeFileSync(realTarget, "audio bytes");
+    const linkPath = path.join(ctx.outputDir, "link-track.mp3");
+    try {
+      fs.symlinkSync(realTarget, linkPath);
+    } catch (e) {
+      if (e.code === "EPERM") {
+        t.skip("cannot create symlinks without developer mode (EPERM)");
+        return;
+      }
+      throw e;
+    }
+    const r = res();
+    await handlerFor("post", "/upload")({ ctx, body: { file: linkPath, label: "Linked" } }, r);
+    assert.equal(r.payload.ok, true, JSON.stringify(r.payload));
+    const stored = readMusicLibrary(ctx.dataDir).items.find((t2) => t2.label === "Linked");
+    assert.equal(stored.file, fs.realpathSync(realTarget), "the index must hold the real file, not the symlink path");
   });
 });

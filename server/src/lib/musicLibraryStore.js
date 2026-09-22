@@ -26,9 +26,33 @@ export function readMusicLibrary(dataDir) {
   }
 }
 
+/**
+ * Write the index atomically: write to a temp file in the same directory,
+ * then rename over the target. A plain `writeFileSync` leaves a window where
+ * a crash mid-write truncates/corrupts the file — and `readMusicLibrary`
+ * treats any corrupt file as an empty library, silently vanishing the
+ * operator's whole index. `rename` on the same filesystem is atomic, so the
+ * target is always either the old complete file or the new complete one.
+ */
 function writeMusicLibrary(dataDir, lib) {
   fs.mkdirSync(dataDir, { recursive: true });
-  fs.writeFileSync(musicIndexPath(dataDir), JSON.stringify(lib, null, 2), "utf8");
+  const target = musicIndexPath(dataDir);
+  const tmp = `${target}.tmp`;
+  const payload = JSON.stringify(lib, null, 2);
+  let fd;
+  try {
+    fd = fs.openSync(tmp, "w");
+    fs.writeFileSync(fd, payload, "utf8");
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = undefined;
+    fs.renameSync(tmp, target);
+  } finally {
+    if (typeof fd === "number") {
+      try { fs.closeSync(fd); } catch { /* already closed */ }
+    }
+    try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch { /* rename already consumed it */ }
+  }
 }
 
 /**
@@ -66,13 +90,16 @@ export function registerTrack(dataDir, { file, label, mood, licence, durationSec
 /** Patch a track's metadata. Returns the updated track, or null if unknown. */
 export function updateTrack(dataDir, id, patch = {}) {
   const lib = readMusicLibrary(dataDir);
-  const track = lib.items.find((t) => t.id === id);
-  if (!track) return null;
+  const idx = lib.items.findIndex((t) => t.id === id);
+  if (idx === -1) return null;
+  const patched = { ...lib.items[idx] };
   for (const key of ["label", "mood", "licence"]) {
-    if (patch[key] !== undefined) track[key] = String(patch[key]).trim();
+    if (patch[key] !== undefined) patched[key] = String(patch[key]).trim();
   }
-  writeMusicLibrary(dataDir, lib);
-  return track;
+  const items = lib.items.slice();
+  items[idx] = patched;
+  writeMusicLibrary(dataDir, { items });
+  return patched;
 }
 
 /**
