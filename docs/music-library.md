@@ -4,92 +4,103 @@
 
 ## The short version
 
-The operator can upload an audio track through any Story Video project's music picker. The track is stored in the operator's own media folder, indexed in `<dataDir>/musicLibrary.json`, and becomes selectable in every Story Video project from that point on. The index tracks the `licence` status (defaulting to `"unknown"`) — a badge warns about uncleared music but does not prevent its use.
+The operator can upload an audio track through any Story Video project's music picker. The track is recorded in the operator's own tenant index at `<dataDir>/musicLibrary.json` and becomes selectable in every Story Video project from that point on. The index tracks a `licence` status (defaulting to `"unknown"`) — a badge warns about uncleared music. Clicking the badge marks that track's licence `"cleared"`; it does not otherwise prevent the track's use.
 
 ## Two track classes and why they differ
 
 | Prefix | Where stored | Resolves with… | Can delete? |
 |---|---|---|---|
-| `library:<id>` | `server/assets/music/` (bundled) | No tenant context needed | No: 403 `Forbidden` |
-| `mylib:<id>` | `<dataDir>/media/audio/` (operator upload) | `dataDir` required | Yes: removes index entry, keeps file |
+| `library:<id>` | `server/assets/music/` (bundled, 23 tracks) | No tenant context needed | No: `DELETE` returns 400 `Bundled tracks ship with the app` |
+| `mylib:<id>` | wherever the operator's upload already landed under their own `outputDir` (`DATA_DIR/users/<sub>/outputs`, super-admin: the global `OUTPUT_DIR`) | `dataDir` required | Yes: removes the index entry, keeps the file |
 
-**Why the split?** `library:` tracks come bundled with the app and the code resolves them by reading `server/assets/music/` directly, independent of any tenant configuration. `mylib:` tracks are tenant-owned and live under the operator's media folder; they cannot resolve without knowing where the dataDir is. Spelling them differently (`mylib:` vs `library:`) makes the resolution path explicit at callsites (`jobs.js`, `render.js`, `audio_advanced.js`, `story.js`), so a code review catches a reference to a track that should not be there.
+**Why the split?** `library:` tracks come bundled with the app and are resolved by reading `server/assets/music/` directly (`server/src/lib/musicLibrary.js`), independent of any tenant. `mylib:` tracks are tenant-owned and live wherever the operator's own upload already sat on disk; they cannot resolve without knowing the tenant's `dataDir`. Spelling them differently (`mylib:` vs `library:`) makes the resolution path explicit at callsites, so a code review catches a reference to a track that should not be there.
+
+**mylib: does not move the file.** `POST /api/music/upload` doesn't receive bytes and doesn't copy anything — it records the path of a file the operator already uploaded via `POST /api/media/upload-audio` (or the resumable pair), wherever that route put it inside their `outputDir`. There is no dedicated `media/audio/` subfolder; the index just points at whatever the real path was, canonicalized.
 
 ## The index: `<dataDir>/musicLibrary.json`
 
 ```json
 {
-  "<track-id>": {
-    "filename": "conversation-2026-09-22-1234.m4a",
-    "uploadedAt": "2026-09-22T18:30:00.000Z",
-    "durationSec": 42.5,
-    "licence": "unknown",
-    "source": "story-upload"
-  }
+  "items": [
+    {
+      "id": "b3f2b6b0-...-uuid",
+      "label": "My Bed",
+      "mood": "calm",
+      "file": "C:\\...\\users\\<sub>\\outputs\\conversation-2026-09-22-1234.m4a",
+      "durationSec": 42.5,
+      "source": "upload",
+      "licence": "unknown",
+      "addedAt": 1758562200000
+    }
+  ]
 }
 ```
 
-When the app reads the library:
-1. It loads the operator's index from `musicLibrary.json`.
-2. It merges in the bundled `library:` tracks (read from `server/assets/music/`, never written to the index).
-3. Both sets are available in the music picker and storage paths.
+(`server/src/lib/musicLibraryStore.js`.) `file` is the canonicalized (`realpath`'d) absolute path on disk. Bundled `library:` tracks are never written here — they come from the static `MUSIC_LIBRARY` array in `musicLibrary.js` and are merged in only at read time (`GET /api/music/library`, `server/src/routes/music.js`).
 
-Bundled tracks appear in the list with the same structure, but they are read-only — a `DELETE` on a `library:` track returns 403.
+A missing or corrupt index reads as an empty library (`{ items: [] }`) rather than throwing — a music picker with nothing in it is recoverable, a request that 500s mid-listing is not. Because of that, hand-editing this file into some other shape (e.g. the old keyed-by-id example this doc used to show) silently loses the whole library with no error. The write itself is atomic (temp file + rename in the same directory), so a crash mid-write can no longer produce that corrupt/truncated file in the first place — but a bad hand-edit that parses as valid JSON without an `items` array still reads back empty.
+
+Bundled tracks appear in the merged `GET /api/music/library` list with the same shape (`ref`, `label`, `mood`, `licence`, …), but they are read-only — `DELETE` on a `library:` id returns 400, not 403 (403 is reserved for "you tried to register a file outside your own media folder").
 
 ## Licence metadata
 
-The `licence` field defaults to the string `"unknown"` and is displayed as a badge in the UI (`licence?`). It does not prevent the operator from using the track.
+The `licence` field defaults to the string `"unknown"` and is shown as a `licence?` badge in the UI. It does not by itself prevent the operator from using the track — **but the badge is now clickable**: clicking it calls `PATCH /api/music/:id` (`updateTrack`) to set `licence: "cleared"`, and only uploads can be badged/clicked — bundled tracks are always `licence: "pixabay-cleared"` and are never shown with a badge.
 
-**Why no `"cleared"`?** On a long, music-led video a Content ID claim by the copyright holder takes the revenue for the *entire video*, not just the segment with the music. Repeat Content ID strikes on a channel can lead to demonetization or channel termination. The `unknown` badge and the default value are honest warnings: the operator decides whether to clear or risk it. The licence *gate* — refusing to assemble an audio bed from uncleared tracks without explicit acknowledgement — belongs to Phase 2 when bed assembly is built; Phase 1 stores the badge and warns.
+**Why default to `"unknown"` rather than `"cleared"`?** On a long, music-led video a Content ID claim by the copyright holder takes the revenue for the *entire video*, not just the segment with the music. Repeat Content ID strikes on a channel can lead to demonetization or channel termination. The `unknown` badge and default are honest warnings: the operator decides whether to clear or risk it. A licence *gate* — refusing to assemble an audio bed from uncleared tracks without explicit acknowledgement — belongs to Phase 2 when bed assembly is built; Phase 1 stores the badge, warns, and lets the operator dismiss the warning once they've made that call.
 
 ## Forgetting a track
 
-`DELETE /api/music/<id>` on a `mylib:` track removes the entry from `musicLibrary.json` but **never deletes the audio file**. The file remains in `<dataDir>/media/audio/`. To fully remove a track, delete both the index entry and the file.
+`DELETE /api/music/<id>` on a `mylib:` track removes the entry from `musicLibrary.json` but **never deletes the audio file** — it may still be referenced by a project this route can't see. The file stays exactly where it was.
 
-`DELETE` on a `library:` track returns 403.
+`DELETE` on a `library:` id returns 400 (`Bundled tracks ship with the app`).
 
 ## Uploading
 
 `POST /api/music/upload` does not receive audio bytes. Instead:
 
-1. The operator uploads audio via `POST /api/media/upload-audio` (or the resumable session pair for files over Cloudflare's 100 MB body cap).
-2. The operator calls `POST /api/music/upload` with the file path, e.g. `{ "path": "conversation-2026-09-22-1234.m4a" }`.
-3. The route validates the path:
-   - Refuses any path outside the caller's own media folder with 403 `Forbidden`.
-   - Returns 400 `Bad Request` if the file does not exist.
-   - Canonicalizes with `realpath()` so a symlink cannot escape the folder.
-4. It records the track in the index with metadata, including a probe of the audio duration.
+1. The operator uploads audio via `POST /api/media/upload-audio` (or the resumable session pair for files over Cloudflare's 100 MB body cap), landing somewhere inside their own `outputDir`.
+2. The client calls `POST /api/music/upload` with the **absolute** path the upload returned, e.g. `{ "file": "C:\\...\\outputs\\conversation-2026-09-22-1234.m4a", "label": "My Bed" }`. A bare filename resolves against the server's working directory, not the tenant's folder, and will 403 — the path must be the absolute path the upload step returned.
+3. The route validates it (`server/src/routes/music.js`):
+   - Refuses any path outside the caller's own `outputDir` with 403 `That file is outside your media folder` (this also covers posting `outputDir` itself — `file === root` is explicitly rejected, not just paths under it).
+   - Returns 400 `That file is no longer there` if it doesn't exist.
+   - Canonicalizes both the file and the root with `fs.realpathSync()` so a symlink cannot escape the folder, and re-checks the boundary against the canonical paths.
+   - Requires the (canonicalized) target to be a regular file (`fs.statSync(...).isFile()`) — 400 `That path is not a file` otherwise. This closes the same door as the `file === root` check (registering the whole directory) for any other non-file target, e.g. a symlinked directory or device file.
+4. It records the track with metadata, including a probe of the audio duration, storing the **canonicalized realpath** (not the path as posted) so a symlink swapped in after registration can't silently redirect a saved track later.
 
-The probe (`probeAudioDurationSec`) uses ffmpeg; if it times out or fails, the track is recorded with `durationSec: null` and no probe failure blocks the save.
+The probe (`probeAudioDurationSec` in `server/src/lib/story/storyRender.js`) shells out to **ffprobe** (not ffmpeg) to read the container's duration metadata. It is bounded by a timeout (20s default) so a hung or corrupt-input probe can't block the request forever; on timeout or any other failure the track is still recorded, with `durationSec: null`. The client's own request timeout for this call is also raised above the app's normal 15s default (`MUSIC_SAVE_TIMEOUT_MS` in `client/src/lib/api.ts`) so a legitimately slow round trip doesn't abort client-side while the server is still finishing the save.
+
+If the save request fails for any reason, the MusicPicker still keeps the upload usable in the current project (it falls back to the raw uploaded path) and now tells the operator the save itself didn't happen — a warning toast, not a silently-successful "Music added".
 
 ## Where the tracks are resolved
 
-- **`server/src/routes/jobs.js`**: Resolves tracks when building a queue job.
-- **`server/src/routes/render.js`**: Resolves tracks during video render.
-- **`server/src/lib/audio_advanced.js`**: Resolves tracks in the audio advanced workflow.
-- **`server/src/routes/story.js`** (Story render path): Resolves tracks in the final story render.
+- **`server/src/routes/jobs.js`** (`resolveAssetPath`): resolves tracks for the background render queue. This one has no per-request `dataDir` to hand around — every internal caller invokes it with a single argument and it falls back to a module-level `currentJobCtx.dataDir`, set synchronously around enqueue/validation and around job execution. An unresolved `library:`/`mylib:` ref (or any other id) fails validation with a 400 rather than being handed to ffmpeg.
+- **`server/src/routes/render.js`** and **`server/src/routes/audio_advanced.js`** (each has its own local `resolveAssetPath(dataDir, pathOrId)`): synchronous HTTP handlers, so `dataDir` always comes from `req.ctx.dataDir` directly. Same behaviour — an unresolved ref is rejected before ffmpeg runs.
+- **`server/src/routes/story.js`** (Story render path): resolves `project.music.path` for the final render. Unlike the three routes above, a Story render is fire-and-forget from the HTTP handler's point of view, so there's no request to 400 by the time ffmpeg would fail. A `library:`/`mylib:` ref that fails to resolve (forgotten track, deleted file, stale project) degrades to **no music** rather than being passed through as a literal string — `buildStoryFfmpegArgs` (`server/src/lib/story/storyRender.js`) also independently drops a `musicPath` that isn't an existing local file or a remote URL, as a second line of defence, so a bad music reference never takes down the whole render.
 
-All four paths check the prefix and look up the track accordingly.
+All four resolvers check the ref prefix the same way and look the track up accordingly; only the fallback behaviour for an unresolved ref differs (reject the request vs. degrade to silence), matching how each callsite can and can't report failure to the operator.
 
 ## Verifying it yourself
 
 The automated tests cover:
-- Upload path validation (refusing paths outside the media folder, missing files, symlink escape).
-- Index persistence (tracks survive a reload).
-- Cross-project reuse (a track uploaded in one project is selectable in another).
-- Resolution at render time (music plays when the track is included in a render).
+- Upload path validation (refusing paths outside the media folder, missing files, non-regular-file targets, symlink escape) — `server/src/routes/music.test.js`.
+- Index persistence and atomic writes, cross-tenant isolation, and immutable updates — `server/src/lib/musicLibraryStore.test.js`.
+- Resolution of `mylib:`/`library:` refs the way each production callsite actually invokes it, including the background job queue's `currentJobCtx` fallback and the cross-tenant case — `server/src/routes/musicRefs.test.js`.
+- `buildStoryFfmpegArgs` wiring a music input in when the file exists, and dropping it (no `-i`, no `amix`) when it doesn't — `server/src/lib/story/storyRender.test.js`.
+- The Story render route resolving a project's `music.path` to `null`, rather than crashing the render, when the stored ref no longer resolves — `server/src/routes/story.test.js`.
+- Client-side: the picker's licence badge (present only for an uploaded, unrecorded-licence track, clickable to clear it), forget/upload flows, and the upload-then-save fallback (both the success and failure paths, including the failure now warning instead of staying silent) — `client/src/components/__tests__/MusicPicker.test.tsx`.
 
-To verify end-to-end in the app:
+None of the above renders an actual video and plays back the result — that stays a manual step. To verify end-to-end in the app:
 
 1. Open a Story Video project in the running dev app.
 2. Open the music picker and upload an audio file.
-3. Confirm it appears in the list with a `licence?` badge.
+3. Confirm it appears in the list with a `licence?` badge, and that clicking the badge clears it.
 4. Reload the page and confirm it is still listed.
 5. Open a different Story Video project and confirm the same track is selectable in its music picker.
 6. Render a short video that includes the track.
 7. Play the rendered video and confirm the music is present.
+8. Forget the track (or delete the underlying file) from a project that still references it, and confirm that project still renders — silently, without music — instead of failing.
 
-This GUI walkthrough is the one part not covered by automated tests; the rest is covered by `server/test/**/*.test.js` and `client/src/**/*.test.ts`.
+This GUI walkthrough, and actually hearing music in a rendered file, is the part automated tests do not cover; the rest is covered by `server/src/**/*.test.js` and `client/src/**/*.test.tsx`.
 
 ---
 
