@@ -562,8 +562,23 @@ export function fitLineFontSize(lines, w, preferred) {
 }
 
 export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal, highlightWords, stagger }) {
-  const safeLines = Array.isArray(lines) ? lines.filter(Boolean) : [];
-  if (safeLines.length === 0) return null;
+  // A line is either a plain string (short-form callers, paced by an even
+  // split of the duration) or { text, start, end } carrying its own window.
+  // Long-form narration has real word timings, and an even split drifts
+  // minutes away from the voice over a 12-minute video.
+  const entries = (Array.isArray(lines) ? lines : [])
+    .filter(Boolean)
+    .map((l) => (typeof l === "object"
+      ? { text: String(l.text ?? "").trim(), start: Number(l.start), end: Number(l.end) }
+      : { text: String(l).trim(), start: NaN, end: NaN }))
+    .filter((e) => e.text);
+  if (entries.length === 0) return null;
+  const safeLines = entries.map((e) => e.text);
+  // Every line must carry a sane window, or none of them are trusted: a
+  // half-timed list would mix real windows with invented ones.
+  const timed = entries.every((e) => Number.isFinite(e.start) && Number.isFinite(e.end) && e.end > e.start);
+  /** The window for line `i`, preferring its own over the even split. */
+  const spanFor = (i, from, to) => (timed ? [entries[i].start, entries[i].end] : [from, to]);
   const style = resolveTypographyPreset(preset);
   const lineGap = Math.round(h * 0.06);
   const fontSize = fitLineFontSize(safeLines, w, Math.round(h * (style.lineSizeMult || 0.033)));
@@ -583,16 +598,30 @@ export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal
   // Revealing raw sentences would be unreadable - a 51-character line caps at
   // 31px on a 1080 frame because the width budget binds - whereas a wrapped
   // row holds ~99px, the same size as a block.
-  if (reveal && Number.isFinite(Number(duration)) && Number(duration) > 0) {
-    const total = Number(duration);
-    const rows = safeLines.flatMap((t) => wrapToBlock(String(t), BLOCK_MAX_CHARS));
+  if ((reveal && Number.isFinite(Number(duration)) && Number(duration) > 0) || (reveal && timed)) {
+    const total = Number(duration) > 0 ? Number(duration) : entries[entries.length - 1].end;
+    // Wrap per LINE so a timed line can share its own window across the rows
+    // it wrapped into, rather than every row in the video sharing one slot.
+    const perLine = safeLines.map((t) => wrapToBlock(String(t), BLOCK_MAX_CHARS));
+    const rows = perLine.flat();
     const fontSize = fitLineFontSize(rows, w, Math.round(h * (style.baseSizeMult || 0.07)));
     const slot = total / rows.length;
     const y = Math.round(h * 0.45);
     const parts = [];
+    // Row index -> [from, to], honouring each line’s own window when timed.
+    const rowSpans = [];
+    perLine.forEach((rowsOfLine, li) => {
+      const [lineFrom, lineTo] = spanFor(li, 0, total);
+      const step = (lineTo - lineFrom) / Math.max(1, rowsOfLine.length);
+      rowsOfLine.forEach((_, ri) => {
+        const globalIndex = rowSpans.length;
+        rowSpans.push(timed
+          ? [lineFrom + ri * step, ri === rowsOfLine.length - 1 ? lineTo : lineFrom + (ri + 1) * step]
+          : [globalIndex * slot, globalIndex === rows.length - 1 ? total : (globalIndex + 1) * slot]);
+      });
+    });
     rows.forEach((row, i) => {
-      const from = i * slot;
-      const to = i === rows.length - 1 ? total : (i + 1) * slot;
+      const [from, to] = rowSpans[i];
       const enable = `:enable='between(t,${from.toFixed(3)},${to.toFixed(3)})'`;
       parts.push(`drawtext=text='${escapeDrawText(row)}':x=(w-text_w)/2:y=${y}${fontArg(style)}:fontsize=${fontSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=${BOX_BORDER_W}${enable}`);
 
@@ -627,8 +656,9 @@ export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal
   // single 49-character line caps at ~32px on a 1080 frame because the width
   // budget binds; wrapping the same text to ~16 characters reaches ~99px. The
   // reference video shows short phrase blocks, not one long line.
-  if (block && Number.isFinite(total) && total > 0) {
-    const slot = total / safeLines.length;
+  if (block && ((Number.isFinite(total) && total > 0) || timed)) {
+    const span = (Number.isFinite(total) && total > 0) ? total : entries[entries.length - 1].end;
+    const slot = span / safeLines.length;
     const preferred = Math.round(h * (style.baseSizeMult || 0.07));
     const blocks = safeLines.map((t) => wrapToBlock(String(t), BLOCK_MAX_CHARS));
     // One size for every block, so type does not jump between phrases.
@@ -639,8 +669,7 @@ export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal
     // block overlap itself ("the chaos around" sat on "presence calms").
     const lead = Math.round(fontSize * 1.15) + 2 * BOX_BORDER_W;
     return blocks.map((rows, bi) => {
-      const from = bi * slot;
-      const to = bi === blocks.length - 1 ? total : (bi + 1) * slot;
+      const [from, to] = spanFor(bi, bi * slot, bi === blocks.length - 1 ? span : (bi + 1) * slot);
       const enable = `:enable='between(t,${from.toFixed(3)},${to.toFixed(3)})'`;
       // Centre the stack on the frame's middle band rather than hanging it
       // from a fixed top, or a tall block runs off the bottom.
@@ -663,8 +692,9 @@ export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal
     }).join(",");
   }
 
-  if (Number.isFinite(total) && total > 0) {
-    const slot = total / safeLines.length;
+  if ((Number.isFinite(total) && total > 0) || timed) {
+    const span = (Number.isFinite(total) && total > 0) ? total : entries[entries.length - 1].end;
+    const slot = span / safeLines.length;
     const y = Math.round(h * 0.42);
     // A paced line has the frame to itself, so it gets the preset's WORD size
     // rather than the much smaller stacked-block size. lineSizeMult exists to
@@ -673,10 +703,9 @@ export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal
     // still caps it to the frame width, so long lines shrink as needed.
     const pacedSize = fitLineFontSize(safeLines, w, Math.round(h * (style.baseSizeMult || 0.07)));
     return safeLines.map((t, i) => {
-      const from = i * slot;
-      // End the last line exactly on `duration` so rounding cannot leave a
+      // End the last line exactly on the span so rounding cannot leave a
       // silent gap of uncaptioned video at the tail.
-      const to = i === safeLines.length - 1 ? total : (i + 1) * slot;
+      const [from, to] = spanFor(i, i * slot, i === safeLines.length - 1 ? span : (i + 1) * slot);
       const enable = `:enable='between(t,${from.toFixed(3)},${to.toFixed(3)})'`;
       return `drawtext=text='${escapeDrawText(t)}':x=(w-text_w)/2:y=${y}${fontArg(style)}:fontsize=${pacedSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=${BOX_BORDER_W}${enable}`;
     }).join(",");
