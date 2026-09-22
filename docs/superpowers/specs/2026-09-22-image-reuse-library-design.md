@@ -75,7 +75,7 @@ the video library is untouched.
     "id": "img_<sha256[0:16]>",
     "hash": "<sha256 of the image bytes>",
     "path": "<absolute path in the pool>",
-    "publicUrl": "/outputs/imageLib/<hash>.png",
+    "publicUrl": "/outputs/imagelib-<hash>.png",
     "prompt": "<the scene imagePrompt that produced it>",
     "style": "cinematic-bible",
     "aspect": "landscape",
@@ -100,7 +100,7 @@ missing `kind` continues to read as a video.
 
 ### 3. Matching
 
-`findReusableImage({ dataDir, prompt, style, aspect, excludeIds })`
+`findReusableImages({ dataDir, prompt, style, aspect, excludeIds })`
 
 1. **Hard filters** — same `aspect`, same `style`, `id` not in `excludeIds`
    (every image already used by the current project).
@@ -123,7 +123,7 @@ leaving harvest on.
 
 In `imagesStage` (`routes/story.js`), per scene, in order:
 
-1. `findReusableImage(...)` with the ids used so far in this project.
+1. `findReusableImages(...)` with the ids used so far in this project.
 2. Hit → set `imagePath`, `imageUrl`, `imageStatus: "done"`,
    `imageSource: "library"`, `imageReuseScore`; bump `lastUsedAt`/`useCount`.
 3. Miss → generate exactly as today, then harvest the result and set
