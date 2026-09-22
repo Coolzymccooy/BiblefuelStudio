@@ -32,7 +32,8 @@ describe("registerImage", () => {
     assert.equal(entry.style, "cinematic-bible");
     assert.equal(entry.aspect, "landscape");
     assert.equal(entry.useCount, 1);
-    assert.ok(entry.publicUrl.startsWith("/outputs/imageLib/"));
+    assert.equal(entry.publicUrl, `/outputs/imagelib-${entry.hash}.png`);
+    assert.equal(entry.publicUrl.slice("/outputs/".length).includes("/"), false, "index.js only serves per-user outputs by bare filename");
     assert.ok(fs.existsSync(entry.path), "the pool file exists");
     assert.notEqual(entry.path, src, "the pool holds a COPY, not the original");
     assert.ok(entry.categories.includes("candle"), "auto-tagged from the prompt");
@@ -47,6 +48,17 @@ describe("registerImage", () => {
     const second = await registerImage({ dataDir, outputDir, sourcePath: b, prompt: "two", style: "s", aspect: "landscape", provider: "x", projectId: "p2" });
     assert.equal(second.id, first.id);
     assert.equal(readLibrary(dataDir).items.length, 1);
+  });
+
+  test("parallel harvests all land in the index — no lost update", async () => {
+    // Scenes generate concurrently and embedding is a network call: two
+    // harvests that both read the index before either writes would lose one.
+    _setEmbedImpl(async (text) => { await new Promise((r) => setTimeout(r, 5)); return [text.length, 0, 0]; });
+    const entries = await Promise.all([1, 2, 3, 4].map((n) =>
+      registerImage({ dataDir, outputDir, sourcePath: writeImage(`c${n}.png`, [n, n, n]), prompt: "x".repeat(n), style: "s", aspect: "landscape", provider: "x", projectId: "p" })));
+    assert.equal(new Set(entries.map((e) => e.id)).size, 4, "four distinct images");
+    assert.equal(readLibrary(dataDir).items.length, 4, "every one is indexed");
+    for (const e of entries) assert.ok(fs.existsSync(e.path), `${e.id} has its pool file`);
   });
 
   test("a missing source file yields null rather than throwing", async () => {
@@ -69,7 +81,7 @@ describe("pruneLibrary", () => {
     const lib = readLibrary(dataDir);
     lib.items[0].lastUsedAt = 1;
     fs.writeFileSync(path.join(dataDir, "imageLibrary.json"), JSON.stringify(lib));
-    const evicted = pruneLibrary({ dataDir, outputDir, max: 2 });
+    const evicted = pruneLibrary({ dataDir, max: 2 });
     assert.equal(evicted, 1);
     assert.equal(readLibrary(dataDir).items.length, 2);
     assert.equal(fs.existsSync(entries[0].path), false, "the evicted pool file was deleted");
@@ -77,7 +89,7 @@ describe("pruneLibrary", () => {
 
   test("does nothing when the library is under the cap", async () => {
     await registerImage({ dataDir, outputDir, sourcePath: writeImage("one.png", [4]), prompt: "p", style: "s", aspect: "landscape", provider: "x", projectId: "p" });
-    assert.equal(pruneLibrary({ dataDir, outputDir, max: 10 }), 0);
+    assert.equal(pruneLibrary({ dataDir, max: 10 }), 0);
     assert.equal(readLibrary(dataDir).items.length, 1);
   });
 });

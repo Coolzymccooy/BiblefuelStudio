@@ -288,7 +288,7 @@ async function imagesStage(ctx, projectId, opts = {}) {
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
   // Housekeeping: keep the library from growing without bound.
-  try { pruneLibrary({ dataDir: ctx.dataDir, outputDir: ctx.outputDir }); } catch { /* ignore */ }
+  try { pruneLibrary({ dataDir: ctx.dataDir }); } catch { /* ignore */ }
 
   if (cancelledProjects.has(projectId)) {
     cancelledProjects.delete(projectId);
@@ -635,9 +635,20 @@ router.post("/:id/scenes/:sid/regenerate", async (req, res) => {
       rawPrompt: scenes[idx].imagePrompt,
       aspect: imageAspectFor(project),
     });
-    scenes[idx] = result?.ok
-      ? { ...scenes[idx], imagePath: result.path, imageUrl: result.publicUrl || null, imageStatus: "done", imageError: null }
-      : { ...scenes[idx], imageStatus: "error", imageError: shortImageError(result?.error) };
+    if (result?.ok) {
+      // Freshly generated, so this is no longer a library reuse — clear the
+      // provenance or the UI keeps calling it "Reused" — and harvest it so
+      // the next project can use it.
+      let entry = null;
+      try {
+        entry = await _imageLib.register({ dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir, sourcePath: result.path, prompt: scenes[idx].imagePrompt, style: String(project.style || ""), aspect: imageAspectFor(project), provider: result.provider, projectId: project.projectId });
+      } catch (err) {
+        console.warn(`[story] regenerate harvest failed: ${err?.message || err}`);
+      }
+      scenes[idx] = { ...scenes[idx], imagePath: result.path, imageUrl: result.publicUrl || null, imageStatus: "done", imageError: null, imageSource: "generated", imageLibraryId: entry?.id || null, imageReuseScore: null };
+    } else {
+      scenes[idx] = { ...scenes[idx], imageStatus: "error", imageError: shortImageError(result?.error) };
+    }
     const updated = writeProject(req.ctx.dataDir, { ...project, scenes });
     // ok=false on the *scene* (not the request) so the client can show the
     // real reason instead of a misleading "regenerated" success.

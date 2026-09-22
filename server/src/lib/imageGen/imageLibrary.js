@@ -3,9 +3,11 @@
  * already own instead of spending image quota on a new one.
  *
  * Two pieces:
- *   - a content-addressed pool at <outputDir>/imageLib/<sha256>.png. It holds
- *     COPIES: outputs/genImg/<projectId>/ is purged on every re-segment, so an
- *     index pointing in there would lose images out from under other projects.
+ *   - a content-addressed pool of COPIES at <outputDir>/imagelib-<sha256>.png.
+ *     Copies, because outputs/genImg/<projectId>/ is purged on every
+ *     re-segment and an index pointing in there would lose images out from
+ *     under other projects. Flat, because index.js serves per-user outputs
+ *     through GET /outputs/:filename, which refuses a path with a slash.
  *   - an index at <dataDir>/imageLibrary.json, separate from library.json so
  *     the existing (video) library needs no migration.
  *
@@ -18,7 +20,11 @@ import crypto from "crypto";
 import { classifySearchQuery } from "../categorize.js";
 
 const INDEX_FILE = "imageLibrary.json";
-const POOL_DIR = "imageLib";
+// Pool files sit FLAT in the tenant's outputs with a distinctive prefix.
+// index.js serves per-user outputs through GET /outputs/:filename, which
+// rejects anything containing "/" — a subdirectory would 404 for every
+// non-admin tenant and the preview would show a broken image.
+const POOL_PREFIX = "imagelib-";
 const DEFAULT_MAX_ITEMS = 2000;
 const DEFAULT_THRESHOLD = 0.82;
 // Category overlap is a blunt instrument, so it needs a clear majority before
@@ -26,7 +32,7 @@ const DEFAULT_THRESHOLD = 0.82;
 const CATEGORY_THRESHOLD = 0.6;
 
 export function libraryIndexPath(dataDir) { return path.join(dataDir, INDEX_FILE); }
-export function poolDir(outputDir) { return path.join(outputDir, POOL_DIR); }
+export function poolFileFor(outputDir, hash) { return path.join(outputDir, `${POOL_PREFIX}${hash}.png`); }
 
 /** Read the index. A missing or corrupt file reads as empty — never throws. */
 export function readLibrary(dataDir) {
@@ -82,8 +88,10 @@ export function decodeEmbedding(b64) {
   if (!b64) return null;
   try {
     const buf = Buffer.from(b64, "base64");
-    if (buf.length % 4 !== 0) return null;
-    return Array.from(new Float32Array(buf.buffer, buf.byteOffset, buf.length / 4));
+    if (buf.length === 0 || buf.length % 4 !== 0) return null;
+    const copy = new Uint8Array(buf.length);
+    copy.set(buf);
+    return Array.from(new Float32Array(copy.buffer));
   } catch {
     return null;
   }
@@ -104,13 +112,18 @@ export async function registerImage({ dataDir, outputDir, sourcePath, prompt, st
     if (!bytes.length) return null;
     const hash = crypto.createHash("sha256").update(bytes).digest("hex");
 
+    // Embed FIRST. Everything after this point is synchronous, so the
+    // read-modify-write of the index cannot interleave with another worker's
+    // — scenes harvest in parallel, and a stale write would silently drop an
+    // entry and orphan its pool file forever.
+    const embedding = encodeEmbedding(await _embed(String(prompt || "")));
+
     const lib = readLibrary(dataDir);
     const existing = lib.items.find((it) => it?.hash === hash);
     if (existing) return existing;
 
-    const dir = poolDir(outputDir);
-    fs.mkdirSync(dir, { recursive: true });
-    const file = path.join(dir, `${hash}.png`);
+    fs.mkdirSync(outputDir, { recursive: true });
+    const file = poolFileFor(outputDir, hash);
     if (!fs.existsSync(file)) fs.writeFileSync(file, bytes);
 
     const now = Date.now();
@@ -118,12 +131,12 @@ export async function registerImage({ dataDir, outputDir, sourcePath, prompt, st
       id: `img_${hash.slice(0, 16)}`,
       hash,
       path: file,
-      publicUrl: `/outputs/${POOL_DIR}/${hash}.png`,
+      publicUrl: `/outputs/${POOL_PREFIX}${hash}.png`,
       prompt: String(prompt || ""),
       style: String(style || ""),
       aspect: String(aspect || ""),
       categories: classifySearchQuery(String(prompt || "")),
-      embedding: encodeEmbedding(await _embed(String(prompt || ""))),
+      embedding,
       provider: String(provider || ""),
       projectId: String(projectId || ""),
       createdAt: now,
@@ -139,7 +152,7 @@ export async function registerImage({ dataDir, outputDir, sourcePath, prompt, st
 }
 
 /** Cap the library, evicting least-recently-used entries and their files. */
-export function pruneLibrary({ dataDir, outputDir, max = DEFAULT_MAX_ITEMS }) {
+export function pruneLibrary({ dataDir, max = DEFAULT_MAX_ITEMS }) {
   try {
     const lib = readLibrary(dataDir);
     if (lib.items.length <= max) return 0;
