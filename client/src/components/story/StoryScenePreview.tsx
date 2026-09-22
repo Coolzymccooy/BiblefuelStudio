@@ -40,6 +40,9 @@ export function StoryScenePreview({ scenes, aspect = 'portrait' }: StoryScenePre
       <div className="absolute inset-x-0 bottom-0 p-5">
         <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-bf-goldDeep">
           Scene {idx + 1} / {scenes.length} · {aspect === 'landscape' ? 'Landscape' : 'Portrait'}
+          {scene.imageSource === 'library' && (
+            <span title="Reused from your library — this scene cost no image quota"> · Reused</span>
+          )}
         </div>
         <div className="mt-1.5 line-clamp-2 font-displaySerif text-[22px] italic leading-tight text-bf-cream">
           &ldquo;{scene.text}&rdquo;
