@@ -26,7 +26,7 @@
 |---|---|
 | `server/src/lib/musicLibraryStore.js` *(new)* | The per-tenant index: read, register, update, remove, resolve a `mylib:` ref. Knows nothing about HTTP. |
 | `server/src/lib/musicLibraryStore.test.js` *(new)* | Store behaviour, including tenant isolation. |
-| `server/src/lib/musicLibrary.js` *(modify)* | Gains `listBundledTracks()` as a named alias of today's `listTracks()` so the merged listing reads clearly. Bundled data untouched. |
+| `server/src/lib/musicLibrary.js` | **Unchanged.** Task 2 calls its existing `listTracks()`; the bundled set and its files are not touched by this plan. |
 | `server/src/routes/music.js` *(modify)* | Merged `GET /library`, plus `POST /upload`, `PATCH /:id`, `DELETE /:id`. |
 | `server/src/routes/music.test.js` *(modify)* | Route contracts against the existing handler-extraction idiom. |
 | `server/src/routes/audio_advanced.js`, `jobs.js`, `render.js`, `story.js` *(modify)* | One line each so a `mylib:` ref resolves to a real file. |
