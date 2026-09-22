@@ -194,7 +194,7 @@ describe("imageGen orchestrator — generateBibleImage", () => {
       aspect: "portrait",
     });
 
-    assert.match(observedUrl, /api\.cloudflare\.com.*flux-1-schnell/);
+    assert.match(observedUrl, /api\.cloudflare\.com.*@cf\/leonardo\/lucid-origin/);
     assert.equal(result.ok, true);
     assert.equal(result.provider, "cloudflare");
     assert.ok(result.path && fs.existsSync(result.path), `file not written: ${result.path}`);

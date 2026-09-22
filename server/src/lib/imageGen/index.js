@@ -143,7 +143,7 @@ export async function generateBibleImage({
   const errors = [];
   for (const provider of chain) {
     const result = provider === "cloudflare"
-      ? await generateImageCloudflare({ prompt, seed })
+      ? await generateImageCloudflare({ prompt, seed, aspect })
       : provider === "pollinations"
         ? await generateImagePollinations({ prompt, seed, aspect })
         : provider === "imagen"

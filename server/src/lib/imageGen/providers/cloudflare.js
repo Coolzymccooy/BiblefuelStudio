@@ -1,27 +1,31 @@
 /**
- * Cloudflare Workers AI adapter — FLUX-1-schnell (free tier: 10,000 neurons
- * per day forever, ~200–300 images depending on size).
+ * Cloudflare Workers AI adapter.
  *
  * Endpoint:
- *   POST https://api.cloudflare.com/client/v4/accounts/{ACCOUNT_ID}/ai/run/@cf/black-forest-labs/flux-1-schnell
+ *   POST https://api.cloudflare.com/client/v4/accounts/{ACCOUNT_ID}/ai/run/{MODEL}
  * Auth:
  *   Authorization: Bearer {API_TOKEN}
  *
  * Response shape (current Cloudflare API):
  *   { "result": { "image": "<base64 PNG bytes>" }, "success": true, ... }
+ *   (some models answer image/png bytes instead — both handled below)
  *
- * Notes:
- *  - Flux ignores negative prompts; we don't send one.
- *  - Flux accepts an integer `seed` for reproducibility — we always pass it.
- *  - Output is square 1024x1024 by default; the ffmpeg scene graph scales/
- *    crops to whatever aspect the video needs.
+ * Default model: Leonardo Lucid Origin. It renders the requested aspect
+ * NATIVELY (1344×768 landscape / 768×1344 portrait), so a widescreen scene is
+ * composed as widescreen instead of a 1024² square cropped to 16:9 with the
+ * subject sliced off. Costs a few cents per image; the free daily neuron
+ * allowance still covers a video or two. Set CLOUDFLARE_IMAGE_MODEL to
+ * @cf/black-forest-labs/flux-1-schnell to go back to the near-free square
+ * model (it only accepts prompt/steps/seed — no dimensions).
  */
+import { toDimensions } from "../dimensions.js";
 
 // Uses Node 18+ global fetch — no node-fetch dep needed and tests can stub
 // globalThis.fetch directly without module mocking.
 
 const ENDPOINT_BASE = "https://api.cloudflare.com/client/v4/accounts";
-const DEFAULT_MODEL = "@cf/black-forest-labs/flux-1-schnell";
+const DEFAULT_MODEL = "@cf/leonardo/lucid-origin";
+const FLUX_SCHNELL = /flux-1-schnell/i;
 const REQUEST_TIMEOUT_MS = 45_000;
 
 /** Per-model set of body properties the API 400'd as "not allowed". */
@@ -74,12 +78,13 @@ export function isCloudflareConfigured() {
  * @param {object} args
  * @param {string} args.prompt
  * @param {number} [args.seed]
- * @param {number} [args.steps]   1–8 for flux-schnell (default 4)
+ * @param {number} [args.steps]   1–8, flux-schnell only (default 4)
+ * @param {string} [args.aspect]  portrait (default) | landscape | square — sent as width/height to models that take them
  * @param {string} [args.model]   override model id
  * @param {AbortSignal} [args.signal]
  * @returns {Promise<ImageGenResult>}
  */
-export async function generateImageCloudflare({ prompt, seed, steps, model, signal }) {
+export async function generateImageCloudflare({ prompt, seed, steps, model, aspect, signal }) {
   if (!isCloudflareConfigured()) {
     return { ok: false, error: "Cloudflare Workers AI not configured (CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_WORKERS_AI_TOKEN)", provider: "cloudflare" };
   }
@@ -95,9 +100,18 @@ export async function generateImageCloudflare({ prompt, seed, steps, model, sign
   /** @type {Record<string, unknown>} */
   const body = { prompt: prompt.trim().slice(0, 2048) };
   if (Number.isFinite(seed)) body.seed = Number(seed);
-  if (Number.isFinite(steps)) {
-    const clamped = Math.min(8, Math.max(1, Math.floor(Number(steps))));
-    body.steps = clamped;
+  if (FLUX_SCHNELL.test(modelId)) {
+    if (Number.isFinite(steps)) {
+      const clamped = Math.min(8, Math.max(1, Math.floor(Number(steps))));
+      body.steps = clamped;
+    }
+  } else {
+    // Dimension-taking models (Leonardo, SDXL family) compose for the aspect
+    // we actually need. If a model turns out to reject them, the 400 handler
+    // below strips the property and remembers that for the session.
+    const { width, height } = toDimensions(aspect);
+    body.width = width;
+    body.height = height;
   }
   // Drop properties this model is KNOWN to reject (learned from earlier 400s)
   // so later scenes don't pay an extra round-trip each.
