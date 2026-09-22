@@ -123,6 +123,13 @@ let currentJobCtx = null;
 function currentOutDir() { return currentJobCtx?.outputDir || OUTPUT_DIR; }
 function currentDataDir() { return currentJobCtx?.dataDir || DATA_DIR; }
 
+// Test-only: lets a unit test set currentJobCtx exactly the way production
+// code does (synchronously around enqueue/validation/execution — see the
+// callers of currentJobCtx below) instead of threading dataDir through a
+// resolveAssetPath signature that no production caller actually uses.
+export function _setJobCtxForTest(ctx) { currentJobCtx = ctx; }
+export function _resetJobCtxForTest() { currentJobCtx = null; }
+
 // Monotonic counter backing the script-type rotation. Persisted per-tenant so
 // the rotation survives restarts — an in-memory counter would reset to the
 // first bucket on every deploy, which is how the page ends up looking
@@ -338,8 +345,16 @@ export function resolveAssetPath(pathOrId, dataDir) {
   const libTrack = resolveLibraryTrack(normalized);
   if (libTrack) return libTrack;
   // A track the operator saved to their own library. Needs dataDir, which is
-  // why it is spelled mylib: rather than library:.
-  const saved = resolveTenantTrack(dataDir, normalized);
+  // why it is spelled mylib: rather than library:. Every production caller
+  // (executeJob, renderVideoCore, renderAdvancedVideo, augmentPayloadWithKineticCaptions,
+  // validatePayloadForEnqueue) invokes resolveAssetPath with ONE argument, so
+  // `dataDir` is undefined here unless the caller is an HTTP handler that
+  // passed it explicitly (e.g. timeline.js). Fall back to currentJobCtx's
+  // dataDir exactly like currentOutDir()/currentDataDir() do below — without
+  // this a saved mylib: track resolves fine in the foreground (dataDir passed
+  // explicitly) but 400s from the background render queue (dataDir undefined,
+  // global DATA_DIR searches the wrong tenant's library).
+  const saved = resolveTenantTrack(dataDir || currentDataDir(), normalized);
   if (saved) return saved;
   const direct = resolveOutputAlias(normalized);
   if (String(direct).startsWith("http")) return direct;
