@@ -167,6 +167,66 @@ describe("POST /api/longform/:id/narrate", () => {
     // missing) voice would silently miss every cached chunk.
     assert.deepEqual(receivedVoiceIds, ["v1", "v1"]);
   });
+  test("persists the provider reported by the heartbeat, and tolerates the initial provider-less 0/total call", async () => {
+    const { body } = await request(app).post("/api/longform/draft").send({ idea: "x", templateId: "sleep-30" });
+    const id = body.project.projectId;
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    _setNarrateImpl(async ({ sections, workDir }, deps) => {
+      deps?.onProgress?.({ done: 0, total: 3, provider: null });
+      await gate;
+      deps?.onProgress?.({ done: 1, total: 3, provider: "azure" });
+      return fakeNarration({ sections, workDir });
+    });
+    const pipelineCalls = [];
+    _setPipelineImpl(async () => { pipelineCalls.push(1); });
+
+    const res = await request(app).post(`/api/longform/${id}/narrate`).send({ voiceId: "v1" });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    const early = await waitFor(id, (x) => x.longform?.progress?.total === 3);
+    assert.deepEqual(early.longform.progress, { done: 0, total: 3 }, "0/total is persisted before the first chunk; no null provider key");
+
+    release();
+    const done = await waitFor(id, () => pipelineCalls.length === 1);
+    assert.equal(done.longform.progress.provider, "azure");
+  });
+  test("GET /api/story/:id reports whether the narration is alive in this process", async () => {
+    const { default: storyRouter } = await import("./story.js");
+    app.use("/api/story", storyRouter);
+    const { body } = await request(app).post("/api/longform/draft").send({ idea: "x", templateId: "sleep-30" });
+    const id = body.project.projectId;
+
+    // A project that says "narrating" but has no run in this process (the
+    // server restarted mid-run) must be reported as not alive.
+    writeProject(dataDir, { ...readProject(dataDir, id), status: "narrating" });
+    const dead = await request(app).get(`/api/story/${id}`);
+    assert.equal(dead.status, 200);
+    assert.equal(dead.body.project.longform.progress.alive, false);
+    assert.equal(readProject(dataDir, id).longform.progress, undefined, "alive is a wire-only enrichment, never persisted");
+
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    _setNarrateImpl(async ({ sections, workDir }, deps) => {
+      deps?.onProgress?.({ done: 0, total: 3, provider: null });
+      await gate;
+      return fakeNarration({ sections, workDir });
+    });
+    const pipelineCalls = [];
+    _setPipelineImpl(async () => { pipelineCalls.push(1); });
+    writeProject(dataDir, { ...readProject(dataDir, id), status: "draft_script" });
+    const res = await request(app).post(`/api/longform/${id}/narrate`).send({ voiceId: "v1" });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    await waitFor(id, (x) => x.longform?.progress?.total === 3);
+    const live = await request(app).get(`/api/story/${id}`);
+    assert.equal(live.body.project.status, "narrating");
+    assert.deepEqual(live.body.project.longform.progress, { done: 0, total: 3, alive: true });
+
+    release();
+    const finished = await waitFor(id, () => pipelineCalls.length === 1);
+    assert.equal(finished.status, "segmenting");
+    const after = await request(app).get(`/api/story/${id}`);
+    assert.equal(after.body.project.longform.progress.alive, undefined, "no liveness flag once narration is over");
+  });
   test("rejects a concurrent narrate call for the same project, and allows a new one once the first finishes", async () => {
     const { body } = await request(app).post("/api/longform/draft").send({ idea: "x", templateId: "sleep-30" });
     const id = body.project.projectId;

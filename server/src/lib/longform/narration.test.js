@@ -65,14 +65,24 @@ describe("narrateSections", () => {
       { sections, template: { ...template, voice: { ...template.voice, maxChunkChars: 25 } }, voiceId: "v1", workDir },
       { ...deps, onProgress: (p) => progress.push(p) },
     );
-    assert.ok(progress.length >= 4, "expected a progress call per chunk");
+    assert.ok(progress.length >= 5, "expected a progress call per chunk plus the initial 0/total");
     const total = progress[0].total;
     assert.ok(total > 0);
+    // The first call fires BEFORE any provider work so a caller can show
+    // "(0/N)" immediately instead of a bare spinner until chunk one lands.
+    assert.equal(progress[0].done, 0, "first call reports done === 0");
     progress.forEach((p, idx) => {
       assert.equal(p.total, total, "total stays stable across the whole run");
-      assert.equal(p.done, idx + 1, "done increases by one per chunk");
+      assert.equal(p.done, idx, "done increases by one per chunk");
     });
     assert.equal(progress[progress.length - 1].done, total, "final call reports done === total");
+  });
+  test("onProgress carries the provider that actually voiced the chunks once known", async () => {
+    const { workDir, deps } = harness();
+    const progress = [];
+    await narrateSections({ sections, template, voiceId: "v1", workDir }, { ...deps, onProgress: (p) => progress.push(p) });
+    assert.equal(progress[0].provider, null, "provider unknown before the first chunk");
+    assert.equal(progress[progress.length - 1].provider, "azure", "provider reported after chunks are voiced");
   });
   test("still fires onProgress for every chunk on a fully cached resume", async () => {
     const { workDir, calls, deps } = harness();

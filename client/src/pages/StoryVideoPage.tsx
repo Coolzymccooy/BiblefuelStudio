@@ -9,7 +9,7 @@ import { useStoryProject } from '../hooks/useStoryProject';
 import type { StoryProject } from '../lib/storyTypes';
 import { YoutubePublishPanel } from '../components/share/YoutubePublishPanel';
 import {
-  deriveStep, progressLabel, canRender, imageCounts, isTransientStatus, isStalled,
+  deriveStep, progressLabel, canRender, imageCounts, isTransientStatus, isStalled, ttsProviderLabel,
 } from '../lib/storyWizard';
 import { StylePicker } from '../components/story/StylePicker';
 import { SceneCard } from '../components/story/SceneCard';
@@ -298,6 +298,9 @@ export function StoryVideoPage() {
             {project.status === 'narrating' && project.longform?.progress && (
               <span className="text-primary-300/80">
                 ({project.longform.progress.done}/{project.longform.progress.total})
+                {project.longform.progress.provider && (
+                  <span className="ml-1 text-primary-300/60">via {ttsProviderLabel(project.longform.progress.provider)}</span>
+                )}
               </span>
             )}
           </span>
@@ -546,7 +549,7 @@ export function StoryVideoPage() {
 
       {step === 2 && project && (
         <div className="mt-6 space-y-4">
-          <StoryScenePreview scenes={project.scenes} />
+          <StoryScenePreview scenes={project.scenes} aspect={project.aspect} />
 
           <div className="flex items-baseline justify-between">
             <div className="font-displaySerif text-[19px] font-semibold text-bf-cream">Scenes</div>

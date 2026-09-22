@@ -21,6 +21,7 @@ import { cleanCaptionLine, cleanSpeakableText } from "../lib/speakableScript.js"
 import { buildImportedTranscript } from "../lib/story/scriptImport.js";
 import { CHARACTER_ANCHORS } from "../lib/story/styleAnchors.js";
 import { confineToDir } from "../lib/confinePath.js";
+import { isNarrationActive } from "../lib/longform/narrationRegistry.js";
 
 // Mockable seams (mirror routes/transcribe.js).
 let _transcribeFn = transcribeAudio;
@@ -274,6 +275,14 @@ router.get("/:id", (req, res) => {
     if (job) {
       out = { ...project, render: { ...project.render, percent: job.percent, phase: job.phase } };
     }
+  }
+  // Same idea for a long-form narration: `alive` says whether the run is
+  // actually in flight in this process. false while status==="narrating"
+  // ⇒ the server restarted mid-run and the UI should offer Resume now, not
+  // after a stall timer. Wire-only — never persisted.
+  if (project.status === STORY_STATUS.NARRATING) {
+    const progress = project.longform?.progress || { done: 0, total: 0 };
+    out = { ...out, longform: { ...out.longform, progress: { ...progress, alive: isNarrationActive(project.projectId) } } };
   }
   return res.json({ ok: true, project: out });
 });

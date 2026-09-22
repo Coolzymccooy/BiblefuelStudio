@@ -54,6 +54,20 @@ export function progressLabel(status: StoryStatus): string {
   }
 }
 
+const TTS_PROVIDER_LABELS: Record<string, string> = {
+  azure: 'Azure Speech',
+  chatterbox: 'Chatterbox',
+  edge: 'Edge-TTS',
+  elevenlabs: 'ElevenLabs',
+  fish: 'Fish Audio',
+  piper: 'Piper',
+};
+
+/** Human label for a TTS provider id reported by the server (falls back to the id). */
+export function ttsProviderLabel(id: string): string {
+  return TTS_PROVIDER_LABELS[id] ?? id;
+}
+
 const STALL_MS = 90_000; // a transient status older than this looks stuck (server died)
 
 // Narration synthesises a 30-60 min session chunk by chunk, one provider call
@@ -71,6 +85,10 @@ const NARRATING_STALL_MS = 10 * 60_000;
  */
 export function isStalled(project: StoryProject, nowMs: number): boolean {
   if (!isTransientStatus(project.status)) return false;
+  // The server says outright when a narration it claims to be running isn't
+  // alive in its process (it restarted mid-run) — no point waiting out the
+  // timer on a run that will never send another heartbeat.
+  if (project.status === 'narrating' && project.longform?.progress?.alive === false) return true;
   const threshold = project.status === 'narrating' ? NARRATING_STALL_MS : STALL_MS;
   return (nowMs - project.updatedAt) > threshold;
 }

@@ -137,11 +137,18 @@ export async function narrateSections({ sections, template, voiceId, workDir }, 
   const chunksBySection = sections.map((s) => splitForProvider(s.text, template.voice.maxChunkChars).filter((c) => c.trim().length >= MIN_CHUNK_CHARS));
   const total = chunksBySection.reduce((n, c) => n + c.length, 0);
   let done = 0;
+  let usedProvider = null;
+  // `provider` is null until the first chunk is voiced (it may differ from
+  // the template's first preference when the orchestrator falls through).
+  const report = () => { if (onProgress) onProgress({ done, total, provider: usedProvider }); };
+  // Fire once before any provider call so the caller can show "(0/N)"
+  // straight away — the first chunk alone can take a while on a slow
+  // self-hosted provider, and a bare spinner for that long reads as hung.
+  report();
 
   const entries = [];
   const timed = [];
   let cursorMs = 0;
-  let usedProvider = null;
   for (let i = 0; i < sections.length; i++) {
     if (i > 0) { entries.push(silence); cursorMs += silenceMs; }
     const startMs = cursorMs;
@@ -153,7 +160,7 @@ export async function narrateSections({ sections, template, voiceId, workDir }, 
       done += 1;
       // Fires for cache hits too — a resumed run should still bump the
       // heartbeat even though nothing was actually synthesised this time.
-      if (onProgress) onProgress({ done, total });
+      report();
     }
     timed.push({ ...sections[i], startMs, endMs: cursorMs });
   }

@@ -9,6 +9,7 @@ import { transcribeAudio } from "../lib/stt/index.js";
 import { buildImportedTranscript } from "../lib/story/scriptImport.js";
 import { createProject, readProject, writeProject, STORY_STATUS } from "../lib/story/projectStore.js";
 import { runStoryPipeline, isCancelled, clearCancelled } from "./story.js";
+import { markNarrationActive, clearNarrationActive, isNarrationActive } from "../lib/longform/narrationRegistry.js";
 import { confineToDir } from "../lib/confinePath.js";
 import { quota } from "../middleware/quota.js";
 
@@ -32,13 +33,10 @@ export function _setQuotaImpl(fn) { _quota = fn; }
 export function _resetQuotaImpl() { _quota = quota; }
 function renderQuota(req, res, next) { return _quota("render")(req, res, next); }
 
-// Projects with a narration run currently in flight (same pattern as
-// story.js's cancelledProjects). Without this, a double-click or an
-// impatient "Resume" click during a stalled-but-actually-still-running
-// narration would start a second `_narrate` over the same chunk cache
-// directory concurrently. A server restart empties the set, so a genuinely
-// stalled project (the process died) can still be resumed.
-const activeNarrations = new Set();
+// Narration runs in flight are tracked in narrationRegistry.js (shared with
+// story.js's GET /:id liveness report). Without it, a double-click or an
+// impatient "Resume" click during a slow-but-healthy narration would start
+// a second `_narrate` over the same chunk cache directory concurrently.
 
 // Matches story.js's cancel wording so the client's "^cancelled" check treats
 // a cancelled narration exactly like a cancelled image run.
@@ -133,11 +131,16 @@ async function runNarration(ctx, projectId, voiceId) {
   // after every chunk keeps the client's stall detector from firing on a
   // slow-but-healthy run. Best-effort, like story.js's persistRenderPct —
   // never let a progress-write failure interrupt the narration itself.
-  const persistProgress = ({ done, total }) => {
+  // The first heartbeat is (0/total) before any provider call, so the UI can
+  // show a counter immediately; `provider` is only known once a chunk has
+  // actually been voiced (the orchestrator may fall through to a different
+  // provider than the template's first preference).
+  const persistProgress = ({ done, total, provider }) => {
     try {
       const fresh = readProject(ctx.dataDir, projectId);
       if (fresh && fresh.status === STORY_STATUS.NARRATING) {
-        writeProject(ctx.dataDir, { ...fresh, longform: { ...fresh.longform, progress: { done, total } }, updatedAt: Date.now() });
+        const progress = provider ? { done, total, provider } : { done, total };
+        writeProject(ctx.dataDir, { ...fresh, longform: { ...fresh.longform, progress }, updatedAt: Date.now() });
       }
     } catch { /* progress persistence is best-effort */ }
   };
@@ -172,7 +175,7 @@ router.post("/:id/narrate", renderQuota, (req, res) => {
   if (!project) return res.status(404).json({ ok: false, error: "project not found" });
   if (!project.longform?.sections?.length) return res.status(400).json({ ok: false, error: "project has no sections to narrate" });
   if (!longformTemplateById(project.longform.templateId)) return res.status(400).json({ ok: false, error: "project's template is unknown" });
-  if (activeNarrations.has(project.projectId)) {
+  if (isNarrationActive(project.projectId)) {
     return res.status(409).json({ ok: false, error: "narration is already running for this project" });
   }
   const voiceId = req.body?.voiceId ? String(req.body.voiceId) : undefined;
@@ -186,7 +189,7 @@ router.post("/:id/narrate", renderQuota, (req, res) => {
     error: null,
   });
   const ctx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir };
-  activeNarrations.add(project.projectId);
+  markNarrationActive(project.projectId);
   clearCancelled(project.projectId); // a fresh run supersedes any earlier cancel
   runNarration(ctx, project.projectId, voiceId)
     .catch((e) => {
@@ -199,7 +202,7 @@ router.post("/:id/narrate", renderQuota, (req, res) => {
         console.warn("[longform] failed to record narration error:", e2?.message || e2);
       }
     })
-    .finally(() => { activeNarrations.delete(project.projectId); });
+    .finally(() => { clearNarrationActive(project.projectId); });
   return res.json({ ok: true, project: started });
 });
 

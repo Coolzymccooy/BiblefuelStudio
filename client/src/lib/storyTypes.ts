@@ -36,8 +36,16 @@ export interface StoryLongform {
   idea?: string;
   summary?: string;
   sections: LongformSection[];
-  /** Chunk-level narration heartbeat while status === 'narrating' (server-persisted, best-effort). */
-  progress?: { done: number; total: number };
+  /**
+   * Chunk-level narration heartbeat while status === 'narrating' (server-persisted, best-effort).
+   * `provider` is the TTS provider that actually voiced the chunks, once known.
+   * `alive` is added on the wire by GET /api/story/:id: false ⇒ the server has no
+   * run in flight for this project (it restarted mid-narration) and Resume is the
+   * only way forward.
+   */
+  progress?: { done: number; total: number; provider?: string; alive?: boolean };
+  /** TTS voice the user picked for narration (persisted at narrate time so Resume reuses it). */
+  voiceId?: string | null;
 }
 
 export interface StoryProject {
