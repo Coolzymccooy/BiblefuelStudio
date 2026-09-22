@@ -32,9 +32,44 @@ function projectPath(baseDir, projectId) {
  * @param {string} baseDir  the caller's req.ctx.dataDir
  * @param {{title?:string, style?:string}} opts
  */
+const CAPTION_MOTIONS = ["words", "lines", "block"];
+const CAPTION_LAYOUTS = ["center", "center-large", "bottom-center", "bottom-left", "staggered"];
+
+/**
+ * Normalise the caption look/motion settings a project carries into its
+ * render. Every field is optional: an absent one means "let the renderer
+ * decide", which is how projects made before these controls existed keep
+ * rendering exactly as they did.
+ *
+ * @param {object} [input]
+ * @param {object} [current] existing values, kept when input omits a field
+ */
+export function normaliseCaptionSettings(input = {}, current = {}) {
+  const pick = (key, allowed) => {
+    const raw = input[key] === undefined ? current[key] : input[key];
+    const value = raw === null || raw === undefined ? undefined : String(raw);
+    return value && allowed.includes(value) ? value : undefined;
+  };
+  const bool = (key) => {
+    const raw = input[key] === undefined ? current[key] : input[key];
+    return raw === undefined || raw === null ? undefined : Boolean(raw);
+  };
+  const presetRaw = input.captionPreset === undefined ? current.captionPreset : input.captionPreset;
+  const preset = presetRaw === null || presetRaw === undefined ? undefined : String(presetRaw).trim();
+  return {
+    captionPreset: preset || "default",
+    captionMotion: pick("captionMotion", CAPTION_MOTIONS),
+    captionLayout: pick("captionLayout", CAPTION_LAYOUTS),
+    captionDepth: pick("captionDepth", ["none", "soft", "hard"]),
+    captionStagger: bool("captionStagger"),
+    captionHighlight: bool("captionHighlight"),
+  };
+}
+
 export function createProject(baseDir, {
   title = "Untitled", style = "cinematic-bible", cast = [],
   aspect = "portrait", captions = "kinetic", scene = null, longform = null,
+  ...captionOpts
 } = {}) {
   const now = Date.now();
   const project = {
@@ -51,7 +86,9 @@ export function createProject(baseDir, {
     transcript: { words: [], hash: null },
     scenes: [],
     music: { path: null, volume: 0.3 },
-    captionPreset: "default",
+    // Caption look and motion. captionPreset was stored and never read until
+    // these controls existed; it is now the typography/animation preset.
+    ...normaliseCaptionSettings(captionOpts),
     render: { jobId: null, outputPath: null, status: null },
     error: null,
     // Video shape: "portrait" (default, existing behaviour) or "landscape".

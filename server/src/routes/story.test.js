@@ -156,6 +156,38 @@ describe("story routes", () => {
     assert.equal(harvested[0].provider, "cloudflare");
   });
 
+  test("PATCH /:id/captions stores the look and motion, ignoring nonsense values", async () => {
+    const create = mockReqRes({ body: { title: "T", style: "cinematic-bible" }, dataDir, outputDir });
+    await handlerFor("post", "/")(create.req, create.res);
+    const id = create.res.payload.project.projectId;
+
+    const { req, res } = mockReqRes({
+      params: { id },
+      body: { captions: "static", captionPreset: "marker", captionMotion: "block", captionLayout: "bottom-left", captionDepth: "soft", captionStagger: true, captionHighlight: true },
+      dataDir, outputDir,
+    });
+    await handlerFor("patch", "/:id/captions")(req, res);
+    assert.equal(res.payload.ok, true);
+    const p1 = res.payload.project;
+    assert.equal(p1.captions, "static");
+    assert.equal(p1.captionPreset, "marker");
+    assert.equal(p1.captionMotion, "block");
+    assert.equal(p1.captionLayout, "bottom-left");
+    assert.equal(p1.captionDepth, "soft");
+    assert.equal(p1.captionStagger, true);
+    assert.equal(p1.captionHighlight, true);
+
+    // A bogus motion/layout is dropped rather than persisted, and fields the
+    // body omits keep their current value.
+    const second = mockReqRes({ params: { id }, body: { captionMotion: "sideways", captionLayout: "diagonal" }, dataDir, outputDir });
+    await handlerFor("patch", "/:id/captions")(second.req, second.res);
+    const p2 = second.res.payload.project;
+    assert.equal(p2.captionMotion, undefined);
+    assert.equal(p2.captionLayout, undefined);
+    assert.equal(p2.captionPreset, "marker", "an omitted field is preserved");
+    assert.equal(p2.captions, "static");
+  });
+
   test("images stage is idempotent — already-done scenes are skipped", async () => {
     const create = mockReqRes({ body: { title: "T", style: "cinematic-bible" }, dataDir, outputDir });
     await handlerFor("post", "/")(create.req, create.res);

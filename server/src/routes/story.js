@@ -4,6 +4,7 @@ import path from "path";
 import { v4 as uuid } from "uuid";
 import {
   createProject, readProject, writeProject, listProjects, deleteProject, STORY_STATUS,
+  normaliseCaptionSettings,
 } from "../lib/story/projectStore.js";
 import { segmentScenes } from "../lib/story/sceneSegmenter.js";
 import { runStoryRender, probeAudioDurationSec } from "../lib/story/storyRender.js";
@@ -680,6 +681,24 @@ router.patch("/:id/scenes/:sid", (req, res) => {
 });
 
 // PATCH /:id/music — set/clear the background music bed
+router.patch("/:id/captions", (req, res) => {
+  try {
+    const project = readProject(req.ctx.dataDir, req.params.id);
+    if (!project) return res.status(404).json({ ok: false, error: "project not found" });
+    const captions = ["none", "static", "kinetic"].includes(req.body?.captions)
+      ? req.body.captions
+      : (project.captions || "kinetic");
+    const updated = writeProject(req.ctx.dataDir, {
+      ...project,
+      captions,
+      ...normaliseCaptionSettings(req.body || {}, project),
+    });
+    return res.json({ ok: true, project: updated });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
 router.patch("/:id/music", (req, res) => {
   try {
     const project = readProject(req.ctx.dataDir, req.params.id);
@@ -761,6 +780,12 @@ router.post("/:id/render", async (req, res) => {
       width,
       height,
       captions: project.captions || "kinetic",
+      captionPreset: project.captionPreset,
+      captionMotion: project.captionMotion,
+      captionLayout: project.captionLayout,
+      captionDepth: project.captionDepth,
+      captionStagger: project.captionStagger,
+      captionHighlight: project.captionHighlight,
       outPath,
       audioDurationSec: audioDurationSec || undefined,
     }).then((r) => {
