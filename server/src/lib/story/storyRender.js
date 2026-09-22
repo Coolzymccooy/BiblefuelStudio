@@ -11,6 +11,12 @@ import { kenBurnsVariedFilter, moveForIndex } from "../kenBurnsVaried.js";
 import { buildXfadeChain } from "./sceneTransitions.js";
 import { markRunning, markProgress, markDone, markError, attachProc } from "../renderJobs.js";
 
+// Line captions past this many phrases fall back to the compact lower-third
+// subtitle chain. At ~7 words a phrase this is roughly a 20-minute
+// narration; beyond it, reveal mode’s per-row filters stall ffmpeg the same
+// way per-word captions do on a sermon.
+const MAX_LINE_PHRASES = 400;
+
 /**
  * Per-scene display durations. Scenes are made CONTIGUOUS: scene i shows from
  * its start until scene i+1 starts (scene 0 starts at 0), and the last scene
@@ -146,7 +152,7 @@ export function buildSubtitleDrawtext(words, w, h) {
  * no matter what was chosen. It now resolves the same controls the Studio
  * renderer has: preset, motion, layout, depth, stagger and highlight.
  *
- * Motion comes from captionMotion when set; otherwise the project\u2019s own
+ * Motion comes from captionMotion when set; otherwise the project’s own
  * captions field decides, so "static" finally means something — line
  * captions — instead of being silently ignored.
  */
@@ -162,10 +168,15 @@ export function buildStoryCaptions({
   const motion = resolveCaptionMotion(requested, { stagger: captionStagger, highlight: captionHighlight }, style);
 
   if (!motion.useWords) {
-    // Line and block captions are a handful of filters per phrase whatever
-    // the transcript length, so they need no word-count escape hatch. Each
-    // phrase carries its own window, so it appears when it is spoken.
+    // Line captions are far cheaper than per-word — a few filters per
+    // phrase rather than two per word — and each phrase carries its own
+    // window, so it appears when it is spoken. Cheaper is not free: reveal
+    // mode wraps every phrase into several rows, so a sermon-length
+    // transcript still reaches four figures of drawtext filters and the
+    // render crawls. Past the cap, take the same compact lower-third
+    // fallback the per-word path takes.
     const lines = splitPhrases(safeWords, { maxWords: 7, maxChars: 42 });
+    if (lines.length > MAX_LINE_PHRASES) return buildSubtitleDrawtext(safeWords, w, h) || "";
     return buildLineDrawtext({
       lines,
       w,

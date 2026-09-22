@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -61,10 +62,23 @@ describe('StoryCaptionsPanel', () => {
 
   it('keeps a legacy static project on static rather than silently changing its look', async () => {
     const user = userEvent.setup();
-    const onChange = show({ captions: 'static' });
+    const onChange = vi.fn();
+    // The real page persists the patch and re-renders from the REFETCHED
+    // project, so 'off' really does overwrite 'static' in `value`. A test that
+    // holds `value` still would pass even with the old, broken derivation.
+    function Host() {
+      const [settings, setSettings] = useState<StoryCaptionSettings>({ captions: 'static' });
+      return (
+        <StoryCaptionsPanel
+          value={settings}
+          onChange={(patch) => { onChange(patch); setSettings((s) => ({ ...s, ...patch })); }}
+        />
+      );
+    }
+    render(<Host />);
     await user.selectOptions(screen.getByRole('combobox', { name: 'Captions' }), 'none');
+    expect(onChange).toHaveBeenLastCalledWith({ captions: 'none' });
     await user.selectOptions(screen.getByRole('combobox', { name: 'Captions' }), 'on');
-    // Off then on is a round trip: the stored 'static' is still what renders.
     expect(onChange).toHaveBeenLastCalledWith({ captions: 'static' });
   });
 
@@ -74,6 +88,24 @@ describe('StoryCaptionsPanel', () => {
     expect(screen.queryByLabelText(/Highlight each word/)).not.toBeInTheDocument();
     rerender(<StoryCaptionsPanel value={{ captions: 'kinetic', captionMotion: 'lines' }} onChange={vi.fn()} />);
     expect(screen.getByLabelText(/Highlight each word/)).toBeInTheDocument();
+  });
+
+  it('shows a legacy static project the motion it actually renders with', async () => {
+    show({ captions: 'static' });
+    // buildStoryCaptions resolves a motion-less 'static' project to per-line
+    // captions; the picker must not claim it renders word by word.
+    const select = await screen.findByRole('combobox', { name: 'Caption motion' });
+    expect((select as HTMLSelectElement).value).toBe('lines');
+  });
+
+  it('offers layered depth only where the renderer draws a ghost', async () => {
+    const { rerender } = render(<StoryCaptionsPanel value={{ captions: 'kinetic', captionMotion: 'lines' }} onChange={vi.fn()} />);
+    await screen.findByRole('combobox', { name: 'Caption motion' });
+    // Only buildWordDrawtext draws the ghost — in line/block modes the
+    // setting would have been a toggle that changed nothing.
+    expect(screen.queryByLabelText(/Layered depth/)).not.toBeInTheDocument();
+    rerender(<StoryCaptionsPanel value={{ captions: 'kinetic', captionMotion: 'words' }} onChange={vi.fn()} />);
+    expect(screen.getByLabelText(/Layered depth/)).toBeInTheDocument();
   });
 
   it('sends layered depth as the catalogue value the renderer understands', async () => {

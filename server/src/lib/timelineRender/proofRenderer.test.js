@@ -313,6 +313,33 @@ describe('captions reach ffmpeg', () => {
 // Timeline captions used to be a hand-rolled drawtext pinned to bottom-centre
 // that honoured the typography preset and nothing else — no motion, no layout.
 // They now go through the same builder as Studio and Story Video.
+// Routing Timeline captions through the shared builder must not restyle the
+// captions of a project that asked for nothing new. Before the shared
+// builder they drew at h-(h*0.16) with an outline and a scrim floor; the
+// builder's own default is a different band, a bigger size and no outline.
+test('a timeline project that sets no caption option keeps the look it had', () => {
+  const cmd = buildProofRenderCommand(richPlan(), richOpts);
+  assert.equal(cmd.ok, true);
+  const graph = cmd.args.join(' ');
+  const y = Number(/drawtext=[^,]*?:y=(\d+)/.exec(graph)?.[1]);
+  const size = Number(/drawtext=[^,]*?:fontsize=(\d+)/.exec(graph)?.[1]);
+  // 720-high canvas: the historical band is h-(h*0.16) = 605, not 0.74h.
+  assert.ok(y > 580 && y < 630, `captions stayed in the lower band (y=${y})`);
+  assert.ok(size <= 40, `captions kept their size (fontsize=${size})`);
+  assert.match(graph, /:borderw=\d+:bordercolor=/, 'captions kept their outline');
+});
+
+// A preset with no line box (lineBoxOpacity 0) used to be saved by the
+// renderer's own 0.25 scrim floor plus the outline. Through the shared
+// builder it would have drawn bare white text over footage.
+test('a boxless preset still gets a scrim floor on the timeline', () => {
+  const cmd = buildProofRenderCommand(richPlan(), { ...richOpts, typographyPreset: 'headline' });
+  assert.equal(cmd.ok, true);
+  const graph = cmd.args.join(' ');
+  const opacity = Number(/boxcolor=[a-z]+@([\d.]+)/.exec(graph)?.[1]);
+  assert.ok(opacity >= 0.25, `scrim floor held (boxcolor opacity ${opacity})`);
+});
+
 test('timeline captions honour caption motion and text layout', () => {
   const graphOf = (extra) => {
     const cmd = buildProofRenderCommand(richPlan(), { ...richOpts, ...extra });

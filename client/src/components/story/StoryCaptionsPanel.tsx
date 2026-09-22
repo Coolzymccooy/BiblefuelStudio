@@ -46,9 +46,17 @@ export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCapti
 
   const captions = value.captions ?? 'kinetic';
   const on = captions !== 'none';
-  // "static" predates the motion control; keep it on a project that has it so
-  // turning captions off and on again doesn't silently change the render.
-  const toggle = (next: string) => onChange({ captions: next === 'on' ? (captions === 'none' ? 'kinetic' : captions) : 'none' });
+  // "static" predates the motion control. Turning captions off PERSISTS
+  // 'none' over it, and `value` is the refetched project, so the old mode is
+  // gone by the time the operator switches back on — remember it here, or a
+  // legacy project silently becomes word-synced on an off/on round trip.
+  const [lastOn, setLastOn] = useState<'static' | 'kinetic'>(captions === 'none' ? 'kinetic' : captions);
+  useEffect(() => { if (captions !== 'none') setLastOn(captions); }, [captions]);
+  const toggle = (next: string) => onChange({ captions: next === 'on' ? lastOn : 'none' });
+  // What the renderer will actually do, not what the catalogue lists first:
+  // buildStoryCaptions reads `captionMotion || (captions === 'static' ? 'lines' : …)`,
+  // so a legacy static project renders per line even with no motion stored.
+  const effectiveMotion = value.captionMotion || (captions === 'static' ? 'lines' : 'words');
 
   return (
     <div className="space-y-4 rounded-xl border border-white/10 bg-black/20 p-4">
@@ -71,7 +79,7 @@ export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCapti
             >
               <Select
                 aria-label="Caption motion"
-                value={value.captionMotion || motions[0].id}
+                value={effectiveMotion}
                 disabled={busy}
                 onChange={(e: ChangeEvent<HTMLSelectElement>) => onChange({ captionMotion: e.target.value })}
               >
@@ -92,7 +100,7 @@ export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCapti
                 {/* Highlighting the spoken word only means something when a
                     whole line is on screen — per-word mode has nothing to
                     highlight it against. */}
-                {value.captionMotion !== 'words' && (
+                {effectiveMotion !== 'words' && (
                   <label className="flex items-center gap-2 text-[12px] text-content-secondary">
                     <input
                       type="checkbox"
@@ -152,6 +160,7 @@ export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCapti
             </Select>
           </Field>
 
+          {effectiveMotion === 'words' && (
           <label className="flex cursor-pointer items-center gap-2 text-sm text-gray-300" title="Ghost shadow behind each word">
             <input
               type="checkbox"
@@ -162,6 +171,7 @@ export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCapti
             />
             Layered depth (ghost shadow behind each word)
           </label>
+          )}
         </>
       )}
     </div>

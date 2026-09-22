@@ -387,7 +387,16 @@ export function buildProofRenderCommand(plan, opts = {}) {
       stagger: motion.stagger,
       // Word mode needs per-word timings, which a caption lane does not
       // carry; it degrades to paced lines rather than drawing nothing.
-      layout: opts.captionLayout ?? 'bottom-center',
+      layout: opts.captionLayout,
+      // The look this renderer drew before the shared builder took over:
+      // the lower band, its own size, an outline and a scrim floor. An
+      // explicit text layout still overrides the band.
+      look: {
+        yFrac: 1 - 0.16,
+        sizeMult: Math.max(0.036, Math.min(0.06, style.lineSizeMult ? style.lineSizeMult * 1.5 : 0.045)),
+        minBoxOpacity: 0.25,
+        outline: true,
+      },
     });
     if (drawtext) {
       videoParts.push(`${videoLabel}${drawtext}[vtxt]`);
