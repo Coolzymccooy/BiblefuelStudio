@@ -22,6 +22,7 @@ import { ensureLocalPath } from "../lib/remoteCache.js";
 import { resolveAutoBackgrounds } from "../lib/autoBackground.js";
 import { generateBibleImage } from "../lib/imageGen/index.js";
 import { resolveLibraryTrack, defaultTrackRef } from "../lib/musicLibrary.js";
+import { resolveTenantTrack } from "../lib/musicLibraryStore.js";
 import { buildSpeakableLines, cleanCaptionLine, cleanSpeakableText, sanitizeScriptObject } from "../lib/speakableScript.js";
 
 const router = Router();
@@ -336,6 +337,10 @@ export function resolveAssetPath(pathOrId, dataDir) {
   if (!normalized) return null;
   const libTrack = resolveLibraryTrack(normalized);
   if (libTrack) return libTrack;
+  // A track the operator saved to their own library. Needs dataDir, which is
+  // why it is spelled mylib: rather than library:.
+  const saved = resolveTenantTrack(dataDir, normalized);
+  if (saved) return saved;
   const direct = resolveOutputAlias(normalized);
   if (String(direct).startsWith("http")) return direct;
   if (fs.existsSync(direct)) return direct;

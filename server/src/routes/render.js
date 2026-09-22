@@ -17,6 +17,7 @@ import { createJob, getJob, gcJobs, markRunning, markProgress, markDone, markErr
 import { appendRender, listRenders } from "../lib/renderHistory.js";
 import { friendlyRenderError } from "../lib/renderErrors.js";
 import { resolveLibraryTrack } from "../lib/musicLibrary.js";
+import { resolveTenantTrack } from "../lib/musicLibraryStore.js";
 
 const router = Router();
 let ffmpegChecked = false;
@@ -64,6 +65,10 @@ function resolveAssetPath(dataDir, pathOrId) {
   if (!normalized) return null;
   const libTrack = resolveLibraryTrack(normalized);
   if (libTrack) return libTrack;
+  // A track the operator saved to their own library. Needs dataDir, which is
+  // why it is spelled mylib: rather than library:.
+  const saved = resolveTenantTrack(dataDir, normalized);
+  if (saved) return saved;
   const direct = resolveOutputAlias(normalized);
   if (String(direct).startsWith("http")) return direct;
   if (fs.existsSync(direct)) return direct;

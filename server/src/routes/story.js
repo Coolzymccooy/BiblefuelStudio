@@ -18,6 +18,7 @@ import { refineScript } from "../lib/story/scriptRefine.js";
 import { templateById } from "../lib/story/scriptTemplates.js";
 import { synthesizeEdgeTts } from "../lib/edgeTts.js";
 import { resolveLibraryTrack } from "../lib/musicLibrary.js";
+import { resolveTenantTrack } from "../lib/musicLibraryStore.js";
 import { cleanCaptionLine, cleanSpeakableText } from "../lib/speakableScript.js";
 import { buildImportedTranscript } from "../lib/story/scriptImport.js";
 import { CHARACTER_ANCHORS } from "../lib/story/styleAnchors.js";
@@ -767,7 +768,10 @@ router.post("/:id/render", async (req, res) => {
       scenes: expandScenesToBeats(scenes, { beatSec: project.scene?.beatSec }),
       words: project.transcript?.words || [],
       audioPath,
-      musicPath: resolveLibraryTrack(project.music?.path) || project.music?.path || null,
+      musicPath: resolveLibraryTrack(project.music?.path)
+        || resolveTenantTrack(req.ctx.dataDir, project.music?.path)
+        || project.music?.path
+        || null,
       musicVolume: project.music?.volume ?? 0.3,
       autoDuck: project.music?.autoDuck ?? true,
       onProgress: persistRenderPct,
