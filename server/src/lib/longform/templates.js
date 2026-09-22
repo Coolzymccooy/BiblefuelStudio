@@ -20,7 +20,10 @@ const sleep = (id, minutes) => Object.freeze({
   wpm: 110,
   structurePrompt: SLEEP_STRUCTURE,
   scene: { targetSceneSec: Math.round((minutes * 60) / 12), maxScenes: 12, captions: "none" },
-  voice: { preferredProviders: ["chatterbox", "azure", "edge"], rate: "-15%", pauseMs: 5000, maxChunkChars: 1200 },
+  // Azure first: a 30-60 min session is ~20 chunks, and Chatterbox on a CPU box
+  // takes minutes per chunk (hours per video) where Azure takes seconds. Edge is
+  // the free fallback; Chatterbox only when neither of those is configured.
+  voice: { preferredProviders: ["azure", "edge", "chatterbox"], rate: "-15%", pauseMs: 5000, maxChunkChars: 1200 },
   music: { volume: 0.22, autoDuck: false },
   thumbnailPrompt: "soft moonlit night sky over still water, warm candle glow, peaceful, cinematic, no text",
 });

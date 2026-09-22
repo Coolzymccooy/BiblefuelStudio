@@ -9,7 +9,7 @@ import { probeAudioDurationSec } from "../story/storyRender.js";
 import { longformTemplateById } from "./templates.js";
 import { splitForProvider } from "./chunker.js";
 
-function harness({ secondsPerChunk = 2, failOnCall = -1, available = { chatterbox: { available: true } } } = {}) {
+function harness({ secondsPerChunk = 2, failOnCall = -1, available = { azure: { available: true } } } = {}) {
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "narr-"));
   const calls = { synth: [], ffmpeg: [] };
   const deps = {
@@ -45,7 +45,7 @@ describe("narrateSections", () => {
     for (const req of calls.synth) {
       assert.equal(req.voiceId, "v1");
       assert.deepEqual(req.prosody, { rate: "-15%" });
-      assert.equal(req.preferredProvider, "chatterbox");
+      assert.equal(req.preferredProvider, "azure");
     }
     assert.equal(out.audioPath, path.join(workDir, "narration.mp3"));
     // section 1 starts at 0; section 2 starts after section-1 chunks + one 5s pause
@@ -185,7 +185,7 @@ describe("narrateSections", () => {
     const { workDir, calls, deps } = harness({ available: { elevenlabs: { available: true }, edge: { available: true } } });
     await narrateSections({ sections, template, voiceId: "v1", workDir }, deps);
     assert.ok(calls.synth.length > 0);
-    for (const req of calls.synth) assert.equal(req.preferredProvider, "edge", "chatterbox and azure are skipped (unavailable)");
+    for (const req of calls.synth) assert.equal(req.preferredProvider, "edge", "azure is skipped (unavailable); edge is next in template order");
   });
   test("falls back to the orchestrator's own default when none of the template's providers is configured", async () => {
     const { workDir, calls, deps } = harness({ available: { elevenlabs: { available: true } } });
@@ -194,15 +194,15 @@ describe("narrateSections", () => {
     for (const req of calls.synth) assert.equal("preferredProvider" in req, false, "no preferredProvider: let the orchestrator choose");
   });
   test("tries the next configured template provider when the first one fails", async () => {
-    const { workDir, calls, deps } = harness({ available: { chatterbox: { available: true }, azure: { available: true } } });
+    const { workDir, calls, deps } = harness({ available: { azure: { available: true }, edge: { available: true } } });
     const flaky = async (req) => {
-      if (req.preferredProvider === "chatterbox") throw new Error("chatterbox down");
+      if (req.preferredProvider === "azure") throw new Error("azure down");
       return deps.synthesize(req);
     };
     const out = await narrateSections({ sections, template, voiceId: "v1", workDir }, { ...deps, synthesize: flaky });
     assert.ok(out.audioPath);
     assert.ok(calls.synth.length > 0);
-    assert.ok(calls.synth.every((r) => r.preferredProvider === "azure"), "only azure calls reached the recording synthesize");
+    assert.ok(calls.synth.every((r) => r.preferredProvider === "edge"), "only edge calls reached the recording synthesize");
   });
 
   // M4 — chunks shorter than the orchestrator's 3-char minimum are skipped

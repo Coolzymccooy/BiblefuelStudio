@@ -13,6 +13,9 @@ describe("longform templates", () => {
       assert.ok(t.voice.pauseMs >= 3000);
       assert.ok(t.voice.maxChunkChars >= 300 && t.voice.maxChunkChars <= 4500);
       assert.equal(t.music.autoDuck, false);
+      // Long-form narration is ~20 provider calls; Azure answers in seconds where
+      // CPU Chatterbox takes minutes per call. Chatterbox stays as a last resort.
+      assert.deepEqual(t.voice.preferredProviders, ["azure", "edge", "chatterbox"]);
     }
   });
   test("sleep-60 is twice sleep-30", () => {
