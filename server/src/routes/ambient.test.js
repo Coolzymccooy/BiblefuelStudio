@@ -20,6 +20,7 @@ import ambientRouter, {
 } from "./ambient.js";
 import { readProject, writeProject } from "../lib/ambient/projectStore.js";
 import { registerTrack } from "../lib/musicLibraryStore.js";
+import { readLibrary, registerImage, _setEmbedImpl, _resetEmbedImpl } from "../lib/imageGen/imageLibrary.js";
 
 let dataDir, outputDir, app;
 
@@ -373,6 +374,208 @@ describe("POST /api/ambient/:id/images", () => {
     const p = await createSession();
     writeProject(dataDir, { ...readProject(dataDir, p.projectId), movements: [] });
     assert.equal((await request(app).post(`/api/ambient/${p.projectId}/images`).send({})).status, 400);
+  });
+});
+
+// A real 1x1 PNG, so the byte-signature check sees a genuine image.
+const PNG_1X1 = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
+  "base64",
+);
+const UUID = "0f8fad5b-d9cb-469f-a165-70867728950e";
+
+/** Stand-in for what POST /api/media/upload-background leaves on disk. */
+function fakeUpload(bytes = PNG_1X1, name = `bg-image-${UUID}.png`, dir = outputDir) {
+  const file = path.join(dir, name);
+  fs.writeFileSync(file, bytes);
+  return file.replace(/\\/g, "/");
+}
+
+describe("PUT /api/ambient/:id/movements/:movementId/image", () => {
+  beforeEach(() => { _setEmbedImpl(async () => null); });
+  afterEach(() => { _resetEmbedImpl(); });
+
+  const put = (p, body, movementId = p.movements[0].id) =>
+    request(app).put(`/api/ambient/${p.projectId}/movements/${movementId}/image`).send(body);
+
+  test("attaches your own uploaded photo to a movement", async () => {
+    const p = await createSession({ targetSec: 600 });
+    const res = await put(p, { uploadPath: fakeUpload() });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+
+    const m = res.body.project.movements[0];
+    assert.equal(m.imageStatus, "done");
+    assert.equal(m.imageSource, "upload");
+    assert.match(m.imageUrl, /^\/outputs\/imagelib-[0-9a-f]{64}\.png$/, "served from the flat pool, like generated stills");
+    assert.ok(fs.existsSync(m.imagePath));
+    assert.equal(path.dirname(m.imagePath), outputDir);
+  });
+
+  test("an upload joins your library but is never auto-reused for another prompt", async () => {
+    // It has no prompt, so no embedding and no categories: it can be CHOSEN
+    // from the library, never silently substituted into someone's scene.
+    const p = await createSession({ targetSec: 600 });
+    await put(p, { uploadPath: fakeUpload() });
+    const [entry] = readLibrary(dataDir).items;
+    assert.equal(entry.provider, "upload");
+    assert.equal(entry.prompt, "");
+    assert.ok(!entry.embedding, "no embedding to match against");
+    assert.deepEqual(entry.categories, []);
+  });
+
+  test("refuses a file outside your own outputs", async () => {
+    const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), "amb-other-"));
+    try {
+      const p = await createSession({ targetSec: 600 });
+      const res = await put(p, { uploadPath: fakeUpload(PNG_1X1, `bg-image-${UUID}.png`, elsewhere) });
+      assert.equal(res.status, 400);
+      assert.equal(readProject(dataDir, p.projectId).movements[0].imagePath ?? null, null);
+    } finally {
+      fs.rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
+  test("refuses a traversal that only starts inside your outputs", async () => {
+    // The file sits one level ABOVE outputs; `..` must not reach it.
+    const p = await createSession({ targetSec: 600 });
+    fakeUpload(PNG_1X1, `bg-image-${UUID}.png`, dataDir);
+    const res = await put(p, { uploadPath: `${outputDir}/../bg-image-${UUID}.png` });
+    assert.equal(res.status, 400);
+  });
+
+  test("only the file name is taken from the client, never the folder", async () => {
+    // A UNC share or a foreign folder in the path is never opened: the name is
+    // looked up in YOUR outputs, so the most a client can name is its own file.
+    const p = await createSession({ targetSec: 600 });
+    fakeUpload();
+    const res = await put(p, { uploadPath: String.raw`\\attacker\share\bg-image-${UUID}.png` });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(path.dirname(res.body.project.movements[0].imagePath), outputDir);
+  });
+
+  test("a photo over the size cap is refused before it is read into memory", async () => {
+    const p = await createSession({ targetSec: 600 });
+    const file = fakeUpload();
+    fs.truncateSync(file, 26 * 1024 * 1024); // sparse: a valid PNG header, then 26 MB
+    const res = await put(p, { uploadPath: file });
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /25 MB/);
+  });
+
+  test("an image run that starts mid-attach is not overwritten underneath", async () => {
+    // The busy check before the await is not enough: POST /images can start
+    // while the upload is being copied, and its own movement list would win.
+    const p = await createSession({ targetSec: 600 });
+    _setImageLibraryImpl({
+      register: async (args) => {
+        writeProject(dataDir, { ...readProject(dataDir, p.projectId), status: AMBIENT_STATUS.GENERATING_IMAGES });
+        return registerImage(args);
+      },
+    });
+    const res = await put(p, { uploadPath: fakeUpload() });
+    assert.equal(res.status, 409);
+  });
+
+  test("refuses a file the upload route did not produce", async () => {
+    // Anything else in outputs (a render, another project's still) is not
+    // yours to repoint by name.
+    const p = await createSession({ targetSec: 600 });
+    const res = await put(p, { uploadPath: fakeUpload(PNG_1X1, "video.png") });
+    assert.equal(res.status, 400);
+  });
+
+  test("refuses a photo ffmpeg cannot decode, whatever it is named", async () => {
+    // An iPhone HEIC arrives saved as .jpg by the upload route. Caught here it
+    // is a sentence; caught by ffmpeg it is a render that dies an hour in.
+    const heic = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from("ftypheic"), Buffer.alloc(32)]);
+    const p = await createSession({ targetSec: 600 });
+    const res = await put(p, { uploadPath: fakeUpload(heic, `bg-image-${UUID}.jpg`) });
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /JPG or PNG/);
+  });
+
+  test("attaches an image already in your library, by id", async () => {
+    const p = await createSession({ targetSec: 600 });
+    await put(p, { uploadPath: fakeUpload() });
+    const [entry] = readLibrary(dataDir).items;
+
+    const q = await createSession({ targetSec: 600, title: "Second" });
+    const res = await put(q, { libraryId: entry.id });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    const m = res.body.project.movements[0];
+    assert.equal(m.imageSource, "library");
+    assert.equal(m.imageLibraryId, entry.id);
+    assert.equal(m.imagePath, entry.path);
+  });
+
+  test("an unknown library id is a 400, not a movement pointing at nothing", async () => {
+    const p = await createSession({ targetSec: 600 });
+    assert.equal((await put(p, { libraryId: "img_nope" })).status, 400);
+  });
+
+  test("an unknown movement is a 404", async () => {
+    const p = await createSession({ targetSec: 600 });
+    assert.equal((await put(p, { uploadPath: fakeUpload() }, "no-such-movement")).status, 404);
+  });
+
+  test("waits while images are generating or a render is running", async () => {
+    // imagesStage rewrites the movement list from its own copy as it goes; a
+    // change made underneath it would be silently overwritten.
+    for (const status of [AMBIENT_STATUS.GENERATING_IMAGES, AMBIENT_STATUS.RENDERING, AMBIENT_STATUS.ASSEMBLING]) {
+      const p = await createSession({ targetSec: 600 });
+      writeProject(dataDir, { ...readProject(dataDir, p.projectId), status });
+      assert.equal((await put(p, { uploadPath: fakeUpload() })).status, 409, status);
+    }
+  });
+});
+
+describe("GET /api/ambient/:id/library-images", () => {
+  beforeEach(() => { _setEmbedImpl(async () => null); });
+  afterEach(() => { _resetEmbedImpl(); });
+
+  test("lists your images newest first, with URLs and never server paths", async () => {
+    const p = await createSession({ targetSec: 600 });
+    await request(app).put(`/api/ambient/${p.projectId}/movements/${p.movements[0].id}/image`)
+      .send({ uploadPath: fakeUpload() });
+
+    const res = await request(app).get(`/api/ambient/${p.projectId}/library-images`);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.images.length, 1);
+    const [img] = res.body.images;
+    assert.match(img.url, /^\/outputs\/imagelib-/);
+    assert.equal(img.source, "upload");
+    assert.equal(img.path, undefined);
+    assert.ok(!JSON.stringify(res.body).includes(path.basename(dataDir)), "no filesystem paths in the response");
+  });
+});
+
+describe("POST /api/ambient/:id/images with a movementId", () => {
+  test("regenerates just that one picture and leaves the others alone", async () => {
+    const calls = [];
+    _setImageLibraryImpl({ find: async () => [], register: async () => null, mark: () => {} });
+    _setImageGenImpl(async ({ partNumber }) => { calls.push(partNumber); return { ok: true, path: `/img/new-${partNumber}.png` }; });
+
+    const p = await createSession({ targetSec: 3600 });
+    await request(app).post(`/api/ambient/${p.projectId}/plan`).send({ count: 2 });
+    const planned = readProject(dataDir, p.projectId);
+    writeProject(dataDir, {
+      ...planned,
+      movements: planned.movements.map((m, i) => ({ ...m, imageStatus: "done", imagePath: `/img/old-${i + 1}.png` })),
+    });
+
+    const target = planned.movements[1].id;
+    const res = await request(app).post(`/api/ambient/${p.projectId}/images`).send({ movementId: target });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+
+    const out = await waitFor(p.projectId, (x) => x.movements[1].imagePath === "/img/new-2.png");
+    assert.deepEqual(calls, [2]);
+    assert.equal(out.movements[0].imagePath, "/img/old-1.png", "the one you kept stays kept");
+  });
+
+  test("an unknown movementId is a 404", async () => {
+    const p = await createSession({ targetSec: 600 });
+    const res = await request(app).post(`/api/ambient/${p.projectId}/images`).send({ movementId: "nope" });
+    assert.equal(res.status, 404);
   });
 });
 

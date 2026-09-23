@@ -17,7 +17,8 @@ import { lookupVerses } from "../lib/bible/scriptureApi.js";
 import { synthesize } from "../lib/voice/index.js";
 import { probeAudioDurationSec } from "../lib/story/storyRender.js";
 import { generateBibleImage } from "../lib/imageGen/index.js";
-import { findReusableImages, markUsed, registerImage, pruneLibrary } from "../lib/imageGen/imageLibrary.js";
+import { findReusableImages, markUsed, registerImage, pruneLibrary, readLibrary } from "../lib/imageGen/imageLibrary.js";
+import { libraryImageView, resolveMovementImage } from "../lib/ambient/movementImage.js";
 import { insideOutputs } from "../lib/ambient/ownFiles.js";
 import { resolveLibraryTrack } from "../lib/musicLibrary.js";
 import { resolveTenantTrack, readMusicLibrary } from "../lib/musicLibraryStore.js";
@@ -227,7 +228,7 @@ export async function voicingStage(ctx, projectId) {
  * image quota, and the daily free cap is low enough that it matters on a
  * session with eight movements.
  */
-export async function imagesStage(ctx, projectId, { force = false } = {}) {
+export async function imagesStage(ctx, projectId, { force = false, onlyId = null } = {}) {
   const project = readProject(ctx.dataDir, projectId);
   if (!project) throw new Error("project not found");
 
@@ -236,13 +237,14 @@ export async function imagesStage(ctx, projectId, { force = false } = {}) {
 
   const pending = [];
   for (let i = 0; i < movements.length; i += 1) {
+    // onlyId regenerates that one picture and leaves the ones you kept alone.
     const done = movements[i].imageStatus === "done" && movements[i].imagePath;
-    if (done && !force) continue;
+    if (onlyId ? movements[i].id !== onlyId : done && !force) continue;
     movements[i] = {
       ...movements[i],
       imageStatus: "generating",
       imageError: null,
-      ...(force ? { imagePath: null, imageUrl: null, imageLibraryId: null } : {}),
+      ...(force || onlyId ? { imagePath: null, imageUrl: null, imageLibraryId: null } : {}),
     };
     pending.push(i);
   }
@@ -708,11 +710,15 @@ router.post("/:id/images", imageQuota, (req, res) => {
   if (!(project.movements || []).length) {
     return res.status(400).json({ ok: false, error: "no movements to illustrate — suggest verses first" });
   }
+  const onlyId = req.body?.movementId ? String(req.body.movementId) : null;
+  if (onlyId && !project.movements.some((m) => m.id === onlyId)) {
+    return res.status(404).json({ ok: false, error: "movement not found" });
+  }
   const ctx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir };
   const id = req.params.id;
   const force = req.body?.force === true;
   clearCancelled(id);
-  imagesStage(ctx, id, { force }).catch((e) => {
+  imagesStage(ctx, id, { force, onlyId }).catch((e) => {
     try {
       const fresh = readProject(ctx.dataDir, id);
       if (fresh) writeProject(ctx.dataDir, { ...fresh, status: AMBIENT_STATUS.ERROR, error: String(e?.message || e) });
@@ -720,6 +726,57 @@ router.post("/:id/images", imageQuota, (req, res) => {
   });
   const started = writeProject(req.ctx.dataDir, { ...project, status: AMBIENT_STATUS.GENERATING_IMAGES, error: null });
   return res.json({ ok: true, project: started });
+});
+
+// Stages that rewrite the movement list from their own copy; a change made
+// underneath them would be silently overwritten.
+const MOVEMENTS_BUSY = new Set([AMBIENT_STATUS.GENERATING_IMAGES, AMBIENT_STATUS.ASSEMBLING, AMBIENT_STATUS.RENDERING]);
+
+// PUT /:id/movements/:movementId/image — your own picture on one movement,
+// from an upload or your image library. See lib/ambient/movementImage.js.
+router.put("/:id/movements/:movementId/image", async (req, res) => {
+  const project = loadOr404(req, res);
+  if (!project) return undefined;
+  const idx = (project.movements || []).findIndex((m) => m.id === req.params.movementId);
+  if (idx < 0) return res.status(404).json({ ok: false, error: "movement not found" });
+  if (MOVEMENTS_BUSY.has(project.status)) {
+    return res.status(409).json({ ok: false, error: "wait for the current step to finish, then try again" });
+  }
+  try {
+    const { dataDir, outputDir } = req.ctx;
+    const got = await resolveMovementImage({
+      dataDir, outputDir, project, body: req.body || {},
+      items: readLibrary(dataDir).items, register: _imageLib.register,
+    });
+    if (!got.ok) return res.status(got.status).json({ ok: false, error: got.error });
+    try { _imageLib.mark({ dataDir, id: got.entry.id }); } catch { /* stats only */ }
+
+    // Checked again: POST /images can start while the upload is being copied,
+    // and its own copy of the movement list would overwrite this one.
+    const fresh = readProject(dataDir, project.projectId) || project;
+    if (MOVEMENTS_BUSY.has(fresh.status)) {
+      return res.status(409).json({ ok: false, error: "wait for the current step to finish, then try again" });
+    }
+    const movements = fresh.movements.map((m) => (m.id !== req.params.movementId ? m : {
+      ...m,
+      imagePath: got.entry.path,
+      imageUrl: got.entry.publicUrl || null,
+      imageStatus: "done",
+      imageError: null,
+      imageSource: got.source,
+      imageLibraryId: got.entry.id,
+      imageReuseScore: null,
+    }));
+    return res.json({ ok: true, project: writeProject(dataDir, { ...fresh, movements }) });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// GET /:id/library-images — pictures you can choose from: ids and URLs only.
+router.get("/:id/library-images", (req, res) => {
+  if (!loadOr404(req, res)) return undefined;
+  return res.json({ ok: true, images: libraryImageView(readLibrary(req.ctx.dataDir).items).slice(0, 200) });
 });
 
 // PATCH /:id/captions — merged against the stored project so a partial update

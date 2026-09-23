@@ -54,8 +54,8 @@ export interface AmbientMovement {
   imageUrl?: string | null;
   imageStatus: ImageStatus;
   imageError?: string | null;
-  /** Where this picture came from: reused from the library, or freshly generated. */
-  imageSource?: 'library' | 'generated';
+  /** Where this picture came from: your upload, picked or reused from the library, or freshly generated. */
+  imageSource?: 'upload' | 'library' | 'generated';
   imageLibraryId?: string | null;
   imageReuseScore?: number | null;
 }

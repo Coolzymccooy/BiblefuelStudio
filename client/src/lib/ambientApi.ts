@@ -49,6 +49,18 @@ export interface PatchDropInput {
   translation?: string;
 }
 
+/** A picture you can put on a movement: never a server path, only a URL. */
+export interface LibraryImage {
+  id: string;
+  url: string;
+  aspect: string;
+  source: 'upload' | 'generated';
+  createdAt: number;
+}
+
+/** Either the path an upload returned, or a library image's id. */
+export type MovementImageSource = { uploadPath: string } | { libraryId: string };
+
 export const ambientApi = {
   async createProject(title: string, theme: string, targetSec?: number, aspect?: AmbientAspect): Promise<AmbientProject> {
     return unwrapProject(await api.post('/api/ambient', { title, theme, targetSec, aspect }));
@@ -97,6 +109,23 @@ export const ambientApi = {
     return unwrapProject(
       await api.post(`/api/ambient/${id}/images`, force ? { force: true } : {}, undefined, { timeout: GENERATE_IMAGES_TIMEOUT_MS }),
     );
+  },
+
+  // Redo one movement's picture and leave the ones you kept alone.
+  async regenerateMovement(id: string, movementId: string): Promise<AmbientProject> {
+    return unwrapProject(
+      await api.post(`/api/ambient/${id}/images`, { movementId }, undefined, { timeout: GENERATE_IMAGES_TIMEOUT_MS }),
+    );
+  },
+
+  async setMovementImage(id: string, movementId: string, source: MovementImageSource): Promise<AmbientProject> {
+    return unwrapProject(await api.put(`/api/ambient/${id}/movements/${movementId}/image`, source));
+  },
+
+  async listLibraryImages(id: string): Promise<LibraryImage[]> {
+    const res = await api.get(`/api/ambient/${id}/library-images`);
+    if (!res.ok) throw new Error(res.error || 'Failed to load your pictures');
+    return (res.data?.images ?? []) as LibraryImage[];
   },
 
   // Reuses normaliseCaptionSettings server-side: the server merges against

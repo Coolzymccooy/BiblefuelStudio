@@ -1,10 +1,12 @@
+import { useState } from 'react';
 import toast from 'react-hot-toast';
-import { Loader2 } from 'lucide-react';
-import { ambientApi } from '../../lib/ambientApi';
-import type { AmbientMovement, AmbientProject } from '../../lib/ambientTypes';
+import { ambientApi, isAmbientTransient } from '../../lib/ambientApi';
+import type { AmbientProject } from '../../lib/ambientTypes';
 import type { StoryCaptionSettings } from '../../lib/storyTypes';
 import { StoryCaptionsPanel } from '../story/StoryCaptionsPanel';
 import { panelCls, primaryBtnCls } from '../story/formStyles';
+import { AmbientMovementTile } from './AmbientMovementTile';
+import { AmbientLibraryPicker } from './AmbientLibraryPicker';
 
 export interface AmbientLookStepProps {
   project: AmbientProject;
@@ -13,8 +15,16 @@ export interface AmbientLookStepProps {
   refresh: () => void;
 }
 
-/** One still per movement, generated library-first, plus the shared caption controls. */
+/**
+ * One still per movement — generated, picked from your library, or your own
+ * photo — plus the shared caption controls.
+ */
 export function AmbientLookStep({ project, busy, setBusy, refresh }: AmbientLookStepProps) {
+  const [pickingFor, setPickingFor] = useState<string | null>(null);
+  // While a stage rewrites the movement list, a change here would be lost
+  // underneath it (the server answers 409); say so by disabling, not failing.
+  const locked = busy || isAmbientTransient(project.status);
+  const pickingIndex = project.movements.findIndex((m) => m.id === pickingFor);
   const generateImages = async () => {
     setBusy(true);
     try {
@@ -44,7 +54,7 @@ export function AmbientLookStep({ project, busy, setBusy, refresh }: AmbientLook
         <button
           type="button"
           onClick={generateImages}
-          disabled={busy || project.movements.length === 0}
+          disabled={locked || project.movements.length === 0}
           className={`${primaryBtnCls} ml-auto px-3 py-1.5`}
         >
           Generate images
@@ -52,41 +62,30 @@ export function AmbientLookStep({ project, busy, setBusy, refresh }: AmbientLook
       </div>
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-        {project.movements.map((m, i) => <MovementThumb key={m.id} movement={m} index={i} />)}
+        {project.movements.map((m, i) => (
+          <AmbientMovementTile
+            key={m.id}
+            projectId={project.projectId}
+            movement={m}
+            index={i}
+            locked={locked}
+            onChooseFromLibrary={() => setPickingFor(m.id)}
+            refresh={refresh}
+          />
+        ))}
       </div>
+
+      {pickingFor && pickingIndex >= 0 && (
+        <AmbientLibraryPicker
+          projectId={project.projectId}
+          movementId={pickingFor}
+          movementNumber={pickingIndex + 1}
+          onClose={() => setPickingFor(null)}
+          onChosen={() => { setPickingFor(null); refresh(); }}
+        />
+      )}
 
       <StoryCaptionsPanel value={project} onChange={onCaptionsChange} busy={busy} />
-    </div>
-  );
-}
-
-function MovementThumb({ movement, index }: { movement: AmbientMovement; index: number }) {
-  return (
-    <div className="space-y-1 overflow-hidden rounded-lg border border-white/10 bg-black/20">
-      <div className="flex aspect-video items-center justify-center bg-black/30">
-        {movement.imageUrl ? (
-          <img src={movement.imageUrl} alt={`Movement ${index + 1}`} className="h-full w-full object-cover" />
-        ) : movement.imageStatus === 'generating' ? (
-          <Loader2 size={18} className="animate-spin text-content-tertiary" />
-        ) : (
-          <span className="text-[11px] text-content-tertiary">No image</span>
-        )}
-      </div>
-      <div className="flex items-center justify-between px-1.5 pb-1 text-[10px]">
-        <span className="text-content-tertiary">Movement {index + 1}</span>
-        <span
-          className={
-            movement.imageStatus === 'done'
-              ? 'text-emerald-300'
-              : movement.imageStatus === 'error'
-                ? 'text-red-300'
-                : 'text-content-tertiary'
-          }
-          title={movement.imageError || undefined}
-        >
-          {movement.imageStatus}
-        </span>
-      </div>
     </div>
   );
 }
