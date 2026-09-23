@@ -101,7 +101,13 @@ export function AmbientWordStep({ project, busy, setBusy, refresh }: AmbientWord
           <p className="text-sm text-content-tertiary">No drops yet — suggest verses to get started.</p>
         )}
         {project.drops.map((drop) => (
-          <DropRow key={drop.id} drop={drop} busy={busy} onPatch={(patch) => patchDrop(drop.id, patch)} />
+          <DropRow
+            key={drop.id}
+            drop={drop}
+            busy={busy}
+            voicing={project.status === 'voicing'}
+            onPatch={(patch) => patchDrop(drop.id, patch)}
+          />
         ))}
       </div>
     </div>
@@ -111,6 +117,8 @@ export function AmbientWordStep({ project, busy, setBusy, refresh }: AmbientWord
 interface DropRowProps {
   drop: AmbientDrop;
   busy: boolean;
+  /** True while the whole project is mid-voicing, so the badge may spin. */
+  voicing: boolean;
   onPatch: (patch: Partial<Pick<AmbientDrop, 'reference' | 'atMs'>>) => void;
 }
 
@@ -120,7 +128,7 @@ interface DropRowProps {
  * round trip after the PREVIOUS keystroke's patch) — keying on `drop.id`
  * keeps this state across re-renders of the parent while the operator types.
  */
-function DropRow({ drop, busy, onPatch }: DropRowProps) {
+function DropRow({ drop, busy, voicing, onPatch }: DropRowProps) {
   const [reference, setReference] = useState(drop.reference);
   const [minutes, setMinutes] = useState(minutesLabel(drop.atMs));
 
@@ -154,12 +162,19 @@ function DropRow({ drop, busy, onPatch }: DropRowProps) {
           className="w-20 rounded-md border border-white/10 bg-transparent px-2 py-1 text-right text-white"
         />
       </label>
-      <DropStatusBadge drop={drop} />
+      <DropStatusBadge drop={drop} voicing={voicing} />
     </div>
   );
 }
 
-function DropStatusBadge({ drop }: { drop: AmbientDrop }) {
+/**
+ * A spinner means "this is happening right now". "Suggest verses" only picks
+ * references — the lookup and synthesis happen later, when you press "Voice
+ * all" — so a drop sitting there unspoken is WAITING, not working, and
+ * spinning at it just reads as a job that never finishes. The spinner is
+ * earned only while the project is actually voicing.
+ */
+function DropStatusBadge({ drop, voicing }: { drop: AmbientDrop; voicing: boolean }) {
   if (drop.status === 'done') {
     return <span className="shrink-0 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] text-emerald-300">Voiced</span>;
   }
@@ -170,9 +185,19 @@ function DropStatusBadge({ drop }: { drop: AmbientDrop }) {
       </span>
     );
   }
+  if (voicing) {
+    return (
+      <span className="flex shrink-0 items-center gap-1 rounded-full bg-[rgba(216,184,120,0.12)] px-2 py-0.5 text-[11px] text-bf-goldDim">
+        <Loader2 size={10} className="animate-spin" /> Voicing…
+      </span>
+    );
+  }
   return (
-    <span className="flex shrink-0 items-center gap-1 rounded-full bg-white/5 px-2 py-0.5 text-[11px] text-content-tertiary">
-      <Loader2 size={10} className="animate-spin" /> Pending
+    <span
+      className="shrink-0 rounded-full bg-white/5 px-2 py-0.5 text-[11px] text-content-tertiary"
+      title="The reference is set. Press “Voice all” to look it up and speak it."
+    >
+      Not voiced
     </span>
   );
 }
