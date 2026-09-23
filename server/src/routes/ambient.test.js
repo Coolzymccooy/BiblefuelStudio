@@ -643,6 +643,18 @@ describe("POST /api/ambient/:id/render", () => {
     assert.ok(res.body.jobId);
   });
 
+  test("a second render cannot start while one is assembling or encoding", async () => {
+    // During bed assembly the Render step used to show its button again; a
+    // second click started a second render writing the same video.mp4.
+    const p = await readySession();
+    for (const status of [AMBIENT_STATUS.ASSEMBLING, AMBIENT_STATUS.RENDERING]) {
+      writeProject(dataDir, { ...readProject(dataDir, p.projectId), status });
+      const res = await request(app).post(`/api/ambient/${p.projectId}/render`).send({});
+      assert.equal(res.status, 409, status);
+      assert.match(res.body.error, /already rendering/);
+    }
+  });
+
   test("refuses to render while a movement has no picture", async () => {
     _setImageLibraryImpl({ find: async () => [], register: async () => ({ id: "x" }), mark: () => {} });
     const p = await createSession();

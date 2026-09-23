@@ -807,7 +807,16 @@ router.patch("/:id/captions", (req, res) => {
 });
 
 // POST /:id/render — assemble the bed and render, detached.
-router.post("/:id/render", renderQuota, (req, res) => {
+// Ahead of the quota, so a refused second click does not spend a render.
+function notAlreadyRendering(req, res, next) {
+  const project = readProject(req.ctx.dataDir, req.params.id);
+  if (project && (project.status === AMBIENT_STATUS.ASSEMBLING || project.status === AMBIENT_STATUS.RENDERING)) {
+    return res.status(409).json({ ok: false, error: "this session is already rendering" });
+  }
+  return next();
+}
+
+router.post("/:id/render", notAlreadyRendering, renderQuota, (req, res) => {
   const project = loadOr404(req, res);
   if (!project) return undefined;
   try {

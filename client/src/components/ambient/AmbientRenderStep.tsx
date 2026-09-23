@@ -4,6 +4,7 @@ import { api } from '../../lib/api';
 import { ambientApi } from '../../lib/ambientApi';
 import type { AmbientProject } from '../../lib/ambientTypes';
 import { RenderProgressOverlay } from '../RenderProgressOverlay';
+import { formatLength, renderEstimateMinutes } from '../../lib/ambientLength';
 import { primaryBtnCls, secondaryBtnCls } from '../story/formStyles';
 
 export interface AmbientRenderStepProps {
@@ -15,7 +16,9 @@ export interface AmbientRenderStepProps {
 
 export function AmbientRenderStep({ project, busy, setBusy, refresh }: AmbientRenderStepProps) {
   const renderPct = typeof project.render.percent === 'number' ? project.render.percent : undefined;
-  const renderLive = project.status === 'rendering' && renderPct !== undefined;
+  // Assembling the bed is the first half of a render. Treated as idle, it
+  // showed the Render button again, and a second click started a second render.
+  const inFlight = project.status === 'assembling' || project.status === 'rendering';
 
   const startRender = async () => {
     setBusy(true);
@@ -43,10 +46,14 @@ export function AmbientRenderStep({ project, busy, setBusy, refresh }: AmbientRe
     }
   };
 
-  if (project.status === 'rendering' && renderLive) {
+  if (inFlight) {
+    const stage = project.status === 'assembling' ? 'Building the music bed…' : 'Encoding the video…';
+    const footnote = 'This runs on the server — you can leave this page and come back. '
+      + `It usually takes about ${formatLength(renderEstimateMinutes(project.targetSec))} `
+      + `for ${formatLength(project.targetSec / 60)}.`;
     return (
       <div className="space-y-4">
-        <RenderProgressOverlay active mode="queued" progress={renderPct} />
+        <RenderProgressOverlay active mode="queued" progress={renderPct} stage={stage} footnote={footnote} />
         <div className="flex justify-center">
           <button onClick={cancelRender} disabled={busy} className={`${secondaryBtnCls} px-3 py-1.5 hover:border-bf-danger hover:text-bf-danger`}>
             <X size={14} /> Cancel render
