@@ -19,6 +19,7 @@ import ambientRouter, {
   clearCancelled, isCancelled,
 } from "./ambient.js";
 import { readProject, writeProject } from "../lib/ambient/projectStore.js";
+import { getJob as getRenderJob } from "../lib/renderJobs.js";
 import { registerTrack } from "../lib/musicLibraryStore.js";
 import { readLibrary, registerImage, _setEmbedImpl, _resetEmbedImpl } from "../lib/imageGen/imageLibrary.js";
 
@@ -682,10 +683,14 @@ describe("POST /api/ambient/:id/render", () => {
     // took the WHOLE process down under Node's default policy.
     _setRenderStageImpl(async () => { throw new Error("spawn ENAMETOOLONG"); });
     const p = await readySession();
-    assert.equal((await request(app).post(`/api/ambient/${p.projectId}/render`).send({})).status, 200);
+    const res = await request(app).post(`/api/ambient/${p.projectId}/render`).send({});
+    assert.equal(res.status, 200);
     const out = await waitFor(p.projectId, (x) => x.status === AMBIENT_STATUS.ERROR);
     assert.match(out.error, /ENAMETOOLONG/);
     assert.equal(out.render.status, "error");
+    // The job registry too, or the Jobs page shows it running forever. The
+    // call sits in a try/catch, so a missing import here failed silently.
+    assert.equal(getRenderJob(res.body.jobId)?.status, "error");
   });
 
   test("render is charged against the render bucket", async () => {
