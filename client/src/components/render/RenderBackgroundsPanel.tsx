@@ -57,7 +57,9 @@ export interface RenderBackgroundsPanelProps {
   compact?: boolean;
 }
 
-const ACCEPT = ['image/*', 'video/*', '.jpg', '.jpeg', '.png', '.webp', '.mp4', '.mov', '.webm', '.m4v'];
+// Explicit image types, not image/*: with the wildcard iOS may hand over a
+// HEIC, which the server refuses; listing these makes it send a JPEG.
+const ACCEPT = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/*', '.jpg', '.jpeg', '.png', '.webp', '.mp4', '.mov', '.webm', '.m4v'];
 
 export function RenderBackgroundsPanel({
   autoBackground,

@@ -1524,7 +1524,7 @@ export function TimelinePage() {
                             <DropZone
                                 className="p-2"
                                 onFiles={handleDroppedBackgrounds}
-                                accept={['image/*', 'video/*', '.jpg', '.jpeg', '.png', '.webp', '.mp4', '.mov', '.webm', '.m4v']}
+                                accept={['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/*', '.jpg', '.jpeg', '.png', '.webp', '.mp4', '.mov', '.webm', '.m4v']}
                                 disabled={isUploading}
                                 overlayLabel="Drop image or video backgrounds"
                             >

@@ -1,5 +1,8 @@
 import fs from "fs";
 import path from "path";
+import { sniffImage, UNDECODABLE_IMAGE_ERROR } from "../imageSniff.js";
+
+export { sniffImage, UNDECODABLE_IMAGE_ERROR };
 
 /**
  * Putting a picture of your own on a movement, instead of a generated one.
@@ -20,10 +23,6 @@ const UPLOAD_NAME = /^bg-image-[0-9a-f-]{36}\.(png|jpe?g|webp)$/i;
 
 /** Checked before the file is read: registerImage loads it whole to hash it. */
 export const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
-
-export const UNDECODABLE_IMAGE_ERROR =
-  "That photo's format can't be used in a video. Save it as JPG or PNG and upload it again " +
-  "(on iPhone: Settings → Camera → Formats → Most Compatible).";
 
 /**
  * The real path of an upload this tenant made, or null.
@@ -52,30 +51,6 @@ export function resolveOwnUpload(outputDir, raw) {
     return null;
   }
   return path.relative(jail, resolved) === name ? resolved : null;
-}
-
-/**
- * What the file's first bytes say it is. The upload route names an unknown
- * image/* type ".jpg" — an iPhone HEIC included — so the name proves nothing.
- *
- * @param {string} file
- * @returns {"png"|"jpeg"|"webp"|null}
- */
-export function sniffImage(file) {
-  const head = Buffer.alloc(12);
-  let fd;
-  try {
-    fd = fs.openSync(file, "r");
-    fs.readSync(fd, head, 0, head.length, 0);
-  } catch {
-    return null;
-  } finally {
-    if (fd !== undefined) fs.closeSync(fd);
-  }
-  if (head[0] === 0x89 && head.toString("ascii", 1, 4) === "PNG") return "png";
-  if (head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) return "jpeg";
-  if (head.toString("ascii", 0, 4) === "RIFF" && head.toString("ascii", 8, 12) === "WEBP") return "webp";
-  return null;
 }
 
 /**
