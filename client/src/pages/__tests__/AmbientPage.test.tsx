@@ -90,6 +90,20 @@ describe('AmbientPage', () => {
     expect(screen.getByLabelText(/theme/i)).toBeInTheDocument();
   });
 
+  it('lists earlier sessions and opens a finished one straight onto its video', async () => {
+    vi.spyOn(ambientApi, 'listProjects').mockResolvedValue([
+      { projectId: 'a1', title: 'Peace Bed', status: 'done', targetSec: 7200, hasVideo: true, lastPublished: null, updatedAt: Date.now() },
+    ]);
+    vi.spyOn(ambientApi, 'getProject').mockResolvedValue(mkProject({
+      status: 'done',
+      render: { jobId: 'j', outputPath: '/x/video.mp4', status: 'done', percent: 100, phase: '' },
+    } as Partial<AmbientProject>));
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: 'Watch or publish Peace Bed' }));
+    expect(await screen.findByRole('heading', { name: 'Publish to YouTube' })).toBeInTheDocument();
+    expect(localStorage.getItem('BF_AMBIENT_ACTIVE')).toBe('a1');
+  });
+
   it('renders all four steps for an active project', async () => {
     localStorage.setItem('BF_AMBIENT_ACTIVE', 'a1');
     vi.spyOn(ambientApi, 'getProject').mockResolvedValue(mkProject());

@@ -1,8 +1,9 @@
+import fs from "fs";
 import { Router } from "express";
 
 import {
   createProject, readProject, writeProject, listProjects, deleteProject,
-  normaliseCaptionSettings, DEFAULT_DROP_INTERVAL_SEC,
+  normaliseCaptionSettings, DEFAULT_DROP_INTERVAL_SEC, publishedEntry, withPublished,
 } from "../lib/ambient/projectStore.js";
 import { bedHash } from "../lib/ambient/bedAssembly.js";
 import { defaultDropTimes, normaliseDrops } from "../lib/ambient/drops.js";
@@ -12,6 +13,7 @@ import { libraryImageView, resolveMovementImage } from "../lib/ambient/movementI
 import {
   AMBIENT_STATUS, voicingStage, imagesStage, renderStage,
   markCancelled, clearCancelled, writeWithMovements, unclearedTracks, resolveTrackFile, currentImageLib,
+  outDirFor,
 } from "../lib/ambient/stages.js";
 import {
   createJob, persistJob, markError, cancelJob as cancelRenderJob, getJob as getRenderJob,
@@ -128,11 +130,45 @@ router.get("/:id", (req, res) => {
 });
 
 // DELETE /:id
+// ffmpeg is writing into the session's folder. Both have Cancel on the page,
+// and Cancel works even after a restart, so this is never a dead end. Voicing
+// and pictures may be deleted mid-stage: the stage stops when its project is
+// gone rather than writing it back.
+const ENCODING_STATUSES = new Set([AMBIENT_STATUS.ASSEMBLING, AMBIENT_STATUS.RENDERING]);
+
+// DELETE /:id — the project and its rendered files. Pictures stay: they live
+// in the shared image library and other sessions may be using them.
 router.delete("/:id", (req, res) => {
-  const removed = deleteProject(req.ctx.dataDir, req.params.id);
-  if (!removed) return res.status(404).json({ ok: false, error: "project not found" });
-  clearCancelled(req.params.id);
+  const project = loadOr404(req, res);
+  if (!project) return undefined;
+  if (ENCODING_STATUSES.has(project.status)) {
+    return res.status(409).json({ ok: false, error: "this session is rendering — cancel it first, then delete" });
+  }
+  // The URL id passed readProject's check; the file's own projectId did not.
+  const id = req.params.id;
+  try {
+    // Files first: if one is locked, the session stays listed to retry.
+    fs.rmSync(outDirFor(req.ctx.outputDir, id), { recursive: true, force: true });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: `could not remove the video files (${err?.code || "error"}) — try again` });
+  }
+  if (!deleteProject(req.ctx.dataDir, id)) return res.status(404).json({ ok: false, error: "project not found" });
+  // The cancel flag is left for any stage still running to find.
   return res.json({ ok: true });
+});
+
+// POST /:id/published — remember an upload of this session's video, so the
+// history can show where it went and the operator can publish it again.
+router.post("/:id/published", (req, res) => {
+  const project = loadOr404(req, res);
+  if (!project) return undefined;
+  if (project.status !== AMBIENT_STATUS.DONE) {
+    return res.status(409).json({ ok: false, error: "only a finished session can be published" });
+  }
+  const entry = publishedEntry(req.body);
+  if (!entry) return res.status(400).json({ ok: false, error: "videoId is not a YouTube video id" });
+  const updated = writeProject(req.ctx.dataDir, withPublished(project, entry));
+  return res.json({ ok: true, project: updated });
 });
 
 // POST /:id/plan — suggest verse REFERENCES for the theme and space them across
@@ -329,7 +365,9 @@ router.put("/:id/movements/:movementId/image", async (req, res) => {
 
     // Checked again: POST /images can start while the upload is being copied,
     // and its own copy of the movement list would overwrite this one.
-    const fresh = readProject(dataDir, project.projectId) || project;
+    const fresh = readProject(dataDir, project.projectId);
+    // Deleted while the upload was copied: don't write it back.
+    if (!fresh) return res.status(404).json({ ok: false, error: "project not found" });
     if (MOVEMENTS_BUSY.has(fresh.status)) {
       return res.status(409).json({ ok: false, error: "wait for the current step to finish, then try again" });
     }

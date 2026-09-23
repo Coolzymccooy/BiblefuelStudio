@@ -371,7 +371,10 @@ describe("POST /api/ambient/:id/images", () => {
     assert.equal(out.movements[0].imageStatus, "error");
     assert.match(out.movements[0].imageError, /provider is down/);
     assert.equal(out.movements[1].imageStatus, "done");
-    assert.equal(out.status, AMBIENT_STATUS.GENERATING_IMAGES, "not ready while a picture is missing");
+    // Not ready while a picture is missing, and not "generating" either: that
+    // status is transient and busy, so the page polled forever and refused
+    // your own upload for the failed movement.
+    assert.equal(out.status, AMBIENT_STATUS.DRAFT);
   });
 
   test("with no movements it is a 400", async () => {

@@ -77,6 +77,11 @@ export const ambientApi = {
     return unwrapProject(await api.get(`/api/ambient/${id}`));
   },
 
+  // Remembers an upload so the history can show where the video went.
+  async recordPublished(id: string, entry: { videoId: string; privacyStatus: string; publishAt?: string }): Promise<AmbientProject> {
+    return unwrapProject(await api.post(`/api/ambient/${id}/published`, entry));
+  },
+
   async deleteProject(id: string): Promise<void> {
     const res = await api.delete(`/api/ambient/${id}`);
     if (!res.ok) throw new Error(res.error || 'Failed to delete project');

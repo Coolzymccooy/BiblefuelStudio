@@ -73,8 +73,10 @@ export function clearCancelled(id) { cancelled.delete(String(id)); }
 
 // ---------------------------------------------------------------- helpers
 
-function outDirFor(outputDir, projectId) {
-  const safe = String(projectId).replace(/[^a-z0-9_-]/gi, "");
+export function outDirFor(outputDir, projectId) {
+  const safe = String(projectId || "").replace(/[^a-z0-9_-]/gi, "");
+  // An empty name would be the ambient folder itself: every session's video.
+  if (!safe) throw new Error("ambient: invalid project id");
   return path.join(outputDir, "ambient", safe);
 }
 
@@ -93,6 +95,17 @@ function ensureDir(dir) {
  * old pictures against the new timings. `deriveMovements` preserves existing
  * images by index, so a retime costs no image quota.
  */
+/**
+ * The project as stored now. Throws when it has been deleted: a stage that
+ * outlives a delete must stop, and falling back to its own stale copy wrote
+ * the deleted session straight back into the list.
+ */
+function stillThere(ctx, projectId) {
+  const live = readProject(ctx.dataDir, projectId);
+  if (!live) throw new Error("this session was deleted");
+  return live;
+}
+
 export function writeWithMovements(dataDir, project) {
   return writeProject(dataDir, { ...project, movements: deriveMovements(project) });
 }
@@ -161,7 +174,7 @@ export async function voicingStage(ctx, projectId) {
     probeAudioDurationSec: _probeFn,
   });
 
-  const fresh = readProject(ctx.dataDir, projectId) || project;
+  const fresh = stillThere(ctx, projectId);
   const anyPending = drops.some((d) => d.status !== "done");
   return writeWithMovements(ctx.dataDir, {
     ...fresh,
@@ -231,7 +244,7 @@ export async function imagesStage(ctx, projectId, { force = false, onlyId = null
         imageLibraryId: reused.entry.id,
         imageReuseScore: reused.score,
       };
-      writeProject(ctx.dataDir, { ...readProject(ctx.dataDir, projectId), movements });
+      writeProject(ctx.dataDir, { ...stillThere(ctx, projectId), movements });
       continue;
     }
 
@@ -277,12 +290,12 @@ export async function imagesStage(ctx, projectId, { force = false, onlyId = null
         imageError: String(result?.error || "image generation failed").slice(0, 300),
       };
     }
-    writeProject(ctx.dataDir, { ...readProject(ctx.dataDir, projectId), movements });
+    writeProject(ctx.dataDir, { ...stillThere(ctx, projectId), movements });
   }
 
   try { pruneLibrary({ dataDir: ctx.dataDir }); } catch { /* housekeeping only */ }
 
-  const fresh = readProject(ctx.dataDir, projectId) || project;
+  const fresh = stillThere(ctx, projectId);
   if (isCancelled(projectId)) {
     clearCancelled(projectId);
     return writeProject(ctx.dataDir, { ...fresh, movements, status: AMBIENT_STATUS.ERROR, error: "Cancelled." });
@@ -291,7 +304,10 @@ export async function imagesStage(ctx, projectId, { force = false, onlyId = null
   return writeProject(ctx.dataDir, {
     ...fresh,
     movements,
-    status: allDone ? AMBIENT_STATUS.READY_TO_RENDER : AMBIENT_STATUS.GENERATING_IMAGES,
+    // A missing picture leaves it a draft, not "generating": that status is
+    // transient (the page polled forever) and busy (it blocked uploading your
+    // own picture for the failed movement).
+    status: allDone ? AMBIENT_STATUS.READY_TO_RENDER : AMBIENT_STATUS.DRAFT,
   });
 }
 
@@ -349,7 +365,7 @@ export async function assembleBed(ctx, project) {
       : reject(new Error(`bed assembly failed (ffmpeg ${code}): ${tail.slice(-400)}`))));
   });
 
-  const fresh = readProject(ctx.dataDir, project.projectId) || project;
+  const fresh = stillThere(ctx, project.projectId);
   const saved = writeProject(ctx.dataDir, {
     ...fresh,
     bed: { ...fresh.bed, trackRefs: order.map((t) => t.ref), builtPath: bedPath, builtHash: hash },
@@ -376,6 +392,12 @@ export async function renderStage(ctx, projectId, jobId) {
   });
 
   const { bedPath, project } = await assembleBed(ctx, start);
+  // Cancel can't stop bed assembly mid-ffmpeg, so honour it here, before the
+  // hour of encoding it was meant to prevent.
+  if (isCancelled(projectId)) {
+    clearCancelled(projectId);
+    throw new Error("Cancelled.");
+  }
 
   const images = (project.movements || []).map((m) => m.imagePath).filter(Boolean);
   if (images.length !== (project.movements || []).length) {
@@ -389,7 +411,7 @@ export async function renderStage(ctx, projectId, jobId) {
   });
 
   writeProject(ctx.dataDir, {
-    ...(readProject(ctx.dataDir, projectId) || project),
+    ...stillThere(ctx, projectId),
     status: AMBIENT_STATUS.RENDERING,
     render: { jobId, outputPath: null, status: "running", percent: 0, phase: "rendering" },
   });
@@ -441,7 +463,7 @@ export async function renderStage(ctx, projectId, jobId) {
       : resolve({ ok: false, error: `ffmpeg exited ${code}: ${tail.slice(-400)}` })));
   });
 
-  const fresh = readProject(ctx.dataDir, projectId) || project;
+  const fresh = stillThere(ctx, projectId);
   if (result.ok) {
     markDone(jobId, outPath);
     // Spread the live job so the persisted record keeps its userId — without

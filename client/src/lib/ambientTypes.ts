@@ -102,14 +102,31 @@ export interface AmbientProject extends StoryCaptionSettings {
   captionPosition?: AmbientCaptionPosition;
   duck: AmbientDuck;
   render: AmbientRenderState;
+  /** Every upload of this session's video, oldest first (the server keeps twenty). */
+  published?: AmbientPublished[];
   error: string | null;
   createdAt: number;
   updatedAt: number;
+}
+
+/** One upload of a session's video. The server builds `url` from the id. */
+export interface AmbientPublished {
+  videoId: string;
+  url: string;
+  privacyStatus: 'private' | 'unlisted' | 'public';
+  /** When YouTube will make it public, if it was scheduled. */
+  publishAt: string | null;
+  at: number;
 }
 
 export interface AmbientProjectSummary {
   projectId: string;
   title: string;
   status: AmbientStatus;
+  targetSec?: number;
+  aspect?: AmbientAspect;
+  /** The finished video is on disk: it can be watched, downloaded and published. */
+  hasVideo?: boolean;
+  lastPublished?: AmbientPublished | null;
   updatedAt: number;
 }

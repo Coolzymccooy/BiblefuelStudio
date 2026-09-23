@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { api } from '../../../lib/api';
+import { ambientApi } from '../../../lib/ambientApi';
 import { AmbientRenderStep } from '../AmbientRenderStep';
 import type { AmbientProject, AmbientStatus } from '../../../lib/ambientTypes';
 
@@ -14,10 +15,10 @@ const project = (status: AmbientStatus, percent = 40): AmbientProject => ({
   error: null, createdAt: 0, updatedAt: 0,
 } as AmbientProject);
 
-const renderStep = (p: AmbientProject) =>
-  render(<AmbientRenderStep project={p} busy={false} setBusy={() => {}} refresh={() => {}} />);
+const renderStep = (p: AmbientProject, refresh = () => {}) =>
+  render(<AmbientRenderStep project={p} busy={false} setBusy={() => {}} refresh={refresh} />);
 
-beforeEach(() => vi.useRealTimers());
+beforeEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe('AmbientRenderStep progress', () => {
   it('says what it is really doing while encoding — never a Story stage', () => {
@@ -63,5 +64,30 @@ describe('AmbientRenderStep when the video is ready', () => {
     const [url, body] = post.mock.calls[0] as [string, Record<string, unknown>];
     expect(url).toBe('/api/social/post');
     expect(body).toMatchObject({ destination: 'youtube', videoUrl: '/outputs/ambient/p1/video.mp4', privacyStatus: 'private' });
+  });
+
+  it('shows where it already went, and that publishing again makes a new copy', () => {
+    renderStep({
+      ...done(),
+      published: [
+        { videoId: 'oldOLD12345', url: 'https://youtu.be/oldOLD12345', privacyStatus: 'private', publishAt: null, at: Date.now() - 3 * 86_400_000 },
+        { videoId: 'newNEW12345', url: 'https://youtu.be/newNEW12345', privacyStatus: 'public', publishAt: null, at: Date.now() - 60_000 },
+      ],
+    } as AmbientProject);
+    const links = screen.getAllByRole('link');
+    expect(links.map((a) => a.getAttribute('href'))).toEqual(['https://youtu.be/newNEW12345', 'https://youtu.be/oldOLD12345']);
+    expect(screen.getByText(/publishing again uploads a new copy/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /publish to youtube/i })).toBeEnabled();
+  });
+
+  it('notes a fresh upload in the session history, then refreshes', async () => {
+    vi.spyOn(api, 'post').mockResolvedValue({ ok: true, status: 200, data: { videoId: 'vidVID12345', videoUrl: 'u', forcedPrivate: false } } as never);
+    const record = vi.spyOn(ambientApi, 'recordPublished').mockResolvedValue(done());
+    const refresh = vi.fn();
+    renderStep(done(), refresh);
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: /privacy/i }), 'unlisted');
+    await userEvent.click(screen.getByRole('button', { name: /publish to youtube/i }));
+    await waitFor(() => expect(record).toHaveBeenCalledWith('p1', { videoId: 'vidVID12345', privacyStatus: 'unlisted', publishAt: undefined }));
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
   });
 });
