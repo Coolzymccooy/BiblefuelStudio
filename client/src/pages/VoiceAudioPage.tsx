@@ -1042,10 +1042,20 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
 
     // Provider buttons with muscle: bold name + one-line note; disabled ones
     // say "not configured" and carry the real reason in their tooltip.
+    // The unselected state was `border-white/10 bg-white/[0.03]` — a 3% white
+    // tint, which is a visible bed on a near-black ground and NOTHING on the
+    // light theme's near-white one. The cards read as flat text with no
+    // surface. lane-bed is the same token the timeline rows sit on, so a
+    // provider card now has a real bed in every theme.
     const providerBtnClass = (id: TTSProvider) => `provider-btn min-w-0 rounded-lg border px-2.5 py-2 text-left transition ${
         provider === id
-            ? 'border-editor-accent/70 bg-editor-accent/15 shadow-[inset_0_0_0_1px_rgba(230,201,138,.35)]'
-            : 'border-white/10 bg-white/[0.03] hover:border-white/20 hover:bg-white/[0.06]'
+            // `bg-editor-accent/15` computed to TRANSPARENT: Tailwind's opacity
+            // modifier rewrites a colour into rgb(... / alpha), which it cannot
+            // do to a var(). The selected card had no fill at all, and its
+            // border fell back to black. color-mix works on variables, so the
+            // selection keeps its gold wash in every theme.
+            ? 'provider-btn-active'
+            : 'border-editor-line bg-lane-bed hover:border-editor-accent/40 hover:bg-editor-hover'
     } disabled:cursor-not-allowed disabled:opacity-40`;
     const providerNameClass = (id: TTSProvider) => `block truncate text-[12.5px] font-bold ${provider === id ? 'text-editor-accent' : 'text-content-primary'}`;
     const PROVIDER_NOTE_CLASS = 'block truncate text-[10px] text-content-tertiary';
@@ -1341,7 +1351,7 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
                         Stop Recording
                     </Button>
                 )}
-                <label className="text-xs h-9 px-4 rounded-lg font-medium transition-all duration-200 bg-dark-900/70 text-gray-200 border border-white/10 hover:bg-dark-900/90 hover:border-white/20 flex items-center gap-2 cursor-pointer">
+                <label className="text-xs h-9 px-4 rounded-lg font-medium transition-all duration-200 bg-editor-panel text-editor-text border border-editor-line hover:bg-editor-hover hover:border-editor-accent/50 flex items-center gap-2 cursor-pointer">
                     <Upload size={14} />
                     Upload Audio
                     <input
@@ -1692,14 +1702,14 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
                                 but aren't supported here. */}
                             <div>
                                 <label className="field-label">Provider</label>
-                                <div className="inline-flex flex-wrap gap-1 rounded-lg border border-white/10 p-1 bg-black/20">
+                                <div className="inline-flex flex-wrap gap-1 rounded-lg border border-editor-line p-1 bg-lane-bed">
                                     <button
                                         type="button"
                                         onClick={() => setCloneProvider('elevenlabs')}
                                         disabled={!ttsEnabled}
                                         className={`px-3 py-1.5 text-xs font-medium rounded transition ${cloneProvider === 'elevenlabs'
-                                            ? 'bg-primary-500 text-black'
-                                            : 'text-gray-300 hover:bg-white/5'
+                                            ? 'bg-accent-fill text-accent-ink'
+                                            : 'bg-editor-panel text-editor-dim hover:bg-editor-hover hover:text-editor-text'
                                             } disabled:opacity-40 disabled:cursor-not-allowed`}
                                     >
                                         ElevenLabs <span className="opacity-60">· cloud</span>
@@ -1710,8 +1720,8 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
                                         disabled={!chatterboxAvailable}
                                         title={chatterboxAvailable ? '' : 'CHATTERBOX_URL not set or bridge unreachable.'}
                                         className={`px-3 py-1.5 text-xs font-medium rounded transition ${cloneProvider === 'chatterbox'
-                                            ? 'bg-[#7fb5aa]/20 text-content-secondary'
-                                            : 'text-gray-300 hover:bg-white/5'
+                                            ? 'bg-tone-success/20 text-editor-text'
+                                            : 'bg-editor-panel text-editor-dim hover:bg-editor-hover hover:text-editor-text'
                                             } disabled:opacity-40 disabled:cursor-not-allowed`}
                                     >
                                         Chatterbox <span className="opacity-60">· self-hosted</span>
@@ -1720,7 +1730,7 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
                                         type="button"
                                         disabled
                                         title="Azure cloning needs Custom Neural Voice or Personal Voice activation on your Azure tenant — not wired in this app."
-                                        className="px-3 py-1.5 text-xs font-medium rounded text-gray-500 opacity-50 cursor-not-allowed"
+                                        className="px-3 py-1.5 text-xs font-medium rounded bg-editor-panel text-editor-faint opacity-70 cursor-not-allowed"
                                     >
                                         Azure <span className="opacity-60">· tenant-only</span>
                                     </button>
@@ -1728,7 +1738,7 @@ export function VoiceLab({ embedded }: { embedded?: VoiceLabEmbed } = {}) {
                                         type="button"
                                         disabled
                                         title="Edge-TTS is the Microsoft Edge Read-Aloud service. Stock voices only — no cloning API exists."
-                                        className="px-3 py-1.5 text-xs font-medium rounded text-gray-500 opacity-50 cursor-not-allowed"
+                                        className="px-3 py-1.5 text-xs font-medium rounded bg-editor-panel text-editor-faint opacity-70 cursor-not-allowed"
                                     >
                                         Edge <span className="opacity-60">· no cloning</span>
                                     </button>

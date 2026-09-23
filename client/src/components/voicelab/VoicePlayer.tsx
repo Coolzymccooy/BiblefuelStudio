@@ -60,7 +60,7 @@ export function VoicePlayer({ src, label, kindLabel }: VoicePlayerProps) {
                 <button
                     onClick={toggle}
                     aria-label={playing ? 'Pause' : 'Play'}
-                    className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-[#221703] shadow-[0_10px_22px_-8px_rgba(216,184,120,0.6)]"
+                    className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-accent-ink shadow-[0_10px_22px_-8px_rgba(216,184,120,0.6)]"
                     style={{ background: 'linear-gradient(180deg,#e9cd8d,#cba85f)' }}
                 >
                     {playing ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" className="ml-0.5" />}

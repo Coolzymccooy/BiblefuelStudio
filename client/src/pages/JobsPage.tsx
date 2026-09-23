@@ -334,7 +334,7 @@ export function JobsPage() {
                                                     {new Date(job.createdAt).toLocaleString()}
                                                 </div>
                                                 {job.finishedAt && (
-                                                    <div className="text-[#7fb5aa]/80 font-medium">
+                                                    <div className="text-tone-success/80 font-medium">
                                                         Duration: {Math.round((new Date(job.finishedAt).getTime() - (job.startedAt ? new Date(job.startedAt).getTime() : new Date(job.createdAt).getTime())) / 1000)}s
                                                     </div>
                                                 )}
@@ -439,7 +439,7 @@ export function JobsPage() {
                                             )}
                                             {(job.result || job.error) && (
                                                 <div className="space-y-2">
-                                                    <span className={`font-semibold ${job.error ? 'text-red-400' : 'text-[#7fb5aa]'}`}>
+                                                    <span className={`font-semibold ${job.error ? 'text-red-400' : 'text-tone-success'}`}>
                                                         {job.error ? 'Error Log:' : 'Result Output:'}
                                                     </span>
                                                     <pre className={`p-3 rounded-lg overflow-auto border font-mono max-h-40 custom-scrollbar ${job.error

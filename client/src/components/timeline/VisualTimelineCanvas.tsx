@@ -1,5 +1,11 @@
 import { useMemo, useState, useEffect } from 'react';
-import { Film, Mic2, Music, Scissors, Sparkles, Subtitles, Trash2, Wand2, Eraser } from 'lucide-react';
+import { useTimelineScale } from '../../lib/useTimelineScale';
+import { clampZoom, MIN_ZOOM, MAX_ZOOM } from '../../lib/timelineScale';
+import { loadZoom, saveZoom, nextZoomIn, nextZoomOut, scrollLeftPreservingAnchor } from '../../lib/timelineZoom';
+import { timelineAssetThumbPath } from '../../lib/timelineThumb';
+import { setTrackFlag } from '../../lib/hiddenLanes';
+import { ClipWaveform } from './ClipWaveform';
+import { Eye, EyeOff, Film, Lock, Mic2, Minus, Music, Plus, Scissors, Sparkles, Subtitles, Trash2, Unlock, Wand2, Eraser } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 import type { TimelineAsset, TimelineClip, TimelineProject, TimelineTrack, TimelineTrackKind } from '../../lib/timelineProject';
@@ -52,17 +58,43 @@ interface VisualTimelineCanvasProps {
  * asked for "muscle". Hue tells you the lane at a glance, fill gives the
  * block weight, and gold stays reserved for the SELECTED clip.
  */
-// Per-lane clip colour. The ink is a THEME variable, not a fixed cream:
-// on a light timeline white-on-pale was unreadable (the operator could not
-// read the Real footage clips at all). Fills stay tinted so lanes remain
-// distinguishable at a glance in both themes.
+// LANE FAMILIES — a system, not five loose hues.
+//
+// Each lane carries a fill, a border and an ink that move together, defined
+// per theme in index.css (pale fill + saturated ink on light; deep muted fill
+// + light ink on dark and calm). Every pair is measured at >= 4.5:1 against
+// its own fill in BOTH directions, so a clip label is legible whichever
+// theme is on.
+//
+// Real footage and Music bed deliberately share the blue family: both are
+// the spine of the cut, so the eye groups them.
+//
+// Gold is still not here. It remains SELECTION only.
 const CLIP_TONE: Record<TimelineTrackKind, string> = {
-  video: 'border-[#c9a961]/70 bg-[#e6c98a]/35 text-editor-text',
-  broll: 'border-[#7d94ad]/70 bg-[#93a7bd]/35 text-editor-text',
-  voiceover: 'border-[#5f9d90]/70 bg-[#7fb5aa]/35 text-editor-text',
-  music: 'border-[#9a83ab]/70 bg-[#b09ac0]/35 text-editor-text',
-  captions: 'border-editor-line bg-editor-hover text-editor-text',
-  effects: 'border-[#b5867a]/70 bg-[#c89a8a]/35 text-editor-text',
+  video: 'lane lane-video',
+  broll: 'lane lane-broll',
+  voiceover: 'lane lane-vo',
+  music: 'lane lane-music',
+  captions: 'lane lane-caption',
+  effects: 'lane lane-fx',
+};
+
+/**
+ * Scene-header families, cycled by scene index. Scenes have no inherent kind,
+ * but giving each a stable colour from the SAME six families makes the ruler
+ * read as part of the timeline rather than a separate grey strip — and it is
+ * deterministic, so a scene keeps its colour between renders.
+ */
+const SCENE_FAMILY = ['lane-video', 'lane-caption', 'lane-vo', 'lane-broll', 'lane-music', 'lane-fx'] as const;
+
+/** Icon chip tint per lane — the small square before each clip label. */
+const LANE_CHIP: Record<TimelineTrackKind, string> = {
+  video: 'chip chip-video',
+  broll: 'chip chip-broll',
+  voiceover: 'chip chip-vo',
+  music: 'chip chip-music',
+  captions: 'chip chip-caption',
+  effects: 'chip chip-fx',
 };
 
 const TRACK_ICON: Record<TimelineTrackKind, typeof Film> = {
@@ -81,6 +113,13 @@ const MIN_CLIP_WIDTH_PCT = 5;
 // Below this width a clip cannot hold its Mute + delete controls without them
 // overflowing the block. Selecting the clip reveals them regardless.
 const CONTROLS_MIN_WIDTH_PCT = 4;
+
+// A waveform needs room of its own BESIDE the label. Splitting a narrow clip
+// between the two leaves neither usable — a 77px voice-over clip truncated its
+// name to a single character and gave the trace 0px. Under this width the
+// label keeps the whole block and the waveform is dropped, which is the same
+// bargain the controls above already make.
+const WAVEFORM_MIN_WIDTH_PCT = 12;
 
 // Each empty lane says WHERE its content comes from, and clicking it opens
 // that tool - the lane itself is the way in.
@@ -185,16 +224,63 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
     return () => mq.removeEventListener?.('change', onChange);
   }, []);
   const target = Math.max(1, project.targetDurationSec);
+  // F1: the timecode axis. Zoom is fixed at 1 here — F2 makes it a control.
+  // Everything that turns seconds into pixels goes through this one scale, so
+  // the ruler cannot drift from the clips the way it did on the 390px phone.
+  // F2 — zoom. A multiplier on the SAME scale the ruler uses, remembered per
+  // project. Loaded lazily so a remount does not reset the operator's view.
+  const [zoom, setZoom] = useState<number>(() => loadZoom(project.id));
+  useEffect(() => { setZoom(loadZoom(project.id)); }, [project.id]);
+  const { ref: scaleRef, scale } = useTimelineScale({ durationSec: target, zoom });
+
+  // The element that actually scrolls. Zoom has to adjust its scrollLeft in
+  // the same frame the scale changes, or the view jumps.
+  // scaleRef and scrollRef are the SAME element: the scrolling viewport.
+  //
+  // This must never be an element whose width the scale then sets. Attaching
+  // it to the ruler created a feedback loop - measure, widen from the
+  // measurement, measure the wider thing - and contentWidth reached 67 MILLION
+  // pixels after one click of +. The viewport is the only stable reference:
+  // "fits" is defined against it, and it does not grow with its content.
+  const scrollRef = scaleRef;
+
+  const applyZoom = (next: number) => {
+    const clamped = clampZoom(next);
+    if (clamped === zoom) return;
+
+    // Keep the moment under the viewport's left edge where it is. Scaling the
+    // scroll origin instead makes the timeline feel like it jumps away.
+    const el = scrollRef.current;
+    const anchorSec = el && scale.pxPerSecond > 0 ? el.scrollLeft / scale.pxPerSecond : 0;
+
+    setZoom(clamped);
+    saveZoom(project.id, clamped);
+
+    if (el) {
+      const nextPxPerSecond = scale.pxPerSecond * (clamped / zoom);
+      // After React has laid out the wider content, or the assignment is
+      // clamped against the OLD scrollWidth and silently lost.
+      requestAnimationFrame(() => {
+        el.scrollLeft = scrollLeftPreservingAnchor({ anchorSec, anchorOffsetPx: 0, nextPxPerSecond });
+      });
+    }
+  };
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   const selection = useMemo(() => findClip(project, selectedClipId), [project, selectedClipId]);
 
+  // F3 — a locked lane is inspectable but not editable. Gating the HANDLERS
+  // rather than each button means every present and future caller is covered
+  // by one rule; the buttons below disable themselves off the same flag so
+  // the state is visible, not just enforced.
+  const selectionLocked = selection?.track.locked === true;
+
   const handleSplit = () => {
-    if (!selection || !onProjectChange) return;
+    if (!selection || !onProjectChange || selectionLocked) return;
     onProjectChange(splitClip(project, selection.track, selection.clip));
   };
 
   const handleRemove = () => {
-    if (!selection || !onProjectChange) return;
+    if (!selection || !onProjectChange || selectionLocked) return;
     onProjectChange(removeClip(project, selection.track, selection.clip));
     setSelectedClipId(null);
   };
@@ -242,12 +328,78 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
   // phone that made the ruler and the lanes sit on different grids - the
   // overlap the operator photographed. Phone uses a 6.5rem column, a matching
   // offset, and no width floor, so the lanes scroll instead of colliding.
-  const headW = phone ? '6.5rem' : '9rem';
+  // The header now carries the lane name, the clip count, and F3's eye/lock/
+  // clear controls. At 9rem the controls left only 44px for text and five of
+  // six lane names truncated ("Real f...", "AI B-r..."), which the design
+  // shows in full. 11.5rem fits every default lane name.
+  // This is ONE constant shared by the ruler, the scene strip and the lane
+  // grid, so widening it keeps all three on the same axis.
+  // ONE source for the header column, in rem and in px. The px value is
+  // DERIVED from the rem value rather than typed twice: the measured viewport
+  // includes this column, so the lane area is that much narrower, and a pair
+  // that drifted apart would put the ruler back on its own grid — the exact
+  // failure this module exists to prevent.
+  const HEAD_W_REM = phone ? 6.5 : 11.5;
+  const headW = `${HEAD_W_REM}rem`;
+  const HEAD_W_PX = HEAD_W_REM * 16;
   const lanes = (
-          <div className={`min-h-0 flex-1 overflow-y-auto rounded-xl border border-editor-line bg-black/10 ${phone ? 'overflow-x-hidden' : 'overflow-x-auto'} ${d.wrap}`}>
-            <div className={`${phone ? 'w-full' : 'min-w-[920px]'} ${d.stack}`}>
-              <div className={`${phone ? 'hidden' : 'flex'} ${d.ruler} items-stretch gap-1`} style={{ marginLeft: headW }} aria-label="Scene ruler">
-                {project.scenes.map((scene) => {
+          <div ref={scrollRef} className={`min-h-0 flex-1 overflow-y-auto rounded-xl bg-editor-panel ${phone ? 'overflow-x-hidden' : 'overflow-x-auto'} ${d.wrap}`}>
+            {/* At zoom > 1 the content is WIDER than the viewport, which is
+                what makes the container scroll. The width comes from the same
+                scale as the ruler, so they cannot disagree. */}
+            {/* The 920px floor keeps six lanes usable at default zoom on a
+                narrow desktop. But as a Tailwind min-width it ALWAYS beat the
+                inline width, and contentWidth is containerWidth x zoom — so on
+                a 1200px timeline zoom 0.5 asked for 600px and 0.25 for 300px,
+                both clamped to 920. Zoom Out simply stopped doing anything
+                below 1x, and at narrow widths even Fit stayed scrollable.
+                Below 1x the operator has explicitly asked for less width, so
+                the floor steps aside; at 1x and above it still applies. */}
+            <div
+              className={`${phone || zoom < 1 ? 'w-full' : 'min-w-[920px]'} ${d.stack}`}
+              style={phone || zoom === 1 ? undefined : { width: `calc(${headW} + ${Math.round(scale.contentWidth - HEAD_W_PX)}px)` }}
+            >
+              {/* F1 — the timecode axis.
+                  Shares headW with the scene strip and the lane grid below, so
+                  0:00 sits exactly above clip x=0. The offset is read from ONE
+                  constant; duplicating it is what put the ruler and the lanes
+                  on different grids before. Hidden on phone, as the scene strip
+                  is, rather than rendered misaligned. */}
+              {/* Laid out as the LANE ROWS are: a sticky gutter cell plus the
+                  content cell. The ruler used a plain marginLeft, which works
+                  at zoom 1 but slides under the lane headers as soon as the
+                  content scrolls. Reusing the row structure means the gutter
+                  stays covered by the same mechanism that already works. */}
+              <div
+                className={`${phone ? 'hidden' : 'grid'} items-stretch`}
+                style={{ gridTemplateColumns: `${headW} 1fr` }}
+              >
+              <div className="sticky left-0 z-20 bg-editor-panel" aria-hidden="true" />
+              <div
+                className="relative h-5 select-none"
+                aria-label="Time ruler"
+              >
+                {scale.ticks.map((tick) => (
+                  <div
+                    key={tick.sec}
+                    className="absolute top-0 flex h-full flex-col items-start"
+                    style={{ left: `${(tick.sec / target) * 100}%` }}
+                  >
+                    <span className="h-1.5 w-px bg-editor-text/25" aria-hidden="true" />
+                    <span className="mt-0.5 pl-1 text-[9px] font-medium leading-none tabular-nums text-editor-faint">
+                      {tick.label}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              </div>
+              <div
+                className={`${phone ? 'hidden' : 'grid'} items-stretch`}
+                style={{ gridTemplateColumns: `${headW} 1fr` }}
+              >
+              <div className="sticky left-0 z-20 bg-editor-panel" aria-hidden="true" />
+              <div className={`flex ${d.ruler} items-stretch gap-1`} aria-label="Scene ruler">
+                {project.scenes.map((scene, index) => {
                   const widthPct = Math.max(8, (scene.targetDurationSec / target) * 100);
                   return (
                     <button
@@ -257,22 +409,23 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                       aria-pressed={selectedSceneId === scene.id}
                       draggable
                       onClick={() => onSelectScene?.(scene.id)}
-                      className={`group relative min-w-24 rounded-lg border text-left ${d.lanePad} shadow-inner outline-none transition ${
+                      className={`group relative min-w-24 rounded-lg border text-left ${d.lanePad} outline-none transition ${
                         selectedSceneId === scene.id
-                          ? 'border-primary-300 bg-gradient-to-br from-primary-500/35 to-amber-500/25 ring-2 ring-primary-300/40'
-                          : 'border-primary-500/25 bg-gradient-to-br from-primary-500/15 to-amber-500/10 hover:border-primary-300/60'
+                          ? 'border-editor-accent bg-editor-hover ring-2 ring-editor-accent/40'
+                          : `lane ${SCENE_FAMILY[index % SCENE_FAMILY.length]} hover:brightness-[0.97]`
                       }`}
                       style={{ flexBasis: `${widthPct}%` }}
                       title={scene.voiceoverBrief}
                     >
-                      <p className="truncate text-[11px] font-semibold text-editor-text">{scene.label}</p>
+                      <p className="truncate text-xs font-semibold tracking-tight text-editor-text">{scene.label}</p>
                       {!compact && (
-                      <p className="mt-1 text-[10px] text-content-tertiary">{formatDuration(scene.startSec)} · {Math.round(scene.targetDurationSec)}s</p>
+                      <p className="mt-0.5 text-[10px] font-medium tabular-nums text-content-tertiary">{formatDuration(scene.startSec)} · {Math.round(scene.targetDurationSec)}s</p>
                     )}
-                      {!compact && <div className="absolute inset-x-2 bottom-2 h-1 rounded-full bg-primary-400/30" />}
+                      {!compact && <div className="absolute inset-x-2 bottom-2 h-1 rounded-full bg-editor-text/15" />}
                     </button>
                   );
                 })}
+              </div>
               </div>
   
               <div className={d.stack}>
@@ -290,20 +443,53 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                           the clips scroll horizontally underneath. Needs an
                           OPAQUE background, not bg-white/[0.03], or the clips
                           show through as they pass behind it. */}
-                      <div className={phone ? `flex items-center gap-1.5 px-0.5 py-0.5` : `sticky left-0 z-10 flex items-center gap-2 rounded-lg border border-white/10 bg-[#141210] ${d.headPad}`}>
-                        <Icon size={phone ? 15 : 15} className="shrink-0 text-editor-accent" />
+                      <div className={phone ? `flex items-center gap-1.5 px-0.5 py-0.5` : `sticky left-0 z-20 flex items-center gap-2 rounded-lg bg-lane-bed ${d.headPad}`}>
+                        <Icon size={phone ? 15 : 15} className="shrink-0 text-editor-dim" />
                         <div className="min-w-0">
-                          <p className={`truncate font-semibold text-editor-text ${phone ? 'text-[11px] leading-none' : 'text-xs'}`}>
+                          {/* Stored labels can be longer than the column (an
+                              existing project still says "AI B-roll /
+                              cutaways"), and renaming one in code would not
+                              migrate saved projects — so the full name is
+                              always available on hover. */}
+                          <p title={track.label} className={`truncate font-semibold text-editor-text ${phone ? 'text-[11px] leading-none' : 'text-xs'}`}>
                             {track.label}
                             {phone && <span className="ml-1.5 font-normal text-content-tertiary">{track.clips.length}</span>}
                           </p>
-                          {!phone && <p className="text-[10px] text-content-tertiary">{track.clips.length} clip{track.clips.length === 1 ? '' : 's'}</p>}
+                          {!phone && <p className="text-[10px] font-medium tabular-nums text-content-tertiary">{track.clips.length} clip{track.clips.length === 1 ? '' : 's'}</p>}
                         </div>
-                        {onClearLane && track.clips.length > 0 && (
+                        {/* F3 — lane controls. Eye and lock come before the
+                            eraser so the destructive action stays last.
+                            ml-auto is on the FIRST of them, so the group sits
+                            right whichever buttons are present. */}
+                        {onProjectChange && (
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); onProjectChange(setTrackFlag(project, track.id, 'hidden', !track.hidden)); }}
+                            className={`ml-auto shrink-0 rounded p-1 transition hover:bg-editor-hover ${track.hidden ? 'text-editor-accent' : 'text-content-tertiary hover:text-editor-text'}`}
+                            aria-label={track.hidden ? `Show ${track.label} lane` : `Hide ${track.label} lane`}
+                            aria-pressed={track.hidden === true}
+                            title={track.hidden ? `${track.label} is hidden — it will NOT appear in the render. Click to show.` : `Hide ${track.label} — hidden lanes are left out of the render`}
+                          >
+                            {track.hidden ? <EyeOff size={12} /> : <Eye size={12} />}
+                          </button>
+                        )}
+                        {onProjectChange && (
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); onProjectChange(setTrackFlag(project, track.id, 'locked', !track.locked)); }}
+                            className={`shrink-0 rounded p-1 transition hover:bg-editor-hover ${track.locked ? 'text-editor-accent' : 'text-content-tertiary hover:text-editor-text'}`}
+                            aria-label={track.locked ? `Unlock ${track.label} lane` : `Lock ${track.label} lane`}
+                            aria-pressed={track.locked === true}
+                            title={track.locked ? `${track.label} is locked — clips still render, but cannot be edited. Click to unlock.` : `Lock ${track.label} — clips stay visible and still render, but cannot be edited`}
+                          >
+                            {track.locked ? <Lock size={12} /> : <Unlock size={12} />}
+                          </button>
+                        )}
+                        {onClearLane && track.clips.length > 0 && !track.locked && (
                           <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); onClearLane(track.kind); }}
-                            className="ml-auto shrink-0 rounded p-1 text-content-tertiary transition hover:bg-white/10 hover:text-white"
+                            className="shrink-0 rounded p-1 text-content-tertiary transition hover:bg-editor-hover hover:text-editor-text"
                             aria-label={`Clear ${track.label} lane`}
                             title={`Clear this lane - removes all ${track.clips.length} clip${track.clips.length === 1 ? '' : 's'} from ${track.label}`}
                           >
@@ -312,14 +498,26 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                         )}
                       </div>
   
-                      <div className={`relative ${d.lane} rounded-lg border border-editor-line/70 bg-editor-hover/30 ${d.lanePad}`}>
+                      {/* A hidden lane dims so the exclusion is visible at a
+                          glance, and stops taking pointer events so a clip
+                          cannot be edited into a lane that will not render.
+
+                          The pointer-events half was described here but never
+                          implemented — the branch only dimmed. Clips stayed
+                          selectable, Mute/Delete still fired, and an empty
+                          hidden lane still opened its insertion tool, so an
+                          edit could land in a lane the renderer then drops.
+                          The eye control sits in the HEADER, outside this
+                          element, so making the lane inert never leaves the
+                          operator without a way to bring it back. */}
+                      <div className={`relative ${d.lane} rounded-lg bg-lane-bed ${d.lanePad} ${track.hidden ? 'opacity-40 pointer-events-none' : ''}`}>
                         {track.clips.length === 0 ? (
                           <button
                             type="button"
                             onClick={() => onEmptyLaneClick?.(track.kind)}
                             disabled={!onEmptyLaneClick}
                             title={onEmptyLaneClick ? 'Open the tool that fills this lane' : undefined}
-                            className={`flex ${d.emptyRow} w-full items-center justify-center rounded-md border border-dashed border-editor-line/80 bg-transparent px-2 text-center text-[11px] text-editor-faint transition enabled:hover:border-editor-accent/50 enabled:hover:text-editor-dim phone:justify-start phone:text-left phone:text-[10px] phone:leading-tight`}
+                            className={`flex ${d.emptyRow} w-full items-center justify-center rounded-md bg-transparent px-2 text-center text-[11px] text-editor-faint transition enabled:hover:text-editor-dim phone:justify-start phone:text-left phone:text-[10px] phone:leading-tight`}
                           >
                             {EMPTY_HINT[track.kind]}
                           </button>
@@ -329,6 +527,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                               const asset = project.assets[clip.assetId];
                               const proxy = proxyLabel(asset);
                               const previewMode = previewModeLabel(asset);
+                              const thumb = timelineAssetThumbPath(asset);
                               const leftPct = Math.max(0, Math.min(96, (clip.startSec / target) * 100));
                               // The 5% minimum width used to be unconditional, which
                               // made short clips WIDER than their own slot: three 5s
@@ -350,42 +549,132 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                                 Math.min(MIN_CLIP_WIDTH_PCT, roomPct),
                                 Math.min(100 - leftPct, trueWidthPct),
                               );
+                              // Audio clips carry a peak trace beside the label.
+                              // Derived once, because both the label's width and
+                              // the trace itself depend on it: the label only
+                              // gives up flex-1 when there is something to give
+                              // it up to. Width matters as much as kind — see
+                              // WAVEFORM_MIN_WIDTH_PCT.
+                              const waveform = asset?.kind === 'audio'
+                                && Boolean(asset.path)
+                                && widthPct >= WAVEFORM_MIN_WIDTH_PCT;
                               const selected = selectedClipId === clip.id;
                               return (
                                 <div
                                   key={clip.id}
-                                  draggable
+                                  // Locked = inspect, do not edit. The clip is
+                                  // still clickable (so the operator can read
+                                  // it and the toolbar can show its details)
+                                  // but cannot be dragged.
+                                  draggable={!track.locked}
                                   // Selection lives on the CONTAINER: the refactor
                                   // moved it to an inner button, so clicking the
                                   // clip block itself no longer selected it and the
                                   // Split/Remove toolbar stayed disabled.
                                   onClick={() => setSelectedClipId(clip.id)}
                                   aria-label={`Timeline clip: ${asset?.label || clip.assetId}`}
-                                  className={`${phone ? '' : 'absolute top-1'} ${d.clipHeight} rounded-md border px-2 py-1 text-left text-[10px] font-medium shadow-md transition ${selected ? 'border-editor-accent bg-editor-accent/30 text-white ring-2 ring-editor-accent/50' : `${CLIP_TONE[track.kind]} hover:brightness-125`}`}
+                                  className={`${phone ? '' : 'absolute top-1'} ${d.clipHeight} rounded-md border px-2 py-1 text-left text-[10px] font-semibold tracking-tight transition ${selected ? 'border-editor-accent bg-editor-accent/30 text-editor-text ring-2 ring-editor-accent/50' : `${CLIP_TONE[track.kind]} hover:brightness-125`}`}
                                   style={phone ? { minWidth: '7.5rem', flex: '0 0 auto' } : { left: `${leftPct}%`, width: `${widthPct}%` }}
                                   title={`${asset?.label || clip.assetId} · ${sourceLabel(asset)} · ${Math.round(clip.durationSec)}s · ${previewMode}`}
                                 >
-                                  <div className="flex h-full items-center gap-1 overflow-hidden">
+                                  <div className="relative flex h-full items-center gap-1.5 overflow-hidden">
+                                    {/* Lane mark. Carries the lane's own ink, so a
+                                        clip is identifiable even when its block is
+                                        too narrow to show the label. */}
+                                    {!compact && (
+                                      thumb ? (
+                                        /* F5 — the poster frame the server already
+                                           extracted at upload. A broken load falls
+                                           back to the chip rather than leaving the
+                                           browser's torn-image icon in the lane. */
+                                        <img
+                                          src={thumb}
+                                          alt=""
+                                          aria-hidden="true"
+                                          loading="lazy"
+                                          decoding="async"
+                                          onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                                          className="h-5 w-7 shrink-0 rounded object-cover"
+                                        />
+                                      ) : (
+                                        <span className={`grid h-5 w-5 shrink-0 place-items-center rounded ${LANE_CHIP[track.kind]}`} aria-hidden="true">
+                                          <Icon size={11} />
+                                        </span>
+                                      )
+                                    )}
+                                    {/* F4 — the peak trace, for audio only, and
+                                        absent entirely when the clip has no
+                                        peaks: a missing waveform degrades to
+                                        the flat clip, it never blocks.
+
+                                        Drawn in compact too. It was gated on
+                                        !compact alongside the second text
+                                        line, but the two are not the same
+                                        problem: a stacked LABEL wrapped and
+                                        broke the 28px row, while the trace
+                                        costs no height at all. Since the
+                                        timeline renders compact by default,
+                                        gating it out meant the waveform never
+                                        appeared on the screen the operator
+                                        uses.
+
+                                        BESIDE the label, not under it. Running
+                                        the trace the full width of the clip
+                                        put peaks directly behind the filename,
+                                        and the two read as one smeared line.
+                                        In the reference the label sits on its
+                                        own solid ground at the head of the
+                                        clip and the waveform takes the space
+                                        that is left, so neither competes: the
+                                        label keeps its own bed below, and this
+                                        flows after it in normal document
+                                        order rather than being positioned over
+                                        the whole row. */}
                                     <button
                                       type="button"
                                       onClick={() => setSelectedClipId(clip.id)}
-                                      className="min-w-0 flex-1 text-left"
+                                      /* flex-1 only when nothing else wants
+                                         the room. With a waveform beside it the
+                                         label shrinks to its own width so the
+                                         trace gets the remainder — the label
+                                         stretching full-width is what put peaks
+                                         behind the text. */
+                                      className={`relative min-w-0 text-left ${waveform ? 'max-w-[45%] shrink' : 'flex-1'}`}
                                     >
                                       {/* ONE line, not two. A stacked label inside a
                                           28px compact clip wrapped under the Mute
                                           button and read as broken. */}
                                       <p className="truncate font-semibold leading-tight">{asset?.label || clip.assetId}</p>
                                       {!compact && (
-                                        <p className="truncate text-editor-dim">{sourceLabel(asset)} · {Math.round(clip.durationSec)}s{proxy ? ` · ${proxy}` : ''}</p>
+                                        <p className="truncate opacity-70">{sourceLabel(asset)} · {Math.round(clip.durationSec)}s{proxy ? ` · ${proxy}` : ''}</p>
                                       )}
                                     </button>
+                                    {waveform && (
+                                      <ClipWaveform
+                                        assetPath={asset!.path!}
+                                        /* Sized by its flex box, not by
+                                           intrinsic size. It used to carry
+                                           h-auto/w-auto, but <canvas> is a
+                                           replaced element: `auto` resolves to
+                                           its intrinsic 300x150 and wins over
+                                           any positioning, so the trace was a
+                                           fixed 300x150 block spilling out of
+                                           a 17px clip row. ClipWaveform now
+                                           pins its own CSS size to 100%. */
+                                        className={`pointer-events-none min-w-0 flex-1 self-stretch opacity-40 ${compact ? 'my-0.5' : 'my-1'}`}
+                                      />
+                                    )}
                                     {/* Controls need ~70px. On a clip narrower
                                         than that they were shrink-0, so they spilled
                                         OUTSIDE the block and three short clips read as
                                         one stack of Mute buttons. Below the threshold
                                         the clip is still selectable and the toolbar
                                         above the lanes acts on the selection. */}
-                                    <div className={`flex shrink-0 gap-1 ${widthPct < CONTROLS_MIN_WIDTH_PCT && !selected ? 'hidden' : ''}`}>
+                                    {/* A locked lane hides its per-clip edit
+                                        controls entirely: the clip stays
+                                        selectable for inspection, but Mute and
+                                        Delete are not offered at all. */}
+                                    <div className={`flex shrink-0 gap-1 ${track.locked || (widthPct < CONTROLS_MIN_WIDTH_PCT && !selected) ? 'hidden' : ''}`}>
                                       <button
                                         type="button"
                                         onClick={(e) => {
@@ -405,7 +694,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                                             ),
                                           });
                                         }}
-                                        className={`rounded px-1.5 py-0.5 transition ${clip.muted ? 'bg-white/[0.04] text-content-secondary' : 'bg-black/40 text-editor-text/90 hover:bg-black/60'}`}
+                                        className={`rounded px-1.5 py-0.5 transition ${clip.muted ? 'opacity-45 hover:opacity-70' : 'opacity-70 hover:opacity-100'}`}
                                         title={clip.muted ? 'Unmute clip' : 'Mute clip'}
                                       >
                                         {clip.muted ? 'Muted' : 'Mute'}
@@ -423,7 +712,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
                                           onProjectChange(removeClip(project, track, clip));
                                           if (selectedClipId === clip.id) setSelectedClipId(null);
                                         }}
-                                        className="rounded bg-black/40 px-1.5 py-0.5 text-editor-text/90 hover:bg-red-500/20 hover:text-red-200 transition"
+                                        className="rounded px-1.5 py-0.5 opacity-70 transition hover:bg-red-500/20 hover:text-red-200 hover:opacity-100"
                                         // Distinct from the toolbar's "Remove clip" so
                                         // accessible-name queries stay unambiguous.
                                         aria-label={`Delete clip: ${asset?.label || clip.assetId}`}
@@ -470,23 +759,60 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
       ) : (
         <span className="text-editor-faint phone:hidden">Select a clip to split or remove</span>
       )}
+      {/* F2 — zoom. Reads as one control: minus, the level, plus. The level
+          is a button because it is also Fit — the fastest way back to seeing
+          the whole project, and the reason 1 is on the step ladder. */}
+      {!phone && (
+        <span className="flex items-center gap-0.5 phone:hidden">
+          <button
+            type="button"
+            onClick={() => applyZoom(nextZoomOut(zoom))}
+            disabled={zoom <= MIN_ZOOM}
+            className="icon-btn"
+            aria-label="Zoom out"
+            title="Zoom out"
+          >
+            <Minus size={14} />
+          </button>
+          <button
+            type="button"
+            onClick={() => applyZoom(1)}
+            disabled={zoom === 1}
+            className="min-w-11 rounded px-1 text-[10px] font-semibold tabular-nums text-content-tertiary transition hover:text-editor-text disabled:hover:text-content-tertiary"
+            aria-label={`Zoom ${zoom}x. Fit the whole project`}
+            title={zoom === 1 ? 'Whole project fits' : 'Fit the whole project'}
+          >
+            {zoom}x
+          </button>
+          <button
+            type="button"
+            onClick={() => applyZoom(nextZoomIn(zoom))}
+            disabled={zoom >= MAX_ZOOM}
+            className="icon-btn"
+            aria-label="Zoom in"
+            title="Zoom in"
+          >
+            <Plus size={14} />
+          </button>
+        </span>
+      )}
       <button
         type="button"
         onClick={handleSplit}
-        disabled={!selection || !onProjectChange || (selection?.clip.durationSec ?? 0) < 1}
+        disabled={!selection || !onProjectChange || selectionLocked || (selection?.clip.durationSec ?? 0) < 1}
         className="icon-btn"
         aria-label="Split clip"
-        title="Split clip"
+        title={selectionLocked ? 'This lane is locked — unlock it to edit' : 'Split clip'}
       >
         <Scissors size={14} />
       </button>
       <button
         type="button"
         onClick={handleRemove}
-        disabled={!selection || !onProjectChange}
+        disabled={!selection || !onProjectChange || selectionLocked}
         className="icon-btn-danger"
         aria-label="Remove clip"
-        title="Remove clip"
+        title={selectionLocked ? 'This lane is locked — unlock it to edit' : 'Remove clip'}
       >
         <Trash2 size={14} />
       </button>
@@ -569,7 +895,7 @@ export function VisualTimelineCanvas({ project, onProjectChange, onRequestVeoBro
             )}
           </div>
           <div className="flex gap-2">
-            <Button variant="secondary" className="text-xs px-3 py-1.5" onClick={handleSplit} disabled={!selection || !onProjectChange || selection.clip.durationSec < 1}>
+            <Button variant="secondary" className="text-xs px-3 py-1.5" onClick={handleSplit} disabled={!selection || !onProjectChange || selectionLocked || selection.clip.durationSec < 1}>
               <Scissors size={14} className="mr-1.5" /> Split clip
             </Button>
             <Button variant="ghost" className="text-xs px-3 py-1.5" onClick={handleRemove} disabled={!selection || !onProjectChange}>

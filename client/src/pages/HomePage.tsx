@@ -209,14 +209,14 @@ function AutoPublishCard() {
             <div className="relative">
                 <div className="flex items-center gap-2.5">
                     <div className="flex h-[42px] w-[42px] items-center justify-center rounded-[13px] border" style={{ borderColor: renderOnly ? 'rgba(111,207,151,0.3)' : 'rgba(230,201,138,0.3)', background: renderOnly ? 'rgba(111,207,151,0.12)' : 'rgba(230,201,138,0.12)' }}>
-                        <Rocket size={22} className={renderOnly ? 'text-bf-success' : 'text-[#f0d49a]'} />
+                        <Rocket size={22} className={renderOnly ? 'text-bf-success' : 'text-editor-accent'} />
                     </div>
                     <div className="font-semibold text-[17px] text-bf-cream">
                         {renderOnly ? 'Generate a fresh video' : 'Auto-Publish a fresh post'}
                     </div>
                 </div>
 
-                <p className="mt-3 text-[12px] leading-relaxed text-[#c0b49c]">
+                <p className="mt-3 text-[12px] leading-relaxed text-content-secondary">
                     {renderOnly
                         ? 'One click chains: script → background → voice → render. Ready to download or share manually.'
                         : <>One click chains: <span className="text-bf-gold">script → background → voice → render → TikTok / YouTube.</span></>}
@@ -420,7 +420,7 @@ export function HomePage() {
                         {workflow.map((w, i) => (
                             <Link key={w.to} to={w.to} className="group flex items-center gap-3 rounded-xl px-2 py-2.5 transition-colors hover:bg-[rgba(216,184,120,0.05)]">
                                 <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full border border-[rgba(216,184,120,0.24)] bg-[rgba(216,184,120,0.10)] text-[11px] font-semibold text-bf-goldDeep tabular-nums">{i + 1}</div>
-                                <div className="flex-1 text-[13px] font-medium text-[#d8cdb6]">{w.text}</div>
+                                <div className="flex-1 text-[13px] font-medium text-editor-text">{w.text}</div>
                                 <ChevronRight size={18} className="text-bf-faint transition-transform group-hover:translate-x-0.5" />
                             </Link>
                         ))}
@@ -567,7 +567,7 @@ export function HomePage() {
                                             {showPasswordConfirm ? <EyeOff size={16} /> : <Eye size={16} />}
                                         </button>
                                     </div>
-                                    <Button type="submit" className="mt-1 h-11 w-full border-none bg-gradient-to-b from-[#e9cd8d] to-[#cba85f] text-[#221703] font-semibold shadow-[0_12px_26px_-8px_rgba(216,184,120,0.5)] hover:brightness-[1.03]" isLoading={isLoading}>
+                                    <Button type="submit" className="mt-1 h-11 w-full border-none bg-gradient-to-b from-[#e9cd8d] to-[#cba85f] text-accent-ink font-semibold shadow-[0_12px_26px_-8px_rgba(216,184,120,0.5)] hover:brightness-[1.03]" isLoading={isLoading}>
                                         Create account
                                     </Button>
                                     <Button
@@ -634,7 +634,7 @@ export function HomePage() {
                                     >
                                         Forgot password?
                                     </button>
-                                    <Button type="submit" className="h-11 w-full border-none bg-gradient-to-b from-[#e9cd8d] to-[#cba85f] text-[#221703] font-semibold shadow-[0_12px_26px_-8px_rgba(216,184,120,0.5)] hover:brightness-[1.03]" isLoading={isLoading}>
+                                    <Button type="submit" className="h-11 w-full border-none bg-gradient-to-b from-[#e9cd8d] to-[#cba85f] text-accent-ink font-semibold shadow-[0_12px_26px_-8px_rgba(216,184,120,0.5)] hover:brightness-[1.03]" isLoading={isLoading}>
                                         Sign in
                                     </Button>
                                     <Button
@@ -666,7 +666,7 @@ export function HomePage() {
                                         required
                                         className="h-11 rounded-xl border-[rgba(216,184,120,0.14)] bg-bf-input text-bf-cream placeholder:text-bf-muted"
                                     />
-                                    <Button type="submit" className="h-11 w-full border-none bg-gradient-to-b from-[#e9cd8d] to-[#cba85f] text-[#221703] font-semibold shadow-[0_12px_26px_-8px_rgba(216,184,120,0.5)] hover:brightness-[1.03]" isLoading={isLoading}>
+                                    <Button type="submit" className="h-11 w-full border-none bg-gradient-to-b from-[#e9cd8d] to-[#cba85f] text-accent-ink font-semibold shadow-[0_12px_26px_-8px_rgba(216,184,120,0.5)] hover:brightness-[1.03]" isLoading={isLoading}>
                                         <Mail size={16} className="mr-2" />
                                         Send reset link
                                     </Button>

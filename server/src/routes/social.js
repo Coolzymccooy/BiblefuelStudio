@@ -8,7 +8,10 @@ import { google } from "googleapis";
 import jwt from "jsonwebtoken";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
-import { buildZernioPost, isTikTokCapacityError } from "../lib/zernioPayload.js";
+import { buildZernioPost } from "../lib/zernioPayload.js";
+// readTikTokOutcome replaced this branch's isTikTokCapacityError: the capacity
+// check now reads attempt.outcome.atCapacity rather than sniffing the message.
+import { readTikTokOutcome } from "../lib/zernioStatus.js";
 import { readSocialStore, writeSocialStore } from "../lib/socialStore.js";
 import { scheduleOwnerCtx, listScheduleSources } from "../lib/social/scheduleSources.js";
 import { validateYoutubeMetadata, buildYoutubeDescription } from "../lib/social/youtubeMetadata.js";
@@ -190,30 +193,54 @@ async function publishToZernioTikTok({ caption, videoUrl, title }) {
       },
       body: JSON.stringify(buildZernioPost({ caption, title, videoUrl, accountId, draft })),
     });
-    return { resp, text: await resp.text() };
+    const text = await resp.text();
+    let body = null;
+    try { body = JSON.parse(text); } catch {}
+    // The outcome lives in the BODY, not the status line. Zernio returns 207
+    // (a 2xx!) for a post TikTok rejected, so branching on resp.ok reports a
+    // lost video as a success - which is exactly what happened for nine days.
+    return { resp, text, body, outcome: readTikTokOutcome(resp.status, body) };
   };
 
-  let { resp, text } = await send(false);
+  let attempt = await send(false);
 
-  // TikTok's direct-posting API is rate limited at TikTok's end. When it is
-  // saturated Zernio answers "TikTok direct posting is at capacity right now.
-  // Use tiktokSettings.draft: true to deliver via Creator Inbox". Retrying the
-  // same way just fails again - the operator lost six posts over three days to
-  // exactly this. Falling back to draft delivery puts the video in the TikTok
-  // Creator Inbox, where it is one tap from posting, instead of losing it.
+  // TikTok caps how many distinct accounts can direct-post through Zernio's
+  // developer app per rolling 24h, shared across every Zernio customer on that
+  // lane - so this fires through no fault of the account or the media. Drafts
+  // are exempt from that cap, so falling back to Creator Inbox delivery keeps
+  // the video instead of losing it: it lands in the TikTok app, one tap from
+  // posting. (The permanent fix is reconnecting the account to TikTok's
+  // Business app, which is exempt entirely.)
   let deliveredAsDraft = false;
-  if (!resp.ok && isTikTokCapacityError(text)) {
+  if (!attempt.outcome.ok && attempt.outcome.atCapacity) {
     console.warn("[SOCIAL] TikTok direct posting at capacity — retrying as a Creator Inbox draft");
-    ({ resp, text } = await send(true));
-    deliveredAsDraft = resp.ok;
+    const draftAttempt = await send(true);
+    if (draftAttempt.outcome.ok) {
+      attempt = draftAttempt;
+      deliveredAsDraft = true;
+    } else {
+      // Both routes failed. Keep BOTH reasons: the draft error is the more
+      // actionable one (e.g. the 5-pending-drafts cap), but losing the
+      // capacity error hides why the fallback was attempted at all.
+      const capacityReason = attempt.outcome.error;
+      attempt = draftAttempt;
+      attempt.outcome = {
+        ...draftAttempt.outcome,
+        error: `Creator Inbox draft also failed: ${draftAttempt.outcome.error} (direct posting was blocked: ${capacityReason})`,
+      };
+    }
   }
 
-  if (!resp.ok) {
-    throw new Error(`Zernio publish failed: ${resp.status} ${text.slice(0, 500)}`);
+  if (!attempt.outcome.ok) {
+    throw new Error(`Zernio publish failed: ${attempt.resp.status} ${attempt.outcome.error || attempt.text.slice(0, 500)}`);
   }
-  let data = null;
-  try { data = JSON.parse(text); } catch {}
-  return { ok: true, data, deliveredAsDraft };
+
+  return {
+    ok: true,
+    data: attempt.body,
+    deliveredAsDraft: deliveredAsDraft || attempt.outcome.isDraft === true,
+    postId: attempt.outcome.postId,
+  };
 }
 
 // Webhook delivery timeout. The webhook itself should ACCEPT the payload

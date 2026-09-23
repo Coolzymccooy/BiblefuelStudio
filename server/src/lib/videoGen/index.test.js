@@ -104,6 +104,21 @@ describe('videoGen orchestrator — generateTimelineVideo', () => {
       durationSec: 8,
       fetchImpl: async (url, init = {}) => {
         calls.push({ url, init });
+        // Model discovery: the provider asks which veo models this key can
+        // drive rather than trusting a hardcoded id that goes stale.
+        if (String(url).includes('/models?')) {
+          return {
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({
+              models: [
+                { name: 'models/veo-3.1-lite-generate-preview', supportedGenerationMethods: ['predictLongRunning'] },
+                { name: 'models/veo-3.1-generate-preview', supportedGenerationMethods: ['predictLongRunning'] },
+                { name: 'models/gemini-3.6-flash', supportedGenerationMethods: ['generateContent'] },
+              ],
+            }),
+          };
+        }
         if (String(url).includes(':predictLongRunning')) {
           return { ok: true, status: 200, text: async () => JSON.stringify({ name: 'operations/veo-123' }) };
         }
@@ -119,8 +134,18 @@ describe('videoGen orchestrator — generateTimelineVideo', () => {
       r2Config: { configured: false },
     });
 
-    assert.match(calls[0].url, /models\/veo-3\.0-generate-preview%3ApredictLongRunning|models\/veo-3\.0-generate-preview:predictLongRunning/);
-    assert.match(calls[1].url, /operations\/veo-123/);
+    // Discovery first, then generate against a model the key ACTUALLY has.
+    // This used to pin veo-3.0-generate-preview, which Google stopped serving:
+    // every real request died on "model ... is not found for API version
+    // v1beta" while /status still reported enabled:true. Pinning the id in a
+    // test only made the stale value look correct.
+    assert.match(calls[0].url, /\/models\?/);
+    assert.match(calls[1].url, /models\/veo-3\.1-generate-preview(%3A|:)predictLongRunning/);
+    // The full model wins over fast/lite when nobody pinned VEO_MODEL.
+    assert.ok(!/lite/.test(calls[1].url));
+    assert.match(calls[2].url, /operations\/veo-123/);
+    // Veo 3.1 rejects 'allow_adult' and 'dont_allow' outright.
+    assert.equal(JSON.parse(calls[1].init.body).parameters.personGeneration, 'allow_all');
     assert.equal(result.ok, true);
     assert.equal(result.provider, 'veo');
     assert.equal(result.publicUrl, 'https://download.example.test/veo.mp4');

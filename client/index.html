@@ -17,8 +17,17 @@
     rel="stylesheet">
 </head>
 
-<body
-  class="bg-dark-950 text-gray-100 font-sans antialiased overflow-x-hidden selection:bg-primary-600 selection:text-black">
+<!--
+  No bg-/text- utilities here. `bg-dark-950` and `text-gray-100` were
+  hardcoded theme-blind values, and because a utility class outranks the
+  themed `body` rule in index.css, they painted EVERY theme with the dark
+  theme's ground (#080604) and ink. Calm in particular rendered as dark no
+  matter what its own tokens said. The ground and ink now come from
+  `body { background-color: var(--bf-bg); color: ... }`, which each theme
+  redefines.
+-->
+
+<body class="font-sans antialiased overflow-x-hidden selection:bg-primary-600 selection:text-black">
   <div id="root"></div>
   <script type="module" src="/src/main.tsx"></script>
 </body>

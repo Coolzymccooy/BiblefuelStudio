@@ -412,7 +412,7 @@ export function AdminPage() {
                                                     )}
                                                     <span>{new Date(issue.createdAt).toLocaleString()}</span>
                                                     {issue.resolvedAt && (
-                                                        <span className="text-[#7fb5aa]/80">
+                                                        <span className="text-tone-success/80">
                                                             resolved {new Date(issue.resolvedAt).toLocaleString()} by {issue.resolvedBy}
                                                         </span>
                                                     )}
@@ -431,7 +431,7 @@ export function AdminPage() {
                                                     </div>
                                                 )}
                                                 {issue.resolutionNote && (
-                                                    <div className="mt-2 text-xs text-[#7fb5aa]/80 italic">
+                                                    <div className="mt-2 text-xs text-tone-success/80 italic">
                                                         Note: {issue.resolutionNote}
                                                     </div>
                                                 )}
@@ -542,7 +542,7 @@ export function AdminPage() {
                                                 </div>
                                                 <div className="flex items-center gap-3 mt-1 text-[0.75rem] text-content-tertiary">
                                                     {u.emailVerified ? (
-                                                        <span className="flex items-center gap-1 text-[#7fb5aa]/80">
+                                                        <span className="flex items-center gap-1 text-tone-success/80">
                                                             <CheckCircle2 size={11} /> verified
                                                         </span>
                                                     ) : (

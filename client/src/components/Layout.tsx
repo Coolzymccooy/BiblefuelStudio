@@ -215,8 +215,8 @@ export function Layout() {
                         const inner = (
                             <div className="relative flex flex-col items-center gap-1 flex-1 pt-2.5 pb-2">
                                 <span className={`absolute top-0 h-[3px] w-5 rounded-full transition-opacity ${tab.active ? 'bg-bf-gold opacity-100' : 'opacity-0'}`} />
-                                <Icon size={21} className={tab.active ? 'text-bf-gold' : 'text-[#776e5b]'} strokeWidth={tab.active ? 2.2 : 1.9} />
-                                <span className={`text-[10px] font-medium tracking-wide ${tab.active ? 'text-bf-gold' : 'text-[#776e5b]'}`}>{tab.label}</span>
+                                <Icon size={21} className={tab.active ? 'text-bf-gold' : 'text-content-tertiary'} strokeWidth={tab.active ? 2.2 : 1.9} />
+                                <span className={`text-[10px] font-medium tracking-wide ${tab.active ? 'text-bf-gold' : 'text-content-tertiary'}`}>{tab.label}</span>
                             </div>
                         );
                         return tab.to
