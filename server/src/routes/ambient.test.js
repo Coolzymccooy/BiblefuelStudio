@@ -7,7 +7,7 @@ import os from "os";
 import path from "path";
 
 import ambientRouter, {
-  AMBIENT_STATUS, unclearedTracks,
+  AMBIENT_STATUS, unclearedTracks, assembleBed,
   _setLookupImpl, _resetLookupImpl,
   _setSynthImpl, _resetSynthImpl,
   _setProbeImpl, _resetProbeImpl,
@@ -486,5 +486,108 @@ describe("POST /api/ambient/:id/cancel", () => {
 
   test("404s an unknown project", async () => {
     assert.equal((await request(app).post("/api/ambient/nope/cancel").send({})).status, 404);
+  });
+});
+
+// What ffmpeg reads is decided by the server. Every path below reaches
+// `-i <path>` at render time, so a client-chosen value is a server-side
+// request (http:, hls:) or another tenant's file mixed into your video.
+describe("security: the client never chooses what ffmpeg reads", () => {
+  test("a new drop cannot arrive pre-voiced with its own audio, text or status", async () => {
+    const p = await createSession({ targetSec: 600 });
+    const res = await request(app).patch(`/api/ambient/${p.projectId}/drops`).send({
+      drops: [{
+        reference: "John 3:16", atMs: 60_000, status: "done",
+        audioPath: "http://169.254.169.254/latest/meta-data/",
+        text: "words that are not scripture", durationMs: 5000, error: "x",
+      }],
+    });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    const [d] = readProject(dataDir, p.projectId).drops;
+    assert.equal(d.audioPath, null);
+    assert.equal(d.status, "pending", "voicing must still run, and fetch the words verbatim");
+    assert.equal(d.text, null, "scripture text only ever comes from the Bible lookup");
+    assert.equal(d.durationMs, null);
+  });
+
+  test("an existing drop keeps the server's audio when the client sends its own", async () => {
+    const p = await createSession({ targetSec: 600 });
+    const voiced = {
+      id: "d1", reference: "John 3:16", atMs: 60_000, translation: "kjv", status: "done",
+      text: "For God so loved the world", audioPath: path.join(outputDir, "voice-real.mp3"), durationMs: 4000,
+    };
+    writeProject(dataDir, { ...readProject(dataDir, p.projectId), drops: [voiced] });
+
+    const res = await request(app).patch(`/api/ambient/${p.projectId}/drops`).send({
+      drops: [{ id: "d1", reference: "John 3:16", atMs: 90_000, audioPath: "/etc/passwd", text: "forged", status: "done" }],
+    });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    const [d] = readProject(dataDir, p.projectId).drops;
+    assert.equal(d.audioPath, voiced.audioPath);
+    assert.equal(d.text, voiced.text);
+    assert.equal(d.atMs, 90_000, "the retime itself still applies");
+  });
+
+  test("a drop edit that omits the time keeps the time it had", async () => {
+    const p = await createSession({ targetSec: 600 });
+    writeProject(dataDir, { ...readProject(dataDir, p.projectId), drops: [
+      { id: "d1", reference: "John 3:16", atMs: 60_000, translation: "kjv", status: "pending", text: null, audioPath: null },
+    ] });
+    await request(app).patch(`/api/ambient/${p.projectId}/drops`).send({ drops: [{ id: "d1", reference: "John 3:16" }] });
+    assert.equal(readProject(dataDir, p.projectId).drops[0].atMs, 60_000);
+  });
+
+  test("a bed file outside your own outputs is refused", async () => {
+    const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), "amb-victim-"));
+    try {
+      const victim = path.join(elsewhere, "their-song.mp3");
+      fs.writeFileSync(victim, "x");
+      const p = await createSession({ targetSec: 600 });
+      const res = await request(app).patch(`/api/ambient/${p.projectId}/bed`).send({ mode: "file", filePath: victim });
+      assert.equal(res.status, 400);
+      assert.equal(readProject(dataDir, p.projectId).bed.filePath, null);
+    } finally {
+      fs.rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
+  test("a bed track that is a bare path outside your outputs is refused", async () => {
+    const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), "amb-victim-"));
+    try {
+      const victim = path.join(elsewhere, "their-song.mp3");
+      fs.writeFileSync(victim, "x");
+      const p = await createSession({ targetSec: 600 });
+      const res = await request(app).patch(`/api/ambient/${p.projectId}/bed`).send({ trackRefs: [victim] });
+      assert.equal(res.status, 400);
+    } finally {
+      fs.rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
+  test("your own uploaded mix is still accepted", async () => {
+    const mine = path.join(outputDir, "user-audio-mine.mp3");
+    fs.writeFileSync(mine, "x");
+    const p = await createSession({ targetSec: 600 });
+    const res = await request(app).patch(`/api/ambient/${p.projectId}/bed`).send({ mode: "file", filePath: mine });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.project.bed.filePath, mine);
+  });
+
+  test("a bed path stored before this check is still refused at render time", async () => {
+    // Defence in depth: a project saved before the route checked must not
+    // reach ffmpeg either.
+    const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), "amb-victim-"));
+    try {
+      const victim = path.join(elsewhere, "their-song.mp3");
+      fs.writeFileSync(victim, "x");
+      const p = await createSession({ targetSec: 600 });
+      const stored = writeProject(dataDir, {
+        ...readProject(dataDir, p.projectId),
+        bed: { ...p.bed, mode: "file", filePath: victim },
+      });
+      await assert.rejects(assembleBed({ dataDir, outputDir }, stored), /bed file is missing/);
+    } finally {
+      fs.rmSync(elsewhere, { recursive: true, force: true });
+    }
   });
 });

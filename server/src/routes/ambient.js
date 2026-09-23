@@ -18,6 +18,7 @@ import { synthesize } from "../lib/voice/index.js";
 import { probeAudioDurationSec } from "../lib/story/storyRender.js";
 import { generateBibleImage } from "../lib/imageGen/index.js";
 import { findReusableImages, markUsed, registerImage, pruneLibrary } from "../lib/imageGen/imageLibrary.js";
+import { insideOutputs } from "../lib/ambient/ownFiles.js";
 import { resolveLibraryTrack } from "../lib/musicLibrary.js";
 import { resolveTenantTrack, readMusicLibrary } from "../lib/musicLibraryStore.js";
 import {
@@ -176,16 +177,18 @@ export function unclearedTracks(dataDir, trackRefs) {
 }
 
 /** Resolve a bed track ref to a real file, or null. */
-function resolveTrackFile(dataDir, ref) {
+function resolveTrackFile(ctx, ref) {
   const raw = String(ref || "").trim();
   if (!raw) return null;
-  const resolved = resolveLibraryTrack(raw) || resolveTenantTrack(dataDir, raw);
+  const resolved = resolveLibraryTrack(raw) || resolveTenantTrack(ctx.dataDir, raw);
   if (resolved) return resolved;
-  // A bare absolute path is pre-library back-compat (see MusicPicker); a ref
-  // that failed to resolve is a forgotten track and must NOT be handed to
-  // ffmpeg as a literal "-i mylib:<uuid>".
+  // A ref that failed to resolve is a forgotten track and must NOT be handed
+  // to ffmpeg as a literal "-i mylib:<uuid>".
   if (/^(library|mylib):/.test(raw)) return null;
-  return fs.existsSync(raw) ? raw : null;
+  // A bare path is pre-library back-compat for YOUR OWN upload (see
+  // MusicPicker) and nothing else: any other path is another tenant's file or
+  // the server's, straight into ffmpeg's -i.
+  return insideOutputs(ctx.outputDir, raw);
 }
 
 function spawnFfmpeg(args) {
@@ -356,7 +359,7 @@ export async function assembleBed(ctx, project) {
   const bed = project.bed || {};
 
   if (bed.mode === "file") {
-    const file = resolveTrackFile(ctx.dataDir, bed.filePath);
+    const file = resolveTrackFile(ctx, bed.filePath);
     if (!file) throw new Error("the uploaded bed file is missing");
     return { bedPath: file, project };
   }
@@ -371,7 +374,7 @@ export async function assembleBed(ctx, project) {
 
   const tracks = [];
   for (const ref of refs) {
-    const file = resolveTrackFile(ctx.dataDir, ref);
+    const file = resolveTrackFile(ctx, ref);
     if (!file) continue; // a forgotten track thins the pool; it must not kill the render
     const durationSec = await _probeFn(file);
     if (Number(durationSec) > 0) tracks.push({ ref, file, durationSec: Number(durationSec) });
@@ -599,8 +602,16 @@ router.patch("/:id/drops", (req, res) => {
   }
   try {
     const byId = new Map((project.drops || []).map((d) => [d.id, d]));
-    const merged = req.body.drops.map((incoming) => {
-      const prev = byId.get(incoming?.id);
+    // Only these four come from the client. audioPath reaches ffmpeg's -i and
+    // text is burned in as scripture: both are the server's to fill, from the
+    // verbatim lookup and the synthesiser, never from a request body.
+    const merged = req.body.drops.map((raw) => {
+      const incoming = Object.fromEntries(
+        ["id", "atMs", "reference", "translation"]
+          .filter((k) => raw?.[k] !== undefined && raw?.[k] !== null)
+          .map((k) => [k, raw[k]]),
+      );
+      const prev = byId.get(incoming.id);
       if (!prev) return incoming;
       // A changed reference invalidates the audio: keeping it would speak the
       // OLD verse at the new citation's time, which is worse than no audio.
@@ -652,6 +663,16 @@ router.patch("/:id/bed", (req, res) => {
     if (body.mode === "assemble" || body.mode === "file") bed.mode = body.mode;
     if (Array.isArray(body.trackRefs)) bed.trackRefs = body.trackRefs.map((r) => String(r)).filter(Boolean);
     if (body.filePath !== undefined) bed.filePath = body.filePath ? String(body.filePath) : null;
+    // Refuse, rather than store, a path that is not yours: stored, it would
+    // only fail at render time, or worse, succeed.
+    const ctxDirs = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir };
+    const bareRefs = [
+      ...(Array.isArray(body.trackRefs) ? bed.trackRefs : []),
+      ...(body.filePath ? [bed.filePath] : []),
+    ].filter((r) => !/^(library|mylib):/.test(r));
+    if (bareRefs.some((r) => !resolveTrackFile(ctxDirs, r))) {
+      return res.status(400).json({ ok: false, error: "that audio file was not found in your uploads — upload it again" });
+    }
     if (Number.isFinite(Number(body.volume))) bed.volume = Math.min(2, Math.max(0, Number(body.volume)));
     if (Number.isFinite(Number(body.crossfadeSec))) bed.crossfadeSec = Math.min(30, Math.max(0, Number(body.crossfadeSec)));
 
