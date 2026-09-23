@@ -1152,12 +1152,13 @@ export async function youtubeOauthCallback(req, res) {
 
   const userId = String(decoded.sub);
 
-  // We need the user's dataDir to write their social.json. The userScope
-  // middleware normally derives this from req.user.sub, but here there's
-  // no JWT on the request — so we call the path helpers directly with
-  // the recovered userId.
-  const { dataDirFor } = await import("../lib/paths.js");
-  const dataDir = dataDirFor({ sub: userId, email: decoded.email });
+  // We need the user's dataDir to write their social.json. withUserScope
+  // normally does this from req.user, but there's no JWT on this request —
+  // so we call the SAME resolver it uses, with the identity recovered from
+  // the signed state. Never re-derive the rules here: the two must agree or
+  // the token is written where nothing reads it.
+  const { resolveScopeDirs } = await import("../lib/paths.js");
+  const { dataDir } = resolveScopeDirs({ sub: userId, email: decoded.email });
 
   let tokens;
   try {

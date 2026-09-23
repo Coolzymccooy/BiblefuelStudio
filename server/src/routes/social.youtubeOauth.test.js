@@ -43,7 +43,7 @@ process.env.YOUTUBE_CLIENT_ID = "test-client-id";
 process.env.YOUTUBE_CLIENT_SECRET = "test-client-secret";
 process.env.PUBLIC_BASE_URL = "https://example.test";
 
-const { dataDirFor } = await import("../lib/paths.js");
+const { dataDirFor, resolveScopeDirs } = await import("../lib/paths.js");
 const { withUserScope } = await import("../middleware/userScope.js");
 const socialRouter = (await import("./social.js")).default;
 
@@ -109,5 +109,31 @@ describe("YouTube OAuth callback / status agree on the user's data directory", (
     // the same per-user directory whether or not the email is present.
     const expected = await authedDataDir({ sub: "regular-1", email: "someone@example.com" });
     assert.equal(dataDirFor({ sub: "regular-1", email: undefined }), expected);
+  });
+
+  test("single-tenant mode keeps the two paths together for EVERY user", async () => {
+    // MULTITENANT=false routes everyone to DATA_DIR in withUserScope. A
+    // callback that resolved paths without knowing that flag would send every
+    // user's token to DATA_DIR/users/<sub> — the same defect as above, but
+    // for the whole user base rather than just the admin.
+    const prev = process.env.MULTITENANT;
+    process.env.MULTITENANT = "false";
+    try {
+      const expected = await authedDataDir({ sub: "regular-2", email: "nobody@example.com" });
+      const viaResolver = resolveScopeDirs({ sub: "regular-2", email: "nobody@example.com" }).dataDir;
+      assert.equal(viaResolver, expected, "the resolver must honour the tenancy flag too");
+    } finally {
+      if (prev === undefined) delete process.env.MULTITENANT; else process.env.MULTITENANT = prev;
+    }
+  });
+
+  test("the resolver matches withUserScope for an admin and a regular user alike", async () => {
+    for (const user of [
+      { sub: ADMIN_SUB, email: ADMIN_EMAIL },
+      { sub: "regular-3", email: "third@example.com" },
+    ]) {
+      const expected = await authedDataDir(user);
+      assert.equal(resolveScopeDirs(user).dataDir, expected, `mismatch for ${user.sub}`);
+    }
   });
 });
