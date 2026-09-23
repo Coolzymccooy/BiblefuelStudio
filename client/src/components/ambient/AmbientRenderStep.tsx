@@ -5,7 +5,9 @@ import { ambientApi } from '../../lib/ambientApi';
 import type { AmbientProject } from '../../lib/ambientTypes';
 import { RenderProgressOverlay } from '../RenderProgressOverlay';
 import { formatLength, renderEstimateMinutes } from '../../lib/ambientLength';
-import { primaryBtnCls, secondaryBtnCls } from '../story/formStyles';
+import { panelCls, primaryBtnCls, secondaryBtnCls } from '../story/formStyles';
+import { YoutubePublishPanel } from '../share/YoutubePublishPanel';
+import { ambientChapters, ambientDescription, ambientThumbnails } from '../../lib/ambientShare';
 
 export interface AmbientRenderStepProps {
   project: AmbientProject;
@@ -82,6 +84,7 @@ export function AmbientRenderStep({ project, busy, setBusy, refresh }: AmbientRe
 }
 
 function AmbientDonePanel({ project }: { project: AmbientProject }) {
+  const chapters = ambientChapters(project);
   const token = api.getToken();
   const base = `${api.mediaBaseUrl}/outputs/ambient/${project.projectId}/video.mp4`;
   const url = token ? `${base}?token=${encodeURIComponent(token)}` : base;
@@ -91,6 +94,18 @@ function AmbientDonePanel({ project }: { project: AmbientProject }) {
       <button onClick={() => api.downloadMedia(base, 'ambient-video.mp4')} className={primaryBtnCls}>
         <Download size={16} /> Download MP4
       </button>
+      {/* The same direct uploader Story Video uses (not Postiz). It starts
+          Private: nothing goes public without the operator choosing it. */}
+      <div className={panelCls}>
+        <div className="bf-eyebrow mb-1">Share</div>
+        <h3 className="section-title mb-3">Publish to YouTube</h3>
+        <YoutubePublishPanel
+          videoUrl={`/outputs/ambient/${project.projectId}/video.mp4`}
+          initial={{ title: project.title, description: ambientDescription(project) }}
+          thumbnailOptions={ambientThumbnails(project)}
+          chapters={chapters.length >= 3 ? chapters : undefined}
+        />
+      </div>
     </div>
   );
 }
