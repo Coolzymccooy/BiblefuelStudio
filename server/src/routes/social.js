@@ -1031,9 +1031,17 @@ router.get("/youtube/connect", (req, res) => {
   // Sign userId into the OAuth `state` param so the callback can recover
   // which user is connecting WITHOUT trusting query params blindly.
   // 10-minute TTL — plenty for a user clicking through Google's consent.
+  //
+  // The email travels too, and it is NOT decoration: dataDirFor() routes a
+  // super-admin to DATA_DIR and everyone else to DATA_DIR/users/<sub>, and
+  // isSuperAdmin identifies the admin by SUPER_ADMIN_EMAIL. Omitting it made
+  // the callback resolve the per-user directory while every authenticated
+  // request resolved the admin one, so the refresh token was written to a
+  // file /youtube/status never reads — consent succeeded, the exchange
+  // succeeded, and the UI still said "Not connected" with no error anywhere.
   const secret = process.env.JWT_SECRET || "dev_secret_change_me";
   const state = jwt.sign(
-    { sub: req.ctx.userId, purpose: "yt_oauth_connect" },
+    { sub: req.ctx.userId, email: req.ctx.email || "", purpose: "yt_oauth_connect" },
     secret,
     { expiresIn: YOUTUBE_OAUTH_STATE_TTL },
   );
