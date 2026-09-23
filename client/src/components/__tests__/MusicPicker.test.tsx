@@ -38,6 +38,26 @@ beforeEach(() => {
   vi.spyOn(api, 'fetchMusicLibrary').mockResolvedValue(TRACKS as any);
 });
 
+describe('MusicPicker on a phone', () => {
+  // The button opens the hidden <input>, not the drop zone. With only
+  // "audio/*" there, iOS has no file types to match files in the Files app
+  // against; listing them is what lets a downloaded .m4a/.caf be picked.
+  for (const multiple of [false, true]) {
+    it(`the ${multiple ? 'track list' : 'single'} upload input names the iPhone audio types`, async () => {
+      const { container } = renderWith(
+        <MusicPicker value={{ path: null, volume: 0.3, autoDuck: true }} onChange={vi.fn()} busy={false} multiple={multiple} />,
+      );
+      await screen.findAllByText(/upload/i);
+      const inputs = [...container.querySelectorAll('input[type="file"]')];
+      expect(inputs.length).toBeGreaterThan(0);
+      for (const input of inputs) {
+        const accept = input.getAttribute('accept') ?? '';
+        for (const ext of ['audio/*', '.mp3', '.m4a', '.wav', '.aiff', '.caf']) expect(accept).toContain(ext);
+      }
+    });
+  }
+});
+
 describe('MusicPicker', () => {
   it('"Use default audio" sets the default library ref', async () => {
     const onChange = vi.fn();
