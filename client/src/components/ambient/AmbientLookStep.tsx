@@ -2,8 +2,7 @@ import { useState } from 'react';
 import toast from 'react-hot-toast';
 import { ambientApi, isAmbientTransient } from '../../lib/ambientApi';
 import type { AmbientProject } from '../../lib/ambientTypes';
-import type { StoryCaptionSettings } from '../../lib/storyTypes';
-import { StoryCaptionsPanel } from '../story/StoryCaptionsPanel';
+import { AmbientCaptionsPanel, type AmbientScripturePatch } from './AmbientCaptionsPanel';
 import { panelCls, primaryBtnCls } from '../story/formStyles';
 import { AmbientMovementTile } from './AmbientMovementTile';
 import { AmbientLibraryPicker } from './AmbientLibraryPicker';
@@ -17,7 +16,7 @@ export interface AmbientLookStepProps {
 
 /**
  * One still per movement — generated, picked from your library, or your own
- * photo — plus the shared caption controls.
+ * photo — plus how the scripture shows on screen.
  */
 export function AmbientLookStep({ project, busy, setBusy, refresh }: AmbientLookStepProps) {
   const [pickingFor, setPickingFor] = useState<string | null>(null);
@@ -38,9 +37,9 @@ export function AmbientLookStep({ project, busy, setBusy, refresh }: AmbientLook
     }
   };
 
-  const onCaptionsChange = async (patch: StoryCaptionSettings) => {
+  const onCaptionsChange = async (patch: AmbientScripturePatch) => {
     try {
-      await ambientApi.setCaptions(project.projectId, patch);
+      await ambientApi.setScriptureDisplay(project.projectId, patch);
       refresh();
     } catch (e) {
       toast.error((e as Error).message || 'Failed to update captions');
@@ -85,7 +84,7 @@ export function AmbientLookStep({ project, busy, setBusy, refresh }: AmbientLook
         />
       )}
 
-      <StoryCaptionsPanel value={project} onChange={onCaptionsChange} busy={busy} />
+      <AmbientCaptionsPanel value={project} onChange={onCaptionsChange} busy={busy} />
     </div>
   );
 }

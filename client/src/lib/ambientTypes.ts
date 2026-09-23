@@ -45,6 +45,10 @@ export interface AmbientDrop {
 
 export type ImageStatus = 'pending' | 'generating' | 'done' | 'error';
 
+/** How long a verse stays on screen: while it is heard, or for its whole picture. */
+export type AmbientCaptionSpan = 'spoken' | 'section';
+export type AmbientCaptionPosition = 'lower' | 'centre';
+
 export interface AmbientMovement {
   id: string;
   startMs: number;
@@ -93,6 +97,9 @@ export interface AmbientProject extends StoryCaptionSettings {
   motion: 'drift' | 'still';
   /** Always present on a stored project; the rest of the caption settings are optional. */
   captionPreset: string;
+  /** How long a verse stays on screen. Absent on projects saved before the choice: renders as 'spoken'. */
+  captionSpan?: AmbientCaptionSpan;
+  captionPosition?: AmbientCaptionPosition;
   duck: AmbientDuck;
   render: AmbientRenderState;
   error: string | null;

@@ -162,8 +162,10 @@ describe('AmbientPage', () => {
     renderPage();
 
     await user.click(await screen.findByRole('button', { name: 'Look' }));
-    await user.selectOptions(await screen.findByRole('combobox', { name: 'Captions' }), 'on');
+    await user.click(await screen.findByRole('button', { name: 'Whole section' }));
 
-    await waitFor(() => expect(patchSpy).toHaveBeenCalledWith('/api/ambient/a1/captions', { captions: 'kinetic' }));
+    await waitFor(() => expect(patchSpy).toHaveBeenCalledWith(
+      '/api/ambient/a1/captions', { captions: 'static', captionSpan: 'section' },
+    ));
   });
 });

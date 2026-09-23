@@ -242,3 +242,72 @@ test("wrapText breaks long verses into readable lines", () => {
   assert.ok(lines.every((l) => l.length <= 30));
   assert.equal(lines.join(" ").split(/\s+/).length, 18, "no words lost in the wrap");
 });
+
+// "Whole section": a verse stays up for as long as its picture does, not
+// only for the ten seconds it is spoken. Otherwise a ten-minute session shows
+// ten seconds of scripture and nine minutes fifty of a bare image.
+const verse = (over = {}) => ({
+  atMs: 60_000, audioPath: "/d1.mp3", status: "done", reference: "Psalms 46:1-2", translation: "kjv",
+  text: "God is our refuge and strength, a very present help in trouble.", durationMs: 8000, ...over,
+});
+const windows = (filter) => [...filter.matchAll(/enable='between\(t,([\d.]+),([\d.]+)\)'/g)].map((m) => [Number(m[1]), Number(m[2])]);
+
+test("section span holds each verse for its whole movement", () => {
+  const dir = work();
+  const { filter } = buildAmbientFfmpegArgs(project({ captions: "static", captionSpan: "section" }), io(dir, {
+    drops: [verse({ atMs: 60_000 }), verse({ atMs: 420_000, reference: "Isaiah 26:3", audioPath: "/d2.mp3" })],
+  }));
+  const spans = new Set(windows(filter).map(([a, b]) => `${a}-${b}`));
+  assert.ok(spans.has("0-300"), `first verse spans the first movement: ${[...spans]}`);
+  assert.ok(spans.has("300-600"), `second verse spans the second movement: ${[...spans]}`);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("section span fades in and out rather than popping on and off", () => {
+  const dir = work();
+  const { filter } = buildAmbientFfmpegArgs(project({ captions: "static", captionSpan: "section" }), io(dir, {
+    drops: [verse()],
+  }));
+  assert.match(filter, /alpha='if\(lt\(t,1\.50\),\(t-0\.00\)\/1\.50,if\(gt\(t,298\.50\),\(300\.00-t\)\/1\.50,1\)\)'/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("section span names the verse beneath it, in the same window", () => {
+  const dir = work();
+  const { filter } = buildAmbientFfmpegArgs(project({ captions: "static", captionSpan: "section" }), io(dir, {
+    drops: [verse()],
+  }));
+  const texts = [...filter.matchAll(/textfile='([^']+)'/g)].map((m) => fs.readFileSync(m[1].replace(/\\:/g, ":"), "utf8"));
+  assert.ok(texts.includes("Psalms 46:1-2 · KJV"), `reference line missing: ${JSON.stringify(texts)}`);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("spoken span is unchanged: the verse shows only while it is heard", () => {
+  const dir = work();
+  const { filter } = buildAmbientFfmpegArgs(project({ captions: "static", captionSpan: "spoken" }), io(dir, {
+    drops: [verse()],
+  }));
+  assert.ok(windows(filter).every(([a, b]) => a === 60 && b === 68), JSON.stringify(windows(filter)));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("centre position sits the block in the middle of the frame", () => {
+  const dir = work();
+  const { filter } = buildAmbientFfmpegArgs(
+    project({ captions: "static", captionSpan: "section", captionPosition: "centre" }),
+    io(dir, { drops: [verse()] }),
+  );
+  const ys = [...filter.matchAll(/:y=(\d+):/g)].map((m) => Number(m[1]));
+  const mid = (Math.min(...ys) + Math.max(...ys)) / 2;
+  assert.ok(Math.abs(mid - 540) < 120, `block centred near 540, got ${Math.min(...ys)}..${Math.max(...ys)}`);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("captions off still draws nothing, whatever the span says", () => {
+  const dir = work();
+  const { filter } = buildAmbientFfmpegArgs(project({ captions: "none", captionSpan: "section" }), io(dir, {
+    drops: [verse()],
+  }));
+  assert.ok(!/drawtext/.test(filter));
+  fs.rmSync(dir, { recursive: true, force: true });
+});

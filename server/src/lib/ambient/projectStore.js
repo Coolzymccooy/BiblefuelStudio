@@ -70,9 +70,14 @@ export function createProject(baseDir, { title, theme, targetSec, aspect, transl
     motion: "still",
     // `captions` is the render MODE and is deliberately not part of
     // normaliseCaptionSettings (Story sets it alongside the spread too), so it
-    // has to be written here or ambientRender would read `undefined` and burn
-    // captions onto a format whose default is none.
-    captions: "none",
+    // has to be written here or ambientRender would read `undefined`.
+    //
+    // On, and held for each verse's whole section: shown only while spoken, a
+    // ten-minute session carried ten seconds of scripture and read as a bare
+    // image with music.
+    captions: "static",
+    captionSpan: "section",
+    captionPosition: "lower",
     ...normaliseCaptionSettings({}),
 
     duck: { ...DEFAULT_DUCK },

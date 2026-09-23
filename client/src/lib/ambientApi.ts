@@ -1,5 +1,6 @@
 import { api } from './api';
 import type { StoryCaptionSettings } from './storyTypes';
+import type { AmbientScripturePatch } from '../components/ambient/AmbientCaptionsPanel';
 import type {
   AmbientAspect, AmbientBedMode, AmbientDrop, AmbientProject, AmbientProjectSummary, AmbientStatus,
 } from './ambientTypes';
@@ -126,6 +127,11 @@ export const ambientApi = {
     const res = await api.get(`/api/ambient/${id}/library-images`);
     if (!res.ok) throw new Error(res.error || 'Failed to load your pictures');
     return (res.data?.images ?? []) as LibraryImage[];
+  },
+
+  // Scripture on screen: on/off, how long each verse stays, and where.
+  async setScriptureDisplay(id: string, patch: AmbientScripturePatch): Promise<AmbientProject> {
+    return unwrapProject(await api.patch(`/api/ambient/${id}/captions`, patch));
   },
 
   // Reuses normaliseCaptionSettings server-side: the server merges against

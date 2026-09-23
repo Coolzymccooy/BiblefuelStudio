@@ -76,7 +76,11 @@ describe("POST /api/ambient", () => {
     assert.equal(p.aspect, "landscape");
     assert.equal(p.targetSec, 7200);
     assert.equal(p.bed.mode, "assemble");
-    assert.equal(p.captions, "none");
+    // On and held for each verse's whole section: a music-first video with
+    // ten seconds of scripture in ten minutes read as a bare image.
+    assert.equal(p.captions, "static");
+    assert.equal(p.captionSpan, "section");
+    assert.equal(p.captionPosition, "lower");
     assert.equal(p.duck.threshold, 0.02, "sidechaincompress threshold is linear, not dB");
     assert.deepEqual(p.drops, []);
   });
@@ -593,6 +597,23 @@ describe("PATCH /api/ambient/:id/captions", () => {
     const p = await createSession();
     const res = await request(app).patch(`/api/ambient/${p.projectId}/captions`).send({ captions: "kinetic" });
     assert.equal(res.body.project.captions, "static");
+  });
+
+  test("span and position are stored, and a partial update keeps the other", async () => {
+    const p = await createSession();
+    await request(app).patch(`/api/ambient/${p.projectId}/captions`).send({ captionSpan: "spoken" });
+    const res = await request(app).patch(`/api/ambient/${p.projectId}/captions`).send({ captionPosition: "centre" });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.project.captionSpan, "spoken");
+    assert.equal(res.body.project.captionPosition, "centre");
+  });
+
+  test("an unknown span or position leaves the stored value alone", async () => {
+    const p = await createSession();
+    const res = await request(app).patch(`/api/ambient/${p.projectId}/captions`)
+      .send({ captionSpan: "forever", captionPosition: "sideways" });
+    assert.equal(res.body.project.captionSpan, "section");
+    assert.equal(res.body.project.captionPosition, "lower");
   });
 
   test("an unrecognised mode leaves the stored one alone", async () => {

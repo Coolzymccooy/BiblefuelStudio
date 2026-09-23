@@ -109,6 +109,8 @@ const TAIL_GUARD_MS = 60_000;
  * rejected: the operator's toggle still works, it just cannot animate.
  */
 const CAPTION_MODES = ["none", "static", "kinetic"];
+const CAPTION_SPANS = ["spoken", "section"];
+const CAPTION_POSITIONS = ["lower", "centre"];
 
 // Projects the operator asked to cancel. The detached stages check this between
 // units of work so a cancel lands promptly instead of after the last image.
@@ -794,7 +796,10 @@ router.patch("/:id/captions", (req, res) => {
     const mode = CAPTION_MODES.includes(requestedMode)
       ? (requestedMode === "none" ? "none" : "static")
       : project.captions;
-    const updated = writeProject(req.ctx.dataDir, { ...project, ...merged, captions: mode });
+    // Unknown values keep what is stored, for the same reason as the mode.
+    const captionSpan = CAPTION_SPANS.includes(body.captionSpan) ? body.captionSpan : project.captionSpan;
+    const captionPosition = CAPTION_POSITIONS.includes(body.captionPosition) ? body.captionPosition : project.captionPosition;
+    const updated = writeProject(req.ctx.dataDir, { ...project, ...merged, captions: mode, captionSpan, captionPosition });
     return res.json({ ok: true, project: updated });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
