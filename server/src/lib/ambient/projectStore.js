@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import { normaliseCaptionSettings } from "../story/projectStore.js";
+import { deriveMovements } from "./movements.js";
 
 /**
  * Ambient project persistence — one JSON file per project under
@@ -80,7 +81,10 @@ export function createProject(baseDir, { title, theme, targetSec, aspect, transl
     createdAt: now,
     updatedAt: now,
   };
-  return writeProject(baseDir, project);
+  // Derived now, not left as []: with no drops, deriveMovements still returns
+  // the one full-length movement the render needs, and an empty list read as
+  // "0 movements" and disabled Generate images on a brand-new session.
+  return writeProject(baseDir, { ...project, movements: deriveMovements(project) });
 }
 
 export function readProject(baseDir, projectId) {

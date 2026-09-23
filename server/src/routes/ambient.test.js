@@ -18,7 +18,7 @@ import ambientRouter, {
   _setQuotaImpl, _resetQuotaImpl,
   clearCancelled, isCancelled,
 } from "./ambient.js";
-import { readProject } from "../lib/ambient/projectStore.js";
+import { readProject, writeProject } from "../lib/ambient/projectStore.js";
 import { registerTrack } from "../lib/musicLibraryStore.js";
 
 let dataDir, outputDir, app;
@@ -79,6 +79,16 @@ describe("POST /api/ambient", () => {
     assert.equal(p.duck.threshold, 0.02, "sidechaincompress threshold is linear, not dB");
     assert.deepEqual(p.drops, []);
   });
+
+  test("a new session already has the one movement it needs, so Look can generate", async () => {
+    // Written as movements: [] the Look step read "0 movements" and disabled
+    // Generate images until something else happened to re-derive them.
+    const p = await createSession({ targetSec: 600 });
+    assert.equal(p.movements.length, 1);
+    assert.equal(p.movements[0].startMs, 0);
+    assert.equal(p.movements[0].endMs, 600_000);
+    assert.equal(readProject(dataDir, p.projectId).movements.length, 1, "persisted, not just returned");
+  });
 });
 
 describe("GET /api/ambient", () => {
@@ -120,6 +130,13 @@ describe("POST /api/ambient/:id/plan", () => {
     assert.equal(res.body.project.movements.length, drops.length);
     assert.equal(res.body.project.movements[0].startMs, 0);
     assert.equal(res.body.project.movements.at(-1).endMs, 3_600_000);
+  });
+
+  test("a ten-minute session gets a verse instead of 'too short'", async () => {
+    const p = await createSession({ targetSec: 600 });
+    const res = await request(app).post(`/api/ambient/${p.projectId}/plan`).send({});
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.deepEqual(res.body.project.drops.map((d) => d.atMs), [300_000]);
   });
 
   test("an explicit count is spread across the whole runtime, not crammed into the first hour", async () => {
@@ -352,7 +369,9 @@ describe("POST /api/ambient/:id/images", () => {
   });
 
   test("with no movements it is a 400", async () => {
+    // A fresh session has its one movement now, so strip it to reach the guard.
     const p = await createSession();
+    writeProject(dataDir, { ...readProject(dataDir, p.projectId), movements: [] });
     assert.equal((await request(app).post(`/api/ambient/${p.projectId}/images`).send({})).status, 400);
   });
 });
