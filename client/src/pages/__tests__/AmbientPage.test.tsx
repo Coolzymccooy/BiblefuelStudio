@@ -72,6 +72,18 @@ beforeEach(() => {
 });
 
 describe('AmbientPage', () => {
+  it('creates the session at the length picked from the presets', async () => {
+    const create = vi.spyOn(ambientApi, 'createProject').mockResolvedValue(mkProject({ targetSec: 3600 }));
+    vi.spyOn(ambientApi, 'getProject').mockResolvedValue(mkProject({ targetSec: 3600 }));
+    renderPage();
+    await userEvent.type(screen.getByLabelText(/title/i), 'Still Waters');
+    await userEvent.type(screen.getByLabelText(/theme/i), 'Rest');
+    await userEvent.click(screen.getByRole('button', { name: /1 hour/ }));
+    await userEvent.click(screen.getByRole('button', { name: /create project/i }));
+    await waitFor(() => expect(create).toHaveBeenCalled());
+    expect(create.mock.calls[0][2]).toBe(3600);
+  });
+
   it('shows the creation form when there is no active project', () => {
     renderPage();
     expect(screen.getByRole('heading', { name: /ambient/i })).toBeInTheDocument();

@@ -9,6 +9,7 @@ import { AmbientSoundStep } from '../components/ambient/AmbientSoundStep';
 import { AmbientWordStep } from '../components/ambient/AmbientWordStep';
 import { AmbientLookStep } from '../components/ambient/AmbientLookStep';
 import { AmbientRenderStep } from '../components/ambient/AmbientRenderStep';
+import { AmbientLengthField } from '../components/ambient/AmbientLengthField';
 import {
   fieldLabelCls, inputCls, primaryBtnCls, segmentCls, segmentedCls, statusRowCls,
 } from '../components/story/formStyles';
@@ -92,10 +93,7 @@ export function AmbientPage() {
             Theme
             <input value={theme} onChange={(e) => setTheme(e.target.value)} placeholder="Peace in the storm" className={inputCls} />
           </label>
-          <label className={fieldLabelCls}>
-            Target length (minutes)
-            <input type="number" min={1} value={minutes} onChange={(e) => setMinutes(e.target.value)} className={inputCls} />
-          </label>
+          <AmbientLengthField minutes={minutes} onChange={setMinutes} />
           <div>
             <div className={fieldLabelCls}>Aspect</div>
             <div className={segmentedCls} role="tablist" aria-label="Aspect">
