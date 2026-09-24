@@ -396,6 +396,42 @@ describe("PATCH /api/ambient/:id/bed", () => {
     assert.equal(bad.body.project.bed.order, "fixed");
   });
 
+  test("switching to fixed order dedupes an inherited shuffle play order", async () => {
+    // Shuffle expands trackRefs into a repeated play order (up to 400 refs);
+    // "Keep my order" must not adopt that expanded list as the operator's own.
+    const p = await createSession();
+    writeProject(dataDir, {
+      ...readProject(dataDir, p.projectId),
+      bed: { ...p.bed, order: "shuffle", trackRefs: ["a", "b", "a", "c", "b"] },
+    });
+    const res = await request(app).patch(`/api/ambient/${p.projectId}/bed`).send({ order: "fixed" });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.deepEqual(res.body.project.bed.trackRefs, ["a", "b", "c"]);
+  });
+
+  test("switching to fixed order with explicit trackRefs keeps them as sent, undeduped", async () => {
+    const p = await createSession();
+    writeProject(dataDir, {
+      ...readProject(dataDir, p.projectId),
+      bed: { ...p.bed, order: "shuffle", trackRefs: ["a", "b", "a", "c", "b"] },
+    });
+    const res = await request(app).patch(`/api/ambient/${p.projectId}/bed`)
+      .send({ order: "fixed", trackRefs: ["library:devotional", "library:devotional"] });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.deepEqual(res.body.project.bed.trackRefs, ["library:devotional", "library:devotional"]);
+  });
+
+  test("patching an already-fixed bed's other fields does not dedupe trackRefs", async () => {
+    const p = await createSession();
+    writeProject(dataDir, {
+      ...readProject(dataDir, p.projectId),
+      bed: { ...p.bed, order: "fixed", trackRefs: ["a", "b", "a"] },
+    });
+    const res = await request(app).patch(`/api/ambient/${p.projectId}/bed`).send({ order: "fixed", volume: 0.5 });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.deepEqual(res.body.project.bed.trackRefs, ["a", "b", "a"], "already fixed — nothing to dedupe from");
+  });
+
   test("changing the order drops the cached bed", async () => {
     const p = await createSession();
     writeProject(dataDir, { ...readProject(dataDir, p.projectId), bed: { ...p.bed, builtPath: "x", builtHash: "old" } });

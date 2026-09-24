@@ -296,7 +296,16 @@ router.patch("/:id/bed", (req, res) => {
     }
     if (Number.isFinite(Number(body.volume))) bed.volume = Math.min(2, Math.max(0, Number(body.volume)));
     if (Number.isFinite(Number(body.crossfadeSec))) bed.crossfadeSec = Math.min(30, Math.max(0, Number(body.crossfadeSec)));
+    const wasFixed = project.bed?.order === "fixed";
     if (body.order === "shuffle" || body.order === "fixed") bed.order = body.order;
+    // Shuffle stores the expanded play order (up to 400 refs, with repeats)
+    // into trackRefs. Switching to "fixed" without also sending trackRefs
+    // must not inherit that expanded list as if it were the operator's own
+    // arrangement — dedupe it down to the order tracks first appeared in.
+    if (body.order === "fixed" && !wasFixed && !Array.isArray(body.trackRefs)) {
+      const seen = new Set();
+      bed.trackRefs = bed.trackRefs.filter((r) => (seen.has(r) ? false : seen.add(r)));
+    }
 
     const allowUncleared = body.allowUncleared === true;
     if (!allowUncleared) {
