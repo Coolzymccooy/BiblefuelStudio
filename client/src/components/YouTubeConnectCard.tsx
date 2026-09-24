@@ -105,9 +105,15 @@ export function YouTubeConnectCard() {
         }
         setDisconnecting(true);
         try {
-            const res = await api.post('/api/social/youtube/disconnect');
+            const res = await api.post<{ revoked?: boolean }>('/api/social/youtube/disconnect');
             if (res.ok) {
-                toast.success('YouTube disconnected');
+                // Removed here either way; if Google couldn't be told, say how
+                // to finish it there.
+                if (res.data?.revoked === false) {
+                    toast.success('YouTube disconnected here. To remove access at Google too, visit myaccount.google.com/permissions.', { duration: 8000 });
+                } else {
+                    toast.success('YouTube disconnected');
+                }
                 await loadStatus();
             } else {
                 toast.error(res.error || 'Disconnect failed');

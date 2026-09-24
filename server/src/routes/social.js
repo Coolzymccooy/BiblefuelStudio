@@ -1057,9 +1057,26 @@ router.get("/youtube/connect", (req, res) => {
   res.json({ ok: true, authUrl });
 });
 
-router.post("/youtube/disconnect", (req, res) => {
+// Ends the grant at Google. A seam so tests don't call Google.
+let _revokeYoutubeToken = (token) => youtubeOauthClient().revokeToken(token);
+export function _setYoutubeRevokeImpl(impl) { _revokeYoutubeToken = impl; }
+export function _resetYoutubeRevokeImpl() { _revokeYoutubeToken = (token) => youtubeOauthClient().revokeToken(token); }
+
+// POST /youtube/disconnect — revoke at Google, then forget the token here.
+// Only blanking the local copy left the grant live at Google. Local removal
+// happens even if Google can't be reached; `revoked` says whether it was.
+router.post("/youtube/disconnect", async (req, res) => {
   const store = readSocialStore(req.ctx.dataDir);
   const yt = store.direct?.youtube || {};
+  let revoked = false;
+  if (yt.refreshToken) {
+    try {
+      await _revokeYoutubeToken(yt.refreshToken);
+      revoked = true;
+    } catch (e) {
+      console.warn("[YT] token revoke failed; removed locally only:", e?.message || e);
+    }
+  }
   const next = {
     ...store,
     direct: {
@@ -1074,7 +1091,7 @@ router.post("/youtube/disconnect", (req, res) => {
     },
   };
   writeSocialStore(req.ctx.dataDir, next);
-  res.json({ ok: true });
+  res.json({ ok: true, revoked });
 });
 
 /**
