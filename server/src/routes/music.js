@@ -185,7 +185,15 @@ router.post("/:id/instrumental", quota("render"), async (req, res) => {
     const workDir = path.resolve(req.ctx.outputDir, "stems-work", jobId);
     const quality = req.body?.quality === "fast" ? "fast" : "best";
     const job = createStemJob({
-      jobId, userId: req.ctx.userId, sourceRef: src.ref, sourcePreview: src.previewUrl, resultPath,
+      jobId,
+      userId: req.ctx.userId,
+      sourceRef: src.ref,
+      sourcePreview: src.previewUrl,
+      resultPath,
+      sourceLabel: src.label,
+      sourceMood: src.mood,
+      sourceLicence: src.licence,
+      sourceCredit: src.credit,
     });
 
     runExclusive(async () => {
@@ -196,8 +204,15 @@ router.post("/:id/instrumental", quota("render"), async (req, res) => {
       });
       updateStemJob(jobId, { status: "done", percent: 100 });
     }, { signal: job.controller.signal }).catch((e) => {
-      fs.rmSync(resultPath, { force: true });
+      // Record the failure FIRST: a killed separator can leave a WAV/partial
+      // output briefly locked on Windows (EBUSY/EPERM), and `force: true`
+      // only suppresses ENOENT — it does not guarantee rmSync succeeds. If
+      // the delete threw before the status was set, the job would stay
+      // "running" forever and this rejection would go unhandled. Any
+      // leftover file here is best-effort cleanup; the weekly sweep reclaims
+      // it if this delete fails.
       updateStemJob(jobId, { status: "error", error: String(e?.message || e) });
+      try { fs.rmSync(resultPath, { force: true }); } catch { /* swept up later */ }
     });
 
     return res.json({ ok: true, jobId });
@@ -224,17 +239,26 @@ router.post("/instrumental/:jobId/keep", async (req, res) => {
     const job = getStemJob(req.params.jobId, req.ctx.userId);
     if (!job) return res.status(404).json({ ok: false, error: "job not found" });
     if (job.status !== "done") return res.status(409).json({ ok: false, error: "the instrumental is not ready yet" });
-    const src = sourceTrack(req.ctx.dataDir, job.sourceRef.replace(/^(library|mylib):/, ""));
+    if (!fs.existsSync(job.resultPath)) {
+      // The result was removed (sweep, a busy-file cleanup elsewhere, or the
+      // operator deleting it by hand) between the job finishing and keep
+      // being clicked. Registering a track pointing at a file that isn't
+      // there would leave a dangling entry in the picker forever.
+      removeStemJob(job.jobId);
+      return res.status(409).json({ ok: false, error: "the instrumental file is gone — run it again" });
+    }
     let durationSec = null;
     try { durationSec = await probeAudioDurationSec(job.resultPath); } catch { /* recorded without it */ }
     const track = registerTrack(req.ctx.dataDir, {
       file: job.resultPath,
-      label: `${src?.label || "Track"} (instrumental)`,
-      mood: src?.mood,
+      label: `${job.sourceLabel || "Track"} (instrumental)`,
+      mood: job.sourceMood,
       // Separating a song does not clear it: the instrumental carries the
-      // original's licence and credit, and the bed's licence gate still applies.
-      licence: src?.licence || "unknown",
-      credit: src?.credit || "",
+      // original's licence and credit, and the bed's licence gate still
+      // applies. These are captured at job start (not re-read here) so
+      // editing or removing the source mid-job can't drop the credit.
+      licence: job.sourceLicence || "unknown",
+      credit: job.sourceCredit || "",
       derivedFrom: job.sourceRef,
       durationSec,
     });
@@ -249,7 +273,9 @@ router.post("/instrumental/:jobId/discard", (req, res) => {
   const job = getStemJob(req.params.jobId, req.ctx.userId);
   if (!job) return res.status(404).json({ ok: false, error: "job not found" });
   job.controller.abort();
-  fs.rmSync(job.resultPath, { force: true });
+  // Best-effort: a busy/locked file must not 500 and leave the job stuck
+  // registered — the weekly sweep reclaims anything left behind.
+  try { fs.rmSync(job.resultPath, { force: true }); } catch { /* swept up later */ }
   removeStemJob(job.jobId);
   return res.json({ ok: true });
 });

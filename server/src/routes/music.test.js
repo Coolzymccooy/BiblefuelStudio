@@ -265,11 +265,89 @@ describe("vocal removal routes", () => {
   test("a failed separation reports its error and leaves no file", async () => {
     const { ctx, file } = tenant();
     const src = registerTrack(ctx.dataDir, { file, label: "Song" });
-    _setSeparatorImpl({ available: async () => ({ ok: true }), remove: async () => { throw new Error("out of memory"); } });
+    let out;
+    _setSeparatorImpl({
+      available: async () => ({ ok: true }),
+      // A separator can fail AFTER it already wrote a partial/failed output
+      // (e.g. it crashes during the ffmpeg re-encode step) — write the file
+      // before throwing so this test covers the cleanup path, not just the
+      // "never wrote anything" case.
+      remove: async ({ outPath }) => { out = outPath; fs.writeFileSync(outPath, "partial"); throw new Error("out of memory"); },
+    });
     const c = { ...ctx, userId: "u1" };
     const { payload } = await call("post", "/:id/instrumental", { ctx: c, params: { id: src.id }, body: {} });
     await until(async () => (await call("get", "/instrumental/:jobId", { ctx: c, params: { jobId: payload.jobId } })).payload.job.status === "error");
     const job = (await call("get", "/instrumental/:jobId", { ctx: c, params: { jobId: payload.jobId } })).payload.job;
     assert.match(job.error, /out of memory/);
+    assert.equal(fs.existsSync(out), false, "the partial result must be cleaned up");
+  });
+
+  test("a failed separation still ends the job as 'error' even when the result file cannot be deleted", async () => {
+    const { ctx, file } = tenant();
+    const src = registerTrack(ctx.dataDir, { file, label: "Song" });
+    let out;
+    _setSeparatorImpl({
+      available: async () => ({ ok: true }),
+      remove: async ({ outPath }) => { out = outPath; fs.writeFileSync(outPath, "partial"); throw new Error("out of memory"); },
+    });
+    const c = { ...ctx, userId: "u1" };
+    const realRmSync = fs.rmSync;
+    fs.rmSync = (p, opts) => {
+      if (out && path.resolve(String(p)) === path.resolve(out)) {
+        throw Object.assign(new Error("EBUSY: resource busy or locked"), { code: "EBUSY" });
+      }
+      return realRmSync(p, opts);
+    };
+    try {
+      const { payload } = await call("post", "/:id/instrumental", { ctx: c, params: { id: src.id }, body: {} });
+      await until(async () => (await call("get", "/instrumental/:jobId", { ctx: c, params: { jobId: payload.jobId } })).payload.job.status === "error");
+      const job = (await call("get", "/instrumental/:jobId", { ctx: c, params: { jobId: payload.jobId } })).payload.job;
+      assert.equal(job.status, "error");
+      assert.match(job.error, /out of memory/, "the separator's own error must win, not the cleanup failure");
+    } finally {
+      fs.rmSync = realRmSync;
+      if (out) { try { realRmSync(out, { force: true }); } catch { /* best effort test cleanup */ } }
+    }
+  });
+
+  test("keep refuses and forgets the job when the result file is gone", async () => {
+    const { ctx, file } = tenant();
+    const src = registerTrack(ctx.dataDir, { file, label: "Song" });
+    _setSeparatorImpl({
+      available: async () => ({ ok: true }),
+      remove: async ({ outPath }) => { fs.writeFileSync(outPath, "m4a"); return outPath; },
+    });
+    const c = { ...ctx, userId: "u1" };
+    const { payload } = await call("post", "/:id/instrumental", { ctx: c, params: { id: src.id }, body: {} });
+    await until(async () => (await call("get", "/instrumental/:jobId", { ctx: c, params: { jobId: payload.jobId } })).payload.job.status === "done");
+    const job = (await call("get", "/instrumental/:jobId", { ctx: c, params: { jobId: payload.jobId } })).payload.job;
+    const resultPath = path.join(ctx.outputDir, job.resultFile);
+    fs.rmSync(resultPath, { force: true });
+    const kept = await call("post", "/instrumental/:jobId/keep", { ctx: c, params: { jobId: payload.jobId } });
+    assert.equal(kept.statusCode, 409);
+    assert.equal(kept.payload.ok, false);
+    assert.match(kept.payload.error, /gone/);
+    const lib = readMusicLibrary(ctx.dataDir).items;
+    assert.equal(lib.length, 1, "no dangling track was registered");
+    const after = await call("get", "/instrumental/:jobId", { ctx: c, params: { jobId: payload.jobId } });
+    assert.equal(after.statusCode, 404, "the job is forgotten, not left stuck");
+  });
+
+  test("keep uses the licence/credit captured when the job started, even if the source is edited mid-job", async () => {
+    const { ctx, file } = tenant();
+    const src = registerTrack(ctx.dataDir, { file, label: "Song", licence: "unknown", credit: "Choir X", mood: "worship" });
+    _setSeparatorImpl({
+      available: async () => ({ ok: true }),
+      remove: async ({ outPath }) => { fs.writeFileSync(outPath, "m4a"); return outPath; },
+    });
+    const c = { ...ctx, userId: "u1" };
+    const { payload } = await call("post", "/:id/instrumental", { ctx: c, params: { id: src.id }, body: {} });
+    await until(async () => (await call("get", "/instrumental/:jobId", { ctx: c, params: { jobId: payload.jobId } })).payload.job.status === "done");
+    // Mutate the source's credit/licence AFTER the job started.
+    await handlerFor("patch", "/:id")({ ctx: c, params: { id: src.id }, body: { credit: "Someone Else", licence: "cleared" } }, res());
+    const kept = await call("post", "/instrumental/:jobId/keep", { ctx: c, params: { jobId: payload.jobId } });
+    assert.equal(kept.payload.ok, true);
+    assert.equal(kept.payload.track.credit, "Choir X", "credit captured at job start, not re-read at keep time");
+    assert.equal(kept.payload.track.licence, "unknown", "licence captured at job start, not re-read at keep time");
   });
 });

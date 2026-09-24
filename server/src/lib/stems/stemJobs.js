@@ -5,9 +5,22 @@
  */
 const jobs = new Map();
 
-export function createStemJob({ jobId, userId, sourceRef, sourcePreview, resultPath }) {
+export function createStemJob({
+  jobId, userId, sourceRef, sourcePreview, resultPath, sourceLabel, sourceMood, sourceLicence, sourceCredit,
+}) {
   const job = {
-    jobId, userId, sourceRef, sourcePreview, resultPath,
+    jobId,
+    userId,
+    sourceRef,
+    sourcePreview,
+    resultPath,
+    // Captured at start, not re-read at keep time: if the source track is
+    // edited or removed while the separation is running, the instrumental
+    // must still inherit the licence/credit it started with.
+    sourceLabel,
+    sourceMood,
+    sourceLicence,
+    sourceCredit,
     status: "queued", percent: 0, error: null, controller: new AbortController(), createdAt: Date.now(),
   };
   jobs.set(jobId, job);
