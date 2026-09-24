@@ -145,9 +145,9 @@ describe('AmbientRenderStep — graphics chip', () => {
   });
 
   it('hides the option when the chip is not available', async () => {
-    vi.spyOn(libraryApi, 'fetchCapabilities').mockResolvedValue({ vocalRemoval: false, amfEncoder: false });
+    const spy = vi.spyOn(libraryApi, 'fetchCapabilities').mockResolvedValue({ vocalRemoval: false, amfEncoder: false });
     renderStep(project('draft'));
-    await Promise.resolve();
+    await waitFor(() => expect(spy).toHaveBeenCalled());
     expect(screen.queryByRole('checkbox', { name: /graphics chip/i })).not.toBeInTheDocument();
   });
 });
