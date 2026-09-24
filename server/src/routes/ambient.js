@@ -294,6 +294,7 @@ router.patch("/:id/bed", (req, res) => {
     }
     if (Number.isFinite(Number(body.volume))) bed.volume = Math.min(2, Math.max(0, Number(body.volume)));
     if (Number.isFinite(Number(body.crossfadeSec))) bed.crossfadeSec = Math.min(30, Math.max(0, Number(body.crossfadeSec)));
+    if (body.order === "shuffle" || body.order === "fixed") bed.order = body.order;
 
     const allowUncleared = body.allowUncleared === true;
     if (!allowUncleared) {
@@ -310,7 +311,7 @@ router.patch("/:id/bed", (req, res) => {
 
     // Any change to the inputs invalidates a cached assembly. Leaving the old
     // hash would silently render yesterday's bed.
-    const nextHash = bedHash({ trackRefs: bed.trackRefs, crossfadeSec: bed.crossfadeSec, targetSec: project.targetSec });
+    const nextHash = bedHash({ trackRefs: bed.trackRefs, crossfadeSec: bed.crossfadeSec, targetSec: project.targetSec, order: bed.order || "shuffle" });
     if (nextHash !== project.bed?.builtHash) { bed.builtPath = null; bed.builtHash = null; }
 
     const updated = writeProject(req.ctx.dataDir, { ...project, bed });

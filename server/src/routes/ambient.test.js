@@ -385,6 +385,21 @@ describe("PATCH /api/ambient/:id/bed", () => {
     assert.equal(res.body.project.bed.builtPath, null, "a stale bed would render yesterday's music");
     assert.equal(res.body.project.bed.builtHash, null);
   });
+
+  test("accepts shuffle or fixed order, ignores anything else", async () => {
+    const p = await createSession();
+    const ok = await request(app).patch(`/api/ambient/${p.projectId}/bed`).send({ order: "fixed" });
+    assert.equal(ok.body.project.bed.order, "fixed");
+    const bad = await request(app).patch(`/api/ambient/${p.projectId}/bed`).send({ order: "random" });
+    assert.equal(bad.body.project.bed.order, "fixed");
+  });
+
+  test("changing the order drops the cached bed", async () => {
+    const p = await createSession();
+    writeProject(dataDir, { ...readProject(dataDir, p.projectId), bed: { ...p.bed, builtPath: "x", builtHash: "old" } });
+    const res = await request(app).patch(`/api/ambient/${p.projectId}/bed`).send({ order: "fixed" });
+    assert.equal(res.body.project.bed.builtHash, null);
+  });
 });
 
 describe("POST /api/ambient/:id/images", () => {
@@ -1014,6 +1029,36 @@ describe("the music bed is levelled", () => {
     const args = calls[0];
     const script = fs.readFileSync(args[args.indexOf("-filter_complex_script") + 1], "utf8");
     assert.ok(!/volume=/.test(script));
+  });
+
+  test("keep-my-order plays the list as given and leaves the operator's list alone", async () => {
+    _setLoudnessImpl(async () => ({ inputI: -18, inputTp: -6 }));
+    const calls = [];
+    _setFfmpegSpawnImpl(fakeFfmpeg(calls));
+    const p = await createSession({ targetSec: 20 });
+    const refs = ["library:prayer-piano", "library:peaceful-worship"];
+    const stored = writeProject(dataDir, {
+      ...readProject(dataDir, p.projectId),
+      bed: { ...p.bed, mode: "assemble", order: "fixed", trackRefs: refs, crossfadeSec: 2 },
+    });
+    const { project } = await assembleBed({ dataDir, outputDir }, stored);
+    // probe says 8 s per track: 8 + 6 + 6 >= 20 → three tracks, a b a.
+    assert.deepEqual(project.bed.builtOrder.map((t) => t.ref), [refs[0], refs[1], refs[0]]);
+    assert.deepEqual(project.bed.trackRefs, refs);
+  });
+
+  test("the tracklist records start times, labels and credits", async () => {
+    _setLoudnessImpl(async () => ({ inputI: -18, inputTp: -6 }));
+    _setFfmpegSpawnImpl(fakeFfmpeg([]));
+    const p = await createSession({ targetSec: 20 });
+    const stored = writeProject(dataDir, {
+      ...readProject(dataDir, p.projectId),
+      bed: { ...p.bed, mode: "assemble", order: "fixed", trackRefs: ["library:prayer-piano", "library:peaceful-worship"], crossfadeSec: 2 },
+    });
+    const { project } = await assembleBed({ dataDir, outputDir }, stored);
+    assert.deepEqual(project.bed.builtOrder.map((t) => t.startSec), [0, 6, 12]);
+    assert.equal(project.bed.builtOrder[0].credit, "Music from Pixabay");
+    assert.ok(project.bed.builtOrder[0].label.length > 0);
   });
 });
 

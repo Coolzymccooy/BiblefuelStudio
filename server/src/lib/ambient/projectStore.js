@@ -77,8 +77,10 @@ export function createProject(baseDir, { title, theme, targetSec, aspect, transl
       filePath: null,
       crossfadeSec: 6,
       volume: 0.85,
+      order: "shuffle",
       builtPath: null,
       builtHash: null,
+      builtOrder: null,
       allowUncleared: false,
     },
 

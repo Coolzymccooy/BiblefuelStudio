@@ -3,7 +3,8 @@ import path from "path";
 import { spawn } from "child_process";
 
 import { readProject, writeProject, isMusicOnly } from "./projectStore.js";
-import { orderTracks, bedHash, buildBedArgs } from "./bedAssembly.js";
+import { orderTracks, fixedOrder, trackStarts, bedHash, buildBedArgs } from "./bedAssembly.js";
+import { trackInfo } from "./trackInfo.js";
 import { voiceDrops } from "./drops.js";
 import { deriveMovements, imagePromptFor, AMBIENT_IMAGE_STYLE } from "./movements.js";
 import { buildAmbientFfmpegArgs } from "./ambientRender.js";
@@ -347,7 +348,8 @@ export async function assembleBed(ctx, project) {
   const refs = (bed.trackRefs || []).filter(Boolean);
   if (refs.length === 0) throw new Error("no music tracks chosen for the bed");
 
-  const hash = bedHash({ trackRefs: refs, crossfadeSec: bed.crossfadeSec, targetSec: project.targetSec });
+  const order = bed.order === "fixed" ? "fixed" : "shuffle";
+  const hash = bedHash({ trackRefs: refs, crossfadeSec: bed.crossfadeSec, targetSec: project.targetSec, order });
   if (bed.builtHash === hash && bed.builtPath && fs.existsSync(bed.builtPath)) {
     return { bedPath: bed.builtPath, project };
   }
@@ -362,7 +364,9 @@ export async function assembleBed(ctx, project) {
   if (tracks.length === 0) throw new Error("none of the chosen tracks could be read");
 
   const crossfadeSec = Number(bed.crossfadeSec) >= 0 ? Number(bed.crossfadeSec) : 6;
-  const order = orderTracks(tracks, project.targetSec, { crossfadeSec });
+  const playOrder = order === "fixed"
+    ? fixedOrder(tracks, project.targetSec, { crossfadeSec })
+    : orderTracks(tracks, project.targetSec, { crossfadeSec });
   const dir = ensureDir(outDirFor(ctx.outputDir, project.projectId));
   const bedPath = path.join(dir, "bed.m4a");
 
@@ -370,15 +374,15 @@ export async function assembleBed(ctx, project) {
   // honoured between tracks: a big pool is minutes of measuring.
   const levels = new Map();
   let allMeasured = true;
-  for (const file of new Set(order.map((t) => t.file))) {
+  for (const file of new Set(playOrder.map((t) => t.file))) {
     if (isCancelled(project.projectId)) throw new Error("Cancelled.");
     const measured = await _measureLoudness(file);
     if (!measured) allMeasured = false;
     levels.set(file, gainToTargetDb(measured));
   }
-  const built = buildBedArgs(order.map((t) => t.file), {
+  const built = buildBedArgs(playOrder.map((t) => t.file), {
     crossfadeSec, targetSec: project.targetSec, outPath: bedPath,
-    gainsDb: order.map((t) => levels.get(t.file) || 0),
+    gainsDb: playOrder.map((t) => levels.get(t.file) || 0),
   });
 
   await new Promise((resolve, reject) => {
@@ -392,17 +396,29 @@ export async function assembleBed(ctx, project) {
   });
 
   const fresh = stillThere(ctx, project.projectId);
-  const savedRefs = order.map((t) => t.ref);
+  // Shuffle stores the expanded play order (what the next render reads back);
+  // fixed keeps the operator's list, so their arrangement is never rewritten.
+  const savedRefs = order === "fixed" ? refs : playOrder.map((t) => t.ref);
   // Keyed on the order saved, which is what the next render reads back; the
   // old key was the pre-shuffle list, so the cache almost never hit. And a
   // bed with an unmeasured track is not kept as levelled: it's rebuilt next
   // time, when the measurement may succeed.
   const builtHash = allMeasured
-    ? bedHash({ trackRefs: savedRefs, crossfadeSec: bed.crossfadeSec, targetSec: project.targetSec })
+    ? bedHash({ trackRefs: savedRefs, crossfadeSec: bed.crossfadeSec, targetSec: project.targetSec, order })
     : null;
+  // trackInfo reads musicLibrary.json per call; a two-hour bed can have up to
+  // 400 entries, so resolve it once per distinct ref rather than per entry.
+  const infoByRef = new Map(
+    [...new Set(playOrder.map((t) => t.ref))].map((ref) => [ref, trackInfo(ctx.dataDir, ref)]),
+  );
+  const builtOrder = trackStarts(
+    playOrder.map((t) => ({ ref: t.ref, durationSec: t.durationSec, ...infoByRef.get(t.ref) })),
+    crossfadeSec,
+    project.targetSec,
+  );
   const saved = writeProject(ctx.dataDir, {
     ...fresh,
-    bed: { ...fresh.bed, trackRefs: savedRefs, builtPath: bedPath, builtHash },
+    bed: { ...fresh.bed, trackRefs: savedRefs, builtPath: bedPath, builtHash, builtOrder },
   });
   return { bedPath, project: saved };
 }
