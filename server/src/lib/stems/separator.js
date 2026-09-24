@@ -18,6 +18,15 @@ let _spawn = spawn;
 export function _setSpawnImpl(fn) { _spawn = fn; }
 export function _resetSpawnImpl() { _spawn = spawn; }
 
+// How long to wait for a killed process to actually emit "close" before
+// giving up and rejecting anyway. Bounded so an abort can never hang
+// forever, but long enough on a real machine for Windows to tear the
+// process (and its file handles) down before we sweep the work dir.
+const DEFAULT_KILL_GRACE_MS = 5000;
+let _killGraceMs = DEFAULT_KILL_GRACE_MS;
+export function _setKillGraceMs(ms) { _killGraceMs = ms; }
+export function _resetKillGraceMs() { _killGraceMs = DEFAULT_KILL_GRACE_MS; }
+
 export function stemsCli(env = process.env) {
   const p = String(env.STEMS_CLI || "").trim();
   return p || null;
@@ -49,7 +58,13 @@ export function parseProgress(text) {
   return n >= 0 && n <= 100 ? n : null;
 }
 
-/** Spawn without a shell; resolve on exit 0, reject with the stderr tail otherwise. */
+/**
+ * Spawn without a shell; resolve on exit 0, reject with the stderr tail
+ * otherwise. On abort, kill the process and WAIT for it to actually close
+ * (so a Windows caller can safely clean up files the process held open)
+ * up to `_killGraceMs`, after which we give up and reject "Cancelled."
+ * regardless — an abort can never hang forever.
+ */
 function run(cmd, args, { onOutput, signal } = {}) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(new Error("Cancelled."));
@@ -61,13 +76,27 @@ function run(cmd, args, { onOutput, signal } = {}) {
     }
     let tail = "";
     let settled = false;
-    const finish = (fn, arg) => { if (settled) return; settled = true; fn(arg); };
+    let aborting = false;
+    let graceTimer = null;
+    const detach = () => {
+      proc.stdout?.removeListener("data", take);
+      proc.stderr?.removeListener("data", take);
+    };
+    const finish = (fn, arg) => {
+      if (settled) return;
+      settled = true;
+      if (graceTimer) clearTimeout(graceTimer);
+      detach();
+      fn(arg);
+    };
     const onAbort = () => {
+      aborting = true;
       try { proc.kill(); } catch { /* already gone */ }
-      finish(reject, new Error("Cancelled."));
+      graceTimer = setTimeout(() => finish(reject, new Error("Cancelled.")), _killGraceMs);
     };
     signal?.addEventListener("abort", onAbort, { once: true });
     const take = (d) => {
+      if (settled) return; // a killed process can still flush buffered output
       const s = d.toString();
       tail = (tail + s).slice(-2000);
       onOutput?.(s);
@@ -77,6 +106,7 @@ function run(cmd, args, { onOutput, signal } = {}) {
     proc.on("error", (e) => { signal?.removeEventListener("abort", onAbort); finish(reject, e); });
     proc.on("close", (code) => {
       signal?.removeEventListener("abort", onAbort);
+      if (aborting) return finish(reject, new Error("Cancelled."));
       if (code === 0) return finish(resolve);
       return finish(reject, new Error(`${path.basename(cmd)} exited ${code}: ${tail.slice(-400)}`));
     });
@@ -87,7 +117,13 @@ function run(cmd, args, { onOutput, signal } = {}) {
 let cached = null;
 export function _resetAvailability() { cached = null; }
 
-/** Whether this machine can remove vocals. Probed once per process. */
+/**
+ * Whether this machine can remove vocals. A stable outcome (available, or
+ * STEMS_CLI simply unset) is cached for the life of the process. A
+ * transient failure (probe timeout, non-zero exit, spawn error) is NOT
+ * cached — a cold start or a momentary hiccup must not hide vocal removal
+ * for the rest of the server's life, so the next call re-probes.
+ */
 export async function separatorAvailable({ timeoutMs = 20_000 } = {}) {
   if (cached) return cached;
   const py = stemsCli();
@@ -101,12 +137,12 @@ export async function separatorAvailable({ timeoutMs = 20_000 } = {}) {
   try {
     await run(py, ["--version"], { onOutput: (s) => { out += s; }, signal: ctrl.signal });
     cached = { ok: true, version: out.trim().split(/\s+/).pop() || "" };
+    return cached;
   } catch (e) {
-    cached = { ok: false, reason: ctrl.signal.aborted ? "timed out" : String(e?.message || e) };
+    return { ok: false, reason: ctrl.signal.aborted ? "timed out" : String(e?.message || e) };
   } finally {
     clearTimeout(timer);
   }
-  return cached;
 }
 
 /**
@@ -129,6 +165,13 @@ export async function removeVocals({ input, outPath, workDir, quality, onProgres
     await run(ff, ["-y", "-i", path.join(workDir, wav), "-c:a", "aac", "-b:a", "192k", outPath], { signal });
     return outPath;
   } finally {
-    fs.rmSync(workDir, { recursive: true, force: true });
+    // Best-effort: a killed separator process can briefly hold a WAV open
+    // on Windows, so rmSync can throw EBUSY/EPERM right after an abort. A
+    // cleanup failure here must never mask the real outcome (success or
+    // the actual error) — any leftovers are swept up by the next run's
+    // stale-workDir cleanup rather than by this one succeeding.
+    try {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    } catch { /* swept up later */ }
   }
 }
