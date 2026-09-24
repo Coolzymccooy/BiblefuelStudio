@@ -1,5 +1,6 @@
 import { test, describe, beforeEach } from "node:test";
 import assert from "node:assert/strict";
+import { getEventListeners } from "node:events";
 import { runExclusive, isHeavyBusy, _resetHeavyGate } from "./heavyJobGate.js";
 
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
@@ -38,5 +39,22 @@ describe("heavyJobGate", () => {
     first.resolve();
     await a;
     assert.equal(ran, false);
+  });
+
+  test("the abort listener for a queued job is removed once it starts running (Ruling 6)", async () => {
+    const first = deferred();
+    const a = runExclusive(() => first.promise);
+    const ctrl = new AbortController();
+    const b = runExclusive(async () => "b done", { signal: ctrl.signal });
+    await new Promise((r) => setImmediate(r));
+    assert.equal(getEventListeners(ctrl.signal, "abort").length, 1, "listener attached while queued");
+    first.resolve();
+    await a;
+    await new Promise((r) => setImmediate(r));
+    assert.equal(getEventListeners(ctrl.signal, "abort").length, 0, "listener removed once it starts running");
+    assert.equal(await b, "b done");
+    // Aborting after the job has already started must be a harmless no-op:
+    // it must not reject a job that has already resolved, and must not throw.
+    assert.doesNotThrow(() => ctrl.abort());
   });
 });

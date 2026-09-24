@@ -14,6 +14,11 @@ export function isHeavyBusy() {
 }
 
 function start(entry) {
+  // A queued entry's abort listener is only useful while it sits in the
+  // queue (to cancel it before it runs); once it starts, leaving the
+  // listener attached to the caller's signal would keep it alive for
+  // nothing until that signal fires or is garbage-collected.
+  if (entry.onAbort) entry.signal.removeEventListener("abort", entry.onAbort);
   active = true;
   Promise.resolve()
     .then(entry.task)
@@ -36,13 +41,17 @@ export function runExclusive(task, { onQueued, signal } = {}) {
     const entry = { task, resolve, reject };
     if (!active) return start(entry);
     queue.push(entry);
-    signal?.addEventListener("abort", () => {
-      const i = queue.indexOf(entry);
-      if (i >= 0) {
-        queue.splice(i, 1);
-        reject(new Error("Cancelled."));
-      }
-    }, { once: true });
+    if (signal) {
+      entry.signal = signal;
+      entry.onAbort = () => {
+        const i = queue.indexOf(entry);
+        if (i >= 0) {
+          queue.splice(i, 1);
+          reject(new Error("Cancelled."));
+        }
+      };
+      signal.addEventListener("abort", entry.onAbort, { once: true });
+    }
     try { onQueued?.(); } catch { /* a progress write must not break the queue */ }
     return undefined;
   });
