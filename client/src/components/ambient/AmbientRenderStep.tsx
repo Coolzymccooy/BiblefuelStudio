@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import toast from 'react-hot-toast';
 import { Download, X, Youtube } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import { ambientApi } from '../../lib/ambientApi';
+import { fetchCapabilities } from '../../lib/musicLibraryApi';
 import type { AmbientProject, AmbientPublished } from '../../lib/ambientTypes';
 import { RenderProgressOverlay } from '../RenderProgressOverlay';
 import { formatLength, renderEstimateMinutes } from '../../lib/ambientLength';
@@ -23,11 +25,13 @@ export function AmbientRenderStep({ project, busy, setBusy, refresh }: AmbientRe
   // Assembling the bed is the first half of a render. Treated as idle, it
   // showed the Render button again, and a second click started a second render.
   const inFlight = project.status === 'assembling' || project.status === 'rendering';
+  const { data: caps } = useQuery({ queryKey: ['music-capabilities'], queryFn: fetchCapabilities, staleTime: 5 * 60_000 });
+  const [useChip, setUseChip] = useState(false);
 
   const startRender = async () => {
     setBusy(true);
     try {
-      await ambientApi.render(project.projectId);
+      await ambientApi.render(project.projectId, useChip ? 'amf' : 'cpu');
       refresh();
       toast.success('Render started — running in the background. You can leave this page.');
     } catch (e) {
@@ -77,6 +81,12 @@ export function AmbientRenderStep({ project, busy, setBusy, refresh }: AmbientRe
         <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
           {project.error || 'Render failed'}
         </div>
+      )}
+      {caps?.amfEncoder && (
+        <label className="flex items-center gap-2 text-sm text-content-secondary">
+          <input type="checkbox" checked={useChip} onChange={(e) => setUseChip(e.target.checked)} disabled={busy} />
+          Encode with graphics chip (faster; falls back to the CPU if it fails)
+        </label>
       )}
       <button onClick={startRender} disabled={busy} className={`${primaryBtnCls} w-full justify-center px-4 py-3`}>
         Render

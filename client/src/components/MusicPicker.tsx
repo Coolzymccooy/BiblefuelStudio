@@ -30,11 +30,21 @@ interface MusicPickerProps {
   busy: boolean;
   /** Allow an ordered list of tracks (played back-to-back, then looped). */
   multiple?: boolean;
+  /** Show ↑/↓ buttons on chosen tracks to reorder the fixed playback order. */
+  reorderable?: boolean;
   /** Host timeline: put the chosen track on the Music bed lane. */
   onInsertToLane?: (path: string) => void;
 }
 
-export function MusicPicker({ value, onChange, busy, multiple = false, onInsertToLane }: MusicPickerProps) {
+/** A copy of `list` with the item at `from` moved to `to`. */
+function move<T>(list: readonly T[], from: number, to: number): T[] {
+  const next = list.slice();
+  const [item] = next.splice(from, 1);
+  next.splice(to, 0, item);
+  return next;
+}
+
+export function MusicPicker({ value, onChange, busy, multiple = false, reorderable = false, onInsertToLane }: MusicPickerProps) {
   const { data: tracks } = useMusicLibrary();
   const qc = useQueryClient();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -85,6 +95,17 @@ export function MusicPicker({ value, onChange, busy, multiple = false, onInsertT
       qc.invalidateQueries({ queryKey: ['music-library'] });
     } catch (e) {
       toast.error((e as Error).message || `Couldn't update the licence for ${label}`);
+    }
+  };
+
+  const editCredit = async (id: string, current: string) => {
+    const next = window.prompt('Credit line for the video description (e.g. "Music by Ada · Pixabay")', current);
+    if (next === null) return;
+    try {
+      await updateTrack(id, { credit: next });
+      qc.invalidateQueries({ queryKey: ['music-library'] });
+    } catch (e) {
+      toast.error((e as Error).message || "Couldn't save the credit");
     }
   };
 
@@ -183,6 +204,16 @@ export function MusicPicker({ value, onChange, busy, multiple = false, onInsertT
           {t.source === 'upload' && (
             <button
               type="button"
+              onClick={() => editCredit(t.id, t.credit || '')}
+              title={t.credit ? `Credit: ${t.credit}` : 'Add a credit line for the video description'}
+              className="shrink-0 rounded border border-white/15 px-1 text-[10px] text-gray-300 hover:border-primary-400"
+            >
+              {t.credit ? 'credit ✓' : 'credit'}
+            </button>
+          )}
+          {t.source === 'upload' && (
+            <button
+              type="button"
               aria-label={`Forget ${t.label}`}
               title="Remove from your library. The uploaded file itself is kept."
               onClick={() => forgetTrack(t.id, t.label)}
@@ -225,6 +256,12 @@ export function MusicPicker({ value, onChange, busy, multiple = false, onInsertT
                   >
                     {playingId === refId(p) ? <Square size={12} /> : <Play size={12} />}
                   </button>
+                )}
+                {reorderable && (
+                  <>
+                    <button type="button" disabled={busy || idx === 0} onClick={() => emitPaths(move(paths, idx, idx - 1))} aria-label="move up" className="text-gray-400 hover:text-white disabled:opacity-30">↑</button>
+                    <button type="button" disabled={busy || idx === paths.length - 1} onClick={() => emitPaths(move(paths, idx, idx + 1))} aria-label="move down" className="text-gray-400 hover:text-white disabled:opacity-30">↓</button>
+                  </>
                 )}
                 <button type="button" onClick={() => emitPaths(paths.filter((_, i) => i !== idx))} className="text-gray-400 hover:text-red-300" aria-label="remove track"><X size={12} /></button>
               </li>

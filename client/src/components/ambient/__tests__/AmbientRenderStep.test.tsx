@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { api } from '../../../lib/api';
 import { ambientApi } from '../../../lib/ambientApi';
+import * as libraryApi from '../../../lib/musicLibraryApi';
 import { AmbientRenderStep } from '../AmbientRenderStep';
 import type { AmbientProject, AmbientStatus } from '../../../lib/ambientTypes';
 
@@ -15,10 +17,20 @@ const project = (status: AmbientStatus, percent = 40): AmbientProject => ({
   error: null, createdAt: 0, updatedAt: 0,
 } as AmbientProject);
 
-const renderStep = (p: AmbientProject, refresh = () => {}) =>
-  render(<AmbientRenderStep project={p} busy={false} setBusy={() => {}} refresh={refresh} />);
+const renderStep = (p: AmbientProject, refresh = () => {}) => {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <AmbientRenderStep project={p} busy={false} setBusy={() => {}} refresh={refresh} />
+    </QueryClientProvider>,
+  );
+};
 
-beforeEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+beforeEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+  vi.spyOn(libraryApi, 'fetchCapabilities').mockResolvedValue({ vocalRemoval: false, amfEncoder: false });
+});
 
 describe('AmbientRenderStep progress', () => {
   it('says what it is really doing while encoding — never a Story stage', () => {
@@ -102,5 +114,23 @@ describe('AmbientRenderStep when the video is ready', () => {
     await userEvent.click(screen.getByRole('button', { name: /publish to youtube/i }));
     await waitFor(() => expect(record).toHaveBeenCalledWith('p1', { videoId: 'vidVID12345', privacyStatus: 'unlisted', publishAt: undefined }));
     await waitFor(() => expect(refresh).toHaveBeenCalled());
+  });
+});
+
+describe('AmbientRenderStep — graphics chip', () => {
+  it('renders with the graphics chip when ticked', async () => {
+    vi.spyOn(libraryApi, 'fetchCapabilities').mockResolvedValue({ vocalRemoval: false, amfEncoder: true });
+    const renderCall = vi.spyOn(ambientApi, 'render').mockResolvedValue({ ok: true });
+    renderStep(project('draft'));
+    await userEvent.click(await screen.findByRole('checkbox', { name: /graphics chip/i }));
+    await userEvent.click(screen.getByRole('button', { name: /render/i }));
+    expect(renderCall).toHaveBeenCalledWith(expect.any(String), 'amf');
+  });
+
+  it('hides the option when the chip is not available', async () => {
+    vi.spyOn(libraryApi, 'fetchCapabilities').mockResolvedValue({ vocalRemoval: false, amfEncoder: false });
+    renderStep(project('draft'));
+    await Promise.resolve();
+    expect(screen.queryByRole('checkbox', { name: /graphics chip/i })).not.toBeInTheDocument();
   });
 });

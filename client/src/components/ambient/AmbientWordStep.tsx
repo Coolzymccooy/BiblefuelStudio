@@ -22,6 +22,18 @@ const msFromMinutes = (minutes: string): number => Math.max(0, Math.round(Number
  */
 export function AmbientWordStep({ project, busy, setBusy, refresh }: AmbientWordStepProps) {
   const [count, setCount] = useState('');
+  const musicOnly = project.words === 'none';
+  const setMusicOnly = async (next: boolean) => {
+    setBusy(true);
+    try {
+      await ambientApi.setWords(project.projectId, next ? 'none' : 'verses');
+      refresh();
+    } catch (e) {
+      toast.error((e as Error).message || 'Failed to change the words setting');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const suggestVerses = async () => {
     setBusy(true);
@@ -67,49 +79,73 @@ export function AmbientWordStep({ project, busy, setBusy, refresh }: AmbientWord
 
   return (
     <div className="space-y-4">
-      <label className={fieldLabelCls}>
-        Theme
-        <div className="input mt-1.5 cursor-not-allowed opacity-70">{project.theme || '—'}</div>
-      </label>
-
-      <div className={`${panelCls} flex flex-wrap items-center gap-2`}>
-        <input
-          type="number"
-          min={1}
-          placeholder="Count (optional)"
-          value={count}
-          onChange={(e) => setCount(e.target.value)}
-          disabled={busy}
-          className="w-32 rounded-md border border-white/10 bg-transparent px-2 py-1 text-white"
-          aria-label="Number of verses to suggest"
-        />
-        <button type="button" onClick={suggestVerses} disabled={busy} className={`${primaryBtnCls} px-3 py-1.5`}>
-          Suggest verses
-        </button>
+      <label className={`${panelCls} flex items-center justify-between gap-3 text-sm text-content-secondary`}>
+        <span>
+          <span className="font-medium text-white">Music only (no verses)</span>
+          <span className="block text-xs text-content-secondary">One picture for the whole video and a tracklist in the description.</span>
+        </span>
         <button
           type="button"
-          onClick={voiceAll}
-          disabled={busy || project.drops.length === 0}
-          className={`${secondaryBtnCls} ml-auto px-3 py-1.5`}
+          role="switch"
+          aria-checked={musicOnly}
+          aria-label="Music only"
+          disabled={busy}
+          onClick={() => setMusicOnly(!musicOnly)}
+          className={`h-6 w-11 rounded-full transition ${musicOnly ? 'bg-primary-500' : 'bg-white/15'}`}
         >
-          Voice all
+          <span className={`block h-5 w-5 rounded-full bg-white transition ${musicOnly ? 'translate-x-5' : 'translate-x-0.5'}`} />
         </button>
-      </div>
+      </label>
 
-      <div className="space-y-2">
-        {project.drops.length === 0 && (
-          <p className="text-sm text-content-tertiary">No drops yet — suggest verses to get started.</p>
-        )}
-        {project.drops.map((drop) => (
-          <DropRow
-            key={drop.id}
-            drop={drop}
-            busy={busy}
-            voicing={project.status === 'voicing'}
-            onPatch={(patch) => patchDrop(drop.id, patch)}
-          />
-        ))}
-      </div>
+      {musicOnly ? (
+        <p className="text-sm text-content-secondary">No verses will be spoken. Go on to Look to choose the picture.</p>
+      ) : (
+        <>
+          <label className={fieldLabelCls}>
+            Theme
+            <div className="input mt-1.5 cursor-not-allowed opacity-70">{project.theme || '—'}</div>
+          </label>
+
+          <div className={`${panelCls} flex flex-wrap items-center gap-2`}>
+            <input
+              type="number"
+              min={1}
+              placeholder="Count (optional)"
+              value={count}
+              onChange={(e) => setCount(e.target.value)}
+              disabled={busy}
+              className="w-32 rounded-md border border-white/10 bg-transparent px-2 py-1 text-white"
+              aria-label="Number of verses to suggest"
+            />
+            <button type="button" onClick={suggestVerses} disabled={busy} className={`${primaryBtnCls} px-3 py-1.5`}>
+              Suggest verses
+            </button>
+            <button
+              type="button"
+              onClick={voiceAll}
+              disabled={busy || project.drops.length === 0}
+              className={`${secondaryBtnCls} ml-auto px-3 py-1.5`}
+            >
+              Voice all
+            </button>
+          </div>
+
+          <div className="space-y-2">
+            {project.drops.length === 0 && (
+              <p className="text-sm text-content-tertiary">No drops yet — suggest verses to get started.</p>
+            )}
+            {project.drops.map((drop) => (
+              <DropRow
+                key={drop.id}
+                drop={drop}
+                busy={busy}
+                voicing={project.status === 'voicing'}
+                onPatch={(patch) => patchDrop(drop.id, patch)}
+              />
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }

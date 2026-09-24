@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AmbientSoundStep, addImportedToBed } from '../AmbientSoundStep';
 import { ambientApi } from '../../../lib/ambientApi';
@@ -57,5 +58,19 @@ describe('AmbientSoundStep — imported tracks the licence check holds back', ()
     const error = vi.spyOn(toastMod, 'error').mockImplementation(() => '');
     reportImportGate([{ id: 'u9', label: 'Mystery Mix', licence: 'unknown' }]);
     expect(error).toHaveBeenCalledWith(expect.stringMatching(/Mystery Mix.*licence/i), expect.anything());
+  });
+});
+
+describe('AmbientSoundStep — order', () => {
+  it('offers shuffle or keep my order and saves the choice', async () => {
+    const setBed = vi.spyOn(ambientApi, 'setBed').mockResolvedValue({ ok: true } as never);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <AmbientSoundStep project={project} busy={false} setBusy={() => {}} refresh={() => {}} />
+      </QueryClientProvider>,
+    );
+    await userEvent.click(screen.getByRole('button', { name: /keep my order/i }));
+    expect(setBed).toHaveBeenCalledWith('p1', { order: 'fixed' });
   });
 });

@@ -146,8 +146,18 @@ export function AmbientSoundStep({ project, busy, setBusy, refresh }: AmbientSou
         </div>
       )}
 
+      {bed.mode === 'assemble' && (
+        <div>
+          <div className={fieldLabelCls}>Track order</div>
+          <div className={segmentedCls} role="tablist" aria-label="Track order">
+            <button type="button" onClick={() => applyBedPatch({ order: 'shuffle' })} className={segmentCls((bed.order ?? 'shuffle') === 'shuffle')} disabled={busy}>Shuffle</button>
+            <button type="button" onClick={() => applyBedPatch({ order: 'fixed' })} className={segmentCls(bed.order === 'fixed')} disabled={busy}>Keep my order</button>
+          </div>
+        </div>
+      )}
+
       {bed.mode === 'assemble' ? (
-        <MusicPicker value={assembleValue} onChange={onAssembleChange} busy={busy} multiple />
+        <MusicPicker value={assembleValue} onChange={onAssembleChange} busy={busy} multiple reorderable={bed.order === 'fixed'} />
       ) : (
         <MusicPicker value={fileValue} onChange={onFileChange} busy={busy} />
       )}
