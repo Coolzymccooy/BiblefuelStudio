@@ -2,13 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 import { AUDIO_ACCEPT, AUDIO_ACCEPT_LIST } from '../lib/audioAccept';
 import { Music, X, Loader2, Play, Square, ArrowDownToLine } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { storyApi } from '../lib/storyApi';
 import { useMusicLibrary } from '../hooks/useMusicLibrary';
-import { saveTrackToLibrary, deleteTrack, updateTrack, type MusicTrack } from '../lib/musicLibraryApi';
+import { saveTrackToLibrary, deleteTrack, updateTrack, fetchCapabilities, type MusicTrack } from '../lib/musicLibraryApi';
 import { DropZone } from './ui/DropZone';
 import { MusicLibraryChecklist } from './MusicLibraryChecklist';
+import { InstrumentalDialog } from './InstrumentalDialog';
 
 // A stored value is a ref (`library:<id>` for a bundled track, `mylib:<id>`
 // for a saved upload) or, for back-compat, a bare absolute path from before
@@ -46,9 +47,12 @@ function move<T>(list: readonly T[], from: number, to: number): T[] {
 
 export function MusicPicker({ value, onChange, busy, multiple = false, reorderable = false, onInsertToLane }: MusicPickerProps) {
   const { data: tracks } = useMusicLibrary();
+  const { data: caps } = useQuery({ queryKey: ['music-capabilities'], queryFn: fetchCapabilities, staleTime: 5 * 60_000 });
   const qc = useQueryClient();
   const inputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  // The library track currently open in the make-instrumental dialog, if any.
+  const [instrumentalFor, setInstrumentalFor] = useState<MusicTrack | null>(null);
   // Which track is currently previewing. Without this the button could only
   // ever start playback: clicking the same track again just built a second
   // Audio element, so a preview could not be stopped.
@@ -211,6 +215,16 @@ export function MusicPicker({ value, onChange, busy, multiple = false, reorderab
               {t.credit ? 'credit ✓' : 'credit'}
             </button>
           )}
+          {caps?.vocalRemoval && (
+            <button
+              type="button"
+              onClick={() => setInstrumentalFor(t)}
+              className="shrink-0 rounded border border-white/15 px-1 text-[10px] text-gray-300 hover:border-primary-400"
+              title="Make an instrumental version (removes the vocals)"
+            >
+              instrumental
+            </button>
+          )}
           {t.source === 'upload' && (
             <button
               type="button"
@@ -225,6 +239,19 @@ export function MusicPicker({ value, onChange, busy, multiple = false, reorderab
         </li>
       ))}
     </ul>
+  );
+
+  const instrumentalDialog = instrumentalFor && (
+    <InstrumentalDialog
+      track={instrumentalFor}
+      onClose={() => setInstrumentalFor(null)}
+      onKept={() => {
+        setInstrumentalFor(null);
+        // Same library refresh clearLicence/forgetTrack use, so the new
+        // instrumental track shows up in this list immediately.
+        qc.invalidateQueries({ queryKey: ['music-library'] });
+      }}
+    />
   );
 
   if (multiple) {
@@ -282,6 +309,7 @@ export function MusicPicker({ value, onChange, busy, multiple = false, reorderab
         </div>
 
         {libraryList}
+        {instrumentalDialog}
 
         {paths.length > 0 && (
           <div className="flex flex-wrap items-center gap-3 pt-1">
@@ -363,6 +391,7 @@ export function MusicPicker({ value, onChange, busy, multiple = false, reorderab
       </div>
 
       {libraryList}
+      {instrumentalDialog}
 
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" disabled={busy || isUploading} onClick={() => inputRef.current?.click()} className="rounded-md border border-white/15 px-2 py-1 hover:border-primary-400 disabled:opacity-50">{isUploading ? 'Uploading…' : 'Upload your own'}</button>
