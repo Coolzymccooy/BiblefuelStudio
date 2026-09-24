@@ -3,6 +3,7 @@ import toast from 'react-hot-toast';
 import { ambientApi, type AmbientBedPatch, type UnclearedTrack } from '../../lib/ambientApi';
 import type { AmbientProject } from '../../lib/ambientTypes';
 import { MusicPicker, type MusicValue } from '../MusicPicker';
+import { MusicLibraryImport } from '../MusicLibraryImport';
 import { fieldLabelCls, panelCls, segmentCls, segmentedCls } from '../story/formStyles';
 
 export interface AmbientSoundStepProps {
@@ -111,6 +112,8 @@ export function AmbientSoundStep({ project, busy, setBusy, refresh }: AmbientSou
       ) : (
         <MusicPicker value={fileValue} onChange={onFileChange} busy={busy} />
       )}
+
+      <MusicLibraryImport busy={busy} />
 
       <div className={`${panelCls} space-y-3`}>
         <label className="flex items-center justify-between gap-3 text-sm text-content-secondary">
