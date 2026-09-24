@@ -11,6 +11,18 @@ export type AmbientAspect = 'landscape' | 'portrait';
 
 export type AmbientBedMode = 'assemble' | 'file';
 
+export type AmbientWords = 'verses' | 'none';
+export type AmbientBedOrder = 'shuffle' | 'fixed';
+
+/** One track as it plays in the assembled bed; written by the server at build. */
+export interface AmbientTrackEntry {
+  ref: string;
+  label: string;
+  credit: string;
+  startSec: number;
+  durationSec: number;
+}
+
 export interface AmbientBed {
   /** Cycle a shuffled library into a chain, or use one uploaded mix as-is. */
   mode: AmbientBedMode;
@@ -26,6 +38,10 @@ export interface AmbientBed {
   builtHash?: string | null;
   /** Operator acknowledged an unknown-licence track despite the warning. */
   allowUncleared?: boolean;
+  /** How tracks cycle: shuffled each session or in a fixed order. */
+  order?: AmbientBedOrder;
+  /** The assembled bed as it was actually built: each track with its playback timing. */
+  builtOrder?: AmbientTrackEntry[] | null;
 }
 
 export type DropStatus = 'pending' | 'done' | 'error';
@@ -82,6 +98,8 @@ export interface AmbientRenderState {
   /** Live ffmpeg progress 0-100 while rendering (absent if the job isn't alive server-side). */
   percent?: number;
   phase?: string;
+  /** Which encoder was used: CPU-based or AMF GPU-accelerated. */
+  encoderUsed?: 'cpu' | 'amf';
 }
 
 export interface AmbientProject extends StoryCaptionSettings {
@@ -110,6 +128,8 @@ export interface AmbientProject extends StoryCaptionSettings {
   error: string | null;
   createdAt: number;
   updatedAt: number;
+  /** Spoken verses over the music, or music only. Absent on older sessions: verses. */
+  words?: AmbientWords;
 }
 
 /** One upload of a session's video. The server builds `url` from the id. */

@@ -1,4 +1,4 @@
-import type { AmbientDrop, AmbientProject } from './ambientTypes';
+import type { AmbientDrop, AmbientProject, AmbientTrackEntry } from './ambientTypes';
 
 /**
  * YouTube metadata drawn from what an ambient session already knows: its
@@ -14,26 +14,46 @@ export interface Chapter {
 const spoken = (drops: AmbientDrop[]): AmbientDrop[] =>
   [...(drops || [])].filter((d) => d.status === 'done' && d.reference).sort((a, b) => a.atMs - b.atMs);
 
+/** YouTube ignores a chapter shorter than ten seconds. */
+const MIN_CHAPTER_SEC = 10;
+
+const tracklist = (project: AmbientProject): AmbientTrackEntry[] =>
+  (project.bed?.builtOrder || []).filter((t) => t.durationSec >= MIN_CHAPTER_SEC);
+
 /**
- * One chapter per verse, at the start of the picture it belongs to — which
- * is when a verse held for its section appears. The server adds them to the
- * description, forces the first to 00:00, and drops them below three (the
- * YouTube minimum).
+ * One chapter per verse, at the start of the picture it belongs to; for a
+ * music-only session (or one with no spoken verses), one per track of the
+ * assembled bed. The server forces the first to 00:00 and drops them below
+ * three (the YouTube minimum).
  */
 export function ambientChapters(project: AmbientProject): Chapter[] {
+  const verses = project.words === 'none' ? [] : spoken(project.drops);
+  if (verses.length === 0) {
+    return tracklist(project).map((t) => ({ startMs: Math.round(t.startSec * 1000), title: t.label }));
+  }
   const movements = project.movements || [];
-  return spoken(project.drops).map((d) => {
+  return verses.map((d) => {
     const m = movements.find((mv, i) => d.atMs >= mv.startMs && (d.atMs < mv.endMs || i === movements.length - 1));
     return { startMs: m ? m.startMs : d.atMs, title: d.reference };
   });
 }
 
+/** Each source credited once; a track with no credit is named instead. */
+function creditsBlock(project: AmbientProject): string {
+  const lines = [...new Set((project.bed?.builtOrder || []).map((t) => (t.credit || t.label).trim()).filter(Boolean))];
+  return lines.length ? `Music credits:\n${lines.join('\n')}` : '';
+}
+
 export function ambientDescription(project: AmbientProject): string {
-  const refs = spoken(project.drops).map((d) => d.reference);
   const theme = String(project.theme || '').trim();
-  if (refs.length === 0) return theme;
+  const refs = project.words === 'none' ? [] : spoken(project.drops).map((d) => d.reference);
   const translation = String(project.translation || 'kjv').toUpperCase();
-  return `${theme}\n\nScripture (${translation}): ${refs.join(' · ')}`.trim();
+  const blocks = [
+    theme,
+    refs.length ? `Scripture (${translation}): ${refs.join(' · ')}` : '',
+    creditsBlock(project),
+  ].filter(Boolean);
+  return blocks.join('\n\n');
 }
 
 export function ambientThumbnails(project: AmbientProject): Array<{ label: string; path: string }> {
