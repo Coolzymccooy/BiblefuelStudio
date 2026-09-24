@@ -343,7 +343,14 @@ export async function assembleBed(ctx, project) {
   if (bed.mode === "file") {
     const file = resolveTrackFile(ctx, bed.filePath);
     if (!file) throw new Error("the uploaded bed file is missing");
-    return { bedPath: file, project };
+    // A previous assemble-mode build may have left a builtOrder behind; a
+    // file-mode bed has no tracklist, so chapters/credits must not describe
+    // tracks that are not actually in this video.
+    const fresh = stillThere(ctx, project.projectId);
+    const saved = fresh.bed?.builtOrder != null
+      ? writeProject(ctx.dataDir, { ...fresh, bed: { ...fresh.bed, builtOrder: null } })
+      : fresh;
+    return { bedPath: file, project: saved };
   }
 
   const refs = (bed.trackRefs || []).filter(Boolean);

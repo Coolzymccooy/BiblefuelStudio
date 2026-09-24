@@ -984,6 +984,24 @@ describe("security: the client never chooses what ffmpeg reads", () => {
     assert.equal(res.body.project.bed.filePath, mine);
   });
 
+  test("file-mode render clears a stale tracklist from an earlier assemble build", async () => {
+    // A project that once used the shuffle/order builder has a builtOrder;
+    // switching to a fixed audio file must not leave chapters/credits
+    // describing tracks that are not actually in this video.
+    const mine = path.join(outputDir, "user-audio-mine.mp3");
+    fs.writeFileSync(mine, "x");
+    const p = await createSession({ targetSec: 600 });
+    const stored = writeProject(dataDir, {
+      ...readProject(dataDir, p.projectId),
+      bed: {
+        ...p.bed, mode: "file", filePath: mine,
+        builtOrder: [{ ref: "library:prayer-piano", startSec: 0, label: "Prayer Piano", credit: "" }],
+      },
+    });
+    const { project } = await assembleBed({ dataDir, outputDir }, stored);
+    assert.equal(project.bed.builtOrder, null);
+  });
+
   test("a bed path stored before this check is still refused at render time", async () => {
     // Defence in depth: a project saved before the route checked must not
     // reach ffmpeg either.
