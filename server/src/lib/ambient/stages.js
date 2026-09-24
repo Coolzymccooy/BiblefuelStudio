@@ -434,6 +434,12 @@ export async function renderStage(ctx, projectId, jobId) {
   const start = readProject(ctx.dataDir, projectId);
   if (!start) throw new Error("project not found");
 
+  // Cancelled while it waited its turn behind another heavy job.
+  if (isCancelled(projectId)) {
+    clearCancelled(projectId);
+    throw new Error("Cancelled.");
+  }
+
   writeProject(ctx.dataDir, {
     ...start,
     status: AMBIENT_STATUS.ASSEMBLING,

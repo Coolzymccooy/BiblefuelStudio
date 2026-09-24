@@ -20,6 +20,7 @@ import {
   createJob, persistJob, markError, cancelJob as cancelRenderJob, getJob as getRenderJob,
 } from "../lib/renderJobs.js";
 import { quota } from "../middleware/quota.js";
+import { runExclusive } from "../lib/heavyJobGate.js";
 
 // The stages, their seams and the cancel registry live in lib/ambient/stages.js.
 // Re-exported so callers and tests keep one import surface; the bindings are
@@ -492,7 +493,12 @@ router.post("/:id/render", notAlreadyRendering, renderQuota, (req, res) => {
 
     const ctx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir };
     const stage = _renderStageFn || renderStage;
-    stage(ctx, id, job.jobId).catch((err) => {
+    runExclusive(() => stage(ctx, id, job.jobId), {
+      onQueued: () => {
+        const live = readProject(ctx.dataDir, id);
+        if (live) writeProject(ctx.dataDir, { ...live, render: { jobId: job.jobId, outputPath: null, status: "running", percent: 0, phase: "waiting for another job to finish" } });
+      },
+    }).catch((err) => {
       // A rejected fire-and-forget is an UNHANDLED rejection; under Node's
       // default policy that kills the server. Record it on the project.
       const message = String(err?.message || err || "render failed");
