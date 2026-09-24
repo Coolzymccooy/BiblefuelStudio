@@ -16,7 +16,7 @@ import ambientRouter, {
   _setPlanImpl, _resetPlanImpl,
   _setRenderStageImpl, _resetRenderStageImpl,
   _setQuotaImpl, _resetQuotaImpl,
-  clearCancelled, isCancelled,
+  clearCancelled, isCancelled, markCancelled,
   _setLoudnessImpl, _resetLoudnessImpl, _setFfmpegSpawnImpl, _resetFfmpegSpawnImpl,
 } from "./ambient.js";
 import { EventEmitter } from "events";
@@ -25,6 +25,7 @@ import { createJob, getJob as getRenderJob } from "../lib/renderJobs.js";
 import { registerTrack } from "../lib/musicLibraryStore.js";
 import { readLibrary, registerImage, _setEmbedImpl, _resetEmbedImpl } from "../lib/imageGen/imageLibrary.js";
 import { _resetHeavyGate } from "../lib/heavyJobGate.js";
+import { _setEncodersProbe, _resetEncodersProbe } from "../lib/ambient/encoders.js";
 
 let dataDir, outputDir, app;
 
@@ -1163,5 +1164,95 @@ describe("renderStage — music only", () => {
     const script = fs.readFileSync(render[render.indexOf("-filter_complex_script") + 1], "utf8");
     assert.doesNotMatch(script, /drawtext/);
     assert.doesNotMatch(script, /sidechaincompress/);
+  });
+});
+
+describe("renderStage — AMF encode falls back to CPU", () => {
+  afterEach(() => { _resetLoudnessImpl(); _resetFfmpegSpawnImpl(); _resetEncodersProbe(); });
+
+  function readyMusicOnlyProject(targetSec = 60) {
+    return (async () => {
+      _setLoudnessImpl(async () => ({ inputI: -18, inputTp: -6 }));
+      const p = await createSession({ targetSec });
+      const img = path.join(outputDir, "pic.jpg");
+      fs.writeFileSync(img, "jpg");
+      writeProject(dataDir, {
+        ...readProject(dataDir, p.projectId),
+        words: "none",
+        movements: [{ id: "m1", startMs: 0, endMs: targetSec * 1000, imageStatus: "done", imagePath: img }],
+        bed: { ...p.bed, mode: "assemble", trackRefs: ["library:prayer-piano"], crossfadeSec: 2 },
+      });
+      return p;
+    })();
+  }
+
+  test("an AMF failure retries once with CPU args, clears the stale percent, and records encoderUsed", async () => {
+    _setEncodersProbe(() => " V....D h264_amf  AMD AMF H.264 Encoder");
+    const videoCalls = [];
+    let videoAttempt = 0;
+    _setFfmpegSpawnImpl((args) => {
+      const proc = new EventEmitter();
+      proc.stderr = new EventEmitter();
+      // Bed assembly spawns ffmpeg too (no -c:v in its args) and must succeed
+      // so the video pass is reached at all.
+      if (!args.includes("-c:v")) {
+        setImmediate(() => proc.emit("close", 0));
+        return proc;
+      }
+      videoCalls.push(args);
+      videoAttempt += 1;
+      if (videoAttempt === 1) {
+        // Progress the AMF attempt well past what the CPU retry starts at, so
+        // a stale monotonic percent would otherwise poison the retry.
+        setImmediate(() => {
+          proc.stderr.emit("data", Buffer.from("time=00:00:24.00 bitrate=..."));
+          setImmediate(() => proc.emit("close", 1));
+        });
+      } else {
+        setImmediate(() => proc.emit("close", 0));
+      }
+      return proc;
+    });
+    const p = await readyMusicOnlyProject(60);
+    const job = createJob("u1", { durationSec: 60 });
+    await renderStage({ dataDir, outputDir }, p.projectId, job.jobId, { encoder: "amf" });
+
+    assert.equal(videoCalls.length, 2, "AMF attempt then a CPU retry");
+    assert.ok(videoCalls[0].includes("h264_amf"), "first attempt uses the graphics chip");
+    assert.ok(videoCalls[1].includes("libx264") && !videoCalls[1].includes("h264_amf"), "retry falls back to CPU");
+
+    const saved = readProject(dataDir, p.projectId);
+    assert.equal(saved.status, AMBIENT_STATUS.DONE);
+    assert.equal(saved.render.encoderUsed, "cpu");
+    // The stale 40% from the failed AMF attempt (24/60) must not survive into
+    // the retry's own progress — it finished at the terminal 100%, not stuck.
+    assert.equal(saved.render.percent, 100);
+    assert.equal(getRenderJob(job.jobId)?.percent, 100);
+  });
+
+  test("a cancel during the AMF attempt skips the CPU retry entirely", async () => {
+    _setEncodersProbe(() => " V....D h264_amf  AMD AMF H.264 Encoder");
+    const p = await readyMusicOnlyProject(60);
+    const videoCalls = [];
+    _setFfmpegSpawnImpl((args) => {
+      const proc = new EventEmitter();
+      proc.stderr = new EventEmitter();
+      if (!args.includes("-c:v")) {
+        setImmediate(() => proc.emit("close", 0));
+        return proc;
+      }
+      videoCalls.push(args);
+      setImmediate(() => {
+        markCancelled(p.projectId);
+        proc.emit("close", 1);
+      });
+      return proc;
+    });
+    const job = createJob("u1", { durationSec: 60 });
+    await renderStage({ dataDir, outputDir }, p.projectId, job.jobId, { encoder: "amf" });
+    assert.equal(videoCalls.length, 1, "no CPU retry once cancelled");
+    const saved = readProject(dataDir, p.projectId);
+    assert.equal(saved.status, AMBIENT_STATUS.ERROR);
+    clearCancelled(p.projectId);
   });
 });

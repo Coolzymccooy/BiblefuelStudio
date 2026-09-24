@@ -525,8 +525,20 @@ export async function renderStage(ctx, projectId, jobId, { encoder = "cpu" } = {
   let result = await encodeWith(argsFor(wanted));
   if (!result.ok && wanted === "amf" && !isCancelled(projectId)) {
     // The graphics encoder failed (driver, unsupported size): the CPU encode
-    // is slower but always there.
+    // is slower but always there. The AMF attempt may have already reported
+    // progress (both markProgress and persistPct are monotonic per job), so
+    // reset both before restarting or the UI would show a stale percentage
+    // until the CPU pass caught back up.
     encoderUsed = "cpu";
+    markRunning(jobId);
+    lastPct = -1;
+    lastAt = 0;
+    try {
+      const live = readProject(ctx.dataDir, projectId);
+      if (live && live.status === AMBIENT_STATUS.RENDERING) {
+        writeProject(ctx.dataDir, { ...live, render: { ...live.render, percent: 0, phase: "retrying on the CPU" } });
+      }
+    } catch { /* progress is best-effort */ }
     result = await encodeWith(argsFor("cpu"));
   }
 
