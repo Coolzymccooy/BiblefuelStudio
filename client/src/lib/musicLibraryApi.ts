@@ -85,7 +85,8 @@ export async function getInstrumental(jobId: string): Promise<InstrumentalJob> {
 }
 
 export async function cancelInstrumental(jobId: string): Promise<void> {
-  await api.post(`/api/music/instrumental/${jobId}/cancel`, {});
+  const res = await api.post(`/api/music/instrumental/${jobId}/cancel`, {});
+  if (!res.ok) throw new Error(res.error || 'Failed to cancel vocal removal');
 }
 
 export async function keepInstrumental(jobId: string): Promise<MusicTrack> {
@@ -95,5 +96,6 @@ export async function keepInstrumental(jobId: string): Promise<MusicTrack> {
 }
 
 export async function discardInstrumental(jobId: string): Promise<void> {
-  await api.post(`/api/music/instrumental/${jobId}/discard`, {});
+  const res = await api.post(`/api/music/instrumental/${jobId}/discard`, {});
+  if (!res.ok) throw new Error(res.error || 'Failed to discard the instrumental');
 }
