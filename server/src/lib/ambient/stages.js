@@ -8,6 +8,7 @@ import { trackInfo } from "./trackInfo.js";
 import { voiceDrops } from "./drops.js";
 import { deriveMovements, imagePromptFor, AMBIENT_IMAGE_STYLE } from "./movements.js";
 import { buildAmbientFfmpegArgs } from "./ambientRender.js";
+import { amfAvailable } from "./encoders.js";
 import { insideOutputs } from "./ownFiles.js";
 import { measureLoudness, gainToTargetDb } from "./loudness.js";
 
@@ -430,7 +431,7 @@ export async function assembleBed(ctx, project) {
  * the project file, because the in-memory job map is not visible to whichever
  * request later serves GET /:id.
  */
-export async function renderStage(ctx, projectId, jobId) {
+export async function renderStage(ctx, projectId, jobId, { encoder = "cpu" } = {}) {
   const start = readProject(ctx.dataDir, projectId);
   if (!start) throw new Error("project not found");
 
@@ -462,9 +463,6 @@ export async function renderStage(ctx, projectId, jobId) {
 
   const dir = ensureDir(outDirFor(ctx.outputDir, projectId));
   const outPath = path.join(dir, "video.mp4");
-  const built = buildAmbientFfmpegArgs(project, {
-    bedPath, images, drops: isMusicOnly(project) ? [] : (project.drops || []), outPath, workDir: dir,
-  });
 
   writeProject(ctx.dataDir, {
     ...stillThere(ctx, projectId),
@@ -491,10 +489,10 @@ export async function renderStage(ctx, projectId, jobId) {
     } catch { /* progress is best-effort */ }
   };
 
-  const result = await new Promise((resolve) => {
+  const encodeWith = (args) => new Promise((resolve) => {
     let proc;
     try {
-      proc = spawnFfmpeg(built.args);
+      proc = spawnFfmpeg(args);
     } catch (err) {
       // spawn throws SYNCHRONOUSLY on ENAMETOOLONG/ENOENT — that must become a
       // failed job, never a dead server.
@@ -519,6 +517,19 @@ export async function renderStage(ctx, projectId, jobId) {
       : resolve({ ok: false, error: `ffmpeg exited ${code}: ${tail.slice(-400)}` })));
   });
 
+  const wanted = encoder === "amf" && amfAvailable() ? "amf" : "cpu";
+  const argsFor = (enc) => buildAmbientFfmpegArgs(project, {
+    bedPath, images, drops: isMusicOnly(project) ? [] : (project.drops || []), outPath, workDir: dir, encoder: enc,
+  }).args;
+  let encoderUsed = wanted;
+  let result = await encodeWith(argsFor(wanted));
+  if (!result.ok && wanted === "amf" && !isCancelled(projectId)) {
+    // The graphics encoder failed (driver, unsupported size): the CPU encode
+    // is slower but always there.
+    encoderUsed = "cpu";
+    result = await encodeWith(argsFor("cpu"));
+  }
+
   const fresh = stillThere(ctx, projectId);
   if (result.ok) {
     markDone(jobId, outPath);
@@ -529,7 +540,7 @@ export async function renderStage(ctx, projectId, jobId) {
       ...fresh,
       status: AMBIENT_STATUS.DONE,
       error: null,
-      render: { jobId, outputPath: outPath, status: "done", percent: 100, phase: "" },
+      render: { jobId, outputPath: outPath, status: "done", percent: 100, phase: "", encoderUsed },
     });
   }
   markError(jobId, result.error);
@@ -538,6 +549,6 @@ export async function renderStage(ctx, projectId, jobId) {
     ...fresh,
     status: AMBIENT_STATUS.ERROR,
     error: result.error,
-    render: { jobId, outputPath: null, status: "error", percent: 0, phase: "" },
+    render: { jobId, outputPath: null, status: "error", percent: 0, phase: "", encoderUsed },
   });
 }

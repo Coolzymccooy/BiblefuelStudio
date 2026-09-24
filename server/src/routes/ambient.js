@@ -7,6 +7,7 @@ import {
   WORDS, isMusicOnly,
 } from "../lib/ambient/projectStore.js";
 import { bedHash } from "../lib/ambient/bedAssembly.js";
+import { ENCODERS } from "../lib/ambient/encoders.js";
 import { defaultDropTimes, normaliseDrops } from "../lib/ambient/drops.js";
 import { planReferences } from "../lib/ambient/versePlan.js";
 import { readLibrary } from "../lib/imageGen/imageLibrary.js";
@@ -490,10 +491,11 @@ router.post("/:id/render", notAlreadyRendering, renderQuota, (req, res) => {
     clearCancelled(id);
     const job = createJob(req.ctx.userId, { durationSec: project.targetSec });
     persistJob(req.ctx.dataDir, { ...job, projectId: id, status: "running" });
+    const encoder = ENCODERS.includes(req.body?.encoder) ? req.body.encoder : "cpu";
 
     const ctx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir };
     const stage = _renderStageFn || renderStage;
-    runExclusive(() => stage(ctx, id, job.jobId), {
+    runExclusive(() => stage(ctx, id, job.jobId, { encoder }), {
       onQueued: () => {
         const live = readProject(ctx.dataDir, id);
         if (live) writeProject(ctx.dataDir, { ...live, render: { jobId: job.jobId, outputPath: null, status: "running", percent: 0, phase: "waiting for another job to finish" } });

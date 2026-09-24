@@ -24,6 +24,7 @@ import { readProject, writeProject } from "../lib/ambient/projectStore.js";
 import { createJob, getJob as getRenderJob } from "../lib/renderJobs.js";
 import { registerTrack } from "../lib/musicLibraryStore.js";
 import { readLibrary, registerImage, _setEmbedImpl, _resetEmbedImpl } from "../lib/imageGen/imageLibrary.js";
+import { _resetHeavyGate } from "../lib/heavyJobGate.js";
 
 let dataDir, outputDir, app;
 
@@ -729,6 +730,8 @@ describe("PATCH /api/ambient/:id/captions", () => {
 });
 
 describe("POST /api/ambient/:id/render", () => {
+  beforeEach(() => _resetHeavyGate());
+
   async function readySession() {
     _setImageLibraryImpl({ find: async () => [], register: async () => ({ id: "x" }), mark: () => {} });
     _setImageGenImpl(async ({ partNumber }) => ({ ok: true, path: `/img/${partNumber}.png` }));
@@ -813,6 +816,24 @@ describe("POST /api/ambient/:id/render", () => {
     await request(app).get(`/api/ambient/${p.projectId}`);
     await request(app).get("/api/ambient");
     assert.deepEqual(charged, [], "a polling client must not burn the operator's allowance");
+  });
+
+  test("passes the chosen encoder to the render, and only cpu or amf", async () => {
+    const seen = [];
+    _setRenderStageImpl(async (_ctx, _id, _job, opts) => { seen.push(opts?.encoder); });
+    const p = await readySession();
+    await request(app).post(`/api/ambient/${p.projectId}/render`).send({ encoder: "amf" });
+    await waitFor(p.projectId, () => seen.length === 1);
+    assert.deepEqual(seen, ["amf"]);
+  });
+
+  test("an unknown encoder value falls back to cpu", async () => {
+    const seen = [];
+    _setRenderStageImpl(async (_ctx, _id, _job, opts) => { seen.push(opts?.encoder); });
+    const p = await readySession();
+    await request(app).post(`/api/ambient/${p.projectId}/render`).send({ encoder: "nvenc" });
+    await waitFor(p.projectId, () => seen.length === 1);
+    assert.deepEqual(seen, ["cpu"]);
   });
 });
 
