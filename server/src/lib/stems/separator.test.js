@@ -1,0 +1,162 @@
+import { test, describe, afterEach } from "node:test";
+import assert from "node:assert/strict";
+import { EventEmitter } from "events";
+import fs from "fs";
+import os from "os";
+import path from "path";
+import {
+  MODELS, stemsCli, buildSeparatorArgs, parseProgress,
+  separatorAvailable, removeVocals, _setSpawnImpl, _resetSpawnImpl, _resetAvailability,
+} from "./separator.js";
+
+function fakeProc({ code = 0, stdout = "", stderr = "", onSpawn } = {}) {
+  return (cmd, args, opts) => {
+    onSpawn?.(cmd, args, opts);
+    const p = new EventEmitter();
+    p.stdout = new EventEmitter();
+    p.stderr = new EventEmitter();
+    p.kill = () => { p.killed = true; setImmediate(() => p.emit("close", null)); };
+    setImmediate(() => {
+      if (stdout) p.stdout.emit("data", Buffer.from(stdout));
+      if (stderr) p.stderr.emit("data", Buffer.from(stderr));
+      p.emit("close", code);
+    });
+    return p;
+  };
+}
+
+describe("stemsCli", () => {
+  test("unset means the feature is off", () => assert.equal(stemsCli({}), null));
+  test("reads STEMS_CLI", () => assert.equal(stemsCli({ STEMS_CLI: " C:\\v\\python.exe " }), "C:\\v\\python.exe"));
+});
+
+describe("buildSeparatorArgs", () => {
+  const input = path.resolve("/music/My Song's \"Best\".mp3");
+  const outDir = path.resolve("/work/job 1");
+
+  test("best quality uses the Roformer model and asks only for the instrumental", () => {
+    const args = buildSeparatorArgs({ input, outDir, quality: "best" });
+    assert.equal(args[0], input);
+    assert.equal(args[args.indexOf("--model_filename") + 1], MODELS.best);
+    assert.equal(args[args.indexOf("--single_stem") + 1], "Instrumental");
+    assert.equal(args[args.indexOf("--output_dir") + 1], outDir);
+  });
+
+  test("fast uses the Demucs model; unknown quality is best", () => {
+    assert.equal(buildSeparatorArgs({ input, outDir, quality: "fast" }).includes(MODELS.fast), true);
+    assert.equal(buildSeparatorArgs({ input, outDir, quality: "ultra" }).includes(MODELS.best), true);
+  });
+
+  test("a path with spaces and quotes stays one argument", () => {
+    assert.ok(buildSeparatorArgs({ input, outDir, quality: "best" }).includes(input));
+  });
+
+  test("the model folder is passed when set", () => {
+    const args = buildSeparatorArgs({ input, outDir, quality: "best", modelDir: path.resolve("/models") });
+    assert.equal(args[args.indexOf("--model_file_dir") + 1], path.resolve("/models"));
+  });
+
+  test("refuses a relative input (it could be read as a flag)", () => {
+    assert.throws(() => buildSeparatorArgs({ input: "-rf", outDir, quality: "best" }), /absolute/);
+  });
+});
+
+describe("parseProgress", () => {
+  test("reads the last percentage in a chunk", () => {
+    assert.equal(parseProgress(" 12%|█▏        | 3/25 [00:05<00:40]\r 48%|████▊     | 12/25"), 48);
+  });
+  test("null when there is none", () => assert.equal(parseProgress("Loading model..."), null));
+});
+
+describe("separatorAvailable", () => {
+  afterEach(() => { _resetSpawnImpl(); _resetAvailability(); delete process.env.STEMS_CLI; });
+
+  test("off when STEMS_CLI is unset", async () => {
+    delete process.env.STEMS_CLI;
+    assert.equal((await separatorAvailable()).ok, false);
+  });
+
+  test("on when --version exits 0, spawned without a shell", async () => {
+    process.env.STEMS_CLI = "C:\\v\\python.exe";
+    let seen;
+    _setSpawnImpl(fakeProc({ stdout: "audio-separator 0.30.1", onSpawn: (cmd, args, opts) => { seen = { cmd, args, opts }; } }));
+    const r = await separatorAvailable();
+    assert.equal(r.ok, true);
+    assert.equal(seen.cmd, "C:\\v\\python.exe");
+    assert.deepEqual(seen.args, ["--version"]);
+    assert.equal(seen.opts.shell, false);
+  });
+
+  test("off when --version fails", async () => {
+    process.env.STEMS_CLI = "C:\\v\\python.exe";
+    _setSpawnImpl(fakeProc({ code: 1 }));
+    assert.equal((await separatorAvailable()).ok, false);
+  });
+
+  test("off, not hung, when --version never answers", async () => {
+    process.env.STEMS_CLI = "C:\\v\\python.exe";
+    _setSpawnImpl(() => { const p = new EventEmitter(); p.stdout = new EventEmitter(); p.stderr = new EventEmitter(); p.kill = () => {}; return p; });
+    const r = await separatorAvailable({ timeoutMs: 20 });
+    assert.equal(r.ok, false);
+  });
+});
+
+describe("removeVocals", () => {
+  afterEach(() => { _resetSpawnImpl(); delete process.env.STEMS_CLI; });
+
+  test("separates, converts the instrumental to m4a, reports progress and cleans up", async () => {
+    process.env.STEMS_CLI = "C:\\v\\python.exe";
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "bf-stems-"));
+    const workDir = path.join(root, "work");
+    const outPath = path.join(root, "instrumental-1.m4a");
+    const calls = [];
+    const progress = [];
+    _setSpawnImpl((cmd, args, opts) => {
+      calls.push({ cmd, args });
+      if (cmd !== "C:\\v\\python.exe") fs.writeFileSync(args[args.length - 1], "m4a"); // ffmpeg writes outPath
+      else fs.writeFileSync(path.join(workDir, "song_(Instrumental)_model.wav"), "wav");
+      return fakeProc({ stderr: cmd === "C:\\v\\python.exe" ? " 50%|█████ | 5/10" : "" })(cmd, args, opts);
+    });
+    const result = await removeVocals({ input: path.join(root, "song.mp3"), outPath, workDir, quality: "fast", onProgress: (p) => progress.push(p) });
+    assert.equal(result, outPath);
+    assert.equal(fs.existsSync(outPath), true);
+    assert.equal(fs.existsSync(workDir), false, "work files removed");
+    assert.deepEqual(progress, [50]);
+    const ff = calls[1];
+    assert.ok(ff.args.includes(path.join(workDir, "song_(Instrumental)_model.wav")));
+    assert.ok(ff.args.includes("aac"));
+  });
+
+  test("fails clearly when the separator writes no instrumental", async () => {
+    process.env.STEMS_CLI = "C:\\v\\python.exe";
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "bf-stems-"));
+    _setSpawnImpl(fakeProc());
+    await assert.rejects(
+      removeVocals({ input: path.join(root, "s.mp3"), outPath: path.join(root, "o.m4a"), workDir: path.join(root, "w"), quality: "best" }),
+      /no instrumental/,
+    );
+  });
+
+  test("a non-zero exit is an error carrying the tail of stderr", async () => {
+    process.env.STEMS_CLI = "C:\\v\\python.exe";
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "bf-stems-"));
+    _setSpawnImpl(fakeProc({ code: 2, stderr: "CUDA? no. out of memory" }));
+    await assert.rejects(
+      removeVocals({ input: path.join(root, "s.mp3"), outPath: path.join(root, "o.m4a"), workDir: path.join(root, "w"), quality: "best" }),
+      /out of memory/,
+    );
+  });
+
+  test("an abort kills the process", async () => {
+    process.env.STEMS_CLI = "C:\\v\\python.exe";
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "bf-stems-"));
+    let proc;
+    _setSpawnImpl(() => { proc = new EventEmitter(); proc.stdout = new EventEmitter(); proc.stderr = new EventEmitter(); proc.kill = () => { proc.killed = true; setImmediate(() => proc.emit("close", null)); }; return proc; });
+    const ctrl = new AbortController();
+    const run = removeVocals({ input: path.join(root, "s.mp3"), outPath: path.join(root, "o.m4a"), workDir: path.join(root, "w"), quality: "best", signal: ctrl.signal });
+    await new Promise((r) => setImmediate(r));
+    ctrl.abort();
+    await assert.rejects(run, /Cancelled/);
+    assert.equal(proc.killed, true);
+  });
+});
