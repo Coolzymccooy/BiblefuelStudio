@@ -86,9 +86,9 @@ describe('MusicPicker', () => {
     it('appends a library track to the ordered list', async () => {
       const onChange = vi.fn();
       renderWith(<MusicPicker multiple value={{ path: 'library:peaceful-worship', paths: ['library:peaceful-worship'], volume: 0.3, autoDuck: true }} onChange={onChange} busy={false} />);
-      const select = await screen.findByLabelText(/add music from library/i);
-      await screen.findByRole('option', { name: /joyful praise/i });
-      await userEvent.selectOptions(select, 'joyful-praise');
+      await userEvent.click(await screen.findByRole('button', { name: /add from library/i }));
+      await userEvent.click(await screen.findByRole('checkbox', { name: /joyful praise/i }));
+      await userEvent.click(screen.getByRole('button', { name: /^add 1 track$/i }));
       expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
         paths: ['library:peaceful-worship', 'library:joyful-praise'],
         path: 'library:peaceful-worship',
@@ -196,9 +196,9 @@ describe('MusicPicker', () => {
     it('multi-mode: selecting a saved upload from the library appends its mylib ref', async () => {
       const onChange = vi.fn();
       renderWith(<MusicPicker multiple value={{ path: null, paths: [], volume: 0.3, autoDuck: true }} onChange={onChange} busy={false} />);
-      const select = await screen.findByLabelText(/add music from library/i);
-      await screen.findByRole('option', { name: /my bed/i });
-      await userEvent.selectOptions(select, 'u1');
+      await userEvent.click(await screen.findByRole('button', { name: /add from library/i }));
+      await userEvent.click(await screen.findByRole('checkbox', { name: /my bed/i }));
+      await userEvent.click(screen.getByRole('button', { name: /^add 1 track$/i }));
       expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
         paths: ['mylib:u1'],
         path: 'mylib:u1',
@@ -326,3 +326,50 @@ describe('MusicPicker', () => {
     });
   });
 });
+
+describe('MusicPicker — choosing several tracks from the library', () => {
+  const lib = [
+    { id: 'peaceful-worship', label: 'Peaceful Worship', mood: 'calm', previewUrl: '/music/01.mp3', default: true, source: 'bundled', licence: 'pixabay-cleared', durationSec: null, ref: 'library:peaceful-worship' },
+    { id: 'u1', label: 'Pastoral — Asher Fulero', mood: '', previewUrl: null, default: false, source: 'upload', licence: 'youtube-audio-library', durationSec: 211, ref: 'mylib:u1' },
+    { id: 'u2', label: 'Tratak — Jesse Gallagher', mood: '', previewUrl: null, default: false, source: 'upload', licence: 'youtube-audio-library', durationSec: 355, ref: 'mylib:u2' },
+    { id: 'u3', label: 'Thin Places — Jesse Gallagher', mood: '', previewUrl: null, default: false, source: 'upload', licence: 'youtube-audio-library', durationSec: 430, ref: 'mylib:u3' },
+  ] as api.MusicTrack[];
+
+  const open = async (paths: string[], onChange = vi.fn()) => {
+    vi.spyOn(api, 'fetchMusicLibrary').mockResolvedValue(lib);
+    renderWith(<MusicPicker multiple value={{ path: paths[0] ?? null, paths, volume: 0.3, autoDuck: true }} onChange={onChange} busy={false} />);
+    await userEvent.click(await screen.findByRole('button', { name: /add from library/i }));
+    return onChange;
+  };
+
+  it('ticks several and adds them in one go, in library order', async () => {
+    const onChange = await open(['mylib:u1']);
+    await userEvent.click(await screen.findByRole('checkbox', { name: /thin places/i }));
+    await userEvent.click(screen.getByRole('checkbox', { name: /peaceful worship/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^add 2 tracks$/i }));
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
+      paths: ['mylib:u1', 'library:peaceful-worship', 'mylib:u3'],
+    }));
+  });
+
+  it('select all takes every track not already in the list', async () => {
+    const onChange = await open(['mylib:u1']);
+    await userEvent.click(await screen.findByRole('button', { name: /select all/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^add 3 tracks$/i }));
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
+      paths: ['mylib:u1', 'library:peaceful-worship', 'mylib:u2', 'mylib:u3'],
+    }));
+  });
+
+  it('shows how long each track is, and leaves out ones already in the list', async () => {
+    await open(['mylib:u1']);
+    expect(await screen.findByRole('checkbox', { name: /tratak.*5:55/i })).toBeInTheDocument();
+    expect(screen.queryByRole('checkbox', { name: /pastoral/i })).not.toBeInTheDocument();
+  });
+
+  it('adding nothing is not an option', async () => {
+    await open([]);
+    expect(await screen.findByRole('button', { name: /^add 0 tracks$/i })).toBeDisabled();
+  });
+});
+

@@ -39,6 +39,8 @@ export interface ImportPlan {
   toAdd: Array<{ file: File; label: string }>;
   /** Labels left out because the library (or this batch) already has them. */
   skipped: string[];
+  /** Library refs of the skipped tracks the library already had, in order. */
+  matchedRefs: string[];
 }
 
 /**
@@ -46,16 +48,26 @@ export interface ImportPlan {
  * has is skipped, so running the same folder again after a failure only adds
  * what's missing.
  */
-export function planImport(files: readonly File[], existing: ReadonlyArray<{ label: string }>): ImportPlan {
-  const seen = new Set(existing.map((t) => labelKey(t.label)));
+export function planImport(
+  files: readonly File[],
+  existing: ReadonlyArray<{ label: string; ref?: string }>,
+): ImportPlan {
+  const libraryRefs = new Map(existing.map((t) => [labelKey(t.label), t.ref] as const));
+  const seen = new Set(libraryRefs.keys());
   const toAdd: ImportPlan['toAdd'] = [];
   const skipped: string[] = [];
+  const matchedRefs: string[] = [];
   for (const file of files) {
     const label = trackLabelFromFilename(file.name);
     const key = labelKey(label);
-    if (seen.has(key)) { skipped.push(label); continue; }
+    if (seen.has(key)) {
+      skipped.push(label);
+      const ref = libraryRefs.get(key);
+      if (ref && !matchedRefs.includes(ref)) matchedRefs.push(ref);
+      continue;
+    }
     seen.add(key);
     toAdd.push({ file, label });
   }
-  return { toAdd, skipped };
+  return { toAdd, skipped, matchedRefs };
 }

@@ -9,10 +9,10 @@ import { storyApi } from '../../lib/storyApi';
 
 const mp3 = (name: string) => new File(['x'], name, { type: 'audio/mpeg' });
 
-function renderImport(existing: Array<{ label: string }> = []) {
+function renderImport(existing: Array<{ label: string; ref?: string }> = [], onAdded?: (refs: string[]) => void) {
   vi.spyOn(libraryApi, 'fetchMusicLibrary').mockResolvedValue(existing as libraryApi.MusicTrack[]);
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}><MusicLibraryImport busy={false} /></QueryClientProvider>);
+  return render(<QueryClientProvider client={qc}><MusicLibraryImport busy={false} onAdded={onAdded} /></QueryClientProvider>);
 }
 
 beforeEach(() => { vi.restoreAllMocks(); _resetImportState(); });
@@ -112,5 +112,39 @@ describe('MusicLibraryImport', () => {
     await waitFor(() => expect(upload).toHaveBeenCalledTimes(2));
     release();
     await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument());
+  });
+
+  describe('adding to this video as well', () => {
+    const saveAs = () => vi.spyOn(libraryApi, 'saveTrackToLibrary')
+      .mockImplementation(async (_p, meta) => ({ ref: `mylib:${meta?.label}` }) as libraryApi.MusicTrack);
+
+    it('is offered, ticked, and hands over every chosen track, including ones already in the library', async () => {
+      vi.spyOn(storyApi, 'uploadAudio').mockImplementation(async (_f, name) => `/out/${name}`);
+      saveAs();
+      vi.spyOn(toast, 'success').mockImplementation(() => '');
+      const onAdded = vi.fn();
+      renderImport([{ label: 'Pastoral — Asher Fulero', ref: 'mylib:old' }], onAdded);
+      expect(screen.getByRole('checkbox', { name: /add them to this video/i })).toBeChecked();
+      await waitFor(() => expect(libraryApi.fetchMusicLibrary).toHaveBeenCalled());
+      await userEvent.upload(screen.getByLabelText(/choose tracks/i), [mp3('Pastoral - Asher Fulero.mp3'), mp3('Tratak - Jesse Gallagher.mp3')]);
+      await waitFor(() => expect(onAdded).toHaveBeenCalledWith(['mylib:old', 'mylib:Tratak — Jesse Gallagher']));
+    });
+
+    it('unticked, the tracks only go to the library', async () => {
+      vi.spyOn(storyApi, 'uploadAudio').mockImplementation(async (_f, name) => `/out/${name}`);
+      saveAs();
+      const success = vi.spyOn(toast, 'success').mockImplementation(() => '');
+      const onAdded = vi.fn();
+      renderImport([], onAdded);
+      await userEvent.click(screen.getByRole('checkbox', { name: /add them to this video/i }));
+      await userEvent.upload(screen.getByLabelText(/choose tracks/i), [mp3('a.mp3')]);
+      await waitFor(() => expect(success).toHaveBeenCalled());
+      expect(onAdded).not.toHaveBeenCalled();
+    });
+
+    it('is not offered where there is no video bed to add to', () => {
+      renderImport();
+      expect(screen.queryByRole('checkbox', { name: /add them to this video/i })).not.toBeInTheDocument();
+    });
   });
 });

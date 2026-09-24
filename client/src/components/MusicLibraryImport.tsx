@@ -37,17 +37,30 @@ export function _resetImportState() {
  * for the batch. Tracks go up one at a time: a 50 MB file already takes the
  * resumable path, and 33 of them at once would only fight for the connection.
  */
-export function MusicLibraryImport({ busy }: { busy: boolean }) {
+export interface MusicLibraryImportProps {
+  busy: boolean;
+  /**
+   * Given where there's a video bed to fill: offers to add the chosen tracks
+   * to it as well, and receives their library refs when the batch ends. It may
+   * run after the step was left, so it must not rely on the step's state.
+   */
+  onAdded?: (refs: string[]) => void | Promise<void>;
+}
+
+export function MusicLibraryImport({ busy, onAdded }: MusicLibraryImportProps) {
   const { data: tracks } = useMusicLibrary();
   const qc = useQueryClient();
   const inputRef = useRef<HTMLInputElement>(null);
   const [licence, setLicence] = useState('unknown');
+  const [addToBed, setAddToBed] = useState(true);
   const current = useSyncExternalStore(subscribe, getProgress);
   const running = current !== null;
 
   const importFiles = async (files: File[]) => {
     if (getProgress() !== null || files.length === 0) return;
-    const { toAdd, skipped } = planImport(files, tracks || []);
+    const { toAdd, skipped, matchedRefs } = planImport(files, tracks || []);
+    const handOver = addToBed ? onAdded : undefined;
+    const refs = [...matchedRefs];
     const failed: string[] = [];
     let added = 0;
     setProgress({ done: 0, total: toAdd.length });
@@ -56,8 +69,9 @@ export function MusicLibraryImport({ busy }: { busy: boolean }) {
         try {
           const path = uploaded.get(label) ?? await storyApi.uploadAudio(file, file.name);
           uploaded.set(label, path);
-          await saveTrackToLibrary(path, { label, licence });
+          const track = await saveTrackToLibrary(path, { label, licence });
           uploaded.delete(label);
+          if (track?.ref) refs.push(track.ref);
           added += 1;
         } catch {
           failed.push(label);
@@ -71,6 +85,13 @@ export function MusicLibraryImport({ busy }: { busy: boolean }) {
     if (added > 0 || skipped.length > 0) {
       const already = skipped.length ? `, ${skipped.length} already in your library` : '';
       toast.success(`${plural(added, 'track')} added${already}`);
+    }
+    if (handOver && refs.length) {
+      try {
+        await handOver(refs);
+      } catch (e) {
+        toast.error((e as Error).message || "The tracks are in your library, but adding them to this video failed. Add them from the library.");
+      }
     }
     if (failed.length) toast.error(`Couldn't add ${plural(failed.length, 'track')}: ${failed.join(', ')}. Choose them again to retry.`, { duration: 10000 });
   };
@@ -100,6 +121,17 @@ export function MusicLibraryImport({ busy }: { busy: boolean }) {
           {IMPORT_LICENCES.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
         </select>
       </label>
+      {onAdded && (
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={addToBed}
+            disabled={busy || running}
+            onChange={(e) => setAddToBed(e.target.checked)}
+          />
+          Add them to this video's music bed as well
+        </label>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"

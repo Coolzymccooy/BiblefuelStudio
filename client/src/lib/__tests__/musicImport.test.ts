@@ -24,6 +24,11 @@ describe('planImport', () => {
     expect(plan.skipped).toEqual(['Pastoral — Asher Fulero']);
   });
 
+  it("hands back the library's own ref for a track it already has, so it can still go in the bed", () => {
+    const plan = planImport([file('Pastoral - Asher Fulero.mp3')], [{ label: 'Pastoral — Asher Fulero', ref: 'mylib:p1' }]);
+    expect(plan.matchedRefs).toEqual(['mylib:p1']);
+  });
+
   it('the same file picked twice is added once', () => {
     const plan = planImport([file('A - B.mp3'), file('A - B.mp3')], []);
     expect(plan.toAdd).toHaveLength(1);
