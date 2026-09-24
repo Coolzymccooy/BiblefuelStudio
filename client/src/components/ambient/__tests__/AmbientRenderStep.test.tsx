@@ -52,6 +52,23 @@ describe('AmbientRenderStep progress', () => {
     expect(screen.getByText(/you can leave this page/i)).toBeInTheDocument();
     expect(screen.getByText(/about 40 minutes for 2 hours/i)).toBeInTheDocument();
   });
+
+  it('shows the server-reported phase — waiting for another job to finish — over the generic stage text', () => {
+    renderStep({
+      ...project('assembling', 0),
+      render: { jobId: 'j1', outputPath: null, status: 'running', percent: 0, phase: 'waiting for another job to finish' },
+    } as AmbientProject);
+    expect(screen.getByText('waiting for another job to finish')).toBeInTheDocument();
+    expect(screen.queryByText('Building the music bed…')).toBeNull();
+  });
+
+  it('shows the retrying-on-the-CPU phase during an encode too', () => {
+    renderStep({
+      ...project('rendering', 10),
+      render: { jobId: 'j1', outputPath: null, status: 'running', percent: 10, phase: 'retrying on the CPU' },
+    } as AmbientProject);
+    expect(screen.getByText('retrying on the CPU')).toBeInTheDocument();
+  });
 });
 
 describe('AmbientRenderStep when the video is ready', () => {

@@ -24,7 +24,7 @@ import { readProject, writeProject } from "../lib/ambient/projectStore.js";
 import { createJob, getJob as getRenderJob } from "../lib/renderJobs.js";
 import { registerTrack } from "../lib/musicLibraryStore.js";
 import { readLibrary, registerImage, _setEmbedImpl, _resetEmbedImpl } from "../lib/imageGen/imageLibrary.js";
-import { _resetHeavyGate } from "../lib/heavyJobGate.js";
+import { _resetHeavyGate, runExclusive } from "../lib/heavyJobGate.js";
 import { _setEncodersProbe, _resetEncodersProbe } from "../lib/ambient/encoders.js";
 
 let dataDir, outputDir, app;
@@ -761,6 +761,51 @@ describe("POST /api/ambient/:id/render", () => {
       assert.equal(res.status, 409, status);
       assert.match(res.body.error, /already rendering/);
     }
+  });
+
+  test("a render queued behind another heavy job is visible and cannot be double-started", async () => {
+    // Before this fix, onQueued only touched render.phase; project.status stayed
+    // whatever it was, so notAlreadyRendering (and the client's own inFlight
+    // check) never saw the wait and a second click started a second render.
+    const p = await readySession();
+    let releaseHeavy;
+    const heavyDone = new Promise((resolve) => { releaseHeavy = resolve; });
+    runExclusive(() => heavyDone);
+
+    const res = await request(app).post(`/api/ambient/${p.projectId}/render`).send({});
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    const queued = await waitFor(p.projectId, (x) => x.render.phase === "waiting for another job to finish");
+    assert.equal(queued.status, AMBIENT_STATUS.ASSEMBLING);
+
+    const second = await request(app).post(`/api/ambient/${p.projectId}/render`).send({});
+    assert.equal(second.status, 409);
+    assert.match(second.body.error, /already rendering/);
+
+    releaseHeavy();
+  });
+
+  test("cancelling a queued render is not undone by a second render click", async () => {
+    // clearCancelled() ran at the top of the route handler; a second click
+    // that reached the handler while the first was still queued would wipe
+    // out the cancel flag the first request's caller just set. Now that the
+    // queued state is visible via status, the second click is a 409 and
+    // never reaches clearCancelled.
+    const p = await readySession();
+    let releaseHeavy;
+    const heavyDone = new Promise((resolve) => { releaseHeavy = resolve; });
+    runExclusive(() => heavyDone);
+
+    const first = await request(app).post(`/api/ambient/${p.projectId}/render`).send({});
+    assert.equal(first.status, 200);
+    await waitFor(p.projectId, (x) => x.status === AMBIENT_STATUS.ASSEMBLING);
+
+    markCancelled(p.projectId);
+    const second = await request(app).post(`/api/ambient/${p.projectId}/render`).send({});
+    assert.equal(second.status, 409);
+    assert.equal(isCancelled(p.projectId), true, "the second, refused request must not clear the cancel flag");
+
+    releaseHeavy();
+    clearCancelled(p.projectId);
   });
 
   test("refuses to render while a movement has no picture", async () => {

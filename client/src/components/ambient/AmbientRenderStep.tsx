@@ -55,7 +55,8 @@ export function AmbientRenderStep({ project, busy, setBusy, refresh }: AmbientRe
   };
 
   if (inFlight) {
-    const stage = project.status === 'assembling' ? 'Building the music bed…' : 'Encoding the video…';
+    const defaultStage = project.status === 'assembling' ? 'Building the music bed…' : 'Encoding the video…';
+    const stage = project.render.phase ? project.render.phase : defaultStage;
     const footnote = 'This runs on the server — you can leave this page and come back. '
       + `It usually takes about ${formatLength(renderEstimateMinutes(project.targetSec))} `
       + `for ${formatLength(project.targetSec / 60)}.`;

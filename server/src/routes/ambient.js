@@ -498,7 +498,11 @@ router.post("/:id/render", notAlreadyRendering, renderQuota, (req, res) => {
     runExclusive(() => stage(ctx, id, job.jobId, { encoder }), {
       onQueued: () => {
         const live = readProject(ctx.dataDir, id);
-        if (live) writeProject(ctx.dataDir, { ...live, render: { jobId: job.jobId, outputPath: null, status: "running", percent: 0, phase: "waiting for another job to finish" } });
+        if (live) writeProject(ctx.dataDir, {
+          ...live,
+          status: AMBIENT_STATUS.ASSEMBLING,
+          render: { jobId: job.jobId, outputPath: null, status: "running", percent: 0, phase: "waiting for another job to finish" },
+        });
       },
     }).catch((err) => {
       // A rejected fire-and-forget is an UNHANDLED rejection; under Node's
