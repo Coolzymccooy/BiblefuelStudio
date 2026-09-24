@@ -119,19 +119,25 @@ test("no inline -filter_complex survives to the spawn", () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test("drift motion passes the encoder fps to Ken Burns rather than its default 30", () => {
+test("drift moves each picture with a smooth perspective zoom at the encoder's frame rate", () => {
   const dir = work();
   const { filter } = buildAmbientFfmpegArgs(project({ motion: "drift" }), io(dir));
-  assert.match(filter, /zoompan/);
-  // The zoompan must be built at 24: the default 30 runs the drift fast.
-  assert.match(filter, /fps=24/);
+  // zoompan snaps to whole pixels: on a slow move the picture sat still, then
+  // jumped, every second or two. The perspective warp moves every frame.
+  assert.ok(!/zoompan/.test(filter));
+  assert.equal(filter.match(/perspective=/g)?.length, 2, "one per picture");
+  // Frames reach the warp at 24 already, so its frame counter is the video's
+  // own clock. The image demuxer's default 25 would run the breathing fast.
+  for (const chain of filter.split(";\n").filter((c) => c.includes("perspective="))) {
+    assert.ok(chain.indexOf("fps=24") < chain.indexOf("perspective="), chain);
+  }
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test("still motion adds no zoompan at all", () => {
+test("still motion adds no movement at all", () => {
   const dir = work();
   const { filter } = buildAmbientFfmpegArgs(project({ motion: "still" }), io(dir));
-  assert.ok(!/zoompan/.test(filter));
+  assert.ok(!/zoompan|perspective/.test(filter));
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

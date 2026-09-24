@@ -128,3 +128,10 @@ describe('AmbientLookStep — your own pictures', () => {
     expect(screen.getByText('Your photo')).toBeInTheDocument();
   });
 });
+
+describe('AmbientLookStep — motion', () => {
+  it('shows the motion choice alongside the pictures', () => {
+    renderStep(project());
+    expect(screen.getByRole('radiogroup', { name: /motion/i })).toBeInTheDocument();
+  });
+});

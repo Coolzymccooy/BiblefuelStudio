@@ -283,6 +283,40 @@ describe("POST /api/ambient/:id/voice", () => {
   });
 });
 
+describe("PATCH /api/ambient/:id/motion", () => {
+  test("a new session is still, and gentle drift can be switched on and off", async () => {
+    const p = await createSession();
+    assert.equal(p.motion, "still");
+    const on = await request(app).patch(`/api/ambient/${p.projectId}/motion`).send({ motion: "drift" });
+    assert.equal(on.status, 200);
+    assert.equal(on.body.project.motion, "drift");
+    assert.equal(readProject(dataDir, p.projectId).motion, "drift");
+    const off = await request(app).patch(`/api/ambient/${p.projectId}/motion`).send({ motion: "still" });
+    assert.equal(off.body.project.motion, "still");
+  });
+
+  test("an unknown motion is refused and nothing changes", async () => {
+    const p = await createSession();
+    const res = await request(app).patch(`/api/ambient/${p.projectId}/motion`).send({ motion: "spin" });
+    assert.equal(res.status, 400);
+    assert.equal(res.body.ok, false);
+    assert.equal(readProject(dataDir, p.projectId).motion, "still");
+  });
+
+  test("it can't change under a render that is already encoding", async () => {
+    const p = await createSession();
+    writeProject(dataDir, { ...readProject(dataDir, p.projectId), status: "rendering" });
+    const res = await request(app).patch(`/api/ambient/${p.projectId}/motion`).send({ motion: "drift" });
+    assert.equal(res.status, 409);
+    assert.equal(readProject(dataDir, p.projectId).motion, "still");
+  });
+
+  test("an unknown session is a 404", async () => {
+    const res = await request(app).patch("/api/ambient/nope/motion").send({ motion: "drift" });
+    assert.equal(res.status, 404);
+  });
+});
+
 describe("PATCH /api/ambient/:id/bed", () => {
   test("records mode, volume and crossfade", async () => {
     const p = await createSession();

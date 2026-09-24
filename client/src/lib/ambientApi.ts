@@ -2,7 +2,7 @@ import { api } from './api';
 import type { StoryCaptionSettings } from './storyTypes';
 import type { AmbientScripturePatch } from '../components/ambient/AmbientCaptionsPanel';
 import type {
-  AmbientAspect, AmbientBedMode, AmbientDrop, AmbientProject, AmbientProjectSummary, AmbientStatus,
+  AmbientAspect, AmbientBedMode, AmbientDrop, AmbientMotion, AmbientProject, AmbientProjectSummary, AmbientStatus,
 } from './ambientTypes';
 
 // Generating movement images can run for minutes, same order of magnitude as
@@ -132,6 +132,10 @@ export const ambientApi = {
     const res = await api.get(`/api/ambient/${id}/library-images`);
     if (!res.ok) throw new Error(res.error || 'Failed to load your pictures');
     return (res.data?.images ?? []) as LibraryImage[];
+  },
+
+  async setMotion(id: string, motion: AmbientMotion): Promise<AmbientProject> {
+    return unwrapProject(await api.patch(`/api/ambient/${id}/motion`, { motion }));
   },
 
   // Scripture on screen: on/off, how long each verse stays, and where.

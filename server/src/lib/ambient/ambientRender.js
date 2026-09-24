@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { toFilterScriptArgs } from "../story/storyRender.js";
 import { buildXfadeChain } from "../story/sceneTransitions.js";
-import { kenBurnsVariedFilter } from "../kenBurnsVaried.js";
+import { driftFilter } from "./ambientMotion.js";
 import { escapeFontPath, fontFileFor } from "../videoFilters.js";
 import { captionPages, balanceLines, pageWindows } from "./captionPages.js";
 
@@ -240,11 +240,12 @@ export function buildAmbientFfmpegArgs(project, { bedPath, images, drops, outPat
       `crop=${width}:${height}`,
     ];
     if (project?.motion === "drift") {
-      // kenBurnsVariedFilter defaults fps to 30. Passing the encoder's 24
-      // explicitly is not optional: the default makes the drift run fast.
-      chain.push(kenBurnsVariedFilter(width, height, dur, FPS, i % 2 === 0 ? "in" : "out"));
+      // fps first: the looped still arrives at the image demuxer's 25, and
+      // the drift counts frames, so at 25 it would breathe fast.
+      chain.push(`fps=${FPS}`, driftFilter({ fps: FPS }), "setsar=1");
+    } else {
+      chain.push("setsar=1", `fps=${FPS}`);
     }
-    chain.push("setsar=1", `fps=${FPS}`);
     parts.push(`[${i}:v]${chain.join(",")}[s${i}]`);
   });
   parts.push(...xfade.filters);
