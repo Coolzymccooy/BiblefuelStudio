@@ -4,6 +4,8 @@ import crypto from "crypto";
 
 const INDEX_FILE = "musicLibrary.json";
 const REF_PREFIX = "mylib:";
+const CREDIT_MAX = 200;
+const cleanCredit = (v) => String(v ?? "").trim().slice(0, CREDIT_MAX);
 
 /** Where this tenant's uploaded-track index lives. */
 export function musicIndexPath(dataDir) {
@@ -65,7 +67,7 @@ function writeMusicLibrary(dataDir, lib) {
  * Content ID claim takes the revenue for the whole video, so the dangerous
  * assumption is "cleared" — the operator has to say so.
  */
-export function registerTrack(dataDir, { file, label, mood, licence, durationSec }) {
+export function registerTrack(dataDir, { file, label, mood, licence, durationSec, credit, derivedFrom }) {
   const abs = String(file || "").trim();
   if (!abs) throw new Error("file is required");
   const lib = readMusicLibrary(dataDir);
@@ -80,6 +82,8 @@ export function registerTrack(dataDir, { file, label, mood, licence, durationSec
     durationSec: Number.isFinite(Number(durationSec)) ? Number(durationSec) : null,
     source: "upload",
     licence: String(licence || "unknown").trim() || "unknown",
+    credit: cleanCredit(credit),
+    derivedFrom: derivedFrom ? String(derivedFrom) : null,
     addedAt: Date.now(),
   };
   lib.items.push(track);
@@ -96,6 +100,7 @@ export function updateTrack(dataDir, id, patch = {}) {
   for (const key of ["label", "mood", "licence"]) {
     if (patch[key] !== undefined) patched[key] = String(patch[key]).trim();
   }
+  if (patch.credit !== undefined) patched.credit = cleanCredit(patch.credit);
   const items = lib.items.slice();
   items[idx] = patched;
   writeMusicLibrary(dataDir, { items });

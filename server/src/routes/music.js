@@ -6,6 +6,7 @@ import {
   readMusicLibrary, registerTrack, updateTrack, removeTrack,
 } from "../lib/musicLibraryStore.js";
 import { probeAudioDurationSec } from "../lib/story/storyRender.js";
+import { BUNDLED_CREDIT } from "../lib/ambient/trackInfo.js";
 
 const router = Router();
 
@@ -19,6 +20,8 @@ function toListed(track) {
     default: false,
     source: "upload",
     licence: track.licence,
+    credit: track.credit || "",
+    derivedFrom: track.derivedFrom || null,
     durationSec: track.durationSec,
     ref: `mylib:${track.id}`,
   };
@@ -30,6 +33,7 @@ router.get("/library", (req, res) => {
     ...t,
     source: "bundled",
     licence: "pixabay-cleared",
+    credit: BUNDLED_CREDIT,
     durationSec: null,
     ref: `library:${t.id}`,
   }));
@@ -104,6 +108,7 @@ router.patch("/:id", (req, res) => {
     label: req.body?.label,
     mood: req.body?.mood,
     licence: req.body?.licence,
+    credit: req.body?.credit,
   });
   if (!track) return res.status(404).json({ ok: false, error: "track not found" });
   return res.json({ ok: true, track: toListed(track) });

@@ -158,4 +158,28 @@ describe("music route", () => {
     const stored = readMusicLibrary(ctx.dataDir).items.find((t2) => t2.label === "Linked");
     assert.equal(stored.file, fs.realpathSync(realTarget), "the index must hold the real file, not the symlink path");
   });
+
+  test("a track's credit is saved, trimmed and capped at 200 characters", async () => {
+    const { ctx, file } = tenant();
+    const t = registerTrack(ctx.dataDir, { file, label: "Bed" });
+    const r = res();
+    await handlerFor("patch", "/:id")({ ctx, params: { id: t.id }, body: { credit: `  ${"x".repeat(250)}  ` } }, r);
+    assert.equal(r.payload.ok, true);
+    assert.equal(r.payload.track.credit.length, 200);
+  });
+
+  test("bundled tracks are credited to Pixabay", async () => {
+    const r = res();
+    await handlerFor("get", "/library")({ ctx: tenant().ctx }, r);
+    const bundled = r.payload.tracks.find((t) => t.source === "bundled");
+    assert.equal(bundled.credit, "Music from Pixabay");
+  });
+
+  test("an upload with no credit lists an empty credit", async () => {
+    const { ctx, file } = tenant();
+    registerTrack(ctx.dataDir, { file, label: "Bed" });
+    const r = res();
+    await handlerFor("get", "/library")({ ctx }, r);
+    assert.equal(r.payload.tracks.find((t) => t.source === "upload").credit, "");
+  });
 });
