@@ -7,7 +7,7 @@ import os from "os";
 import path from "path";
 
 import ambientRouter, {
-  AMBIENT_STATUS, unclearedTracks, assembleBed,
+  AMBIENT_STATUS, unclearedTracks, assembleBed, renderStage,
   _setLookupImpl, _resetLookupImpl,
   _setSynthImpl, _resetSynthImpl,
   _setProbeImpl, _resetProbeImpl,
@@ -21,7 +21,7 @@ import ambientRouter, {
 } from "./ambient.js";
 import { EventEmitter } from "events";
 import { readProject, writeProject } from "../lib/ambient/projectStore.js";
-import { getJob as getRenderJob } from "../lib/renderJobs.js";
+import { createJob, getJob as getRenderJob } from "../lib/renderJobs.js";
 import { registerTrack } from "../lib/musicLibraryStore.js";
 import { readLibrary, registerImage, _setEmbedImpl, _resetEmbedImpl } from "../lib/imageGen/imageLibrary.js";
 
@@ -1014,5 +1014,88 @@ describe("the music bed is levelled", () => {
     const args = calls[0];
     const script = fs.readFileSync(args[args.indexOf("-filter_complex_script") + 1], "utf8");
     assert.ok(!/volume=/.test(script));
+  });
+});
+
+describe("PATCH /api/ambient/:id/words — music only", () => {
+  test("new sessions carry verses", async () => {
+    const p = await createSession();
+    assert.equal(p.words, "verses");
+  });
+
+  test("music only gives one picture for the whole length, even with no verses planned", async () => {
+    const p = await createSession({ targetSec: 3600 });
+    const res = await request(app).patch(`/api/ambient/${p.projectId}/words`).send({ words: "none" });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.project.words, "none");
+    assert.equal(res.body.project.movements.length, 1);
+    assert.equal(res.body.project.movements[0].startMs, 0);
+    assert.equal(res.body.project.movements[0].endMs, 3_600_000);
+  });
+
+  test("music only keeps the verses on disk so switching back restores them", async () => {
+    const p = await createSession();
+    await request(app).post(`/api/ambient/${p.projectId}/plan`).send({ count: 3 });
+    await request(app).patch(`/api/ambient/${p.projectId}/words`).send({ words: "none" });
+    const back = await request(app).patch(`/api/ambient/${p.projectId}/words`).send({ words: "verses" });
+    assert.equal(back.body.project.drops.length, 3);
+    assert.equal(back.body.project.movements.length, 3);
+  });
+
+  test("rejects anything but verses or none", async () => {
+    const p = await createSession();
+    const res = await request(app).patch(`/api/ambient/${p.projectId}/words`).send({ words: "sermon" });
+    assert.equal(res.status, 400);
+  });
+
+  test("refuses while the session is rendering", async () => {
+    const p = await createSession();
+    writeProject(dataDir, { ...readProject(dataDir, p.projectId), status: AMBIENT_STATUS.RENDERING });
+    const res = await request(app).patch(`/api/ambient/${p.projectId}/words`).send({ words: "none" });
+    assert.equal(res.status, 409);
+  });
+
+  test("voicing is refused for a music-only session", async () => {
+    const p = await createSession();
+    await request(app).patch(`/api/ambient/${p.projectId}/words`).send({ words: "none" });
+    const res = await request(app).post(`/api/ambient/${p.projectId}/voice`).send({});
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /music only/);
+  });
+});
+
+describe("renderStage — music only", () => {
+  afterEach(() => { _resetLoudnessImpl(); _resetFfmpegSpawnImpl(); });
+
+  test("a music-only render has no voice input and no burned captions", async () => {
+    _setLoudnessImpl(async () => ({ inputI: -18, inputTp: -6 }));
+    const calls = [];
+    _setFfmpegSpawnImpl((args) => {
+      calls.push(args);
+      const proc = new EventEmitter();
+      proc.stderr = new EventEmitter();
+      setImmediate(() => proc.emit("close", 0));
+      return proc;
+    });
+    const p = await createSession({ targetSec: 60 });
+    const img = path.join(outputDir, "pic.jpg");
+    const voice = path.join(outputDir, "voice.mp3");
+    fs.writeFileSync(img, "jpg");
+    fs.writeFileSync(voice, "mp3");
+    writeProject(dataDir, {
+      ...readProject(dataDir, p.projectId),
+      words: "none",
+      // A verse voiced before the switch must not reach the render.
+      drops: [{ id: "d1", atMs: 1000, reference: "John 14:27", status: "done", audioPath: voice, durationMs: 4000 }],
+      movements: [{ id: "m1", startMs: 0, endMs: 60_000, imageStatus: "done", imagePath: img }],
+      bed: { ...p.bed, mode: "assemble", trackRefs: ["library:prayer-piano"], crossfadeSec: 2 },
+    });
+    const job = createJob("u1", { durationSec: 60 });
+    await renderStage({ dataDir, outputDir }, p.projectId, job.jobId);
+    const render = calls[calls.length - 1];
+    assert.ok(!render.includes(voice), "the voice file is not an input");
+    const script = fs.readFileSync(render[render.indexOf("-filter_complex_script") + 1], "utf8");
+    assert.doesNotMatch(script, /drawtext/);
+    assert.doesNotMatch(script, /sidechaincompress/);
   });
 });

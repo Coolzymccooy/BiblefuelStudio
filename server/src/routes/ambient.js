@@ -4,6 +4,7 @@ import { Router } from "express";
 import {
   createProject, readProject, writeProject, listProjects, deleteProject,
   normaliseCaptionSettings, DEFAULT_DROP_INTERVAL_SEC, publishedEntry, withPublished,
+  WORDS, isMusicOnly,
 } from "../lib/ambient/projectStore.js";
 import { bedHash } from "../lib/ambient/bedAssembly.js";
 import { defaultDropTimes, normaliseDrops } from "../lib/ambient/drops.js";
@@ -251,6 +252,9 @@ router.patch("/:id/drops", (req, res) => {
 router.post("/:id/voice", ttsQuota, (req, res) => {
   const project = loadOr404(req, res);
   if (!project) return undefined;
+  if (isMusicOnly(project)) {
+    return res.status(400).json({ ok: false, error: "this session is music only — switch verses back on to voice them" });
+  }
   if (!(project.drops || []).length) {
     return res.status(400).json({ ok: false, error: "no drops to voice — suggest verses first" });
   }
@@ -410,6 +414,24 @@ router.patch("/:id/motion", (req, res) => {
   }
   try {
     return res.json({ ok: true, project: writeProject(req.ctx.dataDir, { ...project, motion }) });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// PATCH /:id/words — spoken verses over the music, or music only.
+router.patch("/:id/words", (req, res) => {
+  const project = loadOr404(req, res);
+  if (!project) return undefined;
+  const words = req.body?.words;
+  if (!WORDS.includes(words)) {
+    return res.status(400).json({ ok: false, error: "words must be verses or none" });
+  }
+  if (ENCODING_STATUSES.has(project.status)) {
+    return res.status(409).json({ ok: false, error: "this session is rendering; change it when it finishes" });
+  }
+  try {
+    return res.json({ ok: true, project: writeWithMovements(req.ctx.dataDir, { ...project, words }) });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }

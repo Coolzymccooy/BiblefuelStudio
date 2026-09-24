@@ -22,6 +22,14 @@ export { normaliseCaptionSettings };
 /** Fifteen minutes, the spec's default cadence for scripture drops. */
 export const DEFAULT_DROP_INTERVAL_SEC = 900;
 
+/** What a session says over its music: spoken verses, or nothing at all. */
+export const WORDS = Object.freeze(["verses", "none"]);
+
+/** A session saved before the choice existed has verses. */
+export function isMusicOnly(project) {
+  return project?.words === "none";
+}
+
 function projectsDir(baseDir) {
   return path.join(baseDir, "ambient");
 }
@@ -61,6 +69,7 @@ export function createProject(baseDir, { title, theme, targetSec, aspect, transl
     targetSec: Number(targetSec) > 0 ? Math.round(Number(targetSec)) : 7200,
     aspect: aspect === "portrait" || aspect === "square" ? aspect : "landscape",
     status: "draft",
+    words: "verses",
 
     bed: {
       mode: "assemble",

@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { spawn } from "child_process";
 
-import { readProject, writeProject } from "./projectStore.js";
+import { readProject, writeProject, isMusicOnly } from "./projectStore.js";
 import { orderTracks, bedHash, buildBedArgs } from "./bedAssembly.js";
 import { voiceDrops } from "./drops.js";
 import { deriveMovements, imagePromptFor, AMBIENT_IMAGE_STYLE } from "./movements.js";
@@ -108,7 +108,10 @@ function stillThere(ctx, projectId) {
 }
 
 export function writeWithMovements(dataDir, project) {
-  return writeProject(dataDir, { ...project, movements: deriveMovements(project) });
+  // Music only: one picture for the whole length. The drops stay stored so
+  // switching back to verses restores them, but they never place pictures.
+  const source = isMusicOnly(project) ? { ...project, drops: [] } : project;
+  return writeProject(dataDir, { ...project, movements: deriveMovements(source) });
 }
 
 /**
@@ -438,7 +441,7 @@ export async function renderStage(ctx, projectId, jobId) {
   const dir = ensureDir(outDirFor(ctx.outputDir, projectId));
   const outPath = path.join(dir, "video.mp4");
   const built = buildAmbientFfmpegArgs(project, {
-    bedPath, images, drops: project.drops || [], outPath, workDir: dir,
+    bedPath, images, drops: isMusicOnly(project) ? [] : (project.drops || []), outPath, workDir: dir,
   });
 
   writeProject(ctx.dataDir, {
