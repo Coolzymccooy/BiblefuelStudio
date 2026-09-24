@@ -17,6 +17,8 @@ import { scheduleOwnerCtx, listScheduleSources } from "../lib/social/scheduleSou
 import { validateYoutubeMetadata, buildYoutubeDescription } from "../lib/social/youtubeMetadata.js";
 import { uploadToYoutube } from "../lib/social/youtubeUpload.js";
 import { resolveThumbnail } from "../lib/social/thumbnailPath.js";
+import { prepareThumbnail } from "../lib/social/youtubeThumbnail.js";
+import os from "os";
 import { confineToDir } from "../lib/confinePath.js";
 // DATA_DIR is used ONLY by the boot-time cron rehydrator below, which operates
 // on the super-admin's global social.json. Per-user schedule rehydration is
@@ -432,7 +434,7 @@ async function postToBuffer({ caption, videoUrl, profileIds }, req, store) {
 }
 
 async function postToYoutube(payload, req, store) {
-  const { caption, videoUrl, title, description, tags, categoryId, privacyStatus, publishAt, thumbnailPath, chapters, links, hashtags } = payload || {};
+  const { caption, videoUrl, title, description, tags, categoryId, privacyStatus, publishAt, thumbnailPath, thumbnailTitle, chapters, links, hashtags } = payload || {};
   const yt = store.direct?.youtube || {};
   const clientId = String(yt.clientId || "").trim();
   const clientSecret = String(yt.clientSecret || "").trim();
@@ -474,16 +476,27 @@ async function postToYoutube(payload, req, store) {
   }
 
   const upload = await resolveVideoInputForUpload(videoUrl, req);
+  // A 1280x720 JPEG under YouTube's 2 MB limit, with the title on it when
+  // asked. Null when the file isn't a picture: the original goes instead and
+  // YouTube's answer is reported as before.
+  let madeThumb = null;
   try {
+    if (thumbLocal) {
+      madeThumb = await prepareThumbnail(thumbLocal, {
+        workDir: os.tmpdir(),
+        title: thumbnailTitle === true ? validated.value.title : null,
+      });
+    }
     const result = await uploadToYoutube({
       credentials: { clientId, clientSecret, refreshToken },
       filePath: upload.filePath,
       metadata: validated.value,
-      thumbnailPath: thumbLocal,
+      thumbnailPath: madeThumb || thumbLocal,
     });
     return { ...result, forcedPrivate: validated.value.forcedPrivate };
   } finally {
     await upload.cleanup();
+    if (madeThumb) { try { fs.rmSync(madeThumb, { force: true }); } catch { /* temp file */ } }
   }
 }
 

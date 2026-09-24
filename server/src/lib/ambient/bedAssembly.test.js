@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "fs";
 import os from "os";
 import path from "path";
+import crypto from "crypto";
 import { orderTracks, chainDurationSec, bedHash, buildBedArgs } from "./bedAssembly.js";
 
 const track = (ref, durationSec) => ({ ref, file: `${ref}.mp3`, durationSec });
@@ -63,6 +64,23 @@ test("buildBedArgs chains crossfades, trims to length, and emits no inline filte
   assert.ok(!args.includes("-filter_complex"), "prod ffmpeg 5.1 needs the script form");
   assert.ok(args.includes("-filter_complex_script"));
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("each track is set to the same loudness before the crossfades", () => {
+  const { filter } = buildBedArgs(["a.mp3", "b.mp3", "c.mp3"], {
+    crossfadeSec: 6, targetSec: 240, outPath: "bed.m4a", gainsDb: [4.5, 0, -3.25],
+  });
+  assert.match(filter, /\[0:a\]volume=4\.50dB\[g0\]/);
+  assert.match(filter, /\[2:a\]volume=-3\.25dB\[g2\]/);
+  assert.ok(!/volume=0\.00dB/.test(filter), "a track already at level is left untouched");
+  assert.match(filter, /\[g0\]\[1:a\]acrossfade/);
+});
+
+test("a bed built before levelling is rebuilt, not reused", () => {
+  // The cached bed has uneven tracks; the hash must not match it.
+  const base = { trackRefs: ["a", "b"], crossfadeSec: 6, targetSec: 7200 };
+  const before = crypto.createHash("sha256").update(JSON.stringify(base)).digest("hex");
+  assert.notEqual(bedHash(base), before, "same key as an unlevelled bed");
 });
 
 test("buildBedArgs refuses to build a bed from nothing", () => {

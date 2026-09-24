@@ -122,7 +122,34 @@ test("deriveMovements gives one movement per drop, cutting at the midpoints betw
   assert.equal(movements[1].startMs, 200_000);
   assert.equal(movements[1].endMs, 600_000, "last movement runs to the end");
   assert.match(movements[0].imagePrompt, /peace/);
-  assert.match(movements[0].imagePrompt, /Psalm 23:1/);
+});
+
+test("pictures are asked for bright and luminous, never dark or moody", () => {
+  // The old prompt led with the theme and said "cinematic, soft diffused
+  // light": "Peace in the storm" came back as a night storm with lightning.
+  const movements = deriveMovements({
+    targetSec: 1800,
+    theme: "Peace in the storm",
+    drops: [{ atMs: 300_000, reference: "Psalm 23:1" }, { atMs: 900_000, reference: "John 14:27" }, { atMs: 1_500_000, reference: "Isaiah 26:3" }],
+  });
+  for (const m of movements) {
+    assert.match(m.imagePrompt, /bright/i);
+    assert.match(m.imagePrompt, /sunlight|golden/i);
+    assert.doesNotMatch(m.imagePrompt, /cinematic|night|diffused/i);
+    // A model can't read "Psalm 23:1"; it only invites lettering on the picture.
+    assert.doesNotMatch(m.imagePrompt, /\d+:\d+/);
+    // Negations draw what they name ("no people" gave a man walking).
+    assert.doesNotMatch(m.imagePrompt, /no (people|text|lettering)/i);
+  }
+});
+
+test("each movement asks for a different scene, so a long session isn't one picture three times", () => {
+  const movements = deriveMovements({
+    targetSec: 3600,
+    theme: "rest",
+    drops: [100_000, 900_000, 1_800_000, 2_700_000].map((atMs) => ({ atMs, reference: "Psalm 4:8" })),
+  });
+  assert.equal(new Set(movements.map((m) => m.imagePrompt)).size, movements.length);
 });
 
 test("deriveMovements still yields one movement when there are no drops", () => {

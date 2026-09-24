@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { buildAmbientFfmpegArgs, wrapText, dimsFor, layOutCaption } from "./ambientRender.js";
+import { buildAmbientFfmpegArgs, wrapText, dimsFor } from "./ambientRender.js";
 
 function work() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "ambient-"));
@@ -192,16 +192,71 @@ test("captions use the bundled serif, not ffmpeg's default monospace", () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test("layOutCaption shrinks a long verse rather than letting it overflow", () => {
-  const text = "Be careful for nothing; but in every thing by prayer and supplication with thanksgiving "
-    + "let your requests be made known unto God. And the peace of God, which passeth all "
-    + "understanding, shall keep your hearts and minds through Christ Jesus.";
-  const short = layOutCaption("The LORD is my shepherd; I shall not want.", 1080);
-  const long = layOutCaption(text, 1080);
-  assert.ok(long.size < short.size, "the long verse takes a smaller size");
-  assert.ok(long.lines.length * long.size * 1.4 <= 1080 * 0.32, "and still fits its share of the frame");
-  // Shrinking must never become truncating — scripture is burned verbatim.
-  assert.equal(long.lines.join(" "), text.split(/\s+/).join(" "), "no words lost in the wrap");
+const PHIL = [
+  "Be careful for nothing; but in every thing by prayer and supplication with thanksgiving let your requests be made known unto God.",
+  "And the peace of God, which passeth all understanding, shall keep your hearts and minds through Christ Jesus.",
+];
+const captionTexts = (filter) => [...filter.matchAll(/textfile='([^']+)'/g)]
+  .map((m) => fs.readFileSync(m[1].replace(/\\:/g, ":"), "utf8"));
+
+test("a passage is shown a verse at a time, each on at most two lines, taking turns", () => {
+  // Six boxed lines parked mid-frame read as a notice pinned over the picture.
+  const dir = work();
+  const { filter } = buildAmbientFfmpegArgs(project({ captions: "static", captionSpan: "section" }), io(dir, {
+    drops: [verse({ reference: "Philippians 4:6-7", text: PHIL.join(" "), verses: PHIL })],
+  }));
+  const drawn = [...filter.matchAll(/textfile='([^']+)'[^,]*?enable='between\(t,([\d.]+),([\d.]+)\)'/g)]
+    .map((m) => ({ text: fs.readFileSync(m[1].replace(/\\:/g, ":"), "utf8"), start: Number(m[2]), end: Number(m[3]) }));
+  const byWindow = new Map();
+  for (const d of drawn) byWindow.set(`${d.start}-${d.end}`, [...(byWindow.get(`${d.start}-${d.end}`) || []), d.text]);
+  const pages = [...byWindow.entries()].sort((a, b) => parseFloat(a[0]) - parseFloat(b[0]));
+  assert.equal(pages.length, 2, `one page per verse: ${JSON.stringify(pages)}`);
+  const [first, second] = pages.map(([, texts]) => texts);
+  assert.ok(first.join(" ").startsWith("Be careful for nothing"));
+  assert.ok(second.join(" ").startsWith("And the peace of God"));
+  for (const texts of [first, second]) {
+    const lines = texts.filter((t) => t !== "Philippians 4:6-7");
+    assert.ok(lines.length <= 2, `at most two lines: ${JSON.stringify(lines)}`);
+  }
+  const [w1, w2] = pages.map(([k]) => k.split("-").map(Number));
+  assert.equal(w1[0], 0);
+  // Back to back, but never both on screen in the same frame: between() is
+  // inclusive at both ends.
+  assert.ok(w1[1] < w2[0] && w2[0] - w1[1] <= 0.05, `the second verse follows the first: ${w1} ${w2}`);
+  assert.equal(w2[1], 300, "and the pair fills the section");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("captions have no boxes: white text lifted by a soft shadow", () => {
+  const dir = work();
+  const { filter } = buildAmbientFfmpegArgs(project({ captions: "static", captionSpan: "section" }), io(dir, {
+    drops: [verse()],
+  }));
+  assert.ok(!/box=1/.test(filter), "no box behind the lines");
+  assert.match(filter, /shadowcolor=black@/);
+  // Scripture is drawn as written: no %{...} or backslash expansion.
+  assert.match(filter, /expansion=none/);
+  assert.match(filter, /borderw=\d+:bordercolor=black@/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("every word of the passage is drawn, in order", () => {
+  const dir = work();
+  const { filter } = buildAmbientFfmpegArgs(project({ captions: "static", captionSpan: "section" }), io(dir, {
+    drops: [verse({ reference: "Philippians 4:6-7", text: PHIL.join(" "), verses: PHIL })],
+  }));
+  const body = captionTexts(filter).filter((t) => t !== "Philippians 4:6-7").join(" ");
+  assert.equal(body, PHIL.join(" "));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("portrait keeps lines short enough for the narrow frame", () => {
+  const dir = work();
+  const { filter } = buildAmbientFfmpegArgs(project({ aspect: "portrait", captions: "static", captionSpan: "section" }), io(dir, {
+    drops: [verse({ text: PHIL.join(" "), verses: PHIL })],
+  }));
+  for (const t of captionTexts(filter)) assert.ok(t.length <= 48, `"${t}" is too long for 1080 wide`);
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test("the caption path has its drive colon escaped", () => {
@@ -278,7 +333,13 @@ test("section span names the verse beneath it, in the same window", () => {
     drops: [verse()],
   }));
   const texts = [...filter.matchAll(/textfile='([^']+)'/g)].map((m) => fs.readFileSync(m[1].replace(/\\:/g, ":"), "utf8"));
-  assert.ok(texts.includes("Psalms 46:1-2 · KJV"), `reference line missing: ${JSON.stringify(texts)}`);
+  // KJV is the default and is named in the description; a modern translation
+  // is named on screen, since its publisher requires the attribution.
+  assert.ok(texts.includes("Psalms 46:1-2"), `reference line missing: ${JSON.stringify(texts)}`);
+  const niv = buildAmbientFfmpegArgs(project({ captions: "static", captionSpan: "section" }), io(dir, {
+    drops: [verse({ translation: "niv" })],
+  }));
+  assert.ok(captionTexts(niv.filter).includes("Psalms 46:1-2 · NIV"));
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

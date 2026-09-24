@@ -29,6 +29,7 @@ export {
   _setLookupImpl, _resetLookupImpl, _setSynthImpl, _resetSynthImpl,
   _setProbeImpl, _resetProbeImpl, _setImageGenImpl, _resetImageGenImpl,
   _setImageLibraryImpl, _resetImageLibraryImpl,
+  _setLoudnessImpl, _resetLoudnessImpl, _setFfmpegSpawnImpl, _resetFfmpegSpawnImpl,
 } from "../lib/ambient/stages.js";
 
 /**
@@ -232,7 +233,7 @@ router.patch("/:id/drops", (req, res) => {
       const changed = String(incoming.reference || "").trim() !== prev.reference
         || String(incoming.translation || prev.translation) !== prev.translation;
       return changed
-        ? { ...prev, ...incoming, text: null, audioPath: null, durationMs: null, status: "pending", error: null }
+        ? { ...prev, ...incoming, text: null, verses: null, audioPath: null, durationMs: null, status: "pending", error: null }
         : { ...prev, ...incoming };
     });
     const drops = normaliseDrops(merged, {

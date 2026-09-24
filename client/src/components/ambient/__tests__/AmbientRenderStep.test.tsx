@@ -66,6 +66,19 @@ describe('AmbientRenderStep when the video is ready', () => {
     expect(body).toMatchObject({ destination: 'youtube', videoUrl: '/outputs/ambient/p1/video.mp4', privacyStatus: 'private' });
   });
 
+  it('puts the title on the thumbnail by default, and can be told not to', async () => {
+    const post = vi.spyOn(api, 'post').mockResolvedValue({ ok: true, status: 200, data: { videoId: 'vidVID12345', videoUrl: 'u', forcedPrivate: false } } as never);
+    vi.spyOn(ambientApi, 'recordPublished').mockResolvedValue(done());
+    renderStep({ ...done(), movements: [{ id: 'm1', startMs: 0, endMs: 1, imagePrompt: '', imagePath: '/x.png', imageUrl: '/outputs/imagelib-a.png', imageStatus: 'done' }] } as AmbientProject);
+    const box = screen.getByRole('checkbox', { name: /put the title on the thumbnail/i });
+    expect(box).toBeChecked();
+    await userEvent.click(box);
+    await userEvent.click(screen.getByRole('button', { name: /publish to youtube/i }));
+    await waitFor(() => expect(post).toHaveBeenCalled());
+    const [, body] = post.mock.calls.find(([url]) => url === '/api/social/post') as [string, Record<string, unknown>];
+    expect(body).toMatchObject({ thumbnailPath: '/outputs/imagelib-a.png', thumbnailTitle: false });
+  });
+
   it('shows where it already went, and that publishing again makes a new copy', () => {
     renderStep({
       ...done(),
