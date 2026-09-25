@@ -6,7 +6,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { spawnSync } from "child_process";
-import socialRouter, { _setFetchImpl, _resetFetchImpl } from "./social.js";
+import socialRouter, { _setFetchImpl, _resetFetchImpl, _holdPreviewSlot, _releasePreviewSlot } from "./social.js";
 import { _setGoogleImpl, _resetGoogleImpl } from "../lib/social/youtubeUpload.js";
 import { writeSocialStore } from "../lib/socialStore.js";
 import { OUTPUT_DIR } from "../lib/paths.js";
@@ -317,13 +317,16 @@ describe("preview load", () => {
     const { a, outputDir } = app();
     generatedPicture(outputDir);
     const body = { thumbnailPath: "/outputs/part-1.png", title: "T", thumbnailTitle: true };
-    const [first, second] = await Promise.all([
-      request(a).post("/api/social/youtube/thumbnail-preview").send(body),
-      request(a).post("/api/social/youtube/thumbnail-preview").send(body),
-    ]);
-    assert.deepEqual([first.status, second.status].sort(), [200, 429]);
-    const again = await request(a).post("/api/social/youtube/thumbnail-preview").send(body);
-    assert.equal(again.status, 200, "the slot is released afterwards");
+    _holdPreviewSlot("u1");
+    try {
+      const busy = await request(a).post("/api/social/youtube/thumbnail-preview").send(body);
+      assert.equal(busy.status, 429);
+      assert.equal(busy.body.busy, true);
+    } finally {
+      _releasePreviewSlot("u1");
+    }
+    const free = await request(a).post("/api/social/youtube/thumbnail-preview").send(body);
+    assert.equal(free.status, 200, "the slot is released afterwards");
   });
 
   test("a failed preview releases its slot too", async () => {

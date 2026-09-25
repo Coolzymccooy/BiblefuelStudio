@@ -891,6 +891,9 @@ function sendThumbnailError(res, e) {
 // Each preview runs ffmpeg, and the preview asks again as the operator types:
 // one at a time per user, so a burst never piles up processes.
 const previewsRunning = new Set();
+/** Tests hold a user's slot to see the refusal without racing a real ffmpeg. */
+export function _holdPreviewSlot(userId) { previewsRunning.add(String(userId)); }
+export function _releasePreviewSlot(userId) { previewsRunning.delete(String(userId)); }
 
 router.post("/youtube/thumbnail-preview", async (req, res) => {
   const who = String(req.ctx?.userId || "anon");
