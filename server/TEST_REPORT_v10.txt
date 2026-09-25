@@ -1,0 +1,18 @@
+Biblefuel Studio v10 - Import Tests
+{
+  "src/routes/audio_advanced.js": {
+    "exit": 0,
+    "stdout": "OK",
+    "stderr": ""
+  },
+  "src/routes/audio.js": {
+    "exit": 0,
+    "stdout": "OK",
+    "stderr": ""
+  },
+  "src/routes/render.js": {
+    "exit": 0,
+    "stdout": "OK",
+    "stderr": ""
+  }
+}
