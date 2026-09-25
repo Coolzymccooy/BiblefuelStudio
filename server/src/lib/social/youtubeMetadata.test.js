@@ -1,6 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { validateYoutubeMetadata, buildYoutubeDescription, formatChapterTimestamp } from "./youtubeMetadata.js";
+import { validateYoutubeMetadata, buildYoutubeDescription, formatChapterTimestamp, unlinkVerseTimes } from "./youtubeMetadata.js";
 
 describe("formatChapterTimestamp", () => {
   test("formats under an hour as MM:SS", () => {
@@ -24,6 +24,14 @@ describe("buildYoutubeDescription", () => {
     assert.match(out, /\n00:00 Welcome\n01:30 Psalm 23\n10:00 Psalm 91/);
     assert.match(out, /https:\/\/biblefuel\.tiwaton\.co\.uk/);
     assert.match(out, /#sleep #psalms/);
+  });
+  test("a verse in a chapter title is not turned into a second timestamp", () => {
+    // "22:30 Matthew 11:28-30" made 11:28 a link that jumped to minute 11.
+    const out = buildYoutubeDescription({
+      summary: "x",
+      chapters: [{ startMs: 0, title: "Psalms 23:1-2" }, { startMs: 1_350_000, title: "Matthew 11:28-30" }, { startMs: 4_050_000, title: "John 14:27" }],
+    });
+    assert.ok(out.includes("\n00:00 Psalms 23∶1-2\n22:30 Matthew 11∶28-30\n1:07:30 John 14∶27"), out);
   });
   test("drops the chapter block when fewer than three chapters", () => {
     const out = buildYoutubeDescription({ summary: "x", chapters: [{ startMs: 0, title: "Only" }], links: [], hashtags: [] });
@@ -83,5 +91,13 @@ describe("validateYoutubeMetadata", () => {
   test("unknown privacy falls back to private", () => {
     const r = validateYoutubeMetadata({ title: "ok", privacyStatus: "friends" }, { now });
     assert.equal(r.value.privacyStatus, "private");
+  });
+});
+
+describe("unlinkVerseTimes", () => {
+  test("a digit:digit pair takes a look-alike colon YouTube doesn't link", () => {
+    assert.equal(unlinkVerseTimes("Psalms 46:10 · Romans 15:13"), "Psalms 46∶10 · Romans 15∶13");
+    assert.equal(unlinkVerseTimes("Rest: be still"), "Rest: be still");
+    assert.equal(unlinkVerseTimes(""), "");
   });
 });

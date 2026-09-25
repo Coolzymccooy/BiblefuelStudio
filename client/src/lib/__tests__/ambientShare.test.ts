@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ambientChapters, ambientDescription, ambientThumbnails } from '../ambientShare';
+import { ambientChapters, ambientDescription, ambientTagline, ambientThumbnails, unlinkVerseTimes } from '../ambientShare';
 import type { AmbientDrop, AmbientMovement, AmbientProject, AmbientTrackEntry } from '../ambientTypes';
 
 const drop = (atMs: number, reference: string, over: Partial<AmbientDrop> = {}): AmbientDrop =>
@@ -35,7 +35,7 @@ describe('ambientChapters', () => {
 describe('ambientDescription', () => {
   it('the theme, then the verses read, so a short session still lists its scripture', () => {
     const p = project([drop(300_000, 'Psalms 46:1-2')], [movement(0, 600_000)]);
-    expect(ambientDescription(p)).toBe('Peace in the storm\n\nScripture (KJV): Psalms 46:1-2');
+    expect(ambientDescription(p)).toBe('Peace in the storm\n\nScripture (KJV): Psalms 46∶1-2');
   });
 
   it('just the theme when there is no voiced verse', () => {
@@ -96,5 +96,34 @@ describe('tracklist chapters and music credits', () => {
 
   it('no tracklist yet means no credits block', () => {
     expect(ambientDescription(musicOnly([]))).toBe('Soaking worship');
+  });
+});
+
+describe('verse references on YouTube', () => {
+  it('the verses in the description are not turned into timestamp links', () => {
+    const p = project([drop(1, 'Matthew 11:28-30'), drop(2, 'John 14:27')], [movement(0, 600_000)]);
+    const text = ambientDescription(p);
+    expect(text).not.toMatch(/\d:\d/);
+    expect(text).toContain('Matthew 11∶28-30 · John 14∶27');
+  });
+
+  it('only a colon between digits changes', () => {
+    expect(unlinkVerseTimes('Rest: Psalms 46:10')).toBe('Rest: Psalms 46∶10');
+  });
+});
+
+describe('ambientTagline', () => {
+  const withLength = (targetSec: number, words?: 'none' | 'verses') =>
+    ({ ...project([], []), targetSec, ...(words ? { words } : {}) }) as AmbientProject;
+
+  it('says how long and what kind of listening', () => {
+    expect(ambientTagline(withLength(7200))).toBe('2 hours · scripture & soaking worship');
+    expect(ambientTagline(withLength(3600, 'none'))).toBe('1 hour · soaking worship music');
+    expect(ambientTagline(withLength(600))).toBe('10 minutes · scripture & soaking worship');
+    expect(ambientTagline(withLength(5400))).toBe('90 minutes · scripture & soaking worship');
+  });
+
+  it('leaves the length out when it is unknown', () => {
+    expect(ambientTagline(withLength(0))).toBe('scripture & soaking worship');
   });
 });

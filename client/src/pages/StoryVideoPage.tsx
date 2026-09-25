@@ -698,7 +698,7 @@ function DonePanel({ project }: { project: StoryProject }) {
         <h3 className="section-title mb-3">Publish to YouTube</h3>
         <YoutubePublishPanel
           videoUrl={`/outputs/story/${project.projectId}/video.mp4`}
-          initial={{ title: project.title, description: project.longform?.summary ?? '' }}
+          initial={{ title: project.title, description: project.longform?.summary ?? '', thumbnailTitle: true }}
           thumbnailOptions={thumbnailOptions}
           chapters={chapters.length >= 3 ? chapters : undefined}
         />

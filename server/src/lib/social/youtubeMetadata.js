@@ -19,6 +19,15 @@ export function formatChapterTimestamp(ms) {
   return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
+/**
+ * YouTube links any "12:34" in a description as a timestamp, so a verse like
+ * "John 14:27" jumped the video to minute 14. U+2236 (RATIO) looks like a
+ * colon and isn't linked. Only a colon between two digits is touched.
+ */
+export function unlinkVerseTimes(text) {
+  return String(text || "").replace(/(\d):(?=\d)/g, "$1∶");
+}
+
 function chapterLines(chapters) {
   const list = (Array.isArray(chapters) ? chapters : [])
     .filter((c) => c && Number.isFinite(Number(c.startMs)) && String(c.title || "").trim())
@@ -26,7 +35,7 @@ function chapterLines(chapters) {
   if (list.length < MIN_CHAPTERS) return [];
   // YouTube only recognises chapters when the first one is 00:00.
   const normalised = list.map((c, i) => (i === 0 ? { ...c, startMs: 0 } : c));
-  return normalised.map((c) => `${formatChapterTimestamp(c.startMs)} ${String(c.title).trim()}`);
+  return normalised.map((c) => `${formatChapterTimestamp(c.startMs)} ${unlinkVerseTimes(String(c.title).trim())}`);
 }
 
 export function buildYoutubeDescription({ summary = "", chapters = [], links = [], hashtags = [] } = {}) {

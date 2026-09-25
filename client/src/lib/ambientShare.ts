@@ -38,6 +38,32 @@ export function ambientChapters(project: AmbientProject): Chapter[] {
   });
 }
 
+/**
+ * YouTube links any "12:34" in a description as a timestamp, so "John 14:27"
+ * jumped the video to minute 14. U+2236 (RATIO) looks the same and isn't
+ * linked. The server does the same for chapter titles.
+ */
+export function unlinkVerseTimes(text: string): string {
+  return String(text || '').replace(/(\d):(?=\d)/g, '$1∶');
+}
+
+/** "2 hours", "1 hour", "45 minutes": the length as a poster line says it. */
+function lengthPhrase(sec: number): string {
+  const s = Math.round(Number(sec) || 0);
+  if (s <= 0) return '';
+  if (s >= 3600 && s % 3600 === 0) return s === 3600 ? '1 hour' : `${s / 3600} hours`;
+  return `${Math.round(s / 60)} minutes`;
+}
+
+/**
+ * The small line above the title on the thumbnail: how long, and what kind
+ * of listening it is. The operator can change it before publishing.
+ */
+export function ambientTagline(project: AmbientProject): string {
+  const kind = project.words === 'none' ? 'soaking worship music' : 'scripture & soaking worship';
+  return [lengthPhrase(project.targetSec), kind].filter(Boolean).join(' · ');
+}
+
 /** Each source credited once; a track with no credit is named instead. */
 function creditsBlock(project: AmbientProject): string {
   const lines = [...new Set((project.bed?.builtOrder || []).map((t) => (t.credit || t.label).trim()).filter(Boolean))];
@@ -50,7 +76,7 @@ export function ambientDescription(project: AmbientProject): string {
   const translation = String(project.translation || 'kjv').toUpperCase();
   const blocks = [
     theme,
-    refs.length ? `Scripture (${translation}): ${refs.join(' · ')}` : '',
+    refs.length ? `Scripture (${translation}): ${unlinkVerseTimes(refs.join(' · '))}` : '',
     creditsBlock(project),
   ].filter(Boolean);
   return blocks.join('\n\n');
