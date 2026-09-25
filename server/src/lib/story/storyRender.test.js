@@ -73,19 +73,41 @@ describe("storyRender arg building", () => {
   });
 
   test("adds a music input when musicPath is provided", () => {
+    // musicPath must exist on disk (or be a remote URL) to be wired in — see
+    // the "drops a musicPath that doesn't exist" test below — so this uses a
+    // real temp file rather than a made-up "/tmp/music.mp3".
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "story-music-"));
+    const musicPath = path.join(dir, "music.mp3");
+    fs.writeFileSync(musicPath, "audio");
     const { args } = buildStoryFfmpegArgs({
-      scenes: SCENES, words: WORDS, audioPath: "/tmp/voice.mp3", musicPath: "/tmp/music.mp3",
+      scenes: SCENES, words: WORDS, audioPath: "/tmp/voice.mp3", musicPath,
       width: 1080, height: 1920, outPath: "/tmp/out.mp4",
     });
-    assert.ok(args.includes("/tmp/music.mp3"));
+    assert.ok(args.includes(musicPath));
     // A 3-minute track under a 30-minute narration must loop, not go silent
     // after its first play. amix=duration=first still ends at the voice.
-    const mi = args.indexOf("/tmp/music.mp3");
+    const mi = args.indexOf(musicPath);
     assert.deepEqual(args.slice(mi - 3, mi), ["-stream_loop", "-1", "-i"], "music input is looped indefinitely");
     // The voice input must NOT be looped.
     const vi = args.indexOf("/tmp/voice.mp3");
     assert.equal(args[vi - 1], "-i");
     assert.notEqual(args[vi - 2], "-1");
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("drops a musicPath that doesn't exist instead of handing ffmpeg a dead input", () => {
+    // A forgotten/deleted track, or an unresolved library:/mylib: ref that
+    // slipped past story.js, must degrade to no music — not a `-i` on a file
+    // that isn't there, which would kill the WHOLE render, not just the bed.
+    const { args } = buildStoryFfmpegArgs({
+      scenes: SCENES, words: WORDS, audioPath: "/tmp/voice.mp3", musicPath: "/tmp/does-not-exist-music.mp3",
+      width: 1080, height: 1920, outPath: "/tmp/out.mp4",
+    });
+    assert.equal(args.includes("/tmp/does-not-exist-music.mp3"), false);
+    const inputCount = args.filter((a) => a === "-i").length;
+    assert.equal(inputCount, SCENES.length + 1, "only scenes + voice, no music input");
+    const fc = args[args.indexOf("-filter_complex") + 1];
+    assert.doesNotMatch(fc, /amix/, "no music mix in the filtergraph when the music input was dropped");
   });
 
   test("output is capped to the audio/scene length via a single OUTPUT -t", () => {
@@ -156,9 +178,14 @@ describe("storyRender arg building", () => {
   });
 
   test("autoduck builds a sidechaincompress chain; without it a plain amix", () => {
+    // musicPath must exist on disk (or be a remote URL) to be wired in — see
+    // the "drops a musicPath that doesn't exist" test above.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "story-music-duck-"));
+    const musicPath = path.join(dir, "m.mp3");
+    fs.writeFileSync(musicPath, "audio");
     const fcOf = (extra) => {
       const { args } = buildStoryFfmpegArgs({
-        scenes: GAPPY, words: WORDS, audioPath: "/v.mp3", musicPath: "/m.mp3",
+        scenes: GAPPY, words: WORDS, audioPath: "/v.mp3", musicPath,
         width: 1080, height: 1920, outPath: "/o.mp4", audioDurationSec: 25, ...extra,
       });
       return args[args.indexOf("-filter_complex") + 1];
@@ -170,6 +197,7 @@ describe("storyRender arg building", () => {
     assert.doesNotMatch(flat, /sidechaincompress/);
     assert.match(flat, /amix=inputs=2/);
     assert.match(flat, /volume=0\.4/);
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 
   test("long transcript switches to compact subtitle captions (few filters, lower-third)", () => {

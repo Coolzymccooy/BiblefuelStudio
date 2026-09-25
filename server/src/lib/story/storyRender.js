@@ -10,6 +10,7 @@ import { kenBurnsFilter } from "../kenBurns.js";
 import { kenBurnsVariedFilter, moveForIndex } from "../kenBurnsVaried.js";
 import { buildXfadeChain } from "./sceneTransitions.js";
 import { markRunning, markProgress, markDone, markError, attachProc } from "../renderJobs.js";
+import { isLocalOrRemote } from "../mediaThumb.js";
 
 // Line captions past this many phrases fall back to the compact lower-third
 // subtitle chain. At ~7 words a phrase this is roughly a 20-minute
@@ -231,7 +232,12 @@ export function buildStoryFfmpegArgs({
   args.push("-i", audioPath);
   const audioInputIdx = segs.length;
   let musicInputIdx = -1;
-  if (musicPath) {
+  // Defense in depth: even though callers (story.js) are responsible for
+  // turning an unresolved library:/mylib: ref into null, a musicPath that
+  // isn't a real local file or a remote URL must never reach ffmpeg here
+  // either — a nonexistent `-i` input kills the ENTIRE render, not just the
+  // music bed.
+  if (musicPath && isLocalOrRemote(musicPath)) {
     // Loop the bed indefinitely: a long-form narration (30-60 min) outlasts
     // any single track, and without this the music simply stopped after its
     // first play. amix=duration=first (below) still ends the mix at the voice.
@@ -431,8 +437,17 @@ export function runStoryRender({
   });
 }
 
-/** Probe an audio file's duration in seconds via ffprobe. Resolves null on failure. */
-export function probeAudioDurationSec(filePath) {
+/**
+ * Probe an audio file's duration in seconds via ffprobe. Resolves null on
+ * failure (never throws/rejects — callers treat a probe failure as
+ * "duration unknown", not fatal).
+ *
+ * Bounded by `timeoutMs`: an unbounded spawn here previously meant a stuck
+ * or hung ffprobe (corrupt input, a filesystem stall) could block a caller
+ * forever — e.g. POST /api/music/upload awaits this synchronously, so a
+ * hang there kept the request open indefinitely.
+ */
+export function probeAudioDurationSec(filePath, { timeoutMs = 20_000 } = {}) {
   return new Promise((resolve) => {
     const ffprobe = process.env.FFPROBE_PATH?.trim() || "ffprobe";
     const proc = spawn(ffprobe, [
@@ -440,11 +455,23 @@ export function probeAudioDurationSec(filePath) {
       "-of", "default=noprint_wrappers=1:nokey=1", filePath,
     ]);
     let out = "";
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const timer = setTimeout(() => {
+      try { proc.kill("SIGKILL"); } catch { /* already gone */ }
+      finish(null);
+    }, timeoutMs);
+    if (timer.unref) timer.unref();
     proc.stdout.on("data", (d) => { out += d.toString(); });
-    proc.on("error", () => resolve(null));
+    proc.on("error", () => finish(null));
     proc.on("close", () => {
       const sec = Number(String(out).trim());
-      resolve(Number.isFinite(sec) && sec > 0 ? sec : null);
+      finish(Number.isFinite(sec) && sec > 0 ? sec : null);
     });
   });
 }

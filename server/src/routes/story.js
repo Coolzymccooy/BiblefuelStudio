@@ -18,6 +18,7 @@ import { refineScript } from "../lib/story/scriptRefine.js";
 import { templateById } from "../lib/story/scriptTemplates.js";
 import { synthesizeEdgeTts } from "../lib/edgeTts.js";
 import { resolveLibraryTrack } from "../lib/musicLibrary.js";
+import { resolveTenantTrack } from "../lib/musicLibraryStore.js";
 import { cleanCaptionLine, cleanSpeakableText } from "../lib/speakableScript.js";
 import { buildImportedTranscript } from "../lib/story/scriptImport.js";
 import { CHARACTER_ANCHORS } from "../lib/story/styleAnchors.js";
@@ -25,6 +26,30 @@ import { confineToDir } from "../lib/confinePath.js";
 import { isNarrationActive } from "../lib/longform/narrationRegistry.js";
 import { expandScenesToBeats } from "../lib/story/visualBeats.js";
 import { findReusableImages, markUsed, registerImage, pruneLibrary } from "../lib/imageGen/imageLibrary.js";
+
+const MUSIC_REF_PREFIX = /^(library|mylib):/;
+
+/**
+ * Resolve `project.music.path` for the final ffmpeg render.
+ *
+ * A `library:`/`mylib:` ref that fails to resolve (the track was forgotten,
+ * its file deleted, or the project is stale) must come back `null`, not the
+ * literal ref string — buildStoryFfmpegArgs has no existence check of its
+ * own and would hand ffmpeg an `-i library:foo` / `-i mylib:<uuid>` that
+ * doesn't exist, failing the WHOLE render instead of just dropping the music.
+ *
+ * A bare absolute path (pre-library back-compat — see MusicPicker's
+ * REF_PREFIX comment) is not a ref at all, so it is passed through exactly
+ * as before: only the two known ref prefixes are treated as "must resolve or
+ * degrade to silence".
+ */
+export function resolveMusicPathForRender(dataDir, rawMusicPath) {
+  const raw = rawMusicPath || null;
+  if (!raw) return null;
+  const resolved = resolveLibraryTrack(raw) || resolveTenantTrack(dataDir, raw);
+  if (resolved) return resolved;
+  return MUSIC_REF_PREFIX.test(raw) ? null : raw;
+}
 
 // Mockable seams (mirror routes/transcribe.js).
 let _transcribeFn = transcribeAudio;
@@ -767,7 +792,15 @@ router.post("/:id/render", async (req, res) => {
       scenes: expandScenesToBeats(scenes, { beatSec: project.scene?.beatSec }),
       words: project.transcript?.words || [],
       audioPath,
-      musicPath: resolveLibraryTrack(project.music?.path) || project.music?.path || null,
+      // A `library:`/`mylib:` ref that fails to resolve (forgotten track,
+      // deleted file, stale project) must degrade to no music, not to the
+      // literal ref string — resolveLibraryTrack/resolveTenantTrack return
+      // null for it, and buildStoryFfmpegArgs would otherwise hand ffmpeg a
+      // "-i mylib:<uuid>" that doesn't exist and kills the WHOLE render, not
+      // just the music. A bare absolute path (pre-library back-compat, see
+      // MusicPicker's REF_PREFIX comment) is still passed through as-is —
+      // only the two known ref prefixes are treated as "must resolve or die".
+      musicPath: resolveMusicPathForRender(req.ctx.dataDir, project.music?.path),
       musicVolume: project.music?.volume ?? 0.3,
       autoDuck: project.music?.autoDuck ?? true,
       onProgress: persistRenderPct,

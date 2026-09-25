@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { Wand2, FileText, Clapperboard, BookOpen, ChevronRight, type LucideIcon } from 'lucide-react';
+import { Wand2, FileText, Clapperboard, BookOpen, Waves, ChevronRight, type LucideIcon } from 'lucide-react';
 import { ScreenHeader } from '../components/ui/ScreenHeader';
 
 interface Tool {
@@ -13,6 +13,7 @@ const tools: Tool[] = [
     { to: '/app/wizard', icon: Wand2, title: 'Wizard', desc: 'Guided end-to-end: script, voice, timeline, render.' },
     { to: '/app/scripts', icon: FileText, title: 'Scripts', desc: 'Write or generate a hook, verse, reflection, and CTA.' },
     { to: '/app/story', icon: Clapperboard, title: 'Story Video', desc: 'Turn a passage into cinematic, captioned scenes.' },
+    { to: '/app/ambient', icon: Waves, title: 'Ambient Session', desc: 'Hours of calm music with scripture spoken over it.' },
     { to: '/app/series', icon: BookOpen, title: 'Series', desc: 'Build multi-part collections from a book or theme.' },
 ];
 

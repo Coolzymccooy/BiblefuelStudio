@@ -29,6 +29,7 @@ import transcriptsRouter from "./src/routes/transcripts.js";
 import imagegenRouter from "./src/routes/imagegen.js";
 import videogenRouter from "./src/routes/videogen.js";
 import storyRouter from "./src/routes/story.js";
+import ambientRouter from "./src/routes/ambient.js";
 import longformRouter from "./src/routes/longform.js";
 import timelineRouter from "./src/routes/timeline.js";
 import abiRouter from "./src/routes/abi.js";
@@ -381,6 +382,12 @@ app.use("/api/tts",       requireAuth, withUserScope, requireVerifiedEmail, quot
 app.use("/api/abi",       abiRouter);
 app.use("/api/render",    requireAuth, withUserScope, requireVerifiedEmail, quota("render"),     renderRouter);
 app.use("/api/story",     requireAuth, withUserScope, requireVerifiedEmail, quota("render"),     storyRouter);
+// Ambient carries NO blanket quota. The page polls GET /api/ambient/:id about
+// once a second while a bed assembles or a render runs; charging render quota
+// per REQUEST would exhaust a free user's whole allowance within seconds (the
+// same trap documented on the timeline router below). The buckets are charged
+// inside routes/ambient.js on the three expensive POSTs only.
+app.use("/api/ambient",   requireAuth, withUserScope, requireVerifiedEmail,                      ambientRouter);
 // Long-form charges quota("render") on POST /draft and POST /:id/narrate
 // only (see routes/longform.js); templates/sections/reopen must not debit.
 app.use("/api/longform",  requireAuth, withUserScope, requireVerifiedEmail,                      longformRouter);

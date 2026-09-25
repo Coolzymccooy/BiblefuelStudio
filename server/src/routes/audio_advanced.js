@@ -5,6 +5,7 @@ import { v4 as uuid } from "uuid";
 import { spawn } from "child_process";
 import { readLibrary } from "../lib/library.js";
 import { resolveLibraryTrack } from "../lib/musicLibrary.js";
+import { resolveTenantTrack } from "../lib/musicLibraryStore.js";
 
 const router = Router();
 
@@ -14,6 +15,10 @@ function resolveAssetPath(dataDir, pathOrId) {
   if (!normalized) return null;
   const libTrack = resolveLibraryTrack(normalized);
   if (libTrack) return libTrack;
+  // A track the operator saved to their own library. Needs dataDir, which is
+  // why it is spelled mylib: rather than library:.
+  const saved = resolveTenantTrack(dataDir, normalized);
+  if (saved) return saved;
   if (normalized.startsWith('http')) return normalized;
   if (fs.existsSync(normalized)) return normalized;
 

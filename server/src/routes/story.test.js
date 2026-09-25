@@ -675,4 +675,35 @@ describe("story routes", () => {
     assert.equal(b.res.statusCode, 200, JSON.stringify(b.res.payload));
     assert.deepEqual(calls[1].scenes, scenes, "no beatSec: the scenes go through untouched");
   });
+
+  // Finding 2 regression: a forgotten/deleted mylib: track (or a stale
+  // library: id) must degrade the render to no music, not crash the whole
+  // video. Before the fix, story.js fell back to the literal ref string
+  // (`project.music?.path`), which reached buildStoryFfmpegArgs as a
+  // nonexistent `-i mylib:<uuid>` and killed the entire render.
+  test("render drops the music bed instead of failing when the project's mylib ref no longer resolves", async () => {
+    const img = path.join(outputDir, "img.png"); fs.writeFileSync(img, "png");
+    const audio = path.join(outputDir, "voice.mp3"); fs.writeFileSync(audio, "mp3");
+    const mkScene = (i, startMs, endMs) => ({ id: `s${i}`, text: `t${i}`, imagePrompt: "", imagePath: img, imageUrl: "/x.png", imageStatus: "done", startMs, endMs, promptEditedByUser: false });
+    const scenes = [mkScene(1, 0, 8000)];
+    const calls = [];
+    _setRenderImpl(async (args) => { calls.push(args); return { ok: true, outputPath: args.outPath }; });
+
+    const project = createProject(dataDir, { title: "gone-track" });
+    writeProject(dataDir, {
+      ...project,
+      status: "ready_to_render",
+      scenes,
+      source: { audioPath: audio, durationMs: 8000 },
+      // Never registered in this tenant's musicLibrary.json (forgotten, or
+      // simply never existed) — resolveTenantTrack must return null for it.
+      music: { path: "mylib:00000000-0000-0000-0000-000000000000", volume: 0.3, autoDuck: true },
+    });
+    const { req, res } = mockReqRes({ params: { id: project.projectId }, dataDir, outputDir });
+    await handlerFor("post", "/:id/render")(req, res);
+
+    assert.equal(res.statusCode, 200, JSON.stringify(res.payload));
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].musicPath, null, "an unresolved mylib ref must not reach the renderer as a raw string");
+  });
 });
