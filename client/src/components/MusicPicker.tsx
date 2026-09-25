@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { AUDIO_ACCEPT, AUDIO_ACCEPT_LIST } from '../lib/audioAccept';
-import { Music, X, Loader2, Play, Square, ArrowDownToLine } from 'lucide-react';
+import { Music, X, Loader2, Play, Square, ArrowDownToLine, MicOff } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { storyApi } from '../lib/storyApi';
 import { useMusicLibrary } from '../hooks/useMusicLibrary';
-import { saveTrackToLibrary, deleteTrack, updateTrack, type MusicTrack } from '../lib/musicLibraryApi';
+import { saveTrackToLibrary, deleteTrack, updateTrack, fetchCapabilities, type MusicTrack } from '../lib/musicLibraryApi';
 import { DropZone } from './ui/DropZone';
 import { MusicLibraryChecklist } from './MusicLibraryChecklist';
+import { InstrumentalDialog } from './InstrumentalDialog';
 
 // A stored value is a ref (`library:<id>` for a bundled track, `mylib:<id>`
 // for a saved upload) or, for back-compat, a bare absolute path from before
@@ -30,15 +31,28 @@ interface MusicPickerProps {
   busy: boolean;
   /** Allow an ordered list of tracks (played back-to-back, then looped). */
   multiple?: boolean;
+  /** Show ↑/↓ buttons on chosen tracks to reorder the fixed playback order. */
+  reorderable?: boolean;
   /** Host timeline: put the chosen track on the Music bed lane. */
   onInsertToLane?: (path: string) => void;
 }
 
-export function MusicPicker({ value, onChange, busy, multiple = false, onInsertToLane }: MusicPickerProps) {
+/** A copy of `list` with the item at `from` moved to `to`. */
+function move<T>(list: readonly T[], from: number, to: number): T[] {
+  const next = list.slice();
+  const [item] = next.splice(from, 1);
+  next.splice(to, 0, item);
+  return next;
+}
+
+export function MusicPicker({ value, onChange, busy, multiple = false, reorderable = false, onInsertToLane }: MusicPickerProps) {
   const { data: tracks } = useMusicLibrary();
+  const { data: caps } = useQuery({ queryKey: ['music-capabilities'], queryFn: fetchCapabilities, staleTime: 5 * 60_000 });
   const qc = useQueryClient();
   const inputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  // The library track currently open in the make-instrumental dialog, if any.
+  const [instrumentalFor, setInstrumentalFor] = useState<MusicTrack | null>(null);
   // Which track is currently previewing. Without this the button could only
   // ever start playback: clicking the same track again just built a second
   // Audio element, so a preview could not be stopped.
@@ -57,6 +71,17 @@ export function MusicPicker({ value, onChange, busy, multiple = false, onInsertT
   const trackForRef = (p: string): MusicTrack | undefined => {
     const id = refId(p);
     return id ? (tracks || []).find((t) => t.id === id) : undefined;
+  };
+
+  // The newest instrumental made from `ref`, if any.
+  const instrumentalOf = (ref: string): MusicTrack | undefined =>
+    [...(tracks || [])].reverse().find((t) => t.derivedFrom === ref);
+
+  // Put `to` where `from` is in the chosen list (or add it if `from` isn't
+  // chosen — e.g. vocals removed from a library row).
+  const swapRef = (from: string, to: string) => {
+    if (!multiple) { onChange({ path: to, volume: value.volume ?? 0.3, autoDuck }); return; }
+    emitPaths(paths.includes(from) ? paths.map((p) => (p === from ? to : p)) : [...paths, to]);
   };
 
   const trackLabel = (p: string) => {
@@ -85,6 +110,17 @@ export function MusicPicker({ value, onChange, busy, multiple = false, onInsertT
       qc.invalidateQueries({ queryKey: ['music-library'] });
     } catch (e) {
       toast.error((e as Error).message || `Couldn't update the licence for ${label}`);
+    }
+  };
+
+  const editCredit = async (id: string, current: string) => {
+    const next = window.prompt('Credit line for the video description (e.g. "Music by Ada · Pixabay")', current);
+    if (next === null) return;
+    try {
+      await updateTrack(id, { credit: next });
+      qc.invalidateQueries({ queryKey: ['music-library'] });
+    } catch (e) {
+      toast.error((e as Error).message || "Couldn't save the credit");
     }
   };
 
@@ -165,6 +201,69 @@ export function MusicPicker({ value, onChange, busy, multiple = false, onInsertT
   // management list, independent of which track (if any) is selected above
   // (selecting/previewing stays on the select control to avoid a second,
   // redundant preview affordance per row).
+  //
+  // Remove vocals is offered on your own uploads only: the bundled tracks are
+  // already instrumental, and a button beside them read as a genre tag.
+  const vocalsBtnCls = 'shrink-0 inline-flex items-center gap-1 rounded border border-primary-400/40 px-1.5 py-0.5 text-[10px] text-primary-200 hover:bg-primary-500/15';
+  const removeVocalsButton = (t: MusicTrack | undefined) => caps?.vocalRemoval && t?.source === 'upload' && !t.derivedFrom && (
+    <button
+      type="button"
+      onClick={() => setInstrumentalFor(t)}
+      aria-label={`Remove vocals from ${t.label}`}
+      title="Make an instrumental version of this track (removes the singing)"
+      className={vocalsBtnCls}
+    >
+      <MicOff size={10} /> Remove vocals
+    </button>
+  );
+
+  // A loose file (uploaded straight onto a Timeline lane, never saved to the
+  // library) has no track id to separate. Save it first — the server dedupes
+  // by file, so this never duplicates — then swap it for the saved track.
+  const removeVocalsFromLoose = async (p: string) => {
+    try {
+      const saved = await saveTrackToLibrary(p, { label: (p.split(/[\\/]/).pop() || p).replace(/\.[^.]+$/, '') });
+      qc.invalidateQueries({ queryKey: ['music-library'] });
+      swapRef(p, saved.ref);
+      setInstrumentalFor(saved);
+    } catch (e) {
+      toast.error((e as Error).message || "Couldn't save that file to your library");
+    }
+  };
+
+  // What a chosen row offers: its instrumental if one exists, otherwise to
+  // make one.
+  const chosenVocalsControl = (p: string) => {
+    const inst = instrumentalOf(p);
+    if (inst) {
+      return (
+        <button
+          type="button"
+          onClick={() => swapRef(p, inst.ref)}
+          aria-label={`Use the instrumental of ${trackLabel(p)}`}
+          title={`Swap in "${inst.label}"`}
+          className={vocalsBtnCls}
+        >
+          <MicOff size={10} /> Use instrumental
+        </button>
+      );
+    }
+    if (caps?.vocalRemoval && !REF_PREFIX.test(p)) {
+      return (
+        <button
+          type="button"
+          onClick={() => removeVocalsFromLoose(p)}
+          aria-label={`Remove vocals from ${trackLabel(p)}`}
+          title="Make an instrumental version of this track (removes the singing)"
+          className={vocalsBtnCls}
+        >
+          <MicOff size={10} /> Remove vocals
+        </button>
+      );
+    }
+    return removeVocalsButton(trackForRef(p));
+  };
+
   const libraryList = (tracks || []).length > 0 && (
     <ul className="max-h-32 space-y-1 overflow-y-auto rounded-md border border-white/10 bg-black/10 p-1.5">
       {(tracks || []).map((t) => (
@@ -183,6 +282,17 @@ export function MusicPicker({ value, onChange, busy, multiple = false, onInsertT
           {t.source === 'upload' && (
             <button
               type="button"
+              onClick={() => editCredit(t.id, t.credit || '')}
+              title={t.credit ? `Credit: ${t.credit}` : 'Add a credit line for the video description'}
+              className="shrink-0 rounded border border-white/15 px-1 text-[10px] text-gray-300 hover:border-primary-400"
+            >
+              {t.credit ? 'credit ✓' : 'credit'}
+            </button>
+          )}
+          {removeVocalsButton(t)}
+          {t.source === 'upload' && (
+            <button
+              type="button"
               aria-label={`Forget ${t.label}`}
               title="Remove from your library. The uploaded file itself is kept."
               onClick={() => forgetTrack(t.id, t.label)}
@@ -194,6 +304,20 @@ export function MusicPicker({ value, onChange, busy, multiple = false, onInsertT
         </li>
       ))}
     </ul>
+  );
+
+  const instrumentalDialog = instrumentalFor && (
+    <InstrumentalDialog
+      track={instrumentalFor}
+      onClose={() => setInstrumentalFor(null)}
+      // Same library refresh clearLicence/forgetTrack use, so the new
+      // instrumental track shows up in this list immediately.
+      onSaved={() => qc.invalidateQueries({ queryKey: ['music-library'] })}
+      onUse={(inst) => {
+        swapRef(instrumentalFor.ref, inst.ref);
+        setInstrumentalFor(null);
+      }}
+    />
   );
 
   if (multiple) {
@@ -226,6 +350,13 @@ export function MusicPicker({ value, onChange, busy, multiple = false, onInsertT
                     {playingId === refId(p) ? <Square size={12} /> : <Play size={12} />}
                   </button>
                 )}
+                {chosenVocalsControl(p)}
+                {reorderable && (
+                  <>
+                    <button type="button" disabled={busy || idx === 0} onClick={() => emitPaths(move(paths, idx, idx - 1))} aria-label="move up" className="text-gray-400 hover:text-white disabled:opacity-30">↑</button>
+                    <button type="button" disabled={busy || idx === paths.length - 1} onClick={() => emitPaths(move(paths, idx, idx + 1))} aria-label="move down" className="text-gray-400 hover:text-white disabled:opacity-30">↓</button>
+                  </>
+                )}
                 <button type="button" onClick={() => emitPaths(paths.filter((_, i) => i !== idx))} className="text-gray-400 hover:text-red-300" aria-label="remove track"><X size={12} /></button>
               </li>
             ))}
@@ -245,6 +376,7 @@ export function MusicPicker({ value, onChange, busy, multiple = false, onInsertT
         </div>
 
         {libraryList}
+        {instrumentalDialog}
 
         {paths.length > 0 && (
           <div className="flex flex-wrap items-center gap-3 pt-1">
@@ -326,6 +458,7 @@ export function MusicPicker({ value, onChange, busy, multiple = false, onInsertT
       </div>
 
       {libraryList}
+      {instrumentalDialog}
 
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" disabled={busy || isUploading} onClick={() => inputRef.current?.click()} className="rounded-md border border-white/15 px-2 py-1 hover:border-primary-400 disabled:opacity-50">{isUploading ? 'Uploading…' : 'Upload your own'}</button>

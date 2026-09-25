@@ -79,6 +79,54 @@ If the save request fails for any reason, the MusicPicker still keeps the upload
 
 All four resolvers check the ref prefix the same way and look the track up accordingly; only the fallback behaviour for an unresolved ref differs (reject the request vs. degrade to silence), matching how each callsite can and can't report failure to the operator.
 
+## Credits
+
+Only your own uploads carry an editable credit line, up to 200 characters. It's
+set with the "credit" button next to a track in the music picker (`PATCH
+/api/music/:id`, stored as `credit` on the track's index entry). A credit is
+free text — a name, a licence line, a link — whatever the source asks for.
+
+Bundled `library:` tracks always read `"Music from Pixabay"` — that PATCH route
+only reaches tracks in your own index, so a bundled track's credit is fixed.
+
+When an Ambient session's bed is built, each distinct credit (or the track's label, if
+it has no credit) is collected into the **"Music credits:"** block at the end of the
+YouTube description — see Track order below for how the bed's track list is captured.
+
+## Instrumentals
+
+"Make instrumental" (see `docs/vocal-removal.md`) creates a new track in the library
+rather than modifying the original. The new track's `derivedFrom` field holds the
+source track's ref, and it **inherits the source track's `licence` and `credit`** — an
+instrumental doesn't get its own licence status; it's tied to whatever the original was
+cleared (or not cleared) for.
+
+A finished instrumental is saved to the library the moment the separation ends — there
+is no separate "Keep" step, so leaving the page mid-job cannot lose it. "Delete it" in
+the dialog takes it back out. Any chosen song that has an instrumental shows **Use
+instrumental**, which swaps it in place; **Use in this video** in the dialog does the
+same. A loose file on a Timeline music lane (never saved to the library) is saved first
+when "Remove vocals" is pressed on it.
+
+Orphaned results (an `instrumental-*.m4a` no library track points at) and the
+`stems-work/<jobId>` working folder each separation used are swept automatically:
+anything older than 7 days is deleted the next time a separation job starts. Saved
+instrumentals are never swept.
+
+## Track order
+
+In the Ambient Sound step, **Shuffle** (the default) plays tracks in a shuffled order
+that reshuffles on every full pass, so repeats spread out rather than looping the same
+sequence. **Keep my order** plays the tracks in the order the operator arranged them
+(reorder with the ↑/↓ controls); once a full pass finishes, playback repeats from the
+top. Either way, the same track never plays twice in a row unless only one track is
+selected.
+
+When the bed is built, the actual timed track list that was used — track, start time,
+duration — is saved as `bed.builtOrder` on the Ambient project. For a music-only
+session this becomes the video's YouTube chapters, and it's also what the "Music
+credits:" block in the description is built from.
+
 ## Verifying it yourself
 
 The automated tests cover:

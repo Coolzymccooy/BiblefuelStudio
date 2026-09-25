@@ -69,17 +69,74 @@ export function orderTracks(tracks, targetSec, { crossfadeSec = 6, rng = Math.ra
 }
 
 /**
+ * The operator's own order. One pass in the order given, then again from the
+ * top until the bed is long enough. A track is never placed straight after
+ * itself (the seam of a list that starts and ends with the same track, or the
+ * same track listed twice in a row) unless nothing else is left to play.
+ *
+ * @param {Array<{ ref: string, file: string, durationSec: number }>} tracks
+ * @param {number} targetSec
+ * @param {{ crossfadeSec?: number, maxTracks?: number }} [opts]
+ */
+export function fixedOrder(tracks, targetSec, { crossfadeSec = 6, maxTracks = 400 } = {}) {
+  const pool = (tracks || []).filter((t) => Number(t?.durationSec) > 0);
+  if (pool.length === 0) return [];
+
+  const chosen = [];
+  let i = 0;
+  let skips = 0;
+  while (chainDurationSec(chosen, crossfadeSec) < targetSec && chosen.length < maxTracks) {
+    const t = pool[i % pool.length];
+    i += 1;
+    const last = chosen[chosen.length - 1];
+    // After a full pass of skips there is nothing else to play: repeat.
+    if (last && skips < pool.length && t.ref === last.ref) {
+      skips += 1;
+      continue;
+    }
+    skips = 0;
+    chosen.push(t);
+  }
+  return chosen;
+}
+
+/**
+ * When each track starts in the assembled bed. A crossfaded chain starts the
+ * next track `crossfadeSec` before the previous one ends, so track i begins at
+ * sum(durations before it) - i * crossfadeSec. Entries past the target are
+ * dropped and the last one is cut to what actually plays.
+ *
+ * @param {Array<{ ref: string, durationSec: number }>} order
+ * @param {number} crossfadeSec
+ * @param {number} targetSec
+ */
+export function trackStarts(order, crossfadeSec, targetSec) {
+  const d = Number(crossfadeSec) || 0;
+  const out = [];
+  let chainEnd = 0;
+  for (let i = 0; i < (order || []).length; i += 1) {
+    const dur = Number(order[i].durationSec) || 0;
+    const startSec = i === 0 ? 0 : chainEnd - d;
+    if (startSec >= targetSec) break;
+    out.push({ ...order[i], startSec, durationSec: Math.min(dur, targetSec - startSec) });
+    chainEnd = startSec + dur;
+  }
+  return out;
+}
+
+/**
  * Cache key for a built bed. Re-rendering an unchanged project must not
  * re-assemble — on a two-hour bed that is minutes of ffmpeg for no change.
  */
 // Bumped when the way a bed is built changes, so cached beds built the old
 // way are rebuilt rather than reused. v2: tracks levelled to one loudness.
-const BED_BUILD_VERSION = 2;
+// v3: the operator's own order is part of the key.
+const BED_BUILD_VERSION = 3;
 
-export function bedHash({ trackRefs = [], crossfadeSec = 6, targetSec = 0 } = {}) {
+export function bedHash({ trackRefs = [], crossfadeSec = 6, targetSec = 0, order = "shuffle" } = {}) {
   return crypto
     .createHash("sha256")
-    .update(JSON.stringify({ trackRefs, crossfadeSec, targetSec, build: BED_BUILD_VERSION }))
+    .update(JSON.stringify({ trackRefs, crossfadeSec, targetSec, order, build: BED_BUILD_VERSION }))
     .digest("hex");
 }
 

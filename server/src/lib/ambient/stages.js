@@ -2,11 +2,13 @@ import fs from "fs";
 import path from "path";
 import { spawn } from "child_process";
 
-import { readProject, writeProject } from "./projectStore.js";
-import { orderTracks, bedHash, buildBedArgs } from "./bedAssembly.js";
+import { readProject, writeProject, isMusicOnly } from "./projectStore.js";
+import { orderTracks, fixedOrder, trackStarts, bedHash, buildBedArgs } from "./bedAssembly.js";
+import { trackInfo } from "./trackInfo.js";
 import { voiceDrops } from "./drops.js";
 import { deriveMovements, imagePromptFor, AMBIENT_IMAGE_STYLE } from "./movements.js";
 import { buildAmbientFfmpegArgs } from "./ambientRender.js";
+import { amfAvailable } from "./encoders.js";
 import { insideOutputs } from "./ownFiles.js";
 import { measureLoudness, gainToTargetDb } from "./loudness.js";
 
@@ -108,7 +110,10 @@ function stillThere(ctx, projectId) {
 }
 
 export function writeWithMovements(dataDir, project) {
-  return writeProject(dataDir, { ...project, movements: deriveMovements(project) });
+  // Music only: one picture for the whole length. The drops stay stored so
+  // switching back to verses restores them, but they never place pictures.
+  const source = isMusicOnly(project) ? { ...project, drops: [] } : project;
+  return writeProject(dataDir, { ...project, movements: deriveMovements(source) });
 }
 
 /**
@@ -338,13 +343,21 @@ export async function assembleBed(ctx, project) {
   if (bed.mode === "file") {
     const file = resolveTrackFile(ctx, bed.filePath);
     if (!file) throw new Error("the uploaded bed file is missing");
-    return { bedPath: file, project };
+    // A previous assemble-mode build may have left a builtOrder behind; a
+    // file-mode bed has no tracklist, so chapters/credits must not describe
+    // tracks that are not actually in this video.
+    const fresh = stillThere(ctx, project.projectId);
+    const saved = fresh.bed?.builtOrder != null
+      ? writeProject(ctx.dataDir, { ...fresh, bed: { ...fresh.bed, builtOrder: null } })
+      : fresh;
+    return { bedPath: file, project: saved };
   }
 
   const refs = (bed.trackRefs || []).filter(Boolean);
   if (refs.length === 0) throw new Error("no music tracks chosen for the bed");
 
-  const hash = bedHash({ trackRefs: refs, crossfadeSec: bed.crossfadeSec, targetSec: project.targetSec });
+  const order = bed.order === "fixed" ? "fixed" : "shuffle";
+  const hash = bedHash({ trackRefs: refs, crossfadeSec: bed.crossfadeSec, targetSec: project.targetSec, order });
   if (bed.builtHash === hash && bed.builtPath && fs.existsSync(bed.builtPath)) {
     return { bedPath: bed.builtPath, project };
   }
@@ -359,7 +372,9 @@ export async function assembleBed(ctx, project) {
   if (tracks.length === 0) throw new Error("none of the chosen tracks could be read");
 
   const crossfadeSec = Number(bed.crossfadeSec) >= 0 ? Number(bed.crossfadeSec) : 6;
-  const order = orderTracks(tracks, project.targetSec, { crossfadeSec });
+  const playOrder = order === "fixed"
+    ? fixedOrder(tracks, project.targetSec, { crossfadeSec })
+    : orderTracks(tracks, project.targetSec, { crossfadeSec });
   const dir = ensureDir(outDirFor(ctx.outputDir, project.projectId));
   const bedPath = path.join(dir, "bed.m4a");
 
@@ -367,15 +382,15 @@ export async function assembleBed(ctx, project) {
   // honoured between tracks: a big pool is minutes of measuring.
   const levels = new Map();
   let allMeasured = true;
-  for (const file of new Set(order.map((t) => t.file))) {
+  for (const file of new Set(playOrder.map((t) => t.file))) {
     if (isCancelled(project.projectId)) throw new Error("Cancelled.");
     const measured = await _measureLoudness(file);
     if (!measured) allMeasured = false;
     levels.set(file, gainToTargetDb(measured));
   }
-  const built = buildBedArgs(order.map((t) => t.file), {
+  const built = buildBedArgs(playOrder.map((t) => t.file), {
     crossfadeSec, targetSec: project.targetSec, outPath: bedPath,
-    gainsDb: order.map((t) => levels.get(t.file) || 0),
+    gainsDb: playOrder.map((t) => levels.get(t.file) || 0),
   });
 
   await new Promise((resolve, reject) => {
@@ -389,17 +404,29 @@ export async function assembleBed(ctx, project) {
   });
 
   const fresh = stillThere(ctx, project.projectId);
-  const savedRefs = order.map((t) => t.ref);
+  // Shuffle stores the expanded play order (what the next render reads back);
+  // fixed keeps the operator's list, so their arrangement is never rewritten.
+  const savedRefs = order === "fixed" ? refs : playOrder.map((t) => t.ref);
   // Keyed on the order saved, which is what the next render reads back; the
   // old key was the pre-shuffle list, so the cache almost never hit. And a
   // bed with an unmeasured track is not kept as levelled: it's rebuilt next
   // time, when the measurement may succeed.
   const builtHash = allMeasured
-    ? bedHash({ trackRefs: savedRefs, crossfadeSec: bed.crossfadeSec, targetSec: project.targetSec })
+    ? bedHash({ trackRefs: savedRefs, crossfadeSec: bed.crossfadeSec, targetSec: project.targetSec, order })
     : null;
+  // trackInfo reads musicLibrary.json per call; a two-hour bed can have up to
+  // 400 entries, so resolve it once per distinct ref rather than per entry.
+  const infoByRef = new Map(
+    [...new Set(playOrder.map((t) => t.ref))].map((ref) => [ref, trackInfo(ctx.dataDir, ref)]),
+  );
+  const builtOrder = trackStarts(
+    playOrder.map((t) => ({ ref: t.ref, durationSec: t.durationSec, ...infoByRef.get(t.ref) })),
+    crossfadeSec,
+    project.targetSec,
+  );
   const saved = writeProject(ctx.dataDir, {
     ...fresh,
-    bed: { ...fresh.bed, trackRefs: savedRefs, builtPath: bedPath, builtHash },
+    bed: { ...fresh.bed, trackRefs: savedRefs, builtPath: bedPath, builtHash, builtOrder },
   });
   return { bedPath, project: saved };
 }
@@ -411,9 +438,15 @@ export async function assembleBed(ctx, project) {
  * the project file, because the in-memory job map is not visible to whichever
  * request later serves GET /:id.
  */
-export async function renderStage(ctx, projectId, jobId) {
+export async function renderStage(ctx, projectId, jobId, { encoder = "cpu" } = {}) {
   const start = readProject(ctx.dataDir, projectId);
   if (!start) throw new Error("project not found");
+
+  // Cancelled while it waited its turn behind another heavy job.
+  if (isCancelled(projectId)) {
+    clearCancelled(projectId);
+    throw new Error("Cancelled.");
+  }
 
   writeProject(ctx.dataDir, {
     ...start,
@@ -437,9 +470,6 @@ export async function renderStage(ctx, projectId, jobId) {
 
   const dir = ensureDir(outDirFor(ctx.outputDir, projectId));
   const outPath = path.join(dir, "video.mp4");
-  const built = buildAmbientFfmpegArgs(project, {
-    bedPath, images, drops: project.drops || [], outPath, workDir: dir,
-  });
 
   writeProject(ctx.dataDir, {
     ...stillThere(ctx, projectId),
@@ -466,10 +496,10 @@ export async function renderStage(ctx, projectId, jobId) {
     } catch { /* progress is best-effort */ }
   };
 
-  const result = await new Promise((resolve) => {
+  const encodeWith = (args) => new Promise((resolve) => {
     let proc;
     try {
-      proc = spawnFfmpeg(built.args);
+      proc = spawnFfmpeg(args);
     } catch (err) {
       // spawn throws SYNCHRONOUSLY on ENAMETOOLONG/ENOENT — that must become a
       // failed job, never a dead server.
@@ -494,6 +524,31 @@ export async function renderStage(ctx, projectId, jobId) {
       : resolve({ ok: false, error: `ffmpeg exited ${code}: ${tail.slice(-400)}` })));
   });
 
+  const wanted = encoder === "amf" && amfAvailable() ? "amf" : "cpu";
+  const argsFor = (enc) => buildAmbientFfmpegArgs(project, {
+    bedPath, images, drops: isMusicOnly(project) ? [] : (project.drops || []), outPath, workDir: dir, encoder: enc,
+  }).args;
+  let encoderUsed = wanted;
+  let result = await encodeWith(argsFor(wanted));
+  if (!result.ok && wanted === "amf" && !isCancelled(projectId)) {
+    // The graphics encoder failed (driver, unsupported size): the CPU encode
+    // is slower but always there. The AMF attempt may have already reported
+    // progress (both markProgress and persistPct are monotonic per job), so
+    // reset both before restarting or the UI would show a stale percentage
+    // until the CPU pass caught back up.
+    encoderUsed = "cpu";
+    markRunning(jobId);
+    lastPct = -1;
+    lastAt = 0;
+    try {
+      const live = readProject(ctx.dataDir, projectId);
+      if (live && live.status === AMBIENT_STATUS.RENDERING) {
+        writeProject(ctx.dataDir, { ...live, render: { ...live.render, percent: 0, phase: "retrying on the CPU" } });
+      }
+    } catch { /* progress is best-effort */ }
+    result = await encodeWith(argsFor("cpu"));
+  }
+
   const fresh = stillThere(ctx, projectId);
   if (result.ok) {
     markDone(jobId, outPath);
@@ -504,7 +559,7 @@ export async function renderStage(ctx, projectId, jobId) {
       ...fresh,
       status: AMBIENT_STATUS.DONE,
       error: null,
-      render: { jobId, outputPath: outPath, status: "done", percent: 100, phase: "" },
+      render: { jobId, outputPath: outPath, status: "done", percent: 100, phase: "", encoderUsed },
     });
   }
   markError(jobId, result.error);
@@ -513,6 +568,6 @@ export async function renderStage(ctx, projectId, jobId) {
     ...fresh,
     status: AMBIENT_STATUS.ERROR,
     error: result.error,
-    render: { jobId, outputPath: null, status: "error", percent: 0, phase: "" },
+    render: { jobId, outputPath: null, status: "error", percent: 0, phase: "", encoderUsed },
   });
 }

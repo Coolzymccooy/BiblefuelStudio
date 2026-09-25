@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { AmbientWordStep } from '../AmbientWordStep';
+import { ambientApi } from '../../../lib/ambientApi';
 import type { AmbientDrop, AmbientProject, AmbientStatus } from '../../../lib/ambientTypes';
 
 beforeEach(() => vi.restoreAllMocks());
@@ -72,5 +74,21 @@ describe('AmbientWordStep drop status', () => {
     ]));
     expect(screen.getByText(/bible api 404/)).toBeInTheDocument();
     expect(container.querySelector('.animate-spin')).toBeNull();
+  });
+});
+
+describe('AmbientWordStep — music only', () => {
+  it('switching to music only saves it and hides the verse tools', async () => {
+    const setWords = vi.spyOn(ambientApi, 'setWords').mockResolvedValue({} as never);
+    const refresh = vi.fn();
+    const p = project('draft', []);
+    const { rerender } = render(
+      <AmbientWordStep project={{ ...p, words: 'verses' }} busy={false} setBusy={() => {}} refresh={refresh} />,
+    );
+    await userEvent.click(screen.getByRole('switch', { name: /music only/i }));
+    expect(setWords).toHaveBeenCalledWith(p.projectId, 'none');
+    rerender(<AmbientWordStep project={{ ...p, words: 'none' }} busy={false} setBusy={() => {}} refresh={refresh} />);
+    expect(screen.queryByRole('button', { name: /suggest verses/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/no verses will be spoken/i)).toBeInTheDocument();
   });
 });
