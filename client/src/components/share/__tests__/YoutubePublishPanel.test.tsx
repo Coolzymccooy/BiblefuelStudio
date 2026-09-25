@@ -1,11 +1,26 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import toast from 'react-hot-toast';
+
+// toast() is itself callable (a warning), so the module is a callable stub
+// that still carries .success and .error for the tests that spy on them.
+vi.mock('react-hot-toast', () => {
+  const t = Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn() });
+  return { default: t };
+});
 import { api } from '../../../lib/api';
 import { YoutubePublishPanel } from '../YoutubePublishPanel';
 
-beforeEach(() => vi.restoreAllMocks());
+// The preview asks the server for a real picture; tests answer with a stub.
+const stubPreview = () => vi.spyOn(api, 'postForBlob').mockResolvedValue({ ok: true, data: new Blob(['jpg'], { type: 'image/jpeg' }) } as any);
+
+beforeEach(() => {
+  vi.restoreAllMocks();
+  stubPreview();
+  globalThis.URL.createObjectURL = vi.fn(() => 'blob:preview');
+  globalThis.URL.revokeObjectURL = vi.fn();
+});
 
 describe('YoutubePublishPanel', () => {
   it('posts title, tags, schedule and thumbnail to the YouTube destination', async () => {
@@ -76,5 +91,66 @@ describe('YoutubePublishPanel', () => {
     await user.click(screen.getByRole('button', { name: /publish to youtube/i }));
     expect(post).not.toHaveBeenCalled();
     expect(await screen.findByText(/title is required/i)).toBeInTheDocument();
+  });
+
+  it('sends the tagline with the title, and only when the title is drawn', async () => {
+    const user = userEvent.setup();
+    const post = vi.spyOn(api, 'post').mockResolvedValue({ ok: true, data: { videoId: 'v1', videoUrl: 'u', forcedPrivate: false } } as any);
+    render(
+      <YoutubePublishPanel
+        videoUrl="/outputs/a.mp4"
+        initial={{ title: 'Be Still, My Soul', thumbnailTitle: true, thumbnailTagline: '2 hours · soaking worship' }}
+        thumbnailOptions={[{ label: 'Picture 1', path: '/outputs/genImg/p1/part-1.png' }]}
+      />,
+    );
+    expect(screen.getByLabelText(/line above the title/i)).toHaveValue('2 hours · soaking worship');
+    await user.click(screen.getByRole('button', { name: /publish to youtube/i }));
+    expect(post).toHaveBeenLastCalledWith('/api/social/post', expect.objectContaining({ thumbnailTitle: true, thumbnailTagline: '2 hours · soaking worship' }));
+
+    await user.click(screen.getByRole('checkbox', { name: /put the title on the thumbnail/i }));
+    expect(screen.queryByLabelText(/line above the title/i)).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /publish to youtube/i }));
+    expect(post).toHaveBeenLastCalledWith('/api/social/post', expect.objectContaining({ thumbnailTitle: false, thumbnailTagline: '' }));
+  });
+
+  it('shows the thumbnail as the server makes it, from the chosen picture, title and tagline', async () => {
+    const preview = stubPreview();
+    render(
+      <YoutubePublishPanel
+        videoUrl="/outputs/a.mp4"
+        initial={{ title: 'Be Still, My Soul', thumbnailTitle: true, thumbnailTagline: '2 hours' }}
+        thumbnailOptions={[{ label: 'Picture 1', path: '/outputs/genImg/p1/part-1.png' }]}
+      />,
+    );
+    expect(await screen.findByAltText(/thumbnail preview/i, {}, { timeout: 2000 })).toHaveAttribute('src', 'blob:preview');
+    expect(preview).toHaveBeenCalledWith('/api/social/youtube/thumbnail-preview', {
+      thumbnailPath: '/outputs/genImg/p1/part-1.png', title: 'Be Still, My Soul', thumbnailTitle: true, thumbnailTagline: '2 hours',
+    }, { timeout: 60_000 });
+  });
+
+  it('asks again when the server is still making the last preview', async () => {
+    const preview = vi.spyOn(api, 'postForBlob')
+      .mockResolvedValueOnce({ ok: false, status: 429, error: 'busy' } as any)
+      .mockResolvedValue({ ok: true, data: new Blob(['jpg']) } as any);
+    render(<YoutubePublishPanel videoUrl="/outputs/a.mp4" initial={{ title: 'T' }} thumbnailOptions={[{ label: 'P', path: '/outputs/x.png' }]} />);
+    expect(await screen.findByAltText(/thumbnail preview/i, {}, { timeout: 3000 })).toBeInTheDocument();
+    expect(preview).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('says why when the preview cannot be made', async () => {
+    vi.spyOn(api, 'postForBlob').mockResolvedValue({ ok: false, error: "Couldn't make a thumbnail from that picture" } as any);
+    render(<YoutubePublishPanel videoUrl="/outputs/a.mp4" initial={{ title: 'T' }} thumbnailOptions={[{ label: 'P', path: '/outputs/x.png' }]} />);
+    expect(await screen.findByRole('alert', {}, { timeout: 2000 })).toHaveTextContent(/couldn't make a thumbnail/i);
+  });
+
+  it('warns when the picture went up without its title', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(api, 'post').mockResolvedValue({ ok: true, data: { videoId: 'v1', videoUrl: 'u', forcedPrivate: false, thumbnailWarning: 'went up without it' } } as any);
+    const warn = vi.mocked(toast);
+    warn.mockClear();
+    render(<YoutubePublishPanel videoUrl="/outputs/a.mp4" initial={{ title: 'T' }} />);
+    await user.click(screen.getByRole('button', { name: /publish to youtube/i }));
+    await waitFor(() => expect(warn).toHaveBeenCalledWith('went up without it', expect.objectContaining({ icon: '⚠️' })));
   });
 });

@@ -11,7 +11,7 @@ import { formatLength, renderEstimateMinutes } from '../../lib/ambientLength';
 import { panelCls, primaryBtnCls, secondaryBtnCls } from '../story/formStyles';
 import { YoutubePublishPanel, type YoutubePrivacy, type YoutubePublishResult } from '../share/YoutubePublishPanel';
 import { publishedLabel } from '../../lib/ambientHistory';
-import { ambientChapters, ambientDescription, ambientThumbnails } from '../../lib/ambientShare';
+import { ambientChapters, ambientDescription, ambientTagline, ambientThumbnails } from '../../lib/ambientShare';
 
 export interface AmbientRenderStepProps {
   project: AmbientProject;
@@ -99,6 +99,9 @@ export function AmbientRenderStep({ project, busy, setBusy, refresh }: AmbientRe
 function AmbientDonePanel({ project, refresh }: { project: AmbientProject; refresh: () => void }) {
   const chapters = ambientChapters(project);
   const published = project.published ?? [];
+  const [now] = useState(() => Date.now());
+  // Newest first; each can take the thumbnail designed below without a re-upload.
+  const existingVideos = [...published].reverse().map((p) => ({ videoId: p.videoId, label: publishedLabel(p, now) }));
 
   // The upload itself already succeeded; this only notes it in the history.
   const notePublished = async (r: YoutubePublishResult, sent: { privacyStatus: YoutubePrivacy; publishAt: string }) => {
@@ -131,8 +134,9 @@ function AmbientDonePanel({ project, refresh }: { project: AmbientProject; refre
           videoUrl={`/outputs/ambient/${project.projectId}/video.mp4`}
           // A calm picture with its title is what these channels' thumbnails
           // look like; the operator can untick it.
-          initial={{ title: project.title, description: ambientDescription(project), thumbnailTitle: true }}
+          initial={{ title: project.title, description: ambientDescription(project), thumbnailTitle: true, thumbnailTagline: ambientTagline(project) }}
           thumbnailOptions={ambientThumbnails(project)}
+          existingVideos={existingVideos}
           chapters={chapters.length >= 3 ? chapters : undefined}
           onPublished={notePublished}
         />
