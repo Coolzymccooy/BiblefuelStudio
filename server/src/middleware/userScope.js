@@ -1,5 +1,5 @@
-import { DATA_DIR, OUTPUT_DIR, ensureUserDirs } from "../lib/paths.js";
-import { isSuperAdmin, getPlanForUser } from "../lib/userPlan.js";
+import { resolveScopeDirs, isSingleTenant } from "../lib/paths.js";
+import { getPlanForUser } from "../lib/userPlan.js";
 
 /**
  * Express middleware. Must be mounted AFTER requireAuth (i.e. req.user exists).
@@ -26,33 +26,18 @@ export function withUserScope(req, res, next) {
     return res.status(401).json({ ok: false, error: "Missing user context" });
   }
 
-  const flag = String(process.env.MULTITENANT || "").toLowerCase().trim();
-  // Single-tenant only when the operator explicitly opts out.
-  const singleTenant = flag === "false" || flag === "0" || flag === "off";
-
-  if (singleTenant) {
-    req.ctx = {
-      userId: user.sub,
-      email: user.email || "",
-      role: "super_admin",
-      plan: "super_admin",
-      dataDir: DATA_DIR,
-      outputDir: OUTPUT_DIR,
-      isSuperAdmin: true,
-    };
-    return next();
-  }
-
-  const admin = isSuperAdmin(user);
-  const { dataDir, outputDir } = admin
-    ? { dataDir: DATA_DIR, outputDir: OUTPUT_DIR }
-    : ensureUserDirs(user);
+  // Directory resolution lives in resolveScopeDirs so that callers WITHOUT a
+  // JWT — the YouTube OAuth callback, which Google redirects to carrying only
+  // ?code=&state= — reach the same answer. Duplicating the rules here is what
+  // put a refresh token in a directory the status route never read.
+  const { dataDir, outputDir, isSuperAdmin: admin } = resolveScopeDirs(user);
 
   req.ctx = {
     userId: user.sub,
     email: user.email || "",
     role: admin ? "super_admin" : "user",
-    plan: getPlanForUser(user, dataDir),
+    // Single-tenant grants the operator's own tier; otherwise read the plan.
+    plan: isSingleTenant() ? "super_admin" : getPlanForUser(user, dataDir),
     dataDir,
     outputDir,
     isSuperAdmin: admin,

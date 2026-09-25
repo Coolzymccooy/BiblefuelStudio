@@ -1,5 +1,6 @@
 import { api } from './api';
 import type { StoryCaptionSettings } from './storyTypes';
+import type { AmbientScripturePatch } from '../components/ambient/AmbientCaptionsPanel';
 import type {
   AmbientAspect, AmbientBedMode, AmbientDrop, AmbientProject, AmbientProjectSummary, AmbientStatus,
 } from './ambientTypes';
@@ -49,6 +50,18 @@ export interface PatchDropInput {
   translation?: string;
 }
 
+/** A picture you can put on a movement: never a server path, only a URL. */
+export interface LibraryImage {
+  id: string;
+  url: string;
+  aspect: string;
+  source: 'upload' | 'generated';
+  createdAt: number;
+}
+
+/** Either the path an upload returned, or a library image's id. */
+export type MovementImageSource = { uploadPath: string } | { libraryId: string };
+
 export const ambientApi = {
   async createProject(title: string, theme: string, targetSec?: number, aspect?: AmbientAspect): Promise<AmbientProject> {
     return unwrapProject(await api.post('/api/ambient', { title, theme, targetSec, aspect }));
@@ -62,6 +75,11 @@ export const ambientApi = {
 
   async getProject(id: string): Promise<AmbientProject> {
     return unwrapProject(await api.get(`/api/ambient/${id}`));
+  },
+
+  // Remembers an upload so the history can show where the video went.
+  async recordPublished(id: string, entry: { videoId: string; privacyStatus: string; publishAt?: string }): Promise<AmbientProject> {
+    return unwrapProject(await api.post(`/api/ambient/${id}/published`, entry));
   },
 
   async deleteProject(id: string): Promise<void> {
@@ -97,6 +115,28 @@ export const ambientApi = {
     return unwrapProject(
       await api.post(`/api/ambient/${id}/images`, force ? { force: true } : {}, undefined, { timeout: GENERATE_IMAGES_TIMEOUT_MS }),
     );
+  },
+
+  // Redo one movement's picture and leave the ones you kept alone.
+  async regenerateMovement(id: string, movementId: string): Promise<AmbientProject> {
+    return unwrapProject(
+      await api.post(`/api/ambient/${id}/images`, { movementId }, undefined, { timeout: GENERATE_IMAGES_TIMEOUT_MS }),
+    );
+  },
+
+  async setMovementImage(id: string, movementId: string, source: MovementImageSource): Promise<AmbientProject> {
+    return unwrapProject(await api.put(`/api/ambient/${id}/movements/${movementId}/image`, source));
+  },
+
+  async listLibraryImages(id: string): Promise<LibraryImage[]> {
+    const res = await api.get(`/api/ambient/${id}/library-images`);
+    if (!res.ok) throw new Error(res.error || 'Failed to load your pictures');
+    return (res.data?.images ?? []) as LibraryImage[];
+  },
+
+  // Scripture on screen: on/off, how long each verse stays, and where.
+  async setScriptureDisplay(id: string, patch: AmbientScripturePatch): Promise<AmbientProject> {
+    return unwrapProject(await api.patch(`/api/ambient/${id}/captions`, patch));
   },
 
   // Reuses normaliseCaptionSettings server-side: the server merges against

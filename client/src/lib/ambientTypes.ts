@@ -45,6 +45,10 @@ export interface AmbientDrop {
 
 export type ImageStatus = 'pending' | 'generating' | 'done' | 'error';
 
+/** How long a verse stays on screen: while it is heard, or for its whole picture. */
+export type AmbientCaptionSpan = 'spoken' | 'section';
+export type AmbientCaptionPosition = 'lower' | 'centre';
+
 export interface AmbientMovement {
   id: string;
   startMs: number;
@@ -54,8 +58,8 @@ export interface AmbientMovement {
   imageUrl?: string | null;
   imageStatus: ImageStatus;
   imageError?: string | null;
-  /** Where this picture came from: reused from the library, or freshly generated. */
-  imageSource?: 'library' | 'generated';
+  /** Where this picture came from: your upload, picked or reused from the library, or freshly generated. */
+  imageSource?: 'upload' | 'library' | 'generated';
   imageLibraryId?: string | null;
   imageReuseScore?: number | null;
 }
@@ -93,16 +97,36 @@ export interface AmbientProject extends StoryCaptionSettings {
   motion: 'drift' | 'still';
   /** Always present on a stored project; the rest of the caption settings are optional. */
   captionPreset: string;
+  /** How long a verse stays on screen. Absent on projects saved before the choice: renders as 'spoken'. */
+  captionSpan?: AmbientCaptionSpan;
+  captionPosition?: AmbientCaptionPosition;
   duck: AmbientDuck;
   render: AmbientRenderState;
+  /** Every upload of this session's video, oldest first (the server keeps twenty). */
+  published?: AmbientPublished[];
   error: string | null;
   createdAt: number;
   updatedAt: number;
+}
+
+/** One upload of a session's video. The server builds `url` from the id. */
+export interface AmbientPublished {
+  videoId: string;
+  url: string;
+  privacyStatus: 'private' | 'unlisted' | 'public';
+  /** When YouTube will make it public, if it was scheduled. */
+  publishAt: string | null;
+  at: number;
 }
 
 export interface AmbientProjectSummary {
   projectId: string;
   title: string;
   status: AmbientStatus;
+  targetSec?: number;
+  aspect?: AmbientAspect;
+  /** The finished video is on disk: it can be watched, downloaded and published. */
+  hasVideo?: boolean;
+  lastPublished?: AmbientPublished | null;
   updatedAt: number;
 }

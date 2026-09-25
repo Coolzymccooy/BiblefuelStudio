@@ -20,6 +20,20 @@ test("defaultDropTimes honours a custom cadence and yields nothing for a short r
   assert.deepEqual(defaultDropTimes(60, 900), []);
 });
 
+test("a session shorter than the cadence still gets a verse, at its midpoint", () => {
+  // The fifteen-minute cadence is a default for long sessions, not a floor.
+  // Applied as a floor, anything under sixteen minutes held no verse at all
+  // and "Suggest verses" refused with "too short for a scripture drop".
+  assert.deepEqual(defaultDropTimes(600), [300_000], "ten minutes: one verse at five");
+  assert.deepEqual(defaultDropTimes(900), [450_000], "fifteen minutes: one verse at seven and a half");
+  assert.deepEqual(defaultDropTimes(960), [480_000]);
+});
+
+test("the midpoint rule leaves long sessions exactly as they were", () => {
+  assert.equal(defaultDropTimes(7200).length, 7);
+  assert.deepEqual(defaultDropTimes(3600), [900_000, 1_800_000, 2_700_000]);
+});
+
 test("normaliseDrops sorts out-of-order input and clamps past the end", () => {
   const drops = normaliseDrops([
     { atMs: 60_000, reference: "John 3:16" },

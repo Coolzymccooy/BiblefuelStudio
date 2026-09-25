@@ -10,6 +10,14 @@ interface RenderProgressOverlayProps {
     kind?: 'video' | 'waveform';
     /** Whether the in-flight render is queued (background) or running synchronously. */
     mode?: 'instant' | 'queued';
+    /**
+     * The real current stage, when the caller knows it. Without one the card
+     * cycles Story's stages on a timer — which, on a render that does no
+     * voicing, announced "Synthesising voice…" while it encoded video.
+     */
+    stage?: string;
+    /** Replaces the default "Don't refresh" line for renders that run detached. */
+    footnote?: string;
 }
 
 const VIDEO_STAGES = [
@@ -40,6 +48,8 @@ export function RenderProgressOverlay({
     progress,
     kind = 'video',
     mode = 'instant',
+    stage,
+    footnote,
 }: RenderProgressOverlayProps) {
     const [elapsed, setElapsed] = useState(0);
     const [stageIdx, setStageIdx] = useState(0);
@@ -71,7 +81,7 @@ export function RenderProgressOverlay({
     if (!active) return null;
 
     const hasRealProgress = typeof progress === 'number' && progress >= 0 && progress <= 100;
-    const stageMsg = stages[stageIdx];
+    const stageMsg = stage ?? stages[stageIdx];
 
     return (
         <div className="relative overflow-hidden rounded-2xl border border-primary-500/30 bg-gradient-to-br from-primary-500/[0.08] via-dark-900/80 to-dark-900/80 backdrop-blur-xl shadow-[0_8px_40px_-8px_rgba(176,141,87,0.4)] animate-fade-in">
@@ -136,7 +146,7 @@ export function RenderProgressOverlay({
                         </div>
 
                         <p className="text-[0.6875rem] text-content-tertiary mt-2">
-                            Don't refresh — this card disappears when your render is ready.
+                            {footnote ?? "Don't refresh — this card disappears when your render is ready."}
                         </p>
                     </div>
                 </div>

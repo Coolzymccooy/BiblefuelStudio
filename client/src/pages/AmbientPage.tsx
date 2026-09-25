@@ -9,6 +9,8 @@ import { AmbientSoundStep } from '../components/ambient/AmbientSoundStep';
 import { AmbientWordStep } from '../components/ambient/AmbientWordStep';
 import { AmbientLookStep } from '../components/ambient/AmbientLookStep';
 import { AmbientRenderStep } from '../components/ambient/AmbientRenderStep';
+import { AmbientLengthField } from '../components/ambient/AmbientLengthField';
+import { AmbientHistory, AMBIENT_PROJECTS_KEY } from '../components/ambient/AmbientHistory';
 import {
   fieldLabelCls, inputCls, primaryBtnCls, segmentCls, segmentedCls, statusRowCls,
 } from '../components/story/formStyles';
@@ -46,11 +48,13 @@ export function AmbientPage() {
 
   const refresh = () => { if (projectId) qc.invalidateQueries({ queryKey: ['ambient-project', projectId] }); };
 
-  const setActive = (id: string | null) => {
+  const setActive = (id: string | null, startAt: Step = 'sound') => {
     setProjectId(id);
     if (id) localStorage.setItem(ACTIVE_KEY, id);
     else localStorage.removeItem(ACTIVE_KEY);
-    setStep('sound');
+    setStep(startAt);
+    // Back on the list, show what changed while the session was open.
+    if (!id) qc.invalidateQueries({ queryKey: AMBIENT_PROJECTS_KEY });
   };
 
   const createProject = async () => {
@@ -83,7 +87,12 @@ export function AmbientPage() {
       <div className="h-5" />
 
       {!project && (
+        <AmbientHistory onOpen={(id, finished) => setActive(id, finished ? 'render' : 'sound')} />
+      )}
+
+      {!project && (
         <div className="space-y-4">
+          <div className="field-label">New session</div>
           <label className={fieldLabelCls}>
             Title
             <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Rest in His presence" className={inputCls} />
@@ -92,10 +101,7 @@ export function AmbientPage() {
             Theme
             <input value={theme} onChange={(e) => setTheme(e.target.value)} placeholder="Peace in the storm" className={inputCls} />
           </label>
-          <label className={fieldLabelCls}>
-            Target length (minutes)
-            <input type="number" min={1} value={minutes} onChange={(e) => setMinutes(e.target.value)} className={inputCls} />
-          </label>
+          <AmbientLengthField minutes={minutes} onChange={setMinutes} />
           <div>
             <div className={fieldLabelCls}>Aspect</div>
             <div className={segmentedCls} role="tablist" aria-label="Aspect">

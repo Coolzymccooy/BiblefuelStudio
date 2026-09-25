@@ -41,6 +41,21 @@ describe("registerImage", () => {
     assert.equal(readLibrary(dataDir).items.length, 1);
   });
 
+  test("keeps a JPEG a .jpg, so nothing downstream has to guess from a wrong extension", async () => {
+    // Uploads can be JPEG or WebP. Stored as imagelib-<hash>.png they would
+    // rely on ffmpeg and browsers sniffing content over the name.
+    const src = writeImage("photo.jpg", [0xff, 0xd8, 0xff, 1]);
+    const entry = await registerImage({ dataDir, outputDir, sourcePath: src, prompt: "", style: "", aspect: "landscape", provider: "upload", projectId: "p1", ext: "jpg" });
+    assert.ok(entry.path.endsWith(`imagelib-${entry.hash}.jpg`));
+    assert.equal(entry.publicUrl, `/outputs/imagelib-${entry.hash}.jpg`);
+  });
+
+  test("an extension outside png/jpg/webp falls back to png rather than naming a file anything", async () => {
+    const src = writeImage("x.bin", [7, 7, 7]);
+    const entry = await registerImage({ dataDir, outputDir, sourcePath: src, prompt: "p", style: "s", aspect: "landscape", provider: "x", projectId: "p", ext: "../../evil" });
+    assert.equal(entry.publicUrl, `/outputs/imagelib-${entry.hash}.png`);
+  });
+
   test("de-duplicates by content hash — identical bytes make one entry", async () => {
     const a = writeImage("a.png", [9, 9, 9]);
     const b = writeImage("b.png", [9, 9, 9]);

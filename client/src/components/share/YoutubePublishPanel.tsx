@@ -26,7 +26,8 @@ export interface YoutubePublishPanelProps {
   initial?: Partial<YoutubePublishFields>;
   thumbnailOptions?: Array<{ label: string; path: string }>;
   chapters?: Array<{ startMs: number; title: string }>;
-  onPublished?: (r: YoutubePublishResult) => void;
+  /** `sent` is what was asked for, so a caller can keep a record of the upload. */
+  onPublished?: (r: YoutubePublishResult, sent: { privacyStatus: YoutubePrivacy; publishAt: string }) => void;
 }
 
 import { fieldLabelCls, inputCls, primaryBtnCls } from '../story/formStyles';
@@ -59,6 +60,7 @@ export function YoutubePublishPanel({ videoUrl, initial, thumbnailOptions = [], 
     setFieldError('');
     setBusy(true);
     try {
+      const publishAt = toIsoPublishAt(publishAtLocal);
       const res = await api.post<YoutubePublishResult>('/api/social/post', {
         destination: 'youtube',
         videoUrl,
@@ -66,7 +68,7 @@ export function YoutubePublishPanel({ videoUrl, initial, thumbnailOptions = [], 
         description,
         tags: parseTags(tagsRaw),
         privacyStatus: privacy,
-        publishAt: toIsoPublishAt(publishAtLocal),
+        publishAt,
         thumbnailPath,
         chapters,
       });
@@ -75,7 +77,7 @@ export function YoutubePublishPanel({ videoUrl, initial, thumbnailOptions = [], 
       if (r.forcedPrivate) toast.success('Scheduled — the video stays private until its publish time.');
       else toast.success('Uploaded to YouTube');
       if (r.thumbnailError) toast.error(`Uploaded, but the thumbnail was rejected: ${r.thumbnailError}`);
-      onPublished?.(r);
+      onPublished?.(r, { privacyStatus: privacy, publishAt });
     } finally {
       setBusy(false);
     }

@@ -1,10 +1,15 @@
+import { useState } from 'react';
 import toast from 'react-hot-toast';
-import { Download, X } from 'lucide-react';
+import { Download, X, Youtube } from 'lucide-react';
 import { api } from '../../lib/api';
 import { ambientApi } from '../../lib/ambientApi';
-import type { AmbientProject } from '../../lib/ambientTypes';
+import type { AmbientProject, AmbientPublished } from '../../lib/ambientTypes';
 import { RenderProgressOverlay } from '../RenderProgressOverlay';
-import { primaryBtnCls, secondaryBtnCls } from '../story/formStyles';
+import { formatLength, renderEstimateMinutes } from '../../lib/ambientLength';
+import { panelCls, primaryBtnCls, secondaryBtnCls } from '../story/formStyles';
+import { YoutubePublishPanel, type YoutubePrivacy, type YoutubePublishResult } from '../share/YoutubePublishPanel';
+import { publishedLabel } from '../../lib/ambientHistory';
+import { ambientChapters, ambientDescription, ambientThumbnails } from '../../lib/ambientShare';
 
 export interface AmbientRenderStepProps {
   project: AmbientProject;
@@ -15,7 +20,9 @@ export interface AmbientRenderStepProps {
 
 export function AmbientRenderStep({ project, busy, setBusy, refresh }: AmbientRenderStepProps) {
   const renderPct = typeof project.render.percent === 'number' ? project.render.percent : undefined;
-  const renderLive = project.status === 'rendering' && renderPct !== undefined;
+  // Assembling the bed is the first half of a render. Treated as idle, it
+  // showed the Render button again, and a second click started a second render.
+  const inFlight = project.status === 'assembling' || project.status === 'rendering';
 
   const startRender = async () => {
     setBusy(true);
@@ -43,10 +50,14 @@ export function AmbientRenderStep({ project, busy, setBusy, refresh }: AmbientRe
     }
   };
 
-  if (project.status === 'rendering' && renderLive) {
+  if (inFlight) {
+    const stage = project.status === 'assembling' ? 'Building the music bed…' : 'Encoding the video…';
+    const footnote = 'This runs on the server — you can leave this page and come back. '
+      + `It usually takes about ${formatLength(renderEstimateMinutes(project.targetSec))} `
+      + `for ${formatLength(project.targetSec / 60)}.`;
     return (
       <div className="space-y-4">
-        <RenderProgressOverlay active mode="queued" progress={renderPct} />
+        <RenderProgressOverlay active mode="queued" progress={renderPct} stage={stage} footnote={footnote} />
         <div className="flex justify-center">
           <button onClick={cancelRender} disabled={busy} className={`${secondaryBtnCls} px-3 py-1.5 hover:border-bf-danger hover:text-bf-danger`}>
             <X size={14} /> Cancel render
@@ -57,7 +68,7 @@ export function AmbientRenderStep({ project, busy, setBusy, refresh }: AmbientRe
   }
 
   if (project.status === 'done' && project.render.outputPath) {
-    return <AmbientDonePanel project={project} />;
+    return <AmbientDonePanel project={project} refresh={refresh} />;
   }
 
   return (
@@ -74,7 +85,22 @@ export function AmbientRenderStep({ project, busy, setBusy, refresh }: AmbientRe
   );
 }
 
-function AmbientDonePanel({ project }: { project: AmbientProject }) {
+function AmbientDonePanel({ project, refresh }: { project: AmbientProject; refresh: () => void }) {
+  const chapters = ambientChapters(project);
+  const published = project.published ?? [];
+
+  // The upload itself already succeeded; this only notes it in the history.
+  const notePublished = async (r: YoutubePublishResult, sent: { privacyStatus: YoutubePrivacy; publishAt: string }) => {
+    try {
+      await ambientApi.recordPublished(project.projectId, {
+        videoId: r.videoId, privacyStatus: sent.privacyStatus, publishAt: sent.publishAt || undefined,
+      });
+      refresh();
+    } catch {
+      toast.error('Uploaded, but it could not be added to this session’s history.');
+    }
+  };
+
   const token = api.getToken();
   const base = `${api.mediaBaseUrl}/outputs/ambient/${project.projectId}/video.mp4`;
   const url = token ? `${base}?token=${encodeURIComponent(token)}` : base;
@@ -84,6 +110,48 @@ function AmbientDonePanel({ project }: { project: AmbientProject }) {
       <button onClick={() => api.downloadMedia(base, 'ambient-video.mp4')} className={primaryBtnCls}>
         <Download size={16} /> Download MP4
       </button>
+      {/* The same direct uploader Story Video uses (not Postiz). It starts
+          Private: nothing goes public without the operator choosing it. */}
+      <div className={panelCls}>
+        <div className="bf-eyebrow mb-1">Share</div>
+        <h3 className="section-title mb-3">Publish to YouTube</h3>
+        {published.length > 0 && <PublishedBefore published={published} />}
+        <YoutubePublishPanel
+          videoUrl={`/outputs/ambient/${project.projectId}/video.mp4`}
+          initial={{ title: project.title, description: ambientDescription(project) }}
+          thumbnailOptions={ambientThumbnails(project)}
+          chapters={chapters.length >= 3 ? chapters : undefined}
+          onPublished={notePublished}
+        />
+      </div>
+    </div>
+  );
+}
+
+/** Where this video already went. Publishing again is allowed, and says what it does. */
+function PublishedBefore({ published }: { published: AmbientPublished[] }) {
+  const [now] = useState(() => Date.now());
+  const newestFirst = [...published].reverse();
+  return (
+    <div className="mb-4 rounded-xl border border-[rgba(216,184,120,0.18)] bg-bf-card2/40 px-3 py-2">
+      <div className="field-label mb-1">Already on YouTube</div>
+      <ul className="space-y-1">
+        {newestFirst.map((entry) => (
+          <li key={`${entry.videoId}-${entry.at}`}>
+            <a
+              href={entry.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 text-sm text-bf-goldDim hover:text-bf-cream hover:underline"
+            >
+              <Youtube size={14} /> {publishedLabel(entry, now)}
+            </a>
+          </li>
+        ))}
+      </ul>
+      <p className="field-help mt-2">
+        Publishing again uploads a new copy: a separate YouTube video with its own link, views and comments.
+      </p>
     </div>
   );
 }

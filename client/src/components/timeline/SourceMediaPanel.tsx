@@ -36,11 +36,13 @@ export interface SourceMediaPanelProps {
   onClear: () => void;
 }
 
+// Explicit image types, not image/*: with the wildcard iOS may hand over a
+// HEIC, which the server refuses; listing these makes it send a JPEG.
 const ACCEPT_ATTR =
-  '.mp3,.wav,.m4a,.mp4,.mov,.webm,.m4v,.png,.jpg,.jpeg,.webp,.gif,audio/*,video/*,image/*';
+  '.mp3,.wav,.m4a,.mp4,.mov,.webm,.m4v,.png,.jpg,.jpeg,.webp,.gif,audio/*,video/*,image/jpeg,image/png,image/webp,image/gif';
 
 const ACCEPT_LIST = [
-  'audio/*', 'video/*', 'image/*',
+  'audio/*', 'video/*', 'image/jpeg', 'image/png', 'image/webp', 'image/gif',
   '.mp3', '.wav', '.m4a', '.mp4', '.mov', '.webm', '.m4v',
   '.png', '.jpg', '.jpeg', '.webp', '.gif',
 ];

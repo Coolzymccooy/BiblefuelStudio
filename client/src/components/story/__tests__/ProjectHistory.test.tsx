@@ -54,3 +54,73 @@ describe('ProjectHistory', () => {
     expect(del).toHaveBeenCalledWith('a');
   });
 });
+
+/**
+ * A working account accumulates projects forever. The list used to render
+ * every one of them above the new-project form, so at a few hundred projects
+ * the form was several screens down and starting new work meant scrolling
+ * past all your old work to reach it.
+ */
+describe('ProjectHistory with a long history', () => {
+  const many = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      projectId: `p${i}`,
+      title: `Project ${i}`,
+      status: 'done',
+      style: 'cinematic-bible',
+      updatedAt: Date.now() - i * 60_000,
+    }));
+
+  it('shows only the most recent few, so the form stays reachable', async () => {
+    vi.spyOn(storyApi, 'listProjects').mockResolvedValue(many(50) as any);
+    renderWith(<ProjectHistory onOpen={() => {}} activeId={null} />);
+    expect(await screen.findByText('Project 0')).toBeInTheDocument();
+    expect(screen.getByText('Project 4')).toBeInTheDocument();
+    expect(screen.queryByText('Project 5')).toBeNull();
+    expect(screen.queryByText('Project 49')).toBeNull();
+  });
+
+  it('a short history is shown whole, with no expander and no search', async () => {
+    vi.spyOn(storyApi, 'listProjects').mockResolvedValue(many(3) as any);
+    renderWith(<ProjectHistory onOpen={() => {}} activeId={null} />);
+    expect(await screen.findByText('Project 2')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /show all/i })).toBeNull();
+    expect(screen.queryByRole('searchbox')).toBeNull();
+  });
+
+  it('"Show all" reveals the rest inside a scroll box, and collapses again', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(storyApi, 'listProjects').mockResolvedValue(many(50) as any);
+    renderWith(<ProjectHistory onOpen={() => {}} activeId={null} />);
+    await screen.findByText('Project 0');
+
+    await user.click(screen.getByRole('button', { name: /show all 50/i }));
+    expect(screen.getByText('Project 49')).toBeInTheDocument();
+    // Capped height, or 1000 projects simply pushes the form down again.
+    expect(screen.getByTestId('project-history-list').className).toMatch(/overflow-y-auto/);
+
+    await user.click(screen.getByRole('button', { name: /show fewer/i }));
+    expect(screen.queryByText('Project 49')).toBeNull();
+  });
+
+  it('search finds an old project without scrolling to it', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(storyApi, 'listProjects').mockResolvedValue(many(50) as any);
+    renderWith(<ProjectHistory onOpen={() => {}} activeId={null} />);
+    await screen.findByText('Project 0');
+
+    await user.type(screen.getByRole('searchbox'), 'Project 47');
+    expect(await screen.findByText('Project 47')).toBeInTheDocument();
+    expect(screen.queryByText('Project 0')).toBeNull();
+  });
+
+  it('a search that matches nothing says so instead of rendering an empty list', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(storyApi, 'listProjects').mockResolvedValue(many(50) as any);
+    renderWith(<ProjectHistory onOpen={() => {}} activeId={null} />);
+    await screen.findByText('Project 0');
+
+    await user.type(screen.getByRole('searchbox'), 'zzzz');
+    expect(await screen.findByText(/no projects match/i)).toBeInTheDocument();
+  });
+});

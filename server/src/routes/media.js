@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { sniffImage, UNDECODABLE_IMAGE_ERROR } from "../lib/imageSniff.js";
 import fs from "fs";
 import path from "path";
 import { v4 as uuid } from "uuid";
@@ -491,7 +492,12 @@ router.post("/upload-finalize", async (req, res) => {
       const outFile = path.join(outDir, `bg-${cls.kind}-${uuid()}.${cls.ext}`);
       await downloadUploadToLocal(objectPath, outFile);
       cleanupGcs();
-      return respondWithBackground(res, outFile, cls.kind, cls.isImage, contentType || (cls.isImage ? `image/${cls.ext}` : `video/${cls.ext}`));
+      if (cls.isImage) {
+        const img = finaliseImageFile(outFile);
+        if (!img.ok) return res.status(400).json({ ok: false, error: img.error });
+        return respondWithBackground(res, img.file, cls.kind, true, img.mime);
+      }
+      return respondWithBackground(res, outFile, cls.kind, cls.isImage, contentType || `video/${cls.ext}`);
     }
 
     if (kind === "source-video") {
@@ -577,20 +583,86 @@ const imageMimeToExt = (mime, hint) => {
   if (m.includes("jpeg") || m.includes("jpg")) return "jpg";
   if (m.includes("png")) return "png";
   if (m.includes("webp")) return "webp";
+  if (m.includes("gif")) return "gif";
   return imageExtensions.has(`.${hint}`) ? hint : "jpg";
 };
+
+const HEIC_ERROR =
+  "That photo is HEIC, the iPhone camera format, which can't be used in a video. " +
+  "Save it as JPG or PNG and upload it again (on iPhone: Settings → Camera → Formats → Most Compatible).";
 
 // Decide whether a background upload is an image or a video, and pick its
 // extension + kind. Shared by the direct (/upload-background) and resumable
 // (/upload-finalize) paths so both classify identically.
-function classifyBackground(mime, extHint) {
+//
+// Images are JPEG, PNG or WebP and nothing else. Any other image/* type used
+// to fall through imageMimeToExt's default and be saved as ".jpg" — an iPhone
+// HEIC included, which prod's ffmpeg 5.1 cannot decode — so the render that
+// trusted the name failed an hour later instead of the upload failing now.
+export function classifyBackground(mime, extHint) {
   const m = String(mime || "").toLowerCase();
-  const isImage = m.startsWith("image/") || imageExtensions.has(`.${extHint}`);
-  const isVideo = m.startsWith("video/") || videoExtensions.has(`.${extHint}`);
+  const hint = String(extHint || "").toLowerCase();
+  if (/hei[cf]/.test(m) || hint === "heic" || hint === "heif") return { ok: false, error: HEIC_ERROR };
+  const isImage = m.startsWith("image/") || imageExtensions.has(`.${hint}`);
+  const isVideo = m.startsWith("video/") || videoExtensions.has(`.${hint}`);
   if (!isImage && !isVideo) {
     return { ok: false, error: `Background must be an image (jpg/png/webp) or video (mp4/mov/webm); got mime=${mime || "unknown"}` };
   }
-  return { ok: true, isImage, ext: isImage ? imageMimeToExt(m, extHint) : videoMimeToExt(m, extHint), kind: isImage ? "image" : "video" };
+  if (isImage && m.startsWith("image/") && !/jpe?g|png|webp|gif/.test(m)) {
+    return { ok: false, error: "That image type can't be used in a video. Use a JPG, PNG or WebP." };
+  }
+  return { ok: true, isImage, ext: isImage ? imageMimeToExt(m, hint) : videoMimeToExt(m, hint), kind: isImage ? "image" : "video" };
+}
+
+function isGif(file) {
+  try {
+    const head = Buffer.alloc(6);
+    const fd = fs.openSync(file, "r");
+    try { fs.readSync(fd, head, 0, 6, 0); } finally { fs.closeSync(fd); }
+    return head.toString("ascii") === "GIF87a" || head.toString("ascii") === "GIF89a";
+  } catch {
+    return false;
+  }
+}
+
+// The Timeline sends GIF stills through the background route. Every render
+// path treats an image as a still, and only JPEG/PNG/WebP are recognised as
+// images by extension — so a GIF becomes a real PNG of its first frame here,
+// once, rather than a GIF wearing a ".jpg" name that works only by luck.
+function gifToPngStill(file) {
+  const png = `${file.slice(0, file.length - path.extname(file).length)}.png`;
+  const ff = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
+  const r = spawnSync(ff, ["-hide_banner", "-loglevel", "error", "-y", "-i", file, "-frames:v", "1", png], { windowsHide: true });
+  try { fs.rmSync(file, { force: true }); } catch { /* best effort */ }
+  if (r.status !== 0 || sniffImage(png) !== "png") {
+    try { fs.rmSync(png, { force: true }); } catch { /* best effort */ }
+    return { ok: false, error: "That GIF could not be read. Save it as JPG or PNG and upload it again." };
+  }
+  return { ok: true, file: png, mime: "image/png" };
+}
+
+/**
+ * Once an image's bytes are on disk, let them decide. Anything that is not
+ * really PNG/JPEG/WebP is deleted and refused; a real image under the wrong
+ * name is renamed, because the captioned-video render picks its ffmpeg input
+ * flags by extension.
+ *
+ * @param {string} file
+ * @returns {{ ok: true, file: string, mime: string } | { ok: false, error: string }}
+ */
+export function finaliseImageFile(file) {
+  if (isGif(file)) return gifToPngStill(file);
+  const kind = sniffImage(file);
+  if (!kind) {
+    try { fs.rmSync(file, { force: true }); } catch { /* best effort */ }
+    return { ok: false, error: UNDECODABLE_IMAGE_ERROR };
+  }
+  const ext = kind === "jpeg" ? "jpg" : kind;
+  const current = path.extname(file);
+  if (current.slice(1).toLowerCase() === ext) return { ok: true, file, mime: `image/${kind}` };
+  const renamed = `${file.slice(0, file.length - current.length)}.${ext}`;
+  fs.renameSync(file, renamed);
+  return { ok: true, file: renamed, mime: `image/${kind}` };
 }
 
 // Finish a background upload once its bytes are on disk (either transport):
@@ -658,7 +730,12 @@ router.post("/upload-background", async (req, res) => {
     const recv = await receiveUploadToFile(req, outFile, { b64: meta.b64, mime: meta.mime });
     if (!recv.ok) return res.status(recv.status || 400).json({ ok: false, error: recv.error });
 
-    return respondWithBackground(res, outFile, cls.kind, cls.isImage, meta.mime || (cls.isImage ? `image/${cls.ext}` : `video/${cls.ext}`));
+    if (cls.isImage) {
+      const img = finaliseImageFile(outFile);
+      if (!img.ok) return res.status(400).json({ ok: false, error: img.error });
+      return respondWithBackground(res, img.file, cls.kind, true, img.mime);
+    }
+    return respondWithBackground(res, outFile, cls.kind, cls.isImage, meta.mime || `video/${cls.ext}`);
   } catch (e) {
     res.status(400).json({ ok: false, error: String(e?.message || e) });
   }
