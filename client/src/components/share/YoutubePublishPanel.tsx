@@ -3,6 +3,7 @@ import { Loader2, Youtube } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { api } from '../../lib/api';
 import { ThumbnailPreview } from './ThumbnailPreview';
+import { chapterPreviewLines } from '../../lib/youtubeChapters';
 import type { ThumbnailDesign } from '../../lib/youtubeThumbnail';
 import { ApplyThumbnail, type ExistingVideo } from './ApplyThumbnail';
 
@@ -118,6 +119,12 @@ export function YoutubePublishPanel({ videoUrl, initial, thumbnailOptions = [], 
           </span>
         )}
       </label>
+      {chapters && chapters.length > 0 && (
+        <details className="rounded-lg border border-[rgba(216,184,120,0.18)] bg-bf-card2 px-3 py-2 text-sm">
+          <summary className="cursor-pointer text-bf-sub">See the timeline</summary>
+          <pre className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap font-sans text-xs leading-relaxed text-bf-cream">{chapterPreviewLines(chapters).join('\n')}</pre>
+        </details>
+      )}
       <label className={fieldLabelCls}>
         Tags (comma separated)
         <input value={tagsRaw} onChange={(e) => setTagsRaw(e.target.value)} className={inputCls} />

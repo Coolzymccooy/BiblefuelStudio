@@ -19,10 +19,16 @@ interface LibraryDrawerProps {
 
 const lengthSuffix = (sec: number | null) => (Number(sec) > 0 ? ` · ${formatDuration(sec)}` : '');
 
-const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])';
+const MOOD = 'mood:';
+const KINDS: ReadonlyArray<{ id: string; label: string; test: (t: MusicTrack) => boolean }> = [
+  { id: 'instrumentals', label: 'Vocals removed', test: (t) => Boolean(t.derivedFrom) },
+  { id: 'uploads', label: 'My uploads', test: (t) => t.source === 'upload' && !t.derivedFrom },
+];
+
+const FOCUSABLE ='button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])';
 
 /**
- * The library as a side drawer: search, filter by mood, preview, tick several
+ * The library as a side drawer: search, filter by kind or mood, preview, tick several
  * and add them in library order. A two-hour bed wants a dozen or more tracks,
  * so picking is many-at-once. Mounted only while open, so each opening starts
  * clean; it is modal — focus moves in, Tab stays in, and closing hands focus
@@ -31,7 +37,8 @@ const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), [href], [tabin
 export function LibraryDrawer({ onClose, tracks, exclude, onAdd, playingId, canPreview, onPreview, renderActions }: LibraryDrawerProps) {
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
   const [query, setQuery] = useState('');
-  const [mood, setMood] = useState<string | null>(null);
+  // null is everything; otherwise one of the kinds below or `mood:<name>`.
+  const [view, setView] = useState<string | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -54,8 +61,16 @@ export function LibraryDrawer({ onClose, tracks, exclude, onAdd, playingId, canP
 
   const offered = useMemo(() => tracks.filter((t) => !exclude.includes(t.ref)), [tracks, exclude]);
   const moods = useMemo(() => [...new Set(offered.map((t) => t.mood).filter(Boolean))].sort(), [offered]);
+  // The operator's own music gets its own shelves: the instrumentals Biblefuel
+  // made by removing vocals, and their other uploads.
+  const kinds = useMemo(() => KINDS.filter((k) => offered.some(k.test)), [offered]);
+  const inView = (t: MusicTrack) => {
+    if (!view) return true;
+    const kind = KINDS.find((k) => k.id === view);
+    return kind ? kind.test(t) : t.mood === view.slice(MOOD.length);
+  };
   const q = query.trim().toLowerCase();
-  const shown = offered.filter((t) => (!mood || t.mood === mood)
+  const shown = offered.filter((t) => inView(t)
     && (!q || t.label.toLowerCase().includes(q) || (t.credit || '').toLowerCase().includes(q)));
   const count = offered.filter((t) => picked.has(t.ref)).length;
 
@@ -93,15 +108,24 @@ export function LibraryDrawer({ onClose, tracks, exclude, onAdd, playingId, canP
             <Search size={13} className="text-bf-muted" />
             <input ref={searchRef} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search title or credit" aria-label="Search music" className="w-full bg-transparent text-sm text-bf-cream outline-none placeholder:text-bf-faint" />
           </label>
-          {moods.length > 1 && (
-            <div className="flex flex-wrap gap-1.5" role="group" aria-label="Mood">
-              <button type="button" onClick={() => setMood(null)} className={chip(mood === null)}>All</button>
-              {moods.map((m) => <button key={m} type="button" onClick={() => setMood(m)} className={chip(mood === m)}>{m}</button>)}
+          {(moods.length > 1 || kinds.length > 0) && (
+            <div className="flex flex-wrap gap-1.5" role="group" aria-label="Show">
+              <button type="button" aria-pressed={view === null} onClick={() => setView(null)} className={chip(view === null)}>All</button>
+              {kinds.map((k) => (
+                <button key={k.id} type="button" aria-pressed={view === k.id} onClick={() => setView(k.id)} className={chip(view === k.id)}>
+                  {k.label} ({offered.filter(k.test).length})
+                </button>
+              ))}
+              {moods.length > 1 && moods.map((m) => (
+                <button key={m} type="button" aria-pressed={view === `${MOOD}${m}`} onClick={() => setView(`${MOOD}${m}`)} className={chip(view === `${MOOD}${m}`)}>{m}</button>
+              ))}
             </div>
           )}
-          {offered.length > 0 && (
+          {shown.length > 0 && (
             <div className="flex items-center gap-3 text-xs">
-              <button type="button" onClick={() => setPicked(new Set(offered.map((t) => t.ref)))} className="text-bf-gold hover:underline">Select all ({offered.length})</button>
+              {/* What's on screen, not the whole library: under a filter the
+                  operator is choosing from what they can see. */}
+              <button type="button" onClick={() => setPicked((prev) => new Set([...prev, ...shown.map((t) => t.ref)]))} className="text-bf-gold hover:underline">Select all ({shown.length})</button>
               <button type="button" onClick={() => setPicked(new Set())} className="text-bf-muted hover:underline">Clear</button>
             </div>
           )}
@@ -129,7 +153,7 @@ export function LibraryDrawer({ onClose, tracks, exclude, onAdd, playingId, canP
                   </button>
                   <button type="button" onClick={() => toggle(t.ref)} className="min-w-0 flex-1 text-left">
                     <span className="block truncate text-[13px] font-medium text-bf-cream">{t.label}</span>
-                    <span className="block truncate text-[11px] text-bf-muted">{[t.credit, t.mood].filter(Boolean).join(' · ') || (t.source === 'upload' ? 'Your upload' : '')}</span>
+                    <span className="block truncate text-[11px] text-bf-muted">{[t.derivedFrom ? 'Vocals removed by Biblefuel' : '', t.credit, t.mood].filter(Boolean).join(' · ') || (t.source === 'upload' ? 'Your upload' : '')}</span>
                   </button>
                   <span className="shrink-0 font-mono text-[11px] text-bf-sub">{formatDuration(t.durationSec)}</span>
                   {renderActions?.(t)}
