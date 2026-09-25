@@ -30,6 +30,16 @@ export const RESUMABLE_UPLOAD_MAX_BYTES = 1024 * 1024 * 1024;
 // 15000ms exceeded" and the trim never lands. 10 minutes is a safe ceiling.
 export const MEDIA_OP_TIMEOUT_MS = 10 * 60_000;
 
+// Saving an uploaded track to the music library (POST /api/music/upload)
+// synchronously awaits a server-side ffprobe duration probe before
+// responding. The 15s default was tight enough that a long track could abort
+// the request client-side WHILE the server finished the save — leaving the
+// operator's project on the raw upload path (fallback) even though the
+// track really did get saved, so it silently duplicates on the next save of
+// the same file. ffprobe reads container metadata, not the full audio, so
+// this is a generous ceiling rather than a reflection of real probe time.
+export const MUSIC_SAVE_TIMEOUT_MS = 2 * 60_000;
+
 // Transcription (OpenAI whisper-1) runs server-side and Whisper's own latency
 // scales with audio length — a ~27-min sermon can take a couple of minutes.
 // Sit comfortably above the server's per-chunk Whisper timeout (5 min) so the

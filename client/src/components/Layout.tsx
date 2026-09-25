@@ -4,7 +4,7 @@ import { pageWidthClass } from '../lib/pageWidth';
 import { CompletionBanner } from './CompletionBanner';
 import {
     Menu, X, FileText, List, Briefcase, Image, Mic, Film, Video, Package, LogOut, LogIn,
-    Settings, HelpCircle, Wand2, BookOpen, Home, ShieldCheck, Clapperboard, Sparkles, ChevronRight,
+    Settings, HelpCircle, Wand2, BookOpen, Home, ShieldCheck, Clapperboard, Sparkles, ChevronRight, Waves,
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { Button } from './ui/Button';
@@ -21,6 +21,7 @@ const navItems = [
     { path: '/app/wizard', label: 'Wizard', icon: Wand2 },
     { path: '/app/scripts', label: 'Scripts', icon: FileText },
     { path: '/app/story', label: 'Story Video', icon: Clapperboard },
+    { path: '/app/ambient', label: 'Ambient Session', icon: Waves },
     { path: '/app/series', label: 'Series', icon: BookOpen },
     { path: '/app/studio', label: 'Studio', icon: Video },
     { path: '/app/voice-audio', label: 'Voice & Audio', icon: Mic },
@@ -34,7 +35,7 @@ const navItems = [
 
 // Which bottom tab lights up for a given route. Create/Studio are hubs whose
 // tools also activate their tab so the user always knows where they are.
-const createGroup = ['/app/create', '/app/wizard', '/app/scripts', '/app/story', '/app/series'];
+const createGroup = ['/app/create', '/app/wizard', '/app/scripts', '/app/story', '/app/ambient', '/app/series'];
 const studioGroup = ['/app/studio', '/app/voice-audio', '/app/timeline', '/app/backgrounds', '/app/render', '/app/queue'];
 
 export function Layout() {
