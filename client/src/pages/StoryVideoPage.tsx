@@ -278,9 +278,10 @@ export function StoryVideoPage() {
     : <em>{titleWords[0] || 'Untitled'}</em>;
 
   return (
-    // Wide for choosing (history beside the form); a reading column once a
-    // project is open, where scenes and forms read better narrow.
-    <div className={project ? 'mx-auto w-full max-w-3xl px-4 py-6' : 'w-full px-4 py-6'}>
+    // The full width, like Ambient: history beside the form when choosing;
+    // scenes beside their settings (and the video beside publishing) once a
+    // project is open. One column on narrow screens.
+    <div className="w-full px-4 py-6">
       <ScreenHeader
         // Room for the notification bell the shell pins top-right on desktop.
         className="flex-wrap lg:pr-14"
@@ -439,7 +440,7 @@ export function StoryVideoPage() {
       )}
 
       {step === 1 && !transient && project?.status !== 'draft_script' && (
-        <div className={project ? 'mt-6' : 'mt-6 grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]'}>
+        <div className={project ? 'mt-6 max-w-3xl' : 'mt-6 grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]'}>
           {!project && (
             <ProjectHistory
               onOpen={(id) => setActive(id)}
@@ -577,7 +578,8 @@ export function StoryVideoPage() {
       )}
 
       {step === 2 && project && (
-        <div className="mt-6 space-y-4">
+        <div className="mt-6 grid gap-8 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+          <div className="min-w-0 space-y-4">
           <StoryScenePreview scenes={project.scenes} aspect={project.aspect} />
 
           <div className="flex items-baseline justify-between">
@@ -627,6 +629,9 @@ export function StoryVideoPage() {
               </button>
             </div>
           </div>
+          </div>
+
+          <div className="min-w-0 space-y-4 lg:self-start">
           <StoryCaptionsPanel
             value={project}
             onChange={onCaptionsChange}
@@ -652,6 +657,7 @@ export function StoryVideoPage() {
           >
             Too many scenes, or images stuck? Re-segment with fewer, longer scenes
           </button>
+          </div>
         </div>
       )}
 
@@ -709,7 +715,8 @@ function DonePanel({ project }: { project: StoryProject }) {
   const song = songId ? (library || []).find((t) => t.id === songId) : undefined;
   const waitingForSong = Boolean(songId) && libraryLoading;
   return (
-    <div className="space-y-3">
+    <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      <div className="min-w-0 space-y-3 lg:self-start">
       <video src={url} controls className="w-full rounded-2xl border border-[rgba(216,184,120,0.22)] shadow-lg" />
       <button
         onClick={() => api.downloadMedia(base, 'story-video.mp4')}
@@ -717,7 +724,8 @@ function DonePanel({ project }: { project: StoryProject }) {
       >
         <Download size={16} /> Download MP4
       </button>
-      <div className={panelCls}>
+      </div>
+      <div className={`min-w-0 ${panelCls}`}>
         <div className="bf-eyebrow mb-1">Share</div>
         <h3 className="section-title mb-3">Publish to YouTube</h3>
         {waitingForSong ? (
