@@ -410,6 +410,15 @@ router.get("/:id/library-images", (req, res) => {
   return res.json({ ok: true, images: libraryImageView(readLibrary(req.ctx.dataDir).items).slice(0, 200) });
 });
 
+/**
+ * A finished session whose look changes no longer matches its video. Back to
+ * renderable, or the page keeps showing the old video with no Render button
+ * and the change can never be applied.
+ */
+function renderAgainIf(changed, project) {
+  return changed && project.status === AMBIENT_STATUS.DONE ? { status: AMBIENT_STATUS.READY_TO_RENDER } : {};
+}
+
 // PATCH /:id/motion — still, or a gentle drift (see ambientMotion.js).
 const MOTIONS = ["still", "drift"];
 router.patch("/:id/motion", (req, res) => {
@@ -425,7 +434,8 @@ router.patch("/:id/motion", (req, res) => {
     return res.status(409).json({ ok: false, error: "this session is rendering; change the motion when it finishes" });
   }
   try {
-    return res.json({ ok: true, project: writeProject(req.ctx.dataDir, { ...project, motion }) });
+    const again = renderAgainIf(motion !== (project.motion || "still"), project);
+    return res.json({ ok: true, project: writeProject(req.ctx.dataDir, { ...project, motion, ...again }) });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
@@ -439,11 +449,14 @@ router.patch("/:id/words", (req, res) => {
   if (!WORDS.includes(words)) {
     return res.status(400).json({ ok: false, error: "words must be verses or none" });
   }
-  if (ENCODING_STATUSES.has(project.status)) {
-    return res.status(409).json({ ok: false, error: "this session is rendering; change it when it finishes" });
+  // Pictures being made would be written back over the movements derived
+  // here, leaving a music-only session with a picture per verse.
+  if (MOVEMENTS_BUSY.has(project.status)) {
+    return res.status(409).json({ ok: false, error: "this session is busy making pictures or rendering; change it when it finishes" });
   }
   try {
-    return res.json({ ok: true, project: writeWithMovements(req.ctx.dataDir, { ...project, words }) });
+    const again = renderAgainIf(words !== (project.words || "verses"), project);
+    return res.json({ ok: true, project: writeWithMovements(req.ctx.dataDir, { ...project, words, ...again }) });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
@@ -467,7 +480,9 @@ router.patch("/:id/captions", (req, res) => {
     // Unknown values keep what is stored, for the same reason as the mode.
     const captionSpan = CAPTION_SPANS.includes(body.captionSpan) ? body.captionSpan : project.captionSpan;
     const captionPosition = CAPTION_POSITIONS.includes(body.captionPosition) ? body.captionPosition : project.captionPosition;
-    const updated = writeProject(req.ctx.dataDir, { ...project, ...merged, captions: mode, captionSpan, captionPosition });
+    const next = { ...project, ...merged, captions: mode, captionSpan, captionPosition };
+    const changed = Object.keys(next).some((k) => JSON.stringify(next[k]) !== JSON.stringify(project[k]));
+    const updated = writeProject(req.ctx.dataDir, { ...next, ...renderAgainIf(changed, project) });
     return res.json({ ok: true, project: updated });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
