@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0b0906" />
+  <!-- Deferred indexing until public launch. Remove this line to allow search engines. -->
+  <meta name="robots" content="noindex" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon-180x180.png" />
+  <title>Biblefuel Studio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500;1,600&family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet">
+  <script type="module" crossorigin src="/assets/index-qxWQ-5EL.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-BuJX0H1W.css">
+</head>
+
+<!--
+  No bg-/text- utilities here. `bg-dark-950` and `text-gray-100` were
+  hardcoded theme-blind values, and because a utility class outranks the
+  themed `body` rule in index.css, they painted EVERY theme with the dark
+  theme's ground (#080604) and ink. Calm in particular rendered as dark no
+  matter what its own tokens said. The ground and ink now come from
+  `body { background-color: var(--bf-bg); color: ... }`, which each theme
+  redefines.
+-->
+
+<body class="font-sans antialiased overflow-x-hidden selection:bg-primary-600 selection:text-black">
+  <div id="root"></div>
+</body>
+
+</html>
