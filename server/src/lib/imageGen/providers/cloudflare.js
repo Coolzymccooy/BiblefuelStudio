@@ -1,0 +1,195 @@
+/**
+ * Cloudflare Workers AI adapter — FLUX-1-schnell (free tier: 10,000 neurons
+ * per day forever, ~200–300 images depending on size).
+ *
+ * Endpoint:
+ *   POST https://api.cloudflare.com/client/v4/accounts/{ACCOUNT_ID}/ai/run/@cf/black-forest-labs/flux-1-schnell
+ * Auth:
+ *   Authorization: Bearer {API_TOKEN}
+ *
+ * Response shape (current Cloudflare API):
+ *   { "result": { "image": "<base64 PNG bytes>" }, "success": true, ... }
+ *
+ * Notes:
+ *  - Flux ignores negative prompts; we don't send one.
+ *  - Flux accepts an integer `seed` for reproducibility — we always pass it.
+ *  - Output is square 1024x1024 by default; the ffmpeg scene graph scales/
+ *    crops to whatever aspect the video needs.
+ */
+
+// Uses Node 18+ global fetch — no node-fetch dep needed and tests can stub
+// globalThis.fetch directly without module mocking.
+
+const ENDPOINT_BASE = "https://api.cloudflare.com/client/v4/accounts";
+const DEFAULT_MODEL = "@cf/black-forest-labs/flux-1-schnell";
+const REQUEST_TIMEOUT_MS = 45_000;
+
+/** Per-model set of body properties the API 400'd as "not allowed". */
+const rejectedProps = new Map();
+
+/** Test hook: forget learned schema rejections. */
+export function _resetCloudflareSchemaMemo() { rejectedProps.clear(); }
+
+/**
+ * Reads the Workers AI token. Three env names are accepted: the documented
+ * CLOUDFLARE_WORKERS_AI_TOKEN, plus the CLOUDFLARE_AI_API_TOKEN /
+ * CLOUDFLARE_API_TOKEN names real deployments already carry - the operator
+ * HAD Cloudflare configured under those names while every story scene fell
+ * through to a retired Imagen model, because this predicate said "not
+ * configured".
+ *
+ * @returns {string}
+ */
+function readToken() {
+  return String(
+    process.env.CLOUDFLARE_WORKERS_AI_TOKEN
+    || process.env.CLOUDFLARE_AI_API_TOKEN
+    || process.env.CLOUDFLARE_API_TOKEN
+    || "",
+  ).trim();
+}
+
+/**
+ * @returns {boolean}
+ */
+export function isCloudflareConfigured() {
+  const accountId = String(process.env.CLOUDFLARE_ACCOUNT_ID || "").trim();
+  return accountId.length > 0 && readToken().length > 0;
+}
+
+/**
+ * @typedef {object} ImageGenResult
+ * @property {boolean} ok
+ * @property {Buffer} [imageBuffer]
+ * @property {string} [contentType]
+ * @property {string} [provider]
+ * @property {string} [model]
+ * @property {string} [error]
+ * @property {number} [status]
+ */
+
+/**
+ * Generate a single image via Cloudflare Workers AI.
+ *
+ * @param {object} args
+ * @param {string} args.prompt
+ * @param {number} [args.seed]
+ * @param {number} [args.steps]   1–8 for flux-schnell (default 4)
+ * @param {string} [args.model]   override model id
+ * @param {AbortSignal} [args.signal]
+ * @returns {Promise<ImageGenResult>}
+ */
+export async function generateImageCloudflare({ prompt, seed, steps, model, signal }) {
+  if (!isCloudflareConfigured()) {
+    return { ok: false, error: "Cloudflare Workers AI not configured (CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_WORKERS_AI_TOKEN)", provider: "cloudflare" };
+  }
+  if (!prompt || typeof prompt !== "string" || prompt.trim().length === 0) {
+    return { ok: false, error: "prompt required", provider: "cloudflare" };
+  }
+
+  const accountId = String(process.env.CLOUDFLARE_ACCOUNT_ID).trim();
+  const token = readToken();
+  const modelId = String(model || process.env.CLOUDFLARE_IMAGE_MODEL || DEFAULT_MODEL).trim();
+  const url = `${ENDPOINT_BASE}/${encodeURIComponent(accountId)}/ai/run/${modelId}`;
+
+  /** @type {Record<string, unknown>} */
+  const body = { prompt: prompt.trim().slice(0, 2048) };
+  if (Number.isFinite(seed)) body.seed = Number(seed);
+  if (Number.isFinite(steps)) {
+    const clamped = Math.min(8, Math.max(1, Math.floor(Number(steps))));
+    body.steps = clamped;
+  }
+  // Drop properties this model is KNOWN to reject (learned from earlier 400s)
+  // so later scenes don't pay an extra round-trip each.
+  for (const p of rejectedProps.get(modelId) || []) delete body[p];
+
+  // Up to 3 attempts: Cloudflare's schema varies by model and tightens over
+  // time - the operator's model rejected `seed` outright ("Additional or
+  // unevaluated properties '/seed' not allowed"). On that 400, strip the
+  // named property and retry rather than failing the whole scene.
+  for (let attempt = 0; attempt < 3; attempt++) {
+  const ctrl = new AbortController();
+  const timeoutTimer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+  if (signal) {
+    if (signal.aborted) ctrl.abort();
+    else signal.addEventListener("abort", () => ctrl.abort(), { once: true });
+  }
+
+  try {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    });
+
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      const rejected = resp.status === 400
+        ? /properties\s+'\/(\w+)'/.exec(text)
+        : null;
+      if (rejected && rejected[1] !== "prompt" && rejected[1] in body) {
+        const prop = rejected[1];
+        delete body[prop];
+        if (!rejectedProps.has(modelId)) rejectedProps.set(modelId, new Set());
+        rejectedProps.get(modelId).add(prop);
+        continue;
+      }
+      return {
+        ok: false,
+        provider: "cloudflare",
+        model: modelId,
+        status: resp.status,
+        error: `Cloudflare ${resp.status}: ${text.slice(0, 300)}`,
+      };
+    }
+
+    // Cloudflare can return either application/json (FLUX models) or
+    // image/png (some older models). Handle both.
+    const contentType = String(resp.headers.get("content-type") || "").toLowerCase();
+    if (contentType.includes("application/json")) {
+      const data = await resp.json();
+      if (data?.success === false) {
+        const msg = Array.isArray(data?.errors) && data.errors.length > 0
+          ? data.errors.map((e) => e?.message || e).join("; ")
+          : "unknown Cloudflare error";
+        return { ok: false, provider: "cloudflare", model: modelId, error: msg };
+      }
+      const b64 = data?.result?.image;
+      if (typeof b64 !== "string" || b64.length === 0) {
+        return { ok: false, provider: "cloudflare", model: modelId, error: "Cloudflare response missing result.image" };
+      }
+      return {
+        ok: true,
+        provider: "cloudflare",
+        model: modelId,
+        imageBuffer: Buffer.from(b64, "base64"),
+        contentType: "image/png",
+      };
+    }
+
+    // Binary fallback.
+    const buf = Buffer.from(await resp.arrayBuffer());
+    if (!buf.length) {
+      return { ok: false, provider: "cloudflare", model: modelId, error: "Cloudflare returned empty body" };
+    }
+    return {
+      ok: true,
+      provider: "cloudflare",
+      model: modelId,
+      imageBuffer: buf,
+      contentType: contentType || "image/png",
+    };
+  } catch (err) {
+    const msg = err?.name === "AbortError" ? "Cloudflare request timed out" : String(err?.message || err);
+    return { ok: false, provider: "cloudflare", model: modelId, error: msg };
+  } finally {
+    clearTimeout(timeoutTimer);
+  }
+  }
+  return { ok: false, provider: "cloudflare", model: modelId, error: "Cloudflare: schema retry exhausted" };
+}
