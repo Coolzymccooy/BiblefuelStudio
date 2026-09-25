@@ -62,7 +62,7 @@ graphics-chip encoder) on this laptop.
 | | Time per 4-min song | Peak RAM |
 |---|---|---|
 | Best (MDX-Net Inst HQ3) | ~3–4 min (measured 16 s separation for a 20 s clip) | not measured yet |
-| Fast (MDX-Net Inst HQ3, overlap 0.1) | ~2.5–3 min (measured 13 s for a 20 s clip) | not measured yet |
+| Fast (MDX-Net Inst HQ3, overlap 0.1) | ~2.5 min (measured: 6:49 song in 3m40s end to end) | not measured yet |
 | Graphics-chip encode (h264_amf) | not measured yet — first real run pending | not measured yet — first real run pending |
 
 Timings are scaled from a 20 s clip of a real song on the CPU (Ryzen 7 8840HS); a full

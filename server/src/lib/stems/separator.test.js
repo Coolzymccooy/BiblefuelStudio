@@ -170,6 +170,27 @@ describe("removeVocals", () => {
     assert.ok(encode.args.includes("aac"));
   });
 
+  test("progress never moves backwards when the separator runs a second pass", async () => {
+    process.env.STEMS_CLI = "C:\v\python.exe";
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "bf-stems-"));
+    const workDir = path.join(root, "w");
+    const progress = [];
+    _setSpawnImpl((cmd, args, opts) => {
+      if (cmd !== "C:\v\python.exe") fs.writeFileSync(args[args.length - 1], "out");
+      else fs.writeFileSync(path.join(workDir, "source_(Instrumental)_m.wav"), "wav");
+      const p = new EventEmitter();
+      p.stdout = new EventEmitter();
+      p.stderr = new EventEmitter();
+      setImmediate(() => {
+        if (cmd === "C:\v\python.exe") for (const c of [" 40%|", " 100%|", " 0%|", " 30%|", " 100%|"]) p.stderr.emit("data", Buffer.from(c));
+        p.emit("close", 0);
+      });
+      return p;
+    });
+    await removeVocals({ input: path.join(root, "s.m4a"), outPath: path.join(root, "o.m4a"), workDir, quality: "fast", onProgress: (p) => progress.push(p) });
+    assert.deepEqual(progress, [40, 100]);
+  });
+
   test("a song ffmpeg cannot read fails with a plain message", async () => {
     process.env.STEMS_CLI = "C:\v\python.exe";
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "bf-stems-"));

@@ -171,9 +171,15 @@ export async function removeVocals({ input, outPath, workDir, quality, onProgres
       throw new Error(`could not read this song file: ${e.message}`);
     }
     const args = buildSeparatorArgs({ input: source, outDir: workDir, quality, modelDir: process.env.STEMS_MODEL_DIR?.trim() || undefined });
+    // The separator runs a second, short pass after the main one, so its bar
+    // restarts at 0%; only ever report forward movement.
+    let reported = -1;
     await run(py, args, {
       signal,
-      onOutput: (s) => { const p = parseProgress(s); if (p !== null) onProgress?.(p); },
+      onOutput: (s) => {
+        const p = parseProgress(s);
+        if (p !== null && p > reported) { reported = p; onProgress?.(p); }
+      },
     });
     const wav = fs.readdirSync(workDir).find((f) => /instrumental/i.test(f) && /\.wav$/i.test(f));
     if (!wav) throw new Error("the separator finished but wrote no instrumental");
