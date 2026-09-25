@@ -15,7 +15,7 @@ import { readTikTokOutcome } from "../lib/zernioStatus.js";
 import { readSocialStore, writeSocialStore } from "../lib/socialStore.js";
 import { scheduleOwnerCtx, listScheduleSources } from "../lib/social/scheduleSources.js";
 import { validateYoutubeMetadata, buildYoutubeDescription } from "../lib/social/youtubeMetadata.js";
-import { uploadToYoutube } from "../lib/social/youtubeUpload.js";
+import { uploadToYoutube, setYoutubeThumbnail } from "../lib/social/youtubeUpload.js";
 import { resolveThumbnail } from "../lib/social/thumbnailPath.js";
 import { prepareThumbnail } from "../lib/social/youtubeThumbnail.js";
 import os from "os";
@@ -433,8 +433,8 @@ async function postToBuffer({ caption, videoUrl, profileIds }, req, store) {
   return { data, videoUrl: mediaUrl };
 }
 
-async function postToYoutube(payload, req, store) {
-  const { caption, videoUrl, title, description, tags, categoryId, privacyStatus, publishAt, thumbnailPath, thumbnailTitle, chapters, links, hashtags } = payload || {};
+/** The connected channel's OAuth credentials, or an error naming what's missing. */
+function youtubeCredentials(store) {
   const yt = store.direct?.youtube || {};
   const clientId = String(yt.clientId || "").trim();
   const clientSecret = String(yt.clientSecret || "").trim();
@@ -450,6 +450,27 @@ async function postToYoutube(payload, req, store) {
     ].filter(Boolean).join(", ");
     throw new Error(`YouTube is not connected — missing ${missing}. Posts to YouTube will keep failing until this is fixed.`);
   }
+  return { clientId, clientSecret, refreshToken };
+}
+
+/** A picture the caller may use as a thumbnail, confined to their outputs (or genImg). */
+function thumbnailSource(thumbnailPath, req) {
+  const thumb = resolveThumbnail(String(thumbnailPath), req?.ctx?.outputDir || OUTPUT_DIR, OUTPUT_DIR);
+  if (!thumb.ok) throw new Error(thumb.error);
+  return thumb.path;
+}
+
+/** Title and tagline are drawn only when the operator asked for the title. */
+function thumbnailText({ thumbnailTitle, thumbnailTagline }, title) {
+  if (thumbnailTitle !== true) return { title: null, tagline: null };
+  return { title, tagline: typeof thumbnailTagline === "string" ? thumbnailTagline.slice(0, 60) : null };
+}
+
+const THUMBNAIL_PLAIN_WARNING = "The title couldn't be drawn on this picture, so it went up without it.";
+
+async function postToYoutube(payload, req, store) {
+  const { caption, videoUrl, title, description, tags, categoryId, privacyStatus, publishAt, thumbnailPath, chapters, links, hashtags } = payload || {};
+  const credentials = youtubeCredentials(store);
 
   // Timeline/Render shares send only a caption: keep using its first line as
   // the title and the whole caption as the description.
@@ -468,12 +489,8 @@ async function postToYoutube(payload, req, store) {
   // GLOBAL OUTPUT_DIR/genImg (served as /outputs/genImg/...). Resolved and
   // confined BEFORE the video is fetched so a bad thumbnail never costs a
   // multi-gigabyte download.
-  let thumbLocal;
-  if (thumbnailPath) {
-    const thumb = resolveThumbnail(String(thumbnailPath), req?.ctx?.outputDir || OUTPUT_DIR, OUTPUT_DIR);
-    if (!thumb.ok) throw new Error(thumb.error);
-    thumbLocal = thumb.path;
-  }
+  const thumbLocal = thumbnailPath ? thumbnailSource(thumbnailPath, req) : undefined;
+  const drawn = thumbnailText(payload || {}, validated.value.title);
 
   const upload = await resolveVideoInputForUpload(videoUrl, req);
   // A 1280x720 JPEG under YouTube's 2 MB limit, with the title on it when
@@ -482,18 +499,18 @@ async function postToYoutube(payload, req, store) {
   let madeThumb = null;
   try {
     if (thumbLocal) {
-      madeThumb = await prepareThumbnail(thumbLocal, {
-        workDir: os.tmpdir(),
-        title: thumbnailTitle === true ? validated.value.title : null,
-      });
+      madeThumb = await prepareThumbnail(thumbLocal, { workDir: os.tmpdir(), ...drawn });
     }
     const result = await uploadToYoutube({
-      credentials: { clientId, clientSecret, refreshToken },
+      credentials,
       filePath: upload.filePath,
       metadata: validated.value,
       thumbnailPath: madeThumb || thumbLocal,
     });
-    return { ...result, forcedPrivate: validated.value.forcedPrivate };
+    // Say so when the picture went up bare: silently was how every Ambient
+    // thumbnail lost its title without anyone knowing.
+    const plain = Boolean(thumbLocal && drawn.title && !madeThumb && !result.thumbnailError);
+    return { ...result, forcedPrivate: validated.value.forcedPrivate, ...(plain ? { thumbnailWarning: THUMBNAIL_PLAIN_WARNING } : {}) };
   } finally {
     await upload.cleanup();
     if (madeThumb) { try { fs.rmSync(madeThumb, { force: true }); } catch { /* temp file */ } }
@@ -843,6 +860,71 @@ router.post("/post", async (req, res) => {
     const message = String(e?.message || e);
     const status = message.toLowerCase().includes("missing") ? 400 : 400;
     res.status(status).json({ ok: false, error: message });
+  }
+});
+
+// =====================================================================
+// Thumbnails on their own: see one before publishing, or put one on a video
+// that is already up (the channel's own videos only — YouTube enforces it).
+//
+//   POST /api/social/youtube/thumbnail-preview  → image/jpeg
+//   POST /api/social/youtube/thumbnail          → { ok, thumbnailError? }
+// =====================================================================
+
+const YOUTUBE_VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
+
+/** Make the thumbnail the way publishing would; the caller removes the file. */
+async function madeThumbnail(body, req) {
+  if (!body?.thumbnailPath) throw Object.assign(new Error("thumbnailPath is required"), { status: 400 });
+  const src = thumbnailSource(body.thumbnailPath, req);
+  if (!fs.existsSync(src)) throw Object.assign(new Error("That picture isn't there any more"), { status: 404 });
+  const title = String(body.title || "").trim().slice(0, 100);
+  const made = await prepareThumbnail(src, { workDir: os.tmpdir(), ...thumbnailText(body, title) });
+  if (!made) throw Object.assign(new Error("Couldn't make a thumbnail from that picture"), { status: 422 });
+  return made;
+}
+
+function sendThumbnailError(res, e) {
+  res.status(e?.status || 400).json({ ok: false, error: String(e?.message || e) });
+}
+
+// Each preview runs ffmpeg, and the preview asks again as the operator types:
+// one at a time per user, so a burst never piles up processes.
+const previewsRunning = new Set();
+/** Tests hold a user's slot to see the refusal without racing a real ffmpeg. */
+export function _holdPreviewSlot(userId) { previewsRunning.add(String(userId)); }
+export function _releasePreviewSlot(userId) { previewsRunning.delete(String(userId)); }
+
+router.post("/youtube/thumbnail-preview", async (req, res) => {
+  const who = String(req.ctx?.userId || "anon");
+  if (previewsRunning.has(who)) return res.status(429).json({ ok: false, error: "A preview is already being made", busy: true });
+  previewsRunning.add(who);
+  let made = null;
+  try {
+    made = await madeThumbnail(req.body || {}, req);
+    res.set("Cache-Control", "no-store").type("image/jpeg").send(fs.readFileSync(made));
+  } catch (e) {
+    sendThumbnailError(res, e);
+  } finally {
+    previewsRunning.delete(who);
+    if (made) fs.rmSync(made, { force: true });
+  }
+});
+
+router.post("/youtube/thumbnail", async (req, res) => {
+  const videoId = String(req.body?.videoId || "").trim();
+  if (!YOUTUBE_VIDEO_ID.test(videoId)) return res.status(400).json({ ok: false, error: "videoId must be a YouTube video id" });
+  let made = null;
+  try {
+    const credentials = youtubeCredentials(readSocialStore(req.ctx.dataDir));
+    made = await madeThumbnail(req.body || {}, req);
+    const result = await setYoutubeThumbnail({ credentials, videoId, thumbnailPath: made });
+    if (result.thumbnailError) return res.status(502).json({ ok: false, error: result.thumbnailError });
+    return res.json({ ok: true });
+  } catch (e) {
+    return sendThumbnailError(res, e);
+  } finally {
+    if (made) fs.rmSync(made, { force: true });
   }
 });
 

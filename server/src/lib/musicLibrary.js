@@ -47,6 +47,50 @@ export function listTracks() {
   }));
 }
 
+let durations = null;
+export function _resetBundledDurations() { durations = null; }
+
+/** How many ffprobe processes run at once on the first library request. */
+const PROBE_CONCURRENCY = 4;
+
+async function probeAll(probe) {
+  const out = {};
+  let next = 0;
+  const worker = async () => {
+    while (next < MUSIC_LIBRARY.length) {
+      const t = MUSIC_LIBRARY[next];
+      next += 1;
+      try {
+        const sec = Number(await probe(path.join(MUSIC_DIR, t.file)));
+        out[t.id] = sec > 0 ? sec : null;
+      } catch {
+        out[t.id] = null;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: PROBE_CONCURRENCY }, worker));
+  return out;
+}
+
+/**
+ * `{ id: seconds | null }` for every bundled track, so the picker can show a
+ * length and a total. The files never change while the server runs, so a
+ * successful probe is kept and reused. A probe that learned nothing (ffprobe
+ * missing, or timing out on a cold start) is not kept, so the next request
+ * tries again instead of showing no lengths until a restart. `probe` is the
+ * caller's ffprobe wrapper — this module stays free of ffmpeg.
+ */
+export function bundledDurations(probe) {
+  if (!durations) {
+    const pending = probeAll(probe);
+    durations = pending;
+    pending.then((d) => {
+      if (Object.values(d).every((v) => v === null) && durations === pending) durations = null;
+    }, () => { if (durations === pending) durations = null; });
+  }
+  return durations;
+}
+
 /** Resolve a `library:<id>` ref to an existing absolute file path, else null. */
 export function resolveLibraryTrack(ref) {
   const s = String(ref || "").trim();

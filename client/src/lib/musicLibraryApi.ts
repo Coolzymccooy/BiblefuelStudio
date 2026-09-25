@@ -17,6 +17,8 @@ export interface MusicTrack {
   credit?: string;
   /** When present, this track is the vocal-removed version of another track. */
   derivedFrom?: string | null;
+  /** An upload's file name under /outputs, for playback. */
+  mediaFile?: string | null;
 }
 
 export async function fetchMusicLibrary(): Promise<MusicTrack[]> {

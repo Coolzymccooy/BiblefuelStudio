@@ -6,7 +6,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { spawnSync } from "child_process";
-import socialRouter, { _setFetchImpl, _resetFetchImpl } from "./social.js";
+import socialRouter, { _setFetchImpl, _resetFetchImpl, _holdPreviewSlot, _releasePreviewSlot } from "./social.js";
 import { _setGoogleImpl, _resetGoogleImpl } from "../lib/social/youtubeUpload.js";
 import { writeSocialStore } from "../lib/socialStore.js";
 import { OUTPUT_DIR } from "../lib/paths.js";
@@ -223,5 +223,162 @@ describe("POST /api/social/post destination=youtube", () => {
     assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.equal(streamed, true);
     assert.equal(fake.calls.insert.length, 1);
+  });
+});
+
+/** What image generation writes: JPEG bytes under a .png name. */
+function generatedPicture(outputDir, name = "part-1.png") {
+  const file = path.join(outputDir, name);
+  const r = spawnSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "color=c=0x406080:s=1344x768", "-frames:v", "1", "-f", "mjpeg", file]);
+  assert.equal(r.status, 0, String(r.stderr));
+  return file;
+}
+
+async function readAll(stream) {
+  const chunks = [];
+  for await (const c of stream) chunks.push(Buffer.from(c));
+  return Buffer.concat(chunks);
+}
+
+describe("YouTube thumbnails with a title on generated pictures", () => {
+  let fake;
+  beforeEach(() => { fake = fakeGoogle(); _setGoogleImpl(fake.google); });
+  afterEach(() => { _resetGoogleImpl(); });
+
+  test("publishing sends a made 1280x720 JPEG, not the bare picture", async () => {
+    const { a, outputDir } = app();
+    fs.writeFileSync(path.join(outputDir, "long.mp4"), "vid");
+    generatedPicture(outputDir);
+    const sent = [];
+    const set = fake.google.youtube().thumbnails.set;
+    fake.google.youtube = ((orig) => () => ({ ...orig(), thumbnails: { set: async (args) => { sent.push(await readAll(args.media.body)); return set({ ...args, media: { ...args.media, body: null } }); } } }))(fake.google.youtube);
+    const res = await request(a).post("/api/social/post").send({
+      destination: "youtube", videoUrl: "/outputs/long.mp4", title: "Be Still, My Soul",
+      thumbnailPath: "/outputs/part-1.png", thumbnailTitle: true, thumbnailTagline: "2 hours · scripture",
+    });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.thumbnailWarning, undefined);
+    assert.equal(sent.length, 1);
+    const tmp = path.join(os.tmpdir(), `sent-${Date.now()}.jpg`);
+    fs.writeFileSync(tmp, sent[0]);
+    const probe = spawnSync("ffprobe", ["-v", "error", "-show_entries", "stream=width,height", "-of", "csv=p=0", tmp], { encoding: "utf8" });
+    fs.rmSync(tmp, { force: true });
+    assert.equal(probe.stdout.trim(), "1280,720", "the made thumbnail, not the 1344x768 original");
+  });
+
+  test("when the title can't be drawn, the picture still goes up and the operator is told", async () => {
+    const { a, outputDir } = app();
+    fs.writeFileSync(path.join(outputDir, "long.mp4"), "vid");
+    fs.writeFileSync(path.join(outputDir, "thumb.png"), "img");
+    const res = await request(a).post("/api/social/post").send({
+      destination: "youtube", videoUrl: "/outputs/long.mp4", title: "T", thumbnailPath: "/outputs/thumb.png", thumbnailTitle: true,
+    });
+    assert.equal(res.status, 200);
+    assert.match(res.body.thumbnailWarning, /without it/);
+    assert.equal(fake.calls.set.length, 1);
+  });
+
+  test("no warning when no title was asked for", async () => {
+    const { a, outputDir } = app();
+    fs.writeFileSync(path.join(outputDir, "long.mp4"), "vid");
+    fs.writeFileSync(path.join(outputDir, "thumb.png"), "img");
+    const res = await request(a).post("/api/social/post").send({
+      destination: "youtube", videoUrl: "/outputs/long.mp4", title: "T", thumbnailPath: "/outputs/thumb.png",
+    });
+    assert.equal(res.body.thumbnailWarning, undefined);
+  });
+});
+
+describe("POST /api/social/youtube/thumbnail-preview", () => {
+  test("returns the thumbnail as it would be published", async () => {
+    const { a, outputDir } = app();
+    generatedPicture(outputDir);
+    const res = await request(a).post("/api/social/youtube/thumbnail-preview")
+      .send({ thumbnailPath: "/outputs/part-1.png", title: "Be Still, My Soul", thumbnailTitle: true, thumbnailTagline: "2 hours" })
+      .buffer(true).parse((r, cb) => { const c = []; r.on("data", (d) => c.push(d)); r.on("end", () => cb(null, Buffer.concat(c))); });
+    assert.equal(res.status, 200);
+    assert.match(res.headers["content-type"], /image\/jpeg/);
+    assert.deepEqual([...res.body.subarray(0, 3)], [0xff, 0xd8, 0xff]);
+  });
+
+  test("refuses a missing path, a path outside the caller's outputs, a missing file and a non-picture", async () => {
+    const { a, outputDir } = app();
+    fs.writeFileSync(path.join(outputDir, "junk.png"), "not an image");
+    const post = (body) => request(a).post("/api/social/youtube/thumbnail-preview").send(body);
+    assert.equal((await post({})).status, 400);
+    assert.equal((await post({ thumbnailPath: "/outputs/../../secret.png" })).status, 400);
+    assert.equal((await post({ thumbnailPath: "/outputs/gone.png" })).status, 404);
+    assert.equal((await post({ thumbnailPath: "/outputs/junk.png" })).status, 422);
+  });
+});
+
+describe("preview load", () => {
+  test("one preview at a time per user: a second while the first runs is told it's busy", async () => {
+    const { a, outputDir } = app();
+    generatedPicture(outputDir);
+    const body = { thumbnailPath: "/outputs/part-1.png", title: "T", thumbnailTitle: true };
+    _holdPreviewSlot("u1");
+    try {
+      const busy = await request(a).post("/api/social/youtube/thumbnail-preview").send(body);
+      assert.equal(busy.status, 429);
+      assert.equal(busy.body.busy, true);
+    } finally {
+      _releasePreviewSlot("u1");
+    }
+    const free = await request(a).post("/api/social/youtube/thumbnail-preview").send(body);
+    assert.equal(free.status, 200, "the slot is released afterwards");
+  });
+
+  test("a failed preview releases its slot too", async () => {
+    const { a } = app();
+    assert.equal((await request(a).post("/api/social/youtube/thumbnail-preview").send({})).status, 400);
+    assert.equal((await request(a).post("/api/social/youtube/thumbnail-preview").send({})).status, 400);
+  });
+});
+
+describe("POST /api/social/youtube/thumbnail", () => {
+  let fake;
+  beforeEach(() => { fake = fakeGoogle(); _setGoogleImpl(fake.google); });
+  afterEach(() => { _resetGoogleImpl(); });
+
+  test("puts a titled thumbnail on a video that is already up", async () => {
+    const { a, outputDir } = app();
+    generatedPicture(outputDir);
+    const res = await request(a).post("/api/social/youtube/thumbnail")
+      .send({ videoId: "Awlj9uLvOCQ", thumbnailPath: "/outputs/part-1.png", title: "Be Still, My Soul", thumbnailTitle: true });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(fake.calls.set.length, 1);
+    assert.equal(fake.calls.set[0].videoId, "Awlj9uLvOCQ");
+    assert.equal(fake.calls.set[0].media.mimeType, "image/jpeg");
+  });
+
+  test("refuses a malformed video id before touching YouTube", async () => {
+    const { a, outputDir } = app();
+    generatedPicture(outputDir);
+    for (const videoId of ["", "short", "Awlj9uLvOCQ&x=1", "../../etc/pass"]) {
+      const res = await request(a).post("/api/social/youtube/thumbnail").send({ videoId, thumbnailPath: "/outputs/part-1.png" });
+      assert.equal(res.status, 400, videoId);
+    }
+    assert.equal(fake.calls.set.length, 0);
+  });
+
+  test("reports YouTube's refusal instead of claiming success", async () => {
+    const { a, outputDir } = app();
+    generatedPicture(outputDir);
+    const orig = fake.google.youtube;
+    fake.google.youtube = () => ({ ...orig(), thumbnails: { set: async () => { throw new Error("Forbidden: video not owned"); } } });
+    const res = await request(a).post("/api/social/youtube/thumbnail").send({ videoId: "Awlj9uLvOCQ", thumbnailPath: "/outputs/part-1.png" });
+    assert.equal(res.status, 502);
+    assert.match(res.body.error, /not owned/);
+  });
+
+  test("says YouTube isn't connected when it isn't", async () => {
+    const { a, dataDir, outputDir } = app();
+    writeSocialStore(dataDir, {});
+    generatedPicture(outputDir);
+    const res = await request(a).post("/api/social/youtube/thumbnail").send({ videoId: "Awlj9uLvOCQ", thumbnailPath: "/outputs/part-1.png" });
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /not connected/);
+    assert.equal(fake.calls.set.length, 0);
   });
 });

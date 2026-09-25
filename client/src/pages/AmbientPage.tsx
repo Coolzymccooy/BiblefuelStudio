@@ -74,63 +74,73 @@ export function AmbientPage() {
 
   const transient = project ? isAmbientTransient(project.status) : false;
 
+  // "Peace That Surpasses Understanding" → the last word in gold italic.
+  const titleWords = String(project?.title || '').trim().split(/\s+/);
+  const projectTitle = titleWords.length > 1
+    ? <>{titleWords.slice(0, -1).join(' ')} <em>{titleWords[titleWords.length - 1]}</em></>
+    : <em>{titleWords[0]}</em>;
+
+  const stepTabs = project && (
+    <div className="flex flex-wrap items-center gap-3">
+      <div className={segmentedCls} role="tablist" aria-label="Ambient step">
+        {STEPS.map((s) => (
+          <button key={s.id} type="button" onClick={() => setStep(s.id)} className={segmentCls(step === s.id)}>
+            {s.label}
+          </button>
+        ))}
+      </div>
+      <button onClick={() => setActive(null)} className="text-xs text-content-tertiary hover:text-bf-cream">Start new</button>
+    </div>
+  );
+
   return (
-    <div className="mx-auto max-w-2xl px-4 py-6">
+    <div className="w-full">
       <ScreenHeader
-        eyebrow="Create"
-        title={<>Scripture over an <em>ambient</em> bed.</>}
-        subtitle={project ? `${project.theme} · ${project.title}` : undefined}
-        right={project ? (
-          <button onClick={() => setActive(null)} className="text-xs text-content-tertiary hover:text-bf-cream">Start new</button>
-        ) : undefined}
+        // Room for the notification bell the shell pins top-right on desktop.
+        className="flex-wrap lg:pr-14"
+        eyebrow={project ? 'Create · Ambient' : 'Create'}
+        title={project ? projectTitle : <>Scripture over an <em>ambient</em> bed.</>}
+        subtitle={project ? project.theme : undefined}
+        right={stepTabs || undefined}
       />
       <div className="h-5" />
 
       {!project && (
-        <AmbientHistory onOpen={(id, finished) => setActive(id, finished ? 'render' : 'sound')} />
-      )}
-
-      {!project && (
-        <div className="space-y-4">
-          <div className="field-label">New session</div>
-          <label className={fieldLabelCls}>
-            Title
-            <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Rest in His presence" className={inputCls} />
-          </label>
-          <label className={fieldLabelCls}>
-            Theme
-            <input value={theme} onChange={(e) => setTheme(e.target.value)} placeholder="Peace in the storm" className={inputCls} />
-          </label>
-          <AmbientLengthField minutes={minutes} onChange={setMinutes} />
-          <div>
-            <div className={fieldLabelCls}>Aspect</div>
-            <div className={segmentedCls} role="tablist" aria-label="Aspect">
-              <button type="button" onClick={() => setAspect('landscape')} className={segmentCls(aspect === 'landscape')}>Landscape</button>
-              <button type="button" onClick={() => setAspect('portrait')} className={segmentCls(aspect === 'portrait')}>Portrait</button>
+        <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+          <AmbientHistory onOpen={(id, finished) => setActive(id, finished ? 'render' : 'sound')} />
+          <div className="space-y-4">
+            <div className="field-label">New session</div>
+            <label className={fieldLabelCls}>
+              Title
+              <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Rest in His presence" className={inputCls} />
+            </label>
+            <label className={fieldLabelCls}>
+              Theme
+              <input value={theme} onChange={(e) => setTheme(e.target.value)} placeholder="Peace in the storm" className={inputCls} />
+            </label>
+            <AmbientLengthField minutes={minutes} onChange={setMinutes} />
+            <div>
+              <div className={fieldLabelCls}>Aspect</div>
+              <div className={segmentedCls} role="tablist" aria-label="Aspect">
+                <button type="button" onClick={() => setAspect('landscape')} className={segmentCls(aspect === 'landscape')}>Landscape</button>
+                <button type="button" onClick={() => setAspect('portrait')} className={segmentCls(aspect === 'portrait')}>Portrait</button>
+              </div>
             </div>
+            <button onClick={createProject} disabled={busy} className={`${primaryBtnCls} w-full justify-center px-4 py-3`}>
+              {busy ? <Loader2 size={16} className="animate-spin" /> : 'Create project'}
+            </button>
           </div>
-          <button onClick={createProject} disabled={busy} className={`${primaryBtnCls} w-full justify-center px-4 py-3`}>
-            {busy ? <Loader2 size={16} className="animate-spin" /> : 'Create project'}
-          </button>
         </div>
       )}
 
       {project && (
-        <div className="mt-2 space-y-4">
+        <div className="space-y-4">
           {transient && (
             <div className={`flex items-center gap-2 text-sm text-primary-100 ${statusRowCls}`}>
               <Loader2 className="animate-spin text-primary-400" size={16} />
               {project.status.replace(/_/g, ' ')}
             </div>
           )}
-
-          <div className={segmentedCls} role="tablist" aria-label="Ambient step">
-            {STEPS.map((s) => (
-              <button key={s.id} type="button" onClick={() => setStep(s.id)} className={segmentCls(step === s.id)}>
-                {s.label}
-              </button>
-            ))}
-          </div>
 
           {step === 'sound' && <AmbientSoundStep project={project} busy={busy} setBusy={setBusy} refresh={refresh} />}
           {step === 'word' && <AmbientWordStep project={project} busy={busy} setBusy={setBusy} refresh={refresh} />}

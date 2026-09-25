@@ -49,6 +49,8 @@
        approved editor palette (gold = action, teal = ready/voice). */
     --bf-success: #7fb5aa;
     --bf-danger: #e08a8a;
+    /* Warnings (licence missing, music repeats): amber that stays AA on every surface. */
+    --bf-warn: #e8b560;
     /* Card/glass surfaces. Hardcoding these is what kept light mode muddy:
        .card painted rgba(17,14,10,.6) regardless of theme. */
     --bf-cardSurface: rgba(17, 14, 10, 0.60);
@@ -159,6 +161,8 @@
     /* Desaturated to match: status should register, not shout. */
     --bf-success: #8fb3a8;
     --bf-danger: #cf9494;
+    /* Warnings (licence missing, music repeats): amber that stays AA on every surface. */
+    --bf-warn: #d9b57a;
     --bf-cardSurface: rgba(25, 29, 36, 0.66);
     --bf-cardBorder: rgba(210, 207, 200, 0.09);
     --bf-cardBorderHover: rgba(210, 207, 200, 0.17);
@@ -255,6 +259,8 @@
     --bf-faint: #7a7264;     /* 4.75:1 */
     --bf-success: #2a6f66;   /* muted teal, 5.1:1 on white */
     --bf-danger: #b03b3b;    /* 5.94:1 */
+    /* Warnings (licence missing, music repeats): amber that stays AA on every surface. */
+    --bf-warn: #8a5a00;
     /* Opaque white cards. A translucent surface over a cream page produced the
        muddy brown panels; light mode wants clean white with a real border. */
     --bf-cardSurface: #ffffff;

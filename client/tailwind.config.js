@@ -127,6 +127,7 @@ export default {
           faint: 'var(--bf-faint, #6f6654)',
           success: 'var(--bf-success, #7fb5aa)',
           danger: 'var(--bf-danger, #e08a8a)',
+          warn: 'var(--bf-warn, #e8b560)',
         },
         glass: {
           100: 'rgba(255, 255, 255, 0.03)',

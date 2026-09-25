@@ -2,7 +2,7 @@ import { Router } from "express";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
-import { listTracks } from "../lib/musicLibrary.js";
+import { listTracks, bundledDurations } from "../lib/musicLibrary.js";
 import {
   readMusicLibrary, registerTrack, updateTrack, removeTrack,
 } from "../lib/musicLibraryStore.js";
@@ -20,13 +20,29 @@ import { quota } from "../middleware/quota.js";
 
 const router = Router();
 
+/**
+ * How the browser plays an upload: its bare name when it sits at the top of
+ * the caller's media folder (as uploads do), or its /outputs/ path when it is
+ * in a sub-folder (a Timeline render, say), where the bare name would 404.
+ */
+function servedFile(file, outputDir) {
+  const name = path.basename(file);
+  if (!outputDir) return name;
+  let root = path.resolve(outputDir);
+  try { root = fs.realpathSync(root); } catch { /* not there: compare as given */ }
+  const rel = path.relative(root, path.resolve(file));
+  if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) return name;
+  return rel.includes(path.sep) ? `/outputs/${rel.split(path.sep).join("/")}` : name;
+}
+
 /** A tenant upload, in the shape the picker already understands. */
-function toListed(track) {
+function toListed(track, outputDir) {
   return {
     id: track.id,
     label: track.label,
     mood: track.mood,
-    previewUrl: null, // uploads are served through the authed /outputs path, not /music
+    previewUrl: null, // uploads are played from /outputs/<mediaFile>, not /music
+    mediaFile: servedFile(track.file, outputDir),
     default: false,
     source: "upload",
     licence: track.licence,
@@ -38,16 +54,22 @@ function toListed(track) {
 }
 
 // Bundled first (they are the curated set), then the operator's own.
-router.get("/library", (req, res) => {
+let _durationProbe = probeAudioDurationSec;
+export function _setDurationProbe(fn) { _durationProbe = fn; }
+export function _resetDurationProbe() { _durationProbe = probeAudioDurationSec; }
+
+router.get("/library", async (req, res) => {
+  let lengths = {};
+  try { lengths = await bundledDurations(_durationProbe); } catch { /* listed without lengths */ }
   const bundled = listTracks().map((t) => ({
     ...t,
     source: "bundled",
     licence: "pixabay-cleared",
     credit: BUNDLED_CREDIT,
-    durationSec: null,
+    durationSec: lengths[t.id] ?? null,
     ref: `library:${t.id}`,
   }));
-  const mine = readMusicLibrary(req.ctx.dataDir).items.map(toListed);
+  const mine = readMusicLibrary(req.ctx.dataDir).items.map((t) => toListed(t, req.ctx.outputDir));
   res.json({ ok: true, tracks: [...bundled, ...mine] });
 });
 
@@ -60,7 +82,10 @@ router.post("/upload", async (req, res) => {
     // A bare name ("user-audio-….m4a", as a Timeline lane stores a loose
     // upload) is read as a file in the caller's media folder; the containment
     // checks below still apply, so "../x" cannot climb out.
-    const file = path.resolve(root, String(req.body?.file || "").trim());
+    // The served form ("/outputs/…") names the same folder, so it is read as
+    // a name inside it too.
+    const given = String(req.body?.file || "").trim().replace(/^\/?outputs[\\/]/, "");
+    const file = path.resolve(root, given);
     if (file !== root && !file.startsWith(root + path.sep)) {
       return res.status(403).json({ ok: false, error: "That file is outside your media folder" });
     }
@@ -110,7 +135,7 @@ router.post("/upload", async (req, res) => {
       licence: req.body?.licence,
       durationSec,
     });
-    return res.json({ ok: true, track: toListed(track) });
+    return res.json({ ok: true, track: toListed(track, req.ctx.outputDir) });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
@@ -124,7 +149,7 @@ router.patch("/:id", (req, res) => {
     credit: req.body?.credit,
   });
   if (!track) return res.status(404).json({ ok: false, error: "track not found" });
-  return res.json({ ok: true, track: toListed(track) });
+  return res.json({ ok: true, track: toListed(track, req.ctx.outputDir) });
 });
 
 router.delete("/:id", (req, res) => {
@@ -176,7 +201,7 @@ function jobView(job) {
  * licence and credit captured when the job started, and the bed's licence
  * gate still applies.
  */
-async function saveInstrumental(dataDir, job) {
+async function saveInstrumental(dataDir, job, outputDir) {
   if (!fs.existsSync(job.resultPath)) throw new Error("the separator finished but wrote no file");
   let durationSec = null;
   try { durationSec = await probeAudioDurationSec(job.resultPath); } catch { /* recorded without it */ }
@@ -189,7 +214,7 @@ async function saveInstrumental(dataDir, job) {
     derivedFrom: job.sourceRef,
     durationSec,
   });
-  return toListed(track);
+  return toListed(track, outputDir);
 }
 
 router.get("/capabilities", async (req, res) => {
@@ -230,7 +255,7 @@ router.post("/:id/instrumental", quota("render"), async (req, res) => {
         input, outPath: resultPath, workDir, quality, signal: job.controller.signal,
         onProgress: (p) => updateStemJob(jobId, { percent: Math.min(99, p) }),
       });
-      const track = await saveInstrumental(req.ctx.dataDir, job);
+      const track = await saveInstrumental(req.ctx.dataDir, job, req.ctx.outputDir);
       updateStemJob(jobId, { status: "done", percent: 100, track });
     }, { signal: job.controller.signal }).catch((e) => {
       // Record the failure FIRST: a killed separator can leave a WAV/partial

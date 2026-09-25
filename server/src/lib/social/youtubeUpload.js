@@ -26,14 +26,20 @@ async function setThumbnail(youtube, videoId, thumbnailPath) {
   if (!thumbnailPath) return undefined;
   if (!fs.existsSync(thumbnailPath)) return `thumbnail not found: ${thumbnailPath}`;
   const mimeType = MIME_BY_EXT[path.extname(thumbnailPath).toLowerCase()] || "image/jpeg";
+  // Closed whatever happens: a refusal before the body is read would leave it
+  // open, and its late open of a since-deleted temp file threw uncaught.
+  const body = fs.createReadStream(thumbnailPath);
+  body.on("error", () => { /* reported by the request itself */ });
   try {
-    await youtube.thumbnails.set({ videoId, media: { mimeType, body: fs.createReadStream(thumbnailPath) } });
+    await youtube.thumbnails.set({ videoId, media: { mimeType, body } });
     return undefined;
   } catch (e) {
     // Custom thumbnails need a phone-verified channel. The video is already
     // up; report the reason instead of failing a successful upload.
     const message = String(e?.message || e);
     return THUMBNAIL_NOT_ALLOWED_RE.test(message) ? THUMBNAIL_NOT_ALLOWED : message;
+  } finally {
+    body.destroy();
   }
 }
 
@@ -43,14 +49,27 @@ const THUMBNAIL_NOT_ALLOWED_RE = /permission.*thumbnail|thumbnail.*permission/i;
 const THUMBNAIL_NOT_ALLOWED = "YouTube only allows custom thumbnails on verified channels. "
   + "Verify yours once at youtube.com/verify, then set this thumbnail in YouTube Studio.";
 
+function youtubeClient(credentials) {
+  const oauth2 = new _google.auth.OAuth2(credentials.clientId, credentials.clientSecret);
+  oauth2.setCredentials({ refresh_token: credentials.refreshToken });
+  return _google.youtube({ version: "v3", auth: oauth2 });
+}
+
+/**
+ * Replace the thumbnail of a video already on the connected channel.
+ * @returns {Promise<{ thumbnailError?: string }>}
+ */
+export async function setYoutubeThumbnail({ credentials, videoId, thumbnailPath }) {
+  const thumbnailError = await setThumbnail(youtubeClient(credentials), videoId, thumbnailPath);
+  return thumbnailError ? { thumbnailError } : {};
+}
+
 /**
  * Upload one video with full metadata, then (best-effort) its thumbnail.
  * Throws only when the video itself cannot be uploaded.
  */
 export async function uploadToYoutube({ credentials, filePath, metadata, thumbnailPath }) {
-  const oauth2 = new _google.auth.OAuth2(credentials.clientId, credentials.clientSecret);
-  oauth2.setCredentials({ refresh_token: credentials.refreshToken });
-  const youtube = _google.youtube({ version: "v3", auth: oauth2 });
+  const youtube = youtubeClient(credentials);
 
   const result = await youtube.videos.insert({
     part: ["snippet", "status"],

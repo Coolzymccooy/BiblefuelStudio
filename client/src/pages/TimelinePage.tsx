@@ -54,6 +54,8 @@ import type { TimelineEffectKind, TimelineTrackKind } from '../lib/timelineProje
 import { hiddenLaneWarning } from '../lib/hiddenLanes';
 import { MasteringPanel } from '../components/timeline/MasteringPanel';
 import { RecentAudioPanel } from '../components/timeline/RecentAudioPanel';
+import { useSourceVocalRemoval } from '../components/timeline/useSourceVocalRemoval';
+import { swapIntoMusicBed } from '../lib/musicBedSwap';
 import { TranscriptActions } from '../components/timeline/TranscriptActions';
 import { EditorShell } from '../components/editor/EditorShell';
 import { PanelSection } from '../components/editor/PanelSection';
@@ -1050,6 +1052,15 @@ export function TimelinePage() {
     };
 
     // Adopt an existing audio file as the Music Bed.
+    // A song loaded as source media can be made instrumental; the instrumental
+    // takes the original's place on the Music bed, or joins it.
+    const sourceVocals = useSourceVocalRemoval({
+        onUse: (instrumental, replaces) => {
+            setMusicPaths((prev) => swapIntoMusicBed(prev, instrumental, replaces));
+            setMusicPath((prev) => (!prev || replaces.includes(prev) ? instrumental : prev));
+        },
+    });
+
     const useAsMusicBed = (p: string) => {
         if (!p) return;
         setMusicPath(p);
@@ -2251,6 +2262,7 @@ export function TimelinePage() {
                     onApply={(newPath) => { trimTarget.apply(newPath); setTrimTarget(null); }}
                 />
             )}
+            {sourceVocals.dialog}
         </>
     ), document.body);
 
@@ -2420,6 +2432,7 @@ export function TimelinePage() {
                             onUpload={handleSourceUpload}
                             onPreviewSource={handlePreviewSource}
                             onUseAsMusicBed={useAsMusicBed}
+                            onRemoveVocals={sourceVocals.available ? sourceVocals.start : undefined}
                             onTrim={() => sourceMediaPath && setTrimTarget({
                                 kind: sourceMediaKind === 'video' ? 'video' : 'audio',
                                 path: sourceMediaPath,
@@ -2565,6 +2578,7 @@ export function TimelinePage() {
                             >
                                 <MusicPicker
                                     multiple
+                                    reorderable
                                     value={{ path: musicPath || null, paths: musicPaths, volume: musicVolume, autoDuck }}
                                     onChange={(m) => {
                                         const next = m.paths ?? (m.path ? [m.path] : []);
@@ -3085,6 +3099,7 @@ export function TimelinePage() {
                 onUpload={handleSourceUpload}
                 onPreviewSource={handlePreviewSource}
                 onUseAsMusicBed={useAsMusicBed}
+                onRemoveVocals={sourceVocals.available ? sourceVocals.start : undefined}
                 onTrim={() => sourceMediaPath && setTrimTarget({
                     kind: sourceMediaKind === 'video' ? 'video' : 'audio',
                     path: sourceMediaPath,
@@ -3210,6 +3225,7 @@ export function TimelinePage() {
             >
                 <MusicPicker
                   multiple
+                  reorderable
                   value={{ path: musicPath || null, paths: musicPaths, volume: musicVolume, autoDuck }}
                   onChange={(m) => {
                     const next = m.paths ?? (m.path ? [m.path] : []);

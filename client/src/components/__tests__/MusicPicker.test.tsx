@@ -98,8 +98,8 @@ describe('MusicPicker', () => {
     it('removes a track by index, keeping order', async () => {
       const onChange = vi.fn();
       renderWith(<MusicPicker multiple value={{ path: 'library:peaceful-worship', paths: ['library:peaceful-worship', 'library:joyful-praise'], volume: 0.3, autoDuck: true }} onChange={onChange} busy={false} />);
-      const removeButtons = await screen.findAllByRole('button', { name: /remove track/i });
-      await userEvent.click(removeButtons[0]);
+      await userEvent.click(await screen.findByRole('button', { name: /more for peaceful worship/i }));
+      await userEvent.click(screen.getByRole('menuitem', { name: /remove from list/i }));
       expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
         paths: ['library:joyful-praise'],
         path: 'library:joyful-praise',

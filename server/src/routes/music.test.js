@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import musicRouter, { _setSeparatorImpl, _resetSeparatorImpl } from "./music.js";
+import musicRouter, { _setSeparatorImpl, _resetSeparatorImpl, _setDurationProbe, _resetDurationProbe } from "./music.js";
+import { _resetBundledDurations } from "../lib/musicLibrary.js";
 import { registerTrack, readMusicLibrary } from "../lib/musicLibraryStore.js";
 import { _resetStemJobs } from "../lib/stems/stemJobs.js";
 import { _resetHeavyGate } from "../lib/heavyJobGate.js";
@@ -36,6 +37,20 @@ describe("music route", () => {
     assert.equal(bundled[0].licence, "pixabay-cleared");
   });
 
+  test("GET /library gives the bundled tracks their probed length", async () => {
+    _resetBundledDurations();
+    _setDurationProbe(async (file) => (file.endsWith("01-peaceful-worship.mp3") ? 229 : 100));
+    try {
+      const r = res();
+      await handlerFor("get", "/library")({ ctx: tenant().ctx }, r);
+      const pw = r.payload.tracks.find((t) => t.id === "peaceful-worship");
+      assert.equal(pw.durationSec, 229);
+    } finally {
+      _resetDurationProbe();
+      _resetBundledDurations();
+    }
+  });
+
   test("GET /library merges the tenant's own uploads after the bundled ones", async () => {
     const { ctx, file } = tenant();
     registerTrack(ctx.dataDir, { file, label: "My Bed", licence: "unknown" });
@@ -46,6 +61,16 @@ describe("music route", () => {
     assert.equal(mine[0].label, "My Bed");
     assert.equal(mine[0].licence, "unknown");
     assert.equal(r.payload.tracks.length, 24);
+  });
+
+  test("GET /library tells the picker which output file plays an upload (its UUID name), never the full path", async () => {
+    const { ctx, file } = tenant();
+    registerTrack(ctx.dataDir, { file, label: "My Bed" });
+    const r = res();
+    await handlerFor("get", "/library")({ ctx }, r);
+    const mine = r.payload.tracks.find((t) => t.source === "upload");
+    assert.equal(mine.mediaFile, "user-audio-1.mp3");
+    assert.equal(Object.values(mine).some((v) => typeof v === "string" && v.includes(path.basename(ctx.dataDir))), false, "no server path leaks");
   });
 
   test("POST /upload registers a file that is already in the caller's output dir", async () => {
@@ -63,6 +88,35 @@ describe("music route", () => {
     await handlerFor("post", "/upload")({ ctx, body: { file: path.basename(file) } }, r);
     assert.equal(r.payload.ok, true);
     assert.equal(readMusicLibrary(ctx.dataDir).items[0].file, fs.realpathSync(file));
+  });
+
+  test("an upload in a sub-folder of the media folder is played from its /outputs/ path, not a bare name that 404s", async () => {
+    const { ctx } = tenant();
+    const nested = path.join(ctx.outputDir, "timeline", "bed.mp3");
+    fs.mkdirSync(path.dirname(nested), { recursive: true });
+    fs.writeFileSync(nested, "x");
+    const saved = res();
+    await handlerFor("post", "/upload")({ ctx, body: { file: "/outputs/timeline/bed.mp3" } }, saved);
+    assert.equal(saved.payload.track.mediaFile, "/outputs/timeline/bed.mp3");
+    const listed = res();
+    await handlerFor("get", "/library")({ ctx }, listed);
+    assert.equal(listed.payload.tracks.find((t) => t.source === "upload").mediaFile, "/outputs/timeline/bed.mp3");
+  });
+
+  test("POST /upload accepts the served /outputs/ form of a file in the caller's media folder", async () => {
+    const { ctx, file } = tenant();
+    const r = res();
+    await handlerFor("post", "/upload")({ ctx, body: { file: `/outputs/${path.basename(file)}` } }, r);
+    assert.equal(r.payload.ok, true);
+    assert.equal(readMusicLibrary(ctx.dataDir).items[0].file, fs.realpathSync(file));
+  });
+
+  test("POST /upload refuses an /outputs/ path that climbs out", async () => {
+    const { ctx } = tenant();
+    fs.writeFileSync(path.join(ctx.dataDir, "secret.mp3"), "x");
+    const r = res();
+    await handlerFor("post", "/upload")({ ctx, body: { file: "/outputs/../secret.mp3" } }, r);
+    assert.equal(r.statusCode, 403);
   });
 
   test("POST /upload still refuses a relative path that climbs out of the media folder", async () => {

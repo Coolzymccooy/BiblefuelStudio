@@ -192,6 +192,27 @@ class ApiClient {
         }
     }
 
+    /** POST JSON and receive a binary body (an image the server made). */
+    async postForBlob(url: string, body?: unknown, options?: { timeout?: number }): Promise<ApiResponse<Blob>> {
+        try {
+            const response = await axios.post(url, body, {
+                headers: this.getHeaders(),
+                timeout: options?.timeout ?? DEFAULT_TIMEOUT_MS,
+                responseType: 'blob',
+            });
+            return { ok: true, status: response.status, data: response.data as Blob };
+        } catch (error) {
+            // An error body arrives as a Blob too; read its JSON so the
+            // server's own message reaches the caller.
+            if (axios.isAxiosError(error) && error.response?.data instanceof Blob) {
+                try {
+                    error.response.data = JSON.parse(await error.response.data.text());
+                } catch { /* not JSON: the generic message stands */ }
+            }
+            return this.handleError(error);
+        }
+    }
+
     /**
      * Upload a File/Blob as a RAW binary request body (no base64, no JSON).
      * The browser streams the bytes directly — ~1.37x smaller on the wire than
