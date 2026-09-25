@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { readLibrary, registerImage, pruneLibrary, findReusableImages, markUsed, cosine, _setEmbedImpl, _resetEmbedImpl } from "./imageLibrary.js";
+import { readLibrary, registerImage, pruneLibrary, findReusableImages, markUsed, cosine, _setEmbedImpl, _resetEmbedImpl, _defaultEmbed } from "./imageLibrary.js";
 
 let dataDir;
 let outputDir;
@@ -185,3 +185,48 @@ describe("cosine", () => {
     assert.equal(cosine([1, 0], [1, 0, 0]), 0);
   });
 });
+
+describe("the embedding request is bounded", () => {
+  // An embeddings call that never answered held the image stage (and its
+  // worker) forever: the per-image timeout only covers generation.
+  test("a request that never answers gives up and falls back, instead of hanging", async () => {
+    const saved = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = "test-key";
+    let aborted = false;
+    const hang = (_url, { signal }) => new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => { aborted = true; reject(new Error("aborted")); });
+    });
+    try {
+      const started = Date.now();
+      const vec = await _defaultEmbed("still waters", { fetchImpl: hang, timeoutMs: 40 });
+      assert.equal(vec, null, "no vector: callers fall back to keyword matching");
+      assert.ok(Date.now() - started < 1000);
+      assert.equal(aborted, true, "the request itself is cancelled, not left running");
+    } finally {
+      if (saved === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = saved;
+    }
+  });
+
+  test("a fetch that ignores cancellation still can't hold the caller", async () => {
+    const saved = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = "test-key";
+    try {
+      const vec = await _defaultEmbed("still waters", { fetchImpl: () => new Promise(() => {}), timeoutMs: 40 });
+      assert.equal(vec, null);
+    } finally {
+      if (saved === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = saved;
+    }
+  });
+
+  test("a prompt embeds normally when the service answers", async () => {
+    const saved = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = "test-key";
+    try {
+      const ok = async () => ({ ok: true, json: async () => ({ data: [{ embedding: [0.1, 0.2] }] }) });
+      assert.deepEqual(await _defaultEmbed("x", { fetchImpl: ok, timeoutMs: 1000 }), [0.1, 0.2]);
+    } finally {
+      if (saved === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = saved;
+    }
+  });
+});
+

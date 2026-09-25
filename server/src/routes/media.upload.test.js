@@ -10,6 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { spawnSync } from "node:child_process";
+import { EventEmitter } from "node:events";
 import {
   audioMimeToExt,
   getUploadLimits,
@@ -19,6 +20,8 @@ import {
   receiveUploadToFile,
   classifyBackground,
   finaliseImageFile,
+  _setGifSpawnImpl,
+  _resetGifSpawnImpl,
 } from "./media.js";
 import mediaRouter from "./media.js";
 import express from "express";
@@ -222,18 +225,18 @@ describe("classifyBackground — which images are accepted", () => {
 describe("finaliseImageFile — the bytes decide", () => {
   const write = (name, bytes) => { const f = tmp(name); fs.writeFileSync(f, bytes); return f; };
 
-  test("a real PNG keeps its name", () => {
+  test("a real PNG keeps its name", async () => {
     const f = write("a.png", PNG_BYTES);
-    const out = finaliseImageFile(f);
+    const out = await finaliseImageFile(f);
     assert.equal(out.ok, true);
     assert.equal(out.file, f);
     assert.equal(out.mime, "image/png");
     fs.rmSync(f, { force: true });
   });
 
-  test("JPEG bytes labelled PNG are renamed .jpg, so extension-based routing is right", () => {
+  test("JPEG bytes labelled PNG are renamed .jpg, so extension-based routing is right", async () => {
     const f = write("b.png", JPEG_BYTES);
-    const out = finaliseImageFile(f);
+    const out = await finaliseImageFile(f);
     assert.equal(out.ok, true);
     assert.ok(out.file.endsWith(".jpg"), out.file);
     assert.equal(fs.existsSync(f), false, "the mislabelled name is gone");
@@ -241,12 +244,12 @@ describe("finaliseImageFile — the bytes decide", () => {
     fs.rmSync(out.file, { force: true });
   });
 
-  test("a GIF becomes a real PNG still, so every render reads it as the image it is", () => {
+  test("a GIF becomes a real PNG still, so every render reads it as the image it is", async () => {
     const gif = tmp("d.gif");
     const made = spawnSync(process.env.FFMPEG_PATH?.trim() || "ffmpeg",
       ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "color=c=red:s=16x16:d=0.2", "-frames:v", "1", gif]);
     assert.equal(made.status, 0, "fixture GIF built");
-    const out = finaliseImageFile(gif);
+    const out = await finaliseImageFile(gif);
     assert.equal(out.ok, true, out.error);
     assert.ok(out.file.endsWith(".png"), out.file);
     assert.equal(out.mime, "image/png");
@@ -255,9 +258,46 @@ describe("finaliseImageFile — the bytes decide", () => {
     fs.rmSync(out.file, { force: true });
   });
 
-  test("HEIC bytes behind a .jpg name are refused and the file is deleted", () => {
+  test("a GIF converts without freezing the server: other work runs meanwhile", async () => {
+    // spawnSync held the event loop for the whole ffmpeg run, so every other
+    // request on the server waited behind one uploaded GIF.
+    const gif = tmp("e.gif");
+    const made = spawnSync(process.env.FFMPEG_PATH?.trim() || "ffmpeg",
+      ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "color=c=blue:s=16x16:d=0.2", "-frames:v", "1", gif]);
+    assert.equal(made.status, 0, "fixture GIF built");
+    let done = false;
+    const pending = finaliseImageFile(gif).then((r) => { done = true; return r; });
+    await new Promise((r) => setImmediate(r));
+    assert.equal(done, false, "the conversion is still running while other work proceeds");
+    const out = await pending;
+    assert.equal(out.ok, true, out.error);
+    fs.rmSync(out.file, { force: true });
+  });
+
+  test("a GIF conversion that hangs is stopped and refused, and nothing is left behind", async () => {
+    const gif = tmp("f.gif");
+    fs.writeFileSync(gif, Buffer.from("GIF89a" + "x".repeat(20)));
+    let killed = false;
+    _setGifSpawnImpl(() => {
+      const child = new EventEmitter();
+      child.kill = () => { killed = true; setImmediate(() => child.emit("close", null)); };
+      return child; // never closes on its own
+    });
+    try {
+      const out = await finaliseImageFile(gif, { timeoutMs: 30 });
+      assert.equal(out.ok, false);
+      assert.match(out.error, /GIF/);
+      assert.equal(killed, true, "the stuck ffmpeg is killed");
+      assert.equal(fs.existsSync(gif), false);
+      assert.equal(fs.existsSync(gif.replace(/\.gif$/, ".png")), false);
+    } finally {
+      _resetGifSpawnImpl();
+    }
+  });
+
+  test("HEIC bytes behind a .jpg name are refused and the file is deleted", async () => {
     const f = write("c.jpg", HEIC_BYTES);
-    const out = finaliseImageFile(f);
+    const out = await finaliseImageFile(f);
     assert.equal(out.ok, false);
     assert.match(out.error, /JPG or PNG/);
     assert.equal(fs.existsSync(f), false, "nothing unusable is left in outputs");

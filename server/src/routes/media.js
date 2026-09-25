@@ -66,7 +66,9 @@ function probeDurationSec(filePath) {
     "-of",
     "default=noprint_wrappers=1:nokey=1",
     filePath,
-  ], { encoding: "utf8" });
+  // A header read takes milliseconds; a malformed file must not hold the
+  // (synchronous) server for longer than this.
+  ], { encoding: "utf8", timeout: 10_000, killSignal: "SIGKILL" });
 
   if (result.status !== 0) return null;
   const value = Number(String(result.stdout || "").trim());
@@ -493,7 +495,7 @@ router.post("/upload-finalize", async (req, res) => {
       await downloadUploadToLocal(objectPath, outFile);
       cleanupGcs();
       if (cls.isImage) {
-        const img = finaliseImageFile(outFile);
+        const img = await finaliseImageFile(outFile);
         if (!img.ok) return res.status(400).json({ ok: false, error: img.error });
         return respondWithBackground(res, img.file, cls.kind, true, img.mime);
       }
@@ -629,12 +631,41 @@ function isGif(file) {
 // path treats an image as a still, and only JPEG/PNG/WebP are recognised as
 // images by extension — so a GIF becomes a real PNG of its first frame here,
 // once, rather than a GIF wearing a ".jpg" name that works only by luck.
-function gifToPngStill(file) {
+//
+// Asynchronous and bounded. spawnSync here froze the whole server for as long
+// as ffmpeg took, so one large or malformed GIF stalled every other request.
+const GIF_CONVERT_TIMEOUT_MS = 30_000;
+let _gifSpawn = spawn;
+/** Test seam: replace the ffmpeg spawn for the GIF conversion. */
+export function _setGifSpawnImpl(fn) { _gifSpawn = fn; }
+export function _resetGifSpawnImpl() { _gifSpawn = spawn; }
+
+function runFfmpegStill(args, timeoutMs) {
+  return new Promise((resolve) => {
+    const ff = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
+    let proc;
+    try {
+      proc = _gifSpawn(ff, args, { windowsHide: true });
+    } catch {
+      resolve(false);
+      return;
+    }
+    let settled = false;
+    const finish = (ok) => { if (!settled) { settled = true; clearTimeout(timer); resolve(ok); } };
+    const timer = setTimeout(() => {
+      try { proc.kill("SIGKILL"); } catch { /* already gone */ }
+      finish(false);
+    }, timeoutMs);
+    proc.on("error", () => finish(false));
+    proc.on("close", (code) => finish(code === 0));
+  });
+}
+
+async function gifToPngStill(file, { timeoutMs = GIF_CONVERT_TIMEOUT_MS } = {}) {
   const png = `${file.slice(0, file.length - path.extname(file).length)}.png`;
-  const ff = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
-  const r = spawnSync(ff, ["-hide_banner", "-loglevel", "error", "-y", "-i", file, "-frames:v", "1", png], { windowsHide: true });
+  const ok = await runFfmpegStill(["-hide_banner", "-loglevel", "error", "-y", "-i", file, "-frames:v", "1", png], timeoutMs);
   try { fs.rmSync(file, { force: true }); } catch { /* best effort */ }
-  if (r.status !== 0 || sniffImage(png) !== "png") {
+  if (!ok || sniffImage(png) !== "png") {
     try { fs.rmSync(png, { force: true }); } catch { /* best effort */ }
     return { ok: false, error: "That GIF could not be read. Save it as JPG or PNG and upload it again." };
   }
@@ -648,10 +679,11 @@ function gifToPngStill(file) {
  * flags by extension.
  *
  * @param {string} file
- * @returns {{ ok: true, file: string, mime: string } | { ok: false, error: string }}
+ * @param {{ timeoutMs?: number }} [opts] bound on a GIF conversion
+ * @returns {Promise<{ ok: true, file: string, mime: string } | { ok: false, error: string }>}
  */
-export function finaliseImageFile(file) {
-  if (isGif(file)) return gifToPngStill(file);
+export async function finaliseImageFile(file, opts = {}) {
+  if (isGif(file)) return gifToPngStill(file, opts);
   const kind = sniffImage(file);
   if (!kind) {
     try { fs.rmSync(file, { force: true }); } catch { /* best effort */ }
@@ -731,7 +763,7 @@ router.post("/upload-background", async (req, res) => {
     if (!recv.ok) return res.status(recv.status || 400).json({ ok: false, error: recv.error });
 
     if (cls.isImage) {
-      const img = finaliseImageFile(outFile);
+      const img = await finaliseImageFile(outFile);
       if (!img.ok) return res.status(400).json({ ok: false, error: img.error });
       return respondWithBackground(res, img.file, cls.kind, true, img.mime);
     }
