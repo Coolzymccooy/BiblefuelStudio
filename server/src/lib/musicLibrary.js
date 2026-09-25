@@ -47,6 +47,29 @@ export function listTracks() {
   }));
 }
 
+let durations = null;
+export function _resetBundledDurations() { durations = null; }
+
+/**
+ * `{ id: seconds | null }` for every bundled track, so the picker can show a
+ * length and a total. The files never change while the server runs, so they
+ * are probed once (on first use) and the answer is reused. `probe` is the
+ * caller's ffprobe wrapper — this module stays free of ffmpeg.
+ */
+export function bundledDurations(probe) {
+  if (!durations) {
+    durations = Promise.all(MUSIC_LIBRARY.map(async (t) => {
+      try {
+        const sec = Number(await probe(path.join(MUSIC_DIR, t.file)));
+        return [t.id, sec > 0 ? sec : null];
+      } catch {
+        return [t.id, null];
+      }
+    })).then(Object.fromEntries);
+  }
+  return durations;
+}
+
 /** Resolve a `library:<id>` ref to an existing absolute file path, else null. */
 export function resolveLibraryTrack(ref) {
   const s = String(ref || "").trim();

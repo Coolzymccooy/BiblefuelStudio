@@ -36,6 +36,13 @@ describe("music route", () => {
     assert.equal(bundled[0].licence, "pixabay-cleared");
   });
 
+  test("GET /library gives the bundled tracks their real length", async () => {
+    const r = res();
+    await handlerFor("get", "/library")({ ctx: tenant().ctx }, r);
+    const pw = r.payload.tracks.find((t) => t.id === "peaceful-worship");
+    assert.ok(pw.durationSec > 30, `expected a probed length, got ${pw.durationSec}`);
+  });
+
   test("GET /library merges the tenant's own uploads after the bundled ones", async () => {
     const { ctx, file } = tenant();
     registerTrack(ctx.dataDir, { file, label: "My Bed", licence: "unknown" });

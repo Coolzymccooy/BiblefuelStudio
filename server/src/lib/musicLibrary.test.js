@@ -1,7 +1,7 @@
-import { test, describe } from "node:test";
+import { test, describe, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import fs from "fs";
-import { MUSIC_LIBRARY, listTracks, resolveLibraryTrack, defaultTrackRef } from "./musicLibrary.js";
+import { MUSIC_LIBRARY, listTracks, resolveLibraryTrack, defaultTrackRef, bundledDurations, _resetBundledDurations } from "./musicLibrary.js";
 
 describe("musicLibrary", () => {
   test("has 23 tracks with exactly one default, all with unique ids", () => {
@@ -36,5 +36,27 @@ describe("musicLibrary", () => {
   test("defaultTrackRef points at the default track", () => {
     const def = MUSIC_LIBRARY.find((t) => t.default);
     assert.equal(defaultTrackRef(), `library:${def.id}`);
+  });
+});
+
+describe("bundledDurations", () => {
+  afterEach(() => _resetBundledDurations());
+
+  test("probes each bundled file once and caches the lengths", async () => {
+    let calls = 0;
+    const probe = async (file) => { calls += 1; return file.endsWith("01-peaceful-worship.mp3") ? 204.5 : 100; };
+    const first = await bundledDurations(probe);
+    assert.equal(first["peaceful-worship"], 204.5);
+    assert.equal(first["prayer-piano"], 100);
+    const again = await bundledDurations(probe);
+    assert.equal(again, first);
+    assert.equal(calls, MUSIC_LIBRARY.length, "second call answered from the cache");
+  });
+
+  test("a file that cannot be probed has no length, and the rest still do", async () => {
+    const probe = async (file) => { if (file.includes("prayer-piano")) throw new Error("bad file"); return 60; };
+    const d = await bundledDurations(probe);
+    assert.equal(d["prayer-piano"], null);
+    assert.equal(d["gentle-peace"], 60);
   });
 });

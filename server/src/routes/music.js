@@ -2,7 +2,7 @@ import { Router } from "express";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
-import { listTracks } from "../lib/musicLibrary.js";
+import { listTracks, bundledDurations } from "../lib/musicLibrary.js";
 import {
   readMusicLibrary, registerTrack, updateTrack, removeTrack,
 } from "../lib/musicLibraryStore.js";
@@ -38,13 +38,15 @@ function toListed(track) {
 }
 
 // Bundled first (they are the curated set), then the operator's own.
-router.get("/library", (req, res) => {
+router.get("/library", async (req, res) => {
+  let lengths = {};
+  try { lengths = await bundledDurations(probeAudioDurationSec); } catch { /* listed without lengths */ }
   const bundled = listTracks().map((t) => ({
     ...t,
     source: "bundled",
     licence: "pixabay-cleared",
     credit: BUNDLED_CREDIT,
-    durationSec: null,
+    durationSec: lengths[t.id] ?? null,
     ref: `library:${t.id}`,
   }));
   const mine = readMusicLibrary(req.ctx.dataDir).items.map(toListed);
