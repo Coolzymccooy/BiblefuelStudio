@@ -3,8 +3,9 @@ import { spawnSync } from "child_process";
 /**
  * Video encoders an Ambient render can use. "amf" is the AMD graphics chip's
  * H.264 encoder: several times faster than x264 on a laptop and it leaves the
- * CPU free, at slightly lower quality for the size. Values tuned in the spike
- * (docs/vocal-removal.md, "Measured on this laptop").
+ * CPU free, at slightly lower quality for the size. Values are initial
+ * settings to confirm in the first real run (docs/vocal-removal.md,
+ * "Measured on this laptop").
  */
 export const ENCODERS = Object.freeze(["cpu", "amf"]);
 

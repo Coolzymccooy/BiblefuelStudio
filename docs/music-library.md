@@ -81,12 +81,13 @@ All four resolvers check the ref prefix the same way and look the track up accor
 
 ## Credits
 
-Any track — uploaded or bundled — can carry an optional credit line, up to 200
-characters. It's set with the "credit" button next to a track in the music picker
-(`PATCH /api/music/:id`, stored as `credit` on the track's index entry). A credit is
+Only your own uploads carry an editable credit line, up to 200 characters. It's
+set with the "credit" button next to a track in the music picker (`PATCH
+/api/music/:id`, stored as `credit` on the track's index entry). A credit is
 free text — a name, a licence line, a link — whatever the source asks for.
 
-Bundled `library:` tracks all read `"Music from Pixabay"` by default.
+Bundled `library:` tracks always read `"Music from Pixabay"` — that PATCH route
+only reaches tracks in your own index, so a bundled track's credit is fixed.
 
 When an Ambient session's bed is built, each distinct credit (or the track's label, if
 it has no credit) is collected into the **"Music credits:"** block at the end of the

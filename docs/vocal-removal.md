@@ -83,6 +83,22 @@ derived track, not a new, independently-cleared one. Separating a song does not 
 it for YouTube use by itself; the same licence gate that applies to the original bed
 track still applies to its instrumental.
 
+## Forgetting a kept instrumental
+
+"Forget" only removes a track from the music index — it never deletes the file (see
+`docs/music-library.md`, Instrumentals). A kept instrumental is exempt from the 7-day
+sweep only while it stays referenced by the index; "Forget" it and that exemption ends
+— its file becomes eligible for the same 7-day sweep as any other leftover separation
+output, the next time a separation job starts.
+
+## First real run checklist
+
+- [ ] Fill in the timing/memory table above with real numbers (see "Timing and memory").
+- [ ] After a **Cancel**, confirm no `python.exe` from the stems venv is left running
+      (Task Manager or `Get-Process python -ErrorAction SilentlyContinue`) — a
+      separation that ignored the cancel and kept the process alive would otherwise go
+      unnoticed until it finished or something else needed that CPU.
+
 ## Hidden on the deployed server
 
 This feature only appears when `STEMS_CLI` is set. On the deployed server `STEMS_CLI`
