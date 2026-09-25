@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import { Play, Search, Square, X } from 'lucide-react';
 import type { MusicTrack } from '../../lib/musicLibraryApi';
 import { formatDuration, trackColour } from '../../lib/soundtrack';
+import { pageWindow, storedPageSize, storePageSize } from '../../lib/pagination';
+import { Pager } from '../ui/Pager';
 
 interface LibraryDrawerProps {
   onClose: () => void;
@@ -38,7 +40,12 @@ export function LibraryDrawer({ onClose, tracks, exclude, onAdd, playingId, canP
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
   const [query, setQuery] = useState('');
   // null is everything; otherwise one of the kinds below or `mood:<name>`.
-  const [view, setView] = useState<string | null>(null);
+  const [view, setViewState] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(storedPageSize);
+  // A new search or shelf starts from its first page.
+  const setView = (v: string | null) => { setViewState(v); setPage(1); };
+  const search = (q: string) => { setQuery(q); setPage(1); };
   const panelRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -73,6 +80,13 @@ export function LibraryDrawer({ onClose, tracks, exclude, onAdd, playingId, canP
   const shown = offered.filter((t) => inView(t)
     && (!q || t.label.toLowerCase().includes(q) || (t.credit || '').toLowerCase().includes(q)));
   const count = offered.filter((t) => picked.has(t.ref)).length;
+  const w = pageWindow(shown.length, page, pageSize);
+  const pageRows = shown.slice(w.start, w.end);
+  const changeSize = (size: number) => {
+    setPage(Math.floor(w.start / size) + 1);
+    setPageSize(size);
+    storePageSize(size);
+  };
 
   const toggle = (ref: string) => setPicked((prev) => {
     const next = new Set(prev);
@@ -106,7 +120,7 @@ export function LibraryDrawer({ onClose, tracks, exclude, onAdd, playingId, canP
         <div className="space-y-2 px-4 py-3">
           <label className="flex items-center gap-2 rounded-lg border border-[rgba(216,184,120,0.25)] bg-bf-card px-2.5 py-1.5">
             <Search size={13} className="text-bf-muted" />
-            <input ref={searchRef} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search title or credit" aria-label="Search music" className="w-full bg-transparent text-sm text-bf-cream outline-none placeholder:text-bf-faint" />
+            <input ref={searchRef} value={query} onChange={(e) => search(e.target.value)} placeholder="Search title or credit" aria-label="Search music" className="w-full bg-transparent text-sm text-bf-cream outline-none placeholder:text-bf-faint" />
           </label>
           {(moods.length > 1 || kinds.length > 0) && (
             <div className="flex flex-wrap gap-1.5" role="group" aria-label="Show">
@@ -135,7 +149,7 @@ export function LibraryDrawer({ onClose, tracks, exclude, onAdd, playingId, canP
           {offered.length === 0 && <p className="px-2 py-6 text-center text-sm text-bf-muted">Every library track is already in the list.</p>}
           {offered.length > 0 && shown.length === 0 && <p className="px-2 py-6 text-center text-sm text-bf-muted">Nothing matches.</p>}
           <ul className="space-y-0.5">
-            {shown.map((t) => {
+            {pageRows.map((t) => {
               const playing = playingId === t.ref;
               const playable = canPreview(t);
               return (
@@ -161,6 +175,9 @@ export function LibraryDrawer({ onClose, tracks, exclude, onAdd, playingId, canP
               );
             })}
           </ul>
+          {shown.length > 0 && (
+            <Pager label="library" total={shown.length} window={w} pageSize={pageSize} onPage={setPage} onPageSize={changeSize} />
+          )}
         </div>
 
         <div className="flex items-center gap-2 border-t border-[rgba(216,184,120,0.18)] px-4 py-3">
