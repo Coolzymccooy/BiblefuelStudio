@@ -70,7 +70,7 @@ export function InstrumentalDialog({ track, onClose, onSaved, onUse, pollMs = 20
         const message = (e as Error).message || 'Failed to check vocal removal progress';
         setJob((j) => (j
           ? { ...j, status: 'error', error: message }
-          : { jobId, status: 'error', percent: 0, error: message, sourceRef: '', sourcePreview: null, resultFile: null }));
+          : { jobId, status: 'error', percent: 0, error: message, sourceRef: '', sourcePreview: null, resultFile: null, track: null }));
       }
     };
     tick();
