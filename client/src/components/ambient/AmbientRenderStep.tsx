@@ -103,16 +103,11 @@ function AmbientDonePanel({ project, refresh }: { project: AmbientProject; refre
   // Newest first; each can take the thumbnail designed below without a re-upload.
   const existingVideos = [...published].reverse().map((p) => ({ videoId: p.videoId, label: publishedLabel(p, now) }));
 
-  // The upload itself already succeeded; this only notes it in the history.
-  const notePublished = async (r: YoutubePublishResult, sent: { privacyStatus: YoutubePrivacy; publishAt: string }) => {
-    try {
-      await ambientApi.recordPublished(project.projectId, {
-        videoId: r.videoId, privacyStatus: sent.privacyStatus, publishAt: sent.publishAt || undefined,
-      });
-      refresh();
-    } catch {
-      toast.error('Uploaded, but it could not be added to this session’s history.');
-    }
+  // The server notes the upload on this session itself (`record` below), so
+  // the history is right even if this page was closed during the upload.
+  const notePublished = (r: YoutubePublishResult) => {
+    if (r.recorded === false) toast.error('Uploaded, but it could not be added to this session’s history.');
+    refresh();
   };
 
   const token = api.getToken();
@@ -139,6 +134,7 @@ function AmbientDonePanel({ project, refresh }: { project: AmbientProject; refre
           existingVideos={existingVideos}
           chapters={chapters.length >= 3 ? chapters : undefined}
           onPublished={notePublished}
+          record={{ ambientProjectId: project.projectId }}
         />
       </div>
     </div>

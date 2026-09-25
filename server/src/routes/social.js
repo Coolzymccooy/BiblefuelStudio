@@ -18,6 +18,8 @@ import { validateYoutubeMetadata, buildYoutubeDescription } from "../lib/social/
 import { uploadToYoutube, setYoutubeThumbnail } from "../lib/social/youtubeUpload.js";
 import { resolveThumbnail } from "../lib/social/thumbnailPath.js";
 import { prepareThumbnail } from "../lib/social/youtubeThumbnail.js";
+import { startPublishJob, getPublishJob, _resetPublishJobs as resetPublishJobs } from "../lib/social/youtubePublishJobs.js";
+import { readProject, writeProject, publishedEntry, withPublished } from "../lib/ambient/projectStore.js";
 import os from "os";
 import { confineToDir } from "../lib/confinePath.js";
 // DATA_DIR is used ONLY by the boot-time cron rehydrator below, which operates
@@ -135,7 +137,14 @@ async function resolveVideoInputForUpload(videoUrl, req) {
   // Stream to disk. A 60-minute 1080p file is gigabytes; buffering it with
   // arrayBuffer() took the whole process down.
   const source = typeof resp.body.pipe === "function" ? resp.body : Readable.fromWeb(resp.body);
-  await pipeline(source, fs.createWriteStream(outFile));
+  try {
+    await pipeline(source, fs.createWriteStream(outFile));
+  } catch (e) {
+    // A download that broke half way left a partial multi-gigabyte file in
+    // the account's outputs, with nothing to ever remove it.
+    try { fs.unlinkSync(outFile); } catch { /* never written */ }
+    throw e;
+  }
   if (!fs.statSync(outFile).size) { try { fs.unlinkSync(outFile); } catch {} throw new Error("Fetched video is empty"); }
 
   return {
@@ -468,8 +477,13 @@ function thumbnailText({ thumbnailTitle, thumbnailTagline }, title) {
 
 const THUMBNAIL_PLAIN_WARNING = "The title couldn't be drawn on this picture, so it went up without it.";
 
-async function postToYoutube(payload, req, store) {
+/**
+ * Everything about a YouTube post that can be checked without the upload:
+ * credentials, metadata, the thumbnail's path. Throws on the first problem.
+ */
+function checkYoutubePost(payload, req, store) {
   const { caption, videoUrl, title, description, tags, categoryId, privacyStatus, publishAt, thumbnailPath, chapters, links, hashtags } = payload || {};
+  if (!String(videoUrl || "").trim()) throw new Error("videoUrl required");
   const credentials = youtubeCredentials(store);
 
   // Timeline/Render shares send only a caption: keep using its first line as
@@ -491,8 +505,12 @@ async function postToYoutube(payload, req, store) {
   // multi-gigabyte download.
   const thumbLocal = thumbnailPath ? thumbnailSource(thumbnailPath, req) : undefined;
   const drawn = thumbnailText(payload || {}, validated.value.title);
+  return { credentials, validated, thumbLocal, drawn };
+}
 
-  const upload = await resolveVideoInputForUpload(videoUrl, req);
+async function postToYoutube(payload, req, store, checked = checkYoutubePost(payload, req, store)) {
+  const { credentials, validated, thumbLocal, drawn } = checked;
+  const upload = await resolveVideoInputForUpload(payload?.videoUrl, req);
   // A 1280x720 JPEG under YouTube's 2 MB limit, with the title on it when
   // asked. Null when the file isn't a picture: the original goes instead and
   // YouTube's answer is reported as before.
@@ -862,6 +880,75 @@ router.post("/post", async (req, res) => {
     res.status(status).json({ ok: false, error: message });
   }
 });
+
+// =====================================================================
+// YouTube publishing as a job: POST starts it and answers at once; the page
+// reads it back with GET until it is done.
+//
+//   POST /api/social/youtube/publish         → { ok, jobId, joined }
+//   GET  /api/social/youtube/publish/:jobId  → { ok, job }
+//
+// `record: { ambientProjectId }` has the server note the video on that
+// finished ambient session when the upload completes, so the history is
+// right even if the page was closed half way.
+// =====================================================================
+
+/** The finished ambient session a publish may record on, or an Error. */
+function ambientRecordTarget(record, req) {
+  if (!record) return null;
+  const id = String(record.ambientProjectId || "");
+  const project = readProject(req.ctx.dataDir, id);
+  if (!project) throw new Error("That ambient session was not found");
+  if (project.status !== "done") throw new Error("Only a finished ambient session can be published");
+  return id;
+}
+
+function noteAmbientPublished(dataDir, projectId, result, payload) {
+  const entry = publishedEntry({ videoId: result?.videoId, privacyStatus: payload?.privacyStatus, publishAt: payload?.publishAt });
+  const project = entry ? readProject(dataDir, projectId) : null;
+  if (!project) return false;
+  writeProject(dataDir, withPublished(project, entry));
+  return true;
+}
+
+router.post("/youtube/publish", (req, res) => {
+  const payload = { ...(req.body || {}), destination: "youtube" };
+  let checked;
+  let ambientId;
+  try {
+    // The publish panel always sends a title; only Timeline shares through
+    // POST /post fall back to the caption's first line.
+    if (!String(payload.title || "").trim()) throw new Error("Title is required");
+    const store = readSocialStore(req.ctx?.dataDir || DATA_DIR);
+    checked = checkYoutubePost(payload, req, store);
+    ambientId = ambientRecordTarget(payload.record, req);
+  } catch (e) {
+    return res.status(400).json({ ok: false, error: String(e?.message || e) });
+  }
+  const dataDir = req.ctx?.dataDir || DATA_DIR;
+  const { job, joined } = startPublishJob({
+    userId: req.ctx?.userId,
+    key: String(payload.videoUrl).trim(),
+    run: async () => {
+      const store = readSocialStore(dataDir);
+      const result = await postToYoutube(payload, req, store, checked);
+      if (!ambientId) return result;
+      let recorded = false;
+      try { recorded = noteAmbientPublished(dataDir, ambientId, result, payload); } catch { recorded = false; }
+      return { ...result, recorded };
+    },
+  });
+  return res.json({ ok: true, jobId: job.jobId, joined });
+});
+
+router.get("/youtube/publish/:jobId", (req, res) => {
+  const job = getPublishJob(req.ctx?.userId, req.params.jobId);
+  if (!job) return res.status(404).json({ ok: false, error: "No such upload" });
+  return res.json({ ok: true, job });
+});
+
+/** Test seam. */
+export function _resetPublishJobs() { resetPublishJobs(); }
 
 // =====================================================================
 // Thumbnails on their own: see one before publishing, or put one on a video
