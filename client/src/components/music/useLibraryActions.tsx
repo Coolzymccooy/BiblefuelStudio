@@ -138,7 +138,7 @@ export function useLibraryActions() {
           type="button"
           onClick={() => clearLicence(t.id, t.label)}
           title="This track's licence is not recorded. Click to mark it cleared. On a long music-led video a Content ID claim takes the revenue for the whole video."
-          className="shrink-0 rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-600 hover:bg-amber-500/20"
+          className="shrink-0 rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-bf-warn hover:bg-amber-500/20"
         >
           licence?
         </button>
@@ -159,7 +159,7 @@ export function useLibraryActions() {
           onClick={() => setInstrumentalFor(t)}
           aria-label={`Remove vocals from ${t.label}`}
           title="Make an instrumental version of this track (removes the singing)"
-          className="inline-flex shrink-0 items-center gap-1 rounded border border-bf-gold/40 px-1.5 py-0.5 text-[10px] text-bf-gold hover:bg-bf-card2"
+          className="inline-flex shrink-0 items-center gap-1 rounded border border-current px-1.5 py-0.5 text-[10px] text-bf-gold hover:bg-bf-card2"
         >
           <MicOff size={10} /> Remove vocals
         </button>

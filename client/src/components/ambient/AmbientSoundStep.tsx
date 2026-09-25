@@ -99,7 +99,7 @@ export function AmbientSoundStep({ project, busy, setBusy, refresh }: AmbientSou
 
   const assembleValue: MusicValue = { path: bed.trackRefs[0] ?? null, paths: bed.trackRefs, volume: bed.volume };
   const fileValue: MusicValue = { path: bed.filePath, volume: bed.volume };
-  const barLabel = 'text-[10px] font-semibold uppercase tracking-[0.1em] text-bf-faint';
+  const barLabel = 'text-[10px] font-semibold uppercase tracking-[0.1em] text-bf-muted';
 
   // Bed source, order and crossfade: one bar above the tracklist rather than
   // a column of boxes, so the music itself gets the page.
@@ -148,7 +148,7 @@ export function AmbientSoundStep({ project, busy, setBusy, refresh }: AmbientSou
   return (
     <div className="space-y-4">
       {uncleared && uncleared.length > 0 && (
-        <div className="space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-600">
+        <div className="space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm text-bf-warn">
           <div className="font-medium">
             {uncleared.length === 1 ? 'This track has' : `${uncleared.length} tracks have`} an unrecorded licence.
           </div>
@@ -177,6 +177,7 @@ export function AmbientSoundStep({ project, busy, setBusy, refresh }: AmbientSou
           multiple
           variant="full"
           reorderable={bed.order === 'fixed'}
+          shuffle={bed.order !== 'fixed'}
           targetSec={project.targetSec}
           crossfadeSec={bed.crossfadeSec}
           toolbar={toolbar}

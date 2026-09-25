@@ -23,6 +23,8 @@ interface MusicPickerProps {
   multiple?: boolean;
   /** Fixed playback order: chosen tracks can be dragged and moved. */
   reorderable?: boolean;
+  /** Multiple mode only: the list is a pool played in random order. */
+  shuffle?: boolean;
   /** Host timeline: put the chosen track on the Music bed lane. */
   onInsertToLane?: (path: string) => void;
   /** Multiple mode only: the page-wide album layout, or compact for a side panel. */
@@ -43,6 +45,7 @@ export function MusicPicker(props: MusicPickerProps) {
         onChange={props.onChange}
         busy={props.busy}
         reorderable={Boolean(props.reorderable)}
+        shuffle={Boolean(props.shuffle)}
         variant={props.variant ?? 'compact'}
         targetSec={props.targetSec}
         crossfadeSec={props.crossfadeSec}
@@ -74,7 +77,7 @@ function SingleMusicPicker({ value, onChange, busy, onInsertToLane }: MusicPicke
   // Every library track (bundled + this account's uploads), so an unrecorded
   // licence can be badged and a saved upload can be forgotten.
   const libraryList = tracks.length > 0 && (
-    <ul className="max-h-32 space-y-1 overflow-y-auto rounded-md border border-[rgba(216,184,120,0.18)] bg-bf-card/40 p-1.5">
+    <ul className="max-h-32 space-y-1 overflow-y-auto rounded-md border border-[rgba(216,184,120,0.18)] bg-bf-card p-1.5">
       {tracks.map((t) => (
         <li key={t.id} className="flex items-center gap-1.5 px-1 py-0.5">
           <span className="flex-1 truncate">{t.label}</span>
@@ -86,7 +89,7 @@ function SingleMusicPicker({ value, onChange, busy, onInsertToLane }: MusicPicke
 
   return (
     <DropZone
-      className="space-y-2 rounded-lg border border-[rgba(216,184,120,0.18)] bg-bf-card/40 p-3 text-xs text-bf-sub"
+      className="space-y-2 rounded-lg border border-[rgba(216,184,120,0.18)] bg-bf-card p-3 text-xs text-bf-sub"
       onFiles={(files) => { if (files[0]) upload(files[0]); }}
       accept={AUDIO_ACCEPT_LIST}
       multiple={false}
@@ -172,7 +175,7 @@ function SingleMusicPicker({ value, onChange, busy, onInsertToLane }: MusicPicke
       {value.path && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
           <label className="inline-flex min-w-0 flex-1 items-center gap-1" title="Music volume under the voice">Vol
-            <input type="range" min={0} max={1} step={0.05} value={value.volume} onChange={(e) => onChange({ ...value, autoDuck, volume: Number(e.target.value) })} className="min-w-0 flex-1 accent-[#755c2a]" />
+            <input type="range" min={0} max={1} step={0.05} value={value.volume} onChange={(e) => onChange({ ...value, autoDuck, volume: Number(e.target.value) })} className="min-w-0 flex-1 accent-bf-gold" />
           </label>
           <label className="inline-flex items-center gap-1" title="Lower the music automatically while the voice speaks"><input type="checkbox" checked={autoDuck} aria-label="autoduck" onChange={(e) => onChange({ ...value, autoDuck: e.target.checked })} /> Autoduck</label>
           {onInsertToLane && (

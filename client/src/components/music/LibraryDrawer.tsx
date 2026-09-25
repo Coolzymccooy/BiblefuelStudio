@@ -1,11 +1,10 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Play, Search, Square, X } from 'lucide-react';
 import type { MusicTrack } from '../../lib/musicLibraryApi';
 import { formatDuration, trackColour } from '../../lib/soundtrack';
 
 interface LibraryDrawerProps {
-  open: boolean;
   onClose: () => void;
   tracks: readonly MusicTrack[];
   /** Refs already in the list; they aren't offered again. */
@@ -20,22 +19,38 @@ interface LibraryDrawerProps {
 
 const lengthSuffix = (sec: number | null) => (Number(sec) > 0 ? ` · ${formatDuration(sec)}` : '');
 
+const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])';
+
 /**
  * The library as a side drawer: search, filter by mood, preview, tick several
  * and add them in library order. A two-hour bed wants a dozen or more tracks,
- * so picking is many-at-once.
+ * so picking is many-at-once. Mounted only while open, so each opening starts
+ * clean; it is modal — focus moves in, Tab stays in, and closing hands focus
+ * back to whatever opened it.
  */
-export function LibraryDrawer({ open, onClose, tracks, exclude, onAdd, playingId, canPreview, onPreview, renderActions }: LibraryDrawerProps) {
+export function LibraryDrawer({ onClose, tracks, exclude, onAdd, playingId, canPreview, onPreview, renderActions }: LibraryDrawerProps) {
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
   const [query, setQuery] = useState('');
   const [mood, setMood] = useState<string | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (!open) { setPicked(new Set()); setQuery(''); setMood(null); return undefined; }
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+    const opener = document.activeElement as HTMLElement | null;
+    searchRef.current?.focus();
+    return () => { opener?.focus?.(); };
+  }, []);
+
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Escape') { e.stopPropagation(); onClose(); return; }
+    if (e.key !== 'Tab' || !panelRef.current) return;
+    const items = [...panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE)];
+    if (items.length === 0) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  };
 
   const offered = useMemo(() => tracks.filter((t) => !exclude.includes(t.ref)), [tracks, exclude]);
   const moods = useMemo(() => [...new Set(offered.map((t) => t.mood).filter(Boolean))].sort(), [offered]);
@@ -43,8 +58,6 @@ export function LibraryDrawer({ open, onClose, tracks, exclude, onAdd, playingId
   const shown = offered.filter((t) => (!mood || t.mood === mood)
     && (!q || t.label.toLowerCase().includes(q) || (t.credit || '').toLowerCase().includes(q)));
   const count = offered.filter((t) => picked.has(t.ref)).length;
-
-  if (!open) return null;
 
   const toggle = (ref: string) => setPicked((prev) => {
     const next = new Set(prev);
@@ -65,8 +78,8 @@ export function LibraryDrawer({ open, onClose, tracks, exclude, onAdd, playingId
   // the window.
   return createPortal(
     <div className="fixed inset-0 z-50 flex justify-end">
-      <button type="button" aria-label="Close the library" onClick={onClose} className="absolute inset-0 bg-black/40" />
-      <div role="dialog" aria-label="Music library" className="relative flex h-full w-full max-w-md flex-col border-l border-[rgba(216,184,120,0.25)] bg-bf-bg shadow-2xl">
+      <div aria-hidden="true" onClick={onClose} className="absolute inset-0 bg-black/40" />
+      <div ref={panelRef} role="dialog" aria-modal="true" aria-label="Music library" onKeyDown={onKeyDown} className="relative flex h-full w-full max-w-md flex-col border-l border-[rgba(216,184,120,0.25)] bg-bf-bg shadow-2xl">
         <div className="flex items-center justify-between border-b border-[rgba(216,184,120,0.18)] px-4 py-3">
           <div>
             <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-bf-gold">Library</div>
@@ -78,7 +91,7 @@ export function LibraryDrawer({ open, onClose, tracks, exclude, onAdd, playingId
         <div className="space-y-2 px-4 py-3">
           <label className="flex items-center gap-2 rounded-lg border border-[rgba(216,184,120,0.25)] bg-bf-card px-2.5 py-1.5">
             <Search size={13} className="text-bf-muted" />
-            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search title or credit" aria-label="Search music" className="w-full bg-transparent text-sm text-bf-cream outline-none placeholder:text-bf-faint" />
+            <input ref={searchRef} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search title or credit" aria-label="Search music" className="w-full bg-transparent text-sm text-bf-cream outline-none placeholder:text-bf-faint" />
           </label>
           {moods.length > 1 && (
             <div className="flex flex-wrap gap-1.5" role="group" aria-label="Mood">
@@ -103,13 +116,13 @@ export function LibraryDrawer({ open, onClose, tracks, exclude, onAdd, playingId
               const playable = canPreview(t);
               return (
                 <li key={t.ref} className={`flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-bf-card2 ${picked.has(t.ref) ? 'bg-bf-card2' : ''}`}>
-                  <input type="checkbox" checked={picked.has(t.ref)} onChange={() => toggle(t.ref)} aria-label={`${t.label}${lengthSuffix(t.durationSec)}`} className="accent-[#755c2a]" />
+                  <input type="checkbox" checked={picked.has(t.ref)} onChange={() => toggle(t.ref)} aria-label={`${t.label}${lengthSuffix(t.durationSec)}`} className="accent-bf-gold" />
                   <button
                     type="button"
                     disabled={!playable}
                     onClick={() => onPreview(t)}
                     aria-label={playing ? `Stop ${t.label}` : `Preview ${t.label}`}
-                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-white disabled:opacity-60"
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[#fff] disabled:opacity-60"
                     style={{ backgroundColor: trackColour(t.label) }}
                   >
                     {playing ? <Square size={11} /> : <Play size={11} />}
@@ -127,7 +140,7 @@ export function LibraryDrawer({ open, onClose, tracks, exclude, onAdd, playingId
         </div>
 
         <div className="flex items-center gap-2 border-t border-[rgba(216,184,120,0.18)] px-4 py-3">
-          <button type="button" disabled={count === 0} onClick={add} className="rounded-lg bg-bf-gold px-3 py-1.5 text-xs font-semibold text-bf-bg disabled:opacity-40">
+          <button type="button" disabled={count === 0} onClick={add} className="rounded-lg bg-bf-gold px-3 py-1.5 text-xs font-semibold text-bf-bg disabled:cursor-not-allowed disabled:bg-bf-card2 disabled:text-bf-muted disabled:hover:opacity-100">
             Add {count} {count === 1 ? 'track' : 'tracks'}
           </button>
           <button type="button" onClick={onClose} className="px-2 py-1 text-xs text-bf-muted hover:text-bf-cream">Cancel</button>

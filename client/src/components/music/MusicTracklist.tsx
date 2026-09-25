@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { AUDIO_ACCEPT, AUDIO_ACCEPT_LIST } from '../../lib/audioAccept';
 import { soundtrackStats, trackColour } from '../../lib/soundtrack';
@@ -20,6 +20,8 @@ export interface MusicTracklistProps {
   busy: boolean;
   /** Fixed playing order: rows can be dragged and moved. */
   reorderable: boolean;
+  /** Played in a random order, so the numbers are not the order. */
+  shuffle: boolean;
   /** 'full' is the page-wide album layout; 'compact' fits a side panel. */
   variant: TrackListVariant;
   /** Video length, for the "repeats N×" figure. */
@@ -41,7 +43,7 @@ function move<T>(list: readonly T[], from: number, to: number): T[] {
  * An ordered music list (played back-to-back, then looped): the soundtrack
  * header, the tracklist, and the library drawer to fill it.
  */
-export function MusicTracklist({ value, onChange, busy, reorderable, variant, targetSec, crossfadeSec = 0, toolbar }: MusicTracklistProps) {
+export function MusicTracklist({ value, onChange, busy, reorderable, shuffle, variant, targetSec, crossfadeSec = 0, toolbar }: MusicTracklistProps) {
   const lib = useLibraryActions();
   const player = useTrackPreview();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -53,16 +55,24 @@ export function MusicTracklist({ value, onChange, busy, reorderable, variant, ta
   // Falls back to the single `path` for callers that haven't migrated.
   // Emitting keeps `path` in sync with `paths[0]`.
   const paths = value.paths ?? (value.path ? [value.path] : []);
-  const emitPaths = (next: string[]) =>
+  // The list as it is NOW: an upload or a library save can finish after the
+  // operator has added, removed or moved tracks, and must build on that.
+  const latest = useRef(paths);
+  useEffect(() => { latest.current = paths; });
+  const emitPaths = (next: string[]) => {
+    latest.current = next;
     onChange({ path: next[0] ?? null, paths: next, volume: value.volume ?? 0.3, autoDuck });
+  };
 
   // Put `to` where `from` is (or add it if `from` isn't chosen).
-  const swapRef = (from: string, to: string) =>
-    emitPaths(paths.includes(from) ? paths.map((p) => (p === from ? to : p)) : [...paths, to]);
+  const swapRef = (from: string, to: string) => {
+    const now = latest.current;
+    emitPaths(now.includes(from) ? now.map((p) => (p === from ? to : p)) : [...now, to]);
+  };
 
   const upload = async (file: File) => {
     const ref = await lib.uploadFile(file);
-    if (ref) emitPaths([...paths, ref]);
+    if (ref) emitPaths([...latest.current, ref]);
   };
 
   // Keys stay stable when rows move, and a track chosen twice still gets two.
@@ -133,7 +143,7 @@ export function MusicTracklist({ value, onChange, busy, reorderable, variant, ta
   const volumeControls = (
     <>
       <label className="inline-flex items-center gap-1.5 text-bf-sub">Volume
-        <input type="range" min={0} max={1} step={0.05} value={value.volume} onChange={(e) => onChange({ ...value, paths, autoDuck, volume: Number(e.target.value) })} className="w-24 accent-[#755c2a]" />
+        <input type="range" min={0} max={1} step={0.05} value={value.volume} onChange={(e) => onChange({ ...value, paths, autoDuck, volume: Number(e.target.value) })} className="w-24 accent-bf-gold" />
       </label>
       <label className="inline-flex items-center gap-1 text-bf-sub" title="Lower the music automatically while the voice speaks">
         <input type="checkbox" checked={autoDuck} aria-label="autoduck" onChange={(e) => onChange({ ...value, paths, autoDuck: e.target.checked })} /> Autoduck
@@ -146,7 +156,7 @@ export function MusicTracklist({ value, onChange, busy, reorderable, variant, ta
       {cleared > 0 && <span className="text-bf-success">✓ {cleared} cleared</span>}
       {cleared > 0 && missing > 0 && <span className="text-bf-faint"> · </span>}
       {missing > 0 && (
-        <button type="button" onClick={jumpToMissing} className="text-amber-600 hover:underline">
+        <button type="button" onClick={jumpToMissing} className="text-bf-warn hover:underline">
           {missing} {missing === 1 ? 'licence' : 'licences'} missing
         </button>
       )}
@@ -155,7 +165,7 @@ export function MusicTracklist({ value, onChange, busy, reorderable, variant, ta
 
   return (
     <DropZone
-      className={`${full ? 'space-y-3' : 'space-y-2 rounded-lg border border-[rgba(216,184,120,0.18)] bg-bf-card/40 p-3'} text-xs text-bf-sub`}
+      className={`${full ? 'space-y-3' : 'space-y-2 rounded-lg border border-[rgba(216,184,120,0.18)] bg-bf-card p-3'} text-xs text-bf-sub`}
       onFiles={(files) => { if (files[0]) upload(files[0]); }}
       accept={AUDIO_ACCEPT_LIST}
       multiple={false}
@@ -170,14 +180,14 @@ export function MusicTracklist({ value, onChange, busy, reorderable, variant, ta
         targetSec={targetSec}
         trackCount={rows.length}
         segments={segments}
-        shuffle={!reorderable}
+        shuffle={shuffle}
         playingAll={player.playingAll}
         canPlayAll={rows.some((r) => r.canPlay)}
         onPlayAll={() => player.playAll(rows.map((r, i) => ({ id: r.key, url: urlAt(i) })))}
         onAddLibrary={() => setDrawerOpen(true)}
         onUpload={() => inputRef.current?.click()}
         uploading={lib.isUploading}
-        disabled={busy}
+        disabled={busy || lib.isUploading}
       />
 
       {full && (
@@ -215,8 +225,7 @@ export function MusicTracklist({ value, onChange, busy, reorderable, variant, ta
         </div>
       )}
 
-      <LibraryDrawer
-        open={drawerOpen}
+      {drawerOpen && <LibraryDrawer
         onClose={() => setDrawerOpen(false)}
         tracks={lib.tracks}
         exclude={paths}
@@ -225,7 +234,7 @@ export function MusicTracklist({ value, onChange, busy, reorderable, variant, ta
         canPreview={(t: MusicTrack) => Boolean(trackAudioUrl(t))}
         onPreview={(t: MusicTrack) => player.preview({ id: t.ref, url: trackAudioUrl(t) })}
         renderActions={lib.manageControls}
-      />
+      />}
 
       {lib.instrumentalFor && createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">

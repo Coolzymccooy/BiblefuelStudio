@@ -27,8 +27,13 @@ beforeEach(() => {
 describe('InstrumentalDialog', () => {
   it('runs, shows progress, then says it is already saved and previews both versions', async () => {
     vi.spyOn(lib, 'startInstrumental').mockResolvedValue('j1');
+    // Hold the job at "running" until the test has seen it: with a 1 ms poll
+    // it would otherwise finish before a loaded machine renders the 40%.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => { release = r; });
     vi.spyOn(lib, 'getInstrumental')
       .mockResolvedValueOnce(job('running', { percent: 40 }))
+      .mockImplementationOnce(async () => { await gate; return job('running', { percent: 40 }); })
       .mockResolvedValue(job('done', { percent: 100, resultFile: 'instrumental-j1.m4a', track: saved }));
     const onSaved = vi.fn();
     render(<InstrumentalDialog track={track} onClose={() => {}} onSaved={onSaved} pollMs={1} />);
@@ -36,6 +41,7 @@ describe('InstrumentalDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: /remove vocals/i }));
     expect(lib.startInstrumental).toHaveBeenCalledWith('t1', 'fast');
     await screen.findByText(/40%/);
+    release();
     await screen.findByLabelText(/instrumental preview/i);
     expect(screen.getByLabelText(/original preview/i)).toBeInTheDocument();
     expect(screen.getByText(/saved to your library as "Song \(instrumental\)"/i)).toBeInTheDocument();

@@ -39,9 +39,13 @@ function toListed(track) {
 }
 
 // Bundled first (they are the curated set), then the operator's own.
+let _durationProbe = probeAudioDurationSec;
+export function _setDurationProbe(fn) { _durationProbe = fn; }
+export function _resetDurationProbe() { _durationProbe = probeAudioDurationSec; }
+
 router.get("/library", async (req, res) => {
   let lengths = {};
-  try { lengths = await bundledDurations(probeAudioDurationSec); } catch { /* listed without lengths */ }
+  try { lengths = await bundledDurations(_durationProbe); } catch { /* listed without lengths */ }
   const bundled = listTracks().map((t) => ({
     ...t,
     source: "bundled",

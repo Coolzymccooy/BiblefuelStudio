@@ -3,6 +3,9 @@ import { CSS } from '@dnd-kit/utilities';
 import { GripVertical, Play, Square } from 'lucide-react';
 import { formatDuration } from '../../lib/soundtrack';
 import { RowMenu, type RowMenuItem } from './RowMenu';
+import { trackGridCols, type TrackListVariant } from './trackGrid';
+
+export type { TrackListVariant };
 
 export type RowLicence = 'cleared' | 'missing' | null;
 
@@ -19,25 +22,16 @@ export interface TrackRowData {
   canPlay: boolean;
 }
 
-export type TrackListVariant = 'full' | 'compact';
-
 interface TrackRowProps {
   row: TrackRowData;
   index: number;
   variant: TrackListVariant;
   draggable: boolean;
-  /** Shuffle mode: the position is not the playing order. */
-  dimNumber: boolean;
   playing: boolean;
   onPreview: () => void;
   onLicenceClick?: () => void;
   menu: RowMenuItem[];
 }
-
-const FULL_COLS = 'grid-cols-[16px_32px_minmax(0,1fr)_auto_44px_28px] md:grid-cols-[16px_22px_36px_minmax(0,1fr)_minmax(0,200px)_88px_56px_28px]';
-const COMPACT_COLS = 'grid-cols-[14px_30px_minmax(0,1fr)_auto_38px_26px]';
-
-export const trackGridCols = (variant: TrackListVariant) => (variant === 'full' ? FULL_COLS : COMPACT_COLS);
 
 function LicenceBadge({ licence, variant, onClick }: { licence: RowLicence; variant: TrackListVariant; onClick?: () => void }) {
   if (licence === 'missing') {
@@ -46,14 +40,14 @@ function LicenceBadge({ licence, variant, onClick }: { licence: RowLicence; vari
         type="button"
         onClick={onClick}
         title="This track's licence is not recorded. Click to mark it cleared. On a long music-led video a Content ID claim takes the revenue for the whole video."
-        className="justify-self-start whitespace-nowrap rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-600 hover:bg-amber-500/20"
+        className="justify-self-start whitespace-nowrap rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-bf-warn hover:bg-amber-500/20"
       >
         licence?
       </button>
     );
   }
   if (licence === 'cleared' && variant === 'full') {
-    return <span className="justify-self-start whitespace-nowrap rounded-full border border-bf-success/40 px-2 py-0.5 text-[10px] text-bf-success">cleared</span>;
+    return <span className="justify-self-start whitespace-nowrap rounded-full border border-current px-2 py-0.5 text-[10px] text-bf-success">cleared</span>;
   }
   return <span />;
 }
@@ -62,7 +56,7 @@ function LicenceBadge({ licence, variant, onClick }: { licence: RowLicence; vari
  * One track in a music list. The coloured tile previews it; the grip drags
  * it (mouse, touch or keyboard) when the list keeps a fixed order.
  */
-export function TrackRow({ row, index, variant, draggable, dimNumber, playing, onPreview, onLicenceClick, menu }: TrackRowProps) {
+export function TrackRow({ row, index, variant, draggable, playing, onPreview, onLicenceClick, menu }: TrackRowProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: row.key, disabled: !draggable });
   const style = { transform: CSS.Transform.toString(transform), transition };
   const full = variant === 'full';
@@ -87,7 +81,7 @@ export function TrackRow({ row, index, variant, draggable, dimNumber, playing, o
       ) : <span />}
 
       {full && (
-        <span className={`hidden text-right font-mono text-[11px] md:block ${dimNumber ? 'text-bf-faint/50' : 'text-bf-faint'}`}>{index + 1}</span>
+        <span className={`hidden text-right font-mono text-[11px] md:block text-bf-muted`}>{index + 1}</span>
       )}
 
       <button
@@ -96,7 +90,7 @@ export function TrackRow({ row, index, variant, draggable, dimNumber, playing, o
         disabled={!row.canPlay}
         aria-label={playing ? `Stop ${row.label}` : `Preview ${row.label}`}
         title={row.canPlay ? (playing ? 'Stop' : 'Preview') : 'No preview for this track'}
-        className={`group relative flex ${tile} shrink-0 items-center justify-center rounded-md font-mono text-white shadow-sm disabled:cursor-default`}
+        className={`group relative flex ${tile} shrink-0 items-center justify-center rounded-md font-mono text-[#fff] shadow-sm disabled:cursor-default`}
         style={{ backgroundColor: row.colour }}
       >
         <span className={row.canPlay ? 'group-hover:hidden' : ''}>{playing ? <Square size={12} /> : (full ? '♪' : index + 1)}</span>

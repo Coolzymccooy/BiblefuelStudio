@@ -51,8 +51,11 @@ export function soundtrackStats({ durations, crossfadeSec, targetSec }: {
   };
 }
 
-/** Warm, muted tones that sit on the cream and the dark themes alike. */
-export const TRACK_PALETTE = ['#755c2a', '#8a7a5a', '#6f7d86', '#8d6f5c', '#5f7a70', '#7b6a8a', '#8a6a4a', '#5c6f8a'] as const;
+/**
+ * Warm, muted tones that sit on the cream and the dark themes alike, each dark
+ * enough for white text at 4.5:1 (themeContrast.test.ts).
+ */
+export const TRACK_PALETTE = ['#6b5324', '#6b5e44', '#55636c', '#6f5647', '#4d655c', '#65567a', '#6e5238', '#4b5c75'] as const;
 
 /** A tile colour that stays the same for a title between visits. */
 export function trackColour(label: string): string {

@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import musicRouter, { _setSeparatorImpl, _resetSeparatorImpl } from "./music.js";
+import musicRouter, { _setSeparatorImpl, _resetSeparatorImpl, _setDurationProbe, _resetDurationProbe } from "./music.js";
+import { _resetBundledDurations } from "../lib/musicLibrary.js";
 import { registerTrack, readMusicLibrary } from "../lib/musicLibraryStore.js";
 import { _resetStemJobs } from "../lib/stems/stemJobs.js";
 import { _resetHeavyGate } from "../lib/heavyJobGate.js";
@@ -36,11 +37,18 @@ describe("music route", () => {
     assert.equal(bundled[0].licence, "pixabay-cleared");
   });
 
-  test("GET /library gives the bundled tracks their real length", async () => {
-    const r = res();
-    await handlerFor("get", "/library")({ ctx: tenant().ctx }, r);
-    const pw = r.payload.tracks.find((t) => t.id === "peaceful-worship");
-    assert.ok(pw.durationSec > 30, `expected a probed length, got ${pw.durationSec}`);
+  test("GET /library gives the bundled tracks their probed length", async () => {
+    _resetBundledDurations();
+    _setDurationProbe(async (file) => (file.endsWith("01-peaceful-worship.mp3") ? 229 : 100));
+    try {
+      const r = res();
+      await handlerFor("get", "/library")({ ctx: tenant().ctx }, r);
+      const pw = r.payload.tracks.find((t) => t.id === "peaceful-worship");
+      assert.equal(pw.durationSec, 229);
+    } finally {
+      _resetDurationProbe();
+      _resetBundledDurations();
+    }
   });
 
   test("GET /library merges the tenant's own uploads after the bundled ones", async () => {

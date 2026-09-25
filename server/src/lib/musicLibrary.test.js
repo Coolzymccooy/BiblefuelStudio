@@ -59,4 +59,24 @@ describe("bundledDurations", () => {
     assert.equal(d["prayer-piano"], null);
     assert.equal(d["gentle-peace"], 60);
   });
+
+  test("a probe that learned nothing (ffprobe missing or timed out) is not cached; the next call tries again", async () => {
+    const first = await bundledDurations(async () => null);
+    assert.equal(first["peaceful-worship"], null);
+    const second = await bundledDurations(async () => 42);
+    assert.equal(second["peaceful-worship"], 42);
+  });
+
+  test("probes a few files at a time, not all at once", async () => {
+    let running = 0;
+    let peak = 0;
+    await bundledDurations(async () => {
+      running += 1;
+      peak = Math.max(peak, running);
+      await new Promise((r) => setTimeout(r, 2));
+      running -= 1;
+      return 10;
+    });
+    assert.ok(peak <= 4, `peak concurrency ${peak}`);
+  });
 });

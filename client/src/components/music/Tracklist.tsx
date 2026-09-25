@@ -5,7 +5,8 @@ import {
   SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { restrictToVerticalAxisModifier } from './dragModifiers';
-import { TrackRow, trackGridCols, type TrackListVariant, type TrackRowData } from './TrackRow';
+import { TrackRow, type TrackRowData } from './TrackRow';
+import { trackGridCols, type TrackListVariant } from './trackGrid';
 import type { RowMenuItem } from './RowMenu';
 
 interface TracklistProps {
@@ -41,7 +42,7 @@ export function Tracklist({ rows, variant, reorderable, onReorder, playingKey, o
   return (
     <div>
       {variant === 'full' && (
-        <div className={`grid ${trackGridCols('full')} gap-2 border-b border-[rgba(216,184,120,0.18)] px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-bf-faint`}>
+        <div className={`grid ${trackGridCols('full')} gap-2 border-b border-[rgba(216,184,120,0.18)] px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-bf-muted`}>
           <span />
           <span className="hidden text-right md:block">#</span>
           <span />
@@ -62,7 +63,6 @@ export function Tracklist({ rows, variant, reorderable, onReorder, playingKey, o
                 index={i}
                 variant={variant}
                 draggable={reorderable}
-                dimNumber={!reorderable}
                 playing={playingKey === row.key}
                 onPreview={() => onPreview(i)}
                 onLicenceClick={() => onLicenceClick(i)}

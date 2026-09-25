@@ -2565,6 +2565,7 @@ export function TimelinePage() {
                             >
                                 <MusicPicker
                                     multiple
+                                    reorderable
                                     value={{ path: musicPath || null, paths: musicPaths, volume: musicVolume, autoDuck }}
                                     onChange={(m) => {
                                         const next = m.paths ?? (m.path ? [m.path] : []);
@@ -3210,6 +3211,7 @@ export function TimelinePage() {
             >
                 <MusicPicker
                   multiple
+                  reorderable
                   value={{ path: musicPath || null, paths: musicPaths, volume: musicVolume, autoDuck }}
                   onChange={(m) => {
                     const next = m.paths ?? (m.path ? [m.path] : []);

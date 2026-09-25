@@ -4,14 +4,14 @@ import { useTrackPreview, trackAudioUrl } from '../useTrackPreview';
 
 vi.mock('react-hot-toast', () => ({ __esModule: true, default: Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn() }) }));
 
-function stubAudio() {
+function stubAudio(playResult: (src: string) => Promise<void> = () => Promise.resolve()) {
   const made: Array<{ src: string; paused: boolean; fire: (e: string) => void }> = [];
   function FakeAudio(this: any, src: string) {
     const listeners: Record<string, () => void> = {};
     this.src = src;
     this.paused = true;
     this.currentTime = 0;
-    this.play = vi.fn(() => { this.paused = false; return Promise.resolve(); });
+    this.play = vi.fn(() => { this.paused = false; return playResult(src); });
     this.pause = vi.fn(() => { this.paused = true; });
     this.addEventListener = (e: string, fn: () => void) => { listeners[e] = fn; };
     this.fire = (e: string) => listeners[e]?.();
@@ -55,6 +55,40 @@ describe('useTrackPreview', () => {
     expect(result.current.playingId).toBe('b');
     act(() => result.current.preview({ id: 'b', url: 'B' }));
     expect(result.current.playingId).toBeNull();
+  });
+});
+
+describe('useTrackPreview — stale audio', () => {
+  it('a broken track in Play all is skipped, and its rejected play() does not stop the next one', async () => {
+    let rejectA: (e: Error) => void = () => {};
+    const made = stubAudio((src) => (src === 'A' ? new Promise((_, rej) => { rejectA = rej; }) : Promise.resolve()));
+    const { result } = renderHook(() => useTrackPreview());
+    act(() => result.current.playAll([{ id: 'a', url: 'A' }, { id: 'b', url: 'B' }]));
+    act(() => made[0].fire('error')); // A fails to load → B starts
+    await act(async () => { rejectA(new Error('NotSupportedError')); await Promise.resolve(); });
+    expect(result.current.playingId).toBe('b');
+    expect(made[1].paused).toBe(false);
+  });
+
+  it('switching previews before the first has loaded keeps the second playing, with no error', async () => {
+    let rejectA: (e: Error) => void = () => {};
+    const made = stubAudio((src) => (src === 'A' ? new Promise((_, rej) => { rejectA = rej; }) : Promise.resolve()));
+    const { result } = renderHook(() => useTrackPreview());
+    act(() => result.current.preview({ id: 'a', url: 'A' }));
+    act(() => result.current.preview({ id: 'b', url: 'B' }));
+    await act(async () => { rejectA(Object.assign(new Error('aborted'), { name: 'AbortError' })); await Promise.resolve(); });
+    expect(result.current.playingId).toBe('b');
+    expect(made[1].paused).toBe(false);
+  });
+
+  it('pressing the playing row during Play all stops, rather than restarting it', () => {
+    const made = stubAudio();
+    const { result } = renderHook(() => useTrackPreview());
+    act(() => result.current.playAll([{ id: 'a', url: 'A' }, { id: 'b', url: 'B' }]));
+    act(() => result.current.preview({ id: 'a', url: 'A' }));
+    expect(made).toHaveLength(1);
+    expect(result.current.playingId).toBeNull();
+    expect(result.current.playingAll).toBe(false);
   });
 });
 

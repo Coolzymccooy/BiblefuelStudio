@@ -73,6 +73,16 @@ describe('MusicPicker — album layout', () => {
     await screen.findByText('Your Love');
     expect(screen.queryByRole('region', { name: /soundtrack/i })).toBeNull();
     expect(screen.getByText('10:42')).toBeInTheDocument(); // no crossfade given
+  });
+
+  it('a list that plays in order says so; only a shuffled one says shuffled', async () => {
+    const { unmount } = render(wrap(<MusicPicker multiple value={{ path: paths[0], paths, volume: 0.8 }} onChange={() => {}} busy={false} />));
+    await screen.findByText('Your Love');
+    expect(screen.getByText(/plays in order/i)).toBeInTheDocument();
+    expect(screen.queryByText(/shuffled/i)).toBeNull();
+    unmount();
+    render(wrap(<MusicPicker multiple shuffle value={{ path: paths[0], paths, volume: 0.8 }} onChange={() => {}} busy={false} />));
+    await screen.findByText('Your Love');
     expect(screen.getByText(/shuffled/i)).toBeInTheDocument();
   });
 
