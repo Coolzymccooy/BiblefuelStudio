@@ -8,7 +8,6 @@ describe('pageWidthClass', () => {
 
   it('gives two-pane screens a wider column than the default', () => {
     expect(pageWidthClass('/app/voice-audio')).toBe('max-w-6xl');
-    expect(pageWidthClass('/app/story')).toBe('max-w-6xl');
   });
 
   it('keeps reading and form screens narrow', () => {
@@ -21,13 +20,17 @@ describe('pageWidthClass', () => {
     expect(pageWidthClass('/app/ambient')).toBe('max-w-[1400px]');
   });
 
+  it('gives Story Video the same width as Ambient (scenes beside their settings)', () => {
+    expect(pageWidthClass('/app/story')).toBe('max-w-[1400px]');
+  });
+
   it('matches nested routes under a mapped prefix', () => {
     expect(pageWidthClass('/app/timeline/anything')).toBe('max-w-[1600px]');
   });
 
   it('prefers the longest matching prefix', () => {
     // /app/story is mapped; a hypothetical shorter prefix must not win.
-    expect(pageWidthClass('/app/story/123')).toBe('max-w-6xl');
+    expect(pageWidthClass('/app/story/123')).toBe('max-w-[1400px]');
   });
 
   it('handles empty and nullish input without throwing', () => {

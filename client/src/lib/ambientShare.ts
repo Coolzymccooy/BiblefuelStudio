@@ -89,7 +89,7 @@ export function ambientChapters(project: AmbientProject): Chapter[] {
 }
 
 /** "2 hours", "1 hour", "45 minutes": the length as a poster line says it. */
-function lengthPhrase(sec: number): string {
+export function lengthPhrase(sec: number): string {
   const s = Math.round(Number(sec) || 0);
   if (s <= 0) return '';
   if (s >= 3600 && s % 3600 === 0) return s === 3600 ? '1 hour' : `${s / 3600} hours`;

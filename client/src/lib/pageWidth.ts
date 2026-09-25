@@ -21,9 +21,11 @@ const WIDTH_BY_PREFIX: Array<{ prefix: string; width: string }> = [
   { prefix: '/app/studio', width: 'max-w-[1600px]' },
   // A soundtrack is a wide tracklist plus a settings bar.
   { prefix: '/app/ambient', width: 'max-w-[1400px]' },
+  // Story Video matches it: scenes beside their settings, the video beside
+  // publishing.
+  { prefix: '/app/story', width: 'max-w-[1400px]' },
   // Two-pane layouts: main column plus a side rail.
   { prefix: '/app/voice-audio', width: 'max-w-6xl' },
-  { prefix: '/app/story', width: 'max-w-6xl' },
   { prefix: '/app/backgrounds', width: 'max-w-6xl' },
   { prefix: '/app/jobs', width: 'max-w-6xl' },
 ];

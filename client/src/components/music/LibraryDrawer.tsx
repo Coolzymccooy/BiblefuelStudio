@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import { Play, Search, Square, X } from 'lucide-react';
 import type { MusicTrack } from '../../lib/musicLibraryApi';
 import { formatDuration, trackColour } from '../../lib/soundtrack';
+import { pageWindow, storedPageSize, storePageSize } from '../../lib/pagination';
+import { Pager } from '../ui/Pager';
 
 interface LibraryDrawerProps {
   onClose: () => void;
@@ -15,6 +17,8 @@ interface LibraryDrawerProps {
   onPreview: (t: MusicTrack) => void;
   /** Per-track management controls (licence, credit, remove vocals, forget). */
   renderActions?: (t: MusicTrack) => ReactNode;
+  /** Choose one song (a video with a single music bed) rather than several. */
+  single?: boolean;
 }
 
 const lengthSuffix = (sec: number | null) => (Number(sec) > 0 ? ` · ${formatDuration(sec)}` : '');
@@ -34,11 +38,16 @@ const FOCUSABLE ='button:not([disabled]), input:not([disabled]), [href], [tabind
  * clean; it is modal — focus moves in, Tab stays in, and closing hands focus
  * back to whatever opened it.
  */
-export function LibraryDrawer({ onClose, tracks, exclude, onAdd, playingId, canPreview, onPreview, renderActions }: LibraryDrawerProps) {
+export function LibraryDrawer({ onClose, tracks, exclude, onAdd, playingId, canPreview, onPreview, renderActions, single = false }: LibraryDrawerProps) {
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
   const [query, setQuery] = useState('');
   // null is everything; otherwise one of the kinds below or `mood:<name>`.
-  const [view, setView] = useState<string | null>(null);
+  const [view, setViewState] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(storedPageSize);
+  // A new search or shelf starts from its first page.
+  const setView = (v: string | null) => { setViewState(v); setPage(1); };
+  const search = (q: string) => { setQuery(q); setPage(1); };
   const panelRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -73,8 +82,17 @@ export function LibraryDrawer({ onClose, tracks, exclude, onAdd, playingId, canP
   const shown = offered.filter((t) => inView(t)
     && (!q || t.label.toLowerCase().includes(q) || (t.credit || '').toLowerCase().includes(q)));
   const count = offered.filter((t) => picked.has(t.ref)).length;
+  const w = pageWindow(shown.length, page, pageSize);
+  const pageRows = shown.slice(w.start, w.end);
+  const changeSize = (size: number) => {
+    setPage(Math.floor(w.start / size) + 1);
+    setPageSize(size);
+    storePageSize(size);
+  };
 
   const toggle = (ref: string) => setPicked((prev) => {
+    // One song at a time: picking another replaces the choice.
+    if (single) return prev.has(ref) ? new Set() : new Set([ref]);
     const next = new Set(prev);
     if (next.has(ref)) next.delete(ref); else next.add(ref);
     return next;
@@ -98,7 +116,7 @@ export function LibraryDrawer({ onClose, tracks, exclude, onAdd, playingId, canP
         <div className="flex items-center justify-between border-b border-[rgba(216,184,120,0.18)] px-4 py-3">
           <div>
             <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-bf-gold">Library</div>
-            <div className="font-displaySerif text-xl text-bf-cream">Add music</div>
+            <div className="font-displaySerif text-xl text-bf-cream">{single ? 'Choose a song' : 'Add music'}</div>
           </div>
           <button type="button" onClick={onClose} aria-label="Close" className="rounded p-1 text-bf-muted hover:text-bf-cream"><X size={16} /></button>
         </div>
@@ -106,7 +124,7 @@ export function LibraryDrawer({ onClose, tracks, exclude, onAdd, playingId, canP
         <div className="space-y-2 px-4 py-3">
           <label className="flex items-center gap-2 rounded-lg border border-[rgba(216,184,120,0.25)] bg-bf-card px-2.5 py-1.5">
             <Search size={13} className="text-bf-muted" />
-            <input ref={searchRef} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search title or credit" aria-label="Search music" className="w-full bg-transparent text-sm text-bf-cream outline-none placeholder:text-bf-faint" />
+            <input ref={searchRef} value={query} onChange={(e) => search(e.target.value)} placeholder="Search title or credit" aria-label="Search music" className="w-full bg-transparent text-sm text-bf-cream outline-none placeholder:text-bf-faint" />
           </label>
           {(moods.length > 1 || kinds.length > 0) && (
             <div className="flex flex-wrap gap-1.5" role="group" aria-label="Show">
@@ -121,7 +139,7 @@ export function LibraryDrawer({ onClose, tracks, exclude, onAdd, playingId, canP
               ))}
             </div>
           )}
-          {shown.length > 0 && (
+          {shown.length > 0 && !single && (
             <div className="flex items-center gap-3 text-xs">
               {/* What's on screen, not the whole library: under a filter the
                   operator is choosing from what they can see. */}
@@ -135,12 +153,12 @@ export function LibraryDrawer({ onClose, tracks, exclude, onAdd, playingId, canP
           {offered.length === 0 && <p className="px-2 py-6 text-center text-sm text-bf-muted">Every library track is already in the list.</p>}
           {offered.length > 0 && shown.length === 0 && <p className="px-2 py-6 text-center text-sm text-bf-muted">Nothing matches.</p>}
           <ul className="space-y-0.5">
-            {shown.map((t) => {
+            {pageRows.map((t) => {
               const playing = playingId === t.ref;
               const playable = canPreview(t);
               return (
                 <li key={t.ref} className={`flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-bf-card2 ${picked.has(t.ref) ? 'bg-bf-card2' : ''}`}>
-                  <input type="checkbox" checked={picked.has(t.ref)} onChange={() => toggle(t.ref)} aria-label={`${t.label}${lengthSuffix(t.durationSec)}`} className="accent-bf-gold" />
+                  <input type={single ? 'radio' : 'checkbox'} name={single ? 'library-song' : undefined} checked={picked.has(t.ref)} onChange={() => toggle(t.ref)} aria-label={`${t.label}${lengthSuffix(t.durationSec)}`} className="accent-bf-gold" />
                   <button
                     type="button"
                     disabled={!playable}
@@ -161,11 +179,14 @@ export function LibraryDrawer({ onClose, tracks, exclude, onAdd, playingId, canP
               );
             })}
           </ul>
+          {shown.length > 0 && (
+            <Pager label="library" total={shown.length} window={w} pageSize={pageSize} onPage={setPage} onPageSize={changeSize} />
+          )}
         </div>
 
         <div className="flex items-center gap-2 border-t border-[rgba(216,184,120,0.18)] px-4 py-3">
           <button type="button" disabled={count === 0} onClick={add} className="rounded-lg bg-bf-gold px-3 py-1.5 text-xs font-semibold text-bf-bg disabled:cursor-not-allowed disabled:bg-bf-card2 disabled:text-bf-muted disabled:hover:opacity-100">
-            Add {count} {count === 1 ? 'track' : 'tracks'}
+            {single ? 'Use this song' : `Add ${count} ${count === 1 ? 'track' : 'tracks'}`}
           </button>
           <button type="button" onClick={onClose} className="px-2 py-1 text-xs text-bf-muted hover:text-bf-cream">Cancel</button>
         </div>

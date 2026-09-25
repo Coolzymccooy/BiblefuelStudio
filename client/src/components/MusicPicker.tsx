@@ -5,6 +5,7 @@ import { trackAudioUrl, useTrackPreview } from '../hooks/useTrackPreview';
 import { DropZone } from './ui/DropZone';
 import { InstrumentalDialog } from './InstrumentalDialog';
 import { MusicTracklist } from './music/MusicTracklist';
+import { SongCard } from './music/SongCard';
 import { refId, useLibraryActions } from './music/useLibraryActions';
 import type { TrackListVariant } from './music/TrackRow';
 
@@ -27,7 +28,7 @@ interface MusicPickerProps {
   shuffle?: boolean;
   /** Host timeline: put the chosen track on the Music bed lane. */
   onInsertToLane?: (path: string) => void;
-  /** Multiple mode only: the page-wide album layout, or compact for a side panel. */
+  /** The page-wide album layout, or compact for a side panel. One song in full is a song card. */
   variant?: TrackListVariant;
   /** Multiple mode only: the video length, for the "repeats N×" figure. */
   targetSec?: number | null;
@@ -53,6 +54,7 @@ export function MusicPicker(props: MusicPickerProps) {
       />
     );
   }
+  if (props.variant === 'full') return <SongCard value={props.value} onChange={props.onChange} busy={props.busy} />;
   return <SingleMusicPicker {...props} />;
 }
 
