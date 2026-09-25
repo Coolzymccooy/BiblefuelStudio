@@ -36,6 +36,11 @@ export interface PublishOptions {
   pollMs?: number;
   /** Stop following (e.g. the page closed); the upload itself carries on. */
   shouldStop?: () => boolean;
+  /**
+   * This video was already uploading, so this request joined that upload and
+   * its own details (title, privacy...) were not used.
+   */
+  onJoined?: () => void;
 }
 
 /** Consecutive failed checks before giving up on following the job. */
@@ -49,11 +54,12 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export async function publishToYoutube(
   body: Record<string, unknown>,
-  { pollMs = 3000, shouldStop = () => false }: PublishOptions = {},
+  { pollMs = 3000, shouldStop = () => false, onJoined }: PublishOptions = {},
 ): Promise<PublishOutcome> {
-  const started = await api.post<{ jobId: string }>('/api/social/youtube/publish', body);
+  const started = await api.post<{ jobId: string; joined?: boolean }>('/api/social/youtube/publish', body);
   const jobId = started.ok ? started.data?.jobId : undefined;
   if (!jobId) return { ok: false, error: started.error || 'YouTube upload failed' };
+  if (started.data?.joined) onJoined?.();
 
   const since = Date.now();
   let missed = 0;

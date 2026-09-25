@@ -911,6 +911,24 @@ function noteAmbientPublished(dataDir, projectId, result, payload) {
   return true;
 }
 
+/**
+ * One key per video, however it was written: "/outputs/a.mp4",
+ * "outputs/a.mp4" and the full link to it on this site are the same upload.
+ */
+function publishKey(videoUrl, ownHost) {
+  const raw = String(videoUrl || "").trim();
+  let p = raw;
+  if (/^https?:\/\//i.test(raw)) {
+    let url;
+    try { url = new URL(raw); } catch { return raw; }
+    // Another site's /outputs/ is a different file.
+    if (url.host.toLowerCase() !== String(ownHost || "").toLowerCase()) return raw;
+    p = url.pathname;
+  }
+  p = p.split(/[?#]/)[0].replace(/^\.?\/+/, "");
+  return p.startsWith("outputs/") ? `/${p}` : raw;
+}
+
 router.post("/youtube/publish", (req, res) => {
   const payload = { ...(req.body || {}), destination: "youtube" };
   let checked;
@@ -926,9 +944,9 @@ router.post("/youtube/publish", (req, res) => {
     return res.status(400).json({ ok: false, error: String(e?.message || e) });
   }
   const dataDir = req.ctx?.dataDir || DATA_DIR;
-  const { job, joined } = startPublishJob({
+  const started = startPublishJob({
     userId: req.ctx?.userId,
-    key: String(payload.videoUrl).trim(),
+    key: publishKey(payload.videoUrl, req.get("host")),
     run: async () => {
       const store = readSocialStore(dataDir);
       const result = await postToYoutube(payload, req, store, checked);
@@ -938,7 +956,10 @@ router.post("/youtube/publish", (req, res) => {
       return { ...result, recorded };
     },
   });
-  return res.json({ ok: true, jobId: job.jobId, joined });
+  if (started.busy) {
+    return res.status(429).json({ ok: false, error: "Two uploads are already running. Publish this one when one of them finishes." });
+  }
+  return res.json({ ok: true, jobId: started.job.jobId, joined: started.joined });
 });
 
 router.get("/youtube/publish/:jobId", (req, res) => {

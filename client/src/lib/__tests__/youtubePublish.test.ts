@@ -20,6 +20,14 @@ describe('publishToYoutube', () => {
     expect(out).toEqual({ ok: true, result: { videoId: 'v1', videoUrl: 'u', forcedPrivate: false } });
   });
 
+  it('says when the request joined an upload that was already running', async () => {
+    vi.spyOn(api, 'post').mockResolvedValue({ ok: true, status: 200, data: { ok: true, jobId: 'j1', joined: true } } as never);
+    vi.spyOn(api, 'get').mockResolvedValue(job('done', { result: { videoId: 'v1', videoUrl: 'u', forcedPrivate: false } }));
+    const onJoined = vi.fn();
+    await publishToYoutube(body, { pollMs: 1, onJoined });
+    expect(onJoined).toHaveBeenCalledTimes(1);
+  });
+
   it('reports a refusal before the upload starts', async () => {
     vi.spyOn(api, 'post').mockResolvedValue({ ok: false, status: 400, error: 'Title is required' } as never);
     expect(await publishToYoutube(body, { pollMs: 1 })).toEqual({ ok: false, error: 'Title is required' });

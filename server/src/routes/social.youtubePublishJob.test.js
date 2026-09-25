@@ -106,6 +106,42 @@ describe("POST /api/social/youtube/publish", () => {
     assert.equal(fake.calls.insert, 1);
   });
 
+  test("the same video written another way is still the same upload", async () => {
+    fake = gatedGoogle();
+    _setGoogleImpl(fake.google);
+    const { a, outputDir } = app();
+    fs.writeFileSync(path.join(outputDir, "long.mp4"), "vid");
+    const first = await request(a).post("/api/social/youtube/publish").send({ videoUrl: "/outputs/long.mp4", title: "T" });
+    const bare = await request(a).post("/api/social/youtube/publish").send({ videoUrl: "outputs/long.mp4", title: "T" });
+    const query = await request(a).post("/api/social/youtube/publish").send({ videoUrl: "/outputs/long.mp4?token=abc", title: "T" });
+    assert.equal(bare.body.jobId, first.body.jobId);
+    assert.equal(bare.body.joined, true);
+    assert.equal(query.body.jobId, first.body.jobId);
+    fake.release();
+    await waitForJob(a, first.body.jobId);
+    assert.equal(fake.calls.insert, 1);
+  });
+
+  test("an account can have only two uploads running at once", async () => {
+    fake = gatedGoogle();
+    _setGoogleImpl(fake.google);
+    const { a, outputDir } = app();
+    for (const n of ["a", "b", "c"]) fs.writeFileSync(path.join(outputDir, `${n}.mp4`), "vid");
+    const one = await request(a).post("/api/social/youtube/publish").send({ videoUrl: "/outputs/a.mp4", title: "A" });
+    const two = await request(a).post("/api/social/youtube/publish").send({ videoUrl: "/outputs/b.mp4", title: "B" });
+    const three = await request(a).post("/api/social/youtube/publish").send({ videoUrl: "/outputs/c.mp4", title: "C" });
+    assert.equal(one.status, 200);
+    assert.equal(two.status, 200);
+    assert.equal(three.status, 429);
+    assert.match(three.body.error, /already running/);
+    fake.release();
+    await waitForJob(a, one.body.jobId);
+    await waitForJob(a, two.body.jobId);
+    const later = await request(a).post("/api/social/youtube/publish").send({ videoUrl: "/outputs/c.mp4", title: "C" });
+    assert.equal(later.status, 200, "room again once they finish");
+    await waitForJob(a, later.body.jobId);
+  });
+
   test("once it has finished, publishing again is a new upload (the operator asked for it)", async () => {
     fake = gatedGoogle();
     _setGoogleImpl(fake.google);

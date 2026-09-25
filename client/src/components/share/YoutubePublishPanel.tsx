@@ -99,7 +99,10 @@ export function YoutubePublishPanel({ videoUrl, initial, thumbnailOptions = [], 
         thumbnailTagline: thumbnailPath && thumbnailTitle ? tagline.trim() : '',
         chapters,
         ...(record ? { record } : {}),
-      }, { shouldStop: () => gone.current });
+      }, {
+        shouldStop: () => gone.current,
+        onJoined: () => toast('This video is already uploading, so the details you changed were not used. Following that upload.', { duration: 8000 }),
+      });
       if (!res.ok) {
         if ('error' in res) toast.error(res.error);
         return;

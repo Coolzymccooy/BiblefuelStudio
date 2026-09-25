@@ -14,6 +14,11 @@ import crypto from "crypto";
 const jobs = new Map();
 /** Finished jobs kept per account, newest last, for the page to read back. */
 const KEEP_FINISHED = 20;
+/**
+ * Uploads one account may have running at once. Each can be a multi-gigabyte
+ * download and upload, and answering at once made starting many trivial.
+ */
+export const MAX_RUNNING_PER_USER = 2;
 
 function view(job) {
   return {
@@ -38,13 +43,17 @@ function prune(userId) {
  * account: a second click is the same upload, never a second copy.
  *
  * @param {{ userId: string, key: string, run: () => Promise<object> }} opts
- * @returns {{ job: object, joined: boolean }}
+ * @returns {{ job: object, joined: boolean } | { busy: true }}
  */
 export function startPublishJob({ userId, key, run }) {
   const uid = String(userId || "");
+  let running = 0;
   for (const j of jobs.values()) {
-    if (j.userId === uid && j.key === key && j.status === "running") return { job: view(j), joined: true };
+    if (j.userId !== uid || j.status !== "running") continue;
+    if (j.key === key) return { job: view(j), joined: true };
+    running += 1;
   }
+  if (running >= MAX_RUNNING_PER_USER) return { busy: true };
   const job = {
     jobId: crypto.randomUUID(),
     userId: uid,
