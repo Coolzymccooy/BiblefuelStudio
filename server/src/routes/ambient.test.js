@@ -7,7 +7,7 @@ import os from "os";
 import path from "path";
 
 import ambientRouter, {
-  AMBIENT_STATUS, unclearedTracks, assembleBed,
+  AMBIENT_STATUS, unclearedTracks, assembleBed, renderStage,
   _setLookupImpl, _resetLookupImpl,
   _setSynthImpl, _resetSynthImpl,
   _setProbeImpl, _resetProbeImpl,
@@ -16,14 +16,16 @@ import ambientRouter, {
   _setPlanImpl, _resetPlanImpl,
   _setRenderStageImpl, _resetRenderStageImpl,
   _setQuotaImpl, _resetQuotaImpl,
-  clearCancelled, isCancelled,
+  clearCancelled, isCancelled, markCancelled,
   _setLoudnessImpl, _resetLoudnessImpl, _setFfmpegSpawnImpl, _resetFfmpegSpawnImpl,
 } from "./ambient.js";
 import { EventEmitter } from "events";
 import { readProject, writeProject } from "../lib/ambient/projectStore.js";
-import { getJob as getRenderJob } from "../lib/renderJobs.js";
+import { createJob, getJob as getRenderJob } from "../lib/renderJobs.js";
 import { registerTrack } from "../lib/musicLibraryStore.js";
 import { readLibrary, registerImage, _setEmbedImpl, _resetEmbedImpl } from "../lib/imageGen/imageLibrary.js";
+import { _resetHeavyGate, runExclusive } from "../lib/heavyJobGate.js";
+import { _setEncodersProbe, _resetEncodersProbe } from "../lib/ambient/encoders.js";
 
 let dataDir, outputDir, app;
 
@@ -385,6 +387,57 @@ describe("PATCH /api/ambient/:id/bed", () => {
     assert.equal(res.body.project.bed.builtPath, null, "a stale bed would render yesterday's music");
     assert.equal(res.body.project.bed.builtHash, null);
   });
+
+  test("accepts shuffle or fixed order, ignores anything else", async () => {
+    const p = await createSession();
+    const ok = await request(app).patch(`/api/ambient/${p.projectId}/bed`).send({ order: "fixed" });
+    assert.equal(ok.body.project.bed.order, "fixed");
+    const bad = await request(app).patch(`/api/ambient/${p.projectId}/bed`).send({ order: "random" });
+    assert.equal(bad.body.project.bed.order, "fixed");
+  });
+
+  test("switching to fixed order dedupes an inherited shuffle play order", async () => {
+    // Shuffle expands trackRefs into a repeated play order (up to 400 refs);
+    // "Keep my order" must not adopt that expanded list as the operator's own.
+    const p = await createSession();
+    writeProject(dataDir, {
+      ...readProject(dataDir, p.projectId),
+      bed: { ...p.bed, order: "shuffle", trackRefs: ["a", "b", "a", "c", "b"] },
+    });
+    const res = await request(app).patch(`/api/ambient/${p.projectId}/bed`).send({ order: "fixed" });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.deepEqual(res.body.project.bed.trackRefs, ["a", "b", "c"]);
+  });
+
+  test("switching to fixed order with explicit trackRefs keeps them as sent, undeduped", async () => {
+    const p = await createSession();
+    writeProject(dataDir, {
+      ...readProject(dataDir, p.projectId),
+      bed: { ...p.bed, order: "shuffle", trackRefs: ["a", "b", "a", "c", "b"] },
+    });
+    const res = await request(app).patch(`/api/ambient/${p.projectId}/bed`)
+      .send({ order: "fixed", trackRefs: ["library:devotional", "library:devotional"] });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.deepEqual(res.body.project.bed.trackRefs, ["library:devotional", "library:devotional"]);
+  });
+
+  test("patching an already-fixed bed's other fields does not dedupe trackRefs", async () => {
+    const p = await createSession();
+    writeProject(dataDir, {
+      ...readProject(dataDir, p.projectId),
+      bed: { ...p.bed, order: "fixed", trackRefs: ["a", "b", "a"] },
+    });
+    const res = await request(app).patch(`/api/ambient/${p.projectId}/bed`).send({ order: "fixed", volume: 0.5 });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.deepEqual(res.body.project.bed.trackRefs, ["a", "b", "a"], "already fixed — nothing to dedupe from");
+  });
+
+  test("changing the order drops the cached bed", async () => {
+    const p = await createSession();
+    writeProject(dataDir, { ...readProject(dataDir, p.projectId), bed: { ...p.bed, builtPath: "x", builtHash: "old" } });
+    const res = await request(app).patch(`/api/ambient/${p.projectId}/bed`).send({ order: "fixed" });
+    assert.equal(res.body.project.bed.builtHash, null);
+  });
 });
 
 describe("POST /api/ambient/:id/images", () => {
@@ -714,6 +767,8 @@ describe("PATCH /api/ambient/:id/captions", () => {
 });
 
 describe("POST /api/ambient/:id/render", () => {
+  beforeEach(() => _resetHeavyGate());
+
   async function readySession() {
     _setImageLibraryImpl({ find: async () => [], register: async () => ({ id: "x" }), mark: () => {} });
     _setImageGenImpl(async ({ partNumber }) => ({ ok: true, path: `/img/${partNumber}.png` }));
@@ -742,6 +797,51 @@ describe("POST /api/ambient/:id/render", () => {
       assert.equal(res.status, 409, status);
       assert.match(res.body.error, /already rendering/);
     }
+  });
+
+  test("a render queued behind another heavy job is visible and cannot be double-started", async () => {
+    // Before this fix, onQueued only touched render.phase; project.status stayed
+    // whatever it was, so notAlreadyRendering (and the client's own inFlight
+    // check) never saw the wait and a second click started a second render.
+    const p = await readySession();
+    let releaseHeavy;
+    const heavyDone = new Promise((resolve) => { releaseHeavy = resolve; });
+    runExclusive(() => heavyDone);
+
+    const res = await request(app).post(`/api/ambient/${p.projectId}/render`).send({});
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    const queued = await waitFor(p.projectId, (x) => x.render.phase === "waiting for another job to finish");
+    assert.equal(queued.status, AMBIENT_STATUS.ASSEMBLING);
+
+    const second = await request(app).post(`/api/ambient/${p.projectId}/render`).send({});
+    assert.equal(second.status, 409);
+    assert.match(second.body.error, /already rendering/);
+
+    releaseHeavy();
+  });
+
+  test("cancelling a queued render is not undone by a second render click", async () => {
+    // clearCancelled() ran at the top of the route handler; a second click
+    // that reached the handler while the first was still queued would wipe
+    // out the cancel flag the first request's caller just set. Now that the
+    // queued state is visible via status, the second click is a 409 and
+    // never reaches clearCancelled.
+    const p = await readySession();
+    let releaseHeavy;
+    const heavyDone = new Promise((resolve) => { releaseHeavy = resolve; });
+    runExclusive(() => heavyDone);
+
+    const first = await request(app).post(`/api/ambient/${p.projectId}/render`).send({});
+    assert.equal(first.status, 200);
+    await waitFor(p.projectId, (x) => x.status === AMBIENT_STATUS.ASSEMBLING);
+
+    markCancelled(p.projectId);
+    const second = await request(app).post(`/api/ambient/${p.projectId}/render`).send({});
+    assert.equal(second.status, 409);
+    assert.equal(isCancelled(p.projectId), true, "the second, refused request must not clear the cancel flag");
+
+    releaseHeavy();
+    clearCancelled(p.projectId);
   });
 
   test("refuses to render while a movement has no picture", async () => {
@@ -798,6 +898,24 @@ describe("POST /api/ambient/:id/render", () => {
     await request(app).get(`/api/ambient/${p.projectId}`);
     await request(app).get("/api/ambient");
     assert.deepEqual(charged, [], "a polling client must not burn the operator's allowance");
+  });
+
+  test("passes the chosen encoder to the render, and only cpu or amf", async () => {
+    const seen = [];
+    _setRenderStageImpl(async (_ctx, _id, _job, opts) => { seen.push(opts?.encoder); });
+    const p = await readySession();
+    await request(app).post(`/api/ambient/${p.projectId}/render`).send({ encoder: "amf" });
+    await waitFor(p.projectId, () => seen.length === 1);
+    assert.deepEqual(seen, ["amf"]);
+  });
+
+  test("an unknown encoder value falls back to cpu", async () => {
+    const seen = [];
+    _setRenderStageImpl(async (_ctx, _id, _job, opts) => { seen.push(opts?.encoder); });
+    const p = await readySession();
+    await request(app).post(`/api/ambient/${p.projectId}/render`).send({ encoder: "nvenc" });
+    await waitFor(p.projectId, () => seen.length === 1);
+    assert.deepEqual(seen, ["cpu"]);
   });
 });
 
@@ -900,6 +1018,24 @@ describe("security: the client never chooses what ffmpeg reads", () => {
     const res = await request(app).patch(`/api/ambient/${p.projectId}/bed`).send({ mode: "file", filePath: mine });
     assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.equal(res.body.project.bed.filePath, mine);
+  });
+
+  test("file-mode render clears a stale tracklist from an earlier assemble build", async () => {
+    // A project that once used the shuffle/order builder has a builtOrder;
+    // switching to a fixed audio file must not leave chapters/credits
+    // describing tracks that are not actually in this video.
+    const mine = path.join(outputDir, "user-audio-mine.mp3");
+    fs.writeFileSync(mine, "x");
+    const p = await createSession({ targetSec: 600 });
+    const stored = writeProject(dataDir, {
+      ...readProject(dataDir, p.projectId),
+      bed: {
+        ...p.bed, mode: "file", filePath: mine,
+        builtOrder: [{ ref: "library:prayer-piano", startSec: 0, label: "Prayer Piano", credit: "" }],
+      },
+    });
+    const { project } = await assembleBed({ dataDir, outputDir }, stored);
+    assert.equal(project.bed.builtOrder, null);
   });
 
   test("a bed path stored before this check is still refused at render time", async () => {
@@ -1014,5 +1150,208 @@ describe("the music bed is levelled", () => {
     const args = calls[0];
     const script = fs.readFileSync(args[args.indexOf("-filter_complex_script") + 1], "utf8");
     assert.ok(!/volume=/.test(script));
+  });
+
+  test("keep-my-order plays the list as given and leaves the operator's list alone", async () => {
+    _setLoudnessImpl(async () => ({ inputI: -18, inputTp: -6 }));
+    const calls = [];
+    _setFfmpegSpawnImpl(fakeFfmpeg(calls));
+    const p = await createSession({ targetSec: 20 });
+    const refs = ["library:prayer-piano", "library:peaceful-worship"];
+    const stored = writeProject(dataDir, {
+      ...readProject(dataDir, p.projectId),
+      bed: { ...p.bed, mode: "assemble", order: "fixed", trackRefs: refs, crossfadeSec: 2 },
+    });
+    const { project } = await assembleBed({ dataDir, outputDir }, stored);
+    // probe says 8 s per track: 8 + 6 + 6 >= 20 → three tracks, a b a.
+    assert.deepEqual(project.bed.builtOrder.map((t) => t.ref), [refs[0], refs[1], refs[0]]);
+    assert.deepEqual(project.bed.trackRefs, refs);
+  });
+
+  test("the tracklist records start times, labels and credits", async () => {
+    _setLoudnessImpl(async () => ({ inputI: -18, inputTp: -6 }));
+    _setFfmpegSpawnImpl(fakeFfmpeg([]));
+    const p = await createSession({ targetSec: 20 });
+    const stored = writeProject(dataDir, {
+      ...readProject(dataDir, p.projectId),
+      bed: { ...p.bed, mode: "assemble", order: "fixed", trackRefs: ["library:prayer-piano", "library:peaceful-worship"], crossfadeSec: 2 },
+    });
+    const { project } = await assembleBed({ dataDir, outputDir }, stored);
+    assert.deepEqual(project.bed.builtOrder.map((t) => t.startSec), [0, 6, 12]);
+    assert.equal(project.bed.builtOrder[0].credit, "Music from Pixabay");
+    assert.ok(project.bed.builtOrder[0].label.length > 0);
+  });
+});
+
+describe("PATCH /api/ambient/:id/words — music only", () => {
+  test("new sessions carry verses", async () => {
+    const p = await createSession();
+    assert.equal(p.words, "verses");
+  });
+
+  test("music only gives one picture for the whole length, even with no verses planned", async () => {
+    const p = await createSession({ targetSec: 3600 });
+    const res = await request(app).patch(`/api/ambient/${p.projectId}/words`).send({ words: "none" });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.project.words, "none");
+    assert.equal(res.body.project.movements.length, 1);
+    assert.equal(res.body.project.movements[0].startMs, 0);
+    assert.equal(res.body.project.movements[0].endMs, 3_600_000);
+  });
+
+  test("music only keeps the verses on disk so switching back restores them", async () => {
+    const p = await createSession();
+    await request(app).post(`/api/ambient/${p.projectId}/plan`).send({ count: 3 });
+    await request(app).patch(`/api/ambient/${p.projectId}/words`).send({ words: "none" });
+    const back = await request(app).patch(`/api/ambient/${p.projectId}/words`).send({ words: "verses" });
+    assert.equal(back.body.project.drops.length, 3);
+    assert.equal(back.body.project.movements.length, 3);
+  });
+
+  test("rejects anything but verses or none", async () => {
+    const p = await createSession();
+    const res = await request(app).patch(`/api/ambient/${p.projectId}/words`).send({ words: "sermon" });
+    assert.equal(res.status, 400);
+  });
+
+  test("refuses while the session is rendering", async () => {
+    const p = await createSession();
+    writeProject(dataDir, { ...readProject(dataDir, p.projectId), status: AMBIENT_STATUS.RENDERING });
+    const res = await request(app).patch(`/api/ambient/${p.projectId}/words`).send({ words: "none" });
+    assert.equal(res.status, 409);
+  });
+
+  test("voicing is refused for a music-only session", async () => {
+    const p = await createSession();
+    await request(app).patch(`/api/ambient/${p.projectId}/words`).send({ words: "none" });
+    const res = await request(app).post(`/api/ambient/${p.projectId}/voice`).send({});
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /music only/);
+  });
+});
+
+describe("renderStage — music only", () => {
+  afterEach(() => { _resetLoudnessImpl(); _resetFfmpegSpawnImpl(); });
+
+  test("a music-only render has no voice input and no burned captions", async () => {
+    _setLoudnessImpl(async () => ({ inputI: -18, inputTp: -6 }));
+    const calls = [];
+    _setFfmpegSpawnImpl((args) => {
+      calls.push(args);
+      const proc = new EventEmitter();
+      proc.stderr = new EventEmitter();
+      setImmediate(() => proc.emit("close", 0));
+      return proc;
+    });
+    const p = await createSession({ targetSec: 60 });
+    const img = path.join(outputDir, "pic.jpg");
+    const voice = path.join(outputDir, "voice.mp3");
+    fs.writeFileSync(img, "jpg");
+    fs.writeFileSync(voice, "mp3");
+    writeProject(dataDir, {
+      ...readProject(dataDir, p.projectId),
+      words: "none",
+      // A verse voiced before the switch must not reach the render.
+      drops: [{ id: "d1", atMs: 1000, reference: "John 14:27", status: "done", audioPath: voice, durationMs: 4000 }],
+      movements: [{ id: "m1", startMs: 0, endMs: 60_000, imageStatus: "done", imagePath: img }],
+      bed: { ...p.bed, mode: "assemble", trackRefs: ["library:prayer-piano"], crossfadeSec: 2 },
+    });
+    const job = createJob("u1", { durationSec: 60 });
+    await renderStage({ dataDir, outputDir }, p.projectId, job.jobId);
+    const render = calls[calls.length - 1];
+    assert.ok(!render.includes(voice), "the voice file is not an input");
+    const script = fs.readFileSync(render[render.indexOf("-filter_complex_script") + 1], "utf8");
+    assert.doesNotMatch(script, /drawtext/);
+    assert.doesNotMatch(script, /sidechaincompress/);
+  });
+});
+
+describe("renderStage — AMF encode falls back to CPU", () => {
+  afterEach(() => { _resetLoudnessImpl(); _resetFfmpegSpawnImpl(); _resetEncodersProbe(); });
+
+  function readyMusicOnlyProject(targetSec = 60) {
+    return (async () => {
+      _setLoudnessImpl(async () => ({ inputI: -18, inputTp: -6 }));
+      const p = await createSession({ targetSec });
+      const img = path.join(outputDir, "pic.jpg");
+      fs.writeFileSync(img, "jpg");
+      writeProject(dataDir, {
+        ...readProject(dataDir, p.projectId),
+        words: "none",
+        movements: [{ id: "m1", startMs: 0, endMs: targetSec * 1000, imageStatus: "done", imagePath: img }],
+        bed: { ...p.bed, mode: "assemble", trackRefs: ["library:prayer-piano"], crossfadeSec: 2 },
+      });
+      return p;
+    })();
+  }
+
+  test("an AMF failure retries once with CPU args, clears the stale percent, and records encoderUsed", async () => {
+    _setEncodersProbe(() => " V....D h264_amf  AMD AMF H.264 Encoder");
+    const videoCalls = [];
+    let videoAttempt = 0;
+    _setFfmpegSpawnImpl((args) => {
+      const proc = new EventEmitter();
+      proc.stderr = new EventEmitter();
+      // Bed assembly spawns ffmpeg too (no -c:v in its args) and must succeed
+      // so the video pass is reached at all.
+      if (!args.includes("-c:v")) {
+        setImmediate(() => proc.emit("close", 0));
+        return proc;
+      }
+      videoCalls.push(args);
+      videoAttempt += 1;
+      if (videoAttempt === 1) {
+        // Progress the AMF attempt well past what the CPU retry starts at, so
+        // a stale monotonic percent would otherwise poison the retry.
+        setImmediate(() => {
+          proc.stderr.emit("data", Buffer.from("time=00:00:24.00 bitrate=..."));
+          setImmediate(() => proc.emit("close", 1));
+        });
+      } else {
+        setImmediate(() => proc.emit("close", 0));
+      }
+      return proc;
+    });
+    const p = await readyMusicOnlyProject(60);
+    const job = createJob("u1", { durationSec: 60 });
+    await renderStage({ dataDir, outputDir }, p.projectId, job.jobId, { encoder: "amf" });
+
+    assert.equal(videoCalls.length, 2, "AMF attempt then a CPU retry");
+    assert.ok(videoCalls[0].includes("h264_amf"), "first attempt uses the graphics chip");
+    assert.ok(videoCalls[1].includes("libx264") && !videoCalls[1].includes("h264_amf"), "retry falls back to CPU");
+
+    const saved = readProject(dataDir, p.projectId);
+    assert.equal(saved.status, AMBIENT_STATUS.DONE);
+    assert.equal(saved.render.encoderUsed, "cpu");
+    // The stale 40% from the failed AMF attempt (24/60) must not survive into
+    // the retry's own progress — it finished at the terminal 100%, not stuck.
+    assert.equal(saved.render.percent, 100);
+    assert.equal(getRenderJob(job.jobId)?.percent, 100);
+  });
+
+  test("a cancel during the AMF attempt skips the CPU retry entirely", async () => {
+    _setEncodersProbe(() => " V....D h264_amf  AMD AMF H.264 Encoder");
+    const p = await readyMusicOnlyProject(60);
+    const videoCalls = [];
+    _setFfmpegSpawnImpl((args) => {
+      const proc = new EventEmitter();
+      proc.stderr = new EventEmitter();
+      if (!args.includes("-c:v")) {
+        setImmediate(() => proc.emit("close", 0));
+        return proc;
+      }
+      videoCalls.push(args);
+      setImmediate(() => {
+        markCancelled(p.projectId);
+        proc.emit("close", 1);
+      });
+      return proc;
+    });
+    const job = createJob("u1", { durationSec: 60 });
+    await renderStage({ dataDir, outputDir }, p.projectId, job.jobId, { encoder: "amf" });
+    assert.equal(videoCalls.length, 1, "no CPU retry once cancelled");
+    const saved = readProject(dataDir, p.projectId);
+    assert.equal(saved.status, AMBIENT_STATUS.ERROR);
+    clearCancelled(p.projectId);
   });
 });

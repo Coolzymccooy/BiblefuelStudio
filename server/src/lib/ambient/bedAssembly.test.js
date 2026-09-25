@@ -4,7 +4,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import crypto from "crypto";
-import { orderTracks, chainDurationSec, bedHash, buildBedArgs } from "./bedAssembly.js";
+import { orderTracks, chainDurationSec, bedHash, buildBedArgs, fixedOrder, trackStarts } from "./bedAssembly.js";
 
 const track = (ref, durationSec) => ({ ref, file: `${ref}.mp3`, durationSec });
 
@@ -85,6 +85,75 @@ test("a bed built before levelling is rebuilt, not reused", () => {
 
 test("buildBedArgs refuses to build a bed from nothing", () => {
   assert.throws(() => buildBedArgs([], { targetSec: 60, outPath: "x.m4a" }), /no tracks/);
+});
+
+// fixedOrder — the operator's order
+test("fixedOrder: plays tracks exactly in the given order", () => {
+  const t = (ref, durationSec) => ({ ref, file: `/f/${ref}.mp3`, durationSec });
+  const out = fixedOrder([t("a", 100), t("b", 100), t("c", 100)], 250, { crossfadeSec: 0 });
+  assert.deepEqual(out.map((x) => x.ref), ["a", "b", "c"]);
+});
+
+test("fixedOrder: repeats the list from the top when one pass is short", () => {
+  const t = (ref, durationSec) => ({ ref, file: `/f/${ref}.mp3`, durationSec });
+  const out = fixedOrder([t("a", 100), t("b", 100)], 350, { crossfadeSec: 0 });
+  assert.deepEqual(out.map((x) => x.ref), ["a", "b", "a", "b"]);
+});
+
+test("fixedOrder: never puts a track next to itself across the seam", () => {
+  const t = (ref, durationSec) => ({ ref, file: `/f/${ref}.mp3`, durationSec });
+  const out = fixedOrder([t("a", 100), t("b", 100), t("a", 100)], 500, { crossfadeSec: 0 });
+  for (let i = 1; i < out.length; i += 1) assert.notEqual(out[i].ref, out[i - 1].ref);
+});
+
+test("fixedOrder: a single track still fills the length", () => {
+  const t = (ref, durationSec) => ({ ref, file: `/f/${ref}.mp3`, durationSec });
+  const out = fixedOrder([t("a", 100)], 250, { crossfadeSec: 0 });
+  assert.deepEqual(out.map((x) => x.ref), ["a", "a", "a"]);
+});
+
+test("fixedOrder: a list of one track twice does not loop forever", () => {
+  const t = (ref, durationSec) => ({ ref, file: `/f/${ref}.mp3`, durationSec });
+  const out = fixedOrder([t("a", 100), t("a", 100)], 250, { crossfadeSec: 0 });
+  assert.equal(out.length, 3);
+});
+
+test("fixedOrder: stops at maxTracks", () => {
+  const t = (ref, durationSec) => ({ ref, file: `/f/${ref}.mp3`, durationSec });
+  assert.equal(fixedOrder([t("a", 1), t("b", 1)], 10_000, { crossfadeSec: 0, maxTracks: 5 }).length, 5);
+});
+
+test("fixedOrder: ignores tracks with no duration", () => {
+  const t = (ref, durationSec) => ({ ref, file: `/f/${ref}.mp3`, durationSec });
+  assert.deepEqual(fixedOrder([t("a", 0), t("b", 100)], 50, { crossfadeSec: 0 }).map((x) => x.ref), ["b"]);
+});
+
+// trackStarts — where each track begins in the bed
+test("trackStarts: each join overlaps by the crossfade", () => {
+  const out = trackStarts([{ ref: "a", durationSec: 100 }, { ref: "b", durationSec: 100 }, { ref: "c", durationSec: 100 }], 6, 10_000);
+  assert.deepEqual(out.map((x) => x.startSec), [0, 94, 188]);
+});
+
+test("trackStarts: a track starting at or after the target is left out and the last is cut short", () => {
+  const out = trackStarts([{ ref: "a", durationSec: 100 }, { ref: "b", durationSec: 100 }, { ref: "c", durationSec: 100 }], 0, 150);
+  assert.deepEqual(out.map((x) => [x.ref, x.startSec, x.durationSec]), [["a", 0, 100], ["b", 100, 50]]);
+});
+
+test("trackStarts: keeps the other fields of each entry", () => {
+  const [first] = trackStarts([{ ref: "a", durationSec: 10, label: "A", credit: "X" }], 0, 60);
+  assert.equal(first.label, "A");
+  assert.equal(first.credit, "X");
+});
+
+// bedHash — order is part of the cache key
+test("bedHash: shuffle and fixed hash differently", () => {
+  const base = { trackRefs: ["library:a"], crossfadeSec: 6, targetSec: 60 };
+  assert.notEqual(bedHash({ ...base, order: "shuffle" }), bedHash({ ...base, order: "fixed" }));
+});
+
+test("bedHash: order defaults to shuffle", () => {
+  const base = { trackRefs: ["library:a"], crossfadeSec: 6, targetSec: 60 };
+  assert.equal(bedHash(base), bedHash({ ...base, order: "shuffle" }));
 });
 
 /** Deterministic PRNG so shuffle-dependent assertions do not flake. */

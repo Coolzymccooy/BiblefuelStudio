@@ -4,8 +4,10 @@ import { Router } from "express";
 import {
   createProject, readProject, writeProject, listProjects, deleteProject,
   normaliseCaptionSettings, DEFAULT_DROP_INTERVAL_SEC, publishedEntry, withPublished,
+  WORDS, isMusicOnly,
 } from "../lib/ambient/projectStore.js";
 import { bedHash } from "../lib/ambient/bedAssembly.js";
+import { ENCODERS } from "../lib/ambient/encoders.js";
 import { defaultDropTimes, normaliseDrops } from "../lib/ambient/drops.js";
 import { planReferences } from "../lib/ambient/versePlan.js";
 import { readLibrary } from "../lib/imageGen/imageLibrary.js";
@@ -19,6 +21,7 @@ import {
   createJob, persistJob, markError, cancelJob as cancelRenderJob, getJob as getRenderJob,
 } from "../lib/renderJobs.js";
 import { quota } from "../middleware/quota.js";
+import { runExclusive } from "../lib/heavyJobGate.js";
 
 // The stages, their seams and the cancel registry live in lib/ambient/stages.js.
 // Re-exported so callers and tests keep one import surface; the bindings are
@@ -251,6 +254,9 @@ router.patch("/:id/drops", (req, res) => {
 router.post("/:id/voice", ttsQuota, (req, res) => {
   const project = loadOr404(req, res);
   if (!project) return undefined;
+  if (isMusicOnly(project)) {
+    return res.status(400).json({ ok: false, error: "this session is music only — switch verses back on to voice them" });
+  }
   if (!(project.drops || []).length) {
     return res.status(400).json({ ok: false, error: "no drops to voice — suggest verses first" });
   }
@@ -290,6 +296,16 @@ router.patch("/:id/bed", (req, res) => {
     }
     if (Number.isFinite(Number(body.volume))) bed.volume = Math.min(2, Math.max(0, Number(body.volume)));
     if (Number.isFinite(Number(body.crossfadeSec))) bed.crossfadeSec = Math.min(30, Math.max(0, Number(body.crossfadeSec)));
+    const wasFixed = project.bed?.order === "fixed";
+    if (body.order === "shuffle" || body.order === "fixed") bed.order = body.order;
+    // Shuffle stores the expanded play order (up to 400 refs, with repeats)
+    // into trackRefs. Switching to "fixed" without also sending trackRefs
+    // must not inherit that expanded list as if it were the operator's own
+    // arrangement — dedupe it down to the order tracks first appeared in.
+    if (body.order === "fixed" && !wasFixed && !Array.isArray(body.trackRefs)) {
+      const seen = new Set();
+      bed.trackRefs = bed.trackRefs.filter((r) => (seen.has(r) ? false : seen.add(r)));
+    }
 
     const allowUncleared = body.allowUncleared === true;
     if (!allowUncleared) {
@@ -306,7 +322,7 @@ router.patch("/:id/bed", (req, res) => {
 
     // Any change to the inputs invalidates a cached assembly. Leaving the old
     // hash would silently render yesterday's bed.
-    const nextHash = bedHash({ trackRefs: bed.trackRefs, crossfadeSec: bed.crossfadeSec, targetSec: project.targetSec });
+    const nextHash = bedHash({ trackRefs: bed.trackRefs, crossfadeSec: bed.crossfadeSec, targetSec: project.targetSec, order: bed.order || "shuffle" });
     if (nextHash !== project.bed?.builtHash) { bed.builtPath = null; bed.builtHash = null; }
 
     const updated = writeProject(req.ctx.dataDir, { ...project, bed });
@@ -415,6 +431,24 @@ router.patch("/:id/motion", (req, res) => {
   }
 });
 
+// PATCH /:id/words — spoken verses over the music, or music only.
+router.patch("/:id/words", (req, res) => {
+  const project = loadOr404(req, res);
+  if (!project) return undefined;
+  const words = req.body?.words;
+  if (!WORDS.includes(words)) {
+    return res.status(400).json({ ok: false, error: "words must be verses or none" });
+  }
+  if (ENCODING_STATUSES.has(project.status)) {
+    return res.status(409).json({ ok: false, error: "this session is rendering; change it when it finishes" });
+  }
+  try {
+    return res.json({ ok: true, project: writeWithMovements(req.ctx.dataDir, { ...project, words }) });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
 // PATCH /:id/captions — merged against the stored project so a partial update
 // never clears a setting it omits.
 router.patch("/:id/captions", (req, res) => {
@@ -466,10 +500,20 @@ router.post("/:id/render", notAlreadyRendering, renderQuota, (req, res) => {
     clearCancelled(id);
     const job = createJob(req.ctx.userId, { durationSec: project.targetSec });
     persistJob(req.ctx.dataDir, { ...job, projectId: id, status: "running" });
+    const encoder = ENCODERS.includes(req.body?.encoder) ? req.body.encoder : "cpu";
 
     const ctx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir };
     const stage = _renderStageFn || renderStage;
-    stage(ctx, id, job.jobId).catch((err) => {
+    runExclusive(() => stage(ctx, id, job.jobId, { encoder }), {
+      onQueued: () => {
+        const live = readProject(ctx.dataDir, id);
+        if (live) writeProject(ctx.dataDir, {
+          ...live,
+          status: AMBIENT_STATUS.ASSEMBLING,
+          render: { jobId: job.jobId, outputPath: null, status: "running", percent: 0, phase: "waiting for another job to finish" },
+        });
+      },
+    }).catch((err) => {
       // A rejected fire-and-forget is an UNHANDLED rejection; under Node's
       // default policy that kills the server. Record it on the project.
       const message = String(err?.message || err || "render failed");

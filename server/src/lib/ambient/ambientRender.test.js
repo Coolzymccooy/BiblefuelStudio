@@ -378,3 +378,14 @@ test("captions off still draws nothing, whatever the span says", () => {
   assert.ok(!/drawtext/.test(filter));
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test("the graphics-chip encoder swaps only the video codec", () => {
+  const base = { bedPath: "/tmp/bed.m4a", images: ["/tmp/a.jpg"], drops: [], outPath: "/tmp/out.mp4" };
+  const project = { targetSec: 60, aspect: "landscape", motion: "still", captions: "none", movements: [{ startMs: 0, endMs: 60000 }], bed: { volume: 0.85 } };
+  const cpu = buildAmbientFfmpegArgs(project, base).args;
+  const amf = buildAmbientFfmpegArgs(project, { ...base, encoder: "amf" }).args;
+  assert.ok(cpu.includes("libx264"));
+  assert.ok(amf.includes("h264_amf"));
+  assert.ok(!amf.includes("libx264"));
+  assert.ok(amf.includes("yuv420p"));
+});

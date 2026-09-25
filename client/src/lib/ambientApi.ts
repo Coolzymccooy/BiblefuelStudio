@@ -2,7 +2,7 @@ import { api } from './api';
 import type { StoryCaptionSettings } from './storyTypes';
 import type { AmbientScripturePatch } from '../components/ambient/AmbientCaptionsPanel';
 import type {
-  AmbientAspect, AmbientBedMode, AmbientDrop, AmbientMotion, AmbientProject, AmbientProjectSummary, AmbientStatus,
+  AmbientAspect, AmbientBedMode, AmbientBedOrder, AmbientDrop, AmbientMotion, AmbientProject, AmbientProjectSummary, AmbientStatus, AmbientWords,
 } from './ambientTypes';
 
 // Generating movement images can run for minutes, same order of magnitude as
@@ -41,6 +41,7 @@ export interface AmbientBedPatch {
   volume?: number;
   crossfadeSec?: number;
   allowUncleared?: boolean;
+  order?: AmbientBedOrder;
 }
 
 export interface PatchDropInput {
@@ -149,8 +150,12 @@ export const ambientApi = {
     return unwrapProject(await api.patch(`/api/ambient/${id}/captions`, settings));
   },
 
-  async render(id: string): Promise<{ ok: boolean; jobId?: string }> {
-    const res = await api.post(`/api/ambient/${id}/render`, {});
+  async setWords(id: string, words: AmbientWords): Promise<AmbientProject> {
+    return unwrapProject(await api.patch(`/api/ambient/${id}/words`, { words }));
+  },
+
+  async render(id: string, encoder: 'cpu' | 'amf' = 'cpu'): Promise<{ ok: boolean; jobId?: string }> {
+    const res = await api.post(`/api/ambient/${id}/render`, { encoder });
     if (!res.ok) throw new Error(res.error || 'Failed to start render');
     return res.data as { ok: boolean; jobId?: string };
   },
