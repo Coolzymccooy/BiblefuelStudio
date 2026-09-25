@@ -12,9 +12,8 @@ const upload = {
 } as MusicTrack;
 const bundled = {
   id: 'prayer-piano', label: 'Prayer Piano', mood: 'calm', previewUrl: '/music/prayer-piano.mp3', default: true,
-  source: 'bundled', licence: 'pixabay-cleared', durationSec: null, ref: 'library:prayer-piano', credit: 'Music from Pixabay',
+  source: 'bundled', licence: 'pixabay-cleared', durationSec: 168, ref: 'library:prayer-piano', credit: 'Music from Pixabay',
 } as MusicTrack;
-
 const instrumental = {
   id: 'i1', label: 'Your Love (instrumental)', mood: 'worship', previewUrl: null, default: false,
   source: 'upload', licence: 'unknown', durationSec: 240, ref: 'mylib:i1', credit: '', derivedFrom: 'mylib:u1',
@@ -24,35 +23,50 @@ const wrap = (ui: React.ReactElement) => (
   <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>{ui}</QueryClientProvider>
 );
 
+const openMenu = async (label: RegExp) => {
+  await userEvent.click(await screen.findByRole('button', { name: label }));
+  return screen.getByRole('menu');
+};
+
 beforeEach(() => {
   vi.restoreAllMocks();
   vi.spyOn(libraryApi, 'fetchMusicLibrary').mockResolvedValue([bundled, upload]);
 });
 
 describe('MusicPicker — remove vocals', () => {
-  it('offers "Remove vocals" on a chosen upload and in the library, never on bundled tracks', async () => {
+  it('a chosen upload offers "Remove vocals" in its menu; a bundled track never does', async () => {
     vi.spyOn(libraryApi, 'fetchCapabilities').mockResolvedValue({ vocalRemoval: true, amfEncoder: false });
     render(wrap(<MusicPicker value={{ path: 'mylib:u1', paths: ['mylib:u1', 'library:prayer-piano'], volume: 1 }} onChange={() => {}} busy={false} multiple />));
-    const buttons = await screen.findAllByRole('button', { name: /remove vocals from your love/i });
-    expect(buttons).toHaveLength(2); // chosen row + library row
-    expect(screen.queryByRole('button', { name: /remove vocals from prayer piano/i })).not.toBeInTheDocument();
+    await screen.findByText('Your Love');
+    expect(within(await openMenu(/more for your love/i)).getByRole('menuitem', { name: /remove vocals/i })).toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+    expect(within(await openMenu(/more for prayer piano/i)).queryByRole('menuitem', { name: /remove vocals/i })).toBeNull();
+  });
+
+  it('the library drawer offers it on your uploads only', async () => {
+    vi.spyOn(libraryApi, 'fetchCapabilities').mockResolvedValue({ vocalRemoval: true, amfEncoder: false });
+    render(wrap(<MusicPicker value={{ path: null, paths: [], volume: 1 }} onChange={() => {}} busy={false} multiple />));
+    await userEvent.click(await screen.findByRole('button', { name: /add from library/i }));
+    const drawer = screen.getByRole('dialog', { name: /music library/i });
+    expect(await within(drawer).findByRole('button', { name: /remove vocals from your love/i })).toBeInTheDocument();
+    expect(within(drawer).queryByRole('button', { name: /remove vocals from prayer piano/i })).toBeNull();
   });
 
   it('opens the dialog for the chosen track', async () => {
     vi.spyOn(libraryApi, 'fetchCapabilities').mockResolvedValue({ vocalRemoval: true, amfEncoder: false });
     render(wrap(<MusicPicker value={{ path: 'mylib:u1', paths: ['mylib:u1'], volume: 1 }} onChange={() => {}} busy={false} multiple />));
-    const [first] = await screen.findAllByRole('button', { name: /remove vocals from your love/i });
-    await userEvent.click(first);
+    await screen.findByText('Your Love');
+    await userEvent.click(within(await openMenu(/more for your love/i)).getByRole('menuitem', { name: /remove vocals/i }));
     const dialog = screen.getByRole('dialog', { name: /remove vocals from your love/i });
     expect(within(dialog).getByRole('button', { name: /^remove vocals$/i })).toBeInTheDocument();
   });
 
-  it('shows nothing when vocal removal is not set up', async () => {
+  it('shows no vocal option when vocal removal is not set up', async () => {
     const caps = vi.spyOn(libraryApi, 'fetchCapabilities').mockResolvedValue({ vocalRemoval: false, amfEncoder: false });
     render(wrap(<MusicPicker value={{ path: 'mylib:u1', paths: ['mylib:u1'], volume: 1 }} onChange={() => {}} busy={false} multiple />));
     await vi.waitFor(() => expect(caps).toHaveBeenCalled());
-    await screen.findAllByText('Your Love');
-    expect(screen.queryByRole('button', { name: /remove vocals/i })).not.toBeInTheDocument();
+    await screen.findByText('Your Love');
+    expect(within(await openMenu(/more for your love/i)).queryByRole('menuitem', { name: /vocals/i })).toBeNull();
   });
 
   it('a chosen song that already has an instrumental offers "Use instrumental", which swaps it in place', async () => {
@@ -60,7 +74,8 @@ describe('MusicPicker — remove vocals', () => {
     vi.spyOn(libraryApi, 'fetchCapabilities').mockResolvedValue({ vocalRemoval: true, amfEncoder: false });
     const onChange = vi.fn();
     render(wrap(<MusicPicker value={{ path: 'library:prayer-piano', paths: ['library:prayer-piano', 'mylib:u1'], volume: 1 }} onChange={onChange} busy={false} multiple />));
-    await userEvent.click(await screen.findByRole('button', { name: /use the instrumental of your love/i }));
+    await screen.findByText('Your Love');
+    await userEvent.click(within(await openMenu(/more for your love$/i)).getByRole('menuitem', { name: /use instrumental/i }));
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ paths: ['library:prayer-piano', 'mylib:i1'] }));
   });
 
@@ -70,7 +85,8 @@ describe('MusicPicker — remove vocals', () => {
     const onChange = vi.fn();
     const loose = ['C:', 'out', 'user-audio-9.m4a'].join('\\'); // a Windows path, as the server stores it
     render(wrap(<MusicPicker value={{ path: loose, paths: [loose], volume: 1 }} onChange={onChange} busy={false} multiple />));
-    await userEvent.click(await screen.findByRole('button', { name: /remove vocals from user-audio-9\.m4a/i }));
+    await vi.waitFor(() => expect(libraryApi.fetchCapabilities).toHaveBeenCalled());
+    await userEvent.click(within(await openMenu(/more for user-audio-9\.m4a/i)).getByRole('menuitem', { name: /remove vocals/i }));
     expect(saveSpy).toHaveBeenCalledWith(loose, expect.objectContaining({ label: 'user-audio-9' }));
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ paths: ['mylib:raw1'] }));
     expect(await screen.findByRole('dialog', { name: /remove vocals from user-audio-9/i })).toBeInTheDocument();
@@ -84,11 +100,11 @@ describe('MusicPicker — remove vocals', () => {
     });
     const onChange = vi.fn();
     render(wrap(<MusicPicker value={{ path: 'mylib:u1', paths: ['mylib:u1'], volume: 1 }} onChange={onChange} busy={false} multiple />));
-    const [first] = await screen.findAllByRole('button', { name: /remove vocals from your love/i });
-    await userEvent.click(first);
-    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /^remove vocals$/i }));
+    await screen.findByText('Your Love');
+    await userEvent.click(within(await openMenu(/more for your love/i)).getByRole('menuitem', { name: /remove vocals/i }));
+    await userEvent.click(within(screen.getByRole('dialog', { name: /remove vocals from/i })).getByRole('button', { name: /^remove vocals$/i }));
     await userEvent.click(await screen.findByRole('button', { name: /use in this video/i }));
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ paths: ['mylib:i1'] }));
-    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByRole('dialog', { name: /remove vocals from/i })).toBeNull();
   });
 });

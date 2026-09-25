@@ -26,7 +26,8 @@ function toListed(track) {
     id: track.id,
     label: track.label,
     mood: track.mood,
-    previewUrl: null, // uploads are served through the authed /outputs path, not /music
+    previewUrl: null, // uploads are played from /outputs/<mediaFile>, not /music
+    mediaFile: path.basename(track.file),
     default: false,
     source: "upload",
     licence: track.licence,

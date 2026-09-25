@@ -55,6 +55,16 @@ describe("music route", () => {
     assert.equal(r.payload.tracks.length, 24);
   });
 
+  test("GET /library tells the picker which output file plays an upload (its UUID name), never the full path", async () => {
+    const { ctx, file } = tenant();
+    registerTrack(ctx.dataDir, { file, label: "My Bed" });
+    const r = res();
+    await handlerFor("get", "/library")({ ctx }, r);
+    const mine = r.payload.tracks.find((t) => t.source === "upload");
+    assert.equal(mine.mediaFile, "user-audio-1.mp3");
+    assert.equal(Object.values(mine).some((v) => typeof v === "string" && v.includes(path.basename(ctx.dataDir))), false, "no server path leaks");
+  });
+
   test("POST /upload registers a file that is already in the caller's output dir", async () => {
     const { ctx, file } = tenant();
     const r = res();

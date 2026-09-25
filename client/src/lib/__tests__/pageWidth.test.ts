@@ -17,6 +17,10 @@ describe('pageWidthClass', () => {
     expect(pageWidthClass('/app')).toBe(DEFAULT_PAGE_WIDTH);
   });
 
+  it('gives the Ambient session the width of a music editor', () => {
+    expect(pageWidthClass('/app/ambient')).toBe('max-w-[1400px]');
+  });
+
   it('matches nested routes under a mapped prefix', () => {
     expect(pageWidthClass('/app/timeline/anything')).toBe('max-w-[1600px]');
   });
