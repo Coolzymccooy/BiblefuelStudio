@@ -67,7 +67,10 @@ router.post("/upload", async (req, res) => {
     // A bare name ("user-audio-….m4a", as a Timeline lane stores a loose
     // upload) is read as a file in the caller's media folder; the containment
     // checks below still apply, so "../x" cannot climb out.
-    const file = path.resolve(root, String(req.body?.file || "").trim());
+    // The served form ("/outputs/…") names the same folder, so it is read as
+    // a name inside it too.
+    const given = String(req.body?.file || "").trim().replace(/^\/?outputs[\\/]/, "");
+    const file = path.resolve(root, given);
     if (file !== root && !file.startsWith(root + path.sep)) {
       return res.status(403).json({ ok: false, error: "That file is outside your media folder" });
     }

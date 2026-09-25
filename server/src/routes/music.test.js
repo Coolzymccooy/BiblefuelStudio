@@ -90,6 +90,22 @@ describe("music route", () => {
     assert.equal(readMusicLibrary(ctx.dataDir).items[0].file, fs.realpathSync(file));
   });
 
+  test("POST /upload accepts the served /outputs/ form of a file in the caller's media folder", async () => {
+    const { ctx, file } = tenant();
+    const r = res();
+    await handlerFor("post", "/upload")({ ctx, body: { file: `/outputs/${path.basename(file)}` } }, r);
+    assert.equal(r.payload.ok, true);
+    assert.equal(readMusicLibrary(ctx.dataDir).items[0].file, fs.realpathSync(file));
+  });
+
+  test("POST /upload refuses an /outputs/ path that climbs out", async () => {
+    const { ctx } = tenant();
+    fs.writeFileSync(path.join(ctx.dataDir, "secret.mp3"), "x");
+    const r = res();
+    await handlerFor("post", "/upload")({ ctx, body: { file: "/outputs/../secret.mp3" } }, r);
+    assert.equal(r.statusCode, 403);
+  });
+
   test("POST /upload still refuses a relative path that climbs out of the media folder", async () => {
     const { ctx } = tenant();
     fs.writeFileSync(path.join(ctx.dataDir, "secret.mp3"), "x");

@@ -140,4 +140,25 @@ describe('SourceMediaPanel', () => {
       expect(props.onInsertSourceMedia).toHaveBeenCalled();
     });
   });
+
+  describe('Remove vocals', () => {
+    it('is offered for a song, and hands over its path', async () => {
+      const user = userEvent.setup();
+      const onRemoveVocals = vi.fn();
+      setup({ sourceMediaPath: '/outputs/user-audio-1.m4a', sourceMediaKind: 'audio', onRemoveVocals });
+      await user.click(screen.getByRole('button', { name: /remove vocals/i }));
+      expect(onRemoveVocals).toHaveBeenCalledWith('/outputs/user-audio-1.m4a');
+    });
+
+    it('is not offered where vocal removal is unavailable, or for video and pictures', () => {
+      setup({ sourceMediaPath: '/outputs/a.m4a', sourceMediaKind: 'audio' });
+      expect(screen.queryByRole('button', { name: /remove vocals/i })).not.toBeInTheDocument();
+    });
+
+    it('is not offered for a video', () => {
+      setup({ sourceMediaPath: '/outputs/a.mp4', sourceMediaKind: 'video', onRemoveVocals: vi.fn() });
+      expect(screen.queryByRole('button', { name: /remove vocals/i })).not.toBeInTheDocument();
+    });
+  });
 });
+

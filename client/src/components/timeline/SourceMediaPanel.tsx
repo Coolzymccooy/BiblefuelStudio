@@ -1,4 +1,4 @@
-import { Film, Play, Music, Scissors, Plus, Sparkles, X } from 'lucide-react';
+import { Film, Play, Music, MicOff, Scissors, Plus, Sparkles, X } from 'lucide-react';
 import { DropZone } from '../ui/DropZone';
 
 /**
@@ -29,6 +29,8 @@ export interface SourceMediaPanelProps {
   onUpload: (file: File) => void;
   onPreviewSource: () => void;
   onUseAsMusicBed: (path: string) => void;
+  /** Make an instrumental of an audio source. Absent where vocal removal isn't available. */
+  onRemoveVocals?: (path: string) => void;
   onTrim: () => void;
   onInsertSourceMedia: () => void;
   onInsertVoiceoverPlaceholder: () => void;
@@ -69,6 +71,7 @@ export function SourceMediaPanel({
   onUpload,
   onPreviewSource,
   onUseAsMusicBed,
+  onRemoveVocals,
   onTrim,
   onInsertSourceMedia,
   onInsertVoiceoverPlaceholder,
@@ -170,6 +173,18 @@ export function SourceMediaPanel({
                   className={ACTION_CLASS}
                 >
                   <Music size={12} /> Music bed
+                </button>
+              )}
+
+              {sourceMediaKind === 'audio' && onRemoveVocals && (
+                <button
+                  type="button"
+                  onClick={() => sourceMediaPath && onRemoveVocals(sourceMediaPath)}
+                  aria-label="Remove vocals"
+                  className={ACTION_CLASS}
+                  title="Make an instrumental of this song (removes the singing). It is saved to your library and goes on the Music bed."
+                >
+                  <MicOff size={12} /> Remove vocals
                 </button>
               )}
 
