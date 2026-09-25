@@ -118,7 +118,9 @@ function AmbientDonePanel({ project, refresh }: { project: AmbientProject; refre
         {published.length > 0 && <PublishedBefore published={published} />}
         <YoutubePublishPanel
           videoUrl={`/outputs/ambient/${project.projectId}/video.mp4`}
-          initial={{ title: project.title, description: ambientDescription(project) }}
+          // A calm picture with its title is what these channels' thumbnails
+          // look like; the operator can untick it.
+          initial={{ title: project.title, description: ambientDescription(project), thumbnailTitle: true }}
           thumbnailOptions={ambientThumbnails(project)}
           chapters={chapters.length >= 3 ? chapters : undefined}
           onPublished={notePublished}

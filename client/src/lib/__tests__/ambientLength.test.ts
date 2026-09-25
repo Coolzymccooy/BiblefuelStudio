@@ -37,6 +37,13 @@ describe('renderEstimateMinutes', () => {
   it('never promises less than a minute', () => {
     expect(renderEstimateMinutes(30)).toBe(1);
   });
+
+  it('gentle drift costs its measured 1.4x on the picture pass, not on the music', () => {
+    expect(renderEstimateMinutes(600, 'drift')).toBe(4);
+    expect(renderEstimateMinutes(3600, 'drift')).toBe(25);
+    expect(renderEstimateMinutes(7200, 'drift')).toBe(50);
+    expect(renderEstimateMinutes(7200, 'still')).toBe(renderEstimateMinutes(7200));
+  });
 });
 
 describe('lengthSummary', () => {

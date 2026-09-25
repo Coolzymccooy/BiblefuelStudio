@@ -29,6 +29,7 @@ export {
   _setLookupImpl, _resetLookupImpl, _setSynthImpl, _resetSynthImpl,
   _setProbeImpl, _resetProbeImpl, _setImageGenImpl, _resetImageGenImpl,
   _setImageLibraryImpl, _resetImageLibraryImpl,
+  _setLoudnessImpl, _resetLoudnessImpl, _setFfmpegSpawnImpl, _resetFfmpegSpawnImpl,
 } from "../lib/ambient/stages.js";
 
 /**
@@ -232,7 +233,7 @@ router.patch("/:id/drops", (req, res) => {
       const changed = String(incoming.reference || "").trim() !== prev.reference
         || String(incoming.translation || prev.translation) !== prev.translation;
       return changed
-        ? { ...prev, ...incoming, text: null, audioPath: null, durationMs: null, status: "pending", error: null }
+        ? { ...prev, ...incoming, text: null, verses: null, audioPath: null, durationMs: null, status: "pending", error: null }
         : { ...prev, ...incoming };
     });
     const drops = normaliseDrops(merged, {
@@ -391,6 +392,27 @@ router.put("/:id/movements/:movementId/image", async (req, res) => {
 router.get("/:id/library-images", (req, res) => {
   if (!loadOr404(req, res)) return undefined;
   return res.json({ ok: true, images: libraryImageView(readLibrary(req.ctx.dataDir).items).slice(0, 200) });
+});
+
+// PATCH /:id/motion — still, or a gentle drift (see ambientMotion.js).
+const MOTIONS = ["still", "drift"];
+router.patch("/:id/motion", (req, res) => {
+  const project = loadOr404(req, res);
+  if (!project) return undefined;
+  const motion = req.body?.motion;
+  if (!MOTIONS.includes(motion)) {
+    return res.status(400).json({ ok: false, error: "motion must be still or drift" });
+  }
+  // The encode already running has its picture chain; a write now would also
+  // race the render stage's own progress writes.
+  if (ENCODING_STATUSES.has(project.status)) {
+    return res.status(409).json({ ok: false, error: "this session is rendering; change the motion when it finishes" });
+  }
+  try {
+    return res.json({ ok: true, project: writeProject(req.ctx.dataDir, { ...project, motion }) });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
 });
 
 // PATCH /:id/captions — merged against the stored project so a partial update

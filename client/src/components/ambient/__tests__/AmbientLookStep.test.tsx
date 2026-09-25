@@ -43,6 +43,14 @@ describe('AmbientLookStep — your own pictures', () => {
     expect(screen.getByRole('button', { name: 'Regenerate movement 1' })).toBeInTheDocument();
   });
 
+  it('says what each action does in words — a phone shows no hover tooltip', () => {
+    // Icon-only, the upload button went unnoticed on an iPhone.
+    renderStep(project());
+    expect(screen.getByRole('button', { name: 'Upload photo for movement 1' })).toHaveTextContent('Upload photo');
+    expect(screen.getByRole('button', { name: 'Choose from library for movement 1' })).toHaveTextContent('Library');
+    expect(screen.getByRole('button', { name: 'Regenerate movement 1' })).toHaveTextContent('Regenerate');
+  });
+
   it('an uploaded photo is attached to that movement', async () => {
     const upload = vi.spyOn(mediaUpload, 'uploadMedia').mockResolvedValue({ file: '/out/bg-image-x.png', kind: 'image' });
     const attach = vi.spyOn(ambientApi, 'setMovementImage').mockResolvedValue(project());
@@ -118,5 +126,12 @@ describe('AmbientLookStep — your own pictures', () => {
   it('says where a picture came from', () => {
     renderStep(project('ready_to_render', [movement({ imageStatus: 'done', imageUrl: '/outputs/a.jpg', imagePath: '/a.jpg', imageSource: 'upload' })]));
     expect(screen.getByText('Your photo')).toBeInTheDocument();
+  });
+});
+
+describe('AmbientLookStep — motion', () => {
+  it('shows the motion choice alongside the pictures', () => {
+    renderStep(project());
+    expect(screen.getByRole('radiogroup', { name: /motion/i })).toBeInTheDocument();
   });
 });

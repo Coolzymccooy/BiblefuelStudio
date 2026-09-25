@@ -5,9 +5,10 @@ import { spawn } from "child_process";
 import { readProject, writeProject } from "./projectStore.js";
 import { orderTracks, bedHash, buildBedArgs } from "./bedAssembly.js";
 import { voiceDrops } from "./drops.js";
-import { deriveMovements } from "./movements.js";
+import { deriveMovements, imagePromptFor, AMBIENT_IMAGE_STYLE } from "./movements.js";
 import { buildAmbientFfmpegArgs } from "./ambientRender.js";
 import { insideOutputs } from "./ownFiles.js";
+import { measureLoudness, gainToTargetDb } from "./loudness.js";
 
 import { lookupVerses } from "../bible/scriptureApi.js";
 import { synthesize } from "../voice/index.js";
@@ -149,10 +150,18 @@ export function resolveTrackFile(ctx, ref) {
   return insideOutputs(ctx.outputDir, raw);
 }
 
-function spawnFfmpeg(args) {
+function realSpawnFfmpeg(args) {
   const ff = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
   return spawn(ff, args, { windowsHide: true });
 }
+let _spawnFfmpeg = realSpawnFfmpeg;
+export function _setFfmpegSpawnImpl(impl) { _spawnFfmpeg = impl; }
+export function _resetFfmpegSpawnImpl() { _spawnFfmpeg = realSpawnFfmpeg; }
+function spawnFfmpeg(args) { return _spawnFfmpeg(args); }
+
+let _measureLoudness = measureLoudness;
+export function _setLoudnessImpl(impl) { _measureLoudness = impl; }
+export function _resetLoudnessImpl() { _measureLoudness = measureLoudness; }
 
 
 /** The image library as currently wired (real, or a test's stand-in). */
@@ -202,6 +211,9 @@ export async function imagesStage(ctx, projectId, { force = false, onlyId = null
     if (onlyId ? movements[i].id !== onlyId : done && !force) continue;
     movements[i] = {
       ...movements[i],
+      // Refreshed as it is (re)made: a session saved before the bright style
+      // still carries the old prompt.
+      imagePrompt: imagePromptFor(project.theme, i),
       imageStatus: "generating",
       imageError: null,
       ...(force || onlyId ? { imagePath: null, imageUrl: null, imageLibraryId: null } : {}),
@@ -219,7 +231,7 @@ export async function imagesStage(ctx, projectId, { force = false, onlyId = null
     let reused = null;
     try {
       const candidates = await _imageLib.find({
-        dataDir: ctx.dataDir, prompt: movements[i].imagePrompt, style: "", aspect,
+        dataDir: ctx.dataDir, prompt: movements[i].imagePrompt, style: AMBIENT_IMAGE_STYLE, aspect,
         excludeIds: [...claimed],
       });
       for (const c of candidates || []) {
@@ -265,7 +277,7 @@ export async function imagesStage(ctx, projectId, { force = false, onlyId = null
       try {
         entry = await _imageLib.register({
           dataDir: ctx.dataDir, outputDir: ctx.outputDir, sourcePath: result.path,
-          prompt: movements[i].imagePrompt, style: "", aspect,
+          prompt: movements[i].imagePrompt, style: AMBIENT_IMAGE_STYLE, aspect,
           provider: result.provider, projectId: project.projectId,
         });
         if (entry?.id) claimed.add(entry.id);
@@ -351,8 +363,19 @@ export async function assembleBed(ctx, project) {
   const dir = ensureDir(outDirFor(ctx.outputDir, project.projectId));
   const bedPath = path.join(dir, "bed.m4a");
 
+  // Measured once per file, however often the pool loops it. Cancel is
+  // honoured between tracks: a big pool is minutes of measuring.
+  const levels = new Map();
+  let allMeasured = true;
+  for (const file of new Set(order.map((t) => t.file))) {
+    if (isCancelled(project.projectId)) throw new Error("Cancelled.");
+    const measured = await _measureLoudness(file);
+    if (!measured) allMeasured = false;
+    levels.set(file, gainToTargetDb(measured));
+  }
   const built = buildBedArgs(order.map((t) => t.file), {
     crossfadeSec, targetSec: project.targetSec, outPath: bedPath,
+    gainsDb: order.map((t) => levels.get(t.file) || 0),
   });
 
   await new Promise((resolve, reject) => {
@@ -366,9 +389,17 @@ export async function assembleBed(ctx, project) {
   });
 
   const fresh = stillThere(ctx, project.projectId);
+  const savedRefs = order.map((t) => t.ref);
+  // Keyed on the order saved, which is what the next render reads back; the
+  // old key was the pre-shuffle list, so the cache almost never hit. And a
+  // bed with an unmeasured track is not kept as levelled: it's rebuilt next
+  // time, when the measurement may succeed.
+  const builtHash = allMeasured
+    ? bedHash({ trackRefs: savedRefs, crossfadeSec: bed.crossfadeSec, targetSec: project.targetSec })
+    : null;
   const saved = writeProject(ctx.dataDir, {
     ...fresh,
-    bed: { ...fresh.bed, trackRefs: order.map((t) => t.ref), builtPath: bedPath, builtHash: hash },
+    bed: { ...fresh.bed, trackRefs: savedRefs, builtPath: bedPath, builtHash },
   });
   return { bedPath, project: saved };
 }

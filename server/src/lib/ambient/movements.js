@@ -27,7 +27,7 @@ export function deriveMovements(project) {
     return [reuse(existing[0], {
       startMs: 0,
       endMs: targetMs,
-      imagePrompt: promptFor(theme, ""),
+      imagePrompt: imagePromptFor(theme, 0),
     })];
   }
 
@@ -37,10 +37,10 @@ export function deriveMovements(project) {
   }
   bounds.push(targetMs);
 
-  return drops.map((drop, i) => reuse(existing[i], {
+  return drops.map((_drop, i) => reuse(existing[i], {
     startMs: bounds[i],
     endMs: bounds[i + 1],
-    imagePrompt: promptFor(theme, drop.reference),
+    imagePrompt: imagePromptFor(theme, i),
   }));
 }
 
@@ -63,11 +63,43 @@ function reuse(prev, next) {
   };
 }
 
-function promptFor(theme, reference) {
-  const subject = [theme, reference].filter(Boolean).join(", ");
+/**
+ * The library pool these pictures belong to. Reuse only ever matches the same
+ * style, so the dark pictures made before this one are never picked for you
+ * again (you can still choose them yourself from the library).
+ */
+export const AMBIENT_IMAGE_STYLE = "ambient-bright-v1";
+
+// One per movement, in turn, so a long session travels through different
+// places instead of asking for the same picture again.
+const SCENES = [
+  "a still mountain lake at sunrise with golden light on the water",
+  "a sunlit meadow of wildflowers with gentle rolling hills",
+  "a quiet river winding through a green valley in morning light",
+  "a calm seashore at dawn with soft waves and a pastel sky",
+  "a forest clearing with warm sunbeams through the trees",
+  "wide golden fields under a big bright sky with gentle clouds",
+  "misty green hills glowing in early morning sun",
+  "a peaceful lakeside with reflections and a warm sunset glow",
+];
+
+/**
+ * The prompt for a movement's picture.
+ *
+ * Light is the product: the theme sets the feeling, not the subject. Led by
+ * the theme and asking for "cinematic, soft diffused light", "Peace in the
+ * storm" came back as a night storm with lightning. Two more things it no
+ * longer does: a verse reference (a model can't read "Psalm 23:1"; it only
+ * invites lettering) and negations ("no people" is still "people" to the
+ * model, which drew a man walking).
+ */
+export function imagePromptFor(theme, index) {
+  const scene = SCENES[Math.abs(Number(index) || 0) % SCENES.length];
+  const feeling = String(theme || "").trim();
   return [
-    subject || "still water at night",
-    "calm contemplative landscape, soft diffused light, wide empty composition,",
-    "cinematic, peaceful, no people, no text, no lettering",
+    `Bright, luminous landscape photograph of ${scene}.`,
+    feeling ? `The feeling of "${feeling}": peaceful, hopeful, full of light.` : "Peaceful, hopeful, full of light.",
+    "Warm golden sunlight, clear soft blue sky, airy high-key pastel tones,",
+    "serene untouched nature, wide open view.",
   ].join(" ");
 }

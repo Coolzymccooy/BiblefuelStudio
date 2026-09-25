@@ -32,9 +32,16 @@ async function setThumbnail(youtube, videoId, thumbnailPath) {
   } catch (e) {
     // Custom thumbnails need a phone-verified channel. The video is already
     // up; report the reason instead of failing a successful upload.
-    return String(e?.message || e);
+    const message = String(e?.message || e);
+    return THUMBNAIL_NOT_ALLOWED_RE.test(message) ? THUMBNAIL_NOT_ALLOWED : message;
   }
 }
+
+// Google's wording ("The authenticated user doesn't have permissions to upload
+// and set custom video thumbnails") names the cause but not the one-time fix.
+const THUMBNAIL_NOT_ALLOWED_RE = /permission.*thumbnail|thumbnail.*permission/i;
+const THUMBNAIL_NOT_ALLOWED = "YouTube only allows custom thumbnails on verified channels. "
+  + "Verify yours once at youtube.com/verify, then set this thumbnail in YouTube Studio.";
 
 /**
  * Upload one video with full metadata, then (best-effort) its thumbnail.

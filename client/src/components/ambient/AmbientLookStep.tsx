@@ -6,6 +6,7 @@ import { AmbientCaptionsPanel, type AmbientScripturePatch } from './AmbientCapti
 import { panelCls, primaryBtnCls } from '../story/formStyles';
 import { AmbientMovementTile } from './AmbientMovementTile';
 import { AmbientLibraryPicker } from './AmbientLibraryPicker';
+import { AmbientMotionPanel } from './AmbientMotionPanel';
 
 export interface AmbientLookStepProps {
   project: AmbientProject;
@@ -16,7 +17,7 @@ export interface AmbientLookStepProps {
 
 /**
  * One still per movement — generated, picked from your library, or your own
- * photo — plus how the scripture shows on screen.
+ * photo — whether they move, and how the scripture shows on screen.
  */
 export function AmbientLookStep({ project, busy, setBusy, refresh }: AmbientLookStepProps) {
   const [pickingFor, setPickingFor] = useState<string | null>(null);
@@ -83,6 +84,8 @@ export function AmbientLookStep({ project, busy, setBusy, refresh }: AmbientLook
           onChosen={() => { setPickingFor(null); refresh(); }}
         />
       )}
+
+      <AmbientMotionPanel project={project} locked={locked} refresh={refresh} />
 
       <AmbientCaptionsPanel value={project} onChange={onCaptionsChange} busy={busy} />
     </div>

@@ -1,5 +1,8 @@
 import type { StoryCaptionSettings } from './storyTypes';
 
+/** How the pictures move: see server/src/lib/ambient/ambientMotion.js. */
+export type AmbientMotion = 'still' | 'drift';
+
 export type AmbientStatus =
   | 'draft' | 'voicing' | 'assembling' | 'generating_images'
   | 'ready_to_render' | 'rendering' | 'done' | 'error';
@@ -93,8 +96,8 @@ export interface AmbientProject extends StoryCaptionSettings {
   bed: AmbientBed;
   drops: AmbientDrop[];
   movements: AmbientMovement[];
-  /** Slow zoompan drift, or no motion at all. */
-  motion: 'drift' | 'still';
+  /** A slow breathing zoom on each picture, or no motion at all. */
+  motion: AmbientMotion;
   /** Always present on a stored project; the rest of the caption settings are optional. */
   captionPreset: string;
   /** How long a verse stays on screen. Absent on projects saved before the choice: renders as 'spoken'. */

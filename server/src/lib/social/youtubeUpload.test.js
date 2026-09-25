@@ -65,6 +65,14 @@ describe("uploadToYoutube", () => {
     assert.equal(out.videoId, "abc123");
     assert.match(out.thumbnailError, /channel not verified/);
   });
+  test("a channel that can't set thumbnails is told how to fix it, not shown Google's wording", async () => {
+    const { google } = fakeGoogle({ thumbError: "The authenticated user doesn't have permissions to upload and set custom video thumbnails." });
+    _setGoogleImpl(google);
+    const out = await uploadToYoutube({ credentials: creds, filePath: tmpFile("v.mp4"), metadata, thumbnailPath: tmpFile("t.jpg") });
+    assert.equal(out.videoId, "abc123");
+    assert.match(out.thumbnailError, /youtube\.com\/verify/);
+    assert.doesNotMatch(out.thumbnailError, /authenticated user/);
+  });
   test("a missing thumbnail file is reported, not thrown", async () => {
     const { google, calls } = fakeGoogle();
     _setGoogleImpl(google);

@@ -3,7 +3,35 @@ import toast from 'react-hot-toast';
 import { ambientApi, type AmbientBedPatch, type UnclearedTrack } from '../../lib/ambientApi';
 import type { AmbientProject } from '../../lib/ambientTypes';
 import { MusicPicker, type MusicValue } from '../MusicPicker';
+import { MusicLibraryImport } from '../MusicLibraryImport';
 import { fieldLabelCls, panelCls, segmentCls, segmentedCls } from '../story/formStyles';
+
+/**
+ * Put freshly imported library tracks at the end of a video's bed. Reads the
+ * bed fresh: a folder import can end after the step was left or the bed was
+ * changed, and the step's own copy would then be stale. Null when there was
+ * nothing new to add.
+ */
+export async function addImportedToBed(projectId: string, refs: readonly string[]) {
+  const fresh = await ambientApi.getProject(projectId);
+  const current = fresh.bed.trackRefs;
+  const additions = refs.filter((r, i) => !current.includes(r) && refs.indexOf(r) === i);
+  if (additions.length === 0) return null;
+  const patch: AmbientBedPatch = { trackRefs: [...current, ...additions] };
+  return { patch, result: await ambientApi.setBed(projectId, patch) };
+}
+
+/**
+ * A toast, not only the step's banner: a folder import can end after the step
+ * was left, and then nobody would see the banner.
+ */
+export function reportImportGate(uncleared: readonly UnclearedTrack[]) {
+  const names = uncleared.map((t) => t.label).join(', ');
+  toast.error(
+    `Imported tracks weren't added to this video's bed: ${names} ${uncleared.length === 1 ? 'has' : 'have'} no recorded licence. Open the Sound step to add them anyway.`,
+    { duration: 10000 },
+  );
+}
 
 export interface AmbientSoundStepProps {
   project: AmbientProject;
@@ -55,6 +83,18 @@ export function AmbientSoundStep({ project, busy, setBusy, refresh }: AmbientSou
 
   const onFileChange = (next: MusicValue) => {
     applyBedPatch({ filePath: next.path, volume: next.volume });
+  };
+
+  const onImported = async (refs: string[]) => {
+    const added = await addImportedToBed(project.projectId, refs);
+    if (added && !added.result.ok) {
+      // Same licence gate as picking them by hand.
+      reportImportGate(added.result.uncleared);
+      setUncleared(added.result.uncleared);
+      setPendingPatch(added.patch);
+      return;
+    }
+    refresh();
   };
 
   const assembleValue: MusicValue = { path: bed.trackRefs[0] ?? null, paths: bed.trackRefs, volume: bed.volume };
@@ -111,6 +151,8 @@ export function AmbientSoundStep({ project, busy, setBusy, refresh }: AmbientSou
       ) : (
         <MusicPicker value={fileValue} onChange={onFileChange} busy={busy} />
       )}
+
+      <MusicLibraryImport busy={busy} onAdded={bed.mode === 'assemble' ? onImported : undefined} />
 
       <div className={`${panelCls} space-y-3`}>
         <label className="flex items-center justify-between gap-3 text-sm text-content-secondary">

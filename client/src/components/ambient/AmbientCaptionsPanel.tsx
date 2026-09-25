@@ -18,7 +18,7 @@ type Choice = 'off' | AmbientCaptionSpan;
 const CHOICES: Array<{ id: Choice; label: string; hint: string }> = [
   { id: 'off', label: 'Off', hint: 'Music and pictures only.' },
   { id: 'spoken', label: 'While spoken', hint: 'Each verse shows for the few seconds it is read.' },
-  { id: 'section', label: 'Whole section', hint: 'Each verse stays up for as long as its picture does, fading with it.' },
+  { id: 'section', label: 'Whole section', hint: 'Scripture stays up for as long as its picture does — a passage one verse at a time, fading between them.' },
 ];
 
 /**

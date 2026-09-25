@@ -1,3 +1,5 @@
+import type { AmbientMotion } from './ambientTypes';
+
 /**
  * Plain-English answers for the ambient length field.
  *
@@ -36,14 +38,18 @@ export function versesFor(targetSec: number): number {
 
 /**
  * Measured on a real render, then confirmed on prod's ffmpeg 5.1 within 1.5%:
- * the video pass runs at ~3.4x realtime, the bed assembly at ~40x. This is for
- * the default still-image motion; drift is slower and not yet measured.
+ * the video pass runs at ~3.4x realtime, the bed assembly at ~40x, with still
+ * pictures. Gentle drift made the video pass 1.4x longer on a real render
+ * (ffmpeg 8; not yet timed on prod's 5.1). The bed is the same either way.
  */
 const ENCODE_SPEED = 3.4;
 const BED_SPEED = 40;
+const DRIFT_ENCODE_FACTOR = 1.4;
 
-export function renderEstimateMinutes(targetSec: number): number {
-  const sec = (Number(targetSec) || 0) / ENCODE_SPEED + (Number(targetSec) || 0) / BED_SPEED;
+export function renderEstimateMinutes(targetSec: number, motion: AmbientMotion = 'still'): number {
+  const total = Number(targetSec) || 0;
+  const encode = (total / ENCODE_SPEED) * (motion === 'drift' ? DRIFT_ENCODE_FACTOR : 1);
+  const sec = encode + total / BED_SPEED;
   const minutes = sec / 60;
   if (minutes < 1) return 1;
   // Round long waits to five minutes: "38" claims a precision this doesn't have.
