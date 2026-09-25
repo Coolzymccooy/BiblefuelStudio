@@ -90,6 +90,19 @@ describe("music route", () => {
     assert.equal(readMusicLibrary(ctx.dataDir).items[0].file, fs.realpathSync(file));
   });
 
+  test("an upload in a sub-folder of the media folder is played from its /outputs/ path, not a bare name that 404s", async () => {
+    const { ctx } = tenant();
+    const nested = path.join(ctx.outputDir, "timeline", "bed.mp3");
+    fs.mkdirSync(path.dirname(nested), { recursive: true });
+    fs.writeFileSync(nested, "x");
+    const saved = res();
+    await handlerFor("post", "/upload")({ ctx, body: { file: "/outputs/timeline/bed.mp3" } }, saved);
+    assert.equal(saved.payload.track.mediaFile, "/outputs/timeline/bed.mp3");
+    const listed = res();
+    await handlerFor("get", "/library")({ ctx }, listed);
+    assert.equal(listed.payload.tracks.find((t) => t.source === "upload").mediaFile, "/outputs/timeline/bed.mp3");
+  });
+
   test("POST /upload accepts the served /outputs/ form of a file in the caller's media folder", async () => {
     const { ctx, file } = tenant();
     const r = res();
