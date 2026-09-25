@@ -393,6 +393,31 @@ describe("vocal removal routes", () => {
     assert.equal(readMusicLibrary(ctx.dataDir).items.length, 1, "no dangling track was registered");
   });
 
+  test("a cancel that lands as the separator finishes is honoured: nothing is saved", async () => {
+    const { ctx, file } = tenant();
+    const src = registerTrack(ctx.dataDir, { file, label: "Song" });
+    let finish;
+    const gate = new Promise((r) => { finish = r; });
+    let written;
+    _setSeparatorImpl({
+      available: async () => ({ ok: true }),
+      // Like the real one near the end: the file is out, and the abort
+      // arrives too late for the separator itself to notice.
+      remove: async ({ outPath }) => { fs.writeFileSync(outPath, "m4a"); written = outPath; await gate; return outPath; },
+    });
+    const c = { ...ctx, userId: "u1" };
+    const { payload } = await call("post", "/:id/instrumental", { ctx: c, params: { id: src.id }, body: {} });
+    await until(async () => Boolean(written));
+    await call("post", "/instrumental/:jobId/cancel", { ctx: c, params: { jobId: payload.jobId } });
+    finish();
+    await until(async () => (await call("get", "/instrumental/:jobId", { ctx: c, params: { jobId: payload.jobId } })).payload.job.status !== "running");
+    const job = (await call("get", "/instrumental/:jobId", { ctx: c, params: { jobId: payload.jobId } })).payload.job;
+    assert.equal(job.status, "error");
+    assert.match(job.error, /Cancelled/);
+    assert.equal(readMusicLibrary(ctx.dataDir).items.length, 1, "only the original is in the library");
+    assert.equal(fs.existsSync(written), false, "the cancelled instrumental is removed");
+  });
+
   test("a finished instrumental is saved to the library straight away — leaving the page cannot lose it", async () => {
     const { ctx, file } = tenant();
     const src = registerTrack(ctx.dataDir, { file, label: "Song", licence: "unknown", credit: "Choir X" });

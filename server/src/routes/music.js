@@ -205,6 +205,9 @@ async function saveInstrumental(dataDir, job, outputDir) {
   if (!fs.existsSync(job.resultPath)) throw new Error("the separator finished but wrote no file");
   let durationSec = null;
   try { durationSec = await probeAudioDurationSec(job.resultPath); } catch { /* recorded without it */ }
+  // Last point before it becomes a library track: a cancel that landed while
+  // the separator was finishing or the file was being measured wins.
+  if (job.controller.signal.aborted) throw new Error("Cancelled.");
   const track = registerTrack(dataDir, {
     file: job.resultPath,
     label: `${job.sourceLabel || "Track"} (instrumental)`,
