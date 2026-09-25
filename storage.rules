@@ -1,0 +1,69 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function owner(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function isImage() {
+      return request.resource.contentType.matches('image/.*');
+    }
+
+    function isVideo() {
+      return request.resource.contentType.matches('video/.*');
+    }
+
+    function isAudio() {
+      return request.resource.contentType.matches('audio/.*');
+    }
+
+    // Library backgrounds uploaded by each user
+    match /users/{uid}/backgrounds/{fileName} {
+      allow read: if owner(uid);
+      allow create: if owner(uid) && isImage() && request.resource.size < 25 * 1024 * 1024;
+      allow update: if owner(uid) && isImage() && request.resource.size < 25 * 1024 * 1024;
+      allow delete: if owner(uid);
+    }
+
+    // User voice/audio files
+    match /users/{uid}/audio/{fileName} {
+      allow read: if owner(uid);
+      allow create: if owner(uid) && isAudio() && request.resource.size < 100 * 1024 * 1024;
+      allow update: if owner(uid) && isAudio() && request.resource.size < 100 * 1024 * 1024;
+      allow delete: if owner(uid);
+    }
+
+    // User rendered mp4 outputs
+    match /users/{uid}/renders/{fileName} {
+      allow read: if owner(uid);
+      allow create: if owner(uid) && isVideo() && request.resource.size < 350 * 1024 * 1024;
+      allow update: if owner(uid) && isVideo() && request.resource.size < 350 * 1024 * 1024;
+      allow delete: if owner(uid);
+    }
+
+    // Publicly shareable renders
+    match /public/renders/{fileName} {
+      allow read: if true;
+      allow create: if signedIn()
+        && isVideo()
+        && request.resource.size < 350 * 1024 * 1024
+        && request.resource.metadata.ownerUid == request.auth.uid;
+      allow update, delete: if signedIn() && resource.metadata.ownerUid == request.auth.uid;
+    }
+
+    // Server-side mirrored outputs (uploaded by firebase-admin from API server)
+    // Keep these private by default; app reads through signed URLs.
+    match /outputs/{allPaths=**} {
+      allow read: if signedIn();
+      allow write: if false;
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

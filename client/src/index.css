@@ -1,0 +1,1176 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* -- Theme tokens ---------------------------------------------------------
+     Every surface and text colour resolves through these so a `data-theme`
+     attribute can repaint the app. DARK is the default and stays exactly as it
+     was; the light values are additive, not a rewrite.
+
+     LIGHT is NOT an inversion. Gold at the dark theme's saturation reads as
+     muddy yellow on white, so the accent darkens for contrast while keeping the
+     warm identity, and surfaces stay cream-tinted rather than clinical white so
+     both themes feel like the same product. Every light value is measured at
+     >= 4.5:1 against its surface (WCAG AA body text).
+     ----------------------------------------------------------------------- */
+  :root,
+  :root[data-theme='dark'] {
+    /* Field chrome. Gold hairlines read on near-black; see .input. */
+    --input-border: rgba(216, 184, 120, 0.14);
+    --input-border-hover: rgba(216, 184, 120, 0.24);
+    --input-border-focus: rgba(216, 184, 120, 0.40);
+    --input-ring: rgba(216, 184, 120, 0.14);
+    --input-placeholder: #8a7f6b;
+    /* The bf.* Tailwind tokens resolve to these, so one attribute repaints
+       every component that uses them. Dark keeps the original values exactly. */
+    --bf-bg: #0b0906;
+    --bf-bg2: #080604;
+    /* Body wash. Warm gold-on-near-black: the original identity. */
+    --bf-wash-tint: rgba(216, 184, 120, 0.10);
+    --bf-wash-tint2: rgba(107, 79, 31, 0.16);
+    --bf-wash-a: #161009;
+    --bf-wash-b: #0b0805;
+    --bf-wash-c: #080604;
+    --bf-card: #140f09;
+    --bf-card2: #17130c;
+    --bf-input: #161009;
+    --bf-input2: #0f0b07;
+    --bf-gold: #e6c98a;
+    --bf-goldDeep: #cba85f;
+    --bf-goldDim: #a8894f;
+    --bf-cream: #f4ecdc;
+    --bf-cream2: #f0e6d3;
+    --bf-sub: #b7ac97;
+    --bf-sub2: #a99f8b;
+    --bf-muted: #8a7f6b;
+    --bf-faint: #6f6654;
+    /* Dusty teal, not signal green - the professional "ready" tone from the
+       approved editor palette (gold = action, teal = ready/voice). */
+    --bf-success: #7fb5aa;
+    --bf-danger: #e08a8a;
+    /* Card/glass surfaces. Hardcoding these is what kept light mode muddy:
+       .card painted rgba(17,14,10,.6) regardless of theme. */
+    --bf-cardSurface: rgba(17, 14, 10, 0.60);
+    --bf-cardBorder: rgba(255, 255, 255, 0.06);
+    --bf-cardBorderHover: rgba(255, 255, 255, 0.12);
+    --bf-cardShadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 10px 30px -14px rgba(0, 0, 0, 0.5);
+    --bf-cardSolid: #140f09;
+    --bf-hoverTint: rgba(255, 255, 255, 0.07);
+    /* Pale gold fill -> near-black label (11.81:1). */
+    --bf-btnPrimaryFill: linear-gradient(180deg, #e9cd8d, #cba85f);
+    --bf-btnPrimaryInk: #221703;
+    --bf-btnPrimaryShadow: 0 14px 28px -10px rgba(216, 184, 120, 0.5);
+    --bf-btnSecondaryInk: #cdbfa6;
+    --bf-btnSecondaryBorder: rgba(216, 184, 120, 0.16);
+    --bf-btnSecondaryBorderHover: rgba(216, 184, 120, 0.30);
+    /* Tailwind gray, unchanged in dark. */
+    --g-100:#f3f4f6; --g-200:#e5e7eb; --g-300:#d1d5db; --g-400:#9ca3af;
+    /* 500 and 600 are LIFTED from Tailwind's own values. text-gray-500 is used
+       for empty states ("No jobs in the queue") and meta text; at Tailwind's
+       #6b7280 it measures 4.11:1 on this ground and 3.78:1 on calm's lighter
+       one — under AA in BOTH dark themes. #828997 clears it on both (5.66:1
+       dark, 5.20:1 calm) while staying clearly the quiet tier below g-400.
+       600 was worse still at 2.63:1 and gets the same treatment. */
+    --g-500:#828997; --g-600:#6f7684; --g-700:#374151; --g-800:#1f2937; --g-900:#111827;
+    --ink:#ffffff;
+    /* Stage is the only editor surface that follows the theme. */
+    --editor-stage:#080604;
+    /* Declared explicitly: dark relied on the Tailwind fallback, so the shell
+       chrome was never actually part of the theme it belongs to. */
+    --editor-chrome:#14100a;
+    /* Lane bed: the strip a row's clips sit ON, visible for the full width
+       of the lane including the empty space after the last clip. */
+    --lane-bed:#221c12;
+    /* 11px hint text ("No footage yet ...") measured 3.2:1 on the editor
+       panel - under AA. Raised until it clears AA on the LANE BED too, which
+       is darker than the panel and is what this text actually sits on:
+       4.78:1 on the bed, 5.14:1 on the panel. Still the faint tier. */
+    --editor-faint:#918779;
+
+    --surface-bg: #0b0906;
+    --surface-card: #140f09;
+    --surface-card2: #17130c;
+    --surface-input: #161009;
+    --border-subtle: rgba(216, 184, 120, 0.08);
+    --border-strong: rgba(216, 184, 120, 0.20);
+    --text-primary: #f4ecdc;
+    --accent: #e6c98a;
+    --accent-deep: #cba85f;
+    /* Dark mode already had a light gold, so the fill is that same gold with
+       dark ink - the pair must exist in BOTH themes or a filled button loses
+       its text colour when the theme flips. */
+    --accent-fill: #e6c98a;
+    --accent-ink: #1c1a15;
+    --tone-success: #6fcf97;
+    --tone-danger: #e08a8a;
+  }
+
+  /* ------------------------------------------------------------------
+     CALM — a third theme, for night work.
+
+     The brief: "blends well with all the texts, boxes, icons, general
+     background", the gold "looks too deep and not helpful at night", and
+     "not very multi coloured".
+
+     So this is ONE accent, not a palette. A soft slate ground (#12151a —
+     warm-neutral, never pure black, so it does not glare against a dark
+     room) with sand (#c8b389) as the single accent. The sand is the dark
+     theme's gold pulled down in saturation until it reads as a material
+     rather than a highlight: same family, none of the heat.
+
+     Every value below is measured. Body text 15.05:1, secondary 9.17:1,
+     accent 8.94:1 on the ground — all well past AA, most past AAA, which
+     is what keeps it readable at low screen brightness.
+     ------------------------------------------------------------------ */
+  :root[data-theme='calm'] {
+    --input-border: rgba(200, 179, 137, 0.18);
+    --input-border-hover: rgba(200, 179, 137, 0.30);
+    --input-border-focus: rgba(200, 179, 137, 0.48);
+    --input-ring: rgba(200, 179, 137, 0.16);
+    --input-placeholder: #8b8680;
+    --bf-bg: #12151a;
+    --bf-bg2: #0e1116;
+    /* Cool slate wash, and far quieter than dark's: calm exists to be
+       comfortable at night, so the tint is barely there. */
+    --bf-wash-tint: rgba(168, 186, 210, 0.05);
+    --bf-wash-tint2: rgba(90, 104, 126, 0.08);
+    --bf-wash-a: #171b22;
+    --bf-wash-b: #12151a;
+    --bf-wash-c: #0e1116;
+    --bf-card: #191d24;
+    --bf-card2: #1e232b;
+    --bf-input: #161a20;
+    --bf-input2: #12161b;
+    /* Sand, not gold. Same role, no heat. */
+    --bf-gold: #c8b389;
+    --bf-goldDeep: #a89772;
+    --bf-goldDim: #8b7d60;
+    /* Warm-neutral ink, NOT a cool near-white. The cool #e8e9ea sat at the
+       same ~14:1 as the dark theme, but dark's ink is a warm cream, which is
+       what keeps it comfortable. Cool white on a cool slate ground has
+       nothing to soften it and reads as glare. 10.86:1 - still AAA. */
+    --bf-cream: #d2cfc8;
+    --bf-cream2: #c9c5bd;
+    --bf-sub: #aba79f;
+    --bf-sub2: #a39f97;
+    --bf-muted: #948f86;
+    --bf-faint: #8b8680;
+    /* Desaturated to match: status should register, not shout. */
+    --bf-success: #8fb3a8;
+    --bf-danger: #cf9494;
+    --bf-cardSurface: rgba(25, 29, 36, 0.66);
+    --bf-cardBorder: rgba(210, 207, 200, 0.09);
+    --bf-cardBorderHover: rgba(210, 207, 200, 0.17);
+    --bf-cardShadow: inset 0 1px 0 rgba(210, 207, 200, 0.05), 0 10px 30px -14px rgba(0, 0, 0, 0.55);
+    --bf-cardSolid: #191d24;
+    --bf-hoverTint: rgba(210, 207, 200, 0.07);
+    /* Flat fill, no gradient: the gradient is what made the gold button
+       read as "deep". Dark ink on sand measures 8.26:1. */
+    --bf-btnPrimaryFill: linear-gradient(180deg, #c8b389, #b8a37a);
+    --bf-btnPrimaryInk: #1a1d22;
+    --bf-btnPrimaryShadow: 0 14px 28px -12px rgba(200, 179, 137, 0.34);
+    --bf-btnSecondaryInk: #b8b4ab;
+    --bf-btnSecondaryBorder: rgba(200, 179, 137, 0.18);
+    --bf-btnSecondaryBorderHover: rgba(200, 179, 137, 0.34);
+    --g-100:#f3f4f6; --g-200:#e5e7eb; --g-300:#d1d5db; --g-400:#9ca3af;
+    /* Same lift as dark, and needed more here: calm's ground is LIGHTER, so
+       Tailwind's #6b7280 fell to 3.78:1. */
+    --g-500:#828997; --g-600:#6f7684; --g-700:#374151; --g-800:#1f2937; --g-900:#111827;
+    --ink:#d2cfc8;
+    --editor-stage:#0e1116;
+    --editor-chrome:#161a20;
+    --lane-bed:#22252c;
+    --editor-panel:#191d24;
+    --editor-hover:rgba(210, 207, 200, 0.07);
+    --editor-line:rgba(210, 207, 200, 0.12);
+    --editor-text:#d2cfc8;
+    --editor-dim:#aba79f;
+    --editor-faint:#948f86;
+    --editor-accent:#c8b389;
+    --stage-ground:#0e1116;
+    --stage-check:rgba(210, 207, 200, 0.04);
+
+    --surface-bg: #12151a;
+    --surface-card: #191d24;
+    --surface-card2: #1e232b;
+    --surface-input: #161a20;
+    --border-subtle: rgba(210, 207, 200, 0.10);
+    --border-strong: rgba(210, 207, 200, 0.22);
+    --text-primary: #d2cfc8;
+    --accent: #c8b389;
+    --accent-deep: #a89772;
+    --accent-fill: #c8b389;
+    --accent-ink: #1a1d22;
+    --tone-success: #8fb3a8;
+    --tone-danger: #cf9494;
+    --content-secondary: #aba79f;
+    --content-tertiary: #948f86;
+    color-scheme: dark;
+  }
+
+  :root[data-theme='light'] {
+    /* A pale ground needs a DARK hairline, not a gold one: gold at 14% on
+       #faf7f2 is invisible, which is what left every field bedless. */
+    --input-border: rgba(17, 17, 17, 0.16);
+    --input-border-hover: rgba(17, 17, 17, 0.28);
+    --input-border-focus: #8f6a14;
+    --input-ring: rgba(143, 106, 20, 0.20);
+    --input-placeholder: #6b6456;
+    /* Light is NOT an inversion. `cream` is the PRIMARY TEXT token, so in light
+       mode it must become near-black — leaving it cream is what made headings
+       and sidebar labels invisible. Every value below was measured against the
+       white card surface and passes WCAG AA (>= 4.5:1). */
+    --bf-bg: #faf7f2;
+    --bf-bg2: #f2ede4;
+    /* Light sets background-image:none below, so these exist only so the
+       token set is complete and a future change cannot fall back to dark. */
+    --bf-wash-tint: rgba(216, 184, 120, 0.06);
+    --bf-wash-tint2: rgba(180, 160, 120, 0.05);
+    --bf-wash-a: #fdfbf7;
+    --bf-wash-b: #faf7f2;
+    --bf-wash-c: #f2ede4;
+    --bf-card: #ffffff;
+    --bf-card2: #f7f3ec;
+    --bf-input: #ffffff;
+    --bf-input2: #f7f3ec;
+    /* 4.87:1 on white passed, but the ACTIVE nav item sits on a gold-tinted
+       bed, not white, and there the label measured 4.40:1. #755c2a holds the
+       same warm cast and clears AA on both: 6.32:1 on white, 5.72:1 on the
+       active bed. */
+    --bf-gold: #755c2a;
+    --bf-goldDeep: #6f5726;  /* 6.85:1 */
+    --bf-goldDim: #82683a;   /* 5.26:1 */
+    /* A WARM GROUND WANTS A NEUTRAL INK. The ground here (#faf7f2) is already
+       warm, and #1c1a15 added a 14% brown cast on top of it - warm-on-warm is
+       what made light mode read muddy rather than crisp. Apple Music's light
+       surface is the same warm off-white (#faf6f1) with a fully NEUTRAL ink
+       (#000000, 0% saturation), which is why its black looks calm instead of
+       harsh. #111111 takes that neutrality without the full-black hardness. */
+    --bf-cream: #111111;     /* 17.67:1 on the warm ground */
+    --bf-cream2: #2a2620;    /* 15.04:1 */
+    --bf-sub: #4a4438;       /* 9.65:1 */
+    --bf-sub2: #5c5548;      /* 7.37:1 */
+    --bf-muted: #6b6456;     /* 5.86:1 */
+    --bf-faint: #7a7264;     /* 4.75:1 */
+    --bf-success: #2a6f66;   /* muted teal, 5.1:1 on white */
+    --bf-danger: #b03b3b;    /* 5.94:1 */
+    /* Opaque white cards. A translucent surface over a cream page produced the
+       muddy brown panels; light mode wants clean white with a real border. */
+    --bf-cardSurface: #ffffff;
+    --bf-cardBorder: rgba(28, 26, 21, 0.10);
+    --bf-cardBorderHover: rgba(28, 26, 21, 0.20);
+    --bf-cardShadow: 0 1px 2px rgba(28, 26, 21, 0.04), 0 8px 24px -12px rgba(28, 26, 21, 0.14);
+    --bf-cardSolid: #ffffff;
+    --bf-hoverTint: rgba(28, 26, 21, 0.06);
+    /* Deeper gold fill so the button reads as a solid action against white
+       cards, with a WHITE label (4.87:1). Near-black here would be 3.9:1. */
+    --bf-btnPrimaryFill: linear-gradient(180deg, #8a6d33, #745c2c);
+    --bf-btnPrimaryInk: #ffffff;
+    --bf-btnPrimaryShadow: 0 10px 22px -12px rgba(122, 98, 46, 0.55);
+    --bf-btnSecondaryInk: #4a4438;      /* 9.65:1 on white */
+    --bf-btnSecondaryBorder: rgba(28, 26, 21, 0.18);
+    --bf-btnSecondaryBorderHover: rgba(28, 26, 21, 0.34);
+    /* INVERTED: 100-300 are heading/label colours, so they go near-black.
+       Measured on white — 18.7, 17.4, 14.2, 9.7, 7.4, 5.9, 4.8 : 1. */
+    --g-100:#0d0d0d; --g-200:#111111; --g-300:#2f2a22; --g-400:#4a4438;
+    --g-500:#5c5548; --g-600:#6b6456; --g-700:#7a7264; --g-800:#8a8272; --g-900:#9a9280;
+    --ink:#111111;
+    --editor-stage:#e9e4db;
+    /* Editor chrome in light mode: white panels, near-black text, and the
+       darker gold that clears 4.5:1 on white. Without these the docked
+       sheet stayed dark on a light page and its labels vanished. */
+    --editor-chrome:#f4f0e8;
+    --lane-bed:#f1f2f4;
+    --editor-panel:#ffffff;
+    --editor-hover:rgba(28, 26, 21, 0.06);
+    --editor-line:rgba(28, 26, 21, 0.12);
+    --editor-text:#111111;
+    --editor-dim:#3d3d3d;
+    /* 4.23:1 on the panel wash (#e9e4db) failed AA for the empty-state copy
+       that sits on it — the token has to clear AA on the WASH, not just on
+       white. #605c58 measures 5.23:1 there and 6.63:1 on a white card. */
+    --editor-faint:#605c58;
+    /* Gold, not brown. The old #8a6d33 sat at 46% saturation because it had
+       been darkened to carry WHITE text; it read as chocolate.
+
+       #8f6a14 cleared AA on plain white (4.95:1) but not on the surfaces it
+       actually lands on: the selected provider card tints its own bed with
+       this accent, and the label then measured 3.50:1 — the worst failure on
+       the page. Darkening to #7a5a10 keeps the hue and saturation while
+       clearing AA on every ground it meets: 6.37:1 on a white card, 5.69:1 on
+       its own 8% tint, 4.36:1 → 5.35:1 for the active rail label.
+       Filled surfaces still use --accent-fill with dark ink instead. */
+    --editor-accent:#7a5a10;
+    --stage-ground:#efeae1;
+    --stage-check:rgba(28, 26, 21, 0.05);
+
+    --surface-bg: #faf7f2;
+    --surface-card: #ffffff;
+    --surface-card2: #f5f1e9;
+    --surface-input: #ffffff;
+    --border-subtle: rgba(28, 26, 21, 0.10);
+    --border-strong: rgba(28, 26, 21, 0.22);
+    --text-primary: #111111;
+    /* Two golds, two jobs. --accent is TEXT and thin rules on light chrome, so
+       it must clear 4.5:1 on white (4.95:1 here). --accent-fill paints filled
+       surfaces like the Render button and carries DARK ink, which is what
+       lets it stay a rich, saturated gold (8.4:1 with ink) instead of the
+       muddy brown that chasing white-on-gold contrast produced. */
+    /* Kept in lockstep with --editor-accent (a test asserts they are equal —
+       two golds drifting apart is what left the editor chrome muddy). Both
+       moved #8f6a14 → #7a5a10: same hue (42°), slightly HIGHER saturation
+       (76.8% vs 75.5%), and 6.37:1 on white instead of 4.95:1, which is what
+       the active nav and rail labels needed on their tinted beds. */
+    --accent: #7a5a10;
+    --accent-deep: #6f5726;
+    --accent-fill: #dcae4a;
+    --accent-ink: #111111;
+    --tone-success: #1a7f4f;
+    --tone-danger: #b03b3b;
+    /* Secondary text follows the theme, else it stays a dark-mode cream. */
+    --content-secondary: #5c5a57;
+    /* Tertiary text lands on tinted beds, not just white: the provider card's
+       subtitle sits on the selected card's accent tint, where #6e6a66 measured
+       exactly 4.50:1 — on the line, and under it once the tint shifts at all.
+       #635f5a keeps the same neutral cast with real margin on every ground it
+       meets (6.33:1 on white, 5.31:1 on the card tint, 5.00:1 on the wash). */
+    --content-tertiary: #635f5a;
+    /* Native controls (select popups, scrollbars) must follow too, or the
+       OS-drawn option list renders dark-on-light. */
+    color-scheme: light;
+  }
+
+  /* `text-white` is used ~112 times as the PRIMARY heading colour. On a white
+     card that is invisible. Remapping the utility itself is the only way to
+     fix them all without touching 49 files — and it cannot be done in the
+     Tailwind config, because that would break bg-white/10 opacity modifiers. */
+  :root[data-theme='light'] .text-white { color: #111111; }
+
+  /* Selected provider/preset card.
+     Was `border-editor-accent/70 bg-editor-accent/15`, which computed to a
+     TRANSPARENT background and a black border: Tailwind's /alpha modifier
+     rewrites a colour into rgb(... / a) and cannot do that to a var(). So the
+     selected card lost its fill entirely. color-mix does work on variables. */
+  .provider-btn-active {
+    border-color: color-mix(in srgb, var(--editor-accent) 70%, transparent);
+    background-color: color-mix(in srgb, var(--editor-accent) var(--provider-active-tint, 15%), transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--editor-accent) 35%, transparent);
+  }
+  /* A 15% accent tint reads as a gentle lift on a dark panel, but on a white
+     card it DARKENS the bed to ~#d9d9d9 and drags the card's own labels under
+     AA (the provider name measured 3.50:1, its subtitle 3.79:1). 8% keeps the
+     card visibly selected while leaving both labels above AA. */
+  :root[data-theme='light'] { --provider-active-tint: 8%; }
+  /* Flat fallback wherever color-mix is unavailable. */
+  @supports not (color: color-mix(in srgb, red 50%, transparent)) {
+    .provider-btn-active { border-color: var(--editor-accent); background-color: var(--editor-hover); }
+  }
+
+  /* Pale STATUS colours are dark-mode values too. text-red-300 on an error
+     message, text-blue-200 on the "Environment Variables" notice and friends
+     measure 1.1-2.8:1 on the light ground — every error, warning and notice in
+     the app was unreadable there. Each maps to its 700 step, which clears AA
+     (red 6.05:1, rose 5.88:1, blue 6.27:1, indigo 7.40:1, purple 6.53:1) and
+     keeps the hue, so red still reads as an error.
+
+     Backgrounds at the same steps are untouched: a red-500/10 tint behind the
+     text is doing a different job and still works on a pale ground. */
+  :root[data-theme='light'] .text-red-100,
+  :root[data-theme='light'] .text-red-200,
+  :root[data-theme='light'] .text-red-300,
+  :root[data-theme='light'] .text-red-400 { color: #b91c1c; }
+  :root[data-theme='light'] .text-rose-200,
+  :root[data-theme='light'] .text-rose-300,
+  :root[data-theme='light'] .text-rose-400 { color: #be123c; }
+  :root[data-theme='light'] .text-blue-200,
+  :root[data-theme='light'] .text-blue-300,
+  :root[data-theme='light'] .text-blue-400 { color: #1d4ed8; }
+  :root[data-theme='light'] .text-indigo-300,
+  :root[data-theme='light'] .text-indigo-400 { color: #4338ca; }
+  :root[data-theme='light'] .text-purple-300 { color: #7e22ce; }
+
+  /* `bg-black/20`..`/80` are dark washes used as beds and code chips. On a
+     pale ground they are heavy smudges, and any dark ink on top vanishes —
+     the `server/.env` chip measured 1.8:1. Flip them to a light-ink wash of
+     the same weight. */
+  :root[data-theme='light'] .bg-black\/20 { background-color: rgba(17, 17, 17, 0.06); }
+  :root[data-theme='light'] .bg-black\/30 { background-color: rgba(17, 17, 17, 0.08); }
+  :root[data-theme='light'] .bg-black\/40 { background-color: rgba(17, 17, 17, 0.10); }
+
+  /* Faint white tints are a DARK-mode device: `bg-white/5`, `bg-white/[0.04]`
+     and friends lift a surface off a near-black ground. On the light theme's
+     near-white ground they composite to very nearly nothing, so every card,
+     chip and provider button that relied on one lost its BED and read as
+     loose text floating on the page — the "no flesh" the operator reported
+     across Providers, Presets, Clone, Visuals and the API panels.
+
+     Remapping the utilities is the only way to fix ~147 sites at once, and it
+     has to happen HERE rather than in the Tailwind config, which cannot know
+     the theme. Each step maps to a proportional dark-on-light tint, so the
+     relative hierarchy between 0.02 and 0.12 survives the flip.
+
+     Deliberately NOT remapped: bg-white/10 upward is also used as a scrollbar
+     thumb and as a fill over imagery, where a dark tint would be wrong. Only
+     the surface-tint steps are touched. */
+  :root[data-theme='light'] .bg-white\/\[0\.01\],
+  :root[data-theme='light'] .bg-white\/\[0\.015\],
+  :root[data-theme='light'] .bg-white\/\[0\.02\] { background-color: rgba(17, 17, 17, 0.028); }
+  :root[data-theme='light'] .bg-white\/\[0\.03\],
+  :root[data-theme='light'] .bg-white\/\[0\.04\] { background-color: rgba(17, 17, 17, 0.045); }
+  :root[data-theme='light'] .bg-white\/5 { background-color: rgba(17, 17, 17, 0.055); }
+  :root[data-theme='light'] .bg-white\/\[0\.06\] { background-color: rgba(17, 17, 17, 0.07); }
+  :root[data-theme='light'] .bg-white\/\[0\.12\] { background-color: rgba(17, 17, 17, 0.11); }
+
+  /* Hover states built from the same device need the same treatment, or a
+     card gets LIGHTER on hover in light mode — backwards. */
+  :root[data-theme='light'] .hover\:bg-white\/5:hover,
+  :root[data-theme='light'] .hover\:bg-white\/\[0\.06\]:hover { background-color: rgba(17, 17, 17, 0.075); }
+  :root[data-theme='light'] .hover\:bg-white\/10:hover { background-color: rgba(17, 17, 17, 0.10); }
+
+  /* Hairline borders are the same story: white at 5-20% is invisible on a
+     pale ground, so every bordered card lost its edge. */
+  :root[data-theme='light'] .border-white\/5 { border-color: rgba(17, 17, 17, 0.08); }
+  :root[data-theme='light'] .border-white\/10 { border-color: rgba(17, 17, 17, 0.12); }
+  :root[data-theme='light'] .border-white\/15 { border-color: rgba(17, 17, 17, 0.16); }
+  :root[data-theme='light'] .border-white\/20 { border-color: rgba(17, 17, 17, 0.20); }
+  :root[data-theme='light'] .hover\:border-white\/20:hover { border-color: rgba(17, 17, 17, 0.22); }
+  :root[data-theme='light'] .divide-white\/5 > * + * { border-color: rgba(17, 17, 17, 0.08); }
+
+  /* Pale gold is a DARK-mode colour. These steps exist for gold on near black;
+     reused as text on a light ground they measure 1.2-2.9:1 and simply vanish.
+     Light mode remaps gold TEXT to the deep gold that clears 4.5:1, while
+     backgrounds keep the rich fill - so a filled gold button is unaffected.
+
+     100 and 200 are the IMPORTANT ones, not an afterthought: SourceMediaPanel
+     paints "Choose file", Preview, Trim and Insert with them (1.17:1 and
+     1.35:1 on a near-white panel) - the row the operator reported as
+     unreadable. An earlier version of this rule started at 300 and left them
+     exactly as invisible as before. */
+  :root[data-theme='light'] .text-primary-100,
+  :root[data-theme='light'] .text-primary-200,
+  :root[data-theme='light'] .text-primary-300,
+  :root[data-theme='light'] .text-primary-400,
+  :root[data-theme='light'] .text-primary-500,
+  :root[data-theme='light'] .text-primary-600 { color: #8f6a14; }
+
+  /* Type on a pale ground reads THINNER than the same weight on dark. Light
+     mode therefore steps every label/heading class up a weight so the UI feels
+     as solid as the dark theme rather than washed out. */
+  :root[data-theme='light'] .field-label,
+  :root[data-theme='light'] .text-caption,
+  :root[data-theme='light'] .bf-eyebrow { font-weight: 700; }
+
+  :root[data-theme='light'] .card-title,
+  :root[data-theme='light'] h1,
+  :root[data-theme='light'] h2,
+  :root[data-theme='light'] h3 { font-weight: 650; }
+
+  /* Gold on a pale ground is the thinnest-reading combination in the app, so
+     it gets the biggest bump — this is the "make the gold bolder" fix. */
+  :root[data-theme='light'] .text-bf-gold,
+  :root[data-theme='light'] .text-bf-goldDeep,
+  :root[data-theme='light'] .text-bf-goldDim { font-weight: 600; }
+
+  /* MOBILE SAFETY NET
+     body has overflow-x-hidden, which stops the PAGE scrolling sideways but
+     silently CLIPS anything wider than the viewport — a w-[600px] panel on a
+     375px phone loses its right-hand content with no scrollbar to reveal it.
+     Below the lg breakpoint, fixed-width boxes shrink to fit and long strings
+     (file paths, job ids, URLs) wrap instead of pushing the layout wide. */
+  @media (max-width: 1023px) {
+    [class*="w-["] { max-width: 100%; }
+    pre, code, .font-mono { overflow-wrap: anywhere; }
+    table { display: block; overflow-x: auto; }
+  }
+
+  /* Phones: desktop card padding (20-24px each side) eats a third of a 390px
+     screen, so content is squeezed and long labels wrap awkwardly. Tighten it
+     and let flex rows wrap rather than overflow. */
+  @media (max-width: 639px) {
+    .card { padding: 14px; border-radius: 14px; }
+    .input { padding-left: 12px; padding-right: 12px; }
+  }
+
+  :root[data-theme='light'] select { color-scheme: light; }
+
+  :root[data-theme='light'] option,
+  :root[data-theme='light'] optgroup {
+    background-color: #ffffff;
+    color: #111111;
+  }
+
+  :root[data-theme='light'] body {
+    background-color: var(--surface-bg);
+    background-image: none;
+    color: var(--text-primary);
+  }
+
+  :root {
+    /* Secondary-text system, brightened for legibility — small/light subtext at
+       the old #A8B0BC/#8A929E read as washed-out on the near-black UI and made
+       users squint. Lifted a clear step so descriptions/meta are comfortable
+       while still ranking below pure-white headings. */
+    /* Quiet-studio warm text system — reads cohesively on the warm near-black. */
+    --content-secondary: #c0b49c; /* descriptions, help, subtitles */
+    --content-tertiary:  #a99f8b; /* meta, timestamps, counts, hints */
+    /* Render native controls (select popups, scrollbars, date pickers) in dark
+       mode so the OS-drawn <option> list never renders white-on-white. */
+    color-scheme: dark;
+  }
+
+  html {
+    font-size: 15px;
+  }
+
+  /* Native dropdowns: keep the OS-rendered option list legible on the dark
+     theme. color-scheme handles modern Chromium/Firefox; the explicit option
+     colors are a belt-and-braces fallback for engines that ignore it. */
+  select {
+    color-scheme: dark;
+  }
+
+  option,
+  optgroup {
+    background-color: #0b0c0e; /* dark-900 */
+    color: #e5e7eb;            /* gray-200 */
+  }
+
+  body {
+    /* Ink comes from the theme, not from a fixed grey. index.html used to
+       carry `text-gray-100`, which outranked this rule and pinned every theme
+       to the dark theme's ink; with that removed, this is what every page
+       inherits, so it must follow --bf-cream like everything else. */
+    @apply overflow-x-hidden font-sans;
+    color: var(--bf-cream);
+    /* Quiet-studio: warm gold-on-near-black wash. */
+    background-color: var(--bf-bg);
+    /* The wash is TOKENISED, not hardcoded.
+       These three stops used to be literal dark-theme hexes
+       (#161009/#0b0805/#080604), painted over var(--bf-bg) on every theme. Light
+       escaped it only because a later rule sets background-image:none — calm had
+       no such escape, so it inherited the dark theme's near-black wash and
+       rendered as dark no matter what its own tokens said. */
+    background-image:
+      radial-gradient(1200px 700px at 20% -10%, var(--bf-wash-tint), transparent 55%),
+      radial-gradient(900px 600px at 110% 110%, var(--bf-wash-tint2), transparent 55%),
+      linear-gradient(160deg, var(--bf-wash-a) 0%, var(--bf-wash-b) 60%, var(--bf-wash-c) 100%);
+    background-attachment: fixed;
+    letter-spacing: 0;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    line-height: 1.5;
+  }
+
+  @media (max-width: 1024px) {
+    body {
+      background-attachment: scroll;
+    }
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    @apply text-white;
+    font-family: 'Inter Variable', Inter, ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: -0.02em;
+    font-weight: 600;
+  }
+
+  h1 {
+    font-size: 1.625rem; /* 26px */
+    line-height: 1.2;
+    letter-spacing: -0.025em;
+  }
+
+  h2 {
+    font-size: 1.25rem; /* 20px */
+    line-height: 1.25;
+  }
+
+  h3 {
+    font-size: 1.0625rem; /* 17px */
+    line-height: 1.3;
+  }
+
+  h4 {
+    font-size: 0.9375rem; /* 15px */
+    line-height: 1.35;
+  }
+}
+
+@layer components {
+
+  /* Quiet-studio card — neutral iOS glass (frosted, matched to the bf-card
+     surface). Gold stays an accent elsewhere, never a surface wash. */
+  .card {
+    @apply relative rounded-bf p-5 sm:p-6 transition-all duration-300 overflow-hidden;
+    background: var(--bf-cardSurface);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--bf-cardBorder);
+    box-shadow: var(--bf-cardShadow);
+  }
+
+  .card:hover {
+    border-color: var(--bf-cardBorderHover);
+  }
+
+  .card-glow::before {
+    content: '';
+    @apply absolute -inset-[1px] -z-10 rounded-xl bg-gradient-to-r from-transparent via-white/10 to-transparent opacity-0 transition-opacity duration-500;
+  }
+
+  .card:hover .card-glow::before {
+    @apply opacity-100;
+  }
+
+  /* Buttons */
+  .btn {
+    @apply inline-flex items-center justify-center rounded-xl px-4 py-2.5 text-sm font-medium transition-all duration-200 outline-none focus-visible:ring-2 focus-visible:ring-[rgba(216,184,120,0.55)] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0b0906] active:scale-95 disabled:pointer-events-none disabled:opacity-50;
+  }
+
+  /* Gold gradient CTA on ink text — the quiet-studio primary action. */
+  /* The label colour MUST flip with the theme. Measured on the actual button
+     fill: near-black on pale gold is 11.8:1, but on the DARKENED light-mode
+     gold it is only 3.9:1 — a fail. White on that darker gold is 4.87:1.
+     Using one fixed label colour makes the button illegible in one theme. */
+  .btn-primary {
+    @apply border-none font-semibold hover:-translate-y-0.5;
+    color: var(--bf-btnPrimaryInk);
+    background-image: var(--bf-btnPrimaryFill);
+    box-shadow: var(--bf-btnPrimaryShadow);
+  }
+
+  .btn-primary:hover {
+    filter: brightness(1.03);
+  }
+
+  /* Secondary label was a fixed pale #cdbfa6 — fine on a dark card, nearly
+     invisible on a white one. Follows the theme now. */
+  .btn-secondary {
+    @apply bg-bf-card2 border hover:bg-bf-card hover:text-bf-cream;
+    color: var(--bf-btnSecondaryInk);
+    border-color: var(--bf-btnSecondaryBorder);
+  }
+
+  .btn-secondary:hover {
+    border-color: var(--bf-btnSecondaryBorderHover);
+  }
+
+  .btn-danger {
+    @apply bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 hover:text-red-300 hover:border-red-500/30;
+  }
+
+  /* Inputs — warm ink field with a gold hairline. */
+  /* Every field in the app resolves through .input — Treat's preset controls,
+     Clone's name/path, the API Configuration panels. The border and the
+     placeholder were hardcoded dark-theme values: gold at 14% is a visible
+     hairline on near-black and NOTHING on a pale ground, so in light mode
+     every one of those fields lost its bed and read as floating text. */
+  .input {
+    @apply block w-full rounded-[13px] border bg-bf-input px-3.5 py-2.5 text-[0.9375rem] transition-all duration-150 outline-none;
+    border-color: var(--input-border);
+    color: var(--bf-cream);
+  }
+
+  .input::placeholder { color: var(--input-placeholder); }
+
+  .input:hover:not(:focus):not(:disabled) { border-color: var(--input-border-hover); }
+
+  .input:focus {
+    border-color: var(--input-border-focus);
+    box-shadow: 0 0 0 2px var(--input-ring);
+  }
+
+  /* ── Surface + icon-button vocabulary ────────────────────────────────────
+     TimelinePage alone had NINE different surface treatments (bg-black at five
+     opacities, bg-white at four, plus tinted one-offs) because each control
+     invented its own. That reads as unfinished however good the palette is.
+
+     CapCut's discipline is the fix: ONE accent, used sparingly, and everything
+     else neutral. These three surfaces and two icon-button styles are the whole
+     vocabulary — a new control picks one rather than inventing a tenth. */
+
+  /* Recessed: inputs, wells, anything you type or drop into. */
+  .surface-sunken {
+    background: var(--bf-input);
+    border: 1px solid var(--bf-cardBorder);
+  }
+
+  /* Raised: list rows, thumbnails, chips — a step above the card. */
+  .surface-raised {
+    background: var(--bf-card2);
+    border: 1px solid var(--bf-cardBorder);
+  }
+
+  /* Overlay: floats above content (badges over media, hover controls). */
+  .surface-overlay {
+    background: rgba(0, 0, 0, 0.62);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+  }
+
+  /* Neutral icon button. The DEFAULT for icon actions: no colour until hover,
+     so a row of them reads as one control group rather than a fruit salad. */
+  .icon-btn {
+    @apply inline-grid place-items-center rounded-md p-1.5 transition-colors;
+    color: var(--content-tertiary);
+  }
+  .icon-btn:hover:not(:disabled) {
+    color: var(--bf-cream);
+    background: var(--bf-hoverTint);
+  }
+  .icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* Destructive icon button. The ONLY icon variant that carries colour, and it
+     stays neutral until hover — a delete that is permanently red shouts on
+     every row, and the shouting stops being read. */
+  .icon-btn-danger {
+    @apply inline-grid place-items-center rounded-md p-1.5 transition-colors;
+    color: var(--content-tertiary);
+  }
+  .icon-btn-danger:hover:not(:disabled) {
+    color: #f87171;
+    background: rgba(248, 113, 113, 0.12);
+  }
+
+  /* Field primitives - the building blocks for forms */
+  .field-label {
+    @apply block text-[0.8125rem] font-semibold text-gray-300 mb-1.5;
+  }
+
+  .field-help {
+    @apply mt-1.5 text-[0.75rem] leading-relaxed text-content-secondary;
+  }
+
+  .section-title {
+    @apply text-[0.9375rem] font-semibold text-white tracking-tight;
+  }
+
+  .section-subtitle {
+    @apply text-[0.8125rem] font-normal text-content-secondary mt-0.5;
+  }
+
+  /* Sharpened secondary-text system — see
+     docs/superpowers/specs/2026-06-05-secondary-typography-design.md */
+  .text-help {
+    @apply text-[0.8125rem] leading-relaxed text-content-secondary;
+    letter-spacing: -0.005em;
+  }
+
+  .text-subtitle {
+    @apply text-[0.8125rem] text-content-secondary;
+    letter-spacing: -0.005em;
+  }
+
+  .text-meta {
+    @apply text-[0.75rem] text-content-tertiary;
+    letter-spacing: 0;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .text-caption {
+    @apply text-[0.6875rem] uppercase text-content-tertiary;
+    letter-spacing: 0.04em;
+  }
+
+  /* Quiet-studio eyebrow: gold, uppercase, wide tracking — the section marker. */
+  .bf-eyebrow {
+    @apply text-[10px] font-semibold uppercase text-bf-goldDim;
+    letter-spacing: 0.24em;
+  }
+
+  /* Custom Scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-white/10 rounded-full hover:bg-white/20 transition-colors;
+  }
+}
+
+/* Animations */
+@keyframes pulse-subtle {
+
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.8;
+    transform: scale(1.02);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes spin-slow {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes shimmer-x {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+
+@keyframes indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+
+.animate-shimmer-x {
+  animation: shimmer-x 2.4s linear infinite;
+}
+
+.animate-indeterminate {
+  animation: indeterminate 1.4s cubic-bezier(0.65, 0.05, 0.36, 1) infinite;
+}
+
+.animate-pulse-subtle {
+  animation: pulse-subtle 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.animate-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+
+.animate-shimmer::after {
+  content: '';
+  @apply absolute inset-0 -z-10;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.05), transparent);
+  animation: shimmer 2s infinite;
+}
+
+.animate-slide-up {
+  animation: slide-up 0.4s ease-out forwards;
+}
+
+.animate-fade-in {
+  animation: fade-in 0.3s ease-out forwards;
+}
+
+.animate-spin-slow {
+  animation: spin-slow 8s linear infinite;
+}
+
+/* Glassmorphism Utilities */
+.glass-panel {
+  @apply bg-dark-900/60 backdrop-blur-xl border border-white/5 shadow-xl;
+}
+
+.glass-panel-hover {
+  @apply hover:border-white/15 hover:bg-dark-900/70 hover:shadow-2xl transition-all duration-300;
+}
+
+/* iOS-style warm glass — a brand-tinted frosted MATERIAL (palette unchanged):
+   translucency + backdrop blur + saturation + a thin top light-rim, so content
+   behind reads as a soft frost with depth, never a flat panel.
+   `.glass`       — in-flow panels (reveal sections, hero, cards).
+   `.glass-float` — elements that hover over scrolling content (the sticky
+   now-playing player, popovers): more opaque + stronger blur so nothing
+   underneath collides with what's on top (fixes the freeze-pane bleed). */
+.glass {
+  /* Neutral dark frost matched to the production card surface (bf-card #140f09),
+     NOT a gold wash — no saturate (it amplifies the warm background), neutral
+     white hairline rim. Gold stays an accent (buttons, active chips, waveform). */
+  background: var(--bf-cardSurface);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--bf-cardBorder);
+  box-shadow: var(--bf-cardShadow);
+}
+
+.glass-float {
+  background: rgba(12, 10, 7, 0.86);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 18px 44px -16px rgba(0, 0, 0, 0.72);
+}
+
+/* Respect users who don't want the blur (perf / vestibular) — fall back to a
+   solid tint so panels stay legible. */
+@media (prefers-reduced-transparency: reduce) {
+  .glass, .card { background: var(--bf-cardSolid); backdrop-filter: none; -webkit-backdrop-filter: none; }
+  .glass-float { background: #0c0a07; backdrop-filter: none; -webkit-backdrop-filter: none; }
+}
+
+/* Typography Enhancements */
+.neon-text {
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.6);
+}
+
+.neon-text-purple {
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.6);
+}
+
+/* Form Styles */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  -webkit-text-fill-color: #f4ecdc;
+  -webkit-box-shadow: 0 0 0px 1000px #161009 inset;
+  transition: background-color 5000s ease-in-out 0s;
+}
+
+/* Classic control blocks docked inside an editor panel (~320px): their
+   viewport-based md: grids would cram 3 columns into the panel, so stack. */
+.editor-embed [class*="md:grid-cols-"] { grid-template-columns: minmax(0, 1fr) !important; }
+.editor-embed [class*="lg:grid-cols-"] { grid-template-columns: minmax(0, 1fr) !important; }
+/* Embedded lab: providers as full-width rows (name left, note right) so the
+   muscular labels never truncate in a ~300px panel; classic controls shrink
+   to editor scale. */
+.editor-embed .provider-grid { grid-template-columns: minmax(0, 1fr) !important; }
+.editor-embed .provider-btn { display: flex; align-items: baseline; justify-content: space-between; gap: .5rem; padding-top: .45rem; padding-bottom: .45rem; }
+.editor-embed .provider-btn > span { overflow: visible; white-space: normal; }
+.editor-embed .input { font-size: 12px; padding: 6px 10px; border-radius: 8px; }
+.editor-embed .field-label { font-size: 11px; }
+/* Embedded classic blocks: editor scale. Compact, nothing enlarged, nothing
+   clipped - the classic page keeps its own sizes. */
+.editor-embed .card { padding: 10px 12px; border-radius: 12px; }
+.editor-embed .card h3 { font-size: 13px; line-height: 1.2; }
+.editor-embed .card svg.text-primary-400 { width: 15px; height: 15px; }
+.editor-embed button { font-size: 12px; }
+.editor-embed button[class*="px-4"] { padding: 6px 12px; }
+.editor-embed .text-help, .editor-embed .field-help, .editor-embed .text-meta { font-size: 11px; line-height: 1.35; }
+.editor-embed .text-sm { font-size: 12px; }
+.editor-embed .text-\[0\.9375rem\] { font-size: 12.5px; }
+.editor-embed .text-\[0\.8125rem\] { font-size: 11.5px; }
+.editor-embed textarea.input { font-size: 12px; min-height: 5rem; }
+.editor-embed input[type="range"] { height: 4px; }
+.editor-embed .space-y-4 > * + * { margin-top: .625rem; }
+.editor-embed .p-3 { padding: .5rem .625rem; }
+.editor-embed audio { height: 32px; }
+.editor-embed [class*="sm:grid-cols-"]:not(.provider-grid) { grid-template-columns: minmax(0, 1fr) !important; }
+.editor-embed [class*="md:flex-row"] { flex-direction: column !important; align-items: stretch !important; }
+.editor-embed [class*="md:w-64"] { width: 100% !important; }
+.editor-embed .max-h-80 { max-height: 22rem; }
+/* Helper-text model for the whole app: the Share Kit summary size
+   ("copy caption · auto-post") is the reference. Notes stay muted, never a
+   colour of their own. */
+.text-help { font-size: 11px; }
+.field-help, .text-meta { font-size: 10.5px; }
+/* Inside a docked lab only the footer action (Land / Render) stays solid
+   gold; every other primary button becomes a calm gold outline. */
+.editor-embed .lab-body .bg-primary-500 { background: rgba(230,201,138,.10); color: #e6c98a; border-color: rgba(230,201,138,.45); box-shadow: none; }
+.editor-embed .lab-body .bg-primary-500:hover { background: rgba(230,201,138,.18); }
+.editor-embed .text-help, .editor-embed .field-help { font-size: 10.5px; }
+.editor-embed .text-\[12px\] { font-size: 11px; }
+.editor-embed textarea.input { min-height: 4.5rem; }
+.editor-embed label.field-label, .editor-embed .field-label { font-size: 11px; margin-bottom: .25rem; }
+/* The stage's ground is a transparency checkerboard (editor palette), so an
+   empty canvas reads as "nothing placed yet" and alpha in images shows. */
+.stage-ground {
+  /* Theme-aware: the dark checkerboard read as a black hole on a light page. */
+  background-color: var(--stage-ground, #0e0b06);
+  background-image:
+    linear-gradient(45deg, var(--stage-check, rgba(255,255,255,.045)) 25%, transparent 25%, transparent 75%, var(--stage-check, rgba(255,255,255,.045)) 75%),
+    linear-gradient(45deg, var(--stage-check, rgba(255,255,255,.045)) 25%, transparent 25%, transparent 75%, var(--stage-check, rgba(255,255,255,.045)) 75%);
+  background-size: 18px 18px;
+  background-position: 0 0, 9px 9px;
+  /* The frame edge. Without it the pale light-mode stage dissolves into the
+     pale page and you lose the one boundary that tells you what is IN shot -
+     the most important spatial reference in the editor. Dark mode keeps a
+     faint edge for the same reason. */
+  box-shadow: inset 0 0 0 1px var(--editor-line, rgba(216,184,120,.14));
+}
+/* Voice lab, embedded: firm and compact. Provider rows at 30px, the
+   disabled-reason list folded into the rows' tooltips, the tuning sliders
+   side by side under a full-width Voice ID. */
+.editor-embed .provider-btn { padding: .3rem .6rem; }
+.editor-embed .provider-btn > span:first-child { font-size: 12px; }
+.editor-embed .provider-btn > span:last-child { font-size: 10px; }
+.editor-embed .provider-grid { gap: .3rem; }
+.editor-embed .provider-reasons { display: none; }
+.editor-embed .voice-tuning { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr) !important; gap: .5rem .75rem !important; }
+.editor-embed .voice-tuning > :first-child { grid-column: 1 / -1; }
+.editor-embed .voice-tuning input[type="range"] { margin-top: .15rem; }
+.editor-embed .space-y-4 > * + * { margin-top: .5rem; }
+.editor-embed .space-y-3 > * + * { margin-top: .5rem; }
+
+/* ---------------------------------------------------------------------------
+   Phone panel density. The docked labs were tuned for a ~300px desktop rail;
+   on a 390px phone the same markup reads as desktop-scale. `.editor-phone` is
+   the phone sheet. These are written with a doubled class so they beat the
+   `.editor-embed` rules that live INSIDE the sheet (equal specificity would
+   lose on source order).
+   Floor: 11px secondary, 12px content.
+--------------------------------------------------------------------------- */
+.editor-phone.editor-phone { font-size: 12px; }
+.editor-phone.editor-phone h2, .editor-phone.editor-phone h3 { font-size: 12.5px; line-height: 1.25; }
+.editor-phone.editor-phone .card { padding: 8px 10px; border-radius: 10px; }
+.editor-phone.editor-phone .card h3 { font-size: 12px; }
+.editor-phone.editor-phone .input { font-size: 12px; padding: 5px 8px; border-radius: 8px; min-height: 32px; }
+.editor-phone.editor-phone select.input, .editor-phone.editor-phone input.input { height: 32px; }
+.editor-phone.editor-phone textarea.input { min-height: 3.5rem; line-height: 1.35; font-size: 12px; }
+.editor-phone.editor-phone .field-label { font-size: 11px; margin-bottom: 2px; }
+.editor-phone.editor-phone .text-help,
+.editor-phone.editor-phone .field-help,
+.editor-phone.editor-phone .text-meta { font-size: 11px; line-height: 1.3; }
+.editor-phone.editor-phone button { font-size: 12px; }
+.editor-phone.editor-phone .provider-btn { padding: .28rem .5rem; }
+.editor-phone.editor-phone .provider-btn > span:first-child { font-size: 11.5px; }
+.editor-phone.editor-phone .provider-btn > span:last-child { font-size: 10px; }
+/* Tailwind text utilities the panels use directly. */
+.editor-phone.editor-phone [class*="text-xs"] { font-size: 11.5px; }
+.editor-phone.editor-phone [class*="text-sm"] { font-size: 12px; }
+.editor-phone.editor-phone [class*="text-base"] { font-size: 12.5px; }
+.editor-phone.editor-phone [class*="text-lg"] { font-size: 13px; }
+.editor-phone.editor-phone [class*="text-[11px]"] { font-size: 11px; }
+.editor-phone.editor-phone [class*="text-[12px]"] { font-size: 11.5px; }
+.editor-phone.editor-phone [class*="text-[13px]"] { font-size: 12px; }
+.editor-phone.editor-phone [class*="text-[15px]"] { font-size: 12.5px; }
+/* Control heights: 32-34px is still a comfortable tap target inside a sheet. */
+.editor-phone.editor-phone [class*="h-9"] { height: 32px; }
+.editor-phone.editor-phone [class*="h-10"] { height: 34px; }
+/* Rhythm. */
+.editor-phone.editor-phone .space-y-4 > * + * { margin-top: .4rem; }
+.editor-phone.editor-phone .space-y-3 > * + * { margin-top: .4rem; }
+.editor-phone.editor-phone .space-y-2 > * + * { margin-top: .3rem; }
+.editor-phone.editor-phone [class*="p-3"] { padding: .4rem .5rem; }
+.editor-phone.editor-phone [class*="p-4"] { padding: .5rem .625rem; }
+.editor-phone.editor-phone audio { height: 28px; }
+.editor-phone.editor-phone input[type="range"] { height: 3px; }
+/* Two controls per row instead of one full-width stack. */
+.editor-phone.editor-phone .lab-body > div > .flex-wrap { gap: .3rem; }
+/* Section chrome inside the phone sheet. RevealSection is a page-level block
+   (14px title, 14px/56px header row) and it was eating a third of the sheet
+   before any control appeared. */
+.editor-phone.editor-phone .reveal-head { padding: .375rem .625rem; gap: .5rem; }
+.editor-phone.editor-phone .reveal-title { font-size: 12px; }
+.editor-phone.editor-phone .reveal-head svg { width: 14px; height: 14px; }
+
+/* Timeline clip blocks in LIGHT mode.
+   The lane tints are authored for a near-black stage: a /35 fill over white
+   is almost white, so every lane looked identical and the timeline lost its
+   colour coding. Deepen the fill and the border in light mode ONLY - the dark
+   theme keeps the values it was designed with. Saturation, not new hues, so
+   the palette stays the same five lanes. */
+:root[data-theme='light'] .clip-tone {
+  /* The lane weights are alpha over the accent. On a white ground the same
+     alpha reads far lighter than on a dark one, so the whole ladder flattens
+     and the lanes stop being distinguishable. Lift every step together - the
+     RATIO between lanes is what carries the meaning, so it must be preserved,
+     not equalised. */
+  --tw-bg-opacity: 1.9;
+  --tw-border-opacity: 1.35;
+}
+
+/* ===================================================================
+   TIMELINE LANE FAMILIES
+
+   Each lane gets a fill, a border and an ink that move together, so the
+   colour is a SYSTEM rather than five unrelated hues. (The palette this
+   replaced had drifted until Music and Captions were the same colour, which
+   is why lane colour had stopped carrying any information.)
+
+   Defined per theme, because a pastel that reads as a calm tint on white
+   glows on a dark ground. Light gets pale fills with saturated ink; dark and
+   calm get deep muted fills with light ink. Every pair is measured at >= 4.5:1
+   against its own fill, in both directions.
+
+   Lanes that share a job share a family on purpose: Real footage and Music
+   bed are both "the spine of the cut" (blue), so the eye groups them.
+   =================================================================== */
+:root,
+:root[data-theme='dark'] {
+  --lane-video-fill:#1b2740;   --lane-video-ink:#9dbcf0;   --lane-video-line:#31456b;
+  --lane-broll-fill:#261f3d;   --lane-broll-ink:#bda9f0;   --lane-broll-line:#3f3564;
+  --lane-vo-fill:#14301f;      --lane-vo-ink:#8ed9b0;      --lane-vo-line:#255339;
+  --lane-music-fill:#1b2740;   --lane-music-ink:#9dbcf0;   --lane-music-line:#31456b;
+  --lane-caption-fill:#211f3d; --lane-caption-ink:#aaa4f0; --lane-caption-line:#393465;
+  --lane-fx-fill:#24242a;      --lane-fx-ink:#b8b8c0;      --lane-fx-line:#3a3a43;
+}
+:root[data-theme='calm'] {
+  /* Same families, pulled toward the calm ground so they sit IN it. */
+  --lane-video-fill:#1c2430;   --lane-video-ink:#a6c0e0;   --lane-video-line:#32425a;
+  --lane-broll-fill:#251f33;   --lane-broll-ink:#c0aee0;   --lane-broll-line:#3d3352;
+  --lane-vo-fill:#182b21;      --lane-vo-ink:#93ccae;      --lane-vo-line:#284a38;
+  --lane-music-fill:#1c2430;   --lane-music-ink:#a6c0e0;   --lane-music-line:#32425a;
+  --lane-caption-fill:#221f33; --lane-caption-ink:#ada7e0; --lane-caption-line:#393353;
+  --lane-fx-fill:#232429;      --lane-fx-ink:#b5b3ad;      --lane-fx-line:#383940;
+}
+:root[data-theme='light'] {
+  --lane-video-fill:#e8effb;   --lane-video-ink:#1e4fa3;   --lane-video-line:#b9cdec;
+  --lane-broll-fill:#eee9fb;   --lane-broll-ink:#5b3fa8;   --lane-broll-line:#cfc4ee;
+  --lane-vo-fill:#e3f5ec;      --lane-vo-ink:#1f6b4a;      --lane-vo-line:#b4dfc9;
+  --lane-music-fill:#e8effb;   --lane-music-ink:#1e4fa3;   --lane-music-line:#b9cdec;
+  --lane-caption-fill:#eceafb; --lane-caption-ink:#4338a8; --lane-caption-line:#c8c4ee;
+  --lane-fx-fill:#f2f2f4;      --lane-fx-ink:#3d3d42;      --lane-fx-line:#d8d8dd;
+}
+
+/* Lane clip block: fill, border and ink all come from the lane family, so a
+   clip re-tints itself when the theme changes with no JS involved. */
+.lane { background: var(--lane-fill); border-color: var(--lane-line); color: var(--lane-ink); }
+.lane-video   { --lane-fill:var(--lane-video-fill);   --lane-line:var(--lane-video-line);   --lane-ink:var(--lane-video-ink); }
+.lane-broll   { --lane-fill:var(--lane-broll-fill);   --lane-line:var(--lane-broll-line);   --lane-ink:var(--lane-broll-ink); }
+.lane-vo      { --lane-fill:var(--lane-vo-fill);      --lane-line:var(--lane-vo-line);      --lane-ink:var(--lane-vo-ink); }
+.lane-music   { --lane-fill:var(--lane-music-fill);   --lane-line:var(--lane-music-line);   --lane-ink:var(--lane-music-ink); }
+.lane-caption { --lane-fill:var(--lane-caption-fill); --lane-line:var(--lane-caption-line); --lane-ink:var(--lane-caption-ink); }
+.lane-fx      { --lane-fill:var(--lane-fx-fill);      --lane-line:var(--lane-fx-line);      --lane-ink:var(--lane-fx-ink); }
+
+/* The icon chip: the lane's ink at full strength on a slightly deeper fill,
+   so it reads as a label mark rather than another block of colour. */
+.chip {
+  /* Fallback first: any browser without color-mix still gets a visible chip
+     (Safari < 16.2, older Chromium). The mix simply overrides it where
+     supported. */
+  background: var(--lane-line);
+  background: color-mix(in srgb, var(--lane-ink) 18%, transparent);
+  color: var(--lane-ink);
+}
+.chip-video   { --lane-ink:var(--lane-video-ink); }
+.chip-broll   { --lane-ink:var(--lane-broll-ink); }
+.chip-vo      { --lane-ink:var(--lane-vo-ink); }
+.chip-music   { --lane-ink:var(--lane-music-ink); }
+.chip-caption { --lane-ink:var(--lane-caption-ink); }
+.chip-fx      { --lane-ink:var(--lane-fx-ink); }

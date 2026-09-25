@@ -1,0 +1,24 @@
+services:
+  opencode:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: biblefuel-opencode-server:latest
+    container_name: opencode-server
+    restart: unless-stopped
+    ports:
+      - "4096:4096"
+    environment:
+      # Required: free MiniMax M2.7 API key (https://platform.minimax.io/)
+      MINIMAX_API_KEY: "${MINIMAX_API_KEY}"
+      # Required for any non-localhost deployment: HTTP basic auth password
+      OPENCODE_SERVER_PASSWORD: "${OPENCODE_SERVER_PASSWORD}"
+      # Optional: override defaults
+      OPENCODE_SERVER_USERNAME: "${OPENCODE_SERVER_USERNAME:-opencode}"
+      PORT: "4096"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:4096/doc"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
