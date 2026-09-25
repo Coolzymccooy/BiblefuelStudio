@@ -22,7 +22,7 @@ import ambientRouter, {
 import { EventEmitter } from "events";
 import { readProject, writeProject } from "../lib/ambient/projectStore.js";
 import { createJob, getJob as getRenderJob } from "../lib/renderJobs.js";
-import { registerTrack, updateTrack } from "../lib/musicLibraryStore.js";
+import { registerTrack, updateTrack, removeTrack } from "../lib/musicLibraryStore.js";
 import { readLibrary, registerImage, _setEmbedImpl, _resetEmbedImpl } from "../lib/imageGen/imageLibrary.js";
 import { _resetHeavyGate, runExclusive } from "../lib/heavyJobGate.js";
 import { _setEncodersProbe, _resetEncodersProbe } from "../lib/ambient/encoders.js";
@@ -1184,6 +1184,13 @@ describe("the music bed is levelled", () => {
       assert.equal(again.project.bed.builtOrder[0].label, "Great Is Thy Faithfulness");
       assert.equal(again.project.bed.builtOrder[0].credit, "Piano by R. Hale");
       assert.equal(readProject(dataDir, p.projectId).bed.builtOrder[0].label, "Great Is Thy Faithfulness");
+
+      // Removed from the library afterwards: it is still in the audio, so
+      // its name and credit are kept rather than replaced by the bare ref.
+      removeTrack(dataDir, track.id);
+      const later = await assembleBed({ dataDir, outputDir }, again.project);
+      assert.equal(later.project.bed.builtOrder[0].label, "Great Is Thy Faithfulness");
+      assert.equal(later.project.bed.builtOrder[0].credit, "Piano by R. Hale");
     } finally {
       _resetProbeImpl();
     }
@@ -1315,6 +1322,25 @@ describe("PATCH /api/ambient/:id/words — music only", () => {
     finish(p.projectId);
     const res = await request(app).patch(`/api/ambient/${p.projectId}/words`).send({ words: "none" });
     assert.equal(res.body.project.status, AMBIENT_STATUS.READY_TO_RENDER);
+  });
+
+  test("back to verses that were never voiced goes to voicing, not straight to render", async () => {
+    const p = await createSession();
+    await request(app).post(`/api/ambient/${p.projectId}/plan`).send({ count: 2 });
+    await request(app).patch(`/api/ambient/${p.projectId}/words`).send({ words: "none" });
+    finish(p.projectId);
+    const back = await request(app).patch(`/api/ambient/${p.projectId}/words`).send({ words: "verses" });
+    assert.equal(back.body.project.status, AMBIENT_STATUS.DRAFT);
+  });
+
+  test("back to verses that are all voiced is ready to render", async () => {
+    const p = await createSession();
+    await request(app).post(`/api/ambient/${p.projectId}/plan`).send({ count: 2 });
+    const planned = readProject(dataDir, p.projectId);
+    writeProject(dataDir, { ...planned, words: "none", drops: planned.drops.map((d) => ({ ...d, status: "done", audioPath: "/v.mp3" })) });
+    finish(p.projectId);
+    const back = await request(app).patch(`/api/ambient/${p.projectId}/words`).send({ words: "verses" });
+    assert.equal(back.body.project.status, AMBIENT_STATUS.READY_TO_RENDER);
   });
 
   test("voicing is refused for a music-only session", async () => {

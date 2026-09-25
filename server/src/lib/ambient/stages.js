@@ -346,7 +346,11 @@ function withCurrentTrackInfo(dataDir, builtOrder) {
   const infoByRef = new Map();
   return builtOrder.map((entry) => {
     if (!infoByRef.has(entry.ref)) infoByRef.set(entry.ref, trackInfo(dataDir, entry.ref));
-    return { ...entry, ...infoByRef.get(entry.ref) };
+    const info = infoByRef.get(entry.ref);
+    // A track removed from the library since is still in this bed's audio:
+    // its stored name and credit stand (trackInfo only has the raw ref).
+    if (info.label === entry.ref) return entry;
+    return { ...entry, ...info };
   });
 }
 

@@ -455,7 +455,12 @@ router.patch("/:id/words", (req, res) => {
     return res.status(409).json({ ok: false, error: "this session is busy making pictures or rendering; change it when it finishes" });
   }
   try {
-    const again = renderAgainIf(words !== (project.words || "verses"), project);
+    let again = renderAgainIf(words !== (project.words || "verses"), project);
+    // Back to verses with some never voiced (voicing is refused while music
+    // only): they need voicing first, or the render quietly leaves them out.
+    const unvoiced = (project.drops || []).some((d) => !(d.status === "done" && d.audioPath));
+    const renderable = [AMBIENT_STATUS.DONE, AMBIENT_STATUS.READY_TO_RENDER].includes(project.status);
+    if (words === "verses" && unvoiced && renderable) again = { status: AMBIENT_STATUS.DRAFT };
     return res.json({ ok: true, project: writeWithMovements(req.ctx.dataDir, { ...project, words, ...again }) });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });

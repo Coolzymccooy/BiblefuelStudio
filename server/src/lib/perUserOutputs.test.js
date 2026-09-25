@@ -5,6 +5,7 @@ import os from "os";
 import path from "path";
 import { createPerUserOutputFinder, outputSegments } from "./perUserOutputs.js";
 
+const BACKSLASH = String.fromCharCode(92);
 const PROJECT = "3f2c9a1e-5b7d-4c8e-9f01-23456789abcd";
 let dataDir;
 let find;
@@ -51,13 +52,34 @@ describe("per-user outputs", () => {
       `ambient/${PROJECT}/../../../../secret.json`,
       `ambient/${PROJECT}/./video.mp4`,
       `ambient/${PROJECT}//video.mp4`,
-      `ambient\${PROJECT}\video.mp4`,
+      ["ambient", PROJECT, "video.mp4"].join(BACKSLASH),
       `C:/${PROJECT}/x`,
       `a/b/c/${PROJECT}/video.mp4`,
       "",
     ]) {
       assert.equal(find(bad), null, bad);
     }
+  });
+
+  it("a backslash is never a way round the id check", () => {
+    // Windows treats it as a separator: "genImg\series-1\part-1.png" read as
+    // one flat name skipped the id check and served a predictable path.
+    put("u1", "genImg/series-1/part-1.png");
+    const B = BACKSLASH;
+    for (const bad of [
+      `/genImg${B}series-1${B}part-1.png`,
+      `/aaaaaaaaaaaaaaaaaaaaaa/..${B}genImg/series-1/part-1.png`,
+    ]) {
+      assert.equal(outputSegments(bad), null, bad);
+      assert.equal(find(bad), null, bad);
+    }
+  });
+
+  it("the id must be a whole folder name, not a long file name", () => {
+    put("u1", "genImg/a_very_long_file_name_chosen.png");
+    assert.equal(find("genImg/a_very_long_file_name_chosen.png"), null);
+    put("u1", "my notes.3f2c9a1e-5b7d-4c8e-9f01-23456789abcd/v.mp4");
+    assert.equal(find("my notes.3f2c9a1e-5b7d-4c8e-9f01-23456789abcd/v.mp4"), null, "part of a name is not the id");
   });
 
   it("does not serve a folder", () => {

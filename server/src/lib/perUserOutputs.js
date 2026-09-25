@@ -11,7 +11,7 @@ import path from "path";
  *
  * A flat name is served as before (renders use UUID filenames). A nested path
  * such as ambient/<projectId>/video.mp4 is served only when one of its
- * segments is an unguessable id, so a predictable folder name never exposes
+ * folders is an unguessable id, so a predictable folder name never exposes
  * another account's files. Every candidate is confined to that user's
  * outputs folder, symlinks included.
  */
@@ -20,18 +20,20 @@ const MAX_SEGMENTS = 4;
 const MAX_SEGMENT_LEN = 128;
 const CACHE_MAX = 2000;
 // A UUID, or a random token of at least 22 url-safe characters (~128 bits).
-const UNGUESSABLE_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[A-Za-z0-9_-]{22,}/i;
+const UNGUESSABLE_RE = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[A-Za-z0-9_-]{22,})$/i;
 
 /** The path's segments, or null when it is not one this may serve. */
 export function outputSegments(relPath) {
   const raw = String(relPath || "").replace(/^\/+/, "");
-  if (!raw || raw.length > 512 || /[\0\:]/.test(raw)) return null;
+  if (!raw || raw.length > 512 || /[\0\\:]/.test(raw)) return null;
   const segments = raw.split("/");
   if (segments.length > MAX_SEGMENTS) return null;
   for (const s of segments) {
     if (!s || s === "." || s === ".." || s.length > MAX_SEGMENT_LEN) return null;
   }
-  if (segments.length > 1 && !segments.some((s) => UNGUESSABLE_RE.test(s))) return null;
+  // The id must be a whole folder name: a long file name the user chose is
+  // not a secret, and neither is part of one.
+  if (segments.length > 1 && !segments.slice(0, -1).some((s) => UNGUESSABLE_RE.test(s))) return null;
   return segments;
 }
 
