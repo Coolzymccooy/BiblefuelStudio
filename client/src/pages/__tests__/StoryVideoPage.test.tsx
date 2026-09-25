@@ -5,6 +5,7 @@ import React from 'react';
 import { StoryVideoPage } from '../StoryVideoPage';
 import { storyApi } from '../../lib/storyApi';
 import userEvent from '@testing-library/user-event';
+import { api } from '../../lib/api';
 
 vi.mock('../../components/MediaTrimmer', () => ({
   MediaTrimmer: ({ onApply, onCancel }: any) => (
@@ -156,5 +157,31 @@ describe('StoryVideoPage', () => {
   it('shows the upload button in upload mode (default)', () => {
     renderPage();
     expect(screen.getByRole('button', { name: /upload a sermon/i })).toBeInTheDocument();
+  });
+
+  it('a finished story waits for the music library so the description carries the song credit', async () => {
+    localStorage.setItem('BF_STORY_ACTIVE', 'p9');
+    vi.spyOn(storyApi, 'getProject').mockResolvedValue({
+      projectId: 'p9', title: 'Night Psalms', style: 'cinematic-bible', status: 'done',
+      source: { audioPath: 'a', durationMs: 480000 }, transcript: { words: [], hash: 'h' },
+      scenes: [], music: { path: 'library:t1', volume: 0.3, autoDuck: true }, captionPreset: 'default',
+      render: { jobId: null, outputPath: 'o', status: 'done' }, error: null, createdAt: 0, updatedAt: 0,
+    } as any);
+    let release: (v: unknown) => void = () => {};
+    const slow = new Promise((r) => { release = r; });
+    vi.spyOn(api, 'get').mockImplementation(async (url: string) => {
+      if (url === '/api/music/library') {
+        await slow;
+        return { ok: true, data: { tracks: [{ id: 't1', ref: 'library:t1', label: 'Still Waters', credit: 'Still Waters by A. Composer', source: 'library' }] } } as never;
+      }
+      return { ok: false, error: 'not in test' } as never;
+    });
+    renderPage();
+    await screen.findByRole('heading', { name: /publish to youtube/i });
+    release(null);
+    await waitFor(() => {
+      const box = [...document.querySelectorAll('textarea')].find((t) => t.value.includes('Music:'));
+      expect(box?.value).toContain('Music: Still Waters by A. Composer');
+    });
   });
 });

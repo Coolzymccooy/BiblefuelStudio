@@ -702,9 +702,12 @@ function DonePanel({ project }: { project: StoryProject }) {
     .map((s, i) => ({ label: `Scene ${i + 1}`, path: s.imageUrl as string }));
   const chapters = storyChapters(project);
   // The song's credit, when it's a library track, for the description.
-  const { data: library } = useMusicLibrary();
+  // The panel takes its fields once, on mount, so it waits for the library to
+  // settle; a failed load still mounts it, with the song's plain label.
+  const { data: library, isPending: libraryLoading } = useMusicLibrary();
   const songId = refId(project.music?.path);
   const song = songId ? (library || []).find((t) => t.id === songId) : undefined;
+  const waitingForSong = Boolean(songId) && libraryLoading;
   return (
     <div className="space-y-3">
       <video src={url} controls className="w-full rounded-2xl border border-[rgba(216,184,120,0.22)] shadow-lg" />
@@ -717,12 +720,16 @@ function DonePanel({ project }: { project: StoryProject }) {
       <div className={panelCls}>
         <div className="bf-eyebrow mb-1">Share</div>
         <h3 className="section-title mb-3">Publish to YouTube</h3>
-        <YoutubePublishPanel
-          videoUrl={`/outputs/story/${project.projectId}/video.mp4`}
-          initial={{ title: project.title, description: storyDescription(project, song), thumbnailTitle: true, thumbnailTagline: storyTagline(project) }}
-          thumbnailOptions={thumbnailOptions}
-          chapters={chapters.length >= 3 ? chapters : undefined}
-        />
+        {waitingForSong ? (
+          <p className="text-help">Loading the song credit…</p>
+        ) : (
+          <YoutubePublishPanel
+            videoUrl={`/outputs/story/${project.projectId}/video.mp4`}
+            initial={{ title: project.title, description: storyDescription(project, song), thumbnailTitle: true, thumbnailTagline: storyTagline(project) }}
+            thumbnailOptions={thumbnailOptions}
+            chapters={chapters.length >= 3 ? chapters : undefined}
+          />
+        )}
       </div>
     </div>
   );
