@@ -58,6 +58,13 @@ export const DEFAULT_DUCK = Object.freeze({
   releaseMs: 800,
 });
 
+/**
+ * The longest session: ten hours, beyond the usual "8 hours of..." ambient
+ * upload. Unbounded, a huge length made placing the verse drops loop for
+ * minutes on the request thread.
+ */
+export const MAX_TARGET_SEC = 10 * 3600;
+
 export function createProject(baseDir, { title, theme, targetSec, aspect, translation } = {}) {
   const projectId = crypto.randomUUID();
   const now = Date.now();
@@ -66,7 +73,7 @@ export function createProject(baseDir, { title, theme, targetSec, aspect, transl
     title: String(title || "Untitled ambient session").slice(0, 200),
     theme: String(theme || "").slice(0, 500),
     translation: String(translation || "kjv").toLowerCase(),
-    targetSec: Number(targetSec) > 0 ? Math.round(Number(targetSec)) : 7200,
+    targetSec: Number(targetSec) > 0 ? Math.min(MAX_TARGET_SEC, Math.round(Number(targetSec))) : 7200,
     aspect: aspect === "portrait" || aspect === "square" ? aspect : "landscape",
     status: "draft",
     words: "verses",
