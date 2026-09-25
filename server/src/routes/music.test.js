@@ -57,6 +57,22 @@ describe("music route", () => {
     assert.equal(r.payload.track.source, "upload");
   });
 
+  test("POST /upload accepts a bare file name from the caller's media folder (a loose Timeline file)", async () => {
+    const { ctx, file } = tenant();
+    const r = res();
+    await handlerFor("post", "/upload")({ ctx, body: { file: path.basename(file) } }, r);
+    assert.equal(r.payload.ok, true);
+    assert.equal(readMusicLibrary(ctx.dataDir).items[0].file, fs.realpathSync(file));
+  });
+
+  test("POST /upload still refuses a relative path that climbs out of the media folder", async () => {
+    const { ctx } = tenant();
+    fs.writeFileSync(path.join(ctx.dataDir, "secret.mp3"), "x");
+    const r = res();
+    await handlerFor("post", "/upload")({ ctx, body: { file: "../secret.mp3" } }, r);
+    assert.equal(r.statusCode, 403);
+  });
+
   test("POST /upload refuses a path outside the caller's own media folder", async () => {
     const { ctx } = tenant();
     const outsider = path.join(os.tmpdir(), "somebody-elses.mp3");
@@ -310,27 +326,59 @@ describe("vocal removal routes", () => {
     }
   });
 
-  test("keep refuses and forgets the job when the result file is gone", async () => {
+  test("a separator that reports success without writing a file ends as an error and registers nothing", async () => {
     const { ctx, file } = tenant();
     const src = registerTrack(ctx.dataDir, { file, label: "Song" });
-    _setSeparatorImpl({
-      available: async () => ({ ok: true }),
-      remove: async ({ outPath }) => { fs.writeFileSync(outPath, "m4a"); return outPath; },
-    });
+    _setSeparatorImpl({ available: async () => ({ ok: true }), remove: async ({ outPath }) => outPath });
+    const c = { ...ctx, userId: "u1" };
+    const { payload } = await call("post", "/:id/instrumental", { ctx: c, params: { id: src.id }, body: {} });
+    await until(async () => (await call("get", "/instrumental/:jobId", { ctx: c, params: { jobId: payload.jobId } })).payload.job.status === "error");
+    const job = (await call("get", "/instrumental/:jobId", { ctx: c, params: { jobId: payload.jobId } })).payload.job;
+    assert.equal(job.status, "error");
+    assert.match(job.error, /no file/);
+    assert.equal(readMusicLibrary(ctx.dataDir).items.length, 1, "no dangling track was registered");
+  });
+
+  test("a finished instrumental is saved to the library straight away — leaving the page cannot lose it", async () => {
+    const { ctx, file } = tenant();
+    const src = registerTrack(ctx.dataDir, { file, label: "Song", licence: "unknown", credit: "Choir X" });
+    _setSeparatorImpl({ available: async () => ({ ok: true }), remove: async ({ outPath }) => { fs.writeFileSync(outPath, "m4a"); return outPath; } });
     const c = { ...ctx, userId: "u1" };
     const { payload } = await call("post", "/:id/instrumental", { ctx: c, params: { id: src.id }, body: {} });
     await until(async () => (await call("get", "/instrumental/:jobId", { ctx: c, params: { jobId: payload.jobId } })).payload.job.status === "done");
     const job = (await call("get", "/instrumental/:jobId", { ctx: c, params: { jobId: payload.jobId } })).payload.job;
-    const resultPath = path.join(ctx.outputDir, job.resultFile);
-    fs.rmSync(resultPath, { force: true });
-    const kept = await call("post", "/instrumental/:jobId/keep", { ctx: c, params: { jobId: payload.jobId } });
-    assert.equal(kept.statusCode, 409);
-    assert.equal(kept.payload.ok, false);
-    assert.match(kept.payload.error, /gone/);
+    assert.equal(job.track.label, "Song (instrumental)");
+    assert.equal(job.track.derivedFrom, `mylib:${src.id}`);
+    assert.equal(job.track.credit, "Choir X");
     const lib = readMusicLibrary(ctx.dataDir).items;
-    assert.equal(lib.length, 1, "no dangling track was registered");
-    const after = await call("get", "/instrumental/:jobId", { ctx: c, params: { jobId: payload.jobId } });
-    assert.equal(after.statusCode, 404, "the job is forgotten, not left stuck");
+    assert.equal(lib.length, 2, "saved without anyone pressing Keep");
+    assert.equal(lib[1].id, job.track.id);
+  });
+
+  test("keep on an already-saved instrumental returns that track, not a duplicate", async () => {
+    const { ctx, file } = tenant();
+    const src = registerTrack(ctx.dataDir, { file, label: "Song" });
+    _setSeparatorImpl({ available: async () => ({ ok: true }), remove: async ({ outPath }) => { fs.writeFileSync(outPath, "m4a"); return outPath; } });
+    const c = { ...ctx, userId: "u1" };
+    const { payload } = await call("post", "/:id/instrumental", { ctx: c, params: { id: src.id }, body: {} });
+    await until(async () => (await call("get", "/instrumental/:jobId", { ctx: c, params: { jobId: payload.jobId } })).payload.job.status === "done");
+    const job = (await call("get", "/instrumental/:jobId", { ctx: c, params: { jobId: payload.jobId } })).payload.job;
+    const kept = await call("post", "/instrumental/:jobId/keep", { ctx: c, params: { jobId: payload.jobId } });
+    assert.equal(kept.payload.track.id, job.track.id);
+    assert.equal(readMusicLibrary(ctx.dataDir).items.length, 2);
+  });
+
+  test("discarding a saved instrumental takes it back out of the library", async () => {
+    const { ctx, file } = tenant();
+    const src = registerTrack(ctx.dataDir, { file, label: "Song" });
+    let out;
+    _setSeparatorImpl({ available: async () => ({ ok: true }), remove: async ({ outPath }) => { out = outPath; fs.writeFileSync(outPath, "m4a"); return outPath; } });
+    const c = { ...ctx, userId: "u1" };
+    const { payload } = await call("post", "/:id/instrumental", { ctx: c, params: { id: src.id }, body: {} });
+    await until(async () => (await call("get", "/instrumental/:jobId", { ctx: c, params: { jobId: payload.jobId } })).payload.job.status === "done");
+    await call("post", "/instrumental/:jobId/discard", { ctx: c, params: { jobId: payload.jobId } });
+    assert.deepEqual(readMusicLibrary(ctx.dataDir).items.map((t) => t.id), [src.id]);
+    assert.equal(fs.existsSync(out), false);
   });
 
   test("keep uses the licence/credit captured when the job started, even if the source is edited mid-job", async () => {

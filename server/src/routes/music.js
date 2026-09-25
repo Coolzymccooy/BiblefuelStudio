@@ -56,8 +56,11 @@ router.get("/library", (req, res) => {
 // receive bytes; it only records what is already on disk.
 router.post("/upload", async (req, res) => {
   try {
-    const file = path.resolve(String(req.body?.file || "").trim());
     const root = path.resolve(req.ctx.outputDir);
+    // A bare name ("user-audio-….m4a", as a Timeline lane stores a loose
+    // upload) is read as a file in the caller's media folder; the containment
+    // checks below still apply, so "../x" cannot climb out.
+    const file = path.resolve(root, String(req.body?.file || "").trim());
     if (file !== root && !file.startsWith(root + path.sep)) {
       return res.status(403).json({ ok: false, error: "That file is outside your media folder" });
     }
@@ -161,7 +164,32 @@ function jobView(job) {
     sourceRef: job.sourceRef,
     sourcePreview: job.sourcePreview,
     resultFile: job.status === "done" ? path.basename(job.resultPath) : null,
+    track: job.track || null,
   };
+}
+
+/**
+ * Put a finished instrumental in the library. Done the moment the separation
+ * ends, not when someone presses Keep: the dialog that used to ask lives in
+ * the browser, so leaving the page stranded a finished file with no way back
+ * to it. Separating a song does not clear it — the instrumental carries the
+ * licence and credit captured when the job started, and the bed's licence
+ * gate still applies.
+ */
+async function saveInstrumental(dataDir, job) {
+  if (!fs.existsSync(job.resultPath)) throw new Error("the separator finished but wrote no file");
+  let durationSec = null;
+  try { durationSec = await probeAudioDurationSec(job.resultPath); } catch { /* recorded without it */ }
+  const track = registerTrack(dataDir, {
+    file: job.resultPath,
+    label: `${job.sourceLabel || "Track"} (instrumental)`,
+    mood: job.sourceMood,
+    licence: job.sourceLicence || "unknown",
+    credit: job.sourceCredit || "",
+    derivedFrom: job.sourceRef,
+    durationSec,
+  });
+  return toListed(track);
 }
 
 router.get("/capabilities", async (req, res) => {
@@ -202,7 +230,8 @@ router.post("/:id/instrumental", quota("render"), async (req, res) => {
         input, outPath: resultPath, workDir, quality, signal: job.controller.signal,
         onProgress: (p) => updateStemJob(jobId, { percent: Math.min(99, p) }),
       });
-      updateStemJob(jobId, { status: "done", percent: 100 });
+      const track = await saveInstrumental(req.ctx.dataDir, job);
+      updateStemJob(jobId, { status: "done", percent: 100, track });
     }, { signal: job.controller.signal }).catch((e) => {
       // Record the failure FIRST: a killed separator can leave a WAV/partial
       // output briefly locked on Windows (EBUSY/EPERM), and `force: true`
@@ -234,45 +263,20 @@ router.post("/instrumental/:jobId/cancel", (req, res) => {
   return res.json({ ok: true });
 });
 
-router.post("/instrumental/:jobId/keep", async (req, res) => {
-  try {
-    const job = getStemJob(req.params.jobId, req.ctx.userId);
-    if (!job) return res.status(404).json({ ok: false, error: "job not found" });
-    if (job.status !== "done") return res.status(409).json({ ok: false, error: "the instrumental is not ready yet" });
-    if (!fs.existsSync(job.resultPath)) {
-      // The result was removed (sweep, a busy-file cleanup elsewhere, or the
-      // operator deleting it by hand) between the job finishing and keep
-      // being clicked. Registering a track pointing at a file that isn't
-      // there would leave a dangling entry in the picker forever.
-      removeStemJob(job.jobId);
-      return res.status(409).json({ ok: false, error: "the instrumental file is gone — run it again" });
-    }
-    let durationSec = null;
-    try { durationSec = await probeAudioDurationSec(job.resultPath); } catch { /* recorded without it */ }
-    const track = registerTrack(req.ctx.dataDir, {
-      file: job.resultPath,
-      label: `${job.sourceLabel || "Track"} (instrumental)`,
-      mood: job.sourceMood,
-      // Separating a song does not clear it: the instrumental carries the
-      // original's licence and credit, and the bed's licence gate still
-      // applies. These are captured at job start (not re-read here) so
-      // editing or removing the source mid-job can't drop the credit.
-      licence: job.sourceLicence || "unknown",
-      credit: job.sourceCredit || "",
-      derivedFrom: job.sourceRef,
-      durationSec,
-    });
-    removeStemJob(job.jobId);
-    return res.json({ ok: true, track: toListed(track) });
-  } catch (e) {
-    return res.status(500).json({ ok: false, error: String(e?.message || e) });
-  }
+// Kept for older clients: a finished job is already in the library, so this
+// only hands back the track it was saved as.
+router.post("/instrumental/:jobId/keep", (req, res) => {
+  const job = getStemJob(req.params.jobId, req.ctx.userId);
+  if (!job) return res.status(404).json({ ok: false, error: "job not found" });
+  if (job.status !== "done" || !job.track) return res.status(409).json({ ok: false, error: "the instrumental is not ready yet" });
+  return res.json({ ok: true, track: job.track });
 });
 
 router.post("/instrumental/:jobId/discard", (req, res) => {
   const job = getStemJob(req.params.jobId, req.ctx.userId);
   if (!job) return res.status(404).json({ ok: false, error: "job not found" });
   job.controller.abort();
+  if (job.track) removeTrack(req.ctx.dataDir, job.track.id);
   // Best-effort: a busy/locked file must not 500 and leave the job stuck
   // registered — the weekly sweep reclaims anything left behind.
   try { fs.rmSync(job.resultPath, { force: true }); } catch { /* swept up later */ }

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { api } from '../api';
-import { fetchCapabilities, startInstrumental, keepInstrumental, cancelInstrumental, discardInstrumental } from '../musicLibraryApi';
+import { fetchCapabilities, startInstrumental, cancelInstrumental, discardInstrumental } from '../musicLibraryApi';
 import { ambientApi } from '../ambientApi';
 
 beforeEach(() => vi.restoreAllMocks());
@@ -20,11 +20,6 @@ describe('instrumental API', () => {
     const post = vi.spyOn(api, 'post').mockResolvedValue({ ok: true, data: { ok: true, jobId: 'j1' } } as never);
     expect(await startInstrumental('t1', 'fast')).toBe('j1');
     expect(post).toHaveBeenCalledWith('/api/music/t1/instrumental', { quality: 'fast' });
-  });
-
-  it('keep returns the new track', async () => {
-    vi.spyOn(api, 'post').mockResolvedValue({ ok: true, data: { ok: true, track: { id: 'n', label: 'Song (instrumental)' } } } as never);
-    expect((await keepInstrumental('j1')).label).toBe('Song (instrumental)');
   });
 
   it('cancel posts to the right URL on success', async () => {

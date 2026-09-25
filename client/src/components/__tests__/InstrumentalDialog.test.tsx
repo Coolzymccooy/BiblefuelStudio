@@ -13,8 +13,9 @@ vi.mock('react-hot-toast', () => {
 import toast from 'react-hot-toast';
 
 const track = { id: 't1', label: 'Song', licence: 'unknown', source: 'upload', ref: 'mylib:t1' } as MusicTrack;
+const saved = { ...track, id: 'n', label: 'Song (instrumental)', ref: 'mylib:n', derivedFrom: 'mylib:t1' } as MusicTrack;
 const job = (status: lib.InstrumentalJob['status'], extra: Partial<lib.InstrumentalJob> = {}) =>
-  ({ jobId: 'j1', status, percent: 0, error: null, sourceRef: 'mylib:t1', sourcePreview: 'song.mp3', resultFile: null, ...extra });
+  ({ jobId: 'j1', status, percent: 0, error: null, sourceRef: 'mylib:t1', sourcePreview: 'song.mp3', resultFile: null, track: null, ...extra });
 
 beforeEach(() => {
   vi.restoreAllMocks();
@@ -24,46 +25,57 @@ beforeEach(() => {
 });
 
 describe('InstrumentalDialog', () => {
-  it('runs, shows progress, then previews both versions and keeps', async () => {
+  it('runs, shows progress, then says it is already saved and previews both versions', async () => {
     vi.spyOn(lib, 'startInstrumental').mockResolvedValue('j1');
     vi.spyOn(lib, 'getInstrumental')
       .mockResolvedValueOnce(job('running', { percent: 40 }))
-      .mockResolvedValue(job('done', { percent: 100, resultFile: 'instrumental-j1.m4a' }));
-    const keep = vi.spyOn(lib, 'keepInstrumental').mockResolvedValue({ ...track, id: 'n', label: 'Song (instrumental)' });
-    const onKept = vi.fn();
-    render(<InstrumentalDialog track={track} onClose={() => {}} onKept={onKept} pollMs={1} />);
+      .mockResolvedValue(job('done', { percent: 100, resultFile: 'instrumental-j1.m4a', track: saved }));
+    const onSaved = vi.fn();
+    render(<InstrumentalDialog track={track} onClose={() => {}} onSaved={onSaved} pollMs={1} />);
     fireEvent.click(screen.getByRole('radio', { name: /fast/i }));
     fireEvent.click(screen.getByRole('button', { name: /remove vocals/i }));
     expect(lib.startInstrumental).toHaveBeenCalledWith('t1', 'fast');
     await screen.findByText(/40%/);
     await screen.findByLabelText(/instrumental preview/i);
     expect(screen.getByLabelText(/original preview/i)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /keep/i }));
-    await waitFor(() => expect(onKept).toHaveBeenCalledWith(expect.objectContaining({ label: 'Song (instrumental)' })));
-    expect(keep).toHaveBeenCalledWith('j1');
+    expect(screen.getByText(/saved to your library as "Song \(instrumental\)"/i)).toBeInTheDocument();
+    // Saved by the server the moment it finished — there is no Keep step to miss.
+    expect(screen.queryByRole('button', { name: /^keep$/i })).toBeNull();
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
+    expect(onSaved).toHaveBeenCalledWith(saved);
+  });
+
+  it('"Use in this video" hands the instrumental to the host', async () => {
+    vi.spyOn(lib, 'startInstrumental').mockResolvedValue('j1');
+    vi.spyOn(lib, 'getInstrumental').mockResolvedValue(job('done', { resultFile: 'instrumental-j1.m4a', track: saved }));
+    const onUse = vi.fn();
+    render(<InstrumentalDialog track={track} onClose={() => {}} onSaved={() => {}} onUse={onUse} pollMs={1} />);
+    fireEvent.click(screen.getByRole('button', { name: /remove vocals/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /use in this video/i }));
+    expect(onUse).toHaveBeenCalledWith(saved);
   });
 
   it("says the licence carries over", () => {
-    render(<InstrumentalDialog track={track} onClose={() => {}} onKept={() => {}} />);
+    render(<InstrumentalDialog track={track} onClose={() => {}} onSaved={() => {}} />);
     expect(screen.getByText(/keeps the original's licence/i)).toBeInTheDocument();
   });
 
   it('shows the error when separation fails', async () => {
     vi.spyOn(lib, 'startInstrumental').mockResolvedValue('j1');
     vi.spyOn(lib, 'getInstrumental').mockResolvedValue(job('error', { error: 'out of memory' }));
-    render(<InstrumentalDialog track={track} onClose={() => {}} onKept={() => {}} pollMs={1} />);
+    render(<InstrumentalDialog track={track} onClose={() => {}} onSaved={() => {}} pollMs={1} />);
     fireEvent.click(screen.getByRole('button', { name: /remove vocals/i }));
     await screen.findByText(/out of memory/);
   });
 
-  it('discard throws the result away and closes', async () => {
+  it('"Delete it" throws the instrumental away and closes', async () => {
     vi.spyOn(lib, 'startInstrumental').mockResolvedValue('j1');
-    vi.spyOn(lib, 'getInstrumental').mockResolvedValue(job('done', { resultFile: 'instrumental-j1.m4a' }));
+    vi.spyOn(lib, 'getInstrumental').mockResolvedValue(job('done', { resultFile: 'instrumental-j1.m4a', track: saved }));
     const discard = vi.spyOn(lib, 'discardInstrumental').mockResolvedValue();
     const onClose = vi.fn();
-    render(<InstrumentalDialog track={track} onClose={onClose} onKept={() => {}} pollMs={1} />);
+    render(<InstrumentalDialog track={track} onClose={onClose} onSaved={() => {}} pollMs={1} />);
     fireEvent.click(screen.getByRole('button', { name: /remove vocals/i }));
-    fireEvent.click(await screen.findByRole('button', { name: /discard/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /delete it/i }));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(discard).toHaveBeenCalledWith('j1');
   });
@@ -71,14 +83,14 @@ describe('InstrumentalDialog', () => {
   // Task 10 ruling: cancelInstrumental / discardInstrumental now THROW on
   // failure. The dialog must not silently swallow that — it shows a toast
   // and still closes (the server sweeps the leftover job either way).
-  it('shows a toast and still closes when discard fails', async () => {
+  it('shows a toast and still closes when delete fails', async () => {
     vi.spyOn(lib, 'startInstrumental').mockResolvedValue('j1');
-    vi.spyOn(lib, 'getInstrumental').mockResolvedValue(job('done', { resultFile: 'instrumental-j1.m4a' }));
+    vi.spyOn(lib, 'getInstrumental').mockResolvedValue(job('done', { resultFile: 'instrumental-j1.m4a', track: saved }));
     vi.spyOn(lib, 'discardInstrumental').mockRejectedValue(new Error('Failed to discard the instrumental'));
     const onClose = vi.fn();
-    render(<InstrumentalDialog track={track} onClose={onClose} onKept={() => {}} pollMs={1} />);
+    render(<InstrumentalDialog track={track} onClose={onClose} onSaved={() => {}} pollMs={1} />);
     fireEvent.click(screen.getByRole('button', { name: /remove vocals/i }));
-    fireEvent.click(await screen.findByRole('button', { name: /discard/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /delete it/i }));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(toast.error).toHaveBeenCalledWith('Failed to discard the instrumental');
   });
@@ -86,7 +98,7 @@ describe('InstrumentalDialog', () => {
   it('shows the poll error instead of "Removing vocals… 0%" forever when the first poll never lands', async () => {
     vi.spyOn(lib, 'startInstrumental').mockResolvedValue('j1');
     vi.spyOn(lib, 'getInstrumental').mockRejectedValue(new Error('network down'));
-    render(<InstrumentalDialog track={track} onClose={() => {}} onKept={() => {}} pollMs={1} />);
+    render(<InstrumentalDialog track={track} onClose={() => {}} onSaved={() => {}} pollMs={1} />);
     fireEvent.click(screen.getByRole('button', { name: /remove vocals/i }));
     // Tolerates a few transient misses before giving up — must not stall
     // forever on the generic "0%" text with no way out.
@@ -99,7 +111,7 @@ describe('InstrumentalDialog', () => {
     vi.spyOn(lib, 'getInstrumental')
       .mockRejectedValueOnce(new Error('blip'))
       .mockResolvedValue(job('running', { percent: 55 }));
-    render(<InstrumentalDialog track={track} onClose={() => {}} onKept={() => {}} pollMs={1} />);
+    render(<InstrumentalDialog track={track} onClose={() => {}} onSaved={() => {}} pollMs={1} />);
     fireEvent.click(screen.getByRole('button', { name: /remove vocals/i }));
     await screen.findByText(/55%/);
     expect(screen.queryByText(/blip/)).toBeNull();
@@ -108,7 +120,7 @@ describe('InstrumentalDialog', () => {
   it('disables Remove vocals while startInstrumental is in flight', async () => {
     let resolveStart: (id: string) => void = () => {};
     vi.spyOn(lib, 'startInstrumental').mockImplementation(() => new Promise((resolve) => { resolveStart = resolve; }));
-    render(<InstrumentalDialog track={track} onClose={() => {}} onKept={() => {}} pollMs={1} />);
+    render(<InstrumentalDialog track={track} onClose={() => {}} onSaved={() => {}} pollMs={1} />);
     const button = screen.getByRole('button', { name: /remove vocals/i });
     fireEvent.click(button);
     expect(button).toBeDisabled();
@@ -121,7 +133,7 @@ describe('InstrumentalDialog', () => {
     vi.spyOn(lib, 'getInstrumental').mockResolvedValue(job('running', { percent: 10 }));
     vi.spyOn(lib, 'cancelInstrumental').mockRejectedValue(new Error('Failed to cancel vocal removal'));
     const onClose = vi.fn();
-    render(<InstrumentalDialog track={track} onClose={onClose} onKept={() => {}} pollMs={1} />);
+    render(<InstrumentalDialog track={track} onClose={onClose} onSaved={() => {}} pollMs={1} />);
     fireEvent.click(screen.getByRole('button', { name: /remove vocals/i }));
     fireEvent.click(await screen.findByRole('button', { name: /cancel/i }));
     await waitFor(() => expect(onClose).toHaveBeenCalled());

@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import { api } from '../lib/api';
 import {
-  startInstrumental, getInstrumental, cancelInstrumental, keepInstrumental, discardInstrumental,
+  startInstrumental, getInstrumental, cancelInstrumental, discardInstrumental,
   type InstrumentalJob, type InstrumentalQuality, type MusicTrack,
 } from '../lib/musicLibraryApi';
 import { panelCls, primaryBtnCls, secondaryBtnCls } from './story/formStyles';
@@ -10,27 +10,41 @@ import { panelCls, primaryBtnCls, secondaryBtnCls } from './story/formStyles';
 export interface InstrumentalDialogProps {
   track: MusicTrack;
   onClose: () => void;
-  onKept: (track: MusicTrack) => void;
+  /** The server saved the instrumental to the library (fires once per job). */
+  onSaved: (track: MusicTrack) => void;
+  /** Put the instrumental in place of the original in the current video. */
+  onUse?: (track: MusicTrack) => void;
   /** Poll interval; tests shorten it. */
   pollMs?: number;
 }
 
 /**
  * Remove the vocals from one library track: choose a quality, watch it run,
- * listen to both versions, then keep the instrumental as a new track (it
- * carries the original's licence and credit) or throw it away.
+ * then listen to both versions. The server saves the instrumental to the
+ * library as soon as it finishes (it carries the original's licence and
+ * credit), so leaving the page cannot lose it; here it can be put into the
+ * current video, or deleted.
  */
 // A poll failure is tolerated for this many CONSECUTIVE misses (a blip in the
 // connection, or the server briefly unavailable) before the dialog gives up
 // and shows the error — a success in between resets the count.
 const MAX_CONSECUTIVE_POLL_FAILURES = 3;
 
-export function InstrumentalDialog({ track, onClose, onKept, pollMs = 2000 }: InstrumentalDialogProps) {
+export function InstrumentalDialog({ track, onClose, onSaved, onUse, pollMs = 2000 }: InstrumentalDialogProps) {
   const [quality, setQuality] = useState<InstrumentalQuality>('best');
   const [jobId, setJobId] = useState<string | null>(null);
   const [job, setJob] = useState<InstrumentalJob | null>(null);
-  const [saving, setSaving] = useState(false);
   const [starting, setStarting] = useState(false);
+  const announced = useRef<string | null>(null);
+  const saved = job?.status === 'done' ? job.track : null;
+
+  // Tell the host once, so its library list shows the new track right away.
+  useEffect(() => {
+    if (saved && announced.current !== saved.id) {
+      announced.current = saved.id;
+      onSaved(saved);
+    }
+  }, [saved, onSaved]);
 
   useEffect(() => {
     if (!jobId) return undefined;
@@ -75,20 +89,6 @@ export function InstrumentalDialog({ track, onClose, onKept, pollMs = 2000 }: In
     }
   };
 
-  const keep = async () => {
-    if (!jobId) return;
-    setSaving(true);
-    try {
-      const kept = await keepInstrumental(jobId);
-      toast.success(`Saved "${kept.label}" to your library`);
-      onKept(kept);
-    } catch (e) {
-      toast.error((e as Error).message || 'Failed to save the instrumental');
-    } finally {
-      setSaving(false);
-    }
-  };
-
   // Task 10 ruling: cancelInstrumental / discardInstrumental now THROW on
   // failure instead of resolving silently. We must not swallow that with a
   // bare `.catch(() => undefined)` — surface it as a toast — but the dialog
@@ -98,7 +98,7 @@ export function InstrumentalDialog({ track, onClose, onKept, pollMs = 2000 }: In
     try {
       if (jobId) await discardInstrumental(jobId);
     } catch (e) {
-      toast.error((e as Error).message || 'Failed to discard the instrumental');
+      toast.error((e as Error).message || 'Failed to delete the instrumental');
     } finally {
       onClose();
     }
@@ -126,7 +126,7 @@ export function InstrumentalDialog({ track, onClose, onKept, pollMs = 2000 }: In
     <div role="dialog" aria-label={`Remove vocals from ${track.label}`} className={`${panelCls} space-y-3`}>
       <div className="font-medium text-white">Remove vocals — {track.label}</div>
       <p className="text-xs text-content-secondary">
-        The instrumental is saved as a new track and keeps the original's licence and credit. Removing vocals does not clear a song for YouTube.
+        The instrumental is saved to your library as a new track and keeps the original's licence and credit. Removing vocals does not clear a song for YouTube.
       </p>
 
       {!jobId && (
@@ -167,6 +167,9 @@ export function InstrumentalDialog({ track, onClose, onKept, pollMs = 2000 }: In
 
       {job?.status === 'done' && job.resultFile && (
         <div className="space-y-2">
+          {saved && (
+            <div className="text-sm text-content-secondary">Saved to your library as "{saved.label}".</div>
+          )}
           <div className="grid gap-2 sm:grid-cols-2">
             <label className="text-xs text-content-secondary">
               Original
@@ -178,8 +181,11 @@ export function InstrumentalDialog({ track, onClose, onKept, pollMs = 2000 }: In
             </label>
           </div>
           <div className="flex gap-2">
-            <button type="button" onClick={keep} disabled={saving} className={primaryBtnCls}>Keep</button>
-            <button type="button" onClick={discard} disabled={saving} className={secondaryBtnCls}>Discard</button>
+            {saved && onUse && (
+              <button type="button" onClick={() => onUse(saved)} className={primaryBtnCls}>Use in this video</button>
+            )}
+            <button type="button" onClick={onClose} className={secondaryBtnCls}>Done</button>
+            <button type="button" onClick={discard} className={secondaryBtnCls}>Delete it</button>
           </div>
         </div>
       )}

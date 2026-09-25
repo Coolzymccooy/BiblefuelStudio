@@ -101,10 +101,17 @@ source track's ref, and it **inherits the source track's `licence` and `credit`*
 instrumental doesn't get its own licence status; it's tied to whatever the original was
 cleared (or not cleared) for.
 
-An instrumental the operator doesn't keep, and the `stems-work/<jobId>` working folder
-each separation used, are swept automatically: anything older than 7 days is deleted
-the next time a separation job starts. Kept instrumentals (referenced by the music
-index) are never swept.
+A finished instrumental is saved to the library the moment the separation ends — there
+is no separate "Keep" step, so leaving the page mid-job cannot lose it. "Delete it" in
+the dialog takes it back out. Any chosen song that has an instrumental shows **Use
+instrumental**, which swaps it in place; **Use in this video** in the dialog does the
+same. A loose file on a Timeline music lane (never saved to the library) is saved first
+when "Remove vocals" is pressed on it.
+
+Orphaned results (an `instrumental-*.m4a` no library track points at) and the
+`stems-work/<jobId>` working folder each separation used are swept automatically:
+anything older than 7 days is deleted the next time a separation job starts. Saved
+instrumentals are never swept.
 
 ## Track order
 

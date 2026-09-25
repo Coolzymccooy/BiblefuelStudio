@@ -70,6 +70,8 @@ export interface InstrumentalJob {
   sourceRef: string;
   sourcePreview: string | null;
   resultFile: string | null;
+  /** The library track it was saved as — set once the job is done. */
+  track: MusicTrack | null;
 }
 
 export async function startInstrumental(trackId: string, quality: InstrumentalQuality): Promise<string> {
@@ -87,12 +89,6 @@ export async function getInstrumental(jobId: string): Promise<InstrumentalJob> {
 export async function cancelInstrumental(jobId: string): Promise<void> {
   const res = await api.post(`/api/music/instrumental/${jobId}/cancel`, {});
   if (!res.ok) throw new Error(res.error || 'Failed to cancel vocal removal');
-}
-
-export async function keepInstrumental(jobId: string): Promise<MusicTrack> {
-  const res = await api.post(`/api/music/instrumental/${jobId}/keep`, {});
-  if (!res.ok || !res.data?.track) throw new Error(res.error || 'Failed to save the instrumental');
-  return res.data.track as MusicTrack;
 }
 
 export async function discardInstrumental(jobId: string): Promise<void> {

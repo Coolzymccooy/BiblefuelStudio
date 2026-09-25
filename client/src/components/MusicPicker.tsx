@@ -73,6 +73,17 @@ export function MusicPicker({ value, onChange, busy, multiple = false, reorderab
     return id ? (tracks || []).find((t) => t.id === id) : undefined;
   };
 
+  // The newest instrumental made from `ref`, if any.
+  const instrumentalOf = (ref: string): MusicTrack | undefined =>
+    [...(tracks || [])].reverse().find((t) => t.derivedFrom === ref);
+
+  // Put `to` where `from` is in the chosen list (or add it if `from` isn't
+  // chosen — e.g. vocals removed from a library row).
+  const swapRef = (from: string, to: string) => {
+    if (!multiple) { onChange({ path: to, volume: value.volume ?? 0.3, autoDuck }); return; }
+    emitPaths(paths.includes(from) ? paths.map((p) => (p === from ? to : p)) : [...paths, to]);
+  };
+
   const trackLabel = (p: string) => {
     const t = trackForRef(p);
     if (t) return t.label;
@@ -193,17 +204,65 @@ export function MusicPicker({ value, onChange, busy, multiple = false, reorderab
   //
   // Remove vocals is offered on your own uploads only: the bundled tracks are
   // already instrumental, and a button beside them read as a genre tag.
-  const removeVocalsButton = (t: MusicTrack | undefined) => caps?.vocalRemoval && t?.source === 'upload' && (
+  const vocalsBtnCls = 'shrink-0 inline-flex items-center gap-1 rounded border border-primary-400/40 px-1.5 py-0.5 text-[10px] text-primary-200 hover:bg-primary-500/15';
+  const removeVocalsButton = (t: MusicTrack | undefined) => caps?.vocalRemoval && t?.source === 'upload' && !t.derivedFrom && (
     <button
       type="button"
       onClick={() => setInstrumentalFor(t)}
       aria-label={`Remove vocals from ${t.label}`}
       title="Make an instrumental version of this track (removes the singing)"
-      className="shrink-0 inline-flex items-center gap-1 rounded border border-primary-400/40 px-1.5 py-0.5 text-[10px] text-primary-200 hover:bg-primary-500/15"
+      className={vocalsBtnCls}
     >
       <MicOff size={10} /> Remove vocals
     </button>
   );
+
+  // A loose file (uploaded straight onto a Timeline lane, never saved to the
+  // library) has no track id to separate. Save it first — the server dedupes
+  // by file, so this never duplicates — then swap it for the saved track.
+  const removeVocalsFromLoose = async (p: string) => {
+    try {
+      const saved = await saveTrackToLibrary(p, { label: (p.split(/[\\/]/).pop() || p).replace(/\.[^.]+$/, '') });
+      qc.invalidateQueries({ queryKey: ['music-library'] });
+      swapRef(p, saved.ref);
+      setInstrumentalFor(saved);
+    } catch (e) {
+      toast.error((e as Error).message || "Couldn't save that file to your library");
+    }
+  };
+
+  // What a chosen row offers: its instrumental if one exists, otherwise to
+  // make one.
+  const chosenVocalsControl = (p: string) => {
+    const inst = instrumentalOf(p);
+    if (inst) {
+      return (
+        <button
+          type="button"
+          onClick={() => swapRef(p, inst.ref)}
+          aria-label={`Use the instrumental of ${trackLabel(p)}`}
+          title={`Swap in "${inst.label}"`}
+          className={vocalsBtnCls}
+        >
+          <MicOff size={10} /> Use instrumental
+        </button>
+      );
+    }
+    if (caps?.vocalRemoval && !REF_PREFIX.test(p)) {
+      return (
+        <button
+          type="button"
+          onClick={() => removeVocalsFromLoose(p)}
+          aria-label={`Remove vocals from ${trackLabel(p)}`}
+          title="Make an instrumental version of this track (removes the singing)"
+          className={vocalsBtnCls}
+        >
+          <MicOff size={10} /> Remove vocals
+        </button>
+      );
+    }
+    return removeVocalsButton(trackForRef(p));
+  };
 
   const libraryList = (tracks || []).length > 0 && (
     <ul className="max-h-32 space-y-1 overflow-y-auto rounded-md border border-white/10 bg-black/10 p-1.5">
@@ -251,11 +310,12 @@ export function MusicPicker({ value, onChange, busy, multiple = false, reorderab
     <InstrumentalDialog
       track={instrumentalFor}
       onClose={() => setInstrumentalFor(null)}
-      onKept={() => {
+      // Same library refresh clearLicence/forgetTrack use, so the new
+      // instrumental track shows up in this list immediately.
+      onSaved={() => qc.invalidateQueries({ queryKey: ['music-library'] })}
+      onUse={(inst) => {
+        swapRef(instrumentalFor.ref, inst.ref);
         setInstrumentalFor(null);
-        // Same library refresh clearLicence/forgetTrack use, so the new
-        // instrumental track shows up in this list immediately.
-        qc.invalidateQueries({ queryKey: ['music-library'] });
       }}
     />
   );
@@ -290,7 +350,7 @@ export function MusicPicker({ value, onChange, busy, multiple = false, reorderab
                     {playingId === refId(p) ? <Square size={12} /> : <Play size={12} />}
                   </button>
                 )}
-                {removeVocalsButton(trackForRef(p))}
+                {chosenVocalsControl(p)}
                 {reorderable && (
                   <>
                     <button type="button" disabled={busy || idx === 0} onClick={() => emitPaths(move(paths, idx, idx - 1))} aria-label="move up" className="text-gray-400 hover:text-white disabled:opacity-30">↑</button>

@@ -1,7 +1,7 @@
 /**
  * Vocal-removal jobs, in memory. A separation is minutes long and its only
  * durable output is a file in the tenant's outputs; a server restart forgets
- * the job and the sweep removes an unkept result later.
+ * the job and a finished result is already saved to the library.
  */
 const jobs = new Map();
 
