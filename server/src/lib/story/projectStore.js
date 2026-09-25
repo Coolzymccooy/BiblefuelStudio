@@ -6,6 +6,8 @@ import { v4 as uuid } from "uuid";
 /** Project lifecycle states. */
 export const STORY_STATUS = {
   DRAFT: "draft",
+  DRAFT_SCRIPT: "draft_script",   // long-form: outline written, nothing synthesised
+  NARRATING: "narrating",         // long-form: chunked TTS in progress
   TRANSCRIBING: "transcribing",
   SEGMENTING: "segmenting",
   GENERATING_IMAGES: "generating_images",
@@ -30,7 +32,10 @@ function projectPath(baseDir, projectId) {
  * @param {string} baseDir  the caller's req.ctx.dataDir
  * @param {{title?:string, style?:string}} opts
  */
-export function createProject(baseDir, { title = "Untitled", style = "cinematic-bible", cast = [] } = {}) {
+export function createProject(baseDir, {
+  title = "Untitled", style = "cinematic-bible", cast = [],
+  aspect = "portrait", captions = "kinetic", scene = null, longform = null,
+} = {}) {
   const now = Date.now();
   const project = {
     projectId: uuid(),
@@ -49,6 +54,16 @@ export function createProject(baseDir, { title = "Untitled", style = "cinematic-
     captionPreset: "default",
     render: { jobId: null, outputPath: null, status: null },
     error: null,
+    // Video shape: "portrait" (default, existing behaviour) or "landscape".
+    aspect: aspect === "landscape" ? "landscape" : "portrait",
+    // Caption rendering mode for storyRender's drawtext chain.
+    captions: ["none", "static", "kinetic"].includes(captions) ? captions : "kinetic",
+    // Optional per-project scene-timing overrides (target scene length / cap).
+    scene: scene && typeof scene === "object"
+      ? { targetSceneSec: Number(scene.targetSceneSec) || undefined, maxScenes: Number(scene.maxScenes) || undefined }
+      : null,
+    // Long-form (script -> chunked narration) metadata; null for the classic flow.
+    longform: longform && typeof longform === "object" ? longform : null,
     createdAt: now,
     updatedAt: now,
   };

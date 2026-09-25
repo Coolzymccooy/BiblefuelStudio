@@ -7,7 +7,7 @@ export const STORY_STYLES: StoryStyleOption[] = [
   { id: 'ancient-scripture', label: 'Ancient Scripture', blurb: 'Weathered, historical desert' },
 ];
 
-const TRANSIENT: StoryStatus[] = ['transcribing', 'segmenting', 'generating_images', 'rendering'];
+const TRANSIENT: StoryStatus[] = ['transcribing', 'segmenting', 'generating_images', 'rendering', 'narrating'];
 
 export function isTransientStatus(status: StoryStatus): boolean {
   return TRANSIENT.includes(status);
@@ -49,11 +49,33 @@ export function progressLabel(status: StoryStatus): string {
     case 'segmenting': return 'Breaking it into scenes…';
     case 'generating_images': return 'Generating images…';
     case 'rendering': return 'Rendering your video…';
+    case 'narrating': return 'Generating narration…';
     default: return 'Working…';
   }
 }
 
+const TTS_PROVIDER_LABELS: Record<string, string> = {
+  azure: 'Azure Speech',
+  chatterbox: 'Chatterbox',
+  edge: 'Edge-TTS',
+  elevenlabs: 'ElevenLabs',
+  fish: 'Fish Audio',
+  piper: 'Piper',
+};
+
+/** Human label for a TTS provider id reported by the server (falls back to the id). */
+export function ttsProviderLabel(id: string): string {
+  return TTS_PROVIDER_LABELS[id] ?? id;
+}
+
 const STALL_MS = 90_000; // a transient status older than this looks stuck (server died)
+
+// Narration synthesises a 30-60 min session chunk by chunk, one provider call
+// at a time; a single slow self-hosted TTS request can comfortably exceed 90s
+// with nothing wrong at all. The server bumps updatedAt after every chunk
+// (see longform.js's onProgress heartbeat), so this only fires once even that
+// heartbeat has gone quiet for a genuinely long time.
+const NARRATING_STALL_MS = 10 * 60_000;
 
 /**
  * A project is "stalled" when it's in a transient (in-flight) status but its
@@ -62,7 +84,13 @@ const STALL_MS = 90_000; // a transient status older than this looks stuck (serv
  * so a fresh transient status just means "working" — NOT stalled.
  */
 export function isStalled(project: StoryProject, nowMs: number): boolean {
-  return isTransientStatus(project.status) && (nowMs - project.updatedAt) > STALL_MS;
+  if (!isTransientStatus(project.status)) return false;
+  // The server says outright when a narration it claims to be running isn't
+  // alive in its process (it restarted mid-run) — no point waiting out the
+  // timer on a run that will never send another heartbeat.
+  if (project.status === 'narrating' && project.longform?.progress?.alive === false) return true;
+  const threshold = project.status === 'narrating' ? NARRATING_STALL_MS : STALL_MS;
+  return (nowMs - project.updatedAt) > threshold;
 }
 
 const MIN = 60_000, HOUR = 3_600_000, DAY = 86_400_000;
@@ -90,6 +118,8 @@ export function statusMeta(status: StoryStatus): { label: string; tone: StatusTo
     case 'transcribing': return { label: 'Transcribing', tone: 'busy' };
     case 'segmenting': return { label: 'Segmenting', tone: 'busy' };
     case 'ready_to_render': return { label: 'Ready', tone: 'idle' };
+    case 'draft_script': return { label: 'Draft', tone: 'idle' };
+    case 'narrating': return { label: 'Narrating', tone: 'busy' };
     case 'draft':
     default: return { label: 'Draft', tone: 'idle' };
   }

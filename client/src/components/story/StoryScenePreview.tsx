@@ -1,13 +1,19 @@
 import { Play } from 'lucide-react';
 import { AuthedImage } from '../AuthedImage';
-import type { StoryScene } from '../../lib/storyTypes';
+import type { StoryProject, StoryScene } from '../../lib/storyTypes';
 
 /**
  * Cinematic preview of the "current" scene — the one being generated, else the
  * first. Shows its image (or a warm gradient placeholder), the scene index, and
  * the caption text, matching the Story Video handoff.
  */
-export function StoryScenePreview({ scenes }: { scenes: StoryScene[] }) {
+interface StoryScenePreviewProps {
+  scenes: StoryScene[];
+  /** Project aspect; long-form YouTube projects are landscape. Defaults to portrait (Shorts). */
+  aspect?: StoryProject['aspect'];
+}
+
+export function StoryScenePreview({ scenes, aspect = 'portrait' }: StoryScenePreviewProps) {
   if (!scenes.length) return null;
 
   const generatingIdx = scenes.findIndex((s) => s.imageStatus === 'generating');
@@ -33,7 +39,7 @@ export function StoryScenePreview({ scenes }: { scenes: StoryScene[] }) {
 
       <div className="absolute inset-x-0 bottom-0 p-5">
         <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-bf-goldDeep">
-          Scene {idx + 1} / {scenes.length} · Portrait
+          Scene {idx + 1} / {scenes.length} · {aspect === 'landscape' ? 'Landscape' : 'Portrait'}
         </div>
         <div className="mt-1.5 line-clamp-2 font-displaySerif text-[22px] italic leading-tight text-bf-cream">
           &ldquo;{scene.text}&rdquo;

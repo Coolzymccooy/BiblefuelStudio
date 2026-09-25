@@ -113,6 +113,21 @@ describe('isStalled', () => {
     expect(isStalled(project({ status: 'done', updatedAt: 0 }), now)).toBe(false);
     expect(isStalled(project({ status: 'error', updatedAt: 0 }), now)).toBe(false);
   });
+  it('gives narrating a much longer stall threshold (a slow self-hosted TTS chunk can exceed 90s)', () => {
+    // Past the generic 90s threshold but well within narration's leash: not stalled.
+    expect(isStalled(project({ status: 'narrating', updatedAt: now - 200_000 }), now)).toBe(false);
+    // Past narration's own (much longer) threshold: stalled.
+    expect(isStalled(project({ status: 'narrating', updatedAt: now - 11 * 60_000 }), now)).toBe(true);
+  });
+  it('treats a narration the server reports as not alive as stalled immediately', () => {
+    const lf = { templateId: 'sleep-30', sections: [] };
+    // Fresh updatedAt but the server says no run is in flight (it restarted): stalled now.
+    expect(isStalled(project({ status: 'narrating', updatedAt: now - 1_000, longform: { ...lf, progress: { done: 0, total: 14, alive: false } } }), now)).toBe(true);
+    // Alive run with a fresh heartbeat: not stalled.
+    expect(isStalled(project({ status: 'narrating', updatedAt: now - 1_000, longform: { ...lf, progress: { done: 3, total: 14, alive: true } } }), now)).toBe(false);
+    // Liveness unknown (older server): fall back to the time threshold.
+    expect(isStalled(project({ status: 'narrating', updatedAt: now - 1_000, longform: { ...lf, progress: { done: 3, total: 14 } } }), now)).toBe(false);
+  });
 });
 
 describe('relativeTime', () => {

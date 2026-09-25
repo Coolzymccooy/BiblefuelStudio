@@ -20,6 +20,8 @@ import { resolveLibraryTrack } from "../lib/musicLibrary.js";
 import { cleanCaptionLine, cleanSpeakableText } from "../lib/speakableScript.js";
 import { buildImportedTranscript } from "../lib/story/scriptImport.js";
 import { CHARACTER_ANCHORS } from "../lib/story/styleAnchors.js";
+import { confineToDir } from "../lib/confinePath.js";
+import { isNarrationActive } from "../lib/longform/narrationRegistry.js";
 
 // Mockable seams (mirror routes/transcribe.js).
 let _transcribeFn = transcribeAudio;
@@ -38,12 +40,18 @@ export function _resetTtsImpl() { _ttsFn = synthesizeEdgeTts; }
 function confineMediaPath(ctx, rawMediaPath) {
   const raw = String(rawMediaPath || "").trim();
   if (!raw) return { ok: false, status: 400, error: "mediaPath required" };
-  const resolved = path.resolve(raw);
-  const roots = [path.resolve(ctx.outputDir), path.resolve(ctx.dataDir)];
-  const within = roots.some((r) => resolved === r || resolved.startsWith(r + path.sep));
-  if (!within) return { ok: false, status: 403, error: "mediaPath is outside the allowed directory" };
+  const resolved = [ctx.outputDir, ctx.dataDir].map((root) => confineToDir(root, raw)).find(Boolean) || null;
+  if (!resolved) return { ok: false, status: 403, error: "mediaPath is outside the allowed directory" };
   if (!fs.existsSync(resolved)) return { ok: false, status: 400, error: "mediaPath not found" };
   return { ok: true, path: resolved };
+}
+
+// Image-gen aspect for a project: landscape projects request landscape
+// images, everything else (including projects predating the field) stays
+// portrait. Shared by imagesStage and the single-scene regenerate route so
+// the two paths can never drift apart.
+function imageAspectFor(project) {
+  return project.aspect === "landscape" ? "landscape" : "portrait";
 }
 
 // --- Pipeline stages (re-entrant). ctx = { dataDir, outputDir }. ---
@@ -82,7 +90,10 @@ async function segmentStage(ctx, projectId) {
   }
   const words = project.transcript?.words || [];
   if (!words.length) throw new Error("no transcript to segment");
-  const scenes = await segmentScenes({ words, style: project.style, cast: project.cast || [] });
+  const scenes = await segmentScenes({
+    words, style: project.style, cast: project.cast || [],
+    targetSec: project.scene?.targetSceneSec, maxScenes: project.scene?.maxScenes,
+  });
   return writeProject(ctx.dataDir, { ...project, scenes, status: STORY_STATUS.GENERATING_IMAGES });
 }
 
@@ -101,6 +112,15 @@ function imageStageTimeoutMs() {
 // between images so a long (or rogue) run stops promptly instead of grinding
 // through every remaining scene.
 const cancelledProjects = new Set();
+
+// Tiny helpers over the set so other routers (long-form narration) can take
+// part in the same cancel flag without reaching into this module's state.
+/** @param {string} projectId */
+export function markCancelled(projectId) { cancelledProjects.add(projectId); }
+/** @param {string} projectId */
+export function isCancelled(projectId) { return cancelledProjects.has(projectId); }
+/** @param {string} projectId */
+export function clearCancelled(projectId) { cancelledProjects.delete(projectId); }
 
 // Translate a raw provider error into a short, user-facing reason. The most
 // common real-world failure is the daily free image quota running out — the
@@ -176,7 +196,7 @@ async function imagesStage(ctx, projectId, opts = {}) {
       let result;
       try {
         result = await withTimeout(
-          _imageGenFn({ seriesId: project.projectId, partNumber: i + 1, rawPrompt: scenes[i].imagePrompt, aspect: "portrait" }),
+          _imageGenFn({ seriesId: project.projectId, partNumber: i + 1, rawPrompt: scenes[i].imagePrompt, aspect: imageAspectFor(project) }),
           timeoutMs,
           `image gen for scene ${i + 1} timed out after ${timeoutMs}ms`,
         );
@@ -219,8 +239,8 @@ function storyOutDir(outputDir, projectId) {
 
 router.post("/", (req, res) => {
   try {
-    const { title, style, cast } = req.body || {};
-    const project = createProject(req.ctx.dataDir, { title, style, cast });
+    const { title, style, cast, aspect, captions, scene, longform } = req.body || {};
+    const project = createProject(req.ctx.dataDir, { title, style, cast, aspect, captions, scene, longform });
     return res.json({ ok: true, project });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
@@ -255,6 +275,14 @@ router.get("/:id", (req, res) => {
     if (job) {
       out = { ...project, render: { ...project.render, percent: job.percent, phase: job.phase } };
     }
+  }
+  // Same idea for a long-form narration: `alive` says whether the run is
+  // actually in flight in this process. false while status==="narrating"
+  // ⇒ the server restarted mid-run and the UI should offer Resume now, not
+  // after a stall timer. Wire-only — never persisted.
+  if (project.status === STORY_STATUS.NARRATING) {
+    const progress = project.longform?.progress || { done: 0, total: 0 };
+    out = { ...out, longform: { ...out.longform, progress: { ...progress, alive: isNarrationActive(project.projectId) } } };
   }
   return res.json({ ok: true, project: out });
 });
@@ -393,6 +421,10 @@ router.post("/import-script", (req, res) => {
       title: req.body?.title || script.slice(0, 60),
       style: req.body?.style,
       cast: req.body?.cast,
+      aspect: req.body?.aspect,
+      captions: req.body?.captions,
+      scene: req.body?.scene,
+      longform: req.body?.longform,
     });
 
     const ready = writeProject(req.ctx.dataDir, {
@@ -449,7 +481,7 @@ router.post("/:id/images", (req, res) => {
 router.post("/:id/cancel", (req, res) => {
   const project = readProject(req.ctx.dataDir, req.params.id);
   if (!project) return res.status(404).json({ ok: false, error: "project not found" });
-  cancelledProjects.add(req.params.id);
+  markCancelled(req.params.id);
   const jobId = project.render?.jobId;
   if (jobId) { try { cancelRenderJob(jobId, req.ctx.userId); } catch {} }
   const updated = writeProject(req.ctx.dataDir, { ...project, status: STORY_STATUS.ERROR, error: "Cancelled." });
@@ -525,7 +557,7 @@ router.post("/:id/scenes/:sid/regenerate", async (req, res) => {
       seriesId: `${project.projectId}-${req.params.sid}-${Date.now()}`,
       partNumber: 1,
       rawPrompt: scenes[idx].imagePrompt,
-      aspect: "portrait",
+      aspect: imageAspectFor(project),
     });
     scenes[idx] = result?.ok
       ? { ...scenes[idx], imagePath: result.path, imageUrl: result.publicUrl || null, imageStatus: "done", imageError: null }
@@ -587,6 +619,9 @@ router.post("/:id/render", async (req, res) => {
     if (!fs.existsSync(out)) fs.mkdirSync(out, { recursive: true });
     const outPath = path.join(out, "video.mp4");
     const durationSec = scenes[scenes.length - 1].endMs / 1000;
+    const landscape = project.aspect === "landscape";
+    const width = Math.max(240, Number(landscape ? process.env.STORY_RENDER_LANDSCAPE_WIDTH : process.env.STORY_RENDER_WIDTH) || (landscape ? 1280 : 720));
+    const height = Math.max(240, Number(landscape ? process.env.STORY_RENDER_LANDSCAPE_HEIGHT : process.env.STORY_RENDER_HEIGHT) || (landscape ? 720 : 1280));
     const job = createJob(req.ctx.userId, { durationSec });
     persistJob(req.ctx.dataDir, { ...job, projectId: project.projectId, status: "running" });
     writeProject(req.ctx.dataDir, {
@@ -630,8 +665,11 @@ router.post("/:id/render", async (req, res) => {
       // social-ready) keeps long videos renderable on a modest CPU box — full
       // 1080×1920 over a 27-min kinetic render pegs CPU/RAM and stalls the
       // server. Bump STORY_RENDER_WIDTH/HEIGHT once on bigger hardware.
-      width: Math.max(240, Number(process.env.STORY_RENDER_WIDTH) || 720),
-      height: Math.max(240, Number(process.env.STORY_RENDER_HEIGHT) || 1280),
+      // Landscape projects use the separate STORY_RENDER_LANDSCAPE_WIDTH/HEIGHT
+      // envs (default 1280×720) so portrait defaults/tuning stay untouched.
+      width,
+      height,
+      captions: project.captions || "kinetic",
       outPath,
       audioDurationSec: audioDurationSec || undefined,
     }).then((r) => {

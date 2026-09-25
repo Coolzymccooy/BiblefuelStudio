@@ -16,6 +16,8 @@ const RANK: Record<StoryStatus, number> = {
     rendering: 5,
     done: 6,
     error: 0,
+    draft_script: 0,
+    narrating: 1,
 };
 
 /**

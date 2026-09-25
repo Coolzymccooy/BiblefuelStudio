@@ -6,9 +6,15 @@ import { v4 as uuid } from "uuid";
 import cron from "node-cron";
 import { google } from "googleapis";
 import jwt from "jsonwebtoken";
+import { pipeline } from "node:stream/promises";
+import { Readable } from "node:stream";
 import { buildZernioPost, isTikTokCapacityError } from "../lib/zernioPayload.js";
 import { readSocialStore, writeSocialStore } from "../lib/socialStore.js";
 import { scheduleOwnerCtx, listScheduleSources } from "../lib/social/scheduleSources.js";
+import { validateYoutubeMetadata, buildYoutubeDescription } from "../lib/social/youtubeMetadata.js";
+import { uploadToYoutube } from "../lib/social/youtubeUpload.js";
+import { resolveThumbnail } from "../lib/social/thumbnailPath.js";
+import { confineToDir } from "../lib/confinePath.js";
 // DATA_DIR is used ONLY by the boot-time cron rehydrator below, which operates
 // on the super-admin's global social.json. Per-user schedule rehydration is
 // Phase 4 work; see specs/2026-05-26-public-multitenancy-design.md §6.
@@ -16,6 +22,12 @@ import { DATA_DIR, OUTPUT_DIR } from "../lib/paths.js";
 
 const router = Router();
 const scheduleTasks = new Map();
+
+// Injectable fetch so the streaming download path in
+// resolveVideoInputForUpload is testable without a real network call.
+let _fetch = fetch;
+export function _setFetchImpl(impl) { _fetch = impl; }
+export function _resetFetchImpl() { _fetch = fetch; }
 
 function getConfiguredPublicBaseUrl() {
   return String(
@@ -48,39 +60,57 @@ function toAbsolutePublicUrl(req, value) {
   return `${base}${pathOnly}`;
 }
 
-function resolveOutputAlias(value) {
+function resolveOutputAlias(value, outputDir = OUTPUT_DIR) {
   const raw = String(value || "").trim();
   if (!raw) return null;
   if (fs.existsSync(raw)) return path.resolve(raw);
 
   const normalized = raw.replace(/\\/g, "/");
-  if (normalized.startsWith("/outputs/")) return path.join(OUTPUT_DIR, normalized.slice("/outputs/".length));
-  if (normalized.startsWith("outputs/")) return path.join(OUTPUT_DIR, normalized.slice("outputs/".length));
-  if (normalized.startsWith("./outputs/")) return path.join(OUTPUT_DIR, normalized.slice("./outputs/".length));
-  if (normalized.startsWith("server/outputs/")) return path.join(OUTPUT_DIR, normalized.slice("server/outputs/".length));
+  if (normalized.startsWith("/outputs/")) return path.join(outputDir, normalized.slice("/outputs/".length));
+  if (normalized.startsWith("outputs/")) return path.join(outputDir, normalized.slice("outputs/".length));
+  if (normalized.startsWith("./outputs/")) return path.join(outputDir, normalized.slice("./outputs/".length));
+  if (normalized.startsWith("server/outputs/")) return path.join(outputDir, normalized.slice("server/outputs/".length));
 
-  const byName = path.join(OUTPUT_DIR, path.basename(normalized));
+  const byName = path.join(outputDir, path.basename(normalized));
   if (fs.existsSync(byName)) return byName;
   return null;
+}
+
+// A resolved local candidate must live inside the caller's own outputs.
+// resolveOutputAlias happily returns any existing absolute path, so without
+// this a videoUrl of "/etc/passwd" (or another tenant's file) would be
+// uploaded. Null (no local candidate) passes through untouched so the
+// remote-fetch branch still runs.
+function confineLocalVideo(candidate, outputDir) {
+  if (candidate === null || candidate === undefined) return null;
+  const confined = confineToDir(outputDir, candidate);
+  if (!confined) throw new Error("videoUrl must point inside your outputs folder");
+  return confined;
 }
 
 async function resolveVideoInputForUpload(videoUrl, req) {
   const raw = String(videoUrl || "").trim();
   if (!raw) throw new Error("videoUrl required");
 
-  const local = resolveOutputAlias(raw);
+  // Under multitenancy, Story/long-form outputs live in the per-user
+  // outputDir (req.ctx.outputDir), not the global OUTPUT_DIR.
+  const outputDir = req?.ctx?.outputDir || OUTPUT_DIR;
+
+  const local = confineLocalVideo(resolveOutputAlias(raw, outputDir), outputDir);
   if (local && fs.existsSync(local)) {
     return { filePath: local, cleanup: async () => {} };
   }
 
   if (/^https?:\/\//i.test(raw)) {
+    let localFromPath = null;
     try {
       const u = new URL(raw);
-      const localFromPath = resolveOutputAlias(u.pathname);
-      if (localFromPath && fs.existsSync(localFromPath)) {
-        return { filePath: localFromPath, cleanup: async () => {} };
-      }
-    } catch {}
+      localFromPath = resolveOutputAlias(u.pathname, outputDir);
+    } catch { localFromPath = null; }
+    const confined = confineLocalVideo(localFromPath, outputDir);
+    if (confined && fs.existsSync(confined)) {
+      return { filePath: confined, cleanup: async () => {} };
+    }
   }
 
   const absoluteUrl = toAbsolutePublicUrl(req, raw);
@@ -88,17 +118,20 @@ async function resolveVideoInputForUpload(videoUrl, req) {
     throw new Error(`videoUrl must be absolute or resolvable: ${videoUrl}`);
   }
 
-  const resp = await fetch(absoluteUrl);
+  const resp = await _fetch(absoluteUrl);
   if (!resp.ok) {
-    const errText = await resp.text();
+    const errText = typeof resp.text === "function" ? await resp.text() : "";
     throw new Error(`Failed to fetch video: ${resp.status} ${errText}`);
   }
-  const bytes = Buffer.from(await resp.arrayBuffer());
-  if (!bytes.length) throw new Error("Fetched video is empty");
+  if (!resp.body) throw new Error("Fetched video has no body");
 
-  if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
-  const outFile = path.join(OUTPUT_DIR, `youtube-upload-${uuid()}.mp4`);
-  fs.writeFileSync(outFile, bytes);
+  if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
+  const outFile = path.join(outputDir, `youtube-upload-${uuid()}.mp4`);
+  // Stream to disk. A 60-minute 1080p file is gigabytes; buffering it with
+  // arrayBuffer() took the whole process down.
+  const source = typeof resp.body.pipe === "function" ? resp.body : Readable.fromWeb(resp.body);
+  await pipeline(source, fs.createWriteStream(outFile));
+  if (!fs.statSync(outFile).size) { try { fs.unlinkSync(outFile); } catch {} throw new Error("Fetched video is empty"); }
 
   return {
     filePath: outFile,
@@ -108,15 +141,15 @@ async function resolveVideoInputForUpload(videoUrl, req) {
   };
 }
 
-function sanitizePrivacyStatus(value) {
-  const v = String(value || "").trim().toLowerCase();
-  if (v === "public" || v === "unlisted" || v === "private") return v;
-  return "private";
-}
-
+// An explicitly provided title is passed through UNTRUNCATED so
+// validateYoutubeMetadata can reject an over-length one by name instead of
+// it being silently cut down. The caption-derived fallback (Timeline/Shorts
+// shares, which send only a caption) keeps the 100-char truncation it always
+// had — those captions are prose, not something the user is asking YouTube
+// to title verbatim, so truncating instead of failing is the right default.
 function titleFromCaption(title, caption) {
   const provided = String(title || "").trim();
-  if (provided) return provided.slice(0, 100);
+  if (provided) return provided;
   const fromCaption = String(caption || "").trim().split("\n").find(Boolean) || "Biblefuel Studio Upload";
   return fromCaption.slice(0, 100);
 }
@@ -371,7 +404,8 @@ async function postToBuffer({ caption, videoUrl, profileIds }, req, store) {
   return { data, videoUrl: mediaUrl };
 }
 
-async function postToYoutube({ caption, videoUrl, title, privacyStatus }, req, store) {
+async function postToYoutube(payload, req, store) {
+  const { caption, videoUrl, title, description, tags, categoryId, privacyStatus, publishAt, thumbnailPath, chapters, links, hashtags } = payload || {};
   const yt = store.direct?.youtube || {};
   const clientId = String(yt.clientId || "").trim();
   const clientSecret = String(yt.clientSecret || "").trim();
@@ -388,43 +422,50 @@ async function postToYoutube({ caption, videoUrl, title, privacyStatus }, req, s
     throw new Error(`YouTube is not connected — missing ${missing}. Posts to YouTube will keep failing until this is fixed.`);
   }
 
+  // Timeline/Render shares send only a caption: keep using its first line as
+  // the title and the whole caption as the description.
+  const summary = String(description || caption || "").trim();
+  const validated = validateYoutubeMetadata({
+    title: titleFromCaption(title, caption),
+    description: (chapters?.length || links?.length || hashtags?.length)
+      ? buildYoutubeDescription({ summary, chapters, links, hashtags })
+      : summary,
+    tags, categoryId, privacyStatus, publishAt,
+  });
+  if (!validated.ok) throw new Error(validated.error);
+
+  // Thumbnails live in the caller's per-user outputDir under multitenancy,
+  // with one exception: scene images that image generation wrote to the
+  // GLOBAL OUTPUT_DIR/genImg (served as /outputs/genImg/...). Resolved and
+  // confined BEFORE the video is fetched so a bad thumbnail never costs a
+  // multi-gigabyte download.
+  let thumbLocal;
+  if (thumbnailPath) {
+    const thumb = resolveThumbnail(String(thumbnailPath), req?.ctx?.outputDir || OUTPUT_DIR, OUTPUT_DIR);
+    if (!thumb.ok) throw new Error(thumb.error);
+    thumbLocal = thumb.path;
+  }
+
   const upload = await resolveVideoInputForUpload(videoUrl, req);
   try {
-    const oauth2 = new google.auth.OAuth2(clientId, clientSecret);
-    oauth2.setCredentials({ refresh_token: refreshToken });
-
-    const youtube = google.youtube({ version: "v3", auth: oauth2 });
-    const requestBody = {
-      snippet: {
-        title: titleFromCaption(title, caption),
-        description: String(caption || "").slice(0, 5000),
-      },
-      status: {
-        privacyStatus: sanitizePrivacyStatus(privacyStatus),
-        selfDeclaredMadeForKids: false,
-      },
-    };
-
-    const result = await youtube.videos.insert({
-      part: ["snippet", "status"],
-      requestBody,
-      media: { body: fs.createReadStream(upload.filePath) },
+    const result = await uploadToYoutube({
+      credentials: { clientId, clientSecret, refreshToken },
+      filePath: upload.filePath,
+      metadata: validated.value,
+      thumbnailPath: thumbLocal,
     });
-
-    const videoId = String(result?.data?.id || "").trim();
-    return {
-      data: result.data,
-      videoId,
-      videoUrl: videoId ? `https://www.youtube.com/watch?v=${videoId}` : "",
-    };
+    return { ...result, forcedPrivate: validated.value.forcedPrivate };
   } finally {
     await upload.cleanup();
   }
 }
 
 export async function dispatchPost(payload, req) {
-  const { destination, caption, videoUrl, profileIds, webhookId, webhookUrl, title, privacyStatus } = payload || {};
-  if (!caption || !videoUrl) throw new Error("caption and videoUrl required");
+  const { destination, caption, videoUrl } = payload || {};
+  if (!videoUrl) throw new Error("caption and videoUrl required");
+  // YouTube posts carry their own title/description (and validates them
+  // itself) — a bare caption is optional there, unlike webhook/buffer.
+  if (destination !== "youtube" && !caption) throw new Error("caption and videoUrl required");
 
   // Cron-triggered calls pass a reqLike without ctx — fall back to DATA_DIR
   // (super-admin's store). Phase 4 will switch this to per-schedule ctx.
@@ -432,15 +473,17 @@ export async function dispatchPost(payload, req) {
   const store = readSocialStore(storeDir);
 
   if (destination === "webhook") {
+    const { webhookId, webhookUrl, title } = payload || {};
     return postToWebhook({ caption, videoUrl, title, webhookId, webhookUrl }, req, store);
   }
 
   if (destination === "buffer") {
+    const { profileIds } = payload || {};
     return postToBuffer({ caption, videoUrl, profileIds }, req, store);
   }
 
   if (destination === "youtube") {
-    return postToYoutube({ caption, videoUrl, title, privacyStatus }, req, store);
+    return postToYoutube(payload, req, store);
   }
 
   if (destination === "instagram" || destination === "tiktok") {

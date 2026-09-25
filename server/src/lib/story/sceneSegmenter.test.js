@@ -184,3 +184,10 @@ describe("character anchors in scene prompts", () => {
     assert.match(scenes[0].imagePrompt, /armoured warrior/i);
   });
 });
+
+test("maxScenes override widens scenes beyond the env cap", async () => {
+  _setLlmImpl(async () => { throw new Error("no llm"); }); // force fallbackRanges
+  const words = Array.from({ length: 600 }, (_, i) => ({ text: `w${i}`, startMs: i * 1000, endMs: (i + 1) * 1000 })); // 600s
+  const scenes = await segmentScenes({ words, style: "cinematic-bible", targetSec: 8, maxScenes: 6 });
+  assert.ok(scenes.length <= 6, `expected ≤6 scenes, got ${scenes.length}`);
+});
