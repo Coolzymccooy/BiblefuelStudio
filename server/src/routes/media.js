@@ -645,16 +645,28 @@ function runFfmpegStill(args, timeoutMs) {
     const ff = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
     let proc;
     try {
-      proc = _gifSpawn(ff, args, { windowsHide: true });
+      // Its output is never read; an unread pipe that filled would stall it.
+      proc = _gifSpawn(ff, args, { windowsHide: true, stdio: "ignore" });
     } catch {
       resolve(false);
       return;
     }
     let settled = false;
-    const finish = (ok) => { if (!settled) { settled = true; clearTimeout(timer); resolve(ok); } };
+    let timedOut = false;
+    let grace;
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      clearTimeout(grace);
+      resolve(ok && !timedOut);
+    };
     const timer = setTimeout(() => {
+      timedOut = true;
       try { proc.kill("SIGKILL"); } catch { /* already gone */ }
-      finish(false);
+      // Resolved once it has exited, so the files it held can be removed
+      // (Windows refuses while they are open) - but never later than this.
+      grace = setTimeout(() => finish(false), 2000);
     }, timeoutMs);
     proc.on("error", () => finish(false));
     proc.on("close", (code) => finish(code === 0));

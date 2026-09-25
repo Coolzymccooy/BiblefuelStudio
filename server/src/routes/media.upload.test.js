@@ -295,6 +295,25 @@ describe("finaliseImageFile — the bytes decide", () => {
     }
   });
 
+  test("a hung conversion that ignores the kill is still given up on", async () => {
+    const gif = tmp("g.gif");
+    fs.writeFileSync(gif, Buffer.from("GIF89a" + "x".repeat(20)));
+    let options;
+    _setGifSpawnImpl((_ff, _args, opts) => {
+      options = opts;
+      const child = new EventEmitter();
+      child.kill = () => {}; // never exits
+      return child;
+    });
+    try {
+      const out = await finaliseImageFile(gif, { timeoutMs: 20 });
+      assert.equal(out.ok, false);
+      assert.equal(options.stdio, "ignore", "its output is not piped into nothing that reads it");
+    } finally {
+      _resetGifSpawnImpl();
+    }
+  });
+
   test("HEIC bytes behind a .jpg name are refused and the file is deleted", async () => {
     const f = write("c.jpg", HEIC_BYTES);
     const out = await finaliseImageFile(f);
