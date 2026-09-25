@@ -155,14 +155,56 @@ export async function registerImage({ dataDir, outputDir, sourcePath, prompt, st
   }
 }
 
-/** Cap the library, evicting least-recently-used entries and their files. */
+// Where Story (and long-form, which is a Story project) and ambient keep their
+// projects, relative to the tenant's dataDir.
+const PROJECT_DIRS = ["story-projects", "ambient"];
+
+/**
+ * Every image path a saved project still points at. A reused library image is
+ * referenced by its pool path, so evicting that entry would leave a draft
+ * saying "done" with a picture that is gone, and its render would fail.
+ * Walks the whole project, so a picture set aside (e.g. while a session is
+ * music-only) counts too.
+ */
+export function referencedImagePaths(dataDir) {
+  const found = new Set();
+  const walk = (v) => {
+    if (Array.isArray(v)) { v.forEach(walk); return; }
+    if (!v || typeof v !== "object") return;
+    for (const [k, x] of Object.entries(v)) {
+      if (k === "imagePath" && typeof x === "string" && x) found.add(path.resolve(x));
+      else walk(x);
+    }
+  };
+  for (const sub of PROJECT_DIRS) {
+    const dir = path.join(dataDir, sub);
+    let names = [];
+    try { names = fs.readdirSync(dir).filter((n) => n.endsWith(".json")); } catch { continue; }
+    for (const name of names) {
+      try { walk(JSON.parse(fs.readFileSync(path.join(dir, name), "utf8"))); } catch { /* unreadable: skip */ }
+    }
+  }
+  return found;
+}
+
+/**
+ * Cap the library, evicting least-recently-used entries and their files.
+ * Entries a project still uses are kept even past the cap: they are in use,
+ * and they are evicted in a later prune once nothing points at them.
+ */
 export function pruneLibrary({ dataDir, max = DEFAULT_MAX_ITEMS }) {
   try {
     const lib = readLibrary(dataDir);
     if (lib.items.length <= max) return 0;
     const sorted = [...lib.items].sort((a, b) => (Number(b?.lastUsedAt) || 0) - (Number(a?.lastUsedAt) || 0));
-    const keep = sorted.slice(0, max);
-    const evict = sorted.slice(max);
+    const inUse = referencedImagePaths(dataDir);
+    const keep = [];
+    const evict = [];
+    sorted.forEach((item, i) => {
+      if (i < max || (item?.path && inUse.has(path.resolve(item.path)))) keep.push(item);
+      else evict.push(item);
+    });
+    if (evict.length === 0) return 0;
     for (const item of evict) {
       // The index is the record; a file we cannot delete is harmless.
       try { fs.rmSync(item.path, { force: true }); } catch { /* ignore */ }

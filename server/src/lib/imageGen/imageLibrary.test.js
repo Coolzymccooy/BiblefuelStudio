@@ -102,6 +102,40 @@ describe("pruneLibrary", () => {
     assert.equal(fs.existsSync(entries[0].path), false, "the evicted pool file was deleted");
   });
 
+  test("keeps an image a saved project still uses, even past the cap", async () => {
+    const entries = [];
+    for (let i = 0; i < 3; i++) {
+      entries.push(await registerImage({ dataDir, outputDir, sourcePath: writeImage(`u${i}.png`, [i]), prompt: `p${i}`, style: "s", aspect: "landscape", provider: "x", projectId: "p" }));
+    }
+    const lib = readLibrary(dataDir);
+    lib.items.find((it) => it.id === entries[0].id).lastUsedAt = 1; // the oldest
+    fs.writeFileSync(path.join(dataDir, "imageLibrary.json"), JSON.stringify(lib));
+    // An older draft reused it and has not been rendered yet.
+    fs.mkdirSync(path.join(dataDir, "story-projects"), { recursive: true });
+    fs.writeFileSync(path.join(dataDir, "story-projects", "draft.json"), JSON.stringify({
+      projectId: "draft", scenes: [{ imageStatus: "done", imagePath: entries[0].path }],
+    }));
+    assert.equal(pruneLibrary({ dataDir, max: 2 }), 0);
+    assert.equal(fs.existsSync(entries[0].path), true, "the draft's picture is still there");
+    assert.equal(readLibrary(dataDir).items.length, 3);
+  });
+
+  test("counts pictures an ambient session holds, including ones set aside", async () => {
+    const entries = [];
+    for (let i = 0; i < 3; i++) {
+      entries.push(await registerImage({ dataDir, outputDir, sourcePath: writeImage(`a${i}.png`, [i]), prompt: `p${i}`, style: "s", aspect: "landscape", provider: "x", projectId: "p" }));
+    }
+    const lib = readLibrary(dataDir);
+    lib.items.find((it) => it.id === entries[0].id).lastUsedAt = 1;
+    fs.writeFileSync(path.join(dataDir, "imageLibrary.json"), JSON.stringify(lib));
+    fs.mkdirSync(path.join(dataDir, "ambient"), { recursive: true });
+    fs.writeFileSync(path.join(dataDir, "ambient", "s1.json"), JSON.stringify({
+      projectId: "s1", movements: [{ imagePath: null }], verseMovements: [{ imagePath: entries[0].path }],
+    }));
+    assert.equal(pruneLibrary({ dataDir, max: 2 }), 0);
+    assert.equal(fs.existsSync(entries[0].path), true);
+  });
+
   test("does nothing when the library is under the cap", async () => {
     await registerImage({ dataDir, outputDir, sourcePath: writeImage("one.png", [4]), prompt: "p", style: "s", aspect: "landscape", provider: "x", projectId: "p" });
     assert.equal(pruneLibrary({ dataDir, max: 10 }), 0);

@@ -43,6 +43,40 @@ describe('OutlineEditor', () => {
     expect(onNarrate).toHaveBeenCalledWith(expect.any(String));
   });
 
+  it('saves unsaved edits before narrating, so the audio says what the page shows', async () => {
+    const user = userEvent.setup();
+    const patch = vi.spyOn(api, 'patch').mockResolvedValue({ ok: true, data: { project } } as any);
+    const onNarrate = vi.fn();
+    render(<OutlineEditor project={project} onSaved={vi.fn()} onNarrate={onNarrate} busy={false} />);
+    const welcome = screen.getAllByRole('textbox')[0];
+    await user.clear(welcome);
+    await user.type(welcome, 'changed');
+    await user.click(screen.getByRole('button', { name: /generate narration/i }));
+    expect(patch).toHaveBeenCalledWith('/api/longform/p1/sections', expect.objectContaining({ sections: expect.arrayContaining([expect.objectContaining({ text: 'changed' })]) }));
+    expect(onNarrate).toHaveBeenCalledTimes(1);
+    expect(patch.mock.invocationCallOrder[0]).toBeLessThan(onNarrate.mock.invocationCallOrder[0]);
+  });
+
+  it('does not narrate when saving the edits fails', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(api, 'patch').mockResolvedValue({ ok: false, error: 'offline' } as any);
+    const onNarrate = vi.fn();
+    render(<OutlineEditor project={project} onSaved={vi.fn()} onNarrate={onNarrate} busy={false} />);
+    await user.type(screen.getAllByRole('textbox')[0], '!');
+    await user.click(screen.getByRole('button', { name: /generate narration/i }));
+    expect(onNarrate).not.toHaveBeenCalled();
+  });
+
+  it('narrates straight away when nothing was edited', async () => {
+    const user = userEvent.setup();
+    const patch = vi.spyOn(api, 'patch');
+    const onNarrate = vi.fn();
+    render(<OutlineEditor project={project} onSaved={vi.fn()} onNarrate={onNarrate} busy={false} />);
+    await user.click(screen.getByRole('button', { name: /generate narration/i }));
+    expect(patch).not.toHaveBeenCalled();
+    expect(onNarrate).toHaveBeenCalledTimes(1);
+  });
+
   it('marks a pasted-script continuation with its pause and does not call it a new chapter', () => {
     const pasted: any = { ...project, longform: { ...project.longform, source: 'pasted', sections: [
       { heading: 'Psalm 4', reference: 'Psalm 4:8', verseText: 'I will lay me down.', text: 'Psalm 4:8. I will lay me down.', targetSec: 12 },

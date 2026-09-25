@@ -88,7 +88,11 @@ function tokenise(script) {
     }
     if (isReferenceLine(line)) { ensure(); current.lines.push({ kind: "ref", value: referenceOf(line) }); continue; }
     if (NOTE_LINE_RX.test(line)) continue;
-    if (CAPS_HEADING_RX.test(line) && current && current.lines.length === 0 && !current.heading) { current.heading = line; continue; }
+    // Including the very first line, when no block is open yet.
+    if (CAPS_HEADING_RX.test(line) && (!current || (current.lines.length === 0 && !current.heading))) {
+      if (current) current.heading = line; else open(line);
+      continue;
+    }
     const text = speakable(line);
     if (text) { ensure(); current.lines.push({ kind: "text", value: text }); }
   }
@@ -107,25 +111,30 @@ export async function parsePastedScript(script, { lookupVerses, wpm = DEFAULT_WP
   const sections = [];
   let lastHeading = "";
   for (const block of blocks) {
-    const refs = block.lines.filter((l) => l.kind === "ref");
     const prose = block.lines.filter((l) => l.kind === "text").map((l) => l.value);
-    if (refs.length === 0 && prose.length === 0) continue;
+    if (block.lines.length === 0) continue;
 
-    // First reference in the block is the section's scripture; further
-    // references are read inline (the voice layer speaks them naturally).
+    // Each reference line is replaced where it stands, so the author's words
+    // keep their order around it. The first reference is also the section's
+    // scripture (shown above the reflection in the outline).
     let reference = null;
     let verseText = "";
-    const inlineVerses = [];
-    for (const r of refs) {
-      let text;
-      try { text = await lookupVerses(r.value); } catch (e) { throw new Error(`scripture lookup failed for ${r.value}: ${e?.message || e}`); }
-      text = String(text || "").replace(/\s+/g, " ").trim();
-      if (!text) throw new Error(`scripture lookup failed for ${r.value}: no verse text returned`);
-      if (!reference) { reference = r.value; verseText = text; } else inlineVerses.push(`${r.value}. ${text}`);
+    const parts = [];
+    for (const l of block.lines) {
+      if (l.kind === "text") { parts.push(l.value); continue; }
+      let verse;
+      try { verse = await lookupVerses(l.value); } catch (e) { throw new Error(`scripture lookup failed for ${l.value}: ${e?.message || e}`); }
+      verse = String(verse || "").replace(/\s+/g, " ").trim();
+      if (!verse) throw new Error(`scripture lookup failed for ${l.value}: no verse text returned`);
+      if (!reference) { reference = l.value; verseText = verse; }
+      parts.push(`${l.value}. ${verse}`);
     }
 
-    const body = [...inlineVerses, ...prose].join("\n\n");
-    const text = verseText ? `${reference}. ${verseText}${body ? ` ${body}` : ""}` : body;
+    // Opening on its scripture, the text keeps the "Ref. verse reflection"
+    // shape the outline editor splits on; otherwise it is read as written.
+    const text = block.lines[0].kind === "ref"
+      ? [parts[0], parts.slice(1).join("\n\n")].filter(Boolean).join(" ")
+      : parts.join("\n\n");
     const heading = block.heading || (block.continuation ? lastHeading : "") || reference || firstWords(prose[0]);
     lastHeading = heading;
     const targetSec = Math.max(1, Math.round((wordCount(text) / Math.max(1, Number(wpm) || DEFAULT_WPM)) * 60));

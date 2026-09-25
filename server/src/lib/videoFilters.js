@@ -722,10 +722,18 @@ export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal
           const b = Math.min(we, to);
           if (b <= a) continue;
           // Offset the word to its position within the row, measured in the
-          // monospace advance the fit already assumes.
+          // monospace advance the fit already assumes. Centred rows keep the
+          // word centred on its own width; any other anchor places the row's
+          // left edge the way the row itself was placed (with the row's
+          // estimated width standing in for text_w) and steps in from there,
+          // or a left-aligned line would light its words up near the middle.
           const before = row.slice(0, row.indexOf(text));
-          const dx = Math.round((before.length - row.length / 2 + text.length / 2) * fontSize * MONO_ADVANCE_EM);
-          parts.push(`drawtext=text='${escapeDrawText(text)}':x=(w-text_w)/2+${dx}:y=${y}${fontArg(style)}:fontsize=${fontSize}:fontcolor=${emph}:enable='between(t,${a.toFixed(3)},${b.toFixed(3)})'`);
+          const advance = fontSize * MONO_ADVANCE_EM;
+          const dx = Math.round((before.length - row.length / 2 + text.length / 2) * advance);
+          const x = geo.xExpr === "(w-text_w)/2"
+            ? `(w-text_w)/2+${dx}`
+            : `${geo.xExpr.replace(/text_w/g, String(Math.round(row.length * advance)))}+${Math.round(before.length * advance)}`;
+          parts.push(`drawtext=text='${escapeDrawText(text)}':x=${x}:y=${y}${fontArg(style)}:fontsize=${fontSize}:fontcolor=${emph}:enable='between(t,${a.toFixed(3)},${b.toFixed(3)})'`);
         }
       }
     });
