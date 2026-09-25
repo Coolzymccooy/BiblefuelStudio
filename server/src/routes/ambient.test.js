@@ -17,7 +17,9 @@ import ambientRouter, {
   _setRenderStageImpl, _resetRenderStageImpl,
   _setQuotaImpl, _resetQuotaImpl,
   clearCancelled, isCancelled,
+  _setLoudnessImpl, _resetLoudnessImpl, _setFfmpegSpawnImpl, _resetFfmpegSpawnImpl,
 } from "./ambient.js";
+import { EventEmitter } from "events";
 import { readProject, writeProject } from "../lib/ambient/projectStore.js";
 import { getJob as getRenderJob } from "../lib/renderJobs.js";
 import { registerTrack } from "../lib/musicLibraryStore.js";
@@ -192,6 +194,32 @@ describe("PATCH /api/ambient/:id/drops", () => {
     assert.equal(res.body.project.drops[0].status, "pending");
     assert.equal(res.body.project.drops[0].audioPath, null);
     assert.equal(res.body.project.drops[0].text, null);
+    assert.equal(res.body.project.drops[0].verses, null, "the old verses must not be captioned either");
+  });
+
+  test("the verses are kept one by one, so captions can show a passage a verse at a time", async () => {
+    _setLookupImpl(async () => ({ verses: [{ text: "First verse." }, { text: "  Second 	 verse. " }] }));
+    const p = await createSession();
+    await request(app).post(`/api/ambient/${p.projectId}/plan`).send({ count: 1 });
+    await request(app).post(`/api/ambient/${p.projectId}/voice`).send({});
+    const voiced = await waitFor(p.projectId, (x) => x.drops[0]?.status === "done");
+    assert.deepEqual(voiced.drops[0].verses, ["First verse.", "Second verse."]);
+    assert.equal(voiced.drops[0].text, "First verse. Second verse.");
+    // A retime keeps them, like it keeps the audio.
+    const res = await request(app).patch(`/api/ambient/${p.projectId}/drops`).send({
+      drops: [{ id: voiced.drops[0].id, atMs: 30_000, reference: voiced.drops[0].reference }],
+    });
+    assert.deepEqual(res.body.project.drops[0].verses, ["First verse.", "Second verse."]);
+  });
+
+  test("verses can't be sent by the client — like text, they are burned as scripture", async () => {
+    const p = await createSession();
+    await request(app).post(`/api/ambient/${p.projectId}/plan`).send({ count: 1 });
+    const planned = readProject(dataDir, p.projectId);
+    const res = await request(app).patch(`/api/ambient/${p.projectId}/drops`).send({
+      drops: [{ id: planned.drops[0].id, atMs: planned.drops[0].atMs, reference: planned.drops[0].reference, verses: ["forged words"] }],
+    });
+    assert.ok(!JSON.stringify(res.body.project.drops).includes("forged words"));
   });
 
   test("a non-array body is rejected", async () => {
@@ -252,6 +280,40 @@ describe("POST /api/ambient/:id/voice", () => {
     const p = await createSession();
     const res = await request(app).post(`/api/ambient/${p.projectId}/voice`).send({});
     assert.equal(res.status, 400);
+  });
+});
+
+describe("PATCH /api/ambient/:id/motion", () => {
+  test("a new session is still, and gentle drift can be switched on and off", async () => {
+    const p = await createSession();
+    assert.equal(p.motion, "still");
+    const on = await request(app).patch(`/api/ambient/${p.projectId}/motion`).send({ motion: "drift" });
+    assert.equal(on.status, 200);
+    assert.equal(on.body.project.motion, "drift");
+    assert.equal(readProject(dataDir, p.projectId).motion, "drift");
+    const off = await request(app).patch(`/api/ambient/${p.projectId}/motion`).send({ motion: "still" });
+    assert.equal(off.body.project.motion, "still");
+  });
+
+  test("an unknown motion is refused and nothing changes", async () => {
+    const p = await createSession();
+    const res = await request(app).patch(`/api/ambient/${p.projectId}/motion`).send({ motion: "spin" });
+    assert.equal(res.status, 400);
+    assert.equal(res.body.ok, false);
+    assert.equal(readProject(dataDir, p.projectId).motion, "still");
+  });
+
+  test("it can't change under a render that is already encoding", async () => {
+    const p = await createSession();
+    writeProject(dataDir, { ...readProject(dataDir, p.projectId), status: "rendering" });
+    const res = await request(app).patch(`/api/ambient/${p.projectId}/motion`).send({ motion: "drift" });
+    assert.equal(res.status, 409);
+    assert.equal(readProject(dataDir, p.projectId).motion, "still");
+  });
+
+  test("an unknown session is a 404", async () => {
+    const res = await request(app).patch("/api/ambient/nope/motion").send({ motion: "drift" });
+    assert.equal(res.status, 404);
   });
 });
 
@@ -338,6 +400,29 @@ describe("POST /api/ambient/:id/images", () => {
     const out = await waitFor(p.projectId, (x) => x.movements.every((m) => m.imageStatus !== "generating"));
     assert.deepEqual(out.movements.map((m) => m.imagePath), ["/img/1.png", "/img/2.png"]);
     assert.equal(out.status, AMBIENT_STATUS.READY_TO_RENDER);
+  });
+
+  test("only pictures made in the bright style are reused, and new ones join that pool", async () => {
+    const asked = [];
+    const registered = [];
+    _setImageLibraryImpl({
+      find: async (q) => { asked.push(q); return []; },
+      register: async (e) => { registered.push(e); return { id: "n1" }; },
+      mark: () => {},
+    });
+    _setImageGenImpl(async ({ rawPrompt }) => ({ ok: true, path: `/img/${rawPrompt.length}.png` }));
+    const p = await createSession();
+    // A session saved before the change still carries the old dark prompt.
+    writeProject(dataDir, {
+      ...readProject(dataDir, p.projectId),
+      movements: readProject(dataDir, p.projectId).movements.map((m) => ({ ...m, imagePrompt: "storm at night, cinematic" })),
+    });
+    await request(app).post(`/api/ambient/${p.projectId}/images`).send({});
+    await waitFor(p.projectId, (x) => x.movements.every((m) => m.imageStatus === "done"));
+    assert.ok(asked.length > 0);
+    assert.ok(asked.every((q) => q.style === "ambient-bright-v1"), "old dark pictures (style '') must not be reused");
+    assert.ok(registered.every((e) => e.style === "ambient-bright-v1"));
+    assert.ok(asked.every((q) => /bright/i.test(q.prompt)), "an old session's prompt is refreshed when regenerated");
   });
 
   test("a library hit spends no image quota", async () => {
@@ -833,5 +918,101 @@ describe("security: the client never chooses what ffmpeg reads", () => {
     } finally {
       fs.rmSync(elsewhere, { recursive: true, force: true });
     }
+  });
+});
+
+describe("the music bed is levelled", () => {
+  afterEach(() => { _resetLoudnessImpl(); _resetFfmpegSpawnImpl(); });
+
+  /** A stand-in ffmpeg that succeeds at once and keeps its arguments. */
+  function fakeFfmpeg(calls) {
+    return (args) => {
+      calls.push(args);
+      const proc = new EventEmitter();
+      proc.stderr = new EventEmitter();
+      setImmediate(() => proc.emit("close", 0));
+      return proc;
+    };
+  }
+
+  test("every track is measured once and set to one loudness before the crossfades", async () => {
+    const measured = [];
+    _setLoudnessImpl(async (file) => { measured.push(file); return { inputI: -24, inputTp: -10 }; });
+    const calls = [];
+    _setFfmpegSpawnImpl(fakeFfmpeg(calls));
+    const p = await createSession({ targetSec: 60 });
+    const stored = writeProject(dataDir, {
+      ...readProject(dataDir, p.projectId),
+      bed: { ...p.bed, mode: "assemble", trackRefs: ["library:prayer-piano", "library:peaceful-worship"], crossfadeSec: 2 },
+    });
+    await assembleBed({ dataDir, outputDir }, stored);
+    assert.equal(calls.length, 1);
+    const args = calls[0];
+    const script = fs.readFileSync(args[args.indexOf("-filter_complex_script") + 1], "utf8");
+    // -24 LUFS to the bed's -18: +6 dB, well inside its peak headroom.
+    assert.match(script, /volume=6\.00dB/);
+    assert.equal(new Set(measured).size, measured.length, "a looped track is measured once, not per repeat");
+  });
+
+  test("a bed built from unmeasured tracks is not kept as the levelled one", async () => {
+    // Otherwise a one-off measuring failure is stored under the levelled key
+    // and that uneven bed is reused for good.
+    _setLoudnessImpl(async () => null);
+    const calls = [];
+    _setFfmpegSpawnImpl(fakeFfmpeg(calls));
+    const p = await createSession({ targetSec: 60 });
+    const stored = writeProject(dataDir, {
+      ...readProject(dataDir, p.projectId),
+      bed: { ...p.bed, mode: "assemble", trackRefs: ["library:prayer-piano"], crossfadeSec: 2 },
+    });
+    const { project } = await assembleBed({ dataDir, outputDir }, stored);
+    assert.equal(project.bed.builtHash, null);
+  });
+
+  test("an unchanged bed is reused on the next render instead of rebuilt", async () => {
+    _setLoudnessImpl(async () => ({ inputI: -18, inputTp: -6 }));
+    const calls = [];
+    _setFfmpegSpawnImpl((args) => {
+      // The fake writes the file ffmpeg would have, so the cache check sees it.
+      fs.writeFileSync(args[args.length - 1], "bed");
+      return fakeFfmpeg(calls)(args);
+    });
+    const p = await createSession({ targetSec: 60 });
+    const stored = writeProject(dataDir, {
+      ...readProject(dataDir, p.projectId),
+      bed: { ...p.bed, mode: "assemble", trackRefs: ["library:prayer-piano", "library:peaceful-worship"], crossfadeSec: 2 },
+    });
+    const first = await assembleBed({ dataDir, outputDir }, stored);
+    await assembleBed({ dataDir, outputDir }, first.project);
+    assert.equal(calls.length, 1, "the second render found the first bed");
+  });
+
+  test("a cancel during levelling stops before ffmpeg builds the bed", async () => {
+    const p = await createSession({ targetSec: 60 });
+    _setLoudnessImpl(async () => { markCancelled(p.projectId); return { inputI: -18, inputTp: -6 }; });
+    const calls = [];
+    _setFfmpegSpawnImpl(fakeFfmpeg(calls));
+    const stored = writeProject(dataDir, {
+      ...readProject(dataDir, p.projectId),
+      bed: { ...p.bed, mode: "assemble", trackRefs: ["library:prayer-piano", "library:peaceful-worship"], crossfadeSec: 2 },
+    });
+    await assert.rejects(assembleBed({ dataDir, outputDir }, stored), /Cancelled/);
+    assert.equal(calls.length, 0);
+    clearCancelled(p.projectId);
+  });
+
+  test("a track that can't be measured plays at its own level, and the bed still builds", async () => {
+    _setLoudnessImpl(async () => null);
+    const calls = [];
+    _setFfmpegSpawnImpl(fakeFfmpeg(calls));
+    const p = await createSession({ targetSec: 60 });
+    const stored = writeProject(dataDir, {
+      ...readProject(dataDir, p.projectId),
+      bed: { ...p.bed, mode: "assemble", trackRefs: ["library:prayer-piano"], crossfadeSec: 2 },
+    });
+    await assembleBed({ dataDir, outputDir }, stored);
+    const args = calls[0];
+    const script = fs.readFileSync(args[args.indexOf("-filter_complex_script") + 1], "utf8");
+    assert.ok(!/volume=/.test(script));
   });
 });

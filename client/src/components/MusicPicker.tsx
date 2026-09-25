@@ -8,6 +8,7 @@ import { storyApi } from '../lib/storyApi';
 import { useMusicLibrary } from '../hooks/useMusicLibrary';
 import { saveTrackToLibrary, deleteTrack, updateTrack, type MusicTrack } from '../lib/musicLibraryApi';
 import { DropZone } from './ui/DropZone';
+import { MusicLibraryChecklist } from './MusicLibraryChecklist';
 
 // A stored value is a ref (`library:<id>` for a bundled track, `mylib:<id>`
 // for a saved upload) or, for back-compat, a bare absolute path from before
@@ -232,22 +233,15 @@ export function MusicPicker({ value, onChange, busy, multiple = false, onInsertT
         )}
 
         <div className="flex flex-wrap items-center gap-2">
-          <select
-            aria-label="add music from library"
-            value=""
-            onChange={(e) => {
-              const id = e.target.value;
-              const t = id ? (tracks || []).find((x) => x.id === id) : undefined;
-              if (t) emitPaths([...paths, t.ref]);
-            }}
-            className="rounded-md border border-white/10 bg-transparent px-2 py-1 text-white"
-          >
-            <option value="">+ Add from library…</option>
-            {(tracks || []).map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
-          </select>
           <button type="button" disabled={busy || isUploading} onClick={() => inputRef.current?.click()} className="rounded-md border border-white/15 px-2 py-1 hover:border-primary-400 disabled:opacity-50">{isUploading ? 'Uploading…' : '+ Upload'}</button>
           <input ref={inputRef} type="file" accept={AUDIO_ACCEPT} className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f); e.target.value = ''; }} />
           {(busy || isUploading) && <Loader2 size={12} className="animate-spin" />}
+          <MusicLibraryChecklist
+            tracks={tracks || []}
+            exclude={paths}
+            disabled={busy || isUploading}
+            onAdd={(refs) => emitPaths([...paths, ...refs])}
+          />
         </div>
 
         {libraryList}

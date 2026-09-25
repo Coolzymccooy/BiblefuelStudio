@@ -53,6 +53,8 @@ export function normaliseDrops(input, { targetSec, translation = "kjv" } = {}) {
       reference: String(d?.reference || "").trim(),
       translation: String(d?.translation || translation).toLowerCase(),
       text: typeof d?.text === "string" ? d.text : null,
+      // Each verse on its own, so a passage can be captioned a verse at a time.
+      verses: Array.isArray(d?.verses) ? d.verses.filter((v) => typeof v === "string") : null,
       voiceId: d?.voiceId || null,
       audioPath: d?.audioPath || null,
       durationMs: Number(d?.durationMs) > 0 ? Number(d.durationMs) : null,
@@ -87,10 +89,10 @@ export async function voiceDrops(project, deps) {
     try {
       const looked = await lookupVerses(drop.reference, drop.translation || project.translation || "kjv");
       const verses = Array.isArray(looked?.verses) ? looked.verses : [];
-      const text = verses
+      const verseTexts = verses
         .map((v) => String(v?.text || "").replace(/\s+/g, " ").trim())
-        .filter(Boolean)
-        .join(" ");
+        .filter(Boolean);
+      const text = verseTexts.join(" ");
       if (!text) throw new Error(`no verse text returned for "${drop.reference}"`);
 
       const spoken = await synthesize({ text, voiceId: drop.voiceId || voiceId || undefined });
@@ -106,7 +108,7 @@ export async function voiceDrops(project, deps) {
         // drop itself — the audio still plays at its offset.
       }
 
-      out.push({ ...drop, text, audioPath: file, durationMs, status: "done", error: null });
+      out.push({ ...drop, text, verses: verseTexts, audioPath: file, durationMs, status: "done", error: null });
     } catch (err) {
       out.push({ ...drop, status: "error", error: String(err?.message || err) });
     }

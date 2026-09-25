@@ -72,10 +72,14 @@ export function orderTracks(tracks, targetSec, { crossfadeSec = 6, rng = Math.ra
  * Cache key for a built bed. Re-rendering an unchanged project must not
  * re-assemble — on a two-hour bed that is minutes of ffmpeg for no change.
  */
+// Bumped when the way a bed is built changes, so cached beds built the old
+// way are rebuilt rather than reused. v2: tracks levelled to one loudness.
+const BED_BUILD_VERSION = 2;
+
 export function bedHash({ trackRefs = [], crossfadeSec = 6, targetSec = 0 } = {}) {
   return crypto
     .createHash("sha256")
-    .update(JSON.stringify({ trackRefs, crossfadeSec, targetSec }))
+    .update(JSON.stringify({ trackRefs, crossfadeSec, targetSec, build: BED_BUILD_VERSION }))
     .digest("hex");
 }
 
@@ -87,7 +91,7 @@ export function bedHash({ trackRefs = [], crossfadeSec = 6, targetSec = 0 } = {}
  *
  * @returns {{ args: string[], filter: string, scriptFile: string|null }}
  */
-export function buildBedArgs(files, { crossfadeSec = 6, targetSec, outPath }) {
+export function buildBedArgs(files, { crossfadeSec = 6, targetSec, outPath, gainsDb = [] }) {
   const list = (files || []).filter(Boolean);
   if (list.length === 0) throw new Error("bed assembly: no tracks to assemble");
 
@@ -95,10 +99,18 @@ export function buildBedArgs(files, { crossfadeSec = 6, targetSec, outPath }) {
   for (const f of list) args.push("-i", f);
 
   const steps = [];
-  let label = "0:a";
+  // Each track to the bed's common loudness first (see loudness.js), so a
+  // crossfade never jumps in level. A track already there is left alone.
+  const input = list.map((_, i) => {
+    const gain = Number(gainsDb[i]) || 0;
+    if (Math.abs(gain) < 0.01) return `${i}:a`;
+    steps.push(`[${i}:a]volume=${gain.toFixed(2)}dB[g${i}]`);
+    return `g${i}`;
+  });
+  let label = input[0];
   for (let i = 1; i < list.length; i += 1) {
     const next = `x${i}`;
-    steps.push(`[${label}][${i}:a]acrossfade=d=${crossfadeSec}[${next}]`);
+    steps.push(`[${label}][${input[i]}]acrossfade=d=${crossfadeSec}[${next}]`);
     label = next;
   }
   // asetpts rebases timestamps after the chain; without it the trim can land

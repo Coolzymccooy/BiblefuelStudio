@@ -23,7 +23,7 @@ describe('YoutubePublishPanel', () => {
     );
     await user.type(screen.getByLabelText(/tags/i), 'psalms, sleep');
     await user.type(screen.getByLabelText(/publish at/i), '2030-01-01T09:00');
-    await user.selectOptions(screen.getByLabelText(/thumbnail/i), '/outputs/genImg/p1/part-1.png');
+    await user.selectOptions(screen.getByRole('combobox', { name: /thumbnail/i }), '/outputs/genImg/p1/part-1.png');
     await user.click(screen.getByRole('button', { name: /publish to youtube/i }));
 
     expect(post).toHaveBeenCalledWith('/api/social/post', expect.objectContaining({

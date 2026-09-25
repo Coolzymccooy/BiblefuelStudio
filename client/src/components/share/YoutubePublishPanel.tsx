@@ -12,6 +12,8 @@ export interface YoutubePublishFields {
   privacyStatus: YoutubePrivacy;
   publishAt: string;
   thumbnailPath: string;
+  /** Draw the title onto the thumbnail (the server makes the image). */
+  thumbnailTitle: boolean;
 }
 
 export interface YoutubePublishResult {
@@ -50,6 +52,7 @@ export function YoutubePublishPanel({ videoUrl, initial, thumbnailOptions = [], 
   const [privacy, setPrivacy] = useState<YoutubePrivacy>(initial?.privacyStatus ?? 'private');
   const [publishAtLocal, setPublishAtLocal] = useState(initial?.publishAt ?? '');
   const [thumbnailPath, setThumbnailPath] = useState(initial?.thumbnailPath ?? thumbnailOptions[0]?.path ?? '');
+  const [thumbnailTitle, setThumbnailTitle] = useState(initial?.thumbnailTitle ?? false);
   const [busy, setBusy] = useState(false);
   const [fieldError, setFieldError] = useState('');
 
@@ -70,6 +73,7 @@ export function YoutubePublishPanel({ videoUrl, initial, thumbnailOptions = [], 
         privacyStatus: privacy,
         publishAt,
         thumbnailPath,
+        thumbnailTitle: Boolean(thumbnailPath) && thumbnailTitle,
         chapters,
       });
       if (!res.ok || !res.data) { toast.error(res.error || 'YouTube upload failed'); return; }
@@ -124,6 +128,12 @@ export function YoutubePublishPanel({ videoUrl, initial, thumbnailOptions = [], 
           <select value={thumbnailPath} onChange={(e) => setThumbnailPath(e.target.value)} className={inputCls}>
             {thumbnailOptions.map((o) => <option key={o.path} value={o.path}>{o.label}</option>)}
           </select>
+        </label>
+      )}
+      {thumbnailOptions.length > 0 && (
+        <label className="flex items-center gap-2 text-sm text-content-secondary">
+          <input type="checkbox" checked={thumbnailTitle} onChange={(e) => setThumbnailTitle(e.target.checked)} />
+          Put the title on the thumbnail
         </label>
       )}
       {fieldError && <p className="text-sm font-medium text-bf-danger">{fieldError}</p>}

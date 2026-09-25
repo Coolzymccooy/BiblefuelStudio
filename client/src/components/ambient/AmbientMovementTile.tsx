@@ -22,8 +22,10 @@ const SOURCE_LABEL: Record<NonNullable<AmbientMovement['imageSource']>, string> 
   generated: 'Generated',
 };
 
+// Icon over a word, full-width thirds: icon-only buttons went unnoticed on a
+// phone, where there is no hover tooltip to say what they do.
 const actionCls =
-  'flex items-center justify-center rounded-md p-1.5 text-content-tertiary transition-colors hover:bg-white/10 hover:text-bf-cream disabled:pointer-events-none disabled:opacity-40';
+  'flex min-h-[44px] flex-col items-center justify-center gap-0.5 rounded-md px-1 py-1.5 text-center text-[11px] font-medium leading-tight text-content-secondary transition-colors hover:bg-white/10 hover:text-bf-cream disabled:pointer-events-none disabled:opacity-40';
 
 /**
  * One movement's picture, and three ways to change it: your own photo, one
@@ -93,18 +95,21 @@ export function AmbientMovementTile({
         </span>
       </div>
 
-      <div className="flex items-center justify-end gap-0.5 px-1 pb-1">
+      <div className="grid grid-cols-3 gap-0.5 border-t border-white/10 px-1 py-1">
         <button type="button" aria-label={`Upload photo for movement ${n}`} title="Use your own photo"
           disabled={disabled} onClick={() => inputRef.current?.click()} className={actionCls}>
-          <Upload size={14} />
+          <Upload size={16} />
+          <span>Upload photo</span>
         </button>
         <button type="button" aria-label={`Choose from library for movement ${n}`} title="Pick from your pictures — uses no image quota"
           disabled={disabled} onClick={onChooseFromLibrary} className={actionCls}>
-          <Images size={14} />
+          <Images size={16} />
+          <span>Library</span>
         </button>
         <button type="button" aria-label={`Regenerate movement ${n}`} title="Generate a new picture for just this movement"
           disabled={disabled} onClick={regenerate} className={actionCls}>
-          <RefreshCw size={14} />
+          <RefreshCw size={16} />
+          <span>Regenerate</span>
         </button>
         {/* JPEG/PNG/WebP only: iOS then hands over a JPEG instead of a HEIC,
             which prod's ffmpeg cannot decode. */}

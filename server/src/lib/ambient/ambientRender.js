@@ -2,8 +2,9 @@ import fs from "fs";
 import path from "path";
 import { toFilterScriptArgs } from "../story/storyRender.js";
 import { buildXfadeChain } from "../story/sceneTransitions.js";
-import { kenBurnsVariedFilter } from "../kenBurnsVaried.js";
+import { driftFilter } from "./ambientMotion.js";
 import { escapeFontPath, fontFileFor } from "../videoFilters.js";
+import { captionPages, balanceLines, pageWindows } from "./captionPages.js";
 
 /**
  * Ambient render — one ffmpeg pass producing a music-first scripture video.
@@ -31,12 +32,18 @@ export const MOVEMENT_TRANSITION_SEC = 1.5;
 const CAPTION_LINE_HEIGHT = 1.4;
 /** The caption block never reaches past this fraction of the frame height. */
 const CAPTION_BOTTOM = 0.9;
-/** …nor takes more than this share of the frame. A long verse shrinks to fit. */
-const CAPTION_MAX_BLOCK = 0.32;
 /** A held verse fades with its picture's dissolve instead of popping. */
 const CAPTION_FADE_SEC = MOVEMENT_TRANSITION_SEC;
-/** The reference line under a held verse, relative to the verse's size. */
-const REFERENCE_SCALE = 0.62;
+/** Verse size as a share of the frame's shorter side: 42px at 1080. */
+const CAPTION_SIZE = 0.039;
+/** The reference line under a verse, relative to the verse's size. */
+const REFERENCE_SCALE = 0.64;
+/** Longest comfortable line, whatever the width allows. */
+const MAX_LINE_CHARS = 70;
+/** Under one frame at 24 fps: the gap between one page and the next. */
+const PAGE_GAP_SEC = 0.03;
+/** Average glyph width of the caption face, as a share of its size. */
+const GLYPH_WIDTH = 0.47;
 
 export function dimsFor(aspect) {
   if (aspect === "portrait") return { width: 1080, height: 1920 };
@@ -62,29 +69,14 @@ export function wrapText(text, maxChars = 42) {
 }
 
 /**
- * Wrap a verse and pick a font size the block actually fits in.
- *
- * "He maketh me to lie down in green pastures…" is four lines at the base
- * size; "Come unto me, all ye that labour…" is seven. A fixed size renders
- * the short one well and pushes the long one off the frame, so the size
- * shrinks (to a readable floor) until the block is within its share of the
- * height.
- *
- * @param {string} text
- * @param {number} height frame height in px
- * @returns {{ lines: string[], size: number }}
+ * Caption size and line lengths for a frame. The size is fixed (a passage now
+ * pages instead of shrinking), and a line is as long as the width comfortably
+ * holds: about seventy characters on landscape, forty-five on portrait.
  */
-export function layOutCaption(text, height) {
-  const maxBlock = height * CAPTION_MAX_BLOCK;
-  const base = Math.round(height * 0.038);
-  const floor = Math.round(height * 0.024);
-  for (let size = base; size >= floor; size -= 2) {
-    // Longer lines at a smaller size, so shrinking wins on two fronts.
-    const lines = wrapText(text, Math.round(42 * (base / size)));
-    if (lines.length * size * CAPTION_LINE_HEIGHT <= maxBlock) return { lines, size };
-  }
-  // Nothing fits: take the floor rather than truncating scripture.
-  return { lines: wrapText(text, Math.round(42 * (base / floor))), size: floor };
+function captionMetrics(width, height) {
+  const size = Math.round(Math.min(width, height) * CAPTION_SIZE);
+  const lineChars = Math.min(MAX_LINE_CHARS, Math.floor((width * 0.84) / (size * GLYPH_WIDTH)));
+  return { size, lineChars, pageChars: lineChars * 2 - 6 };
 }
 
 /**
@@ -118,10 +110,24 @@ function fadeAlpha(start, end) {
 }
 
 /**
- * One drawtext per line (see the note at the call site), laid out against the
- * block's own height, with the reference beneath a held verse.
+ * The reference under a verse. KJV, the default, is named in the video's
+ * description; any other translation is named here too, because its publisher
+ * requires the attribution wherever the text appears.
  */
-function captionFilters({ project, voiced, movements, height, workDir }) {
+function referenceLine(drop, project) {
+  if (!drop.reference) return "";
+  const translation = String(drop.translation || project?.translation || "kjv").toLowerCase();
+  return translation === "kjv" ? drop.reference : `${drop.reference} · ${translation.toUpperCase()}`;
+}
+
+/**
+ * One drawtext per line (see the note at the call site). A drop's passage is
+ * shown a page at a time — a verse, on at most two balanced lines — and the
+ * pages take turns across the drop's window. White text on a soft shadow and
+ * a faint outline, no boxes: per-line boxes of different widths read as a
+ * stack of highlighter strips over the picture.
+ */
+function captionFilters({ project, voiced, movements, width, height, workDir }) {
   // A bundled serif rather than ffmpeg's default monospace. The monospace
   // default is the single thing that most makes burned scripture read as
   // machine output; the font ships in the repo so it exists on the server.
@@ -129,17 +135,27 @@ function captionFilters({ project, voiced, movements, height, workDir }) {
   const fontArg = fontPath ? `:fontfile='${escapeFontPath(fontPath)}'` : "";
   const span = project?.captionSpan === "section" ? "section" : "spoken";
   const centred = project?.captionPosition === "centre";
+  const { size, lineChars, pageChars } = captionMetrics(width, height);
+  const lineHeight = Math.round(size * CAPTION_LINE_HEIGHT);
+  const refSize = Math.round(size * REFERENCE_SCALE);
+  const shadow = Math.max(1, Math.round(size / 21));
+  // A hairline keeps white text off a bright sky or sunlit ground without
+  // a box; the small reference line gets the same, so it is not the one
+  // that disappears.
+  const outline = Math.max(1, Math.round(size / 28));
   const drawn = [];
 
-  const line = (i, j, text, size, y, win, colour) => {
-    const file = path.join(workDir, `caption-${i}-${j}.txt`);
+  const line = (name, text, fontSize, y, win, colour) => {
+    const file = path.join(workDir, `caption-${name}.txt`);
     fs.writeFileSync(file, text, "utf8");
     // escapeFontPath, not a plain slash swap: a bare drive colon ends the
     // drawtext option and ffmpeg rejects the whole filtergraph.
     drawn.push(
-      `drawtext=textfile='${escapeFontPath(file)}'${fontArg}:` +
-      `fontcolor=${colour}:fontsize=${size}:` +
-      `box=1:boxcolor=black@0.42:boxborderw=${Math.round(size * 0.35)}:` +
+      // expansion=none: scripture is drawn exactly as written; with it on,
+      // a "%" or "\" in the text is read as a drawtext command.
+      `drawtext=textfile='${escapeFontPath(file)}'${fontArg}:expansion=none:` +
+      `fontcolor=${colour}:fontsize=${fontSize}:` +
+      `shadowcolor=black@0.6:shadowx=0:shadowy=${shadow}:borderw=${outline}:bordercolor=black@0.3:` +
       `x=(w-text_w)/2:y=${y}:` +
       `enable='between(t,${win.start.toFixed(2)},${win.end.toFixed(2)})'` +
       (win.fade ? fadeAlpha(win.start, win.end) : ""),
@@ -150,23 +166,27 @@ function captionFilters({ project, voiced, movements, height, workDir }) {
     if (!d.text) return;
     const win = captionWindow(d, span, movements);
     if (!win) return;
-    const { lines, size } = layOutCaption(d.text, height);
-    const lineHeight = Math.round(size * CAPTION_LINE_HEIGHT);
-    const reference = span === "section" && d.reference
-      ? `${d.reference} · ${String(d.translation || project?.translation || "kjv").toUpperCase()}`
-      : "";
-    const refSize = Math.round(size * REFERENCE_SCALE);
-    const refGap = reference ? Math.round(size * 0.6) : 0;
-    const blockHeight = lines.length * lineHeight + (reference ? refGap + refSize : 0);
-    // Lower third by default, never past the safe bottom margin — a long verse
-    // grows upward instead of off the frame. Centre sits the block mid-frame.
-    const top = centred
-      ? Math.round((height - blockHeight) / 2)
-      : Math.round(Math.min(height * 0.70, height * CAPTION_BOTTOM - blockHeight));
-    lines.forEach((text, j) => line(i, j, text, size, top + j * lineHeight, win, "white"));
-    if (reference) {
-      line(i, lines.length, reference, refSize, top + lines.length * lineHeight + refGap, win, "white@0.8");
-    }
+    const reference = span === "section" ? referenceLine(d, project) : "";
+    const refGap = reference ? Math.round(size * 0.55) : 0;
+    const pages = captionPages(d, pageChars);
+    const windows = pageWindows(win.start, win.end, pages, { minSec: span === "spoken" ? 0 : undefined });
+    windows.forEach((pw, k) => {
+      // between() is inclusive at both ends: a page ends a frame early so two
+      // pages are never drawn over each other at the change.
+      const end = k < windows.length - 1 ? pw.end - PAGE_GAP_SEC : pw.end;
+      const pageWin = { start: pw.start, end, fade: win.fade };
+      const lines = balanceLines(pages[k], lineChars);
+      const blockHeight = lines.length * lineHeight + (reference ? refGap + refSize : 0);
+      // Low in the frame by default, clear of the bottom edge; centre sits
+      // the block mid-frame.
+      const top = centred
+        ? Math.round((height - blockHeight) / 2)
+        : Math.round(height * CAPTION_BOTTOM - blockHeight);
+      lines.forEach((text, j) => line(`${i}-${k}-${j}`, text, size, top + j * lineHeight, pageWin, "white"));
+      if (reference) {
+        line(`${i}-${k}-ref`, reference, refSize, top + lines.length * lineHeight + refGap, pageWin, "white@0.88");
+      }
+    });
   });
   return drawn;
 }
@@ -220,11 +240,12 @@ export function buildAmbientFfmpegArgs(project, { bedPath, images, drops, outPat
       `crop=${width}:${height}`,
     ];
     if (project?.motion === "drift") {
-      // kenBurnsVariedFilter defaults fps to 30. Passing the encoder's 24
-      // explicitly is not optional: the default makes the drift run fast.
-      chain.push(kenBurnsVariedFilter(width, height, dur, FPS, i % 2 === 0 ? "in" : "out"));
+      // fps first: the looped still arrives at the image demuxer's 25, and
+      // the drift counts frames, so at 25 it would breathe fast.
+      chain.push(`fps=${FPS}`, driftFilter({ fps: FPS }), "setsar=1");
+    } else {
+      chain.push("setsar=1", `fps=${FPS}`);
     }
-    chain.push("setsar=1", `fps=${FPS}`);
     parts.push(`[${i}:v]${chain.join(",")}[s${i}]`);
   });
   parts.push(...xfade.filters);
@@ -244,7 +265,7 @@ export function buildAmbientFfmpegArgs(project, { bedPath, images, drops, outPat
   //      against its own height.
   let captionIn = videoOut;
   if (project?.captions && project.captions !== "none" && workDir) {
-    const drawn = captionFilters({ project, voiced, movements, height, workDir });
+    const drawn = captionFilters({ project, voiced, movements, width, height, workDir });
     if (drawn.length > 0) {
       parts.push(`${captionIn}${drawn.join(",")}[vout]`);
       captionIn = "[vout]";

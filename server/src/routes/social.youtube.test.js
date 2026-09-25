@@ -5,6 +5,7 @@ import request from "supertest";
 import fs from "fs";
 import os from "os";
 import path from "path";
+import { spawnSync } from "child_process";
 import socialRouter, { _setFetchImpl, _resetFetchImpl } from "./social.js";
 import { _setGoogleImpl, _resetGoogleImpl } from "../lib/social/youtubeUpload.js";
 import { writeSocialStore } from "../lib/socialStore.js";
@@ -44,7 +45,17 @@ function fakeGoogle() {
             return { data: { id: "vid1" } };
           },
         },
-        thumbnails: { set: async (args) => { calls.set.push(args); return { data: {} }; } },
+        thumbnails: {
+          set: async (args) => {
+            calls.set.push(args);
+            // Like the real client, read the whole stream before returning.
+            const body = args?.media?.body;
+            if (body && typeof body[Symbol.asyncIterator] === "function") {
+              for await (const _chunk of body) { /* drain */ }
+            }
+            return { data: {} };
+          },
+        },
       }),
     },
   };
@@ -79,6 +90,27 @@ describe("POST /api/social/post destination=youtube", () => {
     assert.deepEqual(body.snippet.tags, ["psalms", "sleep"]);
     assert.equal(body.status.privacyStatus, "private");
     assert.equal(fake.calls.set[0].videoId, "vid1");
+  });
+
+  test("the thumbnail is sent as a 1280x720 JPEG made for it, and the made file is cleaned up", async () => {
+    // YouTube refuses thumbnails over 2 MB; a phone photo or generated PNG
+    // often is. The picture is converted first, with the title drawn on it
+    // when asked.
+    const { a, outputDir } = app();
+    fs.writeFileSync(path.join(outputDir, "long.mp4"), "vid");
+    const png = path.join(outputDir, "photo.png");
+    const made = spawnSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "color=c=skyblue:s=2400x1600", "-frames:v", "1", png]);
+    assert.equal(made.status, 0, String(made.stderr));
+    const res = await request(a).post("/api/social/post").send({
+      destination: "youtube", videoUrl: "/outputs/long.mp4", title: "Still waters",
+      thumbnailPath: "/outputs/photo.png", thumbnailTitle: true,
+    });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    const sent = fake.calls.set[0].media;
+    assert.equal(sent.mimeType, "image/jpeg");
+    assert.match(path.basename(sent.body.path), /^yt-thumb-.*\.jpg$/);
+    assert.equal(fs.existsSync(sent.body.path), false, "the made thumbnail is removed after the upload");
+    assert.ok(fs.existsSync(png), "your own picture is untouched");
   });
 
   test("falls back to caption as description and title when only caption is sent (Timeline share)", async () => {
