@@ -9,6 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
+import { spawnSync } from "node:child_process";
 import {
   audioMimeToExt,
   getUploadLimits,
@@ -16,7 +17,12 @@ import {
   getVideoProxyStatus,
   startVideoProxyGeneration,
   receiveUploadToFile,
+  classifyBackground,
+  finaliseImageFile,
 } from "./media.js";
+import mediaRouter from "./media.js";
+import express from "express";
+import request from "supertest";
 
 const tmp = (name) => path.join(os.tmpdir(), `bf-upload-test-${Date.now()}-${Math.random().toString(36).slice(2)}-${name}`);
 
@@ -165,5 +171,142 @@ describe("receiveUploadToFile — raw streaming", () => {
     assert.equal(res.ok, false);
     assert.equal(res.status, 400);
     assert.equal(fs.existsSync(dest), false);
+  });
+});
+
+// iPhone photos are HEIC. Prod's ffmpeg 5.1 cannot decode HEIC, and the render
+// routes pick image-vs-video handling by extension — so an image upload must
+// be a real PNG/JPEG/WebP, named for what its bytes actually are.
+const PNG_BYTES = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
+  "base64",
+);
+const JPEG_BYTES = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(256)]);
+const HEIC_BYTES = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from("ftypheic"), Buffer.alloc(256)]);
+
+describe("classifyBackground — which images are accepted", () => {
+  test("HEIC is refused up front with an instruction, by mime or by name", () => {
+    for (const [mime, ext] of [["image/heic", "heic"], ["image/heif", ""], ["application/octet-stream", "heic"], ["", "HEIF".toLowerCase()]]) {
+      const cls = classifyBackground(mime, ext);
+      assert.equal(cls.ok, false, `${mime} .${ext}`);
+      assert.match(cls.error, /HEIC/);
+      assert.match(cls.error, /Most Compatible/);
+    }
+  });
+
+  test("other image types are refused instead of being saved as .jpg", () => {
+    for (const mime of ["image/bmp", "image/tiff", "image/svg+xml"]) {
+      const cls = classifyBackground(mime, "");
+      assert.equal(cls.ok, false, mime);
+      assert.match(cls.error, /JPG, PNG or WebP/);
+    }
+  });
+
+  test("a GIF is still accepted — the Timeline sends GIF stills through here", () => {
+    const cls = classifyBackground("image/gif", "gif");
+    assert.equal(cls.ok, true);
+    assert.equal(cls.kind, "image");
+  });
+
+  test("JPEG, PNG and WebP still pass, and video is untouched", () => {
+    assert.deepEqual(
+      [["image/jpeg", "jpg"], ["image/png", "png"], ["image/webp", "webp"], ["", "jpeg"]].map(([m, e]) => classifyBackground(m, e).ok),
+      [true, true, true, true],
+    );
+    const vid = classifyBackground("video/mp4", "mp4");
+    assert.equal(vid.ok, true);
+    assert.equal(vid.kind, "video");
+  });
+});
+
+describe("finaliseImageFile — the bytes decide", () => {
+  const write = (name, bytes) => { const f = tmp(name); fs.writeFileSync(f, bytes); return f; };
+
+  test("a real PNG keeps its name", () => {
+    const f = write("a.png", PNG_BYTES);
+    const out = finaliseImageFile(f);
+    assert.equal(out.ok, true);
+    assert.equal(out.file, f);
+    assert.equal(out.mime, "image/png");
+    fs.rmSync(f, { force: true });
+  });
+
+  test("JPEG bytes labelled PNG are renamed .jpg, so extension-based routing is right", () => {
+    const f = write("b.png", JPEG_BYTES);
+    const out = finaliseImageFile(f);
+    assert.equal(out.ok, true);
+    assert.ok(out.file.endsWith(".jpg"), out.file);
+    assert.equal(fs.existsSync(f), false, "the mislabelled name is gone");
+    assert.ok(fs.existsSync(out.file));
+    fs.rmSync(out.file, { force: true });
+  });
+
+  test("a GIF becomes a real PNG still, so every render reads it as the image it is", () => {
+    const gif = tmp("d.gif");
+    const made = spawnSync(process.env.FFMPEG_PATH?.trim() || "ffmpeg",
+      ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "color=c=red:s=16x16:d=0.2", "-frames:v", "1", gif]);
+    assert.equal(made.status, 0, "fixture GIF built");
+    const out = finaliseImageFile(gif);
+    assert.equal(out.ok, true, out.error);
+    assert.ok(out.file.endsWith(".png"), out.file);
+    assert.equal(out.mime, "image/png");
+    assert.equal(fs.readFileSync(out.file).subarray(1, 4).toString("ascii"), "PNG");
+    assert.equal(fs.existsSync(gif), false, "the GIF itself is not left behind");
+    fs.rmSync(out.file, { force: true });
+  });
+
+  test("HEIC bytes behind a .jpg name are refused and the file is deleted", () => {
+    const f = write("c.jpg", HEIC_BYTES);
+    const out = finaliseImageFile(f);
+    assert.equal(out.ok, false);
+    assert.match(out.error, /JPG or PNG/);
+    assert.equal(fs.existsSync(f), false, "nothing unusable is left in outputs");
+  });
+});
+
+describe("POST /upload-background", () => {
+  let outDir;
+  let app;
+  const setup = () => {
+    outDir = fs.mkdtempSync(path.join(os.tmpdir(), "bf-bg-"));
+    app = express();
+    app.use((req, _res, next) => { req.ctx = { userId: "u1", dataDir: outDir, outputDir: outDir }; next(); });
+    app.use("/api/media", mediaRouter);
+  };
+  const teardown = () => fs.rmSync(outDir, { recursive: true, force: true });
+
+  test("an iPhone HEIC is refused before anything is written", async () => {
+    setup();
+    try {
+      const res = await request(app).post("/api/media/upload-background?filename=IMG_0042.HEIC")
+        .set("Content-Type", "image/heic").send(HEIC_BYTES);
+      assert.equal(res.status, 400);
+      assert.match(res.body.error, /HEIC/);
+      assert.deepEqual(fs.readdirSync(outDir), []);
+    } finally { teardown(); }
+  });
+
+  test("HEIC bytes that arrive claiming to be JPEG are caught by their bytes", async () => {
+    setup();
+    try {
+      const res = await request(app).post("/api/media/upload-background?filename=photo.jpg")
+        .set("Content-Type", "image/jpeg").send(HEIC_BYTES);
+      assert.equal(res.status, 400);
+      assert.match(res.body.error, /JPG or PNG/);
+      assert.deepEqual(fs.readdirSync(outDir), [], "the unusable file was removed");
+    } finally { teardown(); }
+  });
+
+  test("a real JPEG is accepted and returned with its true name", async () => {
+    setup();
+    try {
+      const res = await request(app).post("/api/media/upload-background?filename=sunrise.png")
+        .set("Content-Type", "image/png").send(JPEG_BYTES);
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+      assert.equal(res.body.kind, "image");
+      assert.match(res.body.file, /bg-image-[0-9a-f-]{36}\.jpg$/);
+      assert.equal(res.body.mime, "image/jpeg");
+      assert.ok(fs.existsSync(res.body.file));
+    } finally { teardown(); }
   });
 });

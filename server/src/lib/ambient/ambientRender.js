@@ -33,6 +33,10 @@ const CAPTION_LINE_HEIGHT = 1.4;
 const CAPTION_BOTTOM = 0.9;
 /** …nor takes more than this share of the frame. A long verse shrinks to fit. */
 const CAPTION_MAX_BLOCK = 0.32;
+/** A held verse fades with its picture's dissolve instead of popping. */
+const CAPTION_FADE_SEC = MOVEMENT_TRANSITION_SEC;
+/** The reference line under a held verse, relative to the verse's size. */
+const REFERENCE_SCALE = 0.62;
 
 export function dimsFor(aspect) {
   if (aspect === "portrait") return { width: 1080, height: 1920 };
@@ -81,6 +85,90 @@ export function layOutCaption(text, height) {
   }
   // Nothing fits: take the floor rather than truncating scripture.
   return { lines: wrapText(text, Math.round(42 * (base / floor))), size: floor };
+}
+
+/**
+ * When a verse is on screen.
+ *
+ *   spoken  — only while it is heard (the original behaviour, and what a
+ *             project saved before the choice existed still gets).
+ *   section — for as long as its picture is up: the movement that contains
+ *             it. A ten-minute session otherwise shows ten seconds of
+ *             scripture and nine minutes fifty of a bare image.
+ */
+function captionWindow(drop, span, movements) {
+  const atMs = Number(drop.atMs) || 0;
+  if (span === "section") {
+    const m = movements.find((mv, i) => atMs >= mv.startMs && (atMs < mv.endMs || i === movements.length - 1));
+    if (m) return { start: m.startMs / 1000, end: m.endMs / 1000, fade: true };
+  }
+  if (!(Number(drop.durationMs) > 0)) return null;
+  return { start: atMs / 1000, end: (atMs + Number(drop.durationMs)) / 1000, fade: false };
+}
+
+/** drawtext alpha: in over CAPTION_FADE_SEC, out over the same, 1 between. */
+function fadeAlpha(start, end) {
+  const f = Math.min(CAPTION_FADE_SEC, (end - start) / 3);
+  const s = start.toFixed(2);
+  const e = end.toFixed(2);
+  const inEnd = (start + f).toFixed(2);
+  const outStart = (end - f).toFixed(2);
+  const fs = f.toFixed(2);
+  return `:alpha='if(lt(t,${inEnd}),(t-${s})/${fs},if(gt(t,${outStart}),(${e}-t)/${fs},1))'`;
+}
+
+/**
+ * One drawtext per line (see the note at the call site), laid out against the
+ * block's own height, with the reference beneath a held verse.
+ */
+function captionFilters({ project, voiced, movements, height, workDir }) {
+  // A bundled serif rather than ffmpeg's default monospace. The monospace
+  // default is the single thing that most makes burned scripture read as
+  // machine output; the font ships in the repo so it exists on the server.
+  const fontPath = fontFileFor({ fontFamily: "serif" });
+  const fontArg = fontPath ? `:fontfile='${escapeFontPath(fontPath)}'` : "";
+  const span = project?.captionSpan === "section" ? "section" : "spoken";
+  const centred = project?.captionPosition === "centre";
+  const drawn = [];
+
+  const line = (i, j, text, size, y, win, colour) => {
+    const file = path.join(workDir, `caption-${i}-${j}.txt`);
+    fs.writeFileSync(file, text, "utf8");
+    // escapeFontPath, not a plain slash swap: a bare drive colon ends the
+    // drawtext option and ffmpeg rejects the whole filtergraph.
+    drawn.push(
+      `drawtext=textfile='${escapeFontPath(file)}'${fontArg}:` +
+      `fontcolor=${colour}:fontsize=${size}:` +
+      `box=1:boxcolor=black@0.42:boxborderw=${Math.round(size * 0.35)}:` +
+      `x=(w-text_w)/2:y=${y}:` +
+      `enable='between(t,${win.start.toFixed(2)},${win.end.toFixed(2)})'` +
+      (win.fade ? fadeAlpha(win.start, win.end) : ""),
+    );
+  };
+
+  voiced.forEach((d, i) => {
+    if (!d.text) return;
+    const win = captionWindow(d, span, movements);
+    if (!win) return;
+    const { lines, size } = layOutCaption(d.text, height);
+    const lineHeight = Math.round(size * CAPTION_LINE_HEIGHT);
+    const reference = span === "section" && d.reference
+      ? `${d.reference} · ${String(d.translation || project?.translation || "kjv").toUpperCase()}`
+      : "";
+    const refSize = Math.round(size * REFERENCE_SCALE);
+    const refGap = reference ? Math.round(size * 0.6) : 0;
+    const blockHeight = lines.length * lineHeight + (reference ? refGap + refSize : 0);
+    // Lower third by default, never past the safe bottom margin — a long verse
+    // grows upward instead of off the frame. Centre sits the block mid-frame.
+    const top = centred
+      ? Math.round((height - blockHeight) / 2)
+      : Math.round(Math.min(height * 0.70, height * CAPTION_BOTTOM - blockHeight));
+    lines.forEach((text, j) => line(i, j, text, size, top + j * lineHeight, win, "white"));
+    if (reference) {
+      line(i, lines.length, reference, refSize, top + lines.length * lineHeight + refGap, win, "white@0.8");
+    }
+  });
+  return drawn;
 }
 
 /**
@@ -156,36 +244,7 @@ export function buildAmbientFfmpegArgs(project, { bedPath, images, drops, outPat
   //      against its own height.
   let captionIn = videoOut;
   if (project?.captions && project.captions !== "none" && workDir) {
-    // A bundled serif rather than ffmpeg's default monospace. The monospace
-    // default is the single thing that most makes burned scripture read as
-    // machine output; the font ships in the repo so it exists on the server.
-    const fontPath = fontFileFor({ fontFamily: "serif" });
-    const fontArg = fontPath ? `:fontfile='${escapeFontPath(fontPath)}'` : "";
-    const drawn = [];
-    voiced.forEach((d, i) => {
-      if (!d.text || !(Number(d.durationMs) > 0)) return;
-      const start = (Number(d.atMs) || 0) / 1000;
-      const end = start + Number(d.durationMs) / 1000;
-      const { lines, size } = layOutCaption(d.text, height);
-      const lineHeight = Math.round(size * CAPTION_LINE_HEIGHT);
-      // Sit the block in the lower third, and never past the safe bottom
-      // margin — a long verse grows upward instead of off the frame.
-      const blockHeight = lines.length * lineHeight;
-      const top = Math.round(Math.min(height * 0.70, height * CAPTION_BOTTOM - blockHeight));
-      lines.forEach((line, j) => {
-        const file = path.join(workDir, `caption-${i}-${j}.txt`);
-        fs.writeFileSync(file, line, "utf8");
-        drawn.push(
-          // escapeFontPath, not a plain slash swap: a bare drive colon ends
-          // the drawtext option and ffmpeg rejects the whole filtergraph.
-          `drawtext=textfile='${escapeFontPath(file)}'${fontArg}:` +
-          `fontcolor=white:fontsize=${size}:` +
-          `box=1:boxcolor=black@0.42:boxborderw=${Math.round(size * 0.35)}:` +
-          `x=(w-text_w)/2:y=${top + j * lineHeight}:` +
-          `enable='between(t,${start.toFixed(2)},${end.toFixed(2)})'`,
-        );
-      });
-    });
+    const drawn = captionFilters({ project, voiced, movements, height, workDir });
     if (drawn.length > 0) {
       parts.push(`${captionIn}${drawn.join(",")}[vout]`);
       captionIn = "[vout]";

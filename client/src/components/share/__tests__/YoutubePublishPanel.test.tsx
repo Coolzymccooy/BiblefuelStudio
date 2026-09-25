@@ -36,7 +36,11 @@ describe('YoutubePublishPanel', () => {
       chapters: [{ startMs: 0, title: 'Welcome' }],
       publishAt: expect.stringMatching(/^2030-01-01T/),
     }));
-    expect(onPublished).toHaveBeenCalledWith(expect.objectContaining({ videoId: 'v1', forcedPrivate: true }));
+    // The second argument is what was asked for, so a caller can record the upload.
+    expect(onPublished).toHaveBeenCalledWith(
+      expect.objectContaining({ videoId: 'v1', forcedPrivate: true }),
+      { privacyStatus: 'private', publishAt: expect.stringMatching(/^2030-01-01T/) },
+    );
   });
 
   it('explains that chapters are appended at publish time, only when there are chapters', () => {

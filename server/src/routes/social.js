@@ -1031,9 +1031,17 @@ router.get("/youtube/connect", (req, res) => {
   // Sign userId into the OAuth `state` param so the callback can recover
   // which user is connecting WITHOUT trusting query params blindly.
   // 10-minute TTL — plenty for a user clicking through Google's consent.
+  //
+  // The email travels too, and it is NOT decoration: dataDirFor() routes a
+  // super-admin to DATA_DIR and everyone else to DATA_DIR/users/<sub>, and
+  // isSuperAdmin identifies the admin by SUPER_ADMIN_EMAIL. Omitting it made
+  // the callback resolve the per-user directory while every authenticated
+  // request resolved the admin one, so the refresh token was written to a
+  // file /youtube/status never reads — consent succeeded, the exchange
+  // succeeded, and the UI still said "Not connected" with no error anywhere.
   const secret = process.env.JWT_SECRET || "dev_secret_change_me";
   const state = jwt.sign(
-    { sub: req.ctx.userId, purpose: "yt_oauth_connect" },
+    { sub: req.ctx.userId, email: req.ctx.email || "", purpose: "yt_oauth_connect" },
     secret,
     { expiresIn: YOUTUBE_OAUTH_STATE_TTL },
   );
@@ -1144,12 +1152,13 @@ export async function youtubeOauthCallback(req, res) {
 
   const userId = String(decoded.sub);
 
-  // We need the user's dataDir to write their social.json. The userScope
-  // middleware normally derives this from req.user.sub, but here there's
-  // no JWT on the request — so we call the path helpers directly with
-  // the recovered userId.
-  const { dataDirFor } = await import("../lib/paths.js");
-  const dataDir = dataDirFor({ sub: userId, email: decoded.email });
+  // We need the user's dataDir to write their social.json. withUserScope
+  // normally does this from req.user, but there's no JWT on this request —
+  // so we call the SAME resolver it uses, with the identity recovered from
+  // the signed state. Never re-derive the rules here: the two must agree or
+  // the token is written where nothing reads it.
+  const { resolveScopeDirs } = await import("../lib/paths.js");
+  const { dataDir } = resolveScopeDirs({ sub: userId, email: decoded.email });
 
   let tokens;
   try {

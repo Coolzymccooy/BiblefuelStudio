@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import { normaliseCaptionSettings } from "../story/projectStore.js";
+import { deriveMovements } from "./movements.js";
 
 /**
  * Ambient project persistence — one JSON file per project under
@@ -25,8 +26,17 @@ function projectsDir(baseDir) {
   return path.join(baseDir, "ambient");
 }
 
+/**
+ * Ids are UUIDs we minted, so anything else is refused outright. Express
+ * decodes %2F inside a route parameter, and without this "..%2F..%2Fx" read
+ * and deleted JSON outside the tenant's ambient folder.
+ */
+const PROJECT_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
 function projectPath(baseDir, projectId) {
-  return path.join(projectsDir(baseDir), `${projectId}.json`);
+  const id = String(projectId || "");
+  if (!PROJECT_ID_RE.test(id)) return null;
+  return path.join(projectsDir(baseDir), `${id}.json`);
 }
 
 /**
@@ -69,9 +79,14 @@ export function createProject(baseDir, { title, theme, targetSec, aspect, transl
     motion: "still",
     // `captions` is the render MODE and is deliberately not part of
     // normaliseCaptionSettings (Story sets it alongside the spread too), so it
-    // has to be written here or ambientRender would read `undefined` and burn
-    // captions onto a format whose default is none.
-    captions: "none",
+    // has to be written here or ambientRender would read `undefined`.
+    //
+    // On, and held for each verse's whole section: shown only while spoken, a
+    // ten-minute session carried ten seconds of scripture and read as a bare
+    // image with music.
+    captions: "static",
+    captionSpan: "section",
+    captionPosition: "lower",
     ...normaliseCaptionSettings({}),
 
     duck: { ...DEFAULT_DUCK },
@@ -80,7 +95,10 @@ export function createProject(baseDir, { title, theme, targetSec, aspect, transl
     createdAt: now,
     updatedAt: now,
   };
-  return writeProject(baseDir, project);
+  // Derived now, not left as []: with no drops, deriveMovements still returns
+  // the one full-length movement the render needs, and an empty list read as
+  // "0 movements" and disabled Generate images on a brand-new session.
+  return writeProject(baseDir, { ...project, movements: deriveMovements(project) });
 }
 
 export function readProject(baseDir, projectId) {
@@ -100,6 +118,7 @@ export function writeProject(baseDir, project) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   const next = { ...project, updatedAt: Date.now() };
   const file = projectPath(baseDir, next.projectId);
+  if (!file) throw new Error("ambient projectStore: invalid project id");
   const tmp = `${file}.${process.pid}.${crypto.randomBytes(6).toString("hex")}.tmp`;
   try {
     fs.writeFileSync(tmp, JSON.stringify(next, null, 2));
@@ -119,15 +138,54 @@ export function listProjects(baseDir) {
     if (!name.endsWith(".json")) continue;
     const p = readProject(baseDir, name.slice(0, -5));
     if (!p) continue;
+    const published = Array.isArray(p.published) ? p.published : [];
     out.push({
       projectId: p.projectId,
       title: p.title,
       status: p.status,
       targetSec: p.targetSec,
+      aspect: p.aspect,
+      // Checked on disk, not inferred from status: a "done" session whose
+      // video was cleaned up must not offer Watch or Publish.
+      hasVideo: p.status === "done" && hasFile(p.render?.outputPath),
+      lastPublished: published.length ? published[published.length - 1] : null,
       updatedAt: p.updatedAt || 0,
     });
   }
   return out.sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+function hasFile(file) {
+  try { return Boolean(file) && fs.statSync(file).isFile(); } catch { return false; }
+}
+
+/** YouTube ids are 11 characters today; allow some slack, never a URL. */
+const YOUTUBE_ID_RE = /^[A-Za-z0-9_-]{6,20}$/;
+const PRIVACY = new Set(["private", "unlisted", "public"]);
+export const PUBLISHED_KEEP = 20;
+
+/**
+ * One upload of this session's video, as the page will show it. The link is
+ * built here from the id, never taken from the client, because it is rendered
+ * as an href. Returns null when the id isn't a YouTube id.
+ */
+export function publishedEntry(body, now = Date.now()) {
+  const videoId = String(body?.videoId || "");
+  if (!YOUTUBE_ID_RE.test(videoId)) return null;
+  const privacy = String(body?.privacyStatus || "");
+  const at = Date.parse(String(body?.publishAt || ""));
+  return {
+    videoId,
+    url: `https://youtu.be/${videoId}`,
+    privacyStatus: PRIVACY.has(privacy) ? privacy : "private",
+    publishAt: Number.isFinite(at) ? new Date(at).toISOString() : null,
+    at: now,
+  };
+}
+
+export function withPublished(project, entry) {
+  const prior = Array.isArray(project.published) ? project.published : [];
+  return { ...project, published: [...prior, entry].slice(-PUBLISHED_KEEP) };
 }
 
 export function deleteProject(baseDir, projectId) {

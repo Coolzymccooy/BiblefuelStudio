@@ -32,7 +32,9 @@ const DEFAULT_THRESHOLD = 0.82;
 const CATEGORY_THRESHOLD = 0.6;
 
 export function libraryIndexPath(dataDir) { return path.join(dataDir, INDEX_FILE); }
-export function poolFileFor(outputDir, hash) { return path.join(outputDir, `${POOL_PREFIX}${hash}.png`); }
+// Uploads keep their real type; everything generated has always been PNG.
+const POOL_EXTS = new Set(["png", "jpg", "webp"]);
+export function poolFileFor(outputDir, hash, ext = "png") { return path.join(outputDir, `${POOL_PREFIX}${hash}.${ext}`); }
 
 /** Read the index. A missing or corrupt file reads as empty — never throws. */
 export function readLibrary(dataDir) {
@@ -103,9 +105,10 @@ export function decodeEmbedding(b64) {
  * exists on disk and the index is only an optimisation.
  *
  * @param {{ dataDir: string, outputDir: string, sourcePath: string, prompt: string,
- *           style: string, aspect: string, provider?: string, projectId?: string }} args
+ *           style: string, aspect: string, provider?: string, projectId?: string,
+ *           ext?: "png"|"jpg"|"webp" }} args
  */
-export async function registerImage({ dataDir, outputDir, sourcePath, prompt, style, aspect, provider, projectId }) {
+export async function registerImage({ dataDir, outputDir, sourcePath, prompt, style, aspect, provider, projectId, ext = "png" }) {
   try {
     if (!sourcePath || !fs.existsSync(sourcePath)) return null;
     const bytes = fs.readFileSync(sourcePath);
@@ -123,7 +126,8 @@ export async function registerImage({ dataDir, outputDir, sourcePath, prompt, st
     if (existing) return existing;
 
     fs.mkdirSync(outputDir, { recursive: true });
-    const file = poolFileFor(outputDir, hash);
+    const safeExt = POOL_EXTS.has(ext) ? ext : "png";
+    const file = poolFileFor(outputDir, hash, safeExt);
     if (!fs.existsSync(file)) fs.writeFileSync(file, bytes);
 
     const now = Date.now();
@@ -131,7 +135,7 @@ export async function registerImage({ dataDir, outputDir, sourcePath, prompt, st
       id: `img_${hash.slice(0, 16)}`,
       hash,
       path: file,
-      publicUrl: `/outputs/${POOL_PREFIX}${hash}.png`,
+      publicUrl: `/outputs/${POOL_PREFIX}${hash}.${safeExt}`,
       prompt: String(prompt || ""),
       style: String(style || ""),
       aspect: String(aspect || ""),

@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { AUDIO_ACCEPT, AUDIO_ACCEPT_LIST } from '../lib/audioAccept';
 import { useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { Upload, Loader2, Download, X, RefreshCw } from 'lucide-react';
@@ -528,7 +529,7 @@ export function StoryVideoPage() {
               ) : (
                 <DropZone
                   onFiles={(files) => { if (files[0]) handlePickFile(files[0]); }}
-                  accept={['audio/*', 'video/*', '.mp3', '.m4a', '.wav', '.mp4', '.mov', '.webm']}
+                  accept={[...AUDIO_ACCEPT_LIST, 'video/*', '.mp4', '.mov', '.webm']}
                   multiple={false}
                   disabled={busy}
                   overlayLabel="Drop a sermon file"
@@ -544,7 +545,7 @@ export function StoryVideoPage() {
                   <input
                     ref={fileInputRef}
                     type="file"
-                    accept="audio/*,video/*"
+                    accept={`${AUDIO_ACCEPT},video/*,.mp4,.mov`}
                     className="hidden"
                     onChange={(e) => {
                       const f = e.target.files?.[0];

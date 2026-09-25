@@ -24,8 +24,14 @@ const TAIL_GUARD_SEC = 60;
  */
 export function defaultDropTimes(targetSec, intervalSec = DEFAULT_INTERVAL_SEC) {
   const total = Number(targetSec) || 0;
-  const step = Number(intervalSec) > 0 ? Number(intervalSec) : DEFAULT_INTERVAL_SEC;
+  const cadence = Number(intervalSec) > 0 ? Number(intervalSec) : DEFAULT_INTERVAL_SEC;
+  // The cadence is a default for long sessions, not a floor. Capped at half
+  // the runtime, a session shorter than the cadence still holds one verse at
+  // its midpoint — applied as a floor, anything under sixteen minutes held
+  // none and "Suggest verses" refused outright.
+  const step = Math.min(cadence, total / 2);
   const times = [];
+  if (!(step > 0)) return times;
   for (let t = step; t <= total - TAIL_GUARD_SEC; t += step) times.push(Math.round(t * 1000));
   return times;
 }

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { AUDIO_ACCEPT, AUDIO_ACCEPT_LIST } from '../lib/audioAccept';
 import { Music, X, Loader2, Play, Square, ArrowDownToLine } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useQueryClient } from '@tanstack/react-query';
@@ -199,7 +200,7 @@ export function MusicPicker({ value, onChange, busy, multiple = false, onInsertT
       <DropZone
         className="space-y-2 rounded-lg border border-white/10 bg-white/[0.03] p-3 text-xs text-gray-300"
         onFiles={(files) => { if (files[0]) upload(files[0]); }}
-        accept={['audio/*', '.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac']}
+        accept={AUDIO_ACCEPT_LIST}
         multiple={false}
         disabled={busy || isUploading}
         overlayLabel="Drop a music track"
@@ -245,7 +246,7 @@ export function MusicPicker({ value, onChange, busy, multiple = false, onInsertT
             {(tracks || []).map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
           </select>
           <button type="button" disabled={busy || isUploading} onClick={() => inputRef.current?.click()} className="rounded-md border border-white/15 px-2 py-1 hover:border-primary-400 disabled:opacity-50">{isUploading ? 'Uploading…' : '+ Upload'}</button>
-          <input ref={inputRef} type="file" accept="audio/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f); e.target.value = ''; }} />
+          <input ref={inputRef} type="file" accept={AUDIO_ACCEPT} className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f); e.target.value = ''; }} />
           {(busy || isUploading) && <Loader2 size={12} className="animate-spin" />}
         </div>
 
@@ -268,7 +269,7 @@ export function MusicPicker({ value, onChange, busy, multiple = false, onInsertT
     <DropZone
       className="space-y-2 rounded-lg border border-white/10 bg-white/[0.03] p-3 text-xs text-gray-300"
       onFiles={(files) => { if (files[0]) upload(files[0]); }}
-      accept={['audio/*', '.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac']}
+      accept={AUDIO_ACCEPT_LIST}
       multiple={false}
       disabled={busy || isUploading}
       overlayLabel="Drop a music track"
@@ -334,7 +335,7 @@ export function MusicPicker({ value, onChange, busy, multiple = false, onInsertT
 
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" disabled={busy || isUploading} onClick={() => inputRef.current?.click()} className="rounded-md border border-white/15 px-2 py-1 hover:border-primary-400 disabled:opacity-50">{isUploading ? 'Uploading…' : 'Upload your own'}</button>
-        <input ref={inputRef} type="file" accept="audio/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f); e.target.value = ''; }} />
+        <input ref={inputRef} type="file" accept={AUDIO_ACCEPT} className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f); e.target.value = ''; }} />
         {(busy || isUploading) && <Loader2 size={12} className="animate-spin" />}
       </div>
 

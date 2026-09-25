@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { AUDIO_ACCEPT } from '../../lib/audioAccept';
 import { Loader2, Sparkles, Mic, FileText } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { longformApi, type LongformTemplateOption } from '../../lib/longformApi';
@@ -154,7 +155,7 @@ export function LongformForm({ onDrafted, busy }: Props) {
         </span>
         <input
           type="file"
-          accept="audio/*"
+          accept={AUDIO_ACCEPT}
           className="sr-only"
           disabled={busy || drafting}
           onChange={(e) => {

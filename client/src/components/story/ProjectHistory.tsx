@@ -19,13 +19,36 @@ const TONE_CLASS: Record<StatusTone, string> = {
   idle: 'bg-bf-card2 text-bf-sub border-[rgba(216,184,120,0.22)]',
 };
 
+/**
+ * How many rows show before the list collapses behind "Show all".
+ *
+ * The new-project form sits directly below this list, so an uncapped history
+ * puts it one screen further down for every few projects you have ever made.
+ * At a few hundred, starting new work means scrolling past all your old work.
+ */
+const COLLAPSED_COUNT = 5;
+
 export function ProjectHistory({ onOpen, activeId, onDeleted }: ProjectHistoryProps) {
   const qc = useQueryClient();
   const { data: projects } = useStoryProjects();
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [now] = useState(() => Date.now());
+  const [expanded, setExpanded] = useState(false);
+  const [query, setQuery] = useState('');
 
   if (!projects || projects.length === 0) return null;
+
+  // Search is what makes a long history usable: finding one old project
+  // should never mean scrolling through the nine hundred in front of it.
+  const needle = query.trim().toLowerCase();
+  const matches = needle
+    ? projects.filter((p) => (p.title || 'Untitled').toLowerCase().includes(needle))
+    : projects;
+
+  // Searching implies you want to see what you found, so it expands too.
+  const showAll = expanded || Boolean(needle);
+  const visible = showAll ? matches : matches.slice(0, COLLAPSED_COUNT);
+  const overflowing = projects.length > COLLAPSED_COUNT;
 
   const doDelete = async (id: string) => {
     try {
@@ -42,9 +65,36 @@ export function ProjectHistory({ onOpen, activeId, onDeleted }: ProjectHistoryPr
 
   return (
     <div data-testid="project-history" className="mb-6">
-      <div className="field-label">Recent projects</div>
-      <ul className="space-y-2">
-        {projects.map((p) => {
+      <div className="flex items-center justify-between gap-3">
+        <div className="field-label">Recent projects</div>
+        {overflowing && (
+          <span className="text-[11px] text-meta">{projects.length} total</span>
+        )}
+      </div>
+
+      {overflowing && (
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search projects…"
+          aria-label="Search projects"
+          className="mb-2 w-full rounded-lg border border-[rgba(216,184,120,0.18)] bg-bf-card2/60 px-3 py-1.5 text-sm text-bf-cream placeholder:text-meta"
+        />
+      )}
+
+      {visible.length === 0 ? (
+        <p className="rounded-xl border border-[rgba(216,184,120,0.18)] bg-bf-card2/40 px-3 py-3 text-sm text-meta">
+          No projects match “{query.trim()}”.
+        </p>
+      ) : (
+      <ul
+        data-testid="project-history-list"
+        // Expanded, the list scrolls inside a fixed height instead of growing
+        // without bound — otherwise "Show all" just recreates the problem.
+        className={`space-y-2${showAll ? ' max-h-[420px] overflow-y-auto pr-1' : ''}`}
+      >
+        {visible.map((p) => {
           const meta = statusMeta(p.status);
           return (
             <li key={p.projectId} className="flex items-center gap-3 rounded-xl border border-[rgba(216,184,120,0.18)] bg-bf-card2/60 px-3 py-2">
@@ -70,6 +120,17 @@ export function ProjectHistory({ onOpen, activeId, onDeleted }: ProjectHistoryPr
           );
         })}
       </ul>
+      )}
+
+      {overflowing && !needle && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="mt-2 text-xs text-bf-goldDim hover:text-bf-cream hover:underline"
+        >
+          {expanded ? 'Show fewer' : `Show all ${projects.length}`}
+        </button>
+      )}
     </div>
   );
 }
