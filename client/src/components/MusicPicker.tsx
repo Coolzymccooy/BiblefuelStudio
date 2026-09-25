@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { AUDIO_ACCEPT, AUDIO_ACCEPT_LIST } from '../lib/audioAccept';
-import { Music, X, Loader2, Play, Square, ArrowDownToLine } from 'lucide-react';
+import { Music, X, Loader2, Play, Square, ArrowDownToLine, MicOff } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
@@ -190,6 +190,21 @@ export function MusicPicker({ value, onChange, busy, multiple = false, reorderab
   // management list, independent of which track (if any) is selected above
   // (selecting/previewing stays on the select control to avoid a second,
   // redundant preview affordance per row).
+  //
+  // Remove vocals is offered on your own uploads only: the bundled tracks are
+  // already instrumental, and a button beside them read as a genre tag.
+  const removeVocalsButton = (t: MusicTrack | undefined) => caps?.vocalRemoval && t?.source === 'upload' && (
+    <button
+      type="button"
+      onClick={() => setInstrumentalFor(t)}
+      aria-label={`Remove vocals from ${t.label}`}
+      title="Make an instrumental version of this track (removes the singing)"
+      className="shrink-0 inline-flex items-center gap-1 rounded border border-primary-400/40 px-1.5 py-0.5 text-[10px] text-primary-200 hover:bg-primary-500/15"
+    >
+      <MicOff size={10} /> Remove vocals
+    </button>
+  );
+
   const libraryList = (tracks || []).length > 0 && (
     <ul className="max-h-32 space-y-1 overflow-y-auto rounded-md border border-white/10 bg-black/10 p-1.5">
       {(tracks || []).map((t) => (
@@ -215,16 +230,7 @@ export function MusicPicker({ value, onChange, busy, multiple = false, reorderab
               {t.credit ? 'credit ✓' : 'credit'}
             </button>
           )}
-          {caps?.vocalRemoval && (
-            <button
-              type="button"
-              onClick={() => setInstrumentalFor(t)}
-              className="shrink-0 rounded border border-white/15 px-1 text-[10px] text-gray-300 hover:border-primary-400"
-              title="Make an instrumental version (removes the vocals)"
-            >
-              instrumental
-            </button>
-          )}
+          {removeVocalsButton(t)}
           {t.source === 'upload' && (
             <button
               type="button"
@@ -284,6 +290,7 @@ export function MusicPicker({ value, onChange, busy, multiple = false, reorderab
                     {playingId === refId(p) ? <Square size={12} /> : <Play size={12} />}
                   </button>
                 )}
+                {removeVocalsButton(trackForRef(p))}
                 {reorderable && (
                   <>
                     <button type="button" disabled={busy || idx === 0} onClick={() => emitPaths(move(paths, idx, idx - 1))} aria-label="move up" className="text-gray-400 hover:text-white disabled:opacity-30">↑</button>
