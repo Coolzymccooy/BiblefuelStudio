@@ -1,0 +1,173 @@
+import fetch from "node-fetch";
+import fs from "fs";
+import path from "path";
+import { v4 as uuid } from "uuid";
+import { OUTPUT_DIR } from "./paths.js";
+
+export function getElevenLabsApiKey() {
+  const rawKey = process.env.ELEVENLABS_API_KEY || "";
+  return rawKey.replace(/['"]/g, "").trim();
+}
+
+export function isElevenLabsConfigured() {
+  return describeElevenLabsKeyProblem() === "";
+}
+
+/**
+ * Explain why the configured ElevenLabs key is unusable, or "" when it looks fine.
+ *
+ * The dashboard shows a key ID beside every key, and pasting that instead of the
+ * key itself is an easy mistake — ElevenLabs then rejects EVERY request with
+ * "API key ID used as API key", which surfaced here only as a bare 502. Checking
+ * the documented `sk_` prefix catches it before a request is spent, and names
+ * the actual mistake instead of a generic failure.
+ *
+ * @returns {string} human-readable problem, or "" if the key looks valid
+ */
+export function describeElevenLabsKeyProblem() {
+  const key = getElevenLabsApiKey();
+  if (!key) return "ELEVENLABS_API_KEY is not set.";
+  if (key.startsWith("your-")) return "ELEVENLABS_API_KEY is still the placeholder value.";
+  if (!key.startsWith("sk_")) {
+    return "ELEVENLABS_API_KEY looks like a key ID rather than the key itself — "
+      + "real ElevenLabs keys start with 'sk_' and are shown only when created or rotated.";
+  }
+  return "";
+}
+
+export function defaultElevenLabsVoiceId() {
+  return String(process.env.ELEVENLABS_VOICE_ID || "EXAVITQu4vr4xnSDxMaL").trim();
+}
+
+/**
+ * Synthesize speech via ElevenLabs. Throws on any failure (caller is expected
+ * to catch and decide whether to fall back to another provider).
+ *
+ * @param {{ text: string, voiceId?: string, voiceSettings?: { stability?: number, similarity_boost?: number }, modelId?: string }} opts
+ * @returns {Promise<{ ok: true, file: string, provider: 'elevenlabs', voice: string }>}
+ */
+export async function synthesizeElevenLabs({ text, voiceId, voiceSettings, modelId } = {}) {
+  if (!isElevenLabsConfigured()) {
+    throw new Error(describeElevenLabsKeyProblem());
+  }
+  if (!text || String(text).trim().length < 3) {
+    throw new Error("text required (min 3 chars)");
+  }
+  const apiKey = getElevenLabsApiKey();
+  const resolvedVoiceId = String(voiceId || defaultElevenLabsVoiceId()).trim();
+  if (!resolvedVoiceId) throw new Error("voiceId missing");
+
+  const outDir = OUTPUT_DIR;
+  if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+  const outFile = path.join(outDir, `tts-${uuid()}.mp3`);
+
+  const resp = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${resolvedVoiceId}`, {
+    method: "POST",
+    headers: {
+      "xi-api-key": apiKey,
+      "Content-Type": "application/json",
+      "Accept": "audio/mpeg",
+    },
+    body: JSON.stringify({
+      text,
+      model_id: modelId || "eleven_multilingual_v2",
+      voice_settings: {
+        stability: voiceSettings?.stability ?? 0.5,
+        similarity_boost: voiceSettings?.similarity_boost ?? 0.75,
+      },
+    }),
+  });
+
+  if (!resp.ok) {
+    const errText = await resp.text();
+    throw new Error(`ElevenLabs error: ${resp.status} ${errText.slice(0, 500)}`);
+  }
+
+  const buffer = Buffer.from(await resp.arrayBuffer());
+  if (!buffer || buffer.byteLength === 0) {
+    throw new Error("ElevenLabs returned empty audio");
+  }
+  fs.writeFileSync(outFile, buffer);
+  console.log(`[TTS] ElevenLabs MP3 saved to ${outFile} (${buffer.byteLength} bytes)`);
+  return {
+    ok: true,
+    file: outFile.replace(/\\/g, "/"),
+    provider: "elevenlabs",
+    voice: resolvedVoiceId,
+  };
+}
+
+/**
+ * Synthesize speech AND return character-level alignment timestamps via the
+ * `/with-timestamps` endpoint. Same input/output shape as synthesizeElevenLabs
+ * with an additional `alignment` field carrying the raw char arrays.
+ *
+ * Response from ElevenLabs:
+ *   { audio_base64: string, alignment: { characters: string[],
+ *     character_start_times_seconds: number[], character_end_times_seconds: number[] } }
+ *
+ * @param {{ text: string, voiceId?: string, voiceSettings?: { stability?: number, similarity_boost?: number }, modelId?: string }} opts
+ * @returns {Promise<{ ok: true, file: string, provider: 'elevenlabs', voice: string, alignment: { characters: string[], starts: number[], ends: number[] } }>}
+ */
+export async function synthesizeElevenLabsWithTimestamps({ text, voiceId, voiceSettings, modelId } = {}) {
+  if (!isElevenLabsConfigured()) {
+    throw new Error(describeElevenLabsKeyProblem());
+  }
+  if (!text || String(text).trim().length < 3) {
+    throw new Error("text required (min 3 chars)");
+  }
+  const apiKey = getElevenLabsApiKey();
+  const resolvedVoiceId = String(voiceId || defaultElevenLabsVoiceId()).trim();
+  if (!resolvedVoiceId) throw new Error("voiceId missing");
+
+  const outDir = OUTPUT_DIR;
+  if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+  const outFile = path.join(outDir, `tts-${uuid()}.mp3`);
+
+  const resp = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${resolvedVoiceId}/with-timestamps`, {
+    method: "POST",
+    headers: {
+      "xi-api-key": apiKey,
+      "Content-Type": "application/json",
+      "Accept": "application/json",
+    },
+    body: JSON.stringify({
+      text,
+      model_id: modelId || "eleven_multilingual_v2",
+      voice_settings: {
+        stability: voiceSettings?.stability ?? 0.5,
+        similarity_boost: voiceSettings?.similarity_boost ?? 0.75,
+      },
+    }),
+  });
+
+  if (!resp.ok) {
+    const errText = await resp.text();
+    throw new Error(`ElevenLabs (with-timestamps) error: ${resp.status} ${errText.slice(0, 500)}`);
+  }
+
+  const payload = await resp.json();
+  const b64 = payload?.audio_base64;
+  if (!b64 || typeof b64 !== "string") {
+    throw new Error("ElevenLabs with-timestamps: missing audio_base64");
+  }
+  const buffer = Buffer.from(b64, "base64");
+  if (!buffer || buffer.byteLength === 0) {
+    throw new Error("ElevenLabs with-timestamps returned empty audio");
+  }
+  fs.writeFileSync(outFile, buffer);
+
+  const rawAlignment = payload?.normalized_alignment || payload?.alignment || null;
+  const characters = Array.isArray(rawAlignment?.characters) ? rawAlignment.characters : [];
+  const starts = Array.isArray(rawAlignment?.character_start_times_seconds) ? rawAlignment.character_start_times_seconds : [];
+  const ends = Array.isArray(rawAlignment?.character_end_times_seconds) ? rawAlignment.character_end_times_seconds : [];
+
+  console.log(`[TTS] ElevenLabs MP3 (timestamped) saved to ${outFile} (${buffer.byteLength} bytes, ${characters.length} chars aligned)`);
+  return {
+    ok: true,
+    file: outFile.replace(/\\/g, "/"),
+    provider: "elevenlabs",
+    voice: resolvedVoiceId,
+    alignment: { characters, starts, ends },
+  };
+}

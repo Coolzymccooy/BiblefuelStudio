@@ -1,0 +1,156 @@
+import { describe, it, expect } from 'vitest';
+import {
+  STORY_STYLES, deriveStep, isTransientStatus, allScenesDone,
+  canRender, sceneTimeLabel, progressLabel, imageCounts, isStalled,
+  relativeTime, statusMeta,
+} from '../storyWizard';
+import type { StoryProject, StoryScene } from '../storyTypes';
+
+function scene(over: Partial<StoryScene> = {}): StoryScene {
+  return {
+    id: 'scene-001', text: 'x', startMs: 0, endMs: 8000, imagePrompt: 'p',
+    imagePath: null, imageStatus: 'pending', promptEditedByUser: false, ...over,
+  };
+}
+function project(over: Partial<StoryProject> = {}): StoryProject {
+  return {
+    projectId: 'p', title: 'T', style: 'cinematic-bible', status: 'draft',
+    source: { audioPath: null, durationMs: 0 }, transcript: { words: [], hash: null },
+    scenes: [], music: { path: null, volume: 0.3 }, captionPreset: 'default',
+    render: { jobId: null, outputPath: null, status: null }, error: null,
+    createdAt: 0, updatedAt: 0, ...over,
+  };
+}
+
+describe('STORY_STYLES', () => {
+  it('lists the 4 v1 styles matching the backend ids', () => {
+    expect(STORY_STYLES.map((s) => s.id).sort()).toEqual(
+      ['ancient-scripture', 'cinematic-bible', 'heavenly-atmosphere', 'modern-devotional'],
+    );
+  });
+});
+
+describe('deriveStep', () => {
+  it('step 1 for a fresh draft', () => {
+    expect(deriveStep(project({ status: 'draft' }))).toBe(1);
+  });
+  it('step 1 while transcribing/segmenting (no scenes yet)', () => {
+    expect(deriveStep(project({ status: 'transcribing' }))).toBe(1);
+    expect(deriveStep(project({ status: 'segmenting' }))).toBe(1);
+  });
+  it('step 2 once scenes exist (review)', () => {
+    expect(deriveStep(project({ status: 'generating_images', scenes: [scene()] }))).toBe(2);
+    expect(deriveStep(project({ status: 'ready_to_render', scenes: [scene()] }))).toBe(2);
+  });
+  it('step 3 while rendering or done', () => {
+    expect(deriveStep(project({ status: 'rendering', scenes: [scene()] }))).toBe(3);
+    expect(deriveStep(project({ status: 'done', scenes: [scene()] }))).toBe(3);
+  });
+  it('error during transcribe (no scenes) stays on step 1; error during images stays on step 2', () => {
+    expect(deriveStep(project({ status: 'error', scenes: [] }))).toBe(1);
+    expect(deriveStep(project({ status: 'error', scenes: [scene()] }))).toBe(2);
+  });
+});
+
+describe('isTransientStatus', () => {
+  it('true for in-flight statuses, false otherwise', () => {
+    expect(isTransientStatus('transcribing')).toBe(true);
+    expect(isTransientStatus('segmenting')).toBe(true);
+    expect(isTransientStatus('generating_images')).toBe(true);
+    expect(isTransientStatus('rendering')).toBe(true);
+    expect(isTransientStatus('draft')).toBe(false);
+    expect(isTransientStatus('ready_to_render')).toBe(false);
+    expect(isTransientStatus('done')).toBe(false);
+    expect(isTransientStatus('error')).toBe(false);
+  });
+});
+
+describe('allScenesDone / canRender', () => {
+  it('false when empty, false with any non-done, true when all done', () => {
+    expect(allScenesDone([])).toBe(false);
+    expect(allScenesDone([scene({ imageStatus: 'done', imagePath: '/a.png' }), scene({ imageStatus: 'pending' })])).toBe(false);
+    expect(allScenesDone([scene({ imageStatus: 'done', imagePath: '/a.png' })])).toBe(true);
+  });
+  it('canRender mirrors allScenesDone on the project scenes', () => {
+    expect(canRender(project({ scenes: [scene({ imageStatus: 'done', imagePath: '/a.png' })] }))).toBe(true);
+    expect(canRender(project({ scenes: [] }))).toBe(false);
+  });
+});
+
+describe('sceneTimeLabel', () => {
+  it('formats ms windows as m:ss–m:ss', () => {
+    expect(sceneTimeLabel(scene({ startMs: 0, endMs: 8000 }))).toBe('0:00–0:08');
+    expect(sceneTimeLabel(scene({ startMs: 65000, endMs: 72000 }))).toBe('1:05–1:12');
+  });
+});
+
+describe('progressLabel', () => {
+  it('maps transient statuses to human text', () => {
+    expect(progressLabel('transcribing')).toMatch(/transcrib/i);
+    expect(progressLabel('segmenting')).toMatch(/scene/i);
+    expect(progressLabel('generating_images')).toMatch(/image/i);
+    expect(progressLabel('rendering')).toMatch(/render/i);
+  });
+});
+
+describe('imageCounts', () => {
+  it('counts done vs total', () => {
+    expect(imageCounts([scene({ imageStatus: 'done' }), scene({ imageStatus: 'pending' })])).toEqual({ done: 1, total: 2 });
+  });
+});
+
+describe('isStalled', () => {
+  const now = 1_000_000_000_000;
+  it('true when a transient status has gone stale (server likely died)', () => {
+    expect(isStalled(project({ status: 'generating_images', updatedAt: now - 200_000 }), now)).toBe(true);
+    expect(isStalled(project({ status: 'transcribing', updatedAt: now - 200_000 }), now)).toBe(true);
+  });
+  it('false while a transient status is still fresh (server actively working)', () => {
+    expect(isStalled(project({ status: 'generating_images', updatedAt: now - 5_000 }), now)).toBe(false);
+  });
+  it('false for non-transient statuses regardless of age', () => {
+    expect(isStalled(project({ status: 'ready_to_render', updatedAt: 0 }), now)).toBe(false);
+    expect(isStalled(project({ status: 'done', updatedAt: 0 }), now)).toBe(false);
+    expect(isStalled(project({ status: 'error', updatedAt: 0 }), now)).toBe(false);
+  });
+  it('gives narrating a much longer stall threshold (a slow self-hosted TTS chunk can exceed 90s)', () => {
+    // Past the generic 90s threshold but well within narration's leash: not stalled.
+    expect(isStalled(project({ status: 'narrating', updatedAt: now - 200_000 }), now)).toBe(false);
+    // Past narration's own (much longer) threshold: stalled.
+    expect(isStalled(project({ status: 'narrating', updatedAt: now - 11 * 60_000 }), now)).toBe(true);
+  });
+  it('treats a narration the server reports as not alive as stalled immediately', () => {
+    const lf = { templateId: 'sleep-30', sections: [] };
+    // Fresh updatedAt but the server says no run is in flight (it restarted): stalled now.
+    expect(isStalled(project({ status: 'narrating', updatedAt: now - 1_000, longform: { ...lf, progress: { done: 0, total: 14, alive: false } } }), now)).toBe(true);
+    // Alive run with a fresh heartbeat: not stalled.
+    expect(isStalled(project({ status: 'narrating', updatedAt: now - 1_000, longform: { ...lf, progress: { done: 3, total: 14, alive: true } } }), now)).toBe(false);
+    // Liveness unknown (older server): fall back to the time threshold.
+    expect(isStalled(project({ status: 'narrating', updatedAt: now - 1_000, longform: { ...lf, progress: { done: 3, total: 14 } } }), now)).toBe(false);
+  });
+});
+
+describe('relativeTime', () => {
+  const now = 1_000_000_000_000;
+  it('formats recent times', () => {
+    expect(relativeTime(now, now)).toBe('just now');
+    expect(relativeTime(now - 30_000, now)).toBe('just now');
+    expect(relativeTime(now - 5 * 60_000, now)).toBe('5m ago');
+    expect(relativeTime(now - 3 * 3600_000, now)).toBe('3h ago');
+    expect(relativeTime(now - 2 * 86_400_000, now)).toBe('2d ago');
+  });
+  it('falls back to a date for older than ~a week', () => {
+    expect(relativeTime(now - 30 * 86_400_000, now)).toMatch(/\d{1,2}\s*\w{3}/);
+  });
+});
+
+describe('statusMeta', () => {
+  it('maps every status to a label + tone', () => {
+    expect(statusMeta('done')).toEqual({ label: 'Done', tone: 'done' });
+    expect(statusMeta('error')).toEqual({ label: 'Error', tone: 'error' });
+    expect(statusMeta('ready_to_render').tone).toBe('idle');
+    expect(statusMeta('rendering').tone).toBe('busy');
+    expect(statusMeta('generating_images').tone).toBe('busy');
+    expect(statusMeta('draft').tone).toBe('idle');
+  });
+});
