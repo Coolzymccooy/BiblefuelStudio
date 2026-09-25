@@ -1,0 +1,126 @@
+import type { StoryProject, StoryScene, StoryStatus, StoryStyleOption } from './storyTypes';
+
+export const STORY_STYLES: StoryStyleOption[] = [
+  { id: 'cinematic-bible', label: 'Cinematic Bible', blurb: 'Dramatic, film-still lighting' },
+  { id: 'modern-devotional', label: 'Modern Devotional', blurb: 'Soft, clean, calm tones' },
+  { id: 'heavenly-atmosphere', label: 'Heavenly Atmosphere', blurb: 'Glowing light, ethereal' },
+  { id: 'ancient-scripture', label: 'Ancient Scripture', blurb: 'Weathered, historical desert' },
+];
+
+const TRANSIENT: StoryStatus[] = ['transcribing', 'segmenting', 'generating_images', 'rendering', 'narrating'];
+
+export function isTransientStatus(status: StoryStatus): boolean {
+  return TRANSIENT.includes(status);
+}
+
+/** Which wizard step (1 upload, 2 review, 3 render) the project is in. */
+export function deriveStep(project: StoryProject): 1 | 2 | 3 {
+  if (project.status === 'rendering' || project.status === 'done') return 3;
+  if (project.scenes.length > 0) return 2;
+  return 1;
+}
+
+export function allScenesDone(scenes: StoryScene[]): boolean {
+  return scenes.length > 0 && scenes.every((s) => s.imageStatus === 'done');
+}
+
+export function canRender(project: StoryProject): boolean {
+  return allScenesDone(project.scenes);
+}
+
+export function imageCounts(scenes: StoryScene[]): { done: number; total: number } {
+  return { done: scenes.filter((s) => s.imageStatus === 'done').length, total: scenes.length };
+}
+
+function fmt(ms: number): string {
+  const total = Math.max(0, Math.round(ms / 1000));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+export function sceneTimeLabel(scene: StoryScene): string {
+  return `${fmt(scene.startMs)}–${fmt(scene.endMs)}`; // en-dash between the two times
+}
+
+export function progressLabel(status: StoryStatus): string {
+  switch (status) {
+    case 'transcribing': return 'Transcribing your audio…';
+    case 'segmenting': return 'Breaking it into scenes…';
+    case 'generating_images': return 'Generating images…';
+    case 'rendering': return 'Rendering your video…';
+    case 'narrating': return 'Generating narration…';
+    default: return 'Working…';
+  }
+}
+
+const TTS_PROVIDER_LABELS: Record<string, string> = {
+  azure: 'Azure Speech',
+  chatterbox: 'Chatterbox',
+  edge: 'Edge-TTS',
+  elevenlabs: 'ElevenLabs',
+  fish: 'Fish Audio',
+  piper: 'Piper',
+};
+
+/** Human label for a TTS provider id reported by the server (falls back to the id). */
+export function ttsProviderLabel(id: string): string {
+  return TTS_PROVIDER_LABELS[id] ?? id;
+}
+
+const STALL_MS = 90_000; // a transient status older than this looks stuck (server died)
+
+// Narration synthesises a 30-60 min session chunk by chunk, one provider call
+// at a time; a single slow self-hosted TTS request can comfortably exceed 90s
+// with nothing wrong at all. The server bumps updatedAt after every chunk
+// (see longform.js's onProgress heartbeat), so this only fires once even that
+// heartbeat has gone quiet for a genuinely long time.
+const NARRATING_STALL_MS = 10 * 60_000;
+
+/**
+ * A project is "stalled" when it's in a transient (in-flight) status but its
+ * record hasn't been touched in a while — i.e. no server stage is advancing it
+ * (e.g. the server restarted mid-pipeline). The server drives the pipeline now,
+ * so a fresh transient status just means "working" — NOT stalled.
+ */
+export function isStalled(project: StoryProject, nowMs: number): boolean {
+  if (!isTransientStatus(project.status)) return false;
+  // The server says outright when a narration it claims to be running isn't
+  // alive in its process (it restarted mid-run) — no point waiting out the
+  // timer on a run that will never send another heartbeat.
+  if (project.status === 'narrating' && project.longform?.progress?.alive === false) return true;
+  const threshold = project.status === 'narrating' ? NARRATING_STALL_MS : STALL_MS;
+  return (nowMs - project.updatedAt) > threshold;
+}
+
+const MIN = 60_000, HOUR = 3_600_000, DAY = 86_400_000;
+
+/** Compact relative time. `nowMs` is injected so the function is deterministic. */
+export function relativeTime(ms: number, nowMs: number): string {
+  const diff = Math.max(0, nowMs - ms);
+  if (diff < MIN) return 'just now';
+  if (diff < HOUR) return `${Math.floor(diff / MIN)}m ago`;
+  if (diff < DAY) return `${Math.floor(diff / HOUR)}h ago`;
+  if (diff < 7 * DAY) return `${Math.floor(diff / DAY)}d ago`;
+  const d = new Date(ms);
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+export type StatusTone = 'done' | 'error' | 'busy' | 'idle';
+
+/** Pill label + tone for a project status. */
+export function statusMeta(status: StoryStatus): { label: string; tone: StatusTone } {
+  switch (status) {
+    case 'done': return { label: 'Done', tone: 'done' };
+    case 'error': return { label: 'Error', tone: 'error' };
+    case 'rendering': return { label: 'Rendering', tone: 'busy' };
+    case 'generating_images': return { label: 'Generating', tone: 'busy' };
+    case 'transcribing': return { label: 'Transcribing', tone: 'busy' };
+    case 'segmenting': return { label: 'Segmenting', tone: 'busy' };
+    case 'ready_to_render': return { label: 'Ready', tone: 'idle' };
+    case 'draft_script': return { label: 'Draft', tone: 'idle' };
+    case 'narrating': return { label: 'Narrating', tone: 'busy' };
+    case 'draft':
+    default: return { label: 'Draft', tone: 'idle' };
+  }
+}
