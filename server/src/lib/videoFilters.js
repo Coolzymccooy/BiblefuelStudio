@@ -291,6 +291,8 @@ export function listTypographyPresets() {
 // w/h/text_w/text_h (evaluated per frame).
 const SAFE_BAND_Y = 0.74; // vertical centre of the lower safe band
 const STAGGER_BAND_Y = 0.70; // staggered sits slightly higher for variety
+// Left / centre / right, cycled per phrase (words) or per line (captions).
+const STAGGER_ANCHORS = Object.freeze(["w*0.10", "(w-text_w)/2", "w*0.90-text_w"]);
 const LAYOUTS = Object.freeze(["center", "center-large", "bottom-center", "bottom-left", "staggered"]);
 
 export function listLayouts() {
@@ -306,6 +308,29 @@ export function resolveLayout(name) {
 // "ghost" copy BEHIND it — the layered, premium look from the reference clips.
 // `depth` may be `true` (defaults) or `{ dx, dy, color, opacity }` (px + colour
 // overrides). Falsy → no ghost. dx/dy default to ~1% w / ~1.2% h at render time.
+// The Story project store persists depth as one of none/soft/hard (that is
+// the catalogue its captions route validates against). A string is neither
+// `true` nor an object, so it used to resolve to null AND — being non-nullish
+// — shadow the preset’s own depth, meaning "soft" turned the ghost OFF.
+const DEPTH_PRESETS = Object.freeze({
+  none: false,
+  soft: { color: "black", opacity: 0.5 },
+  hard: { color: "black", opacity: 0.8 },
+});
+
+/**
+ * Normalise a caption-depth override into what resolveDepth understands.
+ * Unknown strings return undefined, so the preset’s own depth still wins
+ * rather than being silently cancelled by a typo.
+ *
+ * @param {unknown} depth
+ */
+function depthOverride(depth) {
+  if (typeof depth !== "string") return depth;
+  const key = depth.trim().toLowerCase();
+  return Object.prototype.hasOwnProperty.call(DEPTH_PRESETS, key) ? DEPTH_PRESETS[key] : undefined;
+}
+
 function resolveDepth(depth) {
   if (!depth) return null;
   if (depth === true) return { color: "black", opacity: 0.5 };
@@ -335,8 +360,7 @@ function layoutGeometry(layout, phraseIndex = 0) {
     case "bottom-left":
       return { xExpr: "w*0.08", yBase: `(h*${SAFE_BAND_Y}-text_h/2)`, sizeBoost: 1 };
     case "staggered": {
-      const anchors = ["w*0.10", "(w-text_w)/2", "w*0.90-text_w"];
-      return { xExpr: anchors[((phraseIndex % 3) + 3) % 3], yBase: `(h*${STAGGER_BAND_Y}-text_h/2)`, sizeBoost: 1 };
+      return { xExpr: STAGGER_ANCHORS[((phraseIndex % 3) + 3) % 3], yBase: `(h*${STAGGER_BAND_Y}-text_h/2)`, sizeBoost: 1 };
     }
     case "center":
     default:
@@ -395,7 +419,7 @@ export function buildWordDrawtext({ words, w, h, preset, layout, depth }) {
   // layout arg wins, else the preset may declare one, else "center".
   const resolvedLayout = resolveLayout(layout ?? style.layout);
   // depth arg wins (incl. explicit false), else the preset may declare one.
-  const depthCfg = resolveDepth(depth ?? style.depth);
+  const depthCfg = resolveDepth(depthOverride(depth) ?? style.depth);
   const depthDx = depthCfg ? (Number.isFinite(depthCfg.dx) ? depthCfg.dx : Math.round(w * 0.010)) : 0;
   const depthDy = depthCfg ? (Number.isFinite(depthCfg.dy) ? depthCfg.dy : Math.round(h * 0.012)) : 0;
   const depthColor = depthCfg?.color || "black";
@@ -561,13 +585,83 @@ export function fitLineFontSize(lines, w, preferred) {
   return Math.max(MIN_LINE_FONT_SIZE, Math.min(preferred, maxSize));
 }
 
-export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal, highlightWords, stagger }) {
-  const safeLines = Array.isArray(lines) ? lines.filter(Boolean) : [];
-  if (safeLines.length === 0) return null;
+/**
+ * Where a LINE caption sits, for a given layout.
+ *
+ * Line captions draw at a numeric y (rows stack downward from it), unlike
+ * word captions which use an ffmpeg expression. An absent layout keeps the
+ * historical position for that mode exactly, so existing renders are
+ * unchanged; only an explicit layout moves anything.
+ *
+ * @param {string|null|undefined} layout
+ * @param {number} defaultYFrac the mode’s historical y, as a fraction of h
+ * @param {number} [index] which line this is, for layouts that alternate
+ * @returns {{ xExpr: string, yFrac: number }}
+ */
+function lineGeometry(layout, defaultYFrac, index = 0) {
+  if (layout === undefined || layout === null || layout === "") {
+    return { xExpr: "(w-text_w)/2", yFrac: defaultYFrac };
+  }
+  switch (resolveLayout(layout)) {
+    case "bottom-center":
+      return { xExpr: "(w-text_w)/2", yFrac: SAFE_BAND_Y };
+    case "bottom-left":
+      return { xExpr: "w*0.08", yFrac: SAFE_BAND_Y };
+    case "staggered":
+      // The same three anchors, in the same rotation, that staggered WORD
+      // captions use — one shared catalogue name has to mean one look.
+      // Only modes that show a single line at a time pass an index; a
+      // stacked block keeps every row on one anchor.
+      return { xExpr: STAGGER_ANCHORS[((index % 3) + 3) % 3], yFrac: STAGGER_BAND_Y };
+    case "center-large":
+    case "center":
+    default:
+      return { xExpr: "(w-text_w)/2", yFrac: defaultYFrac };
+  }
+}
+
+/**
+ * @typedef {object} LineLook
+ * @property {number} [yFrac] vertical band to use when no layout is picked,
+ *   replacing the mode’s own default. An explicit layout still wins.
+ * @property {number} [sizeMult] preferred font size as a fraction of h,
+ *   replacing the preset’s baseSizeMult in the timed/paced modes.
+ * @property {number} [minBoxOpacity] readability floor for the line box, so
+ *   a preset with no box still gets a scrim over footage.
+ * @property {boolean} [outline] draw the preset’s outline behind the text.
+ *
+ * `look` exists for callers that had their own caption styling before this
+ * builder took over — the Timeline proof renderer — so routing them through
+ * here does not restyle projects that asked for nothing new. Callers that
+ * omit it get exactly the output they always got.
+ */
+export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal, highlightWords, stagger, layout, look }) {
+  // A line is either a plain string (short-form callers, paced by an even
+  // split of the duration) or { text, start, end } carrying its own window.
+  // Long-form narration has real word timings, and an even split drifts
+  // minutes away from the voice over a 12-minute video.
+  const entries = (Array.isArray(lines) ? lines : [])
+    .filter(Boolean)
+    .map((l) => (typeof l === "object"
+      ? { text: String(l.text ?? "").trim(), start: Number(l.start), end: Number(l.end) }
+      : { text: String(l).trim(), start: NaN, end: NaN }))
+    .filter((e) => e.text);
+  if (entries.length === 0) return null;
+  const safeLines = entries.map((e) => e.text);
+  // Every line must carry a sane window, or none of them are trusted: a
+  // half-timed list would mix real windows with invented ones.
+  const timed = entries.every((e) => Number.isFinite(e.start) && Number.isFinite(e.end) && e.end > e.start);
+  /** The window for line `i`, preferring its own over the even split. */
+  const spanFor = (i, from, to) => (timed ? [entries[i].start, entries[i].end] : [from, to]);
   const style = resolveTypographyPreset(preset);
   const lineGap = Math.round(h * 0.06);
   const fontSize = fitLineFontSize(safeLines, w, Math.round(h * (style.lineSizeMult || 0.033)));
-  const boxOpacity = Number.isFinite(style.lineBoxOpacity) ? style.lineBoxOpacity : 0.35;
+  const styleBoxOpacity = Number.isFinite(style.lineBoxOpacity) ? style.lineBoxOpacity : 0.35;
+  const boxOpacity = Math.max(Number(look?.minBoxOpacity) || 0, styleBoxOpacity);
+  /** The preset’s outline at a given font size, or nothing when not asked for. */
+  const outlineFor = (size) => (look?.outline
+    ? `:borderw=${Math.max(2, Math.round(size * (style.borderWidth ? style.borderWidth / 60 : 0.08)))}:bordercolor=black@0.9`
+    : "");
   const color = style.baseColor || BASE_TEXT_COLOR;
   const lineBoxCol = style.lineBoxColor || style.boxColor || "black";
 
@@ -583,18 +677,33 @@ export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal
   // Revealing raw sentences would be unreadable - a 51-character line caps at
   // 31px on a 1080 frame because the width budget binds - whereas a wrapped
   // row holds ~99px, the same size as a block.
-  if (reveal && Number.isFinite(Number(duration)) && Number(duration) > 0) {
-    const total = Number(duration);
-    const rows = safeLines.flatMap((t) => wrapToBlock(String(t), BLOCK_MAX_CHARS));
+  if ((reveal && Number.isFinite(Number(duration)) && Number(duration) > 0) || (reveal && timed)) {
+    const total = Number(duration) > 0 ? Number(duration) : entries[entries.length - 1].end;
+    // Wrap per LINE so a timed line can share its own window across the rows
+    // it wrapped into, rather than every row in the video sharing one slot.
+    const perLine = safeLines.map((t) => wrapToBlock(String(t), BLOCK_MAX_CHARS));
+    const rows = perLine.flat();
     const fontSize = fitLineFontSize(rows, w, Math.round(h * (style.baseSizeMult || 0.07)));
     const slot = total / rows.length;
-    const y = Math.round(h * 0.45);
+    const geo = lineGeometry(layout ?? style.layout, Number(look?.yFrac) || 0.45);
+    const y = Math.round(h * geo.yFrac);
     const parts = [];
+    // Row index -> [from, to], honouring each line’s own window when timed.
+    const rowSpans = [];
+    perLine.forEach((rowsOfLine, li) => {
+      const [lineFrom, lineTo] = spanFor(li, 0, total);
+      const step = (lineTo - lineFrom) / Math.max(1, rowsOfLine.length);
+      rowsOfLine.forEach((_, ri) => {
+        const globalIndex = rowSpans.length;
+        rowSpans.push(timed
+          ? [lineFrom + ri * step, ri === rowsOfLine.length - 1 ? lineTo : lineFrom + (ri + 1) * step]
+          : [globalIndex * slot, globalIndex === rows.length - 1 ? total : (globalIndex + 1) * slot]);
+      });
+    });
     rows.forEach((row, i) => {
-      const from = i * slot;
-      const to = i === rows.length - 1 ? total : (i + 1) * slot;
+      const [from, to] = rowSpans[i];
       const enable = `:enable='between(t,${from.toFixed(3)},${to.toFixed(3)})'`;
-      parts.push(`drawtext=text='${escapeDrawText(row)}':x=(w-text_w)/2:y=${y}${fontArg(style)}:fontsize=${fontSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=${BOX_BORDER_W}${enable}`);
+      parts.push(`drawtext=text='${escapeDrawText(row)}':x=${geo.xExpr}:y=${y}${fontArg(style)}:fontsize=${fontSize}:fontcolor=${color}${outlineFor(fontSize)}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=${BOX_BORDER_W}${enable}`);
 
       // Karaoke overlay: keep the whole row on screen and re-draw just the
       // spoken word in the emphasis colour on top of it. Only the words that
@@ -627,8 +736,9 @@ export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal
   // single 49-character line caps at ~32px on a 1080 frame because the width
   // budget binds; wrapping the same text to ~16 characters reaches ~99px. The
   // reference video shows short phrase blocks, not one long line.
-  if (block && Number.isFinite(total) && total > 0) {
-    const slot = total / safeLines.length;
+  if (block && ((Number.isFinite(total) && total > 0) || timed)) {
+    const span = (Number.isFinite(total) && total > 0) ? total : entries[entries.length - 1].end;
+    const slot = span / safeLines.length;
     const preferred = Math.round(h * (style.baseSizeMult || 0.07));
     const blocks = safeLines.map((t) => wrapToBlock(String(t), BLOCK_MAX_CHARS));
     // One size for every block, so type does not jump between phrases.
@@ -639,12 +749,12 @@ export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal
     // block overlap itself ("the chaos around" sat on "presence calms").
     const lead = Math.round(fontSize * 1.15) + 2 * BOX_BORDER_W;
     return blocks.map((rows, bi) => {
-      const from = bi * slot;
-      const to = bi === blocks.length - 1 ? total : (bi + 1) * slot;
+      const [from, to] = spanFor(bi, bi * slot, bi === blocks.length - 1 ? span : (bi + 1) * slot);
       const enable = `:enable='between(t,${from.toFixed(3)},${to.toFixed(3)})'`;
       // Centre the stack on the frame's middle band rather than hanging it
       // from a fixed top, or a tall block runs off the bottom.
-      const top = Math.round(h * 0.5 - (rows.length * lead) / 2);
+      const blockGeo = lineGeometry(layout ?? style.layout, Number(look?.yFrac) || 0.5);
+      const top = Math.round(h * blockGeo.yFrac - (rows.length * lead) / 2);
       // STAGGER: rows arrive a beat apart instead of popping in together.
       // The step is capped to a fraction of the block so the LAST row still
       // has time on screen - without the cap a short block would stagger past
@@ -658,27 +768,28 @@ export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal
         const rowEnable = step > 0
           ? `:enable='between(t,${rowFrom.toFixed(3)},${to.toFixed(3)})'`
           : enable;
-        return `drawtext=text='${escapeDrawText(row)}':x=(w-text_w)/2:y=${y}${fontArg(style)}:fontsize=${fontSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=${BOX_BORDER_W}${rowEnable}`;
+        return `drawtext=text='${escapeDrawText(row)}':x=${blockGeo.xExpr}:y=${y}${fontArg(style)}:fontsize=${fontSize}:fontcolor=${color}${outlineFor(fontSize)}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=${BOX_BORDER_W}${rowEnable}`;
       }).join(",");
     }).join(",");
   }
 
-  if (Number.isFinite(total) && total > 0) {
-    const slot = total / safeLines.length;
-    const y = Math.round(h * 0.42);
+  if ((Number.isFinite(total) && total > 0) || timed) {
+    const span = (Number.isFinite(total) && total > 0) ? total : entries[entries.length - 1].end;
+    const slot = span / safeLines.length;
+    const pacedFor = (i) => lineGeometry(layout ?? style.layout, Number(look?.yFrac) || 0.42, i);
+    const y = Math.round(h * pacedFor(0).yFrac);
     // A paced line has the frame to itself, so it gets the preset's WORD size
     // rather than the much smaller stacked-block size. lineSizeMult exists to
     // fit several lines at once; using it here rendered captions a third the
     // size of kinetic text and illegible over a bright sky. fitLineFontSize
     // still caps it to the frame width, so long lines shrink as needed.
-    const pacedSize = fitLineFontSize(safeLines, w, Math.round(h * (style.baseSizeMult || 0.07)));
+    const pacedSize = fitLineFontSize(safeLines, w, Math.round(h * (Number(look?.sizeMult) || style.baseSizeMult || 0.07)));
     return safeLines.map((t, i) => {
-      const from = i * slot;
-      // End the last line exactly on `duration` so rounding cannot leave a
+      // End the last line exactly on the span so rounding cannot leave a
       // silent gap of uncaptioned video at the tail.
-      const to = i === safeLines.length - 1 ? total : (i + 1) * slot;
+      const [from, to] = spanFor(i, i * slot, i === safeLines.length - 1 ? span : (i + 1) * slot);
       const enable = `:enable='between(t,${from.toFixed(3)},${to.toFixed(3)})'`;
-      return `drawtext=text='${escapeDrawText(t)}':x=(w-text_w)/2:y=${y}${fontArg(style)}:fontsize=${pacedSize}:fontcolor=${color}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=${BOX_BORDER_W}${enable}`;
+      return `drawtext=text='${escapeDrawText(t)}':x=${pacedFor(i).xExpr}:y=${y}${fontArg(style)}:fontsize=${pacedSize}:fontcolor=${color}${outlineFor(pacedSize)}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=${BOX_BORDER_W}${enable}`;
     }).join(",");
   }
 

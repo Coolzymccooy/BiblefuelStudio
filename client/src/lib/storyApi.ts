@@ -1,6 +1,6 @@
 import { api, TRANSCRIBE_TIMEOUT_MS } from './api';
 import { uploadMedia } from './mediaUpload';
-import type { StoryProject, StoryProjectSummary, StoryScene } from './storyTypes';
+import type { StoryCaptionSettings, StoryProject, StoryProjectSummary, StoryScene } from './storyTypes';
 
 // Generating ~30 images can run for minutes; reuse a generous ceiling.
 const GENERATE_IMAGES_TIMEOUT_MS = 15 * 60_000;
@@ -80,6 +80,13 @@ export const storyApi = {
     const res = await api.patch(`/api/story/${id}/music`, music);
     if (!res.ok || !res.data?.project) throw new Error(res.error || 'Failed to set music');
     return res.data.project as StoryProject;
+  },
+
+  // Caption look and timing. Sent as a patch: the server merges against the
+  // stored project and drops anything outside its catalogues, so a partial
+  // update never clears the settings it does not mention.
+  async setCaptions(id: string, settings: StoryCaptionSettings): Promise<StoryProject> {
+    return unwrapProject(await api.patch(`/api/story/${id}/captions`, settings));
   },
 
   async render(id: string): Promise<StoryProject> {

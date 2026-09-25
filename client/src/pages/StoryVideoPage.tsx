@@ -6,7 +6,7 @@ import { api, DIRECT_UPLOAD_MAX_BYTES } from '../lib/api';
 import { storyApi } from '../lib/storyApi';
 import { longformApi } from '../lib/longformApi';
 import { useStoryProject } from '../hooks/useStoryProject';
-import type { StoryProject } from '../lib/storyTypes';
+import type { StoryCaptionSettings, StoryProject } from '../lib/storyTypes';
 import { YoutubePublishPanel } from '../components/share/YoutubePublishPanel';
 import {
   deriveStep, progressLabel, canRender, imageCounts, isTransientStatus, isStalled, ttsProviderLabel,
@@ -15,6 +15,7 @@ import { StylePicker } from '../components/story/StylePicker';
 import { SceneCard } from '../components/story/SceneCard';
 import { ProjectHistory } from '../components/story/ProjectHistory';
 import { MusicPicker } from '../components/MusicPicker';
+import { StoryCaptionsPanel } from '../components/story/StoryCaptionsPanel';
 import { RenderProgressOverlay } from '../components/RenderProgressOverlay';
 import { MediaTrimmer } from '../components/MediaTrimmer';
 import { DropZone } from '../components/ui/DropZone';
@@ -22,6 +23,7 @@ import { ScreenHeader } from '../components/ui/ScreenHeader';
 import { StoryStepper } from '../components/story/StoryStepper';
 import { CastPicker } from '../components/story/CastPicker';
 import { StoryScenePreview } from '../components/story/StoryScenePreview';
+import { fieldLabelCls, inputCls, primaryBtnCls, secondaryBtnCls, panelCls, statusRowCls, segmentedCls, segmentCls, dropZoneCls } from '../components/story/formStyles';
 import { ScriptForm } from '../components/story/ScriptForm';
 import { LongformForm } from '../components/story/LongformForm';
 import { OutlineEditor } from '../components/story/OutlineEditor';
@@ -179,6 +181,16 @@ export function StoryVideoPage() {
     finally { setBusy(false); }
   };
 
+  // Caption settings are patched one control at a time; the server merges
+  // against the stored project, so nothing else in the project is touched.
+  const onCaptionsChange = async (patch: StoryCaptionSettings) => {
+    if (!projectId) return;
+    try {
+      await storyApi.setCaptions(projectId, patch);
+      refresh();
+    } catch (e) { toast.error((e as Error).message); }
+  };
+
   const onMusicChange = async (next: { path: string | null; volume: number; autoDuck?: boolean }) => {
     if (!projectId) return;
     try {
@@ -288,7 +300,7 @@ export function StoryVideoPage() {
       {/* Actively working (non-render): show what's happening + a way to stop it.
           Rendering has its own progress card with a real % in step 3. */}
       {project && transient && project.status !== 'rendering' && !stalled && (
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary-500/30 bg-primary-500/[0.08] px-4 py-3">
+        <div className={`mt-4 flex flex-wrap items-center justify-between gap-3 ${statusRowCls}`}>
           <span className="flex items-center gap-2 text-sm text-primary-100">
             <Loader2 className="animate-spin text-primary-400" size={16} />
             {progressLabel(project.status)}
@@ -307,7 +319,7 @@ export function StoryVideoPage() {
           <button
             onClick={cancelJob}
             disabled={busy}
-            className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-white/15 px-3 py-1.5 text-sm text-gray-300 hover:border-red-400 hover:text-red-300 disabled:opacity-50"
+            className={`${secondaryBtnCls} shrink-0 px-3 py-1.5 hover:border-bf-danger hover:text-bf-danger`}
           >
             <X size={14} /> Cancel
           </button>
@@ -317,13 +329,13 @@ export function StoryVideoPage() {
       {/* Interrupted (server died mid-run): offer to pick up or rebuild.
           Suppressed while a render is genuinely live (it has its own % card). */}
       {stalled && !renderLive && (
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3">
+        <div className={`mt-4 flex flex-wrap items-center justify-between gap-3 ${panelCls}`}>
           <span className="text-sm text-content-secondary">This project was interrupted. Pick up where it left off.</span>
           <div className="flex shrink-0 flex-wrap gap-2">
             <button
               onClick={resume}
               disabled={busy}
-              className="rounded-lg bg-amber-500 px-3 py-1.5 text-sm font-semibold text-dark-900 hover:bg-amber-400 disabled:opacity-50"
+              className={`${primaryBtnCls} px-3 py-1.5`}
             >
               Resume
             </button>
@@ -332,7 +344,7 @@ export function StoryVideoPage() {
                 onClick={retryFailedImages}
                 disabled={busy}
                 title="Reuse the transcript and scenes — just retry the images that failed."
-                className="rounded-lg border border-white/10 px-3 py-1.5 text-sm text-content-secondary hover:border-amber-300 disabled:opacity-50"
+                className={`${secondaryBtnCls} px-3 py-1.5`}
               >
                 Retry failed images
               </button>
@@ -342,7 +354,7 @@ export function StoryVideoPage() {
                 onClick={resegment}
                 disabled={busy}
                 title="Discard the current scenes and rebuild with fewer, longer scenes — faster, and recovers a render stuck on hundreds of images."
-                className="rounded-lg border border-white/10 px-3 py-1.5 text-sm text-content-secondary hover:border-amber-300 disabled:opacity-50"
+                className={`${secondaryBtnCls} px-3 py-1.5`}
               >
                 Re-segment (fewer scenes)
               </button>
@@ -350,7 +362,7 @@ export function StoryVideoPage() {
             <button
               onClick={cancelJob}
               disabled={busy}
-              className="rounded-lg border border-white/15 px-3 py-1.5 text-sm text-gray-300 hover:border-red-400 hover:text-red-300 disabled:opacity-50"
+              className={`${secondaryBtnCls} px-3 py-1.5 hover:border-bf-danger hover:text-bf-danger`}
             >
               Cancel
             </button>
@@ -362,8 +374,8 @@ export function StoryVideoPage() {
           Cancellation is a user action, not an error, so it gets a calm neutral
           tone rather than alarming red. */}
       {isError && (
-        <div className={`mt-4 rounded-xl border px-4 py-3 ${cancelled ? 'border-white/10 bg-white/[0.03]' : 'border-red-500/30 bg-red-500/10'}`}>
-          <div className={`text-sm ${cancelled ? 'text-gray-300' : 'text-red-300'}`}>
+        <div className={cancelled ? `mt-4 ${panelCls}` : 'mt-4 rounded-2xl border border-bf-danger/40 bg-bf-danger/10 px-4 py-3'}>
+          <div className={`text-sm ${cancelled ? 'text-bf-sub' : 'font-medium text-bf-danger'}`}>
             {cancelled ? 'Cancelled. Pick up where you left off:' : (project?.error || 'Something went wrong.')}
           </div>
           <div className="mt-2 flex flex-wrap gap-2">
@@ -379,11 +391,11 @@ export function StoryVideoPage() {
               </button>
             )}
             {hasTranscript && (
-              <button onClick={resegment} disabled={busy} title="Keep the transcript & audio; rebuild scenes." className="rounded-lg border border-white/15 px-3 py-1.5 text-sm text-gray-200 hover:border-primary-400 disabled:opacity-50">
+              <button onClick={resegment} disabled={busy} title="Keep the transcript & audio; rebuild scenes." className={`${secondaryBtnCls} px-3 py-1.5`}>
                 Re-segment (keep transcript)
               </button>
             )}
-            <button onClick={() => setActive(null)} disabled={busy} className="rounded-lg border border-white/15 px-3 py-1.5 text-sm text-gray-400 hover:text-gray-200 disabled:opacity-50">
+            <button onClick={() => setActive(null)} disabled={busy} className={`${secondaryBtnCls} px-3 py-1.5`}>
               Start over
             </button>
           </div>
@@ -422,29 +434,29 @@ export function StoryVideoPage() {
             />
           )}
           {project?.error && !isError && <ErrorBanner message={project.error} />}
-          <label className="block text-sm text-gray-300">
+          <label className={fieldLabelCls}>
             Title
             <input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="Trusting God in the waiting"
-              className="mt-1 w-full rounded-md border border-white/10 bg-white/[0.03] px-3 py-2 text-white focus:border-primary-400 focus:outline-none"
+              className={inputCls}
             />
           </label>
 
           <div>
-            <div className="text-sm text-gray-300 mb-2">Visual style</div>
+            <div className={fieldLabelCls}>Visual style</div>
             <StylePicker value={style} onChange={setStyle} />
           </div>
 
           {busy ? (
-            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 flex items-center gap-3 text-sm text-gray-300">
+            <div className={`${statusRowCls} flex items-center gap-3 text-sm text-bf-cream`}>
               <Loader2 className="animate-spin text-primary-400" size={18} />
               {project && isTransientStatus(project.status) ? progressLabel(project.status) : 'Working…'}
             </div>
           ) : pendingAudio ? (
-            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
-              <div className="text-sm text-gray-200">Audio uploaded. Trim it, or use the whole thing.</div>
+            <div className={`${panelCls} space-y-3`}>
+              <div className="text-sm font-medium text-bf-cream">Audio uploaded. Trim it, or use the whole thing.</div>
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
@@ -456,14 +468,14 @@ export function StoryVideoPage() {
                 <button
                   type="button"
                   onClick={() => startPipeline(pendingAudio)}
-                  className="rounded-lg border border-white/15 px-3 py-1.5 text-sm text-gray-200 hover:border-primary-400"
+                  className={`${primaryBtnCls} px-3 py-1.5`}
                 >
                   Use full audio
                 </button>
                 <button
                   type="button"
                   onClick={() => setPendingAudio(null)}
-                  className="rounded-lg border border-white/15 px-3 py-1.5 text-sm text-gray-400 hover:text-gray-200"
+                  className={`${secondaryBtnCls} px-3 py-1.5`}
                 >
                   Pick a different file
                 </button>
@@ -479,25 +491,25 @@ export function StoryVideoPage() {
             </div>
           ) : (
             <div className="space-y-3">
-              <div className="inline-flex rounded-lg border border-white/10 p-0.5 text-sm">
+              <div className={segmentedCls} role="tablist" aria-label="How to start">
                 <button
                   type="button"
                   onClick={() => setEntryMode('upload')}
-                  className={`rounded-md px-3 py-1 ${entryMode === 'upload' ? 'bg-white/10 text-white' : 'text-gray-400'}`}
+                  className={segmentCls(entryMode === 'upload')}
                 >
                   Upload audio
                 </button>
                 <button
                   type="button"
                   onClick={() => setEntryMode('script')}
-                  className={`rounded-md px-3 py-1 ${entryMode === 'script' ? 'bg-white/10 text-white' : 'text-gray-400'}`}
+                  className={segmentCls(entryMode === 'script')}
                 >
                   Write a script
                 </button>
                 <button
                   type="button"
                   onClick={() => setEntryMode('longform')}
-                  className={`rounded-md px-3 py-1 ${entryMode === 'longform' ? 'bg-white/10 text-white' : 'text-gray-400'}`}
+                  className={segmentCls(entryMode === 'longform')}
                 >
                   Long-form
                 </button>
@@ -524,7 +536,7 @@ export function StoryVideoPage() {
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-white/20 bg-white/[0.02] px-4 py-8 text-sm text-gray-300 hover:border-primary-400 cursor-pointer"
+                    className={`${dropZoneCls} py-8`}
                   >
                     <Upload size={18} />
                     Upload a sermon (MP3/M4A/MP4)
@@ -571,8 +583,8 @@ export function StoryVideoPage() {
           </div>
 
           {/* Bulk image controls — retry just the failures, or rebuild all. */}
-          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-white/[0.02] p-3">
-            <span className="text-xs text-gray-400">
+          <div className={`flex flex-wrap items-center gap-2 ${panelCls}`}>
+            <span className="text-help">
               Images: {counts.done}/{counts.total} ready
               {counts.total - counts.done > 0 && (
                 <span className="text-red-300/80"> · {counts.total - counts.done} failed</span>
@@ -583,7 +595,7 @@ export function StoryVideoPage() {
                 <button
                   onClick={retryFailedImages}
                   disabled={busy}
-                  className="inline-flex items-center gap-1 rounded-lg border border-white/15 px-3 py-1.5 text-xs text-gray-200 hover:border-primary-400 disabled:opacity-50"
+                  className={`${secondaryBtnCls} px-3 py-1.5 text-xs`}
                 >
                   <RefreshCw size={12} /> Retry failed images
                 </button>
@@ -592,12 +604,17 @@ export function StoryVideoPage() {
                 onClick={regenerateAllImages}
                 disabled={busy}
                 title="Discard every current image and regenerate them all from scratch."
-                className="inline-flex items-center gap-1 rounded-lg border border-white/15 px-3 py-1.5 text-xs text-gray-200 hover:border-primary-400 disabled:opacity-50"
+                className={`${secondaryBtnCls} px-3 py-1.5 text-xs`}
               >
                 <RefreshCw size={12} /> Regenerate all
               </button>
             </div>
           </div>
+          <StoryCaptionsPanel
+            value={project}
+            onChange={onCaptionsChange}
+            busy={busy}
+          />
           <MusicPicker
             value={project.music ?? { path: null, volume: 0.3, autoDuck: true }}
             onChange={onMusicChange}
@@ -613,7 +630,7 @@ export function StoryVideoPage() {
           <button
             onClick={resegment}
             disabled={busy}
-            className="w-full text-center text-xs text-gray-500 hover:text-gray-300 disabled:opacity-50"
+            className="w-full text-center text-meta hover:text-bf-cream disabled:opacity-50"
           >
             Too many scenes, or images stuck? Re-segment with fewer, longer scenes
           </button>
@@ -629,7 +646,7 @@ export function StoryVideoPage() {
                 <button
                   onClick={cancelJob}
                   disabled={busy}
-                  className="inline-flex items-center gap-1 rounded-lg border border-white/15 px-3 py-1.5 text-sm text-gray-300 hover:border-red-400 hover:text-red-300 disabled:opacity-50"
+                  className={`${secondaryBtnCls} px-3 py-1.5 hover:border-bf-danger hover:text-bf-danger`}
                 >
                   <X size={14} /> Cancel render
                 </button>
@@ -668,15 +685,16 @@ function DonePanel({ project }: { project: StoryProject }) {
   const chapters = (project.longform?.sections || []).map((s) => ({ startMs: s.startMs ?? 0, title: s.heading }));
   return (
     <div className="space-y-3">
-      <video src={url} controls className="w-full rounded-xl border border-white/10" />
+      <video src={url} controls className="w-full rounded-2xl border border-[rgba(216,184,120,0.22)] shadow-lg" />
       <button
         onClick={() => api.downloadMedia(base, 'story-video.mp4')}
-        className="inline-flex items-center gap-2 rounded-lg bg-primary-500 px-4 py-2 text-sm font-semibold text-dark-900 hover:bg-primary-400"
+        className={primaryBtnCls}
       >
         <Download size={16} /> Download MP4
       </button>
-      <div className="rounded-xl border border-white/10 p-3">
-        <h3 className="mb-2 text-sm font-medium text-white">Publish to YouTube</h3>
+      <div className={panelCls}>
+        <div className="bf-eyebrow mb-1">Share</div>
+        <h3 className="section-title mb-3">Publish to YouTube</h3>
         <YoutubePublishPanel
           videoUrl={`/outputs/story/${project.projectId}/video.mp4`}
           initial={{ title: project.title, description: project.longform?.summary ?? '' }}

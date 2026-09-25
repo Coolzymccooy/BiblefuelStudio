@@ -19,6 +19,7 @@
 
 // Uses Node 18+ global fetch — same rationale as the Cloudflare/Imagen adapters.
 
+import { toDimensions } from "../dimensions.js";
 const ENDPOINT_BASE = "https://image.pollinations.ai/prompt";
 // On-demand generation behind a free queue can take a while; give each attempt
 // room but keep it short enough that retries fit under the caller's wrapper.
@@ -40,19 +41,6 @@ export function isPollinationsConfigured() {
   return String(process.env.POLLINATIONS_TOKEN || "").trim().length > 0;
 }
 
-/**
- * Map our internal aspect names to concrete pixel dimensions. Kept modest so
- * the free queue returns reasonably fast; the ffmpeg scene graph scales/crops.
- *
- * @param {string} [aspect]
- * @returns {{ width: number, height: number }}
- */
-function toDimensions(aspect) {
-  const a = String(aspect || "").toLowerCase();
-  if (a === "landscape" || a === "16:9") return { width: 1344, height: 768 };
-  if (a === "square" || a === "1:1") return { width: 1024, height: 1024 };
-  return { width: 768, height: 1344 }; // portrait (≈9:16) — the Story default
-}
 
 /**
  * Generate a single image via Pollinations.

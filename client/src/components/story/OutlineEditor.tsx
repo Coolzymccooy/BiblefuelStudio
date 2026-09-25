@@ -6,7 +6,7 @@ import { STORY_VOICES } from '../../lib/storyScript';
 import type { LongformSection, StoryProject } from '../../lib/storyTypes';
 
 interface Props { project: StoryProject; onSaved: (p: StoryProject) => void; onNarrate: (voiceId: string) => void; busy: boolean }
-const inputCls = 'mt-1 w-full rounded-md border border-white/10 bg-white/[0.03] px-3 py-2 text-white focus:border-primary-400 focus:outline-none';
+import { fieldLabelCls, inputCls, panelCls, primaryBtnCls, secondaryBtnCls } from './formStyles';
 
 // A section's `text` is the full spoken narration — scripture (if any) followed
 // by the reflection. When `text` genuinely starts with that scripture, the
@@ -57,31 +57,42 @@ export function OutlineEditor({ project, onSaved, onNarrate, busy }: Props) {
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-gray-400">{sections.length} sections · about {totalMin} min. Scripture is fetched verbatim; edit the reflections freely.</p>
+      <p className="text-help">
+        {sections.length} sections · about {totalMin} min.{' '}
+        {project.longform?.source === 'pasted'
+          ? 'Your words, exactly as written; scripture fetched verbatim. Edit anything before narration.'
+          : 'Scripture is fetched verbatim; edit the reflections freely.'}
+      </p>
       {sections.map((s, i) => {
         const { reflection, hasPrefix } = splitReflection(s);
         return (
-          <div key={i} className="rounded-xl border border-white/10 p-3">
-            <div className="flex items-baseline justify-between">
-              <h4 className="text-sm font-medium text-white">{s.heading}</h4>
-              <span className="text-xs text-gray-500">{Math.round(s.targetSec / 60)} min</span>
+          <div key={i} className={panelCls}>
+            <div className="flex items-baseline justify-between gap-3">
+              <h4 className="section-title">
+                {s.heading}
+                {s.continuation && <span className="ml-2 text-meta font-normal">(continued)</span>}
+              </h4>
+              <span className="text-meta">
+                {s.continuation && s.pauseBeforeMs ? `after a ${Math.round(s.pauseBeforeMs / 1000)} s pause · ` : ''}
+                {s.targetSec >= 60 ? `${Math.round(s.targetSec / 60)} min` : `${s.targetSec} s`}
+              </span>
             </div>
-            {hasPrefix && <blockquote className="mt-1 border-l-2 border-primary-400/60 pl-2 text-sm italic text-gray-300">{s.reference}: {s.verseText}</blockquote>}
+            {hasPrefix && <blockquote className="mt-2 border-l-2 border-bf-goldDeep pl-3 text-sm italic text-bf-sub">{s.reference}: {s.verseText}</blockquote>}
             <textarea value={reflection} onChange={(e) => update(i, e.target.value)} rows={4} className={inputCls} />
           </div>
         );
       })}
       <div className="flex flex-wrap items-end gap-3">
-        <label className="block text-sm text-gray-300">
+        <label className={`${fieldLabelCls} min-w-[12rem]`}>
           Voice
           <select value={voiceId} onChange={(e) => setVoiceId(e.target.value)} className={inputCls}>
             {STORY_VOICES.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
           </select>
         </label>
-        <button type="button" onClick={save} disabled={saving || busy} className="inline-flex items-center gap-2 rounded-md border border-white/15 px-4 py-2 text-sm text-white disabled:opacity-60">
+        <button type="button" onClick={save} disabled={saving || busy} className={secondaryBtnCls}>
           {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} Save outline
         </button>
-        <button type="button" onClick={() => onNarrate(voiceId)} disabled={busy} className="inline-flex items-center gap-2 rounded-md bg-primary-500 px-4 py-2 text-sm font-medium text-black disabled:opacity-60">
+        <button type="button" onClick={() => onNarrate(voiceId)} disabled={busy} className={primaryBtnCls}>
           <Mic size={16} /> Generate narration
         </button>
       </div>

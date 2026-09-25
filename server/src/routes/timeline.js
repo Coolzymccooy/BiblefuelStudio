@@ -157,6 +157,10 @@ async function runTimelineJob(job) {
       outputDir: OUTPUT_DIR,
       outputPath: path.join(OUTPUT_DIR, 'timeline', `${job.jobId}.mp4`),
       typographyPreset: job.typographyPreset || undefined,
+      captionMotion: job.captionMotion || undefined,
+      captionLayout: job.captionLayout || undefined,
+      captionStagger: job.captionStagger || undefined,
+      captionHighlight: job.captionHighlight || undefined,
     });
 
     job.progress = 100;
@@ -247,6 +251,12 @@ router.post('/render', quota('render'), (req, res) => {
       progress: 0,
       plan,
       typographyPreset: typeof req.body?.typographyPreset === 'string' ? req.body.typographyPreset : (project?.renderSettings?.typographyPreset || null),
+      // Caption motion / layout, same catalogue the Studio renderer uses.
+      // Unknown values are dropped by resolveCaptionMotion / resolveLayout.
+      captionMotion: typeof req.body?.captionMotion === 'string' ? req.body.captionMotion : (project?.renderSettings?.captionMotion || null),
+      captionLayout: typeof req.body?.captionLayout === 'string' ? req.body.captionLayout : (project?.renderSettings?.captionLayout || null),
+      captionStagger: req.body?.captionStagger === undefined ? (project?.renderSettings?.captionStagger ?? null) : Boolean(req.body.captionStagger),
+      captionHighlight: req.body?.captionHighlight === undefined ? (project?.renderSettings?.captionHighlight ?? null) : Boolean(req.body.captionHighlight),
       publicUrl: null,
       file: null,
       ignoredPlaceholders: 0,

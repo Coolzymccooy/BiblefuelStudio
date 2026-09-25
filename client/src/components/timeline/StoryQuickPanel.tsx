@@ -1,13 +1,17 @@
 import { useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { Loader2, Upload, X, RefreshCw, ArrowDownToLine } from 'lucide-react';
+import { Loader2, Upload, X, RefreshCw, ArrowDownToLine, Mic, ExternalLink } from 'lucide-react';
 import { storyApi } from '../../lib/storyApi';
+import { longformApi } from '../../lib/longformApi';
+import { STORY_VOICES } from '../../lib/storyScript';
 import { useStoryProject } from '../../hooks/useStoryProject';
 import {
-  deriveStep, progressLabel, imageCounts, isTransientStatus, isStalled, canRender, STORY_STYLES,
+  deriveStep, progressLabel, imageCounts, isTransientStatus, isStalled, canRender, STORY_STYLES, ttsProviderLabel,
 } from '../../lib/storyWizard';
 import { ScriptForm } from '../story/ScriptForm';
+import { LongformForm } from '../story/LongformForm';
+import { LongformErrorActions, isFailedLongformNarration } from '../story/LongformErrorActions';
 import { StoryScenePreview } from '../story/StoryScenePreview';
 import { MusicPicker } from '../MusicPicker';
 import { StoryStepper } from '../story/StoryStepper';
@@ -40,7 +44,7 @@ export function StoryQuickPanel({ onUseVideo, onPreviewVideo }: StoryQuickPanelP
   const [projectId, setProjectId] = useState<string | null>(() => localStorage.getItem(ACTIVE_KEY));
   const [title, setTitle] = useState('');
   const [style, setStyle] = useState('cinematic-bible');
-  const [entryMode, setEntryMode] = useState<'upload' | 'script'>('upload');
+  const [entryMode, setEntryMode] = useState<'upload' | 'script' | 'longform'>('upload');
   const [busy, setBusy] = useState(false);
   // Per-scene regenerate: only the clicked row spins, like the classic page.
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
@@ -170,6 +174,13 @@ export function StoryQuickPanel({ onUseVideo, onPreviewVideo }: StoryQuickPanelP
           >
             Write a script
           </button>
+          <button
+            type="button"
+            onClick={() => setEntryMode('longform')}
+            className={`rounded-md px-3 py-1 ${entryMode === 'longform' ? 'bg-editor-hover text-editor-text' : 'text-editor-faint'}`}
+          >
+            Long-form
+          </button>
         </div>
         {busy ? (
           <div className="flex items-center gap-2 rounded-xl border border-editor-line p-3 text-xs text-editor-dim">
@@ -177,6 +188,17 @@ export function StoryQuickPanel({ onUseVideo, onPreviewVideo }: StoryQuickPanelP
           </div>
         ) : entryMode === 'script' ? (
           <ScriptForm onGenerate={handleGenerateScript} busy={busy} />
+        ) : entryMode === 'longform' ? (
+          // Same drafting flow as the Story page: idea (or voice note) →
+          // outline. The drafted project becomes the shared active project,
+          // so the outline can be reviewed here or on the Story page.
+          <LongformForm
+            onDrafted={(p) => {
+              setActive(p.projectId);
+              qc.invalidateQueries({ queryKey: ['story-project', p.projectId] });
+            }}
+            busy={busy}
+          />
         ) : (
           <DropZone
             onFiles={(files) => { if (files[0]) handlePickFile(files[0]); }}
@@ -297,6 +319,39 @@ export function StoryQuickPanel({ onUseVideo, onPreviewVideo }: StoryQuickPanelP
         </div>
       )}
 
+      {/* Long-form draft: the outline is written and waiting. Section-level
+          editing lives on the Story page; from here you can read the shape of
+          it and start narration with the default voice. */}
+      {project.status === 'draft_script' && (project.longform?.sections?.length ?? 0) > 0 && (
+        <div className="space-y-2 rounded-xl border border-editor-line bg-white/[0.03] p-3">
+          <p className="text-[11px] font-semibold text-editor-text">
+            Outline ready · {project.longform!.sections.length} sections · about {Math.round(project.longform!.sections.reduce((n, sec) => n + (sec.targetSec || 0), 0) / 60)} min
+          </p>
+          <ul className="max-h-28 space-y-0.5 overflow-y-auto pr-1">
+            {project.longform!.sections.map((sec, i) => (
+              <li key={i} className="flex items-baseline gap-2 text-[10px] text-editor-dim">
+                <span className="w-4 shrink-0 font-bold tabular-nums text-editor-accent">{i + 1}</span>
+                <span className="min-w-0 flex-1 truncate">{sec.heading}</span>
+                <span className="shrink-0 font-mono text-editor-faint">{Math.round((sec.targetSec || 0) / 60)}m</span>
+              </li>
+            ))}
+          </ul>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              onClick={act(() => longformApi.narrate(project.projectId, STORY_VOICES[0].id), 'Narrating — it lands here when done')}
+              disabled={busy}
+              className="inline-flex items-center gap-1 rounded-md bg-editor-accent px-2.5 py-1 text-[10px] font-bold text-editor-chrome disabled:opacity-50"
+            >
+              <Mic size={10} /> Generate narration
+            </button>
+            <a href="/app/story" className="inline-flex items-center gap-1 rounded-md border border-editor-line px-2 py-1 text-[10px] text-editor-dim hover:text-editor-text">
+              <ExternalLink size={10} /> Review outline on the Story page
+            </a>
+          </div>
+        </div>
+      )}
+
       {transient && !stalled && (
         <div className="flex items-center justify-between gap-2 rounded-xl border border-editor-line bg-editor-hover px-3 py-2">
           <span className="flex min-w-0 items-center gap-2 text-[11px] text-editor-text">
@@ -304,6 +359,12 @@ export function StoryQuickPanel({ onUseVideo, onPreviewVideo }: StoryQuickPanelP
             <span className="min-w-0 break-words">{progressLabel(project.status)}</span>
             {project.status === 'generating_images' && (
               <span className="shrink-0 font-mono text-editor-dim">{counts.done}/{counts.total}</span>
+            )}
+            {project.status === 'narrating' && project.longform?.progress && (
+              <span className="shrink-0 font-mono text-editor-dim">
+                {project.longform.progress.done}/{project.longform.progress.total}
+                {project.longform.progress.provider && <span className="ml-1 text-editor-faint">via {ttsProviderLabel(project.longform.progress.provider)}</span>}
+              </span>
             )}
           </span>
           <button onClick={act(() => storyApi.cancel(project.projectId), 'Cancelled')} disabled={busy} aria-label="Cancel" className="shrink-0 rounded p-1 text-editor-faint hover:text-red-300">
@@ -323,10 +384,17 @@ export function StoryQuickPanel({ onUseVideo, onPreviewVideo }: StoryQuickPanelP
               : 'Interrupted — pick up where it left off.'}
           </p>
           <div className="flex flex-wrap gap-1.5">
+            {isFailedLongformNarration(project) && (
+              <LongformErrorActions project={project} onChanged={refresh} busy={busy} />
+            )}
+            {!isFailedLongformNarration(project) && (
             <button
               onClick={act(async () => {
                 // Re-drive the pipeline from whatever stage it died in - the
                 // same resume the Story page has.
+                // A long-form narration has no source audio until it finishes;
+                // re-calling narrate resumes from the chunk cache.
+                if (project.status === 'narrating') { await longformApi.narrate(project.projectId); return; }
                 const audioPath = project.source?.audioPath;
                 if (!audioPath) {
                   toast.error('Upload was interrupted — please start again.');
@@ -341,6 +409,7 @@ export function StoryQuickPanel({ onUseVideo, onPreviewVideo }: StoryQuickPanelP
             >
               Resume
             </button>
+            )}
             {project.scenes.length > 0 && (
               <button onClick={act(() => storyApi.generateImages(project.projectId), 'Retrying failed images…')} disabled={busy} className="inline-flex items-center gap-1 rounded-md border border-editor-line px-2 py-1 text-[10px] text-editor-dim hover:text-editor-text disabled:opacity-50">
                 <RefreshCw size={10} /> Retry failed images

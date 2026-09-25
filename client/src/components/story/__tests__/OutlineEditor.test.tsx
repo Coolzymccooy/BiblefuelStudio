@@ -43,6 +43,17 @@ describe('OutlineEditor', () => {
     expect(onNarrate).toHaveBeenCalledWith(expect.any(String));
   });
 
+  it('marks a pasted-script continuation with its pause and does not call it a new chapter', () => {
+    const pasted: any = { ...project, longform: { ...project.longform, source: 'pasted', sections: [
+      { heading: 'Psalm 4', reference: 'Psalm 4:8', verseText: 'I will lay me down.', text: 'Psalm 4:8. I will lay me down.', targetSec: 12 },
+      { heading: 'Psalm 4', reference: null, verseText: '', text: 'Read that again.', targetSec: 8, continuation: true, pauseBeforeMs: 8000 },
+    ] } };
+    render(<OutlineEditor project={pasted} onSaved={() => {}} onNarrate={() => {}} busy={false} />);
+    expect(screen.getByText('(continued)')).toBeInTheDocument();
+    expect(screen.getByText(/after a 8 s pause/)).toBeInTheDocument();
+    expect(screen.getByText(/Your words, exactly as written/)).toBeInTheDocument();
+  });
+
   it('shows text verbatim (no blockquote, no prefix stripped) when it does not start with the verse prefix, and saves the edit with no prefix prepended', async () => {
     const user = userEvent.setup();
     const patch = vi.spyOn(api, 'patch').mockResolvedValue({ ok: true, data: { project: projectMismatchedPrefix } } as any);

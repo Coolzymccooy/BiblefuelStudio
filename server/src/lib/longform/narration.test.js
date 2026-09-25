@@ -9,7 +9,7 @@ import { probeAudioDurationSec } from "../story/storyRender.js";
 import { longformTemplateById } from "./templates.js";
 import { splitForProvider } from "./chunker.js";
 
-function harness({ secondsPerChunk = 2, failOnCall = -1, available = { chatterbox: { available: true } } } = {}) {
+function harness({ secondsPerChunk = 2, failOnCall = -1, available = { azure: { available: true } } } = {}) {
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "narr-"));
   const calls = { synth: [], ffmpeg: [] };
   const deps = {
@@ -45,7 +45,7 @@ describe("narrateSections", () => {
     for (const req of calls.synth) {
       assert.equal(req.voiceId, "v1");
       assert.deepEqual(req.prosody, { rate: "-15%" });
-      assert.equal(req.preferredProvider, "chatterbox");
+      assert.equal(req.preferredProvider, "azure");
     }
     assert.equal(out.audioPath, path.join(workDir, "narration.mp3"));
     // section 1 starts at 0; section 2 starts after section-1 chunks + one 5s pause
@@ -102,6 +102,27 @@ describe("narrateSections", () => {
     assert.ok(out.audioPath);
     // second run re-synthesised only what the first run did not cache
     assert.ok(calls.synth.length < firstRunSynths * 2, "cached chunks were not re-synthesised");
+  });
+  test("honours a section's pauseBeforeMs (a [pause 8] in a pasted script) instead of the template pause", async () => {
+    const { workDir, calls, deps } = harness();
+    const probe = async (p) => { const m = /silence-(\d+)\.mp3$/.exec(path.basename(p)); return m ? Number(m[1]) / 1000 : 2; };
+    const three = [sections[0], { ...sections[1], pauseBeforeMs: 8000, continuation: true }, { heading: "Close", reference: null, verseText: "", text: "Sleep well now.", targetSec: 30 }];
+    const out = await narrateSections({ sections: three, template, voiceId: "v1", workDir }, { ...deps, probeDurationSec: probe });
+    const list = fs.readFileSync(path.join(workDir, "concat.txt"), "utf8");
+    assert.match(list, /silence-8000\.mp3/);
+    assert.match(list, /silence-5000\.mp3/);
+    assert.ok(calls.ffmpeg.some((a) => a.includes("anullsrc=r=44100:cl=mono") && a.includes("8.000")), "an 8 s silence file was generated");
+    assert.equal(out.sections[1].startMs, out.sections[0].endMs + 8000);
+    assert.equal(out.sections[2].startMs, out.sections[1].endMs + 5000);
+  });
+  test("a section with pauseBeforeMs 0 gets no silence at all", async () => {
+    const { workDir, deps } = harness();
+    const probe = async (p) => { const m = /silence-(\d+)\.mp3$/.exec(path.basename(p)); return m ? Number(m[1]) / 1000 : 2; };
+    const two = [sections[0], { ...sections[1], pauseBeforeMs: 0, continuation: true }];
+    const out = await narrateSections({ sections: two, template, voiceId: "v1", workDir }, { ...deps, probeDurationSec: probe });
+    const list = fs.readFileSync(path.join(workDir, "concat.txt"), "utf8");
+    assert.equal(/silence-/.test(list), false, "no silence file was concatenated");
+    assert.equal(out.sections[1].startMs, out.sections[0].endMs, "the second section starts the moment the first ends");
   });
   test("cache key changes with text, voice and rate", () => {
     const a = chunkCacheKey({ provider: "azure", voiceId: "v", rate: "-15%", text: "hi" });
@@ -185,7 +206,7 @@ describe("narrateSections", () => {
     const { workDir, calls, deps } = harness({ available: { elevenlabs: { available: true }, edge: { available: true } } });
     await narrateSections({ sections, template, voiceId: "v1", workDir }, deps);
     assert.ok(calls.synth.length > 0);
-    for (const req of calls.synth) assert.equal(req.preferredProvider, "edge", "chatterbox and azure are skipped (unavailable)");
+    for (const req of calls.synth) assert.equal(req.preferredProvider, "edge", "azure is skipped (unavailable); edge is next in template order");
   });
   test("falls back to the orchestrator's own default when none of the template's providers is configured", async () => {
     const { workDir, calls, deps } = harness({ available: { elevenlabs: { available: true } } });
@@ -194,15 +215,15 @@ describe("narrateSections", () => {
     for (const req of calls.synth) assert.equal("preferredProvider" in req, false, "no preferredProvider: let the orchestrator choose");
   });
   test("tries the next configured template provider when the first one fails", async () => {
-    const { workDir, calls, deps } = harness({ available: { chatterbox: { available: true }, azure: { available: true } } });
+    const { workDir, calls, deps } = harness({ available: { azure: { available: true }, edge: { available: true } } });
     const flaky = async (req) => {
-      if (req.preferredProvider === "chatterbox") throw new Error("chatterbox down");
+      if (req.preferredProvider === "azure") throw new Error("azure down");
       return deps.synthesize(req);
     };
     const out = await narrateSections({ sections, template, voiceId: "v1", workDir }, { ...deps, synthesize: flaky });
     assert.ok(out.audioPath);
     assert.ok(calls.synth.length > 0);
-    assert.ok(calls.synth.every((r) => r.preferredProvider === "azure"), "only azure calls reached the recording synthesize");
+    assert.ok(calls.synth.every((r) => r.preferredProvider === "edge"), "only edge calls reached the recording synthesize");
   });
 
   // M4 — chunks shorter than the orchestrator's 3-char minimum are skipped

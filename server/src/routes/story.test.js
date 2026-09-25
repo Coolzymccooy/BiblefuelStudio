@@ -7,6 +7,8 @@ import storyRouter, {
   _setTranscribeImpl, _resetTranscribeImpl,
   _setImageGenImpl, _resetImageGenImpl,
   _setTtsImpl, _resetTtsImpl,
+  _setRenderImpl, _resetRenderImpl,
+  _setImageLibraryImpl, _resetImageLibraryImpl,
 } from "./story.js";
 import { _setLlmImpl, _resetLlmImpl } from "../lib/story/sceneSegmenter.js";
 import { _setLlmImpl as _setScriptLlmImpl, _resetLlmImpl as _resetScriptLlmImpl } from "../lib/story/scriptRefine.js";
@@ -48,7 +50,8 @@ beforeEach(() => {
   outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "story-route-out-"));
 });
 afterEach(() => {
-  _resetTranscribeImpl(); _resetImageGenImpl(); _resetLlmImpl(); _resetScriptLlmImpl(); _resetTtsImpl();
+  _resetTranscribeImpl(); _resetImageGenImpl(); _resetLlmImpl(); _resetScriptLlmImpl(); _resetTtsImpl(); _resetRenderImpl();
+  _resetImageLibraryImpl();
   fs.rmSync(dataDir, { recursive: true, force: true });
   fs.rmSync(outputDir, { recursive: true, force: true });
 });
@@ -86,6 +89,103 @@ describe("story routes", () => {
     assert.equal(res.payload.ok, true);
     assert.equal(res.payload.project.scenes.length, 2);
     assert.equal(res.payload.project.status, "generating_images");
+  });
+
+  test("a scene reuses a library image instead of generating, and never twice in one video", async () => {
+    const create = mockReqRes({ body: { title: "T", style: "cinematic-bible" }, dataDir, outputDir });
+    await handlerFor("post", "/")(create.req, create.res);
+    const id = create.res.payload.project.projectId;
+    const proj = readProject(dataDir, id);
+    writeProject(dataDir, {
+      ...proj,
+      scenes: [
+        { id: "scene-001", text: "a", startMs: 0, endMs: 8000, imagePrompt: "still waters", imagePath: null, imageStatus: "pending", promptEditedByUser: false },
+        { id: "scene-002", text: "b", startMs: 8000, endMs: 16000, imagePrompt: "still waters at dusk", imagePath: null, imageStatus: "pending", promptEditedByUser: false },
+      ],
+    });
+    const generated = [];
+    _setImageGenImpl(async ({ partNumber }) => { generated.push(partNumber); return { ok: true, path: `/gen-${partNumber}.png`, publicUrl: `/o/gen-${partNumber}.png`, provider: "cloudflare" }; });
+    const claimed = [];
+    _setImageLibraryImpl({
+      // One library image that matches everything: the second scene must not get it.
+      find: async ({ excludeIds }) => (excludeIds.includes("img_a") ? [] : [{ entry: { id: "img_a", path: "/lib/a.png", publicUrl: "/outputs/imageLib/a.png" }, score: 0.91 }]),
+      mark: ({ id: libId }) => claimed.push(libId),
+      register: async () => null,
+    });
+    const { req, res } = mockReqRes({ params: { id }, body: {}, dataDir, outputDir });
+    await handlerFor("post", "/:id/images")(req, res);
+    const after = await waitForProject(dataDir, id, (p) => p.status === "ready_to_render");
+    const fromLibrary = after.scenes.filter((s) => s.imageSource === "library");
+    const fromGen = after.scenes.filter((s) => s.imageSource === "generated");
+    assert.equal(fromLibrary.length, 1, "exactly one scene reused the single library image");
+    assert.equal(fromGen.length, 1, "the other scene had to generate");
+    assert.equal(fromLibrary[0].imageUrl, "/outputs/imageLib/a.png");
+    assert.equal(fromLibrary[0].imagePath, "/lib/a.png");
+    assert.equal(fromLibrary[0].imageReuseScore, 0.91);
+    assert.equal(fromLibrary[0].imageLibraryId, "img_a");
+    assert.deepEqual(claimed, ["img_a"], "the reuse was recorded once");
+    assert.equal(generated.length, 1, "only one scene cost image quota");
+  });
+
+  test("a generated scene is harvested, and a harvest failure still leaves it done", async () => {
+    const create = mockReqRes({ body: { title: "T", style: "cinematic-bible" }, dataDir, outputDir });
+    await handlerFor("post", "/")(create.req, create.res);
+    const id = create.res.payload.project.projectId;
+    const proj = readProject(dataDir, id);
+    writeProject(dataDir, {
+      ...proj,
+      aspect: "landscape",
+      scenes: [{ id: "scene-001", text: "a", startMs: 0, endMs: 8000, imagePrompt: "a candle burning", imagePath: null, imageStatus: "pending", promptEditedByUser: false }],
+    });
+    _setImageGenImpl(async () => ({ ok: true, path: "/gen-1.png", publicUrl: "/o/gen-1.png", provider: "cloudflare" }));
+    const harvested = [];
+    _setImageLibraryImpl({
+      find: async () => [],
+      mark: () => {},
+      register: async (args) => { harvested.push(args); throw new Error("disk full"); },
+    });
+    const { req, res } = mockReqRes({ params: { id }, body: {}, dataDir, outputDir });
+    await handlerFor("post", "/:id/images")(req, res);
+    const after = await waitForProject(dataDir, id, (p) => p.status === "ready_to_render");
+    assert.equal(after.scenes[0].imageStatus, "done", "a harvest failure never fails the scene");
+    assert.equal(after.scenes[0].imageSource, "generated");
+    assert.equal(harvested.length, 1);
+    assert.equal(harvested[0].prompt, "a candle burning");
+    assert.equal(harvested[0].style, "cinematic-bible");
+    assert.equal(harvested[0].aspect, "landscape");
+    assert.equal(harvested[0].provider, "cloudflare");
+  });
+
+  test("PATCH /:id/captions stores the look and motion, ignoring nonsense values", async () => {
+    const create = mockReqRes({ body: { title: "T", style: "cinematic-bible" }, dataDir, outputDir });
+    await handlerFor("post", "/")(create.req, create.res);
+    const id = create.res.payload.project.projectId;
+
+    const { req, res } = mockReqRes({
+      params: { id },
+      body: { captions: "static", captionPreset: "marker", captionMotion: "block", captionLayout: "bottom-left", captionDepth: "soft", captionStagger: true, captionHighlight: true },
+      dataDir, outputDir,
+    });
+    await handlerFor("patch", "/:id/captions")(req, res);
+    assert.equal(res.payload.ok, true);
+    const p1 = res.payload.project;
+    assert.equal(p1.captions, "static");
+    assert.equal(p1.captionPreset, "marker");
+    assert.equal(p1.captionMotion, "block");
+    assert.equal(p1.captionLayout, "bottom-left");
+    assert.equal(p1.captionDepth, "soft");
+    assert.equal(p1.captionStagger, true);
+    assert.equal(p1.captionHighlight, true);
+
+    // A bogus motion/layout is dropped rather than persisted, and fields the
+    // body omits keep their current value.
+    const second = mockReqRes({ params: { id }, body: { captionMotion: "sideways", captionLayout: "diagonal" }, dataDir, outputDir });
+    await handlerFor("patch", "/:id/captions")(second.req, second.res);
+    const p2 = second.res.payload.project;
+    assert.equal(p2.captionMotion, undefined);
+    assert.equal(p2.captionLayout, undefined);
+    assert.equal(p2.captionPreset, "marker", "an omitted field is preserved");
+    assert.equal(p2.captions, "static");
   });
 
   test("images stage is idempotent — already-done scenes are skipped", async () => {
@@ -547,5 +647,32 @@ describe("story routes", () => {
     const bad = mockReqRes({ params: { id }, body: { mediaPath: evil }, dataDir, outputDir });
     await handlerFor("post", "/:id/process")(bad.req, bad.res);
     assert.equal(bad.res.statusCode, 403);
+  });
+
+  test("render re-cuts a long-form project into visual beats when scene.beatSec is set, and leaves other projects alone", async () => {
+    const img = path.join(outputDir, "img.png"); fs.writeFileSync(img, "png");
+    const audio = path.join(outputDir, "voice.mp3"); fs.writeFileSync(audio, "mp3");
+    const mkScene = (i, startMs, endMs) => ({ id: `s${i}`, text: `t${i}`, imagePrompt: "", imagePath: img, imageUrl: "/x.png", imageStatus: "done", startMs, endMs, promptEditedByUser: false });
+    const scenes = [mkScene(1, 0, 150_000), mkScene(2, 150_000, 300_000), mkScene(3, 300_000, 450_000)];
+    const calls = [];
+    _setRenderImpl(async (args) => { calls.push(args); return { ok: true, outputPath: args.outPath }; });
+
+    const lf = createProject(dataDir, { title: "beats", aspect: "landscape", captions: "none", scene: { targetSceneSec: 150, maxScenes: 12, beatSec: 40 } });
+    writeProject(dataDir, { ...lf, status: "ready_to_render", scenes, source: { audioPath: audio, durationMs: 450_000 } });
+    const a = mockReqRes({ params: { id: lf.projectId }, dataDir, outputDir });
+    await handlerFor("post", "/:id/render")(a.req, a.res);
+    assert.equal(a.res.statusCode, 200, JSON.stringify(a.res.payload));
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].scenes.length, 11, "450 s at 40 s beats");
+    assert.equal(calls[0].scenes[calls[0].scenes.length - 1].endMs, 450_000);
+    assert.equal(calls[0].width, 1280);
+    assert.equal(calls[0].captions, "none");
+
+    const plain = createProject(dataDir, { title: "short" });
+    writeProject(dataDir, { ...plain, status: "ready_to_render", scenes, source: { audioPath: audio, durationMs: 450_000 } });
+    const b = mockReqRes({ params: { id: plain.projectId }, dataDir, outputDir });
+    await handlerFor("post", "/:id/render")(b.req, b.res);
+    assert.equal(b.res.statusCode, 200, JSON.stringify(b.res.payload));
+    assert.deepEqual(calls[1].scenes, scenes, "no beatSec: the scenes go through untouched");
   });
 });
