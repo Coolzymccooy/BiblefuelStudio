@@ -17,6 +17,8 @@ interface LibraryDrawerProps {
   onPreview: (t: MusicTrack) => void;
   /** Per-track management controls (licence, credit, remove vocals, forget). */
   renderActions?: (t: MusicTrack) => ReactNode;
+  /** Choose one song (a video with a single music bed) rather than several. */
+  single?: boolean;
 }
 
 const lengthSuffix = (sec: number | null) => (Number(sec) > 0 ? ` · ${formatDuration(sec)}` : '');
@@ -36,7 +38,7 @@ const FOCUSABLE ='button:not([disabled]), input:not([disabled]), [href], [tabind
  * clean; it is modal — focus moves in, Tab stays in, and closing hands focus
  * back to whatever opened it.
  */
-export function LibraryDrawer({ onClose, tracks, exclude, onAdd, playingId, canPreview, onPreview, renderActions }: LibraryDrawerProps) {
+export function LibraryDrawer({ onClose, tracks, exclude, onAdd, playingId, canPreview, onPreview, renderActions, single = false }: LibraryDrawerProps) {
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
   const [query, setQuery] = useState('');
   // null is everything; otherwise one of the kinds below or `mood:<name>`.
@@ -89,6 +91,8 @@ export function LibraryDrawer({ onClose, tracks, exclude, onAdd, playingId, canP
   };
 
   const toggle = (ref: string) => setPicked((prev) => {
+    // One song at a time: picking another replaces the choice.
+    if (single) return prev.has(ref) ? new Set() : new Set([ref]);
     const next = new Set(prev);
     if (next.has(ref)) next.delete(ref); else next.add(ref);
     return next;
@@ -112,7 +116,7 @@ export function LibraryDrawer({ onClose, tracks, exclude, onAdd, playingId, canP
         <div className="flex items-center justify-between border-b border-[rgba(216,184,120,0.18)] px-4 py-3">
           <div>
             <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-bf-gold">Library</div>
-            <div className="font-displaySerif text-xl text-bf-cream">Add music</div>
+            <div className="font-displaySerif text-xl text-bf-cream">{single ? 'Choose a song' : 'Add music'}</div>
           </div>
           <button type="button" onClick={onClose} aria-label="Close" className="rounded p-1 text-bf-muted hover:text-bf-cream"><X size={16} /></button>
         </div>
@@ -135,7 +139,7 @@ export function LibraryDrawer({ onClose, tracks, exclude, onAdd, playingId, canP
               ))}
             </div>
           )}
-          {shown.length > 0 && (
+          {shown.length > 0 && !single && (
             <div className="flex items-center gap-3 text-xs">
               {/* What's on screen, not the whole library: under a filter the
                   operator is choosing from what they can see. */}
@@ -154,7 +158,7 @@ export function LibraryDrawer({ onClose, tracks, exclude, onAdd, playingId, canP
               const playable = canPreview(t);
               return (
                 <li key={t.ref} className={`flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-bf-card2 ${picked.has(t.ref) ? 'bg-bf-card2' : ''}`}>
-                  <input type="checkbox" checked={picked.has(t.ref)} onChange={() => toggle(t.ref)} aria-label={`${t.label}${lengthSuffix(t.durationSec)}`} className="accent-bf-gold" />
+                  <input type={single ? 'radio' : 'checkbox'} name={single ? 'library-song' : undefined} checked={picked.has(t.ref)} onChange={() => toggle(t.ref)} aria-label={`${t.label}${lengthSuffix(t.durationSec)}`} className="accent-bf-gold" />
                   <button
                     type="button"
                     disabled={!playable}
@@ -182,7 +186,7 @@ export function LibraryDrawer({ onClose, tracks, exclude, onAdd, playingId, canP
 
         <div className="flex items-center gap-2 border-t border-[rgba(216,184,120,0.18)] px-4 py-3">
           <button type="button" disabled={count === 0} onClick={add} className="rounded-lg bg-bf-gold px-3 py-1.5 text-xs font-semibold text-bf-bg disabled:cursor-not-allowed disabled:bg-bf-card2 disabled:text-bf-muted disabled:hover:opacity-100">
-            Add {count} {count === 1 ? 'track' : 'tracks'}
+            {single ? 'Use this song' : `Add ${count} ${count === 1 ? 'track' : 'tracks'}`}
           </button>
           <button type="button" onClick={onClose} className="px-2 py-1 text-xs text-bf-muted hover:text-bf-cream">Cancel</button>
         </div>

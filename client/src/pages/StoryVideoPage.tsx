@@ -10,11 +10,14 @@ import { useStoryProject } from '../hooks/useStoryProject';
 import type { StoryCaptionSettings, StoryProject } from '../lib/storyTypes';
 import { YoutubePublishPanel } from '../components/share/YoutubePublishPanel';
 import {
-  deriveStep, progressLabel, canRender, imageCounts, isTransientStatus, isStalled, ttsProviderLabel,
+  deriveStep, progressLabel, canRender, imageCounts, isTransientStatus, isStalled, ttsProviderLabel, STORY_STYLES,
 } from '../lib/storyWizard';
 import { StylePicker } from '../components/story/StylePicker';
 import { SceneCard } from '../components/story/SceneCard';
 import { ProjectHistory } from '../components/story/ProjectHistory';
+import { storyChapters, storyDescription, storyTagline } from '../lib/storyShare';
+import { useMusicLibrary } from '../hooks/useMusicLibrary';
+import { refId } from '../components/music/useLibraryActions';
 import { MusicPicker } from '../components/MusicPicker';
 import { StoryCaptionsPanel } from '../components/story/StoryCaptionsPanel';
 import { RenderProgressOverlay } from '../components/RenderProgressOverlay';
@@ -268,12 +271,22 @@ export function StoryVideoPage() {
   const renderPct = typeof project?.render?.percent === 'number' ? project.render.percent : undefined;
   const renderLive = project?.status === 'rendering' && renderPct !== undefined;
 
+  // The open project's own title, its last word in the gold italic, as Ambient does.
+  const titleWords = String(project?.title || '').trim().split(/\s+/).filter(Boolean);
+  const projectTitle = titleWords.length > 1
+    ? <>{titleWords.slice(0, -1).join(' ')} <em>{titleWords[titleWords.length - 1]}</em></>
+    : <em>{titleWords[0] || 'Untitled'}</em>;
+
   return (
-    <div className="mx-auto max-w-2xl px-4 py-6">
+    // Wide for choosing (history beside the form); a reading column once a
+    // project is open, where scenes and forms read better narrow.
+    <div className={project ? 'mx-auto w-full max-w-3xl px-4 py-6' : 'w-full px-4 py-6'}>
       <ScreenHeader
-        eyebrow="Create"
-        title={<>Verse to <em>cinematic scenes</em>.</>}
-        subtitle={project ? `${project.style} · ${project.title}` : undefined}
+        // Room for the notification bell the shell pins top-right on desktop.
+        className="flex-wrap lg:pr-14"
+        eyebrow={project ? 'Create · Story' : 'Create'}
+        title={project ? projectTitle : <>Verse to <em>cinematic scenes</em>.</>}
+        subtitle={project ? (STORY_STYLES.find((st) => st.id === project.style)?.label ?? project.style) : undefined}
         right={project ? (
           <button onClick={() => setActive(null)} className="text-xs text-content-tertiary hover:text-bf-cream">Start new</button>
         ) : undefined}
@@ -426,7 +439,7 @@ export function StoryVideoPage() {
       )}
 
       {step === 1 && !transient && project?.status !== 'draft_script' && (
-        <div className="mt-6 space-y-4">
+        <div className={project ? 'mt-6' : 'mt-6 grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]'}>
           {!project && (
             <ProjectHistory
               onOpen={(id) => setActive(id)}
@@ -434,6 +447,8 @@ export function StoryVideoPage() {
               onDeleted={() => setActive(null)}
             />
           )}
+          <div className="space-y-4">
+          {!project && <div className="field-label">New story</div>}
           {project?.error && !isError && <ErrorBanner message={project.error} />}
           <label className={fieldLabelCls}>
             Title
@@ -557,6 +572,7 @@ export function StoryVideoPage() {
               )}
             </div>
           )}
+          </div>
         </div>
       )}
 
@@ -617,6 +633,7 @@ export function StoryVideoPage() {
             busy={busy}
           />
           <MusicPicker
+            variant="full"
             value={project.music ?? { path: null, volume: 0.3, autoDuck: true }}
             onChange={onMusicChange}
             busy={busy}
@@ -683,7 +700,11 @@ function DonePanel({ project }: { project: StoryProject }) {
   const thumbnailOptions = (project.scenes || [])
     .filter((s) => s.imageStatus === 'done' && s.imageUrl)
     .map((s, i) => ({ label: `Scene ${i + 1}`, path: s.imageUrl as string }));
-  const chapters = (project.longform?.sections || []).map((s) => ({ startMs: s.startMs ?? 0, title: s.heading }));
+  const chapters = storyChapters(project);
+  // The song's credit, when it's a library track, for the description.
+  const { data: library } = useMusicLibrary();
+  const songId = refId(project.music?.path);
+  const song = songId ? (library || []).find((t) => t.id === songId) : undefined;
   return (
     <div className="space-y-3">
       <video src={url} controls className="w-full rounded-2xl border border-[rgba(216,184,120,0.22)] shadow-lg" />
@@ -698,7 +719,7 @@ function DonePanel({ project }: { project: StoryProject }) {
         <h3 className="section-title mb-3">Publish to YouTube</h3>
         <YoutubePublishPanel
           videoUrl={`/outputs/story/${project.projectId}/video.mp4`}
-          initial={{ title: project.title, description: project.longform?.summary ?? '', thumbnailTitle: true }}
+          initial={{ title: project.title, description: storyDescription(project, song), thumbnailTitle: true, thumbnailTagline: storyTagline(project) }}
           thumbnailOptions={thumbnailOptions}
           chapters={chapters.length >= 3 ? chapters : undefined}
         />
