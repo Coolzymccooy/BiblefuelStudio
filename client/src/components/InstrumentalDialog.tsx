@@ -20,23 +20,43 @@ export interface InstrumentalDialogProps {
  * listen to both versions, then keep the instrumental as a new track (it
  * carries the original's licence and credit) or throw it away.
  */
+// A poll failure is tolerated for this many CONSECUTIVE misses (a blip in the
+// connection, or the server briefly unavailable) before the dialog gives up
+// and shows the error — a success in between resets the count.
+const MAX_CONSECUTIVE_POLL_FAILURES = 3;
+
 export function InstrumentalDialog({ track, onClose, onKept, pollMs = 2000 }: InstrumentalDialogProps) {
   const [quality, setQuality] = useState<InstrumentalQuality>('best');
   const [jobId, setJobId] = useState<string | null>(null);
   const [job, setJob] = useState<InstrumentalJob | null>(null);
   const [saving, setSaving] = useState(false);
+  const [starting, setStarting] = useState(false);
 
   useEffect(() => {
     if (!jobId) return undefined;
     let stopped = false;
+    let failures = 0;
     const tick = async () => {
       try {
         const next = await getInstrumental(jobId);
         if (stopped) return;
+        failures = 0;
         setJob(next);
         if (next.status === 'queued' || next.status === 'running') setTimeout(tick, pollMs);
       } catch (e) {
-        if (!stopped) setJob((j) => (j ? { ...j, status: 'error', error: (e as Error).message } : j));
+        if (stopped) return;
+        failures += 1;
+        if (failures < MAX_CONSECUTIVE_POLL_FAILURES) {
+          setTimeout(tick, pollMs);
+          return;
+        }
+        // Exhausted our tolerance for transient failures. If the first poll
+        // never landed, `job` is still null — without a synthesized error
+        // job the dialog would show "Removing vocals… 0%" forever.
+        const message = (e as Error).message || 'Failed to check vocal removal progress';
+        setJob((j) => (j
+          ? { ...j, status: 'error', error: message }
+          : { jobId, status: 'error', percent: 0, error: message, sourceRef: '', sourcePreview: null, resultFile: null }));
       }
     };
     tick();
@@ -44,11 +64,14 @@ export function InstrumentalDialog({ track, onClose, onKept, pollMs = 2000 }: In
   }, [jobId, pollMs]);
 
   const start = async () => {
+    setStarting(true);
     try {
       setJob(null);
       setJobId(await startInstrumental(track.id, quality));
     } catch (e) {
       toast.error((e as Error).message || 'Failed to start vocal removal');
+    } finally {
+      setStarting(false);
     }
   };
 
@@ -117,7 +140,7 @@ export function InstrumentalDialog({ track, onClose, onKept, pollMs = 2000 }: In
             </label>
           </div>
           <div className="flex gap-2">
-            <button type="button" onClick={start} className={primaryBtnCls}>Remove vocals</button>
+            <button type="button" onClick={start} disabled={starting} className={primaryBtnCls}>Remove vocals</button>
             <button type="button" onClick={onClose} className={secondaryBtnCls}>Close</button>
           </div>
         </>

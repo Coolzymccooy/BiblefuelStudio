@@ -83,6 +83,39 @@ describe('InstrumentalDialog', () => {
     expect(toast.error).toHaveBeenCalledWith('Failed to discard the instrumental');
   });
 
+  it('shows the poll error instead of "Removing vocals… 0%" forever when the first poll never lands', async () => {
+    vi.spyOn(lib, 'startInstrumental').mockResolvedValue('j1');
+    vi.spyOn(lib, 'getInstrumental').mockRejectedValue(new Error('network down'));
+    render(<InstrumentalDialog track={track} onClose={() => {}} onKept={() => {}} pollMs={1} />);
+    fireEvent.click(screen.getByRole('button', { name: /remove vocals/i }));
+    // Tolerates a few transient misses before giving up — must not stall
+    // forever on the generic "0%" text with no way out.
+    await screen.findByText(/network down/, {}, { timeout: 2000 });
+    expect(screen.queryByText(/removing vocals… 0%/i)).toBeNull();
+  });
+
+  it('retries a transient poll failure instead of failing on the first miss', async () => {
+    vi.spyOn(lib, 'startInstrumental').mockResolvedValue('j1');
+    vi.spyOn(lib, 'getInstrumental')
+      .mockRejectedValueOnce(new Error('blip'))
+      .mockResolvedValue(job('running', { percent: 55 }));
+    render(<InstrumentalDialog track={track} onClose={() => {}} onKept={() => {}} pollMs={1} />);
+    fireEvent.click(screen.getByRole('button', { name: /remove vocals/i }));
+    await screen.findByText(/55%/);
+    expect(screen.queryByText(/blip/)).toBeNull();
+  });
+
+  it('disables Remove vocals while startInstrumental is in flight', async () => {
+    let resolveStart: (id: string) => void = () => {};
+    vi.spyOn(lib, 'startInstrumental').mockImplementation(() => new Promise((resolve) => { resolveStart = resolve; }));
+    render(<InstrumentalDialog track={track} onClose={() => {}} onKept={() => {}} pollMs={1} />);
+    const button = screen.getByRole('button', { name: /remove vocals/i });
+    fireEvent.click(button);
+    expect(button).toBeDisabled();
+    resolveStart('j1');
+    await waitFor(() => expect(lib.startInstrumental).toHaveBeenCalled());
+  });
+
   it('shows a toast and still closes when cancel fails', async () => {
     vi.spyOn(lib, 'startInstrumental').mockResolvedValue('j1');
     vi.spyOn(lib, 'getInstrumental').mockResolvedValue(job('running', { percent: 10 }));
