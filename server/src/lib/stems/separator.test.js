@@ -35,7 +35,7 @@ describe("buildSeparatorArgs", () => {
   const input = path.resolve("/music/My Song's \"Best\".mp3");
   const outDir = path.resolve("/work/job 1");
 
-  test("best quality uses the Roformer model and asks only for the instrumental", () => {
+  test("best quality uses the MDX-Net instrumental model and asks only for the instrumental", () => {
     const args = buildSeparatorArgs({ input, outDir, quality: "best" });
     assert.equal(args[0], input);
     assert.equal(args[args.indexOf("--model_filename") + 1], MODELS.best);
@@ -43,9 +43,18 @@ describe("buildSeparatorArgs", () => {
     assert.equal(args[args.indexOf("--output_dir") + 1], outDir);
   });
 
-  test("fast uses the Demucs model; unknown quality is best", () => {
-    assert.equal(buildSeparatorArgs({ input, outDir, quality: "fast" }).includes(MODELS.fast), true);
-    assert.equal(buildSeparatorArgs({ input, outDir, quality: "ultra" }).includes(MODELS.best), true);
+  test("both qualities use a model that writes an Instrumental stem (Demucs does not)", () => {
+    assert.match(MODELS.best, /Inst/);
+    assert.match(MODELS.fast, /Inst/);
+  });
+
+  test("fast lowers the overlap; best keeps the model default; unknown quality is best", () => {
+    const fast = buildSeparatorArgs({ input, outDir, quality: "fast" });
+    assert.equal(fast[fast.indexOf("--mdx_overlap") + 1], "0.1");
+    assert.equal(buildSeparatorArgs({ input, outDir, quality: "best" }).includes("--mdx_overlap"), false);
+    const unknown = buildSeparatorArgs({ input, outDir, quality: "ultra" });
+    assert.equal(unknown.includes(MODELS.best), true);
+    assert.equal(unknown.includes("--mdx_overlap"), false);
   });
 
   test("a path with spaces and quotes stays one argument", () => {
@@ -131,27 +140,44 @@ describe("separatorAvailable", () => {
 describe("removeVocals", () => {
   afterEach(() => { _resetSpawnImpl(); _resetKillGraceMs(); delete process.env.STEMS_CLI; });
 
-  test("separates, converts the instrumental to m4a, reports progress and cleans up", async () => {
-    process.env.STEMS_CLI = "C:\\v\\python.exe";
+  test("decodes the song to WAV first, separates that, converts the instrumental to m4a, reports progress and cleans up", async () => {
+    process.env.STEMS_CLI = "C:\v\python.exe";
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "bf-stems-"));
     const workDir = path.join(root, "work");
+    const input = path.join(root, "song.m4a");
     const outPath = path.join(root, "instrumental-1.m4a");
     const calls = [];
     const progress = [];
     _setSpawnImpl((cmd, args, opts) => {
       calls.push({ cmd, args });
-      if (cmd !== "C:\\v\\python.exe") fs.writeFileSync(args[args.length - 1], "m4a"); // ffmpeg writes outPath
-      else fs.writeFileSync(path.join(workDir, "song_(Instrumental)_model.wav"), "wav");
-      return fakeProc({ stderr: cmd === "C:\\v\\python.exe" ? " 50%|█████ | 5/10" : "" })(cmd, args, opts);
+      if (cmd !== "C:\v\python.exe") fs.writeFileSync(args[args.length - 1], "out"); // ffmpeg writes its last arg
+      else fs.writeFileSync(path.join(workDir, "source_(Instrumental)_model.wav"), "wav");
+      return fakeProc({ stderr: cmd === "C:\v\python.exe" ? " 50%|█████ | 5/10" : "" })(cmd, args, opts);
     });
-    const result = await removeVocals({ input: path.join(root, "song.mp3"), outPath, workDir, quality: "fast", onProgress: (p) => progress.push(p) });
+    const result = await removeVocals({ input, outPath, workDir, quality: "fast", onProgress: (p) => progress.push(p) });
     assert.equal(result, outPath);
     assert.equal(fs.existsSync(outPath), true);
     assert.equal(fs.existsSync(workDir), false, "work files removed");
     assert.deepEqual(progress, [50]);
-    const ff = calls[1];
-    assert.ok(ff.args.includes(path.join(workDir, "song_(Instrumental)_model.wav")));
-    assert.ok(ff.args.includes("aac"));
+    assert.equal(calls.length, 3);
+    const [decode, separate, encode] = calls;
+    // The separator reads through libsndfile, which cannot open m4a/AAC.
+    assert.ok(decode.args.includes(input));
+    assert.equal(decode.args[decode.args.length - 1], path.join(workDir, "source.wav"));
+    assert.equal(separate.cmd, "C:\v\python.exe");
+    assert.equal(separate.args[0], path.join(workDir, "source.wav"));
+    assert.ok(encode.args.includes(path.join(workDir, "source_(Instrumental)_model.wav")));
+    assert.ok(encode.args.includes("aac"));
+  });
+
+  test("a song ffmpeg cannot read fails with a plain message", async () => {
+    process.env.STEMS_CLI = "C:\v\python.exe";
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "bf-stems-"));
+    _setSpawnImpl(fakeProc({ code: 1, stderr: "Invalid data found when processing input" }));
+    await assert.rejects(
+      removeVocals({ input: path.join(root, "s.m4a"), outPath: path.join(root, "o.m4a"), workDir: path.join(root, "w"), quality: "best" }),
+      /could not read this song file.*Invalid data/s,
+    );
   });
 
   test("fails clearly when the separator writes no instrumental", async () => {

@@ -133,10 +133,10 @@ export function InstrumentalDialog({ track, onClose, onKept, pollMs = 2000 }: In
         <>
           <div role="radiogroup" aria-label="Quality" className="flex gap-4 text-sm text-content-secondary">
             <label className="flex items-center gap-1.5">
-              <input type="radio" name="quality" checked={quality === 'best'} onChange={() => setQuality('best')} /> Best quality (slower)
+              <input type="radio" name="quality" checked={quality === 'best'} onChange={() => setQuality('best')} /> Best quality (about the song's length)
             </label>
             <label className="flex items-center gap-1.5">
-              <input type="radio" name="quality" aria-label="Fast" checked={quality === 'fast'} onChange={() => setQuality('fast')} /> Fast
+              <input type="radio" name="quality" aria-label="Fast" checked={quality === 'fast'} onChange={() => setQuality('fast')} /> Fast (a little quicker)
             </label>
           </div>
           <div className="flex gap-2">

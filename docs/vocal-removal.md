@@ -4,10 +4,18 @@
 
 "Make instrumental" in the music library removes the vocals from a track using an AI
 separation model running on this laptop, then saves the result as a new track in the
-library. Two quality options: **Best** uses BS-Roformer
-(`model_bs_roformer_ep_317_sdr_12.9755.ckpt`) — slower, cleaner. **Fast** uses Demucs
-(`htdemucs.yaml`) — quicker, a bit rougher. Neither model is used for anything except
-this one feature.
+library. Both quality options use MDX-Net Inst HQ3 (`UVR-MDX-NET-Inst_HQ_3.onnx`), a
+model trained to output the instrumental directly. **Best** runs it at its default
+overlap; **Fast** passes `--mdx_overlap 0.1` — a little quicker, a little rougher at
+the seams.
+
+The song is first decoded to WAV with ffmpeg: the separator reads audio through
+libsndfile, which cannot open m4a/AAC (it fails with "Format not recognised").
+
+**Models ruled out on this laptop (2026-09-25):** BS-Roformer
+(`model_bs_roformer_ep_317_sdr_12.9755.ckpt`) is cleaner but took 4m38s for a 20 s
+clip on the CPU — about an hour for a 4-minute song. Demucs (`htdemucs.yaml`) has no
+"Instrumental" stem, so `--single_stem Instrumental` writes nothing.
 
 ## One-time setup (Windows)
 
@@ -37,7 +45,7 @@ this one feature.
 
 4. Restart the server so it picks up the new `.env` values.
 
-The first time each model (Best or Fast) is used, `audio-separator` downloads it —
+The first time the model is used, `audio-separator` downloads it (~65 MB) —
 expect a pause on that first run.
 
 **Call the `.exe`, not the module.** `python -m audio_separator.utils.cli` exits 0
@@ -53,11 +61,12 @@ graphics-chip encoder) on this laptop.
 
 | | Time per 4-min song | Peak RAM |
 |---|---|---|
-| Best (BS-Roformer) | not measured yet — first real run pending (estimate: ~3–6 min) | not measured yet — first real run pending (estimate: ~3–6 GB) |
-| Fast (Demucs) | not measured yet — first real run pending (estimate: ~1–3 min) | not measured yet — first real run pending (estimate: ~3–6 GB) |
+| Best (MDX-Net Inst HQ3) | ~3–4 min (measured 16 s separation for a 20 s clip) | not measured yet |
+| Fast (MDX-Net Inst HQ3, overlap 0.1) | ~2.5–3 min (measured 13 s for a 20 s clip) | not measured yet |
 | Graphics-chip encode (h264_amf) | not measured yet — first real run pending | not measured yet — first real run pending |
 
-These rows will be filled in with real numbers after the first live run on this laptop.
+Timings are scaled from a 20 s clip of a real song on the CPU (Ryzen 7 8840HS); a full
+song adds a few seconds of model loading and the AAC encode.
 
 ## What quality to expect
 

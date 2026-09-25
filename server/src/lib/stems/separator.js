@@ -9,10 +9,15 @@ import { spawn } from "child_process";
  * hidden, which is how the deployed server runs. Model names and the module
  * path were confirmed on the operator's laptop (docs/vocal-removal.md).
  */
-export const MODELS = Object.freeze({
-  best: "model_bs_roformer_ep_317_sdr_12.9755.ckpt",
-  fast: "htdemucs.yaml",
-});
+//
+// Measured on the operator's laptop (Ryzen 7 8840HS, CPU only, 20 s clip):
+// BS-Roformer took 4m38s (~14x the song's length — an hour for a 4-minute
+// song) and Demucs with --single_stem Instrumental wrote nothing (it has no
+// "Instrumental" stem). MDX-Net Inst HQ3 took ~16 s, or ~13 s with a lower
+// overlap, so both options use it and Fast trades a little quality for speed.
+const MDX_INST = "UVR-MDX-NET-Inst_HQ_3.onnx";
+export const MODELS = Object.freeze({ best: MDX_INST, fast: MDX_INST });
+const EXTRA_ARGS = Object.freeze({ best: [], fast: ["--mdx_overlap", "0.1"] });
 
 let _spawn = spawn;
 export function _setSpawnImpl(fn) { _spawn = fn; }
@@ -38,13 +43,14 @@ export function buildSeparatorArgs({ input, outDir, quality, modelDir }) {
   if (!path.isAbsolute(String(input || "")) || !path.isAbsolute(String(outDir || ""))) {
     throw new Error("separator paths must be absolute");
   }
-  const model = MODELS[quality] || MODELS.best;
+  const q = MODELS[quality] ? quality : "best";
   const args = [
     input,
-    "--model_filename", model,
+    "--model_filename", MODELS[q],
     "--output_dir", outDir,
     "--output_format", "WAV",
     "--single_stem", "Instrumental",
+    ...EXTRA_ARGS[q],
   ];
   if (modelDir) args.push("--model_file_dir", modelDir);
   return args;
@@ -146,22 +152,31 @@ export async function separatorAvailable({ timeoutMs = 20_000 } = {}) {
 }
 
 /**
- * Separate `input`, keep only the instrumental, and store it as AAC at
- * `outPath`. The WAV working files are removed whatever happens.
+ * Decode `input` to WAV, separate it, keep only the instrumental, and store
+ * it as AAC at `outPath`. The separator reads audio through libsndfile, which
+ * cannot open m4a/AAC (the usual format of a downloaded song), so ffmpeg
+ * decodes first. The WAV working files are removed whatever happens.
  */
 export async function removeVocals({ input, outPath, workDir, quality, onProgress, signal }) {
   const py = stemsCli();
   if (!py) throw new Error("vocal removal is not set up on this machine");
   fs.mkdirSync(workDir, { recursive: true });
   try {
-    const args = buildSeparatorArgs({ input, outDir: workDir, quality, modelDir: process.env.STEMS_MODEL_DIR?.trim() || undefined });
+    const ff = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
+    const source = path.join(workDir, "source.wav");
+    try {
+      await run(ff, ["-y", "-i", input, "-vn", "-ac", "2", "-ar", "44100", source], { signal });
+    } catch (e) {
+      if (signal?.aborted) throw e;
+      throw new Error(`could not read this song file: ${e.message}`);
+    }
+    const args = buildSeparatorArgs({ input: source, outDir: workDir, quality, modelDir: process.env.STEMS_MODEL_DIR?.trim() || undefined });
     await run(py, args, {
       signal,
       onOutput: (s) => { const p = parseProgress(s); if (p !== null) onProgress?.(p); },
     });
     const wav = fs.readdirSync(workDir).find((f) => /instrumental/i.test(f) && /\.wav$/i.test(f));
     if (!wav) throw new Error("the separator finished but wrote no instrumental");
-    const ff = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
     await run(ff, ["-y", "-i", path.join(workDir, wav), "-c:a", "aac", "-b:a", "192k", outPath], { signal });
     return outPath;
   } finally {
