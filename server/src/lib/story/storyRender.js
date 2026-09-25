@@ -1,11 +1,21 @@
 import { spawn } from "child_process";
 import fs from "fs";
 import path from "path";
-import { buildWordDrawtext, escapeDrawText } from "../videoFilters.js";
+import {
+  buildWordDrawtext, buildLineDrawtext, escapeDrawText,
+  resolveCaptionMotion, resolveTypographyPreset,
+} from "../videoFilters.js";
+import { splitPhrases } from "../captions.js";
 import { kenBurnsFilter } from "../kenBurns.js";
 import { kenBurnsVariedFilter, moveForIndex } from "../kenBurnsVaried.js";
 import { buildXfadeChain } from "./sceneTransitions.js";
 import { markRunning, markProgress, markDone, markError, attachProc } from "../renderJobs.js";
+
+// Line captions past this many phrases fall back to the compact lower-third
+// subtitle chain. At ~7 words a phrase this is roughly a 20-minute
+// narration; beyond it, reveal mode’s per-row filters stall ffmpeg the same
+// way per-word captions do on a sermon.
+const MAX_LINE_PHRASES = 400;
 
 /**
  * Per-scene display durations. Scenes are made CONTIGUOUS: scene i shows from
@@ -134,7 +144,77 @@ export function buildSubtitleDrawtext(words, w, h) {
  * Build the FFmpeg argv for an N-scene story video.
  * @returns {{args:string[], totalDurationSec:number}}
  */
-export function buildStoryFfmpegArgs({ scenes, words, audioPath, musicPath, musicVolume, autoDuck, width, height, outPath, audioDurationSec, captions }) {
+/**
+ * Caption filter chain for a story render.
+ *
+ * Story Video used to call buildWordDrawtext with nothing but the words, so
+ * every long-form video came out cinematic-default, centred and word-by-word
+ * no matter what was chosen. It now resolves the same controls the Studio
+ * renderer has: preset, motion, layout, depth, stagger and highlight.
+ *
+ * Motion comes from captionMotion when set; otherwise the project’s own
+ * captions field decides, so "static" finally means something — line
+ * captions — instead of being silently ignored.
+ */
+export function buildStoryCaptions({
+  words, w, h, durationSec, captions, captionPreset, captionMotion,
+  captionLayout, captionDepth, captionStagger, captionHighlight, kineticMaxWords,
+}) {
+  const safeWords = Array.isArray(words) ? words : [];
+  if (safeWords.length === 0) return "";
+  const preset = captionPreset && captionPreset !== "default" ? captionPreset : undefined;
+  const style = resolveTypographyPreset(preset);
+  const requested = captionMotion || (captions === "static" ? "lines" : undefined);
+  const motion = resolveCaptionMotion(requested, { stagger: captionStagger, highlight: captionHighlight }, style);
+
+  if (!motion.useWords) {
+    // Line captions are far cheaper than per-word — a few filters per
+    // phrase rather than two per word — and each phrase carries its own
+    // window, so it appears when it is spoken. Cheaper is not free: reveal
+    // mode wraps every phrase into several rows, so a sermon-length
+    // transcript still reaches four figures of drawtext filters and the
+    // render crawls. Past the cap, take the same compact lower-third
+    // fallback the per-word path takes.
+    const lines = splitPhrases(safeWords, { maxWords: 7, maxChars: 42 });
+    if (lines.length > MAX_LINE_PHRASES) return buildSubtitleDrawtext(safeWords, w, h) || "";
+    return buildLineDrawtext({
+      lines,
+      w,
+      h,
+      preset,
+      duration: durationSec,
+      block: motion.block,
+      reveal: motion.reveal,
+      stagger: motion.stagger,
+      layout: captionLayout,
+      highlightWords: motion.highlight ? safeWords : undefined,
+    }) || "";
+  }
+
+  // Per-word kinetic captions emit ~2 drawtext filters PER WORD, each
+  // evaluated every frame — fine for a short video, but a 27-minute sermon
+  // (~3,800 words) becomes thousands of filters and the render crawls. Past
+  // the cap, fall back to the compact lower-third subtitle chain.
+  const cap = Math.max(0, Number(kineticMaxWords) || 0);
+  if (cap > 0 && safeWords.length > cap) return buildSubtitleDrawtext(safeWords, w, h) || "";
+  return buildWordDrawtext({
+    words: safeWords,
+    w,
+    h,
+    preset,
+    // buildWordDrawtext resolves these itself, falling back to the preset
+    // when they are undefined — the same contract the jobs renderer uses.
+    layout: captionLayout,
+    depth: captionDepth,
+  }) || "";
+}
+
+export function buildStoryFfmpegArgs({
+  scenes, words, audioPath, musicPath, musicVolume, autoDuck, width, height,
+  outPath, audioDurationSec, captions,
+  captionPreset, captionMotion, captionLayout, captionDepth, captionStagger, captionHighlight,
+  kineticMaxWords = Math.max(0, Number(process.env.STORY_KINETIC_MAX_WORDS) || 1500),
+}) {
   if (!scenes.length) throw new Error("story render: no scenes");
   for (const s of scenes) {
     if (!s.imagePath) throw new Error(`story render: scene ${s.id} missing image`);
@@ -152,7 +232,10 @@ export function buildStoryFfmpegArgs({ scenes, words, audioPath, musicPath, musi
   const audioInputIdx = segs.length;
   let musicInputIdx = -1;
   if (musicPath) {
-    args.push("-i", musicPath);
+    // Loop the bed indefinitely: a long-form narration (30-60 min) outlasts
+    // any single track, and without this the music simply stopped after its
+    // first play. amix=duration=first (below) still ends the mix at the voice.
+    args.push("-stream_loop", "-1", "-i", musicPath);
     musicInputIdx = segs.length + 1;
   }
 
@@ -199,10 +282,20 @@ export function buildStoryFfmpegArgs({ scenes, words, audioPath, musicPath, musi
   // keep the full word-by-word kinetic box; longer videos switch to a compact,
   // wrapped, lower-third SUBTITLE (a few hundred filters, renders in minutes,
   // and no edge-clipping).
-  const kineticMaxWords = Math.max(0, Number(process.env.STORY_KINETIC_MAX_WORDS) || 1500);
-  const drawtext = captions === "none"
-    ? ""
-    : (drawWords.length > kineticMaxWords ? buildSubtitleDrawtext(drawWords, width, height) : buildWordDrawtext({ words: drawWords, w: width, h: height }));
+  const drawtext = captions === "none" ? "" : buildStoryCaptions({
+    words: drawWords,
+    w: width,
+    h: height,
+    durationSec: totalDurationSec,
+    captions,
+    captionPreset,
+    captionMotion,
+    captionLayout,
+    captionDepth,
+    captionStagger,
+    captionHighlight,
+    kineticMaxWords,
+  });
   if (drawtext) {
     filterParts.push(`[vcat]${drawtext}[vout]`);
   } else {
@@ -276,11 +369,19 @@ export function toFilterScriptArgs(args, outPath) {
  * Spawn FFmpeg for a story render, wiring progress into the job registry.
  * Resolves with { ok, file } / { ok:false, error }.
  */
-export function runStoryRender({ jobId, scenes, words, audioPath, musicPath, musicVolume, autoDuck, width, height, outPath, audioDurationSec, onProgress, captions }) {
+export function runStoryRender({
+  jobId, scenes, words, audioPath, musicPath, musicVolume, autoDuck, width, height,
+  outPath, audioDurationSec, onProgress, captions,
+  captionPreset, captionMotion, captionLayout, captionDepth, captionStagger, captionHighlight,
+}) {
   return new Promise((resolve) => {
     let built;
     try {
-      built = buildStoryFfmpegArgs({ scenes, words, audioPath, musicPath, musicVolume, autoDuck, width, height, outPath, audioDurationSec, captions });
+      built = buildStoryFfmpegArgs({
+        scenes, words, audioPath, musicPath, musicVolume, autoDuck, width, height,
+        outPath, audioDurationSec, captions,
+        captionPreset, captionMotion, captionLayout, captionDepth, captionStagger, captionHighlight,
+      });
     } catch (err) {
       markError(jobId, err?.message || err);
       return resolve({ ok: false, error: String(err?.message || err) });

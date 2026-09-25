@@ -6,7 +6,10 @@ import { spawn } from 'child_process';
 import { setTimeout as delay } from 'timers/promises';
 import { OUTPUT_DIR } from '../paths.js';
 import { get as getVoiceProvider } from '../voice/index.js';
-import { escapeDrawText, escapeFontPath, fontFileFor, resolveTypographyPreset } from '../videoFilters.js';
+import {
+  escapeDrawText, escapeFontPath, fontFileFor, resolveTypographyPreset,
+  buildLineDrawtext, resolveCaptionMotion,
+} from '../videoFilters.js';
 import { describeRenderCoverage } from './coverage.js';
 import {
   normalizeEffectClip, isSupportedEffect,
@@ -350,31 +353,55 @@ export function buildProofRenderCommand(plan, opts = {}) {
     // standalone pass — a transition needs two streams, not one.
   });
 
-  // Burn captions in the LOOK the operator chose (typography preset), not a
-  // fixed white-on-black box: colour, outline, font, case and scrim come
-  // from the same preset table the captioned-video engine uses. Font size
-  // scales with canvas height so 720p and 1280p stay consistent.
+  // Captions go through the SAME builder as every other renderer, so the
+  // typography preset, caption motion and text layout all behave the way
+  // they do in Studio. This used to be a hand-rolled drawtext pinned to
+  // bottom-centre that honoured the preset and nothing else.
+  //
+  // A caption clip already knows when it starts and how long it runs, so the
+  // lines carry their own windows rather than being paced by an even split.
   if (captions.length > 0) {
     const style = resolveTypographyPreset(opts.typographyPreset);
-    const fontSize = Math.max(18, Math.round(height * Math.max(0.036, Math.min(0.06, style.lineSizeMult ? style.lineSizeMult * 1.5 : 0.045))));
-    const fontFile = fontFileFor(style);
-    const fontArg = fontFile ? `:fontfile='${escapeFontPath(fontFile)}'` : '';
-    const color = style.baseColor || 'white';
-    const borderW = Math.max(2, Math.round(fontSize * (style.borderWidth ? style.borderWidth / 60 : 0.08)));
-    // Readability floor: every line gets at least a soft scrim over footage.
-    const boxOpacity = Math.max(0.25, Number(style.lineBoxOpacity) || 0);
-    const drawtexts = captions.map((clip) => {
+    const motion = resolveCaptionMotion(
+      opts.captionMotion,
+      { stagger: opts.captionStagger, highlight: opts.captionHighlight },
+      style,
+    );
+    const lines = captions.map((clip) => {
       const start = Math.max(0, Number(clip.startSec || 0));
-      const end = Math.max(start + 0.1, start + Number(clip.durationSec || 2));
       const raw = String(clip.text).slice(0, MAX_CAPTION_CHARS);
-      const text = escapeDrawText(style.uppercase ? raw.toUpperCase() : raw);
-      return `drawtext=text='${text}':x=(w-text_w)/2:y=h-(h*0.16)${fontArg}:fontsize=${fontSize}`
-        + `:fontcolor=${color}:borderw=${borderW}:bordercolor=black@0.9`
-        + `:box=1:boxcolor=black@${boxOpacity.toFixed(2)}:boxborderw=${Math.round(fontSize * 0.35)}`
-        + `:enable='between(t,${start},${end})'`;
+      return {
+        text: style.uppercase ? raw.toUpperCase() : raw,
+        start,
+        end: Math.max(start + 0.1, start + Number(clip.durationSec || 2)),
+      };
     });
-    videoParts.push(`${videoLabel}${drawtexts.join(',')}[vtxt]`);
-    videoLabel = '[vtxt]';
+    const drawtext = buildLineDrawtext({
+      lines,
+      w: width,
+      h: height,
+      preset: opts.typographyPreset,
+      duration: lines[lines.length - 1]?.end,
+      block: motion.block,
+      reveal: motion.reveal,
+      stagger: motion.stagger,
+      // Word mode needs per-word timings, which a caption lane does not
+      // carry; it degrades to paced lines rather than drawing nothing.
+      layout: opts.captionLayout,
+      // The look this renderer drew before the shared builder took over:
+      // the lower band, its own size, an outline and a scrim floor. An
+      // explicit text layout still overrides the band.
+      look: {
+        yFrac: 1 - 0.16,
+        sizeMult: Math.max(0.036, Math.min(0.06, style.lineSizeMult ? style.lineSizeMult * 1.5 : 0.045)),
+        minBoxOpacity: 0.25,
+        outline: true,
+      },
+    });
+    if (drawtext) {
+      videoParts.push(`${videoLabel}${drawtext}[vtxt]`);
+      videoLabel = '[vtxt]';
+    }
   }
 
   videoParts.push(`${videoLabel}null[v]`);

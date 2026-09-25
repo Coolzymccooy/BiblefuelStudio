@@ -4,6 +4,7 @@ import path from "path";
 import { v4 as uuid } from "uuid";
 import {
   createProject, readProject, writeProject, listProjects, deleteProject, STORY_STATUS,
+  normaliseCaptionSettings,
 } from "../lib/story/projectStore.js";
 import { segmentScenes } from "../lib/story/sceneSegmenter.js";
 import { runStoryRender, probeAudioDurationSec } from "../lib/story/storyRender.js";
@@ -22,6 +23,8 @@ import { buildImportedTranscript } from "../lib/story/scriptImport.js";
 import { CHARACTER_ANCHORS } from "../lib/story/styleAnchors.js";
 import { confineToDir } from "../lib/confinePath.js";
 import { isNarrationActive } from "../lib/longform/narrationRegistry.js";
+import { expandScenesToBeats } from "../lib/story/visualBeats.js";
+import { findReusableImages, markUsed, registerImage, pruneLibrary } from "../lib/imageGen/imageLibrary.js";
 
 // Mockable seams (mirror routes/transcribe.js).
 let _transcribeFn = transcribeAudio;
@@ -32,9 +35,20 @@ let _imageGenFn = generateBibleImage;
 export function _setImageGenImpl(impl) { _imageGenFn = impl; }
 export function _resetImageGenImpl() { _imageGenFn = generateBibleImage; }
 
+// The image library, as one injectable bundle so route tests can drive reuse
+// without touching disk or the embedding API.
+const REAL_IMAGE_LIB = { find: findReusableImages, mark: markUsed, register: registerImage };
+let _imageLib = REAL_IMAGE_LIB;
+export function _setImageLibraryImpl(impl) { _imageLib = { ...REAL_IMAGE_LIB, ...impl }; }
+export function _resetImageLibraryImpl() { _imageLib = REAL_IMAGE_LIB; }
+
 let _ttsFn = synthesizeEdgeTts;
 export function _setTtsImpl(impl) { _ttsFn = impl; }
 export function _resetTtsImpl() { _ttsFn = synthesizeEdgeTts; }
+
+let _renderFn = runStoryRender;
+export function _setRenderImpl(impl) { _renderFn = impl; }
+export function _resetRenderImpl() { _renderFn = runStoryRender; }
 
 // Confine a user-supplied mediaPath to the caller's own dirs (anti path-traversal).
 function confineMediaPath(ctx, rawMediaPath) {
@@ -188,15 +202,55 @@ async function imagesStage(ctx, projectId, opts = {}) {
   writeProject(ctx.dataDir, { ...project, scenes, status: STORY_STATUS.GENERATING_IMAGES });
 
   const timeoutMs = imageStageTimeoutMs();
+  const style = String(project.style || "");
+  const aspect = imageAspectFor(project);
+  // Library images already spoken for by THIS video. Scenes run concurrently,
+  // so a claim is taken synchronously after the await — two workers must never
+  // land on the same picture.
+  const claimedIds = new Set(scenes.map((s) => s.imageLibraryId).filter(Boolean));
   let cursor = 0;
   const worker = async () => {
     while (cursor < pending.length) {
       if (cancelledProjects.has(projectId)) return; // stop promptly on cancel
       const i = pending[cursor++];
+
+      // 1. Ask the library first — a hit costs no image quota.
+      let reused = null;
+      try {
+        const candidates = await _imageLib.find({ dataDir: ctx.dataDir, prompt: scenes[i].imagePrompt, style, aspect, excludeIds: [...claimedIds] });
+        for (const c of candidates || []) {
+          if (!c?.entry?.id || claimedIds.has(c.entry.id)) continue; // a sibling took it while we awaited
+          claimedIds.add(c.entry.id); // claim synchronously
+          reused = c;
+          break;
+        }
+      } catch (err) {
+        console.warn(`[story] scene ${i + 1} library lookup failed: ${err?.message || err}`);
+      }
+
+      if (reused) {
+        // Usage stats are not worth failing a scene over.
+        try { _imageLib.mark({ dataDir: ctx.dataDir, id: reused.entry.id }); } catch { /* ignore */ }
+        console.log(`[story] scene ${i + 1} reused ${reused.entry.id} (score ${Number(reused.score).toFixed(3)})`);
+        scenes[i] = {
+          ...scenes[i],
+          imagePath: reused.entry.path,
+          imageUrl: reused.entry.publicUrl || null,
+          imageStatus: "done",
+          imageError: null,
+          imageSource: "library",
+          imageLibraryId: reused.entry.id,
+          imageReuseScore: reused.score,
+        };
+        writeProject(ctx.dataDir, { ...project, scenes });
+        continue;
+      }
+
+      // 2. Nothing fit — generate, then harvest the result for next time.
       let result;
       try {
         result = await withTimeout(
-          _imageGenFn({ seriesId: project.projectId, partNumber: i + 1, rawPrompt: scenes[i].imagePrompt, aspect: imageAspectFor(project) }),
+          _imageGenFn({ seriesId: project.projectId, partNumber: i + 1, rawPrompt: scenes[i].imagePrompt, aspect }),
           timeoutMs,
           `image gen for scene ${i + 1} timed out after ${timeoutMs}ms`,
         );
@@ -204,15 +258,38 @@ async function imagesStage(ctx, projectId, opts = {}) {
         console.warn(`[story] scene ${i + 1} image gen failed: ${err?.message || err}`);
         result = { ok: false, error: String(err?.message || err) };
       }
-      scenes[i] = result?.ok
-        ? { ...scenes[i], imagePath: result.path, imageUrl: result.publicUrl || null, imageStatus: "done", imageError: null }
-        : { ...scenes[i], imageStatus: "error", imageError: shortImageError(result?.error) };
+
+      if (result?.ok) {
+        let entry = null;
+        try {
+          entry = await _imageLib.register({ dataDir: ctx.dataDir, outputDir: ctx.outputDir, sourcePath: result.path, prompt: scenes[i].imagePrompt, style, aspect, provider: result.provider, projectId: project.projectId });
+          if (entry?.id) claimedIds.add(entry.id);
+        } catch (err) {
+          // The picture exists; the index is only an optimisation.
+          console.warn(`[story] scene ${i + 1} harvest failed: ${err?.message || err}`);
+        }
+        scenes[i] = {
+          ...scenes[i],
+          imagePath: result.path,
+          imageUrl: result.publicUrl || null,
+          imageStatus: "done",
+          imageError: null,
+          imageSource: "generated",
+          imageLibraryId: entry?.id || null,
+          imageReuseScore: null,
+        };
+      } else {
+        scenes[i] = { ...scenes[i], imageStatus: "error", imageError: shortImageError(result?.error) };
+      }
       writeProject(ctx.dataDir, { ...project, scenes });
     }
   };
 
   const workerCount = Math.min(imageStageConcurrency(), Math.max(1, pending.length));
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
+
+  // Housekeeping: keep the library from growing without bound.
+  try { pruneLibrary({ dataDir: ctx.dataDir }); } catch { /* ignore */ }
 
   if (cancelledProjects.has(projectId)) {
     cancelledProjects.delete(projectId);
@@ -559,9 +636,20 @@ router.post("/:id/scenes/:sid/regenerate", async (req, res) => {
       rawPrompt: scenes[idx].imagePrompt,
       aspect: imageAspectFor(project),
     });
-    scenes[idx] = result?.ok
-      ? { ...scenes[idx], imagePath: result.path, imageUrl: result.publicUrl || null, imageStatus: "done", imageError: null }
-      : { ...scenes[idx], imageStatus: "error", imageError: shortImageError(result?.error) };
+    if (result?.ok) {
+      // Freshly generated, so this is no longer a library reuse — clear the
+      // provenance or the UI keeps calling it "Reused" — and harvest it so
+      // the next project can use it.
+      let entry = null;
+      try {
+        entry = await _imageLib.register({ dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir, sourcePath: result.path, prompt: scenes[idx].imagePrompt, style: String(project.style || ""), aspect: imageAspectFor(project), provider: result.provider, projectId: project.projectId });
+      } catch (err) {
+        console.warn(`[story] regenerate harvest failed: ${err?.message || err}`);
+      }
+      scenes[idx] = { ...scenes[idx], imagePath: result.path, imageUrl: result.publicUrl || null, imageStatus: "done", imageError: null, imageSource: "generated", imageLibraryId: entry?.id || null, imageReuseScore: null };
+    } else {
+      scenes[idx] = { ...scenes[idx], imageStatus: "error", imageError: shortImageError(result?.error) };
+    }
     const updated = writeProject(req.ctx.dataDir, { ...project, scenes });
     // ok=false on the *scene* (not the request) so the client can show the
     // real reason instead of a misleading "regenerated" success.
@@ -593,6 +681,24 @@ router.patch("/:id/scenes/:sid", (req, res) => {
 });
 
 // PATCH /:id/music — set/clear the background music bed
+router.patch("/:id/captions", (req, res) => {
+  try {
+    const project = readProject(req.ctx.dataDir, req.params.id);
+    if (!project) return res.status(404).json({ ok: false, error: "project not found" });
+    const captions = ["none", "static", "kinetic"].includes(req.body?.captions)
+      ? req.body.captions
+      : (project.captions || "kinetic");
+    const updated = writeProject(req.ctx.dataDir, {
+      ...project,
+      captions,
+      ...normaliseCaptionSettings(req.body || {}, project),
+    });
+    return res.json({ ok: true, project: updated });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
 router.patch("/:id/music", (req, res) => {
   try {
     const project = readProject(req.ctx.dataDir, req.params.id);
@@ -652,9 +758,13 @@ router.post("/:id/render", async (req, res) => {
         }
       } catch { /* progress persistence is best-effort */ }
     };
-    runStoryRender({
+    _renderFn({
       jobId: job.jobId,
-      scenes,
+      // Long-form templates set scene.beatSec so a 12-image, 30-minute session
+      // is re-cut into ~40 s beats cycling through the images (each with its
+      // own move + dissolve) instead of one static frame per 2-3 minutes.
+      // Projects without beatSec render their scenes exactly as before.
+      scenes: expandScenesToBeats(scenes, { beatSec: project.scene?.beatSec }),
       words: project.transcript?.words || [],
       audioPath,
       musicPath: resolveLibraryTrack(project.music?.path) || project.music?.path || null,
@@ -670,6 +780,12 @@ router.post("/:id/render", async (req, res) => {
       width,
       height,
       captions: project.captions || "kinetic",
+      captionPreset: project.captionPreset,
+      captionMotion: project.captionMotion,
+      captionLayout: project.captionLayout,
+      captionDepth: project.captionDepth,
+      captionStagger: project.captionStagger,
+      captionHighlight: project.captionHighlight,
       outPath,
       audioDurationSec: audioDurationSec || undefined,
     }).then((r) => {

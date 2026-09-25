@@ -35,7 +35,13 @@ export async function transcribeAudio(audioPath, options = {}) {
   const provider = providers[chosen.id] || providers.openai;
   try {
     const result = await provider.transcribe(audioPath, { ...options, env, selectedProvider: chosen });
-    if (!result?.words?.length) return null;
+    if (!result?.words?.length) {
+      // A local model that yields nothing is as useless as one that threw,
+      // and the caller cannot tell the two apart — both belong on the same
+      // fallback path. Only OpenAI returning nothing is a real empty result.
+      if (chosen.id !== "openai" && providers.openai) throw new Error(`${chosen.id} returned no words`);
+      return null;
+    }
     return {
       provider: chosen.id,
       words: result.words,

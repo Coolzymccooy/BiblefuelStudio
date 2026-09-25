@@ -29,4 +29,8 @@ describe("chaptersFromSections", () => {
   test("maps heading and start", () => {
     assert.deepEqual(chaptersFromSections(sections), [{ startMs: 0, title: "Welcome" }, { startMs: 8000, title: "Psalm 23" }]);
   });
+  test("a continuation section (after a [pause]) does not start a new chapter", () => {
+    const withCont = [...sections, { heading: "Psalm 23", text: "again", startMs: 20000, endMs: 24000, continuation: true }];
+    assert.deepEqual(chaptersFromSections(withCont), [{ startMs: 0, title: "Welcome" }, { startMs: 8000, title: "Psalm 23" }]);
+  });
 });

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Loader2, Sparkles } from 'lucide-react';
 import { STORY_SCRIPT_TEMPLATES, STORY_VOICES } from '../../lib/storyScript';
 import { cleanSpeakableText } from '../../lib/speakableScript';
+import { fieldLabelCls, inputCls, primaryBtnCls, secondaryBtnCls } from './formStyles';
 
 interface ScriptFormProps {
   onGenerate: (idea: string, templateId: string, voiceId: string) => void;
@@ -17,34 +18,34 @@ export function ScriptForm({ onGenerate, busy }: ScriptFormProps) {
 
   return (
     <div className="space-y-3">
-      <label className="block text-sm text-gray-300">
+      <label className={fieldLabelCls}>
         Template
         <select
           value={templateId}
           onChange={(e) => setTemplateId(e.target.value)}
-          className="mt-1 w-full rounded-md border border-white/10 bg-white/[0.03] px-3 py-2 text-white focus:border-primary-400 focus:outline-none"
+          className={inputCls}
         >
           {STORY_SCRIPT_TEMPLATES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
         </select>
       </label>
 
-      <label className="block text-sm text-gray-300">
+      <label className={fieldLabelCls}>
         Your idea (rough is fine)
         <textarea
           value={idea}
           onChange={(e) => setIdea(e.target.value)}
           rows={4}
           placeholder="trusting god when life is hard and dark, hope comes in the morning"
-          className="mt-1 w-full rounded-md border border-white/10 bg-white/[0.03] px-3 py-2 text-white focus:border-primary-400 focus:outline-none"
+          className={inputCls}
         />
       </label>
 
-      <label className="block text-sm text-gray-300">
+      <label className={fieldLabelCls}>
         Voice
         <select
           value={voiceId}
           onChange={(e) => setVoiceId(e.target.value)}
-          className="mt-1 w-full rounded-md border border-white/10 bg-white/[0.03] px-3 py-2 text-white focus:border-primary-400 focus:outline-none"
+          className={inputCls}
         >
           {STORY_VOICES.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
         </select>
@@ -55,7 +56,7 @@ export function ScriptForm({ onGenerate, busy }: ScriptFormProps) {
           type="button"
           disabled={!idea.trim() || busy}
           onClick={formatIdea}
-          className="flex w-full items-center justify-center gap-2 rounded-xl border border-white/15 px-4 py-3 text-sm font-semibold text-gray-200 hover:border-primary-400 disabled:opacity-50 sm:w-auto"
+          className={`${secondaryBtnCls} w-full sm:w-auto`}
         >
           Format for Voiceover
         </button>
@@ -63,7 +64,7 @@ export function ScriptForm({ onGenerate, busy }: ScriptFormProps) {
           type="button"
           disabled={!canGenerate}
           onClick={() => { const next = cleanSpeakableText(idea); setIdea(next); onGenerate(next, templateId, voiceId); }}
-          className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary-500 px-4 py-3 text-sm font-semibold text-dark-900 hover:bg-primary-400 disabled:opacity-50"
+          className={`${primaryBtnCls} w-full sm:flex-1`}
         >
           {busy ? <Loader2 className="animate-spin" size={18} /> : <Sparkles size={18} />}
           {busy ? 'Generating voiceover…' : 'Generate voiceover'}

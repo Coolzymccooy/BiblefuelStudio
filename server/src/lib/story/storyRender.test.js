@@ -78,6 +78,14 @@ describe("storyRender arg building", () => {
       width: 1080, height: 1920, outPath: "/tmp/out.mp4",
     });
     assert.ok(args.includes("/tmp/music.mp3"));
+    // A 3-minute track under a 30-minute narration must loop, not go silent
+    // after its first play. amix=duration=first still ends at the voice.
+    const mi = args.indexOf("/tmp/music.mp3");
+    assert.deepEqual(args.slice(mi - 3, mi), ["-stream_loop", "-1", "-i"], "music input is looped indefinitely");
+    // The voice input must NOT be looped.
+    const vi = args.indexOf("/tmp/voice.mp3");
+    assert.equal(args[vi - 1], "-i");
+    assert.notEqual(args[vi - 2], "-1");
   });
 
   test("output is capped to the audio/scene length via a single OUTPUT -t", () => {

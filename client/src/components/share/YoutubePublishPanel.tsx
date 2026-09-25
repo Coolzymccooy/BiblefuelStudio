@@ -29,7 +29,7 @@ export interface YoutubePublishPanelProps {
   onPublished?: (r: YoutubePublishResult) => void;
 }
 
-const inputCls = 'mt-1 w-full rounded-md border border-white/10 bg-white/[0.03] px-3 py-2 text-white focus:border-primary-400 focus:outline-none';
+import { fieldLabelCls, inputCls, primaryBtnCls } from '../story/formStyles';
 
 export function parseTags(raw: string): string[] {
   return raw.split(',').map((t) => t.trim()).filter(Boolean);
@@ -83,27 +83,27 @@ export function YoutubePublishPanel({ videoUrl, initial, thumbnailOptions = [], 
 
   return (
     <div className="space-y-3">
-      <label className="block text-sm text-gray-300">
+      <label className={fieldLabelCls}>
         Title
         <input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={100} className={inputCls} />
       </label>
-      <label className="block text-sm text-gray-300">
+      <label className={fieldLabelCls}>
         Description
         <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={4} className={inputCls} />
         {chapters && chapters.length > 0 && (
           // Chapters are appended server-side at publish time (see social.js →
           // buildYoutubeDescription), so the user only ever edits the summary.
-          <span className="mt-1 block text-xs text-gray-500">
+          <span className="field-help block font-normal">
             {chapters.length} chapter timestamps will be added below this description when you publish.
           </span>
         )}
       </label>
-      <label className="block text-sm text-gray-300">
+      <label className={fieldLabelCls}>
         Tags (comma separated)
         <input value={tagsRaw} onChange={(e) => setTagsRaw(e.target.value)} className={inputCls} />
       </label>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <label className="block text-sm text-gray-300">
+        <label className={fieldLabelCls}>
           Privacy
           <select value={privacy} onChange={(e) => setPrivacy(e.target.value as YoutubePrivacy)} className={inputCls}>
             <option value="private">Private</option>
@@ -111,25 +111,25 @@ export function YoutubePublishPanel({ videoUrl, initial, thumbnailOptions = [], 
             <option value="public">Public</option>
           </select>
         </label>
-        <label className="block text-sm text-gray-300">
+        <label className={fieldLabelCls}>
           Publish at (optional)
           <input type="datetime-local" value={publishAtLocal} onChange={(e) => setPublishAtLocal(e.target.value)} className={inputCls} />
         </label>
       </div>
       {thumbnailOptions.length > 0 && (
-        <label className="block text-sm text-gray-300">
+        <label className={fieldLabelCls}>
           Thumbnail
           <select value={thumbnailPath} onChange={(e) => setThumbnailPath(e.target.value)} className={inputCls}>
             {thumbnailOptions.map((o) => <option key={o.path} value={o.path}>{o.label}</option>)}
           </select>
         </label>
       )}
-      {fieldError && <p className="text-sm text-red-300">{fieldError}</p>}
+      {fieldError && <p className="text-sm font-medium text-bf-danger">{fieldError}</p>}
       <button
         type="button"
         onClick={publish}
         disabled={busy}
-        className="inline-flex items-center gap-2 rounded-md bg-primary-500 px-4 py-2 text-sm font-medium text-black disabled:opacity-60"
+        className={`${primaryBtnCls} w-full sm:w-auto`}
       >
         {busy ? <Loader2 size={16} className="animate-spin" /> : <Youtube size={16} />}
         Publish to YouTube

@@ -2,6 +2,8 @@ import { Router } from "express";
 import path from "path";
 import { LONGFORM_TEMPLATES, longformTemplateById } from "../lib/longform/templates.js";
 import { planLongformScript } from "../lib/longform/scriptPlanner.js";
+import { parsePastedScript } from "../lib/longform/scriptParser.js";
+import { lookupVerses } from "../lib/bible/scriptureApi.js";
 import { narrateSections } from "../lib/longform/narration.js";
 import { wordsFromSections } from "../lib/longform/sectionTimings.js";
 import { suggestTemplate } from "../lib/longform/suggestTemplate.js";
@@ -58,12 +60,58 @@ function normaliseSections(list) {
     targetSec: Math.max(20, Math.round(Number(s?.targetSec) || 60)),
     ...(Number.isFinite(Number(s?.startMs)) ? { startMs: Number(s.startMs) } : {}),
     ...(Number.isFinite(Number(s?.endMs)) ? { endMs: Number(s.endMs) } : {}),
+    // Pasted-script structure: a continuation shares its chapter and may carry
+    // its own pause. Dropping these on save would turn every [pause] into a
+    // fresh chapter and a default-length gap.
+    ...(s?.continuation ? { continuation: true } : {}),
+    ...(Number.isFinite(Number(s?.pauseBeforeMs)) && Number(s.pauseBeforeMs) >= 0 ? { pauseBeforeMs: Math.round(Number(s.pauseBeforeMs)) } : {}),
   }));
   return out.every((s) => s.text) ? out : null;
 }
 
+// A pasted script is parsed, never planned: the author's words are the words.
+// Verse text is still fetched verbatim by reference. Injectable for tests.
+let _parse = parsePastedScript;
+export function _setParseImpl(fn) { _parse = fn; }
+export function _resetParseImpl() { _parse = parsePastedScript; }
+const SCRIPT_MAX_CHARS = 60_000;
+
+async function verseTextFor(reference, translation) {
+  const r = await lookupVerses(reference, translation);
+  const verses = Array.isArray(r?.verses) ? r.verses : [];
+  return verses.map((v) => String(v.text || "").replace(/\s+/g, " ").trim()).filter(Boolean).join(" ");
+}
+
 router.post("/draft", renderQuota, async (req, res) => {
   try {
+    const script = typeof req.body?.script === "string" ? req.body.script.trim() : "";
+    if (script) {
+      if (script.length > SCRIPT_MAX_CHARS) return res.status(400).json({ ok: false, error: `script is too long (max ${SCRIPT_MAX_CHARS} characters)` });
+      const templateId = String(req.body?.templateId || "").trim() || suggestTemplate(script).templateId;
+      const template = longformTemplateById(templateId);
+      if (!template) return res.status(400).json({ ok: false, error: "template is required (unknown templateId)" });
+      let parsed;
+      try {
+        parsed = await _parse(script, { lookupVerses: (ref) => verseTextFor(ref, req.body?.translation), defaultPauseMs: template.voice.pauseMs });
+      } catch (e) {
+        const message = String(e?.message || e);
+        // A scripture lookup that fell over is our problem, not a bad script:
+        // saying 400 here would read as "your reference is wrong".
+        const upstream = /^scripture lookup failed/.test(message);
+        return res.status(upstream ? 502 : 400).json({ ok: false, error: message });
+      }
+      const created = createProject(req.ctx.dataDir, {
+        title: String(req.body?.title || "").trim() || parsed.title,
+        style: req.body?.style,
+        aspect: "landscape",
+        captions: template.scene.captions,
+        scene: { targetSceneSec: template.scene.targetSceneSec, maxScenes: template.scene.maxScenes, beatSec: template.scene.beatSec },
+        longform: { templateId: template.id, idea: null, summary: parsed.summary, sections: parsed.sections, source: "pasted" },
+      });
+      const project = writeProject(req.ctx.dataDir, { ...created, status: STORY_STATUS.DRAFT_SCRIPT });
+      return res.json({ ok: true, project });
+    }
+
     let idea = String(req.body?.idea || "").trim();
     if (!idea && req.body?.audioPath) {
       // Lexical only — rejects a path that merely names somewhere outside
@@ -91,7 +139,7 @@ router.post("/draft", renderQuota, async (req, res) => {
       style: req.body?.style,
       aspect: "landscape",
       captions: template.scene.captions,
-      scene: { targetSceneSec: template.scene.targetSceneSec, maxScenes: template.scene.maxScenes },
+      scene: { targetSceneSec: template.scene.targetSceneSec, maxScenes: template.scene.maxScenes, beatSec: template.scene.beatSec },
       longform: { templateId: template.id, idea, summary: plan.summary, sections: plan.sections },
     });
     const project = writeProject(req.ctx.dataDir, {

@@ -204,7 +204,8 @@ describe('proofRenderer — multi-track composition', () => {
     const cmd = buildProofRenderCommand(richPlan(), richOpts);
     const filter = cmd.args[cmd.args.indexOf('-filter_complex') + 1];
     assert.match(filter, /drawtext=text='Welcome to the house of God'/);
-    assert.match(filter, /enable='between\(t,1,4\)'/);
+    // The shared line builder writes windows to 3 decimals; same instants.
+    assert.match(filter, /enable='between\(t,1(\.0+)?,4(\.0+)?\)'/);
   });
 
   test('keeps event audio near full when there is no narration', () => {
@@ -292,8 +293,8 @@ describe('captions reach ffmpeg', () => {
     });
     assert.equal(cmd.ok, true);
     const graph = cmd.args.join(' ');
-    assert.match(graph, /drawtext=text='He is worthy'.*enable='between\(t,0,5\)'/);
-    assert.match(graph, /drawtext=text='of all praise'.*enable='between\(t,5,10\)'/);
+    assert.match(graph, /drawtext=text='He is worthy'.*enable='between\(t,0(\.0+)?,5(\.0+)?\)'/);
+    assert.match(graph, /drawtext=text='of all praise'.*enable='between\(t,5(\.0+)?,10(\.0+)?\)'/);
     // Default look still carries a readability scrim.
     assert.match(graph, /box=1:boxcolor=black@0\.\d+/);
 
@@ -307,4 +308,54 @@ describe('captions reach ffmpeg', () => {
     assert.match(glow.args.join(' '), /fontcolor=0xFAE58C/);
     assert.match(glow.args.join(' '), /boxcolor=black@0\.28/);
   });
+});
+
+// Timeline captions used to be a hand-rolled drawtext pinned to bottom-centre
+// that honoured the typography preset and nothing else — no motion, no layout.
+// They now go through the same builder as Studio and Story Video.
+// Routing Timeline captions through the shared builder must not restyle the
+// captions of a project that asked for nothing new. Before the shared
+// builder they drew at h-(h*0.16) with an outline and a scrim floor; the
+// builder's own default is a different band, a bigger size and no outline.
+test('a timeline project that sets no caption option keeps the look it had', () => {
+  const cmd = buildProofRenderCommand(richPlan(), richOpts);
+  assert.equal(cmd.ok, true);
+  const graph = cmd.args.join(' ');
+  const y = Number(/drawtext=[^,]*?:y=(\d+)/.exec(graph)?.[1]);
+  const size = Number(/drawtext=[^,]*?:fontsize=(\d+)/.exec(graph)?.[1]);
+  // 720-high canvas: the historical band is h-(h*0.16) = 605, not 0.74h.
+  assert.ok(y > 580 && y < 630, `captions stayed in the lower band (y=${y})`);
+  assert.ok(size <= 40, `captions kept their size (fontsize=${size})`);
+  assert.match(graph, /:borderw=\d+:bordercolor=/, 'captions kept their outline');
+});
+
+// A preset with no line box (lineBoxOpacity 0) used to be saved by the
+// renderer's own 0.25 scrim floor plus the outline. Through the shared
+// builder it would have drawn bare white text over footage.
+test('a boxless preset still gets a scrim floor on the timeline', () => {
+  const cmd = buildProofRenderCommand(richPlan(), { ...richOpts, typographyPreset: 'headline' });
+  assert.equal(cmd.ok, true);
+  const graph = cmd.args.join(' ');
+  const opacity = Number(/boxcolor=[a-z]+@([\d.]+)/.exec(graph)?.[1]);
+  assert.ok(opacity >= 0.25, `scrim floor held (boxcolor opacity ${opacity})`);
+});
+
+test('timeline captions honour caption motion and text layout', () => {
+  const graphOf = (extra) => {
+    const cmd = buildProofRenderCommand(richPlan(), { ...richOpts, ...extra });
+    assert.equal(cmd.ok, true);
+    return cmd.args.join(' ');
+  };
+
+  const plain = graphOf({});
+  // Default stays in the lower safe band, as it always drew.
+  assert.match(plain, /drawtext/);
+
+  const left = graphOf({ captionLayout: 'bottom-left' });
+  assert.match(left, /x=w\*0\.08/, 'bottom-left moved the captions off centre');
+  assert.notEqual(left, plain);
+
+  const block = graphOf({ captionMotion: 'block' });
+  assert.notEqual(block, plain, 'line-block motion renders differently');
+  assert.doesNotMatch(block, /\[object Object\]/);
 });

@@ -15,6 +15,50 @@ const outlineJson = JSON.stringify({
   ],
 });
 
+describe("section variety (a 12 min session must not say the same thing six times)", () => {
+  const template = longformTemplateById("sleep-30");
+  const outlineWithAngles = JSON.stringify({
+    title: "T", summary: "S",
+    sections: [
+      { heading: "Welcome", reference: null, targetSec: 60, angle: "the door closing on the day" },
+      { heading: "Psalm 23", reference: "Psalm 23:1-4", targetSec: 300, angle: "a shepherd counting his sheep at dusk" },
+      { heading: "Psalm 4", reference: "Psalm 4:8", targetSec: 300, angle: "a lamp left burning in an empty room" },
+    ],
+  });
+
+  test("parseOutline keeps each section's angle", () => {
+    const out = parseOutline(outlineWithAngles);
+    assert.equal(out.sections[1].angle, "a shepherd counting his sheep at dusk");
+    // A model that omits the field must not break the plan.
+    assert.equal(parseOutline(outlineJson).sections[0].angle, "");
+  });
+
+  test("the outline is asked for a distinct angle per section", async () => {
+    const prompts = [];
+    _setLlmImpl(async (p) => { prompts.push(p); return prompts.length === 1 ? outlineWithAngles : "reflection"; });
+    _setVerseLookupImpl(async () => ({ verses: [{ text: "verse" }] }));
+    await planLongformScript({ idea: "rest", template });
+    assert.match(prompts[0], /angle/i, "the outline prompt asks for an angle");
+    assert.match(prompts[0], /no two sections/i, "and forbids two sections sharing one");
+  });
+
+  test("each section is told its own angle and what the other sections already cover", async () => {
+    const prompts = [];
+    _setLlmImpl(async (p) => { prompts.push(p); return prompts.length === 1 ? outlineWithAngles : "reflection"; });
+    _setVerseLookupImpl(async () => ({ verses: [{ text: "verse" }] }));
+    await planLongformScript({ idea: "rest", template });
+    const psalm23 = prompts.slice(1).find((p) => p.includes("Psalm 23"));
+    assert.ok(psalm23, "a prompt was written for the Psalm 23 section");
+    assert.match(psalm23, /a shepherd counting his sheep at dusk/, "it carries its own angle");
+    assert.match(psalm23, /a lamp left burning in an empty room/, "and a sibling's angle to steer away from");
+    assert.match(psalm23, /the door closing on the day/);
+    assert.match(psalm23, /do not/i, "with an explicit do-not-repeat instruction");
+    // The phrases that made the real 12 min session feel like five repeats.
+    assert.match(psalm23, /you are not alone/i);
+    assert.match(psalm23, /in this moment/i);
+  });
+});
+
 describe("parseOutline", () => {
   test("parses JSON, tolerating a ```json fence", () => {
     const out = parseOutline("```json\n" + outlineJson + "\n```");
@@ -29,8 +73,8 @@ describe("parseOutline", () => {
     const raw = JSON.stringify({ title: "T", summary: "", sections: [null, { heading: "Psalm 23", reference: "Psalm 23:1", targetSec: 120 }, "junk", { heading: "Close", targetSec: 60 }] });
     const out = parseOutline(raw);
     assert.equal(out.sections.length, 4);
-    assert.deepEqual(out.sections[0], { heading: "Section", reference: null, targetSec: 60 });
-    assert.deepEqual(out.sections[2], { heading: "Section", reference: null, targetSec: 60 });
+    assert.deepEqual(out.sections[0], { heading: "Section", reference: null, targetSec: 60, angle: "" });
+    assert.deepEqual(out.sections[2], { heading: "Section", reference: null, targetSec: 60, angle: "" });
     assert.equal(out.sections[1].reference, "Psalm 23:1");
   });
   test("still requires the minimum section count when every item is null", () => {

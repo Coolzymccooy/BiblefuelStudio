@@ -22,6 +22,24 @@ describe('LongformForm', () => {
     expect(post).toHaveBeenCalledWith('/api/longform/draft', { idea: 'psalms when I cannot sleep', templateId: 'sleep-60' }, undefined, expect.anything());
     expect(onDrafted).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'p1' }));
   });
+  it('"Paste my script" sends the script verbatim (no idea) and explains the formatting rules', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(api, 'get').mockResolvedValue({ ok: true, data: { templates: [{ id: 'sleep-30', label: 'Sleep 30', kind: 'sleep', targetSec: 1800 }] } } as any);
+    const post = vi.spyOn(api, 'post').mockResolvedValue({ ok: true, data: { project: { projectId: 'p3', status: 'draft_script', longform: { sections: [], source: 'pasted' } } } } as any);
+    const onDrafted = vi.fn();
+    render(<LongformForm onDrafted={onDrafted} busy={false} />);
+    await screen.findByRole('option', { name: 'Sleep 30' });
+    await user.click(screen.getByRole('tab', { name: /paste my script/i }));
+    // The idea box is gone; the rules are visible so the operator knows how headings, references and [pause] behave.
+    expect(screen.queryByLabelText(/what's on your heart/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/\[pause 8\]/)).toBeInTheDocument();
+    expect(screen.getByText(/Psalm 4:8/)).toBeInTheDocument();
+    const box = screen.getByLabelText(/your script/i);
+    await user.type(box, '## Welcome{enter}Settle in.{enter}Psalm 4:8');
+    await user.click(screen.getByRole('button', { name: /preview sections/i }));
+    expect(post).toHaveBeenCalledWith('/api/longform/draft', { script: '## Welcome\nSettle in.\nPsalm 4:8', templateId: 'sleep-30' }, undefined, expect.anything());
+    expect(onDrafted).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'p3' }));
+  });
   it('disables the button until there is an idea', async () => {
     vi.spyOn(api, 'get').mockResolvedValue({ ok: true, data: { templates: [{ id: 'sleep-30', label: 'S', kind: 'sleep', targetSec: 1800 }] } } as any);
     render(<LongformForm onDrafted={() => {}} busy={false} />);

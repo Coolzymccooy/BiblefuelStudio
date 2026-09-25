@@ -3,6 +3,7 @@ import toast from 'react-hot-toast';
 import { RefreshCw } from 'lucide-react';
 import { longformApi } from '../../lib/longformApi';
 import type { StoryProject } from '../../lib/storyTypes';
+import { primaryBtnCls, secondaryBtnCls } from './formStyles';
 
 interface LongformErrorActionsProps {
   project: StoryProject;
@@ -65,7 +66,7 @@ export function LongformErrorActions({ project, onChanged, busy = false }: Longf
         onClick={retry}
         disabled={disabled}
         title="Re-run narration. Chunks already synthesised are reused."
-        className="inline-flex items-center gap-1 rounded-lg bg-primary-500 px-3 py-1.5 text-sm font-semibold text-dark-900 hover:bg-primary-400 disabled:opacity-50"
+        className={`${primaryBtnCls} px-3 py-1.5`}
       >
         <RefreshCw size={13} /> Retry narration
       </button>
@@ -74,7 +75,7 @@ export function LongformErrorActions({ project, onChanged, busy = false }: Longf
         onClick={reopen}
         disabled={disabled}
         title="Go back to the outline to edit sections or pick another voice."
-        className="rounded-lg border border-white/15 px-3 py-1.5 text-sm text-gray-200 hover:border-primary-400 disabled:opacity-50"
+        className={`${secondaryBtnCls} px-3 py-1.5`}
       >
         Back to outline
       </button>
