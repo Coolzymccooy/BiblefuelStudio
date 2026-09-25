@@ -3,6 +3,7 @@ import toast from 'react-hot-toast';
 import { api } from '../../lib/api';
 import { toOutputUrl } from '../../lib/storage';
 import { RenderSharePanel, type PostDestination, type YoutubePrivacy } from '../render/RenderSharePanel';
+import { YoutubePublishPanel } from '../share/YoutubePublishPanel';
 
 /**
  * Self-contained Share Kit: the Render page's share state and wiring
@@ -112,6 +113,15 @@ export function ShareKitPanel({ lines, latestRenderFile }: ShareKitPanelProps) {
     }
   };
 
+  const effectivePath = shareVideoPath || latestRenderFile || '';
+  const captionText = lines.split('\n').filter(Boolean).join('\n');
+  const youtubePanel = effectivePath ? (
+    <YoutubePublishPanel
+      videoUrl={toOutputUrl(effectivePath, api.mediaBaseUrl)}
+      initial={{ title: captionText.split('\n')[0] || '', description: captionText, privacyStatus: youtubePrivacy }}
+    />
+  ) : null;
+
   return (
     <RenderSharePanel
       lines={lines}
@@ -132,6 +142,7 @@ export function ShareKitPanel({ lines, latestRenderFile }: ShareKitPanelProps) {
       onYoutubePrivacyChange={setYoutubePrivacy}
       onShare={handleShare}
       isSharing={isSharing}
+      youtubePanel={youtubePanel}
     />
   );
 }

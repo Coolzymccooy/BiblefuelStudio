@@ -1,6 +1,7 @@
 export type StoryStatus =
   | 'draft' | 'transcribing' | 'segmenting' | 'generating_images'
-  | 'ready_to_render' | 'rendering' | 'done' | 'error';
+  | 'ready_to_render' | 'rendering' | 'done' | 'error'
+  | 'draft_script' | 'narrating';
 
 export type ImageStatus = 'pending' | 'generating' | 'done' | 'error';
 
@@ -20,6 +21,33 @@ export interface StoryScene {
   promptEditedByUser: boolean;
 }
 
+export interface LongformSection {
+  heading: string;
+  reference?: string | null;
+  verseText?: string;
+  text: string;
+  targetSec: number;
+  startMs?: number;
+  endMs?: number;
+}
+
+export interface StoryLongform {
+  templateId: string;
+  idea?: string;
+  summary?: string;
+  sections: LongformSection[];
+  /**
+   * Chunk-level narration heartbeat while status === 'narrating' (server-persisted, best-effort).
+   * `provider` is the TTS provider that actually voiced the chunks, once known.
+   * `alive` is added on the wire by GET /api/story/:id: false ⇒ the server has no
+   * run in flight for this project (it restarted mid-narration) and Resume is the
+   * only way forward.
+   */
+  progress?: { done: number; total: number; provider?: string; alive?: boolean };
+  /** TTS voice the user picked for narration (persisted at narrate time so Resume reuses it). */
+  voiceId?: string | null;
+}
+
 export interface StoryProject {
   projectId: string;
   title: string;
@@ -32,6 +60,9 @@ export interface StoryProject {
   scenes: StoryScene[];
   music: { path: string | null; volume: number; autoDuck?: boolean };
   captionPreset: string;
+  longform?: StoryLongform;
+  aspect?: 'portrait' | 'landscape';
+  captions?: 'none' | 'static' | 'kinetic';
   render: {
     jobId: string | null;
     outputPath: string | null;

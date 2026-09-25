@@ -4,10 +4,12 @@ import toast from 'react-hot-toast';
 import { Upload, Loader2, Download, X, RefreshCw } from 'lucide-react';
 import { api, DIRECT_UPLOAD_MAX_BYTES } from '../lib/api';
 import { storyApi } from '../lib/storyApi';
+import { longformApi } from '../lib/longformApi';
 import { useStoryProject } from '../hooks/useStoryProject';
-// StoryProject type no longer referenced here after removing the inline progress widget.
+import type { StoryProject } from '../lib/storyTypes';
+import { YoutubePublishPanel } from '../components/share/YoutubePublishPanel';
 import {
-  deriveStep, progressLabel, canRender, imageCounts, isTransientStatus, isStalled,
+  deriveStep, progressLabel, canRender, imageCounts, isTransientStatus, isStalled, ttsProviderLabel,
 } from '../lib/storyWizard';
 import { StylePicker } from '../components/story/StylePicker';
 import { SceneCard } from '../components/story/SceneCard';
@@ -21,6 +23,9 @@ import { StoryStepper } from '../components/story/StoryStepper';
 import { CastPicker } from '../components/story/CastPicker';
 import { StoryScenePreview } from '../components/story/StoryScenePreview';
 import { ScriptForm } from '../components/story/ScriptForm';
+import { LongformForm } from '../components/story/LongformForm';
+import { OutlineEditor } from '../components/story/OutlineEditor';
+import { LongformErrorActions, isFailedLongformNarration } from '../components/story/LongformErrorActions';
 import { cleanSpeakableText } from '../lib/speakableScript';
 
 const ACTIVE_KEY = 'BF_STORY_ACTIVE';
@@ -47,7 +52,7 @@ export function StoryVideoPage() {
   const [showTrimmer, setShowTrimmer] = useState(false);
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
   const [defaultTitle, setDefaultTitle] = useState('');
-  const [entryMode, setEntryMode] = useState<'upload' | 'script'>('upload');
+  const [entryMode, setEntryMode] = useState<'upload' | 'script' | 'longform'>('upload');
 
   const { data: project } = useStoryProject(projectId);
   const refresh = () => { if (projectId) qc.invalidateQueries({ queryKey: ['story-project', projectId] }); };
@@ -188,6 +193,17 @@ export function StoryVideoPage() {
     setBusy(true);
     try {
       const p = await storyApi.getProject(projectId);
+      // A long-form project never has source audio until narration finishes —
+      // it's synthesised, not uploaded. Chunks are cached by content hash, so
+      // re-calling narrate resumes from wherever it left off instead of
+      // re-synthesising everything (and instead of the audioPath dead-end
+      // below, which would otherwise always fire for a stalled narration).
+      if (p.status === 'narrating') {
+        await longformApi.narrate(projectId);
+        qc.invalidateQueries({ queryKey: ['story-project', projectId] });
+        toast.success('Resumed');
+        return;
+      }
       const audioPath = p.source?.audioPath;
       if (!audioPath) {
         toast.error('Upload was interrupted — please start again.');
@@ -279,6 +295,14 @@ export function StoryVideoPage() {
             {project.status === 'generating_images' && (
               <span className="text-primary-300/80">{counts.done}/{counts.total}</span>
             )}
+            {project.status === 'narrating' && project.longform?.progress && (
+              <span className="text-primary-300/80">
+                ({project.longform.progress.done}/{project.longform.progress.total})
+                {project.longform.progress.provider && (
+                  <span className="ml-1 text-primary-300/60">via {ttsProviderLabel(project.longform.progress.provider)}</span>
+                )}
+              </span>
+            )}
           </span>
           <button
             onClick={cancelJob}
@@ -343,6 +367,12 @@ export function StoryVideoPage() {
             {cancelled ? 'Cancelled. Pick up where you left off:' : (project?.error || 'Something went wrong.')}
           </div>
           <div className="mt-2 flex flex-wrap gap-2">
+            {/* A long-form project that failed (or was cancelled) during
+                narration has an outline but no transcript yet: offer to retry
+                (cached chunks are reused) or go back to the outline. */}
+            {project && isFailedLongformNarration(project) && (
+              <LongformErrorActions project={project} onChanged={refresh} busy={busy} />
+            )}
             {hasScenes && (
               <button onClick={retryFailedImages} disabled={busy} className="inline-flex items-center gap-1 rounded-lg bg-primary-500 px-3 py-1.5 text-sm font-semibold text-dark-900 hover:bg-primary-400 disabled:opacity-50">
                 <RefreshCw size={13} /> Retry failed images
@@ -360,7 +390,29 @@ export function StoryVideoPage() {
         </div>
       )}
 
-      {step === 1 && !transient && (
+      {project?.status === 'draft_script' && (
+        <div className="mt-6">
+          <OutlineEditor
+            project={project}
+            onSaved={() => refresh()}
+            onNarrate={async (voiceId) => {
+              setBusy(true);
+              try {
+                await longformApi.narrate(project.projectId, voiceId);
+                refresh();
+                toast.success('Narrating on the server — this takes a few minutes');
+              } catch (e) {
+                toast.error((e as Error).message);
+              } finally {
+                setBusy(false);
+              }
+            }}
+            busy={busy}
+          />
+        </div>
+      )}
+
+      {step === 1 && !transient && project?.status !== 'draft_script' && (
         <div className="mt-6 space-y-4">
           {!project && (
             <ProjectHistory
@@ -442,10 +494,25 @@ export function StoryVideoPage() {
                 >
                   Write a script
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setEntryMode('longform')}
+                  className={`rounded-md px-3 py-1 ${entryMode === 'longform' ? 'bg-white/10 text-white' : 'text-gray-400'}`}
+                >
+                  Long-form
+                </button>
               </div>
 
               {entryMode === 'script' ? (
                 <ScriptForm onGenerate={handleGenerateScript} busy={busy} />
+              ) : entryMode === 'longform' ? (
+                <LongformForm
+                  onDrafted={(p) => {
+                    setActive(p.projectId);
+                    qc.invalidateQueries({ queryKey: ['story-project', p.projectId] });
+                  }}
+                  busy={busy}
+                />
               ) : (
                 <DropZone
                   onFiles={(files) => { if (files[0]) handlePickFile(files[0]); }}
@@ -482,7 +549,7 @@ export function StoryVideoPage() {
 
       {step === 2 && project && (
         <div className="mt-6 space-y-4">
-          <StoryScenePreview scenes={project.scenes} />
+          <StoryScenePreview scenes={project.scenes} aspect={project.aspect} />
 
           <div className="flex items-baseline justify-between">
             <div className="font-displaySerif text-[19px] font-semibold text-bf-cream">Scenes</div>
@@ -570,7 +637,7 @@ export function StoryVideoPage() {
             </>
           )}
           {project.status === 'done' && project.render.outputPath && (
-            <DonePanel projectId={project.projectId} />
+            <DonePanel project={project} />
           )}
           {project.status === 'error' && <ErrorBanner message={project.error || 'Render failed'} />}
         </div>
@@ -587,14 +654,18 @@ function ErrorBanner({ message }: { message: string }) {
   );
 }
 
-function DonePanel({ projectId }: { projectId: string }) {
+function DonePanel({ project }: { project: StoryProject }) {
   // Render output is deterministic: outputs/story/<projectId>/video.mp4.
   // projectId is a uuid (untouched by the server's path sanitiser). Token is
   // appended because <video> can't send an Authorization header and the
   // server's requireAuth accepts ?token= (see api.ts). Harmless if public.
   const token = api.getToken();
-  const base = `${api.mediaBaseUrl}/outputs/story/${projectId}/video.mp4`;
+  const base = `${api.mediaBaseUrl}/outputs/story/${project.projectId}/video.mp4`;
   const url = token ? `${base}?token=${encodeURIComponent(token)}` : base;
+  const thumbnailOptions = (project.scenes || [])
+    .filter((s) => s.imageStatus === 'done' && s.imageUrl)
+    .map((s, i) => ({ label: `Scene ${i + 1}`, path: s.imageUrl as string }));
+  const chapters = (project.longform?.sections || []).map((s) => ({ startMs: s.startMs ?? 0, title: s.heading }));
   return (
     <div className="space-y-3">
       <video src={url} controls className="w-full rounded-xl border border-white/10" />
@@ -604,6 +675,15 @@ function DonePanel({ projectId }: { projectId: string }) {
       >
         <Download size={16} /> Download MP4
       </button>
+      <div className="rounded-xl border border-white/10 p-3">
+        <h3 className="mb-2 text-sm font-medium text-white">Publish to YouTube</h3>
+        <YoutubePublishPanel
+          videoUrl={`/outputs/story/${project.projectId}/video.mp4`}
+          initial={{ title: project.title, description: project.longform?.summary ?? '' }}
+          thumbnailOptions={thumbnailOptions}
+          chapters={chapters.length >= 3 ? chapters : undefined}
+        />
+      </div>
     </div>
   );
 }

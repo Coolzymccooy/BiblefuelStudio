@@ -20,16 +20,19 @@ const MAX_SCENES = Math.max(8, Number(process.env.STORY_MAX_SCENES) || 60);
  * @param {Array<{text:string,startMs:number,endMs:number}>} args.words
  * @param {string} args.style
  * @param {number} [args.targetSec=8]
+ * @param {number} [args.maxScenes] optional per-call override for the scene cap;
+ *   a finite number >= 1 widens (or narrows) the env-derived MAX_SCENES ceiling.
  * @returns {Promise<Array<object>>} scene objects
  */
-export async function segmentScenes({ words, style, targetSec = TARGET_SEC_DEFAULT, cast = [] }) {
+export async function segmentScenes({ words, style, targetSec = TARGET_SEC_DEFAULT, cast = [], maxScenes }) {
   if (!Array.isArray(words) || words.length === 0) return [];
+  const cap = Number.isFinite(Number(maxScenes)) && Number(maxScenes) >= 1 ? Math.round(Number(maxScenes)) : MAX_SCENES;
   const baseTargetSec = Number(targetSec) > 0 ? Number(targetSec) : TARGET_SEC_DEFAULT;
-  // Widen scenes for long audio so the count never exceeds MAX_SCENES. The
+  // Widen scenes for long audio so the count never exceeds cap. The
   // effective target is whichever is LONGER: the requested per-scene length, or
-  // the length needed to fit the whole recording into MAX_SCENES scenes.
+  // the length needed to fit the whole recording into `cap` scenes.
   const totalSec = Math.max(0, (words[words.length - 1].endMs - words[0].startMs) / 1000);
-  const minSecForCap = totalSec > 0 ? totalSec / MAX_SCENES : baseTargetSec;
+  const minSecForCap = totalSec > 0 ? totalSec / cap : baseTargetSec;
   const effectiveTargetSec = Math.max(baseTargetSec, minSecForCap);
   const anchor = anchorFor(style);
 
@@ -45,7 +48,7 @@ export async function segmentScenes({ words, style, targetSec = TARGET_SEC_DEFAU
   // over-segments (ignoring the widened target), fall back to bounded
   // duration windows so we never blow past MAX_SCENES.
   const ranges =
-    llmScenes && llmScenes.length > 0 && llmScenes.length <= MAX_SCENES
+    llmScenes && llmScenes.length > 0 && llmScenes.length <= cap
       ? llmScenes.map((s) => ({
           text: String(s.text || "").trim(),
           start: clampIndex(s.startWordIndex, words.length),

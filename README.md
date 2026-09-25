@@ -88,6 +88,10 @@ v7 adds a simple timeline editor in the dashboard: add clips, reorder, optional 
 - Timeline: visual join strips between clips (DAW feel), per-clip Pan and Gate override, and auto-select after split.
 
 
+## Story Video — Long-form (YouTube)
+Write a **Story Video** and switch to the **Long-form** tab. Write an outline, review it, generate narration — the sleep templates prefer Chatterbox → Azure → Edge in that order (whichever is configured; with none of those set up, the voice orchestrator's own default is used) — then render to 16:9 landscape (1280×720). Publish to YouTube directly from the output panel: upload with a thumbnail, description, and optional chapter markers. Use `publishAt` to schedule the video private until your chosen time. Landscape render dimensions are configured via `STORY_RENDER_LANDSCAPE_WIDTH=1280` and `STORY_RENDER_LANDSCAPE_HEIGHT=720` in .env.
+
+
 ## Remote internet access (Auth + Jobs + PWA)
 1) Set env vars: ADMIN_SETUP_KEY, JWT_SECRET, CORS_ORIGIN (your domain), FFMPEG_PATH/FFPROBE_PATH.
 2) Start server.
