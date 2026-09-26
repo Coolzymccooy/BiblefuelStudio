@@ -29,7 +29,7 @@ export function makeWorkerApi({ baseUrl, token, fetchImpl = fetch }) {
     if (!res.ok) {
       let detail = "";
       try { detail = (await res.json())?.error || ""; } catch { /* not JSON */ }
-      throw new Error(`${method} ${route} → ${res.status}${detail ? ` (${detail})` : ""}`);
+      throw Object.assign(new Error(`${method} ${route} → ${res.status}${detail ? ` (${detail})` : ""}`), { status: res.status });
     }
     return res;
   };
@@ -47,6 +47,28 @@ export function makeWorkerApi({ baseUrl, token, fetchImpl = fetch }) {
   };
 }
 
+// Waits between upload attempts. The separation took minutes; one dropped
+// connection on the way back must not throw it away.
+const UPLOAD_RETRY_DELAYS = [5_000, 15_000, 30_000, 60_000];
+
+// Worth another try: no answer at all (a dropped connection), a 5xx from the
+// server or the proxy in front of it, or "too many requests". A 4xx is the
+// server's considered answer and is not retried.
+const retryable = (e) => !e?.status || e.status >= 500 || e.status === 429;
+
+async function uploadWithRetry(api, jobId, file, delays, log) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await api.upload(jobId, file);
+      return;
+    } catch (e) {
+      if (attempt >= delays.length || !retryable(e)) throw e;
+      log(`upload failed (${e.message}); trying again in ${Math.round(delays[attempt] / 1000)}s`);
+      await new Promise((r) => setTimeout(r, delays[attempt]));
+    }
+  }
+}
+
 /** Wait before the next try after `failures` network errors in a row. */
 export function nextDelay(failures) {
   return Math.min(60_000, 5_000 * 2 ** Math.max(0, failures));
@@ -56,7 +78,9 @@ export function nextDelay(failures) {
  * Claim and finish at most one job. Resolves "idle", "done", "failed" or
  * "cancelled"; throws only when the server cannot be reached.
  */
-export async function workOnce({ api, remove, tmpRoot, progressEveryMs = 3_000, log = () => {} }) {
+export async function workOnce({
+  api, remove, tmpRoot, progressEveryMs = 3_000, log = () => {}, retryDelays = UPLOAD_RETRY_DELAYS,
+}) {
   const job = await api.claim();
   if (!job) return "idle";
   log(`job ${job.jobId}: ${job.sourceName} (${job.quality})`);
@@ -95,7 +119,7 @@ export async function workOnce({ api, remove, tmpRoot, progressEveryMs = 3_000, 
       },
     });
     if (controller.signal.aborted) return "cancelled";
-    await api.upload(job.jobId, outPath);
+    await uploadWithRetry(api, job.jobId, outPath, retryDelays, log);
     log(`job ${job.jobId}: done`);
     return "done";
   } catch (e) {

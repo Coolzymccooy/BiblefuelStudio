@@ -176,4 +176,16 @@ describe("stems worker API", () => {
     assert.equal(r.status, 500);
     assert.doesNotMatch(r.body.error, /[\/]/);
   });
+
+  test("a repeated upload for a job already saved is accepted, not added twice", async () => {
+    queueOne();
+    await request(app()).post("/api/stems-worker/claim").set(auth);
+    const first = await request(app()).post("/api/stems-worker/jobs/job-1/result").set(auth).set("Content-Type", "audio/mp4").send(M4A);
+    assert.equal(first.status, 200);
+    // The reply to the first was lost on the way back; the laptop tries again.
+    const again = await request(app()).post("/api/stems-worker/jobs/job-1/result").set(auth).set("Content-Type", "audio/mp4").send(M4A);
+    assert.equal(again.status, 200);
+    assert.equal(again.body.already, true);
+    assert.equal(readMusicLibrary(dir).items.length, 1);
+  });
 });

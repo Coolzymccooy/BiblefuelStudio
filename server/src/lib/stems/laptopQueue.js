@@ -171,6 +171,12 @@ export function claimNext(now = Date.now()) {
   return next;
 }
 
+/** A laptop job by id, whatever its state (the worker has no user to scope by). */
+export function laptopJob(jobId) {
+  const job = listStemJobs().find((j) => j.jobId === String(jobId));
+  return job && isLaptop(job) ? job : null;
+}
+
 /** A job the laptop holds right now, or null (not claimed, lapsed, or cancelled). */
 export function heldJob(jobId, now = Date.now()) {
   const job = listStemJobs().find((j) => j.jobId === String(jobId));

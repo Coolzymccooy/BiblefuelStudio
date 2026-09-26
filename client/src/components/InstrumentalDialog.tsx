@@ -5,7 +5,11 @@ import {
   startInstrumental, getInstrumental, cancelInstrumental, discardInstrumental,
   type InstrumentalJob, type InstrumentalQuality, type MusicTrack,
 } from '../lib/musicLibraryApi';
-import { panelCls, primaryBtnCls, secondaryBtnCls } from './story/formStyles';
+import { primaryBtnCls, secondaryBtnCls } from './story/formStyles';
+
+// Solid, not the page's translucent card: it opens over a busy track list,
+// and the rows behind must not show through the words.
+const dialogCls = 'space-y-3 rounded-2xl border border-[rgba(216,184,120,0.3)] bg-bf-bg p-5 shadow-2xl';
 
 export interface InstrumentalDialogProps {
   track: MusicTrack;
@@ -135,8 +139,8 @@ export function InstrumentalDialog({ track, onClose, onSaved, onUse, pollMs = 20
   const originalSrc = job?.sourcePreview?.startsWith('/music/') ? job.sourcePreview : api.mediaUrl(job?.sourcePreview);
 
   return (
-    <div role="dialog" aria-label={`Remove vocals from ${track.label}`} className={`${panelCls} space-y-3`}>
-      <div className="font-medium text-white">Remove vocals — {track.label}</div>
+    <div role="dialog" aria-label={`Remove vocals from ${track.label}`} className={dialogCls}>
+      <div className="font-displaySerif text-lg leading-snug text-bf-cream">Remove vocals — {track.label}</div>
       <p className="text-xs text-content-secondary">
         The instrumental is saved to your library as a new track and keeps the original's licence and credit. Removing vocals does not clear a song for YouTube.
       </p>
@@ -169,7 +173,7 @@ export function InstrumentalDialog({ track, onClose, onSaved, onUse, pollMs = 20
       )}
 
       {job?.status === 'error' && (
-        <div className="space-y-2 text-sm text-red-300">
+        <div className="space-y-2 text-sm text-bf-danger">
           <div>{job.error}</div>
           <button type="button" onClick={onClose} className={secondaryBtnCls}>Close</button>
         </div>

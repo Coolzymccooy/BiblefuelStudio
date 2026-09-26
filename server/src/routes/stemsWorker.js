@@ -4,7 +4,7 @@ import fs from "fs";
 import path from "path";
 import { probeAudioDurationSec } from "../lib/story/storyRender.js";
 import {
-  laptopQueueEnabled, claimNext, heldJob, reportProgress, failLaptopJob, persistLaptopQueue,
+  laptopQueueEnabled, claimNext, heldJob, laptopJob, reportProgress, failLaptopJob, persistLaptopQueue,
 } from "../lib/stems/laptopQueue.js";
 import { updateStemJob } from "../lib/stems/stemJobs.js";
 import { saveInstrumental } from "./music.js";
@@ -90,6 +90,9 @@ router.post(
     // laptop should hear "cancelled", not "no such job".
     const job = heldJob(req.params.jobId);
     if (!job) {
+      // Saved already: the reply to an earlier upload was lost and the laptop
+      // is retrying. Say so, rather than make it report a failure.
+      if (laptopJob(req.params.jobId)?.status === "done") return res.json({ ok: true, already: true });
       return res.status(409).json({ ok: false, error: "that job was cancelled or has lapsed" });
     }
     // One result per job: a retry landing while the first is still being
