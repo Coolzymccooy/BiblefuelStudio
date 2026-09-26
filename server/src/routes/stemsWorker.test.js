@@ -162,7 +162,13 @@ describe("stems worker API", () => {
     const first = request(app()).post("/api/stems-worker/jobs/job-1/result").set(auth).set("Content-Type", "audio/mp4").send(M4A).then((r) => r);
     await new Promise((r) => setTimeout(r, 50));
     const second = await request(app()).post("/api/stems-worker/jobs/job-1/result").set(auth).set("Content-Type", "audio/mp4").send(M4A);
-    assert.equal(second.status, 409);
+    // "Still saving the first one" is a come-back-shortly, so the laptop retries
+    // (and then hears "already saved") instead of giving the job up.
+    assert.equal(second.status, 503);
+    assert.equal(second.headers["retry-after"], "5");
+    const failDuring = await request(app()).post("/api/stems-worker/jobs/job-1/fail").set(auth).send({ error: "gave up" });
+    assert.equal(failDuring.status, 200);
+    assert.notEqual(getStemJob("job-1", "u1").status, "error", "a failure report cannot undo a save in progress");
     release();
     assert.equal((await first).status, 200);
     assert.equal(readMusicLibrary(dir).items.length, 1);

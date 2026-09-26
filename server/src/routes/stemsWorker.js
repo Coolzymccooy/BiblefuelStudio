@@ -75,6 +75,8 @@ router.post("/jobs/:jobId/progress", (req, res) => {
 router.post("/jobs/:jobId/fail", (req, res) => {
   const job = held(req, res);
   if (!job) return undefined;
+  // A result for it is being saved right now; that outcome wins.
+  if (job.finalizing) return res.json({ ok: true, ignored: true });
   failLaptopJob(job, req.body?.error);
   return res.json({ ok: true });
 });
@@ -97,7 +99,13 @@ router.post(
     }
     // One result per job: a retry landing while the first is still being
     // checked must not write the file twice or add a second library track.
-    if (job.finalizing) return res.status(409).json({ ok: false, error: "a result for this job is already being saved" });
+    // It is a "come back shortly" (503 + Retry-After), not a refusal: the
+    // laptop retries and then hears "already saved", instead of giving up a
+    // finished separation because the first upload's reply was lost.
+    if (job.finalizing) {
+      res.set("Retry-After", "5");
+      return res.status(503).json({ ok: false, error: "a result for this job is already being saved" });
+    }
     const body = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
     if (!looksLikeM4a(body)) {
       return res.status(400).json({ ok: false, error: "the result is not an M4A audio file" });
