@@ -9,7 +9,7 @@ import type { AmbientProject, AmbientPublished } from '../../lib/ambientTypes';
 import { RenderProgressOverlay } from '../RenderProgressOverlay';
 import { formatLength, renderEstimateMinutes } from '../../lib/ambientLength';
 import { panelCls, primaryBtnCls, secondaryBtnCls } from '../story/formStyles';
-import { YoutubePublishPanel, type YoutubePrivacy, type YoutubePublishResult } from '../share/YoutubePublishPanel';
+import { YoutubePublishPanel, type YoutubePublishResult } from '../share/YoutubePublishPanel';
 import { publishedLabel } from '../../lib/ambientHistory';
 import { ambientChapters, ambientDescription, ambientTagline, ambientThumbnails } from '../../lib/ambientShare';
 

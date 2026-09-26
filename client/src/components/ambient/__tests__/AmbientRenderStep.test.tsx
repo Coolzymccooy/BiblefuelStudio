@@ -4,7 +4,6 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as youtubePublish from '../../../lib/youtubePublish';
-import { api } from '../../../lib/api';
 import { ambientApi } from '../../../lib/ambientApi';
 import * as libraryApi from '../../../lib/musicLibraryApi';
 import { AmbientRenderStep } from '../AmbientRenderStep';
