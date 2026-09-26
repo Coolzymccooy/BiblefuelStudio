@@ -59,23 +59,42 @@ function writeLibrary(dataDir, lib) {
  * which case callers fall back to keyword categories. 512 dimensions keeps the
  * index small (~2.7 KB per entry) at no meaningful accuracy cost here.
  */
-async function defaultEmbed(text) {
+const EMBED_TIMEOUT_MS = 8000;
+async function defaultEmbed(text, { fetchImpl = fetch, timeoutMs = EMBED_TIMEOUT_MS } = {}) {
   const key = String(process.env.OPENAI_API_KEY || "").trim();
   if (!key) return null;
+  // Bounded: the image stage awaits this outside the per-image timeout, so an
+  // embeddings call that never answered held the stage and its worker forever.
+  // Past the bound it gives up like a missing key: keyword matching instead.
+  const controller = new AbortController();
+  let timer;
+  const gaveUp = new Promise((resolve) => {
+    timer = setTimeout(() => { controller.abort(); resolve(null); }, timeoutMs);
+  });
+  const call = (async () => {
+    try {
+      const resp = await fetchImpl("https://api.openai.com/v1/embeddings", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+        body: JSON.stringify({ model: "text-embedding-3-small", input: String(text || "").slice(0, 8000), dimensions: 512 }),
+        signal: controller.signal,
+      });
+      if (!resp.ok) return null;
+      const json = await resp.json();
+      const vec = json?.data?.[0]?.embedding;
+      return Array.isArray(vec) ? vec : null;
+    } catch {
+      return null;
+    }
+  })();
   try {
-    const resp = await fetch("https://api.openai.com/v1/embeddings", {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
-      body: JSON.stringify({ model: "text-embedding-3-small", input: String(text || "").slice(0, 8000), dimensions: 512 }),
-    });
-    if (!resp.ok) return null;
-    const json = await resp.json();
-    const vec = json?.data?.[0]?.embedding;
-    return Array.isArray(vec) ? vec : null;
-  } catch {
-    return null;
+    return await Promise.race([call, gaveUp]);
+  } finally {
+    clearTimeout(timer);
   }
 }
+/** Test seam: the real embedding call, with its fetch and bound injectable. */
+export const _defaultEmbed = defaultEmbed;
 
 let _embed = defaultEmbed;
 export function _setEmbedImpl(fn) { _embed = fn; }

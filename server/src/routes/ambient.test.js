@@ -1477,3 +1477,75 @@ describe("renderStage — AMF encode falls back to CPU", () => {
     clearCancelled(p.projectId);
   });
 });
+
+describe("quota is charged only for work that will run", () => {
+  // Five refused renders used to spend the free plan's five for the day.
+  const recordCharges = () => {
+    const charged = [];
+    _setQuotaImpl((bucket) => (_req, _res, next) => { charged.push(bucket); next(); });
+    return charged;
+  };
+
+  test("a render refused for missing pictures costs nothing", async () => {
+    const p = await createSession();
+    const charged = recordCharges();
+    const res = await request(app).post(`/api/ambient/${p.projectId}/render`).send({});
+    assert.equal(res.status, 400);
+    assert.deepEqual(charged, []);
+  });
+
+  test("voicing with nothing to voice costs nothing", async () => {
+    const p = await createSession();
+    const charged = recordCharges();
+    const res = await request(app).post(`/api/ambient/${p.projectId}/voice`).send({});
+    assert.equal(res.status, 400);
+    assert.deepEqual(charged, []);
+  });
+
+  test("pictures for a movement that isn't there cost nothing", async () => {
+    const p = await createSession();
+    const charged = recordCharges();
+    const res = await request(app).post(`/api/ambient/${p.projectId}/images`).send({ movementId: "nope" });
+    assert.equal(res.status, 404);
+    assert.deepEqual(charged, []);
+  });
+
+  test("an unknown session costs nothing", async () => {
+    const charged = recordCharges();
+    for (const step of ["voice", "images", "render", "plan"]) {
+      await request(app).post(`/api/ambient/missing/${step}`).send({});
+    }
+    assert.deepEqual(charged, []);
+  });
+
+  test("suggesting verses asks the model, so it is charged to the scripts bucket", async () => {
+    const p = await createSession();
+    const charged = recordCharges();
+    const res = await request(app).post(`/api/ambient/${p.projectId}/plan`).send({ count: 2 });
+    assert.equal(res.status, 200);
+    assert.deepEqual(charged, ["scripts"]);
+  });
+
+  test("an exhausted scripts bucket stops the model call", async () => {
+    const p = await createSession();
+    let asked = 0;
+    _setPlanImpl(async () => { asked += 1; return ["Psalms 23:1"]; });
+    _setQuotaImpl(() => (_req, res) => res.status(429).json({ ok: false, error: "quota" }));
+    const res = await request(app).post(`/api/ambient/${p.projectId}/plan`).send({ count: 1 });
+    assert.equal(res.status, 429);
+    assert.equal(asked, 0);
+  });
+});
+
+describe("session length is bounded", () => {
+  test("a session longer than ten hours is refused, not stored", async () => {
+    const res = await request(app).post("/api/ambient").send({ title: "T", theme: "rest", targetSec: 999_999_999_999 });
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /10 hours/);
+  });
+
+  test("ten hours exactly is allowed", async () => {
+    const p = await createSession({ targetSec: 36_000 });
+    assert.equal(p.targetSec, 36_000);
+  });
+});

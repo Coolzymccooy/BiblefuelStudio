@@ -4,7 +4,7 @@ import { Router } from "express";
 import {
   createProject, readProject, writeProject, listProjects, deleteProject,
   normaliseCaptionSettings, DEFAULT_DROP_INTERVAL_SEC, publishedEntry, withPublished,
-  WORDS, isMusicOnly,
+  WORDS, isMusicOnly, MAX_TARGET_SEC,
 } from "../lib/ambient/projectStore.js";
 import { bedHash } from "../lib/ambient/bedAssembly.js";
 import { ENCODERS } from "../lib/ambient/encoders.js";
@@ -63,9 +63,16 @@ export function _resetRenderStageImpl() { _renderStageFn = null; }
 let _quota = quota;
 export function _setQuotaImpl(fn) { _quota = fn; }
 export function _resetQuotaImpl() { _quota = quota; }
-function renderQuota(req, res, next) { return _quota("render")(req, res, next); }
-function ttsQuota(req, res, next) { return _quota("tts")(req, res, next); }
-function imageQuota(req, res, next) { return _quota("imageGen")(req, res, next); }
+/**
+ * Charge one unit of `bucket`, or answer 429 and return false. Called once a
+ * request has passed its own checks: charged up front, five refused renders
+ * spent the free plan's five for the day.
+ */
+function charged(bucket, req, res) {
+  let passed = false;
+  _quota(bucket)(req, res, () => { passed = true; });
+  return passed;
+}
 
 /**
  * Keep the last verse a clear minute from the end — the same guard
@@ -105,6 +112,9 @@ function loadOr404(req, res) {
 router.post("/", (req, res) => {
   try {
     const { title, theme, targetSec, aspect, translation } = req.body || {};
+    if (Number(targetSec) > MAX_TARGET_SEC) {
+      return res.status(400).json({ ok: false, error: "an ambient session can be up to 10 hours long" });
+    }
     const project = createProject(req.ctx.dataDir, { title, theme, targetSec, aspect, translation });
     return res.json({ ok: true, project });
   } catch (e) {
@@ -187,6 +197,8 @@ router.post("/:id/plan", async (req, res) => {
     if (count === 0) {
       return res.status(400).json({ ok: false, error: "this session is too short for a scripture drop" });
     }
+    // A model call, metered like every other script generation.
+    if (!charged("scripts", req, res)) return undefined;
 
     const references = await _planFn({ theme: project.theme, count });
     // The default cadence is every fifteen minutes. An explicit count has to
@@ -251,7 +263,7 @@ router.patch("/:id/drops", (req, res) => {
 
 // POST /:id/voice — verbatim lookup + synthesis for every pending drop.
 // Detached: several verses at a few seconds of TTS each outlives a request.
-router.post("/:id/voice", ttsQuota, (req, res) => {
+router.post("/:id/voice", (req, res) => {
   const project = loadOr404(req, res);
   if (!project) return undefined;
   if (isMusicOnly(project)) {
@@ -260,6 +272,7 @@ router.post("/:id/voice", ttsQuota, (req, res) => {
   if (!(project.drops || []).length) {
     return res.status(400).json({ ok: false, error: "no drops to voice — suggest verses first" });
   }
+  if (!charged("tts", req, res)) return undefined;
   const ctx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir };
   const id = req.params.id;
   clearCancelled(id);
@@ -333,7 +346,7 @@ router.patch("/:id/bed", (req, res) => {
 });
 
 // POST /:id/images — one still per movement. Detached; the client polls.
-router.post("/:id/images", imageQuota, (req, res) => {
+router.post("/:id/images", (req, res) => {
   const project = loadOr404(req, res);
   if (!project) return undefined;
   if (!(project.movements || []).length) {
@@ -343,6 +356,7 @@ router.post("/:id/images", imageQuota, (req, res) => {
   if (onlyId && !project.movements.some((m) => m.id === onlyId)) {
     return res.status(404).json({ ok: false, error: "movement not found" });
   }
+  if (!charged("imageGen", req, res)) return undefined;
   const ctx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir };
   const id = req.params.id;
   const force = req.body?.force === true;
@@ -504,7 +518,7 @@ function notAlreadyRendering(req, res, next) {
   return next();
 }
 
-router.post("/:id/render", notAlreadyRendering, renderQuota, (req, res) => {
+router.post("/:id/render", notAlreadyRendering, (req, res) => {
   const project = loadOr404(req, res);
   if (!project) return undefined;
   try {
@@ -515,6 +529,7 @@ router.post("/:id/render", notAlreadyRendering, renderQuota, (req, res) => {
     const bed = project.bed || {};
     const hasBed = bed.mode === "file" ? Boolean(bed.filePath) : (bed.trackRefs || []).length > 0;
     if (!hasBed) return res.status(400).json({ ok: false, error: "choose the music before rendering" });
+    if (!charged("render", req, res)) return undefined;
 
     const id = req.params.id;
     clearCancelled(id);

@@ -1,7 +1,9 @@
+import toast from 'react-hot-toast';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import * as youtubePublish from '../../../lib/youtubePublish';
 import { api } from '../../../lib/api';
 import { ambientApi } from '../../../lib/ambientApi';
 import * as libraryApi from '../../../lib/musicLibraryApi';
@@ -86,17 +88,16 @@ describe('AmbientRenderStep when the video is ready', () => {
   });
 
   it('publishes this session’s own video, privately unless you choose otherwise', async () => {
-    const post = vi.spyOn(api, 'post').mockResolvedValue({ ok: true, status: 200, data: { videoId: 'v', videoUrl: 'u', forcedPrivate: false } } as never);
+    const post = vi.spyOn(youtubePublish, 'publishToYoutube').mockResolvedValue({ ok: true, result: { videoId: 'v', videoUrl: 'u', forcedPrivate: false } } as never);
     renderStep(done());
     await userEvent.click(screen.getByRole('button', { name: /publish to youtube/i }));
     await waitFor(() => expect(post).toHaveBeenCalled());
-    const [url, body] = post.mock.calls[0] as [string, Record<string, unknown>];
-    expect(url).toBe('/api/social/post');
-    expect(body).toMatchObject({ destination: 'youtube', videoUrl: '/outputs/ambient/p1/video.mp4', privacyStatus: 'private' });
+    const [body] = post.mock.calls[0] as [Record<string, unknown>];
+    expect(body).toMatchObject({ videoUrl: '/outputs/ambient/p1/video.mp4', privacyStatus: 'private', record: { ambientProjectId: 'p1' } });
   });
 
   it('puts the title on the thumbnail by default, and can be told not to', async () => {
-    const post = vi.spyOn(api, 'post').mockResolvedValue({ ok: true, status: 200, data: { videoId: 'vidVID12345', videoUrl: 'u', forcedPrivate: false } } as never);
+    const post = vi.spyOn(youtubePublish, 'publishToYoutube').mockResolvedValue({ ok: true, result: { videoId: 'vidVID12345', videoUrl: 'u', forcedPrivate: false } } as never);
     vi.spyOn(ambientApi, 'recordPublished').mockResolvedValue(done());
     renderStep({ ...done(), movements: [{ id: 'm1', startMs: 0, endMs: 1, imagePrompt: '', imagePath: '/x.png', imageUrl: '/outputs/imagelib-a.png', imageStatus: 'done' }] } as AmbientProject);
     const box = screen.getByRole('checkbox', { name: /put the title on the thumbnail/i });
@@ -104,7 +105,7 @@ describe('AmbientRenderStep when the video is ready', () => {
     await userEvent.click(box);
     await userEvent.click(screen.getByRole('button', { name: /publish to youtube/i }));
     await waitFor(() => expect(post).toHaveBeenCalled());
-    const [, body] = post.mock.calls.find(([url]) => url === '/api/social/post') as [string, Record<string, unknown>];
+    const [body] = post.mock.calls[0] as [Record<string, unknown>];
     expect(body).toMatchObject({ thumbnailPath: '/outputs/imagelib-a.png', thumbnailTitle: false });
   });
 
@@ -122,15 +123,24 @@ describe('AmbientRenderStep when the video is ready', () => {
     expect(screen.getByRole('button', { name: /publish to youtube/i })).toBeEnabled();
   });
 
-  it('notes a fresh upload in the session history, then refreshes', async () => {
-    vi.spyOn(api, 'post').mockResolvedValue({ ok: true, status: 200, data: { videoId: 'vidVID12345', videoUrl: 'u', forcedPrivate: false } } as never);
+  it('lets the server note the upload on the session, then refreshes', async () => {
+    // The server records it, so closing the page mid-upload loses nothing.
+    const publish = vi.spyOn(youtubePublish, 'publishToYoutube').mockResolvedValue({ ok: true, result: { videoId: 'vidVID12345', videoUrl: 'u', forcedPrivate: false, recorded: true } } as never);
     const record = vi.spyOn(ambientApi, 'recordPublished').mockResolvedValue(done());
     const refresh = vi.fn();
     renderStep(done(), refresh);
-    await userEvent.selectOptions(screen.getByRole('combobox', { name: /privacy/i }), 'unlisted');
     await userEvent.click(screen.getByRole('button', { name: /publish to youtube/i }));
-    await waitFor(() => expect(record).toHaveBeenCalledWith('p1', { videoId: 'vidVID12345', privacyStatus: 'unlisted', publishAt: undefined }));
     await waitFor(() => expect(refresh).toHaveBeenCalled());
+    expect(publish.mock.calls[0][0]).toMatchObject({ record: { ambientProjectId: 'p1' } });
+    expect(record).not.toHaveBeenCalled();
+  });
+
+  it('says so if the upload worked but the session could not note it', async () => {
+    vi.spyOn(youtubePublish, 'publishToYoutube').mockResolvedValue({ ok: true, result: { videoId: 'vidVID12345', videoUrl: 'u', forcedPrivate: false, recorded: false } } as never);
+    const error = vi.spyOn(toast, 'error').mockImplementation(() => '');
+    renderStep(done(), vi.fn());
+    await userEvent.click(screen.getByRole('button', { name: /publish to youtube/i }));
+    await waitFor(() => expect(error).toHaveBeenCalledWith(expect.stringMatching(/could not be added/)));
   });
 });
 
