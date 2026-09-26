@@ -108,8 +108,43 @@ output, the next time a separation job starts.
       separation that ignored the cancel and kept the process alive would otherwise go
       unnoticed until it finished or something else needed that CPU.
 
-## Hidden on the deployed server
+## On the live site: the laptop does it
 
-This feature only appears when `STEMS_CLI` is set. On the deployed server `STEMS_CLI`
-is left unset, so "Make instrumental" does not appear — the feature is laptop-only by
-design; the deployed server doesn't have a Python venv or spare CPU for it.
+The deployed server has no separator (no Python venv, no spare CPU), so it hands the
+work to this laptop. "Remove vocals" appears on the live site whenever the server has a
+worker key; the request waits in a queue until the laptop picks it up, and the
+instrumental lands in the live library as usual. Requests made while the laptop is off
+wait (they survive a deploy) and run when it is back.
+
+### One-time setup
+
+1. Make a key: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
+2. In Coolify, add it to the Biblefuel app's environment as `STEMS_WORKER_TOKEN`, and
+   redeploy. (The server refuses the worker routes until this is set, and ignores a key
+   shorter than 32 characters.)
+3. On the laptop, add the same line to `server/.env`: `STEMS_WORKER_TOKEN=<the key>`.
+   `BIBLEFUEL_URL` defaults to `https://biblefuel.tiwaton.co.uk`.
+4. Try it: `cd server && npm run stems-worker`. It prints "removing vocals for …" and
+   waits. The live site's dialog now says "Waiting for your laptop…" rather than
+   "offline" while it runs.
+5. Start it at every log-on (current user, no admin needed):
+   `powershell -ExecutionPolicy Bypass -File server\scripts\install-stems-worker.ps1`.
+   Its output goes to `server/stems-worker.log`. Remove it with
+   `Unregister-ScheduledTask -TaskName "Biblefuel vocal removal" -Confirm:$false`.
+
+### How it behaves
+
+- One job at a time. The laptop checks in every 5 seconds; the site shows it offline
+  after 45 seconds without a check-in.
+- A claimed job is leased for 3 minutes and renewed while it runs. If the laptop sleeps
+  mid-job, the lease lapses and the job goes back in the queue; after 3 attempts it
+  fails with a message.
+- Cancel in the dialog stops the laptop at its next progress report; a late result is
+  refused.
+- The worker key only reaches `/api/stems-worker`: it can fetch the song of a job it
+  holds and upload that job's result (checked to be real M4A audio, named by the server).
+
+## Without a worker key
+
+With neither `STEMS_CLI` nor `STEMS_WORKER_TOKEN` set, the server answers that vocal
+removal is unavailable and "Remove vocals" does not appear.

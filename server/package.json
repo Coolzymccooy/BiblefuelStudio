@@ -7,6 +7,7 @@
     "predev": "node scripts/free-port.mjs 5051",
     "dev": "cross-env PORT=5051 CORS_ORIGIN=http://localhost:5174 node --watch-path=index.js --watch-path=src --watch-path=services index.js",
     "start": "node index.js",
+    "stems-worker": "node scripts/stems-worker.mjs",
     "test": "node --test \"test/**/*.test.js\" \"src/**/*.test.js\""
   },
   "dependencies": {

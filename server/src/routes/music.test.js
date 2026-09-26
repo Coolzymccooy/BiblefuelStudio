@@ -1,4 +1,4 @@
-import { test, describe, afterEach } from "node:test";
+import { test, describe, afterEach, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import fs from "fs";
 import os from "os";
@@ -8,6 +8,7 @@ import { _resetBundledDurations } from "../lib/musicLibrary.js";
 import { registerTrack, readMusicLibrary } from "../lib/musicLibraryStore.js";
 import { _resetStemJobs } from "../lib/stems/stemJobs.js";
 import { _resetHeavyGate } from "../lib/heavyJobGate.js";
+import { configureLaptopQueue, claimNext, _resetLaptopQueue, MAX_WAITING_PER_USER } from "../lib/stems/laptopQueue.js";
 
 function handlerFor(method, routePath) {
   const layer = musicRouter.stack.find((l) => l.route && l.route.path === routePath && l.route.methods[method]);
@@ -476,5 +477,80 @@ describe("vocal removal routes", () => {
     assert.equal(kept.payload.ok, true);
     assert.equal(kept.payload.track.credit, "Choir X", "credit captured at job start, not re-read at keep time");
     assert.equal(kept.payload.track.licence, "unknown", "licence captured at job start, not re-read at keep time");
+  });
+});
+
+describe("vocal removal on the laptop (no separator on this server)", () => {
+  const KEY = "k".repeat(40);
+  let previous;
+  let qdir;
+  beforeEach(() => {
+    previous = process.env.STEMS_WORKER_TOKEN;
+    process.env.STEMS_WORKER_TOKEN = KEY;
+    _setSeparatorImpl({ available: async () => ({ ok: false }) });
+    qdir = fs.mkdtempSync(path.join(os.tmpdir(), "bf-music-laptop-"));
+    configureLaptopQueue({ file: path.join(qdir, "q.json") });
+  });
+  afterEach(() => {
+    if (previous === undefined) delete process.env.STEMS_WORKER_TOKEN; else process.env.STEMS_WORKER_TOKEN = previous;
+    _resetSeparatorImpl(); _resetStemJobs(); _resetHeavyGate(); _resetLaptopQueue();
+    fs.rmSync(qdir, { recursive: true, force: true });
+  });
+  const call = async (method, route, req) => { const r = res(); await handlerFor(method, route)(req, r); return r; };
+
+  test("capabilities offer vocal removal via the laptop, and say whether it is online", async () => {
+    const r = await call("get", "/capabilities", { ctx: tenant().ctx });
+    assert.equal(r.payload.vocalRemoval, true);
+    assert.equal(r.payload.vocalRemovalWhere, "laptop");
+    assert.equal(r.payload.laptopOnline, false);
+    claimNext();
+    assert.equal((await call("get", "/capabilities", { ctx: tenant().ctx })).payload.laptopOnline, true);
+  });
+
+  test("a request waits in the laptop queue instead of being refused", async () => {
+    const { ctx, file } = tenant();
+    const t = registerTrack(ctx.dataDir, { file, label: "Song" });
+    const c = { ...ctx, userId: "u1" };
+    const started = await call("post", "/:id/instrumental", { ctx: c, params: { id: t.id }, body: { quality: "fast" } });
+    assert.equal(started.payload.ok, true);
+    assert.equal(started.payload.where, "laptop");
+    const view = (await call("get", "/instrumental/:jobId", { ctx: c, params: { jobId: started.payload.jobId } })).payload.job;
+    assert.equal(view.status, "queued");
+    assert.equal(view.where, "laptop");
+    const claimed = claimNext();
+    assert.equal(claimed.input, file);
+    assert.equal(claimed.quality, "fast");
+  });
+
+  test("cancelling a waiting laptop job fails it straight away", async () => {
+    const { ctx, file } = tenant();
+    const t = registerTrack(ctx.dataDir, { file, label: "Song" });
+    const c = { ...ctx, userId: "u1" };
+    const { payload } = await call("post", "/:id/instrumental", { ctx: c, params: { id: t.id }, body: {} });
+    await call("post", "/instrumental/:jobId/cancel", { ctx: c, params: { jobId: payload.jobId } });
+    const view = (await call("get", "/instrumental/:jobId", { ctx: c, params: { jobId: payload.jobId } })).payload.job;
+    assert.equal(view.status, "error");
+    assert.equal(view.error, "Cancelled.");
+    assert.equal(claimNext(), null);
+  });
+
+  test("a user with a full queue is told to wait", async () => {
+    const { ctx, file } = tenant();
+    const t = registerTrack(ctx.dataDir, { file, label: "Song" });
+    const c = { ...ctx, userId: "u1" };
+    let last;
+    for (let i = 0; i <= MAX_WAITING_PER_USER; i += 1) {
+      last = await call("post", "/:id/instrumental", { ctx: c, params: { id: t.id }, body: {} });
+    }
+    assert.equal(last.statusCode, 429);
+    assert.match(last.payload.error, /already have songs waiting/i);
+  });
+
+  test("without a worker key it is still refused", async () => {
+    delete process.env.STEMS_WORKER_TOKEN;
+    const { ctx, file } = tenant();
+    const t = registerTrack(ctx.dataDir, { file, label: "Song" });
+    const r = await call("post", "/:id/instrumental", { ctx: { ...ctx, userId: "u1" }, params: { id: t.id }, body: {} });
+    assert.equal(r.statusCode, 409);
   });
 });

@@ -146,3 +146,28 @@ describe('InstrumentalDialog', () => {
     expect(toast.error).toHaveBeenCalledWith('Failed to cancel vocal removal');
   });
 });
+
+describe('InstrumentalDialog on the live site (the laptop does it)', () => {
+  const start = async (first: lib.InstrumentalJob) => {
+    vi.spyOn(lib, 'startInstrumental').mockResolvedValue('j1');
+    vi.spyOn(lib, 'getInstrumental').mockResolvedValue(first);
+    render(<InstrumentalDialog track={track} onClose={() => {}} onSaved={() => {}} pollMs={50} />);
+    fireEvent.click(screen.getByRole('button', { name: /remove vocals/i }));
+  };
+
+  it('says it is waiting for the laptop while the laptop is online', async () => {
+    await start(job('queued', { where: 'laptop', laptopOnline: true }));
+    expect(await screen.findByText(/waiting for your laptop/i)).toBeInTheDocument();
+  });
+
+  it('says the laptop is offline and that it will run when it is back', async () => {
+    await start(job('queued', { where: 'laptop', laptopOnline: false }));
+    expect(await screen.findByText(/your laptop is offline/i)).toBeInTheDocument();
+    expect(screen.getByText(/close this/i)).toBeInTheDocument();
+  });
+
+  it('shows progress on the laptop', async () => {
+    await start(job('running', { where: 'laptop', laptopOnline: true, percent: 30 }));
+    expect(await screen.findByText(/removing vocals on your laptop… 30%/i)).toBeInTheDocument();
+  });
+});

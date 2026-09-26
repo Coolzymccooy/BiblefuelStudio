@@ -55,12 +55,24 @@ export async function deleteTrack(id: string): Promise<void> {
   if (!res.ok) throw new Error(res.error || 'Failed to remove track');
 }
 
-export interface Capabilities { vocalRemoval: boolean; amfEncoder: boolean }
+export interface Capabilities {
+  vocalRemoval: boolean;
+  /** Who does it: this server, or the operator's laptop for the live site. */
+  vocalRemovalWhere?: 'server' | 'laptop' | null;
+  laptopOnline?: boolean;
+  amfEncoder: boolean;
+}
 
 export async function fetchCapabilities(): Promise<Capabilities> {
   const res = await api.get('/api/music/capabilities');
-  if (!res.ok) return { vocalRemoval: false, amfEncoder: false };
-  return { vocalRemoval: Boolean(res.data?.vocalRemoval), amfEncoder: Boolean(res.data?.amfEncoder) };
+  if (!res.ok) return { vocalRemoval: false, vocalRemovalWhere: null, laptopOnline: false, amfEncoder: false };
+  const where = res.data?.vocalRemovalWhere;
+  return {
+    vocalRemoval: Boolean(res.data?.vocalRemoval),
+    vocalRemovalWhere: where === 'server' || where === 'laptop' ? where : null,
+    laptopOnline: Boolean(res.data?.laptopOnline),
+    amfEncoder: Boolean(res.data?.amfEncoder),
+  };
 }
 
 export type InstrumentalQuality = 'best' | 'fast';
@@ -74,6 +86,9 @@ export interface InstrumentalJob {
   resultFile: string | null;
   /** The library track it was saved as — set once the job is done. */
   track: MusicTrack | null;
+  /** "laptop" when the operator's laptop does it for the live site. */
+  where?: 'server' | 'laptop';
+  laptopOnline?: boolean;
 }
 
 export async function startInstrumental(trackId: string, quality: InstrumentalQuality): Promise<string> {

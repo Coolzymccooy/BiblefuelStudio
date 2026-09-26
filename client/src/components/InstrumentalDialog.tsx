@@ -30,6 +30,18 @@ export interface InstrumentalDialogProps {
 // and shows the error — a success in between resets the count.
 const MAX_CONSECUTIVE_POLL_FAILURES = 3;
 
+/** What a running job is doing, in words; the live site's jobs run on the laptop. */
+function progressLine(job: InstrumentalJob | null): string {
+  const onLaptop = job?.where === 'laptop';
+  if (job?.status === 'queued') {
+    if (!onLaptop) return 'Waiting for another job to finish…';
+    return job.laptopOnline
+      ? 'Waiting for your laptop to pick this up…'
+      : "Your laptop is offline — this runs when it's back on. You can close this; the instrumental will appear in your library.";
+  }
+  return `Removing vocals${onLaptop ? ' on your laptop' : ''}… ${job?.percent ?? 0}%`;
+}
+
 export function InstrumentalDialog({ track, onClose, onSaved, onUse, pollMs = 2000 }: InstrumentalDialogProps) {
   const [quality, setQuality] = useState<InstrumentalQuality>('best');
   const [jobId, setJobId] = useState<string | null>(null);
@@ -148,9 +160,7 @@ export function InstrumentalDialog({ track, onClose, onSaved, onUse, pollMs = 20
 
       {running && (
         <div className="space-y-2">
-          <div className="text-sm text-content-secondary">
-            {job?.status === 'queued' ? 'Waiting for another job to finish…' : `Removing vocals… ${job?.percent ?? 0}%`}
-          </div>
+          <div className="text-sm text-content-secondary">{progressLine(job)}</div>
           <div className="h-1.5 w-full rounded bg-white/10">
             <div className="h-1.5 rounded bg-primary-500" style={{ width: `${job?.percent ?? 0}%` }} />
           </div>
