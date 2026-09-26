@@ -4,7 +4,7 @@ import fs from "fs";
 import path from "path";
 import { probeAudioDurationSec } from "../lib/story/storyRender.js";
 import {
-  laptopQueueEnabled, claimNext, heldJob, laptopJob, reportProgress, failLaptopJob, persistLaptopQueue,
+  laptopQueueEnabled, claimNext, heldJob, laptopJob, reclaimJob, reportProgress, failLaptopJob, persistLaptopQueue,
 } from "../lib/stems/laptopQueue.js";
 import { updateStemJob } from "../lib/stems/stemJobs.js";
 import { saveInstrumental } from "./music.js";
@@ -66,8 +66,8 @@ router.get("/jobs/:jobId/source", (req, res) => {
 });
 
 router.post("/jobs/:jobId/progress", (req, res) => {
-  // A lapsed or cancelled job: tell the laptop to stop, not 404 it into retrying.
-  const job = heldJob(req.params.jobId);
+  // A lapsed lease is taken back; only a cancelled or unknown job stops the laptop.
+  const job = reclaimJob(req.params.jobId);
   if (!job) return res.json({ ok: true, cancelled: true });
   return res.json({ ok: true, ...reportProgress(job, req.body?.percent) });
 });
@@ -90,7 +90,7 @@ router.post(
   async (req, res) => {
     // Checked before the lease: a cancel makes the job unheld, and the
     // laptop should hear "cancelled", not "no such job".
-    const job = heldJob(req.params.jobId);
+    const job = reclaimJob(req.params.jobId);
     if (!job) {
       // Saved already: the reply to an earlier upload was lost and the laptop
       // is retrying. Say so, rather than make it report a failure.

@@ -257,6 +257,9 @@ app.get('/api/health', async (req, res) => {
   res.json({
     ok: true,
     ts: new Date().toISOString(),
+    // How long this process has been up: a small number means it restarted,
+    // which is what interrupts laptop vocal-removal jobs.
+    uptimeSec: Math.round(process.uptime()),
     system: {
       ffmpeg: ffmpegVersion,
       platform: process.platform,

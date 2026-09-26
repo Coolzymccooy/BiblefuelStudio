@@ -1,7 +1,6 @@
 import { useState } from 'react';
-import { createPortal } from 'react-dom';
 import toast from 'react-hot-toast';
-import { InstrumentalDialog } from '../InstrumentalDialog';
+import { InstrumentalModal } from '../InstrumentalModal';
 import { useLibraryActions } from '../music/useLibraryActions';
 import type { MusicTrack } from '../../lib/musicLibraryApi';
 
@@ -27,10 +26,7 @@ export function useSourceVocalRemoval({ onUse }: {
     if (saved) setOpen({ track: saved, path });
   };
 
-  const dialog = open ? createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-lg">
-        <InstrumentalDialog
+  const dialog = open ? <InstrumentalModal
           track={open.track}
           onClose={() => setOpen(null)}
           onSaved={lib.refresh}
@@ -39,11 +35,7 @@ export function useSourceVocalRemoval({ onUse }: {
             toast.success('The instrumental is on the Music bed');
             setOpen(null);
           }}
-        />
-      </div>
-    </div>,
-    document.body,
-  ) : null;
+        /> : null;
 
   return { available, start, dialog };
 }

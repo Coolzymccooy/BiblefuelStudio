@@ -185,6 +185,25 @@ export function heldJob(jobId, now = Date.now()) {
   return job;
 }
 
+/**
+ * The job the laptop is still working on, taken back if its lease lapsed
+ * while the laptop was out of touch (a flaky connection while the separator
+ * has the CPU). There is one laptop, so a lapsed or re-queued job it reports
+ * on is still its own; handing it back keeps minutes of separation that
+ * "cancelled" would throw away. A job the user cancelled is never handed back.
+ */
+export function reclaimJob(jobId, now = Date.now()) {
+  const job = laptopJob(jobId);
+  if (!job || job.controller.signal.aborted) return null;
+  if (job.status !== "running" && job.status !== "queued") return null;
+  lastSeen = now;
+  if (job.status !== "running" || job.leaseUntil < now) {
+    updateStemJob(job.jobId, { status: "running", leaseUntil: now + LEASE_MS });
+    persistLaptopQueue();
+  }
+  return job;
+}
+
 export function reportProgress(job, percent, now = Date.now()) {
   lastSeen = now;
   if (job.controller.signal.aborted) return { cancelled: true };
