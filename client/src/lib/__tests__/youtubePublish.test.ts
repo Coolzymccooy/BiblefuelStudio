@@ -54,7 +54,7 @@ describe('publishToYoutube', () => {
     vi.spyOn(api, 'get').mockResolvedValue({ ok: false, status: 0, error: 'Network Error' } as never);
     const out = await publishToYoutube(body, { pollMs: 1 });
     expect(out.ok).toBe(false);
-    if (!out.ok) expect(out.error).toMatch(/may still finish.*YouTube Studio/i);
+    if (!out.ok && 'error' in out) expect(out.error).toMatch(/may still finish.*YouTube Studio/i);
   });
 
   it('stops following when the page no longer needs it, without calling it a failure', async () => {
