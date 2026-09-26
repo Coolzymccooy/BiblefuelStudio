@@ -35,6 +35,8 @@ import longformRouter from "./src/routes/longform.js";
 import timelineRouter from "./src/routes/timeline.js";
 import abiRouter from "./src/routes/abi.js";
 import musicRouter from "./src/routes/music.js";
+import stemsWorkerRouter from "./src/routes/stemsWorker.js";
+import { configureLaptopQueue, loadLaptopQueue } from "./src/lib/stems/laptopQueue.js";
 import { requireAuth } from "./src/auth.js";
 import { createAccessRequestsRouter } from "./src/routes/accessRequests.js";
 import { getAccessRequestsStore } from "./src/lib/accessRequestsStore.js";
@@ -376,6 +378,9 @@ app.use("/api/audio",     requireAuth, withUserScope, requireVerifiedEmail,     
 app.use("/api/audio-adv", requireAuth, withUserScope, requireVerifiedEmail,                       audioAdvancedRouter);
 app.use("/api/library",   requireAuth, withUserScope,                                              libraryRouter);
 app.use("/api/music",     requireAuth, withUserScope,                                              musicRouter);
+// The operator's laptop, removing vocals for the live site. No user auth: it
+// carries STEMS_WORKER_TOKEN instead, and the router fails closed without it.
+app.use("/api/stems-worker", stemsWorkerRouter);
 // YouTube OAuth callback — Google redirects here after a user consents,
 // arriving with no JWT (just ?code and ?state). Mount BEFORE the
 // auth-gated /api/social router so it isn't blocked by requireAuth.
@@ -419,6 +424,14 @@ try {
   if (interrupted.length) console.warn(`[story] reconciled ${interrupted.length} interrupted render job(s)`);
 } catch (e) {
   console.warn("[story] job reconciliation skipped:", e?.message || e);
+}
+
+// Vocal-removal requests waiting for the laptop survive a restart.
+try {
+  configureLaptopQueue({ file: path.join(DATA_DIR, "stems-queue.json") });
+  loadLaptopQueue();
+} catch (e) {
+  console.warn("[stems] laptop queue not loaded:", e?.message || e);
 }
 
 app.listen(PORT, () => {

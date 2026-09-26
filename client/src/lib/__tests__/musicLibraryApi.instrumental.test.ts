@@ -8,12 +8,17 @@ beforeEach(() => vi.restoreAllMocks());
 describe('instrumental API', () => {
   it('reads capabilities', async () => {
     vi.spyOn(api, 'get').mockResolvedValue({ ok: true, data: { ok: true, vocalRemoval: true, amfEncoder: false } } as never);
-    expect(await fetchCapabilities()).toEqual({ vocalRemoval: true, amfEncoder: false });
+    expect(await fetchCapabilities()).toEqual({ vocalRemoval: true, vocalRemovalWhere: null, laptopOnline: false, amfEncoder: false });
+  });
+
+  it('reads that the laptop does vocal removal, and whether it is online', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({ ok: true, data: { ok: true, vocalRemoval: true, vocalRemovalWhere: 'laptop', laptopOnline: true, amfEncoder: false } } as never);
+    expect(await fetchCapabilities()).toEqual({ vocalRemoval: true, vocalRemovalWhere: 'laptop', laptopOnline: true, amfEncoder: false });
   });
 
   it('capabilities default to off when the call fails', async () => {
     vi.spyOn(api, 'get').mockResolvedValue({ ok: false, error: 'x' } as never);
-    expect(await fetchCapabilities()).toEqual({ vocalRemoval: false, amfEncoder: false });
+    expect(await fetchCapabilities()).toEqual({ vocalRemoval: false, vocalRemovalWhere: null, laptopOnline: false, amfEncoder: false });
   });
 
   it('starts a job with the chosen quality', async () => {

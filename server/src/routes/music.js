@@ -16,6 +16,9 @@ import {
   createStemJob, getStemJob, updateStemJob, removeStemJob,
 } from "../lib/stems/stemJobs.js";
 import { sweepStaleInstrumentals } from "../lib/stems/sweep.js";
+import {
+  laptopQueueEnabled, laptopOnline, enqueueLaptopJob, cancelLaptopJob, persistLaptopQueue,
+} from "../lib/stems/laptopQueue.js";
 import { quota } from "../middleware/quota.js";
 
 const router = Router();
@@ -190,6 +193,9 @@ function jobView(job) {
     sourcePreview: job.sourcePreview,
     resultFile: job.status === "done" ? path.basename(job.resultPath) : null,
     track: job.track || null,
+    // "laptop": the operator's laptop does this one for the live site.
+    where: job.where === "laptop" ? "laptop" : "server",
+    laptopOnline: laptopOnline(),
   };
 }
 
@@ -201,10 +207,12 @@ function jobView(job) {
  * licence and credit captured when the job started, and the bed's licence
  * gate still applies.
  */
-async function saveInstrumental(dataDir, job, outputDir) {
+export async function saveInstrumental(dataDir, job, outputDir, known = {}) {
   if (!fs.existsSync(job.resultPath)) throw new Error("the separator finished but wrote no file");
-  let durationSec = null;
-  try { durationSec = await probeAudioDurationSec(job.resultPath); } catch { /* recorded without it */ }
+  let durationSec = known.durationSec ?? null;
+  if (durationSec == null) {
+    try { durationSec = await probeAudioDurationSec(job.resultPath); } catch { /* recorded without it */ }
+  }
   // Last point before it becomes a library track: a cancel that landed while
   // the separator was finishing or the file was being measured wins.
   if (job.controller.signal.aborted) throw new Error("Cancelled.");
@@ -221,15 +229,24 @@ async function saveInstrumental(dataDir, job, outputDir) {
 }
 
 router.get("/capabilities", async (req, res) => {
-  const sep = await _separator.available();
-  res.json({ ok: true, vocalRemoval: Boolean(sep?.ok), amfEncoder: amfAvailable() });
+  const local = Boolean((await _separator.available())?.ok);
+  // No separator here (the live site): the laptop can still do it, via the queue.
+  const laptop = !local && laptopQueueEnabled();
+  res.json({
+    ok: true,
+    vocalRemoval: local || laptop,
+    vocalRemovalWhere: local ? "server" : (laptop ? "laptop" : null),
+    laptopOnline: laptopOnline(),
+    amfEncoder: amfAvailable(),
+  });
 });
 
 router.post("/:id/instrumental", quota("render"), async (req, res) => {
   try {
     const src = sourceTrack(req.ctx.dataDir, String(req.params.id));
     if (!src) return res.status(404).json({ ok: false, error: "track not found" });
-    if (!(await _separator.available())?.ok) {
+    const local = Boolean((await _separator.available())?.ok);
+    if (!local && !laptopQueueEnabled()) {
       return res.status(409).json({ ok: false, error: "vocal removal is not set up on this machine — see docs/vocal-removal.md" });
     }
     const input = resolveTrackFile({ dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir }, src.ref);
@@ -240,7 +257,7 @@ router.post("/:id/instrumental", quota("render"), async (req, res) => {
     const resultPath = path.resolve(req.ctx.outputDir, `instrumental-${jobId}.m4a`);
     const workDir = path.resolve(req.ctx.outputDir, "stems-work", jobId);
     const quality = req.body?.quality === "fast" ? "fast" : "best";
-    const job = createStemJob({
+    const fields = {
       jobId,
       userId: req.ctx.userId,
       sourceRef: src.ref,
@@ -250,7 +267,13 @@ router.post("/:id/instrumental", quota("render"), async (req, res) => {
       sourceMood: src.mood,
       sourceLicence: src.licence,
       sourceCredit: src.credit,
-    });
+    };
+    if (!local) {
+      // The laptop picks it up (routes/stemsWorker.js) and uploads the result.
+      enqueueLaptopJob({ ...fields, input, quality, dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir });
+      return res.json({ ok: true, jobId, where: "laptop" });
+    }
+    const job = createStemJob(fields);
 
     runExclusive(async () => {
       updateStemJob(jobId, { status: "running" });
@@ -287,7 +310,12 @@ router.get("/instrumental/:jobId", (req, res) => {
 router.post("/instrumental/:jobId/cancel", (req, res) => {
   const job = getStemJob(req.params.jobId, req.ctx.userId);
   if (!job) return res.status(404).json({ ok: false, error: "job not found" });
-  job.controller.abort();
+  if (job.where === "laptop") {
+    // Nothing on this server is running it; the laptop stops at its next report.
+    if (job.status === "queued" || job.status === "running") cancelLaptopJob(job);
+  } else {
+    job.controller.abort();
+  }
   return res.json({ ok: true });
 });
 
@@ -309,6 +337,7 @@ router.post("/instrumental/:jobId/discard", (req, res) => {
   // registered — the weekly sweep reclaims anything left behind.
   try { fs.rmSync(job.resultPath, { force: true }); } catch { /* swept up later */ }
   removeStemJob(job.jobId);
+  if (job.where === "laptop") persistLaptopQueue();
   return res.json({ ok: true });
 });
 

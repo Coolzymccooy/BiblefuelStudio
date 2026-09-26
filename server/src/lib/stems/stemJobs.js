@@ -39,6 +39,11 @@ export function updateStemJob(jobId, patch) {
   return job;
 }
 
+/** Every job, oldest first (Map keeps insertion order). */
+export function listStemJobs() {
+  return [...jobs.values()];
+}
+
 export function removeStemJob(jobId) {
   jobs.delete(jobId);
 }
