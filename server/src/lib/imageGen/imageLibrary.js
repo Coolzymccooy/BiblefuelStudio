@@ -6,8 +6,8 @@
  *   - a content-addressed pool of COPIES at <outputDir>/imagelib-<sha256>.png.
  *     Copies, because outputs/genImg/<projectId>/ is purged on every
  *     re-segment and an index pointing in there would lose images out from
- *     under other projects. Flat, because index.js serves per-user outputs
- *     through GET /outputs/:filename, which refuses a path with a slash.
+ *     under other projects. Flat, because index.js serves a nested per-user
+ *     output only when its path carries an unguessable id (perUserOutputs.js).
  *   - an index at <dataDir>/imageLibrary.json, separate from library.json so
  *     the existing (video) library needs no migration.
  *
@@ -21,9 +21,9 @@ import { classifySearchQuery } from "../categorize.js";
 
 const INDEX_FILE = "imageLibrary.json";
 // Pool files sit FLAT in the tenant's outputs with a distinctive prefix.
-// index.js serves per-user outputs through GET /outputs/:filename, which
-// rejects anything containing "/" — a subdirectory would 404 for every
-// non-admin tenant and the preview would show a broken image.
+// index.js serves a nested per-user output only when its path carries an
+// unguessable id (perUserOutputs.js); a plain pool subdirectory would 404 for
+// every non-admin tenant and the preview would show a broken image.
 const POOL_PREFIX = "imagelib-";
 const DEFAULT_MAX_ITEMS = 2000;
 const DEFAULT_THRESHOLD = 0.82;
