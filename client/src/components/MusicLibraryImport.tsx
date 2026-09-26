@@ -5,7 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { AUDIO_ACCEPT, AUDIO_ACCEPT_LIST } from '../lib/audioAccept';
 import { storyApi } from '../lib/storyApi';
 import { saveTrackToLibrary } from '../lib/musicLibraryApi';
-import { useMusicLibrary } from '../hooks/useMusicLibrary';
+import { musicLibraryQuery, useMusicLibrary } from '../hooks/useMusicLibrary';
 import { IMPORT_LICENCES, planImport } from '../lib/musicImport';
 import { DropZone } from './ui/DropZone';
 
@@ -48,7 +48,7 @@ export interface MusicLibraryImportProps {
 }
 
 export function MusicLibraryImport({ busy, onAdded }: MusicLibraryImportProps) {
-  const { data: tracks } = useMusicLibrary();
+  useMusicLibrary(); // loads it early, so a drop rarely waits for it
   const qc = useQueryClient();
   const inputRef = useRef<HTMLInputElement>(null);
   const [licence, setLicence] = useState('unknown');
@@ -58,7 +58,20 @@ export function MusicLibraryImport({ busy, onAdded }: MusicLibraryImportProps) {
 
   const importFiles = async (files: File[]) => {
     if (getProgress() !== null || files.length === 0) return;
-    const { toAdd, skipped, matchedRefs } = planImport(files, tracks || []);
+    // Held from here, so a second drop cannot start alongside this one.
+    setProgress({ done: 0, total: files.length });
+    // Planned against the library as it really is: planned against the
+    // empty list a still-loading query gives, every track already there
+    // would be uploaded again as a duplicate.
+    let existing;
+    try {
+      existing = await qc.ensureQueryData(musicLibraryQuery);
+    } catch {
+      setProgress(null);
+      toast.error("Couldn't read your library, so nothing was added. Try again.");
+      return;
+    }
+    const { toAdd, skipped, matchedRefs } = planImport(files, existing || []);
     const handOver = addToBed ? onAdded : undefined;
     const refs = [...matchedRefs];
     const failed: string[] = [];

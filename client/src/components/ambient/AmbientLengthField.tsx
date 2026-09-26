@@ -55,6 +55,7 @@ export function AmbientLengthField({ minutes, onChange }: AmbientLengthFieldProp
           <input
             type="number"
             min={1}
+            max={600}
             value={minutes}
             onChange={(e) => onChange(e.target.value)}
             aria-label="Custom length in minutes"

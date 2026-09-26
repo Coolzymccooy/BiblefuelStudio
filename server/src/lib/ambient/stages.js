@@ -110,10 +110,22 @@ function stillThere(ctx, projectId) {
 }
 
 export function writeWithMovements(dataDir, project) {
-  // Music only: one picture for the whole length. The drops stay stored so
-  // switching back to verses restores them, but they never place pictures.
-  const source = isMusicOnly(project) ? { ...project, drops: [] } : project;
-  return writeProject(dataDir, { ...project, movements: deriveMovements(source) });
+  if (isMusicOnly(project)) {
+    // Music only: one picture for the whole length. The drops stay stored so
+    // switching back to verses restores them, but they never place pictures.
+    // The verse pictures are set aside too, or switching back would ask for
+    // (and spend image quota on) every picture after the first again. An
+    // earlier set-aside wins: by then `movements` is the single picture.
+    const verseMovements = project.verseMovements || project.movements || [];
+    return writeProject(dataDir, {
+      ...project,
+      verseMovements,
+      movements: deriveMovements({ ...project, drops: [] }),
+    });
+  }
+  const { verseMovements, ...rest } = project;
+  const existing = verseMovements || project.movements;
+  return writeProject(dataDir, { ...rest, movements: deriveMovements({ ...rest, movements: existing }) });
 }
 
 /**
@@ -328,6 +340,20 @@ export async function imagesStage(ctx, projectId, { force = false, onlyId = null
   });
 }
 
+/** A built tracklist with each track's current name and credit. */
+function withCurrentTrackInfo(dataDir, builtOrder) {
+  if (!Array.isArray(builtOrder)) return builtOrder ?? null;
+  const infoByRef = new Map();
+  return builtOrder.map((entry) => {
+    if (!infoByRef.has(entry.ref)) infoByRef.set(entry.ref, trackInfo(dataDir, entry.ref));
+    const info = infoByRef.get(entry.ref);
+    // A track removed from the library since is still in this bed's audio:
+    // its stored name and credit stand (trackInfo only has the raw ref).
+    if (info.label === entry.ref) return entry;
+    return { ...entry, ...info };
+  });
+}
+
 /**
  * Build (or reuse) the music bed.
  *
@@ -359,7 +385,15 @@ export async function assembleBed(ctx, project) {
   const order = bed.order === "fixed" ? "fixed" : "shuffle";
   const hash = bedHash({ trackRefs: refs, crossfadeSec: bed.crossfadeSec, targetSec: project.targetSec, order });
   if (bed.builtHash === hash && bed.builtPath && fs.existsSync(bed.builtPath)) {
-    return { bedPath: bed.builtPath, project };
+    // The audio is unchanged, but a track renamed or re-credited in the
+    // library since must reach the tracklist and the description.
+    const builtOrder = withCurrentTrackInfo(ctx.dataDir, bed.builtOrder);
+    if (JSON.stringify(builtOrder) === JSON.stringify(bed.builtOrder ?? null)) {
+      return { bedPath: bed.builtPath, project };
+    }
+    const fresh = stillThere(ctx, project.projectId);
+    const saved = writeProject(ctx.dataDir, { ...fresh, bed: { ...fresh.bed, builtOrder } });
+    return { bedPath: bed.builtPath, project: saved };
   }
 
   const tracks = [];

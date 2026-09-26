@@ -10,6 +10,7 @@ vi.mock('react-hot-toast', () => {
   return { default: t };
 });
 import { api } from '../../../lib/api';
+import * as youtubePublish from '../../../lib/youtubePublish';
 import { YoutubePublishPanel } from '../YoutubePublishPanel';
 
 // The preview asks the server for a real picture; tests answer with a stub.
@@ -25,7 +26,7 @@ beforeEach(() => {
 describe('YoutubePublishPanel', () => {
   it('posts title, tags, schedule and thumbnail to the YouTube destination', async () => {
     const user = userEvent.setup();
-    const post = vi.spyOn(api, 'post').mockResolvedValue({ ok: true, data: { videoId: 'v1', videoUrl: 'https://www.youtube.com/watch?v=v1', forcedPrivate: true } } as any);
+    const post = vi.spyOn(youtubePublish, 'publishToYoutube').mockResolvedValue({ ok: true, result: { videoId: 'v1', videoUrl: 'https://www.youtube.com/watch?v=v1', forcedPrivate: true } } as any);
     const onPublished = vi.fn();
     render(
       <YoutubePublishPanel
@@ -41,8 +42,7 @@ describe('YoutubePublishPanel', () => {
     await user.selectOptions(screen.getByRole('combobox', { name: /thumbnail/i }), '/outputs/genImg/p1/part-1.png');
     await user.click(screen.getByRole('button', { name: /publish to youtube/i }));
 
-    expect(post).toHaveBeenCalledWith('/api/social/post', expect.objectContaining({
-      destination: 'youtube',
+    expect(post).toHaveBeenCalledWith(expect.objectContaining({
       videoUrl: '/outputs/story/p1/video.mp4',
       title: 'Psalms for Sleep',
       description: 'One hour.',
@@ -50,7 +50,7 @@ describe('YoutubePublishPanel', () => {
       thumbnailPath: '/outputs/genImg/p1/part-1.png',
       chapters: [{ startMs: 0, title: 'Welcome' }],
       publishAt: expect.stringMatching(/^2030-01-01T/),
-    }));
+    }), expect.anything());
     // The second argument is what was asked for, so a caller can record the upload.
     expect(onPublished).toHaveBeenCalledWith(
       expect.objectContaining({ videoId: 'v1', forcedPrivate: true }),
@@ -66,7 +66,7 @@ describe('YoutubePublishPanel', () => {
   });
   it('tells the user when a schedule forced the video private', async () => {
     const user = userEvent.setup();
-    vi.spyOn(api, 'post').mockResolvedValue({ ok: true, data: { videoId: 'v1', videoUrl: 'u', forcedPrivate: true } } as any);
+    vi.spyOn(youtubePublish, 'publishToYoutube').mockResolvedValue({ ok: true, result: { videoId: 'v1', videoUrl: 'u', forcedPrivate: true } } as any);
     const success = vi.spyOn(toast, 'success');
     render(<YoutubePublishPanel videoUrl="/outputs/a.mp4" initial={{ title: 'T' }} />);
     await user.click(screen.getByRole('button', { name: /publish to youtube/i }));
@@ -75,7 +75,7 @@ describe('YoutubePublishPanel', () => {
 
   it('surfaces a thumbnail error without hiding the successful upload', async () => {
     const user = userEvent.setup();
-    vi.spyOn(api, 'post').mockResolvedValue({ ok: true, data: { videoId: 'v1', videoUrl: 'u', forcedPrivate: false, thumbnailError: 'channel not verified' } } as any);
+    vi.spyOn(youtubePublish, 'publishToYoutube').mockResolvedValue({ ok: true, result: { videoId: 'v1', videoUrl: 'u', forcedPrivate: false, thumbnailError: 'channel not verified' } } as any);
     const err = vi.spyOn(toast, 'error');
     const success = vi.spyOn(toast, 'success');
     render(<YoutubePublishPanel videoUrl="/outputs/a.mp4" initial={{ title: 'T' }} />);
@@ -86,7 +86,7 @@ describe('YoutubePublishPanel', () => {
 
   it('blocks publish with an empty title and does not call the API', async () => {
     const user = userEvent.setup();
-    const post = vi.spyOn(api, 'post');
+    const post = vi.spyOn(youtubePublish, 'publishToYoutube');
     render(<YoutubePublishPanel videoUrl="/outputs/a.mp4" />);
     await user.click(screen.getByRole('button', { name: /publish to youtube/i }));
     expect(post).not.toHaveBeenCalled();
@@ -95,7 +95,7 @@ describe('YoutubePublishPanel', () => {
 
   it('sends the tagline with the title, and only when the title is drawn', async () => {
     const user = userEvent.setup();
-    const post = vi.spyOn(api, 'post').mockResolvedValue({ ok: true, data: { videoId: 'v1', videoUrl: 'u', forcedPrivate: false } } as any);
+    const post = vi.spyOn(youtubePublish, 'publishToYoutube').mockResolvedValue({ ok: true, result: { videoId: 'v1', videoUrl: 'u', forcedPrivate: false } } as any);
     render(
       <YoutubePublishPanel
         videoUrl="/outputs/a.mp4"
@@ -105,12 +105,12 @@ describe('YoutubePublishPanel', () => {
     );
     expect(screen.getByLabelText(/line above the title/i)).toHaveValue('2 hours · soaking worship');
     await user.click(screen.getByRole('button', { name: /publish to youtube/i }));
-    expect(post).toHaveBeenLastCalledWith('/api/social/post', expect.objectContaining({ thumbnailTitle: true, thumbnailTagline: '2 hours · soaking worship' }));
+    expect(post).toHaveBeenLastCalledWith(expect.objectContaining({ thumbnailTitle: true, thumbnailTagline: '2 hours · soaking worship' }), expect.anything());
 
     await user.click(screen.getByRole('checkbox', { name: /put the title on the thumbnail/i }));
     expect(screen.queryByLabelText(/line above the title/i)).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /publish to youtube/i }));
-    expect(post).toHaveBeenLastCalledWith('/api/social/post', expect.objectContaining({ thumbnailTitle: false, thumbnailTagline: '' }));
+    expect(post).toHaveBeenLastCalledWith(expect.objectContaining({ thumbnailTitle: false, thumbnailTagline: '' }), expect.anything());
   });
 
   it('shows the thumbnail as the server makes it, from the chosen picture, title and tagline', async () => {
@@ -146,11 +146,24 @@ describe('YoutubePublishPanel', () => {
 
   it('warns when the picture went up without its title', async () => {
     const user = userEvent.setup();
-    vi.spyOn(api, 'post').mockResolvedValue({ ok: true, data: { videoId: 'v1', videoUrl: 'u', forcedPrivate: false, thumbnailWarning: 'went up without it' } } as any);
+    vi.spyOn(youtubePublish, 'publishToYoutube').mockResolvedValue({ ok: true, result: { videoId: 'v1', videoUrl: 'u', forcedPrivate: false, thumbnailWarning: 'went up without it' } } as any);
     const warn = vi.mocked(toast);
     warn.mockClear();
     render(<YoutubePublishPanel videoUrl="/outputs/a.mp4" initial={{ title: 'T' }} />);
     await user.click(screen.getByRole('button', { name: /publish to youtube/i }));
     await waitFor(() => expect(warn).toHaveBeenCalledWith('went up without it', expect.objectContaining({ icon: '⚠️' })));
   });
+
+  it('while uploading, says so and that leaving the page does not stop it', async () => {
+    let finish: (v: unknown) => void = () => {};
+    vi.spyOn(youtubePublish, 'publishToYoutube').mockReturnValue(new Promise((r) => { finish = r; }) as never);
+    const user = userEvent.setup();
+    render(<YoutubePublishPanel videoUrl="/outputs/a.mp4" initial={{ title: 'Rest' }} />);
+    await user.click(screen.getByRole('button', { name: /publish to youtube/i }));
+    expect(await screen.findByRole('status')).toHaveTextContent(/carries on if you leave this page/i);
+    expect(screen.getByRole('button', { name: /uploading to youtube/i })).toBeDisabled();
+    finish({ ok: true, result: { videoId: 'v1', videoUrl: 'u', forcedPrivate: false } });
+    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument());
+  });
 });
+
