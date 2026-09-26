@@ -1,11 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { createPortal } from 'react-dom';
 import { AUDIO_ACCEPT, AUDIO_ACCEPT_LIST } from '../../lib/audioAccept';
 import { soundtrackStats, trackColour } from '../../lib/soundtrack';
 import { trackAudioUrl, useTrackPreview } from '../../hooks/useTrackPreview';
 import type { MusicTrack } from '../../lib/musicLibraryApi';
 import { DropZone } from '../ui/DropZone';
-import { InstrumentalDialog } from '../InstrumentalDialog';
+import { InstrumentalModal } from '../InstrumentalModal';
 import { LibraryDrawer } from './LibraryDrawer';
 import { SoundtrackHeader, type RibbonSegment } from './SoundtrackHeader';
 import { Tracklist } from './Tracklist';
@@ -236,10 +235,7 @@ export function MusicTracklist({ value, onChange, busy, reorderable, shuffle, va
         renderActions={lib.manageControls}
       />}
 
-      {lib.instrumentalFor && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-lg">
-            <InstrumentalDialog
+      {lib.instrumentalFor && <InstrumentalModal
               track={lib.instrumentalFor}
               onClose={() => lib.setInstrumentalFor(null)}
               // Refresh so the new instrumental shows up in the library right away.
@@ -248,11 +244,7 @@ export function MusicTracklist({ value, onChange, busy, reorderable, shuffle, va
                 if (lib.instrumentalFor) swapRef(lib.instrumentalFor.ref, inst.ref);
                 lib.setInstrumentalFor(null);
               }}
-            />
-          </div>
-        </div>,
-        document.body,
-      )}
+            />}
     </DropZone>
   );
 }

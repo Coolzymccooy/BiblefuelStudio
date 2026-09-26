@@ -194,4 +194,36 @@ describe("stems worker API", () => {
     assert.equal(again.body.already, true);
     assert.equal(readMusicLibrary(dir).items.length, 1);
   });
+
+  test("a job whose lease lapsed while the laptop was out of touch is handed back, not cancelled", async () => {
+    queueOne();
+    await request(app()).post("/api/stems-worker/claim").set(auth);
+    // The laptop's connection dropped for longer than the lease.
+    const job = getStemJob("job-1", "u1");
+    job.leaseUntil = Date.now() - 1;
+    const r = await request(app()).post("/api/stems-worker/jobs/job-1/progress").set(auth).send({ percent: 60 });
+    assert.deepEqual(r.body, { ok: true, cancelled: false });
+    assert.equal(job.status, "running");
+    assert.ok(job.leaseUntil > Date.now());
+    assert.equal(job.percent, 60);
+  });
+
+  test("a result for a job that went back to the queue is still accepted", async () => {
+    const job = queueOne();
+    await request(app()).post("/api/stems-worker/claim").set(auth);
+    job.leaseUntil = Date.now() - 1;
+    await request(app()).post("/api/stems-worker/claim").set(auth); // requeues the lapsed job, then re-leases it
+    job.leaseUntil = Date.now() - 1;
+    const r = await request(app()).post("/api/stems-worker/jobs/job-1/result").set(auth).set("Content-Type", "audio/mp4").send(M4A);
+    assert.equal(r.status, 200);
+    assert.equal(getStemJob("job-1", "u1").status, "done");
+  });
+
+  test("a job the user cancelled is never handed back", async () => {
+    const job = queueOne();
+    await request(app()).post("/api/stems-worker/claim").set(auth);
+    cancelLaptopJob(job);
+    const r = await request(app()).post("/api/stems-worker/jobs/job-1/progress").set(auth).send({ percent: 60 });
+    assert.equal(r.body.cancelled, true);
+  });
 });

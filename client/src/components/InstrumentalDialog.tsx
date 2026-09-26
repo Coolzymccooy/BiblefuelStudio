@@ -20,6 +20,11 @@ export interface InstrumentalDialogProps {
   onUse?: (track: MusicTrack) => void;
   /** Poll interval; tests shorten it. */
   pollMs?: number;
+  /** Shown as a small progress pill instead of the panel (InstrumentalModal). */
+  minimized?: boolean;
+  /** Offer "Minimise" while it runs; the job carries on either way. */
+  onMinimize?: () => void;
+  onRestore?: () => void;
 }
 
 /**
@@ -46,7 +51,21 @@ function progressLine(job: InstrumentalJob | null): string {
   return `Removing vocals${onLaptop ? ' on your laptop' : ''}… ${job?.percent ?? 0}%`;
 }
 
-export function InstrumentalDialog({ track, onClose, onSaved, onUse, pollMs = 2000 }: InstrumentalDialogProps) {
+/** The pill's one line: where the job is, in a few words. */
+function pillLine(job: InstrumentalJob | null): string {
+  if (job?.status === 'done') return 'Instrumental ready';
+  if (job?.status === 'error') return 'Vocal removal stopped';
+  const onLaptop = job?.where === 'laptop';
+  if (job?.status === 'queued') {
+    if (!onLaptop) return 'Waiting to remove vocals…';
+    return job.laptopOnline ? 'Waiting for your laptop…' : 'Waiting — your laptop is offline';
+  }
+  return `Removing vocals${onLaptop ? ' on your laptop' : ''} · ${job?.percent ?? 0}%`;
+}
+
+export function InstrumentalDialog({
+  track, onClose, onSaved, onUse, pollMs = 2000, minimized = false, onMinimize, onRestore,
+}: InstrumentalDialogProps) {
   const [quality, setQuality] = useState<InstrumentalQuality>('best');
   const [jobId, setJobId] = useState<string | null>(null);
   const [job, setJob] = useState<InstrumentalJob | null>(null);
@@ -138,6 +157,24 @@ export function InstrumentalDialog({ track, onClose, onSaved, onUse, pollMs = 20
   // exist. Everything else (uploads, the result file) goes through mediaUrl.
   const originalSrc = job?.sourcePreview?.startsWith('/music/') ? job.sourcePreview : api.mediaUrl(job?.sourcePreview);
 
+  if (minimized) {
+    const finished = job?.status === 'done' || job?.status === 'error';
+    return (
+      <div role="status" aria-live="polite" className="fixed bottom-5 right-5 z-50 flex w-[min(22rem,calc(100vw-2.5rem))] items-center gap-3 rounded-xl border border-[rgba(216,184,120,0.3)] bg-bf-bg px-4 py-3 shadow-2xl">
+        <div className="min-w-0 flex-1">
+          <div className={`text-sm ${job?.status === 'error' ? 'text-bf-danger' : 'text-bf-cream'}`}>{pillLine(job)}</div>
+          <div className="truncate text-xs text-bf-muted" title={track.label}>{track.label}</div>
+          {!finished && (
+            <div className="mt-1.5 h-1 w-full rounded bg-white/10">
+              <div className="h-1 rounded bg-primary-500" style={{ width: `${job?.percent ?? 0}%` }} />
+            </div>
+          )}
+        </div>
+        <button type="button" onClick={onRestore} className={`${secondaryBtnCls} shrink-0 px-3 py-1.5 text-xs`}>Show</button>
+      </div>
+    );
+  }
+
   return (
     <div role="dialog" aria-label={`Remove vocals from ${track.label}`} className={dialogCls}>
       <div className="font-displaySerif text-lg leading-snug text-bf-cream">Remove vocals — {track.label}</div>
@@ -168,7 +205,13 @@ export function InstrumentalDialog({ track, onClose, onSaved, onUse, pollMs = 20
           <div className="h-1.5 w-full rounded bg-white/10">
             <div className="h-1.5 rounded bg-primary-500" style={{ width: `${job?.percent ?? 0}%` }} />
           </div>
-          <button type="button" onClick={cancel} className={secondaryBtnCls}>Cancel</button>
+          <div className="flex gap-2">
+            {onMinimize && (
+              // The job runs on its own and saves itself; the page stays usable.
+              <button type="button" onClick={onMinimize} className={primaryBtnCls}>Minimise</button>
+            )}
+            <button type="button" onClick={cancel} className={secondaryBtnCls}>Cancel</button>
+          </div>
         </div>
       )}
 
