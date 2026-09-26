@@ -28,6 +28,13 @@ if (token.length < 32) {
   console.error("STEMS_WORKER_TOKEN is missing or too short (32+ characters). Put it in server/.env.");
   process.exit(1);
 }
+// The key travels in every request: only over https, except to this machine.
+const target = new URL(baseUrl);
+const local = ["localhost", "127.0.0.1", "[::1]"].includes(target.hostname);
+if (target.protocol !== "https:" && !local) {
+  console.error(`BIBLEFUEL_URL must be https (got ${baseUrl}); the worker key would travel in the clear.`);
+  process.exit(1);
+}
 const sep = await separatorAvailable();
 if (!sep?.ok) {
   console.error("The vocal separator is not set up on this machine — see docs/vocal-removal.md.");

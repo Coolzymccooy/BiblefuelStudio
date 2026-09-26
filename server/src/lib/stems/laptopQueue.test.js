@@ -6,7 +6,8 @@ import path from "path";
 import {
   configureLaptopQueue, enqueueLaptopJob, claimNext, heldJob, reportProgress,
   failLaptopJob, cancelLaptopJob, loadLaptopQueue, laptopOnline, laptopQueueEnabled,
-  LEASE_MS, ONLINE_MS, MAX_ATTEMPTS, _resetLaptopQueue,
+  LEASE_MS, ONLINE_MS, MAX_ATTEMPTS, _resetLaptopQueue, queueRoomFor, MAX_WAITING_PER_USER, MAX_WAITING,
+  FAILED_ON_LAPTOP,
 } from "./laptopQueue.js";
 import { _resetStemJobs, getStemJob, listStemJobs } from "./stemJobs.js";
 
@@ -105,9 +106,9 @@ describe("laptop queue", () => {
   test("a failure from the laptop is recorded, trimmed", () => {
     const job = enqueueLaptopJob(fields({ jobId: "a" }));
     claimNext(0);
-    failLaptopJob(job, "x".repeat(1000));
+    failLaptopJob(job, "C:\Users\someone\AppData\Temp\bf-stems-1 Traceback ...");
     assert.equal(job.status, "error");
-    assert.equal(job.error.length, 300);
+    assert.equal(job.error, FAILED_ON_LAPTOP, "users see a plain message, not laptop paths");
   });
 
   test("a restart reloads waiting and interrupted jobs as queued", () => {
@@ -136,5 +137,40 @@ describe("laptop queue", () => {
     assert.equal(laptopQueueEnabled({}), false);
     assert.equal(laptopQueueEnabled({ STEMS_WORKER_TOKEN: "short" }), false);
     assert.equal(laptopQueueEnabled({ STEMS_WORKER_TOKEN: "k".repeat(32) }), true);
+  });
+
+  test("each user may have only a few jobs waiting, and the queue as a whole is capped", () => {
+    for (let i = 0; i < MAX_WAITING_PER_USER; i += 1) enqueueLaptopJob(fields({ jobId: `u1-${i}` }));
+    assert.equal(queueRoomFor("u1"), false);
+    assert.equal(queueRoomFor("u2"), true);
+    for (let i = 0; i < MAX_WAITING; i += 1) enqueueLaptopJob(fields({ jobId: `x-${i}`, userId: `other-${i}` }));
+    assert.equal(queueRoomFor("u3"), false);
+  });
+
+  test("the laptop takes turns between users rather than draining one user's backlog first", () => {
+    enqueueLaptopJob(fields({ jobId: "a1", userId: "a", createdAt: 1 }));
+    enqueueLaptopJob(fields({ jobId: "a2", userId: "a" }));
+    enqueueLaptopJob(fields({ jobId: "b1", userId: "b" }));
+    assert.equal(claimNext(0).jobId, "a1");
+    assert.equal(claimNext(0).jobId, "b1", "b has had no turn yet");
+    assert.equal(claimNext(0).jobId, "a2");
+  });
+
+  test("a reloaded row whose paths leave its own folders is dropped", () => {
+    const file = path.join(dir, "stems-queue.json");
+    const good = { ...fields({ jobId: "ok" }), resultPath: "/out/instrumental-ok.m4a", input: "/out/song.mp3" };
+    const badResult = { ...fields({ jobId: "bad1" }), resultPath: "/etc/cron.d/x" };
+    const badInput = { ...fields({ jobId: "bad2" }), input: "/etc/passwd" };
+    fs.writeFileSync(file, JSON.stringify([good, badResult, badInput]));
+    loadLaptopQueue();
+    assert.deepEqual(listStemJobs().map((j) => j.jobId), ["ok"]);
+  });
+
+  test("finished laptop jobs are forgotten after a day", () => {
+    const job = enqueueLaptopJob(fields({ jobId: "old" }));
+    claimNext(0);
+    failLaptopJob(job, "x", { now: 0 });
+    claimNext(25 * 3_600_000);
+    assert.equal(listStemJobs().length, 0);
   });
 });

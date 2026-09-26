@@ -17,7 +17,7 @@ import {
 } from "../lib/stems/stemJobs.js";
 import { sweepStaleInstrumentals } from "../lib/stems/sweep.js";
 import {
-  laptopQueueEnabled, laptopOnline, enqueueLaptopJob, cancelLaptopJob, persistLaptopQueue,
+  laptopQueueEnabled, laptopOnline, enqueueLaptopJob, cancelLaptopJob, persistLaptopQueue, queueRoomFor,
 } from "../lib/stems/laptopQueue.js";
 import { quota } from "../middleware/quota.js";
 
@@ -268,6 +268,9 @@ router.post("/:id/instrumental", quota("render"), async (req, res) => {
       sourceLicence: src.licence,
       sourceCredit: src.credit,
     };
+    if (!local && !queueRoomFor(req.ctx.userId)) {
+      return res.status(429).json({ ok: false, error: "You already have songs waiting for vocal removal. Try again when they finish." });
+    }
     if (!local) {
       // The laptop picks it up (routes/stemsWorker.js) and uploads the result.
       enqueueLaptopJob({ ...fields, input, quality, dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir });

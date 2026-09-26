@@ -8,7 +8,7 @@ import { _resetBundledDurations } from "../lib/musicLibrary.js";
 import { registerTrack, readMusicLibrary } from "../lib/musicLibraryStore.js";
 import { _resetStemJobs } from "../lib/stems/stemJobs.js";
 import { _resetHeavyGate } from "../lib/heavyJobGate.js";
-import { configureLaptopQueue, claimNext, _resetLaptopQueue } from "../lib/stems/laptopQueue.js";
+import { configureLaptopQueue, claimNext, _resetLaptopQueue, MAX_WAITING_PER_USER } from "../lib/stems/laptopQueue.js";
 
 function handlerFor(method, routePath) {
   const layer = musicRouter.stack.find((l) => l.route && l.route.path === routePath && l.route.methods[method]);
@@ -532,6 +532,18 @@ describe("vocal removal on the laptop (no separator on this server)", () => {
     assert.equal(view.status, "error");
     assert.equal(view.error, "Cancelled.");
     assert.equal(claimNext(), null);
+  });
+
+  test("a user with a full queue is told to wait", async () => {
+    const { ctx, file } = tenant();
+    const t = registerTrack(ctx.dataDir, { file, label: "Song" });
+    const c = { ...ctx, userId: "u1" };
+    let last;
+    for (let i = 0; i <= MAX_WAITING_PER_USER; i += 1) {
+      last = await call("post", "/:id/instrumental", { ctx: c, params: { id: t.id }, body: {} });
+    }
+    assert.equal(last.statusCode, 429);
+    assert.match(last.payload.error, /already have songs waiting/i);
   });
 
   test("without a worker key it is still refused", async () => {

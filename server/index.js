@@ -428,7 +428,7 @@ try {
 
 // Vocal-removal requests waiting for the laptop survive a restart.
 try {
-  configureLaptopQueue({ file: path.join(DATA_DIR, "stems-queue.json") });
+  configureLaptopQueue({ file: path.join(DATA_DIR, "stems-queue.json"), roots: [DATA_DIR, OUTPUT_DIR] });
   loadLaptopQueue();
 } catch (e) {
   console.warn("[stems] laptop queue not loaded:", e?.message || e);

@@ -59,7 +59,7 @@ router.get("/jobs/:jobId/source", (req, res) => {
   const job = held(req, res);
   if (!job) return undefined;
   if (!fs.existsSync(job.input)) {
-    failLaptopJob(job, "The song's audio file is missing on the server.");
+    failLaptopJob(job, `source missing: ${job.input}`, { userMessage: "The song's audio file is missing, so its vocals could not be removed." });
     return res.status(410).json({ ok: false, error: "source missing" });
   }
   return res.sendFile(path.resolve(job.input), { dotfiles: "allow" });
@@ -92,12 +92,16 @@ router.post(
     if (!job) {
       return res.status(409).json({ ok: false, error: "that job was cancelled or has lapsed" });
     }
+    // One result per job: a retry landing while the first is still being
+    // checked must not write the file twice or add a second library track.
+    if (job.finalizing) return res.status(409).json({ ok: false, error: "a result for this job is already being saved" });
     const body = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
     if (!looksLikeM4a(body)) {
       return res.status(400).json({ ok: false, error: "the result is not an M4A audio file" });
     }
     // The server's own name for it, in the job owner's media folder.
     const tmp = `${job.resultPath}.upload`;
+    job.finalizing = true;
     try {
       fs.writeFileSync(tmp, body);
       let durationSec;
@@ -110,13 +114,18 @@ router.post(
       if (job.controller.signal.aborted) throw Object.assign(new Error("that job was cancelled"), { status: 409 });
       fs.renameSync(tmp, job.resultPath);
       const track = await saveInstrumental(job.dataDir, job, job.outputDir, { durationSec });
-      updateStemJob(job.jobId, { status: "done", percent: 100, track });
+      updateStemJob(job.jobId, { status: "done", percent: 100, track, finishedAt: Date.now() });
       persistLaptopQueue();
       return res.json({ ok: true });
     } catch (e) {
+      job.finalizing = false;
       try { fs.rmSync(tmp, { force: true }); } catch { /* swept up later */ }
       try { fs.rmSync(job.resultPath, { force: true }); } catch { /* swept up later */ }
-      return res.status(e.status || 500).json({ ok: false, error: String(e?.message || e) });
+      // Our own messages are safe to return; anything else (an fs error) names
+      // server paths, so it is logged and replaced.
+      if (e.status) return res.status(e.status).json({ ok: false, error: e.message });
+      console.warn(`[stems] saving laptop result for ${job.jobId} failed: ${e?.message || e}`);
+      return res.status(500).json({ ok: false, error: "the server could not save the result" });
     }
   },
 );

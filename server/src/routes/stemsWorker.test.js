@@ -7,7 +7,7 @@ import os from "os";
 import path from "path";
 import stemsWorkerRouter, { _setResultProbe, _resetResultProbe } from "./stemsWorker.js";
 import {
-  configureLaptopQueue, enqueueLaptopJob, cancelLaptopJob, _resetLaptopQueue,
+  configureLaptopQueue, enqueueLaptopJob, cancelLaptopJob, _resetLaptopQueue, FAILED_ON_LAPTOP,
 } from "../lib/stems/laptopQueue.js";
 import { _resetStemJobs, getStemJob } from "../lib/stems/stemJobs.js";
 import { readMusicLibrary } from "../lib/musicLibraryStore.js";
@@ -151,6 +151,29 @@ describe("stems worker API", () => {
     assert.equal(r.status, 200);
     const job = getStemJob("job-1", "u1");
     assert.equal(job.status, "error");
-    assert.match(job.error, /separator crashed/);
+    assert.equal(job.error, FAILED_ON_LAPTOP, "the user sees a plain message; the detail goes to the server log");
+  });
+
+  test("a second upload for the same job is refused while the first is being saved", async () => {
+    queueOne();
+    await request(app()).post("/api/stems-worker/claim").set(auth);
+    let release; const gate = new Promise((r) => { release = r; });
+    _setResultProbe(async () => { await gate; return 180; });
+    const first = request(app()).post("/api/stems-worker/jobs/job-1/result").set(auth).set("Content-Type", "audio/mp4").send(M4A).then((r) => r);
+    await new Promise((r) => setTimeout(r, 50));
+    const second = await request(app()).post("/api/stems-worker/jobs/job-1/result").set(auth).set("Content-Type", "audio/mp4").send(M4A);
+    assert.equal(second.status, 409);
+    release();
+    assert.equal((await first).status, 200);
+    assert.equal(readMusicLibrary(dir).items.length, 1);
+  });
+
+  test("an unexpected save error does not reveal server paths", async () => {
+    queueOne();
+    await request(app()).post("/api/stems-worker/claim").set(auth);
+    fs.rmSync(path.join(dir, "out"), { recursive: true, force: true });
+    const r = await request(app()).post("/api/stems-worker/jobs/job-1/result").set(auth).set("Content-Type", "audio/mp4").send(M4A);
+    assert.equal(r.status, 500);
+    assert.doesNotMatch(r.body.error, /[\/]/);
   });
 });
