@@ -237,7 +237,7 @@ export function MusicTracklist({ value, onChange, busy, reorderable, shuffle, va
       />}
 
       {lib.instrumentalFor && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
           <div className="w-full max-w-lg">
             <InstrumentalDialog
               track={lib.instrumentalFor}
