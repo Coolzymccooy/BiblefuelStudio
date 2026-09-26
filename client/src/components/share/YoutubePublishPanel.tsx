@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Loader2, Youtube } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { api } from '../../lib/api';
+import { publishToYoutube } from '../../lib/youtubePublish';
 import { ThumbnailPreview } from './ThumbnailPreview';
 import { chapterPreviewLines } from '../../lib/youtubeChapters';
 import type { ThumbnailDesign } from '../../lib/youtubeThumbnail';
@@ -29,6 +29,8 @@ export interface YoutubePublishResult {
   thumbnailError?: string;
   /** The picture went up, but without the title that was asked for. */
   thumbnailWarning?: string;
+  /** With `record`: whether the server noted the video on that session. */
+  recorded?: boolean;
 }
 
 export interface YoutubePublishPanelProps {
@@ -40,6 +42,11 @@ export interface YoutubePublishPanelProps {
   existingVideos?: ExistingVideo[];
   /** `sent` is what was asked for, so a caller can keep a record of the upload. */
   onPublished?: (r: YoutubePublishResult, sent: { privacyStatus: YoutubePrivacy; publishAt: string }) => void;
+  /**
+   * Have the server note the finished upload on this ambient session itself,
+   * so the history is right even if the page is closed mid-upload.
+   */
+  record?: { ambientProjectId: string };
 }
 
 import { fieldLabelCls, inputCls, primaryBtnCls } from '../story/formStyles';
@@ -55,7 +62,7 @@ export function toIsoPublishAt(local: string): string {
   return Number.isNaN(d.getTime()) ? '' : d.toISOString();
 }
 
-export function YoutubePublishPanel({ videoUrl, initial, thumbnailOptions = [], chapters, existingVideos = [], onPublished }: YoutubePublishPanelProps) {
+export function YoutubePublishPanel({ videoUrl, initial, thumbnailOptions = [], chapters, existingVideos = [], onPublished, record }: YoutubePublishPanelProps) {
   const [title, setTitle] = useState(initial?.title ?? '');
   const [description, setDescription] = useState(initial?.description ?? '');
   const [tagsRaw, setTagsRaw] = useState((initial?.tags ?? []).join(', '));
@@ -65,6 +72,9 @@ export function YoutubePublishPanel({ videoUrl, initial, thumbnailOptions = [], 
   const [thumbnailTitle, setThumbnailTitle] = useState(initial?.thumbnailTitle ?? false);
   const [tagline, setTagline] = useState(initial?.thumbnailTagline ?? '');
   const [busy, setBusy] = useState(false);
+  // Leaving the page stops following the upload, never the upload itself.
+  const gone = useRef(false);
+  useEffect(() => { gone.current = false; return () => { gone.current = true; }; }, []);
   const [fieldError, setFieldError] = useState('');
 
   const design: ThumbnailDesign = { path: thumbnailPath, title: title.trim(), withTitle: thumbnailTitle, tagline };
@@ -77,8 +87,7 @@ export function YoutubePublishPanel({ videoUrl, initial, thumbnailOptions = [], 
     setBusy(true);
     try {
       const publishAt = toIsoPublishAt(publishAtLocal);
-      const res = await api.post<YoutubePublishResult>('/api/social/post', {
-        destination: 'youtube',
+      const res = await publishToYoutube({
         videoUrl,
         title: title.trim(),
         description,
@@ -89,9 +98,16 @@ export function YoutubePublishPanel({ videoUrl, initial, thumbnailOptions = [], 
         thumbnailTitle: Boolean(thumbnailPath) && thumbnailTitle,
         thumbnailTagline: thumbnailPath && thumbnailTitle ? tagline.trim() : '',
         chapters,
+        ...(record ? { record } : {}),
+      }, {
+        shouldStop: () => gone.current,
+        onJoined: () => toast('This video is already uploading, so the details you changed were not used. Following that upload.', { duration: 8000 }),
       });
-      if (!res.ok || !res.data) { toast.error(res.error || 'YouTube upload failed'); return; }
-      const r = res.data;
+      if (!res.ok) {
+        if ('error' in res) toast.error(res.error);
+        return;
+      }
+      const r = res.result;
       if (r.forcedPrivate) toast.success('Scheduled — the video stays private until its publish time.');
       else toast.success('Uploaded to YouTube');
       if (r.thumbnailError) toast.error(`Uploaded, but the thumbnail was rejected: ${r.thumbnailError}`);
@@ -173,8 +189,13 @@ export function YoutubePublishPanel({ videoUrl, initial, thumbnailOptions = [], 
         className={`${primaryBtnCls} w-full sm:w-auto`}
       >
         {busy ? <Loader2 size={16} className="animate-spin" /> : <Youtube size={16} />}
-        Publish to YouTube
+        {busy ? 'Uploading to YouTube…' : 'Publish to YouTube'}
       </button>
+      {busy && (
+        <p role="status" className="text-help">
+          A long video takes a few minutes. The upload carries on if you leave this page.
+        </p>
+      )}
     </div>
   );
 }

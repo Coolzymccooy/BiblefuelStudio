@@ -62,6 +62,36 @@ describe('MusicLibraryImport', () => {
     expect(upload).toHaveBeenCalledTimes(1);
   });
 
+  it('waits for the library before planning, so a track already there is not uploaded again', async () => {
+    let release: (v: libraryApi.MusicTrack[]) => void = () => {};
+    const slow = new Promise<libraryApi.MusicTrack[]>((r) => { release = r; });
+    const upload = vi.spyOn(storyApi, 'uploadAudio').mockImplementation(async (_f, name) => `/out/${name}`);
+    vi.spyOn(libraryApi, 'saveTrackToLibrary').mockResolvedValue({} as libraryApi.MusicTrack);
+    const success = vi.spyOn(toast, 'success').mockImplementation(() => '');
+    vi.spyOn(libraryApi, 'fetchMusicLibrary').mockReturnValue(slow);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={qc}><MusicLibraryImport busy={false} /></QueryClientProvider>);
+
+    await userEvent.upload(screen.getByLabelText(/choose tracks/i), [mp3('Pastoral - Asher Fulero.mp3'), mp3('Tratak - Jesse Gallagher.mp3')]);
+    expect(upload).not.toHaveBeenCalled();
+    release([{ label: 'Pastoral — Asher Fulero' } as libraryApi.MusicTrack]);
+
+    await waitFor(() => expect(success).toHaveBeenCalledWith(expect.stringMatching(/1 track added.*1 already/)));
+    expect(upload).toHaveBeenCalledTimes(1);
+  });
+
+  it('adds nothing when the library cannot be read', async () => {
+    const upload = vi.spyOn(storyApi, 'uploadAudio').mockImplementation(async (_f, name) => `/out/${name}`);
+    const error = vi.spyOn(toast, 'error').mockImplementation(() => '');
+    vi.spyOn(libraryApi, 'fetchMusicLibrary').mockRejectedValue(new Error('offline'));
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={qc}><MusicLibraryImport busy={false} /></QueryClientProvider>);
+
+    await userEvent.upload(screen.getByLabelText(/choose tracks/i), [mp3('a.mp3')]);
+    await waitFor(() => expect(error).toHaveBeenCalledWith(expect.stringMatching(/couldn.t read your library/i)));
+    expect(upload).not.toHaveBeenCalled();
+  });
+
   it('one failure does not stop the rest, and is named', async () => {
     vi.spyOn(storyApi, 'uploadAudio').mockImplementation(async (_f, name) => {
       if (name.startsWith('bad')) throw new Error('too big');

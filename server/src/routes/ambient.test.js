@@ -22,7 +22,7 @@ import ambientRouter, {
 import { EventEmitter } from "events";
 import { readProject, writeProject } from "../lib/ambient/projectStore.js";
 import { createJob, getJob as getRenderJob } from "../lib/renderJobs.js";
-import { registerTrack } from "../lib/musicLibraryStore.js";
+import { registerTrack, updateTrack, removeTrack } from "../lib/musicLibraryStore.js";
 import { readLibrary, registerImage, _setEmbedImpl, _resetEmbedImpl } from "../lib/imageGen/imageLibrary.js";
 import { _resetHeavyGate, runExclusive } from "../lib/heavyJobGate.js";
 import { _setEncodersProbe, _resetEncodersProbe } from "../lib/ambient/encoders.js";
@@ -285,7 +285,28 @@ describe("POST /api/ambient/:id/voice", () => {
   });
 });
 
+
+function finish(id) {
+  const p = readProject(dataDir, id);
+  return writeProject(dataDir, { ...p, status: AMBIENT_STATUS.DONE, render: { ...p.render, status: "done", outputPath: "/x/video.mp4" } });
+}
+
 describe("PATCH /api/ambient/:id/motion", () => {
+  test("changing the motion of a finished session lets it be rendered again", async () => {
+    const p = await createSession();
+    finish(p.projectId);
+    const res = await request(app).patch(`/api/ambient/${p.projectId}/motion`).send({ motion: "drift" });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.project.status, AMBIENT_STATUS.READY_TO_RENDER);
+  });
+
+  test("choosing the motion it already has leaves a finished session finished", async () => {
+    const p = await createSession();
+    finish(p.projectId);
+    const res = await request(app).patch(`/api/ambient/${p.projectId}/motion`).send({ motion: "still" });
+    assert.equal(res.body.project.status, AMBIENT_STATUS.DONE);
+  });
+
   test("a new session is still, and gentle drift can be switched on and off", async () => {
     const p = await createSession();
     assert.equal(p.motion, "still");
@@ -726,6 +747,20 @@ describe("POST /api/ambient/:id/images with a movementId", () => {
 });
 
 describe("PATCH /api/ambient/:id/captions", () => {
+  test("changing the captions of a finished session lets it be rendered again", async () => {
+    const p = await createSession();
+    finish(p.projectId);
+    const res = await request(app).patch(`/api/ambient/${p.projectId}/captions`).send({ captionPosition: "centre" });
+    assert.equal(res.body.project.status, AMBIENT_STATUS.READY_TO_RENDER);
+  });
+
+  test("sending what it already has leaves a finished session finished", async () => {
+    const p = await createSession();
+    const before = finish(p.projectId);
+    const res = await request(app).patch(`/api/ambient/${p.projectId}/captions`).send({ captions: before.captions });
+    assert.equal(res.body.project.status, AMBIENT_STATUS.DONE);
+  });
+
   test("merges against the stored project rather than replacing it", async () => {
     const p = await createSession();
     await request(app).patch(`/api/ambient/${p.projectId}/captions`).send({ captions: "static", captionPreset: "psalm" });
@@ -1123,6 +1158,44 @@ describe("the music bed is levelled", () => {
     assert.equal(calls.length, 1, "the second render found the first bed");
   });
 
+  test("a reused bed picks up a track renamed or re-credited since it was built", async () => {
+    _setLoudnessImpl(async () => ({ inputI: -18, inputTp: -6 }));
+    _setProbeImpl(async () => 30);
+    const calls = [];
+    _setFfmpegSpawnImpl((args) => {
+      fs.writeFileSync(args[args.length - 1], "bed");
+      return fakeFfmpeg(calls)(args);
+    });
+    try {
+      const file = path.join(outputDir, "hymn.mp3");
+      fs.writeFileSync(file, "x");
+      const track = registerTrack(dataDir, { file, label: "Old name", licence: "CC0", durationSec: 30 });
+      const p = await createSession({ targetSec: 20 });
+      const stored = writeProject(dataDir, {
+        ...readProject(dataDir, p.projectId),
+        bed: { ...p.bed, mode: "assemble", order: "fixed", trackRefs: [`mylib:${track.id}`], crossfadeSec: 2 },
+      });
+      const first = await assembleBed({ dataDir, outputDir }, stored);
+      assert.equal(first.project.bed.builtOrder[0].label, "Old name");
+
+      updateTrack(dataDir, track.id, { label: "Great Is Thy Faithfulness", credit: "Piano by R. Hale" });
+      const again = await assembleBed({ dataDir, outputDir }, first.project);
+      assert.equal(calls.length, 1, "the bed itself is still reused");
+      assert.equal(again.project.bed.builtOrder[0].label, "Great Is Thy Faithfulness");
+      assert.equal(again.project.bed.builtOrder[0].credit, "Piano by R. Hale");
+      assert.equal(readProject(dataDir, p.projectId).bed.builtOrder[0].label, "Great Is Thy Faithfulness");
+
+      // Removed from the library afterwards: it is still in the audio, so
+      // its name and credit are kept rather than replaced by the bare ref.
+      removeTrack(dataDir, track.id);
+      const later = await assembleBed({ dataDir, outputDir }, again.project);
+      assert.equal(later.project.bed.builtOrder[0].label, "Great Is Thy Faithfulness");
+      assert.equal(later.project.bed.builtOrder[0].credit, "Piano by R. Hale");
+    } finally {
+      _resetProbeImpl();
+    }
+  });
+
   test("a cancel during levelling stops before ffmpeg builds the bed", async () => {
     const p = await createSession({ targetSec: 60 });
     _setLoudnessImpl(async () => { markCancelled(p.projectId); return { inputI: -18, inputTp: -6 }; });
@@ -1219,6 +1292,55 @@ describe("PATCH /api/ambient/:id/words — music only", () => {
     writeProject(dataDir, { ...readProject(dataDir, p.projectId), status: AMBIENT_STATUS.RENDERING });
     const res = await request(app).patch(`/api/ambient/${p.projectId}/words`).send({ words: "none" });
     assert.equal(res.status, 409);
+  });
+
+  test("refuses while pictures are being made, which would overwrite the change", async () => {
+    const p = await createSession();
+    writeProject(dataDir, { ...readProject(dataDir, p.projectId), status: AMBIENT_STATUS.GENERATING_IMAGES });
+    const res = await request(app).patch(`/api/ambient/${p.projectId}/words`).send({ words: "none" });
+    assert.equal(res.status, 409);
+    assert.equal(readProject(dataDir, p.projectId).words, "verses");
+  });
+
+  test("switching to music only and back keeps every verse picture", async () => {
+    const p = await createSession();
+    await request(app).post(`/api/ambient/${p.projectId}/plan`).send({ count: 3 });
+    const planned = readProject(dataDir, p.projectId);
+    writeProject(dataDir, {
+      ...planned,
+      movements: planned.movements.map((m, i) => ({ ...m, imageStatus: "done", imagePath: `/img-${i}.png`, imageUrl: `/outputs/img-${i}.png` })),
+    });
+    await request(app).patch(`/api/ambient/${p.projectId}/words`).send({ words: "none" });
+    const back = await request(app).patch(`/api/ambient/${p.projectId}/words`).send({ words: "verses" });
+    assert.deepEqual(back.body.project.movements.map((m) => m.imagePath), ["/img-0.png", "/img-1.png", "/img-2.png"]);
+    assert.ok(back.body.project.movements.every((m) => m.imageStatus === "done"));
+    assert.equal(back.body.project.verseMovements, undefined, "nothing is left set aside");
+  });
+
+  test("changing it on a finished session lets it be rendered again", async () => {
+    const p = await createSession();
+    finish(p.projectId);
+    const res = await request(app).patch(`/api/ambient/${p.projectId}/words`).send({ words: "none" });
+    assert.equal(res.body.project.status, AMBIENT_STATUS.READY_TO_RENDER);
+  });
+
+  test("back to verses that were never voiced goes to voicing, not straight to render", async () => {
+    const p = await createSession();
+    await request(app).post(`/api/ambient/${p.projectId}/plan`).send({ count: 2 });
+    await request(app).patch(`/api/ambient/${p.projectId}/words`).send({ words: "none" });
+    finish(p.projectId);
+    const back = await request(app).patch(`/api/ambient/${p.projectId}/words`).send({ words: "verses" });
+    assert.equal(back.body.project.status, AMBIENT_STATUS.DRAFT);
+  });
+
+  test("back to verses that are all voiced is ready to render", async () => {
+    const p = await createSession();
+    await request(app).post(`/api/ambient/${p.projectId}/plan`).send({ count: 2 });
+    const planned = readProject(dataDir, p.projectId);
+    writeProject(dataDir, { ...planned, words: "none", drops: planned.drops.map((d) => ({ ...d, status: "done", audioPath: "/v.mp3" })) });
+    finish(p.projectId);
+    const back = await request(app).patch(`/api/ambient/${p.projectId}/words`).send({ words: "verses" });
+    assert.equal(back.body.project.status, AMBIENT_STATUS.READY_TO_RENDER);
   });
 
   test("voicing is refused for a music-only session", async () => {
@@ -1353,5 +1475,77 @@ describe("renderStage — AMF encode falls back to CPU", () => {
     const saved = readProject(dataDir, p.projectId);
     assert.equal(saved.status, AMBIENT_STATUS.ERROR);
     clearCancelled(p.projectId);
+  });
+});
+
+describe("quota is charged only for work that will run", () => {
+  // Five refused renders used to spend the free plan's five for the day.
+  const recordCharges = () => {
+    const charged = [];
+    _setQuotaImpl((bucket) => (_req, _res, next) => { charged.push(bucket); next(); });
+    return charged;
+  };
+
+  test("a render refused for missing pictures costs nothing", async () => {
+    const p = await createSession();
+    const charged = recordCharges();
+    const res = await request(app).post(`/api/ambient/${p.projectId}/render`).send({});
+    assert.equal(res.status, 400);
+    assert.deepEqual(charged, []);
+  });
+
+  test("voicing with nothing to voice costs nothing", async () => {
+    const p = await createSession();
+    const charged = recordCharges();
+    const res = await request(app).post(`/api/ambient/${p.projectId}/voice`).send({});
+    assert.equal(res.status, 400);
+    assert.deepEqual(charged, []);
+  });
+
+  test("pictures for a movement that isn't there cost nothing", async () => {
+    const p = await createSession();
+    const charged = recordCharges();
+    const res = await request(app).post(`/api/ambient/${p.projectId}/images`).send({ movementId: "nope" });
+    assert.equal(res.status, 404);
+    assert.deepEqual(charged, []);
+  });
+
+  test("an unknown session costs nothing", async () => {
+    const charged = recordCharges();
+    for (const step of ["voice", "images", "render", "plan"]) {
+      await request(app).post(`/api/ambient/missing/${step}`).send({});
+    }
+    assert.deepEqual(charged, []);
+  });
+
+  test("suggesting verses asks the model, so it is charged to the scripts bucket", async () => {
+    const p = await createSession();
+    const charged = recordCharges();
+    const res = await request(app).post(`/api/ambient/${p.projectId}/plan`).send({ count: 2 });
+    assert.equal(res.status, 200);
+    assert.deepEqual(charged, ["scripts"]);
+  });
+
+  test("an exhausted scripts bucket stops the model call", async () => {
+    const p = await createSession();
+    let asked = 0;
+    _setPlanImpl(async () => { asked += 1; return ["Psalms 23:1"]; });
+    _setQuotaImpl(() => (_req, res) => res.status(429).json({ ok: false, error: "quota" }));
+    const res = await request(app).post(`/api/ambient/${p.projectId}/plan`).send({ count: 1 });
+    assert.equal(res.status, 429);
+    assert.equal(asked, 0);
+  });
+});
+
+describe("session length is bounded", () => {
+  test("a session longer than ten hours is refused, not stored", async () => {
+    const res = await request(app).post("/api/ambient").send({ title: "T", theme: "rest", targetSec: 999_999_999_999 });
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /10 hours/);
+  });
+
+  test("ten hours exactly is allowed", async () => {
+    const p = await createSession({ targetSec: 36_000 });
+    assert.equal(p.targetSec, 36_000);
   });
 });
