@@ -49,4 +49,18 @@ describe('InstrumentalModal', () => {
     render(<InstrumentalModal track={track} onClose={() => {}} onSaved={() => {}} />);
     expect(screen.queryByRole('button', { name: /minimise/i })).toBeNull();
   });
+
+  it('choosing another song while one is minimised opens a fresh dialog for it', async () => {
+    vi.spyOn(lib, 'startInstrumental').mockResolvedValue('j1');
+    vi.spyOn(lib, 'getInstrumental').mockResolvedValue(job('running', { percent: 30 }));
+    const other = { ...track, id: 't2', label: 'Other Song', ref: 'mylib:t2' } as MusicTrack;
+    const { rerender } = render(<InstrumentalModal track={track} onClose={() => {}} onSaved={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: /remove vocals/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /minimise/i }));
+    rerender(<InstrumentalModal track={other} onClose={() => {}} onSaved={() => {}} />);
+    // Not song A's job relabelled as B: a new dialog, ready to start B.
+    expect(screen.getByRole('dialog', { name: /other song/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /remove vocals/i })).toBeInTheDocument();
+    expect(screen.queryByRole('status')).toBeNull();
+  });
 });
