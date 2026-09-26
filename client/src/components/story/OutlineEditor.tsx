@@ -39,20 +39,38 @@ export function OutlineEditor({ project, onSaved, onNarrate, busy }: Props) {
   const [sections, setSections] = useState<LongformSection[]>(project.longform?.sections ?? []);
   const [voiceId, setVoiceId] = useState(STORY_VOICES[0].id);
   const [saving, setSaving] = useState(false);
+  // Edits not yet saved: narration reads the saved outline, so they are
+  // saved first rather than silently left out of the audio.
+  const [dirty, setDirty] = useState(false);
   const totalMin = Math.round(sections.reduce((n, s) => n + (s.targetSec || 0), 0) / 60);
 
-  const update = (i: number, reflection: string) =>
+  const update = (i: number, reflection: string) => {
+    setDirty(true);
     setSections((prev) => prev.map((s, j) => {
       if (j !== i) return s;
       const { hasPrefix } = splitReflection(s);
       return { ...s, text: hasPrefix ? versePrefix(s) + reflection : reflection };
     }));
+  };
 
-  const save = async () => {
+  const save = async (): Promise<boolean> => {
     setSaving(true);
-    try { onSaved(await longformApi.saveSections(project.projectId, sections)); toast.success('Outline saved'); }
-    catch (e) { toast.error((e as Error).message || 'Save failed'); }
-    finally { setSaving(false); }
+    try {
+      onSaved(await longformApi.saveSections(project.projectId, sections));
+      setDirty(false);
+      toast.success('Outline saved');
+      return true;
+    } catch (e) {
+      toast.error((e as Error).message || 'Save failed');
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const narrate = async () => {
+    if (dirty && !(await save())) return;
+    onNarrate(voiceId);
   };
 
   return (
@@ -92,7 +110,7 @@ export function OutlineEditor({ project, onSaved, onNarrate, busy }: Props) {
         <button type="button" onClick={save} disabled={saving || busy} className={secondaryBtnCls}>
           {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} Save outline
         </button>
-        <button type="button" onClick={() => onNarrate(voiceId)} disabled={busy} className={primaryBtnCls}>
+        <button type="button" onClick={narrate} disabled={saving || busy} className={primaryBtnCls}>
           <Mic size={16} /> Generate narration
         </button>
       </div>

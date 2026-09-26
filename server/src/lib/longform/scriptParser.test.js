@@ -87,6 +87,24 @@ Those who wait will not be put to shame. #rest #peace
     const huge = await parsePastedScript("## A\nfirst\n[pause 999999]\nsecond", { lookupVerses: lookup, defaultPauseMs: 5000 });
     assert.equal(huge.sections[1].pauseBeforeMs, 120_000);
   });
+  test("a reference line is replaced where it stands, so the author's order survives", async () => {
+    const out = await parsePastedScript("## Rest\nBefore the verse.\nPsalm 4:8\nAfter the verse.", { lookupVerses: lookup });
+    const text = out.sections[0].text;
+    assert.ok(text.indexOf("Before the verse.") < text.indexOf("Psalm 4:8."), text);
+    assert.ok(text.indexOf("Psalm 4:8.") < text.indexOf("After the verse."), text);
+    assert.equal(out.sections[0].reference, "Psalm 4:8");
+  });
+  test("a second reference is read where it was written, not before the prose", async () => {
+    const out = await parsePastedScript("## Rest\nPsalm 4:8\nBetween them.\nIsaiah 40:31", { lookupVerses: lookup });
+    const text = out.sections[0].text;
+    assert.ok(text.startsWith("Psalm 4:8. "), "opening on its scripture keeps the outline's verse shape");
+    assert.ok(text.indexOf("Between them.") < text.indexOf("Isaiah 40:31."), text);
+  });
+  test("an ALL-CAPS first line is a heading, not narration", async () => {
+    const out = await parsePastedScript("BE STILL\nRest in the quiet of this moment.", { lookupVerses: lookup });
+    assert.equal(out.sections[0].heading, "BE STILL");
+    assert.equal(out.sections[0].text, "Rest in the quiet of this moment.");
+  });
   test("rejects an empty script by name and never returns an empty section", async () => {
     await assert.rejects(() => parsePastedScript("  \n(only a note)\n", { lookupVerses: lookup }), /nothing to narrate/i);
     const out = await parsePastedScript("## Empty\n\n## Real\nwords", { lookupVerses: lookup });

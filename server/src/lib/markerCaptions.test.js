@@ -427,6 +427,27 @@ test('highlight mode emphasises one word at a time', () => {
     'expected per-word windows plus the line window');
 });
 
+test('a highlighted word sits on its own line, whatever the layout', () => {
+  // Left-aligned and staggered lines used to light their words up near the
+  // middle of the screen while the line itself was drawn at the side.
+  const xOf = (out, text) => out.match(new RegExp(`text='${text}':x=([^:]+):`))[1];
+  const left = buildLineDrawtext({
+    lines: ['Trust that His'], w: W, h: H, preset: 'marker',
+    duration: 2, reveal: true, highlightWords: HL_WORDS, layout: 'bottom-left',
+  });
+  assert.equal(xOf(left, 'Trust that His'), 'w*0.08');
+  assert.match(xOf(left, 'Trust'), /^w\*0\.08\+0$/, 'the first word starts where the line starts');
+  assert.match(xOf(left, 'His'), /^w\*0\.08\+\d+$/);
+  assert.ok(!/\(w-text_w\)\/2/.test(xOf(left, 'His')), 'not centred');
+
+  const centred = buildLineDrawtext({
+    lines: ['Trust that His'], w: W, h: H, preset: 'marker',
+    duration: 2, reveal: true, highlightWords: HL_WORDS,
+  });
+  assert.match(xOf(centred, 'His'), /^\(w-text_w\)\/2\+-?\d+$/, 'centred lines are unchanged');
+});
+
+
 test('without word timings, highlight mode is inert (no invented emphasis)', () => {
   const plain = buildLineDrawtext({
     lines: ['Trust that His'], w: W, h: H, preset: 'marker', duration: 2, reveal: true,

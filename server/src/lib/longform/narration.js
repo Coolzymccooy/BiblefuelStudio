@@ -52,7 +52,16 @@ function availablePreferredProviders(template, describeProviders) {
  * with only ElevenLabs set up.
  */
 async function synthesizeWithPreference({ text, voiceId, template, synthesize, providers }) {
-  const base = { text, voiceId, prosody: { rate: template.voice.rate }, scriptureMode: true };
+  // The voices offered are neural voice names (en-US-GuyNeural...), which
+  // Edge and Azure both speak. Sent as the bare voiceId every provider falls
+  // back to, Chatterbox took the name for an audio-prompt file and failed;
+  // addressed to those two, the others keep their own configured voice.
+  const base = {
+    text,
+    ...(voiceId ? { voiceIds: { edge: voiceId, azure: voiceId } } : {}),
+    prosody: { rate: template.voice.rate },
+    scriptureMode: true,
+  };
   if (providers.length === 0) return synthesize(base);
   let lastErr = null;
   for (const preferredProvider of providers) {

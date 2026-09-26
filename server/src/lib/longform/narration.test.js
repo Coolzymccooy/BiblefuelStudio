@@ -43,7 +43,8 @@ describe("narrateSections", () => {
     const out = await narrateSections({ sections, template: { ...template, voice: { ...template.voice, maxChunkChars: 25 } }, voiceId: "v1", workDir }, deps);
     assert.ok(calls.synth.length >= 4, "expected several chunks");
     for (const req of calls.synth) {
-      assert.equal(req.voiceId, "v1");
+      assert.deepEqual(req.voiceIds, { edge: "v1", azure: "v1" }, "the chosen voice reaches Edge and Azure (azure is first in the template)");
+      assert.equal(req.voiceId, undefined, "never the bare id every provider falls back to");
       assert.deepEqual(req.prosody, { rate: "-15%" });
       assert.equal(req.preferredProvider, "azure");
     }
