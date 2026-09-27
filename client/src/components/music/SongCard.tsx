@@ -1,11 +1,10 @@
 import { useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { Library, Loader2, Music, Play, Square, Upload, X } from 'lucide-react';
 import { AUDIO_ACCEPT, AUDIO_ACCEPT_LIST } from '../../lib/audioAccept';
 import { formatDuration, trackColour } from '../../lib/soundtrack';
 import { trackAudioUrl, useTrackPreview } from '../../hooks/useTrackPreview';
 import { DropZone } from '../ui/DropZone';
-import { InstrumentalDialog } from '../InstrumentalDialog';
+import { InstrumentalModal } from '../InstrumentalModal';
 import { LibraryDrawer } from './LibraryDrawer';
 import { useLibraryActions } from './useLibraryActions';
 import type { MusicValue } from '../MusicPicker';
@@ -139,19 +138,12 @@ export function SongCard({ value, onChange, busy }: SongCardProps) {
         />
       )}
 
-      {lib.instrumentalFor && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-lg">
-            <InstrumentalDialog
+      {lib.instrumentalFor && <InstrumentalModal
               track={lib.instrumentalFor}
               onClose={() => lib.setInstrumentalFor(null)}
               onSaved={lib.refresh}
               onUse={(inst) => { choose(inst.ref); lib.setInstrumentalFor(null); }}
-            />
-          </div>
-        </div>,
-        document.body,
-      )}
+            />}
     </DropZone>
   );
 }
