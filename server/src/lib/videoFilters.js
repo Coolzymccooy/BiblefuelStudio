@@ -51,9 +51,12 @@ export function fontFileFor(style) {
   return path.join(FONT_DIR, file);
 }
 
-/** Width in pixels of `text` at `fontSize` in the preset's own font. */
-export function textWidthFor(style, text, fontSize) {
-  return measureText(fontFileFor(style), text, fontSize, { kerning: drawtextKerning() });
+/**
+ * Width in pixels of `text` at `fontSize` in the preset's own font, or, with
+ * `upTo`, how far into it the pen is at that character index.
+ */
+export function textWidthFor(style, text, fontSize, upTo) {
+  return measureText(fontFileFor(style), text, fontSize, { kerning: drawtextKerning(), upTo });
 }
 
 function fontArg(style) {
@@ -831,7 +834,9 @@ export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal
       // both ends, so a frame landing exactly where one word hands over to
       // the next lit both.
       for (const { text, offset, a, b } of rowHits[i]) {
-        const x = `${rowX}+${textWidthFor(style, row.slice(0, offset), fontSize)}`;
+        // Measured inside the whole row, not as the row's first `offset`
+        // characters, so kerning and ligatures across the word's start count.
+        const x = `${rowX}+${textWidthFor(style, row, fontSize, offset)}`;
         parts.push(`drawtext=text='${escapeDrawText(text)}':x=${x}:y=${rowY}${fontArg(style)}:fontsize=${fontSize}:fontcolor=${emph}:enable='gte(t,${a.toFixed(3)})*lt(t,${b.toFixed(3)})'`);
       }
     });

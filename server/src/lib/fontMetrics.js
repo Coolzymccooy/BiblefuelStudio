@@ -1,4 +1,5 @@
 import fs from "fs";
+import * as hb from "harfbuzzjs";
 
 /**
  * Text widths straight from a TrueType font file, so a caption can place a
@@ -6,21 +7,20 @@ import fs from "fs";
  *
  * Captions used to assume every glyph is 0.6em wide (true of a typewriter
  * face only), so on any real font the highlighted word was drawn several
- * letters away from itself. This reads the advance widths ffmpeg's drawtext
- * uses (hmtx, through cmap) plus pair kerning from the legacy `kern` table.
- * Advances are rounded per glyph, as drawtext moves its pen in whole pixels.
+ * letters away from itself.
  *
- * Kerning depends on the ffmpeg drawtext does the drawing (see
- * drawtextKerning.js):
- *   "shaped"  6.1 and later shape text with HarfBuzz, which kerns real
- *             glyph pairs.
- *   "legacy"  5.1 (prod) asks FreeType for the pair at the two CHARACTER
- *             CODES, as if they were glyph ids, so a kerned font gets
- *             whatever pair happens to sit at those ids. Wrong, but it is
- *             what gets drawn, so it is what must be measured.
- *   "none"    no kerning.
- *
- * No dependency: only the four or five tables this needs are parsed.
+ * How text is set depends on the ffmpeg doing the drawing (see
+ * drawtextKerning.js), and each mode measures it that way:
+ *   "shaped"  6.1 and later shape text with HarfBuzz: ligatures ("fi"),
+ *             GPOS kerning, contextual forms. Measured with HarfBuzz itself
+ *             (harfbuzzjs), as hmtx plus a kern table missed all of that and
+ *             put a lit word ~15px off in Playfair and Caveat.
+ *   "legacy"  5.1 (prod) does no shaping: hmtx advances, rounded per glyph
+ *             to whole pixels, plus FreeType's legacy kerning, which it asks
+ *             for at the two CHARACTER CODES as if they were glyph ids, so a
+ *             kerned font gets whatever pair sits at those ids. Wrong, but it
+ *             is what gets drawn, so it is what must be measured.
+ *   "none"    hmtx advances only.
  */
 
 const cache = new Map();
@@ -123,36 +123,97 @@ export function loadFont(file) {
   const unitsPerEm = buf.readUInt16BE(t.head.offset + 18);
   const numHMetrics = buf.readUInt16BE(t.hhea.offset + 34);
   const advanceOf = (g) => buf.readUInt16BE(t.hmtx.offset + Math.min(g, numHMetrics - 1) * 4);
-  const font = { unitsPerEm, glyphOf: glyphLookup(buf, t.cmap), advanceOf, kerning: kernPairs(buf, t.kern) };
+  const font = { unitsPerEm, glyphOf: glyphLookup(buf, t.cmap), advanceOf, kerning: kernPairs(buf, t.kern), hasGpos: Boolean(t.GPOS) };
   cache.set(file, font);
   return font;
 }
 
 /**
- * Width in pixels of `text` set at `fontSize` in the font at `file`: the
- * distance drawtext's pen travels, which is where the next text would start.
- * `kerning` is "shaped", "legacy" or "none", as described above.
+ * Where drawtext's pen stands, in pixels, when it reaches character `upTo`
+ * (a string index) of `text` set at `fontSize` in the font at `file`. By
+ * default that is the end: the text's width. The whole text is set, so
+ * kerning or a ligature across `upTo` counts as it does when the whole row is
+ * drawn: in "AVA you", the pen at "you" includes any kerning of the space
+ * against the "y". `kerning` is "shaped", "legacy" or "none", as above.
  */
-export function measureText(file, text, fontSize, { kerning = "shaped" } = {}) {
+export function measureText(file, text, fontSize, { kerning = "shaped", upTo } = {}) {
+  const str = String(text || "");
+  const end = upTo ?? str.length;
+  if (kerning === "shaped") return shapedPen(file, str, fontSize, end);
   const font = loadFont(file);
   const scale = Number(fontSize) / font.unitsPerEm;
-  let width = 0;
+  let pen = 0;
   let prev = null;
-  for (const ch of String(text || "")) {
+  let at = 0;
+  for (const ch of str) {
     const cp = ch.codePointAt(0);
     const g = font.glyphOf(cp);
-    if (prev !== null) width += Math.round((pairKern(font, kerning, prev, { cp, g }) || 0) * scale);
-    width += Math.round(font.advanceOf(g) * scale);
+    if (prev !== null) pen += Math.round((pairKern(font, kerning, prev, { cp, g }) || 0) * scale);
+    if (at >= end) return pen; // the kern before this character counts; its advance does not
+    pen += Math.round(font.advanceOf(g) * scale);
     prev = { cp, g };
+    at += ch.length;
   }
-  return width;
+  return pen;
 }
 
 function pairKern(font, mode, prev, cur) {
-  if (mode === "shaped") return font.kerning.get(prev.g * 65536 + cur.g);
   if (mode === "legacy") return prev.cp > 0xffff || cur.cp > 0xffff ? 0 : font.kerning.get(prev.cp * 65536 + cur.cp);
   return 0;
 }
 
+const shapers = new Map();
+
+function shaperFor(file) {
+  const hit = shapers.get(file);
+  if (hit) return hit;
+  const data = fs.readFileSync(file);
+  const bytes = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+  const font = new hb.Font(new hb.Face(new hb.Blob(bytes)));
+  shapers.set(file, font);
+  return font;
+}
+
+/**
+ * The pen at `end` the way ffmpeg 6.1+ sets text: HarfBuzz at the font size
+ * in 1/64 px (what hb_ft gives drawtext), every glyph that starts before
+ * `end` advancing the pen. drawtext keeps the sub-pixel remainder rather than
+ * rounding per glyph, so only the total is rounded.
+ *
+ * A font with a legacy `kern` table and no GPOS (Permanent Marker) is kerned
+ * from that table by ffmpeg's HarfBuzz, but harfbuzzjs is built without it,
+ * so those pairs are added here, onto the first glyph of each pair as
+ * HarfBuzz does.
+ */
+function shapedPen(file, str, fontSize, end) {
+  const font = shaperFor(file);
+  const scale = Math.round(Number(fontSize) * 64);
+  font.setScale(scale, scale);
+  const buf = new hb.Buffer();
+  buf.addText(str);
+  buf.guessSegmentProperties();
+  hb.shape(font, buf);
+  const positions = buf.getGlyphPositions();
+  const glyphs = buf.getGlyphInfos();
+  const table = loadFont(file);
+  const kernTable = !table.hasGpos && table.kerning.size > 0;
+  let pen64 = 0;
+  glyphs.forEach((glyph, k) => {
+    if (glyph.cluster >= end) return;
+    pen64 += positions[k].xAdvance;
+    const next = glyphs[k + 1];
+    if (kernTable && next) {
+      pen64 += Math.round(((table.kerning.get(glyph.codepoint * 65536 + next.codepoint) || 0) * scale) / table.unitsPerEm);
+    }
+  });
+  // The whole width rounds up, exactly as drawtext's text_w; a pen part-way
+  // in rounds to the nearest pixel, as the glyph there is drawn at its
+  // sub-pixel spot and the lit word can only start on a whole pixel.
+  return end >= str.length ? Math.ceil(pen64 / 64) : Math.round(pen64 / 64);
+}
+
 /** Test seam. */
-export function _clearFontCache() { cache.clear(); }
+export function _clearFontCache() {
+  cache.clear();
+  shapers.clear();
+}

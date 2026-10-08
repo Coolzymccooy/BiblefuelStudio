@@ -110,7 +110,7 @@ test('in every caption style each spoken word lights once, where it sits in its 
       const row = rows.find((r) => word.x.startsWith(`${r.x}+`) && r.text.split(' ').includes(word.text));
       assert.ok(row, `${preset}: "${word.text}" has no row`);
       const offset = (` ${row.text} `).indexOf(` ${word.text} `);
-      const prefix = textWidthFor(style, row.text.slice(0, offset), row.size);
+      const prefix = textWidthFor(style, row.text, row.size, offset);
       assert.equal(word.x, `${row.x}+${prefix}`, `${preset}: "${word.text}"`);
     }
   }

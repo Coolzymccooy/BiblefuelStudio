@@ -452,7 +452,7 @@ test('a highlighted word sits on its own line, whatever the layout', () => {
   const size = fontSizeOf(centred);
   const rowW = textWidthFor(marker, 'Trust that His', size);
   assert.equal(xOf(centred, 'Trust that His'), `(w-${rowW})/2`);
-  const prefix = textWidthFor(marker, 'Trust that ', size);
+  const prefix = textWidthFor(marker, 'Trust that His', size, 'Trust that '.length);
   assert.equal(xOf(centred, 'His'), `(w-${rowW})/2+${prefix}`, 'the word starts where it sits in the row');
 });
 
