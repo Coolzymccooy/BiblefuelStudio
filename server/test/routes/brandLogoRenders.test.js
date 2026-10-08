@@ -7,6 +7,7 @@ import { spawnSync } from "child_process";
 import express from "express";
 import request from "supertest";
 import renderRouter from "../../src/routes/render.js";
+import audioAdvRouter from "../../src/routes/audio_advanced.js";
 import {
   _setJobCtxForTest, _resetJobCtxForTest, _renderVideoCoreForTest, _executeJobForTest,
 } from "../../src/routes/jobs.js";
@@ -61,6 +62,7 @@ function app(ctx) {
   a.use(express.json({ limit: "10mb" }));
   a.use((req, _res, next) => { req.ctx = ctx; next(); });
   a.use("/api/render", renderRouter);
+  a.use("/api/audio-adv", audioAdvRouter);
   return a;
 }
 
@@ -168,5 +170,30 @@ describe("background render jobs draw the account logo", { skip }, () => {
       payload: { backgroundPath: media.bg, audioPath: media.voice, lines: ["Peace"], durationSec: 1 },
     });
     assertLogo(outFile);
+  });
+});
+
+describe("the timeline's quick preview draws the account logo", { skip }, () => {
+  // The timeline's Preview button renders through /api/audio-adv/timeline-preview,
+  // not the timeline renderer, so it must brand the picture too, or the
+  // preview misleads about what the final render will hold.
+  const preview = (c) => request(app(c)).post("/api/audio-adv/timeline-preview")
+    .send({ backgroundPath: media.bg, clips: [{ path: media.voice }], normalizeLUFS: -14 });
+
+  test("a branded account sees its logo in the preview", async () => {
+    const res = await preview(ctx());
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assertLogo(res.body.file, { late: 1.5 });
+  });
+
+  test("an account with branding off gets a preview without one", async () => {
+    const plain = fs.mkdtempSync(path.join(os.tmpdir(), "brand-off-"));
+    try {
+      const res = await preview({ dataDir: plain, outputDir: plain, userId: "plain" });
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+      assertLogo(res.body.file, { present: false, late: 1.5 });
+    } finally {
+      fs.rmSync(plain, { recursive: true, force: true });
+    }
   });
 });
