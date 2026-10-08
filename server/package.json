@@ -21,6 +21,7 @@
     "express-rate-limit": "^7.4.0",
     "firebase-admin": "^13.6.1",
     "googleapis": "^171.4.0",
+    "harfbuzzjs": "1.6.2",
     "helmet": "^7.1.0",
     "jsonwebtoken": "^9.0.2",
     "microsoft-cognitiveservices-speech-sdk": "^1.50.0",
