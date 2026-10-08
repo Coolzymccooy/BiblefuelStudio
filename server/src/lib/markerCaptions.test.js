@@ -423,9 +423,10 @@ test('highlight mode emphasises one word at a time', () => {
   for (const wd of HL_WORDS) {
     assert.ok(out.includes(`text='${wd.text}'`), `no highlight overlay for "${wd.text}"`);
   }
-  const windows = [...out.matchAll(/between\(t,([\d.]+),([\d.]+)\)/g)];
-  assert.ok(windows.length > HL_WORDS.length,
-    'expected per-word windows plus the line window');
+  const lineWindows = [...out.matchAll(/between\(t,([\d.]+),([\d.]+)\)/g)];
+  const wordWindows = [...out.matchAll(/gte\(t,([\d.]+)\)\*lt\(t,([\d.]+)\)/g)];
+  assert.equal(wordWindows.length, HL_WORDS.length, 'one timed window per word');
+  assert.ok(lineWindows.length >= 1, 'plus the line window');
 });
 
 test('a highlighted word sits on its own line, whatever the layout', () => {

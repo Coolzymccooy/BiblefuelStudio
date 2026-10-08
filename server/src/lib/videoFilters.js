@@ -826,10 +826,13 @@ export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal
 
       // Karaoke overlay: keep the whole row on screen and re-draw just the
       // spoken word in the highlight colour, exactly over itself: same font,
-      // same size, starting where the row's pen reaches that word.
+      // same size, starting where the row's pen reaches that word. Each word
+      // shows from its start up to, not including, its end: between() takes
+      // both ends, so a frame landing exactly where one word hands over to
+      // the next lit both.
       for (const { text, offset, a, b } of rowHits[i]) {
         const x = `${rowX}+${textWidthFor(style, row.slice(0, offset), fontSize)}`;
-        parts.push(`drawtext=text='${escapeDrawText(text)}':x=${x}:y=${rowY}${fontArg(style)}:fontsize=${fontSize}:fontcolor=${emph}:enable='between(t,${a.toFixed(3)},${b.toFixed(3)})'`);
+        parts.push(`drawtext=text='${escapeDrawText(text)}':x=${x}:y=${rowY}${fontArg(style)}:fontsize=${fontSize}:fontcolor=${emph}:enable='gte(t,${a.toFixed(3)})*lt(t,${b.toFixed(3)})'`);
       }
     });
     return parts.join(",");

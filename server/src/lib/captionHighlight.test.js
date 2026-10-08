@@ -185,3 +185,16 @@ test('rows are measured the way this machine\'s ffmpeg kerns', () => {
     else process.env.DRAWTEXT_KERNING = before;
   }
 });
+
+test('only one word is lit at the instant one word hands over to the next', () => {
+  // "the" ends at 12.48 and "head" starts at 12.48. With between(), which
+  // includes both ends, a frame landing exactly there lit both.
+  const out = buildLineDrawtext({
+    lines: ['the head of'], w: W, h: H, preset: 'headline', duration: 2, reveal: true,
+    highlightWords: [{ text: 'the', start: 0.3, end: 0.48 }, { text: 'head', start: 0.48, end: 0.58 }],
+  });
+  const windows = [...out.matchAll(/enable='gte\(t,([\d.]+)\)\*lt\(t,([\d.]+)\)'/g)].map((m) => [Number(m[1]), Number(m[2])]);
+  assert.deepEqual(windows, [[0.3, 0.48], [0.48, 0.58]]);
+  const litAt = (t) => windows.filter(([a, b]) => t >= a && t < b).length;
+  assert.equal(litAt(0.48), 1);
+});
