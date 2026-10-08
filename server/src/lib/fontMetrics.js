@@ -7,9 +7,18 @@ import fs from "fs";
  * Captions used to assume every glyph is 0.6em wide (true of a typewriter
  * face only), so on any real font the highlighted word was drawn several
  * letters away from itself. This reads the advance widths ffmpeg's drawtext
- * uses (hmtx, through cmap) plus pair kerning from the legacy `kern` table,
- * which is the kerning FreeType applies in prod's ffmpeg 5.1. Advances are
- * rounded per glyph, as drawtext does when it moves the pen in whole pixels.
+ * uses (hmtx, through cmap) plus pair kerning from the legacy `kern` table.
+ * Advances are rounded per glyph, as drawtext moves its pen in whole pixels.
+ *
+ * Kerning depends on the ffmpeg drawtext does the drawing (see
+ * drawtextKerning.js):
+ *   "shaped"  6.1 and later shape text with HarfBuzz, which kerns real
+ *             glyph pairs.
+ *   "legacy"  5.1 (prod) asks FreeType for the pair at the two CHARACTER
+ *             CODES, as if they were glyph ids, so a kerned font gets
+ *             whatever pair happens to sit at those ids. Wrong, but it is
+ *             what gets drawn, so it is what must be measured.
+ *   "none"    no kerning.
  *
  * No dependency: only the four or five tables this needs are parsed.
  */
@@ -122,19 +131,27 @@ export function loadFont(file) {
 /**
  * Width in pixels of `text` set at `fontSize` in the font at `file`: the
  * distance drawtext's pen travels, which is where the next text would start.
+ * `kerning` is "shaped", "legacy" or "none", as described above.
  */
-export function measureText(file, text, fontSize) {
+export function measureText(file, text, fontSize, { kerning = "shaped" } = {}) {
   const font = loadFont(file);
   const scale = Number(fontSize) / font.unitsPerEm;
   let width = 0;
   let prev = null;
   for (const ch of String(text || "")) {
-    const g = font.glyphOf(ch.codePointAt(0));
-    if (prev !== null) width += Math.round((font.kerning.get(prev * 65536 + g) || 0) * scale);
+    const cp = ch.codePointAt(0);
+    const g = font.glyphOf(cp);
+    if (prev !== null) width += Math.round((pairKern(font, kerning, prev, { cp, g }) || 0) * scale);
     width += Math.round(font.advanceOf(g) * scale);
-    prev = g;
+    prev = { cp, g };
   }
   return width;
+}
+
+function pairKern(font, mode, prev, cur) {
+  if (mode === "shaped") return font.kerning.get(prev.g * 65536 + cur.g);
+  if (mode === "legacy") return prev.cp > 0xffff || cur.cp > 0xffff ? 0 : font.kerning.get(prev.cp * 65536 + cur.cp);
+  return 0;
 }
 
 /** Test seam. */

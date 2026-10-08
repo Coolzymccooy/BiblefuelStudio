@@ -55,3 +55,12 @@ test('an unreadable font throws rather than measuring nonsense', () => {
   assert.throws(() => measureText(font('no-such-font.ttf'), 'x', 10));
   assert.throws(() => loadFont(font('DejaVuSans-LICENSE.txt')));
 });
+
+test('legacy kerning measures what ffmpeg 5.1 draws, not what it should', () => {
+  // 5.1 looks kerning pairs up by character code, so DejaVu's real pairs
+  // never apply. A separate simulation of 5.1's drawtext gave 1101px here.
+  const text = 'To You we lift our voices';
+  assert.equal(measureText(DEJAVU, text, 90), 1072);
+  assert.equal(measureText(DEJAVU, text, 90, { kerning: 'legacy' }), 1101);
+  assert.equal(measureText(DEJAVU, text, 90, { kerning: 'none' }), 1101);
+});

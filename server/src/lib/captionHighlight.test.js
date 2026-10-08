@@ -4,7 +4,7 @@ import path from 'path';
 import {
   buildLineDrawtext,
   fontFileFor,
-  highlightsInRow,
+  highlightLine,
   listKineticAnimations,
   listTypographyPresets,
   resolveTypographyPreset,
@@ -35,19 +35,20 @@ const render = (preset, extra = {}) => drawtexts(buildLineDrawtext({
   lines: [LINE], w: W, h: H, preset, duration: 4, reveal: true, highlightWords: WORDS, ...extra,
 }));
 
-test('highlightsInRow matches whole words in spoken order', () => {
-  const hits = highlightsInRow('prayed again You', 0, 4, WORDS);
+const one = (row, from, to, words) => highlightLine([row], [[from, to]], words)[0];
+
+test('highlightLine matches whole words in spoken order', () => {
+  const hits = one('prayed again You', 0.5, 2, WORDS);
   assert.deepEqual(hits.map((h) => [h.text, h.offset]), [['prayed', 0], ['again', 7], ['You', 13]]);
   assert.deepEqual([hits[0].a, hits[0].b], [0.5, 1]);
 });
 
-test('highlightsInRow never lights a word inside a longer one', () => {
-  const hits = highlightsInRow('come again', 0, 2, [{ text: 'in', start: 0, end: 1 }]);
-  assert.deepEqual(hits, []);
+test('highlightLine never lights a word inside a longer one', () => {
+  assert.deepEqual(one('come again', 0, 2, [{ text: 'in', start: 0, end: 1 }]), []);
 });
 
 test('a word said twice on one row lights each copy in turn', () => {
-  const hits = highlightsInRow('holy holy holy', 0, 3, [
+  const hits = one('holy holy holy', 0, 3, [
     { text: 'holy', start: 0, end: 1 },
     { text: 'holy', start: 1, end: 2 },
     { text: 'Holy', start: 2, end: 3 },
@@ -56,15 +57,38 @@ test('a word said twice on one row lights each copy in turn', () => {
 });
 
 test('the row\'s own spelling is drawn, punctuation and all', () => {
-  const hits = highlightsInRow('Again, Lord!', 0, 2, [
+  const hits = one('Again, Lord!', 0, 2, [
     { text: 'again', start: 0, end: 1 },
     { text: 'lord', start: 1, end: 2 },
   ]);
   assert.deepEqual(hits.map((h) => h.text), ['Again,', 'Lord!']);
 });
 
-test('words spoken outside the row\'s window are left alone', () => {
-  assert.deepEqual(highlightsInRow('prayed again', 2, 3, WORDS), []);
+test('curly and straight apostrophes are the same word', () => {
+  const hits = one('God’s love', 0, 2, [{ text: "God's", start: 0, end: 1 }]);
+  assert.deepEqual(hits.map((h) => h.text), ['God’s']);
+});
+
+test('words spoken outside the line\'s window are left alone', () => {
+  assert.deepEqual(one('prayed again', 2, 3, WORDS), []);
+});
+
+test('a word still being said as the next row appears stays on its own row', () => {
+  // Rows split the line's time evenly, not by speech. Row 1's "the" runs past
+  // the switch; matched row by row it claimed row 2's "the" and skipped
+  // "and", which never lit.
+  const words = [
+    { text: 'Come', start: 0, end: 0.9 },
+    { text: 'to', start: 0.9, end: 1.4 },
+    { text: 'the', start: 1.9, end: 2.1 },
+    { text: 'and', start: 2.2, end: 2.6 },
+    { text: 'the', start: 2.6, end: 2.9 },
+    { text: 'world', start: 2.9, end: 3.8 },
+  ];
+  const [row1, row2] = highlightLine(['Come to the', 'and the world'], [[0, 2], [2, 4]], words);
+  assert.deepEqual(row1.map((h) => [h.text, h.offset]), [['Come', 0], ['to', 5], ['the', 8]]);
+  assert.deepEqual([row1[2].a, row1[2].b], [1.9, 2]);
+  assert.deepEqual(row2.map((h) => [h.text, h.offset, h.a]), [['and', 0, 2.2], ['the', 4, 2.6], ['world', 8, 2.9]]);
 });
 
 test('a preset without its own face draws in the bundled DejaVu Sans', () => {
@@ -73,25 +97,22 @@ test('a preset without its own face draws in the bundled DejaVu Sans', () => {
   for (const d of render('cinematic-default')) assert.equal(d.font, 'DejaVuSans.ttf');
 });
 
-test('in every caption style the highlighted word starts where it sits in its row', () => {
+test('in every caption style each spoken word lights once, where it sits in its row', () => {
   for (const preset of listTypographyPresets()) {
     const style = resolveTypographyPreset(preset);
     const parts = render(preset);
     // A row's x is its anchor; each highlighted word's is that anchor plus an offset.
     const rows = parts.filter((d) => !/\+\d+$/.test(d.x));
+    const lit = parts.filter((d) => /\+\d+$/.test(d.x));
     assert.ok(rows.length > 1, `${preset}: expected the line to wrap into rows`);
-    let checked = 0;
-    for (const row of rows) {
-      const rowX = row.x;
-      for (const hit of highlightsInRow(row.text, 0, 4, WORDS)) {
-        const word = parts.find((d) => d !== row && d.text === hit.text && d.x.startsWith(`${rowX}+`));
-        assert.ok(word, `${preset}: no highlight for "${hit.text}" on row "${row.text}"`);
-        const prefix = textWidthFor(style, row.text.slice(0, hit.offset), row.size);
-        assert.equal(word.x, `${rowX}+${prefix}`, `${preset}: "${hit.text}"`);
-        checked += 1;
-      }
+    assert.equal(lit.length, SAID.length, `${preset}: ${lit.map((d) => d.text).join(' ')}`);
+    for (const word of lit) {
+      const row = rows.find((r) => word.x.startsWith(`${r.x}+`) && r.text.split(' ').includes(word.text));
+      assert.ok(row, `${preset}: "${word.text}" has no row`);
+      const offset = (` ${row.text} `).indexOf(` ${word.text} `);
+      const prefix = textWidthFor(style, row.text.slice(0, offset), row.size);
+      assert.equal(word.x, `${row.x}+${prefix}`, `${preset}: "${word.text}"`);
     }
-    assert.ok(checked > 0, `${preset}: nothing was highlighted`);
   }
 });
 
@@ -121,7 +142,7 @@ test('Headline lights words in a colour that stands apart from its text', () => 
 
 test('Marker no longer lights words in its own text colour', () => {
   const parts = render('marker');
-  const word = parts.find((d) => d.text.toUpperCase() === 'PRAYED' || d.text === 'prayed');
+  const word = parts.find((d) => d.text === 'prayed');
   assert.equal(word.color, '0xB3261E');
   assert.notEqual(word.color, parts[0].color);
 });
@@ -141,4 +162,26 @@ test('highlighting still works when the rows sit to the left', () => {
   const parts = render('headline', { layout: 'bottom-left' });
   const word = parts.find((d) => d.text === 'prayed');
   assert.match(word.x, /^w\*0\.08\+\d+$/);
+});
+
+test('rows are measured the way this machine\'s ffmpeg kerns', () => {
+  // Prod's 5.1 kerns differently from a 6.1+ dev box; the row width in the
+  // filter must follow the one that will draw it.
+  const before = process.env.DRAWTEXT_KERNING;
+  const rowWidth = () => {
+    const [row] = drawtexts(buildLineDrawtext({
+      lines: ['To You we'], w: W, h: H, preset: 'cinematic-default', duration: 2, reveal: true,
+      highlightWords: [{ text: 'we', start: 0, end: 1 }],
+    }));
+    return row.x;
+  };
+  try {
+    process.env.DRAWTEXT_KERNING = 'shaped';
+    const shaped = rowWidth();
+    process.env.DRAWTEXT_KERNING = 'legacy';
+    assert.notEqual(rowWidth(), shaped);
+  } finally {
+    if (before === undefined) delete process.env.DRAWTEXT_KERNING;
+    else process.env.DRAWTEXT_KERNING = before;
+  }
 });

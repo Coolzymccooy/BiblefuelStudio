@@ -7,6 +7,7 @@
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { measureText } from "./fontMetrics.js";
+import { drawtextKerning } from "./drawtextKerning.js";
 
 /**
  * Bundled caption fonts. Every caption used to render in ffmpeg's default
@@ -52,7 +53,7 @@ export function fontFileFor(style) {
 
 /** Width in pixels of `text` at `fontSize` in the preset's own font. */
 export function textWidthFor(style, text, fontSize) {
-  return measureText(fontFileFor(style), text, fontSize);
+  return measureText(fontFileFor(style), text, fontSize, { kerning: drawtextKerning() });
 }
 
 function fontArg(style) {
@@ -584,39 +585,56 @@ const BOX_BORDER_W = 18;
 // How far apart staggered rows arrive, before the per-block cap.
 const STAGGER_STEP_SECONDS = 0.28;
 
-const wordKey = (s) => String(s || "").toLowerCase().replace(/[^\p{L}\p{N}']/gu, "");
+// Curly apostrophes count as straight ones: a script's "God’s" is the
+// transcript's "God's".
+const wordKey = (s) => String(s || "").toLowerCase().replace(/[‘’]/g, "'").replace(/[^\p{L}\p{N}']/gu, "");
 
 /**
- * The spoken words to light up on one row, while it shows.
+ * The spoken words to light up on one caption line, row by row.
  *
- * Words spoken inside the row's window are matched to the row's own words in
- * order, by the word itself rather than a substring: "in" must not light up
- * inside "again", and a word said twice on one row lights each copy in turn.
- * Each match carries the row's spelling (punctuation and all, so the copy
- * drawn on top covers the original exactly) and its character offset.
+ * A word belongs to the line its midpoint is spoken in, and the line's words
+ * are matched to the line's own words in order across all its rows, by the
+ * word itself rather than a substring: "in" must not light up inside "again",
+ * and a word said twice lights each copy in turn. Matching across the whole
+ * line matters because rows share the line's time evenly, not by speech: a
+ * word ending row 1 is often still being said when row 2 appears, and matched
+ * per row it would claim row 2's copy and skip the words before it.
  *
- * @returns {Array<{ text: string, offset: number, a: number, b: number }>}
+ * Each hit carries the row's spelling (punctuation and all, so the copy drawn
+ * on top covers the original exactly), its character offset in the row, and
+ * when it shows: the word's own time, kept inside its row's window.
+ *
+ * @param {string[]} rows the line's rows, in order
+ * @param {Array<[number, number]>} spans each row's [from, to]
+ * @returns {Array<Array<{ text: string, offset: number, a: number, b: number }>>} hits per row
  */
-export function highlightsInRow(row, from, to, words) {
+export function highlightLine(rows, spans, words) {
+  const hits = rows.map(() => []);
+  if (!rows.length) return hits;
+  const from = spans[0][0];
+  const to = spans[spans.length - 1][1];
   const tokens = [];
-  for (const m of String(row).matchAll(/\S+/g)) tokens.push({ text: m[0], offset: m.index, key: wordKey(m[0]) });
-  const out = [];
+  rows.forEach((row, r) => {
+    for (const m of String(row).matchAll(/\S+/g)) tokens.push({ r, text: m[0], offset: m.index, key: wordKey(m[0]) });
+  });
   let next = 0;
   for (const wd of words || []) {
     const ws = Number(wd?.start);
     const we = Number(wd?.end);
     if (!Number.isFinite(ws) || !Number.isFinite(we) || we <= ws) continue;
-    const a = Math.max(ws, from);
-    const b = Math.min(we, to);
-    if (b <= a) continue;
+    const mid = (ws + we) / 2;
+    if (mid < from || mid >= to) continue;
     const key = wordKey(wd.text);
     if (!key) continue;
     const at = tokens.findIndex((t, i) => i >= next && t.key === key);
     if (at === -1) continue;
-    out.push({ text: tokens[at].text, offset: tokens[at].offset, a, b });
     next = at + 1;
+    const { r, text, offset } = tokens[at];
+    const a = Math.max(ws, spans[r][0]);
+    const b = Math.min(we, spans[r][1]);
+    if (b > a) hits[r].push({ text, offset, a, b });
   }
-  return out;
+  return hits;
 }
 
 /** Greedy word wrap to a character budget. Never splits a word. */
@@ -787,6 +805,15 @@ export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal
     // highlight, every piece is placed by its baseline instead: y minus its
     // own ascent lands each one on the same line.
     const rowY = hl ? `${y + Math.round(fontSize * 0.8)}-ascent` : y;
+    const rowHits = [];
+    if (hl) {
+      let first = 0;
+      for (const lineRows of perLine) {
+        const n = lineRows.length;
+        rowHits.push(...highlightLine(lineRows, rowSpans.slice(first, first + n), highlightWords));
+        first += n;
+      }
+    }
     rows.forEach((row, i) => {
       const [from, to] = rowSpans[i];
       const enable = `:enable='between(t,${from.toFixed(3)},${to.toFixed(3)})'`;
@@ -799,10 +826,8 @@ export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal
 
       // Karaoke overlay: keep the whole row on screen and re-draw just the
       // spoken word in the highlight colour, exactly over itself: same font,
-      // same size, starting where the row's pen reaches that word. Only words
-      // spoken while this row shows are considered, matched to the row's own
-      // words in order, so "in" never lights up inside "again".
-      for (const { text, offset, a, b } of highlightsInRow(row, from, to, highlightWords)) {
+      // same size, starting where the row's pen reaches that word.
+      for (const { text, offset, a, b } of rowHits[i]) {
         const x = `${rowX}+${textWidthFor(style, row.slice(0, offset), fontSize)}`;
         parts.push(`drawtext=text='${escapeDrawText(text)}':x=${x}:y=${rowY}${fontArg(style)}:fontsize=${fontSize}:fontcolor=${emph}:enable='between(t,${a.toFixed(3)},${b.toFixed(3)})'`);
       }
