@@ -41,8 +41,8 @@ describe('BrandingCard', () => {
     await userEvent.selectOptions(screen.getByRole('combobox', { name: /corner/i }), 'bottom-left');
     expect(put).toHaveBeenCalledWith('/api/branding', { position: 'bottom-left' });
     const img = screen.getByAltText('Your logo') as HTMLImageElement;
-    await waitFor(() => expect(img.style.bottom).toBe('4.5%'));
-    expect(img.style.left).toBe('3.5%');
+    await waitFor(() => expect(img.style.bottom).toBe('4%'));
+    expect(img.style.left).toBe('3%');
   });
 
   it('turning branding off hides the logo from the preview', async () => {
@@ -72,7 +72,7 @@ describe('BrandingCard, when things go wrong', () => {
     render(<BrandingCard />);
     await screen.findByAltText('Your logo');
     await userEvent.selectOptions(screen.getByRole('combobox', { name: /size/i }), 'large');
-    await waitFor(() => expect((screen.getByAltText('Your logo') as HTMLImageElement).style.width).toBe('10.4%'));
+    await waitFor(() => expect((screen.getByAltText('Your logo') as HTMLImageElement).style.height).toBe('13%'));
   });
 
   it('opacity is saved once the slider settles, however it was moved', async () => {
@@ -126,7 +126,7 @@ describe('BrandingCard, when things go wrong', () => {
 describe('previewLogoStyle', () => {
   it('matches the renderer\'s corners and sizes', () => {
     expect(previewLogoStyle({ position: 'top-right', size: 'medium', opacity: 0.85 }))
-      .toEqual({ width: '8%', opacity: 0.85, top: '4.5%', right: '3.5%' });
-    expect(previewLogoStyle({ position: 'bottom-left', size: 'large', opacity: 1 }).width).toBe('10.4%');
+      .toEqual({ height: '10%', opacity: 0.85, top: '4%', right: '3%' });
+    expect(previewLogoStyle({ position: 'bottom-left', size: 'large', opacity: 1 }).height).toBe('13%');
   });
 });

@@ -73,16 +73,18 @@ export function brandLogoFor(dataDir) {
 const even = (n) => Math.max(2, Math.round(n / 2) * 2);
 
 /**
- * Logo width and corner margins for a w x h frame. Vertical video carries the
- * logo larger relative to its width and lower from the top edge, clear of the
- * Shorts/TikTok status and search icons.
+ * The square box the logo is fitted into, and its corner margins, for a
+ * w x h frame. The box is a share of the frame's SHORTER side, so a tall mark
+ * (an S with a drop beneath it) and a wide one both stay discreet: about a
+ * tenth of the picture's height on landscape. Vertical video sits the logo
+ * lower from the top edge, clear of the Shorts/TikTok status and search icons.
  */
 export function logoGeometry(w, h, size = "medium") {
   const W = Number(w);
   const H = Number(h);
-  const base = H > W ? 0.13 : H === W ? 0.11 : 0.08;
-  const width = even(W * base * (LOGO_SIZES[size] ?? 1));
-  return { width, marginX: Math.round(W * 0.035), marginY: Math.round(H * (H > W ? 0.06 : 0.045)) };
+  const base = H > W ? 0.12 : 0.1;
+  const box = even(Math.min(W, H) * base * (LOGO_SIZES[size] ?? 1));
+  return { box, marginX: Math.round(W * 0.03), marginY: Math.round(H * (H > W ? 0.06 : 0.04)) };
 }
 
 // ffmpeg reads a filter argument through two layers: the graph parser, then
@@ -111,13 +113,13 @@ const filterPath = (p) => escapeChars(
  * overlay and its output is the chain's output.
  */
 export function logoOverlay(logo, { w, h, from, to = "vlogo" }) {
-  const { width, marginX, marginY } = logoGeometry(w, h, logo.size);
+  const { box, marginX, marginY } = logoGeometry(w, h, logo.size);
   const right = logo.position.endsWith("right");
   const bottom = logo.position.startsWith("bottom");
   const x = right ? `main_w-overlay_w-${marginX}` : String(marginX);
   const y = bottom ? `main_h-overlay_h-${marginY}` : String(marginY);
   const alpha = Number(logo.opacity).toFixed(2);
-  return `movie=${filterPath(logo.file)},scale=${width}:-1,format=rgba,colorchannelmixer=aa=${alpha}[brandlogo];`
+  return `movie=${filterPath(logo.file)},scale=${box}:${box}:force_original_aspect_ratio=decrease,format=rgba,colorchannelmixer=aa=${alpha}[brandlogo];`
     + `${from ? `[${from}]` : ""}[brandlogo]overlay=x=${x}:y=${y}${to ? `[${to}]` : ""}`;
 }
 

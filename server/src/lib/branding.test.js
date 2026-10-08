@@ -91,11 +91,12 @@ test('accounts never see each other\'s logo', (t) => {
 });
 
 test('the logo is sized and placed for the frame\'s shape', () => {
-  assert.deepEqual(logoGeometry(1920, 1080), { width: 154, marginX: 67, marginY: 49 });
-  assert.deepEqual(logoGeometry(1080, 1920), { width: 140, marginX: 38, marginY: 115 });
-  assert.equal(logoGeometry(1080, 1080).width, 118);
-  assert.equal(logoGeometry(1920, 1080, 'large').width, 200);
-  assert.equal(logoGeometry(1920, 1080, 'small').width, 116);
+  // A box a tenth of the shorter side: discreet whatever the logo's shape.
+  assert.deepEqual(logoGeometry(1920, 1080), { box: 108, marginX: 58, marginY: 43 });
+  assert.deepEqual(logoGeometry(1080, 1920), { box: 130, marginX: 32, marginY: 115 });
+  assert.equal(logoGeometry(1080, 1080).box, 108);
+  assert.equal(logoGeometry(1920, 1080, 'large').box, 140);
+  assert.equal(logoGeometry(1920, 1080, 'small').box, 82);
 });
 
 test('the overlay reads the logo inside the graph and lands in the chosen corner', () => {
@@ -103,10 +104,10 @@ test('the overlay reads the logo inside the graph and lands in the chosen corner
   const f = logoOverlay(logo, { w: 1920, h: 1080, from: 'vout', to: 'vlogo' });
   // The drive colon is escaped once for the options layer, then that
   // backslash once more for the graph layer.
-  assert.equal(f, "movie=C\\\\:/brand/logo.png,scale=154:-1,format=rgba,colorchannelmixer=aa=0.85[brandlogo];"
-    + '[vout][brandlogo]overlay=x=main_w-overlay_w-67:y=49[vlogo]');
+  assert.equal(f, "movie=C\\\\:/brand/logo.png,scale=108:108:force_original_aspect_ratio=decrease,format=rgba,colorchannelmixer=aa=0.85[brandlogo];"
+    + '[vout][brandlogo]overlay=x=main_w-overlay_w-58:y=43[vlogo]');
   const bl = logoOverlay({ ...logo, position: 'bottom-left' }, { w: 1920, h: 1080, from: 'a', to: 'b' });
-  assert.match(bl, /overlay=x=67:y=main_h-overlay_h-49\[b\]$/);
+  assert.match(bl, /overlay=x=58:y=main_h-overlay_h-43\[b\]$/);
 });
 
 test('a quote in the logo path cannot end the filter argument', { skip: !hasFfmpeg && 'ffmpeg not installed' }, (t) => {
@@ -118,7 +119,7 @@ test('a quote in the logo path cannot end the filter argument', { skip: !hasFfmp
   const r = spawnSync(FF, ['-y', '-v', 'error', '-f', 'lavfi', '-i', 'color=c=0x00FF00:s=640x360:d=1:r=25',
     '-vf', withLogoVf('null', logo, { w: 640, h: 360 }), '-c:v', 'libx264', '-pix_fmt', 'yuv420p', out]);
   assert.equal(r.status, 0, String(r.stderr));
-  const { width, marginX, marginY } = logoGeometry(640, 360);
+  const { box: width, marginX, marginY } = logoGeometry(640, 360);
   const [red] = pixelAt(out, 640 - marginX - width / 2, marginY + width / 2);
   assert.ok(red > 180, 'the logo was still found and drawn');
 });
@@ -127,7 +128,7 @@ test('withLogoVf leaves a chain alone without a logo, and ends it with the overl
   assert.equal(withLogoVf('scale=10:10', null, { w: 10, h: 10 }), 'scale=10:10');
   const logo = { file: '/l.png', position: 'top-left', size: 'medium', opacity: 1 };
   assert.match(withLogoVf('scale=1920:1080', logo, { w: 1920, h: 1080 }),
-    /^scale=1920:1080\[brandbase\];movie=\/l\.png,.*\[brandbase\]\[brandlogo\]overlay=x=67:y=49$/);
+    /^scale=1920:1080\[brandbase\];movie=\/l\.png,.*\[brandbase\]\[brandlogo\]overlay=x=58:y=43$/);
 });
 
 test('ffmpeg draws the logo in the corner for the whole video, in both graph forms', { skip: !hasFfmpeg && 'ffmpeg not installed' }, (t) => {
@@ -136,7 +137,7 @@ test('ffmpeg draws the logo in the corner for the whole video, in both graph for
   putLogo(dir, 'red');
   const logo = brandLogoFor(dir);
   const [W, H] = [640, 360];
-  const { width, marginX, marginY } = logoGeometry(W, H);
+  const { box: width, marginX, marginY } = logoGeometry(W, H);
   const at = [W - marginX - width / 2, marginY + width / 2];
   const green = ['-f', 'lavfi', '-i', `color=c=0x00FF00:s=${W}x${H}:d=2:r=25`];
   const outs = {

@@ -29,17 +29,18 @@ const SIZES: Array<[LogoSize, string]> = [['small', 'Small'], ['medium', 'Medium
 const MAX_LOGO_BYTES = 5 * 1024 * 1024;
 const OPACITY_SAVE_MS = 400;
 
-// Same proportions the renderer uses for a landscape frame (server/src/lib/branding.js).
-const SIZE_PCT: Record<LogoSize, number> = { small: 6, medium: 8, large: 10.4 };
+// Same proportions the renderer uses for a landscape frame (server/src/lib/branding.js):
+// the logo fits a box a tenth of the picture's height.
+const SIZE_PCT: Record<LogoSize, number> = { small: 7.5, medium: 10, large: 13 };
 
 /** Where the preview places the logo: the renderer's corner margins, as percentages. */
 export function previewLogoStyle(b: Pick<Branding, 'position' | 'size' | 'opacity'>) {
     const [v, h] = b.position.split('-');
     return {
-        width: `${SIZE_PCT[b.size]}%`,
+        height: `${SIZE_PCT[b.size]}%`,
         opacity: b.opacity,
-        [v]: '4.5%',
-        [h]: '3.5%',
+        [v]: '4%',
+        [h]: '3%',
     } as const;
 }
 
@@ -150,7 +151,7 @@ export function BrandingCard() {
                     >
                         {branding.hasLogo && branding.logoDataUrl ? (
                             branding.enabled && (
-                                <img src={branding.logoDataUrl} alt="Your logo" className="absolute h-auto" style={previewLogoStyle(branding)} />
+                                <img src={branding.logoDataUrl} alt="Your logo" className="absolute w-auto" style={previewLogoStyle(branding)} />
                             )
                         ) : (
                             <div className="absolute inset-0 flex items-center justify-center text-xs text-white/60">No logo yet</div>

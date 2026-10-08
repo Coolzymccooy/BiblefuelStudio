@@ -46,7 +46,7 @@ function pixelAt(video, x, y, t) {
 function assertLogo(video, { present = true, late = 0.8 } = {}) {
   assert.ok(fs.existsSync(video), `no output at ${video}`);
   const { w, h } = dims(video);
-  const { width, marginX, marginY } = logoGeometry(w, h);
+  const { box: width, marginX, marginY } = logoGeometry(w, h);
   const x = w - marginX - width / 2;
   const y = marginY + width / 2;
   for (const t of [0.1, late]) {

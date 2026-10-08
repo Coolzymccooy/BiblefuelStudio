@@ -30,7 +30,7 @@ function run(args) {
 }
 
 function assertLogo(video, w, h, t = 0.5) {
-  const { width, marginX, marginY } = logoGeometry(w, h);
+  const { box: width, marginX, marginY } = logoGeometry(w, h);
   const r = spawnSync(FF, ['-v', 'error', '-ss', String(t), '-i', video, '-frames:v', '1',
     '-vf', `crop=1:1:${w - marginX - width / 2}:${marginY + width / 2},format=rgb24`, '-f', 'rawvideo', '-']);
   const [red, green] = r.stdout;
