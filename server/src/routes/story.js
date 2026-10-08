@@ -8,6 +8,7 @@ import {
 } from "../lib/story/projectStore.js";
 import { segmentScenes } from "../lib/story/sceneSegmenter.js";
 import { runStoryRender, probeAudioDurationSec } from "../lib/story/storyRender.js";
+import { brandLogoFor } from "../lib/branding.js";
 import { createJob, persistJob, cancelJob as cancelRenderJob, getJob as getRenderJob } from "../lib/renderJobs.js";
 import { generateBibleImage } from "../lib/imageGen/index.js";
 import { extractAudioToMp3 } from "../lib/transcode.js";
@@ -804,6 +805,7 @@ router.post("/:id/render", async (req, res) => {
       musicVolume: project.music?.volume ?? 0.3,
       autoDuck: project.music?.autoDuck ?? true,
       onProgress: persistRenderPct,
+      logo: brandLogoFor(req.ctx.dataDir),
       // Render resolution is env-tunable. Default 720×1280 (still vertical /
       // social-ready) keeps long videos renderable on a modest CPU box — full
       // 1080×1920 over a 27-min kinetic render pegs CPU/RAM and stalls the

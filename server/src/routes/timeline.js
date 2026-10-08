@@ -13,6 +13,7 @@ import { OUTPUT_DIR } from '../lib/paths.js';
 import { spawn } from 'child_process';
 import { downsamplePeaks, peaksCacheKey, PEAK_BUCKETS } from '../lib/audioPeaks.js';
 import { quota } from '../middleware/quota.js';
+import { brandLogoFor } from '../lib/branding.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -163,6 +164,7 @@ async function runTimelineJob(job) {
       captionLayout: job.captionLayout || undefined,
       captionStagger: job.captionStagger || undefined,
       captionHighlight: job.captionHighlight || undefined,
+      logo: brandLogoFor(job.dataDir),
     });
 
     job.progress = 100;

@@ -6,6 +6,7 @@ import { driftFilter } from "./ambientMotion.js";
 import { escapeFontPath, fontFileFor } from "../videoFilters.js";
 import { captionPages, balanceLines, pageWindows } from "./captionPages.js";
 import { videoCodecArgs } from "./encoders.js";
+import { logoOverlay } from "../branding.js";
 
 /**
  * Ambient render — one ffmpeg pass producing a music-first scripture video.
@@ -204,7 +205,7 @@ function captionFilters({ project, voiced, movements, width, height, workDir }) 
  * @param {{ bedPath: string, images: string[], drops: Array<object>, outPath: string, workDir?: string }} io
  * @returns {{ args: string[], filter: string, scriptFile: string|null }}
  */
-export function buildAmbientFfmpegArgs(project, { bedPath, images, drops, outPath, workDir, encoder = "cpu" }) {
+export function buildAmbientFfmpegArgs(project, { bedPath, images, drops, outPath, workDir, encoder = "cpu", logo = null }) {
   if (!bedPath) throw new Error("ambient render: no bed — there is no video without it");
   const { width, height } = dimsFor(project?.aspect);
   const targetSec = Number(project?.targetSec) || 0;
@@ -271,6 +272,11 @@ export function buildAmbientFfmpegArgs(project, { bedPath, images, drops, outPat
       parts.push(`${captionIn}${drawn.join(",")}[vout]`);
       captionIn = "[vout]";
     }
+  }
+  // The account's logo (brandLogoFor) goes over everything, captions included.
+  if (logo) {
+    parts.push(logoOverlay(logo, { w: width, h: height, from: captionIn.slice(1, -1), to: "vlogo" }));
+    captionIn = "[vlogo]";
   }
 
   // --- audio --------------------------------------------------------------

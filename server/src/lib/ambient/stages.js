@@ -8,6 +8,7 @@ import { trackInfo } from "./trackInfo.js";
 import { voiceDrops } from "./drops.js";
 import { deriveMovements, imagePromptFor, AMBIENT_IMAGE_STYLE } from "./movements.js";
 import { buildAmbientFfmpegArgs } from "./ambientRender.js";
+import { brandLogoFor } from "../branding.js";
 import { amfAvailable } from "./encoders.js";
 import { insideOutputs } from "./ownFiles.js";
 import { measureLoudness, gainToTargetDb } from "./loudness.js";
@@ -561,6 +562,7 @@ export async function renderStage(ctx, projectId, jobId, { encoder = "cpu" } = {
   const wanted = encoder === "amf" && amfAvailable() ? "amf" : "cpu";
   const argsFor = (enc) => buildAmbientFfmpegArgs(project, {
     bedPath, images, drops: isMusicOnly(project) ? [] : (project.drops || []), outPath, workDir: dir, encoder: enc,
+    logo: brandLogoFor(ctx.dataDir),
   }).args;
   let encoderUsed = wanted;
   let result = await encodeWith(argsFor(wanted));

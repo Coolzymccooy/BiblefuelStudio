@@ -11,6 +11,7 @@ import { generateBibleImage } from "../lib/imageGen/index.js";
 import { isLocalOrRemote, resolveOutputAlias } from "../lib/mediaThumb.js";
 import { downloadToFile, isRemoteUrl } from "../lib/downloadInput.js";
 import { buildWordDrawtext, resolveKineticAnimation, buildEndingFade } from "../lib/videoFilters.js";
+import { brandLogoFor, logoOverlay, withLogoVf } from "../lib/branding.js";
 import { kenBurnsFilter } from "../lib/kenBurns.js";
 import { annotatePhrasedTiers } from "../lib/captions.js";
 import { createJob, getJob, gcJobs, markRunning, markProgress, markDone, markError, attachProc, cancelJob } from "../lib/renderJobs.js";
@@ -210,10 +211,14 @@ router.post("/video", async (req, res) => {
     // clip doesn't cut off sharp. Clamps to half the clip for short renders.
     const { aFade, vFade, aStart, vStart } = buildEndingFade({ totalDuration: duration });
     const vFadeClause = vFade > 0 ? `,fade=t=out:st=${vStart.toFixed(3)}:d=${vFade.toFixed(3)}` : "";
+    const logo = brandLogoFor(req.ctx?.dataDir);
     if (hasMusic) {
       const aIndex = hasVoice ? 1 : null;
       const mIndex = hasVoice ? 2 : 1;
-      const vFilter = `[0:v]${vf}${vFadeClause}[vout]`;
+      // The logo goes on before the ending fade, so it fades out with the picture.
+      const vFilter = logo
+        ? `[0:v]${vf}[vbrand];${logoOverlay(logo, { w, h, from: "vbrand", to: null })}${vFadeClause}[vout]`
+        : `[0:v]${vf}${vFadeClause}[vout]`;
       const aBase = hasVoice
         ? duck
           ? `[${aIndex}:a]volume=1.0,asplit=2[voice1][voice2];[${mIndex}:a]volume=${musicVol}[m1];[m1][voice1]sidechaincompress=threshold=0.01:ratio=12:attack=5:release=350:makeup=2[ducked];[voice2][ducked]amix=inputs=2:duration=shortest:dropout_transition=2[aout]`
@@ -239,7 +244,7 @@ router.post("/video", async (req, res) => {
     } else {
       args.push(
         "-t", String(duration),
-        "-vf", `${vf}${vFadeClause}`,
+        "-vf", `${withLogoVf(vf, logo, { w, h })}${vFadeClause}`,
         "-r", "30",
         "-c:v", vcodec,
         "-preset", preset,
@@ -386,6 +391,11 @@ router.post("/waveform", async (req, res) => {
     if (textFilters && textFilters.length > 0) {
       filterComplexParts.push(`[withwave]${textFilters}[vout]`);
       finalLabel = "vout";
+    }
+    const logo = brandLogoFor(req.ctx?.dataDir);
+    if (logo) {
+      filterComplexParts.push(logoOverlay(logo, { w, h, from: finalLabel, to: "vlogo" }));
+      finalLabel = "vlogo";
     }
 
     const filterComplex = filterComplexParts.join(";");
@@ -1073,8 +1083,14 @@ router.post("/captioned-video", async (req, res) => {
     let aMap = "aout";
     let vFilterOut = vFilter;
     let aFilterOut = aFilter;
+    // The account's logo goes on before the ending fade, so it fades with the picture.
+    const logo = brandLogoFor(req.ctx?.dataDir);
+    if (logo) {
+      vFilterOut += `;${logoOverlay(logo, { w: renderWidth, h: renderHeight, from: "vout", to: "vlogo" })}`;
+      vMap = "vlogo";
+    }
     if (vFade > 0) {
-      vFilterOut += `;[vout]fade=t=out:st=${vStart.toFixed(3)}:d=${vFade.toFixed(3)}[vend]`;
+      vFilterOut += `;[${vMap}]fade=t=out:st=${vStart.toFixed(3)}:d=${vFade.toFixed(3)}[vend]`;
       vMap = "vend";
     }
     if (aFade > 0) {
