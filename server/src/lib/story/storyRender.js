@@ -11,6 +11,7 @@ import { kenBurnsVariedFilter, moveForIndex } from "../kenBurnsVaried.js";
 import { buildXfadeChain } from "./sceneTransitions.js";
 import { markRunning, markProgress, markDone, markError, attachProc } from "../renderJobs.js";
 import { isLocalOrRemote } from "../mediaThumb.js";
+import { logoOverlay } from "../branding.js";
 
 // Line captions past this many phrases fall back to the compact lower-third
 // subtitle chain. At ~7 words a phrase this is roughly a 20-minute
@@ -215,6 +216,7 @@ export function buildStoryFfmpegArgs({
   outPath, audioDurationSec, captions,
   captionPreset, captionMotion, captionLayout, captionDepth, captionStagger, captionHighlight,
   kineticMaxWords = Math.max(0, Number(process.env.STORY_KINETIC_MAX_WORDS) || 1500),
+  logo = null,
 }) {
   if (!scenes.length) throw new Error("story render: no scenes");
   for (const s of scenes) {
@@ -302,11 +304,14 @@ export function buildStoryFfmpegArgs({
     captionHighlight,
     kineticMaxWords,
   });
+  // The account's logo (brandLogoFor) goes over everything, captions included.
+  const captionOut = logo ? "vcap" : "vout";
   if (drawtext) {
-    filterParts.push(`[vcat]${drawtext}[vout]`);
+    filterParts.push(`[vcat]${drawtext}[${captionOut}]`);
   } else {
-    filterParts.push(`[vcat]copy[vout]`);
+    filterParts.push(`[vcat]copy[${captionOut}]`);
   }
+  if (logo) filterParts.push(logoOverlay(logo, { w: width, h: height, from: "vcap", to: "vout" }));
 
   let audioMap;
   if (musicInputIdx >= 0) {
@@ -378,7 +383,7 @@ export function toFilterScriptArgs(args, outPath) {
 export function runStoryRender({
   jobId, scenes, words, audioPath, musicPath, musicVolume, autoDuck, width, height,
   outPath, audioDurationSec, onProgress, captions,
-  captionPreset, captionMotion, captionLayout, captionDepth, captionStagger, captionHighlight,
+  captionPreset, captionMotion, captionLayout, captionDepth, captionStagger, captionHighlight, logo,
 }) {
   return new Promise((resolve) => {
     let built;
@@ -386,7 +391,7 @@ export function runStoryRender({
       built = buildStoryFfmpegArgs({
         scenes, words, audioPath, musicPath, musicVolume, autoDuck, width, height,
         outPath, audioDurationSec, captions,
-        captionPreset, captionMotion, captionLayout, captionDepth, captionStagger, captionHighlight,
+        captionPreset, captionMotion, captionLayout, captionDepth, captionStagger, captionHighlight, logo,
       });
     } catch (err) {
       markError(jobId, err?.message || err);

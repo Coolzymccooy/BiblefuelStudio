@@ -6,8 +6,31 @@ import { spawn } from "child_process";
 import { readLibrary } from "../lib/library.js";
 import { resolveLibraryTrack } from "../lib/musicLibrary.js";
 import { resolveTenantTrack } from "../lib/musicLibraryStore.js";
+import { brandLogoFor, logoOverlay } from "../lib/branding.js";
 
 const router = Router();
+
+/**
+ * Width and height of a picture's first video stream, or null if ffprobe
+ * can't tell within `timeoutMs` (the caller then goes without, not fails).
+ */
+function frameSizeOf(file, { timeoutMs = 20_000 } = {}) {
+  return new Promise((resolve) => {
+    const ffprobe = process.env.FFPROBE_PATH?.trim() || "ffprobe";
+    const proc = spawn(ffprobe, ["-v", "error", "-select_streams", "v:0",
+      "-show_entries", "stream=width,height", "-of", "csv=p=0", file]);
+    let out = "";
+    const timer = setTimeout(() => { try { proc.kill("SIGKILL"); } catch { /* gone */ } }, timeoutMs);
+    if (timer.unref) timer.unref();
+    proc.stdout.on("data", (d) => { out += d.toString(); });
+    proc.on("error", () => { clearTimeout(timer); resolve(null); });
+    proc.on("close", () => {
+      clearTimeout(timer);
+      const [w, h] = out.trim().split(",").map(Number);
+      resolve(w > 0 && h > 0 ? { w, h } : null);
+    });
+  });
+}
 
 function resolveAssetPath(dataDir, pathOrId) {
   if (pathOrId == null) return null;
@@ -320,12 +343,18 @@ router.post("/timeline-preview", async (req, res) => {
     if (post.length) {
       parts.push(`[amerged]${post.join(",")}[afinal]`);
     } else {
-      parts.push(`[amerged]alias[afinal]`); // Just a label
+      parts.push(`[amerged]anull[afinal]`); // pass-through: ffmpeg has no "alias" filter
     }
+
+    // The account's logo, as the timeline's full render draws it, so the
+    // preview shows what the final video will. Sized for the background.
+    const logo = brandLogoFor(req.ctx.dataDir);
+    const frame = logo ? await frameSizeOf(bg) : null;
+    if (frame) parts.push(logoOverlay(logo, { ...frame, from: "0:v", to: "vlogo" }));
 
     const filterComplex = parts.join(";");
     args.push("-filter_complex", filterComplex);
-    args.push("-map", "0:v", "-map", "[afinal]");
+    args.push("-map", frame ? "[vlogo]" : "0:v", "-map", "[afinal]");
     args.push("-shortest", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", outFile);
 
     await run(ffmpeg, args);

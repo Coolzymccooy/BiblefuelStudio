@@ -18,6 +18,7 @@ import { PostizConnectCard } from '../components/PostizConnectCard';
 import { AutoPublishCard } from '../components/AutoPublishCard';
 import { YouTubeConnectCard } from '../components/YouTubeConnectCard';
 import { WebhookConnectCard } from '../components/WebhookConnectCard';
+import { BrandingCard } from '../components/BrandingCard';
 
 type SocialSchedule = {
     id: string;
@@ -291,6 +292,7 @@ export function SettingsPage() {
             </Card>
 
             <PlanAndUsageCard />
+            <BrandingCard />
             <YouTubeConnectCard />
             <WebhookConnectCard />
             <PostizConnectCard />

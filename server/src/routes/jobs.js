@@ -16,6 +16,7 @@ import { pickBestBackground, classifyText } from "../lib/categorize.js";
 import { charsToWords, captionWordsFromNativeWords, annotatePhrasedTiers, groupWordsByBeat } from "../lib/captions.js";
 import { alignAudioWithText, isForcedAlignmentAvailable } from "../lib/voice/alignment.js";
 import { buildWordDrawtext, buildLineDrawtext, buildSceneGraph, resolveKineticAnimation, resolveTypographyPreset, resolveCaptionMotion, buildEndingFade } from "../lib/videoFilters.js";
+import { brandLogoFor, logoOverlay, withLogoVf } from "../lib/branding.js";
 import { buildSocialCaption } from "../lib/socialCaption.js";
 import { pickScriptType } from "../lib/highPerformerProfile.js";
 import { ensureLocalPath } from "../lib/remoteCache.js";
@@ -129,6 +130,9 @@ function currentDataDir() { return currentJobCtx?.dataDir || DATA_DIR; }
 // resolveAssetPath signature that no production caller actually uses.
 export function _setJobCtxForTest(ctx) { currentJobCtx = ctx; }
 export function _resetJobCtxForTest() { currentJobCtx = null; }
+// Test-only: run a render the way the worker does, without the queue.
+export function _executeJobForTest(job) { return executeJob(job); }
+export function _renderVideoCoreForTest(payload, jobId) { return renderVideoCore(payload, jobId); }
 
 // Monotonic counter backing the script-type rotation. Persisted per-tenant so
 // the rotation survives restarts — an in-memory counter would reset to the
@@ -604,6 +608,11 @@ async function executeJob(job) {
       filterComplexParts.push(`[withwave]${textFilters}[vout]`);
       finalLabel = "vout";
     }
+    const logo = brandLogoFor(currentDataDir());
+    if (logo) {
+      filterComplexParts.push(logoOverlay(logo, { w, h, from: finalLabel, to: "vlogo" }));
+      finalLabel = "vlogo";
+    }
     const filterComplex = filterComplexParts.join(";");
 
     const args = ["-y"];
@@ -824,10 +833,13 @@ async function renderVideoCore(payload, jobId) {
   const musicVol = Math.min(1, Math.max(0, Number(musicVolume ?? 0.3)));
   const duck = Boolean(autoDuck) && Boolean(resolvedMusic) && Boolean(resolvedAudio);
 
+  const logo = brandLogoFor(currentDataDir());
   if (resolvedMusic) {
     const aIndex = resolvedAudio ? 1 : null;
     const mIndex = resolvedAudio ? 2 : 1;
-    const vFilter = `[0:v]${vf}[vout]`;
+    const vFilter = logo
+      ? `[0:v]${vf}[vbrand];${logoOverlay(logo, { w, h, from: "vbrand", to: "vout" })}`
+      : `[0:v]${vf}[vout]`;
     const aFilter = resolvedAudio
       ? duck
         ? `[${aIndex}:a]volume=1.0,asplit=2[voice1][voice2];[${mIndex}:a]volume=${musicVol}[m1];[m1][voice1]sidechaincompress=threshold=0.01:ratio=12:attack=5:release=350:makeup=2[ducked];[voice2][ducked]amix=inputs=2:duration=shortest:dropout_transition=2[aout]`
@@ -849,7 +861,7 @@ async function renderVideoCore(payload, jobId) {
       "-shortest"
     );
   } else {
-    args.push("-t", String(t), "-vf", vf, "-r", "30", "-c:v", vcodec, "-preset", preset, "-crf", "22", "-pix_fmt", "yuv420p");
+    args.push("-t", String(t), "-vf", withLogoVf(vf, logo, { w, h }), "-r", "30", "-c:v", vcodec, "-preset", preset, "-crf", "22", "-pix_fmt", "yuv420p");
     if (resolvedAudio) {
       // Explicit -map so ffmpeg doesn't auto-pick the background clip's audio
       // track over our narration. Pexels b-roll commonly ships with a silent
@@ -1181,6 +1193,12 @@ async function renderAdvancedVideo(payload, jobId) {
   // end so the render finishes cleanly instead of cutting off sharp with the
   // narration. Fades clamp to half the clip for short videos.
   const { aFade, vFade, aStart, vStart } = buildEndingFade({ totalDuration });
+  // The account's logo goes on before the fade, so it fades with the picture.
+  const logo = brandLogoFor(currentDataDir());
+  if (logo) {
+    filterParts.push(logoOverlay(logo, { w, h, from: videoLabel, to: "vlogo" }));
+    videoLabel = "vlogo";
+  }
   if (vFade > 0) {
     filterParts.push(`[${videoLabel}]fade=t=out:st=${vStart.toFixed(3)}:d=${vFade.toFixed(3)}[vend]`);
     videoLabel = "vend";

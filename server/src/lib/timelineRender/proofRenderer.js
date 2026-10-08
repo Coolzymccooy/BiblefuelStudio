@@ -11,6 +11,7 @@ import {
   buildLineDrawtext, resolveCaptionMotion,
 } from '../videoFilters.js';
 import { describeRenderCoverage } from './coverage.js';
+import { logoOverlay } from '../branding.js';
 import {
   normalizeEffectClip, isSupportedEffect,
   buildGlowFilter, buildGradeFilter, buildLightLeakFilter,
@@ -404,7 +405,11 @@ export function buildProofRenderCommand(plan, opts = {}) {
     }
   }
 
-  videoParts.push(`${videoLabel}null[v]`);
+  // The account's logo (opts.logo, from brandLogoFor) goes over everything.
+  // Checked again here: voice-over synthesis can run for minutes after the
+  // job read the setting, and a logo removed meanwhile must not fail the render.
+  if (opts.logo && fs.existsSync(opts.logo.file)) videoParts.push(logoOverlay(opts.logo, { w: width, h: height, from: videoLabel.slice(1, -1), to: 'v' }));
+  else videoParts.push(`${videoLabel}null[v]`);
 
   const audioParts = [];
   const audioLabels = [];

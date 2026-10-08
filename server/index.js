@@ -35,6 +35,7 @@ import longformRouter from "./src/routes/longform.js";
 import timelineRouter from "./src/routes/timeline.js";
 import abiRouter from "./src/routes/abi.js";
 import musicRouter from "./src/routes/music.js";
+import brandingRouter from "./src/routes/branding.js";
 import stemsWorkerRouter from "./src/routes/stemsWorker.js";
 import { configureLaptopQueue, loadLaptopQueue } from "./src/lib/stems/laptopQueue.js";
 import { requireAuth } from "./src/auth.js";
@@ -381,6 +382,7 @@ app.use("/api/audio",     requireAuth, withUserScope, requireVerifiedEmail,     
 app.use("/api/audio-adv", requireAuth, withUserScope, requireVerifiedEmail,                       audioAdvancedRouter);
 app.use("/api/library",   requireAuth, withUserScope,                                              libraryRouter);
 app.use("/api/music",     requireAuth, withUserScope,                                              musicRouter);
+app.use("/api/branding",  requireAuth, withUserScope,                                              brandingRouter);
 // The operator's laptop, removing vocals for the live site. No user auth: it
 // carries STEMS_WORKER_TOKEN instead, and the router fails closed without it.
 app.use("/api/stems-worker", stemsWorkerRouter);
