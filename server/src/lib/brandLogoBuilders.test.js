@@ -51,7 +51,7 @@ before(() => {
     green: path.join(dir, 'green.png'),
     voice: path.join(dir, 'voice.m4a'),
   };
-  if (!hasFfmpeg) return;
+  if (!hasFfmpeg) return fs.writeFileSync(m.logo.file, 'x');
   ff(['-f', 'lavfi', '-i', 'color=c=red:s=64x64', '-frames:v', '1', m.logo.file]);
   ff(['-f', 'lavfi', '-i', 'color=c=0x00FF00:s=640x360', '-frames:v', '1', m.green]);
   ff(['-f', 'lavfi', '-i', 'sine=f=440:d=2', '-c:a', 'aac', m.voice]);
@@ -142,6 +142,13 @@ describe('Timeline editor', () => {
 
   test('without a logo the picture passes straight through', () => {
     assert.match(graphOf(build(null).args), /null\[v\]/);
+  });
+
+  test('a logo removed while voice-overs were being made is skipped, not fatal', () => {
+    const gone = { ...m.logo, file: path.join(dir, 'deleted-logo.png') };
+    const graph = graphOf(build(gone).args);
+    assert.ok(!graph.includes('movie='));
+    assert.match(graph, /null\[v\]/);
   });
 
   test('a real timeline render carries the logo', { skip: !hasFfmpeg && 'ffmpeg not installed' }, () => {

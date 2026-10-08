@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ChangeEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react';
 import toast from 'react-hot-toast';
 import { Image as ImageIcon, Loader2, Trash2, Upload } from 'lucide-react';
 import { Card } from './ui/Card';
@@ -25,6 +25,9 @@ const POSITIONS: Array<[LogoPosition, string]> = [
     ['bottom-left', 'Bottom left'],
 ];
 const SIZES: Array<[LogoSize, string]> = [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large']];
+// The server's upload cap; checked here so a big file gets a clear message.
+const MAX_LOGO_BYTES = 5 * 1024 * 1024;
+const OPACITY_SAVE_MS = 400;
 
 // Same proportions the renderer uses for a landscape frame (server/src/lib/branding.js).
 const SIZE_PCT: Record<LogoSize, number> = { small: 6, medium: 8, large: 10.4 };
@@ -46,33 +49,63 @@ export function previewLogoStyle(b: Pick<Branding, 'position' | 'size' | 'opacit
  */
 export function BrandingCard() {
     const [branding, setBranding] = useState<Branding | null>(null);
+    const [loadFailed, setLoadFailed] = useState(false);
     const [busy, setBusy] = useState(false);
     const fileInput = useRef<HTMLInputElement>(null);
+    const opacityTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const pendingOpacity = useRef<number | null>(null);
 
-    useEffect(() => {
-        void (async () => {
-            const res = await api.get<{ branding: Branding }>('/api/branding');
-            if (res.ok && res.data?.branding) setBranding(res.data.branding);
-            else toast.error(res.error || 'Could not load branding');
-        })();
-    }, []);
-
-    const save = async (patch: Partial<Branding>) => {
-        if (!branding) return;
-        const previous = branding;
-        setBranding({ ...branding, ...patch });
-        const res = await api.put<{ branding: Branding }>('/api/branding', patch);
+    const load = useCallback(async () => {
+        setLoadFailed(false);
+        const res = await api.get<{ branding: Branding }>('/api/branding');
         if (res.ok && res.data?.branding) setBranding(res.data.branding);
         else {
-            setBranding(previous);
-            toast.error(res.error || 'Could not save branding');
+            setLoadFailed(true);
+            toast.error(res.error || 'Could not load your logo settings');
         }
+    }, []);
+
+    useEffect(() => {
+        void load();
+        // Leaving mid-drag still saves the last opacity rather than dropping it.
+        return () => {
+            if (opacityTimer.current) clearTimeout(opacityTimer.current);
+            if (pendingOpacity.current != null) void api.put('/api/branding', { opacity: pendingOpacity.current });
+        };
+    }, [load]);
+
+    // Saves show at once; the server's reply is the truth. Settings replies
+    // leave out the logo image itself, so the preview keeps the one it has.
+    const save = async (patch: Partial<Branding>) => {
+        setBranding((cur) => (cur ? { ...cur, ...patch } : cur));
+        const res = await api.put<{ branding: Branding }>('/api/branding', patch);
+        if (res.ok && res.data?.branding) {
+            const saved = res.data.branding;
+            setBranding((cur) => ({ ...saved, logoDataUrl: cur?.logoDataUrl ?? null }));
+        } else {
+            toast.error(res.error || 'Could not save your logo settings');
+            void load();
+        }
+    };
+
+    const changeOpacity = (opacity: number) => {
+        setBranding((cur) => (cur ? { ...cur, opacity } : cur));
+        if (opacityTimer.current) clearTimeout(opacityTimer.current);
+        pendingOpacity.current = opacity;
+        opacityTimer.current = setTimeout(() => {
+            pendingOpacity.current = null;
+            void save({ opacity });
+        }, OPACITY_SAVE_MS);
     };
 
     const upload = async (e: ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         e.target.value = '';
         if (!file) return;
+        if (file.size > MAX_LOGO_BYTES) {
+            toast.error('That image is over 5 MB. Please use a smaller logo.');
+            return;
+        }
         setBusy(true);
         try {
             const res = await api.uploadRaw<{ branding: Branding }>('/api/branding/logo', file);
@@ -101,7 +134,14 @@ export function BrandingCard() {
     return (
         <Card title="Video logo" icon={ImageIcon} tooltip="Your logo is drawn in a corner of every video you render: source, timeline, story, ambient and series videos.">
             {!branding ? (
-                <div className="flex items-center gap-2 text-sm text-content-secondary"><Loader2 size={14} className="animate-spin" /> Loading…</div>
+                loadFailed ? (
+                    <div className="flex items-center gap-3 text-sm text-content-secondary">
+                        Your logo settings didn't load.
+                        <Button variant="secondary" className="h-8 text-xs" onClick={() => void load()}>Try again</Button>
+                    </div>
+                ) : (
+                    <div className="flex items-center gap-2 text-sm text-content-secondary"><Loader2 size={14} className="animate-spin" /> Loading…</div>
+                )
             ) : (
                 <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
                     <div
@@ -164,9 +204,7 @@ export function BrandingCard() {
                             <input
                                 type="range" min={20} max={100} step={5} className="w-full"
                                 value={Math.round(branding.opacity * 100)}
-                                onChange={(e) => setBranding({ ...branding, opacity: Number(e.target.value) / 100 })}
-                                onPointerUp={(e) => void save({ opacity: Number((e.target as HTMLInputElement).value) / 100 })}
-                                onKeyUp={(e) => void save({ opacity: Number((e.target as HTMLInputElement).value) / 100 })}
+                                onChange={(e) => changeOpacity(Number(e.target.value) / 100)}
                             />
                         </label>
                     </div>

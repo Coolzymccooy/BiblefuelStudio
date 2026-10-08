@@ -406,7 +406,9 @@ export function buildProofRenderCommand(plan, opts = {}) {
   }
 
   // The account's logo (opts.logo, from brandLogoFor) goes over everything.
-  if (opts.logo) videoParts.push(logoOverlay(opts.logo, { w: width, h: height, from: videoLabel.slice(1, -1), to: 'v' }));
+  // Checked again here: voice-over synthesis can run for minutes after the
+  // job read the setting, and a logo removed meanwhile must not fail the render.
+  if (opts.logo && fs.existsSync(opts.logo.file)) videoParts.push(logoOverlay(opts.logo, { w: width, h: height, from: videoLabel.slice(1, -1), to: 'v' }));
   else videoParts.push(`${videoLabel}null[v]`);
 
   const audioParts = [];

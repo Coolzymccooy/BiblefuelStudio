@@ -99,7 +99,18 @@ describe('/api/branding', () => {
     assert.equal(res.body.branding.position, 'bottom-left');
     assert.equal(res.body.branding.size, 'small');
     assert.equal(res.body.branding.opacity, 0.5);
+    assert.equal(res.body.branding.logoDataUrl, undefined, 'settings replies leave the image out');
     assert.equal(brandLogoFor(dir).file, logoFileFor(dir), 'the logo path is never taken from the request');
+  });
+
+  test('an image declaring a huge canvas is refused before ffmpeg decodes it', { skip: !hasFfmpeg && 'ffmpeg not installed' }, async () => {
+    const dir = account();
+    const huge = path.join(root, 'huge.png');
+    spawnSync(FF, ['-y', '-v', 'error', '-f', 'lavfi', '-i', 'color=c=black:s=4200x4200', '-frames:v', '1', huge]);
+    const res = await request(app(dir)).post('/api/branding/logo').set('Content-Type', 'image/png').send(fs.readFileSync(huge));
+    assert.equal(res.status, 400, JSON.stringify(res.body));
+    assert.equal(fs.existsSync(logoFileFor(dir)), false);
+    assert.deepEqual(fs.readdirSync(path.dirname(logoFileFor(dir))), [], 'nothing left behind');
   });
 
   test('removing the logo turns branding off', { skip: !hasFfmpeg && 'ffmpeg not installed' }, async () => {

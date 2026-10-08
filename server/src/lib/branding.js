@@ -85,9 +85,18 @@ export function logoGeometry(w, h, size = "medium") {
   return { width, marginX: Math.round(W * 0.035), marginY: Math.round(H * (H > W ? 0.06 : 0.045)) };
 }
 
-// Same escaping drawtext font paths need: forward slashes, drive colon escaped.
+// ffmpeg reads a filter argument through two layers: the graph parser, then
+// the filter's own options. Each layer takes a backslash as "next character
+// is literal", so the path is escaped for the options layer (its ':' and
+// quotes) and then again for the graph layer (those backslashes, quotes and
+// the graph's own separators). A drive colon or an apostrophe in a folder
+// name then reaches the movie source intact.
 const BACKSLASH = String.fromCharCode(92);
-const filterPath = (p) => String(p).split(BACKSLASH).join("/").split(":").join(BACKSLASH + ":");
+const escapeChars = (s, chars) => [...s].map((c) => (chars.includes(c) ? BACKSLASH + c : c)).join("");
+const filterPath = (p) => escapeChars(
+  escapeChars(String(p).split(BACKSLASH).join("/"), `':${BACKSLASH}`),
+  `'[],;${BACKSLASH}`,
+);
 
 /**
  * Filtergraph text that draws `logo` (from brandLogoFor) over the picture
@@ -108,7 +117,7 @@ export function logoOverlay(logo, { w, h, from, to = "vlogo" }) {
   const x = right ? `main_w-overlay_w-${marginX}` : String(marginX);
   const y = bottom ? `main_h-overlay_h-${marginY}` : String(marginY);
   const alpha = Number(logo.opacity).toFixed(2);
-  return `movie='${filterPath(logo.file)}',scale=${width}:-1,format=rgba,colorchannelmixer=aa=${alpha}[brandlogo];`
+  return `movie=${filterPath(logo.file)},scale=${width}:-1,format=rgba,colorchannelmixer=aa=${alpha}[brandlogo];`
     + `${from ? `[${from}]` : ""}[brandlogo]overlay=x=${x}:y=${y}${to ? `[${to}]` : ""}`;
 }
 

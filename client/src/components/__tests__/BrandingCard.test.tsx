@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import toast from 'react-hot-toast';
 import userEvent from '@testing-library/user-event';
 import { BrandingCard, previewLogoStyle, type Branding } from '../BrandingCard';
 import { api } from '../../lib/api';
@@ -60,6 +61,65 @@ describe('BrandingCard', () => {
     await screen.findByAltText('Your logo');
     await userEvent.selectOptions(screen.getByRole('combobox', { name: /size/i }), 'large');
     await waitFor(() => expect((screen.getByRole('combobox', { name: /size/i }) as HTMLSelectElement).value).toBe('medium'));
+  });
+});
+
+describe('BrandingCard, when things go wrong', () => {
+  it('a settings reply without the image keeps the preview showing', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({ ok: true, status: 200, data: { branding: WITH_LOGO } });
+    const { logoDataUrl: _omit, ...withoutImage } = WITH_LOGO;
+    vi.spyOn(api, 'put').mockResolvedValue({ ok: true, status: 200, data: { branding: { ...withoutImage, size: 'large' } } });
+    render(<BrandingCard />);
+    await screen.findByAltText('Your logo');
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: /size/i }), 'large');
+    await waitFor(() => expect((screen.getByAltText('Your logo') as HTMLImageElement).style.width).toBe('10.4%'));
+  });
+
+  it('opacity is saved once the slider settles, however it was moved', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({ ok: true, status: 200, data: { branding: WITH_LOGO } });
+    const put = vi.spyOn(api, 'put').mockImplementation(async (_url, body) => (
+      { ok: true, status: 200, data: { branding: { ...WITH_LOGO, ...(body as Partial<Branding>) } } }
+    ));
+    render(<BrandingCard />);
+    await screen.findByAltText('Your logo');
+    const slider = screen.getByRole('slider');
+    fireEvent.change(slider, { target: { value: '60' } });
+    fireEvent.change(slider, { target: { value: '50' } });
+    expect(screen.getByText(/opacity 50%/i)).toBeTruthy();
+    await waitFor(() => expect(put).toHaveBeenCalledWith('/api/branding', { opacity: 0.5 }));
+    expect(put).toHaveBeenCalledTimes(1);
+  });
+
+  it('closing the page mid-drag still saves the last opacity', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({ ok: true, status: 200, data: { branding: WITH_LOGO } });
+    const put = vi.spyOn(api, 'put').mockResolvedValue({ ok: true, status: 200, data: { branding: WITH_LOGO } });
+    const { unmount } = render(<BrandingCard />);
+    await screen.findByAltText('Your logo');
+    fireEvent.change(screen.getByRole('slider'), { target: { value: '40' } });
+    unmount();
+    expect(put).toHaveBeenCalledWith('/api/branding', { opacity: 0.4 });
+  });
+
+  it('a failed load offers to try again instead of spinning forever', async () => {
+    const get = vi.spyOn(api, 'get')
+      .mockResolvedValueOnce({ ok: false, status: 500, error: 'down' })
+      .mockResolvedValueOnce({ ok: true, status: 200, data: { branding: NONE } });
+    render(<BrandingCard />);
+    await userEvent.click(await screen.findByRole('button', { name: /try again/i }));
+    expect(await screen.findByText(/no logo yet/i)).toBeTruthy();
+    expect(get).toHaveBeenCalledTimes(2);
+  });
+
+  it('a logo over 5 MB is refused before uploading', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({ ok: true, status: 200, data: { branding: NONE } });
+    const upload = vi.spyOn(api, 'uploadRaw');
+    const error = vi.spyOn(toast, 'error').mockImplementation(() => '');
+    render(<BrandingCard />);
+    await screen.findByText(/no logo yet/i);
+    const big = new File([new Uint8Array(5 * 1024 * 1024 + 1)], 'big.png', { type: 'image/png' });
+    await userEvent.upload(screen.getByTestId('logo-file'), big);
+    expect(upload).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringMatching(/over 5 MB/));
   });
 });
 

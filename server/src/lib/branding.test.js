@@ -101,17 +101,33 @@ test('the logo is sized and placed for the frame\'s shape', () => {
 test('the overlay reads the logo inside the graph and lands in the chosen corner', () => {
   const logo = { file: 'C:\\brand\\logo.png', position: 'top-right', size: 'medium', opacity: 0.85 };
   const f = logoOverlay(logo, { w: 1920, h: 1080, from: 'vout', to: 'vlogo' });
-  assert.equal(f, "movie='C\\:/brand/logo.png',scale=154:-1,format=rgba,colorchannelmixer=aa=0.85[brandlogo];"
+  // The drive colon is escaped once for the options layer, then that
+  // backslash once more for the graph layer.
+  assert.equal(f, "movie=C\\\\:/brand/logo.png,scale=154:-1,format=rgba,colorchannelmixer=aa=0.85[brandlogo];"
     + '[vout][brandlogo]overlay=x=main_w-overlay_w-67:y=49[vlogo]');
   const bl = logoOverlay({ ...logo, position: 'bottom-left' }, { w: 1920, h: 1080, from: 'a', to: 'b' });
   assert.match(bl, /overlay=x=67:y=main_h-overlay_h-49\[b\]$/);
+});
+
+test('a quote in the logo path cannot end the filter argument', { skip: !hasFfmpeg && 'ffmpeg not installed' }, (t) => {
+  const dir = path.join(account(t), "o'brien");
+  writeBranding(dir, { enabled: true, opacity: 1 });
+  putLogo(dir, 'red');
+  const logo = brandLogoFor(dir);
+  const out = path.join(dir, 'q.mp4');
+  const r = spawnSync(FF, ['-y', '-v', 'error', '-f', 'lavfi', '-i', 'color=c=0x00FF00:s=640x360:d=1:r=25',
+    '-vf', withLogoVf('null', logo, { w: 640, h: 360 }), '-c:v', 'libx264', '-pix_fmt', 'yuv420p', out]);
+  assert.equal(r.status, 0, String(r.stderr));
+  const { width, marginX, marginY } = logoGeometry(640, 360);
+  const [red] = pixelAt(out, 640 - marginX - width / 2, marginY + width / 2);
+  assert.ok(red > 180, 'the logo was still found and drawn');
 });
 
 test('withLogoVf leaves a chain alone without a logo, and ends it with the overlay with one', () => {
   assert.equal(withLogoVf('scale=10:10', null, { w: 10, h: 10 }), 'scale=10:10');
   const logo = { file: '/l.png', position: 'top-left', size: 'medium', opacity: 1 };
   assert.match(withLogoVf('scale=1920:1080', logo, { w: 1920, h: 1080 }),
-    /^scale=1920:1080\[brandbase\];movie='\/l\.png'.*\[brandbase\]\[brandlogo\]overlay=x=67:y=49$/);
+    /^scale=1920:1080\[brandbase\];movie=\/l\.png,.*\[brandbase\]\[brandlogo\]overlay=x=67:y=49$/);
 });
 
 test('ffmpeg draws the logo in the corner for the whole video, in both graph forms', { skip: !hasFfmpeg && 'ffmpeg not installed' }, (t) => {

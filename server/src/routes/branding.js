@@ -10,7 +10,8 @@ import { receiveUploadToFile, finaliseImageFile } from "./media.js";
  * The account's video logo: settings, and the logo image itself.
  *
  *   GET    /api/branding        settings, plus the logo as a data URL to preview
- *   PUT    /api/branding        { enabled?, position?, size?, opacity? }
+ *   PUT    /api/branding        { enabled?, position?, size?, opacity? }; no preview
+ *                               in the reply, as the client already has it
  *   POST   /api/branding/logo   raw image body (PNG, JPEG or WebP); turns branding on
  *   DELETE /api/branding/logo   removes the logo; turns branding off
  *
@@ -23,6 +24,11 @@ const MAX_LOGO_BYTES = 5 * 1024 * 1024;
 // The stored logo fits a 512px box: sharp at the largest size it is drawn
 // (about 300px wide on 4K) and small enough to return inline for the preview.
 const LOGO_BOX = 512;
+// A small, highly compressible PNG can declare a huge canvas; capping the
+// decoded size stops a 5 MB upload from asking ffmpeg for gigabytes.
+const MAX_LOGO_PIXELS = 4096 * 4096;
+// One logo conversion per account at a time.
+const converting = new Set();
 
 function withPreview(dataDir, branding) {
   if (!branding.hasLogo) return { ...branding, logoDataUrl: null };
@@ -34,7 +40,7 @@ function withPreview(dataDir, branding) {
 export function normaliseLogo(src, dest, { timeoutMs = 20000 } = {}) {
   const ff = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
   const args = [
-    "-y", "-v", "error", "-i", src,
+    "-y", "-v", "error", "-max_pixels", String(MAX_LOGO_PIXELS), "-i", src,
     "-vf", `scale='min(${LOGO_BOX},iw)':'min(${LOGO_BOX},ih)':force_original_aspect_ratio=decrease,format=rgba`,
     "-frames:v", "1", dest,
   ];
@@ -76,8 +82,7 @@ router.put("/", (req, res) => {
     if (patch.enabled === true && !current.hasLogo) {
       return res.status(400).json({ ok: false, error: "Upload a logo before turning it on" });
     }
-    const next = writeBranding(req.ctx.dataDir, patch);
-    res.json({ ok: true, branding: withPreview(req.ctx.dataDir, next) });
+    res.json({ ok: true, branding: writeBranding(req.ctx.dataDir, patch) });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
@@ -87,7 +92,12 @@ router.post("/logo", async (req, res) => {
   const dataDir = req.ctx.dataDir;
   const dir = path.dirname(logoFileFor(dataDir));
   const tmp = path.join(dir, `upload-${uuid()}.img`);
+  const staged = path.join(dir, `logo-${uuid()}.png`);
   let received = null;
+  if (converting.has(dataDir)) {
+    return res.status(429).json({ ok: false, error: "A logo is already being uploaded" });
+  }
+  converting.add(dataDir);
   try {
     fs.mkdirSync(dir, { recursive: true });
     const recv = await receiveUploadToFile(req, tmp, { maxBytes: MAX_LOGO_BYTES });
@@ -98,10 +108,8 @@ router.post("/logo", async (req, res) => {
     if (!/^image\/(png|jpeg|webp)$/.test(img.mime)) {
       return res.status(400).json({ ok: false, error: "Use a PNG, JPEG or WebP image" });
     }
-    const staged = path.join(dir, `logo-${uuid()}.png`);
     const norm = await normaliseLogo(received, staged);
     if (!norm.ok) {
-      try { fs.rmSync(staged, { force: true }); } catch {}
       return res.status(400).json({ ok: false, error: `That image couldn't be read: ${norm.error}` });
     }
     fs.renameSync(staged, logoFileFor(dataDir));
@@ -110,7 +118,8 @@ router.post("/logo", async (req, res) => {
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e?.message || e) });
   } finally {
-    for (const f of [tmp, received]) {
+    converting.delete(dataDir);
+    for (const f of [tmp, received, staged]) {
       if (f) try { fs.rmSync(f, { force: true }); } catch {}
     }
   }
@@ -120,7 +129,7 @@ router.delete("/logo", (req, res) => {
   try {
     fs.rmSync(logoFileFor(req.ctx.dataDir), { force: true });
     const next = writeBranding(req.ctx.dataDir, { enabled: false });
-    res.json({ ok: true, branding: withPreview(req.ctx.dataDir, { ...next, hasLogo: false }) });
+    res.json({ ok: true, branding: { ...next, hasLogo: false, logoDataUrl: null } });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
