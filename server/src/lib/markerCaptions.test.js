@@ -7,6 +7,7 @@ import {
   listKineticAnimations,
   buildWordDrawtext,
   buildLineDrawtext,
+  textWidthFor,
 } from './videoFilters.js';
 
 // The operator pointed at a TikTok ad for a competitor ("Captions: AI Edits
@@ -152,9 +153,9 @@ test('a long line is shrunk to fit the frame width', () => {
   for (const id of NEW_PRESETS) {
     const out = buildLineDrawtext({ lines: [LONG_LINE], w: W, h: H, preset: id });
     const size = fontSizeOf(out);
-    // ffmpeg's default face is monospace; advance is ~0.6em per glyph. Require
-    // the drawn width to leave a real margin rather than merely touch the edge.
-    const drawn = LONG_LINE.length * size * 0.6;
+    // Measured in the preset's own font. Require the drawn width to leave a
+    // real margin rather than merely touch the edge.
+    const drawn = textWidthFor(resolveTypographyPreset(id), LONG_LINE, size);
     assert.ok(drawn <= W * 0.92,
       `${id}: ${LONG_LINE.length} chars at ${size}px draws ~${Math.round(drawn)}px into a ${W}px frame`);
   }
@@ -444,7 +445,14 @@ test('a highlighted word sits on its own line, whatever the layout', () => {
     lines: ['Trust that His'], w: W, h: H, preset: 'marker',
     duration: 2, reveal: true, highlightWords: HL_WORDS,
   });
-  assert.match(xOf(centred, 'His'), /^\(w-text_w\)\/2\+-?\d+$/, 'centred lines are unchanged');
+  // With a highlight the row's width is measured rather than left to
+  // ffmpeg's text_w, so the row and its words share one known left edge.
+  const marker = resolveTypographyPreset('marker');
+  const size = fontSizeOf(centred);
+  const rowW = textWidthFor(marker, 'Trust that His', size);
+  assert.equal(xOf(centred, 'Trust that His'), `(w-${rowW})/2`);
+  const prefix = textWidthFor(marker, 'Trust that ', size);
+  assert.equal(xOf(centred, 'His'), `(w-${rowW})/2+${prefix}`, 'the word starts where it sits in the row');
 });
 
 

@@ -1,10 +1,12 @@
 // FFmpeg filter-graph builders for the new word-level captions and
-// scene-splitter pipelines. Pure functions — no fs/spawn/network. Each
+// scene-splitter pipelines. Pure functions — no spawn/network; the only fs
+// is reading a bundled font's metrics once (fontMetrics.js). Each
 // returns plain strings (or arrays of strings) the caller assembles into
 // the final ffmpeg invocation.
 
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { measureText } from "./fontMetrics.js";
 
 /**
  * Bundled caption fonts. Every caption used to render in ffmpeg's default
@@ -24,6 +26,12 @@ const FONT_FILES = Object.freeze({
   script: "Caveat-Bold.ttf",
   serif: "PlayfairDisplay-BoldItalic.ttf",
   poster: "Anton.ttf",
+  brush: "Drybrush.ttf",
+  // Every preset without its own face. Left to ffmpeg, the default font was
+  // whatever the machine had (a typewriter face on Windows, most likely
+  // DejaVu Sans on the Linux server), so captions differed by machine and no
+  // highlighted word could be placed: its position depends on the glyphs.
+  sans: "DejaVuSans.ttf",
 });
 
 /**
@@ -36,12 +44,15 @@ export function escapeFontPath(p) {
   return String(p).split(BACKSLASH).join("/").split(":").join(BACKSLASH + ":");
 }
 
-/** Absolute, ffmpeg-escaped font path for a preset, or "" for monospace. */
+/** Absolute path of the font a preset draws in; DejaVu Sans unless it names its own. */
 export function fontFileFor(style) {
-  const key = style?.fontFamily;
-  const file = key && FONT_FILES[key];
-  if (!file) return "";
+  const file = FONT_FILES[style?.fontFamily] || FONT_FILES.sans;
   return path.join(FONT_DIR, file);
+}
+
+/** Width in pixels of `text` at `fontSize` in the preset's own font. */
+export function textWidthFor(style, text, fontSize) {
+  return measureText(fontFileFor(style), text, fontSize);
 }
 
 function fontArg(style) {
@@ -197,6 +208,9 @@ const TYPOGRAPHY_PRESETS = Object.freeze({
     // reference block is roughly a third of the frame width.
     baseSizeMult: 0.042, emphasisSizeMult: 0.048, baseColor: "0x141210",
     emphasisColor: "0x141210",
+    // The spoken word in a per-line highlight. Red ink: emphasisColor is the
+    // same near-black as the text, so a highlighted word was invisible.
+    highlightColor: "0xB3261E",
     heroSizeMult: 0.056, heroColor: "0x141210",
     borderWidth: 0, wordBox: true, boxColor: "0xF5C518", boxOpacity: 0.95,
     boxBorderW: 18,
@@ -213,6 +227,9 @@ const TYPOGRAPHY_PRESETS = Object.freeze({
   "soft-glow": {
     baseSizeMult: 0.052, emphasisSizeMult: 0.060, baseColor: "0xFAE58C",
     emphasisColor: "0xFFF3B0",
+    // Per-line highlight: warm amber, as the pale cream emphasis is too close
+    // to the butter text to see.
+    highlightColor: "0xFFB020",
     heroSizeMult: 0.070, heroColor: "0xFFF8D0",
     // A translucent scrim behind each line: pale butter type over a bright
     // sky was unreadable even with the heavy outline (operator render, 2026-08).
@@ -229,6 +246,9 @@ const TYPOGRAPHY_PRESETS = Object.freeze({
   "headline": {
     baseSizeMult: 0.085, emphasisSizeMult: 0.095, baseColor: "0xFAE58C",
     emphasisColor: "0xFFF3B0",
+    // Per-line highlight: warm amber, as the pale cream emphasis is too close
+    // to the gold text to see.
+    highlightColor: "0xFFB020",
     heroSizeMult: 0.105, heroColor: "0xFFF8D0",
     borderWidth: 8, wordBox: false, lineBoxOpacity: 0, lineSizeMult: 0.034,
     lineEnter: "rise-fade", wordReveal: "scale-fade", wordRevealMs: 220,
@@ -236,6 +256,20 @@ const TYPOGRAPHY_PRESETS = Object.freeze({
     captionMode: "lines",
     uppercase: false, layout: "center",
     shadow: { color: "black@0.45", x: 0, y: 8 },
+  },
+
+  // BRUSH: white dry-brush lettering (Drybrush by GGBotNet, CC0) with a soft
+  // shadow and a warm gold highlight. Hand-made without the marker block.
+  "brush": {
+    baseSizeMult: 0.06, emphasisSizeMult: 0.068, baseColor: "0xFFFFFF",
+    emphasisColor: "0xF5C04A",
+    heroSizeMult: 0.08, heroColor: "0xFFFFFF",
+    borderWidth: 6, wordBox: false, lineBoxOpacity: 0, lineSizeMult: 0.032,
+    lineEnter: "rise-fade", wordReveal: "scale-fade", wordRevealMs: 240,
+    fontFamily: "brush",
+    captionMode: "lines",
+    uppercase: false,
+    shadow: { color: "black@0.6", x: 0, y: 5 },
   },
 });
 
@@ -251,6 +285,7 @@ const KINETIC_ANIMATIONS = Object.freeze([
   { id: "marker", label: "Marker", description: "Dark handwriting on a yellow highlighter block. Works per word or per line.", presetId: "marker", renderable: true, unsupported: [] },
   { id: "soft-glow", label: "Soft Glow", description: "Pale butter type with a heavy dark outline. No block, reads over busy footage.", presetId: "soft-glow", renderable: true, unsupported: [] },
   { id: "headline", label: "Headline", description: "Poster-scale pale type set high in frame, clear of faces.", presetId: "headline", renderable: true, unsupported: [] },
+  { id: "brush", label: "Brush", description: "White dry-brush lettering with a soft shadow; the spoken word lights up gold.", presetId: "brush", renderable: true, unsupported: [] },
   { id: "cinematic-worship", label: "Cinematic Worship", description: "Centered large worship typography; lines rise in, words fade one at a time.", presetId: "cinematic-worship", renderable: true, unsupported: [] },
   { id: "cinematic-reactive", label: "Cinematic Reactive", description: "Cinematic worship type that glows/pulses to audio with drifting particles (audio-reactivity is browser-only).", presetId: "cinematic-reactive", renderable: true, unsupported: ["audio-reactive", "particles"] },
   { id: "scripture-reveal", label: "Scripture Reveal", description: "Slow, reverent verse reveal; long dwell, gentle fade.", presetId: "scripture-reveal", renderable: true, unsupported: [] },
@@ -531,8 +566,8 @@ export function buildWordDrawtext({ words, w, h, preset, layout, depth }) {
  * @param {{ lines: string[], w: number, h: number }} opts
  * @returns {string | null}
  */
-// Line-fitting constants. MONO_ADVANCE_EM is the per-glyph advance of
-// ffmpeg's default monospace face; LINE_WIDTH_BUDGET leaves a margin so text
+// Line-fitting constants. MONO_ADVANCE_EM is the per-glyph advance of a
+// typewriter face, the fallback when no preset is known; LINE_WIDTH_BUDGET leaves a margin so text
 // never touches the frame edge (soft-glow previously did, with zero room).
 const MONO_ADVANCE_EM = 0.6;
 const LINE_WIDTH_BUDGET = 0.72;
@@ -548,6 +583,41 @@ const BOX_BORDER_W = 18;
 
 // How far apart staggered rows arrive, before the per-block cap.
 const STAGGER_STEP_SECONDS = 0.28;
+
+const wordKey = (s) => String(s || "").toLowerCase().replace(/[^\p{L}\p{N}']/gu, "");
+
+/**
+ * The spoken words to light up on one row, while it shows.
+ *
+ * Words spoken inside the row's window are matched to the row's own words in
+ * order, by the word itself rather than a substring: "in" must not light up
+ * inside "again", and a word said twice on one row lights each copy in turn.
+ * Each match carries the row's spelling (punctuation and all, so the copy
+ * drawn on top covers the original exactly) and its character offset.
+ *
+ * @returns {Array<{ text: string, offset: number, a: number, b: number }>}
+ */
+export function highlightsInRow(row, from, to, words) {
+  const tokens = [];
+  for (const m of String(row).matchAll(/\S+/g)) tokens.push({ text: m[0], offset: m.index, key: wordKey(m[0]) });
+  const out = [];
+  let next = 0;
+  for (const wd of words || []) {
+    const ws = Number(wd?.start);
+    const we = Number(wd?.end);
+    if (!Number.isFinite(ws) || !Number.isFinite(we) || we <= ws) continue;
+    const a = Math.max(ws, from);
+    const b = Math.min(we, to);
+    if (b <= a) continue;
+    const key = wordKey(wd.text);
+    if (!key) continue;
+    const at = tokens.findIndex((t, i) => i >= next && t.key === key);
+    if (at === -1) continue;
+    out.push({ text: tokens[at].text, offset: tokens[at].offset, a, b });
+    next = at + 1;
+  }
+  return out;
+}
 
 /** Greedy word wrap to a character budget. Never splits a word. */
 function wrapToBlock(text, maxChars) {
@@ -573,15 +643,20 @@ function wrapToBlock(text, maxChars) {
  * cinematic-default preset draws a 60-character line to ~2306px. Filter
  * strings look correct in every one of those cases; only the pixels show it.
  *
- * Captions use ffmpeg's default monospace face (no preset sets `fontfile`), so
- * glyph advance is a dependable ~0.6em and the fit is computable without
- * measuring. This only ever shrinks: a short line keeps its preset size.
+ * Given the preset, each line is measured in the preset's own font (every
+ * preset now draws in a bundled face). Without one it falls back to the old
+ * ~0.6em-per-glyph estimate, which only holds for a typewriter face. This only
+ * ever shrinks: a short line keeps its preset size.
  */
-export function fitLineFontSize(lines, w, preferred) {
+export function fitLineFontSize(lines, w, preferred, style) {
   const longest = lines.reduce((n, t) => Math.max(n, String(t).length), 0);
   if (longest === 0) return Math.max(MIN_LINE_FONT_SIZE, preferred);
   const budget = w * LINE_WIDTH_BUDGET;
-  const maxSize = Math.floor(budget / (longest * MONO_ADVANCE_EM));
+  // Width per pixel of font size, measured at a size where rounding is noise.
+  const perPx = style
+    ? Math.max(...lines.map((t) => textWidthFor(style, String(t), 1000))) / 1000
+    : longest * MONO_ADVANCE_EM;
+  const maxSize = Math.floor(budget / perPx);
   return Math.max(MIN_LINE_FONT_SIZE, Math.min(preferred, maxSize));
 }
 
@@ -655,7 +730,7 @@ export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal
   const spanFor = (i, from, to) => (timed ? [entries[i].start, entries[i].end] : [from, to]);
   const style = resolveTypographyPreset(preset);
   const lineGap = Math.round(h * 0.06);
-  const fontSize = fitLineFontSize(safeLines, w, Math.round(h * (style.lineSizeMult || 0.033)));
+  const fontSize = fitLineFontSize(safeLines, w, Math.round(h * (style.lineSizeMult || 0.033)), style);
   const styleBoxOpacity = Number.isFinite(style.lineBoxOpacity) ? style.lineBoxOpacity : 0.35;
   const boxOpacity = Math.max(Number(look?.minBoxOpacity) || 0, styleBoxOpacity);
   /** The preset’s outline at a given font size, or nothing when not asked for. */
@@ -683,7 +758,7 @@ export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal
     // it wrapped into, rather than every row in the video sharing one slot.
     const perLine = safeLines.map((t) => wrapToBlock(String(t), BLOCK_MAX_CHARS));
     const rows = perLine.flat();
-    const fontSize = fitLineFontSize(rows, w, Math.round(h * (style.baseSizeMult || 0.07)));
+    const fontSize = fitLineFontSize(rows, w, Math.round(h * (style.baseSizeMult || 0.07)), style);
     const slot = total / rows.length;
     const geo = lineGeometry(layout ?? style.layout, Number(look?.yFrac) || 0.45);
     const y = Math.round(h * geo.yFrac);
@@ -700,41 +775,36 @@ export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal
           : [globalIndex * slot, globalIndex === rows.length - 1 ? total : (globalIndex + 1) * slot]);
       });
     });
+    const hl = Array.isArray(highlightWords) && highlightWords.length > 0;
+    const emph = style.highlightColor || style.emphasisColor || style.heroColor || color;
+    // A preset with no backing box keeps its own shadow here too, or pale
+    // type (headline, brush) has nothing to stand on over a light picture.
+    const shadow = style.shadow && boxOpacity === 0
+      ? `:shadowcolor=${style.shadow.color}:shadowx=${style.shadow.x ?? 0}:shadowy=${style.shadow.y ?? 0}`
+      : "";
+    // drawtext puts the top of a text's tallest glyph at y, so a word drawn
+    // alone ("AGAIN") sat higher than in its row ("AGAIN YOU"). With a
+    // highlight, every piece is placed by its baseline instead: y minus its
+    // own ascent lands each one on the same line.
+    const rowY = hl ? `${y + Math.round(fontSize * 0.8)}-ascent` : y;
     rows.forEach((row, i) => {
       const [from, to] = rowSpans[i];
       const enable = `:enable='between(t,${from.toFixed(3)},${to.toFixed(3)})'`;
-      parts.push(`drawtext=text='${escapeDrawText(row)}':x=${geo.xExpr}:y=${y}${fontArg(style)}:fontsize=${fontSize}:fontcolor=${color}${outlineFor(fontSize)}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=${BOX_BORDER_W}${enable}`);
+      // With a highlight the row is placed from its measured width, so each
+      // word's own position in it is known exactly. ffmpeg's text_w would do
+      // for the row alone, but not for a word drawn over it.
+      const rowX = hl ? geo.xExpr.replace(/text_w/g, String(textWidthFor(style, row, fontSize))) : geo.xExpr;
+      parts.push(`drawtext=text='${escapeDrawText(row)}':x=${rowX}:y=${rowY}${fontArg(style)}:fontsize=${fontSize}:fontcolor=${color}${outlineFor(fontSize)}${shadow}:box=1:boxcolor=${lineBoxCol}@${boxOpacity.toFixed(2)}:boxborderw=${BOX_BORDER_W}${enable}`);
+      if (!hl) return;
 
       // Karaoke overlay: keep the whole row on screen and re-draw just the
-      // spoken word in the emphasis colour on top of it. Only the words that
-      // belong to THIS row are considered, and only while the row is showing,
-      // so a word never lights up over a line it is not part of.
-      if (Array.isArray(highlightWords) && highlightWords.length > 0) {
-        const emph = style.emphasisColor || style.heroColor || color;
-        for (const wd of highlightWords) {
-          const text = String(wd?.text || "").trim();
-          if (!text || !row.includes(text)) continue;
-          const ws = Number(wd.start);
-          const we = Number(wd.end);
-          if (!Number.isFinite(ws) || !Number.isFinite(we) || we <= ws) continue;
-          // Clip the word's window to the row's own window.
-          const a = Math.max(ws, from);
-          const b = Math.min(we, to);
-          if (b <= a) continue;
-          // Offset the word to its position within the row, measured in the
-          // monospace advance the fit already assumes. Centred rows keep the
-          // word centred on its own width; any other anchor places the row's
-          // left edge the way the row itself was placed (with the row's
-          // estimated width standing in for text_w) and steps in from there,
-          // or a left-aligned line would light its words up near the middle.
-          const before = row.slice(0, row.indexOf(text));
-          const advance = fontSize * MONO_ADVANCE_EM;
-          const dx = Math.round((before.length - row.length / 2 + text.length / 2) * advance);
-          const x = geo.xExpr === "(w-text_w)/2"
-            ? `(w-text_w)/2+${dx}`
-            : `${geo.xExpr.replace(/text_w/g, String(Math.round(row.length * advance)))}+${Math.round(before.length * advance)}`;
-          parts.push(`drawtext=text='${escapeDrawText(text)}':x=${x}:y=${y}${fontArg(style)}:fontsize=${fontSize}:fontcolor=${emph}:enable='between(t,${a.toFixed(3)},${b.toFixed(3)})'`);
-        }
+      // spoken word in the highlight colour, exactly over itself: same font,
+      // same size, starting where the row's pen reaches that word. Only words
+      // spoken while this row shows are considered, matched to the row's own
+      // words in order, so "in" never lights up inside "again".
+      for (const { text, offset, a, b } of highlightsInRow(row, from, to, highlightWords)) {
+        const x = `${rowX}+${textWidthFor(style, row.slice(0, offset), fontSize)}`;
+        parts.push(`drawtext=text='${escapeDrawText(text)}':x=${x}:y=${rowY}${fontArg(style)}:fontsize=${fontSize}:fontcolor=${emph}:enable='between(t,${a.toFixed(3)},${b.toFixed(3)})'`);
       }
     });
     return parts.join(",");
@@ -751,7 +821,7 @@ export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal
     const blocks = safeLines.map((t) => wrapToBlock(String(t), BLOCK_MAX_CHARS));
     // One size for every block, so type does not jump between phrases.
     const widest = blocks.flat();
-    const fontSize = fitLineFontSize(widest, w, preferred);
+    const fontSize = fitLineFontSize(widest, w, preferred, style);
     // Leading must clear the DRAWN row height, not just the glyphs: box=1
     // pads boxborderw above and below every row, so 1.25em let a boxed
     // block overlap itself ("the chaos around" sat on "presence calms").
@@ -791,7 +861,7 @@ export function buildLineDrawtext({ lines, w, h, preset, duration, block, reveal
     // fit several lines at once; using it here rendered captions a third the
     // size of kinetic text and illegible over a bright sky. fitLineFontSize
     // still caps it to the frame width, so long lines shrink as needed.
-    const pacedSize = fitLineFontSize(safeLines, w, Math.round(h * (Number(look?.sizeMult) || style.baseSizeMult || 0.07)));
+    const pacedSize = fitLineFontSize(safeLines, w, Math.round(h * (Number(look?.sizeMult) || style.baseSizeMult || 0.07)), style);
     return safeLines.map((t, i) => {
       // End the last line exactly on the span so rounding cannot leave a
       // silent gap of uncaptioned video at the tail.

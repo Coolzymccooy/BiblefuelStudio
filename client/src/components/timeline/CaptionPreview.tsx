@@ -54,7 +54,8 @@ const LOOKS: Record<string, Look> = {
   marker: { wrap: { fontFamily: SCRIPT, color: '#141210' }, word: { background: '#f5d90a', padding: '0 .35em', borderRadius: '.15em', boxDecorationBreak: 'clone' }, scale: 1.15 },
   // Soft Glow carries a translucent scrim (as the render now does): pale type over a bright sky was unreadable.
   'soft-glow': { wrap: { fontFamily: SANS, color: '#f7e7b3', fontWeight: 700, textShadow: OUTLINE }, word: { background: 'rgba(0,0,0,.28)', padding: '0 .2em', borderRadius: '.12em', boxDecorationBreak: 'clone' }, scale: 1.15 },
-  headline: { wrap: { fontFamily: SANS, color: '#f3ead6', fontWeight: 800, letterSpacing: '.01em', textShadow: '0 2px 10px rgba(0,0,0,.6)' }, word: {}, scale: 1.7, place: 'top' },
+  headline: { wrap: { fontFamily: SANS, color: '#f3ead6', fontWeight: 800, letterSpacing: '.01em', textShadow: '0 2px 10px rgba(0,0,0,.6)' }, word: {}, activeWord: { color: '#ffb020' }, scale: 1.7, place: 'top' },
+  brush: { wrap: { fontFamily: SCRIPT, color: '#fff', fontWeight: 700, textShadow: '0 5px 6px rgba(0,0,0,.6)' }, word: {}, activeWord: { color: '#f5c04a' }, scale: 1.3 },
   'word-boxes': { wrap: { fontFamily: SANS, color: '#fff', fontWeight: 800 }, word: { background: 'rgba(0,0,0,.75)', padding: '.1em .35em', borderRadius: '.12em' }, uppercase: true, scale: 1.2 },
   'hero-bold': { wrap: { fontFamily: SANS, color: '#fff', fontWeight: 900, textShadow: '0 3px 14px rgba(0,0,0,.7)' }, word: {}, uppercase: true, scale: 1.9, fade: true },
   'music-video': { wrap: { fontFamily: SANS, color: '#fff', fontWeight: 900, textShadow: '0 2px 8px rgba(0,0,0,.7)' }, word: {}, uppercase: true, scale: 1.4 },
