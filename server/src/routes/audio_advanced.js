@@ -343,7 +343,7 @@ router.post("/timeline-preview", async (req, res) => {
     if (post.length) {
       parts.push(`[amerged]${post.join(",")}[afinal]`);
     } else {
-      parts.push(`[amerged]alias[afinal]`); // Just a label
+      parts.push(`[amerged]anull[afinal]`); // pass-through: ffmpeg has no "alias" filter
     }
 
     // The account's logo, as the timeline's full render draws it, so the

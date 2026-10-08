@@ -186,6 +186,13 @@ describe("the timeline's quick preview draws the account logo", { skip }, () => 
     assertLogo(res.body.file, { late: 1.5 });
   });
 
+  test("a preview with no loudness or fades still renders (it used an ffmpeg filter that doesn't exist)", async () => {
+    const res = await request(app(ctx())).post("/api/audio-adv/timeline-preview")
+      .send({ backgroundPath: media.bg, clips: [{ path: media.voice }] });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assertLogo(res.body.file, { late: 1.5 });
+  });
+
   test("an account with branding off gets a preview without one", async () => {
     const plain = fs.mkdtempSync(path.join(os.tmpdir(), "brand-off-"));
     try {
