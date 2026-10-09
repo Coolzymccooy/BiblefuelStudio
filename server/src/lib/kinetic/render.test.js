@@ -74,3 +74,22 @@ test("a slam paints the hit colour at the centre while it is up, and nothing bef
   assert.equal(yellow(frameAt({ assText, w: 1280, h: 720, t: 0.5 })), 0, "nothing before the first word");
   assert.ok(yellow(frameAt({ assText, w: 1280, h: 720, t: 1.8 })) > 500, "yellow slam on screen");
 });
+
+test("every effect draws through real libass on wide and tall frames", { skip }, () => {
+  const lines = ["Fear thou not", "I still dey", "By his grace", "Hold my hand", "I still dey", "Glory to God", "Amen amen"]
+    .map((text, i) => ({ text, start: i * 2, end: i * 2 + 1.5 }));
+  const order = ["pop", "stack", "slam", "quote", "curve", "frame", "title"];
+  const overrides = Object.fromEntries(order.map((e, i) => [i, e]));
+  for (const [w, h] of [[1280, 720], [720, 1280]]) {
+    for (const look of ["studio-lagos-night", "studio-gospel-gold"]) {
+      const out = studioCaptionFilter({ assPath: "unused", lines, w, h, look, energy: "wild", seed: 1, overrides });
+      const assText = out.sideFiles[0].text;
+      order.forEach((effect, i) => {
+        const buf = frameAt({ assText, w, h, t: i * 2 + 1.2, pix: "gray" });
+        let lit = 0;
+        for (let k = 0; k < buf.length; k += 7) if (buf[k] > 100) lit += 1;
+        assert.ok(lit > 200, `${look} ${w}x${h} ${effect}: ${lit} lit samples`);
+      });
+    }
+  }
+});

@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildAss, phrasesFrom } from "./ass.js";
 import { studioCaptionFilter } from "./filter.js";
+import { EFFECT_IDS } from "./director.js";
 
 const W = (text, start, step = 0.3) => text.split(" ").map((t, i) => ({ text: t, start: start + i * step, end: start + i * step + step }));
 const words = [...W("After the rain", 0), ...W("Who still dey", 2), ...W("I still dey", 3.5), ...W("By his grace", 5), ...W("I still dey", 6.5)];
@@ -17,7 +18,9 @@ test("the document declares the frame and one Kinetic style, and has events for 
   assert.match(ass, /^Style: Kinetic,/m);
   const events = ass.split("\n").filter((l) => l.startsWith("Dialogue:"));
   assert.ok(events.length >= phrasesFrom({ words }).length);
-  for (const t of ["AFTER", "GRACE", "DEY"]) assert.ok(ass.includes(t), t);
+  // Curve draws one event per letter, so compare the visible text, not raw lines.
+  const shown = events.map((l) => l.split(",").slice(9).join(",").replace(/\{[^}]*\}/g, "")).join("").replace(/\s+/g, "");
+  for (const t of ["AFTER", "GRACE", "DEY"]) assert.ok(shown.includes(t), t);
 });
 
 test("a word carrying a carriage return cannot inject a Dialogue line", () => {
@@ -54,4 +57,27 @@ test("the filter points ffmpeg at the file and the repo fonts, with Windows colo
   assert.equal(out.sideFiles.length, 1);
   assert.equal(out.sideFiles[0].path, "C:\\work\\job\\captions-x.ass");
   assert.match(out.sideFiles[0].text, /^\[Script Info\]/);
+});
+
+const lyric = [
+  { text: "Fear thou not", start: 0, end: 1.5 }, { text: "I still dey", start: 2, end: 3.5 },
+  { text: "By his grace", start: 4, end: 5.5 }, { text: "Hold my hand", start: 6, end: 7.5 },
+];
+
+test("every effect id renders through buildAss", () => {
+  for (const effect of EFFECT_IDS) {
+    const ass = buildAss({ lines: lyric, w: 1280, h: 720, look: "studio-lagos-night", energy: "calm", seed: 1, overrides: { 1: effect } });
+    const events = ass.split("\n").filter((l) => l.startsWith("Dialogue:"));
+    assert.ok(events.some((l) => /,0:00:02\.\d\d,/.test(l.slice(0, 40))), `${effect} draws phrase 1`);
+    assert.ok(!/NaN|undefined|Infinity/.test(ass), `${effect} writes only real numbers`);
+  }
+});
+
+test("a title card opens the video", () => {
+  const ass = buildAss({ lines: lyric, w: 1280, h: 720, look: "studio-lagos-night", energy: "wild", seed: 1, title: "Hold My Hand" });
+  const first = ass.split("\n").find((l) => l.startsWith("Dialogue:"));
+  assert.match(first, /^Dialogue: 2,0:00:00\.00,/);
+  assert.ok(first.includes("HOLD"));
+  const none = buildAss({ lines: lyric, w: 1280, h: 720, look: "studio-lagos-night", energy: "wild", seed: 1, title: "   " });
+  assert.equal(none, buildAss({ lines: lyric, w: 1280, h: 720, look: "studio-lagos-night", energy: "wild", seed: 1 }));
 });
