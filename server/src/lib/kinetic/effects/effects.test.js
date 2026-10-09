@@ -123,3 +123,14 @@ test("slam sparks stay inside the safe area on tall frames", () => {
   const r = Math.round(Math.min(720, 1280) * 0.05);
   assert.ok(x <= 0.88 * 720 - 1.6 * r, `sparks x ${x}`);
 });
+
+test("slams and pops are big: sizes match the approved look", () => {
+  const fsOf = (lines) => Number(lines.find((l) => !l.includes("\\p1")).match(/\\fs(\d+)/)[1]);
+  const tallCtx = { w: 720, h: 1280, aspect: "tall" };
+  const slamWide = fsOf(slam(ctx(planned("I still dey", "slam", { hook: true }))));
+  const slamTall = fsOf(slam(ctx(planned("I still dey", "slam", { hook: true }), tallCtx)));
+  const popWide = fsOf(pop(ctx(planned("Fear thou not", "pop"))));
+  assert.ok(slamWide >= 200, `wide slam size ${slamWide}`);
+  assert.ok(slamTall >= 170, `tall slam size ${slamTall}`);
+  assert.ok(popWide >= 75, `wide pop size ${popWide}`);
+});

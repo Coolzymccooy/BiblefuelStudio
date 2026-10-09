@@ -14,7 +14,7 @@ export function render({ planned, look, w, h, aspect, nextStart }) {
   const anchor = LOWER[aspect];
   const maxWidth = maxWidthFor({ side: false }, w, aspect);
   const words = phrase.words.map((x) => ({ text: caseText(look, x.text), t: x.start, colour: fonts.body.colour }));
-  let fs = aspect === "tall" ? Math.round(w * 0.10) : Math.round(h * 0.09);
+  let fs = aspect === "tall" ? Math.round(w * 0.12) : Math.round(h * 0.11);
   let lines = wrapWords(words, fonts.body.file, fs, maxWidth);
   while (lines.length > 2 && fs > MIN_FS) {
     fs = Math.max(MIN_FS, Math.floor(fs * 0.92));

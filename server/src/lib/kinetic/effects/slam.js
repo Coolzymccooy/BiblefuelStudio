@@ -9,7 +9,7 @@ export function render({ planned, look, w, h, aspect, nextStart }) {
   const words = phrase.words.map((x) => ({ text: caseText(look, x.text), t: x.start, colour: fonts.hit.colour }));
   const lines = words.length <= 2 ? [words] : [words.slice(0, Math.ceil(words.length / 2)), words.slice(Math.ceil(words.length / 2))];
   const maxWidth = maxWidthFor({ side: false }, w, aspect) * 0.95;
-  const preferred = aspect === "tall" ? Math.round(w * 0.2) : Math.round(h * 0.22);
+  const preferred = aspect === "tall" ? Math.round(w * 0.26) : Math.round(h * 0.30);
   const fs = fitSize(fonts.hit.file, lines.map((ln) => ln.map((x) => x.text).join(" ")), preferred, maxWidth, 48);
   const anchor = CENTRE[aspect];
   const lineGap = fs * 1.0;
