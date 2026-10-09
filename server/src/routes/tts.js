@@ -18,6 +18,8 @@ import {
 } from "../lib/voice/index.js";
 import { listCaptionMotions, listKineticAnimations } from "../lib/videoFilters.js";
 import { cleanSpeakableText } from "../lib/speakableScript.js";
+import { listStudioLooks, ENERGIES } from "../lib/kinetic/looks.js";
+import { hasLibass } from "../lib/kinetic/capability.js";
 import {
   addChatterboxVoice,
   getChatterboxVoiceById,
@@ -547,7 +549,16 @@ router.get("/profiles", (_req, res) => {
 router.get("/animations", (_req, res) => {
   // `motions` ships alongside the styles so the picker cannot offer a timing
   // the renderer does not implement - one list, both ends.
-  res.json({ ok: true, animations: listKineticAnimations(), motions: listCaptionMotions() });
+  res.json({
+    ok: true,
+    animations: listKineticAnimations(),
+    motions: listCaptionMotions(),
+    // Studio looks (libass) are a separate list: each picker shows them once
+    // its renderer can draw them, instead of silently getting a fallback.
+    studioLooks: listStudioLooks(),
+    energies: ENERGIES,
+    libass: hasLibass(),
+  });
 });
 
 router.post("/synthesize-category", async (req, res) => {
