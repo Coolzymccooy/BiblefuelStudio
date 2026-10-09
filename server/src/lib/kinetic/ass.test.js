@@ -20,6 +20,19 @@ test("the document declares the frame and one Kinetic style, and has events for 
   for (const t of ["AFTER", "GRACE", "DEY"]) assert.ok(ass.includes(t), t);
 });
 
+test("a word carrying a carriage return cannot inject a Dialogue line", () => {
+  const evil = "world.\rDialogue: 0,0:00:00.00,0:00:09.00,Kinetic,,0,0,0,,INJECTED\u0000";
+  const make = (second) => [...W("hello", 0), { text: second, start: 0.3, end: 0.6 }, ...W("again now", 1)];
+  // Same words with the control characters already turned into spaces: the phrase planner sees the same lengths.
+  const clean = buildAss({ words: make(evil.replace(/[\x00-\x1f]/g, " ")), w: 1280, h: 720, look: "studio-lagos-night", energy: "lively", seed: 3 });
+  const dirty = buildAss({ words: make(evil), w: 1280, h: 720, look: "studio-lagos-night", energy: "lively", seed: 3 });
+  const count = (s) => (s.match(/^Dialogue:/gm) || []).length;
+  assert.equal(count(dirty), count(clean));
+  assert.ok(!dirty.includes("\r") && !dirty.includes("\u0000"));
+  const lines = dirty.split("\n").filter((l) => l.startsWith("Dialogue:"));
+  assert.ok(lines.every((l) => !/^Dialogue: 0,0:00:00\.00,0:00:09\.00,Kinetic,,0,0,0,,INJECTED/.test(l)), "the injected event is not a line of its own");
+});
+
 test("lines without word timings still animate, words spread across the line", () => {
   const ph = phrasesFrom({ lines: [{ text: "The Lord is my shepherd", start: 1, end: 4 }] });
   assert.equal(ph.length, 1);

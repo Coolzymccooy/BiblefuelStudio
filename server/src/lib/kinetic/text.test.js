@@ -17,6 +17,14 @@ test("text cannot inject override blocks or line breaks", () => {
   assert.equal(assEscape("a {\\pos(1,1)} b\\N c\nd"), "a /pos(1,1) b/N c d");
 });
 
+test("control characters cannot end a caption line or stop libass parsing", () => {
+  assert.ok(!assEscape("a\rDialogue: x").includes("\r"));
+  assert.equal(assEscape("a\rDialogue: x"), "a Dialogue: x");
+  assert.ok(!assEscape("hel\u0000lo").includes("\u0000"));
+  assert.equal(assEscape("a\tb\u2028c\u2029d\u007fe"), "a b c d e");
+  assert.equal(assEscape("a\r\nb"), "a b");
+});
+
 test("width grows with size and text; fitSize shrinks to fit", () => {
   const a = widthAt("PermanentMarker.ttf", "I STILL DEY", 60);
   assert.ok(a > 200 && a < 700, `width ${a}`);

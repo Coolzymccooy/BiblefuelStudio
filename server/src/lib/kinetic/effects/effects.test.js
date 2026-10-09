@@ -5,6 +5,7 @@ import { render as stack } from "./stack.js";
 import { render as slam } from "./slam.js";
 import { holdEnd, fontsFor, lineEvent, keyWordIndex } from "./common.js";
 import { resolveLook } from "../looks.js";
+import { widthAt } from "../text.js";
 
 const words = (text, start) => text.split(" ").map((t, i) => ({ text: t, start: start + i * 0.25, end: start + i * 0.25 + 0.25 }));
 const phrase = (text, start = 2) => ({ text, start, end: start + text.split(" ").length * 0.25, words: words(text, start) });
@@ -122,6 +123,48 @@ test("slam sparks stay inside the safe area on tall frames", () => {
   const x = Number(sparks.match(/\\pos\((-?\d+),/)[1]);
   const r = Math.round(Math.min(720, 1280) * 0.05);
   assert.ok(x <= 0.88 * 720 - 1.6 * r, `sparks x ${x}`);
+});
+
+/** Boxes (left/right/top/bottom) of a phrase's text events, from their final position, size and text (all are \an5). */
+function boxesOf(lines, look, text) {
+  const fonts = fontsFor(look, look.uppercase ? text.toLocaleUpperCase() : text);
+  return lines.filter((l) => !l.includes("\\p1")).map((l) => {
+    const [x, y] = l.match(/\\move\(-?\d+,-?\d+,(-?\d+),(-?\d+)/).slice(1).map(Number);
+    const fs = Number(l.match(/\\fs(\d+)/)[1]);
+    const family = l.match(/\\fn([^\\}]+)/)[1];
+    const file = [fonts.body, fonts.hit].find((f) => f.family === family).file;
+    const shown = l.replace(/^.*?Kinetic,,0,0,0,,/, "").replace(/\{[^}]*\}/g, "");
+    const half = widthAt(file, shown, fs) / 2;
+    return { left: x - half, right: x + half, top: y - fs / 2, bottom: y + fs / 2, shown };
+  });
+}
+
+const insideSafeArea = (boxes, w, h, aspect) => {
+  const right = (aspect === "tall" ? 0.88 : 0.94) * w + 1;
+  const bottom = (aspect === "tall" ? 0.82 * h : h) + 1;
+  for (const b of boxes) {
+    const n = JSON.stringify({ ...b, w, h });
+    assert.ok(b.left >= 0.06 * w - 1, `left ${n}`);
+    assert.ok(b.right <= right, `right ${n}`);
+    assert.ok(b.bottom <= bottom, `bottom ${n}`);
+    assert.ok(b.top >= 0, `top ${n}`);
+  }
+};
+
+test("a 4-word slam stays inside the safe area on a tall frame", () => {
+  const text = "I still dey here";
+  const c = ctx(planned(text, "slam", { hook: true }), { w: 720, h: 1280, aspect: "tall" });
+  const boxes = boxesOf(slam(c), c.look, text);
+  assert.equal(boxes.length, 2);
+  insideSafeArea(boxes, 720, 1280, "tall");
+});
+
+test("a 5-word pop stays inside the safe area on tall and wide frames", () => {
+  const text = "Even the darkest night ends";
+  const tall = ctx(planned(text, "pop"), { w: 720, h: 1280, aspect: "tall" });
+  insideSafeArea(boxesOf(pop(tall), tall.look, text), 720, 1280, "tall");
+  const wide = ctx(planned(text, "pop"));
+  insideSafeArea(boxesOf(pop(wide), wide.look, text), 1280, 720, "wide");
 });
 
 test("slams and pops are big: sizes match the approved look", () => {

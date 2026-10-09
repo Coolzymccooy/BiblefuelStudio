@@ -35,7 +35,7 @@ export function covers(file, text) {
 
 /** Plain text safe inside an ASS Dialogue: no override blocks, no breaks. */
 export function assEscape(text) {
-  return String(text).replace(/[{}]/g, "").replace(/\\/g, "/").replace(/\r?\n/g, " ");
+  return String(text).replace(/[{}]/g, "").replace(/\\/g, "/").replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, " ");
 }
 
 export function assColour(hex) {
