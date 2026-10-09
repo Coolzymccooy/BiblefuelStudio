@@ -56,6 +56,7 @@ import { createAdminRouter } from "./src/routes/admin.js";
 import issuesRouter from "./src/routes/issues.js";
 import { DATA_DIR, OUTPUT_DIR } from "./src/lib/paths.js";
 import { reconcilePersistedJobs } from "./src/lib/renderJobs.js";
+import { hasLibass } from "./src/lib/kinetic/capability.js";
 
 // Load env from CURRENT server directory
 const __filename = fileURLToPath(import.meta.url);
@@ -276,6 +277,9 @@ app.get('/api/health', async (req, res) => {
       elevenlabs: Boolean(process.env.ELEVENLABS_API_KEY),
       openai: Boolean(process.env.OPENAI_API_KEY),
       kineticCaptions: Boolean(process.env.ELEVENLABS_API_KEY || process.env.OPENAI_API_KEY),
+      // Studio caption looks draw with ffmpeg's ass filter (libass); false
+      // means they fall back to drawtext presets on this box.
+      libass: hasLibass(),
     }
   });
 });
