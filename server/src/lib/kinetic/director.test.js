@@ -1,0 +1,63 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { mulberry32, findHooks, planPhrases } from "./director.js";
+
+const P = (text, start) => ({ text, start, end: start + 1.2, words: text.split(" ").map((t, i) => ({ text: t, start: start + i * 0.2, end: start + i * 0.2 + 0.2 })) });
+const song = [
+  P("After the rain", 0), P("Five in the morning", 1.5), P("Who still dey", 7), P("I still dey", 8.4),
+  P("By his grace", 9.8), P("I still dey!", 11.2), P("From Lagos traffic to the last train home", 13), P("I STILL DEY", 20),
+];
+
+test("the PRNG is deterministic per seed", () => {
+  const a = mulberry32(42), b = mulberry32(42), c = mulberry32(43);
+  const xs = [a(), a(), a()];
+  assert.deepEqual([b(), b(), b()], xs);
+  assert.notDeepEqual([c(), c(), c()], xs);
+  assert.ok(xs.every((x) => x >= 0 && x < 1));
+});
+
+test("a line sung two or more times is a hook, ignoring case and punctuation", () => {
+  assert.deepEqual([...findHooks(song)].sort((a, b) => a - b), [3, 5, 7]);
+});
+
+test("same seed, same plan; another seed, another plan", () => {
+  const a = planPhrases({ phrases: song, energy: "wild", seed: 7, slotCount: 5 });
+  const b = planPhrases({ phrases: song, energy: "wild", seed: 7, slotCount: 5 });
+  assert.deepEqual(a.map((p) => [p.effect, p.slot, p.rot]), b.map((p) => [p.effect, p.slot, p.rot]));
+  const others = [1, 2, 3, 4, 5].map((s) => JSON.stringify(planPhrases({ phrases: song, energy: "wild", seed: s, slotCount: 5 }).map((p) => [p.effect, p.slot])));
+  assert.ok(new Set(others).size > 1, "different seeds give different plans");
+});
+
+test("rules: no repeat except pop, slams spaced 4 s, long lines never slam, slots never repeat", () => {
+  for (let seed = 1; seed <= 50; seed += 1) {
+    const plan = planPhrases({ phrases: song, energy: "wild", seed, slotCount: 5 });
+    let lastSlamEnd = -Infinity;
+    plan.forEach((p, i) => {
+      if (i > 0 && p.effect !== "pop" && plan[i - 1].effect === p.effect) {
+        assert.equal(p.effect, "stack", "only the stack fallback may repeat");
+      }
+      if (p.effect === "slam") {
+        assert.ok(p.phrase.text.split(/\s+/).length <= 4);
+        assert.ok(p.phrase.start - lastSlamEnd >= 4, `seed ${seed}: slams too close`);
+        lastSlamEnd = p.phrase.end;
+      }
+      if (i > 0) assert.notEqual(p.slot, plan[i - 1].slot);
+      assert.ok(Number.isInteger(p.rot) && Math.abs(p.rot) <= 4);
+    });
+  }
+});
+
+test("calm never slams; lively slams only hooks", () => {
+  for (let seed = 1; seed <= 30; seed += 1) {
+    assert.ok(planPhrases({ phrases: song, energy: "calm", seed, slotCount: 5 }).every((p) => p.effect !== "slam"));
+    planPhrases({ phrases: song, energy: "lively", seed, slotCount: 5 }).forEach((p) => {
+      if (p.effect === "slam") assert.equal(p.hook, true);
+    });
+  }
+});
+
+test("an override wins over every rule; unknown overrides are ignored", () => {
+  const plan = planPhrases({ phrases: song, energy: "calm", seed: 1, slotCount: 5, overrides: { 0: "slam", 1: "explode" } });
+  assert.equal(plan[0].effect, "slam");
+  assert.notEqual(plan[1].effect, "explode");
+});
