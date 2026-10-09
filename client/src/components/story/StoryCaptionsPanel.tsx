@@ -20,6 +20,7 @@ import type { StoryCaptionSettings } from '../../lib/storyTypes';
 
 interface AnimationOption { id: string; label: string; renderable?: boolean }
 interface MotionOption { id: string; label: string; description?: string }
+interface StudioOption { id: string; label: string; description?: string }
 
 export interface StoryCaptionsPanelProps {
   value: StoryCaptionSettings;
@@ -30,16 +31,27 @@ export interface StoryCaptionsPanelProps {
 export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCaptionsPanelProps) {
   const [animations, setAnimations] = useState<AnimationOption[]>([]);
   const [motions, setMotions] = useState<MotionOption[]>([]);
+  const [studioLooks, setStudioLooks] = useState<StudioOption[]>([]);
+  const [energies, setEnergies] = useState<StudioOption[]>([]);
+  const [libass, setLibass] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const res = await api.get<{ ok: boolean; animations?: AnimationOption[]; motions?: MotionOption[] }>(
-        '/api/tts/animations',
-      );
+      const res = await api.get<{
+        ok: boolean;
+        animations?: AnimationOption[];
+        motions?: MotionOption[];
+        studioLooks?: StudioOption[];
+        energies?: StudioOption[];
+        libass?: boolean;
+      }>('/api/tts/animations');
       if (cancelled || !res.ok) return; // The catalogue is optional: the rest of the panel still works.
       setAnimations(res.data?.animations ?? []);
       setMotions(res.data?.motions ?? []);
+      setStudioLooks(res.data?.studioLooks ?? []);
+      setEnergies(res.data?.energies ?? []);
+      setLibass(res.data?.libass !== false);
     })();
     return () => { cancelled = true; };
   }, []);
@@ -57,6 +69,15 @@ export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCapti
   // buildStoryCaptions reads `captionMotion || (captions === 'static' ? 'lines' : …)`,
   // so a legacy static project renders per line even with no motion stored.
   const effectiveMotion = value.captionMotion || (captions === 'static' ? 'lines' : 'words');
+  // Studio looks choreograph themselves (libass): the drawtext timing,
+  // layout and depth controls don't apply, so they give way to Energy and
+  // Shuffle.
+  const studio = (value.captionPreset || '').startsWith('studio-');
+  const shuffle = () => {
+    let next = Math.floor(Math.random() * 2147483647);
+    if (next === value.captionSeed) next = (next + 1) % 2147483647;
+    onChange({ captionSeed: next });
+  };
 
   return (
     <div className="space-y-4 rounded-xl border border-white/10 bg-black/20 p-4">
@@ -72,7 +93,7 @@ export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCapti
 
       {on && (
         <>
-          {motions.length > 0 && (
+          {!studio && motions.length > 0 && (
             <Field
               label="Caption motion"
               tooltip="How captions are TIMED, independent of how they look. Pick one base mode; stagger and highlight layer on top."
@@ -128,6 +149,15 @@ export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCapti
               disabled={busy}
               onChange={(e: ChangeEvent<HTMLSelectElement>) => onChange({ captionPreset: e.target.value })}
             >
+              {studioLooks.length > 0 && (
+                <optgroup label="Studio effects">
+                  {studioLooks.map((l) => (
+                    <option key={l.id} value={l.id} disabled={!libass}>
+                      {l.label}{libass ? '' : ' (unavailable on this server)'}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
               {animations.length > 0 && (
                 <optgroup label="Caption animations (word-synced)">
                   {animations.map((a) => (
@@ -147,23 +177,54 @@ export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCapti
             </Select>
           </Field>
 
-          <Field
-            label="Text layout"
-            tooltip="Where captions sit on the frame. Bottom layouts keep text in the safe band above the TikTok/Reels caption strip; staggered alternates left/centre/right."
-          >
-            <Select
-              aria-label="Text layout"
-              value={value.captionLayout || 'center'}
-              disabled={busy}
-              onChange={(e: ChangeEvent<HTMLSelectElement>) => onChange({ captionLayout: e.target.value as StoryCaptionSettings['captionLayout'] })}
+          {studio && (
+            <Field
+              label="Energy"
+              tooltip="How wild the effects get. Calm pops and stacks words; Lively adds big brush slams on lines that repeat; Wild slams everywhere, made for songs."
             >
-              {LAYOUT_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
-            </Select>
-          </Field>
+              <div className="flex items-center gap-2">
+                <Select
+                  aria-label="Energy"
+                  value={value.captionEnergy || 'lively'}
+                  disabled={busy}
+                  onChange={(e: ChangeEvent<HTMLSelectElement>) => onChange({ captionEnergy: e.target.value as StoryCaptionSettings['captionEnergy'] })}
+                >
+                  {energies.map((en) => (
+                    <option key={en.id} value={en.id}>{en.label}</option>
+                  ))}
+                </Select>
+                <button
+                  type="button"
+                  onClick={shuffle}
+                  disabled={busy}
+                  className="shrink-0 rounded-lg border border-white/10 px-3 py-2 text-xs text-content-secondary hover:text-bf-cream disabled:opacity-50"
+                  title="Re-roll which effect each line gets"
+                >
+                  Shuffle effects
+                </button>
+              </div>
+            </Field>
+          )}
 
-          {effectiveMotion === 'words' && (
+          {!studio && (
+            <Field
+              label="Text layout"
+              tooltip="Where captions sit on the frame. Bottom layouts keep text in the safe band above the TikTok/Reels caption strip; staggered alternates left/centre/right."
+            >
+              <Select
+                aria-label="Text layout"
+                value={value.captionLayout || 'center'}
+                disabled={busy}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) => onChange({ captionLayout: e.target.value as StoryCaptionSettings['captionLayout'] })}
+              >
+                {LAYOUT_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </Select>
+            </Field>
+          )}
+
+          {!studio && effectiveMotion === 'words' && (
           <label className="flex cursor-pointer items-center gap-2 text-sm text-gray-300" title="Ghost shadow behind each word">
             <input
               type="checkbox"

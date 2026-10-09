@@ -79,6 +79,10 @@ export interface StoryCaptionSettings {
   captionDepth?: 'none' | 'soft' | 'hard';
   captionStagger?: boolean;
   captionHighlight?: boolean;
+  /** Studio looks only: how wild the effect mix is. */
+  captionEnergy?: 'calm' | 'lively' | 'wild';
+  /** Studio looks only: which choreography; Shuffle sets a new one. */
+  captionSeed?: number;
 }
 
 export interface StoryProject extends StoryCaptionSettings {
