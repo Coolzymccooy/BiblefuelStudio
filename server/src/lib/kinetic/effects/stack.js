@@ -1,11 +1,11 @@
 import { fitSize } from "../text.js";
 import { slotsFor, maxWidthFor, clampBlockY } from "../layout.js";
-import { caseText, fontsFor, holdEnd, keyWordIndex, lineEvent } from "./common.js";
+import { bodyScale, caseText, fontsFor, holdEnd, keyWordIndex, lineEvent } from "./common.js";
 
 const MAX_WORDS_PER_LINE = 2;
 const MAX_CHARS_PER_LINE = 12;
 
-function chunk(words) {
+export function chunk(words) {
   const lines = [];
   let cur = [];
   for (const w of words) {
@@ -35,7 +35,7 @@ export function render({ planned, look, energy, w, h, aspect, nextStart }) {
   }));
   const lines = chunk(words);
   const maxWidth = maxWidthFor(slot, w, aspect);
-  const preferred = aspect === "tall" ? Math.round(w * 0.14) : Math.round(h * 0.13);
+  const preferred = Math.round((aspect === "tall" ? w * 0.14 : h * 0.13) * bodyScale(fonts.body));
   const fs = fitSize(fonts.body.file, lines.map((ln) => ln.map((x) => x.text).join(" ")), preferred, maxWidth);
   const lineGap = fs * 1.05;
   const blockHeight = lines.length * lineGap;
@@ -45,5 +45,6 @@ export function render({ planned, look, energy, w, h, aspect, nextStart }) {
   return lines.map((ln, i) => lineEvent({
     start: ln[0].t, end, x: slot.x * w, y: y0 + i * lineGap, fs, family: fonts.body.family,
     rot, pop: 135, bord: 5, shad: 3, outline: look.outline, words: ln,
+    bold: fonts.body.bold, italic: fonts.body.italic,
   }));
 }
