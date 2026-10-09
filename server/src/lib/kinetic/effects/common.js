@@ -23,12 +23,26 @@ export function caseText(look, s) {
   return look.uppercase ? String(s).toLocaleUpperCase() : String(s);
 }
 
+/** A body font's size multiplier (1 unless the look sets `scale`). */
+export function bodyScale(font) {
+  const s = Number(font?.scale);
+  return Number.isFinite(s) && s > 0 ? s : 1;
+}
+
 export function fontsFor(look, text) {
   if (covers(look.body.file, text) && covers(look.hit.file, text)) return { body: look.body, hit: look.hit };
   return {
     body: { ...FALLBACK_FONT, colour: look.body.colour },
     hit: { ...FALLBACK_FONT, colour: look.hit.colour },
   };
+}
+
+/**
+ * Width to hold back when fitting text, so what libass actually paints (outline,
+ * shadow, faux italic slant, brush overhang) stays inside the measured box.
+ */
+export function inkAllowance(fs, { bord = 0, shad = 0, italic = false, bold = false } = {}) {
+  return 2 * bord + shad + fs * (0.06 + (italic ? 0.22 : 0) + (bold ? 0.03 : 0));
 }
 
 /** Greedy wrap: words onto lines no wider than maxWidth. */
@@ -53,10 +67,11 @@ export function wrapWords(words, file, fs, maxWidth) {
  * later word fades in on its own beat. Words never scale on their own,
  * because that would reflow the line mid-phrase.
  */
-export function lineEvent({ start, end, x, y, fs, family, rot = 0, pop = 135, bord = 5, shad = 3, outline = "#000000", words, layer = 0 }) {
+export function lineEvent({ start, end, x, y, fs, family, rot = 0, pop = 135, bord = 5, shad = 3, outline = "#000000", words, layer = 0, bold = false, italic = false }) {
   const settle = pop >= 150 ? 160 : 130;
+  const style = `${bold ? "\\b1" : ""}${italic ? "\\i1" : ""}`;
   const head = `{\\an5\\move(${Math.round(x)},${Math.round(y + 8)},${Math.round(x)},${Math.round(y)},0,180)`
-    + `\\fn${family}\\fs${Math.round(fs)}\\frz${rot}\\bord${bord}\\shad${shad}\\3c${assColour(outline)}\\fad(50,160)`
+    + `\\fn${family}\\fs${Math.round(fs)}${style}\\frz${rot}\\bord${bord}\\shad${shad}\\3c${assColour(outline)}\\fad(50,160)`
     + `\\fscx${pop}\\fscy${pop}\\t(0,${settle},\\fscx100\\fscy100)}`;
   const body = words.map((w, i) => {
     const dt = Math.max(0, Math.round((w.t - start) * 1000));

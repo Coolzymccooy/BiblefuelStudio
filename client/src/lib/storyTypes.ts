@@ -83,6 +83,8 @@ export interface StoryCaptionSettings {
   captionEnergy?: 'calm' | 'lively' | 'wild';
   /** Studio looks only: which choreography; Shuffle sets a new one. */
   captionSeed?: number;
+  /** Studio looks only: an optional title card shown before the first lyric. */
+  captionTitle?: string;
 }
 
 export interface StoryProject extends StoryCaptionSettings {

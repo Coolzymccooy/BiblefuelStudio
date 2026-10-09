@@ -69,6 +69,11 @@ export function normaliseCaptionSettings(input = {}, current = {}) {
       const n = Number(raw);
       return raw !== null && raw !== undefined && Number.isInteger(n) && n >= 0 && n <= 2147483647 ? n : undefined;
     })(),
+    captionTitle: (() => {
+      const raw = input.captionTitle === undefined ? current.captionTitle : input.captionTitle;
+      const text = raw === null || raw === undefined ? "" : String(raw).replace(/\s+/g, " ").trim().slice(0, 60);
+      return text || undefined;
+    })(),
   };
 }
 

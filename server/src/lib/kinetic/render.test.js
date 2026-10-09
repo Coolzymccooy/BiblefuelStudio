@@ -74,3 +74,51 @@ test("a slam paints the hit colour at the centre while it is up, and nothing bef
   assert.equal(yellow(frameAt({ assText, w: 1280, h: 720, t: 0.5 })), 0, "nothing before the first word");
   assert.ok(yellow(frameAt({ assText, w: 1280, h: 720, t: 1.8 })) > 500, "yellow slam on screen");
 });
+
+test("what libass paints stays inside the 9:16 safe area, outline, shadow and slant included", { skip }, () => {
+  const w = 720;
+  const h = 1280;
+  const cases = [
+    ["studio-lagos-night", "pop", "Even the darkest night ends"],
+    ["studio-gospel-gold", "pop", "Even the darkest night ends"],
+    ["studio-gospel-gold", "quote", "Even the darkest night ends"],
+    ["studio-lagos-night", "stack", "From Lagos traffic home"],
+    ["studio-gospel-gold", "stack", "From Lagos traffic home"],
+    ["studio-lagos-night", "slam", "I still dey here"],
+    ["studio-gospel-gold", "title", "Hold my hand"],
+    ["studio-lagos-night", "curve", "By his grace alone"],
+  ];
+  for (const [look, effect, text] of cases) {
+    const out = studioCaptionFilter({ assPath: "unused", lines: [{ text, start: 0, end: 2 }], w, h, look, energy: "calm", seed: 1, overrides: { 0: effect } });
+    const buf = frameAt({ assText: out.sideFiles[0].text, w, h, t: 1.5, pix: "gray" });
+    let minX = w;
+    let maxX = -1;
+    let maxY = -1;
+    for (let y = 0; y < h; y += 1) for (let x = 0; x < w; x += 1) {
+      if (buf[y * w + x] > 60) { minX = Math.min(minX, x); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); }
+    }
+    const name = `${look} ${effect} "${text}": lit x ${minX}..${maxX}, lowest row ${maxY}`;
+    assert.ok(maxX >= 0, `${name}: nothing drawn`);
+    assert.ok(minX >= 0.06 * w - 1 && maxX <= 0.88 * w + 1, name);
+    assert.ok(maxY <= 0.82 * h + 1, name);
+  }
+});
+
+test("every effect draws through real libass on wide and tall frames", { skip }, () => {
+  const lines = ["Fear thou not", "I still dey", "By his grace", "Hold my hand", "I still dey", "Glory to God", "Amen amen"]
+    .map((text, i) => ({ text, start: i * 2, end: i * 2 + 1.5 }));
+  const order = ["pop", "stack", "slam", "quote", "curve", "frame", "title"];
+  const overrides = Object.fromEntries(order.map((e, i) => [i, e]));
+  for (const [w, h] of [[1280, 720], [720, 1280]]) {
+    for (const look of ["studio-lagos-night", "studio-gospel-gold"]) {
+      const out = studioCaptionFilter({ assPath: "unused", lines, w, h, look, energy: "wild", seed: 1, overrides });
+      const assText = out.sideFiles[0].text;
+      order.forEach((effect, i) => {
+        const buf = frameAt({ assText, w, h, t: i * 2 + 1.2, pix: "gray" });
+        let lit = 0;
+        for (let k = 0; k < buf.length; k += 7) if (buf[k] > 100) lit += 1;
+        assert.ok(lit > 200, `${look} ${w}x${h} ${effect}: ${lit} lit samples`);
+      });
+    }
+  }
+});

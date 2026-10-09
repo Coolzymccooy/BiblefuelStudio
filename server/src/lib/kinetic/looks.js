@@ -16,11 +16,13 @@ export const LOOKS = Object.freeze({
     uppercase: true,
     fallbackPreset: "marker",
   }),
+  // Playfair's small x-height reads ~40% smaller than the marker capitals at the same size,
+  // and the repo's file is the upright Regular variable font, so libass synthesises bold italic.
   "gospel-gold": Object.freeze({
     id: "gospel-gold",
     label: "Gospel Gold",
     description: "Gold headline hits over cream serif lines.",
-    body: { file: "PlayfairDisplay-BoldItalic.ttf", family: "Playfair Display", colour: "#F4EBD0" },
+    body: { file: "PlayfairDisplay-BoldItalic.ttf", family: "Playfair Display", colour: "#F4EBD0", scale: 1.3, bold: true, italic: true },
     hit: { file: "Anton.ttf", family: "Anton", colour: "#E8B04B" },
     outline: "#1A1208",
     uppercase: false,

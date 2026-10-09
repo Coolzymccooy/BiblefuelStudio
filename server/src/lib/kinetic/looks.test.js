@@ -31,3 +31,11 @@ test("energy falls back to the caller's default", () => {
   assert.equal(resolveEnergy("loud"), "lively");
   assert.equal(resolveEnergy(undefined, "calm"), "calm");
 });
+
+test("Gospel Gold's body is scaled up and synthesised bold italic", () => {
+  const body = LOOKS["gospel-gold"].body;
+  assert.equal(body.scale, 1.3);
+  assert.equal(body.bold, true);
+  assert.equal(body.italic, true);
+  assert.equal(LOOKS["lagos-night"].body.scale, undefined);
+});

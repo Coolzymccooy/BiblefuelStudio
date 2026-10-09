@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { api } from '../../../lib/api';
 import { StoryCaptionsPanel } from '../StoryCaptionsPanel';
@@ -185,6 +185,65 @@ describe('StoryCaptionsPanel Studio effects', () => {
     const energy = screen.getByRole('combobox', { name: 'Energy' });
     expect(energy).toHaveValue('lively');
     expect(within(energy).getAllByRole('option')).toHaveLength(3);
+  });
+
+  it('a Studio look offers an optional title intro, saved when the field loses focus', async () => {
+    const user = userEvent.setup();
+    mockCatalogue(studioCatalogue);
+    const onChange = show({ captions: 'kinetic', captionPreset: 'studio-lagos-night', captionTitle: 'Old' });
+    const field = await screen.findByRole('textbox', { name: 'Title intro' });
+    expect(field).toHaveValue('Old');
+    await user.clear(field);
+    await user.type(field, 'Hold My Hand');
+    expect(onChange).not.toHaveBeenCalledWith({ captionTitle: 'Hold My Hand' });
+    await user.tab();
+    expect(onChange).toHaveBeenCalledWith({ captionTitle: 'Hold My Hand' });
+  });
+
+  it('a title that only gained spaces is tidied on screen and not saved again', async () => {
+    const user = userEvent.setup();
+    mockCatalogue(studioCatalogue);
+    const onChange = show({ captions: 'kinetic', captionPreset: 'studio-lagos-night', captionTitle: 'Hold' });
+    const field = await screen.findByRole('textbox', { name: 'Title intro' });
+    await user.clear(field);
+    await user.type(field, '  Hold  ');
+    await user.tab();
+    expect(field).toHaveValue('Hold');
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('ordinary looks have no title intro', async () => {
+    mockCatalogue(studioCatalogue);
+    show({ captions: 'kinetic', captionPreset: 'cinematic-default' });
+    await screen.findByRole('option', { name: 'Lagos Night' });
+    expect(screen.queryByRole('textbox', { name: 'Title intro' })).not.toBeInTheDocument();
+  });
+
+  it('plays a sample clip of the chosen Studio look', async () => {
+    mockCatalogue(studioCatalogue);
+    const { container } = render(<StoryCaptionsPanel value={{ captions: 'kinetic', captionPreset: 'studio-lagos-night' }} onChange={vi.fn()} />);
+    await screen.findByRole('combobox', { name: 'Energy' });
+    const video = container.querySelector('video');
+    expect(video).not.toBeNull();
+    expect(video!.getAttribute('src')).toBe('/studio-looks/lagos-night.mp4');
+    expect(video!.muted).toBe(true);
+  });
+
+  it('hides the sample clip when it fails to load', async () => {
+    mockCatalogue(studioCatalogue);
+    const { container } = render(<StoryCaptionsPanel value={{ captions: 'kinetic', captionPreset: 'studio-lagos-night' }} onChange={vi.fn()} />);
+    await screen.findByRole('combobox', { name: 'Energy' });
+    const video = container.querySelector('video');
+    expect(video).not.toBeNull();
+    fireEvent.error(video!);
+    expect(container.querySelector('video')).toBeNull();
+  });
+
+  it('shows no sample clip for ordinary looks', async () => {
+    mockCatalogue(studioCatalogue);
+    const { container } = render(<StoryCaptionsPanel value={{ captions: 'kinetic', captionPreset: 'cinematic-default' }} onChange={vi.fn()} />);
+    await screen.findByRole('option', { name: 'Lagos Night' });
+    expect(container.querySelector('video')).toBeNull();
   });
 
   it('Studio looks are unavailable when the server has no libass', async () => {

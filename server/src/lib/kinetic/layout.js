@@ -45,3 +45,14 @@ export function clampBlockY(cy, blockHeight, h, aspect) {
   const bottom = Math.floor((aspect === "tall" ? h * TALL_BOTTOM : h * (1 - SIDE)) - blockHeight / 2);
   return Math.round(Math.min(Math.max(cy, top), Math.max(top, bottom)));
 }
+
+/**
+ * The arc a curved phrase sits on, like a rainbow over the subject: apex
+ * (x, y) as frame fractions, radius `r` as a share of the width, and `half`,
+ * how far either side of the apex the text may reach (share of the width).
+ * Tall frames keep the arc inside 6%..88% of the width.
+ */
+export const ARC = Object.freeze({
+  wide: { x: 0.5, y: 0.17, r: 0.45, half: 0.40 },
+  tall: { x: TALL_X, y: 0.15, r: 0.55, half: 0.38 },
+});

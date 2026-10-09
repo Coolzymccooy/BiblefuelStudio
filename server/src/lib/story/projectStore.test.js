@@ -97,3 +97,10 @@ test("a new project gets its own caption seed", () => {
   assert.ok(Number.isInteger(a.captionSeed) && a.captionSeed >= 0);
   assert.notEqual(a.captionSeed, b.captionSeed);
 });
+
+test("caption title is trimmed, single-spaced, capped at 60 and cleared by an empty string", () => {
+  assert.equal(normaliseCaptionSettings({ captionTitle: "  Hold   my\nhand  " }).captionTitle, "Hold my hand");
+  assert.equal(normaliseCaptionSettings({ captionTitle: "x".repeat(80) }).captionTitle.length, 60);
+  assert.equal(normaliseCaptionSettings({ captionTitle: "" }, { captionTitle: "Old" }).captionTitle, undefined);
+  assert.equal(normaliseCaptionSettings({}, { captionTitle: "Kept" }).captionTitle, "Kept");
+});

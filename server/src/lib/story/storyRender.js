@@ -218,7 +218,7 @@ export function buildStoryFfmpegArgs({
   scenes, words, audioPath, musicPath, musicVolume, autoDuck, width, height,
   outPath, audioDurationSec, captions,
   captionPreset, captionMotion, captionLayout, captionDepth, captionStagger, captionHighlight,
-  captionEnergy, captionSeed,
+  captionEnergy, captionSeed, captionTitle,
   kineticMaxWords = Math.max(0, Number(process.env.STORY_KINETIC_MAX_WORDS) || 1500),
   logo = null,
 }) {
@@ -305,6 +305,7 @@ export function buildStoryFfmpegArgs({
     const built = studioCaptionFilter({
       assPath, words: drawWords, w: width, h: height,
       look: captionPreset, energy: captionEnergy || "lively", seed: captionSeed ?? 1,
+      title: captionTitle,
     });
     drawtext = built.filter;
     sideFiles.push(...built.sideFiles);
@@ -404,7 +405,7 @@ export function runStoryRender({
   jobId, scenes, words, audioPath, musicPath, musicVolume, autoDuck, width, height,
   outPath, audioDurationSec, onProgress, captions,
   captionPreset, captionMotion, captionLayout, captionDepth, captionStagger, captionHighlight,
-  captionEnergy, captionSeed, logo,
+  captionEnergy, captionSeed, captionTitle, logo,
 }) {
   return new Promise((resolve) => {
     let built;
@@ -413,7 +414,7 @@ export function runStoryRender({
         scenes, words, audioPath, musicPath, musicVolume, autoDuck, width, height,
         outPath, audioDurationSec, captions,
         captionPreset, captionMotion, captionLayout, captionDepth, captionStagger, captionHighlight,
-        captionEnergy, captionSeed, logo,
+        captionEnergy, captionSeed, captionTitle, logo,
       });
       try {
         for (const f of built.sideFiles || []) fs.writeFileSync(f.path, f.text, "utf8");

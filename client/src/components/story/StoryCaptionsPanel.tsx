@@ -1,5 +1,6 @@
 import { useEffect, useState, type ChangeEvent } from 'react';
 import { Field } from '../ui/Field';
+import { Input } from '../ui/Input';
 import { Select } from '../ui/Select';
 import { api } from '../../lib/api';
 import { LAYOUT_OPTIONS } from '../../lib/layoutOptions';
@@ -49,6 +50,9 @@ export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCapti
   const [studioLooks, setStudioLooks] = useState<StudioOption[]>([]);
   const [energies, setEnergies] = useState<StudioOption[]>([]);
   const [libass, setLibass] = useState(true);
+  // A look whose sample clip failed to load: hide the player rather than show
+  // a broken one.
+  const [failedPreview, setFailedPreview] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -91,6 +95,15 @@ export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCapti
   // A saved Studio look must show correctly even before (or without) the
   // catalogue, or the select would display its first option instead.
   const savedStudioMissing = studio && !studioLooks.some((l) => l.id === value.captionPreset);
+  // The title is a free-text field, so it is drafted locally and saved on
+  // blur/Enter; patching per keystroke would round-trip the project each time.
+  const [titleDraft, setTitleDraft] = useState(value.captionTitle ?? '');
+  useEffect(() => { setTitleDraft(value.captionTitle ?? ''); }, [value.captionTitle]);
+  const commitTitle = () => {
+    const next = titleDraft.replace(/\s+/g, ' ').trim();
+    setTitleDraft(next); // show the cleaned title even when nothing changed to save
+    if (next !== (value.captionTitle ?? '')) onChange({ captionTitle: next });
+  };
   const energyOptions = energies.length > 0 ? energies : FALLBACK_ENERGIES;
   const shuffle = () => {
     let next = Math.floor(Math.random() * 2147483647);
@@ -199,7 +212,22 @@ export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCapti
             </Select>
           </Field>
 
+          {studio && failedPreview !== value.captionPreset && (
+            <video
+              key={value.captionPreset}
+              src={`/studio-looks/${value.captionPreset!.replace(/^studio-/, '')}.mp4`}
+              autoPlay
+              muted
+              loop
+              playsInline
+              aria-label="Studio look sample"
+              onError={() => setFailedPreview(value.captionPreset ?? null)}
+              className="w-full max-w-xs rounded-lg border border-white/10"
+            />
+          )}
+
           {studio && (
+            <>
             <Field
               label="Energy"
               tooltip="How wild the effects get. Calm pops and stacks words; Lively adds big brush slams on lines that repeat; Wild slams everywhere, made for songs."
@@ -226,6 +254,23 @@ export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCapti
                 </button>
               </div>
             </Field>
+            <Field
+              label="Title intro"
+              tooltip="Optional. Shown big before the first line, like a song title — it needs a moment of silence before the narration starts (under ~0.7 s, it's skipped). Leave empty for none."
+            >
+              <Input
+                type="text"
+                aria-label="Title intro"
+                value={titleDraft}
+                maxLength={60}
+                disabled={busy}
+                placeholder="e.g. Hold My Hand"
+                onChange={(e: ChangeEvent<HTMLInputElement>) => setTitleDraft(e.target.value)}
+                onBlur={commitTitle}
+                onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+              />
+            </Field>
+            </>
           )}
 
           {!studio && (

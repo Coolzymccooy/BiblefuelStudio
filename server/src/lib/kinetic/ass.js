@@ -5,8 +5,13 @@ import { aspectOf, slotsFor } from "./layout.js";
 import { render as pop } from "./effects/pop.js";
 import { render as stack } from "./effects/stack.js";
 import { render as slam } from "./effects/slam.js";
+import { render as quote } from "./effects/quote.js";
+import { render as curve } from "./effects/curve.js";
+import { render as frame } from "./effects/frame.js";
+import { render as titleEffect, titleCard } from "./effects/title.js";
 
-const EFFECTS = { pop, stack, slam };
+const EFFECTS = { pop, stack, slam, quote, curve, frame, title: titleEffect };
+const TITLE_MAX_CHARS = 60;
 
 /** Phrases from timed words, or from timed lines with their words spread evenly. */
 export function phrasesFrom({ words, lines }) {
@@ -48,18 +53,23 @@ function header(w, h) {
 
 /**
  * The whole caption track as an ASS document: phrases, then a plan, then
- * events. Returns "" when there is nothing to draw.
+ * events. `title` adds a title card before the first lyric. Returns "" when
+ * there is nothing to draw.
  */
-export function buildAss({ words, lines, w, h, look, energy, seed = 1, overrides = {} }) {
+export function buildAss({ words, lines, w, h, look, energy, seed = 1, overrides = {}, title = "" }) {
   const phrases = phrasesFrom({ words, lines });
   if (!phrases.length) return "";
   const aspect = aspectOf(w, h);
   const theLook = resolveLook(look);
   const theEnergy = resolveEnergy(energy);
-  const plan = planPhrases({ phrases, energy: theEnergy, seed, overrides, slotCount: slotsFor(aspect).length });
+  const intro = String(title || "").trim().slice(0, TITLE_MAX_CHARS);
+  const plan = planPhrases({
+    phrases, energy: theEnergy, seed, overrides, slotCount: slotsFor(aspect).length, titleFirst: !intro,
+  });
+  const card = intro ? titleCard({ text: intro, look: theLook, w, h, aspect, firstStart: phrases[0].start }) : [];
   const events = plan.flatMap((planned, i) => EFFECTS[planned.effect]({
     planned, look: theLook, energy: theEnergy, w, h, aspect,
     nextStart: i + 1 < plan.length ? plan[i + 1].phrase.start : Infinity,
   }));
-  return `${header(w, h)}\n${events.join("\n")}\n`;
+  return `${header(w, h)}\n${[...card, ...events].join("\n")}\n`;
 }

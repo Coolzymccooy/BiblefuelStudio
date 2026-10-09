@@ -177,3 +177,15 @@ test("slams and pops are big: sizes match the approved look", () => {
   assert.ok(slamTall >= 170, `tall slam size ${slamTall}`);
   assert.ok(popWide >= 75, `wide pop size ${popWide}`);
 });
+
+test("Gospel Gold's body is set larger and in bold italic so it reads like the marker looks", () => {
+  const fsOf = (lines) => Number(lines[0].match(/\\fs(\d+)/)[1]);
+  const tall = { w: 720, h: 1280, aspect: "tall" };
+  const lagos = stack(ctx(planned("Fear thou", "stack"), tall));
+  const gold = stack(ctx(planned("Fear thou", "stack"), { ...tall, look: resolveLook("studio-gospel-gold") }));
+  assert.ok(fsOf(gold) >= Math.round(fsOf(lagos) * 1.25), `gold ${fsOf(gold)} vs lagos ${fsOf(lagos)}`);
+  assert.match(gold[0], /\\fs\d+\\b1\\i1\\frz/);
+  assert.doesNotMatch(lagos[0], /\\b1|\\i1/);
+  const goldPop = pop(ctx(planned("Fear thou not", "pop"), { look: resolveLook("studio-gospel-gold") }));
+  assert.match(goldPop[0], /\\b1\\i1/);
+});
