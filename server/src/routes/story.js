@@ -947,6 +947,7 @@ router.post("/:id/render", async (req, res) => {
       captionHighlight: project.captionHighlight,
       captionEnergy: project.captionEnergy,
       captionSeed: project.captionSeed,
+      captionTitle: project.captionTitle,
       outPath,
       audioDurationSec: audioDurationSec || undefined,
     }).then((r) => {

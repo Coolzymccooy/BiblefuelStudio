@@ -187,6 +187,26 @@ describe('StoryCaptionsPanel Studio effects', () => {
     expect(within(energy).getAllByRole('option')).toHaveLength(3);
   });
 
+  it('a Studio look offers an optional title intro, saved when the field loses focus', async () => {
+    const user = userEvent.setup();
+    mockCatalogue(studioCatalogue);
+    const onChange = show({ captions: 'kinetic', captionPreset: 'studio-lagos-night', captionTitle: 'Old' });
+    const field = await screen.findByRole('textbox', { name: 'Title intro' });
+    expect(field).toHaveValue('Old');
+    await user.clear(field);
+    await user.type(field, 'Hold My Hand');
+    expect(onChange).not.toHaveBeenCalledWith({ captionTitle: 'Hold My Hand' });
+    await user.tab();
+    expect(onChange).toHaveBeenCalledWith({ captionTitle: 'Hold My Hand' });
+  });
+
+  it('ordinary looks have no title intro', async () => {
+    mockCatalogue(studioCatalogue);
+    show({ captions: 'kinetic', captionPreset: 'cinematic-default' });
+    await screen.findByRole('option', { name: 'Lagos Night' });
+    expect(screen.queryByRole('textbox', { name: 'Title intro' })).not.toBeInTheDocument();
+  });
+
   it('Studio looks are unavailable when the server has no libass', async () => {
     mockCatalogue({ ...studioCatalogue, libass: false });
     show({ captions: 'kinetic', captionPreset: 'cinematic-default' });

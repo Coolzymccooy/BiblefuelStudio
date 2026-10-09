@@ -334,6 +334,15 @@ describe("Studio caption looks", () => {
     _setLibassForTest(undefined);
   });
 
+  test("a caption title becomes a title card at the start of the .ass", () => {
+    _setLibassForTest(true);
+    const built = buildStoryFfmpegArgs({ ...base, captionPreset: "studio-lagos-night", captionEnergy: "wild", captionTitle: "Hold My Hand" });
+    const first = built.sideFiles[0].text.split("\n").find((l) => l.startsWith("Dialogue:"));
+    assert.match(first, /^Dialogue: 2,0:00:00\.00,/);
+    assert.ok(first.includes("HOLD"));
+    _setLibassForTest(undefined);
+  });
+
   test("ordinary presets are untouched and write no side files", () => {
     _setLibassForTest(true);
     const before = buildStoryFfmpegArgs({ ...base, captionPreset: "marker" });

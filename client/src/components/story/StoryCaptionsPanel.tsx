@@ -1,5 +1,6 @@
 import { useEffect, useState, type ChangeEvent } from 'react';
 import { Field } from '../ui/Field';
+import { Input } from '../ui/Input';
 import { Select } from '../ui/Select';
 import { api } from '../../lib/api';
 import { LAYOUT_OPTIONS } from '../../lib/layoutOptions';
@@ -91,6 +92,14 @@ export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCapti
   // A saved Studio look must show correctly even before (or without) the
   // catalogue, or the select would display its first option instead.
   const savedStudioMissing = studio && !studioLooks.some((l) => l.id === value.captionPreset);
+  // The title is a free-text field, so it is drafted locally and saved on
+  // blur/Enter; patching per keystroke would round-trip the project each time.
+  const [titleDraft, setTitleDraft] = useState(value.captionTitle ?? '');
+  useEffect(() => { setTitleDraft(value.captionTitle ?? ''); }, [value.captionTitle]);
+  const commitTitle = () => {
+    const next = titleDraft.replace(/\s+/g, ' ').trim();
+    if (next !== (value.captionTitle ?? '')) onChange({ captionTitle: next });
+  };
   const energyOptions = energies.length > 0 ? energies : FALLBACK_ENERGIES;
   const shuffle = () => {
     let next = Math.floor(Math.random() * 2147483647);
@@ -200,6 +209,7 @@ export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCapti
           </Field>
 
           {studio && (
+            <>
             <Field
               label="Energy"
               tooltip="How wild the effects get. Calm pops and stacks words; Lively adds big brush slams on lines that repeat; Wild slams everywhere, made for songs."
@@ -226,6 +236,23 @@ export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCapti
                 </button>
               </div>
             </Field>
+            <Field
+              label="Title intro"
+              tooltip="Optional. Shown big before the first line, like a song title. Leave empty for none."
+            >
+              <Input
+                type="text"
+                aria-label="Title intro"
+                value={titleDraft}
+                maxLength={60}
+                disabled={busy}
+                placeholder="e.g. Hold My Hand"
+                onChange={(e: ChangeEvent<HTMLInputElement>) => setTitleDraft(e.target.value)}
+                onBlur={commitTitle}
+                onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+              />
+            </Field>
+            </>
           )}
 
           {!studio && (
