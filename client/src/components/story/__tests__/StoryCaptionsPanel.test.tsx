@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { api } from '../../../lib/api';
 import { StoryCaptionsPanel } from '../StoryCaptionsPanel';
@@ -122,5 +122,76 @@ describe('StoryCaptionsPanel', () => {
     expect(screen.getByRole('combobox', { name: 'Caption animation' })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: 'Cinematic (default)' })).toBeInTheDocument();
     expect(screen.queryByRole('combobox', { name: 'Caption motion' })).not.toBeInTheDocument();
+  });
+});
+
+const studioCatalogue = {
+  ok: true,
+  animations: [{ id: 'karaoke-pop', label: 'Karaoke pop', renderable: true }],
+  motions: [{ id: 'words', label: 'Per word' }, { id: 'lines', label: 'Per line' }],
+  studioLooks: [{ id: 'studio-lagos-night', label: 'Lagos Night', description: 'Yellow brush hits' }],
+  energies: [{ id: 'calm', label: 'Calm' }, { id: 'lively', label: 'Lively' }, { id: 'wild', label: 'Wild' }],
+  libass: true,
+};
+
+const mockCatalogue = (data: Record<string, unknown>) => {
+  vi.spyOn(api, 'get').mockResolvedValue({ ok: true, data } as any);
+};
+
+describe('StoryCaptionsPanel Studio effects', () => {
+  it('lists Studio effects looks in the animation picker', async () => {
+    mockCatalogue(studioCatalogue);
+    show({ captions: 'kinetic', captionPreset: 'cinematic-default' });
+    expect(await screen.findByRole('option', { name: 'Lagos Night' })).toBeInTheDocument();
+  });
+
+  it('a Studio look swaps motion/layout/depth for Energy and Shuffle', async () => {
+    const user = userEvent.setup();
+    mockCatalogue(studioCatalogue);
+    const onChange = show({ captions: 'kinetic', captionPreset: 'studio-lagos-night', captionSeed: 3 });
+    const energy = await screen.findByRole('combobox', { name: 'Energy' });
+    expect(screen.queryByRole('combobox', { name: 'Caption motion' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: 'Text layout' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Layered depth/)).not.toBeInTheDocument();
+    expect(energy).toHaveValue('lively');
+    await user.selectOptions(energy, 'wild');
+    expect(onChange).toHaveBeenCalledWith({ captionEnergy: 'wild' });
+    await user.click(screen.getByRole('button', { name: /shuffle/i }));
+    const seed = onChange.mock.calls.at(-1)![0].captionSeed;
+    expect(Number.isInteger(seed)).toBe(true);
+    expect(seed).not.toBe(3);
+  });
+
+  it('Shuffle never re-picks the current seed', async () => {
+    const user = userEvent.setup();
+    mockCatalogue(studioCatalogue);
+    const random = vi.spyOn(Math, 'random').mockReturnValue(3 / 2147483647);
+    try {
+      const onChange = show({ captions: 'kinetic', captionPreset: 'studio-lagos-night', captionSeed: 3 });
+      await user.click(await screen.findByRole('button', { name: /shuffle/i }));
+      expect(onChange).toHaveBeenLastCalledWith({ captionSeed: 4 });
+    } finally {
+      random.mockRestore();
+    }
+  });
+
+  it('shows a saved Studio look and a usable Energy picker before the catalogue loads', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({ ok: false, error: 'offline' } as any);
+    show({ captions: 'kinetic', captionPreset: 'studio-lagos-night' });
+    await waitFor(() => expect(api.get).toHaveBeenCalled());
+    const animation = screen.getByRole('combobox', { name: 'Caption animation' });
+    expect(animation).toHaveValue('studio-lagos-night');
+    expect(screen.getByRole('option', { name: 'Lagos Night' })).toBeInTheDocument();
+    const energy = screen.getByRole('combobox', { name: 'Energy' });
+    expect(energy).toHaveValue('lively');
+    expect(within(energy).getAllByRole('option')).toHaveLength(3);
+  });
+
+  it('Studio looks are unavailable when the server has no libass', async () => {
+    mockCatalogue({ ...studioCatalogue, libass: false });
+    show({ captions: 'kinetic', captionPreset: 'cinematic-default' });
+    const opt = await screen.findByRole('option', { name: /Lagos Night/ });
+    expect(opt).toBeDisabled();
+    expect(opt.textContent).toMatch(/unavailable/i);
   });
 });

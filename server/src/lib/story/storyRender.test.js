@@ -299,3 +299,46 @@ describe("groupWordsIntoCues", () => {
     assert.equal(cues[1].text, "c");
   });
 });
+
+import { _setLibassForTest } from "../kinetic/capability.js";
+
+describe("Studio caption looks", () => {
+  const img = path.join(os.tmpdir(), `studio-img-${process.pid}.png`);
+  const aud = path.join(os.tmpdir(), `studio-aud-${process.pid}.mp3`);
+  fs.writeFileSync(img, "x");
+  fs.writeFileSync(aud, "x");
+  const base = {
+    scenes: [{ id: "s1", imagePath: img, startMs: 0, endMs: 4000 }],
+    words: [{ text: "I", startMs: 500, endMs: 700 }, { text: "still", startMs: 700, endMs: 1000 }, { text: "dey", startMs: 1000, endMs: 1400 }],
+    audioPath: aud, width: 1280, height: 720, outPath: path.join(os.tmpdir(), "studio-out.mp4"),
+    audioDurationSec: 4, captions: "kinetic",
+  };
+  const graph = (args) => args[args.indexOf("-filter_complex") + 1];
+
+  test("a studio look draws with the ass filter and hands back the .ass to write", () => {
+    _setLibassForTest(true);
+    const built = buildStoryFfmpegArgs({ ...base, captionPreset: "studio-lagos-night", captionEnergy: "wild", captionSeed: 5 });
+    assert.match(graph(built.args), /\[vcat\]ass=filename='[^']*captions-studio-out\.ass':fontsdir='[^']*'\[vout\]/);
+    assert.equal(built.sideFiles.length, 1);
+    assert.match(built.sideFiles[0].text, /DEY/);
+    assert.ok(!graph(built.args).includes("drawtext"));
+    _setLibassForTest(undefined);
+  });
+
+  test("without libass the look renders as its drawtext fallback", () => {
+    _setLibassForTest(false);
+    const built = buildStoryFfmpegArgs({ ...base, captionPreset: "studio-lagos-night" });
+    assert.ok(graph(built.args).includes("drawtext"));
+    assert.ok(!graph(built.args).includes("ass=filename"));
+    assert.deepEqual(built.sideFiles, []);
+    _setLibassForTest(undefined);
+  });
+
+  test("ordinary presets are untouched and write no side files", () => {
+    _setLibassForTest(true);
+    const before = buildStoryFfmpegArgs({ ...base, captionPreset: "marker" });
+    assert.deepEqual(before.sideFiles, []);
+    assert.ok(graph(before.args).includes("drawtext"));
+    _setLibassForTest(undefined);
+  });
+});

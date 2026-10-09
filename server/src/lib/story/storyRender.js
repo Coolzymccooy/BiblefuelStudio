@@ -12,6 +12,9 @@ import { buildXfadeChain } from "./sceneTransitions.js";
 import { markRunning, markProgress, markDone, markError, attachProc } from "../renderJobs.js";
 import { isLocalOrRemote } from "../mediaThumb.js";
 import { logoOverlay } from "../branding.js";
+import { isStudioLook, resolveLook } from "../kinetic/looks.js";
+import { studioCaptionFilter } from "../kinetic/filter.js";
+import { hasLibass } from "../kinetic/capability.js";
 
 // Line captions past this many phrases fall back to the compact lower-third
 // subtitle chain. At ~7 words a phrase this is roughly a 20-minute
@@ -215,6 +218,7 @@ export function buildStoryFfmpegArgs({
   scenes, words, audioPath, musicPath, musicVolume, autoDuck, width, height,
   outPath, audioDurationSec, captions,
   captionPreset, captionMotion, captionLayout, captionDepth, captionStagger, captionHighlight,
+  captionEnergy, captionSeed,
   kineticMaxWords = Math.max(0, Number(process.env.STORY_KINETIC_MAX_WORDS) || 1500),
   logo = null,
 }) {
@@ -290,20 +294,36 @@ export function buildStoryFfmpegArgs({
   // keep the full word-by-word kinetic box; longer videos switch to a compact,
   // wrapped, lower-third SUBTITLE (a few hundred filters, renders in minutes,
   // and no edge-clipping).
-  const drawtext = captions === "none" ? "" : buildStoryCaptions({
-    words: drawWords,
-    w: width,
-    h: height,
-    durationSec: totalDurationSec,
-    captions,
-    captionPreset,
-    captionMotion,
-    captionLayout,
-    captionDepth,
-    captionStagger,
-    captionHighlight,
-    kineticMaxWords,
-  });
+  // Studio looks draw with libass from an .ass file written beside the
+  // render. Where this ffmpeg has no libass they degrade to the look's
+  // drawtext preset, so a render never fails over captions.
+  const sideFiles = [];
+  const studio = captions !== "none" && isStudioLook(captionPreset);
+  let drawtext = "";
+  if (studio && hasLibass()) {
+    const assPath = path.join(path.dirname(outPath), `captions-${path.basename(outPath, ".mp4")}.ass`);
+    const built = studioCaptionFilter({
+      assPath, words: drawWords, w: width, h: height,
+      look: captionPreset, energy: captionEnergy || "lively", seed: captionSeed ?? 1,
+    });
+    drawtext = built.filter;
+    sideFiles.push(...built.sideFiles);
+  } else if (captions !== "none") {
+    drawtext = buildStoryCaptions({
+      words: drawWords,
+      w: width,
+      h: height,
+      durationSec: totalDurationSec,
+      captions,
+      captionPreset: studio ? resolveLook(captionPreset).fallbackPreset : captionPreset,
+      captionMotion,
+      captionLayout,
+      captionDepth,
+      captionStagger,
+      captionHighlight,
+      kineticMaxWords,
+    });
+  }
   // The account's logo (brandLogoFor) goes over everything, captions included.
   const captionOut = logo ? "vcap" : "vout";
   if (drawtext) {
@@ -349,7 +369,7 @@ export function buildStoryFfmpegArgs({
     "-t", totalDurationSec.toFixed(3),
     outPath,
   );
-  return { args, totalDurationSec };
+  return { args, totalDurationSec, sideFiles };
 }
 
 /**
@@ -383,7 +403,8 @@ export function toFilterScriptArgs(args, outPath) {
 export function runStoryRender({
   jobId, scenes, words, audioPath, musicPath, musicVolume, autoDuck, width, height,
   outPath, audioDurationSec, onProgress, captions,
-  captionPreset, captionMotion, captionLayout, captionDepth, captionStagger, captionHighlight, logo,
+  captionPreset, captionMotion, captionLayout, captionDepth, captionStagger, captionHighlight,
+  captionEnergy, captionSeed, logo,
 }) {
   return new Promise((resolve) => {
     let built;
@@ -391,8 +412,20 @@ export function runStoryRender({
       built = buildStoryFfmpegArgs({
         scenes, words, audioPath, musicPath, musicVolume, autoDuck, width, height,
         outPath, audioDurationSec, captions,
-        captionPreset, captionMotion, captionLayout, captionDepth, captionStagger, captionHighlight, logo,
+        captionPreset, captionMotion, captionLayout, captionDepth, captionStagger, captionHighlight,
+        captionEnergy, captionSeed, logo,
       });
+      try {
+        for (const f of built.sideFiles || []) fs.writeFileSync(f.path, f.text, "utf8");
+      } catch (err) {
+        console.warn(`[CAPTIONS] studio fallback: ${err?.message || err}`);
+        built = buildStoryFfmpegArgs({
+          scenes, words, audioPath, musicPath, musicVolume, autoDuck, width, height,
+          outPath, audioDurationSec, captions,
+          captionPreset: resolveLook(captionPreset).fallbackPreset,
+          captionMotion, captionLayout, captionDepth, captionStagger, captionHighlight, logo,
+        });
+      }
     } catch (err) {
       markError(jobId, err?.message || err);
       return resolve({ ok: false, error: String(err?.message || err) });

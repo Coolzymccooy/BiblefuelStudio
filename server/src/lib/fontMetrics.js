@@ -123,7 +123,14 @@ export function loadFont(file) {
   const unitsPerEm = buf.readUInt16BE(t.head.offset + 18);
   const numHMetrics = buf.readUInt16BE(t.hhea.offset + 34);
   const advanceOf = (g) => buf.readUInt16BE(t.hmtx.offset + Math.min(g, numHMetrics - 1) * 4);
-  const font = { unitsPerEm, glyphOf: glyphLookup(buf, t.cmap), advanceOf, kerning: kernPairs(buf, t.kern), hasGpos: Boolean(t.GPOS) };
+  // libass sizes text by the font's CELL (Windows ascent + descent), not its
+  // em, like VSFilter. Kinetic captions measure with this to know how wide a
+  // \fs size really draws.
+  const os2 = t["OS/2"];
+  const winCell = os2 ? buf.readUInt16BE(os2.offset + 74) + buf.readUInt16BE(os2.offset + 76) : 0;
+  const hheaCell = buf.readInt16BE(t.hhea.offset + 4) - buf.readInt16BE(t.hhea.offset + 6);
+  const cellUnits = winCell || hheaCell || unitsPerEm;
+  const font = { unitsPerEm, cellUnits, glyphOf: glyphLookup(buf, t.cmap), advanceOf, kerning: kernPairs(buf, t.kern), hasGpos: Boolean(t.GPOS) };
   cache.set(file, font);
   return font;
 }

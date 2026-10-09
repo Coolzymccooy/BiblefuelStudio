@@ -104,3 +104,12 @@ test('legacy kerning measures what ffmpeg 5.1 draws, not what it should', () => 
   assert.equal(measureText(DEJAVU, text, 90, { kerning: 'legacy' }), 1101);
   assert.equal(measureText(DEJAVU, text, 90, { kerning: 'none' }), 1101);
 });
+
+test('loadFont reports the cell height libass sizes fonts by', () => {
+  for (const file of ['PermanentMarker.ttf', 'Anton.ttf', 'DejaVuSans.ttf', 'Drybrush.ttf']) {
+    const f = loadFont(font(file));
+    assert.ok(Number.isInteger(f.cellUnits), `${file} cellUnits is an integer`);
+    // A cell is taller than the em for every real font, but not absurdly so.
+    assert.ok(f.cellUnits >= f.unitsPerEm * 0.9 && f.cellUnits <= f.unitsPerEm * 2.5, `${file}: ${f.cellUnits} vs ${f.unitsPerEm}`);
+  }
+});

@@ -63,6 +63,12 @@ export function normaliseCaptionSettings(input = {}, current = {}) {
     captionDepth: pick("captionDepth", ["none", "soft", "hard"]),
     captionStagger: bool("captionStagger"),
     captionHighlight: bool("captionHighlight"),
+    captionEnergy: pick("captionEnergy", ["calm", "lively", "wild"]),
+    captionSeed: (() => {
+      const raw = input.captionSeed === undefined ? current.captionSeed : input.captionSeed;
+      const n = Number(raw);
+      return raw !== null && raw !== undefined && Number.isInteger(n) && n >= 0 && n <= 2147483647 ? n : undefined;
+    })(),
   };
 }
 
@@ -89,6 +95,8 @@ export function createProject(baseDir, {
     // Caption look and motion. captionPreset was stored and never read until
     // these controls existed; it is now the typography/animation preset.
     ...normaliseCaptionSettings(captionOpts),
+    // Each story gets its own caption choreography; Shuffle replaces it.
+    captionSeed: normaliseCaptionSettings(captionOpts).captionSeed ?? Math.floor(Math.random() * 2147483647),
     render: { jobId: null, outputPath: null, status: null },
     error: null,
     // Video shape: "portrait" (default, existing behaviour) or "landscape".

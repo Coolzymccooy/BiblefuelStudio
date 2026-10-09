@@ -78,3 +78,22 @@ describe("projectStore", () => {
     assert.equal(deleteProject(baseDir, "does-not-exist"), false);
   });
 });
+
+import { normaliseCaptionSettings } from "./projectStore.js";
+
+test("caption energy and seed are validated and merged", () => {
+  assert.equal(normaliseCaptionSettings({ captionEnergy: "wild" }).captionEnergy, "wild");
+  assert.equal(normaliseCaptionSettings({ captionEnergy: "loud" }).captionEnergy, undefined);
+  assert.equal(normaliseCaptionSettings({}, { captionEnergy: "calm" }).captionEnergy, "calm");
+  assert.equal(normaliseCaptionSettings({ captionSeed: 12345 }).captionSeed, 12345);
+  assert.equal(normaliseCaptionSettings({ captionSeed: -1 }).captionSeed, undefined);
+  assert.equal(normaliseCaptionSettings({ captionSeed: 1.5 }).captionSeed, undefined);
+  assert.equal(normaliseCaptionSettings({ captionSeed: "7" }).captionSeed, 7);
+});
+
+test("a new project gets its own caption seed", () => {
+  const a = createProject(baseDir, { title: "A" });
+  const b = createProject(baseDir, { title: "B" });
+  assert.ok(Number.isInteger(a.captionSeed) && a.captionSeed >= 0);
+  assert.notEqual(a.captionSeed, b.captionSeed);
+});
