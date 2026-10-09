@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { AUDIO_ACCEPT, AUDIO_ACCEPT_LIST } from '../lib/audioAccept';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { Upload, Loader2, Download, X, RefreshCw } from 'lucide-react';
 import { api, DIRECT_UPLOAD_MAX_BYTES } from '../lib/api';
@@ -14,6 +14,9 @@ import {
 } from '../lib/storyWizard';
 import { StylePicker } from '../components/story/StylePicker';
 import { SceneCard } from '../components/story/SceneCard';
+import { SceneLibraryPicker } from '../components/story/SceneLibraryPicker';
+import { StoryImageTools } from '../components/story/StoryImageTools';
+import { putOwnImage } from '../lib/storyImages';
 import { ProjectHistory } from '../components/story/ProjectHistory';
 import { storyChapters, storyDescription, storyTagline } from '../lib/storyShare';
 import { useMusicLibrary } from '../hooks/useMusicLibrary';
@@ -57,10 +60,25 @@ export function StoryVideoPage() {
   const [pendingAudio, setPendingAudio] = useState<string | null>(null);
   const [showTrimmer, setShowTrimmer] = useState(false);
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
+  // Your own pictures on scenes: the one uploading, and the one choosing from the library.
+  const [uploadingSceneId, setUploadingSceneId] = useState<string | null>(null);
+  // Upload several, which runs inside StoryImageTools.
+  const [bulkUploading, setBulkUploading] = useState(false);
+  // Pictures are changing: rendering now would freeze a half-updated set.
+  const imagesBusy = busy || bulkUploading || Boolean(regeneratingId || uploadingSceneId);
+  const [pickingSceneId, setPickingSceneId] = useState<string | null>(null);
   const [defaultTitle, setDefaultTitle] = useState('');
   const [entryMode, setEntryMode] = useState<'upload' | 'script' | 'longform'>('upload');
 
   const { data: project } = useStoryProject(projectId);
+  // Cast descriptions, for the image brief: only fetched when the story has a cast.
+  const hasCast = (project?.cast?.length ?? 0) > 0;
+  const { data: characters } = useQuery({
+    queryKey: ['story-characters'],
+    queryFn: () => storyApi.listCharacters(),
+    enabled: hasCast,
+    staleTime: Infinity,
+  });
   const refresh = () => { if (projectId) qc.invalidateQueries({ queryKey: ['story-project', projectId] }); };
 
   const setActive = (id: string | null) => {
@@ -150,8 +168,21 @@ export function StoryVideoPage() {
     finally { setRegeneratingId(null); }
   };
 
+  // A photo from the device on one scene: no image quota, so a project can be
+  // finished when the daily limit has run out.
+  const onUploadSceneImage = async (sceneId: string, file: File) => {
+    if (!projectId || uploadingSceneId) return;
+    setUploadingSceneId(sceneId);
+    try {
+      await putOwnImage(projectId, sceneId, file);
+      refresh();
+      toast.success('Your picture is on that scene');
+    } catch (e) { toast.error((e as Error).message || 'Could not use that picture'); }
+    finally { setUploadingSceneId(null); }
+  };
+
   const onRender = async () => {
-    if (!projectId) return;
+    if (!projectId || imagesBusy) return;
     setBusy(true);
     try {
       await storyApi.render(projectId);
@@ -162,15 +193,24 @@ export function StoryVideoPage() {
   };
 
   const retryFailedImages = async () => {
-    if (!projectId || busy) return;
+    if (!projectId || imagesBusy) return;
     setBusy(true);
     try { await storyApi.generateImages(projectId); refresh(); toast.success('Retrying failed images…'); }
     catch (e) { toast.error((e as Error).message); }
     finally { setBusy(false); }
   };
 
+  // Both of these replace every picture, including ones you put on yourself.
+  const confirmDiscardOwnImages = (action: string) => {
+    const own = project?.scenes.filter((s) => s.imageChosenByUser).length ?? 0;
+    return !own || window.confirm(
+      `${action} replaces every scene's picture, including the ${own} you chose yourself. Continue?`,
+    );
+  };
+
   const regenerateAllImages = async () => {
-    if (!projectId || busy) return;
+    if (!projectId || imagesBusy) return;
+    if (!confirmDiscardOwnImages('Regenerate all')) return;
     setBusy(true);
     try { await storyApi.regenerateAllImages(projectId); refresh(); toast.success('Regenerating all images…'); }
     catch (e) { toast.error((e as Error).message); }
@@ -244,7 +284,8 @@ export function StoryVideoPage() {
   // segmentation. Recovers a project that over-segmented into hundreds of
   // scenes and stalled while generating images.
   const resegment = async () => {
-    if (!projectId || busy) return;
+    if (!projectId || imagesBusy) return;
+    if (!confirmDiscardOwnImages('Re-segmenting')) return;
     setBusy(true);
     try {
       await storyApi.resegment(projectId);
@@ -595,11 +636,25 @@ export function StoryVideoPage() {
                 index={i}
                 onPatch={onPatch}
                 onRegenerate={onRegenerate}
-                busy={busy}
+                busy={busy || bulkUploading}
                 regenerating={regeneratingId === s.id}
+                onUpload={onUploadSceneImage}
+                onChooseFromLibrary={setPickingSceneId}
+                uploading={uploadingSceneId === s.id}
+                imagesRunning={project.status === 'generating_images' && transient && !stalled}
               />
             ))}
           </div>
+
+          {pickingSceneId && (
+            <SceneLibraryPicker
+              projectId={project.projectId}
+              sceneId={pickingSceneId}
+              sceneNumber={project.scenes.findIndex((s) => s.id === pickingSceneId) + 1}
+              onClose={() => setPickingSceneId(null)}
+              onChosen={() => { setPickingSceneId(null); refresh(); }}
+            />
+          )}
 
           {/* Bulk image controls — retry just the failures, or rebuild all. */}
           <div className={`flex flex-wrap items-center gap-2 ${panelCls}`}>
@@ -613,7 +668,7 @@ export function StoryVideoPage() {
               {counts.done < counts.total && (
                 <button
                   onClick={retryFailedImages}
-                  disabled={busy}
+                  disabled={imagesBusy}
                   className={`${secondaryBtnCls} px-3 py-1.5 text-xs`}
                 >
                   <RefreshCw size={12} /> Retry failed images
@@ -621,13 +676,15 @@ export function StoryVideoPage() {
               )}
               <button
                 onClick={regenerateAllImages}
-                disabled={busy}
+                disabled={imagesBusy}
                 title="Discard every current image and regenerate them all from scratch."
                 className={`${secondaryBtnCls} px-3 py-1.5 text-xs`}
               >
                 <RefreshCw size={12} /> Regenerate all
               </button>
             </div>
+            {/* Out of free images? Make them in ChatGPT/Gemini and bring them back. */}
+            <StoryImageTools project={project} characters={characters} busy={busy || Boolean(regeneratingId || uploadingSceneId)} onChanged={refresh} onUploadingChange={setBulkUploading} />
           </div>
           </div>
 
@@ -645,14 +702,14 @@ export function StoryVideoPage() {
           />
           <button
             onClick={onRender}
-            disabled={!canRender(project) || busy}
+            disabled={!canRender(project) || imagesBusy}
             className="w-full rounded-xl bg-primary-500 px-4 py-3 text-sm font-semibold text-dark-900 hover:bg-primary-400 disabled:opacity-50"
           >
             {canRender(project) ? 'Looks good → Render' : 'Waiting for all images…'}
           </button>
           <button
             onClick={resegment}
-            disabled={busy}
+            disabled={imagesBusy}
             className="w-full text-center text-meta hover:text-bf-cream disabled:opacity-50"
           >
             Too many scenes, or images stuck? Re-segment with fewer, longer scenes

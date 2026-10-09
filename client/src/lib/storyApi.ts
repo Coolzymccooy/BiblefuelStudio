@@ -1,6 +1,7 @@
 import { api, TRANSCRIBE_TIMEOUT_MS } from './api';
 import { uploadMedia } from './mediaUpload';
 import type { StoryCaptionSettings, StoryProject, StoryProjectSummary, StoryScene } from './storyTypes';
+import type { LibraryImage, MovementImageSource } from './ambientApi';
 
 // Generating ~30 images can run for minutes; reuse a generous ceiling.
 const GENERATE_IMAGES_TIMEOUT_MS = 15 * 60_000;
@@ -74,6 +75,26 @@ export const storyApi = {
 
   async patchScene(id: string, sceneId: string, patch: Partial<Pick<StoryScene, 'text' | 'imagePrompt'>>): Promise<StoryProject> {
     return unwrapProject(await api.patch(`/api/story/${id}/scenes/${sceneId}`, patch));
+  },
+
+  // Your own picture on one scene, instead of a generated one: no image quota.
+  // { uploadPath } is what uploadMedia(file, name, 'background') returned.
+  // A refusal carries the server's `code` (IMAGES_RUNNING, SCENE_REGENERATING,
+  // RENDERING) so callers can tell why without reading the message.
+  async setSceneImage(id: string, sceneId: string, source: MovementImageSource): Promise<StoryProject> {
+    const res = await api.put(`/api/story/${id}/scenes/${sceneId}/image`, source);
+    if (res.ok && res.data?.project) return res.data.project as StoryProject;
+    throw Object.assign(new Error(res.error || res.data?.error || 'Could not use that picture'), {
+      status: res.status,
+      code: res.data?.code as string | undefined,
+    });
+  },
+
+  // Pictures on this account, generated or uploaded before, to choose from.
+  async listLibraryImages(id: string): Promise<LibraryImage[]> {
+    const res = await api.get(`/api/story/${id}/library-images`);
+    if (!res.ok) throw new Error(res.error || 'Failed to load your pictures');
+    return (res.data?.images ?? []) as LibraryImage[];
   },
 
   async setMusic(id: string, music: { path: string | null; volume: number; autoDuck: boolean }): Promise<StoryProject> {

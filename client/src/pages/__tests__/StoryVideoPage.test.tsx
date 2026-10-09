@@ -7,6 +7,13 @@ import { storyApi } from '../../lib/storyApi';
 import userEvent from '@testing-library/user-event';
 import { api } from '../../lib/api';
 
+const uploadMediaMock = vi.hoisted(() => vi.fn());
+vi.mock('../../lib/mediaUpload', async (orig) => {
+  const real = await orig<typeof import('../../lib/mediaUpload')>();
+  uploadMediaMock.mockImplementation(real.uploadMedia);
+  return { ...real, uploadMedia: (...args: Parameters<typeof real.uploadMedia>) => uploadMediaMock(...args) };
+});
+
 vi.mock('../../components/MediaTrimmer', () => ({
   MediaTrimmer: ({ onApply, onCancel }: any) => (
     <div data-testid="media-trimmer">
@@ -68,6 +75,39 @@ describe('StoryVideoPage', () => {
     // Scene caption is shown as read-only serif text in the review list (the
     // editable input now lives behind each scene's "tune" toggle).
     expect(await screen.findByText('a')).toBeInTheDocument();
+  });
+
+  it('Render stays off while Upload several is still putting pictures on scenes', async () => {
+    localStorage.setItem('BF_STORY_ACTIVE', 'p1');
+    const done = (id: string) => ({ id, text: id, startMs: 0, endMs: 8000, imagePrompt: 'p', imagePath: '/a.png', imageUrl: '/outputs/x.png', imageStatus: 'done', promptEditedByUser: false });
+    vi.spyOn(storyApi, 'getProject').mockResolvedValue({
+      projectId: 'p1', title: 'T', style: 'cinematic-bible', status: 'ready_to_render',
+      source: { audioPath: 'a', durationMs: 16000 }, transcript: { words: [], hash: 'h' },
+      scenes: [done('scene-001'), done('scene-002')],
+      music: { path: null, volume: 0.3 }, captionPreset: 'default',
+      render: { jobId: null, outputPath: null, status: null }, error: null, createdAt: 0, updatedAt: 0,
+    } as any);
+    let release!: () => void;
+    uploadMediaMock.mockImplementation(() => new Promise((r) => { release = () => r({ file: '/outputs/bg-image-x.png', kind: 'image' }); }));
+    vi.spyOn(storyApi, 'setSceneImage').mockResolvedValue({} as any);
+    const renderSpy = vi.spyOn(storyApi, 'render').mockResolvedValue(undefined as any);
+    renderPage();
+    const renderBtn = await screen.findByRole('button', { name: /looks good → render/i });
+    expect(renderBtn).toBeEnabled();
+
+    await userEvent.upload(screen.getByLabelText('Image files for several scenes'), [
+      new File(['a'], 'Scene 1.png', { type: 'image/png' }), new File(['b'], 'Scene 2.png', { type: 'image/png' }),
+    ]);
+    await waitFor(() => expect(uploadMediaMock).toHaveBeenCalledTimes(1));
+    expect(renderBtn).toBeDisabled();
+    expect(screen.getByRole('button', { name: /regenerate all/i })).toBeDisabled();
+    fireEvent.click(renderBtn);
+    expect(renderSpy).not.toHaveBeenCalled();
+
+    release();
+    await waitFor(() => expect(uploadMediaMock).toHaveBeenCalledTimes(2));
+    release();
+    await waitFor(() => expect(renderBtn).toBeEnabled());
   });
 
   it('shows a Resume button for an interrupted (transient, stale) project and re-drives it', async () => {

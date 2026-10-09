@@ -19,8 +19,10 @@ export interface StoryScene {
   /** When imageStatus === 'error', a short human-readable reason (quota, timeout, safety, …). */
   imageError?: string | null;
   promptEditedByUser: boolean;
-  /** Where this picture came from: reused from the library, or freshly generated. */
-  imageSource?: 'library' | 'generated';
+  /** Where this picture came from: the library, freshly generated, or uploaded by you. */
+  imageSource?: 'library' | 'generated' | 'upload';
+  /** You put this picture on the scene yourself (upload or library pick), not the generator. */
+  imageChosenByUser?: boolean;
   /** Cosine score of the library match, when imageSource === 'library'. */
   imageReuseScore?: number | null;
   /** Library entry id — the same image is never used twice in one video. */
