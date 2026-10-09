@@ -45,4 +45,54 @@ describe('SceneCard', () => {
     render(<SceneCard scene={scene({ imageStatus: 'error', imageUrl: null })} index={0} onPatch={vi.fn()} onRegenerate={vi.fn()} busy={false} />);
     expect(screen.getByText(/failed/i)).toBeInTheDocument();
   });
+
+  describe('your own picture', () => {
+    const own = { onUpload: vi.fn(), onChooseFromLibrary: vi.fn() };
+
+    it('a scene without a picture offers Upload and From library straight away', async () => {
+      const onChooseFromLibrary = vi.fn();
+      render(<SceneCard scene={scene({ imageStatus: 'error', imageUrl: null })} index={2} onPatch={vi.fn()} onRegenerate={vi.fn()}
+        busy={false} onUpload={vi.fn()} onChooseFromLibrary={onChooseFromLibrary} />);
+      expect(screen.getByRole('button', { name: 'Upload image for scene 3' })).toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', { name: 'Choose image for scene 3 from library' }));
+      expect(onChooseFromLibrary).toHaveBeenCalledWith('scene-001');
+    });
+
+    it('a scene with a picture keeps them inside Tune, out of the way', async () => {
+      render(<SceneCard scene={scene()} index={0} onPatch={vi.fn()} onRegenerate={vi.fn()} busy={false} {...own} />);
+      expect(screen.queryByRole('button', { name: /upload image/i })).not.toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', { name: /tune scene/i }));
+      expect(screen.getByRole('button', { name: 'Upload image for scene 1' })).toBeInTheDocument();
+    });
+
+    it('a chosen photo is handed over with its scene', async () => {
+      const onUpload = vi.fn();
+      render(<SceneCard scene={scene({ imageStatus: 'error' })} index={0} onPatch={vi.fn()} onRegenerate={vi.fn()} busy={false} onUpload={onUpload} />);
+      const photo = new File(['x'], 'Scene 1.png', { type: 'image/png' });
+      await userEvent.upload(screen.getByLabelText('Image file for scene 1'), photo);
+      expect(onUpload).toHaveBeenCalledWith('scene-001', photo);
+    });
+
+    it('a scene a cancelled run left "generating" still offers your own picture; a live run does not', () => {
+      const stuck = scene({ imageStatus: 'generating', imageUrl: null });
+      const { rerender } = render(<SceneCard scene={stuck} index={0} onPatch={vi.fn()} onRegenerate={vi.fn()} busy={false} {...own} />);
+      expect(screen.getByRole('button', { name: 'Upload image for scene 1' })).toBeInTheDocument();
+      rerender(<SceneCard scene={stuck} index={0} onPatch={vi.fn()} onRegenerate={vi.fn()} busy={false} {...own} imagesRunning />);
+      expect(screen.queryByRole('button', { name: 'Upload image for scene 1' })).not.toBeInTheDocument();
+    });
+
+    it('a picture you chose says so', () => {
+      render(<SceneCard scene={scene({ imageChosenByUser: true, imageSource: 'upload' })} index={0} onPatch={vi.fn()} onRegenerate={vi.fn()} busy={false} />);
+      expect(screen.getByText('Your image')).toBeInTheDocument();
+    });
+
+    it('Copy prompt copies the scene\'s image prompt', async () => {
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+      render(<SceneCard scene={scene()} index={0} onPatch={vi.fn()} onRegenerate={vi.fn()} busy={false} />);
+      await userEvent.click(screen.getByRole('button', { name: /tune scene/i }));
+      await userEvent.click(screen.getByRole('button', { name: 'Copy image prompt for scene 1' }));
+      expect(writeText).toHaveBeenCalledWith('a lonely figure');
+    });
+  });
 });

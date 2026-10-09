@@ -1,9 +1,11 @@
-import { useState } from 'react';
-import { Loader2, RefreshCw, Wand2, ImageOff, SlidersHorizontal, Check, Clock } from 'lucide-react';
+import { useRef, useState } from 'react';
+import toast from 'react-hot-toast';
+import { Loader2, RefreshCw, Wand2, ImageOff, SlidersHorizontal, Check, Clock, Upload, Images, Copy } from 'lucide-react';
 import { AuthedImage } from '../AuthedImage';
 import { sceneTimeLabel } from '../../lib/storyWizard';
 import type { ImageStatus, StoryScene } from '../../lib/storyTypes';
 import { cleanCaptionLine } from '../../lib/speakableScript';
+import { copyText } from '../../lib/copyText';
 
 interface SceneCardProps {
   scene: StoryScene;
@@ -15,6 +17,14 @@ interface SceneCardProps {
   busy: boolean;
   /** This specific scene is mid-regenerate — only THIS card shows the spinner. */
   regenerating?: boolean;
+  /** Put a photo from the device on this scene. */
+  onUpload?: (sceneId: string, file: File) => void;
+  /** Open the library picker for this scene. */
+  onChooseFromLibrary?: (sceneId: string) => void;
+  /** This scene's own picture is being uploaded. */
+  uploading?: boolean;
+  /** An image run is live, so a scene marked generating is really being generated. */
+  imagesRunning?: boolean;
 }
 
 const STATUS: Record<ImageStatus, { label: string; cls: string }> = {
@@ -24,7 +34,12 @@ const STATUS: Record<ImageStatus, { label: string; cls: string }> = {
   error: { label: 'Failed', cls: 'text-bf-danger' },
 };
 
-export function SceneCard({ scene, index = 0, onPatch, onRegenerate, busy, regenerating = false }: SceneCardProps) {
+const actionCls = 'inline-flex items-center gap-1 rounded-md border border-[rgba(216,184,120,0.18)] px-2 py-1 text-xs text-bf-cream hover:border-bf-gold disabled:opacity-50';
+
+export function SceneCard({
+  scene, index = 0, onPatch, onRegenerate, busy, regenerating = false, onUpload, onChooseFromLibrary, uploading = false, imagesRunning = false,
+}: SceneCardProps) {
+  const fileRef = useRef<HTMLInputElement>(null);
   const [text, setText] = useState(scene.text);
   const [prompt, setPrompt] = useState(scene.imagePrompt);
   const [tuning, setTuning] = useState(false);
@@ -40,6 +55,36 @@ export function SceneCard({ scene, index = 0, onPatch, onRegenerate, busy, regen
   };
 
   const st = STATUS[scene.imageStatus] ?? STATUS.pending;
+  const n = index + 1;
+  // Without a picture, unless a live run is making it now. A cancelled run
+  // leaves scenes "generating" that nothing is generating any more.
+  const missing = scene.imageStatus !== 'done' && !(scene.imageStatus === 'generating' && imagesRunning);
+  const yours = scene.imageStatus === 'done' && scene.imageChosenByUser;
+  const imageLocked = busy || regenerating || uploading;
+
+  const copyPrompt = async () => {
+    if (await copyText(scene.imagePrompt)) toast.success(`Scene ${n} prompt copied`);
+    else toast.error('Could not copy. Select the prompt text instead.');
+  };
+
+  // Your own picture: from the device, or one already in your library.
+  const ownImageButtons = (onUpload || onChooseFromLibrary) && (
+    <>
+      {onUpload && (
+        <button type="button" onClick={() => fileRef.current?.click()} disabled={imageLocked}
+          aria-label={`Upload image for scene ${n}`} className={actionCls}>
+          {uploading ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
+          {uploading ? 'Uploading…' : 'Upload image'}
+        </button>
+      )}
+      {onChooseFromLibrary && (
+        <button type="button" onClick={() => onChooseFromLibrary(scene.id)} disabled={imageLocked}
+          aria-label={`Choose image for scene ${n} from library`} className={actionCls}>
+          <Images size={12} /> From library
+        </button>
+      )}
+    </>
+  );
 
   return (
     <div className="rounded-bf border border-[rgba(216,184,120,0.12)] bg-bf-card p-3.5">
@@ -48,7 +93,7 @@ export function SceneCard({ scene, index = 0, onPatch, onRegenerate, busy, regen
           className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[12px] text-[15px] font-semibold tabular-nums text-bf-gold"
           style={{ background: 'linear-gradient(150deg,#4a3d24,#251c10)' }}
         >
-          {index + 1}
+          {n}
         </div>
         <div className="min-w-0 flex-1">
           <p className="font-displaySerif text-[15px] leading-snug text-bf-cream">{scene.text}</p>
@@ -60,8 +105,9 @@ export function SceneCard({ scene, index = 0, onPatch, onRegenerate, busy, regen
                 : scene.imageStatus === 'error'
                   ? <ImageOff size={12} />
                   : <Clock size={12} />}
-            {st.label}
+            {yours ? 'Your image' : st.label}
           </div>
+          {missing && !tuning && ownImageButtons && <div className="mt-2 flex flex-wrap gap-2">{ownImageButtons}</div>}
         </div>
         <button
           type="button"
@@ -112,22 +158,39 @@ export function SceneCard({ scene, index = 0, onPatch, onRegenerate, busy, regen
                 className="mt-1 w-full rounded-md border border-[rgba(216,184,120,0.14)] bg-bf-input px-2 py-1.5 text-xs text-bf-sub focus:border-[rgba(216,184,120,0.4)] focus:outline-none"
               />
             )}
-            <div className="mt-2">
+            <div className="mt-2 flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={() => onRegenerate(scene.id)}
-                disabled={busy || regenerating}
-                className="inline-flex items-center gap-1 rounded-md border border-[rgba(216,184,120,0.18)] px-2 py-1 text-xs text-bf-cream hover:border-bf-gold disabled:opacity-50"
+                disabled={imageLocked}
+                className={actionCls}
               >
                 {regenerating ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
                 {regenerating ? 'Regenerating…' : 'Regenerate'}
               </button>
+              {ownImageButtons}
+              <button type="button" onClick={copyPrompt} aria-label={`Copy image prompt for scene ${n}`} className={actionCls}>
+                <Copy size={12} /> Copy prompt
+              </button>
               {scene.promptEditedByUser && (
-                <span className="ml-2 inline-flex items-center gap-1 text-[10px] text-bf-goldDeep"><Wand2 size={10} /> edited</span>
+                <span className="inline-flex items-center gap-1 text-[10px] text-bf-goldDeep"><Wand2 size={10} /> edited</span>
               )}
             </div>
           </div>
         </div>
+      )}
+
+      {/* JPEG/PNG/WebP only: iOS then hands over a JPEG instead of a HEIC,
+          which prod's ffmpeg cannot decode. */}
+      {onUpload && (
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          aria-label={`Image file for scene ${n}`}
+          className="hidden"
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) onUpload(scene.id, f); e.target.value = ''; }}
+        />
       )}
     </div>
   );

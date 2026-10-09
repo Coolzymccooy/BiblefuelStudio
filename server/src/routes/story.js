@@ -26,7 +26,8 @@ import { CHARACTER_ANCHORS } from "../lib/story/styleAnchors.js";
 import { confineToDir } from "../lib/confinePath.js";
 import { isNarrationActive } from "../lib/longform/narrationRegistry.js";
 import { expandScenesToBeats } from "../lib/story/visualBeats.js";
-import { findReusableImages, markUsed, registerImage, pruneLibrary } from "../lib/imageGen/imageLibrary.js";
+import { findReusableImages, markUsed, registerImage, pruneLibrary, readLibrary as readImageLibrary } from "../lib/imageGen/imageLibrary.js";
+import { resolveMovementImage, libraryImageView } from "../lib/ambient/movementImage.js";
 
 const MUSIC_REF_PREFIX = /^(library|mylib):/;
 
@@ -195,7 +196,33 @@ function withTimeout(promise, ms, message) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
+// Image runs in progress, by project. A run works from its own copy of the
+// scenes and writes the whole list back as it goes, so a picture put on a
+// scene meanwhile would be overwritten; PUT /scenes/:sid/image waits for it.
+// The project's status can't tell: a run that hit the image quota leaves it at
+// generating_images with nothing running.
+const imageRuns = new Map();
+
+function imagesRunning(projectId) {
+  return (imageRuns.get(projectId) || 0) > 0;
+}
+
+// Scenes being regenerated one at a time: the PUT waits for those too, or the
+// regenerate would land over the picture you just put there.
+const sceneRegens = new Set();
+const sceneKey = (projectId, sceneId) => `${projectId}\u0000${sceneId}`;
+
 async function imagesStage(ctx, projectId, opts = {}) {
+  imageRuns.set(projectId, (imageRuns.get(projectId) || 0) + 1);
+  try {
+    return await runImagesStage(ctx, projectId, opts);
+  } finally {
+    const left = (imageRuns.get(projectId) || 1) - 1;
+    if (left > 0) imageRuns.set(projectId, left); else imageRuns.delete(projectId);
+  }
+}
+
+async function runImagesStage(ctx, projectId, opts = {}) {
   const force = Boolean(opts.force);
   const project = readProject(ctx.dataDir, projectId);
   if (!project) throw new Error("project not found");
@@ -222,7 +249,8 @@ async function imagesStage(ctx, projectId, opts = {}) {
   for (let i = 0; i < scenes.length; i++) {
     const alreadyDone = scenes[i].imageStatus === "done" && scenes[i].imagePath;
     if (alreadyDone && !force) continue; // retry-failed reruns error/pending; force reruns all
-    scenes[i] = { ...scenes[i], imageStatus: "generating", imageError: null, ...(force ? { imagePath: null, imageUrl: null } : {}) };
+    // Whatever this run puts here, it isn't a picture you chose.
+    scenes[i] = { ...scenes[i], imageStatus: "generating", imageError: null, imageChosenByUser: false, ...(force ? { imagePath: null, imageUrl: null } : {}) };
     pending.push(i);
   }
   writeProject(ctx.dataDir, { ...project, scenes, status: STORY_STATUS.GENERATING_IMAGES });
@@ -553,6 +581,88 @@ router.post("/:id/segment", async (req, res) => {
   }
 });
 
+/**
+ * Why a picture can't go on this scene right now, or null. Each reason has
+ * its own code so the client can tell them apart without reading the words.
+ */
+function sceneImageBlocked(project, sceneId) {
+  if (!(project.scenes || []).some((s) => s.id === sceneId)) {
+    return { status: 404, body: { error: "scene not found" } };
+  }
+  if (imagesRunning(project.projectId)) {
+    return { status: 409, body: { code: "IMAGES_RUNNING", error: "Images are still being generated. Wait for that to finish, or Cancel it, then try again." } };
+  }
+  if (sceneRegens.has(sceneKey(project.projectId, sceneId))) {
+    return { status: 409, body: { code: "SCENE_REGENERATING", error: "This scene is being regenerated. Wait for that to finish, then try again." } };
+  }
+  // Only a render alive in this process: one that died in a restart leaves
+  // the status at "rendering", and must not lock the pictures for good.
+  if (project.status === STORY_STATUS.RENDERING && project.render?.jobId && getRenderJob(project.render.jobId)) {
+    return { status: 409, body: { code: "RENDERING", error: "The video is rendering. Wait for it to finish, then change pictures." } };
+  }
+  return null;
+}
+
+// PUT /:id/scenes/:sid/image — your own picture on one scene, instead of a
+// generated one: { uploadPath } from POST /api/media/upload-background, or
+// { libraryId } from GET /:id/library-images. Costs no image quota, so a
+// project can be finished when the daily limit has run out. The checks on
+// what may be used are Ambient's (lib/ambient/movementImage.js).
+router.put("/:id/scenes/:sid/image", async (req, res) => {
+  try {
+    const { dataDir, outputDir } = req.ctx;
+    const project = readProject(dataDir, req.params.id);
+    if (!project) return res.status(404).json({ ok: false, error: "project not found" });
+    const refused = sceneImageBlocked(project, req.params.sid);
+    if (refused) return res.status(refused.status).json({ ok: false, ...refused.body });
+
+    const got = await resolveMovementImage({
+      dataDir, outputDir, project: { ...project, aspect: imageAspectFor(project) }, body: req.body || {},
+      items: readImageLibrary(dataDir).items, register: _imageLib.register,
+    });
+    if (!got.ok) return res.status(got.status).json({ ok: false, error: got.error });
+    try { _imageLib.mark({ dataDir, id: got.entry.id }); } catch { /* stats only */ }
+
+    // Checked again: a run, a render or a re-segment can start while the
+    // upload is being copied. From here to the write nothing awaits, so none
+    // can start in between.
+    const fresh = readProject(dataDir, project.projectId);
+    if (!fresh) return res.status(404).json({ ok: false, error: "project not found" });
+    const refusedNow = sceneImageBlocked(fresh, req.params.sid);
+    if (refusedNow) return res.status(refusedNow.status).json({ ok: false, ...refusedNow.body });
+    const scenes = (fresh.scenes || []).map((s) => (s.id !== req.params.sid ? s : {
+      ...s,
+      imagePath: got.entry.path,
+      imageUrl: got.entry.publicUrl || null,
+      imageStatus: "done",
+      imageError: null,
+      imageSource: got.source,
+      imageLibraryId: got.entry.id,
+      imageReuseScore: null,
+      imageChosenByUser: true,
+    }));
+    // The quota stopped the run short (status "generating"), or it was
+    // cancelled (status "error"); once every scene has a picture it is ready.
+    const allDone = scenes.every((s) => s.imageStatus === "done");
+    const settle = allDone && [STORY_STATUS.GENERATING_IMAGES, STORY_STATUS.ERROR].includes(fresh.status)
+      ? { status: STORY_STATUS.READY_TO_RENDER, error: null }
+      : {};
+    const updated = writeProject(dataDir, { ...fresh, scenes, ...settle });
+    // Uploads land in the library too; keep it from growing without bound.
+    try { pruneLibrary({ dataDir }); } catch { /* housekeeping only */ }
+    return res.json({ ok: true, project: updated });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// GET /:id/library-images — pictures this account can put on a scene
+// (generated or uploaded before): ids and URLs only, never server paths.
+router.get("/:id/library-images", (req, res) => {
+  if (!readProject(req.ctx.dataDir, req.params.id)) return res.status(404).json({ ok: false, error: "project not found" });
+  return res.json({ ok: true, images: libraryImageView(readImageLibrary(req.ctx.dataDir).items).slice(0, 200) });
+});
+
 // POST /:id/images — (re)generate scene images. Runs DETACHED and returns
 // immediately so it isn't killed by the ~100s edge timeout when a long video
 // has dozens of images; the client polls the project for progress.
@@ -654,29 +764,43 @@ router.post("/:id/scenes/:sid/regenerate", async (req, res) => {
     if (!project) return res.status(404).json({ ok: false, error: "project not found" });
     const idx = (project.scenes || []).findIndex((s) => s.id === req.params.sid);
     if (idx < 0) return res.status(404).json({ ok: false, error: "scene not found" });
-    const scenes = [...project.scenes];
-    scenes[idx] = { ...scenes[idx], imageStatus: "generating" };
-    const result = await _imageGenFn({
-      seriesId: `${project.projectId}-${req.params.sid}-${Date.now()}`,
-      partNumber: 1,
-      rawPrompt: scenes[idx].imagePrompt,
-      aspect: imageAspectFor(project),
-    });
-    if (result?.ok) {
-      // Freshly generated, so this is no longer a library reuse — clear the
-      // provenance or the UI keeps calling it "Reused" — and harvest it so
-      // the next project can use it.
-      let entry = null;
-      try {
-        entry = await _imageLib.register({ dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir, sourcePath: result.path, prompt: scenes[idx].imagePrompt, style: String(project.style || ""), aspect: imageAspectFor(project), provider: result.provider, projectId: project.projectId });
-      } catch (err) {
-        console.warn(`[story] regenerate harvest failed: ${err?.message || err}`);
+    const key = sceneKey(project.projectId, req.params.sid);
+    sceneRegens.add(key);
+    let image;
+    let result;
+    try {
+      result = await _imageGenFn({
+        seriesId: `${project.projectId}-${req.params.sid}-${Date.now()}`,
+        partNumber: 1,
+        rawPrompt: project.scenes[idx].imagePrompt,
+        aspect: imageAspectFor(project),
+      });
+      if (result?.ok) {
+        // Freshly generated, so this is no longer a library reuse — clear the
+        // provenance or the UI keeps calling it "Reused" — and harvest it so
+        // the next project can use it.
+        let entry = null;
+        try {
+          entry = await _imageLib.register({ dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir, sourcePath: result.path, prompt: project.scenes[idx].imagePrompt, style: String(project.style || ""), aspect: imageAspectFor(project), provider: result.provider, projectId: project.projectId });
+        } catch (err) {
+          console.warn(`[story] regenerate harvest failed: ${err?.message || err}`);
+        }
+        image = { imagePath: result.path, imageUrl: result.publicUrl || null, imageStatus: "done", imageError: null, imageSource: "generated", imageLibraryId: entry?.id || null, imageReuseScore: null, imageChosenByUser: false };
+      } else {
+        image = { imageStatus: "error", imageError: shortImageError(result?.error), imageChosenByUser: false };
       }
-      scenes[idx] = { ...scenes[idx], imagePath: result.path, imageUrl: result.publicUrl || null, imageStatus: "done", imageError: null, imageSource: "generated", imageLibraryId: entry?.id || null, imageReuseScore: null };
-    } else {
-      scenes[idx] = { ...scenes[idx], imageStatus: "error", imageError: shortImageError(result?.error) };
+    } finally {
+      sceneRegens.delete(key);
     }
-    const updated = writeProject(req.ctx.dataDir, { ...project, scenes });
+    // Generating took a while: put the result on the scene as it is NOW, so
+    // a picture put on another scene, or a caption edit, meanwhile isn't
+    // undone. (A picture can't be put on THIS scene meanwhile: the PUT waits.)
+    const fresh = readProject(req.ctx.dataDir, req.params.id);
+    if (!fresh) return res.status(404).json({ ok: false, error: "project not found" });
+    const updated = writeProject(req.ctx.dataDir, {
+      ...fresh,
+      scenes: (fresh.scenes || []).map((s) => (s.id === req.params.sid ? { ...s, ...image } : s)),
+    });
     // ok=false on the *scene* (not the request) so the client can show the
     // real reason instead of a misleading "regenerated" success.
     return res.json({ ok: true, project: updated, sceneOk: Boolean(result?.ok), sceneError: result?.ok ? null : shortImageError(result?.error) });

@@ -138,7 +138,10 @@ export async function registerImage({ dataDir, outputDir, sourcePath, prompt, st
     // read-modify-write of the index cannot interleave with another worker's
     // — scenes harvest in parallel, and a stale write would silently drop an
     // entry and orphan its pool file forever.
-    const embedding = encodeEmbedding(await _embed(String(prompt || "")));
+    // No prompt (your own upload) means no embedding on purpose: nothing to
+    // match against, and no needless call to the embedding API.
+    const text = String(prompt || "").trim();
+    const embedding = text ? encodeEmbedding(await _embed(text)) : "";
 
     const lib = readLibrary(dataDir);
     const existing = lib.items.find((it) => it?.hash === hash);

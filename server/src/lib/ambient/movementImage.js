@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { sniffImage, UNDECODABLE_IMAGE_ERROR } from "../imageSniff.js";
+import { sniffImage, imageHeaderSize, UNDECODABLE_IMAGE_ERROR } from "../imageSniff.js";
 
 export { sniffImage, UNDECODABLE_IMAGE_ERROR };
 
@@ -53,6 +53,28 @@ export function resolveOwnUpload(outputDir, raw) {
   return path.relative(jail, resolved) === name ? resolved : null;
 }
 
+/** Larger than any phone camera or AI image; a render decodes every one whole. */
+export const MAX_IMAGE_SIDE = 8192;
+export const MAX_IMAGE_PIXELS = 40_000_000;
+
+/**
+ * Refuse a picture a render can't use or would choke on. A small file can
+ * declare a huge canvas, and a render decodes each scene's picture whole,
+ * so 30 of those could take the server's memory with them. The size comes
+ * from the file's header: even ffprobe decodes the picture to report it.
+ */
+async function checkImageShape(file, kind) {
+  const size = imageHeaderSize(file, kind);
+  if (size?.animated) {
+    return { ok: false, error: "That's an animated picture. Use a still JPG or PNG." };
+  }
+  if (!size) return { ok: false, error: UNDECODABLE_IMAGE_ERROR };
+  if (size.w > MAX_IMAGE_SIDE || size.h > MAX_IMAGE_SIDE || size.w * size.h > MAX_IMAGE_PIXELS) {
+    return { ok: false, error: `That picture is ${size.w}×${size.h}, too large for a video. Use one under ${MAX_IMAGE_SIDE} pixels a side.` };
+  }
+  return { ok: true };
+}
+
 /**
  * The client's view of the library: ids and URLs, never server paths.
  *
@@ -95,6 +117,8 @@ export async function resolveMovementImage({ dataDir, outputDir, project, body, 
   }
   const kind = sniffImage(file);
   if (!kind) return { ok: false, status: 400, error: UNDECODABLE_IMAGE_ERROR };
+  const shape = await checkImageShape(file, kind);
+  if (!shape.ok) return { ok: false, status: 400, error: shape.error };
 
   // No prompt on purpose: no embedding and no categories means the reuse
   // matcher never substitutes your photo into a scene on its own. It is only
