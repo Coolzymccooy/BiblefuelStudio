@@ -29,22 +29,44 @@ test("same seed, same plan; another seed, another plan", () => {
 });
 
 test("rules: no repeat except pop, slams spaced 4 s, long lines never slam, slots never repeat", () => {
-  for (let seed = 1; seed <= 50; seed += 1) {
-    const plan = planPhrases({ phrases: song, energy: "wild", seed, slotCount: 5 });
-    let lastSlamEnd = -Infinity;
-    plan.forEach((p, i) => {
-      if (i > 0 && p.effect !== "pop" && plan[i - 1].effect === p.effect) {
-        assert.equal(p.effect, "stack", "only the stack fallback may repeat");
-      }
-      if (p.effect === "slam") {
-        assert.ok(p.phrase.text.split(/\s+/).length <= 4);
-        assert.ok(p.phrase.start - lastSlamEnd >= 4, `seed ${seed}: slams too close`);
-        lastSlamEnd = p.phrase.end;
-      }
-      if (i > 0) assert.notEqual(p.slot, plan[i - 1].slot);
-      assert.ok(Number.isInteger(p.rot) && Math.abs(p.rot) <= 4);
-    });
+  for (const energy of ["wild", "lively"]) {
+    for (let seed = 1; seed <= 50; seed += 1) {
+      const plan = planPhrases({ phrases: song, energy, seed, slotCount: 5 });
+      let lastSlamEnd = -Infinity;
+      plan.forEach((p, i) => {
+        if (i > 0 && p.effect !== "pop") {
+          assert.notEqual(p.effect, plan[i - 1].effect, `${energy} seed ${seed}: back-to-back ${p.effect}`);
+        }
+        if (p.effect === "slam") {
+          assert.ok(p.phrase.text.split(/\s+/).length <= 4);
+          assert.ok(p.phrase.start - lastSlamEnd >= 4, `${energy} seed ${seed}: slams too close`);
+          lastSlamEnd = p.phrase.end;
+        }
+        if (i > 0) assert.notEqual(p.slot, plan[i - 1].slot);
+        assert.ok(Number.isInteger(p.rot) && Math.abs(p.rot) <= 4);
+      });
+    }
   }
+});
+
+test("an override on one phrase leaves every other phrase's slot and rot unchanged", () => {
+  const base = planPhrases({ phrases: song, energy: "wild", seed: 3, slotCount: 5 });
+  const over = planPhrases({ phrases: song, energy: "wild", seed: 3, slotCount: 5, overrides: { 0: "pop" } });
+  for (let i = 1; i < song.length; i += 1) {
+    assert.equal(over[i].slot, base[i].slot, `slot of phrase ${i}`);
+    assert.equal(over[i].rot, base[i].rot, `rot of phrase ${i}`);
+  }
+});
+
+test("null overrides are tolerated and a NaN slotCount puts every phrase in slot 0", () => {
+  assert.doesNotThrow(() => planPhrases({ phrases: song, energy: "wild", seed: 1, overrides: null }));
+  const plan = planPhrases({ phrases: song, energy: "wild", seed: 1, slotCount: NaN });
+  assert.ok(plan.every((p) => p.slot === 0));
+});
+
+test("seed 0 is a valid seed distinct from seed 1", () => {
+  const key = (seed) => JSON.stringify(planPhrases({ phrases: song, energy: "wild", seed, slotCount: 5 }).map((p) => [p.effect, p.slot]));
+  assert.notEqual(key(0), key(1));
 });
 
 test("calm never slams; lively slams only hooks", () => {

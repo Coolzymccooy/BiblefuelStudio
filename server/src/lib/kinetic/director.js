@@ -48,27 +48,39 @@ function allowed(effect, { prev, words, start, lastSlamEnd }) {
   return true;
 }
 
-export function planPhrases({ phrases, energy = "lively", seed = 1, overrides = {}, slotCount = 5 }) {
-  const rnd = mulberry32(Number(seed) || 1);
+function fallbackEffect(energy, prev) {
+  if (energy === "calm") return "pop";
+  return prev === "stack" ? "pop" : "stack";
+}
+
+export function planPhrases({ phrases, energy = "lively", seed = 1, overrides = null, slotCount = 5 }) {
+  const s = Number(seed);
+  const rnd = mulberry32(Number.isFinite(s) ? Math.floor(s) : 1);
+  const forced = overrides ?? {};
   const mix = MIX[energy] || MIX.lively;
   const hooks = findHooks(phrases);
-  const slots = Math.max(1, slotCount);
+  const slots = Math.max(1, Math.floor(Number(slotCount)) || 1);
   let prev = null;
   let lastSlamEnd = -Infinity;
   let slot = -1;
   return phrases.map((phrase, index) => {
+    // Always draw the same three values per phrase, so an override on one
+    // phrase cannot shift the slot or rotation of any other phrase.
+    const rEffect = rnd();
+    const rSlot = rnd();
+    const rRot = rnd();
     const words = String(phrase.text).trim().split(/\s+/).filter(Boolean).length;
     const hook = hooks.has(index);
     let effect;
-    if (EFFECT_IDS.includes(overrides[index])) {
-      effect = overrides[index];
+    if (EFFECT_IDS.includes(forced[index])) {
+      effect = forced[index];
     } else {
       const pool = (hook ? mix.hook : mix.normal).filter((e) => allowed(e, { prev, words, start: phrase.start, lastSlamEnd }));
-      effect = pool.length ? pool[Math.floor(rnd() * pool.length)] : (energy === "calm" ? "pop" : "stack");
+      effect = pool.length ? pool[Math.floor(rEffect * pool.length)] : fallbackEffect(energy, prev);
     }
     if (effect === "slam") lastSlamEnd = phrase.end;
-    slot = slots === 1 ? 0 : (slot + 1 + Math.floor(rnd() * (slots - 1))) % slots;
-    const rot = (index % 2 === 0 ? -1 : 1) * (1 + Math.floor(rnd() * 4));
+    slot = slots === 1 ? 0 : (slot + 1 + Math.floor(rSlot * (slots - 1))) % slots;
+    const rot = (index % 2 === 0 ? -1 : 1) * (1 + Math.floor(rRot * 4));
     prev = effect;
     return { index, phrase, effect, slot, hook, rot };
   });
