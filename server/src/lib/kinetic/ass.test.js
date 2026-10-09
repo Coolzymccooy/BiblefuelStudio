@@ -64,12 +64,35 @@ const lyric = [
   { text: "By his grace", start: 4, end: 5.5 }, { text: "Hold my hand", start: 6, end: 7.5 },
 ];
 
-test("every effect id renders through buildAss", () => {
+/** Phrase 1's events: it starts at 2 s and phrase 2 at 4 s, so its events start in 2.00..3.99. */
+const phraseOne = (ass) => ass.split("\n").filter((l) => /^Dialogue: \d+,0:00:0[23]\.\d\d,/.test(l));
+const shownText = (l) => l.replace(/^.*?Kinetic,,0,0,0,,/, "").replace(/\{[^}]*\}/g, "");
+const HIT_FAMILY = "Knewave"; // Lagos Night's hit font
+
+/** What each effect leaves in its events, and nothing else does. */
+const FINGERPRINTS = {
+  quote: (ev) => ev.some((l) => l.includes("\\t(0,350,\\clip(")),
+  slam: (ev) => ev.some((l) => l.includes("\\p1") && !l.includes("\\clip")) && ev.some((l) => l.includes(`\\fn${HIT_FAMILY}`)),
+  frame: (ev) => ev.filter((l) => l.includes("\\clip(")).length === 4,
+  title: (ev) => ev.some((l) => l.startsWith("Dialogue: 2,")) && !ev.some((l) => l.includes("\\clip(")),
+  curve: (ev) => ev.length >= 6 && ev.every((l) => l.includes("\\pos(") && l.includes("\\frz") && [...shownText(l)].length === 1),
+  stack: (ev) => ev.some((l) => l.includes("\\move(") && /\\frz-?[1-9]/.test(l)),
+  pop: (ev) => ev.some((l) => l.includes("\\move(")) && ev.filter((l) => l.includes("\\move(")).every((l) => l.includes("\\frz0\\")),
+};
+
+test("every effect id renders through buildAss, each with its own fingerprint", () => {
+  const make = (overrides) => buildAss({ lines: lyric, w: 1280, h: 720, look: "studio-lagos-night", energy: "calm", seed: 1, overrides });
   for (const effect of EFFECT_IDS) {
-    const ass = buildAss({ lines: lyric, w: 1280, h: 720, look: "studio-lagos-night", energy: "calm", seed: 1, overrides: { 1: effect } });
-    const events = ass.split("\n").filter((l) => l.startsWith("Dialogue:"));
-    assert.ok(events.some((l) => /,0:00:02\.\d\d,/.test(l.slice(0, 40))), `${effect} draws phrase 1`);
+    const ass = make({ 1: effect });
+    const events = phraseOne(ass);
+    assert.ok(events.length, `${effect} draws phrase 1`);
+    assert.ok(FINGERPRINTS[effect](events), `${effect} fingerprint:\n${events.join("\n")}`);
     assert.ok(!/NaN|undefined|Infinity/.test(ass), `${effect} writes only real numbers`);
+  }
+  // Calm only pops or stacks on its own, so phrase 1 shows none of the other effects.
+  const plain = phraseOne(make({}));
+  for (const effect of ["quote", "curve", "frame", "title"]) {
+    assert.ok(!FINGERPRINTS[effect](plain), `calm phrase 1 looks like ${effect}:\n${plain.join("\n")}`);
   }
 });
 
