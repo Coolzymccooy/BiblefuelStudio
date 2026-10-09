@@ -53,6 +53,6 @@ export function clampBlockY(cy, blockHeight, h, aspect) {
  * Tall frames keep the arc inside 6%..88% of the width.
  */
 export const ARC = Object.freeze({
-  wide: { x: 0.5, y: 0.17, r: 0.75, half: 0.40 },
-  tall: { x: TALL_X, y: 0.15, r: 0.85, half: 0.38 },
+  wide: { x: 0.5, y: 0.17, r: 0.45, half: 0.40 },
+  tall: { x: TALL_X, y: 0.15, r: 0.55, half: 0.38 },
 });

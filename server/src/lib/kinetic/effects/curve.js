@@ -4,13 +4,15 @@ import { bodyScale, caseText, fontsFor, holdEnd, keyWordIndex } from "./common.j
 import { render as stack } from "./stack.js";
 
 const MIN_SHARE = 0.6; // shrunk below 60% of its preferred size a curve reads badly: stack it instead
+// Letters are grapheme clusters, so a Yoruba tone mark stays on its letter instead of floating alone.
+const GRAPHEMES = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 /** Letters of the phrase in order, each tagged with its word, with a space between words. */
 function lettersOf(words) {
   const out = [];
   words.forEach((w, wi) => {
     if (wi > 0) out.push({ ch: " ", word: wi, space: true });
-    for (const ch of w.text) out.push({ ch, word: wi, space: false });
+    for (const { segment } of GRAPHEMES.segment(w.text)) out.push({ ch: segment, word: wi, space: false });
   });
   return out;
 }
