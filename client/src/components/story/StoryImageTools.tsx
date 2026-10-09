@@ -15,6 +15,8 @@ export interface StoryImageToolsProps {
   busy: boolean;
   /** Re-read the project after pictures change. */
   onChanged: () => void;
+  /** Upload several is running, so the page can hold Render and the other image actions. */
+  onUploadingChange?: (uploading: boolean) => void;
 }
 
 const btn = `${secondaryBtnCls} px-3 py-1.5 text-xs`;
@@ -24,9 +26,10 @@ const btn = `${secondaryBtnCls} px-3 py-1.5 text-xs`;
  * quota has run out: copy everything an image AI needs in one go, then bring
  * the pictures back several at a time.
  */
-export function StoryImageTools({ project, characters = [], busy, onChanged }: StoryImageToolsProps) {
+export function StoryImageTools({ project, characters = [], busy, onChanged, onUploadingChange }: StoryImageToolsProps) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const [uploading, setUploading] = useState(false);
+  const [uploading, setUploadingState] = useState(false);
+  const setUploading = (value: boolean) => { setUploadingState(value); onUploadingChange?.(value); };
   const missing = scenesNeedingImages(project).length;
   const someDone = missing < project.scenes.length;
 

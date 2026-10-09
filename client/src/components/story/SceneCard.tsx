@@ -63,7 +63,8 @@ export function SceneCard({
   const imageLocked = busy || regenerating || uploading;
 
   const copyPrompt = async () => {
-    if (await copyText(scene.imagePrompt)) toast.success(`Scene ${n} prompt copied`);
+    // What the editor shows: an edit may still be saving.
+    if (await copyText(prompt)) toast.success(`Scene ${n} prompt copied`);
     else toast.error('Could not copy. Select the prompt text instead.');
   };
 

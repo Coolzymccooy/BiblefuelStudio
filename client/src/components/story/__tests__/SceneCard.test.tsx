@@ -94,5 +94,18 @@ describe('SceneCard', () => {
       await userEvent.click(screen.getByRole('button', { name: 'Copy image prompt for scene 1' }));
       expect(writeText).toHaveBeenCalledWith('a lonely figure');
     });
+
+    it('Copy prompt copies the prompt as just edited, before the save comes back', async () => {
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+      render(<SceneCard scene={scene()} index={0} onPatch={vi.fn()} onRegenerate={vi.fn()} busy={false} />);
+      await userEvent.click(screen.getByRole('button', { name: /tune scene/i }));
+      await userEvent.click(screen.getByRole('button', { name: /edit image prompt/i }));
+      const box = screen.getByLabelText('Image prompt');
+      await userEvent.clear(box);
+      await userEvent.type(box, 'a shepherd at dawn');
+      await userEvent.click(screen.getByRole('button', { name: 'Copy image prompt for scene 1' }));
+      expect(writeText).toHaveBeenCalledWith('a shepherd at dawn');
+    });
   });
 });

@@ -62,6 +62,10 @@ export function StoryVideoPage() {
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
   // Your own pictures on scenes: the one uploading, and the one choosing from the library.
   const [uploadingSceneId, setUploadingSceneId] = useState<string | null>(null);
+  // Upload several, which runs inside StoryImageTools.
+  const [bulkUploading, setBulkUploading] = useState(false);
+  // Pictures are changing: rendering now would freeze a half-updated set.
+  const imagesBusy = busy || bulkUploading || Boolean(regeneratingId || uploadingSceneId);
   const [pickingSceneId, setPickingSceneId] = useState<string | null>(null);
   const [defaultTitle, setDefaultTitle] = useState('');
   const [entryMode, setEntryMode] = useState<'upload' | 'script' | 'longform'>('upload');
@@ -178,7 +182,7 @@ export function StoryVideoPage() {
   };
 
   const onRender = async () => {
-    if (!projectId) return;
+    if (!projectId || imagesBusy) return;
     setBusy(true);
     try {
       await storyApi.render(projectId);
@@ -189,7 +193,7 @@ export function StoryVideoPage() {
   };
 
   const retryFailedImages = async () => {
-    if (!projectId || busy) return;
+    if (!projectId || imagesBusy) return;
     setBusy(true);
     try { await storyApi.generateImages(projectId); refresh(); toast.success('Retrying failed images…'); }
     catch (e) { toast.error((e as Error).message); }
@@ -205,7 +209,7 @@ export function StoryVideoPage() {
   };
 
   const regenerateAllImages = async () => {
-    if (!projectId || busy) return;
+    if (!projectId || imagesBusy) return;
     if (!confirmDiscardOwnImages('Regenerate all')) return;
     setBusy(true);
     try { await storyApi.regenerateAllImages(projectId); refresh(); toast.success('Regenerating all images…'); }
@@ -280,7 +284,7 @@ export function StoryVideoPage() {
   // segmentation. Recovers a project that over-segmented into hundreds of
   // scenes and stalled while generating images.
   const resegment = async () => {
-    if (!projectId || busy) return;
+    if (!projectId || imagesBusy) return;
     if (!confirmDiscardOwnImages('Re-segmenting')) return;
     setBusy(true);
     try {
@@ -632,7 +636,7 @@ export function StoryVideoPage() {
                 index={i}
                 onPatch={onPatch}
                 onRegenerate={onRegenerate}
-                busy={busy}
+                busy={busy || bulkUploading}
                 regenerating={regeneratingId === s.id}
                 onUpload={onUploadSceneImage}
                 onChooseFromLibrary={setPickingSceneId}
@@ -664,7 +668,7 @@ export function StoryVideoPage() {
               {counts.done < counts.total && (
                 <button
                   onClick={retryFailedImages}
-                  disabled={busy}
+                  disabled={imagesBusy}
                   className={`${secondaryBtnCls} px-3 py-1.5 text-xs`}
                 >
                   <RefreshCw size={12} /> Retry failed images
@@ -672,7 +676,7 @@ export function StoryVideoPage() {
               )}
               <button
                 onClick={regenerateAllImages}
-                disabled={busy}
+                disabled={imagesBusy}
                 title="Discard every current image and regenerate them all from scratch."
                 className={`${secondaryBtnCls} px-3 py-1.5 text-xs`}
               >
@@ -680,7 +684,7 @@ export function StoryVideoPage() {
               </button>
             </div>
             {/* Out of free images? Make them in ChatGPT/Gemini and bring them back. */}
-            <StoryImageTools project={project} characters={characters} busy={busy || Boolean(regeneratingId || uploadingSceneId)} onChanged={refresh} />
+            <StoryImageTools project={project} characters={characters} busy={busy || Boolean(regeneratingId || uploadingSceneId)} onChanged={refresh} onUploadingChange={setBulkUploading} />
           </div>
           </div>
 
@@ -698,14 +702,14 @@ export function StoryVideoPage() {
           />
           <button
             onClick={onRender}
-            disabled={!canRender(project) || busy}
+            disabled={!canRender(project) || imagesBusy}
             className="w-full rounded-xl bg-primary-500 px-4 py-3 text-sm font-semibold text-dark-900 hover:bg-primary-400 disabled:opacity-50"
           >
             {canRender(project) ? 'Looks good → Render' : 'Waiting for all images…'}
           </button>
           <button
             onClick={resegment}
-            disabled={busy}
+            disabled={imagesBusy}
             className="w-full text-center text-meta hover:text-bf-cream disabled:opacity-50"
           >
             Too many scenes, or images stuck? Re-segment with fewer, longer scenes
