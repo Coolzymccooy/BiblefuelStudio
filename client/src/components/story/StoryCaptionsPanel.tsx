@@ -256,7 +256,7 @@ export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCapti
             </Field>
             <Field
               label="Title intro"
-              tooltip="Optional. Shown big before the first line, like a song title. Leave empty for none."
+              tooltip="Optional. Shown big before the first line, like a song title — it needs a moment of silence before the narration starts (under ~0.7 s, it's skipped). Leave empty for none."
             >
               <Input
                 type="text"

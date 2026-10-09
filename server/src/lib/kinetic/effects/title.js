@@ -4,9 +4,10 @@ import { caseText, fontsFor, holdEnd, inkAllowance, lineEvent } from "./common.j
 
 const BORD = 6;
 const SHAD = 4;
-const INTRO_MIN = 1.5;
+const INTRO_MIN = 0.6; // a card on screen for less than this is too short to read, so it is skipped
 const INTRO_MAX = 3;
 const SECOND_LINE_DELAY = 0.25;
+const TOGETHER_BELOW = 0.85; // a card shorter than this brings both lines up at 0 s, so the second is not barely seen
 
 /** Split words into two lines as even in length as possible (one line for a single word). */
 export function splitTitle(words) {
@@ -51,7 +52,9 @@ export function render({ planned, look, w, h, aspect, nextStart }) {
 
 /**
  * An opt-in title card before the first lyric: up from 0 s, the second line
- * a beat later, gone just before the first phrase (on screen 1.5–3 s).
+ * a beat later, gone just before the first phrase (on screen up to 3 s).
+ * It never overlaps the opening lyric: when the first lyric leaves under
+ * 0.6 s the card is skipped (no events) rather than delaying the captions.
  */
 export function titleCard({ text, look, w, h, aspect, firstStart }) {
   const parts = String(text || "").trim().split(/\s+/).filter(Boolean);
@@ -59,8 +62,11 @@ export function titleCard({ text, look, w, h, aspect, firstStart }) {
   // A missing first-lyric time would make the end NaN (or 0, as Number(null) is 0): show the card for the full 3 s instead.
   const raw = firstStart;
   const first = raw === null || raw === undefined || raw === "" || !Number.isFinite(Number(raw)) ? INTRO_MAX + 0.05 : Number(raw);
-  const end = Number(Math.min(INTRO_MAX, Math.max(INTRO_MIN, first - 0.05)).toFixed(2));
+  const end = Number(Math.min(INTRO_MAX, first - 0.05).toFixed(2));
+  if (end < INTRO_MIN) return [];
+  // With little room, the second line comes up with the first rather than after the card is gone.
+  const secondAt = end < TOGETHER_BELOW ? 0 : SECOND_LINE_DELAY;
   const lines = splitTitle(parts.map((p) => ({ text: caseText(look, p) })));
-  const words = lines.flatMap((ln, li) => ln.map((x) => ({ text: x.text, t: li * SECOND_LINE_DELAY })));
+  const words = lines.flatMap((ln, li) => ln.map((x) => ({ text: x.text, t: li * secondAt })));
   return titleEvents({ words, look, w, h, aspect, end, rot: -1 });
 }

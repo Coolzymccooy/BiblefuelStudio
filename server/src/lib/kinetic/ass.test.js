@@ -96,11 +96,34 @@ test("every effect id renders through buildAss, each with its own fingerprint", 
   }
 });
 
-test("a title card opens the video", () => {
-  const ass = buildAss({ lines: lyric, w: 1280, h: 720, look: "studio-lagos-night", energy: "wild", seed: 1, title: "Hold My Hand" });
-  const first = ass.split("\n").find((l) => l.startsWith("Dialogue:"));
+const stampSeconds = (stamp) => stamp.split(":").reduce((acc, part) => acc * 60 + Number(part), 0);
+const dialogue = (ass) => ass.split("\n").filter((l) => l.startsWith("Dialogue:"));
+
+test("a title card opens the video and is gone before the first lyric", () => {
+  // The first lyric starts at 4 s here, so there is room for the card.
+  const late = lyric.map((l) => ({ ...l, start: l.start + 4, end: l.end + 4 }));
+  const ass = buildAss({ lines: late, w: 1280, h: 720, look: "studio-lagos-night", energy: "wild", seed: 1, title: "Hold My Hand" });
+  const events = dialogue(ass);
+  const first = events[0];
   assert.match(first, /^Dialogue: 2,0:00:00\.00,/);
   assert.ok(first.includes("HOLD"));
-  const none = buildAss({ lines: lyric, w: 1280, h: 720, look: "studio-lagos-night", energy: "wild", seed: 1, title: "   " });
-  assert.equal(none, buildAss({ lines: lyric, w: 1280, h: 720, look: "studio-lagos-night", energy: "wild", seed: 1 }));
+  const cardEnd = stampSeconds(first.split(",")[2]);
+  // The card is two lines (events 0 and 1); everything after is lyric.
+  const lyricStarts = events.slice(2).map((l) => stampSeconds(l.split(",")[1]));
+  assert.ok(lyricStarts.length > 0);
+  assert.ok(cardEnd < Math.min(...lyricStarts), `card ends ${cardEnd} before the first lyric ${Math.min(...lyricStarts)}`);
+  const none = buildAss({ lines: late, w: 1280, h: 720, look: "studio-lagos-night", energy: "wild", seed: 1, title: "   " });
+  assert.equal(none, buildAss({ lines: late, w: 1280, h: 720, look: "studio-lagos-night", energy: "wild", seed: 1 }));
+});
+
+test("a title card is skipped when the first lyric starts too soon, and the first phrase is then a plain phrase", () => {
+  // The first lyric at 0.3 s leaves under 0.6 s, so no card is drawn. `titleFirst` is off whenever a
+  // title was given, so the first phrase is not promoted to the wild title effect either: the video
+  // simply opens on the lyric. That is accepted — captions stay in sync with the audio.
+  const soon = lyric.map((l) => ({ ...l, start: l.start + 0.3, end: l.end + 0.3 }));
+  const ass = buildAss({ lines: soon, w: 1280, h: 720, look: "studio-lagos-night", energy: "wild", seed: 1, title: "Morning Glory" });
+  const events = dialogue(ass);
+  assert.ok(events.length > 0);
+  assert.ok(!events.some((l) => /^Dialogue: 2,0:00:00\.00,/.test(l)), "no layer-2 event at 0:00:00.00");
+  assert.ok(!events.some((l) => l.includes("MORNING")), "the title text is not drawn");
 });
