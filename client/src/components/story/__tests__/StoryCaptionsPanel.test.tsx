@@ -207,6 +207,23 @@ describe('StoryCaptionsPanel Studio effects', () => {
     expect(screen.queryByRole('textbox', { name: 'Title intro' })).not.toBeInTheDocument();
   });
 
+  it('plays a sample clip of the chosen Studio look', async () => {
+    mockCatalogue(studioCatalogue);
+    const { container } = render(<StoryCaptionsPanel value={{ captions: 'kinetic', captionPreset: 'studio-lagos-night' }} onChange={vi.fn()} />);
+    await screen.findByRole('combobox', { name: 'Energy' });
+    const video = container.querySelector('video');
+    expect(video).not.toBeNull();
+    expect(video!.getAttribute('src')).toBe('/studio-looks/lagos-night.mp4');
+    expect(video!.muted).toBe(true);
+  });
+
+  it('shows no sample clip for ordinary looks', async () => {
+    mockCatalogue(studioCatalogue);
+    const { container } = render(<StoryCaptionsPanel value={{ captions: 'kinetic', captionPreset: 'cinematic-default' }} onChange={vi.fn()} />);
+    await screen.findByRole('option', { name: 'Lagos Night' });
+    expect(container.querySelector('video')).toBeNull();
+  });
+
   it('Studio looks are unavailable when the server has no libass', async () => {
     mockCatalogue({ ...studioCatalogue, libass: false });
     show({ captions: 'kinetic', captionPreset: 'cinematic-default' });

@@ -50,6 +50,9 @@ export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCapti
   const [studioLooks, setStudioLooks] = useState<StudioOption[]>([]);
   const [energies, setEnergies] = useState<StudioOption[]>([]);
   const [libass, setLibass] = useState(true);
+  // A look whose sample clip failed to load: hide the player rather than show
+  // a broken one.
+  const [failedPreview, setFailedPreview] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -207,6 +210,20 @@ export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCapti
               </optgroup>
             </Select>
           </Field>
+
+          {studio && failedPreview !== value.captionPreset && (
+            <video
+              key={value.captionPreset}
+              src={`/studio-looks/${value.captionPreset!.replace(/^studio-/, '')}.mp4`}
+              autoPlay
+              muted
+              loop
+              playsInline
+              aria-label="Studio look sample"
+              onError={() => setFailedPreview(value.captionPreset ?? null)}
+              className="w-full max-w-xs rounded-lg border border-white/10"
+            />
+          )}
 
           {studio && (
             <>
