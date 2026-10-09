@@ -1,7 +1,9 @@
 import { covers, fitSize, widthAt, assEscape, assColour, assTime } from "../text.js";
-import { caseText, fontsFor, holdEnd, lineEvent } from "./common.js";
+import { caseText, fontsFor, holdEnd, inkAllowance, lineEvent } from "./common.js";
 import { chunk } from "./stack.js";
 
+const BORD = 6; // the centre lines' outline and shadow
+const SHAD = 4;
 const SPEED = 0.06; // bands scroll this share of the frame's long side per second
 const MAX_REPEATS = 40;
 
@@ -64,14 +66,15 @@ export function render({ planned, look, w, h, aspect, nextStart }) {
   const lines = chunk(words);
   const room = (box.right - box.left) - 2 * (inset + bandFs);
   const preferred = aspect === "tall" ? Math.round(w * 0.16) : Math.round(h * 0.15);
-  const fs = fitSize(fonts.hit.file, lines.map((ln) => ln.map((x) => x.text).join(" ")), preferred, room * 0.9, 32);
+  const budget = room * 0.9 - inkAllowance(preferred, { bord: BORD, shad: SHAD, italic: fonts.hit.italic, bold: fonts.hit.bold });
+  const fs = fitSize(fonts.hit.file, lines.map((ln) => ln.map((x) => x.text).join(" ")), preferred, budget, 32);
   const lineGap = fs * 1.0;
   const cx = (box.left + box.right) / 2;
   const cy = (box.top + box.bottom) / 2;
   const y0 = cy - ((lines.length - 1) * lineGap) / 2;
   lines.forEach((ln, i) => events.push(lineEvent({
     start: ln[0].t, end, x: cx, y: y0 + i * lineGap, fs, family: fonts.hit.family,
-    rot: 0, pop: 140, bord: 6, shad: 4, outline: look.outline, words: ln, layer: 2,
+    rot: 0, pop: 140, bord: BORD, shad: SHAD, outline: look.outline, words: ln, layer: 2,
   })));
   return events;
 }

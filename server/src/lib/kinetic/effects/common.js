@@ -37,6 +37,14 @@ export function fontsFor(look, text) {
   };
 }
 
+/**
+ * Width to hold back when fitting text, so what libass actually paints (outline,
+ * shadow, faux italic slant, brush overhang) stays inside the measured box.
+ */
+export function inkAllowance(fs, { bord = 0, shad = 0, italic = false, bold = false } = {}) {
+  return 2 * bord + shad + fs * (0.06 + (italic ? 0.22 : 0) + (bold ? 0.03 : 0));
+}
+
 /** Greedy wrap: words onto lines no wider than maxWidth. */
 export function wrapWords(words, file, fs, maxWidth) {
   const lines = [];

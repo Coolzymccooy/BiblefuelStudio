@@ -1,7 +1,9 @@
 import { fitSize } from "../text.js";
 import { CENTRE, maxWidthFor } from "../layout.js";
-import { caseText, fontsFor, holdEnd, lineEvent } from "./common.js";
+import { caseText, fontsFor, holdEnd, inkAllowance, lineEvent } from "./common.js";
 
+const BORD = 6;
+const SHAD = 4;
 const INTRO_MIN = 1.5;
 const INTRO_MAX = 3;
 const SECOND_LINE_DELAY = 0.25;
@@ -28,13 +30,14 @@ function titleEvents({ words, look, w, h, aspect, end, rot }) {
   })));
   const maxWidth = maxWidthFor({ side: false }, w, aspect) * 0.92;
   const preferred = aspect === "tall" ? Math.round(w * 0.22) : Math.round(h * 0.26);
-  const fs = fitSize(fonts.hit.file, lines.map((ln) => ln.map((x) => x.text).join(" ")), preferred, maxWidth, 40);
+  const budget = maxWidth - inkAllowance(preferred, { bord: BORD, shad: SHAD, italic: fonts.hit.italic, bold: fonts.hit.bold });
+  const fs = fitSize(fonts.hit.file, lines.map((ln) => ln.map((x) => x.text).join(" ")), preferred, budget, 40);
   const anchor = CENTRE[aspect] || CENTRE.wide;
   const lineGap = fs * 1.0;
   const y0 = anchor.y * h - ((lines.length - 1) * lineGap) / 2;
   return lines.map((ln, i) => lineEvent({
     start: ln[0].t, end, x: anchor.x * w, y: y0 + i * lineGap, fs, family: fonts.hit.family,
-    rot, pop: 150, bord: 6, shad: 4, outline: look.outline, words: ln, layer: 2,
+    rot, pop: 150, bord: BORD, shad: SHAD, outline: look.outline, words: ln, layer: 2,
   }));
 }
 
