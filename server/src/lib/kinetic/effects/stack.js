@@ -1,6 +1,6 @@
 import { fitSize } from "../text.js";
 import { slotsFor, maxWidthFor, clampBlockY } from "../layout.js";
-import { caseText, fontsFor, holdEnd, lineEvent } from "./common.js";
+import { caseText, fontsFor, holdEnd, keyWordIndex, lineEvent } from "./common.js";
 
 const MAX_WORDS_PER_LINE = 2;
 const MAX_CHARS_PER_LINE = 12;
@@ -27,15 +27,15 @@ export function render({ planned, look, energy, w, h, aspect, nextStart }) {
   const fonts = fontsFor(look, caseText(look, phrase.words.map((x) => x.text).join(" ")));
   const slots = slotsFor(aspect);
   const slot = slots[planned.slot % slots.length];
-  const last = phrase.words.length - 1;
+  const key = keyWordIndex(phrase.words.map((x) => x.text));
   const words = phrase.words.map((x, i) => ({
     text: caseText(look, x.text),
     t: x.start,
-    colour: hook || (energy !== "calm" && i === last) ? fonts.hit.colour : fonts.body.colour,
+    colour: hook || (energy !== "calm" && i === key) ? fonts.hit.colour : fonts.body.colour,
   }));
   const lines = chunk(words);
   const maxWidth = maxWidthFor(slot, w, aspect);
-  const preferred = aspect === "tall" ? Math.round(w * 0.11) : Math.round(h * 0.095);
+  const preferred = aspect === "tall" ? Math.round(w * 0.14) : Math.round(h * 0.13);
   const fs = fitSize(fonts.body.file, lines.map((ln) => ln.map((x) => x.text).join(" ")), preferred, maxWidth);
   const lineGap = fs * 1.05;
   const blockHeight = lines.length * lineGap;

@@ -79,3 +79,17 @@ export function sparksEvent({ x, y, at, r, colour }) {
     + `{\\an7\\pos(${Math.round(x)},${Math.round(y)})\\bord0\\shad0\\1c${assColour(colour)}\\fscx60\\fscy60`
     + `\\t(0,160,\\fscx115\\fscy115)\\fad(0,220)\\p1}${strokes.join(" ")}{\\p0}`;
 }
+
+/**
+ * Index of a phrase's most important word: the one with the most letters
+ * (punctuation does not count). On a tie the later word wins.
+ */
+export function keyWordIndex(words) {
+  let best = 0;
+  let bestLetters = -1;
+  words.forEach((w, i) => {
+    const letters = (String(w).match(/\p{L}/gu) || []).length;
+    if (letters >= bestLetters) { best = i; bestLetters = letters; }
+  });
+  return best;
+}

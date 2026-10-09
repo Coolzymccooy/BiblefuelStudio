@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { render as pop } from "./pop.js";
 import { render as stack } from "./stack.js";
 import { render as slam } from "./slam.js";
-import { holdEnd, fontsFor, lineEvent } from "./common.js";
+import { holdEnd, fontsFor, lineEvent, keyWordIndex } from "./common.js";
 import { resolveLook } from "../looks.js";
 
 const words = (text, start) => text.split(" ").map((t, i) => ({ text: t, start: start + i * 0.25, end: start + i * 0.25 + 0.25 }));
@@ -51,7 +51,25 @@ test("stack breaks a phrase into short stacked lines at its slot, tilted", () =>
   const ys = lines.map((l) => posOf(l)[1]);
   assert.deepEqual([...ys].sort((a, b) => a - b), ys, "top to bottom");
   for (const l of lines) assert.match(l, /\\frz-2/);
-  assert.match(lines.at(-1), /&H003AD3F5&/, "last word in the hit colour when lively");
+  const morning = lines.find((l) => l.includes("MORNING"));
+  const nepa = lines.find((l) => l.includes("NEPA"));
+  assert.match(morning, /&H003AD3F5&/, "the longest word is in the hit colour when lively");
+  assert.ok(!nepa.includes("&H003AD3F5&"), "the last word is not, unless it is the key word");
+});
+
+test("keyWordIndex picks the word with the most letters; a tie goes to the later word", () => {
+  assert.equal(keyWordIndex(["I", "still", "dey"]), 1);
+  assert.equal(keyWordIndex(["By", "his", "grace,"]), 2);
+  assert.equal(keyWordIndex(["God", "is", "good"]), 2);
+  assert.equal(keyWordIndex(["Ọlọ́run", "ṣe"]), 0);
+});
+
+test("captions are big: a short stack line fills the frame", () => {
+  const fsOf = (lines) => Number(lines[0].match(/\\fs(\d+)/)[1]);
+  const tall = stack(ctx(planned("Fear thou", "stack"), { w: 720, h: 1280, aspect: "tall" }));
+  const wide = stack(ctx(planned("Fear thou", "stack")));
+  assert.ok(fsOf(tall) >= 95, `tall stack size ${fsOf(tall)}`);
+  assert.ok(fsOf(wide) >= 90, `wide stack size ${fsOf(wide)}`);
 });
 
 test("calm stack keeps every word in the body colour unless the line is a hook", () => {

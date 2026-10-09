@@ -78,6 +78,14 @@ test("calm never slams; lively slams only hooks", () => {
   }
 });
 
+test("wild actually slams: at least 1.5 slams per plan on average", () => {
+  let slams = 0;
+  for (let seed = 1; seed <= 50; seed += 1) {
+    slams += planPhrases({ phrases: song, energy: "wild", seed, slotCount: 5 }).filter((p) => p.effect === "slam").length;
+  }
+  assert.ok(slams / 50 >= 1.5, `average slams ${slams / 50}`);
+});
+
 test("an override wins over every rule; unknown overrides are ignored", () => {
   const plan = planPhrases({ phrases: song, energy: "calm", seed: 1, slotCount: 5, overrides: { 0: "slam", 1: "explode" } });
   assert.equal(plan[0].effect, "slam");

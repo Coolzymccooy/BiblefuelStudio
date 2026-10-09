@@ -8,7 +8,7 @@ export const EFFECT_IDS = Object.freeze(["pop", "stack", "slam"]);
 const MIX = Object.freeze({
   calm: { normal: ["pop", "stack"], hook: ["stack", "pop"] },
   lively: { normal: ["stack", "pop", "stack"], hook: ["slam", "stack"] },
-  wild: { normal: ["stack", "slam", "stack", "pop"], hook: ["slam"] },
+  wild: { normal: ["slam", "stack", "slam", "pop"], hook: ["slam"] },
 });
 
 const SLAM_GAP_SEC = 4;
