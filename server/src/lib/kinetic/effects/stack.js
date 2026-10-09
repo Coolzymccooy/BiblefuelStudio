@@ -24,7 +24,7 @@ function chunk(words) {
 /** The phrase as short stacked lines, tilted, at the planned slot. */
 export function render({ planned, look, energy, w, h, aspect, nextStart }) {
   const { phrase, hook, rot } = planned;
-  const fonts = fontsFor(look, caseText(look, phrase.text));
+  const fonts = fontsFor(look, caseText(look, phrase.words.map((x) => x.text).join(" ")));
   const slots = slotsFor(aspect);
   const slot = slots[planned.slot % slots.length];
   const last = phrase.words.length - 1;

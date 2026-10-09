@@ -76,3 +76,32 @@ test("tall frames keep stacked text inside the safe band", () => {
   const lines = stack(ctx(planned("From Lagos traffic to the last train home", "stack", { slot: 2 }), { w: 720, h: 1280, aspect: "tall" }));
   for (const l of lines) assert.ok(posOf(l)[1] <= 1280 * 0.82, "above the bottom strip");
 });
+
+/** The words a set of Dialogue lines show on screen, in order, with override blocks removed. */
+const visible = (lines) => lines
+  .map((l) => l.replace(/^.*?Kinetic,,0,0,0,,/, "").replace(/\{[^}]*\}/g, ""))
+  .join(" ")
+  .split(" ")
+  .filter(Boolean);
+const upper = (text) => text.toLocaleUpperCase().split(" ");
+
+test("pop never drops a word on a tall frame, however long the phrase", () => {
+  for (const text of ["Even though I walk through the valley of the shadow of death", "Reconciliation transformation righteousness everywhere"]) {
+    const lines = pop(ctx(planned(text, "pop"), { w: 720, h: 1280, aspect: "tall" }));
+    assert.deepEqual(visible(lines), upper(text), text);
+    for (const l of lines) assert.ok(posOf(l)[1] <= 1280 * 0.82, "inside the safe band");
+  }
+});
+
+test("pop shows every word of a 12-word phrase on a wide frame", () => {
+  const text = "Even though I walk through the valley of the shadow of death";
+  assert.deepEqual(visible(pop(ctx(planned(text, "pop")))), upper(text));
+});
+
+test("slam sparks stay inside the safe area on tall frames", () => {
+  const lines = slam(ctx(planned("Glorification Alleluia", "slam"), { w: 720, h: 1280, aspect: "tall" }));
+  const sparks = lines.find((l) => l.includes("\\p1"));
+  const x = Number(sparks.match(/\\pos\((-?\d+),/)[1]);
+  const r = Math.round(Math.min(720, 1280) * 0.05);
+  assert.ok(x <= 0.88 * 720 - 1.6 * r, `sparks x ${x}`);
+});

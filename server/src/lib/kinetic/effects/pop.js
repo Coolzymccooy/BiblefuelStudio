@@ -1,19 +1,24 @@
-import { fitSize } from "../text.js";
 import { LOWER, maxWidthFor } from "../layout.js";
 import { caseText, fontsFor, holdEnd, lineEvent, wrapWords } from "./common.js";
 
-/** Words pop in on one or two lines in the lower safe band. Calm and readable. */
+const MIN_FS = 24;
+
+/**
+ * Words pop in on one or two lines in the lower safe band. A long phrase
+ * shrinks until it wraps to two lines; if it still needs more at the minimum
+ * size, every line is kept, because showing every word beats the 2-line ideal.
+ */
 export function render({ planned, look, w, h, aspect, nextStart }) {
   const { phrase } = planned;
-  const fonts = fontsFor(look, caseText(look, phrase.text));
+  const fonts = fontsFor(look, caseText(look, phrase.words.map((x) => x.text).join(" ")));
   const anchor = LOWER[aspect];
   const maxWidth = maxWidthFor({ side: false }, w, aspect);
   const words = phrase.words.map((x) => ({ text: caseText(look, x.text), t: x.start, colour: fonts.body.colour }));
   let fs = aspect === "tall" ? Math.round(w * 0.085) : Math.round(h * 0.075);
   let lines = wrapWords(words, fonts.body.file, fs, maxWidth);
-  if (lines.length > 2) {
-    fs = fitSize(fonts.body.file, [words.map((x) => x.text).join(" ")], fs, maxWidth * 2);
-    lines = wrapWords(words, fonts.body.file, fs, maxWidth).slice(0, 2);
+  while (lines.length > 2 && fs > MIN_FS) {
+    fs = Math.max(MIN_FS, Math.floor(fs * 0.92));
+    lines = wrapWords(words, fonts.body.file, fs, maxWidth);
   }
   const end = holdEnd(phrase, nextStart);
   const lineGap = fs * 1.05;
