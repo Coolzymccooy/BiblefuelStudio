@@ -101,6 +101,7 @@ export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCapti
   useEffect(() => { setTitleDraft(value.captionTitle ?? ''); }, [value.captionTitle]);
   const commitTitle = () => {
     const next = titleDraft.replace(/\s+/g, ' ').trim();
+    setTitleDraft(next); // show the cleaned title even when nothing changed to save
     if (next !== (value.captionTitle ?? '')) onChange({ captionTitle: next });
   };
   const energyOptions = energies.length > 0 ? energies : FALLBACK_ENERGIES;
