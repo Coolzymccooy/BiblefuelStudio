@@ -35,3 +35,13 @@ test("a title card shows from 0 s until just before the first lyric, 1.5 to 3 s"
   assert.match(mid[0], /,0:00:02\.15,/);
   assert.deepEqual(titleCard({ text: "   ", look, w: 1280, h: 720, aspect: "wide", firstStart: 4 }), []);
 });
+
+test("a title with no words draws nothing, and a missing first-lyric time shows the card for 3 s", () => {
+  const empty = { ...planned("x", "title"), phrase: { text: "", start: 2, end: 2.5, words: [] } };
+  assert.deepEqual(title(ctx(empty)), []);
+  const look = resolveLook("studio-lagos-night");
+  for (const firstStart of [null, undefined, ""]) {
+    const card = titleCard({ text: "I Still Dey", look, w: 1280, h: 720, aspect: "wide", firstStart });
+    assert.match(card[0], /^Dialogue: 2,0:00:00\.00,0:00:03\.00,/, String(firstStart));
+  }
+});

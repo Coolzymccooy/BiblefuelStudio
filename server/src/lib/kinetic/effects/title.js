@@ -23,6 +23,7 @@ export function splitTitle(words) {
 
 /** Two big centred lines in the hit font: the first in the body colour, the last in the hit colour. */
 function titleEvents({ words, look, w, h, aspect, end, rot }) {
+  if (!words.length) return [];
   const fonts = fontsFor(look, words.map((x) => x.text).join(" "));
   const split = splitTitle(words);
   const lines = split.map((ln, li) => ln.map((x) => ({
@@ -55,8 +56,9 @@ export function render({ planned, look, w, h, aspect, nextStart }) {
 export function titleCard({ text, look, w, h, aspect, firstStart }) {
   const parts = String(text || "").trim().split(/\s+/).filter(Boolean);
   if (!parts.length) return [];
-  // A missing first-lyric time would make the end NaN: show the card for the full 3 s instead.
-  const first = Number.isFinite(Number(firstStart)) ? Number(firstStart) : INTRO_MAX + 0.05;
+  // A missing first-lyric time would make the end NaN (or 0, as Number(null) is 0): show the card for the full 3 s instead.
+  const raw = firstStart;
+  const first = raw === null || raw === undefined || raw === "" || !Number.isFinite(Number(raw)) ? INTRO_MAX + 0.05 : Number(raw);
   const end = Number(Math.min(INTRO_MAX, Math.max(INTRO_MIN, first - 0.05)).toFixed(2));
   const lines = splitTitle(parts.map((p) => ({ text: caseText(look, p) })));
   const words = lines.flatMap((ln, li) => ln.map((x) => ({ text: x.text, t: li * SECOND_LINE_DELAY })));
