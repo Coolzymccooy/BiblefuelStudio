@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { api } from '../../../lib/api';
 import { StoryCaptionsPanel } from '../StoryCaptionsPanel';
@@ -160,6 +160,31 @@ describe('StoryCaptionsPanel Studio effects', () => {
     const seed = onChange.mock.calls.at(-1)![0].captionSeed;
     expect(Number.isInteger(seed)).toBe(true);
     expect(seed).not.toBe(3);
+  });
+
+  it('Shuffle never re-picks the current seed', async () => {
+    const user = userEvent.setup();
+    mockCatalogue(studioCatalogue);
+    const random = vi.spyOn(Math, 'random').mockReturnValue(3 / 2147483647);
+    try {
+      const onChange = show({ captions: 'kinetic', captionPreset: 'studio-lagos-night', captionSeed: 3 });
+      await user.click(await screen.findByRole('button', { name: /shuffle/i }));
+      expect(onChange).toHaveBeenLastCalledWith({ captionSeed: 4 });
+    } finally {
+      random.mockRestore();
+    }
+  });
+
+  it('shows a saved Studio look and a usable Energy picker before the catalogue loads', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({ ok: false, error: 'offline' } as any);
+    show({ captions: 'kinetic', captionPreset: 'studio-lagos-night' });
+    await waitFor(() => expect(api.get).toHaveBeenCalled());
+    const animation = screen.getByRole('combobox', { name: 'Caption animation' });
+    expect(animation).toHaveValue('studio-lagos-night');
+    expect(screen.getByRole('option', { name: 'Lagos Night' })).toBeInTheDocument();
+    const energy = screen.getByRole('combobox', { name: 'Energy' });
+    expect(energy).toHaveValue('lively');
+    expect(within(energy).getAllByRole('option')).toHaveLength(3);
   });
 
   it('Studio looks are unavailable when the server has no libass', async () => {

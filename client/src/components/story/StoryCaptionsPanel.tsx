@@ -22,6 +22,21 @@ interface AnimationOption { id: string; label: string; renderable?: boolean }
 interface MotionOption { id: string; label: string; description?: string }
 interface StudioOption { id: string; label: string; description?: string }
 
+const FALLBACK_ENERGIES: StudioOption[] = [
+  { id: 'calm', label: 'Calm' },
+  { id: 'lively', label: 'Lively' },
+  { id: 'wild', label: 'Wild' },
+];
+
+/** "studio-lagos-night" -> "Lagos Night". */
+const readableLook = (id: string) =>
+  id
+    .replace(/^studio-/, '')
+    .split('-')
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+
 export interface StoryCaptionsPanelProps {
   value: StoryCaptionSettings;
   onChange: (patch: StoryCaptionSettings) => void;
@@ -73,6 +88,10 @@ export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCapti
   // layout and depth controls don't apply, so they give way to Energy and
   // Shuffle.
   const studio = (value.captionPreset || '').startsWith('studio-');
+  // A saved Studio look must show correctly even before (or without) the
+  // catalogue, or the select would display its first option instead.
+  const savedStudioMissing = studio && !studioLooks.some((l) => l.id === value.captionPreset);
+  const energyOptions = energies.length > 0 ? energies : FALLBACK_ENERGIES;
   const shuffle = () => {
     let next = Math.floor(Math.random() * 2147483647);
     if (next === value.captionSeed) next = (next + 1) % 2147483647;
@@ -149,8 +168,11 @@ export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCapti
               disabled={busy}
               onChange={(e: ChangeEvent<HTMLSelectElement>) => onChange({ captionPreset: e.target.value })}
             >
-              {studioLooks.length > 0 && (
+              {(studioLooks.length > 0 || savedStudioMissing) && (
                 <optgroup label="Studio effects">
+                  {savedStudioMissing && (
+                    <option value={value.captionPreset}>{readableLook(value.captionPreset!)}</option>
+                  )}
                   {studioLooks.map((l) => (
                     <option key={l.id} value={l.id} disabled={!libass}>
                       {l.label}{libass ? '' : ' (unavailable on this server)'}
@@ -189,7 +211,7 @@ export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCapti
                   disabled={busy}
                   onChange={(e: ChangeEvent<HTMLSelectElement>) => onChange({ captionEnergy: e.target.value as StoryCaptionSettings['captionEnergy'] })}
                 >
-                  {energies.map((en) => (
+                  {energyOptions.map((en) => (
                     <option key={en.id} value={en.id}>{en.label}</option>
                   ))}
                 </Select>
@@ -197,7 +219,7 @@ export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCapti
                   type="button"
                   onClick={shuffle}
                   disabled={busy}
-                  className="shrink-0 rounded-lg border border-white/10 px-3 py-2 text-xs text-content-secondary hover:text-bf-cream disabled:opacity-50"
+                  className="shrink-0 rounded-lg border border-white/10 px-3 py-2.5 text-xs text-content-secondary hover:text-bf-cream disabled:opacity-50"
                   title="Re-roll which effect each line gets"
                 >
                   Shuffle effects
