@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { render as quote, underlineShape } from "./quote.js";
 import { ctx, planned, posOf, visible } from "./testkit.js";
+import { widthAt } from "../text.js";
 
 const textOf = (lines) => lines.filter((l) => !l.includes("\\p1"));
 const underOf = (lines) => lines.find((l) => l.includes("\\p1"));
@@ -31,6 +32,19 @@ test("the underline sits below the last line of text", () => {
   const lastY = Math.max(...textOf(lines).map((l) => posOf(l)[1]));
   const underY = Number(underOf(lines).match(/\\pos\(-?\d+,(-?\d+)\)/)[1]);
   assert.ok(underY > lastY, `underline ${underY} below text ${lastY}`);
+});
+
+test("the underline is 0.9 of the last line's width, not the widest line's", () => {
+  const c = ctx(planned("Even the darkest night ends", "quote"));
+  const lines = quote(c);
+  const text = textOf(lines);
+  assert.equal(text.length, 2, "wraps to two lines");
+  const shown = text.map((l) => l.replace(/^.*?Kinetic,,0,0,0,,/, "").replace(/\{[^}]*\}/g, ""));
+  const fs = Number(text[0].match(/\\fs(\d+)/)[1]);
+  const [first, last] = shown.map((s) => widthAt(c.look.body.file, s, fs));
+  assert.ok(last < first * 0.8, `the last line (${last}) is clearly narrower than the first (${first})`);
+  const m = underOf(lines).match(/\\t\(0,350,\\clip\((-?\d+),-?\d+,(-?\d+),-?\d+\)\)/).slice(1).map(Number);
+  assert.ok(Math.abs(m[1] - m[0] - 0.9 * last) <= 1, `underline ${m[1] - m[0]} vs 0.9 × ${last}`);
 });
 
 test("on a tall frame quote stays inside the safe band", () => {

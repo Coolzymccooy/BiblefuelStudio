@@ -73,7 +73,7 @@ export function render({ planned, look, energy, w, h, aspect, nextStart }) {
     rot: 0, pop: 125, bord: BORD, shad: SHAD, outline: look.outline, words: ln,
     bold: fonts.body.bold, italic: fonts.body.italic,
   }));
-  const width = Math.max(...texts.map((t) => widthAt(fonts.body.file, t, fs))) * 0.9;
+  const width = widthAt(fonts.body.file, texts[texts.length - 1], fs) * 0.9; // under the last line, which it sits beneath
   events.push(underlineEvent({
     x0: slot.x * w - width / 2,
     y: y0 + (lines.length - 1) * lineGap + fs * 0.5,
