@@ -1,0 +1,78 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { render as pop } from "./pop.js";
+import { render as stack } from "./stack.js";
+import { render as slam } from "./slam.js";
+import { holdEnd, fontsFor, lineEvent } from "./common.js";
+import { resolveLook } from "../looks.js";
+
+const words = (text, start) => text.split(" ").map((t, i) => ({ text: t, start: start + i * 0.25, end: start + i * 0.25 + 0.25 }));
+const phrase = (text, start = 2) => ({ text, start, end: start + text.split(" ").length * 0.25, words: words(text, start) });
+const planned = (text, effect, extra = {}) => ({ index: 0, phrase: phrase(text), effect, slot: 0, hook: false, rot: -2, ...extra });
+const ctx = (p, over = {}) => ({ planned: p, look: resolveLook("studio-lagos-night"), energy: "lively", w: 1280, h: 720, aspect: "wide", nextStart: 10, ...over });
+const posOf = (line) => line.match(/\\(?:move|pos)\((-?\d+),(-?\d+)/).slice(1).map(Number);
+
+test("a phrase holds until just before the next one, at least 0.25 s past its last word", () => {
+  assert.equal(holdEnd({ start: 1, end: 2 }, 2.1), 2.25);
+  assert.equal(holdEnd({ start: 1, end: 2 }, 5), 4.95);
+  assert.equal(holdEnd({ start: 1, end: 2 }, Infinity), 3.2);
+  assert.equal(holdEnd({ start: 1, end: 2 }, 30), 5);
+});
+
+test("letters the look's fonts lack switch the phrase to DejaVu", () => {
+  const look = resolveLook("studio-lagos-night");
+  assert.equal(fontsFor(look, "I STILL DEY").hit.family, "Knewave");
+  const f = fontsFor(look, "Ọlọ́run ṣe é");
+  assert.equal(f.body.family, "DejaVu Sans");
+  assert.equal(f.hit.family, "DejaVu Sans");
+  assert.equal(f.hit.colour, look.hit.colour);
+});
+
+test("lineEvent: first word shows at once, later words fade in on their beat", () => {
+  const line = lineEvent({ start: 2, end: 4, x: 640, y: 360, fs: 80, family: "Knewave", rot: -2, pop: 135, bord: 5, shad: 3, outline: "#101010",
+    words: [{ text: "I", t: 2, colour: "#F5D33A" }, { text: "STILL", t: 2.5, colour: "#F5D33A" }] });
+  assert.match(line, /^Dialogue: 0,0:00:02\.00,0:00:04\.00,Kinetic,,0,0,0,,/);
+  assert.match(line, /\\fnKnewave\\fs80/);
+  assert.match(line, /\\fscx135\\fscy135\\t\(0,1[36]0,\\fscx100\\fscy100\)/);
+  assert.match(line, /\{\\c&H003AD3F5&\}I \{\\c&H003AD3F5&\\alpha&HFF&\\t\(500,570,\\alpha&H00&\)\}STILL$/);
+});
+
+test("pop sits in the lower band and reveals every word", () => {
+  const lines = pop(ctx(planned("When life feels dark and heavy", "pop")));
+  assert.ok(lines.length >= 1 && lines.length <= 2);
+  const text = lines.join(" ");
+  for (const w of ["WHEN", "LIFE", "FEELS", "DARK", "AND", "HEAVY"]) assert.ok(text.includes(w), w);
+  for (const l of lines) assert.ok(posOf(l)[1] > 720 * 0.6, "lower band");
+});
+
+test("stack breaks a phrase into short stacked lines at its slot, tilted", () => {
+  const lines = stack(ctx(planned("Five in the morning NEPA", "stack")));
+  assert.ok(lines.length >= 2);
+  const ys = lines.map((l) => posOf(l)[1]);
+  assert.deepEqual([...ys].sort((a, b) => a - b), ys, "top to bottom");
+  for (const l of lines) assert.match(l, /\\frz-2/);
+  assert.match(lines.at(-1), /&H003AD3F5&/, "last word in the hit colour when lively");
+});
+
+test("calm stack keeps every word in the body colour unless the line is a hook", () => {
+  const calm = stack(ctx(planned("By his grace", "stack"), { energy: "calm" })).join(" ");
+  assert.ok(!calm.includes("&H003AD3F5&"));
+  const hook = stack(ctx(planned("I still dey", "stack", { hook: true }), { energy: "calm" })).join(" ");
+  assert.ok(hook.includes("&H003AD3F5&"));
+});
+
+test("slam is huge, centred, in the hit font, and fires sparks on its last word", () => {
+  const lines = slam(ctx(planned("I still dey", "slam", { hook: true })));
+  const text = lines.filter((l) => !l.includes("\\p1"));
+  const sparks = lines.filter((l) => l.includes("\\p1"));
+  assert.ok(text.every((l) => l.includes("\\fnKnewave")));
+  const fs = Number(text[0].match(/\\fs(\d+)/)[1]);
+  assert.ok(fs >= 110, `slam size ${fs}`);
+  assert.equal(sparks.length, 1);
+  assert.match(sparks[0], /^Dialogue: 1,0:00:02\.50,/);
+});
+
+test("tall frames keep stacked text inside the safe band", () => {
+  const lines = stack(ctx(planned("From Lagos traffic to the last train home", "stack", { slot: 2 }), { w: 720, h: 1280, aspect: "tall" }));
+  for (const l of lines) assert.ok(posOf(l)[1] <= 1280 * 0.82, "above the bottom strip");
+});
