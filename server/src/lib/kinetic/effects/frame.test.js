@@ -1,8 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { render as frame } from "./frame.js";
-import { ctx, planned, visible } from "./testkit.js";
+import { ctx, planned, posOf, visible } from "./testkit.js";
 import { widthAt } from "../text.js";
+import { buildAss } from "../ass.js";
 
 const bandsOf = (lines) => lines.filter((l) => l.includes("\\clip("));
 const moveOf = (l) => l.match(/\\move\((-?\d+),(-?\d+),(-?\d+),(-?\d+)\)/).slice(1).map(Number);
@@ -29,14 +30,44 @@ test("each band covers its whole edge from the first frame to the last", () => {
   const bands = bandsOf(frame(c));
   const file = c.look.body.file;
   const [top, , left] = [bands[0], bands[1], bands[2]];
-  const [L, T, R, B] = clipOf(top);
+  const [L, , R] = clipOf(top);
   const topLen = widthAt(file, shownOf(top), fsOf(top));
   for (const x of [moveOf(top)[0], moveOf(top)[2]]) {
     assert.ok(x - topLen / 2 <= L + 1 && x + topLen / 2 >= R - 1, `top band at ${x} spans ${L}..${R}`);
   }
+  const [, T, , B] = clipOf(left);
   const sideLen = widthAt(file, shownOf(left), fsOf(left));
   for (const y of [moveOf(left)[1], moveOf(left)[3]]) {
     assert.ok(y - sideLen / 2 <= T + 1 && y + sideLen / 2 >= B - 1, `left band at ${y} spans ${T}..${B}`);
+  }
+});
+
+test("the side bands own the corners: top and bottom are clipped short of them", () => {
+  const c = ctx(planned("I still dey", "frame", { hook: true }));
+  const [top, bottom, left, right] = bandsOf(frame(c)).map(clipOf);
+  const cut = Math.round(1.4 * Math.round(720 * 0.055));
+  assert.deepEqual(left, right);
+  for (const edge of [top, bottom]) {
+    assert.ok(Math.abs(edge[0] - (left[0] + cut)) <= 1 && Math.abs(edge[2] - (left[2] - cut)) <= 1, `clip ${edge} vs ${left}`);
+    assert.equal(edge[1], left[1]);
+    assert.equal(edge[3], left[3]);
+  }
+});
+
+test("a long overridden phrase keeps every centre line between the top and bottom bands", () => {
+  const text = "When the storm is raging and the night is long Lord";
+  const ass = buildAss({ lines: [{ text, start: 1, end: 5 }], w: 1280, h: 720, look: "studio-lagos-night", energy: "wild", seed: 1, overrides: { 0: "frame" } });
+  const events = ass.split("\n").filter((l) => l.startsWith("Dialogue:"));
+  const [top, bottom] = bandsOf(events);
+  const bandFs = fsOf(top);
+  const upper = moveOf(top)[1] + bandFs;
+  const lower = moveOf(bottom)[1] - bandFs;
+  const centre = events.filter((l) => !l.includes("\\clip("));
+  assert.deepEqual(visible(centre), text.toLocaleUpperCase().split(" "));
+  for (const l of centre) {
+    const y = posOf(l)[1];
+    const fs = fsOf(l);
+    assert.ok(y - fs / 2 >= upper && y + fs / 2 <= lower, `line at ${y} size ${fs} vs ${upper}..${lower}`);
   }
 });
 

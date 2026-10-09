@@ -23,6 +23,28 @@ function bandEvent({ start, end, from, to, rot, clip, family, fs, colour, outlin
 }
 
 /**
+ * The four scrolling bands. The sides run the full box and own the corners;
+ * the top and bottom are clipped short of them so the bands never overprint.
+ */
+function bands({ box, inset, across, down, acrossLen, downLen, shift, ...common }) {
+  const full = [box.left, box.top, box.right, box.bottom];
+  const cut = 1.4 * common.fs;
+  const short = [box.left + cut, box.top, box.right - cut, box.bottom];
+  const topY = box.top + inset;
+  const bottomY = box.bottom - inset;
+  const leftX = box.left + inset;
+  const rightX = box.right - inset;
+  return [
+    // Top scrolls left and bottom scrolls right; each starts flush with one end of its edge.
+    bandEvent({ ...common, clip: short, text: across, rot: 0, from: [box.left + acrossLen / 2, topY], to: [box.left + acrossLen / 2 - shift, topY] }),
+    bandEvent({ ...common, clip: short, text: across, rot: 0, from: [box.right - acrossLen / 2, bottomY], to: [box.right - acrossLen / 2 + shift, bottomY] }),
+    // Left reads bottom to top and scrolls up; right reads top to bottom and scrolls down.
+    bandEvent({ ...common, clip: full, text: down, rot: 90, from: [leftX, box.top + downLen / 2], to: [leftX, box.top + downLen / 2 - shift] }),
+    bandEvent({ ...common, clip: full, text: down, rot: -90, from: [rightX, box.bottom - downLen / 2], to: [rightX, box.bottom - downLen / 2 + shift] }),
+  ];
+}
+
+/**
  * The phrase repeated round all four edges as scrolling bands (top and
  * bottom run opposite ways, the sides run up and down), with the phrase
  * stacked big in the centre. Made for a song's hook.
@@ -44,30 +66,20 @@ export function render({ planned, look, w, h, aspect, nextStart }) {
   const bandText = (edge) => unit.repeat(Math.min(MAX_REPEATS, Math.ceil((edge + shift) / unitWidth) + 1)).trimEnd();
   const across = bandText(box.right - box.left);
   const down = bandText(box.bottom - box.top);
-  const acrossLen = widthAt(band.file, across, bandFs);
-  const downLen = widthAt(band.file, down, bandFs);
-  const common = {
-    start, end, clip: [box.left, box.top, box.right, box.bottom],
-    family: band.family, fs: bandFs, colour: band.colour, outline: look.outline,
-  };
-  const topY = box.top + inset;
-  const bottomY = box.bottom - inset;
-  const leftX = box.left + inset;
-  const rightX = box.right - inset;
-  const events = [
-    // Top scrolls left and bottom scrolls right; each starts flush with one end of its edge.
-    bandEvent({ ...common, text: across, rot: 0, from: [box.left + acrossLen / 2, topY], to: [box.left + acrossLen / 2 - shift, topY] }),
-    bandEvent({ ...common, text: across, rot: 0, from: [box.right - acrossLen / 2, bottomY], to: [box.right - acrossLen / 2 + shift, bottomY] }),
-    // Left reads bottom to top and scrolls up; right reads top to bottom and scrolls down.
-    bandEvent({ ...common, text: down, rot: 90, from: [leftX, box.top + downLen / 2], to: [leftX, box.top + downLen / 2 - shift] }),
-    bandEvent({ ...common, text: down, rot: -90, from: [rightX, box.bottom - downLen / 2], to: [rightX, box.bottom - downLen / 2 + shift] }),
-  ];
+  const events = bands({
+    box, inset, across, down, shift,
+    acrossLen: widthAt(band.file, across, bandFs), downLen: widthAt(band.file, down, bandFs),
+    start, end, family: band.family, fs: bandFs, colour: band.colour, outline: look.outline,
+  });
   const words = phrase.words.map((x) => ({ text: caseText(look, x.text), t: x.start, colour: fonts.hit.colour }));
   const lines = chunk(words);
   const room = (box.right - box.left) - 2 * (inset + bandFs);
+  const roomY = (box.bottom - box.top) - 2 * (inset + bandFs);
   const preferred = aspect === "tall" ? Math.round(w * 0.16) : Math.round(h * 0.15);
   const budget = room * 0.9 - inkAllowance(preferred, { bord: BORD, shad: SHAD, italic: fonts.hit.italic, bold: fonts.hit.bold });
-  const fs = fitSize(fonts.hit.file, lines.map((ln) => ln.map((x) => x.text).join(" ")), preferred, budget, 32);
+  const wide = fitSize(fonts.hit.file, lines.map((ln) => ln.map((x) => x.text).join(" ")), preferred, budget, 32);
+  // A long phrase stacks many lines: shrink until the block fits between the top and bottom bands.
+  const fs = Math.max(32, Math.min(wide, Math.floor((roomY * 0.9) / lines.length)));
   const lineGap = fs * 1.0;
   const cx = (box.left + box.right) / 2;
   const cy = (box.top + box.bottom) / 2;
