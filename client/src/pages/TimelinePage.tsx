@@ -2704,9 +2704,13 @@ export function TimelinePage() {
                                             if (style.preset !== typographyPreset) setTypographyPreset(style.preset);
                                             if (style.layout !== layout) setLayout(style.layout);
                                             // ...and the same Studio energy and seed, so one
-                                            // effects mix drives the Sermon export.
-                                            if (style.captionEnergy && style.captionEnergy !== captionEnergy) setCaptionEnergy(style.captionEnergy);
-                                            if (Number.isInteger(style.captionSeed) && style.captionSeed !== captionSeed) setCaptionSeed(style.captionSeed);
+                                            // effects mix drives the Sermon export. Only a Studio
+                                            // look carries them: a classic style in the lab must
+                                            // not reset the Sermon editor's own choice.
+                                            if (isStudioLook(style.preset)) {
+                                                if (style.captionEnergy && style.captionEnergy !== captionEnergy) setCaptionEnergy(style.captionEnergy);
+                                                if (Number.isInteger(style.captionSeed) && style.captionSeed !== captionSeed) setCaptionSeed(style.captionSeed);
+                                            }
                                         },
                                         onAspectChange: (a) => {
                                             if (!documentaryProject) return;
