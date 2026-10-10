@@ -1,4 +1,7 @@
+import { useCallback, useState } from 'react';
 import { AnimationPicker } from '../voicelab/AnimationPicker';
+import { StudioEffectsControls } from '../captions/StudioEffects';
+import { isStudioLook, type CaptionEnergy } from '../../lib/studioCaptions';
 
 /**
  * Kinetic caption styling: animation preset, text layout, layered depth.
@@ -29,6 +32,11 @@ export interface CaptionStylePanelProps {
   /** Ghost shadow behind each word. */
   depth: boolean;
   onDepthChange: (value: boolean) => void;
+  /** Studio looks: Calm / Lively / Wild. Sermons default to Calm. */
+  captionEnergy?: string;
+  onCaptionEnergyChange?: (next: CaptionEnergy) => void;
+  /** Re-roll which effect each line gets (a new seed). */
+  onShuffleEffects?: () => void;
 }
 
 export function CaptionStylePanel({
@@ -40,39 +48,58 @@ export function CaptionStylePanel({
   layoutOptions,
   depth,
   onDepthChange,
+  captionEnergy,
+  onCaptionEnergyChange,
+  onShuffleEffects,
 }: CaptionStylePanelProps) {
+  // Whether the server can draw Studio looks, as the picker's catalogue reports it.
+  const [libass, setLibass] = useState(true);
+  const onCatalogue = useCallback((info: { libass: boolean }) => setLibass(info.libass), []);
+
   if (!enabled) return null;
 
   return (
     <div className="mb-4">
       <p className="mb-2 text-xs text-gray-400">Kinetic typography style</p>
-      <AnimationPicker value={typographyPreset} onChange={onTypographyPresetChange} />
+      <AnimationPicker value={typographyPreset} onChange={onTypographyPresetChange} showStudio onCatalogue={onCatalogue} />
 
-      <div className="mt-3">
-        <p className="mb-2 text-xs text-gray-400">Text layout</p>
-        <select
-          value={layout}
-          onChange={(e) => onLayoutChange(e.target.value)}
-          aria-label="Text layout"
-          className="w-full rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-gray-200 focus:border-primary-500/40 focus:outline-none"
-        >
-          {layoutOptions.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-
-        <label className="mt-3 flex cursor-pointer items-center gap-2 text-sm text-gray-300">
-          <input
-            type="checkbox"
-            checked={depth}
-            onChange={(e) => onDepthChange(e.target.checked)}
-            className="rounded border-white/10 bg-black/50 checked:bg-primary-500"
+      {isStudioLook(typographyPreset) ? (
+        <div className="mt-3 space-y-3">
+          <StudioEffectsControls
+            look={typographyPreset}
+            energy={captionEnergy || 'calm'}
+            onEnergyChange={(next) => onCaptionEnergyChange?.(next)}
+            onShuffle={() => onShuffleEffects?.()}
+            unavailable={!libass}
           />
-          Layered depth (ghost shadow behind each word)
-        </label>
-      </div>
+        </div>
+      ) : (
+        <div className="mt-3">
+          <p className="mb-2 text-xs text-gray-400">Text layout</p>
+          <select
+            value={layout}
+            onChange={(e) => onLayoutChange(e.target.value)}
+            aria-label="Text layout"
+            className="w-full rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-gray-200 focus:border-primary-500/40 focus:outline-none"
+          >
+            {layoutOptions.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+
+          <label className="mt-3 flex cursor-pointer items-center gap-2 text-sm text-gray-300">
+            <input
+              type="checkbox"
+              checked={depth}
+              onChange={(e) => onDepthChange(e.target.checked)}
+              className="rounded border-white/10 bg-black/50 checked:bg-primary-500"
+            />
+            Layered depth (ghost shadow behind each word)
+          </label>
+        </div>
+      )}
     </div>
   );
 }

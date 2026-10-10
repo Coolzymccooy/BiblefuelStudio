@@ -40,7 +40,7 @@ const PreviewSchema = z.object({
   translation: z.string().min(2).max(8).optional().default("kjv"),
 });
 
-const GenerateSchema = PreviewSchema.extend({
+export const GenerateSchema = PreviewSchema.extend({
   // Publish + render knobs (forwarded to campaign_auto_post).
   destination: z.enum(["webhook", "buffer", "youtube"]).optional().default("webhook"),
   webhookId: z.string().optional(),
@@ -67,6 +67,7 @@ const GenerateSchema = PreviewSchema.extend({
   forcedAlignmentFallback: z.boolean().optional(),
   kineticCaptions: z.boolean().optional(),
   typographyPreset: z.string().optional(),
+  captionEnergy: z.enum(["calm", "lively", "wild"]).optional(),
 });
 
 /**
@@ -196,6 +197,7 @@ router.post("/generate", async (req, res) => {
         forcedAlignmentFallback: input.forcedAlignmentFallback !== false,
         kineticCaptions: input.kineticCaptions !== false,
         typographyPreset: input.typographyPreset || undefined,
+        captionEnergy: input.captionEnergy || undefined,
         series: {
           seriesId: plan.seriesId,
           partNumber: segment.partNumber,

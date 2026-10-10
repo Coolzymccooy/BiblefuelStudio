@@ -28,6 +28,7 @@ import { MediaTrimmer } from '../components/MediaTrimmer';
 import { BackgroundLibraryModal } from '../components/BackgroundLibraryModal';
 import { applyGeneratedVisuals, type GenerateMode } from '../lib/generativeVisuals';
 import { buildSpeakableLines } from '../lib/speakableScript';
+import { isStudioLook, nextSeed, normaliseEnergy, normaliseSeed, type CaptionEnergy, type StudioOption } from '../lib/studioCaptions';
 
 /** Mirrors the server's MAX_BACKGROUNDS — keep in sync with render.js. */
 const MAX_BACKGROUNDS = 30;
@@ -86,8 +87,23 @@ export interface RenderLabEmbed {
     onBackgroundsChange?: (items: Array<{ id: string; url: string; previewUrl?: string; image?: string; kind?: 'image' | 'video' }>) => void;
     onLinesChange?: (lines: string) => void;
     onInsertMusicBed?: (path: string) => void;
-    /** The caption look (preset / motion / highlight / layout), for the host's live stage. */
-    onCaptionStyleChange?: (style: { preset: string; motion: string; highlight: boolean; stagger: boolean; layout: string; depth: boolean }) => void;
+    /**
+     * The caption look (preset / motion / highlight / layout), for the host's
+     * live stage, plus the Studio energy and seed so the host renders the
+     * same effects mix the lab shows.
+     */
+    onCaptionStyleChange?: (style: RenderLabCaptionStyle) => void;
+}
+
+export interface RenderLabCaptionStyle {
+    preset: string;
+    motion: string;
+    highlight: boolean;
+    stagger: boolean;
+    layout: string;
+    depth: boolean;
+    captionEnergy: CaptionEnergy;
+    captionSeed: number;
 }
 
 export function RenderPage() {
@@ -145,6 +161,17 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
     const [isGeneratingVisuals, setIsGeneratingVisuals] = useState(false);
     const [kenBurns, setKenBurns] = useState(false);
     const [typographyPreset, setTypographyPreset] = useState<string>(() => loadJson<string>(STORAGE_KEYS.renderTypographyPreset, 'cinematic-default'));
+    // Studio looks: how lively the effects are, and which effect each line gets.
+    // Stored values are validated: a corrupt energy becomes Lively, a bad seed a fresh one.
+    const [captionEnergy, setCaptionEnergy] = useState<CaptionEnergy>(
+        () => normaliseEnergy(loadJson<unknown>(STORAGE_KEYS.renderCaptionEnergy, 'lively'), 'lively'),
+    );
+    const [captionSeed, setCaptionSeed] = useState<number>(
+        () => normaliseSeed(loadJson<unknown>(STORAGE_KEYS.renderCaptionSeed, undefined)),
+    );
+    const [studioLooks, setStudioLooks] = useState<StudioOption[]>([]);
+    const [energies, setEnergies] = useState<StudioOption[]>([]);
+    const [libass, setLibass] = useState(true);
     // Caption MOTION - how captions are timed, independent of the style's look.
     const [captionMotion, setCaptionMotion] = useState<string>('words');
     const [captionStagger, setCaptionStagger] = useState<boolean>(false);
@@ -186,9 +213,12 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [backgroundItems]);
     useEffect(() => {
-        embedded?.onCaptionStyleChange?.({ preset: typographyPreset, motion: captionMotion, highlight: captionHighlight, stagger: captionStagger, layout, depth });
+        embedded?.onCaptionStyleChange?.({
+            preset: typographyPreset, motion: captionMotion, highlight: captionHighlight, stagger: captionStagger, layout, depth,
+            captionEnergy, captionSeed,
+        });
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [typographyPreset, captionMotion, captionHighlight, captionStagger, layout, depth]);
+    }, [typographyPreset, captionMotion, captionHighlight, captionStagger, layout, depth, captionEnergy, captionSeed]);
     const finishedFile = result?.file || completedRender?.file;
     useEffect(() => {
         if (finishedFile && embedded?.onRendered) embedded.onRendered(finishedFile);
@@ -276,6 +306,14 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
     }, [typographyPreset]);
 
     useEffect(() => {
+        saveJson(STORAGE_KEYS.renderCaptionEnergy, captionEnergy);
+    }, [captionEnergy]);
+
+    useEffect(() => {
+        saveJson(STORAGE_KEYS.renderCaptionSeed, captionSeed);
+    }, [captionSeed]);
+
+    useEffect(() => {
         saveJson(STORAGE_KEYS.renderLayout, layout);
     }, [layout]);
 
@@ -293,12 +331,18 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
                 ok: boolean;
                 animations: Array<{ id: string; label: string; renderable: boolean }>;
                 motions?: CaptionMotionOption[];
+                studioLooks?: StudioOption[];
+                energies?: StudioOption[];
+                libass?: boolean;
             }>('/api/tts/animations');
             if (cancelled || !res.ok) return;
             if (res.data?.animations) setAnimations(res.data.animations);
             // Motions come from the same endpoint so the picker can never offer
             // a timing the renderer does not implement.
             if (Array.isArray(res.data?.motions)) setCaptionMotions(res.data.motions);
+            setStudioLooks(res.data?.studioLooks ?? []);
+            setEnergies(res.data?.energies ?? []);
+            setLibass(res.data?.libass !== false);
         })();
         return () => {
             cancelled = true;
@@ -520,6 +564,7 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
                 captionMotion,
                 captionStagger,
                 captionHighlight,
+                ...(isStudioLook(typographyPreset) ? { captionEnergy, captionSeed } : {}),
                 kenBurns,
                 layout,
                 depth,
@@ -1110,6 +1155,12 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
                             depth={depth}
                             onDepthChange={setDepth}
                             animations={animations}
+                            studioLooks={studioLooks}
+                            energies={energies}
+                            libass={libass}
+                            captionEnergy={captionEnergy}
+                            onCaptionEnergyChange={setCaptionEnergy}
+                            onShuffleEffects={() => setCaptionSeed((s) => nextSeed(s))}
                             hasScripts={scripts.length > 0}
                             onOpenScripts={() => setShowScriptsModal(true)}
                             onUseLatestScript={() => { setLines(buildLinesFromScript(scripts[0])); toast.success('Latest script loaded'); }}
@@ -1407,6 +1458,12 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
                             depth={depth}
                             onDepthChange={setDepth}
                             animations={animations}
+                            studioLooks={studioLooks}
+                            energies={energies}
+                            libass={libass}
+                            captionEnergy={captionEnergy}
+                            onCaptionEnergyChange={setCaptionEnergy}
+                            onShuffleEffects={() => setCaptionSeed((s) => nextSeed(s))}
                             hasScripts={scripts.length > 0}
                             onOpenScripts={() => setShowScriptsModal(true)}
                             onUseLatestScript={() => { setLines(buildLinesFromScript(scripts[0])); toast.success('Latest script loaded'); }}

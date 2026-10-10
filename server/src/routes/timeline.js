@@ -14,6 +14,7 @@ import { spawn } from 'child_process';
 import { downsamplePeaks, peaksCacheKey, PEAK_BUCKETS } from '../lib/audioPeaks.js';
 import { quota } from '../middleware/quota.js';
 import { brandLogoFor } from '../lib/branding.js';
+import { drawtextPresetFor } from '../lib/kinetic/looks.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -376,7 +377,9 @@ router.post('/render', quota('render'), (req, res) => {
       phase: 'queued',
       progress: 0,
       plan,
-      typographyPreset: typeof req.body?.typographyPreset === 'string' ? req.body.typographyPreset : (project?.renderSettings?.typographyPreset || null),
+      // The Timeline renderer gets its Studio (libass) path in step 4 of the
+      // kinetic caption plan; until then a Studio pick draws with its fallback.
+      typographyPreset: drawtextPresetFor(typeof req.body?.typographyPreset === 'string' ? req.body.typographyPreset : (project?.renderSettings?.typographyPreset || null)),
       // Caption motion / layout, same catalogue the Studio renderer uses.
       // Unknown values are dropped by resolveCaptionMotion / resolveLayout.
       captionMotion: typeof req.body?.captionMotion === 'string' ? req.body.captionMotion : (project?.renderSettings?.captionMotion || null),

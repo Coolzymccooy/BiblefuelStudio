@@ -11,6 +11,9 @@ import { generateBibleImage } from "../lib/imageGen/index.js";
 import { isLocalOrRemote, resolveOutputAlias } from "../lib/mediaThumb.js";
 import { downloadToFile, isRemoteUrl } from "../lib/downloadInput.js";
 import { buildWordDrawtext, resolveKineticAnimation, buildEndingFade } from "../lib/videoFilters.js";
+import { isStudioLook } from "../lib/kinetic/looks.js";
+import { hasLibass } from "../lib/kinetic/capability.js";
+import { prepareStudioCaptions } from "../lib/kinetic/renderCaptions.js";
 import { brandLogoFor, logoOverlay, withLogoVf } from "../lib/branding.js";
 import { kenBurnsFilter } from "../lib/kenBurns.js";
 import { annotatePhrasedTiers } from "../lib/captions.js";
@@ -43,6 +46,16 @@ function clampDuration(value) {
   const n = Number(value || 20);
   if (Number.isNaN(n)) return 20;
   return Math.min(Math.max(n, 1), MAX_RENDER_SECONDS);
+}
+
+// The one builder for every "Too many caption words" 413 message. Studio
+// looks (libass) get their own advice: the cap there is about abuse, not
+// drawtext feasibility, so "kinetic captions are for short clips" is wrong.
+function tooManyCaptionWordsMessage(count, max, { studio = false } = {}) {
+  const advice = studio
+    ? "Trim the audio or use Series mode to split it into shorter videos."
+    : "Kinetic captions are for short clips — trim the audio or use Series mode to split it into short videos.";
+  return `Too many caption words (${count}; max ${max}). ${advice}`;
 }
 
 function isFileTooLarge(p) {
@@ -599,6 +612,9 @@ router.post("/captioned-video", async (req, res) => {
     // wanted. With captions off, words[] is optional and the drawtext chain is
     // a passthrough.
     const captions = req.body?.captions !== false;
+    // Studio looks draw with libass: thousands of ASS events cost little, so
+    // drawtext's word cap below does not apply to them.
+    const studioLook = captions && isStudioLook(typographyPreset) && hasLibass();
 
     // Defense in depth against an infeasible render: kinetic captions emit a
     // drawtext filter per word, so word count drives filter-graph size. A
@@ -608,10 +624,15 @@ router.post("/captioned-video", async (req, res) => {
     // single-worker render pipeline. Kept generous (short-form is the target).
     // Only relevant when captions are on.
     const MAX_CAPTION_WORDS = 1500;
-    if (captions && Array.isArray(words) && words.length > MAX_CAPTION_WORDS) {
+    // Studio looks skip the drawtext cap, but buildAss runs synchronously in
+    // this handler, so an unbounded word list could still stall the process.
+    // 20k words is over two hours of speech.
+    const MAX_STUDIO_CAPTION_WORDS = 20000;
+    const wordCap = studioLook ? MAX_STUDIO_CAPTION_WORDS : MAX_CAPTION_WORDS;
+    if (captions && Array.isArray(words) && words.length > wordCap) {
       return res.status(413).json({
         ok: false,
-        error: `Too many caption words (${words.length}; max ${MAX_CAPTION_WORDS}). Kinetic captions are for short clips — trim the audio or use Series mode to split it into short videos.`,
+        error: tooManyCaptionWordsMessage(words.length, wordCap, { studio: studioLook }),
       });
     }
 
@@ -908,22 +929,47 @@ router.post("/captioned-video", async (req, res) => {
       if (drawWords.length === 0) {
         return res.status(400).json({ ok: false, error: "words[] contained no usable entries (need text + startMs + endMs)" });
       }
-      const resolvedPreset = resolveKineticAnimation(typographyPreset)?.presetId || typographyPreset;
-      // Apply the semantic 3-tier emphasis engine (hero/key/normal) and tag each
-      // word with its micro-phrase index so the "staggered" layout can offset by
-      // phrase. This replaces the raw client `emphasize` flag with lexicon-driven
-      // emphasis, matching the kinetic-caption path in jobs.js.
-      const tieredWords = annotatePhrasedTiers(drawWords);
-      drawtextChain = buildWordDrawtext({
-        words: tieredWords,
+      fs.mkdirSync(req.ctx.outputDir, { recursive: true });
+      const studioCaptions = prepareStudioCaptions({
+        preset: typographyPreset,
+        assPath: path.join(req.ctx.outputDir, `captions-${uuid()}.ass`),
+        words: drawWords,
         w: renderWidth,
         h: renderHeight,
-        preset: resolvedPreset,
-        layout,
-        depth,
+        energy: req.body?.captionEnergy,
+        seed: req.body?.captionSeed,
+        defaultEnergy: "calm",
       });
-      if (!drawtextChain) {
-        return res.status(400).json({ ok: false, error: "buildWordDrawtext returned empty filter chain" });
+      if (studioCaptions.mode === "studio") {
+        // Removed with the other temp inputs when the render ends.
+        tempInputs.push(...studioCaptions.files);
+        drawtextChain = studioCaptions.filter || "null";
+      } else {
+        // A Studio look that fell back to drawtext is bound by drawtext's cap again.
+        if (drawWords.length > MAX_CAPTION_WORDS) {
+          cleanupTempInputs();
+          return res.status(413).json({
+            ok: false,
+            error: tooManyCaptionWordsMessage(drawWords.length, MAX_CAPTION_WORDS),
+          });
+        }
+        const resolvedPreset = resolveKineticAnimation(studioCaptions.preset)?.presetId || studioCaptions.preset;
+        // Apply the semantic 3-tier emphasis engine (hero/key/normal) and tag each
+        // word with its micro-phrase index so the "staggered" layout can offset by
+        // phrase. This replaces the raw client `emphasize` flag with lexicon-driven
+        // emphasis, matching the kinetic-caption path in jobs.js.
+        const tieredWords = annotatePhrasedTiers(drawWords);
+        drawtextChain = buildWordDrawtext({
+          words: tieredWords,
+          w: renderWidth,
+          h: renderHeight,
+          preset: resolvedPreset,
+          layout,
+          depth,
+        });
+        if (!drawtextChain) {
+          return res.status(400).json({ ok: false, error: "buildWordDrawtext returned empty filter chain" });
+        }
       }
     }
 

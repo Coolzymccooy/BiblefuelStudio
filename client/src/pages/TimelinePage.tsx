@@ -39,6 +39,7 @@ import {
 import { loadJson, saveJson, STORAGE_KEYS } from '../lib/storage';
 import { LAYOUT_OPTIONS } from '../lib/layoutOptions';
 import { usePersistedState } from '../lib/usePersistedState';
+import { isStudioLook, nextSeed, normaliseEnergy, normaliseSeed, type CaptionEnergy } from '../lib/studioCaptions';
 import { pickTranscribeAction, baseName, type TranscriptRecord } from '../lib/transcribeAction';
 import { ShareSheet } from '../components/ShareSheet';
 import { MediaTrimmer } from '../components/MediaTrimmer';
@@ -68,7 +69,7 @@ import { buildSpeakableLines, cleanCaptionLine } from '../lib/speakableScript';
 import { ScriptQuickPanel, type QuickScript, type ScriptQuickConfig } from '../components/timeline/ScriptQuickPanel';
 import { VoiceLab, type VoiceTake } from './VoiceAudioPage';
 import { OutputQuickPanel, type ReadinessItem } from '../components/timeline/OutputQuickPanel';
-import { RenderLab } from './RenderPage';
+import { RenderLab, type RenderLabCaptionStyle } from './RenderPage';
 import { ShareKitPanel } from '../components/timeline/ShareKitPanel';
 import { StoryQuickPanel } from '../components/timeline/StoryQuickPanel';
 import { SeriesQuickPanel } from '../components/timeline/SeriesQuickPanel';
@@ -225,7 +226,7 @@ export function TimelinePage() {
     // The docked Render lab's background picks, mirrored on the stage live.
     const [labBackgrounds, setLabBackgrounds] = useState<Array<{ id: string; url: string; previewUrl?: string; image?: string; kind?: 'image' | 'video' }>>([]);
     // The docked Render lab's caption look, previewed on the stage live.
-    const [labCaptionStyle, setLabCaptionStyle] = useState<{ preset: string; motion: string; highlight: boolean; stagger: boolean; layout: string; depth: boolean } | null>(null);
+    const [labCaptionStyle, setLabCaptionStyle] = useState<RenderLabCaptionStyle | null>(null);
     // The stage shows the LAST RENDER only until the next edit: any change
     // to the cut returns the stage to the live preview. Otherwise a preset
     // change, a new line or a wipe looked like nothing happened.
@@ -344,6 +345,16 @@ export function TimelinePage() {
         STORAGE_KEYS.sclTypographyPreset,
         'cinematic-worship',
     );
+    // Studio looks: sermons default to Calm; the seed picks each line's effect.
+    // Stored values are validated: a corrupt energy becomes Calm, a bad seed a fresh one.
+    const [captionEnergy, setCaptionEnergy] = useState<CaptionEnergy>(
+        () => normaliseEnergy(loadJson<unknown>(STORAGE_KEYS.sclCaptionEnergy, 'calm'), 'calm'),
+    );
+    useEffect(() => { saveJson(STORAGE_KEYS.sclCaptionEnergy, captionEnergy); }, [captionEnergy]);
+    const [captionSeed, setCaptionSeed] = useState<number>(
+        () => normaliseSeed(loadJson<unknown>(STORAGE_KEYS.sclCaptionSeed, undefined)),
+    );
+    useEffect(() => { saveJson(STORAGE_KEYS.sclCaptionSeed, captionSeed); }, [captionSeed]);
     const [layout, setLayout] = usePersistedState<string>(
         STORAGE_KEYS.sclLayout,
         'center',
@@ -771,7 +782,8 @@ export function TimelinePage() {
         // Feasibility guard: kinetic captions don't scale to long sermons — the
         // filter graph explodes and the render effectively never finishes. Block
         // early with a clear path forward (only when captions are on).
-        if (shouldRenderCaptions && words.length > MAX_CAPTION_WORDS) {
+        // Studio looks (libass) have no word cap; the server enforces it if it has to fall back.
+        if (shouldRenderCaptions && !isStudioLook(typographyPreset) && words.length > MAX_CAPTION_WORDS) {
             const mins = Math.round((words[words.length - 1]?.endMs || 0) / 60000);
             toast.error(
                 `This clip has ${words.length} words${mins ? ` (~${mins} min)` : ''} — too long for kinetic captions (max ~${MAX_CAPTION_WORDS}). ` +
@@ -861,6 +873,7 @@ export function TimelinePage() {
                     typographyPreset,
                     layout,
                     depth,
+                    ...(isStudioLook(typographyPreset) ? { captionEnergy, captionSeed } : {}),
                     // Multi-track bed: the server concatenates these and loops
                     // the result. Falls back to musicPath for older servers.
                     musicPaths: musicPaths.length > 0 ? musicPaths : undefined,
@@ -2032,7 +2045,7 @@ export function TimelinePage() {
             ...(sourceMediaKind === 'audio' && backgroundItems.length === 0 && !autoBackground
                 ? [{ label: 'Pick a video background, or turn on Auto', status: 'todo' as const, detail: 'Audio sources need a visual layer (Background tool).' }]
                 : [{ label: sourceMediaKind === 'audio' ? (autoBackground && backgroundItems.length === 0 ? 'Background: Auto' : 'Background ready') : 'Video brings its own picture', status: 'done' as const }]),
-            ...(kineticCaptions && transcript && transcript.length > MAX_CAPTION_WORDS
+            ...(kineticCaptions && !isStudioLook(typographyPreset) && transcript && transcript.length > MAX_CAPTION_WORDS
                 ? [{ label: 'Too long for kinetic captions', status: 'todo' as const, detail: `${transcript.length} words - max ~${MAX_CAPTION_WORDS}. Trim the clip, use Series, or turn captions off.` }]
                 : []),
             { label: musicPath ? 'Music bed set' : 'Music bed', status: musicPath ? 'done' : 'optional' },
@@ -2564,6 +2577,9 @@ export function TimelinePage() {
                                 layoutOptions={LAYOUT_OPTIONS}
                                 depth={depth}
                                 onDepthChange={setDepth}
+                                captionEnergy={captionEnergy}
+                                onCaptionEnergyChange={setCaptionEnergy}
+                                onShuffleEffects={() => setCaptionSeed((s) => nextSeed(s))}
                             />
                             {captionLinesEditor}
                         </div>
@@ -2687,6 +2703,14 @@ export function TimelinePage() {
                                             // One look: the timeline's own render uses the preset you previewed.
                                             if (style.preset !== typographyPreset) setTypographyPreset(style.preset);
                                             if (style.layout !== layout) setLayout(style.layout);
+                                            // ...and the same Studio energy and seed, so one
+                                            // effects mix drives the Sermon export. Only a Studio
+                                            // look carries them: a classic style in the lab must
+                                            // not reset the Sermon editor's own choice.
+                                            if (isStudioLook(style.preset)) {
+                                                if (style.captionEnergy && style.captionEnergy !== captionEnergy) setCaptionEnergy(style.captionEnergy);
+                                                if (Number.isInteger(style.captionSeed) && style.captionSeed !== captionSeed) setCaptionSeed(style.captionSeed);
+                                            }
                                         },
                                         onAspectChange: (a) => {
                                             if (!documentaryProject) return;
@@ -3177,6 +3201,9 @@ export function TimelinePage() {
                     layoutOptions={LAYOUT_OPTIONS}
                     depth={depth}
                     onDepthChange={setDepth}
+                    captionEnergy={captionEnergy}
+                    onCaptionEnergyChange={setCaptionEnergy}
+                    onShuffleEffects={() => setCaptionSeed((s) => nextSeed(s))}
                 />
                 {kineticCaptions && editedLines.length > 0 && (
                     <div className="mt-1">

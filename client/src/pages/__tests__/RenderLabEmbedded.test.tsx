@@ -55,4 +55,36 @@ describe('RenderLab (embedded in the Timeline editor)', () => {
     expect(screen.getByText(/Caption width/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /render a waveform video/i })).toBeInTheDocument();
   });
+
+  it('reports the Studio energy and seed to the host with the caption style', async () => {
+    const user = userEvent.setup();
+    localStorage.setItem('BF_RENDER_TYPOGRAPHY_PRESET', JSON.stringify('studio-lagos-night'));
+    localStorage.setItem('BF_RENDER_CAPTION_ENERGY', JSON.stringify('lively'));
+    localStorage.setItem('BF_RENDER_CAPTION_SEED', JSON.stringify(7));
+    const onCaptionStyleChange = vi.fn();
+    setup({ onCaptionStyleChange });
+    expect(onCaptionStyleChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ preset: 'studio-lagos-night', captionEnergy: 'lively', captionSeed: 7 }),
+    );
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Energy' }), 'wild');
+    expect(onCaptionStyleChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ captionEnergy: 'wild', captionSeed: 7 }),
+    );
+    await user.click(screen.getByRole('button', { name: /shuffle effects/i }));
+    const last = onCaptionStyleChange.mock.calls.at(-1)![0];
+    expect(last.captionSeed).not.toBe(7);
+    expect(last.captionEnergy).toBe('wild');
+  });
+
+  it('a corrupt stored energy or seed falls back to Lively and a fresh seed', () => {
+    localStorage.setItem('BF_RENDER_TYPOGRAPHY_PRESET', JSON.stringify('studio-lagos-night'));
+    localStorage.setItem('BF_RENDER_CAPTION_ENERGY', JSON.stringify('loud'));
+    localStorage.setItem('BF_RENDER_CAPTION_SEED', JSON.stringify('abc'));
+    const onCaptionStyleChange = vi.fn();
+    setup({ onCaptionStyleChange });
+    const last = onCaptionStyleChange.mock.calls.at(-1)![0];
+    expect(last.captionEnergy).toBe('lively');
+    expect(Number.isInteger(last.captionSeed)).toBe(true);
+    expect(screen.getByRole('combobox', { name: 'Energy' })).toHaveValue('lively');
+  });
 });

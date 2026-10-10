@@ -16,6 +16,8 @@ import { pickBestBackground, classifyText } from "../lib/categorize.js";
 import { charsToWords, captionWordsFromNativeWords, annotatePhrasedTiers, groupWordsByBeat } from "../lib/captions.js";
 import { alignAudioWithText, isForcedAlignmentAvailable } from "../lib/voice/alignment.js";
 import { buildWordDrawtext, buildLineDrawtext, buildSceneGraph, resolveKineticAnimation, resolveTypographyPreset, resolveCaptionMotion, buildEndingFade } from "../lib/videoFilters.js";
+import { isStudioLook } from "../lib/kinetic/looks.js";
+import { prepareStudioCaptions } from "../lib/kinetic/renderCaptions.js";
 import { brandLogoFor, logoOverlay, withLogoVf } from "../lib/branding.js";
 import { buildSocialCaption } from "../lib/socialCaption.js";
 import { pickScriptType } from "../lib/highPerformerProfile.js";
@@ -760,6 +762,11 @@ async function renderVideoCore(payload, jobId) {
     }
     return await renderVideoCore({ ...augmented, kineticCaptions: false }, jobId);
   }
+  // Studio looks draw with libass from an .ass file, which the advanced path
+  // writes and cleans up; it also takes a single background as one scene.
+  if (isStudioLook(payload?.typographyPreset)) {
+    return await renderAdvancedVideo(payload, jobId);
+  }
   const { backgroundPath, audioPath, lines, durationSec, aspect, captionWidthPct, musicPath, musicVolume, autoDuck, typographyPreset } = payload || {};
   let resolvedBackground = resolveAssetPath(backgroundPath);
   const resolvedAudio = resolveAssetPath(audioPath);
@@ -1081,7 +1088,30 @@ async function renderAdvancedVideo(payload, jobId) {
   // Map a kinetic-animation id (lumina catalog) to its concrete preset. Non-
   // renderable picks degrade to their fallback presetId; existing preset and
   // category names pass through unchanged.
-  const resolvedPreset = resolveKineticAnimation(typographyPreset)?.presetId || typographyPreset;
+  // Studio looks (libass) replace the drawtext chain with one `ass` filter.
+  // Without libass, or if the .ass file can't be written, they draw with
+  // their fallback preset like any other style.
+  // The cleaned, unwrapped lines: used by the Studio engine and by the line
+  // drawtext below. Block mode wraps these ORIGINAL lines itself (to ~16
+  // chars, so type can be large); handing it the pre-wrapped copy would
+  // double-wrap.
+  const rawCaptionLines = Array.isArray(lines)
+    ? lines.map((s) => cleanCaptionLine(String(s).slice(0, 280))).filter(Boolean)
+    : [];
+  const studioCaptions = prepareStudioCaptions({
+    preset: typographyPreset,
+    assPath: path.join(currentOutDir(), `captions-${uuid()}.ass`),
+    words,
+    lines: rawCaptionLines,
+    durationSec: totalDuration,
+    w,
+    h,
+    energy: payload?.captionEnergy,
+    seed: payload?.captionSeed,
+    defaultEnergy: "lively",
+  });
+  const drawPreset = studioCaptions.mode === "drawtext" ? studioCaptions.preset : typographyPreset;
+  const resolvedPreset = resolveKineticAnimation(drawPreset)?.presetId || drawPreset;
   // Line captions (no kinetic) need their lines wrapped to fit the canvas
   // width — without this, drawtext's `x=(w-text_w)/2` goes negative and the
   // line scrolls off both edges (the "lready ... gave you. Take 10 secon..."
@@ -1107,21 +1137,18 @@ async function renderAdvancedVideo(payload, jobId) {
   );
   const wantsLines = !motion.useWords;
   const hasWordTimings = Array.isArray(words) && words.length > 0;
-  // Block mode wraps the ORIGINAL lines itself (to ~16 chars, so type can be
-  // large); handing it the pre-wrapped copy would double-wrap.
-  const rawCaptionLines = Array.isArray(lines)
-    ? lines.map((s) => cleanCaptionLine(String(s).slice(0, 280))).filter(Boolean)
-    : [];
-  const drawtextChain = hasWordTimings && !wantsLines
-    ? buildWordDrawtext({ words, w, h, preset: resolvedPreset, layout, depth })
-    : wantsLines
-      ? buildLineDrawtext({
-          lines: rawCaptionLines, w, h, preset: resolvedPreset, duration: totalDuration,
-          block: motion.block, reveal: motion.reveal, stagger: motion.stagger,
-          // Highlight needs real word timings; without them it is inert.
-          highlightWords: motion.highlight && hasWordTimings ? words : undefined,
-        })
-      : buildLineDrawtext({ lines: wrappedLines, w, h, preset: resolvedPreset, duration: totalDuration });
+  const drawtextChain = studioCaptions.mode === "studio"
+    ? studioCaptions.filter
+    : hasWordTimings && !wantsLines
+      ? buildWordDrawtext({ words, w, h, preset: resolvedPreset, layout, depth })
+      : wantsLines
+        ? buildLineDrawtext({
+            lines: rawCaptionLines, w, h, preset: resolvedPreset, duration: totalDuration,
+            block: motion.block, reveal: motion.reveal, stagger: motion.stagger,
+            // Highlight needs real word timings; without them it is inert.
+            highlightWords: motion.highlight && hasWordTimings ? words : undefined,
+          })
+        : buildLineDrawtext({ lines: wrappedLines, w, h, preset: resolvedPreset, duration: totalDuration });
 
   const filterParts = graph.filterParts.slice();
   let videoLabel = graph.videoLabel;
@@ -1245,7 +1272,9 @@ async function renderAdvancedVideo(payload, jobId) {
   args.push("-movflags", "+faststart", outFile);
 
   const cleanupFilterScript = () => {
-    try { if (fs.existsSync(filterScriptFile)) fs.unlinkSync(filterScriptFile); } catch {}
+    for (const f of [filterScriptFile, ...(studioCaptions.files || [])]) {
+      try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch {}
+    }
   };
 
   try {
@@ -1312,6 +1341,10 @@ async function runCampaignAutoPost(payload, jobId) {
     preferredProvider,
     forcedAlignmentFallback,
     typographyPreset: typographyPresetOverride,
+    // Studio looks: how lively the effects are, and which effect each line
+    // gets. Unset seed = a fresh one per video, so series parts differ.
+    captionEnergy,
+    captionSeed,
   } = payload || {};
 
   // Series + Auto-Publish auto-apply the default gospel bed when none chosen.
@@ -1503,6 +1536,8 @@ async function runCampaignAutoPost(payload, jobId) {
       aspect,
       captionWidthPct,
       typographyPreset,
+      captionEnergy,
+      captionSeed,
       musicPath: payload.musicPath,
       musicVolume: payload.musicVolume,
       autoDuck: payload.autoDuck,
@@ -1532,6 +1567,8 @@ async function runCampaignAutoPost(payload, jobId) {
         aspect,
         captionWidthPct,
         typographyPreset,
+        captionEnergy,
+        captionSeed,
         musicPath: payload.musicPath,
         musicVolume: payload.musicVolume,
         autoDuck: payload.autoDuck,
@@ -1548,6 +1585,8 @@ async function runCampaignAutoPost(payload, jobId) {
         aspect,
         captionWidthPct,
         typographyPreset,
+        captionEnergy,
+        captionSeed,
         musicPath: payload.musicPath,
         musicVolume: payload.musicVolume,
         autoDuck: payload.autoDuck,
