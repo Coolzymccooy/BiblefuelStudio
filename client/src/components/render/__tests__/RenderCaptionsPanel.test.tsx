@@ -156,3 +156,45 @@ describe('RenderCaptionsPanel — caption motion', () => {
     expect(screen.getByText(/overlay text/i)).toBeInTheDocument();
   });
 });
+
+const STUDIO = [{ id: 'studio-lagos-night', label: 'Lagos Night' }];
+
+describe('RenderCaptionsPanel Studio effects', () => {
+  it('lists Studio looks in the caption animation picker', () => {
+    setup({ studioLooks: STUDIO, libass: true });
+    expect(screen.getByRole('option', { name: 'Lagos Night' })).not.toBeDisabled();
+  });
+
+  it('disables Studio looks where the server cannot draw them', () => {
+    setup({ studioLooks: STUDIO, libass: false });
+    expect(screen.getByRole('option', { name: /unavailable on this server/ })).toBeDisabled();
+  });
+
+  it('a Studio look swaps motion, layout and depth for Energy and Shuffle', async () => {
+    const user = userEvent.setup();
+    const onCaptionEnergyChange = vi.fn();
+    const onShuffleEffects = vi.fn();
+    setup({
+      typographyPreset: 'studio-lagos-night',
+      studioLooks: STUDIO,
+      libass: true,
+      motions: [{ id: 'words', label: 'Word by word' }],
+      captionEnergy: 'lively',
+      onCaptionEnergyChange,
+      onShuffleEffects,
+    });
+    expect(screen.queryByRole('combobox', { name: 'Caption motion' })).toBeNull();
+    expect(screen.queryByRole('combobox', { name: 'Text layout' })).toBeNull();
+    expect(screen.queryByRole('checkbox', { name: /depth/i })).toBeNull();
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Energy' }), 'wild');
+    expect(onCaptionEnergyChange).toHaveBeenCalledWith('wild');
+    await user.click(screen.getByRole('button', { name: /shuffle effects/i }));
+    expect(onShuffleEffects).toHaveBeenCalled();
+  });
+
+  it('other styles keep layout and depth, and show no Energy', () => {
+    setup({ typographyPreset: 'cinematic-default', studioLooks: STUDIO, libass: true });
+    expect(screen.getByRole('combobox', { name: 'Text layout' })).toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: 'Energy' })).toBeNull();
+  });
+});

@@ -20,6 +20,8 @@ export const STORAGE_KEYS = {
     renderAutoDuck: 'BF_RENDER_AUTO_DUCK',
     renderDurationSec: 'BF_RENDER_DURATION_SEC',
     renderTypographyPreset: 'BF_RENDER_TYPOGRAPHY_PRESET',
+    renderCaptionEnergy: 'BF_RENDER_CAPTION_ENERGY',
+    renderCaptionSeed: 'BF_RENDER_CAPTION_SEED',
     renderLayout: 'BF_RENDER_LAYOUT',
     renderDepth: 'BF_RENDER_DEPTH',
     ttsVoiceId: 'BF_TTS_VOICE_ID',

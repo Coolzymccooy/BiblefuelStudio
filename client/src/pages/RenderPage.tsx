@@ -28,6 +28,7 @@ import { MediaTrimmer } from '../components/MediaTrimmer';
 import { BackgroundLibraryModal } from '../components/BackgroundLibraryModal';
 import { applyGeneratedVisuals, type GenerateMode } from '../lib/generativeVisuals';
 import { buildSpeakableLines } from '../lib/speakableScript';
+import { isStudioLook, nextSeed, randomSeed, type CaptionEnergy, type StudioOption } from '../lib/studioCaptions';
 
 /** Mirrors the server's MAX_BACKGROUNDS — keep in sync with render.js. */
 const MAX_BACKGROUNDS = 30;
@@ -145,6 +146,12 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
     const [isGeneratingVisuals, setIsGeneratingVisuals] = useState(false);
     const [kenBurns, setKenBurns] = useState(false);
     const [typographyPreset, setTypographyPreset] = useState<string>(() => loadJson<string>(STORAGE_KEYS.renderTypographyPreset, 'cinematic-default'));
+    // Studio looks: how lively the effects are, and which effect each line gets.
+    const [captionEnergy, setCaptionEnergy] = useState<CaptionEnergy>(() => loadJson<CaptionEnergy>(STORAGE_KEYS.renderCaptionEnergy, 'lively'));
+    const [captionSeed, setCaptionSeed] = useState<number>(() => loadJson<number>(STORAGE_KEYS.renderCaptionSeed, randomSeed()));
+    const [studioLooks, setStudioLooks] = useState<StudioOption[]>([]);
+    const [energies, setEnergies] = useState<StudioOption[]>([]);
+    const [libass, setLibass] = useState(true);
     // Caption MOTION - how captions are timed, independent of the style's look.
     const [captionMotion, setCaptionMotion] = useState<string>('words');
     const [captionStagger, setCaptionStagger] = useState<boolean>(false);
@@ -276,6 +283,14 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
     }, [typographyPreset]);
 
     useEffect(() => {
+        saveJson(STORAGE_KEYS.renderCaptionEnergy, captionEnergy);
+    }, [captionEnergy]);
+
+    useEffect(() => {
+        saveJson(STORAGE_KEYS.renderCaptionSeed, captionSeed);
+    }, [captionSeed]);
+
+    useEffect(() => {
         saveJson(STORAGE_KEYS.renderLayout, layout);
     }, [layout]);
 
@@ -293,12 +308,18 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
                 ok: boolean;
                 animations: Array<{ id: string; label: string; renderable: boolean }>;
                 motions?: CaptionMotionOption[];
+                studioLooks?: StudioOption[];
+                energies?: StudioOption[];
+                libass?: boolean;
             }>('/api/tts/animations');
             if (cancelled || !res.ok) return;
             if (res.data?.animations) setAnimations(res.data.animations);
             // Motions come from the same endpoint so the picker can never offer
             // a timing the renderer does not implement.
             if (Array.isArray(res.data?.motions)) setCaptionMotions(res.data.motions);
+            setStudioLooks(res.data?.studioLooks ?? []);
+            setEnergies(res.data?.energies ?? []);
+            setLibass(res.data?.libass !== false);
         })();
         return () => {
             cancelled = true;
@@ -520,6 +541,7 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
                 captionMotion,
                 captionStagger,
                 captionHighlight,
+                ...(isStudioLook(typographyPreset) ? { captionEnergy, captionSeed } : {}),
                 kenBurns,
                 layout,
                 depth,
@@ -1110,6 +1132,12 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
                             depth={depth}
                             onDepthChange={setDepth}
                             animations={animations}
+                            studioLooks={studioLooks}
+                            energies={energies}
+                            libass={libass}
+                            captionEnergy={captionEnergy}
+                            onCaptionEnergyChange={setCaptionEnergy}
+                            onShuffleEffects={() => setCaptionSeed((s) => nextSeed(s))}
                             hasScripts={scripts.length > 0}
                             onOpenScripts={() => setShowScriptsModal(true)}
                             onUseLatestScript={() => { setLines(buildLinesFromScript(scripts[0])); toast.success('Latest script loaded'); }}
@@ -1407,6 +1435,12 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
                             depth={depth}
                             onDepthChange={setDepth}
                             animations={animations}
+                            studioLooks={studioLooks}
+                            energies={energies}
+                            libass={libass}
+                            captionEnergy={captionEnergy}
+                            onCaptionEnergyChange={setCaptionEnergy}
+                            onShuffleEffects={() => setCaptionSeed((s) => nextSeed(s))}
                             hasScripts={scripts.length > 0}
                             onOpenScripts={() => setShowScriptsModal(true)}
                             onUseLatestScript={() => { setLines(buildLinesFromScript(scripts[0])); toast.success('Latest script loaded'); }}

@@ -4,6 +4,8 @@ import { Button } from '../ui/Button';
 import { Select } from '../ui/Select';
 import { Textarea } from '../ui/Textarea';
 import { Field } from '../ui/Field';
+import { StudioLookOptions, StudioEffectsControls } from '../captions/StudioEffects';
+import { isStudioLook, type CaptionEnergy, type StudioOption } from '../../lib/studioCaptions';
 
 /**
  * Caption controls for the Render screen.
@@ -52,6 +54,16 @@ export interface RenderCaptionsPanelProps {
   onCaptionStaggerChange?: (next: boolean) => void;
   captionHighlight?: boolean;
   onCaptionHighlightChange?: (next: boolean) => void;
+  /** Studio looks (libass) from the server; may be empty while loading. */
+  studioLooks?: StudioOption[];
+  /** Energy levels from the server; falls back to Calm / Lively / Wild. */
+  energies?: StudioOption[];
+  /** False when the server's ffmpeg has no libass: Studio looks are listed but disabled. */
+  libass?: boolean;
+  captionEnergy?: string;
+  onCaptionEnergyChange?: (next: CaptionEnergy) => void;
+  /** Re-roll which effect each line gets (a new seed). */
+  onShuffleEffects?: () => void;
   /** True when a saved script is available to pull in. */
   hasScripts?: boolean;
   onOpenScripts: () => void;
@@ -82,6 +94,12 @@ export function RenderCaptionsPanel({
   depth,
   onDepthChange,
   animations = [],
+  studioLooks = [],
+  energies,
+  libass = true,
+  captionEnergy,
+  onCaptionEnergyChange,
+  onShuffleEffects,
   hasScripts = false,
   onOpenScripts,
   onUseLatestScript,
@@ -90,6 +108,7 @@ export function RenderCaptionsPanel({
   compact = false,
   onSendToLane,
 }: RenderCaptionsPanelProps) {
+  const studio = isStudioLook(typographyPreset);
   return (
     <div className="space-y-4">
       <Field
@@ -152,7 +171,7 @@ export function RenderCaptionsPanel({
         </div>
       </Field>
 
-      {Array.isArray(motions) && motions.length > 0 && (
+      {!studio && Array.isArray(motions) && motions.length > 0 && (
         <Field
           label="Caption motion"
           tooltip="How captions are TIMED, independent of how they look. Pick one base mode; stagger and highlight layer on top."
@@ -203,6 +222,7 @@ export function RenderCaptionsPanel({
           value={typographyPreset}
           onChange={(e: ChangeEvent<HTMLSelectElement>) => onTypographyPresetChange(e.target.value)}
         >
+          <StudioLookOptions looks={studioLooks} libass={libass} value={typographyPreset} />
           {animations.length > 0 && (
             <optgroup label="Caption animations (word-synced)">
               {animations.map((a) => (
@@ -222,6 +242,23 @@ export function RenderCaptionsPanel({
         </Select>
       </Field>
 
+      {studio && (
+        <>
+          <StudioEffectsControls
+            look={typographyPreset}
+            energy={captionEnergy || 'lively'}
+            energies={energies}
+            onEnergyChange={(next) => onCaptionEnergyChange?.(next)}
+            onShuffle={() => onShuffleEffects?.()}
+          />
+          <p className="text-[11px] text-content-secondary">
+            Studio effects follow each spoken word when Kinetic captions are on; otherwise the lines are spread over the video.
+          </p>
+        </>
+      )}
+
+      {!studio && (
+      <>
       <Field
         label="Text layout"
         tooltip="Where word captions sit on the frame. Bottom layouts keep text in the safe band above the TikTok/Reels caption strip; staggered alternates left/centre/right per phrase."
@@ -246,6 +283,8 @@ export function RenderCaptionsPanel({
         />
         {compact ? 'Layered depth' : 'Layered depth (ghost shadow behind each word)'}
       </label>
+      </>
+      )}
     </div>
   );
 }
