@@ -75,4 +75,16 @@ describe('RenderLab (embedded in the Timeline editor)', () => {
     expect(last.captionSeed).not.toBe(7);
     expect(last.captionEnergy).toBe('wild');
   });
+
+  it('a corrupt stored energy or seed falls back to Lively and a fresh seed', () => {
+    localStorage.setItem('BF_RENDER_TYPOGRAPHY_PRESET', JSON.stringify('studio-lagos-night'));
+    localStorage.setItem('BF_RENDER_CAPTION_ENERGY', JSON.stringify('loud'));
+    localStorage.setItem('BF_RENDER_CAPTION_SEED', JSON.stringify('abc'));
+    const onCaptionStyleChange = vi.fn();
+    setup({ onCaptionStyleChange });
+    const last = onCaptionStyleChange.mock.calls.at(-1)![0];
+    expect(last.captionEnergy).toBe('lively');
+    expect(Number.isInteger(last.captionSeed)).toBe(true);
+    expect(screen.getByRole('combobox', { name: 'Energy' })).toHaveValue('lively');
+  });
 });

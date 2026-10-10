@@ -28,7 +28,7 @@ import { MediaTrimmer } from '../components/MediaTrimmer';
 import { BackgroundLibraryModal } from '../components/BackgroundLibraryModal';
 import { applyGeneratedVisuals, type GenerateMode } from '../lib/generativeVisuals';
 import { buildSpeakableLines } from '../lib/speakableScript';
-import { isStudioLook, nextSeed, randomSeed, type CaptionEnergy, type StudioOption } from '../lib/studioCaptions';
+import { isStudioLook, nextSeed, normaliseEnergy, normaliseSeed, type CaptionEnergy, type StudioOption } from '../lib/studioCaptions';
 
 /** Mirrors the server's MAX_BACKGROUNDS — keep in sync with render.js. */
 const MAX_BACKGROUNDS = 30;
@@ -162,8 +162,13 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
     const [kenBurns, setKenBurns] = useState(false);
     const [typographyPreset, setTypographyPreset] = useState<string>(() => loadJson<string>(STORAGE_KEYS.renderTypographyPreset, 'cinematic-default'));
     // Studio looks: how lively the effects are, and which effect each line gets.
-    const [captionEnergy, setCaptionEnergy] = useState<CaptionEnergy>(() => loadJson<CaptionEnergy>(STORAGE_KEYS.renderCaptionEnergy, 'lively'));
-    const [captionSeed, setCaptionSeed] = useState<number>(() => loadJson<number>(STORAGE_KEYS.renderCaptionSeed, randomSeed()));
+    // Stored values are validated: a corrupt energy becomes Lively, a bad seed a fresh one.
+    const [captionEnergy, setCaptionEnergy] = useState<CaptionEnergy>(
+        () => normaliseEnergy(loadJson<unknown>(STORAGE_KEYS.renderCaptionEnergy, 'lively'), 'lively'),
+    );
+    const [captionSeed, setCaptionSeed] = useState<number>(
+        () => normaliseSeed(loadJson<unknown>(STORAGE_KEYS.renderCaptionSeed, undefined)),
+    );
     const [studioLooks, setStudioLooks] = useState<StudioOption[]>([]);
     const [energies, setEnergies] = useState<StudioOption[]>([]);
     const [libass, setLibass] = useState(true);

@@ -39,7 +39,7 @@ import {
 import { loadJson, saveJson, STORAGE_KEYS } from '../lib/storage';
 import { LAYOUT_OPTIONS } from '../lib/layoutOptions';
 import { usePersistedState } from '../lib/usePersistedState';
-import { isStudioLook, nextSeed, randomSeed, type CaptionEnergy } from '../lib/studioCaptions';
+import { isStudioLook, nextSeed, normaliseEnergy, normaliseSeed, type CaptionEnergy } from '../lib/studioCaptions';
 import { pickTranscribeAction, baseName, type TranscriptRecord } from '../lib/transcribeAction';
 import { ShareSheet } from '../components/ShareSheet';
 import { MediaTrimmer } from '../components/MediaTrimmer';
@@ -346,8 +346,15 @@ export function TimelinePage() {
         'cinematic-worship',
     );
     // Studio looks: sermons default to Calm; the seed picks each line's effect.
-    const [captionEnergy, setCaptionEnergy] = usePersistedState<CaptionEnergy>(STORAGE_KEYS.sclCaptionEnergy, 'calm');
-    const [captionSeed, setCaptionSeed] = usePersistedState<number>(STORAGE_KEYS.sclCaptionSeed, randomSeed());
+    // Stored values are validated: a corrupt energy becomes Calm, a bad seed a fresh one.
+    const [captionEnergy, setCaptionEnergy] = useState<CaptionEnergy>(
+        () => normaliseEnergy(loadJson<unknown>(STORAGE_KEYS.sclCaptionEnergy, 'calm'), 'calm'),
+    );
+    useEffect(() => { saveJson(STORAGE_KEYS.sclCaptionEnergy, captionEnergy); }, [captionEnergy]);
+    const [captionSeed, setCaptionSeed] = useState<number>(
+        () => normaliseSeed(loadJson<unknown>(STORAGE_KEYS.sclCaptionSeed, undefined)),
+    );
+    useEffect(() => { saveJson(STORAGE_KEYS.sclCaptionSeed, captionSeed); }, [captionSeed]);
     const [layout, setLayout] = usePersistedState<string>(
         STORAGE_KEYS.sclLayout,
         'center',
