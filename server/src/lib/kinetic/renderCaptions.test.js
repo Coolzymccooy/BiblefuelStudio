@@ -1,9 +1,10 @@
-import { test } from "node:test";
+import { test, mock } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { SEED_MAX, normaliseSeed, timedLinePhrases, prepareStudioCaptions } from "./renderCaptions.js";
+import { hasLibass, _setLibassForTest } from "./capability.js";
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "studio-caps-"));
 
@@ -103,9 +104,82 @@ test("timed words win over lines", () => {
 });
 
 test("a failed .ass write falls back to drawtext instead of failing the render", () => {
-  const assPath = path.join(os.tmpdir(), `no-such-dir-${Date.now()}`, "c.ass");
-  const out = prepareStudioCaptions({ preset: "studio-gospel-gold", assPath, lines: ["Peace"], durationSec: 2, w: 720, h: 1280, libass: true });
-  assert.deepEqual(out, { mode: "drawtext", preset: "scripture-emphasis" });
+  const warn = mock.method(console, "warn", () => {});
+  try {
+    const assPath = path.join(os.tmpdir(), `no-such-dir-${Date.now()}`, "c.ass");
+    const out = prepareStudioCaptions({ preset: "studio-gospel-gold", assPath, lines: ["Peace"], durationSec: 2, w: 720, h: 1280, libass: true });
+    assert.deepEqual(out, { mode: "drawtext", preset: "scripture-emphasis" });
+    assert.equal(warn.mock.callCount(), 1);
+    assert.match(String(warn.mock.calls[0].arguments[0]), /studio fallback/);
+  } finally {
+    warn.mock.restore();
+  }
+});
+
+/** The .ass text prepareStudioCaptions writes for `opts` (seed 1, fixed lines). */
+function assFor(opts) {
+  const dir = tmp();
+  const assPath = path.join(dir, "c.ass");
+  try {
+    prepareStudioCaptions({
+      preset: "studio-lagos-night", assPath, w: 720, h: 1280, seed: 1, libass: true,
+      lines: ["Be still and know that I am God", "Peace be still"], durationSec: 6, ...opts,
+    });
+    return fs.readFileSync(assPath, "utf8");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test("an unknown energy falls back to defaultEnergy", () => {
+  assert.equal(assFor({ energy: "loud", defaultEnergy: "calm" }), assFor({ energy: "calm" }));
+});
+
+test("without an energy, defaultEnergy is used", () => {
+  assert.equal(assFor({ defaultEnergy: "wild" }), assFor({ energy: "wild" }));
+});
+
+test("invalid words are dropped, and with none left the lines are used", () => {
+  const doc = assFor({
+    energy: "calm",
+    words: [
+      { text: "", start: 0, end: 1 },
+      { text: "   ", start: 0, end: 1 },
+      { text: "grace", start: Number.NaN, end: 1 },
+      { text: "favour", start: 0, end: Number.POSITIVE_INFINITY },
+      { start: 0, end: 1 },
+      null,
+    ],
+    lines: ["mercy"],
+  });
+  assert.match(doc, /mercy/i);
+  assert.doesNotMatch(doc, /grace|favour/i);
+});
+
+test("a non-Studio preset never probes ffmpeg for libass", (t) => {
+  if (!hasLibass()) return t.skip("ffmpeg here has no libass");
+  const saved = process.env.FFMPEG_PATH;
+  t.after(() => {
+    if (saved === undefined) delete process.env.FFMPEG_PATH;
+    else process.env.FFMPEG_PATH = saved;
+    _setLibassForTest(undefined);
+  });
+  // Forget the answer and point the probe at a missing binary: a probe now
+  // would cache false.
+  _setLibassForTest(undefined);
+  process.env.FFMPEG_PATH = path.join(os.tmpdir(), "no-such-ffmpeg-binary");
+  const out = prepareStudioCaptions({ preset: "hero-bold", assPath: "unused.ass", lines: ["Peace"], durationSec: 2, w: 720, h: 1280 });
+  assert.deepEqual(out, { mode: "drawtext", preset: "hero-bold" });
+  if (saved === undefined) delete process.env.FFMPEG_PATH;
+  else process.env.FFMPEG_PATH = saved;
+  assert.equal(hasLibass(), true, "the non-Studio call must not have cached a probe");
+});
+
+test("a Studio look with no libass argument asks the probe", (t) => {
+  t.after(() => _setLibassForTest(undefined));
+  _setLibassForTest(false);
+  const out = prepareStudioCaptions({ preset: "studio-lagos-night", assPath: "unused.ass", lines: ["Peace"], durationSec: 2, w: 720, h: 1280 });
+  assert.deepEqual(out, { mode: "drawtext", preset: "marker" });
 });
 
 test("nothing timed gives an empty studio filter and no file", () => {

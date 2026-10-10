@@ -1091,11 +1091,18 @@ async function renderAdvancedVideo(payload, jobId) {
   // Studio looks (libass) replace the drawtext chain with one `ass` filter.
   // Without libass, or if the .ass file can't be written, they draw with
   // their fallback preset like any other style.
+  // The cleaned, unwrapped lines: used by the Studio engine and by the line
+  // drawtext below. Block mode wraps these ORIGINAL lines itself (to ~16
+  // chars, so type can be large); handing it the pre-wrapped copy would
+  // double-wrap.
+  const rawCaptionLines = Array.isArray(lines)
+    ? lines.map((s) => cleanCaptionLine(String(s).slice(0, 280))).filter(Boolean)
+    : [];
   const studioCaptions = prepareStudioCaptions({
     preset: typographyPreset,
     assPath: path.join(currentOutDir(), `captions-${uuid()}.ass`),
     words,
-    lines: Array.isArray(lines) ? lines.map((s) => cleanCaptionLine(String(s).slice(0, 280))).filter(Boolean) : [],
+    lines: rawCaptionLines,
     durationSec: totalDuration,
     w,
     h,
@@ -1130,11 +1137,6 @@ async function renderAdvancedVideo(payload, jobId) {
   );
   const wantsLines = !motion.useWords;
   const hasWordTimings = Array.isArray(words) && words.length > 0;
-  // Block mode wraps the ORIGINAL lines itself (to ~16 chars, so type can be
-  // large); handing it the pre-wrapped copy would double-wrap.
-  const rawCaptionLines = Array.isArray(lines)
-    ? lines.map((s) => cleanCaptionLine(String(s).slice(0, 280))).filter(Boolean)
-    : [];
   const drawtextChain = studioCaptions.mode === "studio"
     ? studioCaptions.filter
     : hasWordTimings && !wantsLines

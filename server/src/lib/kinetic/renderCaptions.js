@@ -66,11 +66,13 @@ export function timedLinePhrases(lines, durationSec) {
  */
 export function prepareStudioCaptions({
   preset, assPath, words, lines, durationSec, w, h, energy, seed, title,
-  defaultEnergy = "lively", libass = hasLibass(),
+  defaultEnergy = "lively", libass = undefined,
 }) {
   if (!isStudioLook(preset)) return { mode: "drawtext", preset };
   const fallback = { mode: "drawtext", preset: resolveLook(preset).fallbackPreset };
-  if (!libass) return fallback;
+  // Probe ffmpeg only for a Studio look: non-Studio renders never need libass.
+  const canDraw = libass ?? hasLibass();
+  if (!canDraw) return fallback;
   const timed = (Array.isArray(words) ? words : []).filter(
     (wd) => wd && String(wd.text || "").trim() && Number.isFinite(wd.start) && Number.isFinite(wd.end),
   );

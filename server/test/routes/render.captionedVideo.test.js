@@ -93,7 +93,10 @@ describe("POST /api/render/captioned-video — validation", () => {
       .post("/api/render/captioned-video")
       .send({ audioPath: aud, backgroundPath: bg, words });
     assert.equal(res.status, 413);
-    assert.match(res.body.error || "", /Too many caption words/);
+    assert.equal(
+      res.body.error,
+      "Too many caption words (1600; max 1500). Kinetic captions are for short clips — trim the audio or use Series mode to split it into short videos.",
+    );
   });
 
   test("blend: accepts manual backgroundPaths[] together with autoBackground", async (t) => {
@@ -228,6 +231,23 @@ describe("POST /api/render/captioned-video — validation", () => {
     // word cap did not stop it.
     assert.notEqual(res.status, 413, JSON.stringify(res.body));
     assert.doesNotMatch(res.body?.error || "", /Too many caption words/);
+  });
+
+  test("a Studio look is still bound by a generous Studio word cap", async (t) => {
+    if (!hasLibass()) return t.skip("ffmpeg here has no libass");
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "render-"));
+    const aud = path.join(outDir, "a.wav");
+    const bg = path.join(outDir, "bg.mp4");
+    fs.writeFileSync(aud, Buffer.alloc(200, 0));
+    fs.writeFileSync(bg, Buffer.alloc(200, 0));
+    t.after(() => fs.rmSync(outDir, { recursive: true, force: true }));
+    const words = Array.from({ length: 20001 }, (_, i) => ({ text: `w${i}`, startMs: i * 100, endMs: i * 100 + 80 }));
+    const res = await request(makeApp(outDir))
+      .post("/api/render/captioned-video")
+      .send({ audioPath: aud, backgroundPath: bg, words, typographyPreset: "studio-gospel-gold" });
+    assert.equal(res.status, 413, JSON.stringify(res.body).slice(0, 300));
+    assert.match(res.body.error || "", /Too many caption words \(20001; max 20000\)/);
+    assert.match(res.body.error || "", /Trim the audio or use Series mode to split it into shorter videos\./);
   });
 });
 

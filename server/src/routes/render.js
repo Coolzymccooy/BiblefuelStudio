@@ -48,6 +48,16 @@ function clampDuration(value) {
   return Math.min(Math.max(n, 1), MAX_RENDER_SECONDS);
 }
 
+// The one builder for every "Too many caption words" 413 message. Studio
+// looks (libass) get their own advice: the cap there is about abuse, not
+// drawtext feasibility, so "kinetic captions are for short clips" is wrong.
+function tooManyCaptionWordsMessage(count, max, { studio = false } = {}) {
+  const advice = studio
+    ? "Trim the audio or use Series mode to split it into shorter videos."
+    : "Kinetic captions are for short clips — trim the audio or use Series mode to split it into short videos.";
+  return `Too many caption words (${count}; max ${max}). ${advice}`;
+}
+
 function isFileTooLarge(p) {
   if (!p || p.startsWith('http')) return false;
   try {
@@ -614,10 +624,15 @@ router.post("/captioned-video", async (req, res) => {
     // single-worker render pipeline. Kept generous (short-form is the target).
     // Only relevant when captions are on.
     const MAX_CAPTION_WORDS = 1500;
-    if (captions && !studioLook && Array.isArray(words) && words.length > MAX_CAPTION_WORDS) {
+    // Studio looks skip the drawtext cap, but buildAss runs synchronously in
+    // this handler, so an unbounded word list could still stall the process.
+    // 20k words is over two hours of speech.
+    const MAX_STUDIO_CAPTION_WORDS = 20000;
+    const wordCap = studioLook ? MAX_STUDIO_CAPTION_WORDS : MAX_CAPTION_WORDS;
+    if (captions && Array.isArray(words) && words.length > wordCap) {
       return res.status(413).json({
         ok: false,
-        error: `Too many caption words (${words.length}; max ${MAX_CAPTION_WORDS}). Kinetic captions are for short clips — trim the audio or use Series mode to split it into short videos.`,
+        error: tooManyCaptionWordsMessage(words.length, wordCap, { studio: studioLook }),
       });
     }
 
@@ -935,7 +950,7 @@ router.post("/captioned-video", async (req, res) => {
           cleanupTempInputs();
           return res.status(413).json({
             ok: false,
-            error: `Too many caption words (${drawWords.length}; max ${MAX_CAPTION_WORDS}). Kinetic captions are for short clips — trim the audio or use Series mode to split it into short videos.`,
+            error: tooManyCaptionWordsMessage(drawWords.length, MAX_CAPTION_WORDS),
           });
         }
         const resolvedPreset = resolveKineticAnimation(studioCaptions.preset)?.presetId || studioCaptions.preset;

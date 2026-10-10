@@ -26,6 +26,14 @@ test("studio ids are prefixed and resolve; everything else is not a studio look"
   assert.deepEqual(listStudioLooks().map((l) => l.id), ["studio-lagos-night", "studio-gospel-gold", "studio-clean-white"]);
 });
 
+test("only a look's own keys count: prototype names are not Studio looks", () => {
+  for (const id of ["studio-constructor", "studio-__proto__", "studio-toString", "studio-hasOwnProperty"]) {
+    assert.equal(isStudioLook(id), false, id);
+    assert.equal(drawtextPresetFor(id), id, id);
+    assert.equal(resolveLook(id).id, "clean-white", id);
+  }
+});
+
 test("energy falls back to the caller's default", () => {
   assert.equal(resolveEnergy("wild"), "wild");
   assert.equal(resolveEnergy("loud"), "lively");

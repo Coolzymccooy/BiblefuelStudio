@@ -50,12 +50,14 @@ export const ENERGIES = Object.freeze([
 ]);
 
 export function isStudioLook(id) {
-  return typeof id === "string" && id.startsWith(STUDIO_PREFIX) && Boolean(LOOKS[id.slice(STUDIO_PREFIX.length)]);
+  // Own keys only: "studio-constructor" or "studio-__proto__" must not resolve
+  // through the object prototype.
+  return typeof id === "string" && id.startsWith(STUDIO_PREFIX) && Object.hasOwn(LOOKS, id.slice(STUDIO_PREFIX.length));
 }
 
 export function resolveLook(id) {
   const key = String(id || "").startsWith(STUDIO_PREFIX) ? String(id).slice(STUDIO_PREFIX.length) : String(id || "");
-  return LOOKS[key] || LOOKS["clean-white"];
+  return Object.hasOwn(LOOKS, key) ? LOOKS[key] : LOOKS["clean-white"];
 }
 
 export function resolveEnergy(id, fallback = "lively") {
