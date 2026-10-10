@@ -108,6 +108,9 @@ export interface SeriesGenerateInput {
     backgroundQuery?: string;
     titlePrefix?: string;
     useGenImage?: boolean;
+    /** Caption style: a Studio look id; omitted = the scripture default. */
+    typographyPreset?: string;
+    captionEnergy?: 'calm' | 'lively' | 'wild';
 }
 
 export interface ImageGenSegmentResult {

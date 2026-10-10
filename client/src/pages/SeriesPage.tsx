@@ -28,6 +28,8 @@ import {
     type SeriesRecord,
 } from '../lib/bibleApi';
 import { toastError } from '../lib/errors';
+import { SeriesCaptionStyle } from '../components/series/SeriesCaptionStyle';
+import type { CaptionEnergy } from '../lib/studioCaptions';
 
 const PART_COUNT_OPTIONS = [3, 4, 5, 6, 7, 8, 10, 12];
 
@@ -43,6 +45,8 @@ export function SeriesPage() {
     const [aspect, setAspect] = useState<'portrait' | 'square' | 'landscape'>('portrait');
     const [durationSec, setDurationSec] = useState(22);
     const [useGenImage, setUseGenImage] = useState(false);
+    const [captionStyle, setCaptionStyle] = useState('');
+    const [captionEnergy, setCaptionEnergy] = useState<CaptionEnergy>('lively');
 
     const [catalog, setCatalog] = useState<TranslationsResponse | null>(null);
     const [plan, setPlan] = useState<SeriesPlan | null>(null);
@@ -127,6 +131,7 @@ export function SeriesPage() {
                 aspect,
                 durationSec,
                 useGenImage,
+                ...(captionStyle ? { typographyPreset: captionStyle, captionEnergy } : {}),
             });
             toast.success(`Series queued — ${result.jobIds.length} videos`);
             if (result.imageGen?.requested && Array.isArray(result.imageGen.results)) {
@@ -228,6 +233,12 @@ export function SeriesPage() {
                                 <option value="landscape">Landscape (16:9)</option>
                             </Select>
                         </label>
+                        <SeriesCaptionStyle
+                            value={captionStyle}
+                            onChange={setCaptionStyle}
+                            energy={captionEnergy}
+                            onEnergyChange={setCaptionEnergy}
+                        />
                         <label className="flex flex-col gap-1.5">
                             <span className="text-caption">Duration (sec)</span>
                             <Input
