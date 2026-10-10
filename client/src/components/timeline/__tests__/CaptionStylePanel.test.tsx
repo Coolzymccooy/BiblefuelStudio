@@ -1,17 +1,38 @@
-import { describe, it, expect, vi } from 'vitest';
+import { useEffect } from 'react';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { CaptionStylePanel, type CaptionStylePanelProps } from '../CaptionStylePanel';
 
+// What the mocked picker's catalogue reports; a test flips it to a server with no libass.
+const catalogue = vi.hoisted(() => ({ libass: true }));
+
 vi.mock('../../voicelab/AnimationPicker', () => ({
   // The real picker pulls the animation catalogue from the server; this panel's
   // job is only to pass the value through and report changes.
-  AnimationPicker: ({ value, onChange }: { value: string; onChange: (id: string) => void }) => (
-    <button type="button" onClick={() => onChange('hero-bold')}>
-      preset:{value}
-    </button>
-  ),
+  AnimationPicker: ({
+    value,
+    onChange,
+    onCatalogue,
+  }: {
+    value: string;
+    onChange: (id: string) => void;
+    onCatalogue?: (info: { libass: boolean }) => void;
+  }) => {
+    useEffect(() => {
+      onCatalogue?.({ libass: catalogue.libass });
+    }, [onCatalogue]);
+    return (
+      <button type="button" onClick={() => onChange('hero-bold')}>
+        preset:{value}
+      </button>
+    );
+  },
 }));
+
+afterEach(() => {
+  catalogue.libass = true;
+});
 
 const LAYOUTS = [
   { value: 'center', label: 'Center (default)' },
@@ -116,5 +137,13 @@ describe('CaptionStylePanel Studio effects', () => {
   it('defaults a Studio look to Calm energy for sermons', () => {
     setup({ typographyPreset: 'studio-gospel-gold' });
     expect(screen.getByRole('combobox', { name: 'Energy' })).toHaveValue('calm');
+  });
+
+  it('a saved Studio look on a server without libass shows disabled controls and says why', async () => {
+    catalogue.libass = false;
+    setup({ typographyPreset: 'studio-gospel-gold', onCaptionEnergyChange: vi.fn(), onShuffleEffects: vi.fn() });
+    expect(await screen.findByText(/Studio effects unavailable on this server/)).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Energy' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /shuffle effects/i })).toBeDisabled();
   });
 });

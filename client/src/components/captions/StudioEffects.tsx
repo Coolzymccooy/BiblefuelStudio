@@ -1,7 +1,7 @@
 import { useState, type ChangeEvent } from 'react';
 import { Field } from '../ui/Field';
 import { Select } from '../ui/Select';
-import { FALLBACK_ENERGIES, isStudioLook, readableLook, type CaptionEnergy, type StudioOption } from '../../lib/studioCaptions';
+import { FALLBACK_ENERGIES, isStudioLook, lookSlug, readableLook, type CaptionEnergy, type StudioOption } from '../../lib/studioCaptions';
 
 /**
  * Studio effects controls shared by every caption picker (Story, Render,
@@ -42,19 +42,29 @@ export interface StudioEffectsControlsProps {
   /** Re-roll which effect each line gets. Omit where every render is shuffled anyway. */
   onShuffle?: () => void;
   disabled?: boolean;
+  /**
+   * The server's ffmpeg has no libass: Energy and Shuffle are disabled and a
+   * line says renders use the look's standard style. The sample still plays.
+   */
+  unavailable?: boolean;
 }
 
+const STUDIO_UNAVAILABLE_TEXT = "Studio effects unavailable on this server — renders use the look's standard style.";
+
 /** Shown once a Studio look is picked: its sample clip, Energy, and Shuffle. */
-export function StudioEffectsControls({ look, energy, energies, onEnergyChange, onShuffle, disabled = false }: StudioEffectsControlsProps) {
+export function StudioEffectsControls({
+  look, energy, energies, onEnergyChange, onShuffle, disabled = false, unavailable = false,
+}: StudioEffectsControlsProps) {
   // A look whose sample clip failed to load: hide the player rather than show a broken one.
   const [failedPreview, setFailedPreview] = useState<string | null>(null);
   const options = energies && energies.length > 0 ? energies : FALLBACK_ENERGIES;
+  const off = disabled || unavailable;
   return (
     <>
       {failedPreview !== look && (
         <video
           key={look}
-          src={`/studio-looks/${look.replace(/^studio-/, '')}.mp4`}
+          src={`/studio-looks/${lookSlug(look)}.mp4`}
           autoPlay
           muted
           loop
@@ -64,6 +74,7 @@ export function StudioEffectsControls({ look, energy, energies, onEnergyChange, 
           className="w-full max-w-xs rounded-lg border border-white/10"
         />
       )}
+      {unavailable && <p className="text-xs text-content-secondary">{STUDIO_UNAVAILABLE_TEXT}</p>}
       <Field
         label="Energy"
         tooltip="How wild the effects get. Calm pops and stacks words; Lively adds big brush slams on lines that repeat; Wild slams everywhere, made for songs."
@@ -72,7 +83,7 @@ export function StudioEffectsControls({ look, energy, energies, onEnergyChange, 
           <Select
             aria-label="Energy"
             value={energy}
-            disabled={disabled}
+            disabled={off}
             onChange={(e: ChangeEvent<HTMLSelectElement>) => onEnergyChange(e.target.value as CaptionEnergy)}
           >
             {options.map((en) => (
@@ -83,7 +94,7 @@ export function StudioEffectsControls({ look, energy, energies, onEnergyChange, 
             <button
               type="button"
               onClick={onShuffle}
-              disabled={disabled}
+              disabled={off}
               className="shrink-0 rounded-lg border border-white/10 px-3 py-2.5 text-xs text-content-secondary hover:text-bf-cream disabled:opacity-50"
               title="Re-roll which effect each line gets"
             >

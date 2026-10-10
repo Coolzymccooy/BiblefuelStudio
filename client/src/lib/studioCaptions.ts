@@ -20,10 +20,13 @@ export const FALLBACK_ENERGIES: StudioOption[] = [
 export const isStudioLook = (id?: string | null): boolean =>
   typeof id === 'string' && id.startsWith(STUDIO_PREFIX);
 
+/** "studio-lagos-night" -> "lagos-night"; any other id is returned unchanged. */
+export const lookSlug = (id: string): string =>
+  id.startsWith(STUDIO_PREFIX) ? id.slice(STUDIO_PREFIX.length) : id;
+
 /** "studio-lagos-night" -> "Lagos Night". */
 export const readableLook = (id: string): string =>
-  id
-    .replace(/^studio-/, '')
+  lookSlug(id)
     .split('-')
     .filter(Boolean)
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))

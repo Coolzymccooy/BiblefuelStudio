@@ -250,6 +250,7 @@ export function RenderCaptionsPanel({
             energies={energies}
             onEnergyChange={(next) => onCaptionEnergyChange?.(next)}
             onShuffle={() => onShuffleEffects?.()}
+            unavailable={!libass}
           />
           <p className="text-[11px] text-content-secondary">
             Studio effects follow each spoken word when Kinetic captions are on; otherwise the lines are spread over the video.

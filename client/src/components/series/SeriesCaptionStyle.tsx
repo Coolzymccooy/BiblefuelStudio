@@ -42,7 +42,7 @@ export function SeriesCaptionStyle({ value, onChange, energy, onEnergyChange }: 
         <StudioLookOptions looks={studioLooks} libass={libass} value={value} />
       </Select>
       {isStudioLook(value) && (
-        <StudioEffectsControls look={value} energy={energy} energies={energies} onEnergyChange={onEnergyChange} />
+        <StudioEffectsControls look={value} energy={energy} energies={energies} onEnergyChange={onEnergyChange} unavailable={!libass} />
       )}
     </div>
   );

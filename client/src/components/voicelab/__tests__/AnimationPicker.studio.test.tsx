@@ -41,4 +41,12 @@ describe('AnimationPicker Studio looks', () => {
     render(<AnimationPicker defaultOpen showStudio />);
     expect(await screen.findByRole('button', { name: /Lagos Night/ })).toBeDisabled();
   });
+
+  it('reports whether the server has libass once the catalogue loads', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue(catalogue(false) as any);
+    const onCatalogue = vi.fn();
+    render(<AnimationPicker defaultOpen showStudio onCatalogue={onCatalogue} />);
+    await screen.findByText('Karaoke Pop');
+    expect(onCatalogue).toHaveBeenCalledWith({ libass: false });
+  });
 });

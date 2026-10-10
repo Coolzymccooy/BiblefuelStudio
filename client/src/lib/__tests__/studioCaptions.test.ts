@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { SEED_MAX, isStudioLook, readableLook, nextSeed, randomSeed } from '../studioCaptions';
+import { SEED_MAX, isStudioLook, readableLook, lookSlug, nextSeed, randomSeed } from '../studioCaptions';
 
 describe('studioCaptions', () => {
   it('recognises Studio look ids', () => {
@@ -11,6 +11,12 @@ describe('studioCaptions', () => {
 
   it('turns a look id into a readable name', () => {
     expect(readableLook('studio-lagos-night')).toBe('Lagos Night');
+  });
+
+  it('lookSlug strips the Studio prefix and leaves other ids alone', () => {
+    expect(lookSlug('studio-lagos-night')).toBe('lagos-night');
+    expect(lookSlug('hero-bold')).toBe('hero-bold');
+    expect(lookSlug('my-studio-look')).toBe('my-studio-look');
   });
 
   it('nextSeed never returns the current seed', () => {

@@ -253,4 +253,12 @@ describe('StoryCaptionsPanel Studio effects', () => {
     expect(opt).toBeDisabled();
     expect(opt.textContent).toMatch(/unavailable/i);
   });
+
+  it('a saved Studio look on a server without libass shows disabled controls and says why', async () => {
+    mockCatalogue({ ...studioCatalogue, libass: false });
+    show({ captions: 'kinetic', captionPreset: 'studio-lagos-night' });
+    expect(await screen.findByText(/Studio effects unavailable on this server/)).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Energy' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /shuffle effects/i })).toBeDisabled();
+  });
 });

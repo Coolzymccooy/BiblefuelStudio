@@ -32,4 +32,14 @@ describe('SeriesCaptionStyle', () => {
     expect(onEnergyChange).toHaveBeenCalledWith('calm');
     expect(screen.queryByRole('button', { name: /shuffle effects/i })).toBeNull();
   });
+
+  it('a saved Studio look on a server without libass shows a disabled Energy and says why', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({
+      ok: true,
+      data: { ok: true, studioLooks: [{ id: 'studio-gospel-gold', label: 'Gospel Gold' }], libass: false },
+    } as any);
+    render(<SeriesCaptionStyle value="studio-gospel-gold" onChange={vi.fn()} energy="lively" onEnergyChange={vi.fn()} />);
+    expect(await screen.findByText(/Studio effects unavailable on this server/)).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Energy' })).toBeDisabled();
+  });
 });

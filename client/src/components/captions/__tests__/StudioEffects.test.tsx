@@ -55,6 +55,30 @@ describe('StudioEffectsControls', () => {
     expect(onShuffle).toHaveBeenCalled();
   });
 
+  it('disables Energy and Shuffle when disabled', () => {
+    render(<StudioEffectsControls look="studio-lagos-night" energy="lively" onEnergyChange={vi.fn()} onShuffle={vi.fn()} disabled />);
+    expect(screen.getByRole('combobox', { name: 'Energy' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /shuffle effects/i })).toBeDisabled();
+  });
+
+  it('when unavailable, disables the controls, says why and still plays the sample', () => {
+    const { container } = render(
+      <StudioEffectsControls look="studio-lagos-night" energy="lively" onEnergyChange={vi.fn()} onShuffle={vi.fn()} unavailable />,
+    );
+    expect(screen.getByRole('combobox', { name: 'Energy' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /shuffle effects/i })).toBeDisabled();
+    expect(
+      screen.getByText("Studio effects unavailable on this server — renders use the look's standard style."),
+    ).toBeInTheDocument();
+    expect(container.querySelector('video')?.getAttribute('src')).toBe('/studio-looks/lagos-night.mp4');
+  });
+
+  it('shows no unavailable line by default', () => {
+    render(<StudioEffectsControls look="studio-lagos-night" energy="lively" onEnergyChange={vi.fn()} onShuffle={vi.fn()} />);
+    expect(screen.queryByText(/Studio effects unavailable on this server/)).toBeNull();
+    expect(screen.getByRole('combobox', { name: 'Energy' })).not.toBeDisabled();
+  });
+
   it('offers no Shuffle button when there is nothing to shuffle', () => {
     render(<StudioEffectsControls look="studio-lagos-night" energy="calm" onEnergyChange={vi.fn()} />);
     expect(screen.queryByRole('button', { name: /shuffle effects/i })).toBeNull();

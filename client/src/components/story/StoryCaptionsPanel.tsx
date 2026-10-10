@@ -184,6 +184,7 @@ export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCapti
               onEnergyChange={(next) => onChange({ captionEnergy: next })}
               onShuffle={() => onChange({ captionSeed: nextSeed(value.captionSeed) })}
               disabled={busy}
+              unavailable={!libass}
             />
             <Field
               label="Title intro"

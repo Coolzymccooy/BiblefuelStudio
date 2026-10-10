@@ -1,3 +1,4 @@
+import { useCallback, useState } from 'react';
 import { AnimationPicker } from '../voicelab/AnimationPicker';
 import { StudioEffectsControls } from '../captions/StudioEffects';
 import { isStudioLook, type CaptionEnergy } from '../../lib/studioCaptions';
@@ -51,12 +52,16 @@ export function CaptionStylePanel({
   onCaptionEnergyChange,
   onShuffleEffects,
 }: CaptionStylePanelProps) {
+  // Whether the server can draw Studio looks, as the picker's catalogue reports it.
+  const [libass, setLibass] = useState(true);
+  const onCatalogue = useCallback((info: { libass: boolean }) => setLibass(info.libass), []);
+
   if (!enabled) return null;
 
   return (
     <div className="mb-4">
       <p className="mb-2 text-xs text-gray-400">Kinetic typography style</p>
-      <AnimationPicker value={typographyPreset} onChange={onTypographyPresetChange} showStudio />
+      <AnimationPicker value={typographyPreset} onChange={onTypographyPresetChange} showStudio onCatalogue={onCatalogue} />
 
       {isStudioLook(typographyPreset) ? (
         <div className="mt-3 space-y-3">
@@ -65,6 +70,7 @@ export function CaptionStylePanel({
             energy={captionEnergy || 'calm'}
             onEnergyChange={(next) => onCaptionEnergyChange?.(next)}
             onShuffle={() => onShuffleEffects?.()}
+            unavailable={!libass}
           />
         </div>
       ) : (

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Wand2, Loader2 } from 'lucide-react';
 import { Card } from '../ui/Card';
 import { Badge } from '../ui/Badge';
@@ -25,6 +25,8 @@ interface AnimationPickerProps {
   defaultOpen?: boolean;
   /** List the Studio effects looks (libass) above the animations. Only for renderers that draw them. */
   showStudio?: boolean;
+  /** Called once the catalogue loads, so a parent can tell whether the server can draw Studio looks. */
+  onCatalogue?: (info: { libass: boolean }) => void;
 }
 
 /**
@@ -34,7 +36,12 @@ interface AnimationPickerProps {
  * The chosen id is the `typographyPreset` passed to renders, and is persisted
  * to localStorage so the render flow can pick it up.
  */
-export function AnimationPicker({ value, onChange, className = '', defaultOpen = false, showStudio = false }: AnimationPickerProps) {
+export function AnimationPicker({ value, onChange, className = '', defaultOpen = false, showStudio = false, onCatalogue }: AnimationPickerProps) {
+  // The latest callback, read when the one-off catalogue fetch finishes.
+  const onCatalogueRef = useRef(onCatalogue);
+  useEffect(() => {
+    onCatalogueRef.current = onCatalogue;
+  }, [onCatalogue]);
   const [animations, setAnimations] = useState<KineticAnimation[]>([]);
   const [studioLooks, setStudioLooks] = useState<StudioOption[]>([]);
   const [libass, setLibass] = useState(true);
@@ -55,6 +62,7 @@ export function AnimationPicker({ value, onChange, className = '', defaultOpen =
         setAnimations(res.data.animations);
         setStudioLooks(res.data.studioLooks ?? []);
         setLibass(res.data.libass !== false);
+        onCatalogueRef.current?.({ libass: res.data.libass !== false });
       } else {
         setError(res.error || 'Failed to load animations');
       }

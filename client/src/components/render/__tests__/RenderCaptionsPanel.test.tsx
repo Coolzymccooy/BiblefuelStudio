@@ -192,6 +192,20 @@ describe('RenderCaptionsPanel Studio effects', () => {
     expect(onShuffleEffects).toHaveBeenCalled();
   });
 
+  it('a saved Studio look on a server without libass shows disabled controls and says why', () => {
+    setup({
+      typographyPreset: 'studio-lagos-night',
+      studioLooks: STUDIO,
+      libass: false,
+      captionEnergy: 'lively',
+      onCaptionEnergyChange: vi.fn(),
+      onShuffleEffects: vi.fn(),
+    });
+    expect(screen.getByRole('combobox', { name: 'Energy' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /shuffle effects/i })).toBeDisabled();
+    expect(screen.getByText(/Studio effects unavailable on this server/)).toBeInTheDocument();
+  });
+
   it('other styles keep layout and depth, and show no Energy', () => {
     setup({ typographyPreset: 'cinematic-default', studioLooks: STUDIO, libass: true });
     expect(screen.getByRole('combobox', { name: 'Text layout' })).toBeInTheDocument();
