@@ -6,6 +6,7 @@ import path from "path";
 import express from "express";
 import request from "supertest";
 import renderRouter from "../../src/routes/render.js";
+import { hasLibass } from "../../src/lib/kinetic/capability.js";
 
 function makeApp(outDir, userId = "test-user") {
   const app = express();
@@ -176,6 +177,57 @@ describe("POST /api/render/captioned-video — validation", () => {
       });
     assert.equal(res.status, 400);
     assert.match(res.body.error || "", /at most 30 backgrounds/);
+  });
+
+  test("a Studio look draws captions with one ass filter instead of drawtext", async (t) => {
+    const { spawnSync } = await import("child_process");
+    const bin = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
+    if (spawnSync(bin, ["-version"], { stdio: "ignore" }).status !== 0) return t.skip("ffmpeg not available");
+    if (!hasLibass()) return t.skip("ffmpeg here has no libass");
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "render-"));
+    t.after(() => fs.rmSync(outDir, { recursive: true, force: true }));
+    const aud = path.join(outDir, "voice.wav");
+    const bg = path.join(outDir, "bg.mp4");
+    spawnSync(bin, ["-y", "-f", "lavfi", "-i", "anullsrc=r=22050:cl=mono", "-t", "6", aud], { stdio: "ignore" });
+    spawnSync(bin, ["-y", "-f", "lavfi", "-i", "color=size=64x64:rate=10:color=navy", "-t", "6", "-pix_fmt", "yuv420p", bg], { stdio: "ignore" });
+
+    const res = await request(makeApp(outDir))
+      .post("/api/render/captioned-video")
+      .send({
+        audioPath: aud,
+        backgroundPath: bg,
+        typographyPreset: "studio-lagos-night",
+        captionEnergy: "calm",
+        captionSeed: 1,
+        words: [
+          { text: "be", startMs: 200, endMs: 500 },
+          { text: "strong", startMs: 3200, endMs: 3600 },
+        ],
+      });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    const filterName = fs.readdirSync(outDir).find((f) => /^filter-.*\.txt$/.test(f));
+    assert.ok(filterName, "expected a filter script to be written");
+    const graph = fs.readFileSync(path.join(outDir, filterName), "utf-8");
+    assert.match(graph, /ass=filename='[^']*captions-[0-9a-f-]+\.ass'/);
+    assert.doesNotMatch(graph, /drawtext=/);
+  });
+
+  test("a Studio look is not bound by the drawtext word cap", async (t) => {
+    if (!hasLibass()) return t.skip("ffmpeg here has no libass");
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "render-"));
+    const aud = path.join(outDir, "a.wav");
+    const bg = path.join(outDir, "bg.mp4");
+    fs.writeFileSync(aud, Buffer.alloc(200, 0));
+    fs.writeFileSync(bg, Buffer.alloc(200, 0));
+    t.after(() => fs.rmSync(outDir, { recursive: true, force: true }));
+    const words = Array.from({ length: 1600 }, (_, i) => ({ text: `w${i}`, startMs: i * 100, endMs: i * 100 + 80 }));
+    const res = await request(makeApp(outDir))
+      .post("/api/render/captioned-video")
+      .send({ audioPath: aud, backgroundPath: bg, words, typographyPreset: "studio-gospel-gold" });
+    // The zeroed sentinel files fail a later probe; what matters is that the
+    // word cap did not stop it.
+    assert.notEqual(res.status, 413, JSON.stringify(res.body));
+    assert.doesNotMatch(res.body?.error || "", /Too many caption words/);
   });
 });
 
