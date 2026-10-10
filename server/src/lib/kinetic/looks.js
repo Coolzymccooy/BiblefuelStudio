@@ -65,3 +65,8 @@ export function resolveEnergy(id, fallback = "lively") {
 export function listStudioLooks() {
   return Object.values(LOOKS).map((l) => ({ id: STUDIO_PREFIX + l.id, label: l.label, description: l.description }));
 }
+
+/** The drawtext preset to use for `id`: a Studio look's fallback, any other id unchanged. */
+export function drawtextPresetFor(id) {
+  return isStudioLook(id) ? resolveLook(id).fallbackPreset : id;
+}

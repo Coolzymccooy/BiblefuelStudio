@@ -90,17 +90,21 @@ test("what libass paints stays inside the 9:16 safe area, outline, shadow and sl
   ];
   for (const [look, effect, text] of cases) {
     const out = studioCaptionFilter({ assPath: "unused", lines: [{ text, start: 0, end: 2 }], w, h, look, energy: "calm", seed: 1, overrides: { 0: effect } });
-    const buf = frameAt({ assText: out.sideFiles[0].text, w, h, t: 1.5, pix: "gray" });
-    let minX = w;
-    let maxX = -1;
-    let maxY = -1;
-    for (let y = 0; y < h; y += 1) for (let x = 0; x < w; x += 1) {
-      if (buf[y * w + x] > 60) { minX = Math.min(minX, x); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); }
+    // Late in the phrase every word is up and the pop/slam overshoot has settled
+    // — the widest the phrase gets (ruling R9: 1.5 s alone missed that).
+    for (const t of [1.7, 1.95]) {
+      const buf = frameAt({ assText: out.sideFiles[0].text, w, h, t, pix: "gray" });
+      let minX = w;
+      let maxX = -1;
+      let maxY = -1;
+      for (let y = 0; y < h; y += 1) for (let x = 0; x < w; x += 1) {
+        if (buf[y * w + x] > 60) { minX = Math.min(minX, x); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); }
+      }
+      const name = `${look} ${effect} "${text}" at ${t}s: lit x ${minX}..${maxX}, lowest row ${maxY}`;
+      assert.ok(maxX >= 0, `${name}: nothing drawn`);
+      assert.ok(minX >= 0.06 * w - 1 && maxX <= 0.88 * w + 1, name);
+      assert.ok(maxY <= 0.82 * h + 1, name);
     }
-    const name = `${look} ${effect} "${text}": lit x ${minX}..${maxX}, lowest row ${maxY}`;
-    assert.ok(maxX >= 0, `${name}: nothing drawn`);
-    assert.ok(minX >= 0.06 * w - 1 && maxX <= 0.88 * w + 1, name);
-    assert.ok(maxY <= 0.82 * h + 1, name);
   }
 });
 

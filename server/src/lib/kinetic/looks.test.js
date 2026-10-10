@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { LOOKS, FALLBACK_FONT, isStudioLook, resolveLook, resolveEnergy, listStudioLooks } from "./looks.js";
+import { LOOKS, FALLBACK_FONT, isStudioLook, resolveLook, resolveEnergy, listStudioLooks, drawtextPresetFor } from "./looks.js";
 import { FONT_DIR, listTypographyPresets } from "../videoFilters.js";
 
 test("every look's fonts are in the repo and its fallback preset exists", () => {
@@ -38,4 +38,11 @@ test("Gospel Gold's body is scaled up and synthesised bold italic", () => {
   assert.equal(body.bold, true);
   assert.equal(body.italic, true);
   assert.equal(LOOKS["lagos-night"].body.scale, undefined);
+});
+
+test("drawtextPresetFor maps a Studio look to its fallback and leaves other presets alone", () => {
+  assert.equal(drawtextPresetFor("studio-lagos-night"), "marker");
+  assert.equal(drawtextPresetFor("studio-gospel-gold"), "scripture-emphasis");
+  assert.equal(drawtextPresetFor("hero-bold"), "hero-bold");
+  assert.equal(drawtextPresetFor(undefined), undefined);
 });
