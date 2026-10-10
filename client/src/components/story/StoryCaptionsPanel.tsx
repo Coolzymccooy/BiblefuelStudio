@@ -5,6 +5,8 @@ import { Select } from '../ui/Select';
 import { api } from '../../lib/api';
 import { LAYOUT_OPTIONS } from '../../lib/layoutOptions';
 import type { StoryCaptionSettings } from '../../lib/storyTypes';
+import { isStudioLook, nextSeed, type StudioOption } from '../../lib/studioCaptions';
+import { StudioLookOptions, StudioEffectsControls } from '../captions/StudioEffects';
 
 /**
  * Caption controls for a Story Video project.
@@ -21,22 +23,6 @@ import type { StoryCaptionSettings } from '../../lib/storyTypes';
 
 interface AnimationOption { id: string; label: string; renderable?: boolean }
 interface MotionOption { id: string; label: string; description?: string }
-interface StudioOption { id: string; label: string; description?: string }
-
-const FALLBACK_ENERGIES: StudioOption[] = [
-  { id: 'calm', label: 'Calm' },
-  { id: 'lively', label: 'Lively' },
-  { id: 'wild', label: 'Wild' },
-];
-
-/** "studio-lagos-night" -> "Lagos Night". */
-const readableLook = (id: string) =>
-  id
-    .replace(/^studio-/, '')
-    .split('-')
-    .filter(Boolean)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(' ');
 
 export interface StoryCaptionsPanelProps {
   value: StoryCaptionSettings;
@@ -50,9 +36,6 @@ export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCapti
   const [studioLooks, setStudioLooks] = useState<StudioOption[]>([]);
   const [energies, setEnergies] = useState<StudioOption[]>([]);
   const [libass, setLibass] = useState(true);
-  // A look whose sample clip failed to load: hide the player rather than show
-  // a broken one.
-  const [failedPreview, setFailedPreview] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -91,10 +74,7 @@ export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCapti
   // Studio looks choreograph themselves (libass): the drawtext timing,
   // layout and depth controls don't apply, so they give way to Energy and
   // Shuffle.
-  const studio = (value.captionPreset || '').startsWith('studio-');
-  // A saved Studio look must show correctly even before (or without) the
-  // catalogue, or the select would display its first option instead.
-  const savedStudioMissing = studio && !studioLooks.some((l) => l.id === value.captionPreset);
+  const studio = isStudioLook(value.captionPreset);
   // The title is a free-text field, so it is drafted locally and saved on
   // blur/Enter; patching per keystroke would round-trip the project each time.
   const [titleDraft, setTitleDraft] = useState(value.captionTitle ?? '');
@@ -103,12 +83,6 @@ export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCapti
     const next = titleDraft.replace(/\s+/g, ' ').trim();
     setTitleDraft(next); // show the cleaned title even when nothing changed to save
     if (next !== (value.captionTitle ?? '')) onChange({ captionTitle: next });
-  };
-  const energyOptions = energies.length > 0 ? energies : FALLBACK_ENERGIES;
-  const shuffle = () => {
-    let next = Math.floor(Math.random() * 2147483647);
-    if (next === value.captionSeed) next = (next + 1) % 2147483647;
-    onChange({ captionSeed: next });
   };
 
   return (
@@ -181,18 +155,7 @@ export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCapti
               disabled={busy}
               onChange={(e: ChangeEvent<HTMLSelectElement>) => onChange({ captionPreset: e.target.value })}
             >
-              {(studioLooks.length > 0 || savedStudioMissing) && (
-                <optgroup label="Studio effects">
-                  {savedStudioMissing && (
-                    <option value={value.captionPreset}>{readableLook(value.captionPreset!)}</option>
-                  )}
-                  {studioLooks.map((l) => (
-                    <option key={l.id} value={l.id} disabled={!libass}>
-                      {l.label}{libass ? '' : ' (unavailable on this server)'}
-                    </option>
-                  ))}
-                </optgroup>
-              )}
+              <StudioLookOptions looks={studioLooks} libass={libass} value={value.captionPreset} />
               {animations.length > 0 && (
                 <optgroup label="Caption animations (word-synced)">
                   {animations.map((a) => (
@@ -212,48 +175,16 @@ export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCapti
             </Select>
           </Field>
 
-          {studio && failedPreview !== value.captionPreset && (
-            <video
-              key={value.captionPreset}
-              src={`/studio-looks/${value.captionPreset!.replace(/^studio-/, '')}.mp4`}
-              autoPlay
-              muted
-              loop
-              playsInline
-              aria-label="Studio look sample"
-              onError={() => setFailedPreview(value.captionPreset ?? null)}
-              className="w-full max-w-xs rounded-lg border border-white/10"
-            />
-          )}
-
           {studio && (
             <>
-            <Field
-              label="Energy"
-              tooltip="How wild the effects get. Calm pops and stacks words; Lively adds big brush slams on lines that repeat; Wild slams everywhere, made for songs."
-            >
-              <div className="flex items-center gap-2">
-                <Select
-                  aria-label="Energy"
-                  value={value.captionEnergy || 'lively'}
-                  disabled={busy}
-                  onChange={(e: ChangeEvent<HTMLSelectElement>) => onChange({ captionEnergy: e.target.value as StoryCaptionSettings['captionEnergy'] })}
-                >
-                  {energyOptions.map((en) => (
-                    <option key={en.id} value={en.id}>{en.label}</option>
-                  ))}
-                </Select>
-                <button
-                  type="button"
-                  onClick={shuffle}
-                  disabled={busy}
-                  className="shrink-0 rounded-lg border border-white/10 px-3 py-2.5 text-xs text-content-secondary hover:text-bf-cream disabled:opacity-50"
-                  title="Re-roll which effect each line gets"
-                >
-                  Shuffle effects
-                </button>
-              </div>
-            </Field>
+            <StudioEffectsControls
+              look={value.captionPreset!}
+              energy={value.captionEnergy || 'lively'}
+              energies={energies}
+              onEnergyChange={(next) => onChange({ captionEnergy: next })}
+              onShuffle={() => onChange({ captionSeed: nextSeed(value.captionSeed) })}
+              disabled={busy}
+            />
             <Field
               label="Title intro"
               tooltip="Optional. Shown big before the first line, like a song title — it needs a moment of silence before the narration starts (under ~0.7 s, it's skipped). Leave empty for none."
