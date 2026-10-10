@@ -69,7 +69,7 @@ import { buildSpeakableLines, cleanCaptionLine } from '../lib/speakableScript';
 import { ScriptQuickPanel, type QuickScript, type ScriptQuickConfig } from '../components/timeline/ScriptQuickPanel';
 import { VoiceLab, type VoiceTake } from './VoiceAudioPage';
 import { OutputQuickPanel, type ReadinessItem } from '../components/timeline/OutputQuickPanel';
-import { RenderLab } from './RenderPage';
+import { RenderLab, type RenderLabCaptionStyle } from './RenderPage';
 import { ShareKitPanel } from '../components/timeline/ShareKitPanel';
 import { StoryQuickPanel } from '../components/timeline/StoryQuickPanel';
 import { SeriesQuickPanel } from '../components/timeline/SeriesQuickPanel';
@@ -226,7 +226,7 @@ export function TimelinePage() {
     // The docked Render lab's background picks, mirrored on the stage live.
     const [labBackgrounds, setLabBackgrounds] = useState<Array<{ id: string; url: string; previewUrl?: string; image?: string; kind?: 'image' | 'video' }>>([]);
     // The docked Render lab's caption look, previewed on the stage live.
-    const [labCaptionStyle, setLabCaptionStyle] = useState<{ preset: string; motion: string; highlight: boolean; stagger: boolean; layout: string; depth: boolean } | null>(null);
+    const [labCaptionStyle, setLabCaptionStyle] = useState<RenderLabCaptionStyle | null>(null);
     // The stage shows the LAST RENDER only until the next edit: any change
     // to the cut returns the stage to the live preview. Otherwise a preset
     // change, a new line or a wipe looked like nothing happened.
@@ -2696,6 +2696,10 @@ export function TimelinePage() {
                                             // One look: the timeline's own render uses the preset you previewed.
                                             if (style.preset !== typographyPreset) setTypographyPreset(style.preset);
                                             if (style.layout !== layout) setLayout(style.layout);
+                                            // ...and the same Studio energy and seed, so one
+                                            // effects mix drives the Sermon export.
+                                            if (style.captionEnergy && style.captionEnergy !== captionEnergy) setCaptionEnergy(style.captionEnergy);
+                                            if (Number.isInteger(style.captionSeed) && style.captionSeed !== captionSeed) setCaptionSeed(style.captionSeed);
                                         },
                                         onAspectChange: (a) => {
                                             if (!documentaryProject) return;

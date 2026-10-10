@@ -87,8 +87,23 @@ export interface RenderLabEmbed {
     onBackgroundsChange?: (items: Array<{ id: string; url: string; previewUrl?: string; image?: string; kind?: 'image' | 'video' }>) => void;
     onLinesChange?: (lines: string) => void;
     onInsertMusicBed?: (path: string) => void;
-    /** The caption look (preset / motion / highlight / layout), for the host's live stage. */
-    onCaptionStyleChange?: (style: { preset: string; motion: string; highlight: boolean; stagger: boolean; layout: string; depth: boolean }) => void;
+    /**
+     * The caption look (preset / motion / highlight / layout), for the host's
+     * live stage, plus the Studio energy and seed so the host renders the
+     * same effects mix the lab shows.
+     */
+    onCaptionStyleChange?: (style: RenderLabCaptionStyle) => void;
+}
+
+export interface RenderLabCaptionStyle {
+    preset: string;
+    motion: string;
+    highlight: boolean;
+    stagger: boolean;
+    layout: string;
+    depth: boolean;
+    captionEnergy: CaptionEnergy;
+    captionSeed: number;
 }
 
 export function RenderPage() {
@@ -193,9 +208,12 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [backgroundItems]);
     useEffect(() => {
-        embedded?.onCaptionStyleChange?.({ preset: typographyPreset, motion: captionMotion, highlight: captionHighlight, stagger: captionStagger, layout, depth });
+        embedded?.onCaptionStyleChange?.({
+            preset: typographyPreset, motion: captionMotion, highlight: captionHighlight, stagger: captionStagger, layout, depth,
+            captionEnergy, captionSeed,
+        });
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [typographyPreset, captionMotion, captionHighlight, captionStagger, layout, depth]);
+    }, [typographyPreset, captionMotion, captionHighlight, captionStagger, layout, depth, captionEnergy, captionSeed]);
     const finishedFile = result?.file || completedRender?.file;
     useEffect(() => {
         if (finishedFile && embedded?.onRendered) embedded.onRendered(finishedFile);
