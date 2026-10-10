@@ -96,3 +96,25 @@ describe('CaptionStylePanel', () => {
     expect(screen.getByLabelText('Text layout')).toBeInTheDocument();
   });
 });
+
+describe('CaptionStylePanel Studio effects', () => {
+  it('a Studio look swaps layout and depth for Energy and Shuffle', async () => {
+    const user = userEvent.setup();
+    const onCaptionEnergyChange = vi.fn();
+    const onShuffleEffects = vi.fn();
+    setup({ typographyPreset: 'studio-lagos-night', captionEnergy: 'calm', onCaptionEnergyChange, onShuffleEffects });
+    expect(screen.queryByRole('combobox', { name: 'Text layout' })).toBeNull();
+    expect(screen.queryByRole('checkbox')).toBeNull();
+    const energy = screen.getByRole('combobox', { name: 'Energy' });
+    expect(energy).toHaveValue('calm');
+    await user.selectOptions(energy, 'wild');
+    expect(onCaptionEnergyChange).toHaveBeenCalledWith('wild');
+    await user.click(screen.getByRole('button', { name: /shuffle effects/i }));
+    expect(onShuffleEffects).toHaveBeenCalled();
+  });
+
+  it('defaults a Studio look to Calm energy for sermons', () => {
+    setup({ typographyPreset: 'studio-gospel-gold' });
+    expect(screen.getByRole('combobox', { name: 'Energy' })).toHaveValue('calm');
+  });
+});

@@ -55,6 +55,8 @@ export const STORAGE_KEYS = {
     sclSyncBackgrounds: 'BF_SCL_SYNC_BACKGROUNDS', // sync multi-bg cuts to speech + crossfade
     sclKineticCaptions: 'BF_SCL_KINETIC_CAPTIONS', // burn per-word captions onto the video (off = plain audio/video + bg)
     sclTypographyPreset: 'BF_SCL_TYPOGRAPHY_PRESET',
+    sclCaptionEnergy: 'BF_SCL_CAPTION_ENERGY',
+    sclCaptionSeed: 'BF_SCL_CAPTION_SEED',
     sclLayout: 'BF_SCL_LAYOUT',
     sclDepth: 'BF_SCL_DEPTH',
     sclRenderedVideo: 'BF_SCL_RENDERED_VIDEO',

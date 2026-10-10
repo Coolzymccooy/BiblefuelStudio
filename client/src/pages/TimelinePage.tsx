@@ -39,6 +39,7 @@ import {
 import { loadJson, saveJson, STORAGE_KEYS } from '../lib/storage';
 import { LAYOUT_OPTIONS } from '../lib/layoutOptions';
 import { usePersistedState } from '../lib/usePersistedState';
+import { isStudioLook, nextSeed, randomSeed, type CaptionEnergy } from '../lib/studioCaptions';
 import { pickTranscribeAction, baseName, type TranscriptRecord } from '../lib/transcribeAction';
 import { ShareSheet } from '../components/ShareSheet';
 import { MediaTrimmer } from '../components/MediaTrimmer';
@@ -344,6 +345,9 @@ export function TimelinePage() {
         STORAGE_KEYS.sclTypographyPreset,
         'cinematic-worship',
     );
+    // Studio looks: sermons default to Calm; the seed picks each line's effect.
+    const [captionEnergy, setCaptionEnergy] = usePersistedState<CaptionEnergy>(STORAGE_KEYS.sclCaptionEnergy, 'calm');
+    const [captionSeed, setCaptionSeed] = usePersistedState<number>(STORAGE_KEYS.sclCaptionSeed, randomSeed());
     const [layout, setLayout] = usePersistedState<string>(
         STORAGE_KEYS.sclLayout,
         'center',
@@ -771,7 +775,8 @@ export function TimelinePage() {
         // Feasibility guard: kinetic captions don't scale to long sermons — the
         // filter graph explodes and the render effectively never finishes. Block
         // early with a clear path forward (only when captions are on).
-        if (shouldRenderCaptions && words.length > MAX_CAPTION_WORDS) {
+        // Studio looks (libass) have no word cap; the server enforces it if it has to fall back.
+        if (shouldRenderCaptions && !isStudioLook(typographyPreset) && words.length > MAX_CAPTION_WORDS) {
             const mins = Math.round((words[words.length - 1]?.endMs || 0) / 60000);
             toast.error(
                 `This clip has ${words.length} words${mins ? ` (~${mins} min)` : ''} — too long for kinetic captions (max ~${MAX_CAPTION_WORDS}). ` +
@@ -861,6 +866,7 @@ export function TimelinePage() {
                     typographyPreset,
                     layout,
                     depth,
+                    ...(isStudioLook(typographyPreset) ? { captionEnergy, captionSeed } : {}),
                     // Multi-track bed: the server concatenates these and loops
                     // the result. Falls back to musicPath for older servers.
                     musicPaths: musicPaths.length > 0 ? musicPaths : undefined,
@@ -2032,7 +2038,7 @@ export function TimelinePage() {
             ...(sourceMediaKind === 'audio' && backgroundItems.length === 0 && !autoBackground
                 ? [{ label: 'Pick a video background, or turn on Auto', status: 'todo' as const, detail: 'Audio sources need a visual layer (Background tool).' }]
                 : [{ label: sourceMediaKind === 'audio' ? (autoBackground && backgroundItems.length === 0 ? 'Background: Auto' : 'Background ready') : 'Video brings its own picture', status: 'done' as const }]),
-            ...(kineticCaptions && transcript && transcript.length > MAX_CAPTION_WORDS
+            ...(kineticCaptions && !isStudioLook(typographyPreset) && transcript && transcript.length > MAX_CAPTION_WORDS
                 ? [{ label: 'Too long for kinetic captions', status: 'todo' as const, detail: `${transcript.length} words - max ~${MAX_CAPTION_WORDS}. Trim the clip, use Series, or turn captions off.` }]
                 : []),
             { label: musicPath ? 'Music bed set' : 'Music bed', status: musicPath ? 'done' : 'optional' },
@@ -2564,6 +2570,9 @@ export function TimelinePage() {
                                 layoutOptions={LAYOUT_OPTIONS}
                                 depth={depth}
                                 onDepthChange={setDepth}
+                                captionEnergy={captionEnergy}
+                                onCaptionEnergyChange={setCaptionEnergy}
+                                onShuffleEffects={() => setCaptionSeed((s) => nextSeed(s))}
                             />
                             {captionLinesEditor}
                         </div>
@@ -3177,6 +3186,9 @@ export function TimelinePage() {
                     layoutOptions={LAYOUT_OPTIONS}
                     depth={depth}
                     onDepthChange={setDepth}
+                    captionEnergy={captionEnergy}
+                    onCaptionEnergyChange={setCaptionEnergy}
+                    onShuffleEffects={() => setCaptionSeed((s) => nextSeed(s))}
                 />
                 {kineticCaptions && editedLines.length > 0 && (
                     <div className="mt-1">
