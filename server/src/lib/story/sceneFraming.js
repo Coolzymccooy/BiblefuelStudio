@@ -78,9 +78,10 @@ export function chooseSceneFit({ mediaWidth, mediaHeight, frameWidth, frameHeigh
 }
 
 /**
- * Display size from `ffprobe -show_streams -of json` output. A phone clip
- * stored landscape with a 90/270 degree rotation plays portrait, so its sides
- * swap. Returns null for anything unreadable.
+ * Display size from `ffprobe -show_streams -of json` output: the stored
+ * width scaled by the sample aspect ratio, then, for a phone clip stored
+ * landscape with a 90/270 degree rotation, the sides swapped, since it plays
+ * portrait. Returns null for anything unreadable.
  */
 export function parseProbeSize(json) {
   let stream;
@@ -89,9 +90,14 @@ export function parseProbeSize(json) {
   } catch {
     return null;
   }
-  const width = Number(stream?.width);
+  const stored = Number(stream?.width);
   const height = Number(stream?.height);
-  if (!(width > 0 && height > 0)) return null;
+  if (!(stored > 0 && height > 0)) return null;
+  // Anamorphic video stores non-square pixels: 1440x1080 at 4:3 plays as
+  // 1920x1080. "0:1" (unknown) and "1:1" leave the width as stored.
+  const [sarNum, sarDen] = String(stream.sample_aspect_ratio || "").split(":").map(Number);
+  const sar = sarNum > 0 && sarDen > 0 ? sarNum / sarDen : 1;
+  const width = Math.round(stored * sar);
   const sideRotation = (stream.side_data_list || []).find((d) => d && d.rotation !== undefined)?.rotation;
   const rotation = Number(sideRotation ?? stream.tags?.rotate ?? 0);
   const quarterTurn = Math.abs(rotation) % 180 === 90;
@@ -106,7 +112,7 @@ export function probeMediaSize(filePath, { timeoutMs = 15_000 } = {}) {
     try {
       proc = spawn(ffprobe, [
         "-v", "error", "-select_streams", "v:0",
-        "-show_entries", "stream=width,height:stream_tags=rotate:stream_side_data=rotation",
+        "-show_entries", "stream=width,height,sample_aspect_ratio:stream_tags=rotate:stream_side_data=rotation",
         "-of", "json", filePath,
       ]);
     } catch {

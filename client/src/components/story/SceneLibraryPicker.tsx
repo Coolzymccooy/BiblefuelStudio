@@ -5,6 +5,8 @@ import { Loader2, X } from 'lucide-react';
 import { AuthedImage } from '../AuthedImage';
 import { storyApi } from '../../lib/storyApi';
 import type { LibraryImage } from '../../lib/ambientApi';
+import type { StoryAspect } from '../../lib/storyTypes';
+import { frameBoxClass } from '../../lib/storyFrame';
 import { panelCls } from './formStyles';
 
 export interface SceneLibraryPickerProps {
@@ -14,6 +16,8 @@ export interface SceneLibraryPickerProps {
   sceneNumber: number;
   onClose: () => void;
   onChosen: () => void;
+  /** The project's output frame; tiles are drawn in that shape. Defaults to portrait. */
+  aspect?: StoryAspect;
 }
 
 /**
@@ -21,7 +25,7 @@ export interface SceneLibraryPickerProps {
  * Choosing one costs no image quota. Shown over the page, so on a phone it
  * opens where you are rather than wherever the scene list starts.
  */
-export function SceneLibraryPicker({ projectId, sceneId, sceneNumber, onClose, onChosen }: SceneLibraryPickerProps) {
+export function SceneLibraryPicker({ projectId, sceneId, sceneNumber, onClose, onChosen, aspect }: SceneLibraryPickerProps) {
   const [images, setImages] = useState<LibraryImage[] | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -87,9 +91,9 @@ export function SceneLibraryPicker({ projectId, sceneId, sceneNumber, onClose, o
                 disabled={saving}
                 onClick={() => choose(img)}
                 aria-label={`${img.source === 'upload' ? 'Uploaded' : 'Generated'} picture ${i + 1}`}
-                className="aspect-[9/16] overflow-hidden rounded-md border border-white/10 hover:border-bf-gold disabled:opacity-50"
+                className={`${frameBoxClass(aspect)} overflow-hidden rounded-md border border-white/10 bg-black/40 hover:border-bf-gold disabled:opacity-50`}
               >
-                <AuthedImage src={img.url} alt="" className="h-full w-full object-cover" openOnClick={false} />
+                <AuthedImage src={img.url} alt="" className="h-full w-full object-contain" openOnClick={false} />
               </button>
             ))}
           </div>

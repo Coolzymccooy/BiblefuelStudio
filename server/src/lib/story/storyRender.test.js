@@ -405,7 +405,7 @@ describe("a scene with a video clip of your own", () => {
     const clipBranch = fc.split(";").find((p) => p.startsWith("[0:v]"));
     // Scene 1 is 2 s; the 0.5 s crossfade that follows it is borrowed from it.
     assert.equal(clipBranch,
-      "[0:v]trim=duration=2.5,setpts=PTS-STARTPTS,fps=30,scale=360:640:force_original_aspect_ratio=increase,crop=360:640,setsar=1[s0]");
+      "[0:v]trim=duration=2.5,setpts=PTS-STARTPTS,fps=30,scale=trunc(iw*sar/2)*2:ih,setsar=1,scale=360:640:force_original_aspect_ratio=increase,crop=360:640,setsar=1[s0]");
     const stillBranch = fc.split(";").find((p) => p.startsWith("[1:v]"));
     assert.match(stillBranch, /^\[1:v\]trim=end_frame=1,.*zoompan=.*\[s1\]$/);
   });
@@ -529,21 +529,52 @@ describe("a scene whose picture is not the frame's shape", () => {
       { id: "s2", startMs: 2000, endMs: 4000, imagePath: path.join(dir, "still.png") },
     ]);
     const fc = graph(args);
-    assert.match(fc, /\[0:v\]trim=duration=2\.5,setpts=PTS-STARTPTS,fps=30,split=2\[s0bg\]\[s0fg\]/);
+    assert.match(fc, /\[0:v\]trim=duration=2\.5,setpts=PTS-STARTPTS,fps=30,scale=trunc\(iw\*sar\/2\)\*2:ih,setsar=1,split=2\[s0bg\]\[s0fg\]/);
     assert.match(fc, /\[s0fg\]scale=360:640:force_original_aspect_ratio=decrease:force_divisible_by=2\[s0f\]/);
     assert.match(fc, /\[s0bg\]scale=90:160:force_original_aspect_ratio=increase,crop=90:160,boxblur=\d+:\d+,scale=360:640[^;]*\[s0b\]/);
     assert.match(fc, /\[s0b\]\[s0f\]overlay=\(W-w\)\/2:\(H-h\)\/2,setsar=1\[s0\]/);
     // The other scene is untouched: still the cover crop.
-    assert.match(fc, /\[1:v\]trim=end_frame=1,setpts=PTS-STARTPTS,scale=360:640:force_original_aspect_ratio=increase,crop=360:640,/);
+    assert.match(fc, /\[1:v\]trim=end_frame=1,setpts=PTS-STARTPTS,scale=trunc\(iw\*sar\/2\)\*2:ih,setsar=1,scale=360:640:force_original_aspect_ratio=increase,crop=360:640,/);
   });
 
   test("a contained still stays whole: only its blurred backdrop gets the Ken Burns move", () => {
     const { args } = build([{ id: "s1", startMs: 0, endMs: 4000, imagePath: path.join(dir, "wide.png"), fit: "contain" }]);
     const parts = graph(args).split(";");
-    assert.ok(parts.includes("[0:v]trim=end_frame=1,setpts=PTS-STARTPTS,split=2[s0bg][s0fg]"));
+    assert.ok(parts.includes("[0:v]trim=end_frame=1,setpts=PTS-STARTPTS,scale=trunc(iw*sar/2)*2:ih,setsar=1,split=2[s0bg][s0fg]"));
     assert.match(parts.find((p) => p.startsWith("[s0bg]")), /boxblur=.*zoompan=.*\[s0b\]$/);
     assert.equal(parts.find((p) => p.startsWith("[s0b][s0f]")), "[s0b][s0f]overlay=(W-w)/2:(H-h)/2,setsar=1[s0]");
   });
+
+  test("an anamorphic clip is shown at its display shape, not squeezed or cropped (real ffmpeg)",
+    { skip: !hasFfmpeg && "ffmpeg not installed", timeout: 120_000 }, () => {
+      const ff = (a) => {
+        const r = spawnSync(FF, ["-y", "-v", "error", ...a]);
+        assert.equal(r.status, 0, String(r.stderr));
+      };
+      // 480x360 stored with 4:3 pixels plays as 640x360 (16:9): the same shape
+      // as the 320x180 frame, so it fills it with nothing cut. Red top band,
+      // blue bottom band: a crop computed from the stored 4:3 shape cuts both.
+      const ana = path.join(dir, "ana.mp4");
+      ff(["-f", "lavfi", "-i", "color=c=white:s=480x360:r=25:d=1", "-vf",
+        "drawbox=x=0:y=0:w=480:h=24:color=red:t=fill,drawbox=x=0:y=336:w=480:h=24:color=blue:t=fill,setsar=4/3",
+        "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", ana]);
+      const voice = path.join(dir, "voice.m4a");
+      ff(["-f", "lavfi", "-i", "sine=d=1", "-c:a", "aac", voice]);
+      const out = path.join(dir, "ana-out.mp4");
+      const { args } = buildStoryFfmpegArgs({
+        scenes: [{ id: "s1", startMs: 0, endMs: 1000, imagePath: ana, videoPath: ana, fit: "cover" }],
+        words: [], audioPath: voice, musicPath: null, width: 320, height: 180,
+        outPath: out, audioDurationSec: 1, captions: "none",
+      });
+      const r = spawnSync(FF, ["-v", "error", ...toFilterScriptArgs(args, out).args], { timeout: 110_000 });
+      assert.equal(r.status, 0, String(r.stderr).slice(-1500));
+      const rgbAt = (x, y) => [...spawnSync(FF, ["-v", "error", "-ss", "0.5", "-i", out, "-frames:v", "1",
+        "-vf", `crop=1:1:${x}:${y},format=rgb24`, "-f", "rawvideo", "-"]).stdout.subarray(0, 3)];
+      const [rt, gt, bt] = rgbAt(160, 4);
+      const [rb, gb, bb] = rgbAt(160, 175);
+      assert.ok(rt > 150 && gt < 110 && bt < 110, `top band should be red, got ${rt},${gt},${bt}`);
+      assert.ok(bb > 150 && rb < 110 && gb < 110, `bottom band should be blue, got ${rb},${gb},${bb}`);
+    });
 
   test("a contained still keeps its very edges to the end of the scene (real ffmpeg)",
     { skip: !hasFfmpeg && "ffmpeg not installed", timeout: 120_000 }, () => {

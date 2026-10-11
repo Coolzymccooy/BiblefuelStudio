@@ -68,6 +68,12 @@ export function sceneSegmentsSec(scenes, audioDurationSec) {
  */
 export function sceneFrameFilter({ src, i, width, height, fit, move = "" }) {
   const out = `[s${i}]`;
+  // Square pixels first. An anamorphic clip (1440x1080 at 4:3, playing as
+  // 1920x1080) is measured at its display size, but scale's aspect handling
+  // works from the stored size, so without this it is cropped and squeezed.
+  // For square pixels this scale is the same size and passes frames through.
+  const squarePixels = "scale=trunc(iw*sar/2)*2:ih,setsar=1,";
+  src = `${src}${squarePixels}`;
   if (fit !== FIT_CONTAIN) {
     return [
       `${src}scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},` +

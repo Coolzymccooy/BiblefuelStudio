@@ -676,6 +676,7 @@ export function StoryVideoPage() {
                 onChooseFromLibrary={setPickingSceneId}
                 uploading={uploadingSceneId === s.id}
                 imagesRunning={project.status === 'generating_images' && transient && !stalled}
+                aspect={project.aspect}
               />
             ))}
           </div>
@@ -687,6 +688,7 @@ export function StoryVideoPage() {
               sceneNumber={project.scenes.findIndex((s) => s.id === pickingSceneId) + 1}
               onClose={() => setPickingSceneId(null)}
               onChosen={() => { setPickingSceneId(null); refresh(); }}
+              aspect={project.aspect}
             />
           )}
 
