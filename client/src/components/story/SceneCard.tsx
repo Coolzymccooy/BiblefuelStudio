@@ -3,7 +3,8 @@ import toast from 'react-hot-toast';
 import { Loader2, RefreshCw, Wand2, ImageOff, SlidersHorizontal, Check, Clock, Upload, Images, Copy, Film } from 'lucide-react';
 import { AuthedImage } from '../AuthedImage';
 import { sceneTimeLabel } from '../../lib/storyWizard';
-import type { ImageStatus, StoryScene } from '../../lib/storyTypes';
+import type { ImageStatus, StoryAspect, StoryScene } from '../../lib/storyTypes';
+import { frameBoxClass, frameThumbWidthClass } from '../../lib/storyFrame';
 import { cleanCaptionLine } from '../../lib/speakableScript';
 import { copyText } from '../../lib/copyText';
 
@@ -25,6 +26,8 @@ interface SceneCardProps {
   uploading?: boolean;
   /** An image run is live, so a scene marked generating is really being generated. */
   imagesRunning?: boolean;
+  /** The project's output frame; the thumbnail is drawn in that shape. Defaults to portrait. */
+  aspect?: StoryAspect;
 }
 
 const STATUS: Record<ImageStatus, { label: string; cls: string }> = {
@@ -37,7 +40,7 @@ const STATUS: Record<ImageStatus, { label: string; cls: string }> = {
 const actionCls = 'inline-flex items-center gap-1 rounded-md border border-[rgba(216,184,120,0.18)] px-2 py-1 text-xs text-bf-cream hover:border-bf-gold disabled:opacity-50';
 
 export function SceneCard({
-  scene, index = 0, onPatch, onRegenerate, busy, regenerating = false, onUpload, onChooseFromLibrary, uploading = false, imagesRunning = false,
+  scene, index = 0, onPatch, onRegenerate, busy, regenerating = false, onUpload, onChooseFromLibrary, uploading = false, imagesRunning = false, aspect,
 }: SceneCardProps) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [text, setText] = useState(scene.text);
@@ -132,8 +135,10 @@ export function SceneCard({
 
       {tuning && (
         <div className="mt-3 flex gap-3 border-t border-[rgba(216,184,120,0.1)] pt-3">
-          <div className="w-20 shrink-0">
-            <div className="aspect-[9/16] w-full overflow-hidden rounded-lg bg-[rgba(216,184,120,0.05)]">
+          <div className={`${frameThumbWidthClass(aspect)} shrink-0`}>
+            {/* Drawn in the video's frame. The whole picture shows (contain), as
+                the render shows a picture of another shape whole, not cropped. */}
+            <div data-testid="scene-thumb" className={`${frameBoxClass(aspect)} w-full overflow-hidden rounded-lg bg-black/40`}>
               {scene.imageStatus === 'generating' ? (
                 <div className="flex h-full items-center justify-center"><Loader2 className="animate-spin text-bf-gold" size={18} /></div>
               ) : scene.imageStatus === 'error' || !scene.imageUrl ? (
@@ -142,7 +147,7 @@ export function SceneCard({
                   <span className="text-[9px] font-medium text-bf-muted">No image</span>
                 </div>
               ) : (
-                <AuthedImage src={scene.imageUrl} alt={scene.text} className="h-full w-full object-cover" openOnClick={false} />
+                <AuthedImage src={scene.imageUrl} alt={scene.text} className="h-full w-full object-contain" openOnClick={false} />
               )}
             </div>
             <div className="mt-1 text-center text-[10px] tabular-nums text-bf-muted">{sceneTimeLabel(scene)}</div>

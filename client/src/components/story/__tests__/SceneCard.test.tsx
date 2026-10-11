@@ -13,6 +13,16 @@ function scene(over: Partial<StoryScene> = {}): StoryScene {
 }
 
 describe('SceneCard', () => {
+  it('draws the thumbnail in the project frame, showing the whole picture', async () => {
+    const { rerender } = render(<SceneCard scene={scene()} index={0} onPatch={vi.fn()} onRegenerate={vi.fn()} busy={false} />);
+    await userEvent.click(screen.getByRole('button', { name: /tune scene/i }));
+    expect(screen.getByTestId('scene-thumb').className).toContain('aspect-[9/16]');
+    rerender(<SceneCard scene={scene()} index={0} onPatch={vi.fn()} onRegenerate={vi.fn()} busy={false} aspect="landscape" />);
+    expect(screen.getByTestId('scene-thumb').className).toContain('aspect-video');
+    rerender(<SceneCard scene={scene()} index={0} onPatch={vi.fn()} onRegenerate={vi.fn()} busy={false} aspect="square" />);
+    expect(screen.getByTestId('scene-thumb').className).toContain('aspect-square');
+  });
+
   it('shows the caption text, and reveals the editor + time label when tuned', async () => {
     render(<SceneCard scene={scene()} index={0} onPatch={vi.fn()} onRegenerate={vi.fn()} busy={false} />);
     // Caption is shown as read-only text until the tune panel is opened.

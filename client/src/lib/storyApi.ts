@@ -13,7 +13,10 @@ const PROCESS_TIMEOUT_MS = 60_000;
 // reported as failed while it is still being attached.
 const SCENE_MEDIA_TIMEOUT_MS = 120_000;
 
-function unwrapProject(res: { ok: boolean; data?: any; error?: string }): StoryProject {
+// What the story routes answer with: the project, or an error message.
+interface ProjectResponse { ok: boolean; data?: { project?: StoryProject; error?: string; note?: string }; error?: string }
+
+function unwrapProject(res: ProjectResponse): StoryProject {
   if (!res.ok || !res.data?.project) throw new Error(res.error || res.data?.error || 'Request failed');
   return res.data.project as StoryProject;
 }

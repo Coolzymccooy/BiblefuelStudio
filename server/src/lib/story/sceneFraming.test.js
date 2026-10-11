@@ -73,6 +73,13 @@ describe("parseProbeSize", () => {
     assert.deepEqual(parseProbeSize(probe({ width: 1920, height: 1080, side_data_list: [{ rotation: -90 }] })), { width: 1080, height: 1920 });
     assert.deepEqual(parseProbeSize(probe({ width: 1920, height: 1080, tags: { rotate: "270" } })), { width: 1080, height: 1920 });
   });
+  test("an anamorphic clip is measured at its display size", () => {
+    // 1440x1080 stored with 4:3 pixels plays as 1920x1080.
+    assert.deepEqual(parseProbeSize(probe({ width: 1440, height: 1080, sample_aspect_ratio: "4:3" })), { width: 1920, height: 1080 });
+    // Square pixels, or none stated, change nothing.
+    assert.deepEqual(parseProbeSize(probe({ width: 1920, height: 1080, sample_aspect_ratio: "1:1" })), { width: 1920, height: 1080 });
+    assert.deepEqual(parseProbeSize(probe({ width: 1920, height: 1080, sample_aspect_ratio: "0:1" })), { width: 1920, height: 1080 });
+  });
   test("garbage is null, never a throw", () => {
     assert.equal(parseProbeSize("not json"), null);
     assert.equal(parseProbeSize(JSON.stringify({ streams: [] })), null);
