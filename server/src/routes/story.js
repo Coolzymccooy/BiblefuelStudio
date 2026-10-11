@@ -4,7 +4,7 @@ import path from "path";
 import { v4 as uuid } from "uuid";
 import {
   createProject, readProject, writeProject, listProjects, deleteProject, STORY_STATUS,
-  normaliseCaptionSettings,
+  normaliseCaptionSettings, sourceDisplayFacts,
 } from "../lib/story/projectStore.js";
 import { segmentScenes } from "../lib/story/sceneSegmenter.js";
 import { runStoryRender, probeAudioDurationSec } from "../lib/story/storyRender.js";
@@ -121,9 +121,11 @@ async function transcribeStage(ctx, projectId, mediaPath) {
     throw new Error("Transcription returned no words");
   }
   const durationMs = stitched.words[stitched.words.length - 1].endMs;
+  const fresh = readProject(ctx.dataDir, projectId);
   return writeProject(ctx.dataDir, {
-    ...readProject(ctx.dataDir, projectId),
-    source: { audioPath, durationMs },
+    ...fresh,
+    // Keep the display facts (name, trimmed) the start request recorded.
+    source: { ...fresh.source, audioPath, durationMs },
     transcript: { words: stitched.words, hash: String(durationMs) + ":" + stitched.words.length },
     status: STORY_STATUS.SEGMENTING,
   });
@@ -736,9 +738,15 @@ router.post("/:id/cancel", (req, res) => {
 
 // POST /:id/process — run transcribe -> segment -> images SERVER-SIDE, detached.
 router.post("/:id/process", (req, res) => {
-  if (!readProject(req.ctx.dataDir, req.params.id)) return res.status(404).json({ ok: false, error: "project not found" });
+  const existing = readProject(req.ctx.dataDir, req.params.id);
+  if (!existing) return res.status(404).json({ ok: false, error: "project not found" });
   const guard = confineMediaPath(req.ctx, req.body?.mediaPath);
   if (!guard.ok) return res.status(guard.status).json({ ok: false, error: guard.error });
+  // What the soundtrack was called and whether it was trimmed: shown back to
+  // the user in the Music panel, never used as a path.
+  const facts = sourceDisplayFacts({ name: req.body?.sourceName, trimmed: req.body?.sourceTrimmed });
+  const { name: _previousName, ...sourceWithoutName } = existing.source || {};
+  writeProject(req.ctx.dataDir, { ...existing, source: { ...sourceWithoutName, ...facts } });
   const ctx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir };
   const id = req.params.id;
   cancelledProjects.delete(id);

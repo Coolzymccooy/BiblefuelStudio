@@ -10,6 +10,7 @@ import {
   listProjects,
   deleteProject,
   STORY_STATUS,
+  sourceDisplayFacts,
 } from "./projectStore.js";
 
 let baseDir;
@@ -103,4 +104,28 @@ test("caption title is trimmed, single-spaced, capped at 60 and cleared by an em
   assert.equal(normaliseCaptionSettings({ captionTitle: "x".repeat(80) }).captionTitle.length, 60);
   assert.equal(normaliseCaptionSettings({ captionTitle: "" }, { captionTitle: "Old" }).captionTitle, undefined);
   assert.equal(normaliseCaptionSettings({}, { captionTitle: "Kept" }).captionTitle, "Kept");
+});
+
+describe("sourceDisplayFacts", () => {
+  test("keeps only the base name, never a path", () => {
+    assert.deepEqual(sourceDisplayFacts({ name: "C:\\fakepath\\My Song.mp3", trimmed: true }), { name: "My Song.mp3", trimmed: true });
+    assert.equal(sourceDisplayFacts({ name: "../../etc/passwd.mp3" }).name, "passwd.mp3");
+  });
+
+  test("strips control characters and caps the name at 120 characters", () => {
+    assert.equal(sourceDisplayFacts({ name: "a\u0000b\u001fc\u007fd\n.mp3" }).name, "abcd.mp3");
+    assert.equal(sourceDisplayFacts({ name: "x".repeat(300) }).name.length, 120);
+  });
+
+  test("omits the name when it is missing, not a string or empty after cleaning", () => {
+    for (const bad of [undefined, null, 42, {}, "", "   ", "\u0001\u0002", "dir/"]) {
+      assert.equal("name" in sourceDisplayFacts({ name: bad }), false, JSON.stringify(bad));
+    }
+    assert.deepEqual(sourceDisplayFacts(undefined), { trimmed: false });
+  });
+
+  test("trimmed is true only for the boolean true", () => {
+    assert.equal(sourceDisplayFacts({ trimmed: true }).trimmed, true);
+    for (const v of [undefined, false, "true", 1, null]) assert.equal(sourceDisplayFacts({ trimmed: v }).trimmed, false);
+  });
 });
