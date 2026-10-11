@@ -452,6 +452,100 @@ describe('Studio effects captions', () => {
     assert.ok(warn.mock.calls.some((c) => /\[CAPTIONS\] studio fallback: font unreadable/.test(String(c.arguments[0]))));
   });
 
+  // A Timeline caption is usually a whole script sentence. The engine lays out
+  // a phrase word by word, so a long clip must be cut into short phrases inside
+  // its own window or the lines run off the frame and linger past the clip.
+  const LONG_TEXT = 'In the beginning the earth was without form, and void; and darkness was upon the face of the deep.';
+  const GAP_PLAN_CLIPS = [
+    { id: 'g1', text: LONG_TEXT, startSec: 1, durationSec: 6 },
+    { id: 'g2', text: 'And God said, Let there be light: and there was light.', startSec: 13, durationSec: 4 },
+  ];
+  const planWithCaptions = (aspect, clips) => ({
+    projectId: 'timeline-long',
+    aspect,
+    durationSec: 30,
+    tracks: [
+      { kind: 'video', clips: [{ id: 'main', path: 'uploads/main.mp4', startSec: 0, durationSec: 30 }] },
+      { kind: 'captions', clips },
+    ],
+  });
+  const toSec = (stamp) => {
+    const [h, m, s] = stamp.split(':').map(Number);
+    return h * 3600 + m * 60 + s;
+  };
+  // Every text Dialogue (the \p1 spark shapes are drawings, not words).
+  const dialogues = (ass) => ass.split('\n')
+    .filter((l) => l.startsWith('Dialogue:') && !l.includes('\\p1'))
+    .map((l) => {
+      const [, start, end] = /^Dialogue: \d+,([\d:.]+),([\d:.]+),/.exec(l);
+      const at = /\\(?:pos|move)\((-?[\d.]+),(-?[\d.]+)/.exec(l);
+      const size = /\\fs(\d+)/.exec(l);
+      return { start: toSec(start), end: toSec(end), y: at ? Number(at[2]) : null, fs: size ? Number(size[1]) : null };
+    });
+  const LOOKS = ['studio-lagos-night', 'studio-gospel-gold', 'studio-clean-white'];
+
+  test('a long clip is cut into several short phrases that all fall inside the clip window', () => {
+    _setLibassForTest(true);
+    const cmd = buildProofRenderCommand(planWithCaptions('16:9', GAP_PLAN_CLIPS), { ...richOpts, typographyPreset: 'studio-clean-white', captionSeed: 1 });
+    const events = dialogues(cmd.sideFiles[0].text);
+    const first = events.filter((e) => e.start >= 1 && e.start < 10);
+    // The words of one phrase leave together, so each distinct end is one phrase.
+    const phrases = new Set(first.map((e) => e.end));
+    assert.ok(phrases.size >= 3, `the 98-char clip became several phrases (got ${phrases.size})`);
+    assert.ok(first.every((e) => e.start >= 1 - 0.01 && e.end <= 7 + 0.01), 'every phrase sits inside the clip window');
+  });
+
+  test('no caption outlives its clip, so none overlaps the next clip or the gap', () => {
+    _setLibassForTest(true);
+    for (const look of LOOKS) {
+      const cmd = buildProofRenderCommand(planWithCaptions('16:9', GAP_PLAN_CLIPS), { ...richOpts, typographyPreset: look, captionSeed: 1 });
+      const events = dialogues(cmd.sideFiles[0].text);
+      const inFirst = events.filter((e) => e.start < 10);
+      const inSecond = events.filter((e) => e.start >= 10);
+      assert.ok(inFirst.length > 0 && inSecond.length > 0, `${look}: both clips drew`);
+      for (const e of inFirst) assert.ok(e.end <= 7 + 0.01, `${look}: clip 1 ends at 7 s but a caption runs to ${e.end}`);
+      for (const e of inSecond) {
+        assert.ok(e.start >= 13 - 0.01, `${look}: clip 2 caption starts at ${e.start}`);
+        assert.ok(e.end <= 17 + 0.01, `${look}: clip 2 ends at 17 s but a caption runs to ${e.end}`);
+      }
+    }
+  });
+
+  test('a short clip keeps its start and its end', () => {
+    _setLibassForTest(true);
+    const cmd = buildProofRenderCommand(
+      planWithCaptions('16:9', [{ id: 's', text: 'Peace be still', startSec: 2, durationSec: 3 }]),
+      { ...richOpts, typographyPreset: 'studio-clean-white', captionSeed: 1 },
+    );
+    const events = dialogues(cmd.sideFiles[0].text);
+    assert.ok(events.length > 0);
+    assert.ok(Math.abs(Math.min(...events.map((e) => e.start)) - 2) < 0.01);
+    assert.ok(Math.abs(Math.max(...events.map((e) => e.end)) - 5) < 0.01);
+  });
+
+  for (const [aspect, frameH] of [['16:9', 720], ['9:16', 1280]]) {
+    test(`every word of a long clip stays on the ${aspect} frame, for every look, energy and seed`, () => {
+      _setLibassForTest(true);
+      let checked = 0;
+      for (const look of ['studio-lagos-night', 'studio-gospel-gold', 'studio-clean-white']) {
+        for (const captionEnergy of ['calm', 'lively', 'wild']) {
+          for (const captionSeed of [1, 2, 3, 4, 5, 6]) {
+            const cmd = buildProofRenderCommand(
+              planWithCaptions(aspect, [{ id: 'l', text: LONG_TEXT, startSec: 0.5, durationSec: 6 }]),
+              { ...richOpts, typographyPreset: look, captionEnergy, captionSeed },
+            );
+            for (const e of dialogues(cmd.sideFiles[0].text)) {
+              if (e.y === null || e.fs === null) continue;
+              checked += 1;
+              assert.ok(e.y - e.fs / 2 >= 0 && e.y + e.fs / 2 <= frameH, `${look}/${captionEnergy}/${captionSeed}: word at y=${e.y} (fs ${e.fs}) leaves the ${frameH}px frame`);
+            }
+          }
+        }
+      }
+      assert.ok(checked > 100, `the check saw real events (${checked})`);
+    });
+  }
+
   test('a Studio look on a plan with no captions yields no side files', () => {
     _setLibassForTest(true);
     const noCaps = richPlan();

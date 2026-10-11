@@ -19,7 +19,7 @@ import {
 import { isStudioLook, resolveLook, resolveEnergy } from '../kinetic/looks.js';
 import { studioCaptionFilter } from '../kinetic/filter.js';
 import { hasLibass } from '../kinetic/capability.js';
-import { normaliseSeed } from '../kinetic/renderCaptions.js';
+import { normaliseSeed, timedLinePhrases } from '../kinetic/renderCaptions.js';
 
 // Safety ceilings on ffmpeg input count, NOT editorial limits. Anything beyond
 // these is reported through describeRenderCoverage rather than dropped
@@ -29,6 +29,27 @@ const MAX_VOICEOVER_INPUTS = 24;
 // drawtext with a very long string bloats the filtergraph and is unreadable
 // on screen anyway; captions are cues, not paragraphs.
 const MAX_CAPTION_CHARS = 120;
+
+/**
+ * Caption clips as timed phrases for the Studio engine. The engine lays a
+ * phrase out word by word, so a clip is cut into short phrases inside its own
+ * window (a whole script sentence would run off the frame), and the clip's last
+ * phrase leaves exactly when the clip does rather than lingering under the
+ * engine's lyric hold. Text goes in as typed: the look decides its casing.
+ */
+function studioLines(captions) {
+  return captions.flatMap((clip) => {
+    const start = Math.max(0, Number(clip.startSec || 0));
+    const end = Math.max(start + 0.1, start + Number(clip.durationSec || 2));
+    const phrases = timedLinePhrases([String(clip.text).slice(0, MAX_CAPTION_CHARS)], end - start);
+    return phrases.map((p, i) => ({
+      text: p.text,
+      start: start + p.start,
+      end: Math.min(end, start + p.end),
+      ...(i === phrases.length - 1 ? { holdUntil: end } : {}),
+    }));
+  });
+}
 
 function isSubPath(child, parent) {
   const rel = path.relative(parent, child);
@@ -380,14 +401,7 @@ export function buildProofRenderCommand(plan, opts = {}) {
         const built = studioCaptionFilter({
           assPath,
           // Clip text goes in as typed: the look decides its own casing.
-          lines: captions.map((clip) => {
-            const start = Math.max(0, Number(clip.startSec || 0));
-            return {
-              text: String(clip.text).slice(0, MAX_CAPTION_CHARS),
-              start,
-              end: Math.max(start + 0.1, start + Number(clip.durationSec || 2)),
-            };
-          }),
+          lines: studioLines(captions),
           w: width,
           h: height,
           look: opts.typographyPreset,
