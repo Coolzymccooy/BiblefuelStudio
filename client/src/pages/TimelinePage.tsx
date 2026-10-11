@@ -1335,7 +1335,7 @@ export function TimelinePage() {
         setDocumentaryRenderProgress(0);
         setDocumentaryRenderStatus('queued');
         try {
-            const response = await timelineApi.render(documentaryProject, documentaryProject.renderSettings?.quality || 'proof_720p', typographyPreset);
+            const response = await timelineApi.render(documentaryProject, documentaryProject.renderSettings?.quality || 'proof_720p', typographyPreset, isStudioLook(typographyPreset) ? { captionEnergy, captionSeed } : undefined);
             if (!response.ok || !response.data?.ok || !response.data.jobId) {
                 toast.error(response.error || response.data?.error || 'Timeline render rejected', { id: toastId });
                 setDocumentaryRenderStatus('failed');
