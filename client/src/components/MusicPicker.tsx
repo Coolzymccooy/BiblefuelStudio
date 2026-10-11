@@ -8,6 +8,7 @@ import { MusicTracklist } from './music/MusicTracklist';
 import { SongCard } from './music/SongCard';
 import { refId, useLibraryActions } from './music/useLibraryActions';
 import type { TrackListVariant } from './music/TrackRow';
+import type { SoundtrackInfo } from '../lib/soundtrackMatch';
 
 /**
  * `paths` is the multi-track form (ordered). `path` stays for back-compat —
@@ -36,6 +37,8 @@ interface MusicPickerProps {
   crossfadeSec?: number;
   /** Multiple mode, full layout: host settings for the bar above the list. */
   toolbar?: ReactNode;
+  /** One song, full layout: the story's own soundtrack, shown above the bed and guarded against being added twice. */
+  soundtrack?: SoundtrackInfo | null;
 }
 
 export function MusicPicker(props: MusicPickerProps) {
@@ -54,7 +57,7 @@ export function MusicPicker(props: MusicPickerProps) {
       />
     );
   }
-  if (props.variant === 'full') return <SongCard value={props.value} onChange={props.onChange} busy={props.busy} />;
+  if (props.variant === 'full') return <SongCard value={props.value} onChange={props.onChange} busy={props.busy} soundtrack={props.soundtrack} />;
   return <SingleMusicPicker {...props} />;
 }
 

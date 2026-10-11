@@ -22,6 +22,7 @@ import { storyChapters, storyDescription, storyTagline } from '../lib/storyShare
 import { useMusicLibrary } from '../hooks/useMusicLibrary';
 import { refId } from '../components/music/useLibraryActions';
 import { MusicPicker } from '../components/MusicPicker';
+import { soundtrackFor } from '../lib/soundtrackMatch';
 import { StoryCaptionsPanel } from '../components/story/StoryCaptionsPanel';
 import { RenderProgressOverlay } from '../components/RenderProgressOverlay';
 import { MediaTrimmer } from '../components/MediaTrimmer';
@@ -58,6 +59,8 @@ export function StoryVideoPage() {
   const [busy, setBusy] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [pendingAudio, setPendingAudio] = useState<string | null>(null);
+  // The picked file's name, shown back as the soundtrack; none for a script's voiceover.
+  const [pendingName, setPendingName] = useState<string | undefined>(undefined);
   const [showTrimmer, setShowTrimmer] = useState(false);
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
   // Your own pictures on scenes: the one uploading, and the one choosing from the library.
@@ -104,6 +107,7 @@ export function StoryVideoPage() {
       );
       if (isLarge) toast.success('Upload complete', { id: toastId });
       setPendingAudio(path);
+      setPendingName(file.name);
     } catch (e) {
       toast.error((e as Error).message || 'Upload failed', isLarge ? { id: toastId } : undefined);
     } finally {
@@ -119,6 +123,7 @@ export function StoryVideoPage() {
       setDefaultTitle(cleanIdea.slice(0, 60));
       const path = await storyApi.scriptToAudio(cleanIdea, templateId, voiceId);
       setPendingAudio(path);
+      setPendingName(undefined);
     } catch (e) {
       toast.error((e as Error).message || 'Voice generation failed');
     } finally {
@@ -127,14 +132,15 @@ export function StoryVideoPage() {
   };
 
   // Phase 2: run the pipeline on the chosen audio path (trimmed or full).
-  const startPipeline = async (audioPath: string) => {
+  const startPipeline = async (audioPath: string, trimmed: boolean) => {
     setBusy(true);
     setShowTrimmer(false);
     try {
       const created = await storyApi.createProject(title || defaultTitle, style);
       setActive(created.projectId);
-      await storyApi.process(created.projectId, audioPath);
+      await storyApi.process(created.projectId, audioPath, { ...(pendingName ? { name: pendingName } : {}), trimmed });
       setPendingAudio(null);
+      setPendingName(undefined);
       qc.invalidateQueries({ queryKey: ['story-project', created.projectId] });
       toast.success('Generating on the server — you can leave this page');
     } catch (e) {
@@ -525,7 +531,7 @@ export function StoryVideoPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => startPipeline(pendingAudio)}
+                  onClick={() => startPipeline(pendingAudio, false)}
                   className={`${primaryBtnCls} px-3 py-1.5`}
                 >
                   Use full audio
@@ -542,7 +548,7 @@ export function StoryVideoPage() {
                 <MediaTrimmer
                   serverPath={pendingAudio}
                   kind="audio"
-                  onApply={(trimmedPath) => { setShowTrimmer(false); startPipeline(trimmedPath); }}
+                  onApply={(trimmedPath) => { setShowTrimmer(false); startPipeline(trimmedPath, true); }}
                   onCancel={() => setShowTrimmer(false)}
                 />
               )}
@@ -699,6 +705,7 @@ export function StoryVideoPage() {
             value={project.music ?? { path: null, volume: 0.3, autoDuck: true }}
             onChange={onMusicChange}
             busy={busy}
+            soundtrack={soundtrackFor(project.source, Boolean(project.longform))}
           />
           <button
             onClick={onRender}

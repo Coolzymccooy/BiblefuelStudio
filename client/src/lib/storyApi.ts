@@ -132,8 +132,13 @@ export const storyApi = {
     return res.data.file as string;
   },
 
-  async process(id: string, mediaPath: string): Promise<void> {
-    const res = await api.post(`/api/story/${id}/process`, { mediaPath }, undefined, { timeout: PROCESS_TIMEOUT_MS });
+  /**
+   * Start the pipeline. `source` is the picked file's name and whether it was
+   * trimmed, kept for display in the Music panel; a resume sends none.
+   */
+  async process(id: string, mediaPath: string, source?: { name?: string; trimmed: boolean }): Promise<void> {
+    const body = source ? { mediaPath, sourceName: source.name, sourceTrimmed: source.trimmed } : { mediaPath };
+    const res = await api.post(`/api/story/${id}/process`, body, undefined, { timeout: PROCESS_TIMEOUT_MS });
     if (!res.ok) throw new Error(res.error || 'Failed to start processing');
   },
 

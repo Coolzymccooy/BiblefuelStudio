@@ -162,7 +162,60 @@ describe('StoryVideoPage', () => {
     renderPage();
     pickFile();
     await userEvent.click(await screen.findByRole('button', { name: /use full audio/i }));
-    await waitFor(() => expect(storyApi.process).toHaveBeenCalledWith('np', '/out/full.mp3'));
+    await waitFor(() => expect(storyApi.process).toHaveBeenCalledWith('np', '/out/full.mp3', { name: 'sermon.mp3', trimmed: false }));
+  });
+
+  it('a script-made voiceover starts the pipeline with no file name', async () => {
+    vi.spyOn(storyApi, 'scriptToAudio').mockResolvedValue('/out/story-tts-1.mp3');
+    mockPipeline();
+    renderPage();
+    await userEvent.click(screen.getByRole('button', { name: /write a script/i }));
+    await userEvent.type(screen.getByLabelText(/your idea/i), 'hope in the morning');
+    await userEvent.click(screen.getByRole('button', { name: /generate voiceover/i }));
+    await userEvent.click(await screen.findByRole('button', { name: /use full audio/i }));
+    await waitFor(() => expect(storyApi.process).toHaveBeenCalledWith('np', '/out/story-tts-1.mp3', { trimmed: false }));
+  });
+
+  it('the Music panel shows the soundtrack the story was made from', async () => {
+    localStorage.setItem('BF_STORY_ACTIVE', 'p1');
+    vi.spyOn(storyApi, 'getProject').mockResolvedValue({
+      projectId: 'p1', title: 'T', style: 'cinematic-bible', status: 'ready_to_render',
+      source: { audioPath: 'a', durationMs: 215000, name: 'Great Is Thy Faithfulness.mp3', trimmed: true }, transcript: { words: [], hash: 'h' },
+      scenes: [{ id: 'scene-001', text: 'a', startMs: 0, endMs: 8000, imagePrompt: 'p', imagePath: '/a.png', imageUrl: '/outputs/x.png', imageStatus: 'done', promptEditedByUser: false }],
+      music: { path: null, volume: 0.3 }, captionPreset: 'default',
+      render: { jobId: null, outputPath: null, status: null }, error: null, createdAt: 0, updatedAt: 0,
+    } as any);
+    renderPage();
+    expect(await screen.findByText('Soundtrack: Great Is Thy Faithfulness.mp3 · trimmed · 3:35')).toBeInTheDocument();
+    expect(screen.getByText(/no extra music\. your soundtrack plays on its own/i)).toBeInTheDocument();
+  });
+
+  it('a narrated long-form story with no file name calls its soundtrack "your narration"', async () => {
+    localStorage.setItem('BF_STORY_ACTIVE', 'p1');
+    vi.spyOn(storyApi, 'getProject').mockResolvedValue({
+      projectId: 'p1', title: 'T', style: 'cinematic-bible', status: 'ready_to_render',
+      source: { audioPath: 'a', durationMs: 600000 }, transcript: { words: [], hash: 'h' },
+      longform: { script: 's', outline: [], progress: null },
+      scenes: [{ id: 'scene-001', text: 'a', startMs: 0, endMs: 8000, imagePrompt: 'p', imagePath: '/a.png', imageUrl: '/outputs/x.png', imageStatus: 'done', promptEditedByUser: false }],
+      music: { path: null, volume: 0.3 }, captionPreset: 'default',
+      render: { jobId: null, outputPath: null, status: null }, error: null, createdAt: 0, updatedAt: 0,
+    } as any);
+    renderPage();
+    expect(await screen.findByText('Soundtrack: your narration · 10:00')).toBeInTheDocument();
+  });
+
+  it('a new project shows Cinematic (default) in the caption picker, not the first option', async () => {
+    localStorage.setItem('BF_STORY_ACTIVE', 'p1');
+    vi.spyOn(storyApi, 'getProject').mockResolvedValue({
+      projectId: 'p1', title: 'T', style: 'cinematic-bible', status: 'ready_to_render',
+      source: { audioPath: 'a', durationMs: 8000 }, transcript: { words: [], hash: 'h' },
+      scenes: [{ id: 'scene-001', text: 'a', startMs: 0, endMs: 8000, imagePrompt: 'p', imagePath: '/a.png', imageUrl: '/outputs/x.png', imageStatus: 'done', promptEditedByUser: false }],
+      music: { path: null, volume: 0.3 }, captionPreset: 'default', captions: 'kinetic',
+      render: { jobId: null, outputPath: null, status: null }, error: null, createdAt: 0, updatedAt: 0,
+    } as any);
+    renderPage();
+    const select = await screen.findByRole('combobox', { name: 'Caption animation' });
+    expect(select).toHaveValue('cinematic-default');
   });
 
   it('"Trim audio" → apply runs the pipeline with the trimmed path', async () => {
@@ -172,7 +225,7 @@ describe('StoryVideoPage', () => {
     pickFile();
     await userEvent.click(await screen.findByRole('button', { name: /trim audio/i }));
     await userEvent.click(await screen.findByRole('button', { name: /trimmer-apply/i }));
-    await waitFor(() => expect(storyApi.process).toHaveBeenCalledWith('np', '/out/trimmed.mp3'));
+    await waitFor(() => expect(storyApi.process).toHaveBeenCalledWith('np', '/out/trimmed.mp3', { name: 'sermon.mp3', trimmed: true }));
   });
 
   it('upload error returns to the form (no ready panel)', async () => {

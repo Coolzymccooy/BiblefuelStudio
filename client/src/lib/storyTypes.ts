@@ -100,7 +100,14 @@ export interface StoryProject extends StoryCaptionSettings {
   /** Biblical figures appearing in this story; applied to every scene prompt. */
   cast?: string[];
   status: StoryStatus;
-  source: { audioPath: string | null; durationMs: number };
+  source: {
+    audioPath: string | null;
+    durationMs: number;
+    /** The picked file's name, for display only (never a path). Absent for generated narration and older projects. */
+    name?: string;
+    /** The upload was trimmed before the story was made from it. */
+    trimmed?: boolean;
+  };
   transcript: { words: StoryWord[]; hash: string | null };
   scenes: StoryScene[];
   music: { path: string | null; volume: number; autoDuck?: boolean };
