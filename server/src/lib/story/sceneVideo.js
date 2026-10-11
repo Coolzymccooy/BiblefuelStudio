@@ -123,6 +123,35 @@ function parseRate(raw) {
 }
 
 /**
+ * The clip's picture stream: the first video stream that isn't cover art. A
+ * song's embedded artwork is reported as a one-frame "video" stream marked
+ * attached_pic; on its own it is no video. null when there is none.
+ */
+export function pickVideoStream(streams) {
+  if (!Array.isArray(streams)) return null;
+  return streams.find((s) => s?.codec_type === "video" && Number(s?.disposition?.attached_pic) !== 1) || null;
+}
+
+/** "01:02:03.5" (a Matroska DURATION tag) in seconds, or NaN. */
+function parseClock(raw) {
+  const m = /^(\d+):(\d{1,2}):(\d{1,2}(?:\.\d+)?)$/.exec(String(raw || "").trim());
+  return m ? Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) : NaN;
+}
+
+/**
+ * How long a clip is. The container says, usually; a WebM written as it was
+ * recorded (a browser's MediaRecorder) often doesn't, so fall back to the
+ * video stream's duration, then to its Matroska DURATION tag. NaN when
+ * nothing says (counting frames would mean decoding the whole clip).
+ */
+export function clipDurationSec(format, stream) {
+  for (const v of [Number(format?.duration), Number(stream?.duration), parseClock(stream?.tags?.DURATION)]) {
+    if (Number.isFinite(v) && v > 0) return v;
+  }
+  return NaN;
+}
+
+/**
  * What ffprobe says about a clip: its first video stream's size, codec,
  * frame rate and index, and the container's duration. null when it could
  * not be read at all.
@@ -135,19 +164,21 @@ export async function probeSceneVideo(file) {
   const { code, stdout } = await run(ffprobe, [
     "-v", "error",
     ...SCENE_VIDEO_INPUT_GUARD,
-    "-show_entries", "stream=index,codec_type,codec_name,width,height,avg_frame_rate,r_frame_rate:format=duration",
+    "-show_entries",
+    "stream=index,codec_type,codec_name,width,height,avg_frame_rate,r_frame_rate,duration"
+      + ":stream_disposition=attached_pic:stream_tags=DURATION:format=duration",
     "-of", "json", file,
   ], PROBE_TIMEOUT_MS);
   if (code !== 0) return null;
   let info;
   try { info = JSON.parse(stdout); } catch { return null; }
-  const video = (info?.streams || []).find((s) => s?.codec_type === "video");
+  const video = pickVideoStream(info?.streams);
   const avg = parseRate(video?.avg_frame_rate);
   return {
     hasVideo: Boolean(video),
     width: Number(video?.width) || 0,
     height: Number(video?.height) || 0,
-    durationSec: Number(info?.format?.duration),
+    durationSec: clipDurationSec(info?.format, video),
     codec: String(video?.codec_name || ""),
     fps: Number.isFinite(avg) ? avg : parseRate(video?.r_frame_rate),
     streamIndex: Number.isInteger(video?.index) ? video.index : 0,
@@ -213,7 +244,8 @@ function shapeProblem(probe) {
   if (!probe) return UNREADABLE;
   if (!probe.hasVideo) return "That file has no video in it. Choose a video clip (MP4, MOV or WebM).";
   const d = probe.durationSec;
-  if (!Number.isFinite(d) || d <= MIN_SCENE_VIDEO_SEC) return "That clip is too short to use. Choose one at least half a second long.";
+  if (!Number.isFinite(d)) return "Couldn't read that clip's length — re-save it as MP4.";
+  if (d <= MIN_SCENE_VIDEO_SEC) return "That clip is too short to use. Choose one at least half a second long.";
   if (d > MAX_SCENE_VIDEO_SEC) return "That clip is over 10 minutes. Use a shorter clip for one scene.";
   const { width: w, height: h } = probe;
   if (!w || !h) return UNREADABLE;

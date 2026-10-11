@@ -108,7 +108,7 @@ export function SceneCard({
                 : scene.imageStatus === 'error'
                   ? <ImageOff size={12} />
                   : <Clock size={12} />}
-            {yours ? 'Your image' : st.label}
+            {yours ? (isVideo ? 'Your clip' : 'Your image') : st.label}
           </div>
           {isVideo && (
             <span

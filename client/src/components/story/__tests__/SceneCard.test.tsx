@@ -106,6 +106,13 @@ describe('SceneCard', () => {
       expect(screen.getByText('Your image')).toBeInTheDocument();
     });
 
+    it('a clip you chose is called your clip, not your image', () => {
+      render(<SceneCard scene={scene({ imageChosenByUser: true, imageSource: 'upload', mediaKind: 'video', videoUrl: '/outputs/bg-video-x-scene.mp4' })}
+        index={0} onPatch={vi.fn()} onRegenerate={vi.fn()} busy={false} />);
+      expect(screen.getByText('Your clip')).toBeInTheDocument();
+      expect(screen.queryByText('Your image')).not.toBeInTheDocument();
+    });
+
     it('Copy prompt copies the scene\'s image prompt', async () => {
       const writeText = vi.fn().mockResolvedValue(undefined);
       Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });

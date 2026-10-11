@@ -9,6 +9,12 @@ vi.mock('../../../lib/storyImages', async (orig) => ({
   putOwnImage: (...args: unknown[]) => putOwnImage(...args),
 }));
 
+const toastSuccess = vi.hoisted(() => vi.fn());
+vi.mock('react-hot-toast', async (orig) => {
+  const real = (await orig<typeof import('react-hot-toast')>()).default;
+  return { default: Object.assign((...a: Parameters<typeof real>) => real(...a), real, { success: toastSuccess }) };
+});
+
 import { StoryImageTools } from '../StoryImageTools';
 
 function scene(i: number, done: boolean): StoryScene {
@@ -66,6 +72,29 @@ describe('StoryImageTools', () => {
     await waitFor(() => expect(putOwnImage).toHaveBeenCalledTimes(2));
     expect(putOwnImage.mock.calls.map((c) => [c[1], (c[2] as File).name])).toEqual([['s2', 'a.png'], ['s3', 'b.png']]);
     expect(onChanged).toHaveBeenCalled();
+  });
+
+  it('the done toast does not call a clip a picture', async () => {
+    toastSuccess.mockReset();
+    render(<StoryImageTools project={project([scene(0, false), scene(1, false)])} busy={false} onChanged={vi.fn()} />);
+    // Some Android pickers ignore accept, so a clip can come in here too.
+    await userEvent.upload(screen.getByLabelText('Image files for several scenes'), [
+      new File(['v'], 'clip.mp4', { type: 'video/mp4' }),
+    ], { applyAccept: false });
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledTimes(1));
+    const text = String(toastSuccess.mock.calls[0][0]);
+    expect(text).toBe('Added to the scene');
+    expect(text).not.toMatch(/picture/i);
+  });
+
+  it('the done toast counts several scenes without calling them pictures', async () => {
+    toastSuccess.mockReset();
+    render(<StoryImageTools project={project([scene(0, false), scene(1, false)])} busy={false} onChanged={vi.fn()} />);
+    await userEvent.upload(screen.getByLabelText('Image files for several scenes'), [
+      new File(['a'], 'a.png', { type: 'image/png' }), new File(['b'], 'b.mp4', { type: 'video/mp4' }),
+    ], { applyAccept: false });
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledTimes(1));
+    expect(String(toastSuccess.mock.calls[0][0])).toBe('Added to 2 scenes');
   });
 
   it('stops when images start generating, since every later upload would be refused', async () => {

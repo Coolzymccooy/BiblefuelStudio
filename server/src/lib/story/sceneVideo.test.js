@@ -4,7 +4,9 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { spawnSync } from "child_process";
-import { isSceneVideoUpload, resolveSceneVideo, MAX_SCENE_VIDEO_BYTES } from "./sceneVideo.js";
+import {
+  isSceneVideoUpload, resolveSceneVideo, MAX_SCENE_VIDEO_BYTES, pickVideoStream, clipDurationSec,
+} from "./sceneVideo.js";
 
 // A clip of your own on a Story scene: a Pixabay download from an iPhone or a
 // Samsung. Only your own upload may be used, and only one a render can take.
@@ -48,6 +50,49 @@ describe("isSceneVideoUpload", () => {
     assert.equal(isSceneVideoUpload(""), false);
     assert.equal(isSceneVideoUpload(undefined), false);
     assert.equal(isSceneVideoUpload({ path: "a.mp4" }), false);
+  });
+});
+
+describe("pickVideoStream", () => {
+  test("skips cover art and takes the first real video stream", () => {
+    const streams = [
+      { index: 0, codec_type: "audio" },
+      { index: 1, codec_type: "video", disposition: { attached_pic: 1 } },
+      { index: 2, codec_type: "video", disposition: { attached_pic: 0 } },
+    ];
+    assert.equal(pickVideoStream(streams)?.index, 2);
+  });
+
+  test("cover art alone is no video", () => {
+    assert.equal(pickVideoStream([{ index: 0, codec_type: "audio" }, { index: 1, codec_type: "video", disposition: { attached_pic: 1 } }]), null);
+    assert.equal(pickVideoStream([]), null);
+    assert.equal(pickVideoStream(undefined), null);
+  });
+
+  test("a stream with no disposition reported is still a video", () => {
+    assert.equal(pickVideoStream([{ index: 0, codec_type: "video" }])?.index, 0);
+  });
+});
+
+describe("clipDurationSec", () => {
+  test("the container's duration when it has one", () => {
+    assert.equal(clipDurationSec({ duration: "4.5" }, { duration: "9" }), 4.5);
+  });
+
+  test("falls back to the video stream's duration", () => {
+    assert.equal(clipDurationSec({}, { duration: "3.25" }), 3.25);
+    assert.equal(clipDurationSec({ duration: "N/A" }, { duration: "3.25" }), 3.25);
+  });
+
+  test("then to a Matroska/WebM stream's DURATION tag", () => {
+    assert.equal(clipDurationSec({}, { tags: { DURATION: "00:01:02.500000000" } }), 62.5);
+    assert.equal(clipDurationSec(undefined, { tags: { DURATION: "01:00:00.000" } }), 3600);
+  });
+
+  test("NaN when nothing says how long it is", () => {
+    assert.ok(Number.isNaN(clipDurationSec({}, {})));
+    assert.ok(Number.isNaN(clipDurationSec(undefined, undefined)));
+    assert.ok(Number.isNaN(clipDurationSec({ duration: "0" }, { tags: { DURATION: "junk" } })));
   });
 });
 
@@ -117,6 +162,42 @@ describe("resolveSceneVideo", () => {
     assert.equal(got.ok, false);
     assert.equal(got.status, 400);
     assert.match(got.error, /no video/i);
+  });
+
+  test("a song with cover art is refused: the art is not a video", needsFfmpeg, async () => {
+    const art = path.join(outputDir, "art.jpg");
+    ff(["-f", "lavfi", "-i", "color=red:s=64x64", "-frames:v", "1", art]);
+    const file = path.join(outputDir, `bg-video-${UUID}.mp4`);
+    ff(["-f", "lavfi", "-i", "sine=d=2", "-i", art, "-map", "0", "-map", "1",
+      "-c:a", "aac", "-c:v", "copy", "-disposition:v:0", "attached_pic", file]);
+    const got = await resolveSceneVideo({ outputDir, uploadPath: file });
+    assert.equal(got.ok, false, JSON.stringify(got));
+    assert.equal(got.status, 400);
+    assert.match(got.error, /no video/i);
+  });
+
+  test("a concat list dressed up as a clip is refused, so ffmpeg never reads the clip it names", needsFfmpeg, async () => {
+    // A real clip beside the list: followed, the list would pass as that clip
+    // (its length given, so nothing else about it is refused).
+    makeClip({ name: "sib.mp4" });
+    fs.writeFileSync(path.join(outputDir, `bg-video-${UUID}.mp4`), "ffconcat version 1.0\nfile sib.mp4\nduration 1\n");
+    const got = await resolveSceneVideo({ outputDir, uploadPath: `bg-video-${UUID}.mp4` });
+    assert.equal(got.ok, false, JSON.stringify(got));
+    assert.equal(got.status, 400);
+    assert.deepEqual(fs.readdirSync(outputDir).sort(), [`bg-video-${UUID}.mp4`, "sib.mp4"], "no poster, no converted copy");
+  });
+
+  test("a WebM with no length recorded anywhere gets a plain answer, not \"too short\"", needsFfmpeg, async () => {
+    // Written to a pipe, as a browser's MediaRecorder does: no duration in the
+    // container or the stream.
+    const file = path.join(outputDir, `bg-video-${UUID}.webm`);
+    const r = spawnSync(FF, ["-v", "error", "-f", "lavfi", "-i", "testsrc=s=64x64:r=10:d=1", "-c:v", "libvpx-vp9", "-f", "webm", "pipe:1"],
+      { maxBuffer: 64 * 1024 * 1024 });
+    assert.equal(r.status, 0, String(r.stderr));
+    fs.writeFileSync(file, r.stdout);
+    const got = await resolveSceneVideo({ outputDir, uploadPath: file });
+    assert.equal(got.ok, false);
+    assert.equal(got.error, "Couldn't read that clip's length — re-save it as MP4.");
   });
 
   test("bytes that aren't a video at all are refused", async () => {

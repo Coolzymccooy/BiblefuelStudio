@@ -81,8 +81,10 @@ export function StoryImageTools({ project, characters = [], busy, onChanged, onU
       extra.length ? `${extra.length} not used (no scene left for ${extra.length === 1 ? 'it' : 'them'})` : '',
       failed.length ? `${failed.length} failed: ${failed[0]}` : '',
     ].filter(Boolean).join('. ');
-    if (done) toast.success(`${done} picture${done === 1 ? '' : 's'} added${notes ? `. ${notes}` : ''}`, { id: toastId, duration: 6000 });
-    else toast.error(notes || 'No pictures were added', { id: toastId, duration: 6000 });
+    // Neutral words: a clip can come in here too (some Android pickers ignore accept).
+    const added = done === 1 ? 'Added to the scene' : `Added to ${done} scenes`;
+    if (done) toast.success(`${added}${notes ? `. ${notes}` : ''}`, { id: toastId, duration: 6000 });
+    else toast.error(notes || 'Nothing was added', { id: toastId, duration: 6000 });
   };
 
   return (

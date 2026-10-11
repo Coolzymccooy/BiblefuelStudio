@@ -27,6 +27,31 @@ describe('putOwnImage', () => {
     await expect(putOwnImage('p1', 's2', clip)).resolves.toEqual({ projectId: 'p1' });
     expect(setSceneImage).toHaveBeenCalledWith('p1', 's2', { uploadPath: '/o/bg-video-1.mp4' });
   });
+
+  // A clip over the server's cap would only be refused after the whole upload,
+  // which on mobile data is minutes and hundreds of MB wasted.
+  const MB = 1024 * 1024;
+  const sized = (name: string, type: string, bytes: number) => {
+    const f = new File(['x'], name, { type });
+    Object.defineProperty(f, 'size', { value: bytes });
+    return f;
+  };
+
+  it('refuses a clip over 200 MB before uploading it, with the server\'s words', async () => {
+    const big = sized('4k.mp4', 'video/mp4', 200 * MB + 1);
+    await expect(putOwnImage('p1', 's1', big)).rejects.toThrow('That clip is over 200 MB. Use a shorter clip or the HD (1080p) version.');
+    expect(uploadMedia).not.toHaveBeenCalled();
+    expect(setSceneImage).not.toHaveBeenCalled();
+  });
+
+  it('uploads a clip of exactly 200 MB, and never size-checks a photo here', async () => {
+    uploadMedia.mockResolvedValue({ ok: true, file: '/o/bg-video-2.mp4', kind: 'video' });
+    await putOwnImage('p1', 's1', sized('ok.mov', 'video/quicktime', 200 * MB));
+    expect(uploadMedia).toHaveBeenCalledTimes(1);
+    uploadMedia.mockResolvedValue({ ok: true, file: '/o/bg-image-2.jpg', kind: 'image' });
+    await putOwnImage('p1', 's1', sized('huge.jpg', 'image/jpeg', 300 * MB));
+    expect(uploadMedia).toHaveBeenCalledTimes(2);
+  });
 });
 
 function scene(i: number, done = false): StoryScene {
