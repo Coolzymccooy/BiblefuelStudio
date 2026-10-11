@@ -24,10 +24,19 @@ beforeEach(() => { outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "scene-vide
 afterEach(() => { fs.rmSync(outputDir, { recursive: true, force: true }); });
 
 /** A short clip, as POST /api/media/upload-background leaves it on disk. */
-function makeClip({ name = `bg-video-${UUID}.mp4`, size = "320x240", dur = 1, rate = 30, dir = outputDir } = {}) {
+function makeClip({ name = `bg-video-${UUID}.mp4`, size = "320x240", dur = 1, rate = 30, dir = outputDir, codec = ["-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"] } = {}) {
   const file = path.join(dir, name);
-  ff(["-f", "lavfi", "-i", `testsrc=s=${size}:r=${rate}:d=${dur}`, "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", file]);
+  ff(["-f", "lavfi", "-i", `testsrc=s=${size}:r=${rate}:d=${dur}`, ...codec, file]);
   return file;
+}
+
+/** What ffprobe says about a file's streams, for checking a converted clip. */
+function streamsOf(file) {
+  const r = spawnSync(process.env.FFPROBE_PATH?.trim() || "ffprobe", [
+    "-v", "error", "-show_entries", "stream=codec_type,codec_name,width,height,avg_frame_rate", "-of", "json", file,
+  ]);
+  assert.equal(r.status, 0, String(r.stderr));
+  return JSON.parse(String(r.stdout)).streams;
 }
 
 describe("isSceneVideoUpload", () => {
@@ -98,7 +107,7 @@ describe("resolveSceneVideo", () => {
     const got = await resolveSceneVideo({ outputDir, uploadPath: `bg-video-${UUID}.mp4`, maxBytes: 10 });
     assert.equal(got.ok, false);
     assert.equal(got.status, 400);
-    assert.equal(got.error, "That clip is over 200 MB. Download the HD (1080p) version instead of 4K.");
+    assert.equal(got.error, "That clip is over 200 MB. Use a shorter clip or the HD (1080p) version.");
   });
 
   test("a file with no picture in it (audio only) is refused", needsFfmpeg, async () => {
@@ -149,5 +158,90 @@ describe("resolveSceneVideo", () => {
     const got = await resolveSceneVideo({ outputDir, uploadPath: `bg-video-${UUID}.mp4` });
     assert.equal(got.ok, false);
     assert.match(got.error, /4112×16/);
+    assert.doesNotMatch(got.error, /instead of 4K/, "4K is accepted now, so the copy must not say otherwise");
+  });
+});
+
+// Every clip scene is its own ffmpeg input at render time, all decoding at
+// once, so a 4K clip on each scene could run the server out of memory. A big
+// or unusual clip is converted once, when it goes on the scene, to 1080p-class
+// H.264 at 30 fps; a render then only ever decodes small, uniform clips.
+describe("resolveSceneVideo converts big clips once", () => {
+  const sceneName = `bg-video-${UUID}-scene.mp4`;
+
+  test("a 2560×1440 clip is converted to 1920×1080 H.264 at 30 fps, and the scene uses that", needsFfmpeg, async () => {
+    makeClip({ size: "2560x1440", dur: 0.5, rate: 30 });
+    const got = await resolveSceneVideo({ outputDir, uploadPath: `bg-video-${UUID}.mp4` });
+    assert.equal(got.ok, true, JSON.stringify(got));
+    const real = fs.realpathSync(outputDir);
+    assert.equal(got.videoPath, path.join(real, sceneName), "a sibling of the upload");
+    assert.equal(got.videoUrl, `/outputs/${sceneName}`);
+    const streams = streamsOf(got.videoPath);
+    assert.equal(streams.length, 1, "video only, no sound");
+    assert.equal(streams[0].codec_name, "h264");
+    assert.equal(streams[0].width, 1920);
+    assert.equal(streams[0].height, 1080);
+    assert.equal(streams[0].avg_frame_rate, "30/1");
+    // The poster comes from the converted clip, so it is 1920 wide.
+    const poster = streamsOf(got.posterPath)[0];
+    assert.equal(poster.width, 1920);
+    assert.equal(path.dirname(got.posterPath), real);
+    assert.equal(fs.readdirSync(outputDir).some((n) => n.endsWith(".part.mp4")), false, "no half-written file is left");
+  });
+
+  test("a portrait 4K-class clip keeps its shape: the long side becomes 1920", needsFfmpeg, async () => {
+    makeClip({ size: "1440x2560", dur: 0.5, rate: 10 });
+    const got = await resolveSceneVideo({ outputDir, uploadPath: `bg-video-${UUID}.mp4` });
+    assert.equal(got.ok, true, JSON.stringify(got));
+    const [v] = streamsOf(got.videoPath);
+    assert.equal(v.width, 1080);
+    assert.equal(v.height, 1920);
+  });
+
+  test("a clip over 60 fps is converted to 30 fps", needsFfmpeg, async () => {
+    makeClip({ size: "160x120", dur: 0.5, rate: 120 });
+    const got = await resolveSceneVideo({ outputDir, uploadPath: `bg-video-${UUID}.mp4` });
+    assert.equal(got.ok, true, JSON.stringify(got));
+    assert.equal(path.basename(got.videoPath), sceneName);
+    const [v] = streamsOf(got.videoPath);
+    assert.equal(v.avg_frame_rate, "30/1");
+    assert.equal(v.width, 160, "a small clip is not scaled up");
+  });
+
+  test("a clip that isn't H.264 is converted to H.264", needsFfmpeg, async () => {
+    makeClip({ name: `bg-video-${UUID}.webm`, size: "64x64", dur: 0.5, rate: 10, codec: ["-c:v", "libvpx-vp9"] });
+    const got = await resolveSceneVideo({ outputDir, uploadPath: `bg-video-${UUID}.webm` });
+    assert.equal(got.ok, true, JSON.stringify(got));
+    assert.equal(path.basename(got.videoPath), sceneName);
+    assert.equal(streamsOf(got.videoPath)[0].codec_name, "h264");
+  });
+
+  test("a 1280×720 H.264 clip is used as it is: no conversion, no new clip", needsFfmpeg, async () => {
+    const clip = makeClip({ size: "1280x720", dur: 0.5, rate: 30 });
+    const before = fs.readdirSync(outputDir).sort();
+    const got = await resolveSceneVideo({ outputDir, uploadPath: `bg-video-${UUID}.mp4` });
+    assert.equal(got.ok, true, JSON.stringify(got));
+    assert.equal(got.videoPath, fs.realpathSync(clip));
+    const added = fs.readdirSync(outputDir).filter((n) => !before.includes(n));
+    assert.deepEqual(added, [`bg-video-${UUID}-poster.jpg`], "only the poster is added");
+  });
+
+  test("the converted clip is itself accepted if it is sent again", needsFfmpeg, async () => {
+    makeClip({ size: "160x120", dur: 0.5, rate: 120 });
+    const first = await resolveSceneVideo({ outputDir, uploadPath: `bg-video-${UUID}.mp4` });
+    assert.equal(first.ok, true, JSON.stringify(first));
+    const again = await resolveSceneVideo({ outputDir, uploadPath: first.videoPath });
+    assert.equal(again.ok, true, JSON.stringify(again));
+    assert.equal(again.videoPath, first.videoPath, "already small, so used as it is");
+  });
+
+  test("a conversion that runs too long is stopped with a plain answer", needsFfmpeg, async () => {
+    makeClip({ size: "2000x200", dur: 0.5, rate: 30 });
+    const got = await resolveSceneVideo({ outputDir, uploadPath: `bg-video-${UUID}.mp4`, transcodeTimeoutMs: 1 });
+    assert.equal(got.ok, false);
+    assert.equal(got.status, 400);
+    assert.equal(got.error, "That clip took too long to prepare. Use a shorter clip or the HD (1080p) version.");
+    assert.equal(fs.existsSync(path.join(outputDir, sceneName)), false);
+    assert.equal(fs.readdirSync(outputDir).some((n) => n.endsWith(".part.mp4")), false, "the half-written file is removed");
   });
 });

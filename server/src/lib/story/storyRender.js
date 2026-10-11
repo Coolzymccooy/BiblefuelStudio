@@ -241,7 +241,10 @@ export function buildStoryFfmpegArgs({
   const args = ["-y"];
   segs.forEach((seg, i) => {
     // A clip shorter than its scene loops; trim (below) cuts it to length.
-    if (playsClip[i]) args.push(...SCENE_VIDEO_INPUT_GUARD, "-stream_loop", "-1", "-i", seg.videoPath);
+    // Every clip input decodes at once, and each decoder thread holds its own
+    // frames, so the default (one thread per core) multiplies memory by the
+    // number of clip scenes: two threads each keeps that bounded.
+    if (playsClip[i]) args.push(...SCENE_VIDEO_INPUT_GUARD, "-threads", "2", "-stream_loop", "-1", "-i", seg.videoPath);
     else args.push("-loop", "1", "-i", seg.imagePath);
   });
   args.push("-i", audioPath);

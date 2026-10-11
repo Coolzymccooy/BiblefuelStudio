@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { spawn } from "child_process";
+import { randomUUID } from "crypto";
 import { resolveOwnUpload } from "../ambient/movementImage.js";
 
 /**
@@ -19,7 +20,9 @@ import { resolveOwnUpload } from "../ambient/movementImage.js";
  * Clips are not put in the image library.
  */
 
-const VIDEO_UPLOAD_NAME = /^bg-video-[0-9a-f-]{36}\.(mp4|mov|webm|m4v)$/i;
+// The upload itself, or the converted copy made beside it (see
+// normaliseSceneVideo), which is what a scene stores when its clip needed it.
+const VIDEO_UPLOAD_NAME = /^bg-video-[0-9a-f-]{36}(?:\.(mp4|mov|webm|m4v)|-scene\.mp4)$/i;
 const VIDEO_EXT = /\.(mp4|mov|webm|m4v)$/i;
 
 export const MAX_SCENE_VIDEO_BYTES = 200 * 1024 * 1024;
@@ -28,21 +31,36 @@ export const MAX_SCENE_VIDEO_SEC = 10 * 60;
 export const MAX_SCENE_VIDEO_SIDE = 4096;
 
 /**
+ * What a clip may be at render time without being converted first. Every
+ * clip scene is its own ffmpeg input and they all decode at once, so a 4K or
+ * 120 fps clip on each scene multiplies the render's memory. Anything bigger,
+ * faster or in another codec is converted once, when it goes on the scene.
+ */
+export const SCENE_VIDEO_MAX_LONG_SIDE = 1920;
+export const SCENE_VIDEO_MAX_FPS = 60;
+/** A scene loops its clip, so more than a minute of it is never needed. */
+export const SCENE_VIDEO_MAX_CONVERTED_SEC = 60;
+
+/**
  * The only containers a scene clip may be read as. An uploaded file's bytes
  * decide its format, not its name, and some formats (an HLS playlist, a
  * concat list) make ffmpeg open other files or URLs. Holding ffprobe and
- * ffmpeg to the MP4/MOV and Matroska/WebM demuxers rules that out.
- * `-format_whitelist` is an input option on ffmpeg 5.1 as well.
+ * ffmpeg to the MP4/MOV and Matroska/WebM demuxers, and to local files,
+ * rules that out. Both are input options on ffmpeg 5.1 as well.
  */
 export const SCENE_VIDEO_FORMATS = "mov,mp4,m4a,3gp,3g2,mj2,matroska,webm";
-export const SCENE_VIDEO_INPUT_GUARD = Object.freeze(["-format_whitelist", SCENE_VIDEO_FORMATS]);
+export const SCENE_VIDEO_INPUT_GUARD = Object.freeze([
+  "-format_whitelist", SCENE_VIDEO_FORMATS, "-protocol_whitelist", "file",
+]);
 
 const PROBE_TIMEOUT_MS = 20_000;
 const POSTER_TIMEOUT_MS = 30_000;
+const TRANSCODE_TIMEOUT_MS = 120_000;
 
 const NOT_FOUND = "that upload was not found — try uploading it again";
-const TOO_BIG = "That clip is over 200 MB. Download the HD (1080p) version instead of 4K.";
+export const SCENE_VIDEO_TOO_BIG = "That clip is over 200 MB. Use a shorter clip or the HD (1080p) version.";
 const UNREADABLE = "That clip could not be read. Try the MP4 download instead.";
+const TOO_SLOW = "That clip took too long to prepare. Use a shorter clip or the HD (1080p) version.";
 
 /** True when an uploadPath names a video upload rather than a picture. */
 export function isSceneVideoUpload(raw) {
@@ -53,7 +71,8 @@ export function isSceneVideoUpload(raw) {
 
 /**
  * Run a binary with an argument array (never a shell), bounded by a timeout.
- * Resolves { code, stdout }; code is null when it could not run or timed out.
+ * Resolves { code, stdout, timedOut }; code is null when it could not run or
+ * timed out.
  */
 function run(bin, args, timeoutMs) {
   return new Promise((resolve) => {
@@ -61,20 +80,30 @@ function run(bin, args, timeoutMs) {
     try {
       proc = spawn(bin, args, { windowsHide: true });
     } catch {
-      resolve({ code: null, stdout: "" });
+      resolve({ code: null, stdout: "", timedOut: false });
       return;
     }
     let stdout = "";
     let settled = false;
-    const finish = (code) => {
+    const finish = (code, timedOut = false) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve({ code, stdout });
+      // A killed child can still be holding its output file open; wait for it
+      // to go so the caller can remove what it left.
+      if (timedOut) {
+        const backstop = setTimeout(() => resolve({ code, stdout, timedOut }), 5_000);
+        proc.once("close", () => {
+          clearTimeout(backstop);
+          resolve({ code, stdout, timedOut });
+        });
+        return;
+      }
+      resolve({ code, stdout, timedOut });
     };
     const timer = setTimeout(() => {
       try { proc.kill("SIGKILL"); } catch { /* already gone */ }
-      finish(null);
+      finish(null, true);
     }, timeoutMs);
     if (timer.unref) timer.unref();
     proc.stdout?.on("data", (d) => { stdout += d.toString(); });
@@ -86,29 +115,99 @@ function run(bin, args, timeoutMs) {
 }
 
 /**
- * What ffprobe says about a clip: its first video stream's size and the
- * container's duration. null when it could not be read at all.
+ * A rate like "30000/1001" as a number; NaN when ffprobe doesn't know it
+ * ("0/0").
+ */
+function parseRate(raw) {
+  const [n, d = "1"] = String(raw || "").split("/");
+  const v = Number(n) / Number(d);
+  return Number.isFinite(v) && v > 0 ? v : NaN;
+}
+
+/**
+ * What ffprobe says about a clip: its first video stream's size, codec,
+ * frame rate and index, and the container's duration. null when it could
+ * not be read at all.
  *
- * @returns {Promise<{ hasVideo: boolean, width: number, height: number, durationSec: number } | null>}
+ * @returns {Promise<{ hasVideo: boolean, width: number, height: number, durationSec: number,
+ *                     codec: string, fps: number, streamIndex: number } | null>}
  */
 export async function probeSceneVideo(file) {
   const ffprobe = process.env.FFPROBE_PATH?.trim() || "ffprobe";
   const { code, stdout } = await run(ffprobe, [
     "-v", "error",
-    ...SCENE_VIDEO_INPUT_GUARD, "-protocol_whitelist", "file",
-    "-show_entries", "stream=codec_type,width,height:format=duration",
+    ...SCENE_VIDEO_INPUT_GUARD,
+    "-show_entries", "stream=index,codec_type,codec_name,width,height,avg_frame_rate,r_frame_rate:format=duration",
     "-of", "json", file,
   ], PROBE_TIMEOUT_MS);
   if (code !== 0) return null;
   let info;
   try { info = JSON.parse(stdout); } catch { return null; }
   const video = (info?.streams || []).find((s) => s?.codec_type === "video");
+  const avg = parseRate(video?.avg_frame_rate);
   return {
     hasVideo: Boolean(video),
     width: Number(video?.width) || 0,
     height: Number(video?.height) || 0,
     durationSec: Number(info?.format?.duration),
+    codec: String(video?.codec_name || ""),
+    fps: Number.isFinite(avg) ? avg : parseRate(video?.r_frame_rate),
+    streamIndex: Number.isInteger(video?.index) ? video.index : 0,
   };
+}
+
+/**
+ * Does this clip need converting before a render can take it cheaply? Too
+ * big (long side over 1920), not H.264, or over 60 fps. An unknown frame rate
+ * is left alone: the render's own fps=30 handles it.
+ */
+export function needsNormalising(probe) {
+  if (Math.max(probe.width, probe.height) > SCENE_VIDEO_MAX_LONG_SIDE) return true;
+  if (probe.codec !== "h264") return true;
+  return Number.isFinite(probe.fps) && probe.fps > SCENE_VIDEO_MAX_FPS;
+}
+
+/**
+ * Convert a clip once, beside the upload, to what every render can decode
+ * cheaply: long side at most 1920 (shape kept, even sides), 30 fps, H.264
+ * yuv420p, no sound, at most a minute. Written under a temporary name and
+ * renamed, so a stopped conversion never leaves a clip that looks finished.
+ *
+ * @returns {Promise<{ ok: true, file: string } | { ok: false, error: string }>}
+ */
+async function normaliseSceneVideo(file, probe, timeoutMs) {
+  const ff = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
+  const stem = path.basename(file, path.extname(file)).replace(/-scene$/i, "");
+  const out = path.join(path.dirname(file), `${stem}-scene.mp4`);
+  const part = path.join(path.dirname(file), `${stem}-scene.${randomUUID()}.part.mp4`);
+  const L = SCENE_VIDEO_MAX_LONG_SIDE;
+  const scale = `scale='if(gt(iw,ih),min(${L},trunc(iw/2)*2),-2)':'if(gt(iw,ih),-2,min(${L},trunc(ih/2)*2))'`;
+  const { code, timedOut } = await run(ff, [
+    "-hide_banner", "-v", "error", "-y",
+    "-threads", "2",
+    ...SCENE_VIDEO_INPUT_GUARD, "-i", file,
+    "-map", `0:${probe.streamIndex}`,
+    "-t", String(SCENE_VIDEO_MAX_CONVERTED_SEC),
+    "-vf", `${scale},fps=30`,
+    "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
+    "-threads", "2",
+    "-an", "-movflags", "+faststart",
+    "-f", "mp4", part,
+  ], timeoutMs);
+  const ok = code === 0 && fs.existsSync(part) && fs.statSync(part).size > 0;
+  if (!ok) {
+    try { fs.rmSync(part, { force: true }); } catch { /* best effort */ }
+    return { ok: false, error: timedOut ? TOO_SLOW : UNREADABLE };
+  }
+  try {
+    fs.renameSync(part, out);
+  } catch {
+    // The same clip went on another scene at the same moment and its copy is
+    // already in place (and may be open): use that one.
+    try { fs.rmSync(part, { force: true }); } catch { /* best effort */ }
+    if (!fs.existsSync(out)) return { ok: false, error: UNREADABLE };
+  }
+  return { ok: true, file: out };
 }
 
 /** Why a probed clip can't go on a scene, or null when it can. */
@@ -121,7 +220,7 @@ function shapeProblem(probe) {
   const { width: w, height: h } = probe;
   if (!w || !h) return UNREADABLE;
   if (w > MAX_SCENE_VIDEO_SIDE || h > MAX_SCENE_VIDEO_SIDE) {
-    return `That clip is ${w}×${h}, too large for a video scene. Download the HD (1080p) version instead of 4K.`;
+    return `That clip is ${w}×${h}, too large for a video scene. Use a 4K or smaller version.`;
   }
   return null;
 }
@@ -134,7 +233,7 @@ async function grabPoster(file, posterPath, durationSec) {
     const { code } = await run(ff, [
       "-hide_banner", "-v", "error", "-y",
       "-ss", seek.toFixed(3),
-      ...SCENE_VIDEO_INPUT_GUARD, "-protocol_whitelist", "file", "-i", file,
+      ...SCENE_VIDEO_INPUT_GUARD, "-i", file,
       "-frames:v", "1", "-q:v", "3", posterPath,
     ], POSTER_TIMEOUT_MS);
     if (code === 0 && fs.existsSync(posterPath) && fs.statSync(posterPath).size > 0) return true;
@@ -147,22 +246,36 @@ async function grabPoster(file, posterPath, durationSec) {
  * Resolve the body of PUT /api/story/:id/scenes/:sid/image when it names a
  * video upload.
  *
- * @param {{ outputDir: string, uploadPath: unknown, maxBytes?: number }} args
- *        maxBytes exists so tests can exercise the cap without a 200 MB file.
+ * A clip that is too big, too fast or not H.264 is converted once (see
+ * normaliseSceneVideo) and the scene gets the converted copy; one that is
+ * already fine is used as it is.
+ *
+ * @param {{ outputDir: string, uploadPath: unknown, maxBytes?: number, transcodeTimeoutMs?: number }} args
+ *        maxBytes and transcodeTimeoutMs exist so tests can exercise the cap
+ *        and the time limit without a 200 MB file or a slow conversion.
  * @returns {Promise<{ ok: true, videoPath: string, videoUrl: string, posterPath: string,
  *                     posterUrl: string, durationSec: number, width: number, height: number }
  *                 | { ok: false, status: number, error: string }>}
  */
-export async function resolveSceneVideo({ outputDir, uploadPath, maxBytes = MAX_SCENE_VIDEO_BYTES }) {
-  const file = resolveOwnUpload(outputDir, uploadPath, VIDEO_UPLOAD_NAME);
-  if (!file) return { ok: false, status: 400, error: NOT_FOUND };
+export async function resolveSceneVideo({
+  outputDir, uploadPath, maxBytes = MAX_SCENE_VIDEO_BYTES, transcodeTimeoutMs = TRANSCODE_TIMEOUT_MS,
+}) {
+  const upload = resolveOwnUpload(outputDir, uploadPath, VIDEO_UPLOAD_NAME);
+  if (!upload) return { ok: false, status: 400, error: NOT_FOUND };
   let size;
-  try { size = fs.statSync(file).size; } catch { return { ok: false, status: 400, error: NOT_FOUND }; }
-  if (size > maxBytes) return { ok: false, status: 400, error: TOO_BIG };
+  try { size = fs.statSync(upload).size; } catch { return { ok: false, status: 400, error: NOT_FOUND }; }
+  if (size > maxBytes) return { ok: false, status: 400, error: SCENE_VIDEO_TOO_BIG };
 
-  const probe = await probeSceneVideo(file);
+  const probe = await probeSceneVideo(upload);
   const problem = shapeProblem(probe);
   if (problem) return { ok: false, status: 400, error: problem };
+
+  let file = upload;
+  if (needsNormalising(probe)) {
+    const converted = await normaliseSceneVideo(upload, probe, transcodeTimeoutMs);
+    if (!converted.ok) return { ok: false, status: 400, error: converted.error };
+    file = converted.file;
+  }
 
   const stem = path.basename(file, path.extname(file));
   const posterPath = path.join(path.dirname(file), `${stem}-poster.jpg`);

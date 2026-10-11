@@ -385,8 +385,15 @@ describe("a scene with a video clip of your own", () => {
     const { args } = build(twoScenes());
     const ci = args.indexOf(clip);
     assert.deepEqual(args.slice(ci - 3, ci), ["-stream_loop", "-1", "-i"]);
-    // Only read as MP4/MOV or Matroska/WebM, whatever the bytes claim.
-    assert.deepEqual(args.slice(ci - 5, ci - 3), ["-format_whitelist", "mov,mp4,m4a,3gp,3g2,mj2,matroska,webm"]);
+    // Two decoder threads per clip: every clip decodes at once, and each
+    // decoder thread holds its own frames, so the default (one per core)
+    // multiplies memory by the scene count.
+    assert.deepEqual(args.slice(ci - 5, ci - 3), ["-threads", "2"]);
+    // Only read as MP4/MOV or Matroska/WebM, whatever the bytes claim, and
+    // only from a local file.
+    assert.deepEqual(args.slice(ci - 9, ci - 5), [
+      "-format_whitelist", "mov,mp4,m4a,3gp,3g2,mj2,matroska,webm", "-protocol_whitelist", "file",
+    ]);
     const si = args.indexOf(path.join(dir, "still.png"));
     assert.deepEqual(args.slice(si - 3, si), ["-loop", "1", "-i"]);
     assert.equal(args.includes(path.join(dir, "poster.jpg")), false, "the poster is not an input when the clip exists");
