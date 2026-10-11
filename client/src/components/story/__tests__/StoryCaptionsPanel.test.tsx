@@ -262,3 +262,40 @@ describe('StoryCaptionsPanel Studio effects', () => {
     expect(screen.getByRole('button', { name: /shuffle effects/i })).toBeDisabled();
   });
 });
+
+describe('StoryCaptionsPanel caption animation select', () => {
+  it('a new project ("default") shows Cinematic (default), not the first option, and no Energy control', async () => {
+    mockCatalogue(studioCatalogue);
+    show({ captions: 'kinetic', captionPreset: 'default' });
+    await screen.findByRole('option', { name: 'Lagos Night' });
+    const select = screen.getByRole('combobox', { name: 'Caption animation' });
+    expect(select).toHaveValue('cinematic-default');
+    expect(within(select).getByRole('option', { name: 'Cinematic (default)' })).toHaveProperty('selected', true);
+    expect(screen.queryByRole('combobox', { name: 'Energy' })).not.toBeInTheDocument();
+  });
+
+  it('"default" is Cinematic (default) before the catalogue has loaded too', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({ ok: false, error: 'offline' } as any);
+    show({ captions: 'kinetic', captionPreset: 'default' });
+    await waitFor(() => expect(api.get).toHaveBeenCalled());
+    expect(screen.getByRole('combobox', { name: 'Caption animation' })).toHaveValue('cinematic-default');
+  });
+
+  it('a value that is not among the options shows Cinematic (default) once the catalogue has loaded', async () => {
+    mockCatalogue(studioCatalogue);
+    show({ captions: 'kinetic', captionPreset: 'retired-preset' });
+    await screen.findByRole('option', { name: 'Lagos Night' });
+    expect(screen.getByRole('combobox', { name: 'Caption animation' })).toHaveValue('cinematic-default');
+  });
+
+  it('keeps a catalogue animation and a classic preset selected', async () => {
+    mockCatalogue(studioCatalogue);
+    const { unmount } = render(<StoryCaptionsPanel value={{ captions: 'kinetic', captionPreset: 'karaoke-pop' }} onChange={vi.fn()} />);
+    await screen.findByRole('option', { name: 'Lagos Night' });
+    expect(screen.getByRole('combobox', { name: 'Caption animation' })).toHaveValue('karaoke-pop');
+    unmount();
+    render(<StoryCaptionsPanel value={{ captions: 'kinetic', captionPreset: 'playful-pop' }} onChange={vi.fn()} />);
+    await screen.findByRole('option', { name: 'Lagos Night' });
+    expect(screen.getByRole('combobox', { name: 'Caption animation' })).toHaveValue('playful-pop');
+  });
+});
