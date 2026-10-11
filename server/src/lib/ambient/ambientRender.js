@@ -288,7 +288,7 @@ function studioFilters({ project, plan, width, height, workDir }) {
       text: p.text,
       start: p.start,
       end: p.end,
-      reveal: Math.min(p.end - p.start, REVEAL_SEC_PER_WORD * p.text.split(/s+/).filter(Boolean).length),
+      reveal: Math.min(p.end - p.start, REVEAL_SEC_PER_WORD * p.text.split(/\s+/).filter(Boolean).length),
       holdUntil: p.end,
     })));
     const built = studioEngine({

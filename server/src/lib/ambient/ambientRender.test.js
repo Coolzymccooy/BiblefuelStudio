@@ -570,10 +570,10 @@ test("Studio seed: an explicit captionSeed wins over the project id", () => {
 
 // --- Held pages: prompt reveal, exact hold ----------------------------------
 const secs = (ts) => ts.split(":").reduce((a, p) => a * 60 + Number(p), 0);
-const events = (assText) => assText.split("\n").filter((l) => l.startsWith("Dialogue:") && !l.includes("\p1"))
+const events = (assText) => assText.split("\n").filter((l) => l.startsWith("Dialogue:") && !l.includes("\\p1"))
   .map((l) => ({ start: secs(l.split(",")[1]), end: secs(l.split(",")[2]), line: l }));
 /** When the last word of an event appears: its start plus the largest word-reveal offset. */
-const lastWordAt = (e) => e.start + Math.max(0, ...[...e.line.matchAll(/\t\((\d+),\d+,\alpha/g)].map((m) => Number(m[1]) / 1000));
+const lastWordAt = (e) => e.start + Math.max(0, ...[...e.line.matchAll(/\\t\((\d+),\d+,\\alpha/g)].map((m) => Number(m[1]) / 1000));
 
 test("a long section page reveals its words promptly instead of over the whole section", () => {
   const dir = work();
@@ -583,10 +583,18 @@ test("a long section page reveals its words promptly instead of over the whole s
   withLibass(true, () => buildAmbientFfmpegArgs(studioProject(), io(dir, { drops })));
   // The pages share the 300 s movement, so each is held for minutes.
   assert.ok(pages[0].end - pages[0].start > 60);
+  const lastByPage = new Map();
   for (const e of events(assAt(dir))) {
     const page = pages.filter((p) => p.start <= e.start + 0.05).pop();
     const budget = 0.4 * page.text.split(" ").length;
     assert.ok(lastWordAt(e) <= page.start + budget + 0.2, `a word appears at ${lastWordAt(e)} s; its page starts ${page.start}, ${budget} s allowed`);
+    lastByPage.set(page, Math.max(lastByPage.get(page) ?? 0, lastWordAt(e)));
+  }
+  // ...and not faster than about 0.4 s a word either: the reveal follows the words.
+  assert.ok(lastByPage.size > 0, "word reveals were found in the ASS");
+  for (const [page, last] of lastByPage) {
+    const words = page.text.split(" ").length;
+    assert.ok(last >= page.start + 0.4 * (words - 1) - 0.25, `the last of ${words} words appears at ${last} s, page starts ${page.start}`);
   }
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -647,7 +655,7 @@ test("an engine error logs and falls back to the classic captions", (t) => {
 
 // --- Shorter Studio pages so a long verse stays large ------------------------
 const FIFTEEN = "I will be exalted among the heathen, I will be exalted in the earth.";
-const stripped = (t) => t.replace(/s+/g, " ").trim();
+const stripped = (t) => t.replace(/\s+/g, " ").trim();
 
 test("under Studio a long verse is cut into short pages (the engine shrinks long phrases)", () => {
   const dir = work();

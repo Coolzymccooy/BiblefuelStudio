@@ -169,7 +169,7 @@ test("holdUntil pins where every drawn event of a line ends", () => {
   for (const energy of ["calm", "lively"]) {
     for (const seed of [1, 2, 3, 4]) {
       const ass = buildAss({ lines, w: 1080, h: 1920, look: "studio-gospel-gold", energy, seed });
-      const drawn = dialogue(ass).filter((l) => !l.includes("\p1"));
+      const drawn = dialogue(ass).filter((l) => !l.includes("\\p1"));
       assert.ok(drawn.length >= 2);
       for (const l of drawn) {
         const [, start, end] = l.split(",");
