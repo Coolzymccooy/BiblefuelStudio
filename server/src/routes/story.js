@@ -743,10 +743,13 @@ router.post("/:id/process", (req, res) => {
   const guard = confineMediaPath(req.ctx, req.body?.mediaPath);
   if (!guard.ok) return res.status(guard.status).json({ ok: false, error: guard.error });
   // What the soundtrack was called and whether it was trimmed: shown back to
-  // the user in the Music panel, never used as a path.
-  const facts = sourceDisplayFacts({ name: req.body?.sourceName, trimmed: req.body?.sourceTrimmed });
-  const { name: _previousName, ...sourceWithoutName } = existing.source || {};
-  writeProject(req.ctx.dataDir, { ...existing, source: { ...sourceWithoutName, ...facts } });
+  // the user in the Music panel, never used as a path. A resume sends neither
+  // and keeps what the first start recorded.
+  if (req.body?.sourceName !== undefined || req.body?.sourceTrimmed !== undefined) {
+    const { name: _previousName, ...sourceWithoutName } = existing.source || {};
+    const facts = sourceDisplayFacts({ name: req.body.sourceName, trimmed: req.body.sourceTrimmed });
+    writeProject(req.ctx.dataDir, { ...existing, source: { ...sourceWithoutName, ...facts } });
+  }
   const ctx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir };
   const id = req.params.id;
   cancelledProjects.delete(id);
