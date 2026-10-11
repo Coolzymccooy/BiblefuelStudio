@@ -528,11 +528,18 @@ export function StoryVideoPage() {
             <StylePicker value={style} onChange={setStyle} />
           </div>
 
-          <StoryOutputFramePanel
-            value={project ? project.aspect : newAspect}
-            onChange={project ? onAspectChange : setNewAspect}
-            busy={busy}
-          />
+          {/* Long-form stories are made landscape by the server (YouTube
+              sessions), so a frame chosen here would be dropped. An open
+              project can still change its frame on the scenes step. */}
+          {!project && entryMode === 'longform' ? (
+            <p className="text-meta">Long-form videos are landscape (16:9). You can change the frame once the scenes are made.</p>
+          ) : (
+            <StoryOutputFramePanel
+              value={project ? project.aspect : newAspect}
+              onChange={project ? onAspectChange : setNewAspect}
+              busy={busy}
+            />
+          )}
 
           {busy ? (
             <div className={`${statusRowCls} flex items-center gap-3 text-sm text-bf-cream`}>
@@ -765,6 +772,20 @@ export function StoryVideoPage() {
           )}
           {project.status === 'done' && project.render.outputPath && (
             <DonePanel project={project} />
+          )}
+          {project.status === 'done' && (
+            <div className={`${panelCls} space-y-3`}>
+              <div className="text-sm font-medium text-bf-cream">Want it in another frame?</div>
+              <StoryOutputFramePanel value={project.aspect} onChange={onAspectChange} busy={busy} />
+              <button
+                type="button"
+                onClick={onRender}
+                disabled={busy || imagesBusy || !canRender(project)}
+                className={`${secondaryBtnCls} px-3 py-1.5`}
+              >
+                Render again
+              </button>
+            </div>
           )}
           {project.status === 'error' && <ErrorBanner message={project.error || 'Render failed'} />}
         </div>

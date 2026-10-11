@@ -277,4 +277,50 @@ describe('StoryVideoPage', () => {
       expect(box?.value).toContain('Music: Still Waters by A. Composer');
     });
   });
+  it('a new story is created in the chosen output frame', async () => {
+    const create = vi.spyOn(storyApi, 'createProject').mockResolvedValue(mkDraft());
+    vi.spyOn(storyApi, 'getProject').mockResolvedValue(mkDraft());
+    vi.spyOn(storyApi, 'process').mockResolvedValue(undefined as any);
+    vi.spyOn(storyApi, 'scriptToAudio').mockResolvedValue('/out/story-tts-1.mp3');
+    renderPage();
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: /output frame/i }), 'square');
+    await userEvent.click(screen.getByRole('button', { name: /write a script/i }));
+    await userEvent.type(screen.getByLabelText(/your idea/i), 'hope');
+    await userEvent.click(screen.getByRole('button', { name: /generate voiceover/i }));
+    await userEvent.click(await screen.findByRole('button', { name: /use full audio/i }));
+    await waitFor(() => expect(create).toHaveBeenCalled());
+    expect(create.mock.calls[0][3]).toBe('square');
+  });
+
+  it('long-form stories are landscape, so the frame picker gives way to a note', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({ ok: true, data: { templates: [] } } as never);
+    renderPage();
+    expect(screen.getByRole('combobox', { name: /output frame/i })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /long-form/i }));
+    expect(screen.queryByRole('combobox', { name: /output frame/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/long-form videos are landscape/i)).toBeInTheDocument();
+  });
+
+  it('a finished story can change its frame and render again', async () => {
+    localStorage.setItem('BF_STORY_ACTIVE', 'pd');
+    const done = {
+      projectId: 'pd', title: 'Done', style: 'cinematic-bible', status: 'done', aspect: 'portrait',
+      source: { audioPath: 'a', durationMs: 8000 }, transcript: { words: [], hash: 'h' },
+      scenes: [{ id: 'scene-001', text: 'a', startMs: 0, endMs: 8000, imagePrompt: 'p', imagePath: '/a.png', imageUrl: '/outputs/x.png', imageStatus: 'done', promptEditedByUser: false }],
+      music: { path: null, volume: 0.3 }, captionPreset: 'default',
+      render: { jobId: null, outputPath: 'o', status: 'done' }, error: null, createdAt: 0, updatedAt: 0,
+    } as any;
+    vi.spyOn(storyApi, 'getProject').mockResolvedValue(done);
+    vi.spyOn(api, 'get').mockResolvedValue({ ok: false, error: 'not in test' } as never);
+    const setAspect = vi.spyOn(storyApi, 'setAspect').mockResolvedValue({ project: { ...done, aspect: 'landscape' }, note: '' });
+    const renderSpy = vi.spyOn(storyApi, 'render').mockResolvedValue(done);
+    renderPage();
+    // Wait for the finished view: before the project loads, the new-story form
+    // (with its own picker) is on screen.
+    const again = await screen.findByRole('button', { name: /render again/i });
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: /output frame/i }), 'landscape');
+    expect(setAspect).toHaveBeenCalledWith('pd', 'landscape');
+    await userEvent.click(again);
+    expect(renderSpy).toHaveBeenCalledWith('pd');
+  });
 });
