@@ -30,12 +30,22 @@ export interface StoryCaptionsPanelProps {
   busy?: boolean;
 }
 
+const DEFAULT_PRESET = 'cinematic-default';
+const CLASSIC_PRESETS = [
+  { id: DEFAULT_PRESET, label: 'Cinematic (default)' },
+  { id: 'intimate-fade', label: 'Intimate fade' },
+  { id: 'scripture-emphasis', label: 'Scripture emphasis' },
+  { id: 'playful-pop', label: 'Playful pop' },
+  { id: 'worship-cinematic', label: 'Worship cinematic' },
+] as const;
+
 export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCaptionsPanelProps) {
   const [animations, setAnimations] = useState<AnimationOption[]>([]);
   const [motions, setMotions] = useState<MotionOption[]>([]);
   const [studioLooks, setStudioLooks] = useState<StudioOption[]>([]);
   const [energies, setEnergies] = useState<StudioOption[]>([]);
   const [libass, setLibass] = useState(true);
+  const [catalogueLoaded, setCatalogueLoaded] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -54,6 +64,7 @@ export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCapti
       setStudioLooks(res.data?.studioLooks ?? []);
       setEnergies(res.data?.energies ?? []);
       setLibass(res.data?.libass !== false);
+      setCatalogueLoaded(true);
     })();
     return () => { cancelled = true; };
   }, []);
@@ -75,6 +86,16 @@ export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCapti
   // layout and depth controls don't apply, so they give way to Energy and
   // Shuffle.
   const studio = isStudioLook(value.captionPreset);
+  // The look the select shows. New projects store "default", which is no
+  // option (it renders as Cinematic), so the browser would show the first
+  // option instead; after the catalogue loads, any other value that is not an
+  // option reads as Cinematic too. A saved Studio look has its own option.
+  const knownPreset = (id: string) =>
+    CLASSIC_PRESETS.some((p) => p.id === id) || isStudioLook(id) || animations.some((a) => a.id === id);
+  const stored = value.captionPreset;
+  const shownPreset = !stored || stored === 'default' || (catalogueLoaded && !knownPreset(stored))
+    ? DEFAULT_PRESET
+    : stored;
   // The title is a free-text field, so it is drafted locally and saved on
   // blur/Enter; patching per keystroke would round-trip the project each time.
   const [titleDraft, setTitleDraft] = useState(value.captionTitle ?? '');
@@ -151,7 +172,7 @@ export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCapti
           >
             <Select
               aria-label="Caption animation"
-              value={value.captionPreset || 'cinematic-default'}
+              value={shownPreset}
               disabled={busy}
               onChange={(e: ChangeEvent<HTMLSelectElement>) => onChange({ captionPreset: e.target.value })}
             >
@@ -166,11 +187,7 @@ export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCapti
                 </optgroup>
               )}
               <optgroup label="Classic presets (no motion)">
-                <option value="cinematic-default">Cinematic (default)</option>
-                <option value="intimate-fade">Intimate fade</option>
-                <option value="scripture-emphasis">Scripture emphasis</option>
-                <option value="playful-pop">Playful pop</option>
-                <option value="worship-cinematic">Worship cinematic</option>
+                {CLASSIC_PRESETS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
               </optgroup>
             </Select>
           </Field>

@@ -649,6 +649,60 @@ describe("story routes", () => {
     assert.equal(bad.res.statusCode, 403);
   });
 
+  test("POST /:id/process keeps the source's display name and trimmed flag, through transcription", async () => {
+    const create = mockReqRes({ body: { title: "T", style: "cinematic-bible" }, dataDir, outputDir });
+    await handlerFor("post", "/")(create.req, create.res);
+    const id = create.res.payload.project.projectId;
+    const audio = path.join(outputDir, "upload.mp3");
+    fs.writeFileSync(audio, "ID3");
+    _setTranscribeImpl(async () => ({ words: Array.from({ length: 12 }, (_, i) => ({ text: `w${i}`, startMs: i * 1000, endMs: i * 1000 + 800 })) }));
+    _setLlmImpl(async () => JSON.stringify({ scenes: [{ text: "a", startWordIndex: 0, endWordIndex: 11, imagePrompt: "p" }] }));
+    _setImageGenImpl(async () => ({ ok: true, path: "/img.png", publicUrl: "/outputs/img.png" }));
+    const { req, res } = mockReqRes({
+      params: { id },
+      body: { mediaPath: audio, sourceName: "C:\\fakepath\\My Song (1).mp3", sourceTrimmed: true },
+      dataDir, outputDir,
+    });
+    await handlerFor("post", "/:id/process")(req, res);
+    assert.equal(res.payload.ok, true);
+    const done = await waitForProject(dataDir, id, (p) => p.status === "ready_to_render");
+    assert.equal(done.status, "ready_to_render");
+    assert.equal(done.source.name, "My Song (1).mp3");
+    assert.equal(done.source.trimmed, true);
+    assert.equal(done.source.audioPath, audio);
+    assert.ok(done.source.durationMs > 0);
+  });
+
+  test("POST /:id/process sent no display facts (a resume) keeps the ones already stored", async () => {
+    const created = createProject(dataDir, { title: "T", style: "cinematic-bible" });
+    const id = created.projectId;
+    const audio = path.join(outputDir, "narration.mp3");
+    fs.writeFileSync(audio, "ID3");
+    writeProject(dataDir, { ...created, source: { audioPath: audio, durationMs: 4000, name: "Song.mp3", trimmed: true } });
+    _setTranscribeImpl(async () => ({ words: Array.from({ length: 4 }, (_, i) => ({ text: `w${i}`, startMs: i * 1000, endMs: i * 1000 + 800 })) }));
+    _setLlmImpl(async () => JSON.stringify({ scenes: [{ text: "a", startWordIndex: 0, endWordIndex: 3, imagePrompt: "p" }] }));
+    _setImageGenImpl(async () => ({ ok: true, path: "/img.png", publicUrl: "/outputs/img.png" }));
+    const { req, res } = mockReqRes({ params: { id }, body: { mediaPath: audio }, dataDir, outputDir });
+    await handlerFor("post", "/:id/process")(req, res);
+    const done = await waitForProject(dataDir, id, (p) => p.status === "ready_to_render");
+    assert.equal(done.source.name, "Song.mp3");
+    assert.equal(done.source.trimmed, true);
+  });
+
+  test("POST /:id/process with a name that cleans to nothing stores no name", async () => {
+    const created = createProject(dataDir, { title: "T", style: "cinematic-bible" });
+    const audio = path.join(outputDir, "n.mp3");
+    fs.writeFileSync(audio, "ID3");
+    _setTranscribeImpl(async () => ({ words: [{ text: "w", startMs: 0, endMs: 800 }] }));
+    _setLlmImpl(async () => JSON.stringify({ scenes: [{ text: "a", startWordIndex: 0, endWordIndex: 0, imagePrompt: "p" }] }));
+    _setImageGenImpl(async () => ({ ok: true, path: "/img.png", publicUrl: "/outputs/img.png" }));
+    const { req, res } = mockReqRes({ params: { id: created.projectId }, body: { mediaPath: audio, sourceName: "\u0001  ", sourceTrimmed: "yes" }, dataDir, outputDir });
+    await handlerFor("post", "/:id/process")(req, res);
+    const done = await waitForProject(dataDir, created.projectId, (p) => p.status === "ready_to_render");
+    assert.equal("name" in done.source, false);
+    assert.equal(done.source.trimmed, false);
+  });
+
   test("render re-cuts a long-form project into visual beats when scene.beatSec is set, and leaves other projects alone", async () => {
     const img = path.join(outputDir, "img.png"); fs.writeFileSync(img, "png");
     const audio = path.join(outputDir, "voice.mp3"); fs.writeFileSync(audio, "mp3");

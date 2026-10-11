@@ -35,6 +35,26 @@ function projectPath(baseDir, projectId) {
 const CAPTION_MOTIONS = ["words", "lines", "block"];
 const CAPTION_LAYOUTS = ["center", "center-large", "bottom-center", "bottom-left", "staggered"];
 
+const SOURCE_NAME_MAX = 120;
+
+/**
+ * The display-only facts about a project's source soundtrack: what the file
+ * was called and whether it was trimmed. Neither is ever used as a path. The
+ * name is cut down to a base name, stripped of control characters and capped,
+ * and is left out when nothing usable remains.
+ *
+ * @param {{ name?: unknown, trimmed?: unknown }} [input]
+ * @returns {{ name?: string, trimmed: boolean }}
+ */
+export function sourceDisplayFacts(input) {
+  const facts = { trimmed: input?.trimmed === true };
+  if (typeof input?.name !== "string") return facts;
+  const base = input.name.split(/[\\/]/).pop() ?? "";
+  // eslint-disable-next-line no-control-regex
+  const name = base.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, SOURCE_NAME_MAX);
+  return name ? { name, ...facts } : facts;
+}
+
 /**
  * Normalise the caption look/motion settings a project carries into its
  * render. Every field is optional: an absent one means "let the renderer

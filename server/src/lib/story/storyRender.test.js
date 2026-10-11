@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "fs";
 import os from "os";
 import path from "path";
+import { spawnSync } from "child_process";
 import { buildStoryFfmpegArgs, sceneSegmentsSec, groupWordsIntoCues, buildSubtitleDrawtext, wrapCue, toFilterScriptArgs } from "./storyRender.js";
 
 function countDrawtext(args) {
@@ -352,4 +353,130 @@ describe("Studio caption looks", () => {
     assert.ok(graph(before.args).includes("drawtext"));
     _setLibassForTest(undefined);
   });
+});
+
+describe("a scene with a video clip of your own", () => {
+  const graph = (args) => args[args.indexOf("-filter_complex") + 1];
+  let dir;
+  let clip;
+  const twoScenes = () => [
+    { id: "s1", startMs: 0, endMs: 2000, imagePath: path.join(dir, "poster.jpg"), videoPath: clip, mediaKind: "video" },
+    { id: "s2", startMs: 2000, endMs: 4000, imagePath: path.join(dir, "still.png") },
+  ];
+  const build = (scenes, over = {}) => buildStoryFfmpegArgs({
+    scenes, words: [], audioPath: "/tmp/voice.mp3", musicPath: null,
+    width: 360, height: 640, outPath: "/tmp/out.mp4", audioDurationSec: 4, captions: "none", ...over,
+  });
+
+  test.beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "story-clip-"));
+    clip = path.join(dir, "clip.mp4");
+    fs.writeFileSync(clip, "x");
+  });
+  test.afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+
+  test("sceneSegmentsSec carries the clip through", () => {
+    const segs = sceneSegmentsSec(twoScenes(), 4);
+    assert.equal(segs[0].videoPath, clip);
+    assert.equal(segs[1].videoPath, undefined);
+  });
+
+  test("the clip is looped as a video input; the still keeps -loop 1", () => {
+    const { args } = build(twoScenes());
+    const ci = args.indexOf(clip);
+    assert.deepEqual(args.slice(ci - 3, ci), ["-stream_loop", "-1", "-i"]);
+    // Two decoder threads per clip: every clip decodes at once, and each
+    // decoder thread holds its own frames, so the default (one per core)
+    // multiplies memory by the scene count.
+    assert.deepEqual(args.slice(ci - 5, ci - 3), ["-threads", "2"]);
+    // Only read as MP4/MOV or Matroska/WebM, whatever the bytes claim, and
+    // only from a local file.
+    assert.deepEqual(args.slice(ci - 9, ci - 5), [
+      "-format_whitelist", "mov,mp4,m4a,3gp,3g2,mj2,matroska,webm", "-protocol_whitelist", "file",
+    ]);
+    const si = args.indexOf(path.join(dir, "still.png"));
+    assert.deepEqual(args.slice(si - 3, si), ["-loop", "1", "-i"]);
+    assert.equal(args.includes(path.join(dir, "poster.jpg")), false, "the poster is not an input when the clip exists");
+  });
+
+  test("the clip plays for the scene's padded length at 30 fps, without Ken Burns", () => {
+    const { args } = build(twoScenes());
+    const fc = graph(args);
+    const clipBranch = fc.split(";").find((p) => p.startsWith("[0:v]"));
+    // Scene 1 is 2 s; the 0.5 s crossfade that follows it is borrowed from it.
+    assert.equal(clipBranch,
+      "[0:v]trim=duration=2.5,setpts=PTS-STARTPTS,fps=30,scale=360:640:force_original_aspect_ratio=increase,crop=360:640,setsar=1[s0]");
+    const stillBranch = fc.split(";").find((p) => p.startsWith("[1:v]"));
+    assert.match(stillBranch, /^\[1:v\]trim=end_frame=1,.*zoompan=.*\[s1\]$/);
+  });
+
+  test("the clip's own sound is never used: only the narration is mapped", () => {
+    const { args } = build(twoScenes());
+    const maps = args.reduce((acc, a, i) => (a === "-map" ? [...acc, args[i + 1]] : acc), []);
+    assert.deepEqual(maps, ["[vout]", "2:a"]);
+  });
+
+  test("a clip that has gone from disk falls back to its poster, so the render still runs", () => {
+    fs.rmSync(clip);
+    const { args } = build(twoScenes());
+    const pi = args.indexOf(path.join(dir, "poster.jpg"));
+    assert.deepEqual(args.slice(pi - 3, pi), ["-loop", "1", "-i"]);
+    assert.equal(args.includes("-stream_loop"), false);
+    assert.equal((graph(args).match(/trim=end_frame=1/g) || []).length, 2);
+  });
+
+  test("scenes without a clip build exactly the args they always did", () => {
+    const plain = SCENES.map((s) => ({ ...s }));
+    const marked = SCENES.map((s) => ({ ...s, videoPath: null, videoUrl: null, mediaKind: "image" }));
+    const opts = { words: WORDS, audioPath: "/tmp/voice.mp3", musicPath: null, width: 1080, height: 1920, outPath: "/tmp/out.mp4" };
+    assert.deepEqual(buildStoryFfmpegArgs({ scenes: marked, ...opts }).args, buildStoryFfmpegArgs({ scenes: plain, ...opts }).args);
+  });
+
+  const FF = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
+  const FP = process.env.FFPROBE_PATH?.trim() || "ffprobe";
+  const hasFfmpeg = spawnSync(FF, ["-version"]).status === 0 && spawnSync(FP, ["-version"]).status === 0;
+
+  test("a real render plays the red clip, then the green still, for the narration's length",
+    { skip: !hasFfmpeg && "ffmpeg not installed", timeout: 120_000 }, () => {
+      const ff = (a) => {
+        const r = spawnSync(FF, ["-y", "-v", "error", ...a]);
+        assert.equal(r.status, 0, String(r.stderr));
+      };
+      // A 1-second landscape clip: shorter than its scene, so it must loop.
+      const red = path.join(dir, "red.mp4");
+      ff(["-f", "lavfi", "-i", "color=c=red:s=640x360:r=25:d=1", "-f", "lavfi", "-i", "sine=f=880:d=1",
+        "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", red]);
+      // Blue on purpose: had the still poster been drawn instead of the clip,
+      // scene 1 would come out blue, not red.
+      const poster = path.join(dir, "poster.jpg");
+      ff(["-f", "lavfi", "-i", "color=c=blue:s=640x360", "-frames:v", "1", poster]);
+      const green = path.join(dir, "green.png");
+      ff(["-f", "lavfi", "-i", "color=c=green:s=720x1280", "-frames:v", "1", green]);
+      const voice = path.join(dir, "voice.m4a");
+      ff(["-f", "lavfi", "-i", "sine=d=4", "-c:a", "aac", voice]);
+      const out = path.join(dir, "out.mp4");
+
+      const { args } = buildStoryFfmpegArgs({
+        scenes: [
+          { id: "s1", startMs: 0, endMs: 2000, imagePath: poster, videoPath: red, mediaKind: "video" },
+          { id: "s2", startMs: 2000, endMs: 4000, imagePath: green },
+        ],
+        words: [], audioPath: voice, musicPath: null, width: 360, height: 640,
+        outPath: out, audioDurationSec: 4, captions: "none",
+      });
+      const scripted = toFilterScriptArgs(args, out);
+      const r = spawnSync(FF, ["-v", "error", ...scripted.args], { timeout: 110_000 });
+      assert.equal(r.status, 0, String(r.stderr).slice(-1500));
+
+      const dur = Number(String(spawnSync(FP, ["-v", "error", "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1", out]).stdout).trim());
+      assert.ok(Math.abs(dur - 4) <= 0.2, `output is ${dur}s, narration is 4s`);
+
+      const rgbAt = (t) => [...spawnSync(FF, ["-v", "error", "-ss", String(t), "-i", out, "-frames:v", "1",
+        "-vf", "crop=1:1:180:320,format=rgb24", "-f", "rawvideo", "-"]).stdout.subarray(0, 3)];
+      const [r1, g1] = rgbAt(1.5); // past the clip's first loop
+      const [r2, g2] = rgbAt(3.5);
+      assert.ok(r1 > 180 && g1 < 80, `scene 1 should be the red clip, got r=${r1} g=${g1}`);
+      assert.ok(g2 > 90 && r2 < 80, `scene 2 should be the green still, got r=${r2} g=${g2}`);
+    });
 });

@@ -7,6 +7,11 @@ import type { LibraryImage, MovementImageSource } from './ambientApi';
 const GENERATE_IMAGES_TIMEOUT_MS = 15 * 60_000;
 const SCRIPT_TO_AUDIO_TIMEOUT_MS = 2 * 60_000;
 const PROCESS_TIMEOUT_MS = 60_000;
+// A scene clip is probed, converted when it needs it (the server gives up at
+// 90 s, under Cloudflare's 100 s) and has a poster grabbed before the PUT
+// answers. Waiting longer than the server can work means a slow clip is never
+// reported as failed while it is still being attached.
+const SCENE_MEDIA_TIMEOUT_MS = 120_000;
 
 function unwrapProject(res: { ok: boolean; data?: any; error?: string }): StoryProject {
   if (!res.ok || !res.data?.project) throw new Error(res.error || res.data?.error || 'Request failed');
@@ -82,7 +87,7 @@ export const storyApi = {
   // A refusal carries the server's `code` (IMAGES_RUNNING, SCENE_REGENERATING,
   // RENDERING) so callers can tell why without reading the message.
   async setSceneImage(id: string, sceneId: string, source: MovementImageSource): Promise<StoryProject> {
-    const res = await api.put(`/api/story/${id}/scenes/${sceneId}/image`, source);
+    const res = await api.put(`/api/story/${id}/scenes/${sceneId}/image`, source, undefined, { timeout: SCENE_MEDIA_TIMEOUT_MS });
     if (res.ok && res.data?.project) return res.data.project as StoryProject;
     throw Object.assign(new Error(res.error || res.data?.error || 'Could not use that picture'), {
       status: res.status,
@@ -132,8 +137,13 @@ export const storyApi = {
     return res.data.file as string;
   },
 
-  async process(id: string, mediaPath: string): Promise<void> {
-    const res = await api.post(`/api/story/${id}/process`, { mediaPath }, undefined, { timeout: PROCESS_TIMEOUT_MS });
+  /**
+   * Start the pipeline. `source` is the picked file's name and whether it was
+   * trimmed, kept for display in the Music panel; a resume sends none.
+   */
+  async process(id: string, mediaPath: string, source?: { name?: string; trimmed: boolean }): Promise<void> {
+    const body = source ? { mediaPath, sourceName: source.name, sourceTrimmed: source.trimmed } : { mediaPath };
+    const res = await api.post(`/api/story/${id}/process`, body, undefined, { timeout: PROCESS_TIMEOUT_MS });
     if (!res.ok) throw new Error(res.error || 'Failed to start processing');
   },
 

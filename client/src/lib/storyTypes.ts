@@ -27,6 +27,12 @@ export interface StoryScene {
   imageReuseScore?: number | null;
   /** Library entry id — the same image is never used twice in one video. */
   imageLibraryId?: string | null;
+  /** 'video' when the scene plays a clip of your own; imageUrl is then its poster. */
+  mediaKind?: 'image' | 'video';
+  /** Server path of your own clip, when mediaKind === 'video'. */
+  videoPath?: string | null;
+  /** Public /outputs URL of your own clip, when mediaKind === 'video'. */
+  videoUrl?: string | null;
 }
 
 export interface LongformSection {
@@ -94,7 +100,14 @@ export interface StoryProject extends StoryCaptionSettings {
   /** Biblical figures appearing in this story; applied to every scene prompt. */
   cast?: string[];
   status: StoryStatus;
-  source: { audioPath: string | null; durationMs: number };
+  source: {
+    audioPath: string | null;
+    durationMs: number;
+    /** The picked file's name, for display only (never a path). Absent for generated narration and older projects. */
+    name?: string;
+    /** The upload was trimmed before the story was made from it. */
+    trimmed?: boolean;
+  };
   transcript: { words: StoryWord[]; hash: string | null };
   scenes: StoryScene[];
   music: { path: string | null; volume: number; autoDuck?: boolean };

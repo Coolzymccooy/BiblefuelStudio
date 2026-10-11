@@ -294,12 +294,13 @@ class ApiClient {
     async put<T = any>(
         url: string,
         body?: any,
-        customHeaders?: Record<string, string>
+        customHeaders?: Record<string, string>,
+        options?: { timeout?: number }
     ): Promise<ApiResponse<T>> {
         try {
             const response = await axios.put(url, body, {
                 headers: this.getHeaders(customHeaders),
-                timeout: DEFAULT_TIMEOUT_MS,
+                timeout: options?.timeout ?? DEFAULT_TIMEOUT_MS,
             });
             return {
                 ok: true,

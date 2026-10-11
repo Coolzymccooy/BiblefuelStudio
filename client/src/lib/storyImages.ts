@@ -54,9 +54,22 @@ export function pairFilesWithScenes<F extends { name: string }>(
   return { pairs, extra };
 }
 
-/** Upload a photo and put it on one scene. */
+/** The server's cap on a scene clip (server/src/lib/story/sceneVideo.js). */
+export const MAX_SCENE_VIDEO_BYTES = 200 * 1024 * 1024;
+/** Word for word what the server says about a clip over the cap. */
+export const SCENE_VIDEO_TOO_BIG = 'That clip is over 200 MB. Use a shorter clip or the HD (1080p) version.';
+
+function isVideoFile(file: File): boolean {
+  return file.type.startsWith('video/') || /\.(mp4|mov|webm|m4v)$/i.test(file.name);
+}
+
+/**
+ * Upload a photo or a video clip and put it on one scene. The server tells
+ * the two apart, checks a clip a render can use, and gives it a poster. A
+ * clip over the server's cap is refused here, before minutes of uploading.
+ */
 export async function putOwnImage(projectId: string, sceneId: string, file: File): Promise<StoryProject> {
+  if (isVideoFile(file) && file.size > MAX_SCENE_VIDEO_BYTES) throw new Error(SCENE_VIDEO_TOO_BIG);
   const uploaded = await uploadMedia(file, file.name, 'background');
-  if (uploaded.kind === 'video') throw new Error('That’s a video. Choose a photo for this scene.');
   return storyApi.setSceneImage(projectId, sceneId, { uploadPath: uploaded.file });
 }

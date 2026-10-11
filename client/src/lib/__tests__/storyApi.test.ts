@@ -34,6 +34,22 @@ describe('storyApi', () => {
     expect(spy).toHaveBeenCalledWith('/api/story/p/transcribe', { mediaPath: '/out/a.mp3' }, undefined, expect.objectContaining({ timeout: expect.any(Number) }));
   });
 
+  // A video clip is probed, maybe converted (up to 90 s on the server) and
+  // has a poster grabbed before this answers, so the default 15 s would report
+  // a failure while the server goes on to attach the clip.
+  it('setSceneImage PUTs with a timeout long enough for a clip conversion', async () => {
+    const spy = vi.spyOn(api, 'put').mockResolvedValue({ ok: true, status: 200, data: { ok: true, project: fakeProject } });
+    await storyApi.setSceneImage('p', 'scene-001', { uploadPath: '/o/bg-video-1.mp4' });
+    expect(spy).toHaveBeenCalledWith(
+      '/api/story/p/scenes/scene-001/image',
+      { uploadPath: '/o/bg-video-1.mp4' },
+      undefined,
+      expect.objectContaining({ timeout: expect.any(Number) }),
+    );
+    const timeout = (spy.mock.calls[0][3] as { timeout: number }).timeout;
+    expect(timeout).toBeGreaterThanOrEqual(120_000);
+  });
+
   it('patchScene PATCHes the scene fields', async () => {
     const spy = vi.spyOn(api, 'patch').mockResolvedValue({ ok: true, status: 200, data: { ok: true, project: fakeProject } });
     await storyApi.patchScene('p', 'scene-001', { imagePrompt: 'new' });

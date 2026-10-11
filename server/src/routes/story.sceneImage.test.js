@@ -10,7 +10,7 @@ import storyRouter, {
   _setImageLibraryImpl, _resetImageLibraryImpl,
 } from "./story.js";
 import { readProject, writeProject, createProject } from "../lib/story/projectStore.js";
-import { registerImage, _setEmbedImpl, _resetEmbedImpl } from "../lib/imageGen/imageLibrary.js";
+import { registerImage, readLibrary as readImageLibrary, _setEmbedImpl, _resetEmbedImpl } from "../lib/imageGen/imageLibrary.js";
 import { buildStoryFfmpegArgs } from "../lib/story/storyRender.js";
 
 // When the free image quota runs out, a Story project can still be finished:
@@ -210,6 +210,94 @@ describe("PUT /api/story/:id/scenes/:sid/image", () => {
     const scenes = readProject(dataDir, p.projectId).scenes;
     assert.equal(scenes[1].imageSource, "upload", "the upload survived");
     assert.equal(scenes[2].imagePath, gen);
+  });
+});
+
+describe("a video clip of your own on a scene", () => {
+  const FF = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
+  const hasFfmpeg = spawnSync(FF, ["-version"]).status === 0;
+  const needsFfmpeg = { skip: !hasFfmpeg && "ffmpeg not installed" };
+
+  /** A short clip, as POST /api/media/upload-background leaves a video on disk. */
+  function fakeClip(name = `bg-video-${UUID}.mp4`) {
+    const file = path.join(outputDir, name);
+    const r = spawnSync(FF, ["-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=s=320x240:r=30:d=1",
+      "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", file]);
+    assert.equal(r.status, 0, String(r.stderr));
+    return file.replace(/\\/g, "/");
+  }
+
+  test("an uploaded clip goes on the scene, with a poster picture for everything that wants one", needsFfmpeg, async () => {
+    const p = quotaHitProject();
+    const clip = fakeClip();
+    const res = await putImage(p, "s1", { uploadPath: clip });
+    assert.equal(res.statusCode, 200, JSON.stringify(res.payload));
+    const s1 = readProject(dataDir, p.projectId).scenes[1];
+    assert.equal(s1.mediaKind, "video");
+    assert.equal(s1.videoPath, fs.realpathSync(clip));
+    assert.equal(s1.videoUrl, `/outputs/bg-video-${UUID}.mp4`);
+    assert.equal(s1.imageStatus, "done");
+    assert.equal(s1.imageSource, "upload");
+    assert.equal(s1.imageChosenByUser, true);
+    assert.equal(s1.imageError, null);
+    assert.ok(fs.existsSync(s1.imagePath), "the poster is on disk");
+    assert.match(s1.imagePath, /\.jpg$/);
+    assert.equal(s1.imageUrl, `/outputs/${path.basename(s1.imagePath)}`);
+    assert.equal(readImageLibrary(dataDir).items.length, 0, "clips are not put in the image library");
+  });
+
+  test("a picture put back on the scene clears the clip", needsFfmpeg, async () => {
+    const p = quotaHitProject();
+    await putImage(p, "s1", { uploadPath: fakeClip() });
+    const res = await putImage(p, "s1", { uploadPath: fakeUpload() });
+    assert.equal(res.statusCode, 200, JSON.stringify(res.payload));
+    const s1 = readProject(dataDir, p.projectId).scenes[1];
+    assert.equal(s1.videoPath, null);
+    assert.equal(s1.videoUrl, null);
+    assert.equal(s1.mediaKind, "image");
+    assert.match(s1.imagePath, /\.png$/);
+  });
+
+  test("Regenerate, and Regenerate all, clear the clip too", needsFfmpeg, async () => {
+    const p = quotaHitProject();
+    const gen = path.join(outputDir, "gen.png");
+    fs.writeFileSync(gen, PNG_1X1);
+    _setImageGenImpl(async () => ({ ok: true, path: gen, publicUrl: "/outputs/gen.png" }));
+
+    await putImage(p, "s1", { uploadPath: fakeClip() });
+    await call("post", "/:id/scenes/:sid/regenerate", { params: { id: p.projectId, sid: "s1" } });
+    let s1 = readProject(dataDir, p.projectId).scenes[1];
+    assert.equal(s1.imagePath, gen);
+    assert.equal(s1.videoPath, null);
+    assert.equal(s1.mediaKind, "image");
+
+    await putImage(p, "s1", { uploadPath: fakeClip(`bg-video-${UUID.replace("0f8", "4d5")}.mp4`) });
+    assert.equal(readProject(dataDir, p.projectId).scenes[1].mediaKind, "video");
+    _setImageLibraryImpl({ find: async () => [] });
+    await call("post", "/:id/images", { params: { id: p.projectId }, body: { force: true } });
+    await waitFor(() => readProject(dataDir, p.projectId).scenes.every((s) => s.imageStatus === "done"));
+    s1 = readProject(dataDir, p.projectId).scenes[1];
+    assert.equal(s1.videoPath, null);
+    assert.equal(s1.videoUrl, null);
+    assert.equal(s1.mediaKind, "image");
+  });
+
+  test("a clip a render can't use is refused, and the scene is left as it was", async () => {
+    const p = quotaHitProject();
+    const notAClip = path.join(outputDir, `bg-video-${UUID}.mp4`);
+    fs.writeFileSync(notAClip, "plain text, not a clip ".repeat(20));
+    const cases = [
+      { uploadPath: notAClip },
+      { uploadPath: `bg-video-${UUID.replace("0f8", "5e6")}.mp4` },
+      { uploadPath: "../../etc/clip.mp4" },
+    ];
+    for (const body of cases) {
+      const res = await putImage(p, "s1", body);
+      assert.equal(res.statusCode, 400, `${JSON.stringify(body)} -> ${JSON.stringify(res.payload)}`);
+    }
+    const s1 = readProject(dataDir, p.projectId).scenes[1];
+    assert.equal(s1.imageStatus, "error");
+    assert.equal(s1.videoPath, undefined);
   });
 });
 
