@@ -28,8 +28,14 @@ import { isNarrationActive } from "../lib/longform/narrationRegistry.js";
 import { expandScenesToBeats } from "../lib/story/visualBeats.js";
 import { findReusableImages, markUsed, registerImage, pruneLibrary, readLibrary as readImageLibrary } from "../lib/imageGen/imageLibrary.js";
 import { resolveMovementImage, libraryImageView } from "../lib/ambient/movementImage.js";
+import { isSceneVideoUpload, resolveSceneVideo } from "../lib/story/sceneVideo.js";
 
 const MUSIC_REF_PREFIX = /^(library|mylib):/;
+
+// Spread wherever a new PICTURE goes on a scene. A scene can carry a clip of
+// your own (videoPath), and the render plays the clip when there is one, so
+// a picture put back without this would lose to the stale clip.
+const NO_SCENE_VIDEO = Object.freeze({ videoPath: null, videoUrl: null, mediaKind: "image" });
 
 /**
  * Resolve `project.music.path` for the final ffmpeg render.
@@ -250,7 +256,7 @@ async function runImagesStage(ctx, projectId, opts = {}) {
     const alreadyDone = scenes[i].imageStatus === "done" && scenes[i].imagePath;
     if (alreadyDone && !force) continue; // retry-failed reruns error/pending; force reruns all
     // Whatever this run puts here, it isn't a picture you chose.
-    scenes[i] = { ...scenes[i], imageStatus: "generating", imageError: null, imageChosenByUser: false, ...(force ? { imagePath: null, imageUrl: null } : {}) };
+    scenes[i] = { ...scenes[i], imageStatus: "generating", imageError: null, imageChosenByUser: false, ...(force ? { imagePath: null, imageUrl: null, ...NO_SCENE_VIDEO } : {}) };
     pending.push(i);
   }
   writeProject(ctx.dataDir, { ...project, scenes, status: STORY_STATUS.GENERATING_IMAGES });
@@ -295,6 +301,7 @@ async function runImagesStage(ctx, projectId, opts = {}) {
           imageSource: "library",
           imageLibraryId: reused.entry.id,
           imageReuseScore: reused.score,
+          ...NO_SCENE_VIDEO,
         };
         writeProject(ctx.dataDir, { ...project, scenes });
         continue;
@@ -331,6 +338,7 @@ async function runImagesStage(ctx, projectId, opts = {}) {
           imageSource: "generated",
           imageLibraryId: entry?.id || null,
           imageReuseScore: null,
+          ...NO_SCENE_VIDEO,
         };
       } else {
         scenes[i] = { ...scenes[i], imageStatus: "error", imageError: shortImageError(result?.error) };
@@ -607,7 +615,10 @@ function sceneImageBlocked(project, sceneId) {
 // generated one: { uploadPath } from POST /api/media/upload-background, or
 // { libraryId } from GET /:id/library-images. Costs no image quota, so a
 // project can be finished when the daily limit has run out. The checks on
-// what may be used are Ambient's (lib/ambient/movementImage.js).
+// what may be used are Ambient's (lib/ambient/movementImage.js). An upload
+// that is a video clip (a Pixabay download, say) goes through
+// lib/story/sceneVideo.js instead: the scene plays the clip, and a poster
+// frame stands in wherever a picture is expected.
 router.put("/:id/scenes/:sid/image", async (req, res) => {
   try {
     const { dataDir, outputDir } = req.ctx;
@@ -616,12 +627,37 @@ router.put("/:id/scenes/:sid/image", async (req, res) => {
     const refused = sceneImageBlocked(project, req.params.sid);
     if (refused) return res.status(refused.status).json({ ok: false, ...refused.body });
 
-    const got = await resolveMovementImage({
-      dataDir, outputDir, project: { ...project, aspect: imageAspectFor(project) }, body: req.body || {},
-      items: readImageLibrary(dataDir).items, register: _imageLib.register,
-    });
-    if (!got.ok) return res.status(got.status).json({ ok: false, error: got.error });
-    try { _imageLib.mark({ dataDir, id: got.entry.id }); } catch { /* stats only */ }
+    const body = req.body || {};
+    let media;
+    if (!body.libraryId && isSceneVideoUpload(body.uploadPath)) {
+      // A clip of your own: its poster stands in wherever a picture is
+      // expected, and the render plays the clip. Not put in the library.
+      const clip = await resolveSceneVideo({ outputDir, uploadPath: body.uploadPath });
+      if (!clip.ok) return res.status(clip.status).json({ ok: false, error: clip.error });
+      media = {
+        imagePath: clip.posterPath,
+        imageUrl: clip.posterUrl,
+        imageSource: "upload",
+        imageLibraryId: null,
+        videoPath: clip.videoPath,
+        videoUrl: clip.videoUrl,
+        mediaKind: "video",
+      };
+    } else {
+      const got = await resolveMovementImage({
+        dataDir, outputDir, project: { ...project, aspect: imageAspectFor(project) }, body,
+        items: readImageLibrary(dataDir).items, register: _imageLib.register,
+      });
+      if (!got.ok) return res.status(got.status).json({ ok: false, error: got.error });
+      try { _imageLib.mark({ dataDir, id: got.entry.id }); } catch { /* stats only */ }
+      media = {
+        imagePath: got.entry.path,
+        imageUrl: got.entry.publicUrl || null,
+        imageSource: got.source,
+        imageLibraryId: got.entry.id,
+        ...NO_SCENE_VIDEO,
+      };
+    }
 
     // Checked again: a run, a render or a re-segment can start while the
     // upload is being copied. From here to the write nothing awaits, so none
@@ -632,12 +668,9 @@ router.put("/:id/scenes/:sid/image", async (req, res) => {
     if (refusedNow) return res.status(refusedNow.status).json({ ok: false, ...refusedNow.body });
     const scenes = (fresh.scenes || []).map((s) => (s.id !== req.params.sid ? s : {
       ...s,
-      imagePath: got.entry.path,
-      imageUrl: got.entry.publicUrl || null,
+      ...media,
       imageStatus: "done",
       imageError: null,
-      imageSource: got.source,
-      imageLibraryId: got.entry.id,
       imageReuseScore: null,
       imageChosenByUser: true,
     }));
@@ -785,7 +818,7 @@ router.post("/:id/scenes/:sid/regenerate", async (req, res) => {
         } catch (err) {
           console.warn(`[story] regenerate harvest failed: ${err?.message || err}`);
         }
-        image = { imagePath: result.path, imageUrl: result.publicUrl || null, imageStatus: "done", imageError: null, imageSource: "generated", imageLibraryId: entry?.id || null, imageReuseScore: null, imageChosenByUser: false };
+        image = { imagePath: result.path, imageUrl: result.publicUrl || null, imageStatus: "done", imageError: null, imageSource: "generated", imageLibraryId: entry?.id || null, imageReuseScore: null, imageChosenByUser: false, ...NO_SCENE_VIDEO };
       } else {
         image = { imageStatus: "error", imageError: shortImageError(result?.error), imageChosenByUser: false };
       }

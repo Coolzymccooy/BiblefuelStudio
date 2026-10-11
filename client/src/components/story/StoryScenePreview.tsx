@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { Play } from 'lucide-react';
 import { AuthedImage } from '../AuthedImage';
+import { api } from '../../lib/api';
 import type { StoryProject, StoryScene } from '../../lib/storyTypes';
 
 /**
@@ -14,16 +16,38 @@ interface StoryScenePreviewProps {
 }
 
 export function StoryScenePreview({ scenes, aspect = 'portrait' }: StoryScenePreviewProps) {
+  // The clip that failed to play, so its poster shows instead.
+  const [brokenClip, setBrokenClip] = useState<string | null>(null);
   if (!scenes.length) return null;
 
   const generatingIdx = scenes.findIndex((s) => s.imageStatus === 'generating');
   const idx = generatingIdx >= 0 ? generatingIdx : 0;
   const scene = scenes[idx];
   const hasImage = scene.imageStatus === 'done' && !!scene.imageUrl;
+  // Your own clip plays here. /outputs is served without auth (the link is
+  // the secret), from the media origin that honours Range for iOS.
+  const clipUrl = scene.imageStatus === 'done' && scene.mediaKind === 'video' && scene.videoUrl
+    ? api.mediaUrl(scene.videoUrl)
+    : '';
+  const playClip = !!clipUrl && brokenClip !== clipUrl;
 
   return (
     <div className="relative overflow-hidden rounded-bf-lg border border-[rgba(216,184,120,0.14)]" style={{ aspectRatio: '16 / 10' }}>
-      {hasImage ? (
+      {playClip ? (
+        <video
+          key={clipUrl}
+          src={clipUrl}
+          poster={scene.imageUrl ? api.mediaUrl(scene.imageUrl) : undefined}
+          muted
+          loop
+          autoPlay
+          playsInline
+          preload="metadata"
+          aria-label={scene.text}
+          onError={() => setBrokenClip(clipUrl)}
+          className="absolute inset-0 h-full w-full object-cover"
+        />
+      ) : hasImage ? (
         <AuthedImage src={scene.imageUrl ?? ''} alt={scene.text} className="absolute inset-0 h-full w-full object-cover" openOnClick={false} />
       ) : (
         <div

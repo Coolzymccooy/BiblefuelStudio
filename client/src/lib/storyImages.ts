@@ -54,9 +54,11 @@ export function pairFilesWithScenes<F extends { name: string }>(
   return { pairs, extra };
 }
 
-/** Upload a photo and put it on one scene. */
+/**
+ * Upload a photo or a video clip and put it on one scene. The server tells
+ * the two apart, checks a clip a render can use, and gives it a poster.
+ */
 export async function putOwnImage(projectId: string, sceneId: string, file: File): Promise<StoryProject> {
   const uploaded = await uploadMedia(file, file.name, 'background');
-  if (uploaded.kind === 'video') throw new Error('That’s a video. Choose a photo for this scene.');
   return storyApi.setSceneImage(projectId, sceneId, { uploadPath: uploaded.file });
 }

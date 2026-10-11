@@ -53,7 +53,7 @@ describe('SceneCard', () => {
       const onChooseFromLibrary = vi.fn();
       render(<SceneCard scene={scene({ imageStatus: 'error', imageUrl: null })} index={2} onPatch={vi.fn()} onRegenerate={vi.fn()}
         busy={false} onUpload={vi.fn()} onChooseFromLibrary={onChooseFromLibrary} />);
-      expect(screen.getByRole('button', { name: 'Upload image for scene 3' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Upload image or video for scene 3' })).toBeInTheDocument();
       await userEvent.click(screen.getByRole('button', { name: 'Choose image for scene 3 from library' }));
       expect(onChooseFromLibrary).toHaveBeenCalledWith('scene-001');
     });
@@ -62,23 +62,43 @@ describe('SceneCard', () => {
       render(<SceneCard scene={scene()} index={0} onPatch={vi.fn()} onRegenerate={vi.fn()} busy={false} {...own} />);
       expect(screen.queryByRole('button', { name: /upload image/i })).not.toBeInTheDocument();
       await userEvent.click(screen.getByRole('button', { name: /tune scene/i }));
-      expect(screen.getByRole('button', { name: 'Upload image for scene 1' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Upload image or video for scene 1' })).toBeInTheDocument();
     });
 
     it('a chosen photo is handed over with its scene', async () => {
       const onUpload = vi.fn();
       render(<SceneCard scene={scene({ imageStatus: 'error' })} index={0} onPatch={vi.fn()} onRegenerate={vi.fn()} busy={false} onUpload={onUpload} />);
       const photo = new File(['x'], 'Scene 1.png', { type: 'image/png' });
-      await userEvent.upload(screen.getByLabelText('Image file for scene 1'), photo);
+      await userEvent.upload(screen.getByLabelText('Image or video file for scene 1'), photo);
       expect(onUpload).toHaveBeenCalledWith('scene-001', photo);
+    });
+
+    it('takes a video clip as well as a photo, and says so', async () => {
+      const onUpload = vi.fn();
+      render(<SceneCard scene={scene({ imageStatus: 'error', imageUrl: null })} index={0} onPatch={vi.fn()} onRegenerate={vi.fn()} busy={false} onUpload={onUpload} />);
+      expect(screen.getByRole('button', { name: 'Upload image or video for scene 1' })).toHaveTextContent('Upload image or video');
+      const input = screen.getByLabelText('Image or video file for scene 1');
+      const accept = (input.getAttribute('accept') || '').split(',');
+      expect(accept).toEqual(expect.arrayContaining(['image/jpeg', 'image/png', 'image/webp', 'video/mp4', 'video/quicktime', 'video/webm']));
+      const clip = new File(['x'], 'pixabay-sunrise.mp4', { type: 'video/mp4' });
+      await userEvent.upload(input, clip);
+      expect(onUpload).toHaveBeenCalledWith('scene-001', clip);
+    });
+
+    it('a scene playing your own clip shows a Video badge', () => {
+      const { rerender } = render(<SceneCard scene={scene({ imageChosenByUser: true, imageSource: 'upload', mediaKind: 'video', videoUrl: '/outputs/bg-video-x.mp4' })}
+        index={0} onPatch={vi.fn()} onRegenerate={vi.fn()} busy={false} />);
+      expect(screen.getByText('Video')).toBeInTheDocument();
+      rerender(<SceneCard scene={scene({ mediaKind: 'image' })} index={0} onPatch={vi.fn()} onRegenerate={vi.fn()} busy={false} />);
+      expect(screen.queryByText('Video')).not.toBeInTheDocument();
     });
 
     it('a scene a cancelled run left "generating" still offers your own picture; a live run does not', () => {
       const stuck = scene({ imageStatus: 'generating', imageUrl: null });
       const { rerender } = render(<SceneCard scene={stuck} index={0} onPatch={vi.fn()} onRegenerate={vi.fn()} busy={false} {...own} />);
-      expect(screen.getByRole('button', { name: 'Upload image for scene 1' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Upload image or video for scene 1' })).toBeInTheDocument();
       rerender(<SceneCard scene={stuck} index={0} onPatch={vi.fn()} onRegenerate={vi.fn()} busy={false} {...own} imagesRunning />);
-      expect(screen.queryByRole('button', { name: 'Upload image for scene 1' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Upload image or video for scene 1' })).not.toBeInTheDocument();
     });
 
     it('a picture you chose says so', () => {

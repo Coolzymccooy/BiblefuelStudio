@@ -27,6 +27,12 @@ export interface StoryScene {
   imageReuseScore?: number | null;
   /** Library entry id — the same image is never used twice in one video. */
   imageLibraryId?: string | null;
+  /** 'video' when the scene plays a clip of your own; imageUrl is then its poster. */
+  mediaKind?: 'image' | 'video';
+  /** Server path of your own clip, when mediaKind === 'video'. */
+  videoPath?: string | null;
+  /** Public /outputs URL of your own clip, when mediaKind === 'video'. */
+  videoUrl?: string | null;
 }
 
 export interface LongformSection {

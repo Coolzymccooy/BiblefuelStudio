@@ -35,13 +35,14 @@ export const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
  *
  * @param {string} outputDir the tenant's outputs folder (req.ctx.outputDir)
  * @param {unknown} raw client-supplied path, as the upload route returned it
+ * @param {RegExp} [namePattern] the upload names allowed; images by default
  * @returns {string|null}
  */
-export function resolveOwnUpload(outputDir, raw) {
+export function resolveOwnUpload(outputDir, raw, namePattern = UPLOAD_NAME) {
   const s = typeof raw === "string" ? raw.trim() : "";
   if (!s || !outputDir) return null;
   const name = s.split(/[\\/]/).pop();
-  if (!UPLOAD_NAME.test(name)) return null;
+  if (!namePattern.test(name)) return null;
   let jail;
   let resolved;
   try {

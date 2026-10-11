@@ -60,4 +60,10 @@ describe("expandScenesToBeats", () => {
     assert.equal(beats.length, 5);
     assert.ok(beats.every((b) => b.imagePath === "/img/1.png"));
   });
+  test("a scene with a clip of your own keeps its clip in every beat", () => {
+    const scenes = [{ ...scene(1, 0, 100_000), videoPath: "/out/bg-video-1.mp4" }, scene(2, 100_000, 200_000)];
+    const beats = expandScenesToBeats(scenes, { beatSec: 40 });
+    assert.deepEqual(beats.map((b) => b.videoPath), ["/out/bg-video-1.mp4", undefined, "/out/bg-video-1.mp4", undefined, "/out/bg-video-1.mp4"]);
+    assert.ok(beats.every((b) => b.imagePath), "the poster still stands in");
+  });
 });

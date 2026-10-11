@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import toast from 'react-hot-toast';
-import { Loader2, RefreshCw, Wand2, ImageOff, SlidersHorizontal, Check, Clock, Upload, Images, Copy } from 'lucide-react';
+import { Loader2, RefreshCw, Wand2, ImageOff, SlidersHorizontal, Check, Clock, Upload, Images, Copy, Film } from 'lucide-react';
 import { AuthedImage } from '../AuthedImage';
 import { sceneTimeLabel } from '../../lib/storyWizard';
 import type { ImageStatus, StoryScene } from '../../lib/storyTypes';
@@ -60,6 +60,8 @@ export function SceneCard({
   // leaves scenes "generating" that nothing is generating any more.
   const missing = scene.imageStatus !== 'done' && !(scene.imageStatus === 'generating' && imagesRunning);
   const yours = scene.imageStatus === 'done' && scene.imageChosenByUser;
+  // Your own clip: imageUrl is its poster, so the thumbnail below still works.
+  const isVideo = scene.imageStatus === 'done' && scene.mediaKind === 'video';
   const imageLocked = busy || regenerating || uploading;
 
   const copyPrompt = async () => {
@@ -73,9 +75,9 @@ export function SceneCard({
     <>
       {onUpload && (
         <button type="button" onClick={() => fileRef.current?.click()} disabled={imageLocked}
-          aria-label={`Upload image for scene ${n}`} className={actionCls}>
+          aria-label={`Upload image or video for scene ${n}`} className={actionCls}>
           {uploading ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
-          {uploading ? 'Uploading…' : 'Upload image'}
+          {uploading ? 'Uploading…' : 'Upload image or video'}
         </button>
       )}
       {onChooseFromLibrary && (
@@ -108,6 +110,14 @@ export function SceneCard({
                   : <Clock size={12} />}
             {yours ? 'Your image' : st.label}
           </div>
+          {isVideo && (
+            <span
+              title="This scene plays your own video clip"
+              className="ml-2 inline-flex items-center gap-1 rounded-full border border-[rgba(216,184,120,0.3)] px-1.5 py-px align-middle text-[10px] font-semibold uppercase tracking-wide text-bf-gold"
+            >
+              <Film size={10} aria-hidden /> Video
+            </span>
+          )}
           {missing && !tuning && ownImageButtons && <div className="mt-2 flex flex-wrap gap-2">{ownImageButtons}</div>}
         </div>
         <button
@@ -181,14 +191,16 @@ export function SceneCard({
         </div>
       )}
 
-      {/* JPEG/PNG/WebP only: iOS then hands over a JPEG instead of a HEIC,
-          which prod's ffmpeg cannot decode. */}
+      {/* Pictures are JPEG/PNG/WebP only: listing the image types explicitly
+          makes iOS hand over a JPEG instead of a HEIC, which prod's ffmpeg
+          cannot decode. Video clips (a Pixabay download, say) are MP4, MOV
+          or WebM; the server checks each one and gives it a poster. */}
       {onUpload && (
         <input
           ref={fileRef}
           type="file"
-          accept="image/jpeg,image/png,image/webp"
-          aria-label={`Image file for scene ${n}`}
+          accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime,video/webm"
+          aria-label={`Image or video file for scene ${n}`}
           className="hidden"
           onChange={(e) => { const f = e.target.files?.[0]; if (f) onUpload(scene.id, f); e.target.value = ''; }}
         />

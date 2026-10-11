@@ -176,7 +176,7 @@ export function StoryVideoPage() {
     try {
       await putOwnImage(projectId, sceneId, file);
       refresh();
-      toast.success('Your picture is on that scene');
+      toast.success(file.type.startsWith('video/') ? 'Your clip is on that scene' : 'Your picture is on that scene');
     } catch (e) { toast.error((e as Error).message || 'Could not use that picture'); }
     finally { setUploadingSceneId(null); }
   };

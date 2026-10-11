@@ -9,6 +9,7 @@ import { splitPhrases } from "../captions.js";
 import { kenBurnsFilter } from "../kenBurns.js";
 import { kenBurnsVariedFilter, moveForIndex } from "../kenBurnsVaried.js";
 import { buildXfadeChain } from "./sceneTransitions.js";
+import { SCENE_VIDEO_INPUT_GUARD } from "./sceneVideo.js";
 import { markRunning, markProgress, markDone, markError, attachProc } from "../renderJobs.js";
 import { isLocalOrRemote } from "../mediaThumb.js";
 import { logoOverlay } from "../branding.js";
@@ -41,6 +42,9 @@ export function sceneSegmentsSec(scenes, audioDurationSec) {
       id: s.id,
       durationSec: Math.max(0.1, (nextMs - startMs) / 1000),
       imagePath: s.imagePath,
+      // A clip of your own (scene.videoPath) plays instead of the still;
+      // imagePath is then its poster, kept as the fallback.
+      ...(s.videoPath ? { videoPath: s.videoPath } : {}),
     };
   });
 }
@@ -231,9 +235,14 @@ export function buildStoryFfmpegArgs({
     ? Number(Number(audioDurationSec).toFixed(3))
     : Number((scenes[scenes.length - 1].endMs / 1000).toFixed(3));
 
+  // A scene plays its own clip only while the clip is still on disk; one that
+  // has gone falls back to its still poster, so a render never fails over it.
+  const playsClip = segs.map((seg) => typeof seg.videoPath === "string" && seg.videoPath !== "" && fs.existsSync(seg.videoPath));
   const args = ["-y"];
-  segs.forEach((seg) => {
-    args.push("-loop", "1", "-i", seg.imagePath);
+  segs.forEach((seg, i) => {
+    // A clip shorter than its scene loops; trim (below) cuts it to length.
+    if (playsClip[i]) args.push(...SCENE_VIDEO_INPUT_GUARD, "-stream_loop", "-1", "-i", seg.videoPath);
+    else args.push("-loop", "1", "-i", seg.imagePath);
   });
   args.push("-i", audioPath);
   const audioInputIdx = segs.length;
@@ -262,6 +271,19 @@ export function buildStoryFfmpegArgs({
     // Ken Burns spans the PADDED duration so the move still completes across
     // the whole clip, including the frames the crossfade eats.
     const kbDuration = xfade.paddedDurations[i] ?? seg.durationSec;
+    if (playsClip[i]) {
+      // The clip moves on its own, so no Ken Burns. It is cut to the same
+      // padded length and set to 30 fps (zoompan's rate for stills), so xfade
+      // sees matching frame rates and timebases. The clip's own sound is
+      // never mapped: only the narration and music are.
+      filterParts.push(
+        `[${i}:v]trim=duration=${kbDuration},setpts=PTS-STARTPTS,fps=30,` +
+          `scale=${width}:${height}:force_original_aspect_ratio=increase,` +
+          `crop=${width}:${height},setsar=1[s${i}]`,
+      );
+      sceneLabels.push(`[s${i}]`);
+      return;
+    }
     // Alternate the move per scene; a uniform push-in across 30 stills is what
     // makes a sequence feel mechanical. Deterministic on index so re-renders
     // match the approved video.

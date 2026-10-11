@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { StoryScenePreview } from '../StoryScenePreview';
 import type { StoryScene } from '../../../lib/storyTypes';
 
@@ -31,5 +31,35 @@ describe('StoryScenePreview', () => {
   it('says nothing for a scene from before the library existed', () => {
     render(<StoryScenePreview scenes={[scene()]} />);
     expect(screen.queryByText(/Reused/)).not.toBeInTheDocument();
+  });
+
+  it('plays a scene\'s own clip, muted and looping, inline on a phone', () => {
+    const { container } = render(<StoryScenePreview scenes={[scene({
+      imageStatus: 'done', imageUrl: '/outputs/bg-video-x-poster.jpg', imageSource: 'upload',
+      mediaKind: 'video', videoUrl: '/outputs/bg-video-x.mp4',
+    })]} />);
+    const video = container.querySelector('video');
+    expect(video).not.toBeNull();
+    expect(video!.getAttribute('src')).toMatch(/\/outputs\/bg-video-x\.mp4$/);
+    expect(video!.muted).toBe(true);
+    expect(video!.loop).toBe(true);
+    expect(video!.hasAttribute('playsinline')).toBe(true);
+    expect(video!.className).toMatch(/object-cover/);
+    expect(screen.queryByAltText('Be still.')).not.toBeInTheDocument();
+  });
+
+  it('a still scene stays a picture', () => {
+    const { container } = render(<StoryScenePreview scenes={[scene({ imageStatus: 'done', imageUrl: '/o/gen-1.png', mediaKind: 'image' })]} />);
+    expect(container.querySelector('video')).toBeNull();
+    expect(screen.getByAltText('Be still.')).toBeInTheDocument();
+  });
+
+  it('a clip that will not play falls back to its poster', async () => {
+    const { container } = render(<StoryScenePreview scenes={[scene({
+      imageStatus: 'done', imageUrl: '/outputs/bg-video-x-poster.jpg', mediaKind: 'video', videoUrl: '/outputs/bg-video-x.mp4',
+    })]} />);
+    fireEvent.error(container.querySelector('video')!);
+    expect(container.querySelector('video')).toBeNull();
+    expect(await screen.findByAltText('Be still.')).toBeInTheDocument();
   });
 });

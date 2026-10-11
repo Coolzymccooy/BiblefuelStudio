@@ -1,6 +1,33 @@
-import { describe, it, expect } from 'vitest';
-import { pairFilesWithScenes, sceneNumberIn } from '../storyImages';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { pairFilesWithScenes, sceneNumberIn, putOwnImage } from '../storyImages';
 import type { StoryScene } from '../storyTypes';
+
+const uploadMedia = vi.fn();
+const setSceneImage = vi.fn();
+vi.mock('../mediaUpload', () => ({ uploadMedia: (...a: unknown[]) => uploadMedia(...a) }));
+vi.mock('../storyApi', () => ({ storyApi: { setSceneImage: (...a: unknown[]) => setSceneImage(...a) } }));
+
+describe('putOwnImage', () => {
+  beforeEach(() => {
+    uploadMedia.mockReset();
+    setSceneImage.mockReset().mockResolvedValue({ projectId: 'p1' });
+  });
+
+  it('puts an uploaded photo on the scene', async () => {
+    uploadMedia.mockResolvedValue({ ok: true, file: '/o/bg-image-1.jpg', kind: 'image' });
+    const photo = new File(['x'], 'Scene 1.jpg', { type: 'image/jpeg' });
+    await putOwnImage('p1', 's1', photo);
+    expect(uploadMedia).toHaveBeenCalledWith(photo, 'Scene 1.jpg', 'background');
+    expect(setSceneImage).toHaveBeenCalledWith('p1', 's1', { uploadPath: '/o/bg-image-1.jpg' });
+  });
+
+  it('puts an uploaded video clip on the scene too, instead of refusing it', async () => {
+    uploadMedia.mockResolvedValue({ ok: true, file: '/o/bg-video-1.mp4', kind: 'video' });
+    const clip = new File(['x'], 'pixabay.mp4', { type: 'video/mp4' });
+    await expect(putOwnImage('p1', 's2', clip)).resolves.toEqual({ projectId: 'p1' });
+    expect(setSceneImage).toHaveBeenCalledWith('p1', 's2', { uploadPath: '/o/bg-video-1.mp4' });
+  });
+});
 
 function scene(i: number, done = false): StoryScene {
   return {
