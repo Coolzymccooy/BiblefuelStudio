@@ -1,6 +1,6 @@
 import { api, TRANSCRIBE_TIMEOUT_MS } from './api';
 import { uploadMedia } from './mediaUpload';
-import type { StoryCaptionSettings, StoryProject, StoryProjectSummary, StoryScene } from './storyTypes';
+import type { StoryAspect, StoryCaptionSettings, StoryProject, StoryProjectSummary, StoryScene } from './storyTypes';
 import type { LibraryImage, MovementImageSource } from './ambientApi';
 
 // Generating ~30 images can run for minutes; reuse a generous ceiling.
@@ -19,8 +19,16 @@ function unwrapProject(res: { ok: boolean; data?: any; error?: string }): StoryP
 }
 
 export const storyApi = {
-  async createProject(title: string, style: string, cast: string[] = []): Promise<StoryProject> {
-    return unwrapProject(await api.post('/api/story', { title, style, cast }));
+  async createProject(title: string, style: string, cast: string[] = [], aspect?: StoryAspect): Promise<StoryProject> {
+    return unwrapProject(await api.post('/api/story', { title, style, cast, ...(aspect ? { aspect } : {}) }));
+  },
+
+  // Changes the output frame of an existing project. Scene images already made
+  // keep their shape; the server's `note` says how many, so the page can
+  // suggest regenerating them for a full-bleed fit.
+  async setAspect(id: string, aspect: StoryAspect): Promise<{ project: StoryProject; note: string }> {
+    const res = await api.patch(`/api/story/${id}/aspect`, { aspect });
+    return { project: unwrapProject(res), note: String(res.data?.note || '') };
   },
 
   // The cast options come from the server so adding a character needs no

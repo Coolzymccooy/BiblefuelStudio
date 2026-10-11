@@ -4,7 +4,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { spawnSync } from "child_process";
-import { buildStoryFfmpegArgs, sceneSegmentsSec, groupWordsIntoCues, buildSubtitleDrawtext, wrapCue, toFilterScriptArgs } from "./storyRender.js";
+import { buildStoryFfmpegArgs, sceneSegmentsSec, groupWordsIntoCues, buildSubtitleDrawtext, wrapCue, toFilterScriptArgs, runStoryRender } from "./storyRender.js";
 
 function countDrawtext(args) {
   const fc = args[args.indexOf("-filter_complex") + 1] || "";
@@ -478,5 +478,135 @@ describe("a scene with a video clip of your own", () => {
       const [r2, g2] = rgbAt(3.5);
       assert.ok(r1 > 180 && g1 < 80, `scene 1 should be the red clip, got r=${r1} g=${g1}`);
       assert.ok(g2 > 90 && r2 < 80, `scene 2 should be the green still, got r=${r2} g=${g2}`);
+    });
+});
+
+describe("runStoryRender and a cancel", () => {
+  test("a render cancelled while its scenes are being measured never starts ffmpeg", async () => {
+    const { createJob, cancelJob, getJob } = await import("../renderJobs.js");
+    const job = createJob("user-1", { durationSec: 1 });
+    // A missing file is measured as unknown (null), quickly; the cancel lands
+    // during that await, before any ffmpeg exists to be killed.
+    const pending = runStoryRender({
+      jobId: job.jobId,
+      scenes: [{ id: "s1", startMs: 0, endMs: 1000, imagePath: path.join(os.tmpdir(), "no-such-picture.png") }],
+      words: [], audioPath: path.join(os.tmpdir(), "no-such-voice.m4a"), musicPath: null,
+      width: 360, height: 640, outPath: path.join(os.tmpdir(), "never.mp4"), audioDurationSec: 1, captions: "none",
+    });
+    cancelJob(job.jobId);
+    const r = await pending;
+    assert.equal(r.ok, false);
+    assert.match(r.error, /cancel/i);
+    assert.equal(getJob(job.jobId).cancelled, true);
+  });
+});
+
+describe("a scene whose picture is not the frame's shape", () => {
+  const graph = (args) => args[args.indexOf("-filter_complex") + 1];
+  const FF = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
+  const hasFfmpeg = spawnSync(FF, ["-version"]).status === 0;
+  let dir;
+  let clip;
+  test.beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "story-fit-"));
+    clip = path.join(dir, "clip.mp4");
+    fs.writeFileSync(clip, "x");
+  });
+  test.afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+  const build = (scenes) => buildStoryFfmpegArgs({
+    scenes, words: [], audioPath: "/tmp/voice.mp3", musicPath: null,
+    width: 360, height: 640, outPath: "/tmp/out.mp4", audioDurationSec: 4, captions: "none",
+  });
+
+  test("sceneSegmentsSec carries the fit through", () => {
+    const segs = sceneSegmentsSec([{ id: "a", startMs: 0, endMs: 1000, imagePath: "a.png", fit: "contain" }], 1);
+    assert.equal(segs[0].fit, "contain");
+  });
+
+  test("a contained clip is shown whole over a blurred copy of itself", () => {
+    const { args } = build([
+      { id: "s1", startMs: 0, endMs: 2000, imagePath: path.join(dir, "poster.jpg"), videoPath: clip, fit: "contain" },
+      { id: "s2", startMs: 2000, endMs: 4000, imagePath: path.join(dir, "still.png") },
+    ]);
+    const fc = graph(args);
+    assert.match(fc, /\[0:v\]trim=duration=2\.5,setpts=PTS-STARTPTS,fps=30,split=2\[s0bg\]\[s0fg\]/);
+    assert.match(fc, /\[s0fg\]scale=360:640:force_original_aspect_ratio=decrease:force_divisible_by=2\[s0f\]/);
+    assert.match(fc, /\[s0bg\]scale=90:160:force_original_aspect_ratio=increase,crop=90:160,boxblur=\d+:\d+,scale=360:640[^;]*\[s0b\]/);
+    assert.match(fc, /\[s0b\]\[s0f\]overlay=\(W-w\)\/2:\(H-h\)\/2,setsar=1\[s0\]/);
+    // The other scene is untouched: still the cover crop.
+    assert.match(fc, /\[1:v\]trim=end_frame=1,setpts=PTS-STARTPTS,scale=360:640:force_original_aspect_ratio=increase,crop=360:640,/);
+  });
+
+  test("a contained still stays whole: only its blurred backdrop gets the Ken Burns move", () => {
+    const { args } = build([{ id: "s1", startMs: 0, endMs: 4000, imagePath: path.join(dir, "wide.png"), fit: "contain" }]);
+    const parts = graph(args).split(";");
+    assert.ok(parts.includes("[0:v]trim=end_frame=1,setpts=PTS-STARTPTS,split=2[s0bg][s0fg]"));
+    assert.match(parts.find((p) => p.startsWith("[s0bg]")), /boxblur=.*zoompan=.*\[s0b\]$/);
+    assert.equal(parts.find((p) => p.startsWith("[s0b][s0f]")), "[s0b][s0f]overlay=(W-w)/2:(H-h)/2,setsar=1[s0]");
+  });
+
+  test("a contained still keeps its very edges to the end of the scene (real ffmpeg)",
+    { skip: !hasFfmpeg && "ffmpeg not installed", timeout: 120_000 }, () => {
+      const ff = (a) => {
+        const r = spawnSync(FF, ["-y", "-v", "error", ...a]);
+        assert.equal(r.status, 0, String(r.stderr));
+      };
+      // White picture with a thin red left edge and blue right edge. At the
+      // 640->360 scale each edge is 9 px: a 6% zoom on the picture eats ~11.
+      const still = path.join(dir, "edges.png");
+      ff(["-f", "lavfi", "-i", "color=c=white:s=640x360", "-vf",
+        "drawbox=x=0:y=0:w=16:h=360:color=red:t=fill,drawbox=x=624:y=0:w=16:h=360:color=blue:t=fill",
+        "-frames:v", "1", still]);
+      const voice = path.join(dir, "voice.m4a");
+      ff(["-f", "lavfi", "-i", "sine=d=2", "-c:a", "aac", voice]);
+      const out = path.join(dir, "still.mp4");
+      const { args } = buildStoryFfmpegArgs({
+        scenes: [{ id: "s1", startMs: 0, endMs: 2000, imagePath: still, fit: "contain" }],
+        words: [], audioPath: voice, musicPath: null, width: 360, height: 640,
+        outPath: out, audioDurationSec: 2, captions: "none",
+      });
+      const r = spawnSync(FF, ["-v", "error", ...toFilterScriptArgs(args, out).args], { timeout: 110_000 });
+      assert.equal(r.status, 0, String(r.stderr).slice(-1500));
+      const rgbAt = (x, y) => [...spawnSync(FF, ["-v", "error", "-sseof", "-0.1", "-i", out, "-frames:v", "1",
+        "-vf", `crop=1:1:${x}:${y},format=rgb24`, "-f", "rawvideo", "-"]).stdout.subarray(0, 3)];
+      const [rl, gl, bl] = rgbAt(3, 320);
+      const [rr, gr, br] = rgbAt(356, 320);
+      assert.ok(rl > 150 && gl < 110 && bl < 110, `left edge should still be red at the end, got ${rl},${gl},${bl}`);
+      assert.ok(br > 150 && rr < 110 && gr < 110, `right edge should still be blue at the end, got ${rr},${gr},${br}`);
+    });
+
+  test("the whole landscape picture survives a portrait render (real ffmpeg)",
+    { skip: !hasFfmpeg && "ffmpeg not installed", timeout: 120_000 }, () => {
+      const ff = (a) => {
+        const r = spawnSync(FF, ["-y", "-v", "error", ...a]);
+        assert.equal(r.status, 0, String(r.stderr));
+      };
+      // Red | green | blue thirds. A centre crop to portrait keeps only green.
+      const wide = path.join(dir, "wide.mp4");
+      ff(["-f", "lavfi", "-i", "color=c=red:s=214x360:r=25:d=1", "-f", "lavfi", "-i", "color=c=lime:s=212x360:r=25:d=1",
+        "-f", "lavfi", "-i", "color=c=blue:s=214x360:r=25:d=1", "-filter_complex", "[0][1][2]hstack=3",
+        "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", wide]);
+      const poster = path.join(dir, "poster.jpg");
+      ff(["-f", "lavfi", "-i", "color=c=black:s=640x360", "-frames:v", "1", poster]);
+      const voice = path.join(dir, "voice.m4a");
+      ff(["-f", "lavfi", "-i", "sine=d=2", "-c:a", "aac", voice]);
+      const out = path.join(dir, "out.mp4");
+      const { args } = buildStoryFfmpegArgs({
+        scenes: [{ id: "s1", startMs: 0, endMs: 2000, imagePath: poster, videoPath: wide, fit: "contain" }],
+        words: [], audioPath: voice, musicPath: null, width: 360, height: 640,
+        outPath: out, audioDurationSec: 2, captions: "none",
+      });
+      const scripted = toFilterScriptArgs(args, out);
+      const r = spawnSync(FF, ["-v", "error", ...scripted.args], { timeout: 110_000 });
+      assert.equal(r.status, 0, String(r.stderr).slice(-1500));
+      const rgbAt = (x, y) => [...spawnSync(FF, ["-v", "error", "-ss", "1", "-i", out, "-frames:v", "1",
+        "-vf", `crop=1:1:${x}:${y},format=rgb24`, "-f", "rawvideo", "-"]).stdout.subarray(0, 3)];
+      const [rl, gl, bl] = rgbAt(20, 320);
+      const [rr, gr, br] = rgbAt(340, 320);
+      assert.ok(rl > 150 && gl < 100 && bl < 100, `left edge should be the red third, got ${rl},${gl},${bl}`);
+      assert.ok(br > 150 && rr < 100 && gr < 100, `right edge should be the blue third, got ${rr},${gr},${br}`);
+      // Above the picture is its blurred copy, not black bars.
+      const top = rgbAt(180, 30);
+      assert.ok(top.some((c) => c > 40), `the band above the picture should be the blurred fill, got ${top}`);
     });
 });

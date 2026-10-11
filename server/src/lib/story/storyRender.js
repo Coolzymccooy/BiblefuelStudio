@@ -10,7 +10,8 @@ import { kenBurnsFilter } from "../kenBurns.js";
 import { kenBurnsVariedFilter, moveForIndex } from "../kenBurnsVaried.js";
 import { buildXfadeChain } from "./sceneTransitions.js";
 import { SCENE_VIDEO_INPUT_GUARD } from "./sceneVideo.js";
-import { markRunning, markProgress, markDone, markError, attachProc } from "../renderJobs.js";
+import { FIT_CONTAIN, withSceneFits } from "./sceneFraming.js";
+import { markRunning, markProgress, markDone, markError, attachProc, getJob } from "../renderJobs.js";
 import { isLocalOrRemote } from "../mediaThumb.js";
 import { logoOverlay } from "../branding.js";
 import { isStudioLook, resolveLook } from "../kinetic/looks.js";
@@ -45,8 +46,44 @@ export function sceneSegmentsSec(scenes, audioDurationSec) {
       // A clip of your own (scene.videoPath) plays instead of the still;
       // imagePath is then its poster, kept as the fallback.
       ...(s.videoPath ? { videoPath: s.videoPath } : {}),
+      // How the picture meets the frame (see sceneFraming.js); absent = cover.
+      ...(s.fit ? { fit: s.fit } : {}),
     };
   });
+}
+
+/**
+ * The filter steps that put scene `i`'s picture into the frame, from `src`
+ * (the scene's trimmed stream) to its output label. `move` is a still's Ken
+ * Burns chain, empty for a clip, which moves on its own.
+ *
+ * cover: fill and centre-crop, as every scene always did, with the move on
+ * the framed picture.
+ * contain: the whole picture, centred, over a blurred copy of itself. The move
+ * goes on the backdrop only: zooming the picture would trim its edges again,
+ * and the point of contain is that nothing of it is lost. The single-frame
+ * picture is repeated over the moving backdrop (overlay repeats its last
+ * frame). The blur works at a quarter size, far cheaper per frame than blurring
+ * full resolution, and looks the same once softened.
+ */
+export function sceneFrameFilter({ src, i, width, height, fit, move = "" }) {
+  const out = `[s${i}]`;
+  if (fit !== FIT_CONTAIN) {
+    return [
+      `${src}scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},` +
+        `${move ? `${move},` : ""}setsar=1${out}`,
+    ];
+  }
+  const even = (n) => Math.max(2, Math.round(n / 2) * 2);
+  const bw = even(width / 4);
+  const bh = even(height / 4);
+  return [
+    `${src}split=2[s${i}bg][s${i}fg]`,
+    `[s${i}bg]scale=${bw}:${bh}:force_original_aspect_ratio=increase,crop=${bw}:${bh},` +
+      `boxblur=12:2,scale=${width}:${height},eq=brightness=-0.06${move ? `,${move}` : ""}[s${i}b]`,
+    `[s${i}fg]scale=${width}:${height}:force_original_aspect_ratio=decrease:force_divisible_by=2[s${i}f]`,
+    `[s${i}b][s${i}f]overlay=(W-w)/2:(H-h)/2,setsar=1${out}`,
+  ];
 }
 
 /**
@@ -279,11 +316,10 @@ export function buildStoryFfmpegArgs({
       // padded length and set to 30 fps (zoompan's rate for stills), so xfade
       // sees matching frame rates and timebases. The clip's own sound is
       // never mapped: only the narration and music are.
-      filterParts.push(
-        `[${i}:v]trim=duration=${kbDuration},setpts=PTS-STARTPTS,fps=30,` +
-          `scale=${width}:${height}:force_original_aspect_ratio=increase,` +
-          `crop=${width}:${height},setsar=1[s${i}]`,
-      );
+      filterParts.push(...sceneFrameFilter({
+        src: `[${i}:v]trim=duration=${kbDuration},setpts=PTS-STARTPTS,fps=30,`,
+        i, width, height, fit: seg.fit,
+      }));
       sceneLabels.push(`[s${i}]`);
       return;
     }
@@ -295,11 +331,10 @@ export function buildStoryFfmpegArgs({
     // zoompan. Without it, `-loop 1` feeds an endless frame stream into
     // zoompan (which emits d frames per input frame), causing a runaway encode
     // that never reaches EOF. Mirrors the proven single-image path in render.js.
-    filterParts.push(
-      `[${i}:v]trim=end_frame=1,setpts=PTS-STARTPTS,` +
-        `scale=${width}:${height}:force_original_aspect_ratio=increase,` +
-        `crop=${width}:${height},${kb},setsar=1[s${i}]`,
-    );
+    filterParts.push(...sceneFrameFilter({
+      src: `[${i}:v]trim=end_frame=1,setpts=PTS-STARTPTS,`,
+      i, width, height, fit: seg.fit, move: kb,
+    }));
     sceneLabels.push(`[s${i}]`);
   });
   if (xfade.filters.length > 0) {
@@ -423,10 +458,24 @@ export function toFilterScriptArgs(args, outPath) {
 }
 
 /**
- * Spawn FFmpeg for a story render, wiring progress into the job registry.
+ * Render a Story video. Each scene's media is measured first, so a picture of
+ * another shape than the frame (an uploaded landscape clip in a portrait
+ * video) is shown whole instead of centre-cropped. See sceneFraming.js.
  * Resolves with { ok, file } / { ok:false, error }.
  */
-export function runStoryRender({
+export async function runStoryRender(opts) {
+  const scenes = await withSceneFits(opts.scenes || [], { width: opts.width, height: opts.height });
+  // A cancel that arrived while the scenes were measured has no ffmpeg to
+  // kill yet; starting one now would overwrite the cancel and render anyway.
+  if (getJob(opts.jobId)?.cancelled) return { ok: false, error: "Render cancelled" };
+  return renderFramedScenes({ ...opts, scenes });
+}
+
+/**
+ * Spawn FFmpeg for a story render, wiring progress into the job registry.
+ */
+
+function renderFramedScenes({
   jobId, scenes, words, audioPath, musicPath, musicVolume, autoDuck, width, height,
   outPath, audioDurationSec, onProgress, captions,
   captionPreset, captionMotion, captionLayout, captionDepth, captionStagger, captionHighlight,

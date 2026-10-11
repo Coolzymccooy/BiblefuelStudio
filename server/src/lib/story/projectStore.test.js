@@ -129,3 +129,15 @@ describe("sourceDisplayFacts", () => {
     for (const v of [undefined, false, "true", 1, null]) assert.equal(sourceDisplayFacts({ trimmed: v }).trimmed, false);
   });
 });
+
+describe("output frame", () => {
+  let dir;
+  beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), "story-aspect-")); });
+  afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+  test("a project can be square, like the Render tab's output frame", () => {
+    assert.equal(createProject(dir, { title: "Sq", aspect: "square" }).aspect, "square");
+  });
+  test("an unknown frame stays portrait", () => {
+    assert.equal(createProject(dir, { title: "W", aspect: "wide" }).aspect, "portrait");
+  });
+});

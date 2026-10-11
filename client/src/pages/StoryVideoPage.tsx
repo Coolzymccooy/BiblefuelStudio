@@ -7,7 +7,7 @@ import { api, DIRECT_UPLOAD_MAX_BYTES } from '../lib/api';
 import { storyApi } from '../lib/storyApi';
 import { longformApi } from '../lib/longformApi';
 import { useStoryProject } from '../hooks/useStoryProject';
-import type { StoryCaptionSettings, StoryProject } from '../lib/storyTypes';
+import type { StoryAspect, StoryCaptionSettings, StoryProject } from '../lib/storyTypes';
 import { YoutubePublishPanel } from '../components/share/YoutubePublishPanel';
 import {
   deriveStep, progressLabel, canRender, imageCounts, isTransientStatus, isStalled, ttsProviderLabel, STORY_STYLES,
@@ -24,6 +24,7 @@ import { refId } from '../components/music/useLibraryActions';
 import { MusicPicker } from '../components/MusicPicker';
 import { soundtrackFor } from '../lib/soundtrackMatch';
 import { StoryCaptionsPanel } from '../components/story/StoryCaptionsPanel';
+import { StoryOutputFramePanel } from '../components/story/StoryOutputFramePanel';
 import { RenderProgressOverlay } from '../components/RenderProgressOverlay';
 import { MediaTrimmer } from '../components/MediaTrimmer';
 import { DropZone } from '../components/ui/DropZone';
@@ -56,6 +57,8 @@ export function StoryVideoPage() {
   });
   const [title, setTitle] = useState('');
   const [style, setStyle] = useState('cinematic-bible');
+  // Output frame for the next new story; an open project keeps its own.
+  const [newAspect, setNewAspect] = useState<StoryAspect>('portrait');
   const [busy, setBusy] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [pendingAudio, setPendingAudio] = useState<string | null>(null);
@@ -136,7 +139,7 @@ export function StoryVideoPage() {
     setBusy(true);
     setShowTrimmer(false);
     try {
-      const created = await storyApi.createProject(title || defaultTitle, style);
+      const created = await storyApi.createProject(title || defaultTitle, style, [], newAspect);
       setActive(created.projectId);
       await storyApi.process(created.projectId, audioPath, { ...(pendingName ? { name: pendingName } : {}), trimmed });
       setPendingAudio(null);
@@ -238,6 +241,18 @@ export function StoryVideoPage() {
     try {
       await storyApi.setCaptions(projectId, patch);
       refresh();
+    } catch (e) { toast.error((e as Error).message); }
+  };
+
+  // The frame of an open project. Images already made keep their shape; the
+  // render shows any that no longer match whole over a blurred fill, and the
+  // server's note says how many so they can be regenerated for full bleed.
+  const onAspectChange = async (next: StoryAspect) => {
+    if (!projectId) return;
+    try {
+      const { note } = await storyApi.setAspect(projectId, next);
+      refresh();
+      if (note) toast(note, { duration: 7000 });
     } catch (e) { toast.error((e as Error).message); }
   };
 
@@ -513,6 +528,19 @@ export function StoryVideoPage() {
             <StylePicker value={style} onChange={setStyle} />
           </div>
 
+          {/* Long-form stories are made landscape by the server (YouTube
+              sessions), so a frame chosen here would be dropped. An open
+              project can still change its frame on the scenes step. */}
+          {!project && entryMode === 'longform' ? (
+            <p className="text-meta">Long-form videos are landscape (16:9). You can change the frame once the scenes are made.</p>
+          ) : (
+            <StoryOutputFramePanel
+              value={project ? project.aspect : newAspect}
+              onChange={project ? onAspectChange : setNewAspect}
+              busy={busy}
+            />
+          )}
+
           {busy ? (
             <div className={`${statusRowCls} flex items-center gap-3 text-sm text-bf-cream`}>
               <Loader2 className="animate-spin text-primary-400" size={18} />
@@ -695,6 +723,7 @@ export function StoryVideoPage() {
           </div>
 
           <div className="min-w-0 space-y-4 lg:self-start">
+          <StoryOutputFramePanel value={project.aspect} onChange={onAspectChange} busy={busy || imagesBusy || isTransientStatus(project.status)} />
           <StoryCaptionsPanel
             value={project}
             onChange={onCaptionsChange}
@@ -743,6 +772,20 @@ export function StoryVideoPage() {
           )}
           {project.status === 'done' && project.render.outputPath && (
             <DonePanel project={project} />
+          )}
+          {project.status === 'done' && (
+            <div className={`${panelCls} space-y-3`}>
+              <div className="text-sm font-medium text-bf-cream">Want it in another frame?</div>
+              <StoryOutputFramePanel value={project.aspect} onChange={onAspectChange} busy={busy} />
+              <button
+                type="button"
+                onClick={onRender}
+                disabled={busy || imagesBusy || !canRender(project)}
+                className={`${secondaryBtnCls} px-3 py-1.5`}
+              >
+                Render again
+              </button>
+            </div>
           )}
           {project.status === 'error' && <ErrorBanner message={project.error || 'Render failed'} />}
         </div>

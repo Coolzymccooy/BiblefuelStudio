@@ -29,6 +29,7 @@ import { expandScenesToBeats } from "../lib/story/visualBeats.js";
 import { findReusableImages, markUsed, registerImage, pruneLibrary, readLibrary as readImageLibrary } from "../lib/imageGen/imageLibrary.js";
 import { resolveMovementImage, libraryImageView } from "../lib/ambient/movementImage.js";
 import { isSceneVideoUpload, resolveSceneVideo } from "../lib/story/sceneVideo.js";
+import { normalizeStoryAspect, storyFrameSize } from "../lib/story/sceneFraming.js";
 
 const MUSIC_REF_PREFIX = /^(library|mylib):/;
 
@@ -93,12 +94,12 @@ function confineMediaPath(ctx, rawMediaPath) {
   return { ok: true, path: resolved };
 }
 
-// Image-gen aspect for a project: landscape projects request landscape
-// images, everything else (including projects predating the field) stays
-// portrait. Shared by imagesStage and the single-scene regenerate route so
-// the two paths can never drift apart.
+// Image-gen aspect for a project: images are generated in the project's own
+// output frame (portrait, landscape or square), and projects predating the
+// field stay portrait. Shared by imagesStage and the single-scene regenerate
+// route so the two paths can never drift apart.
 function imageAspectFor(project) {
-  return project.aspect === "landscape" ? "landscape" : "portrait";
+  return normalizeStoryAspect(project.aspect);
 }
 
 // --- Pipeline stages (re-entrant). ctx = { dataDir, outputDir }. ---
@@ -538,6 +539,43 @@ router.patch("/:id/cast", (req, res) => {
   });
 });
 
+const ASPECT_LOCKED_STATUSES = new Set([
+  STORY_STATUS.TRANSCRIBING, STORY_STATUS.SEGMENTING, STORY_STATUS.GENERATING_IMAGES,
+  STORY_STATUS.RENDERING, STORY_STATUS.NARRATING,
+]);
+
+// PATCH /:id/aspect — set the output frame: portrait, landscape or square,
+// the same choices as the Render tab.
+//
+// Scene images already made keep their shape. At render time a picture whose
+// shape differs from the frame is shown whole over a blurred fill rather than
+// cropped (see sceneFraming.js), and the response says how many there are so
+// the operator can regenerate them for a full-bleed fit.
+router.patch("/:id/aspect", (req, res) => {
+  const project = readProject(req.ctx.dataDir, req.params.id);
+  if (!project) return res.status(404).json({ ok: false, error: "project not found" });
+  const requested = req.body?.aspect;
+  if (normalizeStoryAspect(requested) !== requested) {
+    return res.status(400).json({ ok: false, error: "aspect must be portrait, landscape or square" });
+  }
+  // A running stage read the project before it started and writes it back
+  // when it ends, which would quietly put the old frame back.
+  if (ASPECT_LOCKED_STATUSES.has(project.status)) {
+    return res.status(409).json({ ok: false, error: "wait for the current step to finish before changing the output frame" });
+  }
+  const updated = writeProject(req.ctx.dataDir, { ...project, aspect: requested });
+  const changed = normalizeStoryAspect(project.aspect) !== requested;
+  const made = (updated.scenes || []).filter((s) => s.imageStatus === "done").length;
+  const notes = [];
+  if (changed && made > 0) {
+    notes.push(`${made} scene image(s) were made for the old frame. Any that no longer fit will be shown whole over a blurred fill; regenerate them to fill the new frame.`);
+  }
+  if (changed && updated.status === STORY_STATUS.DONE) {
+    notes.push("Render again to get the video in the new frame.");
+  }
+  return res.json({ ok: true, project: updated, note: notes.join(" ") });
+});
+
 router.post("/import-script", (req, res) => {
   try {
     const script = String(req.body?.script || "").trim();
@@ -919,9 +957,7 @@ router.post("/:id/render", async (req, res) => {
     if (!fs.existsSync(out)) fs.mkdirSync(out, { recursive: true });
     const outPath = path.join(out, "video.mp4");
     const durationSec = scenes[scenes.length - 1].endMs / 1000;
-    const landscape = project.aspect === "landscape";
-    const width = Math.max(240, Number(landscape ? process.env.STORY_RENDER_LANDSCAPE_WIDTH : process.env.STORY_RENDER_WIDTH) || (landscape ? 1280 : 720));
-    const height = Math.max(240, Number(landscape ? process.env.STORY_RENDER_LANDSCAPE_HEIGHT : process.env.STORY_RENDER_HEIGHT) || (landscape ? 720 : 1280));
+    const { width, height } = storyFrameSize(project.aspect);
     const job = createJob(req.ctx.userId, { durationSec });
     persistJob(req.ctx.dataDir, { ...job, projectId: project.projectId, status: "running" });
     writeProject(req.ctx.dataDir, {
@@ -979,7 +1015,8 @@ router.post("/:id/render", async (req, res) => {
       // 1080×1920 over a 27-min kinetic render pegs CPU/RAM and stalls the
       // server. Bump STORY_RENDER_WIDTH/HEIGHT once on bigger hardware.
       // Landscape projects use the separate STORY_RENDER_LANDSCAPE_WIDTH/HEIGHT
-      // envs (default 1280×720) so portrait defaults/tuning stay untouched.
+      // envs (default 1280×720) and square ones STORY_RENDER_SQUARE_SIZE
+      // (default 1080), so portrait defaults/tuning stay untouched.
       width,
       height,
       captions: project.captions || "kinetic",

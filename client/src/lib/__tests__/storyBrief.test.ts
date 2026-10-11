@@ -69,6 +69,10 @@ describe('buildImageBrief', () => {
     expect(brief).toContain('There is hope');
   });
 
+  it('describes a square video as 1:1', () => {
+    expect(buildImageBrief(project({ aspect: 'square' }))).toContain('Square 1:1 (1080×1080)');
+  });
+
   it('describes a landscape video as 16:9', () => {
     expect(buildImageBrief(project({ aspect: 'landscape' }))).toContain('Landscape 16:9 (1920×1080)');
   });
