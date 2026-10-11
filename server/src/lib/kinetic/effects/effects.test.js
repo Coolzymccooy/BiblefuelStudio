@@ -189,3 +189,10 @@ test("Gospel Gold's body is set larger and in bold italic so it reads like the m
   const goldPop = pop(ctx(planned("Fear thou not", "pop"), { look: resolveLook("studio-gospel-gold") }));
   assert.match(goldPop[0], /\\b1\\i1/);
 });
+
+test("holdEnd honours an explicit holdUntil over the hold rules", () => {
+  assert.equal(holdEnd({ start: 1, end: 2, holdUntil: 9 }, 2.1), 9);
+  assert.equal(holdEnd({ start: 1, end: 2, holdUntil: 9 }, Infinity), 9);
+  assert.equal(holdEnd({ start: 1, end: 2, holdUntil: 1.02 }, 5), 1.1);
+  assert.equal(holdEnd({ start: 1, end: 2, holdUntil: NaN }, 5), 4.95, "a non-finite holdUntil is ignored");
+});

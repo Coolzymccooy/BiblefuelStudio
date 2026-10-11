@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { buildAss, phrasesFrom } from "./ass.js";
 import { studioCaptionFilter } from "./filter.js";
 import { EFFECT_IDS } from "./director.js";
@@ -126,4 +127,55 @@ test("a title card is skipped when the first lyric starts too soon, and the firs
   assert.ok(events.length > 0);
   assert.ok(!events.some((l) => /^Dialogue: 2,0:00:00\.00,/.test(l)), "no layer-2 event at 0:00:00.00");
   assert.ok(!events.some((l) => l.includes("MORNING")), "the title text is not drawn");
+});
+
+const sha = (text) => createHash("sha256").update(text).digest("hex");
+const GOLDEN_LINES = [
+  { text: "Be still, and know that I am God:", start: 2, end: 6.5 },
+  { text: "I will be exalted among the heathen, I will be exalted in the earth.", start: 6.5, end: 12 },
+  { text: "The LORD of hosts is with us", start: 14, end: 17 },
+];
+
+test("lines without reveal or holdUntil give byte-identical ASS to before those options existed", () => {
+  // Hashes taken from the engine before `reveal`/`holdUntil` were added.
+  const make = (energy, lines) => buildAss({ lines, w: 1080, h: 1920, look: "studio-gospel-gold", energy, seed: 3 });
+  assert.equal(sha(make("calm", GOLDEN_LINES)), "46274ddb5da76a1fa02f52304b6a7350c1ab6c3866d1b8cae605469aac41ba16");
+  assert.equal(sha(make("wild", GOLDEN_LINES)), "254267f654ef7788d3d0ecf6beb0a9551869b8589dd6743dfbb30f4bbcea4540");
+  const explicitlyUnset = GOLDEN_LINES.map((l) => ({ ...l, reveal: undefined, holdUntil: undefined }));
+  assert.equal(make("calm", explicitlyUnset), make("calm", GOLDEN_LINES));
+});
+
+test("reveal spreads a line's words over min(reveal, line length) from its start", () => {
+  const text = "one two three four five six seven eight nine ten";
+  const [p] = phrasesFrom({ lines: [{ text, start: 10, end: 70, reveal: 4 }] });
+  assert.equal(p.start, 10);
+  assert.equal(p.end, 70, "the phrase keeps the line's own window");
+  assert.equal(p.words[0].start, 10);
+  assert.ok(p.words[9].start < 14 && p.words[9].start > 13, `last word lands inside the reveal, at ${p.words[9].start}`);
+  assert.ok(p.words.every((w) => w.end <= 14.001));
+  const [short] = phrasesFrom({ lines: [{ text, start: 0, end: 2, reveal: 30 }] });
+  assert.ok(short.words[9].start < 2, "a reveal longer than the line is capped at the line");
+  for (const reveal of [0, -1, NaN, Infinity, "3", null]) {
+    const [plain] = phrasesFrom({ lines: [{ text, start: 0, end: 10, reveal }] });
+    assert.equal(plain.words[5].start, 5, `reveal ${String(reveal)} is ignored`);
+  }
+});
+
+test("holdUntil pins where every drawn event of a line ends", () => {
+  const lines = [
+    { text: "Be still, and know that I am God:", start: 0, end: 60, reveal: 3, holdUntil: 60 },
+    { text: "I will be exalted among the heathen", start: 60, end: 120, reveal: 3, holdUntil: 120 },
+  ];
+  for (const energy of ["calm", "lively"]) {
+    for (const seed of [1, 2, 3, 4]) {
+      const ass = buildAss({ lines, w: 1080, h: 1920, look: "studio-gospel-gold", energy, seed });
+      const drawn = dialogue(ass).filter((l) => !l.includes("\p1"));
+      assert.ok(drawn.length >= 2);
+      for (const l of drawn) {
+        const [, start, end] = l.split(",");
+        const pinned = stampSeconds(start) < 60 ? 60 : 120;
+        assert.equal(stampSeconds(end), pinned, `${energy}/${seed}: ${l.slice(0, 60)}`);
+      }
+    }
+  }
 });

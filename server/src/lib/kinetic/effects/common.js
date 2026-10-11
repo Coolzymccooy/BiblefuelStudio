@@ -12,6 +12,8 @@ const TAIL = 1.2; // last phrase: hold this long after its last word
  * instrumental break does not leave a stale lyric on screen).
  */
 export function holdEnd(phrase, nextStart) {
+  // A caller that owns the window (a held page) says exactly when the phrase leaves.
+  if (Number.isFinite(phrase.holdUntil)) return Number(Math.max(phrase.holdUntil, phrase.start + 0.1).toFixed(2));
   const floor = phrase.end + MIN_HOLD;
   const ceiling = Number.isFinite(nextStart)
     ? Math.min(nextStart - GAP, phrase.end + MAX_HOLD)
