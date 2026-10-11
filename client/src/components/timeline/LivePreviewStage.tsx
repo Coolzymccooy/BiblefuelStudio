@@ -7,6 +7,7 @@ import {
   type PreviewBackground,
 } from '../../lib/livePreview';
 import { api } from '../../lib/api';
+import { isStudioLook } from '../../lib/studioCaptions';
 
 /**
  * Live preview of the cut, composited in the browser.
@@ -209,6 +210,16 @@ export function LivePreviewStage({
       <p className="text-[10px] text-editor-faint short:hidden">
         Live preview · approximate. Transitions and glow appear in the render.
       </p>
+      {isStudioLook(captionStyle?.preset) && (
+        // Studio looks are drawn by the server's libass engine; the browser
+        // shows the plain caption only, so say so.
+        <span
+          className="rounded-full border border-white/15 px-2 py-0.5 text-[10px] text-editor-faint"
+          data-testid="studio-preview-badge"
+        >
+          Studio effects appear in the render
+        </span>
+      )}
     </div>
   );
 }

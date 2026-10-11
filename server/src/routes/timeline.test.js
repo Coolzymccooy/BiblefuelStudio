@@ -39,6 +39,37 @@ function projectWithClip() {
 describe('timeline route', () => {
   beforeEach(() => _resetTimelineRenderJobsForTest());
 
+  test('POST /render forwards a Studio look, energy and seed to the renderer unmapped', async () => {
+    let seen;
+    _setTimelineRendererForTest(async (_plan, opts) => {
+      seen = opts;
+      return { ok: true, outputPath: 'C:/tmp/x.mp4', publicUrl: '/outputs/timeline/x.mp4', ignoredPlaceholders: 0, generatedVoiceovers: [] };
+    });
+    await request(app())
+      .post('/api/timeline/render')
+      .send({ project: projectWithClip(), typographyPreset: 'studio-gospel-gold', captionEnergy: 'wild', captionSeed: 42 })
+      .expect(202);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.equal(seen.typographyPreset, 'studio-gospel-gold');
+    assert.equal(seen.captionEnergy, 'wild');
+    assert.equal(seen.captionSeed, 42);
+  });
+
+  test('POST /render falls back to the project renderSettings for energy and seed', async () => {
+    let seen;
+    _setTimelineRendererForTest(async (_plan, opts) => {
+      seen = opts;
+      return { ok: true, outputPath: 'C:/tmp/x.mp4', publicUrl: '/outputs/timeline/x.mp4', ignoredPlaceholders: 0, generatedVoiceovers: [] };
+    });
+    const project = projectWithClip();
+    project.renderSettings = { ...project.renderSettings, typographyPreset: 'studio-clean-white', captionEnergy: 'lively', captionSeed: 7 };
+    await request(app()).post('/api/timeline/render').send({ project }).expect(202);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.equal(seen.typographyPreset, 'studio-clean-white');
+    assert.equal(seen.captionEnergy, 'lively');
+    assert.equal(seen.captionSeed, 7);
+  });
+
   test('POST /render rejects invalid timeline payload', async () => {
     const res = await request(app()).post('/api/timeline/render').send({ project: { id: 'bad', title: 'Bad' } }).expect(400);
     assert.equal(res.body.ok, false);

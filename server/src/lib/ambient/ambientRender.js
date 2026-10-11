@@ -7,6 +7,10 @@ import { escapeFontPath, fontFileFor } from "../videoFilters.js";
 import { captionPages, balanceLines, pageWindows } from "./captionPages.js";
 import { videoCodecArgs } from "./encoders.js";
 import { logoOverlay } from "../branding.js";
+import { isStudioLook, resolveEnergy } from "../kinetic/looks.js";
+import { studioCaptionFilter } from "../kinetic/filter.js";
+import { hasLibass } from "../kinetic/capability.js";
+import { SEED_MAX } from "../kinetic/renderCaptions.js";
 
 /**
  * Ambient render — one ffmpeg pass producing a music-first scripture video.
@@ -40,6 +44,18 @@ const CAPTION_FADE_SEC = MOVEMENT_TRANSITION_SEC;
 const CAPTION_SIZE = 0.039;
 /** The reference line under a verse, relative to the verse's size. */
 const REFERENCE_SCALE = 0.64;
+/** Under Studio the reference reads beside 53-150 px phrases, so it is larger than the classic 0.64. */
+const STUDIO_REFERENCE_SCALE = 1.1;
+/**
+ * Longest Studio page. The serif pages run about twice this (two lines of ~45
+ * characters), but the engine fits a long phrase by shrinking it toward the
+ * serif's size; cut near its own 28-character / five-word phrases, a verse
+ * keeps the big hand-lettered look. Windows are shared out across the extra
+ * pages by pageWindows, which never drops a word.
+ */
+const STUDIO_PAGE_CHARS = 36;
+/** Reading pace for a held Studio page: seconds each word takes to appear. */
+const REVEAL_SEC_PER_WORD = 0.4;
 /** Longest comfortable line, whatever the width allows. */
 const MAX_LINE_CHARS = 70;
 /** Under one frame at 24 fps: the gap between one page and the next. */
@@ -123,61 +139,97 @@ function referenceLine(drop, project) {
 }
 
 /**
+ * What is said and when: for each voiced drop, its window, its reference line
+ * and its pages with their windows. The serif drawtext captions and the Studio
+ * (libass) captions both draw from this one plan, so their timings cannot
+ * drift apart.
+ */
+function captionPlan({ project, voiced, movements, width, height, pageChars }) {
+  const span = project?.captionSpan === "section" ? "section" : "spoken";
+  const metrics = captionMetrics(width, height);
+  const drops = [];
+  voiced.forEach((d, i) => {
+    if (!d.text) return;
+    const win = captionWindow(d, span, movements);
+    if (!win) return;
+    const reference = span === "section" ? referenceLine(d, project) : "";
+    const pages = captionPages(d, pageChars ?? metrics.pageChars);
+    const windows = pageWindows(win.start, win.end, pages, { minSec: span === "spoken" ? 0 : undefined });
+    drops.push({
+      i,
+      win,
+      reference,
+      pages: windows.map((pw, k) => ({
+        text: pages[k],
+        start: pw.start,
+        // between() is inclusive at both ends: a page ends a frame early so two
+        // pages are never drawn over each other at the change.
+        end: k < windows.length - 1 ? pw.end - PAGE_GAP_SEC : pw.end,
+      })),
+    });
+  });
+  return { metrics, drops };
+}
+
+/**
+ * The look shared by every drawtext line: a bundled serif rather than ffmpeg's
+ * default monospace (the single thing that most makes burned scripture read as
+ * machine output; the font ships in the repo so it exists on the server), and
+ * a soft shadow plus a hairline outline in place of a box.
+ */
+function drawtextStyle(size) {
+  const fontPath = fontFileFor({ fontFamily: "serif" });
+  return {
+    fontArg: fontPath ? `:fontfile='${escapeFontPath(fontPath)}'` : "",
+    shadow: Math.max(1, Math.round(size / 21)),
+    // A hairline keeps white text off a bright sky or sunlit ground without
+    // a box; the small reference line gets the same, so it is not the one
+    // that disappears.
+    outline: Math.max(1, Math.round(size / 28)),
+  };
+}
+
+/** One drawtext line, its text written to `file` (textfile= sidesteps quoting). */
+function drawtextLine({ file, text, fontSize, y, win, colour, style }) {
+  fs.writeFileSync(file, text, "utf8");
+  // escapeFontPath, not a plain slash swap: a bare drive colon ends the
+  // drawtext option and ffmpeg rejects the whole filtergraph.
+  return (
+    // expansion=none: scripture is drawn exactly as written; with it on,
+    // a "%" or "\" in the text is read as a drawtext command.
+    `drawtext=textfile='${escapeFontPath(file)}'${style.fontArg}:expansion=none:` +
+    `fontcolor=${colour}:fontsize=${fontSize}:` +
+    `shadowcolor=black@0.6:shadowx=0:shadowy=${style.shadow}:borderw=${style.outline}:bordercolor=black@0.3:` +
+    `x=(w-text_w)/2:y=${y}:` +
+    `enable='between(t,${win.start.toFixed(2)},${win.end.toFixed(2)})'` +
+    (win.fade ? fadeAlpha(win.start, win.end) : "")
+  );
+}
+
+/**
  * One drawtext per line (see the note at the call site). A drop's passage is
  * shown a page at a time — a verse, on at most two balanced lines — and the
  * pages take turns across the drop's window. White text on a soft shadow and
  * a faint outline, no boxes: per-line boxes of different widths read as a
  * stack of highlighter strips over the picture.
  */
-function captionFilters({ project, voiced, movements, width, height, workDir }) {
-  // A bundled serif rather than ffmpeg's default monospace. The monospace
-  // default is the single thing that most makes burned scripture read as
-  // machine output; the font ships in the repo so it exists on the server.
-  const fontPath = fontFileFor({ fontFamily: "serif" });
-  const fontArg = fontPath ? `:fontfile='${escapeFontPath(fontPath)}'` : "";
-  const span = project?.captionSpan === "section" ? "section" : "spoken";
+function captionFilters({ project, plan, width, height, workDir }) {
   const centred = project?.captionPosition === "centre";
-  const { size, lineChars, pageChars } = captionMetrics(width, height);
+  const { size, lineChars } = plan.metrics;
   const lineHeight = Math.round(size * CAPTION_LINE_HEIGHT);
   const refSize = Math.round(size * REFERENCE_SCALE);
-  const shadow = Math.max(1, Math.round(size / 21));
-  // A hairline keeps white text off a bright sky or sunlit ground without
-  // a box; the small reference line gets the same, so it is not the one
-  // that disappears.
-  const outline = Math.max(1, Math.round(size / 28));
+  const style = drawtextStyle(size);
   const drawn = [];
 
   const line = (name, text, fontSize, y, win, colour) => {
-    const file = path.join(workDir, `caption-${name}.txt`);
-    fs.writeFileSync(file, text, "utf8");
-    // escapeFontPath, not a plain slash swap: a bare drive colon ends the
-    // drawtext option and ffmpeg rejects the whole filtergraph.
-    drawn.push(
-      // expansion=none: scripture is drawn exactly as written; with it on,
-      // a "%" or "\" in the text is read as a drawtext command.
-      `drawtext=textfile='${escapeFontPath(file)}'${fontArg}:expansion=none:` +
-      `fontcolor=${colour}:fontsize=${fontSize}:` +
-      `shadowcolor=black@0.6:shadowx=0:shadowy=${shadow}:borderw=${outline}:bordercolor=black@0.3:` +
-      `x=(w-text_w)/2:y=${y}:` +
-      `enable='between(t,${win.start.toFixed(2)},${win.end.toFixed(2)})'` +
-      (win.fade ? fadeAlpha(win.start, win.end) : ""),
-    );
+    drawn.push(drawtextLine({ file: path.join(workDir, `caption-${name}.txt`), text, fontSize, y, win, colour, style }));
   };
 
-  voiced.forEach((d, i) => {
-    if (!d.text) return;
-    const win = captionWindow(d, span, movements);
-    if (!win) return;
-    const reference = span === "section" ? referenceLine(d, project) : "";
+  plan.drops.forEach(({ i, win, reference, pages }) => {
     const refGap = reference ? Math.round(size * 0.55) : 0;
-    const pages = captionPages(d, pageChars);
-    const windows = pageWindows(win.start, win.end, pages, { minSec: span === "spoken" ? 0 : undefined });
-    windows.forEach((pw, k) => {
-      // between() is inclusive at both ends: a page ends a frame early so two
-      // pages are never drawn over each other at the change.
-      const end = k < windows.length - 1 ? pw.end - PAGE_GAP_SEC : pw.end;
-      const pageWin = { start: pw.start, end, fade: win.fade };
-      const lines = balanceLines(pages[k], lineChars);
+    pages.forEach((page, k) => {
+      const pageWin = { start: page.start, end: page.end, fade: win.fade };
+      const lines = balanceLines(page.text, lineChars);
       const blockHeight = lines.length * lineHeight + (reference ? refGap + refSize : 0);
       // Low in the frame by default, clear of the bottom edge; centre sits
       // the block mid-frame.
@@ -191,6 +243,85 @@ function captionFilters({ project, voiced, movements, width, height, workDir }) 
     });
   });
   return drawn;
+}
+
+// The caption engine, swappable so a test can make it throw.
+let studioEngine = studioCaptionFilter;
+/** Replace (or with undefined, restore) the engine. Tests only. */
+export function _setStudioEngineForTest(fn) {
+  studioEngine = fn ?? studioCaptionFilter;
+}
+
+/** A stable 31-bit seed from a string (FNV-1a), so an old project never reshuffles. */
+function seedFromId(id) {
+  let h = 0x811c9dc5;
+  for (const ch of String(id ?? "")) {
+    h ^= ch.codePointAt(0);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0) & SEED_MAX;
+}
+
+/** The project's stored seed, else one derived from its id. Never random here. */
+function studioSeed(project) {
+  const seed = project?.captionSeed;
+  return Number.isInteger(seed) && seed >= 0 && seed <= SEED_MAX ? seed : seedFromId(project?.projectId);
+}
+
+/**
+ * Studio effects captions: the pages go to the libass engine as timed lines,
+ * and the reference line stays a drawtext (the engine draws phrases, not
+ * citations) chained after the `ass` filter. Returns the filter chain, or
+ * null when this render should use the serif captions instead (no libass, the
+ * engine or the .ass write failed, or there was nothing to draw).
+ *
+ * `captionPosition` is deliberately ignored: the director places Studio
+ * phrases itself.
+ */
+function studioFilters({ project, plan, width, height, workDir }) {
+  try {
+    // A page is held for its whole window, minutes long in section span. The
+    // engine would spread its words over all of it and hold the last phrase past
+    // it, so each page asks for a reading-pace reveal and to leave exactly at
+    // its page end (no overlap with the next page, no hang into the next movement).
+    const lines = plan.drops.flatMap((d) => d.pages.map((p) => ({
+      text: p.text,
+      start: p.start,
+      end: p.end,
+      reveal: Math.min(p.end - p.start, REVEAL_SEC_PER_WORD * p.text.split(/\s+/).filter(Boolean).length),
+      holdUntil: p.end,
+    })));
+    const built = studioEngine({
+      assPath: path.join(workDir, "captions.ass"),
+      lines,
+      w: width,
+      h: height,
+      look: project.captionPreset,
+      energy: resolveEnergy(project.captionEnergy, "calm"),
+      seed: studioSeed(project),
+    });
+    if (!built.filter) return null;
+    // A fixed name: the AMF attempt and its CPU retry rewrite the same file.
+    for (const f of built.sideFiles) fs.writeFileSync(f.path, f.text, "utf8");
+
+    // Safe area: 9:16 platforms cover the bottom 18% with their own chrome.
+    const { size } = plan.metrics;
+    const refSize = Math.round(size * STUDIO_REFERENCE_SCALE);
+    const refY = Math.round(height * (height > width ? 0.82 : CAPTION_BOTTOM) - refSize);
+    const style = drawtextStyle(size);
+    const references = plan.drops
+      .filter((d) => d.reference)
+      .map((d) => drawtextLine({
+        file: path.join(workDir, `reference-${d.i}.txt`),
+        text: d.reference, fontSize: refSize, y: refY, win: d.win, colour: "white@0.88", style,
+      }));
+    return [built.filter, ...references].join(",");
+  } catch (err) {
+    // An engine or file error must never fail a render: the serif captions
+    // take over, exactly as they draw without a Studio look.
+    console.warn(`[CAPTIONS] studio fallback: ${err?.message || err}`);
+    return null;
+  }
 }
 
 /**
@@ -267,7 +398,16 @@ export function buildAmbientFfmpegArgs(project, { bedPath, images, drops, outPat
   //      against its own height.
   let captionIn = videoOut;
   if (project?.captions && project.captions !== "none" && workDir) {
-    const drawn = captionFilters({ project, voiced, movements, width, height, workDir });
+    // A Studio look draws with libass, on pages cut for the engine; everything
+    // else, and any Studio failure, is today's serif drawtext on its own pages.
+    const studio = isStudioLook(project.captionPreset) && hasLibass()
+      ? studioFilters({
+        project, plan: captionPlan({ project, voiced, movements, width, height, pageChars: STUDIO_PAGE_CHARS }), width, height, workDir,
+      })
+      : null;
+    const drawn = studio
+      ? [studio]
+      : captionFilters({ project, plan: captionPlan({ project, voiced, movements, width, height }), width, height, workDir });
     if (drawn.length > 0) {
       parts.push(`${captionIn}${drawn.join(",")}[vout]`);
       captionIn = "[vout]";

@@ -189,3 +189,31 @@ test("Gospel Gold's body is set larger and in bold italic so it reads like the m
   const goldPop = pop(ctx(planned("Fear thou not", "pop"), { look: resolveLook("studio-gospel-gold") }));
   assert.match(goldPop[0], /\\b1\\i1/);
 });
+
+test("holdEnd honours an explicit holdUntil over the hold rules", () => {
+  assert.equal(holdEnd({ start: 1, end: 2, holdUntil: 9 }, 2.1), 9);
+  assert.equal(holdEnd({ start: 1, end: 2, holdUntil: 9 }, Infinity), 9);
+  assert.equal(holdEnd({ start: 1, end: 2, holdUntil: 1.02 }, 5), 1.1);
+  assert.equal(holdEnd({ start: 1, end: 2, holdUntil: NaN }, 5), 4.95, "a non-finite holdUntil is ignored");
+});
+
+// A phrase that must leave at a fixed time (a Timeline clip's end) takes its
+// sparks with it: they would otherwise fire on into the next clip.
+const endSec = (line) => line.split(",")[2].split(":").reduce((a, p) => a * 60 + Number(p), 0);
+test("slam sparks never outlast a phrase's holdUntil", () => {
+  const p = planned("I still dey", "slam");
+  const last = p.phrase.words[p.phrase.words.length - 1].start;
+  p.phrase = { ...p.phrase, holdUntil: last + 0.2 };
+  const lines = slam(ctx(p));
+  const sparks = lines.filter((l) => l.includes("\\p1"));
+  assert.equal(sparks.length, 1, "the sparks still fire");
+  for (const l of lines) assert.ok(endSec(l) <= last + 0.2 + 0.005, `an event ends at ${endSec(l)} s, after the hold ${last + 0.2} s`);
+});
+
+test("slam sparks with no holdUntil keep their full 0.45 s burst", () => {
+  const p = planned("I still dey", "slam");
+  const last = p.phrase.words[p.phrase.words.length - 1].start;
+  const sparks = slam(ctx(p)).filter((l) => l.includes("\\p1"));
+  assert.equal(sparks.length, 1);
+  assert.ok(Math.abs(endSec(sparks[0]) - (last + 0.45)) < 0.011, `sparks end at ${endSec(sparks[0])}`);
+});

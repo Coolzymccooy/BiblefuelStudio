@@ -1,11 +1,17 @@
-import { describe, test } from 'node:test';
+import { describe, test, afterEach, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'path';
+import fs from 'fs';
+import os from 'os';
 import {
   buildProofRenderCommand,
   prepareVoiceoverAssets,
+  renderTimelineProof,
   resolveTimelineAssetPath,
 } from './proofRenderer.js';
+import { _setLibassForTest } from '../kinetic/capability.js';
+import { resolveLook } from '../kinetic/looks.js';
+import { _clearFontCache } from '../fontMetrics.js';
 
 function plan() {
   return {
@@ -358,4 +364,261 @@ test('timeline captions honour caption motion and text layout', () => {
   const block = graphOf({ captionMotion: 'block' });
   assert.notEqual(block, plain, 'line-block motion renders differently');
   assert.doesNotMatch(block, /\[object Object\]/);
+});
+
+// ── Studio effects (libass) captions ──
+
+const filterOf = (cmd) => cmd.args[cmd.args.indexOf('-filter_complex') + 1];
+
+describe('Studio effects captions', () => {
+  afterEach(() => _setLibassForTest(undefined));
+
+  test('with libass, a Studio look draws an ass filter timed to the clips and writes no drawtext', () => {
+    _setLibassForTest(true);
+    const cmd = buildProofRenderCommand(richPlan(), { ...richOpts, typographyPreset: 'studio-lagos-night', captionEnergy: 'calm', captionSeed: 7 });
+    assert.equal(cmd.ok, true);
+    const graph = filterOf(cmd);
+    assert.match(graph, /ass=filename='[^']*captions-rich\.ass':fontsdir=/);
+    assert.doesNotMatch(graph, /drawtext/);
+    assert.match(graph, /\[vtxt\]/);
+    assert.equal(cmd.sideFiles.length, 1);
+    assert.equal(cmd.sideFiles[0].path, path.join(path.dirname(cmd.outputPath), 'captions-rich.ass'));
+    assert.match(cmd.sideFiles[0].text, /Dialogue: [^,]*,0:00:01\.00,/, 'first clip starts at 1 s');
+    assert.match(cmd.sideFiles[0].text, /Dialogue: [^,]*,0:00:08\.00,/, 'second clip starts at 8 s');
+  });
+
+  test('caption text reaches the engine as typed, so the look decides casing', () => {
+    _setLibassForTest(true);
+    // gospel-gold is not an uppercase look: the clip's own casing must survive.
+    const cmd = buildProofRenderCommand(richPlan(), { ...richOpts, typographyPreset: 'studio-gospel-gold', captionSeed: 3 });
+    assert.match(cmd.sideFiles[0].text, /Welcome/);
+    assert.doesNotMatch(cmd.sideFiles[0].text, /WELCOME/);
+  });
+
+  test('energy changes the ASS and the same seed repeats it', () => {
+    _setLibassForTest(true);
+    const build = (captionEnergy, captionSeed) => buildProofRenderCommand(richPlan(), { ...richOpts, typographyPreset: 'studio-gospel-gold', captionEnergy, captionSeed }).sideFiles[0].text;
+    assert.notEqual(build('wild', 5), build('calm', 5));
+    assert.equal(build('wild', 5), build('wild', 5));
+  });
+
+  test('an unknown energy is treated as calm', () => {
+    _setLibassForTest(true);
+    const build = (captionEnergy) => buildProofRenderCommand(richPlan(), { ...richOpts, typographyPreset: 'studio-gospel-gold', captionEnergy, captionSeed: 5 }).sideFiles[0].text;
+    assert.equal(build('bogus'), build('calm'));
+  });
+
+  test('without libass, a Studio look renders as its fallback preset and sideFiles is empty', () => {
+    _setLibassForTest(false);
+    const fallback = resolveLook('studio-lagos-night').fallbackPreset;
+    const studio = buildProofRenderCommand(richPlan(), { ...richOpts, typographyPreset: 'studio-lagos-night', captionEnergy: 'wild', captionSeed: 9 });
+    const direct = buildProofRenderCommand(richPlan(), { ...richOpts, typographyPreset: fallback });
+    assert.match(filterOf(studio), /drawtext/);
+    assert.doesNotMatch(filterOf(studio), /ass=filename/);
+    assert.equal(filterOf(studio), filterOf(direct));
+    assert.deepEqual(studio.sideFiles, []);
+  });
+
+  test('a non-Studio preset is unchanged and has no side files', () => {
+    _setLibassForTest(true);
+    const cmd = buildProofRenderCommand(richPlan(), { ...richOpts, typographyPreset: 'soft-glow', captionEnergy: 'wild', captionSeed: 9 });
+    assert.match(filterOf(cmd), /drawtext/);
+    assert.deepEqual(cmd.sideFiles, []);
+    const plain = buildProofRenderCommand(richPlan(), richOpts);
+    assert.deepEqual(plain.sideFiles, []);
+  });
+
+  test('an engine error (unreadable font) logs and falls back to the drawtext preset of the look', (t) => {
+    _setLibassForTest(true);
+    _clearFontCache();
+    const warn = t.mock.method(console, 'warn', () => {});
+    const realRead = fs.readFileSync;
+    let thrown = false;
+    // Fail the engine's first font read only; the drawtext fallback measures
+    // text with the same fonts and must still be able to read them.
+    t.mock.method(fs, 'readFileSync', (file, ...rest) => {
+      if (!thrown && /\.(ttf|otf)$/i.test(String(file))) { thrown = true; throw new Error('font unreadable'); }
+      return realRead(file, ...rest);
+    });
+    const cmd = buildProofRenderCommand(richPlan(), { ...richOpts, typographyPreset: 'studio-lagos-night', captionSeed: 2 });
+    t.mock.restoreAll();
+    _clearFontCache();
+    assert.equal(cmd.ok, true);
+    assert.match(filterOf(cmd), /drawtext/);
+    assert.doesNotMatch(filterOf(cmd), /ass=filename/);
+    assert.deepEqual(cmd.sideFiles, []);
+    const direct = buildProofRenderCommand(richPlan(), { ...richOpts, typographyPreset: resolveLook('studio-lagos-night').fallbackPreset });
+    assert.equal(filterOf(cmd), filterOf(direct));
+    assert.ok(warn.mock.calls.some((c) => /\[CAPTIONS\] studio fallback: font unreadable/.test(String(c.arguments[0]))));
+  });
+
+  // A Timeline caption is usually a whole script sentence. The engine lays out
+  // a phrase word by word, so a long clip must be cut into short phrases inside
+  // its own window or the lines run off the frame and linger past the clip.
+  const LONG_TEXT = 'In the beginning the earth was without form, and void; and darkness was upon the face of the deep.';
+  const GAP_PLAN_CLIPS = [
+    { id: 'g1', text: LONG_TEXT, startSec: 1, durationSec: 6 },
+    { id: 'g2', text: 'And God said, Let there be light: and there was light.', startSec: 13, durationSec: 4 },
+  ];
+  const planWithCaptions = (aspect, clips) => ({
+    projectId: 'timeline-long',
+    aspect,
+    durationSec: 30,
+    tracks: [
+      { kind: 'video', clips: [{ id: 'main', path: 'uploads/main.mp4', startSec: 0, durationSec: 30 }] },
+      { kind: 'captions', clips },
+    ],
+  });
+  const toSec = (stamp) => {
+    const [h, m, s] = stamp.split(':').map(Number);
+    return h * 3600 + m * 60 + s;
+  };
+  // Every text Dialogue (the \p1 spark shapes are drawings, not words).
+  const dialogues = (ass) => ass.split('\n')
+    .filter((l) => l.startsWith('Dialogue:') && !l.includes('\\p1'))
+    .map((l) => {
+      const [, start, end] = /^Dialogue: \d+,([\d:.]+),([\d:.]+),/.exec(l);
+      const at = /\\(?:pos|move)\((-?[\d.]+),(-?[\d.]+)/.exec(l);
+      const size = /\\fs(\d+)/.exec(l);
+      return { start: toSec(start), end: toSec(end), y: at ? Number(at[2]) : null, fs: size ? Number(size[1]) : null };
+    });
+  const LOOKS = ['studio-lagos-night', 'studio-gospel-gold', 'studio-clean-white'];
+
+  test('a long clip is cut into several short phrases that all fall inside the clip window', () => {
+    _setLibassForTest(true);
+    const cmd = buildProofRenderCommand(planWithCaptions('16:9', GAP_PLAN_CLIPS), { ...richOpts, typographyPreset: 'studio-clean-white', captionSeed: 1 });
+    const events = dialogues(cmd.sideFiles[0].text);
+    const first = events.filter((e) => e.start >= 1 && e.start < 10);
+    // The words of one phrase leave together, so each distinct end is one phrase.
+    const phrases = new Set(first.map((e) => e.end));
+    assert.ok(phrases.size >= 3, `the 98-char clip became several phrases (got ${phrases.size})`);
+    assert.ok(first.every((e) => e.start >= 1 - 0.01 && e.end <= 7 + 0.01), 'every phrase sits inside the clip window');
+  });
+
+  test('no caption outlives its clip, so none overlaps the next clip or the gap', () => {
+    _setLibassForTest(true);
+    for (const look of LOOKS) {
+      const cmd = buildProofRenderCommand(planWithCaptions('16:9', GAP_PLAN_CLIPS), { ...richOpts, typographyPreset: look, captionSeed: 1 });
+      const events = dialogues(cmd.sideFiles[0].text);
+      const inFirst = events.filter((e) => e.start < 10);
+      const inSecond = events.filter((e) => e.start >= 10);
+      assert.ok(inFirst.length > 0 && inSecond.length > 0, `${look}: both clips drew`);
+      for (const e of inFirst) assert.ok(e.end <= 7 + 0.01, `${look}: clip 1 ends at 7 s but a caption runs to ${e.end}`);
+      for (const e of inSecond) {
+        assert.ok(e.start >= 13 - 0.01, `${look}: clip 2 caption starts at ${e.start}`);
+        assert.ok(e.end <= 17 + 0.01, `${look}: clip 2 ends at 17 s but a caption runs to ${e.end}`);
+      }
+    }
+  });
+
+  test('a short clip keeps its start and its end', () => {
+    _setLibassForTest(true);
+    const cmd = buildProofRenderCommand(
+      planWithCaptions('16:9', [{ id: 's', text: 'Peace be still', startSec: 2, durationSec: 3 }]),
+      { ...richOpts, typographyPreset: 'studio-clean-white', captionSeed: 1 },
+    );
+    const events = dialogues(cmd.sideFiles[0].text);
+    assert.ok(events.length > 0);
+    assert.ok(Math.abs(Math.min(...events.map((e) => e.start)) - 2) < 0.01);
+    assert.ok(Math.abs(Math.max(...events.map((e) => e.end)) - 5) < 0.01);
+  });
+
+  for (const [aspect, frameH] of [['16:9', 720], ['9:16', 1280]]) {
+    test(`every word of a long clip stays on the ${aspect} frame, for every look, energy and seed`, () => {
+      _setLibassForTest(true);
+      let checked = 0;
+      for (const look of ['studio-lagos-night', 'studio-gospel-gold', 'studio-clean-white']) {
+        for (const captionEnergy of ['calm', 'lively', 'wild']) {
+          for (const captionSeed of [1, 2, 3, 4, 5, 6]) {
+            const cmd = buildProofRenderCommand(
+              planWithCaptions(aspect, [{ id: 'l', text: LONG_TEXT, startSec: 0.5, durationSec: 6 }]),
+              { ...richOpts, typographyPreset: look, captionEnergy, captionSeed },
+            );
+            for (const e of dialogues(cmd.sideFiles[0].text)) {
+              if (e.y === null || e.fs === null) continue;
+              checked += 1;
+              assert.ok(e.y - e.fs / 2 >= 0 && e.y + e.fs / 2 <= frameH, `${look}/${captionEnergy}/${captionSeed}: word at y=${e.y} (fs ${e.fs}) leaves the ${frameH}px frame`);
+            }
+          }
+        }
+      }
+      assert.ok(checked > 100, `the check saw real events (${checked})`);
+    });
+  }
+
+  test('a Studio look on a plan with no captions yields no side files', () => {
+    _setLibassForTest(true);
+    const noCaps = richPlan();
+    noCaps.tracks = noCaps.tracks.filter((t) => t.kind !== 'captions');
+    const cmd = buildProofRenderCommand(noCaps, { ...richOpts, typographyPreset: 'studio-lagos-night', captionSeed: 1 });
+    assert.equal(cmd.ok, true);
+    assert.deepEqual(cmd.sideFiles, []);
+    assert.doesNotMatch(filterOf(cmd), /ass=filename/);
+  });
+});
+
+describe('renderTimelineProof — Studio side files', () => {
+  let dir;
+  beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'timeline-studio-')); });
+  afterEach(() => {
+    _setLibassForTest(undefined);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  const opts = (extra = {}) => ({
+    outputPath: path.join(dir, 'timeline', 'job1.mp4'),
+    serverRoot: path.resolve('/tmp/biblefuel-server'),
+    outputDir: dir,
+    typographyPreset: 'studio-clean-white',
+    captionSeed: 4,
+    ...extra,
+  });
+  const assIn = (d) => (fs.existsSync(d) ? fs.readdirSync(d).filter((f) => f.endsWith('.ass')) : []);
+
+  test('the .ass exists while ffmpeg runs and is gone afterwards', async () => {
+    _setLibassForTest(true);
+    let seen = null;
+    const runner = async (args) => {
+      seen = assIn(path.join(dir, 'timeline'));
+      assert.match(args.join(' '), /ass=filename/);
+      return { ok: true, stderr: '' };
+    };
+    const result = await renderTimelineProof(richPlan(), opts({ runner }));
+    assert.equal(result.ok, true);
+    assert.deepEqual(seen, ['captions-job1.ass']);
+    assert.deepEqual(assIn(path.join(dir, 'timeline')), []);
+  });
+
+  test('the .ass is removed when ffmpeg fails', async () => {
+    _setLibassForTest(true);
+    const runner = async () => ({ ok: false, error: 'boom', stderr: 'boom' });
+    const result = await renderTimelineProof(richPlan(), opts({ runner }));
+    assert.equal(result.ok, false);
+    assert.deepEqual(assIn(path.join(dir, 'timeline')), []);
+  });
+
+  test('the .ass is removed when the runner throws', async () => {
+    _setLibassForTest(true);
+    const runner = async () => { throw new Error('spawn exploded'); };
+    await assert.rejects(renderTimelineProof(richPlan(), opts({ runner })), /spawn exploded/);
+    assert.deepEqual(assIn(path.join(dir, 'timeline')), []);
+  });
+
+  test('a failed .ass write logs and renders the fallback preset with drawtext', async (t) => {
+    _setLibassForTest(true);
+    const warn = t.mock.method(console, 'warn', () => {});
+    const realWrite = fs.writeFileSync;
+    t.mock.method(fs, 'writeFileSync', (file, ...rest) => {
+      if (String(file).endsWith('.ass')) throw new Error('disk full');
+      return realWrite(file, ...rest);
+    });
+    let args;
+    const runner = async (a) => { args = a; return { ok: true, stderr: '' }; };
+    const result = await renderTimelineProof(richPlan(), opts({ runner }));
+    assert.equal(result.ok, true);
+    const joined = args.join(' ');
+    assert.match(joined, /drawtext/);
+    assert.doesNotMatch(joined, /ass=filename/);
+    assert.ok(warn.mock.calls.some((c) => /\[CAPTIONS\] studio fallback: disk full/.test(String(c.arguments[0]))));
+  });
 });
