@@ -4,6 +4,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { buildAmbientFfmpegArgs, wrapText, dimsFor } from "./ambientRender.js";
+import { _setLibassForTest } from "../kinetic/capability.js";
 
 function work() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "ambient-"));
@@ -388,4 +389,170 @@ test("the graphics-chip encoder swaps only the video codec", () => {
   assert.ok(amf.includes("h264_amf"));
   assert.ok(!amf.includes("libx264"));
   assert.ok(amf.includes("yuv420p"));
+});
+
+// --- Studio effects (libass) -------------------------------------------------
+// A Studio caption look swaps the drawtext lines for an `ass` filter fed by
+// captions.ass in the work dir. Where libass is missing, or the file cannot be
+// written, the serif drawtext path above renders instead.
+const STUDIO = "studio-gospel-gold";
+const studioProject = (over = {}) => project({
+  projectId: "amb-1", captions: "static", captionSpan: "section", captionPreset: STUDIO, ...over,
+});
+const withLibass = (value, fn) => {
+  _setLibassForTest(value);
+  try { return fn(); } finally { _setLibassForTest(undefined); }
+};
+const firstDialogueStart = (assText) => assText.match(/^Dialogue: \d+,([\d:.]+),/m)?.[1];
+const assAt = (dir) => fs.readFileSync(path.join(dir, "captions.ass"), "utf8");
+const PHIL_THREE = [
+  ...PHIL,
+  "Finally, brethren, whatsoever things are true, whatsoever things are honest, whatsoever things are just, think on these things.",
+];
+
+test("Studio look: the verse is drawn by the ass filter, the reference stays drawtext", () => {
+  const dir = work();
+  const { filter } = withLibass(true, () => buildAmbientFfmpegArgs(studioProject(), io(dir, { drops: [verse()] })));
+  assert.match(filter, /ass=filename='[^']*captions\.ass'/);
+  assert.ok(!/textfile='[^']*caption-/.test(filter), "no verse line is drawn with drawtext");
+  assert.equal(filter.match(/drawtext=/g)?.length, 1, "only the reference line is drawtext");
+  assert.match(filter, /ass=[^;]*,drawtext=[^;]*\[vout\]/, "the reference is chained after the ass filter");
+  assert.deepEqual(captionTexts(filter), ["Psalms 46:1-2"]);
+  assert.match(filter, /enable='between\(t,0\.00,300\.00\)'/, "shown for the whole section");
+  assert.match(filter, /alpha='if\(/, "and fades with it");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("Studio look: captions.ass is written and starts with the first page window", () => {
+  const dir = work();
+  withLibass(true, () => buildAmbientFfmpegArgs(studioProject(), io(dir, {
+    drops: [verse({ atMs: 420_000 })],
+  })));
+  assert.ok(fs.existsSync(path.join(dir, "captions.ass")));
+  // The verse belongs to the second movement (300 s), so its first page starts there.
+  assert.equal(firstDialogueStart(assAt(dir)), "0:05:00.00");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("Studio look: the ASS timings are the drawtext path's page windows", () => {
+  const dir = work();
+  const drops = [verse({ reference: "Philippians 4:6-7", text: PHIL.join(" "), verses: PHIL })];
+  const drawn = buildAmbientFfmpegArgs(studioProject({ captionPreset: "default" }), io(dir, { drops })).filter;
+  const starts = [...new Set([...drawn.matchAll(/between\(t,([\d.]+),/g)].map((m) => Number(m[1])))];
+  assert.ok(starts.length >= 2, "two pages, two windows");
+  withLibass(true, () => buildAmbientFfmpegArgs(studioProject(), io(dir, { drops })));
+  const secs = (ts) => ts.split(":").reduce((a, p) => a * 60 + Number(p), 0);
+  const dialogue = [...assAt(dir).matchAll(/^Dialogue: \d+,([\d:.]+),/gm)].map((m) => secs(m[1]));
+  for (const s of starts) {
+    assert.ok(dialogue.some((d) => Math.abs(d - s) < 0.05), `no ASS event starts at ${s}: ${dialogue}`);
+  }
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("Studio look: a non-KJV reference names its translation", () => {
+  const dir = work();
+  const { filter } = withLibass(true, () => buildAmbientFfmpegArgs(studioProject(), io(dir, {
+    drops: [verse({ translation: "niv" })],
+  })));
+  assert.deepEqual(captionTexts(filter), ["Psalms 46:1-2 · NIV"]);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("Studio look: the reference sits inside the safe area, above the bottom 18% in portrait", () => {
+  const dir = work();
+  const { filter } = withLibass(true, () => buildAmbientFfmpegArgs(studioProject({ aspect: "portrait" }), io(dir, {
+    drops: [verse()],
+  })));
+  const y = Number(filter.match(/drawtext=[^;]*:y=(\d+):/)[1]);
+  const size = Number(filter.match(/fontsize=(\d+)/)[1]);
+  assert.ok(y + size <= 1920 * 0.82, `reference bottom ${y + size} is inside the safe area`);
+  assert.ok(y > 1920 * 0.6, "and still low in the frame");
+  assert.match(filter, /fontfile='[^']*PlayfairDisplay-BoldItalic\.ttf'/, "same serif face as the classic captions");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("Studio look in spoken span: the verse is Studio and there is no reference line", () => {
+  const dir = work();
+  const { filter } = withLibass(true, () => buildAmbientFfmpegArgs(studioProject({ captionSpan: "spoken" }), io(dir, {
+    drops: [verse()],
+  })));
+  assert.match(filter, /ass=filename=/);
+  assert.ok(!/drawtext/.test(filter));
+  assert.equal(firstDialogueStart(assAt(dir)), "0:01:00.00");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("Studio look ignores the classic caption position", () => {
+  const dir = work();
+  const build = (over) => withLibass(true, () => buildAmbientFfmpegArgs(studioProject(over), io(dir, { drops: [verse()] })).filter);
+  assert.equal(build({ captionPosition: "centre" }), build({}));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("without libass a Studio look renders the classic serif captions, unchanged", () => {
+  const dir = work();
+  const drops = [verse()];
+  const studio = withLibass(false, () => buildAmbientFfmpegArgs(studioProject(), io(dir, { drops })).filter);
+  const classic = buildAmbientFfmpegArgs(studioProject({ captionPreset: "default" }), io(dir, { drops })).filter;
+  assert.equal(studio, classic);
+  assert.ok(!/ass=/.test(studio));
+  assert.ok(!fs.existsSync(path.join(dir, "captions.ass")), "no .ass is written for the fallback");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("a non-Studio look renders classic captions even when libass is available", () => {
+  const dir = work();
+  const drops = [verse()];
+  const a = withLibass(true, () => buildAmbientFfmpegArgs(studioProject({ captionPreset: "default" }), io(dir, { drops })).filter);
+  const b = withLibass(false, () => buildAmbientFfmpegArgs(studioProject({ captionPreset: "default" }), io(dir, { drops })).filter);
+  assert.equal(a, b);
+  assert.ok(!/ass=/.test(a));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("captions off gives no ass filter even for a Studio look", () => {
+  const dir = work();
+  const { filter } = withLibass(true, () => buildAmbientFfmpegArgs(studioProject({ captions: "none" }), io(dir, { drops: [verse()] })));
+  assert.ok(!/ass=/.test(filter));
+  assert.ok(!fs.existsSync(path.join(dir, "captions.ass")));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("a failed .ass write logs and falls back to the classic captions", (t) => {
+  const dir = work();
+  // A directory where the file should go makes writeFileSync throw EISDIR.
+  fs.mkdirSync(path.join(dir, "captions.ass"));
+  const warn = t.mock.method(console, "warn", () => {});
+  const drops = [verse()];
+  const { filter } = withLibass(true, () => buildAmbientFfmpegArgs(studioProject(), io(dir, { drops })));
+  const classic = buildAmbientFfmpegArgs(studioProject({ captionPreset: "default" }), io(dir, { drops })).filter;
+  assert.equal(filter, classic);
+  assert.ok(warn.mock.calls.some((c) => /\[CAPTIONS\] studio fallback: /.test(String(c.arguments[0]))));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("Studio seed: an old project (no captionSeed) renders the same captions every time", () => {
+  const dir = work();
+  const drops = [verse({ reference: "Philippians 4", text: PHIL_THREE.join(" "), verses: PHIL_THREE })];
+  const build = (over) => withLibass(true, () => {
+    buildAmbientFfmpegArgs(studioProject({ captionEnergy: "hype", ...over }), io(dir, { drops }));
+    return assAt(dir);
+  });
+  const a = build({});
+  assert.equal(build({}), a, "same project id, same captions");
+  assert.notEqual(build({ projectId: "amb-other-project" }), a, "a different project id seeds differently");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("Studio seed: an explicit captionSeed wins over the project id", () => {
+  const dir = work();
+  const drops = [verse({ reference: "Philippians 4", text: PHIL_THREE.join(" "), verses: PHIL_THREE })];
+  const build = (over) => withLibass(true, () => {
+    buildAmbientFfmpegArgs(studioProject({ captionEnergy: "hype", ...over }), io(dir, { drops }));
+    return assAt(dir);
+  });
+  const a = build({ captionSeed: 7, projectId: "one" });
+  assert.equal(build({ captionSeed: 7, projectId: "two" }), a, "the id is ignored when a seed is stored");
+  assert.notEqual(build({ captionSeed: 8, projectId: "one" }), a, "a different seed reshuffles");
+  fs.rmSync(dir, { recursive: true, force: true });
 });
