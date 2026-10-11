@@ -84,7 +84,11 @@ export function lineEvent({ start, end, x, y, fs, family, rot = 0, pop = 135, bo
 }
 
 /** A burst of short strokes fanning upwards from (x, y) as a word lands. */
-export function sparksEvent({ x, y, at, r, colour }) {
+export function sparksEvent({ x, y, at, r, colour, until }) {
+  // A phrase that must leave at a fixed time (its holdUntil) takes its sparks
+  // with it; otherwise they burst for their full 0.45 s.
+  const end = Number.isFinite(until) ? Math.min(at + 0.45, until) : at + 0.45;
+  if (end <= at) return null;
   const strokes = [];
   for (let i = 0; i < 7; i += 1) {
     const a = ((-150 + i * 22) * Math.PI) / 180;
@@ -92,7 +96,7 @@ export function sparksEvent({ x, y, at, r, colour }) {
     const pts = [p(r, -3), p(r, 3), p(r * 1.4, 2), p(r * 1.4, -2)];
     strokes.push(`m ${pts[0].join(" ")} l ${pts[1].join(" ")} ${pts[2].join(" ")} ${pts[3].join(" ")}`);
   }
-  return `Dialogue: 1,${assTime(at)},${assTime(at + 0.45)},Kinetic,,0,0,0,,`
+  return `Dialogue: 1,${assTime(at)},${assTime(end)},Kinetic,,0,0,0,,`
     + `{\\an7\\pos(${Math.round(x)},${Math.round(y)})\\bord0\\shad0\\1c${assColour(colour)}\\fscx60\\fscy60`
     + `\\t(0,160,\\fscx115\\fscy115)\\fad(0,220)\\p1}${strokes.join(" ")}{\\p0}`;
 }

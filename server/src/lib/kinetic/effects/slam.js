@@ -27,12 +27,14 @@ export function render({ planned, look, w, h, aspect, nextStart }) {
   }));
   const lastLine = lines[lines.length - 1];
   const lastWidth = widthAt(fonts.hit.file, lastLine.map((x) => x.text).join(" "), fs);
-  events.push(sparksEvent({
+  const sparks = sparksEvent({
     x: Math.min(anchor.x * w + lastWidth / 2 - w * 0.01, sparkMaxX),
     y: y0 + (lines.length - 1) * lineGap - fs * 0.55,
     at: lastLine[lastLine.length - 1].t,
     r: sparkR,
     colour: fonts.hit.colour,
-  }));
+    until: Number.isFinite(phrase.holdUntil) ? end : undefined,
+  });
+  if (sparks) events.push(sparks);
   return events;
 }
