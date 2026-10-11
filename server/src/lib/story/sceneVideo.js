@@ -3,6 +3,7 @@ import path from "path";
 import { spawn } from "child_process";
 import { randomUUID } from "crypto";
 import { resolveOwnUpload } from "../ambient/movementImage.js";
+import { VIDEO_INPUT_FORMATS, VIDEO_INPUT_GUARD } from "../videoInputGuard.js";
 
 /**
  * A video clip of your own on a Story scene (a Pixabay download, say),
@@ -42,16 +43,13 @@ export const SCENE_VIDEO_MAX_FPS = 60;
 export const SCENE_VIDEO_MAX_CONVERTED_SEC = 60;
 
 /**
- * The only containers a scene clip may be read as. An uploaded file's bytes
- * decide its format, not its name, and some formats (an HLS playlist, a
- * concat list) make ffmpeg open other files or URLs. Holding ffprobe and
- * ffmpeg to the MP4/MOV and Matroska/WebM demuxers, and to local files,
- * rules that out. Both are input options on ffmpeg 5.1 as well.
+ * The only containers a scene clip may be read as (MP4/MOV, Matroska/WebM),
+ * and only from a local file, so a playlist or concat list dressed up as a
+ * clip is never followed. Shared with the upload thumbnail (see
+ * lib/videoInputGuard.js).
  */
-export const SCENE_VIDEO_FORMATS = "mov,mp4,m4a,3gp,3g2,mj2,matroska,webm";
-export const SCENE_VIDEO_INPUT_GUARD = Object.freeze([
-  "-format_whitelist", SCENE_VIDEO_FORMATS, "-protocol_whitelist", "file",
-]);
+export const SCENE_VIDEO_FORMATS = VIDEO_INPUT_FORMATS;
+export const SCENE_VIDEO_INPUT_GUARD = VIDEO_INPUT_GUARD;
 
 const PROBE_TIMEOUT_MS = 20_000;
 const POSTER_TIMEOUT_MS = 30_000;
