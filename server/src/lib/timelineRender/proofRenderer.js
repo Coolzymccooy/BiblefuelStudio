@@ -374,25 +374,33 @@ export function buildProofRenderCommand(plan, opts = {}) {
     let studioFilter = '';
     if (studio && hasLibass()) {
       const assPath = path.join(path.dirname(outputPath), `captions-${path.basename(outputPath, '.mp4')}.ass`);
-      const built = studioCaptionFilter({
-        assPath,
-        // Clip text goes in as typed: the look decides its own casing.
-        lines: captions.map((clip) => {
-          const start = Math.max(0, Number(clip.startSec || 0));
-          return {
-            text: String(clip.text).slice(0, MAX_CAPTION_CHARS),
-            start,
-            end: Math.max(start + 0.1, start + Number(clip.durationSec || 2)),
-          };
-        }),
-        w: width,
-        h: height,
-        look: opts.typographyPreset,
-        energy: resolveEnergy(opts.captionEnergy, 'calm'),
-        seed: normaliseSeed(opts.captionSeed),
-      });
-      studioFilter = built.filter;
-      if (studioFilter) sideFiles = built.sideFiles;
+      // The engine reads font files; a missing or corrupt one must degrade to
+      // the fallback preset below, never fail the render.
+      try {
+        const built = studioCaptionFilter({
+          assPath,
+          // Clip text goes in as typed: the look decides its own casing.
+          lines: captions.map((clip) => {
+            const start = Math.max(0, Number(clip.startSec || 0));
+            return {
+              text: String(clip.text).slice(0, MAX_CAPTION_CHARS),
+              start,
+              end: Math.max(start + 0.1, start + Number(clip.durationSec || 2)),
+            };
+          }),
+          w: width,
+          h: height,
+          look: opts.typographyPreset,
+          energy: resolveEnergy(opts.captionEnergy, 'calm'),
+          seed: normaliseSeed(opts.captionSeed),
+        });
+        studioFilter = built.filter;
+        if (studioFilter) sideFiles = built.sideFiles;
+      } catch (err) {
+        console.warn(`[CAPTIONS] studio fallback: ${err?.message || err}`);
+        studioFilter = '';
+        sideFiles = [];
+      }
     }
     if (studioFilter) {
       videoParts.push(`${videoLabel}${studioFilter}[vtxt]`);

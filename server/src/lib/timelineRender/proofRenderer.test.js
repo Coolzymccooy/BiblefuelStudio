@@ -11,6 +11,7 @@ import {
 } from './proofRenderer.js';
 import { _setLibassForTest } from '../kinetic/capability.js';
 import { resolveLook } from '../kinetic/looks.js';
+import { _clearFontCache } from '../fontMetrics.js';
 
 function plan() {
   return {
@@ -427,6 +428,30 @@ describe('Studio effects captions', () => {
     assert.deepEqual(plain.sideFiles, []);
   });
 
+  test('an engine error (unreadable font) logs and falls back to the drawtext preset of the look', (t) => {
+    _setLibassForTest(true);
+    _clearFontCache();
+    const warn = t.mock.method(console, 'warn', () => {});
+    const realRead = fs.readFileSync;
+    let thrown = false;
+    // Fail the engine's first font read only; the drawtext fallback measures
+    // text with the same fonts and must still be able to read them.
+    t.mock.method(fs, 'readFileSync', (file, ...rest) => {
+      if (!thrown && /\.(ttf|otf)$/i.test(String(file))) { thrown = true; throw new Error('font unreadable'); }
+      return realRead(file, ...rest);
+    });
+    const cmd = buildProofRenderCommand(richPlan(), { ...richOpts, typographyPreset: 'studio-lagos-night', captionSeed: 2 });
+    t.mock.restoreAll();
+    _clearFontCache();
+    assert.equal(cmd.ok, true);
+    assert.match(filterOf(cmd), /drawtext/);
+    assert.doesNotMatch(filterOf(cmd), /ass=filename/);
+    assert.deepEqual(cmd.sideFiles, []);
+    const direct = buildProofRenderCommand(richPlan(), { ...richOpts, typographyPreset: resolveLook('studio-lagos-night').fallbackPreset });
+    assert.equal(filterOf(cmd), filterOf(direct));
+    assert.ok(warn.mock.calls.some((c) => /\[CAPTIONS\] studio fallback: font unreadable/.test(String(c.arguments[0]))));
+  });
+
   test('a Studio look on a plan with no captions yields no side files', () => {
     _setLibassForTest(true);
     const noCaps = richPlan();
@@ -475,6 +500,13 @@ describe('renderTimelineProof — Studio side files', () => {
     const runner = async () => ({ ok: false, error: 'boom', stderr: 'boom' });
     const result = await renderTimelineProof(richPlan(), opts({ runner }));
     assert.equal(result.ok, false);
+    assert.deepEqual(assIn(path.join(dir, 'timeline')), []);
+  });
+
+  test('the .ass is removed when the runner throws', async () => {
+    _setLibassForTest(true);
+    const runner = async () => { throw new Error('spawn exploded'); };
+    await assert.rejects(renderTimelineProof(richPlan(), opts({ runner })), /spawn exploded/);
     assert.deepEqual(assIn(path.join(dir, 'timeline')), []);
   });
 
