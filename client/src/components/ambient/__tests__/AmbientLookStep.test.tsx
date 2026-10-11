@@ -129,6 +129,25 @@ describe('AmbientLookStep — your own pictures', () => {
   });
 });
 
+describe('AmbientLookStep — caption look', () => {
+  it('forwards a Studio look, with its seed, to the captions endpoint and refreshes', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({
+      ok: true,
+      data: { ok: true, studioLooks: [{ id: 'studio-lagos-night', label: 'Lagos Night' }], libass: true },
+    } as never);
+    const save = vi.spyOn(ambientApi, 'setScriptureDisplay').mockResolvedValue(project());
+    const { refresh } = renderStep({ ...project(), captions: 'static' });
+
+    await screen.findByRole('option', { name: 'Lagos Night' });
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Caption look' }), 'studio-lagos-night');
+
+    await waitFor(() => expect(save).toHaveBeenCalledWith('p1', {
+      captionPreset: 'studio-lagos-night', captionSeed: expect.any(Number),
+    }));
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
+  });
+});
+
 describe('AmbientLookStep — motion', () => {
   it('shows the motion choice alongside the pictures', () => {
     renderStep(project());
