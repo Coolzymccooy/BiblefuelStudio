@@ -44,6 +44,10 @@ const CAPTION_FADE_SEC = MOVEMENT_TRANSITION_SEC;
 const CAPTION_SIZE = 0.039;
 /** The reference line under a verse, relative to the verse's size. */
 const REFERENCE_SCALE = 0.64;
+/** Under Studio the reference reads beside 53-150 px phrases, so it is larger than the classic 0.64. */
+const STUDIO_REFERENCE_SCALE = 1.1;
+/** Reading pace for a held Studio page: seconds each word takes to appear. */
+const REVEAL_SEC_PER_WORD = 0.4;
 /** Longest comfortable line, whatever the width allows. */
 const MAX_LINE_CHARS = 70;
 /** Under one frame at 24 fps: the gap between one page and the next. */
@@ -233,6 +237,13 @@ function captionFilters({ project, plan, width, height, workDir }) {
   return drawn;
 }
 
+// The caption engine, swappable so a test can make it throw.
+let studioEngine = studioCaptionFilter;
+/** Replace (or with undefined, restore) the engine. Tests only. */
+export function _setStudioEngineForTest(fn) {
+  studioEngine = fn ?? studioCaptionFilter;
+}
+
 /** A stable 31-bit seed from a string (FNV-1a), so an old project never reshuffles. */
 function seedFromId(id) {
   let h = 0x811c9dc5;
@@ -261,8 +272,18 @@ function studioSeed(project) {
  */
 function studioFilters({ project, plan, width, height, workDir }) {
   try {
-    const lines = plan.drops.flatMap((d) => d.pages.map((p) => ({ text: p.text, start: p.start, end: p.end })));
-    const built = studioCaptionFilter({
+    // A page is held for its whole window, minutes long in section span. The
+    // engine would spread its words over all of it and hold the last phrase past
+    // it, so each page asks for a reading-pace reveal and to leave exactly at
+    // its page end (no overlap with the next page, no hang into the next movement).
+    const lines = plan.drops.flatMap((d) => d.pages.map((p) => ({
+      text: p.text,
+      start: p.start,
+      end: p.end,
+      reveal: Math.min(p.end - p.start, REVEAL_SEC_PER_WORD * p.text.split(/s+/).filter(Boolean).length),
+      holdUntil: p.end,
+    })));
+    const built = studioEngine({
       assPath: path.join(workDir, "captions.ass"),
       lines,
       w: width,
@@ -277,7 +298,7 @@ function studioFilters({ project, plan, width, height, workDir }) {
 
     // Safe area: 9:16 platforms cover the bottom 18% with their own chrome.
     const { size } = plan.metrics;
-    const refSize = Math.round(size * REFERENCE_SCALE);
+    const refSize = Math.round(size * STUDIO_REFERENCE_SCALE);
     const refY = Math.round(height * (height > width ? 0.82 : CAPTION_BOTTOM) - refSize);
     const style = drawtextStyle(size);
     const references = plan.drops

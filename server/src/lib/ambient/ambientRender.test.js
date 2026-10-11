@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { buildAmbientFfmpegArgs, wrapText, dimsFor } from "./ambientRender.js";
+import { buildAmbientFfmpegArgs, wrapText, dimsFor, _setStudioEngineForTest } from "./ambientRender.js";
 import { _setLibassForTest } from "../kinetic/capability.js";
 
 function work() {
@@ -554,5 +554,77 @@ test("Studio seed: an explicit captionSeed wins over the project id", () => {
   const a = build({ captionSeed: 7, projectId: "one" });
   assert.equal(build({ captionSeed: 7, projectId: "two" }), a, "the id is ignored when a seed is stored");
   assert.notEqual(build({ captionSeed: 8, projectId: "one" }), a, "a different seed reshuffles");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// --- Held pages: prompt reveal, exact hold ----------------------------------
+const secs = (ts) => ts.split(":").reduce((a, p) => a * 60 + Number(p), 0);
+const events = (assText) => assText.split("\n").filter((l) => l.startsWith("Dialogue:") && !l.includes("\p1"))
+  .map((l) => ({ start: secs(l.split(",")[1]), end: secs(l.split(",")[2]), line: l }));
+/** When the last word of an event appears: its start plus the largest word-reveal offset. */
+const lastWordAt = (e) => e.start + Math.max(0, ...[...e.line.matchAll(/\t\((\d+),\d+,\alpha/g)].map((m) => Number(m[1]) / 1000));
+
+test("a long section page reveals its words promptly instead of over the whole section", () => {
+  const dir = work();
+  const text = "Be still, and know that I am God: I will be exalted among the heathen.";
+  const words = text.split(" ").length;
+  withLibass(true, () => buildAmbientFfmpegArgs(studioProject(), io(dir, {
+    drops: [verse({ text, verses: [text] })],
+  })));
+  // One page spans the whole 300 s movement (a single verse, under a page long).
+  const ev = events(assAt(dir));
+  assert.ok(ev.length >= 1);
+  for (const e of ev) {
+    assert.ok(lastWordAt(e) <= 0.4 * words + 0.2, `a word appears at ${lastWordAt(e)} s, ${0.4 * words} s expected at most`);
+  }
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("a Studio page holds exactly to its page end: no overlap with the next page, no hang into the next movement", () => {
+  const dir = work();
+  const drops = [verse({ reference: "Philippians 4:6-7", text: PHIL.join(" "), verses: PHIL }), verse({ atMs: 420_000, reference: "Isaiah 26:3", audioPath: "/d2.mp3" })];
+  const drawn = buildAmbientFfmpegArgs(studioProject({ captionPreset: "default" }), io(dir, { drops })).filter;
+  const windowsOf = [...drawn.matchAll(/textfile='[^']*caption-\d+-\d+-0\.txt'[^,]*?enable='between\(t,([\d.]+),([\d.]+)\)'/g)]
+    .map((m) => ({ start: Number(m[1]), end: Number(m[2]) }));
+  assert.ok(windowsOf.length >= 3, "two pages in the first movement and one in the second");
+  withLibass(true, () => buildAmbientFfmpegArgs(studioProject(), io(dir, { drops })));
+  const ev = events(assAt(dir));
+  for (const e of ev) {
+    const page = windowsOf.filter((w) => w.start <= e.start + 0.05).pop();
+    assert.ok(Math.abs(e.end - page.end) < 0.011, `an event ends ${e.end}, its page ends ${page.end}`);
+  }
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("Studio spoken pages reveal and hold to the spoken window", () => {
+  const dir = work();
+  withLibass(true, () => buildAmbientFfmpegArgs(studioProject({ captionSpan: "spoken" }), io(dir, { drops: [verse()] })));
+  for (const e of events(assAt(dir))) assert.ok(Math.abs(e.end - 68) < 0.011, `spoken verse ends with its voice: ${e.end}`);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("Studio reference is a readable size, not the classic 0.64 ratio", () => {
+  const dir = work();
+  const { filter } = withLibass(true, () => buildAmbientFfmpegArgs(studioProject({ aspect: "portrait" }), io(dir, { drops: [verse()] })));
+  const size = Number(filter.match(/fontsize=(\d+)/)[1]);
+  assert.equal(size, Math.round(Math.round(1080 * 0.039) * 1.1), "1.1 x the classic caption size");
+  assert.ok(size >= 40);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("an engine error logs and falls back to the classic captions", (t) => {
+  const dir = work();
+  const warn = t.mock.method(console, "warn", () => {});
+  const drops = [verse()];
+  _setStudioEngineForTest(() => { throw new Error("font file corrupt"); });
+  let filter;
+  try {
+    filter = withLibass(true, () => buildAmbientFfmpegArgs(studioProject(), io(dir, { drops })).filter);
+  } finally {
+    _setStudioEngineForTest(undefined);
+  }
+  const classic = buildAmbientFfmpegArgs(studioProject({ captionPreset: "default" }), io(dir, { drops })).filter;
+  assert.equal(filter, classic);
+  assert.ok(warn.mock.calls.some((c) => /\[CAPTIONS\] studio fallback: font file corrupt/.test(String(c.arguments[0]))));
   fs.rmSync(dir, { recursive: true, force: true });
 });
