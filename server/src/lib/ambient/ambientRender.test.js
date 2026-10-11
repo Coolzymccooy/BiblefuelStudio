@@ -495,8 +495,17 @@ test("Studio look in spoken span: the verse is Studio and there is no reference 
 
 test("Studio look ignores the classic caption position", () => {
   const dir = work();
-  const build = (over) => withLibass(true, () => buildAmbientFfmpegArgs(studioProject(over), io(dir, { drops: [verse()] })).filter);
-  assert.equal(build({ captionPosition: "centre" }), build({}));
+  // Under Studio the position could only leak into captions.ass, which the
+  // filter string never shows, so compare the written ASS as well.
+  const build = (over) => withLibass(true, () => {
+    const { filter } = buildAmbientFfmpegArgs(studioProject(over), io(dir, { drops: [verse()] }));
+    return { filter, ass: assAt(dir) };
+  });
+  const centred = build({ captionPosition: "centre" });
+  const dflt = build({});
+  assert.ok(events(dflt.ass).length > 0, "the ASS has caption events to compare");
+  assert.equal(centred.filter, dflt.filter);
+  assert.equal(centred.ass, dflt.ass);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -606,7 +615,9 @@ test("a Studio page holds exactly to its page end: no overlap with the next page
   assert.ok(pages.length >= 4, "pages in both movements");
   assert.ok(pages.every((p) => p.holdUntil === p.end), "every page asks to leave at its own end");
   withLibass(true, () => buildAmbientFfmpegArgs(studioProject(), io(dir, { drops })));
-  for (const e of events(assAt(dir))) {
+  const ev = events(assAt(dir));
+  assert.ok(ev.length > 0, "the ASS has caption events to check");
+  for (const e of ev) {
     const page = pages.filter((p) => p.start <= e.start + 0.05).pop();
     assert.ok(Math.abs(e.end - page.end) < 0.011, `an event ends ${e.end}, its page ends ${page.end}`);
   }
@@ -620,6 +631,7 @@ test("Studio spoken pages reveal and hold to the spoken window", () => {
   assert.equal(pages.at(-1).end, 68, "the last page ends with the voice");
   withLibass(true, () => buildAmbientFfmpegArgs(studioProject({ captionSpan: "spoken" }), io(dir, { drops })));
   const ev = events(assAt(dir));
+  assert.ok(ev.length > 0, "the ASS has caption events to check");
   for (const e of ev) {
     assert.ok(pages.some((p) => Math.abs(e.end - p.end) < 0.011), `an event ends ${e.end}, on no page end`);
   }
