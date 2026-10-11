@@ -22,6 +22,20 @@ describe('storyApi', () => {
     expect(spy).toHaveBeenCalledWith('/api/story', { title: 'T', style: 'cinematic-bible', cast: ['david_young'] });
   });
 
+  it('createProject sends the chosen output frame', async () => {
+    const spy = vi.spyOn(api, 'post').mockResolvedValue({ ok: true, status: 200, data: { ok: true, project: fakeProject } });
+    await storyApi.createProject('T', 'cinematic-bible', [], 'square');
+    expect(spy).toHaveBeenCalledWith('/api/story', { title: 'T', style: 'cinematic-bible', cast: [], aspect: 'square' });
+  });
+
+  it('setAspect PATCHes the output frame and returns the project and note', async () => {
+    const spy = vi.spyOn(api, 'patch').mockResolvedValue({ ok: true, status: 200, data: { ok: true, project: { ...fakeProject, aspect: 'landscape' }, note: 'regenerate' } });
+    const out = await storyApi.setAspect('p', 'landscape');
+    expect(spy).toHaveBeenCalledWith('/api/story/p/aspect', { aspect: 'landscape' });
+    expect(out.project.aspect).toBe('landscape');
+    expect(out.note).toBe('regenerate');
+  });
+
   it('getProject GETs by id', async () => {
     const spy = vi.spyOn(api, 'get').mockResolvedValue({ ok: true, status: 200, data: { ok: true, project: fakeProject } });
     await storyApi.getProject('p');

@@ -11,7 +11,7 @@ import type { StoryProject, StoryScene } from '../../lib/storyTypes';
  */
 interface StoryScenePreviewProps {
   scenes: StoryScene[];
-  /** Project aspect; long-form YouTube projects are landscape. Defaults to portrait (Shorts). */
+  /** Project output frame (portrait, landscape or square). Defaults to portrait (Shorts). */
   aspect?: StoryProject['aspect'];
 }
 
@@ -63,7 +63,7 @@ export function StoryScenePreview({ scenes, aspect = 'portrait' }: StoryScenePre
 
       <div className="absolute inset-x-0 bottom-0 p-5">
         <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-bf-goldDeep">
-          Scene {idx + 1} / {scenes.length} · {aspect === 'landscape' ? 'Landscape' : 'Portrait'}
+          Scene {idx + 1} / {scenes.length} · {aspect === 'landscape' ? 'Landscape' : aspect === 'square' ? 'Square' : 'Portrait'}
           {scene.imageSource === 'library' && (
             <span title="Reused from your library — this scene cost no image quota"> · Reused</span>
           )}

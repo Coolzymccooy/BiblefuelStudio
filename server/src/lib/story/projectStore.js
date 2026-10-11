@@ -2,6 +2,7 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { v4 as uuid } from "uuid";
+import { normalizeStoryAspect } from "./sceneFraming.js";
 
 /** Project lifecycle states. */
 export const STORY_STATUS = {
@@ -125,7 +126,7 @@ export function createProject(baseDir, {
     render: { jobId: null, outputPath: null, status: null },
     error: null,
     // Video shape: "portrait" (default, existing behaviour) or "landscape".
-    aspect: aspect === "landscape" ? "landscape" : "portrait",
+    aspect: normalizeStoryAspect(aspect),
     // Caption rendering mode for storyRender's drawtext chain.
     captions: ["none", "static", "kinetic"].includes(captions) ? captions : "kinetic",
     // Optional per-project scene policy: timing overrides (target scene length

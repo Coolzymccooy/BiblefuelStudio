@@ -39,6 +39,8 @@ export function expandScenesToBeats(scenes, { beatSec } = {}) {
       imageUrl: src.imageUrl,
       // A clip of your own plays in each of its beats (imagePath is its poster).
       ...(src.videoPath ? { videoPath: src.videoPath } : {}),
+      // Where the picture came from decides how strictly it is framed.
+      ...(src.imageSource ? { imageSource: src.imageSource } : {}),
       imageStatus: "done",
       startMs: Math.round(i * len),
       endMs: i === count - 1 ? totalMs : Math.round((i + 1) * len),

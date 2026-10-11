@@ -1,3 +1,7 @@
+
+/** A Story video's output frame. */
+export type StoryAspect = 'portrait' | 'landscape' | 'square';
+
 export type StoryStatus =
   | 'draft' | 'transcribing' | 'segmenting' | 'generating_images'
   | 'ready_to_render' | 'rendering' | 'done' | 'error'
@@ -112,7 +116,8 @@ export interface StoryProject extends StoryCaptionSettings {
   scenes: StoryScene[];
   music: { path: string | null; volume: number; autoDuck?: boolean };
   longform?: StoryLongform;
-  aspect?: 'portrait' | 'landscape';
+  /** Output frame, the same choices as the Render tab. Absent on older projects: portrait. */
+  aspect?: StoryAspect;
   /** Always present on a stored project; the rest of the caption settings are optional. */
   captionPreset: string;
   render: {
