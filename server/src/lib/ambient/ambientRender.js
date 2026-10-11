@@ -46,6 +46,14 @@ const CAPTION_SIZE = 0.039;
 const REFERENCE_SCALE = 0.64;
 /** Under Studio the reference reads beside 53-150 px phrases, so it is larger than the classic 0.64. */
 const STUDIO_REFERENCE_SCALE = 1.1;
+/**
+ * Longest Studio page. The serif pages run about twice this (two lines of ~45
+ * characters), but the engine fits a long phrase by shrinking it toward the
+ * serif's size; cut near its own 28-character / five-word phrases, a verse
+ * keeps the big hand-lettered look. Windows are shared out across the extra
+ * pages by pageWindows, which never drops a word.
+ */
+const STUDIO_PAGE_CHARS = 36;
 /** Reading pace for a held Studio page: seconds each word takes to appear. */
 const REVEAL_SEC_PER_WORD = 0.4;
 /** Longest comfortable line, whatever the width allows. */
@@ -136,7 +144,7 @@ function referenceLine(drop, project) {
  * (libass) captions both draw from this one plan, so their timings cannot
  * drift apart.
  */
-function captionPlan({ project, voiced, movements, width, height }) {
+function captionPlan({ project, voiced, movements, width, height, pageChars }) {
   const span = project?.captionSpan === "section" ? "section" : "spoken";
   const metrics = captionMetrics(width, height);
   const drops = [];
@@ -145,7 +153,7 @@ function captionPlan({ project, voiced, movements, width, height }) {
     const win = captionWindow(d, span, movements);
     if (!win) return;
     const reference = span === "section" ? referenceLine(d, project) : "";
-    const pages = captionPages(d, metrics.pageChars);
+    const pages = captionPages(d, pageChars ?? metrics.pageChars);
     const windows = pageWindows(win.start, win.end, pages, { minSec: span === "spoken" ? 0 : undefined });
     drops.push({
       i,
@@ -390,13 +398,16 @@ export function buildAmbientFfmpegArgs(project, { bedPath, images, drops, outPat
   //      against its own height.
   let captionIn = videoOut;
   if (project?.captions && project.captions !== "none" && workDir) {
-    const plan = captionPlan({ project, voiced, movements, width, height });
-    // A Studio look draws with libass; everything else, and any Studio failure,
-    // is today's serif drawtext.
+    // A Studio look draws with libass, on pages cut for the engine; everything
+    // else, and any Studio failure, is today's serif drawtext on its own pages.
     const studio = isStudioLook(project.captionPreset) && hasLibass()
-      ? studioFilters({ project, plan, width, height, workDir })
+      ? studioFilters({
+        project, plan: captionPlan({ project, voiced, movements, width, height, pageChars: STUDIO_PAGE_CHARS }), width, height, workDir,
+      })
       : null;
-    const drawn = studio ? [studio] : captionFilters({ project, plan, width, height, workDir });
+    const drawn = studio
+      ? [studio]
+      : captionFilters({ project, plan: captionPlan({ project, voiced, movements, width, height }), width, height, workDir });
     if (drawn.length > 0) {
       parts.push(`${captionIn}${drawn.join(",")}[vout]`);
       captionIn = "[vout]";

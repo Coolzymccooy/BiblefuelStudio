@@ -434,18 +434,29 @@ test("Studio look: captions.ass is written and starts with the first page window
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test("Studio look: the ASS timings are the drawtext path's page windows", () => {
+/** The lines the Studio branch hands the engine, captured through the test seam. */
+function studioLinesFor(project, drops, dir) {
+  let seen = null;
+  _setStudioEngineForTest((opts) => { seen = opts.lines; return { filter: "", sideFiles: [] }; });
+  try {
+    withLibass(true, () => buildAmbientFfmpegArgs(project, io(dir, { drops })));
+  } finally {
+    _setStudioEngineForTest(undefined);
+  }
+  return seen;
+}
+
+test("Studio look: pages tile the section window back to back, as the drawtext path's do", () => {
   const dir = work();
   const drops = [verse({ reference: "Philippians 4:6-7", text: PHIL.join(" "), verses: PHIL })];
-  const drawn = buildAmbientFfmpegArgs(studioProject({ captionPreset: "default" }), io(dir, { drops })).filter;
-  const starts = [...new Set([...drawn.matchAll(/between\(t,([\d.]+),/g)].map((m) => Number(m[1])))];
-  assert.ok(starts.length >= 2, "two pages, two windows");
-  withLibass(true, () => buildAmbientFfmpegArgs(studioProject(), io(dir, { drops })));
-  const secs = (ts) => ts.split(":").reduce((a, p) => a * 60 + Number(p), 0);
-  const dialogue = [...assAt(dir).matchAll(/^Dialogue: \d+,([\d:.]+),/gm)].map((m) => secs(m[1]));
-  for (const s of starts) {
-    assert.ok(dialogue.some((d) => Math.abs(d - s) < 0.05), `no ASS event starts at ${s}: ${dialogue}`);
-  }
+  const lines = studioLinesFor(studioProject(), drops, dir);
+  assert.ok(lines.length >= 2);
+  assert.equal(lines[0].start, 0);
+  assert.equal(lines.at(-1).end, 300);
+  lines.slice(1).forEach((l, i) => {
+    const gap = l.start - lines[i].end;
+    assert.ok(gap > 0 && gap <= 0.05, `page ${i + 1} follows page ${i} with a frame's gap, got ${gap}`);
+  });
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -567,15 +578,15 @@ const lastWordAt = (e) => e.start + Math.max(0, ...[...e.line.matchAll(/\t\((\d+
 test("a long section page reveals its words promptly instead of over the whole section", () => {
   const dir = work();
   const text = "Be still, and know that I am God: I will be exalted among the heathen.";
-  const words = text.split(" ").length;
-  withLibass(true, () => buildAmbientFfmpegArgs(studioProject(), io(dir, {
-    drops: [verse({ text, verses: [text] })],
-  })));
-  // One page spans the whole 300 s movement (a single verse, under a page long).
-  const ev = events(assAt(dir));
-  assert.ok(ev.length >= 1);
-  for (const e of ev) {
-    assert.ok(lastWordAt(e) <= 0.4 * words + 0.2, `a word appears at ${lastWordAt(e)} s, ${0.4 * words} s expected at most`);
+  const drops = [verse({ text, verses: [text] })];
+  const pages = studioLinesFor(studioProject(), drops, dir);
+  withLibass(true, () => buildAmbientFfmpegArgs(studioProject(), io(dir, { drops })));
+  // The pages share the 300 s movement, so each is held for minutes.
+  assert.ok(pages[0].end - pages[0].start > 60);
+  for (const e of events(assAt(dir))) {
+    const page = pages.filter((p) => p.start <= e.start + 0.05).pop();
+    const budget = 0.4 * page.text.split(" ").length;
+    assert.ok(lastWordAt(e) <= page.start + budget + 0.2, `a word appears at ${lastWordAt(e)} s; its page starts ${page.start}, ${budget} s allowed`);
   }
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -583,14 +594,12 @@ test("a long section page reveals its words promptly instead of over the whole s
 test("a Studio page holds exactly to its page end: no overlap with the next page, no hang into the next movement", () => {
   const dir = work();
   const drops = [verse({ reference: "Philippians 4:6-7", text: PHIL.join(" "), verses: PHIL }), verse({ atMs: 420_000, reference: "Isaiah 26:3", audioPath: "/d2.mp3" })];
-  const drawn = buildAmbientFfmpegArgs(studioProject({ captionPreset: "default" }), io(dir, { drops })).filter;
-  const windowsOf = [...drawn.matchAll(/textfile='[^']*caption-\d+-\d+-0\.txt'[^,]*?enable='between\(t,([\d.]+),([\d.]+)\)'/g)]
-    .map((m) => ({ start: Number(m[1]), end: Number(m[2]) }));
-  assert.ok(windowsOf.length >= 3, "two pages in the first movement and one in the second");
+  const pages = studioLinesFor(studioProject(), drops, dir);
+  assert.ok(pages.length >= 4, "pages in both movements");
+  assert.ok(pages.every((p) => p.holdUntil === p.end), "every page asks to leave at its own end");
   withLibass(true, () => buildAmbientFfmpegArgs(studioProject(), io(dir, { drops })));
-  const ev = events(assAt(dir));
-  for (const e of ev) {
-    const page = windowsOf.filter((w) => w.start <= e.start + 0.05).pop();
+  for (const e of events(assAt(dir))) {
+    const page = pages.filter((p) => p.start <= e.start + 0.05).pop();
     assert.ok(Math.abs(e.end - page.end) < 0.011, `an event ends ${e.end}, its page ends ${page.end}`);
   }
   fs.rmSync(dir, { recursive: true, force: true });
@@ -598,8 +607,15 @@ test("a Studio page holds exactly to its page end: no overlap with the next page
 
 test("Studio spoken pages reveal and hold to the spoken window", () => {
   const dir = work();
-  withLibass(true, () => buildAmbientFfmpegArgs(studioProject({ captionSpan: "spoken" }), io(dir, { drops: [verse()] })));
-  for (const e of events(assAt(dir))) assert.ok(Math.abs(e.end - 68) < 0.011, `spoken verse ends with its voice: ${e.end}`);
+  const drops = [verse()];
+  const pages = studioLinesFor(studioProject({ captionSpan: "spoken" }), drops, dir);
+  assert.equal(pages.at(-1).end, 68, "the last page ends with the voice");
+  withLibass(true, () => buildAmbientFfmpegArgs(studioProject({ captionSpan: "spoken" }), io(dir, { drops })));
+  const ev = events(assAt(dir));
+  for (const e of ev) {
+    assert.ok(pages.some((p) => Math.abs(e.end - p.end) < 0.011), `an event ends ${e.end}, on no page end`);
+  }
+  assert.ok(ev.every((e) => e.end <= 68.011), "nothing outlives the voice");
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -626,5 +642,53 @@ test("an engine error logs and falls back to the classic captions", (t) => {
   const classic = buildAmbientFfmpegArgs(studioProject({ captionPreset: "default" }), io(dir, { drops })).filter;
   assert.equal(filter, classic);
   assert.ok(warn.mock.calls.some((c) => /\[CAPTIONS\] studio fallback: font file corrupt/.test(String(c.arguments[0]))));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// --- Shorter Studio pages so a long verse stays large ------------------------
+const FIFTEEN = "I will be exalted among the heathen, I will be exalted in the earth.";
+const stripped = (t) => t.replace(/s+/g, " ").trim();
+
+test("under Studio a long verse is cut into short pages (the engine shrinks long phrases)", () => {
+  const dir = work();
+  for (const span of ["section", "spoken"]) {
+    const lines = studioLinesFor(studioProject({ captionSpan: span }), [verse({ text: FIFTEEN })], dir);
+    assert.ok(lines.length >= 2, `${span}: a 68-character verse is cut in two, got ${lines.length}`);
+    for (const l of lines) {
+      const longest = Math.max(...l.text.split(" ").map((w) => w.length));
+      assert.ok(l.text.length <= 36 || longest === l.text.length, `${span}: "${l.text}" is ${l.text.length} chars`);
+    }
+  }
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("Studio pages never lose or reorder a word, in either span", () => {
+  const dir = work();
+  const texts = [FIFTEEN, PHIL.join(" "), PHIL_THREE.join(" ")];
+  for (const span of ["section", "spoken"]) {
+    for (const text of texts) {
+      const lines = studioLinesFor(studioProject({ captionSpan: span }), [verse({ text, durationMs: 6000 })], dir);
+      assert.equal(stripped(lines.map((l) => l.text).join(" ")), stripped(text), span);
+    }
+  }
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("a longer verse gives several short pages, more than the serif's two", () => {
+  const dir = work();
+  const lines = studioLinesFor(studioProject(), [verse({ text: PHIL_THREE.join(" ") })], dir);
+  const classic = captionTexts(buildAmbientFfmpegArgs(studioProject({ captionPreset: "default" }), io(dir, { drops: [verse({ text: PHIL_THREE.join(" ") })] })).filter);
+  assert.ok(lines.length > 6 && lines.every((l) => l.text.length <= 36 || !l.text.includes(" ")), JSON.stringify(lines.map((l) => l.text)));
+  assert.ok(classic.length > 0);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("Studio page size does not change the serif captions, nor the fallback when libass is missing", () => {
+  const dir = work();
+  const drops = [verse({ text: FIFTEEN })];
+  const studioOff = withLibass(false, () => buildAmbientFfmpegArgs(studioProject(), io(dir, { drops })).filter);
+  const classic = buildAmbientFfmpegArgs(studioProject({ captionPreset: "default" }), io(dir, { drops })).filter;
+  assert.equal(studioOff, classic);
+  assert.equal(captionTexts(classic).filter((t) => t !== "Psalms 46:1-2").length <= 4, true, "serif keeps its two-line pages");
   fs.rmSync(dir, { recursive: true, force: true });
 });

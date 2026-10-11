@@ -50,7 +50,7 @@ before(() => {
     out: path.join(dir, "out.mp4"),
   };
   ff(["-f", "lavfi", "-i", "color=c=black:s=1080x1920", "-frames:v", "1", media.image]);
-  ff(["-f", "lavfi", "-i", "sine=f=220:d=5", media.bed]);
+  ff(["-f", "lavfi", "-i", "sine=f=220:d=8", media.bed]);
   media.bed30 = path.join(dir, "bed30.wav");
   ff(["-f", "lavfi", "-i", "sine=f=220:d=30", media.bed30]);
   ff(["-f", "lavfi", "-i", "sine=f=440:d=1.5", media.voice]);
@@ -61,14 +61,14 @@ after(() => { if (dir) fs.rmSync(dir, { recursive: true, force: true }); });
 describe("Ambient renders draw Studio looks with libass", { skip }, () => {
   test("a Studio verse is on screen through its section and clean before it", () => {
     const project = {
-      projectId: "ambient-studio", aspect: "portrait", targetSec: 5, motion: "still",
+      projectId: "ambient-studio", aspect: "portrait", targetSec: 8, motion: "still",
       captions: "static", captionSpan: "section", captionPreset: "studio-clean-white", captionEnergy: "calm", captionSeed: 1,
       bed: { volume: 0.85 },
-      movements: [{ startMs: 0, endMs: 2000 }, { startMs: 2000, endMs: 5000 }],
+      movements: [{ startMs: 0, endMs: 2000 }, { startMs: 2000, endMs: 8000 }],
     };
-    // The verse belongs to the second movement, 2 s to 5 s; the first is bare.
+    // The verse belongs to the second movement, 2 s to 8 s; the first is bare.
     const drops = [{
-      atMs: 3500, durationMs: 1500, audioPath: media.voice, status: "done", reference: "Psalms 46:10", translation: "kjv",
+      atMs: 5000, durationMs: 1500, audioPath: media.voice, status: "done", reference: "Psalms 46:10", translation: "kjv",
       text: "Be still, and know that I am God: I will be exalted among the heathen, I will be exalted in the earth.",
     }];
     const { args } = buildAmbientFfmpegArgs(project, {
@@ -78,17 +78,17 @@ describe("Ambient renders draw Studio looks with libass", { skip }, () => {
     assert.ok(fs.existsSync(media.out), "the render exists");
     assert.ok(fs.existsSync(path.join(dir, "captions.ass")), "the engine's file was written beside the render");
 
-    const during = whiteAt(media.out, 3.25);
-    assert.ok(during.count > 300, `expected Studio-sized white captions at 3.25 s, got ${during.count} white pixels`);
+    const during = whiteAt(media.out, 3.3);
+    assert.ok(during.count > 300, `expected Studio-sized white captions at 3.3 s, got ${during.count} white pixels`);
     // The serif fallback, like the reference line, sits in the bottom fifth of
-    // the frame (row ~385 of 480); the stacked phrases at 3.25 s start far above it.
+    // the frame (row ~385 of 480); the stacked phrases at 3.3 s start far above it.
     assert.ok(during.firstRow < during.rows * 0.5, `expected Studio captions above the lower band, first white row was ${during.firstRow} of ${during.rows}`);
     const before = whiteAt(media.out, 0.5);
     assert.ok(before.count < 20, `expected a clean frame at 0.5 s, got ${before.count} white pixels`);
   });
 
-  test("late in a long section page the whole verse is up, and it is gone when the page ends", () => {
-    // A 30 s section holds one page for all 30 s. Its words must land at
+  test("late in a long section page the whole page is up", () => {
+    // A 30 s section holds its pages for 15 s each. Words must land at
     // reading pace, not trickle in across the section, and stay.
     const out = path.join(dir, "long.mp4");
     const project = {
@@ -105,12 +105,18 @@ describe("Ambient renders draw Studio looks with libass", { skip }, () => {
       bedPath: media.bed30, images: [media.image], drops, outPath: out, workDir: dir,
     });
     ff(args);
-    // 12 words at 0.4 s: all up by ~5 s. Every sample after that carries the full verse, so the
-    // white-pixel count is steady; a reveal spread over 30 s would still be climbing at 20 s.
-    const mid = whiteAt(out, 12);
-    const late = whiteAt(out, 26);
-    assert.ok(late.count > 300, `expected the verse up at 26 s, got ${late.count} white pixels`);
-    assert.ok(late.firstRow < late.rows * 0.5, `expected Studio captions high in the frame, first row ${late.firstRow}`);
-    assert.ok(Math.abs(late.count - mid.count) < mid.count * 0.25, `verse complete by 12 s: ${mid.count} vs ${late.count} at 26 s`);
+    // The verse is two pages of ~15 s each. Each page's words land within a few
+    // seconds, so a page looks the same early and late in its window; a reveal spread
+    // over the 15 s would still be climbing at the early sample.
+    const page1Early = whiteAt(out, 7);
+    const page1Late = whiteAt(out, 12);
+    const page2Early = whiteAt(out, 22);
+    const page2Late = whiteAt(out, 27);
+    for (const [name, frame] of [["page 1", page1Late], ["page 2", page2Late]]) {
+      assert.ok(frame.count > 300, `expected ${name} up late in its window, got ${frame.count} white pixels`);
+      assert.ok(frame.firstRow < frame.rows * 0.78, `expected Studio captions above the reference line, first row ${frame.firstRow}`);
+    }
+    assert.ok(Math.abs(page1Late.count - page1Early.count) < page1Early.count * 0.25, `page 1 complete by 7 s: ${page1Early.count} vs ${page1Late.count}`);
+    assert.ok(Math.abs(page2Late.count - page2Early.count) < page2Early.count * 0.25, `page 2 complete by 22 s: ${page2Early.count} vs ${page2Late.count}`);
   });
 });
