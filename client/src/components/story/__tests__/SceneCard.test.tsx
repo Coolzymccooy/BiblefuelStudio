@@ -13,6 +13,14 @@ function scene(over: Partial<StoryScene> = {}): StoryScene {
 }
 
 describe('SceneCard', () => {
+  it('frames the thumbnail as the render will: generated fills, your own picture shows whole', async () => {
+    const { rerender } = render(<SceneCard scene={scene({ imageSource: 'generated' })} index={0} onPatch={vi.fn()} onRegenerate={vi.fn()} busy={false} />);
+    await userEvent.click(screen.getByRole('button', { name: /tune scene/i }));
+    expect(screen.getByTestId('scene-thumb').dataset.fit).toBe('cover');
+    rerender(<SceneCard scene={scene({ imageSource: 'upload' })} index={0} onPatch={vi.fn()} onRegenerate={vi.fn()} busy={false} />);
+    expect(screen.getByTestId('scene-thumb').dataset.fit).toBe('contain');
+  });
+
   it('draws the thumbnail in the project frame, showing the whole picture', async () => {
     const { rerender } = render(<SceneCard scene={scene()} index={0} onPatch={vi.fn()} onRegenerate={vi.fn()} busy={false} />);
     await userEvent.click(screen.getByRole('button', { name: /tune scene/i }));

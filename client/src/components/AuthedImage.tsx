@@ -7,6 +7,8 @@ interface AuthedImageProps {
     className?: string;
     /** Open in a new tab on click. Defaults to true since these are small thumbnails. */
     openOnClick?: boolean;
+    /** Called with the picture's natural size once it has loaded. */
+    onSize?: (width: number, height: number) => void;
 }
 
 /**
@@ -18,7 +20,7 @@ interface AuthedImageProps {
  * Object URLs are revoked on unmount or when `src` changes to avoid leaking
  * Blob refs.
  */
-export function AuthedImage({ src, alt = '', className, openOnClick = true }: AuthedImageProps) {
+export function AuthedImage({ src, alt = '', className, openOnClick = true, onSize }: AuthedImageProps) {
     const [url, setUrl] = useState<string | null>(null);
     const [err, setErr] = useState<string | null>(null);
 
@@ -64,7 +66,14 @@ export function AuthedImage({ src, alt = '', className, openOnClick = true }: Au
     if (!url) {
         return <div className={`bg-white/5 animate-pulse rounded ${className || ''}`} aria-label="loading image" />;
     }
-    const img = <img src={url} alt={alt} className={className} />;
+    const img = (
+        <img
+            src={url}
+            alt={alt}
+            className={className}
+            onLoad={onSize ? (e) => onSize(e.currentTarget.naturalWidth, e.currentTarget.naturalHeight) : undefined}
+        />
+    );
     if (openOnClick) {
         return (
             <button

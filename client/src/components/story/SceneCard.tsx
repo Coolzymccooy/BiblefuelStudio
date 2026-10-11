@@ -4,7 +4,7 @@ import { Loader2, RefreshCw, Wand2, ImageOff, SlidersHorizontal, Check, Clock, U
 import { AuthedImage } from '../AuthedImage';
 import { sceneTimeLabel } from '../../lib/storyWizard';
 import type { ImageStatus, StoryAspect, StoryScene } from '../../lib/storyTypes';
-import { frameBoxClass, frameThumbWidthClass } from '../../lib/storyFrame';
+import { frameBoxClass, frameThumbWidthClass, sceneThumbFit } from '../../lib/storyFrame';
 import { cleanCaptionLine } from '../../lib/speakableScript';
 import { copyText } from '../../lib/copyText';
 
@@ -62,6 +62,14 @@ export function SceneCard({
   // Without a picture, unless a live run is making it now. A cancelled run
   // leaves scenes "generating" that nothing is generating any more.
   const missing = scene.imageStatus !== 'done' && !(scene.imageStatus === 'generating' && imagesRunning);
+  // The thumbnail's picture size, once loaded, decides fill vs whole as the render does.
+  // Keyed by URL: a regenerated or replaced picture is measured afresh.
+  const [thumbSize, setThumbSize] = useState<{ url: string; width: number; height: number } | null>(null);
+  const measured = thumbSize && thumbSize.url === scene.imageUrl ? thumbSize : null;
+  const thumbFit = sceneThumbFit({
+    width: measured?.width, height: measured?.height, aspect,
+    generated: scene.imageSource === 'generated' && scene.mediaKind !== 'video',
+  });
   const yours = scene.imageStatus === 'done' && scene.imageChosenByUser;
   // Your own clip: imageUrl is its poster, so the thumbnail below still works.
   const isVideo = scene.imageStatus === 'done' && scene.mediaKind === 'video';
@@ -136,9 +144,9 @@ export function SceneCard({
       {tuning && (
         <div className="mt-3 flex gap-3 border-t border-[rgba(216,184,120,0.1)] pt-3">
           <div className={`${frameThumbWidthClass(aspect)} shrink-0`}>
-            {/* Drawn in the video's frame. The whole picture shows (contain), as
-                the render shows a picture of another shape whole, not cropped. */}
-            <div data-testid="scene-thumb" className={`${frameBoxClass(aspect)} w-full overflow-hidden rounded-lg bg-black/40`}>
+            {/* Drawn in the video's frame, and filled or shown whole by the same
+                rule the render uses, so it previews the real composition. */}
+            <div data-testid="scene-thumb" data-fit={thumbFit} className={`${frameBoxClass(aspect)} w-full overflow-hidden rounded-lg bg-black/40`}>
               {scene.imageStatus === 'generating' ? (
                 <div className="flex h-full items-center justify-center"><Loader2 className="animate-spin text-bf-gold" size={18} /></div>
               ) : scene.imageStatus === 'error' || !scene.imageUrl ? (
@@ -147,7 +155,13 @@ export function SceneCard({
                   <span className="text-[9px] font-medium text-bf-muted">No image</span>
                 </div>
               ) : (
-                <AuthedImage src={scene.imageUrl} alt={scene.text} className="h-full w-full object-contain" openOnClick={false} />
+                <AuthedImage
+                  src={scene.imageUrl}
+                  alt={scene.text}
+                  className={`h-full w-full ${thumbFit === 'cover' ? 'object-cover' : 'object-contain'}`}
+                  openOnClick={false}
+                  onSize={(width, height) => setThumbSize({ url: scene.imageUrl ?? '', width, height })}
+                />
               )}
             </div>
             <div className="mt-1 text-center text-[10px] tabular-nums text-bf-muted">{sceneTimeLabel(scene)}</div>
