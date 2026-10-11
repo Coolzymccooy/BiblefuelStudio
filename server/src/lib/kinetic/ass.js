@@ -25,11 +25,19 @@ export function phrasesFrom({ words, lines }) {
     .filter((l) => l && String(l.text || "").trim() && Number.isFinite(l.start) && Number.isFinite(l.end) && l.end > l.start)
     .map((l) => {
       const parts = String(l.text).trim().split(/\s+/);
-      const step = (l.end - l.start) / parts.length;
-      return {
+      // `reveal`: land the words within that many seconds of the start, however
+      // long the line stays up (a held page, not a sung line).
+      const span = typeof l.reveal === "number" && Number.isFinite(l.reveal) && l.reveal > 0
+        ? Math.min(l.reveal, l.end - l.start)
+        : l.end - l.start;
+      const step = span / parts.length;
+      const phrase = {
         text: String(l.text).trim(), start: l.start, end: l.end,
         words: parts.map((t, i) => ({ text: t, start: Number((l.start + i * step).toFixed(3)), end: Number((l.start + (i + 1) * step).toFixed(3)) })),
       };
+      // `holdUntil`: when the phrase leaves, overriding the engine's hold rules.
+      if (typeof l.holdUntil === "number" && Number.isFinite(l.holdUntil)) phrase.holdUntil = l.holdUntil;
+      return phrase;
     });
 }
 

@@ -16,6 +16,10 @@ import {
   normalizeEffectClip, isSupportedEffect,
   buildGlowFilter, buildGradeFilter, buildLightLeakFilter,
 } from './effects.js';
+import { isStudioLook, resolveLook, resolveEnergy } from '../kinetic/looks.js';
+import { studioCaptionFilter } from '../kinetic/filter.js';
+import { hasLibass } from '../kinetic/capability.js';
+import { normaliseSeed, timedLinePhrases } from '../kinetic/renderCaptions.js';
 
 // Safety ceilings on ffmpeg input count, NOT editorial limits. Anything beyond
 // these is reported through describeRenderCoverage rather than dropped
@@ -25,6 +29,27 @@ const MAX_VOICEOVER_INPUTS = 24;
 // drawtext with a very long string bloats the filtergraph and is unreadable
 // on screen anyway; captions are cues, not paragraphs.
 const MAX_CAPTION_CHARS = 120;
+
+/**
+ * Caption clips as timed phrases for the Studio engine. The engine lays a
+ * phrase out word by word, so a clip is cut into short phrases inside its own
+ * window (a whole script sentence would run off the frame), and the clip's last
+ * phrase leaves exactly when the clip does rather than lingering under the
+ * engine's lyric hold. Text goes in as typed: the look decides its casing.
+ */
+function studioLines(captions) {
+  return captions.flatMap((clip) => {
+    const start = Math.max(0, Number(clip.startSec || 0));
+    const end = Math.max(start + 0.1, start + Number(clip.durationSec || 2));
+    const phrases = timedLinePhrases([String(clip.text).slice(0, MAX_CAPTION_CHARS)], end - start);
+    return phrases.map((p, i) => ({
+      text: p.text,
+      start: start + p.start,
+      end: Math.min(end, start + p.end),
+      ...(i === phrases.length - 1 ? { holdUntil: end } : {}),
+    }));
+  });
+}
 
 function isSubPath(child, parent) {
   const rel = path.relative(parent, child);
@@ -361,47 +386,83 @@ export function buildProofRenderCommand(plan, opts = {}) {
   //
   // A caption clip already knows when it starts and how long it runs, so the
   // lines carry their own windows rather than being paced by an even split.
+  let sideFiles = [];
   if (captions.length > 0) {
-    const style = resolveTypographyPreset(opts.typographyPreset);
-    const motion = resolveCaptionMotion(
-      opts.captionMotion,
-      { stagger: opts.captionStagger, highlight: opts.captionHighlight },
-      style,
-    );
-    const lines = captions.map((clip) => {
-      const start = Math.max(0, Number(clip.startSec || 0));
-      const raw = String(clip.text).slice(0, MAX_CAPTION_CHARS);
-      return {
-        text: style.uppercase ? raw.toUpperCase() : raw,
-        start,
-        end: Math.max(start + 0.1, start + Number(clip.durationSec || 2)),
-      };
-    });
-    const drawtext = buildLineDrawtext({
-      lines,
-      w: width,
-      h: height,
-      preset: opts.typographyPreset,
-      duration: lines[lines.length - 1]?.end,
-      block: motion.block,
-      reveal: motion.reveal,
-      stagger: motion.stagger,
-      // Word mode needs per-word timings, which a caption lane does not
-      // carry; it degrades to paced lines rather than drawing nothing.
-      layout: opts.captionLayout,
-      // The look this renderer drew before the shared builder took over:
-      // the lower band, its own size, an outline and a scrim floor. An
-      // explicit text layout still overrides the band.
-      look: {
-        yFrac: 1 - 0.16,
-        sizeMult: Math.max(0.036, Math.min(0.06, style.lineSizeMult ? style.lineSizeMult * 1.5 : 0.045)),
-        minBoxOpacity: 0.25,
-        outline: true,
-      },
-    });
-    if (drawtext) {
-      videoParts.push(`${videoLabel}${drawtext}[vtxt]`);
+    // Studio looks draw with libass from an .ass file written beside the
+    // render. Where this ffmpeg has no libass (or there is nothing to draw)
+    // they degrade to the look's drawtext preset, so captions never fail a render.
+    const studio = isStudioLook(opts.typographyPreset);
+    let studioFilter = '';
+    if (studio && hasLibass()) {
+      const assPath = path.join(path.dirname(outputPath), `captions-${path.basename(outputPath, '.mp4')}.ass`);
+      // The engine reads font files; a missing or corrupt one must degrade to
+      // the fallback preset below, never fail the render.
+      try {
+        const built = studioCaptionFilter({
+          assPath,
+          // Clip text goes in as typed: the look decides its own casing.
+          lines: studioLines(captions),
+          w: width,
+          h: height,
+          look: opts.typographyPreset,
+          energy: resolveEnergy(opts.captionEnergy, 'calm'),
+          seed: normaliseSeed(opts.captionSeed),
+        });
+        studioFilter = built.filter;
+        if (studioFilter) sideFiles = built.sideFiles;
+      } catch (err) {
+        console.warn(`[CAPTIONS] studio fallback: ${err?.message || err}`);
+        studioFilter = '';
+        sideFiles = [];
+      }
+    }
+    if (studioFilter) {
+      videoParts.push(`${videoLabel}${studioFilter}[vtxt]`);
       videoLabel = '[vtxt]';
+    } else {
+      // Every value below comes from the fallback preset, never the Studio id.
+      const preset = studio ? resolveLook(opts.typographyPreset).fallbackPreset : opts.typographyPreset;
+      const style = resolveTypographyPreset(preset);
+      const motion = resolveCaptionMotion(
+        opts.captionMotion,
+        { stagger: opts.captionStagger, highlight: opts.captionHighlight },
+        style,
+      );
+      const lines = captions.map((clip) => {
+        const start = Math.max(0, Number(clip.startSec || 0));
+        const raw = String(clip.text).slice(0, MAX_CAPTION_CHARS);
+        return {
+          text: style.uppercase ? raw.toUpperCase() : raw,
+          start,
+          end: Math.max(start + 0.1, start + Number(clip.durationSec || 2)),
+        };
+      });
+      const drawtext = buildLineDrawtext({
+        lines,
+        w: width,
+        h: height,
+        preset,
+        duration: lines[lines.length - 1]?.end,
+        block: motion.block,
+        reveal: motion.reveal,
+        stagger: motion.stagger,
+        // Word mode needs per-word timings, which a caption lane does not
+        // carry; it degrades to paced lines rather than drawing nothing.
+        layout: opts.captionLayout,
+        // The look this renderer drew before the shared builder took over:
+        // the lower band, its own size, an outline and a scrim floor. An
+        // explicit text layout still overrides the band.
+        look: {
+          yFrac: 1 - 0.16,
+          sizeMult: Math.max(0.036, Math.min(0.06, style.lineSizeMult ? style.lineSizeMult * 1.5 : 0.045)),
+          minBoxOpacity: 0.25,
+          outline: true,
+        },
+      });
+      if (drawtext) {
+        videoParts.push(`${videoLabel}${drawtext}[vtxt]`);
+        videoLabel = '[vtxt]';
+      }
     }
   }
 
@@ -506,6 +567,9 @@ export function buildProofRenderCommand(plan, opts = {}) {
     outputPath,
     publicUrl: normalizeOutputPublicUrl(outputPath, outputDir),
     ignoredPlaceholders,
+    // Files the filtergraph reads (the Studio .ass); the caller writes them
+    // before ffmpeg starts and removes them afterwards.
+    sideFiles,
     // What actually made it in, and what did not — so the UI can say so
     // instead of leaving the operator to discover omissions by watching.
     coverage,
@@ -526,10 +590,26 @@ export function runFfmpeg(args, opts = {}) {
 export async function renderTimelineProof(plan, opts = {}) {
   const prepared = await prepareVoiceoverAssets(plan, opts);
   if (!prepared.ok) return prepared;
-  const command = buildProofRenderCommand(prepared.plan, opts);
+  let command = buildProofRenderCommand(prepared.plan, opts);
   if (!command.ok) return command;
   fs.mkdirSync(path.dirname(command.outputPath), { recursive: true });
-  const result = await (opts.runner || runFfmpeg)(command.args, opts);
+  try {
+    for (const f of command.sideFiles) fs.writeFileSync(f.path, f.text, 'utf8');
+  } catch (err) {
+    console.warn(`[CAPTIONS] studio fallback: ${err?.message || err}`);
+    removeSideFiles(command.sideFiles);
+    command = buildProofRenderCommand(prepared.plan, {
+      ...opts,
+      typographyPreset: resolveLook(opts.typographyPreset).fallbackPreset,
+    });
+    if (!command.ok) return command;
+  }
+  let result;
+  try {
+    result = await (opts.runner || runFfmpeg)(command.args, opts);
+  } finally {
+    removeSideFiles(command.sideFiles);
+  }
   if (!result.ok) {
     return { ok: false, error: result.error || result.stderr || `ffmpeg exited ${result.code}`, stderr: result.stderr, command, generatedVoiceovers: prepared.generatedVoiceovers };
   }
@@ -541,4 +621,10 @@ export async function renderTimelineProof(plan, opts = {}) {
     generatedVoiceovers: prepared.generatedVoiceovers,
     stderr: result.stderr,
   };
+}
+
+function removeSideFiles(sideFiles) {
+  for (const f of sideFiles || []) {
+    try { fs.rmSync(f.path, { force: true }); } catch { /* best effort */ }
+  }
 }
