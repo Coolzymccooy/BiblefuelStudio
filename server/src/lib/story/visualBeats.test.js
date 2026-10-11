@@ -66,4 +66,9 @@ describe("expandScenesToBeats", () => {
     assert.deepEqual(beats.map((b) => b.videoPath), ["/out/bg-video-1.mp4", undefined, "/out/bg-video-1.mp4", undefined, "/out/bg-video-1.mp4"]);
     assert.ok(beats.every((b) => b.imagePath), "the poster still stands in");
   });
+  test("every beat keeps where its picture came from, which decides its framing", () => {
+    const scenes = [{ ...scene(1, 0, 100_000), imageSource: "upload" }, { ...scene(2, 100_000, 200_000), imageSource: "generated" }];
+    const beats = expandScenesToBeats(scenes, { beatSec: 40 });
+    assert.deepEqual(beats.map((b) => b.imageSource), ["upload", "generated", "upload", "generated", "upload"]);
+  });
 });

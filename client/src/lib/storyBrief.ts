@@ -28,7 +28,9 @@ export function scenesNeedingImages(project: StoryProject): StoryScene[] {
 }
 
 function frameLine(project: StoryProject): string {
-  return project.aspect === 'landscape' ? 'Landscape 16:9 (1920×1080)' : 'Portrait 9:16 (1080×1920)';
+  if (project.aspect === 'landscape') return 'Landscape 16:9 (1920×1080)';
+  if (project.aspect === 'square') return 'Square 1:1 (1080×1080)';
+  return 'Portrait 9:16 (1080×1920)';
 }
 
 function lengthLabel(project: StoryProject): string {

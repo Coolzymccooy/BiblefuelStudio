@@ -761,3 +761,74 @@ describe("story routes", () => {
     assert.equal(calls[0].musicPath, null, "an unresolved mylib ref must not reach the renderer as a raw string");
   });
 });
+
+describe("output frame", () => {
+  const readyProject = (over = {}) => {
+    const img = path.join(outputDir, "img.png"); fs.writeFileSync(img, "png");
+    const audio = path.join(outputDir, "voice.mp3"); fs.writeFileSync(audio, "mp3");
+    const scenes = [{ id: "s1", text: "t", imagePrompt: "", imagePath: img, imageUrl: "/x.png", imageStatus: "done", startMs: 0, endMs: 4000, promptEditedByUser: false }];
+    const p = createProject(dataDir, { title: "frame", ...over });
+    return writeProject(dataDir, { ...p, status: "ready_to_render", scenes, source: { audioPath: audio, durationMs: 4000 } });
+  };
+
+  test("a square project renders a square video", async () => {
+    const calls = [];
+    _setRenderImpl(async (args) => { calls.push(args); return { ok: true, outputPath: args.outPath }; });
+    const p = readyProject({ aspect: "square" });
+    const { req, res } = mockReqRes({ params: { id: p.projectId }, dataDir, outputDir });
+    await handlerFor("post", "/:id/render")(req, res);
+    assert.equal(res.statusCode, 200, JSON.stringify(res.payload));
+    assert.equal(calls[0].width, 1080);
+    assert.equal(calls[0].height, 1080);
+  });
+
+  test("PATCH /:id/aspect changes the frame of an existing project", () => {
+    const p = readyProject();
+    const { req, res } = mockReqRes({ params: { id: p.projectId }, body: { aspect: "landscape" }, dataDir, outputDir });
+    handlerFor("patch", "/:id/aspect")(req, res);
+    assert.equal(res.statusCode, 200, JSON.stringify(res.payload));
+    assert.equal(res.payload.project.aspect, "landscape");
+    assert.equal(readProject(dataDir, p.projectId).aspect, "landscape");
+    assert.match(res.payload.note, /1 scene image/);
+  });
+
+  test("PATCH /:id/aspect refuses an unknown frame", () => {
+    const p = readyProject();
+    const { req, res } = mockReqRes({ params: { id: p.projectId }, body: { aspect: "wide" }, dataDir, outputDir });
+    handlerFor("patch", "/:id/aspect")(req, res);
+    assert.equal(res.statusCode, 400);
+    assert.equal(readProject(dataDir, p.projectId).aspect, "portrait");
+  });
+
+  test("PATCH /:id/aspect waits while the video is rendering", () => {
+    const p = writeProject(dataDir, { ...readyProject(), status: "rendering" });
+    const { req, res } = mockReqRes({ params: { id: p.projectId }, body: { aspect: "square" }, dataDir, outputDir });
+    handlerFor("patch", "/:id/aspect")(req, res);
+    assert.equal(res.statusCode, 409);
+    assert.equal(readProject(dataDir, p.projectId).aspect, "portrait");
+  });
+
+  for (const status of ["transcribing", "segmenting", "generating_images", "narrating"]) {
+    test(`PATCH /:id/aspect waits while the project is ${status}`, () => {
+      const p = writeProject(dataDir, { ...readyProject(), status });
+      const { req, res } = mockReqRes({ params: { id: p.projectId }, body: { aspect: "landscape" }, dataDir, outputDir });
+      handlerFor("patch", "/:id/aspect")(req, res);
+      assert.equal(res.statusCode, 409);
+      assert.equal(readProject(dataDir, p.projectId).aspect, "portrait");
+    });
+  }
+
+  test("PATCH /:id/aspect on a finished video says to render again", () => {
+    const p = writeProject(dataDir, { ...readyProject(), status: "done" });
+    const { req, res } = mockReqRes({ params: { id: p.projectId }, body: { aspect: "square" }, dataDir, outputDir });
+    handlerFor("patch", "/:id/aspect")(req, res);
+    assert.equal(res.statusCode, 200);
+    assert.match(res.payload.note, /render again/i);
+  });
+
+  test("PATCH /:id/aspect on a missing project is 404", () => {
+    const { req, res } = mockReqRes({ params: { id: "nope" }, body: { aspect: "square" }, dataDir, outputDir });
+    handlerFor("patch", "/:id/aspect")(req, res);
+    assert.equal(res.statusCode, 404);
+  });
+});
