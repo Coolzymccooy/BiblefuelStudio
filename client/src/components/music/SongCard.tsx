@@ -10,6 +10,7 @@ import { LibraryDrawer } from './LibraryDrawer';
 import { SoundtrackTwiceDialog } from './SoundtrackTwiceDialog';
 import { useLibraryActions } from './useLibraryActions';
 import type { MusicValue } from '../MusicPicker';
+import type { MusicTrack } from '../../lib/musicLibraryApi';
 
 interface SongCardProps {
   value: MusicValue;
@@ -67,8 +68,8 @@ export function SongCard({ value, onChange, busy, soundtrack = null }: SongCardP
   // A song that looks like the soundtrack is held for a yes before it plays
   // twice under the story.
   const doubles = (song: CandidateSong) => Boolean(soundtrack) && looksLikeSoundtrack(song, soundtrack);
-  const chooseChecked = (ref: string) => {
-    const t = lib.trackForRef(ref);
+  const chooseChecked = (ref: string, known?: MusicTrack) => {
+    const t = known ?? lib.trackForRef(ref);
     if (doubles({ name: t?.label ?? lib.trackLabel(ref), durationSec: t?.durationSec })) setHeld({ kind: 'ref', ref });
     else choose(ref);
   };
@@ -190,7 +191,7 @@ export function SongCard({ value, onChange, busy, soundtrack = null }: SongCardP
               track={lib.instrumentalFor}
               onClose={() => lib.setInstrumentalFor(null)}
               onSaved={lib.refresh}
-              onUse={(inst) => { choose(inst.ref); lib.setInstrumentalFor(null); }}
+              onUse={(inst) => { chooseChecked(inst.ref, inst); lib.setInstrumentalFor(null); }}
             />}
     </DropZone>
   );

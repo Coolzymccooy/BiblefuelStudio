@@ -9,12 +9,20 @@ const track = (id: string, label: string, over: Partial<MusicTrack> = {}): Music
 });
 const tracks = [track('a', 'Peaceful Worship', { default: true }), track('b', 'Prayer Piano')];
 const uploadFile = vi.hoisted(() => vi.fn());
+const instrumentalState = vi.hoisted(() => ({ target: null as unknown }));
+
+// The Remove vocals dialog is out of scope here: a stub that finishes at once.
+vi.mock('../../InstrumentalModal', () => ({
+  InstrumentalModal: ({ onUse }: { onUse: (t: unknown) => void }) => (
+    <button type="button" onClick={() => onUse({ id: 'inst', ref: 'mylib:inst', label: 'Prayer Piano (instrumental)', durationSec: 229 })}>Use in this video</button>
+  ),
+}));
 
 vi.mock('../useLibraryActions', () => ({
   useLibraryActions: () => ({
     tracks,
     isUploading: false,
-    instrumentalFor: null,
+    instrumentalFor: instrumentalState.target,
     setInstrumentalFor: vi.fn(),
     refresh: vi.fn(),
     uploadFile,
@@ -26,7 +34,7 @@ vi.mock('../useLibraryActions', () => ({
 
 import { SongCard } from '../SongCard';
 
-beforeEach(() => { localStorage.clear(); uploadFile.mockReset(); });
+beforeEach(() => { localStorage.clear(); uploadFile.mockReset(); instrumentalState.target = null; });
 
 const soundtrack = { label: 'Prayer Piano.mp3', name: 'Prayer Piano.mp3', trimmed: true, durationMs: 229_000 };
 const noBed = { path: null, volume: 0.3 };
@@ -144,5 +152,27 @@ describe('SongCard with a source soundtrack', () => {
     await pickPrayerPiano(user);
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
     expect(onChange).toHaveBeenCalledWith({ path: 'library:b', volume: 0.3, autoDuck: true });
+  });
+
+  it('warns before an instrumental of the soundtrack song is used, and only applies it on Add anyway', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    instrumentalState.target = tracks[1];
+    render(<SongCard value={noBed} onChange={onChange} busy={false} soundtrack={soundtrack} />);
+    await user.click(screen.getByRole('button', { name: /use in this video/i }));
+    expect(screen.getByRole('alertdialog')).toHaveTextContent(WARNING);
+    expect(onChange).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Add anyway' }));
+    expect(onChange).toHaveBeenCalledWith({ path: 'mylib:inst', volume: 0.3, autoDuck: true });
+  });
+
+  it('uses an instrumental of a different song without asking', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    instrumentalState.target = tracks[0];
+    render(<SongCard value={noBed} onChange={onChange} busy={false} soundtrack={{ ...soundtrack, name: 'Other.mp3', label: 'Other.mp3' }} />);
+    await user.click(screen.getByRole('button', { name: /use in this video/i }));
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(onChange).toHaveBeenCalledWith({ path: 'mylib:inst', volume: 0.3, autoDuck: true });
   });
 });

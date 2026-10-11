@@ -1,4 +1,4 @@
-import { useEffect, useRef, type KeyboardEvent } from 'react';
+import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 
 interface SoundtrackTwiceDialogProps {
@@ -18,22 +18,31 @@ export function SoundtrackTwiceDialog({ onKeepOut, onAddAnyway }: SoundtrackTwic
   const keepRef = useRef<HTMLButtonElement>(null);
   const addRef = useRef<HTMLButtonElement>(null);
 
+  // Escape and Tab are handled on the document, so they work wherever focus
+  // is (clicking the message leaves it on the page, not on a button). The
+  // latest onKeepOut is read through a ref so the listener mounts once.
+  const keepOutRef = useRef(onKeepOut);
+  keepOutRef.current = onKeepOut;
+
   useEffect(() => {
     const opener = document.activeElement as HTMLElement | null;
     keepRef.current?.focus();
-    return () => { opener?.focus?.(); };
+    const onKeyDown = (e: globalThis.KeyboardEvent) => {
+      if (e.key === 'Escape') { e.stopPropagation(); keepOutRef.current(); return; }
+      if (e.key !== 'Tab') return;
+      // Two buttons: Tab cycles between them, never out of the dialog.
+      e.preventDefault();
+      (document.activeElement === keepRef.current ? addRef : keepRef).current?.focus();
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown, true);
+      opener?.focus?.();
+    };
   }, []);
 
-  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    if (e.key === 'Escape') { e.stopPropagation(); onKeepOut(); return; }
-    if (e.key !== 'Tab') return;
-    // Two buttons: Tab cycles between them, never out of the dialog.
-    e.preventDefault();
-    (document.activeElement === keepRef.current ? addRef : keepRef).current?.focus();
-  };
-
   return createPortal(
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" onKeyDown={onKeyDown}>
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
       <div aria-hidden="true" onClick={onKeepOut} className="absolute inset-0 bg-black/50" />
       <div
         role="alertdialog"
