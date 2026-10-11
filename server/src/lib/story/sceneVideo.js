@@ -53,7 +53,9 @@ export const SCENE_VIDEO_INPUT_GUARD = VIDEO_INPUT_GUARD;
 
 const PROBE_TIMEOUT_MS = 20_000;
 const POSTER_TIMEOUT_MS = 30_000;
-const TRANSCODE_TIMEOUT_MS = 120_000;
+// Under Cloudflare's 100 s proxy limit, so a slow conversion fails with our
+// message instead of a 524 while the server is still working.
+const TRANSCODE_TIMEOUT_MS = 90_000;
 
 const NOT_FOUND = "that upload was not found — try uploading it again";
 export const SCENE_VIDEO_TOO_BIG = "That clip is over 200 MB. Use a shorter clip or the HD (1080p) version.";
