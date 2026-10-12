@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { useState } from 'react';
 import { Toaster } from 'react-hot-toast';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -28,6 +29,20 @@ function renderStep(project = mkMoment(), meta: MomentMeta = META) {
   render(<QueryClientProvider client={qc}><MomentsSoundStep {...props} /><Toaster /></QueryClientProvider>);
   return props;
 }
+
+/** Like the page: `busy` is real state that setBusy flips, so a disabled control really is disabled. */
+function renderLive(project: ReturnType<typeof mkMoment>) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const refresh = vi.fn();
+  function Host({ p }: { p: ReturnType<typeof mkMoment> }) {
+    const [busy, setBusy] = useState(false);
+    return <MomentsSoundStep project={p} meta={META} refresh={refresh} busy={busy} setBusy={setBusy} />;
+  }
+  const view = render(<QueryClientProvider client={qc}><Host p={project} /></QueryClientProvider>);
+  return { rerender: (p: ReturnType<typeof mkMoment>) => view.rerender(<QueryClientProvider client={qc}><Host p={p} /></QueryClientProvider>) };
+}
+const withSong = (ref: string | null, windowStartSec: number | null = null) =>
+  mkMoment({ sound: { song: ref ? { ref, windowStartSec } : null, voiceover: null } });
 
 let toastErr: ReturnType<typeof vi.spyOn>;
 
@@ -74,6 +89,58 @@ describe('MomentsSoundStep', () => {
     renderStep();
     expect(await screen.findByText(/couldn't read that song/i)).toBeInTheDocument();
     expect(screen.queryByLabelText(/start at/i)).not.toBeInTheDocument();
+  });
+
+  it('hides the slider at once when the song is removed', async () => {
+    const { rerender } = renderLive(withSong('library:gospel-fire'));
+    await screen.findByLabelText(/start at/i);
+    rerender(withSong(null));
+    expect(screen.queryByLabelText(/start at/i)).not.toBeInTheDocument();
+  });
+
+  it('shows no slider for a new song until its own analysis lands', async () => {
+    const win = vi.spyOn(momentsApi, 'songWindow');
+    const { rerender } = renderLive(withSong('library:gospel-fire'));
+    await screen.findByLabelText(/start at/i);
+    win.mockReturnValue(new Promise(() => {}));
+    rerender(withSong('library:hopeful'));
+    expect(screen.queryByLabelText(/start at/i)).not.toBeInTheDocument();
+  });
+
+  it('keeps the slider while a nudge on the same song is re-read', async () => {
+    const win = vi.spyOn(momentsApi, 'songWindow');
+    const { rerender } = renderLive(withSong('library:gospel-fire'));
+    await screen.findByLabelText(/start at/i);
+    win.mockReturnValue(new Promise(() => {}));
+    rerender(withSong('library:gospel-fire', 30));
+    expect(screen.getByLabelText(/start at/i)).toBeInTheDocument();
+  });
+
+  it('does not save a start that is already the saved or automatic one', async () => {
+    const update = vi.spyOn(momentsApi, 'update').mockResolvedValue(mkMoment());
+    renderStep();
+    const slider = await screen.findByLabelText(/start at/i);
+    fireEvent.keyUp(slider, { key: 'Tab' });
+    fireEvent.mouseUp(slider);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('keeps keyboard focus on the slider while its own save runs', async () => {
+    let finish: (m: ReturnType<typeof mkMoment>) => void = () => {};
+    const update = vi.spyOn(momentsApi, 'update').mockReturnValue(new Promise((res) => { finish = res; }));
+    renderLive(mkMoment());
+    const slider = await screen.findByLabelText(/start at/i);
+    slider.focus();
+    fireEvent.change(slider, { target: { value: '30' } });
+    fireEvent.keyUp(slider, { key: 'ArrowLeft' });
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1));
+    expect(slider).not.toBeDisabled();
+    expect(slider).toHaveAttribute('aria-busy', 'true');
+    expect(document.activeElement).toBe(slider);
+    fireEvent.keyUp(slider, { key: 'ArrowLeft' });
+    expect(update).toHaveBeenCalledTimes(1);
+    finish(mkMoment());
+    await waitFor(() => expect(slider).toHaveAttribute('aria-busy', 'false'));
   });
 
   it('No music removes the song', async () => {

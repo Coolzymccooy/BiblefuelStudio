@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
 import { MusicPicker } from '../MusicPicker';
 import { momentsApi } from '../../lib/momentsApi';
@@ -19,14 +19,20 @@ export function MomentsSoundStep({ project, meta, refresh, busy, setBusy }: Mome
   const [script, setScript] = useState('');
   const [voiceId, setVoiceId] = useState(vo?.voiceId || STORY_VOICES[0].id);
   const [making, setMaking] = useState(false);
-  const { data: win, error: winError } = useQuery({
+  const { data, error } = useQuery({
     queryKey: ['moment-song-window', project.projectId, song?.ref, song?.windowStartSec, project.lengthSec],
     queryFn: () => momentsApi.songWindow(project.projectId),
     enabled: Boolean(song),
-    // Keep the slider on screen while a nudge is saved and the window re-read.
-    placeholderData: keepPreviousData,
+    // Keep the slider on screen while a nudge on the SAME song is saved and re-read; a different song
+    // (key index 2 is the song ref) shows no slider until its own analysis lands.
+    placeholderData: (prev, prevQuery) => (prevQuery?.queryKey[2] === song?.ref ? prev : undefined),
   });
+  // A query that was disabled by "No music" can still hold the old song's data or error.
+  const win = song ? data : undefined;
+  const winError = song ? error : null;
   const [start, setStart] = useState(0);
+  /** The slider's own save is running: it stays enabled so the keyboard focus is not lost on every arrow press. */
+  const [nudging, setNudging] = useState(false);
   useEffect(() => { if (win) setStart(win.windowStartSec); }, [win]);
 
   const save = async (patch: MomentPatch) => {
@@ -57,8 +63,14 @@ export function MomentsSoundStep({ project, meta, refresh, busy, setBusy }: Mome
   };
 
   const maxStart = win ? Math.max(0, Math.floor(win.durationSec - project.lengthSec)) : 0;
-  const commitStart = () => {
-    if (song && win && start !== win.windowStartSec) save({ sound: { song: { ref: song.ref, windowStartSec: start } } });
+  const commitStart = async () => {
+    if (!song || !win || nudging || start === (song.windowStartSec ?? win.autoStartSec)) return;
+    setNudging(true);
+    try {
+      await save({ sound: { song: { ref: song.ref, windowStartSec: start } } });
+    } finally {
+      setNudging(false);
+    }
   };
   const scriptTooShort = script.trim().length < MIN_SCRIPT_CHARS;
 
@@ -86,7 +98,8 @@ export function MomentsSoundStep({ project, meta, refresh, busy, setBusy }: Mome
                 max={maxStart}
                 step={1}
                 value={Math.min(start, maxStart)}
-                disabled={busy}
+                disabled={busy && !nudging}
+                aria-busy={nudging}
                 onChange={(e) => setStart(Number(e.target.value))}
                 onMouseUp={commitStart}
                 onTouchEnd={commitStart}
