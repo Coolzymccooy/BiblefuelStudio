@@ -296,3 +296,18 @@ test("dropped is the number of photos the plan never uses", () => {
     }
   }
 });
+
+test("a tall photo is never panned: its 9:16 window is the whole picture, so pan would be a frozen shot", () => {
+  for (const lengthSec of [15, 30, 60]) {
+    for (const styleId of STYLE_IDS) {
+      for (const energy of [0, 0.5, 1]) {
+        for (let seed = 1; seed <= 30; seed += 1) {
+          const { plan } = directMoment(base({ photos: tall(6), styleId, energy, seed, lengthSec, grid: grid120(lengthSec) }));
+          for (const [i, s] of plan.shots.entries()) {
+            assert.notEqual(s.move.id, "pan", `${styleId}@${energy} ${lengthSec}s seed ${seed} shot ${i}`);
+          }
+        }
+      }
+    }
+  }
+});

@@ -49,14 +49,12 @@ function usable(id, { kind, shape, capabilities, strongOk, avoid }) {
   return !avoid.includes(id);
 }
 
-function chooseMove({ style, shape, role, capabilities, strongOk, prevMove, lastForPhoto, nextWide, r }) {
+function chooseMove({ style, shape, role, capabilities, strongOk, prevMove, lastForPhoto, r }) {
   const base = { kind: "move", shape, capabilities, strongOk };
   const noSplit = (id) => role === "body" || !id.startsWith("split");
-  // A wide photo next takes pan (its only non-split move), so a tall photo before it leaves pan alone.
-  const leavesPan = (id) => !(shape === "tall" && nextWide && id === "pan");
   const tries = [[prevMove, lastForPhoto], [prevMove]];
   for (const avoid of tries) {
-    const id = pick(style.moves, (m) => noSplit(m) && leavesPan(m) && usable(m, { ...base, avoid }), r);
+    const id = pick(style.moves, (m) => noSplit(m) && usable(m, { ...base, avoid }), r);
     if (id) return id;
   }
   // A wide photo can only pan or split. Pan is the only non-split move that suits a
@@ -175,8 +173,7 @@ export function directMoment({
     const prev = shots[i - 1];
     const strongOk = Boolean(c.downbeat || c.strong);
     const move = chooseMove({
-      style, shape, role, capabilities, strongOk, prevMove: prev?.move.id, lastForPhoto: lastMoveOf.get(photo),
-      nextWide: photos[sequence[i + 1]]?.shape === "wide", r: rMove,
+      style, shape, role, capabilities, strongOk, prevMove: prev?.move.id, lastForPhoto: lastMoveOf.get(photo), r: rMove,
     });
     lastMoveOf.set(photo, move);
     const entrance = chooseEntrance({ style, index: i, capabilities, strongOk, prev: prev?.entrance.id, r: rEntrance });

@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { getEffect, effectsOfKind, FFMPEG_51_FILTERS } from "./index.js";
 import { frameCount, anchoredXY } from "./common.js";
 import { filterNames, FFMPEG, ffmpegAvailable } from "../testkit.js";
@@ -191,4 +192,36 @@ test("frameCount tiles consecutive shots exactly", () => {
   const a = { start: 0, end: 0.517 };
   const b = { start: 0.517, end: 1.033 };
   assert.equal(frameCount(a, 30) + frameCount(b, 30), Math.round(1.033 * 30));
+});
+
+// A tall working image is 2160x3840: exactly the 9:16 window, so a pan over it never moves.
+test("pan is for wide photos only; no move is registered for tall photos that stands still", () => {
+  assert.deepEqual(getEffect("pan").shapes, ["wide"]);
+});
+
+test("every move that takes a tall photo ends on a different frame than it starts on", { skip: !renderable }, () => {
+  const tallMoves = MOVES.filter((id) => getEffect(id).shapes.includes("tall"));
+  assert.ok(tallMoves.length >= 6 && !tallMoves.includes("pan"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "motion-moving-"));
+  try {
+    const photo = path.join(dir, "photo.png");
+    // testsrc2 has detail everywhere, so any zoom or shift changes the picture.
+    run(["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=2160x3840:d=1", "-frames:v", "1", photo]);
+    const c = { ...RENDER_CTX, frames: 30, dur: 1 };
+    const frameBytes = 1080 * 1920 * 3 / 2;
+    for (const id of tallMoves) {
+      const graph = getEffect(id).graph({ input: "[0:v]", output: "[mv]", shot: shot(id), ctx: c, tag: "m" });
+      graph.push("[mv]format=yuv420p[o]");
+      const script = path.join(dir, `${id}.txt`);
+      fs.writeFileSync(script, graph.join(";\n"));
+      const out = path.join(dir, `${id}.yuv`);
+      run(["-hide_banner", "-loglevel", "error", "-i", photo, "-filter_complex_script", script, "-map", "[o]", "-an", "-f", "rawvideo", out]);
+      const bytes = fs.readFileSync(out);
+      assert.equal(bytes.length, frameBytes * 30, `${id}: 30 frames`);
+      const md5 = (b) => createHash("md5").update(b).digest("hex");
+      assert.notEqual(md5(bytes.subarray(0, frameBytes)), md5(bytes.subarray(bytes.length - frameBytes)), `${id} is frozen`);
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

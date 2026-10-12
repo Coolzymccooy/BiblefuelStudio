@@ -36,9 +36,12 @@ export const shake = zoomMove("shake", (shot, ctx) => {
 
 export const still = zoomMove("still", (shot, ctx) => ({ z: `1.02+0.01*on/${ctx.frames}`, ...anchoredXY(shot.anchor) }));
 
-/** A landscape photo: a 9:16 window travelling across it. */
+/**
+ * A landscape photo: a 9:16 window travelling across it. Wide only: a tall
+ * working image is 2160x3840, exactly the window, so a pan over it never moves.
+ */
 export const pan = {
-  id: "pan", kind: "move", needs: [], shapes: ["tall", "wide"], strong: false,
+  id: "pan", kind: "move", needs: [], shapes: ["wide"], strong: false,
   graph({ input, output, ctx }) {
     return [
       `${input}loop=loop=${ctx.frames - 1}:size=1:start=0,settb=1/${ctx.fps},setpts=N,` +
