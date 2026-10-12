@@ -134,13 +134,13 @@ export function MomentsPage() {
       <div className="min-w-0 overflow-x-auto">
         <div className={`${segmentedCls} whitespace-nowrap`} role="tablist" aria-label="Moment step">
           {STEPS.map((s) => (
-            <button key={s.id} type="button" aria-pressed={step === s.id} onClick={() => setStep(s.id)} className={`${segmentCls(step === s.id)} shrink-0`}>
+            <button key={s.id} type="button" aria-pressed={step === s.id} disabled={busy} onClick={() => setStep(s.id)} className={`${segmentCls(step === s.id)} shrink-0`}>
               {s.label}
             </button>
           ))}
         </div>
       </div>
-      <button type="button" onClick={() => setActive(null)} className="shrink-0 text-xs text-content-tertiary hover:text-bf-cream">Start new</button>
+      <button type="button" disabled={busy} onClick={() => setActive(null)} className="shrink-0 text-xs text-content-tertiary hover:text-bf-cream disabled:opacity-50">Start new</button>
     </div>
   );
 
@@ -166,7 +166,7 @@ export function MomentsPage() {
       )}
       {stepProps && (
         <div className="space-y-4">
-          {step === 'details' && <MomentsDetailsStep {...stepProps} />}
+          {step === 'details' && <MomentsDetailsStep key={stepProps.project.projectId} {...stepProps} />}
           {step === 'photos' && <MomentsPhotosStep {...stepProps} />}
           {step === 'sound' && <StepPlaceholder name="Sound" />}
           {step === 'words' && <StepPlaceholder name="Words" />}

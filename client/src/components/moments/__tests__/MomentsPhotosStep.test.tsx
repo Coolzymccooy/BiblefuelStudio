@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
+import { Toaster } from 'react-hot-toast';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MomentsPhotosStep } from '../MomentsPhotosStep';
@@ -46,7 +47,37 @@ describe('MomentsPhotosStep', () => {
     expect(up).toHaveBeenCalledTimes(2);
     expect(update.mock.calls[0][1]).toEqual({ photos: [ref('a')], heroIndex: 0 });
     expect(update.mock.calls.at(-1)?.[1]).toEqual({ photos: [ref('a'), ref('b')], heroIndex: 0 });
-    await waitFor(() => expect(p.refresh).toHaveBeenCalled());
+    await waitFor(() => expect(p.refresh).toHaveBeenCalledTimes(2));
+  });
+
+  it('tells the page it is busy for the whole batch', async () => {
+    let release: (v: never) => void = () => {};
+    vi.spyOn(upload, 'uploadMedia').mockReturnValue(new Promise((r) => { release = r as never; }));
+    vi.spyOn(momentsApi, 'update').mockResolvedValue(mkMoment());
+    const p = props({ photos: [] });
+    renderStep(p);
+    await userEvent.upload(screen.getByLabelText(/add photos/i), [jpg('a.jpg')]);
+    await waitFor(() => expect(p.setBusy).toHaveBeenCalledWith(true));
+    expect(p.setBusy).not.toHaveBeenCalledWith(false);
+    release({ file: '/data/out/bg-image-a.jpg' } as never);
+    await waitFor(() => expect(p.setBusy).toHaveBeenLastCalledWith(false));
+  });
+
+  it('drops the extra files and says how much room is left', async () => {
+    const up = vi.spyOn(upload, 'uploadMedia').mockResolvedValue({ file: '/data/out/bg-image-a.jpg' } as never);
+    vi.spyOn(momentsApi, 'update').mockResolvedValue(mkMoment());
+    const full = Array.from({ length: 18 }, (_, i) => photo(i + 1));
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={qc}><Toaster /><MomentsPhotosStep {...props({ photos: full })} /></QueryClientProvider>);
+    await userEvent.upload(screen.getByLabelText(/add photos/i), [jpg('a.jpg'), jpg('b.jpg'), jpg('c.jpg')]);
+    expect(await screen.findByText('Only room for 2 more photos (max 20).')).toBeInTheDocument();
+    await waitFor(() => expect(up).toHaveBeenCalledTimes(2));
+  });
+
+  it('at the limit, adding is disabled and a hint says why', () => {
+    renderStep(props({ photos: Array.from({ length: 20 }, (_, i) => photo(i + 1)) }));
+    expect(screen.getByRole('button', { name: /add photos/i })).toBeDisabled();
+    expect(screen.getByText(/most a moment can hold \(20 photos\)/i)).toBeInTheDocument();
   });
 
   it('a photo that fails to upload costs only itself', async () => {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { momentsApi } from '../../lib/momentsApi';
 import { DETAIL_LABELS } from '../../lib/momentsWizard';
 import { toastError } from '../../lib/errors';
@@ -8,8 +8,9 @@ import { fieldLabelCls, inputCls } from '../story/formStyles';
 
 export function MomentsDetailsStep({ project, meta, refresh, busy }: MomentStepProps) {
   const occasion = meta.occasions.find((o) => o.id === project.occasion) ?? meta.occasions[0];
+  // Local state is authoritative while mounted: a refetch must never overwrite what is being typed.
+  // The page keys this step by projectId, so opening another Moment starts from its own details.
   const [details, setDetails] = useState(project.details);
-  useEffect(() => setDetails(project.details), [project.details]);
 
   const save = async (patch: Parameters<typeof momentsApi.update>[1]) => {
     try {

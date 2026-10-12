@@ -6,6 +6,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { MomentsPage } from '../MomentsPage';
 import { momentsApi } from '../../lib/momentsApi';
 import { ApiError } from '../../lib/apiError';
+import * as upload from '../../lib/mediaUpload';
 import { META, mkMoment } from '../../lib/__tests__/momentsFixtures';
 import type { MomentSummary } from '../../lib/momentsTypes';
 
@@ -39,6 +40,19 @@ describe('MomentsPage shell', () => {
     expect(create).toHaveBeenCalledWith('birthday');
     expect(await screen.findByRole('button', { name: 'Photos', pressed: true })).toBeInTheDocument();
     expect(localStorage.getItem('BF_MOMENTS_ACTIVE')).toBe('m1');
+  });
+
+  it('locks the step tabs and Start new while a photo batch is uploading', async () => {
+    localStorage.setItem('BF_MOMENTS_ACTIVE', 'm1');
+    vi.spyOn(momentsApi, 'get').mockResolvedValue(mkMoment());
+    vi.spyOn(momentsApi, 'libraryImages').mockResolvedValue([]);
+    vi.spyOn(upload, 'uploadMedia').mockReturnValue(new Promise(() => {}));
+    renderPage();
+    await screen.findByRole('button', { name: 'Photos', pressed: true });
+    expect(screen.getByRole('button', { name: 'Sound' })).toBeEnabled();
+    await userEvent.upload(screen.getByLabelText(/add photos/i), [new File(['a'], 'a.jpg', { type: 'image/jpeg' })]);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Sound' })).toBeDisabled());
+    expect(screen.getByRole('button', { name: /start new/i })).toBeDisabled();
   });
 
   it('lists earlier Moments and reopens one', async () => {

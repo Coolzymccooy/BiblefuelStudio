@@ -25,6 +25,14 @@ describe('MomentsDetailsStep', () => {
     expect(update).toHaveBeenCalledWith('m1', { details: { name: 'Tolu' } });
   });
 
+  it('a refetch mid-typing does not overwrite what is being typed', async () => {
+    const p = stepProps();
+    const { rerender } = render(<MomentsDetailsStep {...p} />);
+    await userEvent.type(screen.getByLabelText('Name'), 'Tol');
+    rerender(<MomentsDetailsStep {...p} project={mkMoment({ details: {} })} />);
+    expect(screen.getByLabelText('Name')).toHaveValue('Tol');
+  });
+
   it('does not save when a field is left unchanged', async () => {
     const update = vi.spyOn(momentsApi, 'update').mockResolvedValue(mkMoment());
     render(<MomentsDetailsStep {...stepProps()} />);

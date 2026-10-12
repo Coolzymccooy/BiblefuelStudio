@@ -52,11 +52,11 @@ export function MomentsPhotosStep({ project, meta, refresh, busy, setBusy }: Mom
 
   const addFiles = async (files: File[]) => {
     const list = files.slice(0, Math.max(0, room));
-    if (files.length > list.length) toast(`Only ${meta.limits.maxPhotos} photos fit a Moment.`);
+    if (files.length > list.length && room > 0) toast(`Only room for ${room} more photo${room === 1 ? '' : 's'} (max ${meta.limits.maxPhotos}).`);
     if (!list.length) return;
     setUploading(true);
+    setBusy(true);
     let current = refs(photos);
-    let saved = false;
     const toastId = toast.loading(`Uploading 1 of ${list.length}…`);
     try {
       for (let i = 0; i < list.length; i += 1) {
@@ -67,7 +67,7 @@ export function MomentsPhotosStep({ project, meta, refresh, busy, setBusy }: Mom
           const next = [...current, { kind: 'upload', path: up.file } as PhotoRef];
           if (await persist({ photos: next, heroIndex })) {
             current = next;
-            saved = true;
+            refresh();
           }
         } catch (e) {
           toastError(uploadFailure(e, list[i].name));
@@ -76,7 +76,7 @@ export function MomentsPhotosStep({ project, meta, refresh, busy, setBusy }: Mom
     } finally {
       toast.dismiss(toastId);
       setUploading(false);
-      if (saved) refresh();
+      setBusy(false);
     }
   };
 
@@ -115,6 +115,7 @@ export function MomentsPhotosStep({ project, meta, refresh, busy, setBusy }: Mom
           {!library.length && <p className="text-help col-span-full">No pictures in your library yet.</p>}
         </div>
       )}
+      {room <= 0 && <p className="text-help">That is the most a Moment can hold ({meta.limits.maxPhotos} photos). Remove one to add another.</p>}
       {need > 0 && <p className="text-help">Add {need} more photo{need === 1 ? '' : 's'} to make your Moment.</p>}
       <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
         {photos.map((p, i) => (
