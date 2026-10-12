@@ -36,7 +36,7 @@ export function resolvePhoto(ctx, ref, { items } = {}) {
   const kind = sniffImage(found.file);
   if (!kind) return { ok: false, error: UNDECODABLE_IMAGE_ERROR };
   const size = imageHeaderSize(found.file, kind);
-  if (!size) return { ok: false, error: UNDECODABLE_IMAGE_ERROR };
+  if (!size || !(size.w >= 1) || !(size.h >= 1)) return { ok: false, error: UNDECODABLE_IMAGE_ERROR };
   if (size.animated) return { ok: false, error: "That's an animated picture. Use a still JPG or PNG." };
   if (size.w > MAX_IMAGE_SIDE || size.h > MAX_IMAGE_SIDE || size.w * size.h > MAX_IMAGE_PIXELS) {
     return { ok: false, error: `That picture is ${size.w}×${size.h}, too large for a video.` };
