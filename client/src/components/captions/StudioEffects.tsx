@@ -1,4 +1,4 @@
-import { useState, type ChangeEvent } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { Field } from '../ui/Field';
 import { Select } from '../ui/Select';
 import { FALLBACK_ENERGIES, isStudioLook, lookSlug, readableLook, type CaptionEnergy, type StudioOption } from '../../lib/studioCaptions';
@@ -50,6 +50,8 @@ export interface StudioEffectsControlsProps {
 }
 
 const STUDIO_UNAVAILABLE_TEXT = "Studio effects unavailable on this server — renders use the look's standard style.";
+/** How long the Shuffle button shows its tick before going back to its label. */
+const SHUFFLE_TICK_MS = 1200;
 
 /** Shown once a Studio look is picked: its sample clip, Energy, and Shuffle. */
 export function StudioEffectsControls({
@@ -57,6 +59,22 @@ export function StudioEffectsControls({
 }: StudioEffectsControlsProps) {
   // A look whose sample clip failed to load: hide the player rather than show a broken one.
   const [failedPreview, setFailedPreview] = useState<string | null>(null);
+  // Shuffle feedback, both keyed to the look so a different look starts afresh.
+  const [shuffle, setShuffle] = useState({ look, presses: 0 });
+  const [tickedLook, setTickedLook] = useState<string | null>(null);
+  const tickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (tickTimer.current) clearTimeout(tickTimer.current);
+  }, []);
+  const presses = shuffle.look === look ? shuffle.presses : 0;
+  const ticked = tickedLook === look;
+  const handleShuffle = () => {
+    onShuffle?.();
+    setShuffle({ look, presses: presses + 1 });
+    setTickedLook(look);
+    if (tickTimer.current) clearTimeout(tickTimer.current);
+    tickTimer.current = setTimeout(() => setTickedLook(null), SHUFFLE_TICK_MS);
+  };
   const options = energies && energies.length > 0 ? energies : FALLBACK_ENERGIES;
   const off = disabled || unavailable;
   return (
@@ -93,16 +111,22 @@ export function StudioEffectsControls({
           {onShuffle && (
             <button
               type="button"
-              onClick={onShuffle}
+              onClick={handleShuffle}
               disabled={off}
               className="shrink-0 rounded-lg border border-white/10 px-3 py-2.5 text-xs text-content-secondary hover:text-bf-cream disabled:opacity-50"
               title="Re-roll which effect each line gets"
             >
-              Shuffle effects
+              {ticked ? '✓ Shuffled' : 'Shuffle effects'}
             </button>
           )}
         </div>
       </Field>
+      {presses > 0 && (
+        // Mix 1 is the original, so the first press lands on mix 2.
+        <p role="status" aria-live="polite" className="text-xs text-content-secondary">
+          New effect mix (mix {presses + 1}) — you'll see it on your next render.
+        </p>
+      )}
     </>
   );
 }

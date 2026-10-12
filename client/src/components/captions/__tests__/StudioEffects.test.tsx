@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
-import { describe, it, expect, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, describe, it, expect, vi } from 'vitest';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { StudioLookOptions, StudioEffectsControls } from '../StudioEffects';
 
@@ -82,5 +82,110 @@ describe('StudioEffectsControls', () => {
   it('offers no Shuffle button when there is nothing to shuffle', () => {
     render(<StudioEffectsControls look="studio-lagos-night" energy="calm" onEnergyChange={vi.fn()} />);
     expect(screen.queryByRole('button', { name: /shuffle effects/i })).toBeNull();
+  });
+});
+
+describe('StudioEffectsControls shuffle feedback', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const renderControls = (props: Partial<Parameters<typeof StudioEffectsControls>[0]> = {}) =>
+    render(
+      <StudioEffectsControls look="studio-lagos-night" energy="lively" onEnergyChange={vi.fn()} onShuffle={vi.fn()} {...props} />,
+    );
+  const shuffleButton = () => screen.getByRole('button', { name: /shuffle effects|shuffled/i });
+
+  it('shows no mix line before Shuffle is pressed', () => {
+    renderControls();
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.queryByText(/new effect mix/i)).toBeNull();
+    expect(shuffleButton()).toHaveTextContent('Shuffle effects');
+  });
+
+  it('the first press calls onShuffle and announces mix 2', () => {
+    const onShuffle = vi.fn();
+    renderControls({ onShuffle });
+    fireEvent.click(shuffleButton());
+    expect(onShuffle).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('status')).toHaveTextContent(
+      "New effect mix (mix 2) — you'll see it on your next render.",
+    );
+    expect(screen.getByRole('status')).toHaveAttribute('aria-live', 'polite');
+  });
+
+  it('each further press counts up and the line stays', () => {
+    vi.useFakeTimers();
+    const onShuffle = vi.fn();
+    renderControls({ onShuffle });
+    fireEvent.click(shuffleButton());
+    fireEvent.click(shuffleButton());
+    expect(onShuffle).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole('status')).toHaveTextContent('(mix 3)');
+    act(() => {
+      vi.advanceTimersByTime(5000);
+    });
+    expect(screen.getByRole('status')).toHaveTextContent('(mix 3)');
+  });
+
+  it('shows a tick on the button, then reverts after about 1.2 seconds', () => {
+    vi.useFakeTimers();
+    renderControls();
+    fireEvent.click(shuffleButton());
+    expect(shuffleButton()).toHaveTextContent('✓ Shuffled');
+    act(() => {
+      vi.advanceTimersByTime(1100);
+    });
+    expect(shuffleButton()).toHaveTextContent('✓ Shuffled');
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+    expect(shuffleButton()).toHaveTextContent('Shuffle effects');
+  });
+
+  it('a second press restarts the tick timer', () => {
+    vi.useFakeTimers();
+    renderControls();
+    fireEvent.click(shuffleButton());
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    fireEvent.click(shuffleButton());
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(shuffleButton()).toHaveTextContent('✓ Shuffled');
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+    expect(shuffleButton()).toHaveTextContent('Shuffle effects');
+  });
+
+  it('resets the line and the tick when the chosen look changes', () => {
+    const { rerender } = renderControls();
+    fireEvent.click(shuffleButton());
+    expect(screen.getByRole('status')).toBeInTheDocument();
+    rerender(<StudioEffectsControls look="studio-gospel-gold" energy="lively" onEnergyChange={vi.fn()} onShuffle={vi.fn()} />);
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(shuffleButton()).toHaveTextContent('Shuffle effects');
+    fireEvent.click(shuffleButton());
+    expect(screen.getByRole('status')).toHaveTextContent('(mix 2)');
+  });
+
+  it('does nothing when disabled', () => {
+    const onShuffle = vi.fn();
+    renderControls({ onShuffle, disabled: true });
+    fireEvent.click(shuffleButton());
+    expect(onShuffle).not.toHaveBeenCalled();
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(shuffleButton()).toHaveTextContent('Shuffle effects');
+  });
+
+  it('clears its timer on unmount', () => {
+    vi.useFakeTimers();
+    const { unmount } = renderControls();
+    fireEvent.click(shuffleButton());
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
