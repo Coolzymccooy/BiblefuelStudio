@@ -83,6 +83,14 @@ export function MomentsPage() {
   const commit = useCallback((saved: MomentProject) => {
     qc.setQueryData(['moment', saved.projectId], saved);
   }, [qc]);
+  // A step seeds its editors from the page copy when it mounts, so a tab switch waits for any
+  // blur-save still in flight; otherwise coming straight back would show (and later re-save) old text.
+  const stepRequest = useRef(0);
+  const goTo = useCallback(async (next: Step) => {
+    const ticket = ++stepRequest.current;
+    if (pending.current.size) await Promise.allSettled([...pending.current]);
+    if (ticket === stepRequest.current) setStep(next);
+  }, []);
   const making = useRef(false);
   /** Bumped when Make it writes the words itself, so a mounted Words step reloads them. */
   const [wordsKey, setWordsKey] = useState(0);
@@ -231,7 +239,7 @@ export function MomentsPage() {
       <div className="min-w-0 overflow-x-auto">
         <div className={`${segmentedCls} whitespace-nowrap`} role="group" aria-label="Moment step">
           {STEPS.map((s) => (
-            <button key={s.id} type="button" aria-pressed={step === s.id} disabled={busy} onClick={() => setStep(s.id)} className={`${segmentCls(step === s.id)} shrink-0`}>
+            <button key={s.id} type="button" aria-pressed={step === s.id} disabled={busy} onClick={() => { void goTo(s.id); }} className={`${segmentCls(step === s.id)} shrink-0`}>
               {s.label}
             </button>
           ))}

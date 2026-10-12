@@ -108,6 +108,29 @@ describe('every successful PUT lands in the query cache', () => {
     await waitFor(() => expect(update).toHaveBeenCalledTimes(2));
     expect(update.mock.calls[1][1]).toEqual({ statements: ['Amazing', 'Second'] });
   });
+
+  it('a step switch waits for a Words save still in flight, so coming back shows the edit', async () => {
+    open();
+    const base = ready({ title: 'Title', statements: ['Grace', 'Rising'] });
+    const get = vi.spyOn(momentsApi, 'get').mockResolvedValue(base);
+    let finish: (v: MomentProject) => void = () => {};
+    const update = vi.spyOn(momentsApi, 'update').mockImplementationOnce((_id, patch) => new Promise<MomentProject>((resolve) => {
+      finish = () => resolve(applyPatch(base, patch as never));
+    }));
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: 'Words' }));
+    delayRefetches(get);
+    const first = await screen.findByLabelText('Statement 1');
+    await userEvent.clear(first);
+    await userEvent.type(first, 'Amazing');
+    await userEvent.click(screen.getByRole('button', { name: 'Style' }));
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1));
+    // The save is still in flight: the switch waits for it.
+    expect(screen.getByRole('button', { name: 'Words', pressed: true })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Words' }));
+    await act(async () => { finish(base); });
+    expect(await screen.findByLabelText('Statement 1')).toHaveValue('Amazing');
+  });
 });
 
 describe('when Make it cannot write the words', () => {
