@@ -81,6 +81,7 @@ export interface MomentMeta {
     detail: number;
     minPhotos: number;
     maxPhotos: number;
+    scriptMax: number;
   };
 }
 

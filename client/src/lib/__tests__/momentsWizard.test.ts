@@ -6,7 +6,7 @@ import type { MomentMeta, MomentPhoto, MomentProject } from '../momentsTypes';
 
 const meta = {
   occasions: [], styles: [], lengths: [15, 30, 60],
-  limits: { statements: { 15: 3, 30: 5, 60: 8 }, maxStatements: 8, title: 40, statement: 60, detail: 80, minPhotos: 3, maxPhotos: 20 },
+  limits: { statements: { 15: 3, 30: 5, 60: 8 }, maxStatements: 8, title: 40, statement: 60, detail: 80, minPhotos: 3, maxPhotos: 20, scriptMax: 1200 },
 } as MomentMeta;
 const photo = (n: number): MomentPhoto => ({ ref: { kind: 'upload', path: `p${n}` }, url: `/outputs/p${n}.jpg`, width: 1, height: 1 });
 /** Freeze a value and everything under it, so any in-place write throws in strict mode. */

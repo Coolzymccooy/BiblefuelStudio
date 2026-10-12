@@ -10,7 +10,7 @@ export const META: MomentMeta = {
     { id: 'hype', label: 'Hype', description: 'Energy' }, { id: 'gallery', label: 'Gallery', description: 'Clean' },
   ],
   lengths: [15, 30, 60],
-  limits: { statements: { 15: 3, 30: 5, 60: 8 }, maxStatements: 8, title: 40, statement: 60, detail: 80, minPhotos: 3, maxPhotos: 20 },
+  limits: { statements: { 15: 3, 30: 5, 60: 8 }, maxStatements: 8, title: 40, statement: 60, detail: 80, minPhotos: 3, maxPhotos: 20, scriptMax: 1200 },
 };
 
 export function mkMoment(over: Partial<MomentProject> = {}): MomentProject {

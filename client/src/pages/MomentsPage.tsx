@@ -11,6 +11,7 @@ import { MomentsHistory, MOMENTS_LIST_KEY } from '../components/moments/MomentsH
 import { MomentsOccasionPicker } from '../components/moments/MomentsOccasionPicker';
 import { MomentsDetailsStep } from '../components/moments/MomentsDetailsStep';
 import { MomentsPhotosStep } from '../components/moments/MomentsPhotosStep';
+import { MomentsSoundStep } from '../components/moments/MomentsSoundStep';
 import { segmentCls, segmentedCls } from '../components/story/formStyles';
 
 const ACTIVE_KEY = 'BF_MOMENTS_ACTIVE';
@@ -168,7 +169,7 @@ export function MomentsPage() {
         <div className="space-y-4">
           {step === 'details' && <MomentsDetailsStep key={stepProps.project.projectId} {...stepProps} />}
           {step === 'photos' && <MomentsPhotosStep {...stepProps} />}
-          {step === 'sound' && <StepPlaceholder name="Sound" />}
+          {step === 'sound' && <MomentsSoundStep {...stepProps} />}
           {step === 'words' && <StepPlaceholder name="Words" />}
           {step === 'style' && <StepPlaceholder name="Style" />}
           {step === 'result' && <StepPlaceholder name="Result" />}
