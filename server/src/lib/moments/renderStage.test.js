@@ -279,3 +279,166 @@ test("cancelMomentRender still stops a running render", async () => {
 test("a missing project does not throw", async () => {
   await assert.doesNotReject(momentRenderStage(ctx, "no-such-project", createJob("u1", { durationSec: 15 }).jobId, {}));
 });
+
+// ---- fix round 1
+
+const projectFile = (p) => path.join(ctx.dataDir, "moments", `${p.projectId}.json`);
+const movieFiles = () => fs.readdirSync(ctx.outputDir).filter((f) => /^moment-[0-9a-f-]{36}\.mp4$/i.test(f));
+
+test("a progress write that throws neither kills the stage nor stops the render", async () => {
+  const p = moment();
+  // A directory where the store's temp file goes makes every write inside the render throw.
+  const poison = `${projectFile(p)}.${process.pid}.tmp`;
+  _setEngineForTest({
+    renderPlan: async (opts) => {
+      fs.mkdirSync(poison);
+      try {
+        opts.onProgress({ stage: "shots", fraction: 0.5 });
+        opts.onProgress({ stage: "no-such-stage", fraction: 1 });
+        opts.onProgress({ stage: "finish", fraction: 0.99 });
+      } finally { fs.rmSync(poison, { recursive: true, force: true }); }
+      fs.writeFileSync(opts.out, "mp4");
+      return { ok: true, file: opts.out };
+    },
+  });
+  await momentRenderStage(ctx, p.projectId, createJob("u1", { durationSec: 15 }).jobId, {});
+  assert.equal(readProject(ctx.dataDir, p.projectId).render.status, "done");
+});
+
+test("a render that belongs to a newer job is left alone", async () => {
+  const newer = { jobId: "other", status: "running", percent: 30, stage: "shots" };
+  const p = moment({ render: newer });
+  const job = createJob("u1", { durationSec: 15 });
+  await momentRenderStage(ctx, p.projectId, job.jobId, {});
+  const after = readProject(ctx.dataDir, p.projectId);
+  assert.deepEqual(after.render, newer, "progress, the plan's render record and the result all skipped");
+  assert.equal(after.history.length, 0);
+  assert.equal(getJob(job.jobId).status, "error");
+  assert.deepEqual(movieFiles(), [], "the finished file is removed rather than orphaned");
+});
+
+test("a cancelled job does not overwrite a newer job's render", async () => {
+  const newer = { jobId: "other", status: "running", percent: 30, stage: "shots" };
+  const p = moment({ render: newer });
+  const job = createJob("u1", { durationSec: 15 });
+  cancelJob(job.jobId, "u1");
+  await momentRenderStage(ctx, p.projectId, job.jobId, {});
+  assert.deepEqual(readProject(ctx.dataDir, p.projectId).render, newer);
+});
+
+test("running progress is a fresh record, not the old render's fields", async () => {
+  const seen = [];
+  _setEngineForTest({
+    renderPlan: async (opts) => {
+      opts.onProgress({ stage: "shots", fraction: 0.5 });
+      seen.push(readProject(ctx.dataDir, p.projectId).render);
+      fs.writeFileSync(opts.out, "mp4");
+      return { ok: true, file: opts.out };
+    },
+  });
+  const p = moment({ render: { jobId: null, status: "running", percent: 0, stage: "waiting", file: "/outputs/old.mp4", notes: ["old"], error: "old" } });
+  await momentRenderStage(ctx, p.projectId, createJob("u1", { durationSec: 15 }).jobId, {});
+  assert.deepEqual(Object.keys(seen[0]).sort(), ["jobId", "percent", "stage", "status"]);
+});
+
+test("a job record that cannot be saved does not turn a finished Moment into an error", async () => {
+  const p = moment();
+  // A file where the persisted-jobs folder goes makes persistJob throw.
+  fs.writeFileSync(path.join(ctx.dataDir, "render-jobs"), "not a folder");
+  await momentRenderStage(ctx, p.projectId, createJob("u1", { durationSec: 15 }).jobId, {});
+  const done = readProject(ctx.dataDir, p.projectId);
+  assert.equal(done.render.status, "done", JSON.stringify(done.render));
+  assert.equal(movieFiles().length, 1);
+});
+
+test("a project deleted during the render leaves no orphan video", async () => {
+  const p = moment();
+  _setEngineForTest({
+    renderPlan: async (opts) => {
+      fs.writeFileSync(opts.out, "mp4");
+      fs.rmSync(projectFile(p));
+      return { ok: true, file: opts.out };
+    },
+  });
+  await assert.doesNotReject(momentRenderStage(ctx, p.projectId, createJob("u1", { durationSec: 15 }).jobId, {}));
+  assert.deepEqual(movieFiles(), []);
+});
+
+test("a cancel during photo preparation says Cancelled, not 'need 3 photos'", async () => {
+  const ac = new AbortController();
+  let n = 0;
+  // Cancelled during the last photo's conversion: it fails, and so would the 3-photo minimum.
+  _setEngineForTest({
+    runFfmpeg: async (args) => {
+      n += 1;
+      if (n < 3) { fs.writeFileSync(args.at(-1), "jpg"); return { ok: true }; }
+      ac.abort();
+      return { ok: false, error: "cancelled" };
+    },
+  });
+  const p = moment({ photos: [photo(), photo(), photo()] });
+  await momentRenderStage(ctx, p.projectId, createJob("u1", { durationSec: 15 }).jobId, { signal: ac.signal });
+  assert.equal(readProject(ctx.dataDir, p.projectId).render.error, "Cancelled.");
+});
+
+test("cancelMomentRender is false before the stage registers, and an older run does not unregister a newer one", async () => {
+  const p = moment();
+  assert.equal(cancelMomentRender(p.projectId), false, "nothing registered yet");
+  const releases = [];
+  _setEngineForTest({
+    renderPlan: (opts) => new Promise((resolve) => {
+      calls.render.push(opts);
+      releases.push(() => resolve({ ok: false, error: "Rendering failed at shot 1 of 3." }));
+      opts.signal.addEventListener("abort", () => resolve({ ok: false, error: "cancelled" }), { once: true });
+    }),
+  });
+  const first = momentRenderStage(ctx, p.projectId, createJob("u1", { durationSec: 15 }).jobId, {});
+  while (calls.render.length < 1) await new Promise((r) => setTimeout(r, 5));
+  const second = momentRenderStage(ctx, p.projectId, createJob("u1", { durationSec: 15 }).jobId, {});
+  while (calls.render.length < 2) await new Promise((r) => setTimeout(r, 5));
+  // The newer run registered last, so the older run finishing must leave it registered.
+  releases[0]();
+  await first;
+  assert.equal(calls.render[1].signal.aborted, false);
+  assert.equal(cancelMomentRender(p.projectId), true, "the newer run is still cancellable");
+  await second;
+  assert.equal(calls.render[1].signal.aborted, true);
+  assert.equal(cancelMomentRender(p.projectId), false);
+});
+
+// ---- R11: an unreadable voiceover is a note, not a failure
+
+test("a voiceover that cannot be decoded is noted and the Moment renders without it", async () => {
+  const name = voiceName();
+  const voicePath = path.join(ctx.outputDir, name);
+  fs.writeFileSync(voicePath, "mp3");
+  const p = moment({ sound: { song: null, voiceover: { file: name } } });
+  _setEngineForTest({
+    decode: async (file) => {
+      if (path.basename(file) === name) throw new Error("bad mp3");
+      return Buffer.alloc(11025 * 2 * 30);
+    },
+  });
+  await momentRenderStage(ctx, p.projectId, createJob("u1", { durationSec: 15 }).jobId, {});
+  const done = readProject(ctx.dataDir, p.projectId);
+  assert.equal(done.render.status, "done", JSON.stringify(done.render));
+  assert.equal(calls.render[0].voice, null);
+  assert.equal(calls.render[0].song, null);
+  assert.match(done.render.notes.join(" "), /The voiceover couldn't be read, so this Moment has no voice\. Make it again\./);
+});
+
+test("an unreadable voiceover with a song keeps the song", async () => {
+  const name = voiceName();
+  fs.writeFileSync(path.join(ctx.outputDir, name), "mp3");
+  const p = moment({ sound: { song: { ref: "library:hopeful", windowStartSec: 7 }, voiceover: { file: name } } });
+  _setEngineForTest({
+    decode: async (file) => {
+      if (path.basename(file) === name) throw new Error("bad mp3");
+      return Buffer.alloc(11025 * 2 * 30);
+    },
+  });
+  await momentRenderStage(ctx, p.projectId, createJob("u1", { durationSec: 15 }).jobId, {});
+  assert.equal(readProject(ctx.dataDir, p.projectId).render.status, "done");
+  assert.equal(calls.render[0].voice, null);
+  assert.equal(calls.render[0].song.startSec, 7);
+});

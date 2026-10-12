@@ -25,6 +25,7 @@ export const VOICE_NAME = /^moment-vo-[0-9a-f-]{36}\.mp3$/i;
 export const OUTPUT_NAME = /^moment-[0-9a-f-]{36}\.mp4$/i;
 export const STAGES = Object.freeze({ prepare: [0, 10], analyse: [10, 20], shots: [20, 75], join: [75, 85], finish: [85, 100] });
 const VOICE_SLACK_SEC = 0.05;
+const VOICE_UNREADABLE_NOTE = "The voiceover couldn't be read, so this Moment has no voice. Make it again.";
 const VOICE_MISSING_NOTE = "The voiceover was missing, so this Moment has no voice. Make it again to add it back.";
 
 let engine = { runFfmpeg: realRunFfmpeg, renderPlan: realRenderPlan, decode: decodePcm };
@@ -43,18 +44,31 @@ class StageError extends Error {}
 
 function progressWriter(ctx, projectId, jobId) {
   let lastWritten = -1;
+  // Best-effort: the engine calls this from a stream "data" handler, so nothing may escape.
   return (stage, fraction) => {
-    const [a, b] = STAGES[stage];
-    // 100% only once the finish stage reports fraction 1 (the file is in place);
-    // rounding a running 0.99 must not show 100 while the move is still pending.
-    const raw = Math.round(a + (b - a) * Math.min(1, Math.max(0, fraction)));
-    const percent = stage === "finish" && fraction >= 1 ? 100 : Math.min(99, raw);
-    try { markProgress(jobId, percent); } catch { /* job gone */ }
-    if (percent - lastWritten < 5 && percent !== 100 && fraction !== 0) return;
-    lastWritten = percent;
-    const live = readProject(ctx.dataDir, projectId);
-    if (live) writeProject(ctx.dataDir, { ...live, render: { ...live.render, jobId, status: "running", percent, stage } });
+    try {
+      const [a, b] = STAGES[stage];
+      // 100% only once the finish stage reports fraction 1 (the file is in place);
+      // rounding a running 0.99 must not show 100 while the move is still pending.
+      const raw = Math.round(a + (b - a) * Math.min(1, Math.max(0, fraction)));
+      const percent = stage === "finish" && fraction >= 1 ? 100 : Math.min(99, raw);
+      try { markProgress(jobId, percent); } catch { /* job gone */ }
+      if (percent - lastWritten < 5 && percent !== 100 && fraction !== 0) return;
+      lastWritten = percent;
+      const live = readProject(ctx.dataDir, projectId);
+      if (!live || !ownsRender(live, jobId)) return;
+      // A fresh record: nothing (file, notes, an old error) is inherited from an earlier render.
+      writeProject(ctx.dataDir, { ...live, render: { jobId, status: "running", percent, stage } });
+    } catch (err) {
+      console.error(`[moments] progress for ${projectId} not recorded:`, err?.message || err);
+    }
   };
+}
+
+/** False when the project's render belongs to a newer job, which this one must not overwrite. */
+function ownsRender(project, jobId) {
+  const current = project.render?.jobId;
+  return !(current && current !== jobId);
 }
 
 async function preparePhotos(ctx, project, workDir, signal) {
@@ -68,6 +82,7 @@ async function preparePhotos(ctx, project, workDir, signal) {
     const out = path.join(workDir, `work-${i}.jpg`);
     const { args, shape } = workImageArgs({ src: r.file, out, width: r.width, height: r.height, orientation: orientationOf(r.file) });
     const ran = await engine.runFfmpeg(args, { signal });
+    if (!ran.ok && (signal.aborted || ran.error === "cancelled")) throw new StageError("Cancelled.");
     if (!ran.ok) { notes.push(`Photo ${i + 1} was skipped: it could not be read.`); continue; }
     usable.push({ index: i, file: out, shape });
   }
@@ -96,19 +111,60 @@ async function timing(ctx, project, sound) {
   const notes = [];
   if (sound.voiceMissing) notes.push(VOICE_MISSING_NOTE);
 
+  // A voiceover that can't be read is a note, not a failure: the Moment simply has no voice.
+  let voice = null;
   let voiceGridResult = null;
   if (sound.voiceFile) {
-    voiceGridResult = await voiceGrid(sound.voiceFile, { lengthSec, decode: engine.decode });
-    if (voiceGridResult.durationSec > lengthSec + VOICE_SLACK_SEC) {
-      notes.push(`Your voiceover is ${voiceGridResult.durationSec.toFixed(1)} s, so it's cut at ${lengthSec} s.`);
+    try {
+      voiceGridResult = await voiceGrid(sound.voiceFile, { lengthSec, decode: engine.decode });
+      voice = { file: sound.voiceFile };
+      if (voiceGridResult.durationSec > lengthSec + VOICE_SLACK_SEC) {
+        notes.push(`Your voiceover is ${voiceGridResult.durationSec.toFixed(1)} s, so it's cut at ${lengthSec} s.`);
+      }
+    } catch (err) {
+      console.error("[moments] voiceover could not be read:", err?.message || err);
+      notes.push(VOICE_UNREADABLE_NOTE);
     }
   }
 
   if (sound.songFile) {
     const g = await songGrid(ctx, sound.songFile, { lengthSec, windowStartSec: sound.song.windowStartSec, decode: engine.decode });
-    return { grid: g.grid, song: { file: sound.songFile, startSec: g.windowStartSec }, notes };
+    return { grid: g.grid, song: { file: sound.songFile, startSec: g.windowStartSec }, voice, notes };
   }
-  return { grid: voiceGridResult || pulseGrid(lengthSec), song: null, notes };
+  return { grid: voiceGridResult || pulseGrid(lengthSec), song: null, voice, notes };
+}
+
+/** The stored project, or a StageError if it has been deleted since the render began. */
+function liveProject(ctx, projectId) {
+  const live = readProject(ctx.dataDir, projectId);
+  if (!live) throw new StageError("This Moment no longer exists.");
+  return live;
+}
+
+/**
+ * Saves a finished render to the project. If it can't be saved (the project is gone, or a
+ * newer render owns it) the finished file is removed so no orphan video is left behind.
+ */
+function recordDone(ctx, projectId, jobId, { name, out, plan, notes }) {
+  try {
+    const live = liveProject(ctx, projectId);
+    if (!ownsRender(live, jobId)) throw new StageError("This Moment was changed while it was being made. Make it again.");
+    const file = `/outputs/${name}`;
+    writeProject(ctx.dataDir, withHistory(
+      { ...live, render: { jobId, status: "done", percent: 100, stage: "done", file, notes } },
+      { jobId, file, createdAt: Date.now(), seed: plan.seed, notes },
+    ));
+  } catch (err) {
+    try { fs.rmSync(out, { force: true }); } catch { /* best effort */ }
+    throw err;
+  }
+  try { markDone(jobId, out); } catch { /* job gone */ }
+  try {
+    persistJob(ctx.dataDir, { ...(getJob(jobId) || {}), jobId, projectId, status: "done", outputPath: out });
+  } catch (persistErr) {
+    // The project already says "done"; a failed job record must not turn that into an error.
+    console.error(`[moments] could not persist job ${jobId}:`, persistErr);
+  }
 }
 
 /** Wire an outside signal (a queued job's cancel) to this stage's own controller. */
@@ -126,7 +182,7 @@ function recordFailure(ctx, projectId, jobId, err) {
   try { markError(jobId, friendly); } catch { /* job gone */ }
   try {
     const live = readProject(ctx.dataDir, projectId);
-    if (live) writeProject(ctx.dataDir, { ...live, render: { jobId, status: "error", percent: 0, stage: "error", error: friendly } });
+    if (live && ownsRender(live, jobId)) writeProject(ctx.dataDir, { ...live, render: { jobId, status: "error", percent: 0, stage: "error", error: friendly } });
   } catch (writeErr) {
     console.error(`[moments] could not record the failure of ${projectId}:`, writeErr);
   }
@@ -160,7 +216,7 @@ export async function momentRenderStage(ctx, projectId, jobId, { seed, signal } 
     progress("prepare", 1);
     const timed = await timing(ctx, project, sound);
     notes.push(...timed.notes);
-    const { grid, song } = timed;
+    const { grid, song, voice } = timed;
     const heroAt = usable.findIndex((u) => u.index === project.heroIndex);
     const { plan, dropped } = directMoment({
       photos: usable.map((u) => ({ shape: u.shape })),
@@ -179,7 +235,7 @@ export async function momentRenderStage(ctx, projectId, jobId, { seed, signal } 
       throw new StageError("Couldn't plan this Moment. Try Shuffle or a different length.");
     }
     if (dropped) notes.push(`${dropped} photo${dropped === 1 ? "" : "s"} didn't fit ${project.lengthSec} s.`);
-    project = writeProject(ctx.dataDir, { ...readProject(ctx.dataDir, projectId), plan });
+    project = writeProject(ctx.dataDir, { ...liveProject(ctx, projectId), plan });
     progress("analyse", 1);
 
     const name = `moment-${crypto.randomUUID()}.mp4`;
@@ -188,7 +244,7 @@ export async function momentRenderStage(ctx, projectId, jobId, { seed, signal } 
       plan,
       workImages: usable.map((u) => u.file),
       song,
-      voice: sound.voiceFile ? { file: sound.voiceFile } : null,
+      voice,
       workDir,
       out,
       signal: controller.signal,
@@ -199,19 +255,14 @@ export async function momentRenderStage(ctx, projectId, jobId, { seed, signal } 
       throw new StageError(result.error === "cancelled" ? "Cancelled." : result.error);
     }
 
-    const file = `/outputs/${name}`;
-    const live = readProject(ctx.dataDir, projectId);
-    writeProject(ctx.dataDir, withHistory(
-      { ...live, render: { jobId, status: "done", percent: 100, stage: "done", file, notes } },
-      { jobId, file, createdAt: Date.now(), seed: plan.seed, notes },
-    ));
-    try { markDone(jobId, out); } catch { /* job gone */ }
-    persistJob(ctx.dataDir, { ...(getJob(jobId) || {}), jobId, projectId, status: "done", outputPath: out });
+    recordDone(ctx, projectId, jobId, { name, out, plan, notes });
   } catch (err) {
     recordFailure(ctx, projectId, jobId, err);
   } finally {
     unlink();
     if (controllers.get(String(projectId)) === controller) controllers.delete(String(projectId));
-    if (workDir) fs.rmSync(workDir, { recursive: true, force: true });
+    if (workDir) {
+      try { fs.rmSync(workDir, { recursive: true, force: true }); } catch (err) { console.error(`[moments] could not remove ${workDir}:`, err?.message || err); }
+    }
   }
 }

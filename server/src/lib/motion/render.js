@@ -58,7 +58,10 @@ function lineSplitter(onLine) {
     partial = parts.pop();
     for (const raw of parts) {
       if (skipping) skipping = false;
-      else onLine(raw.replace(/\r$/, ""));
+      else {
+        // This runs inside a stream "data" handler: a throwing callback must never escape the engine.
+        try { onLine(raw.replace(/\r$/, "")); } catch (err) { console.error("[motion] a progress callback threw:", err?.message || err); }
+      }
     }
     if (partial.length > LINE_CAP) {
       partial = "";

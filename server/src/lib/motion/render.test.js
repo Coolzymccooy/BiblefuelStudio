@@ -400,3 +400,29 @@ test("smoke: a 15 s Moment from 4 photos and a tone is a 1080x1920, 15 s MP4", {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// A throwing progress callback must never escape the engine: onStdout runs inside a stream "data"
+// handler, where an exception would be uncaught and kill the process.
+test("a throwing onStdout never escapes runFfmpeg, and later lines still arrive", async () => {
+  const seen = [];
+  const r = await runFfmpeg(["-e", "process.stdout.write('a=1\\nb=2\\nc=3\\n')"], {
+    ffmpegPath: process.execPath,
+    onStdout: (l) => { seen.push(l); throw new Error("callback exploded"); },
+  });
+  assert.equal(r.ok, true);
+  assert.deepEqual(seen, ["a=1", "b=2", "c=3"]);
+});
+
+test("a throwing onProgress during the finish does not crash renderPlan", async () => {
+  const workDir = tmp();
+  // The "ffmpeg" is node: it prints ffmpeg-style progress and writes the output file (the last argument).
+  const script = "const t=['out_time_us=1500000','progress=continue','out_time_us=3000000','progress=continue'].join('\\n')+'\\n';"
+    + "process.stdout.write(t);require('node:fs').writeFileSync(process.argv[1],'stub')";
+  const runner = (args, opts) => runFfmpeg(["-e", script, args.at(-1)], { ...opts, ffmpegPath: process.execPath });
+  const r = await renderPlan({
+    plan: plan(), workImages: ["w0.jpg"], song: null, voice: null, workDir, out: path.join(workDir, "o.mp4"), runner, libass: true,
+    onProgress: (p) => { if (p.stage === "finish" && p.fraction < 1) throw new Error("progress sink failed"); },
+  });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  fs.rmSync(workDir, { recursive: true, force: true });
+});
