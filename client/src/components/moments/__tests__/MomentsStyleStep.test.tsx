@@ -10,14 +10,14 @@ import { ApiError } from '../../../lib/apiError';
 import { META, mkMoment } from '../../../lib/__tests__/momentsFixtures';
 
 beforeEach(() => vi.restoreAllMocks());
-const props = (over = {}) => ({ project: mkMoment(over), meta: META, refresh: vi.fn(), busy: false, setBusy: vi.fn() });
+const props = (over = {}) => ({ project: mkMoment(over), meta: META, refresh: vi.fn(), busy: false, setBusy: vi.fn(), track: vi.fn() });
 
 /** Like the page: `busy` is real state that setBusy flips, so a disabled control really is disabled. */
 function renderLive(project: ReturnType<typeof mkMoment>) {
   const refresh = vi.fn();
   function Host() {
     const [busy, setBusy] = useState(false);
-    return <MomentsStyleStep project={project} meta={META} refresh={refresh} busy={busy} setBusy={setBusy} />;
+    return <MomentsStyleStep project={project} meta={META} refresh={refresh} busy={busy} setBusy={setBusy} track={vi.fn()} />;
   }
   render(<><Host /><Toaster /></>);
   return { refresh };

@@ -12,7 +12,7 @@ interface Words {
   statements: string[];
 }
 
-export function MomentsWordsStep({ project, meta, refresh, busy, setBusy }: MomentStepProps) {
+export function MomentsWordsStep({ project, meta, refresh, busy, setBusy, track }: MomentStepProps) {
   // Local state is authoritative while mounted: a refetch after a save must never overwrite what is being
   // typed. The page keys this step by projectId so opening another Moment starts from its own words.
   const [title, setTitle] = useState(project.title);
@@ -72,6 +72,7 @@ export function MomentsWordsStep({ project, meta, refresh, busy, setBusy }: Mome
       }
     });
     chain.current = run;
+    track(run);
     return run;
   };
 

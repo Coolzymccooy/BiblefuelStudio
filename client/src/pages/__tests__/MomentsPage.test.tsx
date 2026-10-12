@@ -7,6 +7,7 @@ import { MomentsPage } from '../MomentsPage';
 import { momentsApi } from '../../lib/momentsApi';
 import { ApiError } from '../../lib/apiError';
 import * as upload from '../../lib/mediaUpload';
+import * as errors from '../../lib/errors';
 import { META, mkMoment } from '../../lib/__tests__/momentsFixtures';
 import type { MomentSummary } from '../../lib/momentsTypes';
 
@@ -234,5 +235,176 @@ describe('MomentsPage polling', () => {
     expect(get).toHaveBeenCalledTimes(2);
     await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
     expect(get).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('Make it', () => {
+  const ready = (over = {}) => mkMoment({
+    photos: [1, 2, 3].map((n) => ({ ref: { kind: 'upload' as const, path: `p${n}` }, url: `/outputs/p${n}.jpg`, width: 1, height: 1 })),
+    ...over,
+  });
+  const open = () => localStorage.setItem('BF_MOMENTS_ACTIVE', 'm1');
+
+  it('is disabled until there are 3 photos', async () => {
+    open();
+    vi.spyOn(momentsApi, 'get').mockResolvedValue(mkMoment());
+    renderPage();
+    expect(await screen.findByRole('button', { name: /^make it$/i })).toBeDisabled();
+    expect(screen.getByText(/add at least 3 photos/i)).toBeInTheDocument();
+  });
+
+  it('with empty words, suggests and saves them first, then renders once even on a double press', async () => {
+    open();
+    vi.spyOn(momentsApi, 'get').mockResolvedValue(ready());
+    const suggest = vi.spyOn(momentsApi, 'suggest').mockResolvedValue({ title: 'Happy birthday!', statements: ['A'], source: 'template' });
+    const update = vi.spyOn(momentsApi, 'update').mockResolvedValue(ready());
+    let resolveRender: (v: string) => void = () => {};
+    const renderCall = vi.spyOn(momentsApi, 'render').mockImplementation(() => new Promise((r) => { resolveRender = r; }));
+    renderPage();
+    const button = await screen.findByRole('button', { name: /^make it$/i });
+    // Both clicks land before React re-renders, so only a ref guard (not the busy state) can stop the second.
+    await act(async () => { button.click(); button.click(); });
+    await waitFor(() => expect(renderCall).toHaveBeenCalledTimes(1));
+    expect(suggest).toHaveBeenCalledTimes(1);
+    expect(update).toHaveBeenCalledWith('m1', { title: 'Happy birthday!', statements: ['A'] });
+    expect(suggest.mock.invocationCallOrder[0]).toBeLessThan(update.mock.invocationCallOrder[0]);
+    expect(update.mock.invocationCallOrder[0]).toBeLessThan(renderCall.mock.invocationCallOrder[0]);
+    await act(async () => { resolveRender('job-1'); });
+    expect(await screen.findByRole('button', { name: 'Result', pressed: true })).toBeInTheDocument();
+    expect(renderCall).toHaveBeenCalledTimes(1);
+  });
+
+  it('with words already written, renders straight away', async () => {
+    open();
+    vi.spyOn(momentsApi, 'get').mockResolvedValue(ready({ title: 'Mine', statements: ['Mine too'] }));
+    const suggest = vi.spyOn(momentsApi, 'suggest');
+    const renderCall = vi.spyOn(momentsApi, 'render').mockResolvedValue('job-1');
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: /^make it$/i }));
+    await waitFor(() => expect(renderCall).toHaveBeenCalledWith('m1', undefined));
+    expect(suggest).not.toHaveBeenCalled();
+  });
+
+  it('waits for a pending blur-save before rendering', async () => {
+    open();
+    vi.spyOn(momentsApi, 'get').mockResolvedValue(ready({ title: 'Mine', statements: ['Mine too'] }));
+    let finishSave: () => void = () => {};
+    const update = vi.spyOn(momentsApi, 'update').mockImplementation(() => new Promise((r) => { finishSave = () => r(ready()); }));
+    const renderCall = vi.spyOn(momentsApi, 'render').mockResolvedValue('job-1');
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: 'Occasion' }));
+    await userEvent.type(await screen.findByLabelText(/name/i), 'Tolu');
+    await userEvent.tab();
+    await waitFor(() => expect(update).toHaveBeenCalled());
+    await userEvent.click(screen.getByRole('button', { name: /^make it$/i }));
+    await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+    expect(renderCall).not.toHaveBeenCalled();
+    await act(async () => { finishSave(); });
+    await waitFor(() => expect(renderCall).toHaveBeenCalledTimes(1));
+    expect(update.mock.invocationCallOrder[0]).toBeLessThan(renderCall.mock.invocationCallOrder[0]);
+  });
+
+  it('decides about suggesting from the words as saved, not the stale page copy', async () => {
+    open();
+    const get = vi.spyOn(momentsApi, 'get').mockResolvedValue(ready());
+    let finishSave: () => void = () => {};
+    vi.spyOn(momentsApi, 'update').mockImplementation(() => new Promise((r) => { finishSave = () => r(ready()); }));
+    const suggest = vi.spyOn(momentsApi, 'suggest');
+    const renderCall = vi.spyOn(momentsApi, 'render').mockResolvedValue('job-1');
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: 'Occasion' }));
+    await userEvent.type(await screen.findByLabelText(/name/i), 'Tolu');
+    await userEvent.tab();
+    await userEvent.click(screen.getByRole('button', { name: /^make it$/i }));
+    // By the time the save lands the server holds written words.
+    get.mockResolvedValue(ready({ title: 'Typed', statements: ['Typed too'] }));
+    await act(async () => { finishSave(); });
+    await waitFor(() => expect(renderCall).toHaveBeenCalledTimes(1));
+    expect(suggest).not.toHaveBeenCalled();
+  });
+
+  it('is disabled while a photo batch is uploading', async () => {
+    open();
+    vi.spyOn(momentsApi, 'get').mockResolvedValue(ready());
+    vi.spyOn(momentsApi, 'libraryImages').mockResolvedValue([]);
+    vi.spyOn(upload, 'uploadMedia').mockReturnValue(new Promise(() => {}));
+    const renderCall = vi.spyOn(momentsApi, 'render');
+    renderPage();
+    await screen.findByRole('button', { name: 'Photos', pressed: true });
+    await userEvent.upload(screen.getByLabelText(/add photos/i), [new File(['a'], 'a.jpg', { type: 'image/jpeg' })]);
+    await waitFor(() => expect(screen.getByRole('button', { name: /^make it$/i })).toBeDisabled());
+    expect(renderCall).not.toHaveBeenCalled();
+  });
+
+  it('a Moment whose render was interrupted shows Make it again, not a spinner, and retries', async () => {
+    open();
+    vi.spyOn(momentsApi, 'get').mockResolvedValue(ready({ title: 'Mine', statements: ['x'], render: { jobId: 'j', status: 'interrupted', percent: 40, stage: 'shots' } }));
+    const renderCall = vi.spyOn(momentsApi, 'render').mockResolvedValue('job-2');
+    renderPage();
+    await screen.findByRole('button', { name: 'Result', pressed: true });
+    expect(screen.queryByRole('progressbar')).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: /make it again/i }));
+    await waitFor(() => expect(renderCall).toHaveBeenCalledWith('m1', undefined));
+  });
+
+  it('Shuffle renders again with a new seed', async () => {
+    open();
+    vi.spyOn(momentsApi, 'get').mockResolvedValue(ready({ title: 'Mine', statements: ['x'], render: { jobId: 'j', status: 'done', percent: 100, stage: 'done', file: '/outputs/moment-1.mp4' } }));
+    const renderCall = vi.spyOn(momentsApi, 'render').mockResolvedValue('job-2');
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: 'Result' }));
+    await userEvent.click(await screen.findByRole('button', { name: /shuffle/i }));
+    await waitFor(() => expect(renderCall).toHaveBeenCalledWith('m1', expect.any(Number)));
+  });
+
+  it('Cancel stops the render and refreshes', async () => {
+    open();
+    const get = vi.spyOn(momentsApi, 'get').mockResolvedValue(ready({ render: { jobId: 'j', status: 'running', percent: 30, stage: 'shots' } }));
+    const cancel = vi.spyOn(momentsApi, 'cancel').mockResolvedValue(undefined);
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: /cancel/i }));
+    expect(cancel).toHaveBeenCalledWith('m1');
+    await waitFor(() => expect(get.mock.calls.length).toBeGreaterThanOrEqual(2));
+  });
+
+  it('reports a failed Cancel with toastError', async () => {
+    open();
+    vi.spyOn(momentsApi, 'get').mockResolvedValue(ready({ render: { jobId: 'j', status: 'running', percent: 30, stage: 'shots' } }));
+    const failure = new ApiError('nope', '', {}, 500);
+    vi.spyOn(momentsApi, 'cancel').mockRejectedValue(failure);
+    const toastErr = vi.spyOn(errors, 'toastError').mockImplementation(() => {});
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: /cancel/i }));
+    await waitFor(() => expect(toastErr).toHaveBeenCalledWith(failure));
+  });
+
+  it('a refused render (quota, 409) is reported with toastError and unlocks Make it', async () => {
+    open();
+    vi.spyOn(momentsApi, 'get').mockResolvedValue(ready({ title: 'Mine', statements: ['x'] }));
+    const failure = new ApiError('limit', 'QUOTA_EXCEEDED', {}, 429);
+    vi.spyOn(momentsApi, 'render').mockRejectedValue(failure);
+    const toastErr = vi.spyOn(errors, 'toastError').mockImplementation(() => {});
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: /^make it$/i }));
+    await waitFor(() => expect(toastErr).toHaveBeenCalledWith(failure));
+    expect(screen.getByRole('button', { name: /^make it$/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Photos', pressed: true })).toBeInTheDocument();
+  });
+
+  it('keeps suggested words visible on the Words step when the render is then refused', async () => {
+    open();
+    const saved = ready({ title: 'Happy birthday!', statements: ['Cheers'] });
+    const get = vi.spyOn(momentsApi, 'get').mockResolvedValue(ready());
+    vi.spyOn(momentsApi, 'suggest').mockResolvedValue({ title: 'Happy birthday!', statements: ['Cheers'], source: 'template' });
+    vi.spyOn(momentsApi, 'update').mockImplementation(async () => {
+      get.mockResolvedValue(saved);
+      return saved;
+    });
+    vi.spyOn(momentsApi, 'render').mockRejectedValue(new ApiError('limit', 'QUOTA_EXCEEDED', {}, 429));
+    vi.spyOn(errors, 'toastError').mockImplementation(() => {});
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: 'Words' }));
+    await userEvent.click(screen.getByRole('button', { name: /^make it$/i }));
+    expect(await screen.findByDisplayValue('Cheers')).toBeInTheDocument();
   });
 });

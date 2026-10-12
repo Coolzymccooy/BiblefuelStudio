@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Wand2 } from 'lucide-react';
 import { momentsApi } from '../lib/momentsApi';
-import { isRunning } from '../lib/momentsWizard';
+import { canMake, isRunning, newSeed } from '../lib/momentsWizard';
 import { toastError } from '../lib/errors';
 import { isApiError } from '../lib/apiError';
 import type { MomentMeta, MomentProject } from '../lib/momentsTypes';
@@ -14,7 +14,8 @@ import { MomentsPhotosStep } from '../components/moments/MomentsPhotosStep';
 import { MomentsSoundStep } from '../components/moments/MomentsSoundStep';
 import { MomentsWordsStep } from '../components/moments/MomentsWordsStep';
 import { MomentsStyleStep } from '../components/moments/MomentsStyleStep';
-import { segmentCls, segmentedCls } from '../components/story/formStyles';
+import { MomentsResult } from '../components/moments/MomentsResult';
+import { primaryBtnCls, segmentCls, segmentedCls } from '../components/story/formStyles';
 
 const ACTIVE_KEY = 'BF_MOMENTS_ACTIVE';
 const POLL_MS = 2500;
@@ -40,18 +41,32 @@ export interface MomentStepProps {
   meta: MomentMeta;
   refresh: () => void;
   busy: boolean;
+  /** Calls nest: every setBusy(true) is paired with a setBusy(false), and the page stays busy until all are released. */
   setBusy: (b: boolean) => void;
-}
-
-function StepPlaceholder({ name }: { name: string }) {
-  return <p className="text-help">{name}</p>;
+  /** Registers a save that does not hold busy (a blur-save), so Make it waits for it before rendering. */
+  track: (save: Promise<unknown>) => void;
 }
 
 export function MomentsPage() {
   const qc = useQueryClient();
   const [projectId, setProjectId] = useState<string | null>(() => localStorage.getItem(ACTIVE_KEY));
   const [step, setStep] = useState<Step>('photos');
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusyState] = useState(false);
+  // Counted in a ref so Make it can read it synchronously, and so overlapping long saves don't release each other.
+  const busyCount = useRef(0);
+  const setBusy = useCallback((b: boolean) => {
+    busyCount.current = Math.max(0, busyCount.current + (b ? 1 : -1));
+    setBusyState(busyCount.current > 0);
+  }, []);
+  const pending = useRef<Set<Promise<unknown>>>(new Set());
+  const track = useCallback((save: Promise<unknown>) => {
+    pending.current.add(save);
+    const done = () => { pending.current.delete(save); };
+    save.then(done, done);
+  }, []);
+  const making = useRef(false);
+  /** Bumped when Make it writes the words itself, so a mounted Words step reloads them. */
+  const [wordsKey, setWordsKey] = useState(0);
   /** The Moment already routed to its starting step, so a refetch never pulls the user back. */
   const routedFor = useRef<string | null>(null);
 
@@ -84,6 +99,46 @@ export function MomentsPage() {
   }, [project]);
 
   const refresh = () => { if (projectId) qc.invalidateQueries({ queryKey: ['moment', projectId] }); };
+
+  const makeIt = async (seed?: number) => {
+    // Refs, not state: two presses can land before React re-renders with busy set.
+    if (!project || making.current || busyCount.current > 0) return;
+    making.current = true;
+    setBusy(true);
+    const id = project.projectId;
+    try {
+      let current = project;
+      if (pending.current.size > 0) {
+        // Let blur-saves land, then judge from what the server holds rather than this render's copy.
+        await Promise.allSettled([...pending.current]);
+        current = await qc.fetchQuery({ queryKey: ['moment', id], queryFn: () => momentsApi.get(id), staleTime: 0 });
+      }
+      if (!current.title.trim() && current.statements.length === 0) {
+        const s = await momentsApi.suggest(id);
+        const saved = await momentsApi.update(id, { title: s.title, statements: s.statements });
+        qc.setQueryData(['moment', id], saved);
+        setWordsKey((k) => k + 1);
+      }
+      await momentsApi.render(id, seed);
+      setStep('result');
+      refresh();
+    } catch (e) {
+      toastError(e);
+    } finally {
+      making.current = false;
+      setBusy(false);
+    }
+  };
+
+  const cancel = async () => {
+    if (!project) return;
+    try {
+      await momentsApi.cancel(project.projectId);
+    } catch (e) {
+      toastError(e);
+    }
+    refresh();
+  };
 
   const setActive = (id: string | null, startAt: Step = 'photos') => {
     routedFor.current = null;
@@ -149,8 +204,9 @@ export function MomentsPage() {
 
   // Tasks 3-7 replace each placeholder with its step, which receives these props.
   const stepProps: MomentStepProps | null = project
-    ? { project, meta, refresh, busy: busy || isRunning(project), setBusy }
+    ? { project, meta, refresh, busy: busy || isRunning(project), setBusy, track }
     : null;
+  const ready = project ? canMake(project, meta) : null;
   return (
     <div className="w-full">
       <ScreenHeader
@@ -172,9 +228,17 @@ export function MomentsPage() {
           {step === 'details' && <MomentsDetailsStep key={stepProps.project.projectId} {...stepProps} />}
           {step === 'photos' && <MomentsPhotosStep {...stepProps} />}
           {step === 'sound' && <MomentsSoundStep {...stepProps} />}
-          {step === 'words' && <MomentsWordsStep key={stepProps.project.projectId} {...stepProps} />}
+          {step === 'words' && <MomentsWordsStep key={`${stepProps.project.projectId}:${wordsKey}`} {...stepProps} />}
           {step === 'style' && <MomentsStyleStep {...stepProps} />}
-          {step === 'result' && <StepPlaceholder name="Result" />}
+          {step === 'result' && (
+            <MomentsResult project={stepProps.project} busy={stepProps.busy} onShuffle={() => makeIt(newSeed())} onRetry={() => makeIt()} onCancel={cancel} />
+          )}
+          <div className="sticky bottom-4 mt-6 flex flex-col items-center gap-1">
+            <button type="button" onClick={() => makeIt()} disabled={!ready?.ok || stepProps.busy} className={`${primaryBtnCls} px-8 py-3`}>
+              <Wand2 size={18} /> Make it
+            </button>
+            {ready && !ready.ok && <span className="text-help">{ready.reason}</span>}
+          </div>
         </div>
       )}
     </div>
