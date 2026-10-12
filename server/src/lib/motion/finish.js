@@ -77,8 +77,11 @@ export function finishArgs({ body, out, plan, statementsPath, fxPath, song, voic
   const D = plan.durationSec;
   const style = resolveStyle(plan.style);
   const inputs = ["-i", body];
-  if (song) inputs.push("-ss", n3(song.startSec || 0), "-i", song.file);
-  if (voice) inputs.push("-i", voice.file);
+  // Each audio input is cut at D in the demuxer, so the audio graph only ever sees a natural EOF at
+  // or before D. A long voice that hit the in-graph atrim ceiling while its demuxer was still
+  // producing made the tail drop out under load.
+  if (song) inputs.push("-ss", n3(song.startSec || 0), "-t", n3(D), "-i", song.file);
+  if (voice) inputs.push("-t", n3(D), "-i", voice.file);
   if (!song && !voice) inputs.push("-f", "lavfi", "-t", n3(D), "-i", "anullsrc=r=48000:cl=stereo");
   // Both streams are bounded inside the graph. An output-side -t raced loudnorm's end-of-stream
   // flush (it buffers about 3 s), and the muxer could close the audio before the flush landed.
