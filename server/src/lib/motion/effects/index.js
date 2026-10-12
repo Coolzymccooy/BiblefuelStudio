@@ -22,7 +22,7 @@ export function effectsOfKind(kind) {
  * only after checking it exists in 5.1's filter list.
  */
 export const FFMPEG_51_FILTERS = new Set([
-  "zoompan", "loop", "setpts", "crop", "scale", "setsar", "fps", "split", "hflip", "color", "overlay",
+  "zoompan", "loop", "setpts", "settb", "crop", "scale", "setsar", "fps", "split", "hflip", "color", "overlay",
   "format", "null", "fade", "gblur", "rgbashift", "noise", "eq", "xfade", "geq", "blend",
   "drawbox", "drawtext", "vignette", "trim", "ass", "colorbalance", "concat",
 ]);

@@ -20,7 +20,11 @@ export function anchoredXY(anchor) {
   return { x: `(iw-iw/zoom)*${num(anchor.x)}`, y: `(ih-ih/zoom)*${num(anchor.y)}` };
 }
 
-/** One zoompan over a still: ctx.frames frames at the output size. */
+/**
+ * One zoompan over a still: ctx.frames frames at the output size.
+ * Input contract for every move graph: exactly ONE input frame. zoompan emits
+ * `d` frames per input frame, and loop/pan would run unbounded on a looped input.
+ */
 export function zoompan({ input, output, z, x, y, ctx }) {
   return `${input}zoompan=z='${z}':x='${x}':y='${y}':d=${ctx.frames}:s=${ctx.w}x${ctx.h}:fps=${ctx.fps}${output}`;
 }

@@ -41,37 +41,44 @@ export const pan = {
   id: "pan", kind: "move", needs: [], shapes: ["tall", "wide"], strong: false,
   graph({ input, output, ctx }) {
     return [
-      `${input}loop=loop=${ctx.frames - 1}:size=1:start=0,setpts=N/${ctx.fps}/TB,` +
-        `crop=w='ih*${ctx.w}/${ctx.h}':h=ih:x='(iw-ow)*(0.15+0.7*t/${num(ctx.dur)})':y=0,` +
+      `${input}loop=loop=${ctx.frames - 1}:size=1:start=0,settb=1/${ctx.fps},setpts=N,` +
+        `crop=w='ih*${ctx.w}/${ctx.h}':h=ih:x='(iw-ow)*(0.15+0.7*t/${num(ctx.frames / ctx.fps)})':y=0,` +
         `scale=${ctx.w}:${ctx.h},setsar=1,fps=${ctx.fps}${output}`,
     ];
   },
 };
 
+/** Black gap, in pixels, between stacked split panels. */
+const GAP = 4;
+
 /**
- * n panels stacked, each a band of the photo slowly zooming, entering 0.15 s
- * apart (the middle one mirrored in a triple). Each crop keeps the panel's
- * own shape whichever side of the photo limits it, so nothing is squashed.
+ * n panels stacked with GAP px of black between them, each a band of the photo
+ * slowly zooming, entering 0.15 s apart (the middle one mirrored in a triple).
+ * Panels plus gaps fill the frame exactly: the last panel takes the remainder.
+ * Each crop keeps its panel's own shape whichever side of the photo limits it,
+ * so nothing is squashed.
  */
 function split(n) {
   return {
     id: `split${n}`, kind: "move", needs: [], shapes: ["tall", "wide"], strong: true,
     graph({ input, output, ctx, tag }) {
-      const ph = Math.floor(ctx.h / n);
+      const ph = Math.floor((ctx.h - GAP * (n - 1)) / n);
       const bands = n === 3 ? [0.1, 0.5, 0.9] : [0.15, 0.75];
       const lines = [`${input}split=${n}${bands.map((_, k) => `[s${tag}${k}]`).join("")}`];
       bands.forEach((band, k) => {
         const flip = n === 3 && k === 1 ? ",hflip" : "";
+        const panelH = k === n - 1 ? ctx.h - (n - 1) * (ph + GAP) : ph;
         lines.push(
-          `[s${tag}${k}]crop=w='min(iw,ih*${ctx.w}/${ph})':h='min(ih,iw*${ph}/${ctx.w})':x='(iw-ow)/2':y='(ih-oh)*${num(band)}'${flip},` +
-            `zoompan=z='1+0.06*on/${ctx.frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${ctx.frames}:s=${ctx.w}x${ph}:fps=${ctx.fps}[p${tag}${k}]`,
+          `[s${tag}${k}]crop=w='min(iw,ih*${ctx.w}/${panelH})':h='min(ih,iw*${panelH}/${ctx.w})':x='(iw-ow)/2':y='(ih-oh)*${num(band)}'${flip},` +
+            `zoompan=z='1+0.06*on/${ctx.frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${ctx.frames}:s=${ctx.w}x${panelH}:fps=${ctx.fps}[p${tag}${k}]`,
         );
       });
-      lines.push(`color=c=black:s=${ctx.w}x${ctx.h}:r=${ctx.fps}:d=${num(ctx.dur)}[bg${tag}]`);
+      // (frames - 0.5) / fps: the background emits ceil(d * fps) = ctx.frames frames, no more.
+      lines.push(`color=c=black:s=${ctx.w}x${ctx.h}:r=${ctx.fps}:d=${num((ctx.frames - 0.5) / ctx.fps, 4)}[bg${tag}]`);
       let cur = `[bg${tag}]`;
       bands.forEach((_, k) => {
         const out = k === n - 1 ? output : `[l${tag}${k}]`;
-        lines.push(`${cur}[p${tag}${k}]overlay=0:${k * ph + (k ? 4 : 0)}:enable='gte(t,${num(k * 0.15, 2)})'${out}`);
+        lines.push(`${cur}[p${tag}${k}]overlay=0:${k * (ph + GAP)}:enable='gte(t,${num(k * 0.15, 2)})'${out}`);
         cur = out;
       });
       return lines;
