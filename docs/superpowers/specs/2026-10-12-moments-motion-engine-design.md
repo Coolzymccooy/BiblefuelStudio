@@ -56,7 +56,7 @@ It follows the structure of `server/src/lib/kinetic/`: small pure modules, each 
 | `beats.js` | Decode the audio to mono PCM with ffmpeg, then compute the onset-energy envelope, the tempo by autocorrelation, beat times and downbeats (every 4th beat, phase aligned to the strongest bar). Tempos outside 70–160 BPM are doubled or halved. Also scores every candidate window of the chosen length and returns the highest-energy one. If no clear tempo is found, it returns `{ tempo: null }` so callers fall back to a pulse grid. Also contains `pausesFrom(pcm)`, which finds silence gaps in a voiceover for the voice-paced grid. |
 | `director.js` | `directMoment({ photos, grid, statements, style, energy, lengthSec, seed })` returns a motion plan. It is pure and deterministic: the same inputs and seed give the same plan. It uses `normaliseSeed` from the kinetic engine and a seeded PRNG. |
 | `plan.js` | The motion-plan schema plus `validatePlan(plan)`, which reports clear errors. This is the single contract between the director, the renderer and (in Phase 3) "Open in Timeline". |
-| `effects/` | One file per effect. Each one exports `{ id, kind: 'move' \| 'entrance' \| 'overlay', needs: [], build(shot, ctx) }`, where `build` returns ffmpeg filter fragments. `needs` lists capabilities such as `'mask'` (Phase 2). The director never picks an effect whose needs are not met; this is how the vision fallback works. |
+| `effects/` | One file per effect. Each one exports `{ id, kind: 'move' \| 'entrance' \| 'overlay', needs: [], graph({ input, output, shot, ctx, tag }) }`, where `graph` returns ffmpeg filter fragments (ASS-drawn overlays export `assEvents` instead). `needs` lists capabilities such as `'mask'` (Phase 2). The director never picks an effect whose needs are not met; this is how the vision fallback works. |
 | `styles.js` | The four launch styles. Each has weighted move, entrance and overlay palettes, a colour grade, and a Studio caption look. Every palette entry must name an existing effect. |
 | `render.js` | `renderPlan(plan, { workDir, onProgress, signal })` turns a motion plan into an MP4 (see §6). |
 
@@ -64,9 +64,9 @@ It follows the structure of `server/src/lib/kinetic/`: small pure modules, each 
 
 | Kind | Effects |
 |---|---|
-| Move | `push` (slow zoom), `punch` (fast zoom-in on the beat), `shake`, `pan` (for landscape photos), `still` |
+| Move | `push` (slow zoom), `punch` (fast zoom-in on the beat), `shake`, `pan` (for landscape photos), `still`, `split2` / `split3` (duo/triple split: a split replaces the shot's framing, so it is a move) |
 | Entrance | `cut`, `crossfade`, `flash` (white fade), `whip` (directional blur), `glitch` (rgbashift + noise) |
-| Overlay | `lightLeak` (geq + screen blend), `viewfinder` (drawbox/drawtext frame), `split2` / `split3` (duo/triple split), `sparkles`, `doodles`, `rayBurst` (end card) |
+| Overlay | `lightLeak` (geq + screen blend), `viewfinder` (drawbox/drawtext frame), `sparkles`, `doodles`, `rayBurst` (end card) |
 
 **Rule from the spike:** any `blend` runs in `gbrp`. A screen blend in YUV tints everything magenta.
 
@@ -260,7 +260,7 @@ An invalid reference or a failed lookup drops the verse silently.
 
 The render runs as a background job. The stages, with their share of the progress bar, are:
 
-1. **Prepare (0–10%).** Resolve each photo through `resolveOwnUpload` or the library, apply the EXIF rotation, and scale once to a working size (long side 2160). Unreadable photos are skipped and noted. If fewer than 3 usable photos remain, the job fails.
+1. **Prepare (0–10%).** Resolve each photo through `resolveOwnUpload` or the library, apply the EXIF rotation, and scale once to a working size at twice the output (2160×3840 cover for tall photos, height 2160 for wide ones), so zooms and pans never upscale. Unreadable photos are skipped and noted. If fewer than 3 usable photos remain, the job fails.
 2. **Analyse (10–20%).** Run beats from the cache, or compute them; get voiceover pauses; then direct, validate and save the plan.
 3. **Shots (20–75%).** Render each shot to a short 1080×1920, 30 fps intermediate clip. Progress advances per shot. Rendering shot by shot keeps memory flat.
 4. **Join (75–85%).** Apply each shot's entrance, and join the clips.
