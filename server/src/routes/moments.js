@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import { Router } from "express";
 import { quota } from "../middleware/quota.js";
 import { runExclusive } from "../lib/heavyJobGate.js";
-import { createJob, persistJob, markError, getJob, cancelJob } from "../lib/renderJobs.js";
+import { createJob, persistJob, markError, getJob, cancelJob, gcJobs } from "../lib/renderJobs.js";
 import { refineScript } from "../lib/story/scriptRefine.js";
 import { cleanSpeakableText } from "../lib/speakableScript.js";
 import { synthesizeEdgeTts } from "../lib/edgeTts.js";
@@ -41,7 +41,13 @@ let _tts = synthesizeEdgeTts;
 export function _setTtsImpl(fn) { _tts = fn; }
 export function _resetTtsImpl() { _tts = synthesizeEdgeTts; }
 
+let _suggest = suggestStatements;
+export function _setStatementsImpl(fn) { _suggest = fn; }
+export function _resetStatementsImpl() { _suggest = suggestStatements; }
+
 const SCRIPT_MAX = 1200;
+const VOICEOVER_FAILED = "Couldn't make the voiceover. Please try again.";
+const STATEMENTS_FAILED = "Couldn't write the lines. Please try again.";
 // The abort handle of each project's in-flight render run (queued or running), so Cancel can
 // reach a run that is still waiting for the heavy-job gate.
 const queuedRuns = new Map();
@@ -162,8 +168,13 @@ router.post("/:id/statements", async (req, res) => {
   const project = loadOr404(req, res);
   if (!project) return undefined;
   if (!charged("scripts", req, res)) return undefined;
-  const suggestion = await suggestStatements({ occasion: project.occasion, details: project.details, lengthSec: project.lengthSec });
-  return res.json({ ok: true, suggestion });
+  try {
+    const suggestion = await _suggest({ occasion: project.occasion, details: project.details, lengthSec: project.lengthSec });
+    return res.json({ ok: true, suggestion });
+  } catch (e) {
+    console.error(`[moments] statements ${project.projectId}:`, e);
+    return res.status(500).json({ ok: false, error: STATEMENTS_FAILED });
+  }
 });
 
 router.post("/:id/voiceover", async (req, res) => {
@@ -186,21 +197,44 @@ router.post("/:id/voiceover", async (req, res) => {
     try {
       tts = await _tts({ text: script, voiceId });
     } catch (e) {
-      // Edge TTS throws for a disabled service or unusable text; those are the caller's to fix.
+      // Edge TTS throws for a disabled service or unusable text; those are the caller's to fix and
+      // the only messages shown. Anything else may carry paths or upstream details.
       const message = String(e?.message || e);
-      return res.status(/disabled|required/i.test(message) ? 400 : 500).json({ ok: false, error: message });
+      if (/disabled|required/i.test(message)) return res.status(400).json({ ok: false, error: message });
+      throw e;
     }
-    if (!tts?.ok || !tts.file) return res.status(502).json({ ok: false, error: tts?.error || "voice synthesis failed" });
+    if (!tts?.ok || !tts.file) {
+      console.error(`[moments] voiceover ${project.projectId}: synthesis returned no file:`, tts?.error);
+      return res.status(502).json({ ok: false, error: VOICEOVER_FAILED });
+    }
     fs.mkdirSync(req.ctx.outputDir, { recursive: true });
     const name = `moment-vo-${crypto.randomUUID()}.mp3`;
     const dest = path.join(req.ctx.outputDir, name);
     try { fs.renameSync(tts.file, dest); } catch { fs.copyFileSync(tts.file, dest); try { fs.unlinkSync(tts.file); } catch { /* temp file */ } }
+    // The synthesis took a while: the Moment may have been deleted, or a render started, meanwhile.
+    // Never swap a voice file under a running render.
     const live = readProject(req.ctx.dataDir, project.projectId);
+    if (!live) {
+      removeOutput(req.ctx.outputDir, name, VOICE_NAME);
+      return res.status(404).json({ ok: false, error: "Moment not found" });
+    }
+    if (isRendering(view(live))) {
+      removeOutput(req.ctx.outputDir, name, VOICE_NAME);
+      return res.status(409).json({ ok: false, error: "this Moment is rendering" });
+    }
+    let saved;
+    try {
+      saved = writeProject(req.ctx.dataDir, { ...live, sound: { ...live.sound, voiceover: { script, voiceId: voiceId || null, file: name } } });
+    } catch (e) {
+      removeOutput(req.ctx.outputDir, name, VOICE_NAME);
+      throw e;
+    }
     removeOutput(req.ctx.outputDir, live.sound?.voiceover?.file, VOICE_NAME);
-    const saved = writeProject(req.ctx.dataDir, { ...live, sound: { ...live.sound, voiceover: { script, voiceId: voiceId || null, file: name } } });
     return res.json({ ok: true, project: saved });
   } catch (e) {
-    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+    // Raw messages can embed server paths or upstream details; log them, tell the user something fixed.
+    console.error(`[moments] voiceover ${project.projectId}:`, e);
+    return res.status(500).json({ ok: false, error: VOICEOVER_FAILED });
   }
 });
 
@@ -213,6 +247,7 @@ router.post("/:id/render", (req, res) => {
   const seed = input.seed === undefined ? project.seed : normaliseSeed(input.seed);
   if (!charged("render", req, res)) return undefined;
 
+  gcJobs();
   const job = createJob(req.ctx.userId, { durationSec: project.lengthSec });
   persistJob(req.ctx.dataDir, { ...job, projectId: project.projectId, status: "running" });
   writeProject(req.ctx.dataDir, { ...project, render: { jobId: job.jobId, status: "running", percent: 0, stage: "waiting" } });

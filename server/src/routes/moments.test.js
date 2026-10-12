@@ -8,9 +8,9 @@ import path from "node:path";
 import crypto from "node:crypto";
 import momentsRouter, {
   _setQuotaImpl, _resetQuotaImpl, _setRenderStageImpl, _resetRenderStageImpl, _setTtsImpl, _resetTtsImpl,
-  _setSongGridImpl, _resetSongGridImpl,
+  _setSongGridImpl, _resetSongGridImpl, _setStatementsImpl, _resetStatementsImpl,
 } from "./moments.js";
-import { readProject, writeProject } from "../lib/moments/projectStore.js";
+import { readProject, writeProject, deleteProject } from "../lib/moments/projectStore.js";
 import { _setLlmImpl, _resetLlmImpl } from "../lib/moments/statements.js";
 import { _resetHeavyGate } from "../lib/heavyJobGate.js";
 import { createJob, getJob } from "../lib/renderJobs.js";
@@ -315,12 +315,158 @@ test("PUT refuses photos that are not a list, or too many, before resolving any"
   assert.doesNotMatch(tooMany.body.error, /^Photo 1:/);
 });
 
-test("PUT, voiceover and render tolerate a missing body", async () => {
+test("PUT with no body is an empty update; voiceover and POST / refuse it; render uses the Moment's own seed", async () => {
   const p = await newMoment();
   const put = await request(app).put(`/api/moments/${p.projectId}`);
-  assert.ok([200, 400].includes(put.status), `PUT status ${put.status}`);
-  const vo = await request(app).post(`/api/moments/${p.projectId}/voiceover`);
-  assert.equal(vo.status, 400);
-  const created = await request(app).post("/api/moments");
-  assert.equal(created.status, 400);
+  assert.equal(put.status, 200, JSON.stringify(put.body));
+  assert.equal(put.body.project.title, p.title);
+  assert.equal((await request(app).post(`/api/moments/${p.projectId}/voiceover`)).status, 400);
+  assert.equal((await request(app).post("/api/moments")).status, 400);
+
+  await request(app).put(`/api/moments/${p.projectId}`).send({ photos: [upload(), upload(), upload()] });
+  const render = await request(app).post(`/api/moments/${p.projectId}/render`);
+  assert.equal(render.status, 200, JSON.stringify(render.body));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(stageCalls[0][3].seed, p.seed);
+});
+
+test("another user gets 404 from every route that takes a Moment id", async () => {
+  const p = await newMoment();
+  const otherDir = fs.mkdtempSync(path.join(os.tmpdir(), "moments-other-"));
+  const other = makeApp("u2", otherDir, otherDir);
+  const base = `/api/moments/${p.projectId}`;
+  try {
+    assert.equal((await request(other).delete(base)).status, 404);
+    assert.equal((await request(other).post(`${base}/voiceover`).send({ script: "Happy birthday Tolu, God bless you." })).status, 404);
+    assert.equal((await request(other).post(`${base}/render`).send()).status, 404);
+    assert.equal((await request(other).post(`${base}/cancel`).send()).status, 404);
+    assert.equal((await request(other).post(`${base}/statements`).send()).status, 404);
+    assert.equal((await request(other).get(`${base}/song-window`)).status, 404);
+    assert.deepEqual(charges, [], "nothing charged to a stranger");
+    assert.ok(readProject(dataDir, p.projectId), "the owner's Moment is untouched");
+  } finally {
+    fs.rmSync(otherDir, { recursive: true, force: true });
+  }
+});
+
+const voiceFiles = () => fs.readdirSync(outputDir).filter((n) => n.startsWith("moment-vo-"));
+const SPEAK = { script: "Happy birthday Tolu, God bless you." };
+
+test("voiceover failures never put server paths or upstream text in the response", async () => {
+  const p = await newMoment();
+  const url = `/api/moments/${p.projectId}/voiceover`;
+  const leaks = (body) => /secret|moments-route|ENOENT/i.test(JSON.stringify(body));
+  const quiet = console.error;
+  console.error = () => {};
+  try {
+    _setTtsImpl(async () => { throw new Error("ENOENT: no such file C:\\secret\\path\\voice.mp3"); });
+    const thrown = await request(app).post(url).send(SPEAK);
+    assert.equal(thrown.status, 500);
+    assert.equal(thrown.body.error, "Couldn't make the voiceover. Please try again.");
+    assert.equal(leaks(thrown.body), false);
+
+    _setTtsImpl(async () => ({ ok: false, error: "upstream said C:\\secret\\path" }));
+    const refused = await request(app).post(url).send(SPEAK);
+    assert.equal(refused.status, 502);
+    assert.equal(leaks(refused.body), false);
+
+    _setTtsImpl(async () => ({ ok: true, file: "C:\\secret\\path\\missing.mp3" }));
+    const unmovable = await request(app).post(url).send(SPEAK);
+    assert.equal(unmovable.status, 500);
+    assert.equal(leaks(unmovable.body), false);
+
+    // The project file can't be saved: a directory sits where its temp file would go.
+    _setTtsImpl(async () => {
+      fs.mkdirSync(path.join(dataDir, "moments", `${p.projectId}.json.${process.pid}.tmp`), { recursive: true });
+      const f = path.join(os.tmpdir(), `tts-${crypto.randomUUID()}.mp3`);
+      fs.writeFileSync(f, "mp3");
+      return { ok: true, file: f };
+    });
+    const unsaved = await request(app).post(url).send(SPEAK);
+    assert.equal(unsaved.status, 500);
+    assert.equal(leaks(unsaved.body), false);
+    assert.deepEqual(voiceFiles(), [], "no orphan voice file is left behind");
+  } finally {
+    console.error = quiet;
+  }
+});
+
+test("a voiceover that finishes after the Moment was deleted is dropped with a 404", async () => {
+  const p = await newMoment();
+  _setTtsImpl(async () => {
+    deleteProject(dataDir, p.projectId);
+    const f = path.join(os.tmpdir(), `tts-${crypto.randomUUID()}.mp3`);
+    fs.writeFileSync(f, "mp3");
+    return { ok: true, file: f };
+  });
+  const r = await request(app).post(`/api/moments/${p.projectId}/voiceover`).send(SPEAK);
+  assert.equal(r.status, 404);
+  assert.deepEqual(voiceFiles(), []);
+});
+
+test("a voiceover that finishes after a render started is dropped with a 409 and the old voice stays", async () => {
+  const p = await newMoment();
+  const first = await request(app).post(`/api/moments/${p.projectId}/voiceover`).send(SPEAK);
+  const oldFile = first.body.project.sound.voiceover.file;
+  _setTtsImpl(async () => {
+    writeProject(dataDir, {
+      ...readProject(dataDir, p.projectId),
+      render: { jobId: createJob("u1", { durationSec: 15 }).jobId, status: "running", percent: 5, stage: "shots" },
+    });
+    const f = path.join(os.tmpdir(), `tts-${crypto.randomUUID()}.mp3`);
+    fs.writeFileSync(f, "mp3");
+    return { ok: true, file: f };
+  });
+  const r = await request(app).post(`/api/moments/${p.projectId}/voiceover`).send(SPEAK);
+  assert.equal(r.status, 409);
+  assert.deepEqual(voiceFiles(), [oldFile], "the new file is gone and the running render's voice is untouched");
+  assert.equal(readProject(dataDir, p.projectId).sound.voiceover.file, oldFile);
+});
+
+test("statements failures return a fixed message", async () => {
+  const p = await newMoment();
+  _setStatementsImpl(async () => { throw new Error("boom C:\\secret\\path"); });
+  const quiet = console.error;
+  console.error = () => {};
+  try {
+    const r = await request(app).post(`/api/moments/${p.projectId}/statements`).send();
+    assert.equal(r.status, 500, JSON.stringify(r.body));
+    assert.equal(r.body.error, "Couldn't write the lines. Please try again.");
+    assert.equal(/secret/i.test(JSON.stringify(r.body)), false);
+  } finally {
+    console.error = quiet;
+    _resetStatementsImpl();
+  }
+});
+
+test("a queued run cancelled after a newer render took over leaves that render untouched", async () => {
+  let release;
+  const held = new Promise((r) => { release = r; });
+  _setRenderStageImpl(async (...args) => { stageCalls.push(args); await held; });
+  const first = await newMoment();
+  const second = await newMoment();
+  for (const p of [first, second]) {
+    await request(app).put(`/api/moments/${p.projectId}`).send({ photos: [upload(), upload(), upload()] });
+  }
+  await request(app).post(`/api/moments/${first.projectId}/render`).send();
+  await request(app).post(`/api/moments/${second.projectId}/render`).send();
+  const newer = { jobId: createJob("u1", { durationSec: 15 }).jobId, status: "running", percent: 30, stage: "shots" };
+  writeProject(dataDir, { ...readProject(dataDir, second.projectId), render: newer });
+
+  assert.equal((await request(app).post(`/api/moments/${second.projectId}/cancel`).send()).status, 200);
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(readProject(dataDir, second.projectId).render, newer, "the newer render's record is not overwritten");
+  release();
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(stageCalls.length, 1);
+});
+
+test("starting a render sweeps stale job records on its own", async () => {
+  const stale = createJob("u1", { durationSec: 15 });
+  stale.status = "done";
+  stale.updatedAt = Date.now() - 2 * 60 * 60 * 1000;
+  const p = await newMoment();
+  await request(app).put(`/api/moments/${p.projectId}`).send({ photos: [upload(), upload(), upload()] });
+  assert.equal((await request(app).post(`/api/moments/${p.projectId}/render`).send()).status, 200);
+  assert.equal(getJob(stale.jobId), null);
 });
