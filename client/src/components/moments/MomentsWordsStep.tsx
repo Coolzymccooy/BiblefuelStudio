@@ -47,8 +47,8 @@ export function MomentsWordsStep({ project, meta, refresh, busy, setBusy, track 
   };
 
   /**
-   * Queues a save built from the latest committed words (null skips it). Held busy while it runs; a refusal is
-   * toasted. Resolves true when saved.
+   * Queues a save built from the latest committed words (null skips it). Only a structural save holds the page
+   * busy while it runs; a refusal is toasted. Resolves true when saved.
    */
   const save = (
     build: (c: Words) => MomentPatch | null,
@@ -58,8 +58,9 @@ export function MomentsWordsStep({ project, meta, refresh, busy, setBusy, track 
     const run = chain.current.then(async () => {
       const patch = build(committedRef.current);
       if (!patch) return true;
-      setBusy(true);
-      if (isStructural) setStructural(true);
+      // Only a structural change holds the page busy. A typing blur-save is tracked by the page instead, so
+      // Make it waits for it without being disabled by it.
+      if (isStructural) { setBusy(true); setStructural(true); }
       try {
         await persist(patch, () => applyLocal(patch));
         return true;
@@ -67,8 +68,7 @@ export function MomentsWordsStep({ project, meta, refresh, busy, setBusy, track 
         toastError(e);
         return false;
       } finally {
-        setBusy(false);
-        if (isStructural) setStructural(false);
+        if (isStructural) { setBusy(false); setStructural(false); }
       }
     });
     chain.current = run;

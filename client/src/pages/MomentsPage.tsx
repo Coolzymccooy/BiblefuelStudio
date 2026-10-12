@@ -32,7 +32,7 @@ const STEPS: Array<{ id: Step; label: string }> = [
 ];
 
 /** A Moment in one of these render states opens on the Result step, where the outcome (or the retry) is. */
-const RESULT_STATUSES = new Set(['running', 'interrupted', 'error']);
+const RESULT_STATUSES = new Set(['running', 'done', 'interrupted', 'error']);
 
 const isNotFound = (e: unknown) => isApiError(e) && e.status === 404;
 
@@ -98,7 +98,9 @@ export function MomentsPage() {
     if (project.render && RESULT_STATUSES.has(project.render.status)) setStep('result');
   }, [project]);
 
-  const refresh = () => { if (projectId) qc.invalidateQueries({ queryKey: ['moment', projectId] }); };
+  /** Resolves once the refetch has landed. */
+  const refreshNow = async () => { if (projectId) await qc.invalidateQueries({ queryKey: ['moment', projectId] }); };
+  const refresh = () => { void refreshNow(); };
 
   const makeIt = async (seed?: number) => {
     // Refs, not state: two presses can land before React re-renders with busy set.
@@ -107,13 +109,17 @@ export function MomentsPage() {
     setBusy(true);
     const id = project.projectId;
     try {
+      const wasEmpty = (p: MomentProject) => !p.title.trim() && p.statements.length === 0;
       let current = project;
-      if (pending.current.size > 0) {
-        // Let blur-saves land, then judge from what the server holds rather than this render's copy.
-        await Promise.allSettled([...pending.current]);
+      const waited = pending.current.size > 0;
+      // Let blur-saves land first.
+      if (waited) await Promise.allSettled([...pending.current]);
+      // This render's copy can lag behind words that were just saved, and suggesting would overwrite them. So
+      // after a pending save, or before suggesting at all, judge from what the server holds now.
+      if (waited || wasEmpty(current)) {
         current = await qc.fetchQuery({ queryKey: ['moment', id], queryFn: () => momentsApi.get(id), staleTime: 0 });
       }
-      if (!current.title.trim() && current.statements.length === 0) {
+      if (wasEmpty(current)) {
         const s = await momentsApi.suggest(id);
         const saved = await momentsApi.update(id, { title: s.title, statements: s.statements });
         qc.setQueryData(['moment', id], saved);
@@ -121,7 +127,8 @@ export function MomentsPage() {
       }
       await momentsApi.render(id, seed);
       setStep('result');
-      refresh();
+      // Stay busy until the new state lands, so the old video and its Shuffle are never live beside a new render.
+      await refreshNow();
     } catch (e) {
       toastError(e);
     } finally {
@@ -130,14 +137,20 @@ export function MomentsPage() {
     }
   };
 
+  const cancelling = useRef(false);
   const cancel = async () => {
-    if (!project) return;
+    if (!project || cancelling.current) return;
+    cancelling.current = true;
     try {
       await momentsApi.cancel(project.projectId);
     } catch (e) {
       toastError(e);
     }
-    refresh();
+    try {
+      await refreshNow();
+    } finally {
+      cancelling.current = false;
+    }
   };
 
   const setActive = (id: string | null, startAt: Step = 'photos') => {
@@ -207,6 +220,8 @@ export function MomentsPage() {
     ? { project, meta, refresh, busy: busy || isRunning(project), setBusy, track }
     : null;
   const ready = project ? canMake(project, meta) : null;
+  // A failed or interrupted render has its own "Make it again" on the Result step, so the sticky button steps aside.
+  const ownRetry = step === 'result' && (project?.render?.status === 'error' || project?.render?.status === 'interrupted');
   return (
     <div className="w-full">
       <ScreenHeader
@@ -233,12 +248,14 @@ export function MomentsPage() {
           {step === 'result' && (
             <MomentsResult project={stepProps.project} busy={stepProps.busy} onShuffle={() => makeIt(newSeed())} onRetry={() => makeIt()} onCancel={cancel} />
           )}
-          <div className="sticky bottom-4 mt-6 flex flex-col items-center gap-1">
-            <button type="button" onClick={() => makeIt()} disabled={!ready?.ok || stepProps.busy} className={`${primaryBtnCls} px-8 py-3`}>
-              <Wand2 size={18} /> Make it
-            </button>
-            {ready && !ready.ok && <span className="text-help">{ready.reason}</span>}
-          </div>
+          {!ownRetry && (
+            <div className="sticky bottom-4 mt-6 flex flex-col items-center gap-1">
+              <button type="button" onClick={() => makeIt()} disabled={!ready?.ok || stepProps.busy} className={`${primaryBtnCls} px-8 py-3`}>
+                <Wand2 size={18} /> Make it
+              </button>
+              {ready && !ready.ok && <span className="text-help">{ready.reason}</span>}
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -407,4 +407,86 @@ describe('Make it', () => {
     await userEvent.click(screen.getByRole('button', { name: /^make it$/i }));
     expect(await screen.findByDisplayValue('Cheers')).toBeInTheDocument();
   });
+
+  it('never suggests over words the server already holds, even when the page copy still reads empty', async () => {
+    open();
+    const get = vi.spyOn(momentsApi, 'get').mockResolvedValue(ready());
+    const suggest = vi.spyOn(momentsApi, 'suggest');
+    const renderCall = vi.spyOn(momentsApi, 'render').mockResolvedValue('job-1');
+    renderPage();
+    const button = await screen.findByRole('button', { name: /^make it$/i });
+    // The words were saved after the page last loaded; its copy has not caught up.
+    get.mockResolvedValue(ready({ title: 'Typed', statements: ['Typed too'] }));
+    await userEvent.click(button);
+    await waitFor(() => expect(renderCall).toHaveBeenCalledTimes(1));
+    expect(suggest).not.toHaveBeenCalled();
+  });
+
+  it('opens a finished Moment restored from storage on its video', async () => {
+    open();
+    vi.spyOn(momentsApi, 'get').mockResolvedValue(ready({ render: { jobId: 'j', status: 'done', percent: 100, stage: 'done', file: '/outputs/moment-1.mp4' } }));
+    renderPage();
+    expect(await screen.findByRole('button', { name: 'Result', pressed: true })).toBeInTheDocument();
+    expect(document.querySelector('video')?.getAttribute('src')).toContain('/outputs/moment-1.mp4');
+  });
+
+  it('stays busy until the refetch after a render lands, so the old video is not live beside the new render', async () => {
+    open();
+    const done = ready({ title: 'Mine', statements: ['x'], render: { jobId: 'j', status: 'done', percent: 100, stage: 'done', file: '/outputs/moment-1.mp4' } });
+    const get = vi.spyOn(momentsApi, 'get').mockResolvedValue(done);
+    vi.spyOn(momentsApi, 'render').mockResolvedValue('job-2');
+    renderPage();
+    const shuffle = await screen.findByRole('button', { name: /shuffle/i });
+    let landRefetch: (m: ReturnType<typeof mkMoment>) => void = () => {};
+    get.mockImplementation(() => new Promise((r) => { landRefetch = r; }));
+    await userEvent.click(shuffle);
+    await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+    expect(screen.getByRole('button', { name: /shuffle/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /^make it$/i })).toBeDisabled();
+    await act(async () => { landRefetch({ ...done, render: { jobId: 'job-2', status: 'running', percent: 0, stage: 'waiting' } }); });
+    expect(await screen.findByRole('progressbar')).toBeInTheDocument();
+  });
+
+  it('a double click on Cancel sends one cancel', async () => {
+    open();
+    vi.spyOn(momentsApi, 'get').mockResolvedValue(ready({ render: { jobId: 'j', status: 'running', percent: 30, stage: 'shots' } }));
+    const cancel = vi.spyOn(momentsApi, 'cancel').mockImplementation(() => new Promise(() => {}));
+    renderPage();
+    const button = await screen.findByRole('button', { name: /cancel/i });
+    await act(async () => { button.click(); button.click(); });
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['error', { jobId: 'j', status: 'error' as const, percent: 0, stage: 'error', error: 'Cancelled.' }],
+    ['interrupted', { jobId: 'j', status: 'interrupted' as const, percent: 40, stage: 'shots' }],
+  ])('a %s render shows a single Make it button, the Result step\'s own', async (_name, render) => {
+    open();
+    vi.spyOn(momentsApi, 'get').mockResolvedValue(ready({ title: 'Mine', statements: ['x'], render }));
+    renderPage();
+    await screen.findByRole('button', { name: 'Result', pressed: true });
+    expect(screen.getAllByRole('button', { name: /make it/i })).toHaveLength(1);
+    expect(screen.getByRole('button', { name: /make it again/i })).toBeInTheDocument();
+  });
+
+  it('a Words blur-save does not disable Make it, and the render waits for it', async () => {
+    open();
+    vi.spyOn(momentsApi, 'get').mockResolvedValue(ready({ title: 'Mine', statements: ['Mine too'] }));
+    let finishSave: () => void = () => {};
+    const update = vi.spyOn(momentsApi, 'update').mockImplementation(() => new Promise((r) => { finishSave = () => r(ready()); }));
+    const renderCall = vi.spyOn(momentsApi, 'render').mockResolvedValue('job-1');
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: 'Words' }));
+    await userEvent.type(await screen.findByLabelText('Title'), '!');
+    await userEvent.tab();
+    await waitFor(() => expect(update).toHaveBeenCalled());
+    const button = screen.getByRole('button', { name: /^make it$/i });
+    expect(button).toBeEnabled();
+    await userEvent.click(button);
+    await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+    expect(renderCall).not.toHaveBeenCalled();
+    await act(async () => { finishSave(); });
+    await waitFor(() => expect(renderCall).toHaveBeenCalledTimes(1));
+    expect(update.mock.invocationCallOrder[0]).toBeLessThan(renderCall.mock.invocationCallOrder[0]);
+  });
 });
