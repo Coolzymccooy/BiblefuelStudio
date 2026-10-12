@@ -21,6 +21,8 @@ const WIDTH_BY_PREFIX: Array<{ prefix: string; width: string }> = [
   { prefix: '/app/studio', width: 'max-w-[1600px]' },
   // A soundtrack is a wide tracklist plus a settings bar.
   { prefix: '/app/ambient', width: 'max-w-[1400px]' },
+  // Moments: the photo grid beside its settings, the video beside publishing.
+  { prefix: '/app/moments', width: 'max-w-[1400px]' },
   // Story Video matches it: scenes beside their settings, the video beside
   // publishing.
   { prefix: '/app/story', width: 'max-w-[1400px]' },
