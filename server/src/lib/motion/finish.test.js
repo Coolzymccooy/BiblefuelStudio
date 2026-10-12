@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { statementsAss, fxAss, finishArgs } from "./finish.js";
+import { statementsAss, fxAss, finishArgs, LOUDNESS } from "./finish.js";
 import { shotArgs } from "./shotArgs.js";
 import { filterNames, ffmpegAvailable, FFMPEG } from "./testkit.js";
 import { FFMPEG_51_FILTERS } from "./effects/index.js";
@@ -59,7 +59,7 @@ test("song only: trimmed from its window, padded to length, faded, loudness-norm
   const r = finishArgs({ ...common, plan: plan(), song: { file: "song.mp3", startSec: 42.5 }, voice: null });
   const a = r.args;
   assert.deepEqual(a.slice(a.indexOf("-ss"), a.indexOf("-ss") + 4), ["-ss", "42.500", "-i", "song.mp3"]);
-  assert.match(graphOf(r), /\[1:a\]aresample=48000,apad,atrim=0:15\.000,afade=t=in:d=0\.3,afade=t=out:st=13\.800:d=1\.2,loudnorm=I=-14:TP=-1\.5:LRA=11\[a\]/);
+  assert.match(graphOf(r), /\[1:a\]aresample=48000,apad,atrim=0:15\.000,afade=t=in:d=0\.3,afade=t=out:st=13\.800:d=1\.2,loudnorm=I=-14:TP=-1\.5:LRA=11,aresample=48000\[a\]/);
   assert.equal(a[a.indexOf("-filter_complex_script") + 1], path.join("wd", "finish.txt"));
   assert.deepEqual(a.slice(a.indexOf("-t"), a.indexOf("-t") + 2), ["-t", "15.000"]);
 });
@@ -75,6 +75,14 @@ test("voice only and silence both give a full-length audio track", () => {
   assert.match(v, /\[1:a\]aresample=48000,apad,atrim=0:15\.000/);
   const s = finishArgs({ ...common, plan: plan(), song: null, voice: null });
   assert.ok(s.args.join(" ").includes("anullsrc=r=48000:cl=stereo"));
+});
+
+test("every audio graph ends back at 48 kHz (loudnorm emits 192 kHz)", () => {
+  for (const [song, voice] of [[{ file: "s", startSec: 0 }, null], [{ file: "s", startSec: 0 }, { file: "v" }], [null, { file: "v" }], [null, null]]) {
+    const g = graphOf(finishArgs({ ...common, plan: plan(), song, voice }));
+    assert.ok(g.endsWith(",aresample=48000[a]"), g);
+    if (song || voice) assert.ok(g.endsWith(`${LOUDNESS},aresample=48000[a]`), "resample comes after loudnorm");
+  }
 });
 
 test("the picture is graded, then statements, then FX, with escaped paths", () => {
@@ -197,3 +205,81 @@ for (const [label, withSong, withVoice] of [["song and voice", true, true], ["so
     else assert.ok(mean < -70, `silent, got ${mean} dB`);
   });
 }
+
+// Measured audio. A small silent-picture body per length keeps these quick: only the sound is under test.
+const bodies = new Map();
+function bodyOf(sec) {
+  if (!bodies.has(sec)) {
+    const file = path.join(fx.dir, `plain-${sec}.mp4`);
+    run(FFMPEG, ["-hide_banner", "-v", "error", "-y", "-f", "lavfi", "-i", `testsrc2=s=270x480:r=30:d=${sec}`, "-c:v", "libx264", "-pix_fmt", "yuv420p", file]);
+    bodies.set(sec, file);
+  }
+  return bodies.get(sec);
+}
+
+/** A file of consecutive sine tones: [[hz, seconds], ...]. */
+function tones(name, parts) {
+  const file = path.join(fx.dir, name);
+  const srcs = parts.map(([hz, sec], i) => `sine=frequency=${hz}:duration=${sec}:sample_rate=44100[t${i}]`);
+  const graph = `${srcs.join(";")};${parts.map((_, i) => `[t${i}]`).join("")}concat=n=${parts.length}:v=0:a=1[a]`;
+  run(FFMPEG, ["-hide_banner", "-v", "error", "-y", "-filter_complex", graph, "-map", "[a]", file]);
+  return file;
+}
+
+function finishAudio({ sec, song, voice, name }) {
+  const out = path.join(fx.dir, `${name}.mp4`);
+  const p = plan({ durationSec: sec, captions: [], shots: [] });
+  const { args, sideFiles } = finishArgs({ body: bodyOf(sec), out, plan: p, statementsPath: null, fxPath: null, song, voice, workDir: fx.dir });
+  for (const f of sideFiles) fs.writeFileSync(f.path, f.text);
+  run(FFMPEG, args);
+  return out;
+}
+
+/** Mean volume (dB) of [from, from + len) after an optional audio filter. */
+function windowVolume(file, from, len, filter = "anull") {
+  const r = spawnSync(FFMPEG, ["-hide_banner", "-ss", String(from), "-t", String(len), "-i", file, "-map", "0:a:0", "-af", `${filter},volumedetect`, "-f", "null", "-"], { encoding: "utf8" });
+  const m = /mean_volume: (-?[\d.]+|-inf) dB/.exec(r.stderr);
+  assert.ok(m, r.stderr);
+  return m[1] === "-inf" ? -Infinity : Number(m[1]);
+}
+
+const band = (hz) => `bandpass=f=${hz}:width_type=q:w=8`;
+
+test("the mixed audio keeps sounding to the end of the video", { skip }, () => {
+  const song = tones("tail-song.wav", [[440, 8]]);
+  const voice = tones("tail-voice.wav", [[880, 3]]);
+  for (const [label, vo] of [["3 s voice", voice], ["voice as long as the video", tones("tail-voice8.wav", [[880, 8]])]]) {
+    const out = finishAudio({ sec: 8, song: { file: song, startSec: 0 }, voice: { file: vo }, name: `tail-${label.replace(/\W+/g, "-")}` });
+    const mean = windowVolume(out, 6, 0.5);
+    assert.ok(mean > -50, `${label}: the song should still play at 6.0-6.5 s, got ${mean} dB`);
+    const late = windowVolume(out, 7.0, 0.5); // inside the 1.2 s fade-out, so quieter but never silent
+    assert.ok(late > -45, `${label}: the tail should fade, not drop out, at 7.0-7.5 s, got ${late} dB`);
+  }
+});
+
+test("song only lands on the -14 LUFS target", { skip }, () => {
+  const out = finishAudio({ sec: 8, song: { file: tones("loud-song.wav", [[440, 10]]), startSec: 0 }, voice: null, name: "loud" });
+  const r = spawnSync(FFMPEG, ["-hide_banner", "-i", out, "-map", "0:a:0", "-af", "ebur128", "-f", "null", "-"], { encoding: "utf8" });
+  const m = /Summary:[\s\S]*?I:\s+(-?[\d.]+) LUFS/.exec(r.stderr);
+  assert.ok(m, r.stderr);
+  assert.ok(Math.abs(Number(m[1]) + 14) <= 1, `integrated loudness ${m[1]} LUFS`);
+});
+
+test("the song plays from its start window", { skip }, () => {
+  // 440 Hz for 10 s then 880 Hz; starting at 8 s, the tone changes 2 s into the output.
+  const out = finishAudio({ sec: 4, song: { file: tones("window-song.wav", [[440, 10], [880, 10]]), startSec: 8 }, voice: null, name: "window" });
+  const low = [windowVolume(out, 0.5, 1, band(440)), windowVolume(out, 0.5, 1, band(880))];
+  const high = [windowVolume(out, 2.5, 0.3, band(440)), windowVolume(out, 2.5, 0.3, band(880))];
+  assert.ok(low[0] - low[1] > 15, `before 2 s it is 440 Hz: ${low}`);
+  assert.ok(high[1] - high[0] > 15, `after 2 s it is 880 Hz: ${high}`);
+});
+
+test("the song ducks while the voice speaks", { skip }, () => {
+  // Song at 440 Hz all through; the voice (1320 Hz) speaks for the first 2 s of 6.
+  const out = finishAudio({
+    sec: 6, song: { file: tones("duck-song.wav", [[440, 10]]), startSec: 0 }, voice: { file: tones("duck-voice.wav", [[1320, 2]]) }, name: "duck",
+  });
+  const under = windowVolume(out, 0.7, 1, band(440));
+  const clear = windowVolume(out, 3.2, 1, band(440));
+  assert.ok(clear - under >= 6, `song band should drop at least 6 dB under the voice: ${under} vs ${clear}`);
+});

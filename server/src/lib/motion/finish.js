@@ -56,17 +56,20 @@ const assFilter = (p) => `ass=filename='${escapeFontPath(p)}':fontsdir='${escape
 function audioGraph({ song, voice, D }) {
   const fit = `aresample=48000,apad,atrim=0:${n3(D)}`;
   const tail = (sec) => `afade=t=out:st=${n3(Math.max(0, D - sec))}:d=${sec}`;
+  // loudnorm emits 192 kHz. Resampling back to 48 kHz here, explicitly, stops the
+  // implicit conversion in front of the AAC encoder from dropping the end of a mixed track.
+  const end = `${LOUDNESS},aresample=48000[a]`;
   if (song && voice) {
     return [
       `[1:a]${fit},volume=0.35[m]`,
       `[2:a]${fit},asplit=2[v1][v2]`,
       `[m][v1]sidechaincompress=threshold=0.01:ratio=12:attack=5:release=350:makeup=2[duck]`,
-      `[v2][duck]amix=inputs=2:duration=first:dropout_transition=2,${tail(1.2)},${LOUDNESS}[a]`,
+      `[v2][duck]amix=inputs=2:duration=first:dropout_transition=2,${tail(1.2)},${end}`,
     ];
   }
-  if (song) return [`[1:a]${fit},afade=t=in:d=0.3,${tail(1.2)},${LOUDNESS}[a]`];
-  if (voice) return [`[1:a]${fit},${tail(0.6)},${LOUDNESS}[a]`];
-  return ["[1:a]anull[a]"];
+  if (song) return [`[1:a]${fit},afade=t=in:d=0.3,${tail(1.2)},${end}`];
+  if (voice) return [`[1:a]${fit},${tail(0.6)},${end}`];
+  return ["[1:a]anull,aresample=48000[a]"];
 }
 
 export function finishArgs({ body, out, plan, statementsPath, fxPath, song, voice, workDir }) {
