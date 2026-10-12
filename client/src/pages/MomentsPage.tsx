@@ -13,6 +13,7 @@ import { MomentsDetailsStep } from '../components/moments/MomentsDetailsStep';
 import { MomentsPhotosStep } from '../components/moments/MomentsPhotosStep';
 import { MomentsSoundStep } from '../components/moments/MomentsSoundStep';
 import { MomentsWordsStep } from '../components/moments/MomentsWordsStep';
+import { MomentsStyleStep } from '../components/moments/MomentsStyleStep';
 import { segmentCls, segmentedCls } from '../components/story/formStyles';
 
 const ACTIVE_KEY = 'BF_MOMENTS_ACTIVE';
@@ -172,7 +173,7 @@ export function MomentsPage() {
           {step === 'photos' && <MomentsPhotosStep {...stepProps} />}
           {step === 'sound' && <MomentsSoundStep {...stepProps} />}
           {step === 'words' && <MomentsWordsStep key={stepProps.project.projectId} {...stepProps} />}
-          {step === 'style' && <StepPlaceholder name="Style" />}
+          {step === 'style' && <MomentsStyleStep {...stepProps} />}
           {step === 'result' && <StepPlaceholder name="Result" />}
         </div>
       )}
