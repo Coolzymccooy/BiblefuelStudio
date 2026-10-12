@@ -95,8 +95,9 @@ export const rayBurst = assOverlay("rayBurst", ({ shot, ctx, rnd }) => {
     const a = (k / 48) * Math.PI * 2 + rnd() * 0.1;
     const r0 = 60 + rnd() * 45;
     const r1 = 450 + rnd() * 390;
-    const t0 = shot.start + rnd() * 0.15;
-    const end = Math.min(shot.end, t0 + 0.9);
+    // A shot shorter than the 0.15 s stagger would otherwise start a ray after its own end.
+    const t0 = Math.min(shot.end, shot.start + rnd() * 0.15);
+    const end = Math.max(t0, Math.min(shot.end, t0 + 0.9));
     const deg = Math.round((-a * 180) / Math.PI);
     const p = (r) => `${Math.round(cx + Math.cos(a) * r)},${Math.round(cy + Math.sin(a) * r)}`;
     lines.push(`Dialogue: 2,${assTime(t0)},${assTime(end)},FX,,0,0,0,,{\\an5\\move(${p(r0)},${p(r1)},0,700)\\frz${deg}\\bord0\\shad0\\blur2\\1c${RAYS[k % RAYS.length]}\\fad(0,350)\\p1}m 0 -4 l 51 -4 51 4 0 4{\\p0}`);

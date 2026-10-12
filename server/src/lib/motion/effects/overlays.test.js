@@ -163,3 +163,17 @@ test("the ASS overlays' Dialogue lines parse under libass and draw on a 1.5 s sh
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("rayBurst never emits an event that ends before it starts, however short the end shot", () => {
+  const sec = (t) => { const [h, m, s] = t.split(":"); return Number(h) * 3600 + Number(m) * 60 + Number(s); };
+  for (const len of [0.2, 0.1, 0.05, 0.01]) {
+    const tiny = { ...shot, start: 10, end: 10 + len };
+    for (let seed = 1; seed <= 20; seed += 1) {
+      for (const l of getEffect("rayBurst").assEvents({ shot: tiny, ctx, rnd: mulberry32(seed) })) {
+        const [, a, b] = l.match(/^Dialogue: \d,(\d:\d\d:\d\d\.\d\d),(\d:\d\d:\d\d\.\d\d)/);
+        assert.ok(sec(b) >= sec(a), `${len} s shot, seed ${seed}: ${l.slice(0, 50)}`);
+        assert.ok(sec(b) <= tiny.end + 0.005, `${len} s shot stays inside the shot: ${l.slice(0, 50)}`);
+      }
+    }
+  }
+});
