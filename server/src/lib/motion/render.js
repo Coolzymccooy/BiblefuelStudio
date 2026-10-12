@@ -24,7 +24,8 @@ export function runFfmpeg(args, { signal, ffmpegPath = process.env.FFMPEG_PATH?.
     let stderr = "";
     const onAbort = () => child.kill("SIGKILL");
     signal?.addEventListener("abort", onAbort, { once: true });
-    child.stderr?.on("data", (c) => { stderr += c.toString(); });
+    // ffmpeg can be chatty; the end of its stderr is the part that explains a failure.
+    child.stderr?.on("data", (c) => { stderr = (stderr + c.toString()).slice(-STDERR_CAP); });
     child.on("error", (err) => {
       signal?.removeEventListener("abort", onAbort);
       resolve({ ok: false, error: String(err?.message || err), stderr });
@@ -38,7 +39,25 @@ export function runFfmpeg(args, { signal, ffmpegPath = process.env.FFMPEG_PATH?.
   });
 }
 
-const tail = (s) => String(s || "").trim().split("\n").slice(-8).join("\n");
+const STDERR_CAP = 16 * 1024;
+const DETAIL_CAP = 2000;
+const tail = (s) => String(s || "").trim().split("\n").slice(-8).join("\n").slice(-DETAIL_CAP);
+
+/** Moves a finished file into place. rename is atomic; across devices it is copy then unlink. */
+function moveInto(from, to) {
+  try {
+    fs.renameSync(from, to);
+  } catch (err) {
+    if (err?.code !== "EXDEV") throw err;
+    try {
+      fs.copyFileSync(from, to);
+    } catch (copyErr) {
+      fs.rmSync(to, { force: true });
+      throw copyErr;
+    }
+    fs.unlinkSync(from);
+  }
+}
 const writeSide = (files) => { for (const f of files) fs.writeFileSync(f.path, f.text, "utf8"); };
 const pad = (i) => String(i).padStart(3, "0");
 
@@ -46,9 +65,11 @@ export async function renderPlan({
   plan, workImages, song = null, voice = null, workDir, out, runner = runFfmpeg, onProgress = () => {}, signal, libass,
 }) {
   if (signal?.aborted) return { ok: false, error: "cancelled" };
-  const canDraw = libass ?? hasLibass();
-  if (plan.captions.length && !canDraw) {
-    return { ok: false, error: "This server can't draw the statements (its ffmpeg has no libass)." };
+  // Statements and the FX overlays both go through the ass filter, so either needs libass.
+  const statementsText = statementsAss(plan);
+  const fxText = fxAss(plan);
+  if ((statementsText || fxText) && !(libass ?? hasLibass())) {
+    return { ok: false, error: "This server can't draw the statements and effects (its ffmpeg has no libass)." };
   }
   const run = async (args, what) => {
     const r = await runner(args, { signal });
@@ -70,7 +91,7 @@ export async function renderPlan({
     const failed = await run(args, `shot ${i + 1} of ${n}`);
     if (failed) return failed;
     if (plan.shots[i + 1]?.entrance.id === "crossfade") {
-      const grabbed = await run(lastFrameArgs(clip, path.join(workDir, `last-${pad(i)}.png`)), `shot ${i + 1} of ${n}`);
+      const grabbed = await run(lastFrameArgs(clip, path.join(workDir, `last-${pad(i)}.png`)), `the last frame of shot ${i + 1} of ${n}`);
       if (grabbed) return grabbed;
     }
     clips.push(clip);
@@ -85,16 +106,25 @@ export async function renderPlan({
   if (joined) return joined;
   onProgress({ stage: "join", fraction: 1 });
 
-  const statementsText = statementsAss(plan);
   const statementsPath = statementsText ? path.join(workDir, "statements.ass") : null;
   if (statementsPath) fs.writeFileSync(statementsPath, statementsText, "utf8");
-  const fxText = fxAss(plan);
   const fxPath = fxText ? path.join(workDir, "fx.ass") : null;
   if (fxPath) fs.writeFileSync(fxPath, fxText, "utf8");
-  const { args, sideFiles } = finishArgs({ body, out, plan, statementsPath, fxPath, song, voice, workDir });
+  // The finish renders into the work dir and moves to `out` only on success, so a cancelled or
+  // failed run never leaves a truncated file where a "file exists" check would take it for a render.
+  const final = path.join(workDir, "final.mp4");
+  const { args, sideFiles } = finishArgs({ body, out: final, plan, statementsPath, fxPath, song, voice, workDir });
   writeSide(sideFiles);
   const finished = await run(args, "the finishing pass");
-  if (finished) return finished;
+  if (finished) {
+    fs.rmSync(final, { force: true });
+    return finished;
+  }
+  try {
+    moveInto(final, out);
+  } catch (err) {
+    return { ok: false, error: "Couldn't save the finished video.", detail: String(err?.code || err?.message || err).slice(0, DETAIL_CAP) };
+  }
   onProgress({ stage: "finish", fraction: 1 });
   return { ok: true, file: out };
 }
