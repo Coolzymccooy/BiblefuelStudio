@@ -10,6 +10,8 @@ import { resolveOccasion, statementLimit, templatesFor, TITLE_MAX, STATEMENT_MAX
  * reference from the AI: its words come from the Bible lookup.
  */
 export const AI_TIMEOUT_MS = 15_000;
+/** The verse lookup gets its own bound so a stalled scripture API yields no verse, not a hung request. */
+export const VERSE_TIMEOUT_MS = 5_000;
 
 /** A verse is shown only when the reference names up to this many verses past the first. */
 const MAX_VERSE_SPAN = 3;
@@ -73,7 +75,9 @@ async function verseFor(reference) {
   }
 }
 
-export async function suggestStatements({ occasion, details = {}, lengthSec = 15, timeoutMs = AI_TIMEOUT_MS }) {
+export async function suggestStatements({
+  occasion, details = {}, lengthSec = 15, timeoutMs = AI_TIMEOUT_MS, verseTimeoutMs = VERSE_TIMEOUT_MS,
+}) {
   const occ = resolveOccasion(occasion) || OCCASIONS.fun;
   const limit = statementLimit(lengthSec);
   const fallback = templatesFor(occ.id, details, lengthSec);
@@ -84,7 +88,11 @@ export async function suggestStatements({ occasion, details = {}, lengthSec = 15
     parsed = null;
   }
   const aiStatements = Array.isArray(parsed?.statements)
-    ? parsed.statements.map(tidy).filter((s) => s && s.length <= STATEMENT_MAX).slice(0, limit)
+    ? parsed.statements
+      .filter((s) => typeof s === "string")
+      .map(tidy)
+      .filter((s) => s && s.length <= STATEMENT_MAX)
+      .slice(0, limit)
     : [];
   const aiTitle = tidy(parsed?.title);
   const useAi = aiStatements.length > 0;
@@ -94,7 +102,7 @@ export async function suggestStatements({ occasion, details = {}, lengthSec = 15
     source: useAi ? "ai" : "template",
   };
   if (occ.church && useAi) {
-    const verse = await verseFor(parsed.verseReference);
+    const verse = await withTimeout(verseFor(parsed.verseReference), verseTimeoutMs).catch(() => undefined);
     if (verse) result.verse = verse;
   }
   return result;

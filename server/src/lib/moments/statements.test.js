@@ -95,6 +95,24 @@ test("a range longer than four verses never looks a verse up", async () => {
   assert.equal(called, false);
 });
 
+test("a stalled verse lookup is abandoned; the statements still come from the AI", async () => {
+  _setLlmImpl(async () => json({ title: "T", statements: ["A", "B"], verseReference: "John 3:16" }));
+  _setLookupImpl(() => new Promise(() => {}));
+  const started = Date.now();
+  const s = await suggestStatements({ occasion: "sermon", details: {}, lengthSec: 15, verseTimeoutMs: 50 });
+  assert.ok(Date.now() - started < 1000, "returns promptly");
+  assert.equal(s.source, "ai");
+  assert.deepEqual(s.statements, ["A", "B"]);
+  assert.equal(s.verse, undefined);
+});
+
+test("non-string AI statements are dropped before cleaning", async () => {
+  _setLlmImpl(async () => json({ title: "T", statements: ["Ok", { a: 1 }, ["x"], 5] }));
+  const s = await suggestStatements({ occasion: "fun", details: {}, lengthSec: 15 });
+  assert.equal(s.source, "ai");
+  assert.deepEqual(s.statements, ["Ok"]);
+});
+
 test("a four-verse range (John 3:16-19) still looks up", async () => {
   _setLlmImpl(async () => json({ title: "T", statements: ["A"], verseReference: "John 3:16-19" }));
   let asked = null;
