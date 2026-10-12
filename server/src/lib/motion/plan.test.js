@@ -34,7 +34,19 @@ const bad = [
   ["a shot ending before it starts", (p) => { p.shots[0].end = 0; }, /ends before it starts/],
   ["a missing anchor", (p) => { delete p.shots[0].anchor; }, /anchor/],
   ["an energy that is NaN", (p) => { p.energy = NaN; }, /energy/],
+  ["a caption reveal that is Infinity", (p) => { p.captions[0].reveal = Infinity; }, /reveal/],
+  ["a caption holdUntil that is Infinity", (p) => { p.captions[0].holdUntil = Infinity; }, /holdUntil/],
+  ["a caption holdUntil past durationSec", (p) => { p.captions[0].holdUntil = 9; }, /hold/],
+  ["a caption holdUntil before its start", (p) => { p.captions[0].holdUntil = 0.1; }, /hold/],
 ];
+test("requires photoCount to be a positive integer", () => {
+  for (const photoCount of [undefined, 0, -1, 1.5, NaN]) {
+    const r = validatePlan(good(), { photoCount });
+    assert.equal(r.ok, false, `photoCount ${photoCount}`);
+    assert.deepEqual(r.errors, ["photoCount must be a positive integer"]);
+  }
+});
+
 for (const [name, mutate, re] of bad) {
   test(`rejects ${name}`, () => {
     const p = good();

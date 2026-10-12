@@ -26,8 +26,9 @@ const captionSchema = z.object({
   text: z.string().trim().min(1).max(60),
   start: z.number().min(0),
   end: z.number().positive(),
-  reveal: z.number().positive(),
-  holdUntil: z.number().positive(),
+  // reveal is a duration; holdUntil is an absolute time inside the caption's window (checked below).
+  reveal: z.number().positive().finite(),
+  holdUntil: z.number().finite(),
   effect: z.string().optional(),
 });
 const planSchema = z.object({
@@ -48,6 +49,9 @@ function kindError(id, kind, label) {
 }
 
 export function validatePlan(plan, { photoCount }) {
+  if (!Number.isInteger(photoCount) || photoCount < 1) {
+    return { ok: false, errors: ["photoCount must be a positive integer"] };
+  }
   const parsed = planSchema.safeParse(plan);
   if (!parsed.success) {
     return { ok: false, errors: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`) };
@@ -66,6 +70,9 @@ export function validatePlan(plan, { photoCount }) {
   if (Math.abs(p.shots.at(-1).end - p.durationSec) > EPS) errors.push(`the last shot must end at durationSec (${p.durationSec})`);
   p.captions.forEach((c, i) => {
     if (c.end <= c.start || c.end > p.durationSec + EPS) errors.push(`caption ${i} must sit inside 0..durationSec`);
+    if (c.holdUntil < c.start - EPS || c.holdUntil > p.durationSec + EPS) {
+      errors.push(`caption ${i} must hold until a time inside its own start..durationSec`);
+    }
     if (i > 0 && c.start < p.captions[i - 1].end - EPS) errors.push(`caption ${i} and the one before overlap`);
   });
   return errors.length ? { ok: false, errors } : { ok: true, plan: p };
