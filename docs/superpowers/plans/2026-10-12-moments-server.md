@@ -1369,6 +1369,25 @@ test("prepare → analyse → direct → render → history, with progress by st
   assert.deepEqual(STAGES.shots, [20, 75]);
 });
 
+test("a running finish never shows 100% before the file is in place", async () => {
+  const seen = [];
+  _setEngineForTest({
+    runFfmpeg: async (args) => { fs.writeFileSync(args.at(-1), "jpg"); return { ok: true }; },
+    decode: async () => Buffer.alloc(11025 * 2 * 30),
+    renderPlan: async (opts) => {
+      opts.onProgress({ stage: "finish", fraction: 0.99 });
+      seen.push(readProject(ctx.dataDir, p.projectId).render.percent);
+      opts.onProgress({ stage: "finish", fraction: 1 });
+      fs.writeFileSync(opts.out, "mp4");
+      return { ok: true, file: opts.out };
+    },
+  });
+  const p = moment();
+  await momentRenderStage(ctx, p.projectId, createJob("u1", { durationSec: 15 }).jobId, {});
+  assert.ok(seen[0] <= 99, `running finish showed ${seen[0]}%`);
+  assert.equal(readProject(ctx.dataDir, p.projectId).render.percent, 100);
+});
+
 test("only the length's share of statements is used (15 s → 3)", async () => {
   const p = moment();
   await momentRenderStage(ctx, p.projectId, createJob("u1", { durationSec: 15 }).jobId, {});
@@ -1493,7 +1512,10 @@ function progressWriter(ctx, projectId, jobId) {
   let lastWritten = -1;
   return (stage, fraction) => {
     const [a, b] = STAGES[stage];
-    const percent = Math.round(a + (b - a) * Math.min(1, Math.max(0, fraction)));
+    // 100% only once the finish stage reports fraction 1 (the file is in place);
+    // rounding a running 0.99 must not show 100 while the move is still pending.
+    const raw = Math.round(a + (b - a) * Math.min(1, Math.max(0, fraction)));
+    const percent = stage === "finish" && fraction >= 1 ? 100 : Math.min(99, raw);
     try { markProgress(jobId, percent); } catch { /* job gone */ }
     if (percent - lastWritten < 5 && percent !== 100 && fraction !== 0) return;
     lastWritten = percent;
