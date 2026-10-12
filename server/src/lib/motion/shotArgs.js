@@ -53,7 +53,12 @@ export function shotArgs({ shot, index, workImage, prevFrame, out, w, h, fps, wo
   return { args, sideFiles: [{ path: script, text: shotGraph({ shot, w, h, fps, hasPrev }) }] };
 }
 
-/** The clip's final frame as a still, for the next shot's crossfade. */
+/**
+ * The clip's final frame as a still, for the next shot's crossfade. -sseof
+ * only seeks near the end, and the first frame after the seek is not the
+ * last one. So every frame after it is written to the same file (-update 1)
+ * and the last write wins. No -frames:v: that would stop at the first.
+ */
 export function lastFrameArgs(clip, png) {
-  return ["-hide_banner", "-v", "error", "-y", "-sseof", "-0.2", "-i", clip, "-update", "1", "-frames:v", "1", png];
+  return ["-hide_banner", "-v", "error", "-y", "-sseof", "-0.2", "-i", clip, "-update", "1", png];
 }
