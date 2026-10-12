@@ -2579,6 +2579,7 @@ export function TimelinePage() {
                                 onDepthChange={setDepth}
                                 captionEnergy={captionEnergy}
                                 onCaptionEnergyChange={setCaptionEnergy}
+                                captionSeed={captionSeed}
                                 onShuffleEffects={() => setCaptionSeed((s) => nextSeed(s))}
                             />
                             {captionLinesEditor}
@@ -3203,6 +3204,7 @@ export function TimelinePage() {
                     onDepthChange={setDepth}
                     captionEnergy={captionEnergy}
                     onCaptionEnergyChange={setCaptionEnergy}
+                    captionSeed={captionSeed}
                     onShuffleEffects={() => setCaptionSeed((s) => nextSeed(s))}
                 />
                 {kineticCaptions && editedLines.length > 0 && (
