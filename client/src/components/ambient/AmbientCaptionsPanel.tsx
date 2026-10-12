@@ -125,6 +125,7 @@ export function AmbientCaptionsPanel({ value, onChange, busy }: AmbientCaptionsP
         <StudioEffectsControls
           look={value.captionPreset!}
           energy={normaliseEnergy(value.captionEnergy, 'calm')}
+          seed={value.captionSeed}
           energies={energies}
           onEnergyChange={(next) => onChange({ captionEnergy: next })}
           onShuffle={() => onChange({ captionSeed: nextSeed(value.captionSeed) })}

@@ -62,6 +62,8 @@ export interface RenderCaptionsPanelProps {
   libass?: boolean;
   captionEnergy?: string;
   onCaptionEnergyChange?: (next: CaptionEnergy) => void;
+  /** The current caption seed, so Shuffle can tell when a re-roll landed. */
+  captionSeed?: number;
   /** Re-roll which effect each line gets (a new seed). */
   onShuffleEffects?: () => void;
   /** True when a saved script is available to pull in. */
@@ -99,6 +101,7 @@ export function RenderCaptionsPanel({
   libass = true,
   captionEnergy,
   onCaptionEnergyChange,
+  captionSeed,
   onShuffleEffects,
   hasScripts = false,
   onOpenScripts,
@@ -247,6 +250,7 @@ export function RenderCaptionsPanel({
           <StudioEffectsControls
             look={typographyPreset}
             energy={captionEnergy || 'lively'}
+            seed={captionSeed}
             energies={energies}
             onEnergyChange={(next) => onCaptionEnergyChange?.(next)}
             onShuffle={() => onShuffleEffects?.()}

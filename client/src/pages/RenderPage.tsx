@@ -1160,6 +1160,7 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
                             libass={libass}
                             captionEnergy={captionEnergy}
                             onCaptionEnergyChange={setCaptionEnergy}
+                            captionSeed={captionSeed}
                             onShuffleEffects={() => setCaptionSeed((s) => nextSeed(s))}
                             hasScripts={scripts.length > 0}
                             onOpenScripts={() => setShowScriptsModal(true)}
@@ -1463,6 +1464,7 @@ export function RenderLab({ embedded }: { embedded?: RenderLabEmbed } = {}) {
                             libass={libass}
                             captionEnergy={captionEnergy}
                             onCaptionEnergyChange={setCaptionEnergy}
+                            captionSeed={captionSeed}
                             onShuffleEffects={() => setCaptionSeed((s) => nextSeed(s))}
                             hasScripts={scripts.length > 0}
                             onOpenScripts={() => setShowScriptsModal(true)}
