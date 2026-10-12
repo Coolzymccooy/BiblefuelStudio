@@ -31,6 +31,7 @@ import imagegenRouter from "./src/routes/imagegen.js";
 import videogenRouter from "./src/routes/videogen.js";
 import storyRouter from "./src/routes/story.js";
 import ambientRouter from "./src/routes/ambient.js";
+import momentsRouter from "./src/routes/moments.js";
 import longformRouter from "./src/routes/longform.js";
 import timelineRouter from "./src/routes/timeline.js";
 import abiRouter from "./src/routes/abi.js";
@@ -364,6 +365,10 @@ app.use("/api/story",     requireAuth, withUserScope, requireVerifiedEmail, quot
 // same trap documented on the timeline router below). The buckets are charged
 // inside routes/ambient.js on the three expensive POSTs only.
 app.use("/api/ambient",   requireAuth, withUserScope, requireVerifiedEmail,                      ambientRouter);
+// Moments carries NO blanket quota, for the same reason as Ambient: the page
+// polls GET /api/moments/:id during a render. The expensive POSTs (statements,
+// voiceover, render) charge their own bucket inside routes/moments.js.
+app.use("/api/moments",   requireAuth, withUserScope, requireVerifiedEmail,                      momentsRouter);
 // Long-form charges quota("render") on POST /draft and POST /:id/narrate
 // only (see routes/longform.js); templates/sections/reopen must not debit.
 app.use("/api/longform",  requireAuth, withUserScope, requireVerifiedEmail,                      longformRouter);
