@@ -36,7 +36,11 @@ export function MomentsStyleStep({ project, meta, refresh, busy, setBusy }: Mome
     savedEnergy.current = value;
     setSavingEnergy(true);
     const ok = await save({ energy: value / 100 });
-    if (!ok) savedEnergy.current = previous;
+    if (!ok) {
+      // Roll the slider back so the screen matches what the server has.
+      savedEnergy.current = previous;
+      setEnergy(previous);
+    }
     setSavingEnergy(false);
   };
 
@@ -52,7 +56,7 @@ export function MomentsStyleStep({ project, meta, refresh, busy, setBusy }: Mome
             onClick={() => save({ style: s.id })}
             className={`glass overflow-hidden rounded-bf text-left disabled:opacity-60 ${project.style === s.id ? 'ring-2 ring-bf-gold' : ''}`}
           >
-            <video src={`/moments/previews/${s.id}.mp4`} autoPlay muted loop playsInline aria-hidden="true" className="aspect-[9/16] w-full object-cover" />
+            <video src={`/moments/previews/${s.id}.mp4`} autoPlay muted loop playsInline preload="metadata" aria-hidden="true" className="aspect-[9/16] w-full object-cover" />
             <div className="p-2">
               <div className="text-sm font-semibold text-bf-cream">{s.label}</div>
               <div className="text-help">{s.description}</div>

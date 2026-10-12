@@ -33,7 +33,7 @@ const STILLS = [
   { w: 1080, h: 1920, c0: "0xF5B041", c1: "0x6C3483", box: "0xE74C3C" },
   { w: 1920, h: 1080, c0: "0x48C9B0", c1: "0x1B4F72", box: "0xF4D03F" },
   { w: 1080, h: 1920, c0: "0xEC7063", c1: "0xF7DC6F", box: "0x2874A6" },
-  { w: 1920, h: 1080, c0: "0x5DADE2", c1: "0x0B0B10", box: "0xE67E22" },
+  { w: 1920, h: 1080, c0: "0x85C1E9", c1: "0x2874A6", box: "0xE67E22" },
   { w: 1080, h: 1920, c0: "0x58D68D", c1: "0x4A235A", box: "0xF1948A" },
 ];
 
@@ -89,10 +89,12 @@ try {
     const full = path.join(work, `${style}-full.mp4`);
     const r = await renderPlan({ plan, workImages: photos.map((p) => p.file), song: null, voice: null, workDir, out: full });
     if (!r.ok) throw new Error(`${style}: ${r.error} ${r.detail || ""}`);
-    const dest = path.join(outDir, `${style}.mp4`);
-    await run(["-v", "error", "-y", "-i", full, "-an", "-vf", "scale=360:640", "-c:v", "libx264", "-crf", "30", "-preset", "slow", "-pix_fmt", "yuv420p", "-movflags", "+faststart", dest]);
-    const bytes = fs.statSync(dest).size;
+    // Encode to the temp dir; only a file that passes the size check reaches the repo.
+    const small = path.join(work, `${style}-preview.mp4`);
+    await run(["-v", "error", "-y", "-i", full, "-an", "-vf", "scale=360:640", "-c:v", "libx264", "-crf", "30", "-preset", "slow", "-pix_fmt", "yuv420p", "-movflags", "+faststart", small]);
+    const bytes = fs.statSync(small).size;
     if (bytes > MAX_BYTES) throw new Error(`${style}.mp4 is ${bytes} bytes, over the ${MAX_BYTES} limit`);
+    fs.copyFileSync(small, path.join(outDir, `${style}.mp4`));
     console.log(`wrote ${style}.mp4 (${Math.round(bytes / 1024)} KB)`);
   }
 } finally {

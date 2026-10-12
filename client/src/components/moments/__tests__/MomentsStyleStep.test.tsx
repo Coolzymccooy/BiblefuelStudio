@@ -129,6 +129,22 @@ describe('MomentsStyleStep', () => {
     expect(screen.getByRole('button', { name: /hype/i })).not.toBeDisabled();
   });
 
+  it('a failed Energy save rolls the slider back to the last saved value', async () => {
+    vi.spyOn(momentsApi, 'update').mockRejectedValue(new Error('nope'));
+    vi.spyOn(errors, 'toastError').mockImplementation(() => {});
+    renderLive(mkMoment({ energy: 0.8 }));
+    const slider = screen.getByLabelText(/energy/i) as HTMLInputElement;
+    fireEvent.change(slider, { target: { value: '25' } });
+    fireEvent.mouseUp(slider);
+    await waitFor(() => expect(slider.value).toBe('80'));
+    expect(screen.getByText(/energy: hype/i)).toBeInTheDocument();
+  });
+
+  it('previews load metadata only until played', () => {
+    render(<MomentsStyleStep {...props()} />);
+    expect(document.querySelector('video[src="/moments/previews/glow.mp4"]')).toHaveAttribute('preload', 'metadata');
+  });
+
   it('disables everything while busy', () => {
     render(<MomentsStyleStep {...props()} busy />);
     expect(screen.getByRole('button', { name: /hype/i })).toBeDisabled();
