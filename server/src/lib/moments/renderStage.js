@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 import { readProject, writeProject, withHistory, MIN_PHOTOS } from "./projectStore.js";
 import { resolvePhoto, resolveSong } from "./photos.js";
 import { songGrid, voiceGrid } from "./beatCache.js";
-import { statementLimit } from "./occasions.js";
+import { statementLimit, LENGTHS } from "./occasions.js";
 import { orientationOf, workImageArgs } from "../motion/prepare.js";
 import { directMoment } from "../motion/director.js";
 import { validatePlan } from "../motion/plan.js";
@@ -41,6 +41,13 @@ export function cancelMomentRender(projectId) {
 }
 
 class StageError extends Error {}
+
+/** "N photos didn't fit L s." plus, when a longer length exists, a nudge to try the next one. */
+export function droppedNote(dropped, lengthSec) {
+  const next = LENGTHS.find((l) => l > lengthSec);
+  const base = `${dropped} photo${dropped === 1 ? "" : "s"} didn't fit ${lengthSec} s.`;
+  return next ? `${base} Try ${next} s?` : base;
+}
 
 function progressWriter(ctx, projectId, jobId) {
   let lastWritten = -1;
@@ -146,24 +153,35 @@ function liveProject(ctx, projectId) {
  * newer render owns it) the finished file is removed so no orphan video is left behind.
  */
 function recordDone(ctx, projectId, jobId, { name, out, plan, notes }) {
+  let dropped = [];
   try {
     const live = liveProject(ctx, projectId);
     if (!ownsRender(live, jobId)) throw new StageError("This Moment was changed while it was being made. Make it again.");
     const file = `/outputs/${name}`;
-    writeProject(ctx.dataDir, withHistory(
-      { ...live, render: { jobId, status: "done", percent: 100, stage: "done", file, notes } },
-      { jobId, file, createdAt: Date.now(), seed: plan.seed, notes },
-    ));
+    const entry = { jobId, file, createdAt: Date.now(), seed: plan.seed, notes };
+    const next = withHistory({ ...live, render: { jobId, status: "done", percent: 100, stage: "done", file, notes } }, entry);
+    writeProject(ctx.dataDir, next);
+    dropped = [...(live.history || []), entry].filter((h) => !next.history.includes(h));
   } catch (err) {
     try { fs.rmSync(out, { force: true }); } catch { /* best effort */ }
     throw err;
   }
+  removeDroppedVideos(ctx, dropped, name);
   try { markDone(jobId, out); } catch { /* job gone */ }
   try {
     persistJob(ctx.dataDir, { ...(getJob(jobId) || {}), jobId, projectId, status: "done", outputPath: out });
   } catch (persistErr) {
     // The project already says "done"; a failed job record must not turn that into an error.
     console.error(`[moments] could not persist job ${jobId}:`, persistErr);
+  }
+}
+
+/** History the trim pushed out no longer points at its video; remove it (never the one just made). */
+function removeDroppedVideos(ctx, dropped, keepName) {
+  for (const h of dropped) {
+    const base = path.basename(String(h?.file || ""));
+    if (base === keepName || !OUTPUT_NAME.test(base)) continue;
+    try { fs.unlinkSync(path.join(ctx.outputDir, base)); } catch { /* already gone */ }
   }
 }
 
@@ -207,7 +225,7 @@ export async function momentRenderStage(ctx, projectId, jobId, { seed, signal } 
 
     let project = readProject(ctx.dataDir, projectId);
     if (!project) throw new StageError("This Moment no longer exists.");
-    if (Number.isInteger(seed)) project = writeProject(ctx.dataDir, { ...project, seed });
+    if (Number.isInteger(seed) && ownsRender(project, jobId)) project = writeProject(ctx.dataDir, { ...project, seed });
     try { markRunning(jobId); } catch { /* job gone */ }
     progress("prepare", 0);
 
@@ -234,8 +252,9 @@ export async function momentRenderStage(ctx, projectId, jobId, { seed, signal } 
       console.error(`[moments] invalid plan for ${projectId}: ${checked.errors.join("; ")}`);
       throw new StageError("Couldn't plan this Moment. Try Shuffle or a different length.");
     }
-    if (dropped) notes.push(`${dropped} photo${dropped === 1 ? "" : "s"} didn't fit ${project.lengthSec} s.`);
-    project = writeProject(ctx.dataDir, { ...liveProject(ctx, projectId), plan });
+    if (dropped) notes.push(droppedNote(dropped, project.lengthSec));
+    const withPlan = liveProject(ctx, projectId);
+    if (ownsRender(withPlan, jobId)) writeProject(ctx.dataDir, { ...withPlan, plan });
     progress("analyse", 1);
 
     const name = `moment-${crypto.randomUUID()}.mp4`;

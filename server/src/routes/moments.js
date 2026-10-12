@@ -71,6 +71,8 @@ function view(project) {
   if (r?.status !== "running" || !r.jobId) return project;
   const job = getJob(r.jobId);
   if (!job) return { ...project, render: { ...r, status: "interrupted" } };
+  // Cancel was pressed: show it at once; the stage writes the same record when it winds down.
+  if (job.cancelled) return { ...project, render: { ...r, status: "error", error: "Cancelled." } };
   return typeof job.percent === "number" ? { ...project, render: { ...r, percent: Math.max(r.percent || 0, job.percent) } } : project;
 }
 
@@ -151,7 +153,7 @@ router.put("/:id", (req, res) => {
   const saved = writeProject(req.ctx.dataDir, r.project);
   // Removing the voiceover also removes its file; it is an orphan nothing else points at.
   if (saved.sound?.voiceover === null) removeOutput(req.ctx.outputDir, project.sound?.voiceover?.file, VOICE_NAME);
-  return res.json({ ok: true, project: saved });
+  return res.json({ ok: true, project: view(saved) });
 });
 
 router.delete("/:id", (req, res) => {
@@ -230,7 +232,7 @@ router.post("/:id/voiceover", async (req, res) => {
       throw e;
     }
     removeOutput(req.ctx.outputDir, live.sound?.voiceover?.file, VOICE_NAME);
-    return res.json({ ok: true, project: saved });
+    return res.json({ ok: true, project: view(saved) });
   } catch (e) {
     // Raw messages can embed server paths or upstream details; log them, tell the user something fixed.
     console.error(`[moments] voiceover ${project.projectId}:`, e);
@@ -249,6 +251,7 @@ router.post("/:id/render", (req, res) => {
 
   gcJobs();
   const job = createJob(req.ctx.userId, { durationSec: project.lengthSec });
+  // Persisted as "running" even while the in-memory job is still "queued": reconcile treats both alike.
   persistJob(req.ctx.dataDir, { ...job, projectId: project.projectId, status: "running" });
   writeProject(req.ctx.dataDir, { ...project, render: { jobId: job.jobId, status: "running", percent: 0, stage: "waiting" } });
   const ctx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir, userId: req.ctx.userId };

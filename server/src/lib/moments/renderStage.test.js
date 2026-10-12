@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
-import { momentRenderStage, cancelMomentRender, _setEngineForTest, _resetEngineForTest, STAGES } from "./renderStage.js";
+import { momentRenderStage, cancelMomentRender, droppedNote, _setEngineForTest, _resetEngineForTest, STAGES } from "./renderStage.js";
 import { createProject, readProject, writeProject } from "./projectStore.js";
 import { createJob, getJob, cancelJob } from "../renderJobs.js";
 
@@ -441,4 +441,64 @@ test("an unreadable voiceover with a song keeps the song", async () => {
   assert.equal(readProject(ctx.dataDir, p.projectId).render.status, "done");
   assert.equal(calls.render[0].voice, null);
   assert.equal(calls.render[0].song.startSec, 7);
+});
+
+function historyEntry(i) {
+  const name = `moment-${crypto.randomUUID()}.mp4`;
+  fs.writeFileSync(path.join(ctx.outputDir, name), "old");
+  return { name, entry: { jobId: `old${i}`, file: `/outputs/${name}`, createdAt: i, seed: i } };
+}
+
+test("a render that pushes the oldest history entry out removes that entry's video", async () => {
+  const olds = Array.from({ length: 20 }, (_, i) => historyEntry(i));
+  const p = moment({ history: olds.map((o) => o.entry) });
+  await momentRenderStage(ctx, p.projectId, createJob("u1", { durationSec: 15 }).jobId, {});
+  const done = readProject(ctx.dataDir, p.projectId);
+  assert.equal(done.history.length, 20);
+  const left = movieFiles();
+  assert.ok(!left.includes(olds[0].name), "the dropped entry's file is gone");
+  for (const o of olds.slice(1)) assert.ok(left.includes(o.name), "the kept entries' files stay");
+  assert.ok(left.includes(path.basename(done.render.file)), "the new video stays");
+  assert.equal(left.length, 20);
+});
+
+test("a dropped history entry whose file name is not a Moment video is never deleted", async () => {
+  const olds = Array.from({ length: 20 }, (_, i) => historyEntry(i));
+  fs.writeFileSync(path.join(ctx.outputDir, "precious.txt"), "keep");
+  olds[0].entry.file = "/outputs/precious.txt";
+  const p = moment({ history: olds.map((o) => o.entry) });
+  await momentRenderStage(ctx, p.projectId, createJob("u1", { durationSec: 15 }).jobId, {});
+  assert.ok(fs.existsSync(path.join(ctx.outputDir, "precious.txt")));
+});
+
+test("a render that cannot be saved removes no history videos", async () => {
+  const olds = Array.from({ length: 20 }, (_, i) => historyEntry(i));
+  const newer = { jobId: "other", status: "running", percent: 30, stage: "shots" };
+  const p = moment({ history: olds.map((o) => o.entry), render: newer });
+  await momentRenderStage(ctx, p.projectId, createJob("u1", { durationSec: 15 }).jobId, {});
+  for (const o of olds) assert.ok(fs.existsSync(path.join(ctx.outputDir, o.name)));
+});
+
+test("the seed and the plan are not written over a newer job's render", async () => {
+  const newer = { jobId: "other", status: "running", percent: 30, stage: "shots" };
+  const p = moment({ render: newer, plan: null });
+  await momentRenderStage(ctx, p.projectId, createJob("u1", { durationSec: 15 }).jobId, { seed: 4321 });
+  const after = readProject(ctx.dataDir, p.projectId);
+  assert.equal(after.seed, 9, "the seed write is skipped");
+  assert.equal(after.plan, null, "the plan write is skipped");
+  assert.deepEqual(after.render, newer);
+});
+
+test("droppedNote suggests the next longer length, and nothing at 60 s", () => {
+  assert.equal(droppedNote(4, 15), "4 photos didn't fit 15 s. Try 30 s?");
+  assert.equal(droppedNote(1, 30), "1 photo didn't fit 30 s. Try 60 s?");
+  assert.equal(droppedNote(2, 60), "2 photos didn't fit 60 s.");
+});
+
+test("a Moment with too many photos for 15 s notes the dropped ones and suggests 30 s", async () => {
+  const p = moment({ photos: Array.from({ length: 20 }, () => photo()) });
+  await momentRenderStage(ctx, p.projectId, createJob("u1", { durationSec: 15 }).jobId, {});
+  const done = readProject(ctx.dataDir, p.projectId);
+  assert.equal(done.render.status, "done", JSON.stringify(done.render));
+  assert.match(done.render.notes.join(" "), /\d+ photos? didn't fit 15 s\. Try 30 s\?/);
 });

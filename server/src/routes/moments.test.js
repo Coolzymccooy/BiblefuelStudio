@@ -13,7 +13,7 @@ import momentsRouter, {
 import { readProject, writeProject, deleteProject } from "../lib/moments/projectStore.js";
 import { _setLlmImpl, _resetLlmImpl } from "../lib/moments/statements.js";
 import { _resetHeavyGate } from "../lib/heavyJobGate.js";
-import { createJob, getJob } from "../lib/renderJobs.js";
+import { createJob, getJob, cancelJob } from "../lib/renderJobs.js";
 import { MAX_PHOTOS } from "../lib/moments/projectStore.js";
 
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
@@ -469,4 +469,32 @@ test("starting a render sweeps stale job records on its own", async () => {
   await request(app).put(`/api/moments/${p.projectId}`).send({ photos: [upload(), upload(), upload()] });
   assert.equal((await request(app).post(`/api/moments/${p.projectId}/render`).send()).status, 200);
   assert.equal(getJob(stale.jobId), null);
+});
+
+test("PUT on an interrupted Moment returns it as interrupted", async () => {
+  const p = await newMoment();
+  writeProject(dataDir, { ...readProject(dataDir, p.projectId), render: { jobId: "gone-job", status: "running", percent: 40, stage: "shots" } });
+  const r = await request(app).put(`/api/moments/${p.projectId}`).send({ title: "Hello" });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.project.title, "Hello");
+  assert.equal(r.body.project.render.status, "interrupted");
+});
+
+test("the voiceover response also reads an interrupted Moment as interrupted", async () => {
+  const p = await newMoment();
+  writeProject(dataDir, { ...readProject(dataDir, p.projectId), render: { jobId: "gone-job", status: "running", percent: 40, stage: "shots" } });
+  const r = await request(app).post(`/api/moments/${p.projectId}/voiceover`).send({ script: "Happy birthday to you" });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.project.render.status, "interrupted");
+});
+
+test("a cancelled job reads as a Cancelled error straight away, before the stage records it", async () => {
+  const p = await newMoment();
+  const job = createJob("u1", { durationSec: 15 });
+  cancelJob(job.jobId, "u1");
+  writeProject(dataDir, { ...readProject(dataDir, p.projectId), render: { jobId: job.jobId, status: "running", percent: 40, stage: "shots" } });
+  const r = await request(app).get(`/api/moments/${p.projectId}`);
+  assert.equal(r.body.project.render.status, "error");
+  assert.equal(r.body.project.render.error, "Cancelled.");
+  assert.equal(r.body.project.render.jobId, job.jobId);
 });
