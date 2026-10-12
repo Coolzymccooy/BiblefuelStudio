@@ -89,7 +89,7 @@ router.get("/meta", (_req, res) => {
     lengths: LENGTHS,
     limits: {
       statements: STATEMENT_LIMIT, maxStatements: MAX_STATEMENTS, title: TITLE_MAX, statement: STATEMENT_MAX,
-      detail: DETAIL_MAX, minPhotos: MIN_PHOTOS, maxPhotos: MAX_PHOTOS,
+      detail: DETAIL_MAX, minPhotos: MIN_PHOTOS, maxPhotos: MAX_PHOTOS, scriptMax: SCRIPT_MAX,
     },
   });
 });
