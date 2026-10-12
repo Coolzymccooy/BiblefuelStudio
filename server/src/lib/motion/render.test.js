@@ -60,6 +60,74 @@ test("shots, the last frame before a crossfade, the join, then the finish", asyn
   fs.rmSync(workDir, { recursive: true, force: true });
 });
 
+// ffmpeg's -progress output: key=value lines, one block per tick. out_time_us and out_time_ms are both microseconds.
+const progressBlock = (us) => [`out_time_us=${us}`, `out_time_ms=${us}`, "progress=continue"];
+
+test("the finish asks ffmpeg for progress on stdout, and the other runs do not", async () => {
+  const workDir = tmp();
+  const { calls, runner } = recorder();
+  await renderPlan({ plan: plan(), workImages: ["w0.jpg"], song: null, voice: null, workDir, out: path.join(workDir, "o.mp4"), runner, libass: true });
+  const finish = calls.at(-1);
+  const at = finish.indexOf("-progress");
+  assert.ok(at >= 0 && finish[at + 1] === "pipe:1" && finish.includes("-nostats"));
+  assert.ok(at < finish.indexOf("-i"), "a global option, before the inputs");
+  for (const c of calls.slice(0, -1)) assert.equal(c.includes("-progress"), false);
+  fs.rmSync(workDir, { recursive: true, force: true });
+});
+
+test("finish progress climbs with ffmpeg's out_time, stays below 1, and ends at exactly 1", async () => {
+  const workDir = tmp();
+  const progress = [];
+  const runner = async (args, opts) => {
+    if (args.some((x) => String(x).endsWith("finish-video.txt"))) {
+      // 6 s Moment. Includes noise a real ffmpeg emits: N/A, a negative start, a repeated tick, a part-line split, the end block.
+      const lines = ["out_time_us=N/A", "out_time_us=-9223372036854775807", ...progressBlock(1_500_000), ...progressBlock(1_500_000),
+        ...progressBlock(3_000_000), "frame=90", ...progressBlock(2_000_000), ...progressBlock(6_000_000), "progress=end"];
+      for (const l of lines) opts.onStdout(l);
+    }
+    fs.writeFileSync(args.at(-1), "stub");
+    return { ok: true, code: 0, stderr: "" };
+  };
+  const r = await renderPlan({ plan: plan(), workImages: ["w0.jpg"], song: null, voice: null, workDir, out: path.join(workDir, "o.mp4"), runner, onProgress: (p) => progress.push(p), libass: true });
+  assert.equal(r.ok, true);
+  const fin = progress.filter((p) => p.stage === "finish").map((p) => p.fraction);
+  assert.deepEqual(fin.slice(0, -1), [0.25, 0.5, 0.99]);
+  assert.equal(fin.at(-1), 1);
+  for (let i = 1; i < fin.length; i += 1) assert.ok(fin[i] > fin[i - 1], "strictly increasing");
+  assert.ok(fin.slice(0, -1).every((f) => f >= 0 && f < 1));
+  fs.rmSync(workDir, { recursive: true, force: true });
+});
+
+test("a runner that ignores onStdout still finishes with fraction 1", async () => {
+  const workDir = tmp();
+  const { runner } = recorder();
+  const progress = [];
+  await renderPlan({ plan: plan(), workImages: ["w0.jpg"], song: null, voice: null, workDir, out: path.join(workDir, "o.mp4"), runner, onProgress: (p) => progress.push(p), libass: true });
+  assert.deepEqual(progress.filter((p) => p.stage === "finish"), [{ stage: "finish", fraction: 1 }]);
+  fs.rmSync(workDir, { recursive: true, force: true });
+});
+
+test("runFfmpeg hands stdout to onStdout a line at a time, joining chunks that split a line", { skip: !ffmpegAvailable() }, async () => {
+  const lines = [];
+  const r = await runFfmpeg(["-hide_banner", "-v", "error", "-nostats", "-progress", "pipe:1", "-f", "lavfi", "-i", "testsrc2=s=64x64:r=30:d=1", "-f", "null", "-"],
+    { ffmpegPath: FFMPEG, onStdout: (l) => lines.push(l) });
+  assert.equal(r.ok, true);
+  assert.ok(lines.some((l) => /^out_time_us=\d+$/.test(l)), lines.join("|"));
+  assert.equal(lines.at(-1), "progress=end");
+  assert.ok(lines.every((l) => !/[\r\n]/.test(l)));
+});
+
+test("runFfmpeg's stdout buffer is bounded: a runaway line with no newline is dropped, not grown", async () => {
+  const lines = [];
+  // The "ffmpeg" here is node itself, writing 5 MB with no newline and then one real line.
+  const r = await runFfmpeg(["-e", "process.stdout.write('x'.repeat(5_000_000) + '\\nout_time_us=7\\n')"], {
+    ffmpegPath: process.execPath, onStdout: (l) => lines.push(l),
+  });
+  assert.equal(r.ok, true);
+  assert.ok(lines.every((l) => l.length <= 8192), "no oversized line is delivered");
+  assert.equal(lines.at(-1), "out_time_us=7", "the stream recovers at the next newline");
+});
+
 test("a failing finish leaves nothing at out", async () => {
   const workDir = tmp();
   const out = path.join(workDir, "o.mp4");
@@ -302,8 +370,13 @@ test("smoke: a 15 s Moment from 4 photos and a tone is a 1080x1920, 15 s MP4", {
     const workDir = path.join(dir, "work");
     fs.mkdirSync(workDir);
     const out = path.join(dir, "moment.mp4");
-    const r = await renderPlan({ plan: p, workImages, song: { file: tone, startSec: 0 }, voice: null, workDir, out });
+    const progress = [];
+    const r = await renderPlan({ plan: p, workImages, song: { file: tone, startSec: 0 }, voice: null, workDir, out, onProgress: (e) => progress.push(e) });
     assert.equal(r.ok, true, JSON.stringify(r));
+    const fin = progress.filter((e) => e.stage === "finish").map((e) => e.fraction);
+    assert.ok(fin.some((f) => f > 0 && f < 1), `finish reports progress before it is done: ${fin}`);
+    assert.equal(fin.at(-1), 1);
+    for (let i = 1; i < fin.length; i += 1) assert.ok(fin[i] > fin[i - 1], "finish progress never goes back");
     const probe = spawnSync(FFMPEG.replace(/ffmpeg(\.exe)?$/i, "ffprobe$1"), ["-v", "error", "-show_entries", "stream=width,height,codec_type:format=duration", "-of", "json", out], { encoding: "utf8" });
     if (probe.status === 0) {
       const info = JSON.parse(probe.stdout);

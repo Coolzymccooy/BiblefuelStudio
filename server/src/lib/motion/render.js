@@ -14,7 +14,7 @@ import { statementsAss, fxAss, finishArgs } from "./finish.js";
  * Shots render one after another, never in parallel: production has no swap.
  * renderPlan writes only inside workDir and to `out`, and never deletes workDir.
  */
-export function runFfmpeg(args, { signal, ffmpegPath = process.env.FFMPEG_PATH?.trim() || "ffmpeg" } = {}) {
+export function runFfmpeg(args, { signal, onStdout, ffmpegPath = process.env.FFMPEG_PATH?.trim() || "ffmpeg" } = {}) {
   return new Promise((resolve) => {
     if (signal?.aborted) {
       resolve({ ok: false, error: "cancelled", stderr: "" });
@@ -26,6 +26,9 @@ export function runFfmpeg(args, { signal, ffmpegPath = process.env.FFMPEG_PATH?.
     signal?.addEventListener("abort", onAbort, { once: true });
     // ffmpeg can be chatty; the end of its stderr is the part that explains a failure.
     child.stderr?.on("data", (c) => { stderr = (stderr + c.toString()).slice(-STDERR_CAP); });
+    // stdout carries nothing unless the caller asks (-progress pipe:1); it is always drained so a full pipe can't stall ffmpeg.
+    const lines = lineSplitter(onStdout);
+    child.stdout?.on("data", lines);
     child.on("error", (err) => {
       signal?.removeEventListener("abort", onAbort);
       resolve({ ok: false, error: String(err?.message || err), stderr });
@@ -40,6 +43,50 @@ export function runFfmpeg(args, { signal, ffmpegPath = process.env.FFMPEG_PATH?.
 }
 
 const STDERR_CAP = 16 * 1024;
+const LINE_CAP = 8 * 1024;
+
+/**
+ * A chunk handler that calls `onLine` once per complete line. Only the part-line after the last
+ * newline is kept, and one that outgrows LINE_CAP is dropped (up to its newline), so memory is flat.
+ */
+function lineSplitter(onLine) {
+  let partial = "";
+  let skipping = false;
+  return (chunk) => {
+    if (!onLine) return;
+    const parts = (partial + chunk.toString()).split("\n");
+    partial = parts.pop();
+    for (const raw of parts) {
+      if (skipping) skipping = false;
+      else onLine(raw.replace(/\r$/, ""));
+    }
+    if (partial.length > LINE_CAP) {
+      partial = "";
+      skipping = true;
+    }
+  };
+}
+
+/** Highest fraction a running finish reports; 1 is reserved for "saved to out". */
+const FINISH_RUNNING_MAX = 0.99;
+
+/**
+ * A line handler for ffmpeg's -progress feed. out_time_us and out_time_ms are both
+ * microseconds of output written; each new high-water mark becomes a fraction of durationSec
+ * (clamped to 0..0.99), so the reported fractions only ever go up.
+ */
+export function finishProgressReader(durationSec, emit) {
+  let best = 0;
+  return (line) => {
+    const m = /^out_time_(?:us|ms)=(\d+)$/.exec(line);
+    if (!m || !(durationSec > 0)) return;
+    const fraction = Math.min(FINISH_RUNNING_MAX, Number(m[1]) / 1e6 / durationSec);
+    if (!(fraction > best)) return;
+    best = fraction;
+    emit(fraction);
+  };
+}
+
 const DETAIL_CAP = 2000;
 const tail = (s) => String(s || "").trim().split("\n").slice(-8).join("\n").slice(-DETAIL_CAP);
 
@@ -71,8 +118,8 @@ export async function renderPlan({
   if ((statementsText || fxText) && !(libass ?? hasLibass())) {
     return { ok: false, error: "This server can't draw the statements and effects (its ffmpeg has no libass)." };
   }
-  const run = async (args, what) => {
-    const r = await runner(args, { signal });
+  const run = async (args, what, onStdout) => {
+    const r = await runner(args, { signal, onStdout });
     if (r.ok) return null;
     if (r.error === "cancelled" || signal?.aborted) return { ok: false, error: "cancelled" };
     return { ok: false, error: `Rendering failed at ${what}.`, detail: tail(r.stderr || r.error) };
@@ -115,7 +162,10 @@ export async function renderPlan({
   const final = path.join(workDir, "final.mp4");
   const { args, sideFiles } = finishArgs({ body, out: final, plan, statementsPath, fxPath, song, voice, workDir });
   writeSide(sideFiles);
-  const finished = await run(args, "the finishing pass");
+  // Progress is a render concern, not part of the finish graph: finishArgs stays the pure
+  // description of the encode, and this is the one place that listens to ffmpeg's -progress feed.
+  const watch = finishProgressReader(plan.durationSec, (fraction) => onProgress({ stage: "finish", fraction }));
+  const finished = await run(["-progress", "pipe:1", "-nostats", ...args], "the finishing pass", watch);
   if (finished) {
     fs.rmSync(final, { force: true });
     return finished;
