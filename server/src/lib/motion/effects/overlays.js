@@ -19,7 +19,7 @@ export const lightLeak = videoOverlay("lightLeak", ({ input, output, ctx, tag })
   return [
     `color=c=black:s=270x480:r=${ctx.fps}:d=${num(Math.min(ctx.dur, 0.9))},format=gbrp,` +
       `geq=r='255*${G}':g='150*${G}':b='60*${G}',scale=${ctx.w}:${ctx.h},format=gbrp[lk${tag}]`,
-    `${input}format=gbrp[lb${tag}]`,
+    `${input}format=gbrp,setpts=N/${ctx.fps}/TB[lb${tag}]`,
     `[lb${tag}][lk${tag}]blend=all_mode=screen:eof_action=pass${output}`,
   ];
 });
@@ -45,7 +45,7 @@ export const viewfinder = videoOverlay("viewfinder", ({ input, output, ctx }) =>
     `drawbox=x=w/2-1:y=h/2-45:w=3:h=90:color=white@0.6:t=fill`,
     `vignette=angle=0.55`,
   ];
-  return [`${input}${filters.join(",")}${output}`];
+  return [`${input}setpts=N/${ctx.fps}/TB,${filters.join(",")}${output}`];
 });
 
 const STAR = "m 0 -14 l 3 -3 14 0 3 3 0 14 -3 3 -14 0 -3 -3";

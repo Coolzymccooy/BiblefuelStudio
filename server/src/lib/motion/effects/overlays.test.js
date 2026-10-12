@@ -38,6 +38,13 @@ test("the viewfinder draws its labels in Anton with an escaped running clock", (
   assert.ok(g.includes("text='%{pts\\:hms}'"), "the colon in pts:hms is escaped");
 });
 
+test("time-gated video overlays reset their input timestamps, so a late-starting input keeps its clock", () => {
+  const v = getEffect("viewfinder").graph({ input: "[mv]", output: "[ov]", shot, ctx, tag: "o0" })[0];
+  assert.ok(v.startsWith("[mv]setpts=N/30/TB,"), v);
+  const l = getEffect("lightLeak").graph({ input: "[mv]", output: "[ov]", shot, ctx, tag: "o0" }).join(";");
+  assert.match(l, /\[mv\]format=gbrp,setpts=N\/30\/TB\[lbo0\]/, "the leak's clock starts with the picture's");
+});
+
 for (const id of ["sparkles", "doodles", "rayBurst"]) {
   test(`${id} writes FX Dialogue lines inside the shot's own time`, () => {
     const lines = getEffect(id).assEvents({ shot, ctx, rnd: mulberry32(4) });
