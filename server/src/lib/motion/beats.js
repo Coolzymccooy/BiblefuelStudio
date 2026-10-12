@@ -124,10 +124,13 @@ export function estimateTempo(env) {
   const near = scores.filter((s) => Math.abs(s.bpm - best.bpm * 2) <= 1);
   const double = near.length ? near.reduce((a, b) => (b.score > a.score ? b : a)) : null;
   if (double && double.score >= DOUBLE_SHARE * best.score) best = double;
-  // Refine to 0.1 BPM with the comb over the whole track.
+  // Refine to 0.1 BPM with the comb over the whole track. The search is clamped
+  // to the allowed range, so the refined tempo cannot leave it either.
   const lenSec = env.length / FRAME_RATE;
+  const lo = Math.max(MIN_BPM, best.bpm - 1);
+  const hi = Math.min(MAX_BPM, best.bpm + 1);
   let refined = { bpm: best.bpm, score: -1 };
-  for (let bpm = best.bpm - 1; bpm <= best.bpm + 1.0001; bpm += 0.1) {
+  for (let bpm = lo; bpm <= hi + 0.0001; bpm += 0.1) {
     const { score } = combScore(env, 60 / bpm, 0, lenSec);
     if (score > refined.score) refined = { bpm, score };
   }

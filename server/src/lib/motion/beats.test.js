@@ -16,6 +16,30 @@ for (const bpm of [90, 120, 150]) {
   });
 }
 
+test("a 160 BPM click track reads within 159-160 and never above 160", () => {
+  const got = estimateTempo(onsetEnvelope(clickTrack({ bpm: 160, sec: 30 })));
+  assert.ok(got !== null, "tempo found");
+  assert.ok(got >= 159 && got <= 160, `got ${got}`);
+});
+
+test("a 70 BPM click track reads within 70-71 and never below 70", () => {
+  const got = estimateTempo(onsetEnvelope(clickTrack({ bpm: 70, sec: 30 })));
+  assert.ok(got !== null, "tempo found");
+  assert.ok(got >= 70 && got <= 71, `got ${got}`);
+});
+
+test("clicks just outside 70-160 still read inside it", () => {
+  for (const bpm of [69.2, 161]) {
+    const got = estimateTempo(onsetEnvelope(clickTrack({ bpm, sec: 30 })));
+    assert.ok(got !== null, `${bpm} BPM: tempo found`);
+    assert.ok(got >= 70 && got <= 160, `${bpm} BPM read as ${got}`);
+  }
+});
+
+test("an empty envelope has no tempo", () => {
+  assert.equal(estimateTempo(new Float64Array(0)), null);
+});
+
 test("beat times land within 30 ms of the clicks", () => {
   const bpm = 120;
   const offset = 0.1;
@@ -49,7 +73,9 @@ test("downbeats are every 4th beat and strong beats are the loudest", () => {
 
 test("silence and noise have no tempo", () => {
   assert.equal(estimateTempo(onsetEnvelope(silence(20))), null);
-  assert.equal(estimateTempo(onsetEnvelope(noiseTrack({ sec: 20 }))), null);
+  for (const seed of [1, 2, 3, 4, 5]) {
+    assert.equal(estimateTempo(onsetEnvelope(noiseTrack({ sec: 20, seed }))), null, `noise seed ${seed}`);
+  }
 });
 
 test("the chosen window is the loud part of the track", () => {
@@ -106,9 +132,10 @@ test("decodePcm rejects with ffmpeg's error when the file can't be read", async 
   await assert.rejects(decodePcm("bad.mp3", { spawnImpl: impl }), /Invalid data found/);
 });
 
-test("a real song (22-gospel-fire) reads as about 99.5 BPM", { skip: !ffmpegAvailable() }, async () => {
+test("a real song (22-gospel-fire) reads about 100 BPM", { skip: !ffmpegAvailable() }, async () => {
   const file = fileURLToPath(new URL("../../../assets/music/22-gospel-fire.mp3", import.meta.url));
   const env = onsetEnvelope(await decodePcm(file, { maxSec: 240 }));
   const got = estimateTempo(env);
-  assert.ok(got !== null && got >= 99 && got <= 100, `got ${got}`);
+  // Prod runs a different ffmpeg whose resampler can shift the reading by 0.1.
+  assert.ok(got !== null && got >= 99 && got <= 100.5, `got ${got}`);
 });
