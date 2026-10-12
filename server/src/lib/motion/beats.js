@@ -14,15 +14,14 @@ export const FRAME_RATE = SAMPLE_RATE / HOP;
 
 const MIN_BPM = 70;
 const MAX_BPM = 160;
-// Best autocorrelation over the mean one. A rhythmic track scores far above;
-// noise and speech sit lower. Measured on this envelope: click tracks 70-160
-// BPM score 6.6-25 (lowest: 150 BPM, 6.65); white noise scores 1.35-2.09 over
-// 60 seeds (seed 3, the one the tests use, is 1.69). The 1.15-1.6 range first
-// suggested cannot reject that noise, so this sits in the gap between them.
-const TEMPO_CONFIDENCE = 2.5;
+// Tempo is accepted when the mean-removed onset envelope correlates with
+// itself one and two beats later at least this much (Pearson-style r, divided
+// by the variance). A ratio to the mean autocorrelation cannot separate music
+// from noise, so this uses r. Measured: white noise <= 0.015 over 60 seeds,
+// the 23 bundled songs 0.045-0.542, click tracks 70-160 BPM 0.55-0.78.
+const TEMPO_MIN_CORRELATION = 0.05;
 // The faster reading wins when it scores at least this share of the slower one.
 const DOUBLE_SHARE = 0.8;
-const SILENT_ENERGY = 1e-3;
 const STRONG_SHARE = 0.15;
 
 /** Mono signed 16-bit PCM at SAMPLE_RATE from any audio file ffmpeg can read. */
@@ -69,15 +68,18 @@ function at(env, frame) {
   return env[i] * (1 - k) + env[i + 1] * k;
 }
 
-/** Mean of env[f] * (env[f+lag] + env[f+2*lag]): how well the envelope repeats every `lag` frames. */
-function autocorr(env, lag) {
+/**
+ * How well the mean-removed envelope `x` repeats every `lag` frames:
+ * mean of x[f] * (x[f+lag] + x[f+2*lag]) / 2, divided by the variance.
+ */
+function correlation(x, lag, variance) {
   let sum = 0;
   let count = 0;
-  for (let f = 0; f + 2 * lag < env.length - 1; f += 1) {
-    sum += env[f] * (at(env, f + lag) + at(env, f + 2 * lag));
+  for (let f = 0; f + 2 * lag < x.length - 1; f += 1) {
+    sum += (x[f] * (at(x, f + lag) + at(x, f + 2 * lag))) / 2;
     count += 1;
   }
-  return count ? sum / count : 0;
+  return count ? sum / count / variance : 0;
 }
 
 /**
@@ -101,18 +103,21 @@ export function combScore(env, periodSec, startSec, lenSec) {
 
 /** Tempo in BPM (70–160, one decimal), or null when nothing repeats. */
 export function estimateTempo(env) {
-  let total = 0;
-  for (const v of env) total += v;
-  if (total < SILENT_ENERGY) return null;
+  if (!env.length) return null;
+  let mean = 0;
+  for (const v of env) mean += v;
+  mean /= env.length;
+  const x = Float64Array.from(env, (v) => v - mean);
+  let variance = 0;
+  for (const v of x) variance += v * v;
+  variance /= x.length;
+  if (variance <= 0) return null;
   const scores = [];
   for (let bpm = MIN_BPM; bpm <= MAX_BPM; bpm += 0.5) {
-    scores.push({ bpm, score: autocorr(env, (60 / bpm) * FRAME_RATE) });
+    scores.push({ bpm, score: correlation(x, (60 / bpm) * FRAME_RATE, variance) });
   }
-  // The mean, not the median: a clean click track scores exactly 0 at most
-  // lags, so its median is 0 even though its rhythm is perfect.
-  const mean = scores.reduce((s, x) => s + x.score, 0) / scores.length;
   let best = scores.reduce((a, b) => (b.score > a.score ? b : a));
-  if (mean <= 0 || best.score / mean < TEMPO_CONFIDENCE) return null;
+  if (best.score < TEMPO_MIN_CORRELATION) return null;
   // Every other beat repeats too, so half the tempo scores as well as the real
   // one. Prefer the faster reading while it is in range and nearly as strong.
   // Lags are quantised to whole frames, so look +-1 BPM around the double.

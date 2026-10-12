@@ -4,7 +4,8 @@ import { EventEmitter } from "node:events";
 import {
   onsetEnvelope, estimateTempo, beatGrid, chooseWindow, pausesFrom, decodePcm, FRAME_RATE,
 } from "./beats.js";
-import { clickTrack, noiseTrack, silence, toneGaps } from "./testkit.js";
+import { fileURLToPath } from "node:url";
+import { clickTrack, noiseTrack, silence, toneGaps, ffmpegAvailable } from "./testkit.js";
 
 for (const bpm of [90, 120, 150]) {
   test(`a ${bpm} BPM click track reads as ${bpm} BPM (±1)`, () => {
@@ -103,4 +104,11 @@ test("decodePcm asks ffmpeg for mono s16le at the sample rate, capped in length"
 test("decodePcm rejects with ffmpeg's error when the file can't be read", async () => {
   const { impl } = fakeSpawn({ code: 1, out: Buffer.alloc(0), err: "Invalid data found" });
   await assert.rejects(decodePcm("bad.mp3", { spawnImpl: impl }), /Invalid data found/);
+});
+
+test("a real song (22-gospel-fire) reads as about 99.5 BPM", { skip: !ffmpegAvailable() }, async () => {
+  const file = fileURLToPath(new URL("../../../assets/music/22-gospel-fire.mp3", import.meta.url));
+  const env = onsetEnvelope(await decodePcm(file, { maxSec: 240 }));
+  const got = estimateTempo(env);
+  assert.ok(got !== null && got >= 99 && got <= 100, `got ${got}`);
 });
