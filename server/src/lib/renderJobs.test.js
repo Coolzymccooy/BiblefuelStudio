@@ -6,7 +6,7 @@ import path from "path";
 import {
   createJob, markRunning, markDone, markError, getJob, _resetJobs,
   persistJob, reconcilePersistedJobs, readPersistedJob,
-  attachProc, cancelJob,
+  attachProc, cancelJob, gcJobs,
 } from "./renderJobs.js";
 
 let baseDir;
@@ -77,5 +77,26 @@ describe("durable render jobs", () => {
     markRunning(job.jobId);
     markDone(job.jobId, "/tmp/out.mp4");
     assert.equal(getJob(job.jobId).status, "done");
+  });
+});
+
+describe("gcJobs", () => {
+  const HOUR = 60 * 60 * 1000;
+  test("queued and running records outlive the terminal TTL, up to 12 h", () => {
+    const now = Date.now();
+    const queued = createJob("user-1", { durationSec: 20 });
+    queued.updatedAt = now - 2 * HOUR;
+    const running = createJob("user-1", { durationSec: 20 });
+    markRunning(running.jobId);
+    running.updatedAt = now - 13 * HOUR;
+    const failed = createJob("user-1", { durationSec: 20 });
+    markError(failed.jobId, "boom");
+    failed.updatedAt = now - 2 * HOUR;
+    const fresh = createJob("user-1", { durationSec: 20 });
+    gcJobs(now);
+    assert.ok(getJob(queued.jobId), "a queued record 2 h old survives");
+    assert.equal(getJob(failed.jobId), null, "an error record 2 h old is removed");
+    assert.equal(getJob(running.jobId), null, "a running record 13 h old is removed");
+    assert.ok(getJob(fresh.jobId));
   });
 });
