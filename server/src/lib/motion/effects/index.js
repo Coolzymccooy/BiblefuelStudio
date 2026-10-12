@@ -29,4 +29,6 @@ export const FFMPEG_51_FILTERS = new Set([
   "zoompan", "loop", "setpts", "settb", "crop", "scale", "setsar", "fps", "split", "hflip", "color", "overlay",
   "format", "null", "fade", "gblur", "rgbashift", "noise", "eq", "xfade", "geq", "blend",
   "drawbox", "drawtext", "vignette", "trim", "ass", "colorbalance", "concat",
+  // finish stage audio (all exist in 5.1): mix, duck, fit to length, normalise
+  "aresample", "apad", "atrim", "afade", "volume", "asplit", "sidechaincompress", "amix", "loudnorm", "anull", "anullsrc",
 ]);
