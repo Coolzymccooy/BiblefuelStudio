@@ -20,7 +20,7 @@ export const lightLeak = videoOverlay("lightLeak", ({ input, output, ctx, tag })
     `color=c=black:s=270x480:r=${ctx.fps}:d=${num(Math.min(ctx.dur, 0.9))},format=gbrp,` +
       `geq=r='255*${G}':g='150*${G}':b='60*${G}',scale=${ctx.w}:${ctx.h},format=gbrp[lk${tag}]`,
     `${input}format=gbrp,setpts=N/${ctx.fps}/TB[lb${tag}]`,
-    `[lb${tag}][lk${tag}]blend=all_mode=screen:eof_action=pass${output}`,
+    `[lb${tag}][lk${tag}]blend=all_mode=screen:eof_action=pass,format=yuv420p${output}`,
   ];
 });
 
@@ -41,8 +41,8 @@ export const viewfinder = videoOverlay("viewfinder", ({ input, output, ctx }) =>
     `drawtext=fontfile='${FONT_ANTON}':text='REC':x=${I + 66}:y=${I + 36}:fontsize=45:fontcolor=white`,
     `drawtext=fontfile='${FONT_ANTON}':text='4K 60':x=w-tw-${I + 27}:y=${I + 36}:fontsize=39:fontcolor=white@0.9`,
     `drawtext=fontfile='${FONT_ANTON}':text='%{pts\\:hms}':x=${I + 27}:y=h-${I + 90}:fontsize=39:fontcolor=white@0.9`,
-    `drawbox=x=w/2-45:y=h/2-1:w=90:h=3:color=white@0.6:t=fill`,
-    `drawbox=x=w/2-1:y=h/2-45:w=3:h=90:color=white@0.6:t=fill`,
+    `drawbox=x=iw/2-45:y=ih/2-1:w=90:h=3:color=white@0.6:t=fill`,
+    `drawbox=x=iw/2-1:y=ih/2-45:w=3:h=90:color=white@0.6:t=fill`,
     `vignette=angle=0.55`,
   ];
   return [`${input}setpts=N/${ctx.fps}/TB,${filters.join(",")}${output}`];

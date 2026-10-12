@@ -28,7 +28,7 @@ for (const id of ["lightLeak", "viewfinder"]) {
 test("the light leak blends in planar RGB (a YUV screen blend tints magenta)", () => {
   const g = getEffect("lightLeak").graph({ input: "[mv]", output: "[ov]", shot, ctx, tag: "o0" }).join(";");
   assert.match(g, /\[mv\]format=gbrp/);
-  assert.match(g, /blend=all_mode=screen:eof_action=pass\[ov\]/);
+  assert.match(g, /blend=all_mode=screen:eof_action=pass,format=yuv420p\[ov\]/, "the output is back to yuv420p");
   assert.match(g, /color=c=black:s=270x480/, "the leak is drawn small and scaled up");
 });
 
@@ -90,10 +90,33 @@ test("the two video overlays render exactly 15 frames at 1080x1920", { skip: !re
       const out = path.join(dir, `${id}.nut`); // NUT carries raw video; Matroska rejects it
       run([...CLIP_ARGS, "-filter_complex_script", script, "-map", "[ov]", "-an", "-c:v", "rawvideo", out]);
       const probe = spawnSync(probeBin, ["-v", "error", "-count_frames", "-select_streams", "v:0",
-        "-show_entries", "stream=width,height,nb_read_frames", "-of", "csv=p=0", out], { encoding: "utf8" });
+        "-show_entries", "stream=width,height,nb_read_frames,pix_fmt", "-of", "csv=p=0", out], { encoding: "utf8" });
       assert.equal(probe.status, 0, probe.stderr);
-      assert.equal(probe.stdout.trim(), `1080,1920,${RENDER_CTX.frames}`, id);
+      // ffprobe prints the fields in its own order: width,height,pix_fmt,frames.
+      assert.equal(probe.stdout.trim(), `1080,1920,yuv420p,${RENDER_CTX.frames}`, id);
     }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the viewfinder's centre cross is lit at the centre and empty in the top-left corner", { skip: !renderable }, () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "motion-overlay-cross-"));
+  try {
+    const graph = getEffect("viewfinder").graph({ input: "[0:v]", output: "[ov]", shot, ctx: RENDER_CTX, tag: "o" });
+    graph.push("[ov]format=gray[gray]");
+    const script = path.join(dir, "cross.txt");
+    fs.writeFileSync(script, graph.join(";\n"));
+    const out = path.join(dir, "cross.gray");
+    run(["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=black:s=1080x1920:r=30:d=0.5",
+      "-filter_complex_script", script, "-map", "[gray]", "-frames:v", "1", "-f", "rawvideo", out]);
+    const px = fs.readFileSync(out);
+    assert.equal(px.length, 1080 * 1920, "one gray 1080x1920 frame");
+    const at = (x, y) => px[y * 1080 + x];
+    assert.ok(at(540, 960) > 100, `centre pixel ${at(540, 960)} should be lit by the cross`);
+    let corner = 0;
+    for (let y = 0; y < 4; y += 1) for (let x = 0; x < 4; x += 1) corner = Math.max(corner, at(x, y));
+    assert.ok(corner < 30, `top-left 4x4 block peaks at ${corner}; the cross must not be drawn there`);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -127,13 +150,15 @@ test("the ASS overlays' Dialogue lines parse under libass and draw on a 1.5 s sh
     const script = path.join(dir, "graph.txt");
     fs.writeFileSync(script, graph.join(";\n"));
     const out = path.join(dir, "fx.gray");
-    run(["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=black:s=1080x1920:r=30:d=0.5",
+    const SHOT_FRAMES = 45; // 1.5 s at 30 fps, the full shot
+    run(["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", `color=c=black:s=1080x1920:r=30:d=${SHOT_FRAMES / 30}`,
       "-filter_complex_script", script, "-map", "[gray]", "-f", "rawvideo", out]);
     const bytes = fs.readFileSync(out);
     const frameBytes = 1080 * 1920;
-    assert.equal(bytes.length, frameBytes * RENDER_CTX.frames, "15 gray frames at 1080x1920");
-    const mid = bytes.subarray(7 * frameBytes, 8 * frameBytes); // frame 7 (0.23 s) is mid-shot
-    assert.ok(mid.reduce((m, v) => Math.max(m, v), 0) > 40, "the overlays draw something visible");
+    assert.equal(bytes.length, frameBytes * SHOT_FRAMES, "45 gray frames at 1080x1920");
+    const peak = (n) => bytes.subarray(n * frameBytes, (n + 1) * frameBytes).reduce((m, v) => Math.max(m, v), 0);
+    assert.ok(peak(7) > 40, "frame 7 (0.23 s): early events draw something visible");
+    assert.ok(peak(40) > 40, "frame 40 (1.33 s): later sparkles draw something visible");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
