@@ -48,9 +48,17 @@ function kindError(id, kind, label) {
   return getEffect(id)?.kind === kind ? null : `${label}: ${kind} "${id}" is not a known ${kind}`;
 }
 
-export function validatePlan(plan, { photoCount }) {
+/**
+ * `shapes` (optional): each photo's shape, 'tall' or 'wide'. When given, a
+ * shot whose move can't take its photo's shape (a squashed wide photo, a
+ * frozen tall pan) is rejected.
+ */
+export function validatePlan(plan, { photoCount, shapes } = {}) {
   if (!Number.isInteger(photoCount) || photoCount < 1) {
     return { ok: false, errors: ["photoCount must be a positive integer"] };
+  }
+  if (shapes !== undefined && (!Array.isArray(shapes) || shapes.length !== photoCount || shapes.some((s) => s !== "tall" && s !== "wide"))) {
+    return { ok: false, errors: [`shapes must list "tall" or "wide" for each of the ${photoCount} photos`] };
   }
   const parsed = planSchema.safeParse(plan);
   if (!parsed.success) {
@@ -64,6 +72,9 @@ export function validatePlan(plan, { photoCount }) {
     if (i === 0 && Math.abs(s.start) > EPS) errors.push(`${label} must start at 0`);
     if (i > 0 && Math.abs(s.start - p.shots[i - 1].end) > EPS) errors.push(`${label} is not contiguous with the shot before`);
     if (s.photo >= photoCount) errors.push(`${label} uses photo ${s.photo}, but there are ${photoCount}`);
+    const shape = shapes?.[s.photo];
+    const moveShapes = getEffect(s.move.id)?.shapes;
+    if (shape && moveShapes && !moveShapes.includes(shape)) errors.push(`${label}: move "${s.move.id}" doesn't suit a ${shape} photo`);
     for (const e of [kindError(s.move.id, "move", label), kindError(s.entrance.id, "entrance", label),
       ...s.overlays.map((o) => kindError(o.id, "overlay", label))]) if (e) errors.push(e);
   });

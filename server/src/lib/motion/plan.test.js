@@ -56,3 +56,27 @@ for (const [name, mutate, re] of bad) {
     assert.ok(r.errors.some((e) => re.test(e)), JSON.stringify(r.errors));
   });
 }
+
+test("with photo shapes, a move that doesn't suit its photo is rejected", () => {
+  const p = good();
+  p.shots[0].move.id = "pan"; // pan takes wide photos only
+  const wideFirst = validatePlan(p, { photoCount: 2, shapes: ["wide", "tall"] });
+  assert.equal(wideFirst.ok, true, JSON.stringify(wideFirst.errors));
+  const tallFirst = validatePlan(p, { photoCount: 2, shapes: ["tall", "wide"] });
+  assert.equal(tallFirst.ok, false);
+  assert.deepEqual(tallFirst.errors, ['shot 0: move "pan" doesn\'t suit a tall photo', 'shot 1: move "push" doesn\'t suit a wide photo']);
+  // A wide photo can't take a zoom move either (push is tall-only).
+  const squashed = validatePlan(good(), { photoCount: 2, shapes: ["wide", "tall"] });
+  assert.deepEqual(squashed.errors, ['shot 0: move "push" doesn\'t suit a wide photo']);
+});
+
+test("shapes are optional, but when given there is one per photo", () => {
+  assert.equal(validatePlan(good(), { photoCount: 2 }).ok, true);
+  assert.equal(validatePlan(good(), { photoCount: 2, shapes: ["tall", "tall"] }).ok, true);
+  const short = validatePlan(good(), { photoCount: 2, shapes: ["tall"] });
+  assert.equal(short.ok, false);
+  assert.match(short.errors[0], /shapes/);
+  const odd = validatePlan(good(), { photoCount: 2, shapes: ["tall", "round"] });
+  assert.equal(odd.ok, false);
+  assert.match(odd.errors[0], /shapes/);
+});

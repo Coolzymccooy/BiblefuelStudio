@@ -82,6 +82,8 @@ test("wide photos only get pan or a split", () => {
     for (const s of plan.shots) {
       if (photos[s.photo].shape === "wide") assert.ok(getEffect(s.move.id).shapes.includes("wide"), `${styleId}: ${s.move.id}`);
     }
+    const checked = validatePlan(plan, { photoCount: photos.length, shapes: photos.map((p) => p.shape) });
+    assert.equal(checked.ok, true, `${styleId}: ${JSON.stringify(checked.errors)}`);
   }
 });
 
@@ -234,7 +236,7 @@ test("every seed, style, energy, length and photo set gives a valid, reproducibl
               const input = base({ photos, grid, lengthSec, styleId, energy, seed, statements: TWELVE });
               const { plan } = directMoment(input);
               const label = `${setName} ${gridName} ${styleId}@${energy} ${lengthSec}s seed ${seed}`;
-              const r = validatePlan(plan, { photoCount: photos.length });
+              const r = validatePlan(plan, { photoCount: photos.length, shapes: photos.map((p) => p.shape) });
               assert.equal(r.ok, true, `${label}: ${JSON.stringify(r.errors)}`);
               assert.deepEqual(directMoment(input).plan, plan, `${label} is not reproducible`);
             }
