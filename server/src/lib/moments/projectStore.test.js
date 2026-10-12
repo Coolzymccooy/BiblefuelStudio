@@ -68,6 +68,11 @@ const bad = [
   ["21 photos", { photos: Array(21).fill({ ref: { kind: "upload", path: "p" }, url: "u", width: 1, height: 1 }) }, /20 photos/],
   ["a hero outside the photos", { heroIndex: 3 }, /hero/],
   ["a negative window", { sound: { song: { ref: "library:hopeful", windowStartSec: -1 } } }, /window/],
+  ["an object as the title", { title: { a: 1 } }, /title/],
+  ["an object as a detail", { details: { name: { a: 1 } } }, /name/],
+  ["an object as a statement", { statements: [{ a: 1 }] }, /statement/],
+  ["a 201-character song ref", { sound: { song: { ref: `library:${"x".repeat(200)}`, windowStartSec: null } } }, /song/],
+  ["a photo whose upload path is blank", { photos: [{ ref: { kind: "upload", path: " " }, url: "u", width: 1, height: 1 }] }, /resolved/],
 ];
 for (const [name, body, re] of bad) {
   test(`applyUpdate refuses ${name}`, () => {
@@ -100,4 +105,81 @@ test("isRendering is true only while a render runs", () => {
   assert.equal(isRendering(p), false);
   assert.equal(isRendering({ ...p, render: { status: "running" } }), true);
   assert.equal(isRendering({ ...p, render: { status: "done" } }), false);
+});
+
+test("readProject and listProjects refuse files that are not a project under their own name", () => {
+  const a = createProject(dir, { occasion: "fun" });
+  const m = path.join(dir, "moments");
+  fs.writeFileSync(path.join(m, "num.json"), "5");
+  fs.writeFileSync(path.join(m, "arr.json"), "[]");
+  fs.writeFileSync(path.join(m, "other.json"), JSON.stringify({ ...a, projectId: "someone-else" }));
+  assert.equal(readProject(dir, "num"), null);
+  assert.equal(readProject(dir, "arr"), null);
+  assert.equal(readProject(dir, "other"), null);
+  assert.deepEqual(listProjects(dir).map((s) => s.projectId), [a.projectId]);
+});
+
+test("list ignores a corrupt file and a folder named beats", () => {
+  const a = createProject(dir, { occasion: "fun" });
+  const m = path.join(dir, "moments");
+  fs.writeFileSync(path.join(m, "corrupt.json"), "{not json");
+  fs.mkdirSync(path.join(m, "beats"));
+  assert.deepEqual(listProjects(dir).map((s) => s.projectId), [a.projectId]);
+});
+
+test("a failed write removes its temp file and rethrows", () => {
+  const m = path.join(dir, "moments");
+  fs.mkdirSync(path.join(m, "blocked.json"), { recursive: true });
+  assert.throws(() => writeProject(dir, { projectId: "blocked", updatedAt: 0 }));
+  assert.deepEqual(fs.readdirSync(m).filter((f) => f.endsWith(".tmp")), []);
+});
+
+for (const body of [null, [], "title"]) {
+  test(`applyUpdate refuses a body that is ${JSON.stringify(body)}`, () => {
+    const r = applyUpdate(createProject(dir, { occasion: "birthday" }), body);
+    assert.equal(r.ok, false);
+    assert.match(r.error, /update/);
+  });
+}
+
+test("a 200-character song ref is kept", () => {
+  const p = createProject(dir, { occasion: "fun" });
+  const ref = "x".repeat(200);
+  const r = applyUpdate(p, { sound: { song: { ref } } });
+  assert.equal(r.ok, true, r.error);
+  assert.equal(r.project.sound.song.ref, ref);
+});
+
+test("a photo ref is rebuilt from its known keys and not shared with the caller", () => {
+  const ref = { kind: "upload", path: "p", evil: "x" };
+  const r = applyUpdate(createProject(dir, { occasion: "birthday" }), { photos: [{ ref, url: "u", width: 1, height: 1 }] });
+  assert.equal(r.ok, true, r.error);
+  assert.deepEqual(r.project.photos[0].ref, { kind: "upload", path: "p" });
+  assert.notEqual(r.project.photos[0].ref, ref);
+  ref.path = "changed";
+  assert.equal(r.project.photos[0].ref.path, "p");
+});
+
+test("a library photo ref keeps only its id", () => {
+  const r = applyUpdate(createProject(dir, { occasion: "birthday" }), { photos: [{ ref: { kind: "library", id: "abc", path: "x" }, url: "u", width: 1, height: 1 }] });
+  assert.equal(r.ok, true, r.error);
+  assert.deepEqual(r.project.photos[0].ref, { kind: "library", id: "abc" });
+});
+
+function deepFreeze(o) {
+  for (const v of Object.values(o)) if (v && typeof v === "object") deepFreeze(v);
+  return Object.freeze(o);
+}
+
+test("applyUpdate on a deep-frozen project and body does not throw and leaves them unchanged", () => {
+  const p = deepFreeze(createProject(dir, { occasion: "birthday" }));
+  const body = deepFreeze({
+    title: "Hi", statements: ["One"], details: { name: "Tolu" },
+    photos: [{ ref: { kind: "upload", path: "p" }, url: "u", width: 1, height: 1 }],
+    heroIndex: 0, sound: { song: { ref: "library:hopeful", windowStartSec: 1 } },
+  });
+  const before = JSON.stringify(p) + JSON.stringify(body);
+  const r = applyUpdate(p, body);
+  assert.equal(r.ok, true, r.error);
+  assert.equal(JSON.stringify(p) + JSON.stringify(body), before);
 });

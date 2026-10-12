@@ -50,10 +50,15 @@ export function createProject(baseDir, { occasion }) {
   });
 }
 
+const isPlainObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+
+/** The stored project, but only when it is an object that names itself as this file. */
 export function readProject(baseDir, id) {
   const file = fileOf(baseDir, id);
   if (!file || !fs.existsSync(file)) return null;
-  try { return JSON.parse(fs.readFileSync(file, "utf8")); } catch { return null; }
+  let parsed;
+  try { parsed = JSON.parse(fs.readFileSync(file, "utf8")); } catch { return null; }
+  return isPlainObject(parsed) && parsed.projectId === id ? parsed : null;
 }
 
 export function writeProject(baseDir, project) {
@@ -64,8 +69,13 @@ export function writeProject(baseDir, project) {
   // two writes land in the same millisecond.
   const next = { ...project, updatedAt: Math.max(Date.now(), Number(project.updatedAt || 0) + 1) };
   const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(next, null, 2));
-  fs.renameSync(tmp, file);
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(next, null, 2));
+    fs.renameSync(tmp, file);
+  } catch (err) {
+    try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch {}
+    throw err;
+  }
   return next;
 }
 
@@ -102,14 +112,18 @@ export function isRendering(project) {
   return project?.render?.status === "running";
 }
 
-const text = (v) => String(v ?? "").replace(/\s+/g, " ").trim();
+/** Collapses whitespace in a string the caller has already checked is a string. */
+const clean = (s) => s.replace(/\s+/g, " ").trim();
+const nonEmpty = (v) => typeof v === "string" && v.trim().length > 0;
+export const SONG_REF_MAX = 200;
 
 function checkDetails(details) {
-  if (details === null || typeof details !== "object" || Array.isArray(details)) return { error: "details must be an object" };
+  if (!isPlainObject(details)) return { error: "details must be an object" };
   const out = {};
   for (const [k, v] of Object.entries(details)) {
     if (!DETAIL_FIELDS.includes(k)) return { error: `unknown detail "${k}"` };
-    const t = text(v);
+    if (typeof v !== "string") return { error: `${k} must be text` };
+    const t = clean(v);
     if (t.length > DETAIL_MAX) return { error: `${k} can be up to ${DETAIL_MAX} characters` };
     if (t) out[k] = t;
   }
@@ -119,28 +133,45 @@ function checkDetails(details) {
 function checkStatements(list) {
   if (!Array.isArray(list)) return { error: "statements must be a list" };
   if (list.length > MAX_STATEMENTS) return { error: `up to ${MAX_STATEMENTS} statements` };
-  const out = list.map(text);
+  if (list.some((s) => typeof s !== "string")) return { error: "each statement must be text" };
+  const out = list.map(clean);
   if (out.some((s) => !s)) return { error: "a statement can't be empty" };
   if (out.some((s) => s.length > STATEMENT_MAX)) return { error: `each statement can be up to ${STATEMENT_MAX} characters` };
   return { value: out };
 }
 
+/** A photo ref rebuilt from its known keys only, so nothing extra is stored. */
+function cleanRef(ref) {
+  if (!isPlainObject(ref)) return null;
+  if (ref.kind === "upload" && nonEmpty(ref.path)) return { kind: "upload", path: ref.path };
+  if (ref.kind === "library" && nonEmpty(ref.id)) return { kind: "library", id: ref.id };
+  return null;
+}
+
 function checkPhotos(photos) {
   if (!Array.isArray(photos)) return { error: "photos must be a list" };
   if (photos.length > MAX_PHOTOS) return { error: `up to ${MAX_PHOTOS} photos` };
-  const ok = photos.every((p) => p && p.ref && (p.ref.kind === "upload" || p.ref.kind === "library")
-    && typeof p.url === "string" && Number.isFinite(p.width) && Number.isFinite(p.height));
-  return ok ? { value: photos.map((p) => ({ ref: p.ref, url: p.url, width: p.width, height: p.height })) } : { error: "photos are not resolved" };
+  const out = [];
+  for (const p of photos) {
+    const ref = isPlainObject(p) ? cleanRef(p.ref) : null;
+    if (!ref || typeof p.url !== "string" || !Number.isFinite(p.width) || !Number.isFinite(p.height)) {
+      return { error: "photos are not resolved" };
+    }
+    out.push({ ref, url: p.url, width: p.width, height: p.height });
+  }
+  return { value: out };
 }
 
 function checkSound(current, sound) {
-  if (sound === null || typeof sound !== "object") return { error: "sound must be an object" };
+  if (!isPlainObject(sound)) return { error: "sound must be an object" };
   const next = { ...current };
   if ("song" in sound) {
     if (sound.song === null) next.song = null;
     else {
-      const ref = text(sound.song?.ref);
-      if (!ref) return { error: "the song needs a ref" };
+      const raw = isPlainObject(sound.song) ? sound.song.ref : undefined;
+      if (!nonEmpty(raw)) return { error: "the song needs a ref" };
+      const ref = clean(raw);
+      if (ref.length > SONG_REF_MAX) return { error: `the song ref can be up to ${SONG_REF_MAX} characters` };
       const w = sound.song.windowStartSec;
       if (w !== null && w !== undefined && !(Number.isFinite(w) && w >= 0)) return { error: "the song window must start at 0 or later" };
       next.song = { ref, windowStartSec: w ?? null };
@@ -158,6 +189,7 @@ function checkSound(current, sound) {
 export function applyUpdate(project, body = {}) {
   const next = { ...project };
   const fail = (error) => ({ ok: false, error });
+  if (!isPlainObject(body)) return fail("the update must be an object");
   if ("occasion" in body) {
     const occ = resolveOccasion(body.occasion);
     if (!occ) return fail("unknown occasion");
@@ -178,7 +210,8 @@ export function applyUpdate(project, body = {}) {
     return fail("the hero photo must be one of the photos");
   }
   if ("title" in body) {
-    const t = text(body.title);
+    if (typeof body.title !== "string") return fail("the title must be text");
+    const t = clean(body.title);
     if (t.length > TITLE_MAX) return fail(`the title can be up to ${TITLE_MAX} characters`);
     next.title = t;
   }
