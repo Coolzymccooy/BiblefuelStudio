@@ -4,6 +4,7 @@ import { Trash2, Film } from 'lucide-react';
 import { momentsApi } from '../../lib/momentsApi';
 import { api } from '../../lib/api';
 import { toastError } from '../../lib/errors';
+import type { MomentMeta } from '../../lib/momentsTypes';
 
 export const MOMENTS_LIST_KEY = ['moments'];
 
@@ -11,12 +12,13 @@ export const MOMENTS_LIST_KEY = ['moments'];
 const COLLAPSED_COUNT = 5;
 
 interface MomentsHistoryProps {
+  meta: MomentMeta;
   /** `finished` opens straight onto the video. */
   onOpen: (id: string, finished: boolean) => void;
 }
 
 /** Every Moment this account has made, newest first. */
-export function MomentsHistory({ onOpen }: MomentsHistoryProps) {
+export function MomentsHistory({ meta, onOpen }: MomentsHistoryProps) {
   const qc = useQueryClient();
   const { data: list = [], isError, refetch } = useQuery({ queryKey: MOMENTS_LIST_KEY, queryFn: () => momentsApi.list() });
   const [confirmId, setConfirmId] = useState<string | null>(null);
@@ -53,7 +55,8 @@ export function MomentsHistory({ onOpen }: MomentsHistoryProps) {
       </div>
       <div className={`space-y-2${expanded && overflowing ? ' max-h-[420px] overflow-y-auto pr-1' : ''}`}>
         {visible.map((m) => {
-          const name = m.title || m.occasion;
+          const occasion = meta.occasions.find((o) => o.id === m.occasion)?.label ?? m.occasion;
+          const name = m.title || occasion;
           return (
             <div key={m.projectId} className="glass flex items-center gap-3 rounded-bf p-2">
               <button
@@ -67,7 +70,7 @@ export function MomentsHistory({ onOpen }: MomentsHistoryProps) {
                   : <div className="flex h-14 w-10 items-center justify-center rounded-lg bg-bf-card2"><Film size={16} /></div>}
                 <div className="min-w-0">
                   <div className="truncate text-sm font-semibold text-bf-cream">{m.title || 'Untitled Moment'}</div>
-                  <div className="text-help capitalize">{m.occasion}{m.lastFile ? ' · made' : ''}</div>
+                  <div className="text-help">{occasion}{m.lastFile ? ' · made' : ''}</div>
                 </div>
               </button>
               {confirmId === m.projectId ? (

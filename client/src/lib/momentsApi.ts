@@ -25,7 +25,7 @@ function failure(res: Res, fallback: string): ApiError {
   const code = [bodyError, res.error].find((v): v is string => typeof v === 'string' && CODE_PATTERN.test(v)) ?? '';
   const human = [body.hint, res.error, bodyError]
     .find((v): v is string => typeof v === 'string' && v.length > 0 && v !== code);
-  return new ApiError(human || code || fallback, code, body);
+  return new ApiError(human || code || fallback, code, body, res.status);
 }
 
 function unwrap<T>(res: Res, key: string): T {

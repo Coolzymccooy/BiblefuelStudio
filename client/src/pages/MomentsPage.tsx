@@ -4,6 +4,7 @@ import { Loader2 } from 'lucide-react';
 import { momentsApi } from '../lib/momentsApi';
 import { isRunning } from '../lib/momentsWizard';
 import { toastError } from '../lib/errors';
+import { isApiError } from '../lib/apiError';
 import type { MomentMeta, MomentProject } from '../lib/momentsTypes';
 import { ScreenHeader } from '../components/ui/ScreenHeader';
 import { MomentsHistory, MOMENTS_LIST_KEY } from '../components/moments/MomentsHistory';
@@ -26,6 +27,8 @@ const STEPS: Array<{ id: Step; label: string }> = [
 
 /** A Moment in one of these render states opens on the Result step, where the outcome (or the retry) is. */
 const RESULT_STATUSES = new Set(['running', 'interrupted', 'error']);
+
+const isNotFound = (e: unknown) => isApiError(e) && e.status === 404;
 
 export interface MomentStepProps {
   project: MomentProject;
@@ -52,12 +55,22 @@ export function MomentsPage() {
     queryFn: () => momentsApi.meta(),
     staleTime: Infinity,
   });
-  const { data: project } = useQuery({
+  const { data: project, error: projectError, refetch: refetchProject } = useQuery({
     queryKey: ['moment', projectId],
     queryFn: () => momentsApi.get(projectId as string),
     enabled: Boolean(projectId),
+    // A missing Moment will not come back; anything else gets one quick retry before the error state.
+    retry: (count, e) => !isNotFound(e) && count < 1,
+    retryDelay: 300,
     refetchInterval: (query) => (query.state.data && isRunning(query.state.data) ? POLL_MS : false),
   });
+
+  const missing = isNotFound(projectError);
+  useEffect(() => {
+    if (missing) setActive(null);
+    // setActive only touches state and the cache; it is recreated every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [missing]);
 
   useEffect(() => {
     if (!project || routedFor.current === project.projectId) return;
@@ -99,6 +112,21 @@ export function MomentsPage() {
   }
   if (!meta) return <Loader2 className="animate-spin text-primary-400" />;
 
+  if (projectId && !project) {
+    if (projectError && !missing) {
+      return (
+        <div className="space-y-3">
+          <p className="text-help">Couldn't open your last Moment.</p>
+          <div className="flex items-center gap-3">
+            <button type="button" onClick={() => refetchProject()} className="btn btn-secondary px-3 py-1.5 text-sm">Retry</button>
+            <button type="button" onClick={() => setActive(null)} className="text-xs text-content-tertiary hover:text-bf-cream">Start new</button>
+          </div>
+        </div>
+      );
+    }
+    return <Loader2 className="animate-spin text-primary-400" />;
+  }
+
   const tabs = project && (
     <div className="flex max-w-full items-center gap-3">
       <div className="min-w-0 overflow-x-auto">
@@ -131,7 +159,7 @@ export function MomentsPage() {
       {!project && (
         <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
           <MomentsOccasionPicker meta={meta} onPick={create} busy={busy} />
-          <MomentsHistory onOpen={(id, finished) => setActive(id, finished ? 'result' : 'photos')} />
+          <MomentsHistory meta={meta} onOpen={(id, finished) => setActive(id, finished ? 'result' : 'photos')} />
         </div>
       )}
       {stepProps && (
