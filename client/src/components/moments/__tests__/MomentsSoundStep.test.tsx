@@ -25,7 +25,7 @@ vi.mock('../../MusicPicker', () => ({
 
 function renderStep(project = mkMoment(), meta: MomentMeta = META) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const props = { project, meta, refresh: vi.fn(), busy: false, setBusy: vi.fn(), track: vi.fn() };
+  const props = { project, meta, refresh: vi.fn(), busy: false, setBusy: vi.fn(), track: vi.fn(), commit: vi.fn() };
   render(<QueryClientProvider client={qc}><MomentsSoundStep {...props} /><Toaster /></QueryClientProvider>);
   return props;
 }
@@ -36,7 +36,7 @@ function renderLive(project: ReturnType<typeof mkMoment>) {
   const refresh = vi.fn();
   function Host({ p }: { p: ReturnType<typeof mkMoment> }) {
     const [busy, setBusy] = useState(false);
-    return <MomentsSoundStep project={p} meta={META} refresh={refresh} busy={busy} setBusy={setBusy} track={vi.fn()} />;
+    return <MomentsSoundStep project={p} meta={META} refresh={refresh} busy={busy} setBusy={setBusy} track={vi.fn()} commit={vi.fn()} />;
   }
   const view = render(<QueryClientProvider client={qc}><Host p={project} /></QueryClientProvider>);
   return { rerender: (p: ReturnType<typeof mkMoment>) => view.rerender(<QueryClientProvider client={qc}><Host p={p} /></QueryClientProvider>) };

@@ -6,7 +6,7 @@ import { momentsApi } from '../../../lib/momentsApi';
 import * as errors from '../../../lib/errors';
 import { META, mkMoment } from '../../../lib/__tests__/momentsFixtures';
 
-const stepProps = () => ({ project: mkMoment(), meta: META, refresh: vi.fn(), busy: false, setBusy: vi.fn(), track: vi.fn() });
+const stepProps = () => ({ project: mkMoment(), meta: META, refresh: vi.fn(), busy: false, setBusy: vi.fn(), track: vi.fn(), commit: vi.fn() });
 
 beforeEach(() => {
   vi.restoreAllMocks();

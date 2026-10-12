@@ -5,7 +5,7 @@ import { Star, X, ChevronLeft, ChevronRight, ImagePlus, Loader2 } from 'lucide-r
 import { momentsApi } from '../../lib/momentsApi';
 import { uploadMedia } from '../../lib/mediaUpload';
 import { api } from '../../lib/api';
-import { isApiError } from '../../lib/apiError';
+import { ApiError, isApiError } from '../../lib/apiError';
 import { toastError } from '../../lib/errors';
 import { movePhoto, removePhoto } from '../../lib/momentsWizard';
 import type { MomentPatch, MomentPhoto, PhotoRef } from '../../lib/momentsTypes';
@@ -22,7 +22,17 @@ const refs = (photos: MomentPhoto[]): PhotoRef[] => photos.map((p) => p.ref);
 const uploadFailure = (e: unknown, name: string) =>
   isApiError(e) ? e : new Error(`${name}: ${e instanceof Error ? e.message : 'Upload failed'}`);
 
-export function MomentsPhotosStep({ project, meta, refresh, busy, setBusy }: MomentStepProps) {
+/**
+ * The server names a refused photo by its slot ("Photo 2: ..."), which means nothing to someone who just picked
+ * five files. Swap the slot for the file's name, keeping the code, status and payload so coded errors still render.
+ */
+const refusalFor = (e: unknown, name: string): unknown => {
+  if (!(e instanceof Error)) return e;
+  const message = `${name}: ${e.message.replace(/^Photo \d+:\s*/, '')}`;
+  return isApiError(e) ? new ApiError(message, e.code, e.payload, e.status) : new Error(message);
+};
+
+export function MomentsPhotosStep({ project, meta, refresh, busy, setBusy, commit }: MomentStepProps) {
   const input = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
@@ -30,13 +40,16 @@ export function MomentsPhotosStep({ project, meta, refresh, busy, setBusy }: Mom
   const { photos, heroIndex } = project;
   const room = meta.limits.maxPhotos - photos.length;
 
-  /** Send one change; a refusal is toasted and reported as false so callers can carry on. */
-  const persist = async (patch: MomentPatch): Promise<boolean> => {
+  /**
+   * Send one change and hand the saved project to the page; a refusal is toasted (naming the file when one is
+   * given) and reported as false so callers can carry on.
+   */
+  const persist = async (patch: MomentPatch, fileName?: string): Promise<boolean> => {
     try {
-      await momentsApi.update(project.projectId, patch);
+      commit(await momentsApi.update(project.projectId, patch));
       return true;
     } catch (e) {
-      toastError(e);
+      toastError(fileName ? refusalFor(e, fileName) : e);
       return false;
     }
   };
@@ -65,7 +78,7 @@ export function MomentsPhotosStep({ project, meta, refresh, busy, setBusy }: Mom
           const up = await uploadMedia(list[i], list[i].name, 'background');
           // Saved one at a time so a photo the server refuses costs only itself.
           const next = [...current, { kind: 'upload', path: up.file } as PhotoRef];
-          if (await persist({ photos: next, heroIndex })) {
+          if (await persist({ photos: next, heroIndex }, list[i].name)) {
             current = next;
             refresh();
           }
@@ -122,18 +135,18 @@ export function MomentsPhotosStep({ project, meta, refresh, busy, setBusy }: Mom
           <div key={`${i}-${p.url}`} className={`relative overflow-hidden rounded-lg border ${i === heroIndex ? 'border-bf-gold' : 'border-transparent'}`}>
             <img src={api.mediaUrl(p.url)} alt={`Photo ${i + 1}`} className="aspect-[9/16] w-full object-cover" />
             <div className="absolute inset-x-0 top-0 flex justify-between p-1">
-              <button type="button" disabled={busy || uploading} onClick={() => save({ heroIndex: i })} aria-label={`Make photo ${i + 1} the hero`} aria-pressed={i === heroIndex} className="rounded-full bg-black/50 p-1">
+              <button type="button" disabled={busy || uploading} onClick={() => save({ heroIndex: i })} aria-label={`Make photo ${i + 1} the hero`} aria-pressed={i === heroIndex} className="rounded-full bg-black/50 p-1.5">
                 <Star size={14} className={i === heroIndex ? 'fill-bf-gold text-bf-gold' : 'text-white'} />
               </button>
-              <button type="button" disabled={busy || uploading} onClick={() => doRemove(i)} aria-label={`Remove photo ${i + 1}`} className="rounded-full bg-black/50 p-1">
+              <button type="button" disabled={busy || uploading} onClick={() => doRemove(i)} aria-label={`Remove photo ${i + 1}`} className="rounded-full bg-black/50 p-1.5">
                 <X size={14} />
               </button>
             </div>
             <div className="absolute inset-x-0 bottom-0 flex justify-between p-1">
-              <button type="button" disabled={busy || uploading || i === 0} onClick={() => doMove(i, i - 1)} aria-label={`Move photo ${i + 1} earlier`} className="rounded-full bg-black/50 p-1">
+              <button type="button" disabled={busy || uploading || i === 0} onClick={() => doMove(i, i - 1)} aria-label={`Move photo ${i + 1} earlier`} className="rounded-full bg-black/50 p-1.5">
                 <ChevronLeft size={14} />
               </button>
-              <button type="button" disabled={busy || uploading || i === photos.length - 1} onClick={() => doMove(i, i + 1)} aria-label={`Move photo ${i + 1} later`} className="rounded-full bg-black/50 p-1">
+              <button type="button" disabled={busy || uploading || i === photos.length - 1} onClick={() => doMove(i, i + 1)} aria-label={`Move photo ${i + 1} later`} className="rounded-full bg-black/50 p-1.5">
                 <ChevronRight size={14} />
               </button>
             </div>

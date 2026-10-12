@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Trash2, Film } from 'lucide-react';
 import { momentsApi } from '../../lib/momentsApi';
@@ -24,13 +24,19 @@ export function MomentsHistory({ meta, onOpen }: MomentsHistoryProps) {
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
 
+  // A ref, not state: two presses can land before React re-renders, and each would send a DELETE.
+  const deleting = useRef(false);
+
   const remove = async (id: string) => {
+    if (deleting.current) return;
+    deleting.current = true;
     try {
       await momentsApi.remove(id);
       qc.invalidateQueries({ queryKey: MOMENTS_LIST_KEY });
     } catch (e) {
       toastError(e);
     } finally {
+      deleting.current = false;
       setConfirmId(null);
     }
   };

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2, Wand2 } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { momentsApi } from '../lib/momentsApi';
 import { canMake, isRunning, newSeed } from '../lib/momentsWizard';
 import { toastError } from '../lib/errors';
@@ -36,6 +37,19 @@ const RESULT_STATUSES = new Set(['running', 'done', 'interrupted', 'error']);
 
 const isNotFound = (e: unknown) => isApiError(e) && e.status === 404;
 
+const NO_WORDS_GUIDANCE = "Couldn't write words for you right now. Add a title or a statement on the Words step, then press Make it.";
+
+/** Storage can be blocked (private windows, site settings): the active Moment is a convenience, never a requirement. */
+const readActive = (): string | null => {
+  try { return localStorage.getItem(ACTIVE_KEY); } catch { return null; }
+};
+const writeActive = (id: string | null) => {
+  try {
+    if (id) localStorage.setItem(ACTIVE_KEY, id);
+    else localStorage.removeItem(ACTIVE_KEY);
+  } catch { /* the Moment still opens; it just is not remembered */ }
+};
+
 export interface MomentStepProps {
   project: MomentProject;
   meta: MomentMeta;
@@ -45,11 +59,13 @@ export interface MomentStepProps {
   setBusy: (b: boolean) => void;
   /** Registers a save that does not hold busy (a blur-save), so Make it waits for it before rendering. */
   track: (save: Promise<unknown>) => void;
+  /** Every successful PUT hands its response here, so the page's copy is current before the background refetch lands. */
+  commit: (saved: MomentProject) => void;
 }
 
 export function MomentsPage() {
   const qc = useQueryClient();
-  const [projectId, setProjectId] = useState<string | null>(() => localStorage.getItem(ACTIVE_KEY));
+  const [projectId, setProjectId] = useState<string | null>(readActive);
   const [step, setStep] = useState<Step>('photos');
   const [busy, setBusyState] = useState(false);
   // Counted in a ref so Make it can read it synchronously, and so overlapping long saves don't release each other.
@@ -64,6 +80,9 @@ export function MomentsPage() {
     const done = () => { pending.current.delete(save); };
     save.then(done, done);
   }, []);
+  const commit = useCallback((saved: MomentProject) => {
+    qc.setQueryData(['moment', saved.projectId], saved);
+  }, [qc]);
   const making = useRef(false);
   /** Bumped when Make it writes the words itself, so a mounted Words step reloads them. */
   const [wordsKey, setWordsKey] = useState(0);
@@ -120,9 +139,17 @@ export function MomentsPage() {
         current = await qc.fetchQuery({ queryKey: ['moment', id], queryFn: () => momentsApi.get(id), staleTime: 0 });
       }
       if (wasEmpty(current)) {
-        const s = await momentsApi.suggest(id);
-        const saved = await momentsApi.update(id, { title: s.title, statements: s.statements });
-        qc.setQueryData(['moment', id], saved);
+        let s: Awaited<ReturnType<typeof momentsApi.suggest>>;
+        try {
+          s = await momentsApi.suggest(id);
+        } catch (e) {
+          // Nothing was written: send the user to write their own, and do not render.
+          if (isApiError(e) && e.code) toastError(e);
+          toast.error(NO_WORDS_GUIDANCE);
+          setStep('words');
+          return;
+        }
+        commit(await momentsApi.update(id, { title: s.title, statements: s.statements }));
         setWordsKey((k) => k + 1);
       }
       await momentsApi.render(id, seed);
@@ -156,8 +183,7 @@ export function MomentsPage() {
   const setActive = (id: string | null, startAt: Step = 'photos') => {
     routedFor.current = null;
     setProjectId(id);
-    if (id) localStorage.setItem(ACTIVE_KEY, id);
-    else localStorage.removeItem(ACTIVE_KEY);
+    writeActive(id);
     setStep(startAt);
     if (!id) qc.invalidateQueries({ queryKey: MOMENTS_LIST_KEY });
   };
@@ -203,7 +229,7 @@ export function MomentsPage() {
   const tabs = project && (
     <div className="flex max-w-full items-center gap-3">
       <div className="min-w-0 overflow-x-auto">
-        <div className={`${segmentedCls} whitespace-nowrap`} role="tablist" aria-label="Moment step">
+        <div className={`${segmentedCls} whitespace-nowrap`} role="group" aria-label="Moment step">
           {STEPS.map((s) => (
             <button key={s.id} type="button" aria-pressed={step === s.id} disabled={busy} onClick={() => setStep(s.id)} className={`${segmentCls(step === s.id)} shrink-0`}>
               {s.label}
@@ -217,11 +243,12 @@ export function MomentsPage() {
 
   // Tasks 3-7 replace each placeholder with its step, which receives these props.
   const stepProps: MomentStepProps | null = project
-    ? { project, meta, refresh, busy: busy || isRunning(project), setBusy, track }
+    ? { project, meta, refresh, busy: busy || isRunning(project), setBusy, track, commit }
     : null;
   const ready = project ? canMake(project, meta) : null;
-  // A failed or interrupted render has its own "Make it again" on the Result step, so the sticky button steps aside.
-  const ownRetry = step === 'result' && (project?.render?.status === 'error' || project?.render?.status === 'interrupted');
+  // The Result step has its own button for each finished render (Shuffle, or Make it again), so the sticky one steps aside.
+  const renderStatus = project?.render?.status;
+  const ownRetry = step === 'result' && (renderStatus === 'done' || renderStatus === 'error' || renderStatus === 'interrupted');
   return (
     <div className="w-full">
       <ScreenHeader
@@ -248,12 +275,13 @@ export function MomentsPage() {
           {step === 'result' && (
             <MomentsResult project={stepProps.project} busy={stepProps.busy} onShuffle={() => makeIt(newSeed())} onRetry={() => makeIt()} onCancel={cancel} />
           )}
+          {/* On phones the fixed tab bar (about 60 px plus the safe area) covers bottom-4, so Make it sits above it. */}
           {!ownRetry && (
-            <div className="sticky bottom-4 mt-6 flex flex-col items-center gap-1">
+            <div className="sticky bottom-[calc(76px+env(safe-area-inset-bottom))] mt-6 flex flex-col items-center gap-1 lg:bottom-4">
               <button type="button" onClick={() => makeIt()} disabled={!ready?.ok || stepProps.busy} className={`${primaryBtnCls} px-8 py-3`}>
                 <Wand2 size={18} /> Make it
               </button>
-              {ready && !ready.ok && <span className="text-help">{ready.reason}</span>}
+              {ready && !ready.ok && <span className="text-help rounded-full bg-bf-bg/90 px-3 py-1 backdrop-blur">{ready.reason}</span>}
             </div>
           )}
         </div>

@@ -12,7 +12,7 @@ import { META, mkMoment } from '../../../lib/__tests__/momentsFixtures';
 import type { MomentPhoto } from '../../../lib/momentsTypes';
 
 const photo = (n: number): MomentPhoto => ({ ref: { kind: 'upload', path: `bg-image-${n}.jpg` }, url: `/outputs/bg-image-${n}.jpg`, width: 1, height: 1 });
-const props = (over = {}) => ({ project: mkMoment({ photos: [photo(1), photo(2), photo(3)], heroIndex: 0, ...over }), meta: META, refresh: vi.fn(), busy: false, setBusy: vi.fn(), track: vi.fn() });
+const props = (over = {}) => ({ project: mkMoment({ photos: [photo(1), photo(2), photo(3)], heroIndex: 0, ...over }), meta: META, refresh: vi.fn(), busy: false, setBusy: vi.fn(), track: vi.fn(), commit: vi.fn() });
 
 function renderStep(p: ReturnType<typeof props>) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -108,7 +108,7 @@ describe('MomentsPhotosStep', () => {
     await userEvent.upload(screen.getByLabelText(/add photos/i), [jpg('a.jpg'), jpg('b.jpg'), jpg('c.jpg')]);
     await waitFor(() => expect(update).toHaveBeenCalledTimes(3));
     expect(update.mock.calls[2][1]).toEqual({ photos: [ref('a'), ref('c')], heroIndex: 0 });
-    expect(toastErr).toHaveBeenCalledWith(refusal);
+    expect(toastErr.mock.calls[0][0]).toMatchObject({ message: 'b.jpg: that photo is too large.' });
   });
 
   it('only accepts jpeg, png and webp, so iPhones convert HEIC', () => {

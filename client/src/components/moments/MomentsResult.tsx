@@ -33,7 +33,7 @@ export function MomentsResult({ project, onShuffle, onRetry, onCancel, busy }: P
     <div className="space-y-4">
       {r?.status === 'running' && (
         <div className={panelCls}>
-          <div className="text-sm text-bf-cream">{STAGE_WORDS[r.stage] ?? 'Making your Moment…'}</div>
+          <div aria-live="polite" className="text-sm text-bf-cream">{STAGE_WORDS[r.stage] ?? 'Making your Moment…'}</div>
           <div role="progressbar" aria-label="Making your Moment" aria-valuemin={0} aria-valuemax={100} aria-valuenow={r.percent} className="mt-2 h-2 overflow-hidden rounded-full bg-bf-card2">
             <div className="h-full bg-bf-gold transition-all" style={{ width: `${r.percent}%` }} />
           </div>

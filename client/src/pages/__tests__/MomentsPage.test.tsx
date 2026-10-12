@@ -442,7 +442,8 @@ describe('Make it', () => {
     await userEvent.click(shuffle);
     await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
     expect(screen.getByRole('button', { name: /shuffle/i })).toBeDisabled();
-    expect(screen.getByRole('button', { name: /^make it$/i })).toBeDisabled();
+    // The finished Result has no sticky Make it (Shuffle covers it); the only live control is Shuffle, and it is locked.
+    expect(screen.queryByRole('button', { name: /^make it$/i })).toBeNull();
     await act(async () => { landRefetch({ ...done, render: { jobId: 'job-2', status: 'running', percent: 0, stage: 'waiting' } }); });
     expect(await screen.findByRole('progressbar')).toBeInTheDocument();
   });

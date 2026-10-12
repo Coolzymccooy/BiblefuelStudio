@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { ArrowUp, ArrowDown, Trash2, Sparkles, Loader2 } from 'lucide-react';
 import { momentsApi } from '../../lib/momentsApi';
-import { statementLimit, verseStatement } from '../../lib/momentsWizard';
+import { isRunning, statementLimit, verseStatement } from '../../lib/momentsWizard';
 import { toastError } from '../../lib/errors';
 import type { MomentPatch, MomentSuggestion } from '../../lib/momentsTypes';
 import type { MomentStepProps } from '../../pages/MomentsPage';
@@ -12,7 +12,7 @@ interface Words {
   statements: string[];
 }
 
-export function MomentsWordsStep({ project, meta, refresh, busy, setBusy, track }: MomentStepProps) {
+export function MomentsWordsStep({ project, meta, refresh, busy, setBusy, track, commit }: MomentStepProps) {
   // Local state is authoritative while mounted: a refetch after a save must never overwrite what is being
   // typed. The page keys this step by projectId so opening another Moment starts from its own words.
   const [title, setTitle] = useState(project.title);
@@ -32,11 +32,12 @@ export function MomentsWordsStep({ project, meta, refresh, busy, setBusy, track 
   const list = committed.statements;
   const overflow = Math.max(0, list.length - limit);
   const atLengthLimit = list.length >= limit;
-  const locked = structural || suggesting;
+  // A render in progress refuses edits, so the fields are locked rather than letting typing be silently dropped.
+  const locked = structural || suggesting || isRunning(project);
 
   /** Saves a patch, records it as committed, then lets the caller mirror it into local state. */
   const persist = async (patch: MomentPatch, applyLocal: () => void) => {
-    await momentsApi.update(project.projectId, patch);
+    commit(await momentsApi.update(project.projectId, patch));
     committedRef.current = {
       title: patch.title ?? committedRef.current.title,
       statements: patch.statements ?? committedRef.current.statements,
@@ -167,9 +168,9 @@ export function MomentsWordsStep({ project, meta, refresh, busy, setBusy, track 
                 onBlur={() => commitStatement(i)}
                 className={`${inputCls} mt-0 flex-1 ${i >= limit ? 'opacity-50' : ''}`}
               />
-              <button type="button" aria-label={`Move statement ${i + 1} up`} disabled={busy || i === 0} onClick={() => move(i, -1)}><ArrowUp size={16} /></button>
-              <button type="button" aria-label={`Move statement ${i + 1} down`} disabled={busy || i === drafts.length - 1} onClick={() => move(i, 1)}><ArrowDown size={16} /></button>
-              <button type="button" aria-label={`Delete statement ${i + 1}`} disabled={busy} onClick={() => saveList((c) => c.filter((_, k) => k !== i))}><Trash2 size={16} /></button>
+              <button type="button" aria-label={`Move statement ${i + 1} up`} disabled={busy || i === 0} onClick={() => move(i, -1)} className="p-1.5"><ArrowUp size={16} /></button>
+              <button type="button" aria-label={`Move statement ${i + 1} down`} disabled={busy || i === drafts.length - 1} onClick={() => move(i, 1)} className="p-1.5"><ArrowDown size={16} /></button>
+              <button type="button" aria-label={`Delete statement ${i + 1}`} disabled={busy} onClick={() => saveList((c) => c.filter((_, k) => k !== i))} className="p-1.5"><Trash2 size={16} /></button>
             </div>
           ))}
         </div>

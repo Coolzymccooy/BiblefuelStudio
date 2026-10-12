@@ -7,7 +7,7 @@ import { fieldLabelCls, panelCls, segmentCls, segmentedCls } from '../story/form
 
 const energyWord = (e: number) => (e < 0.34 ? 'Calm' : e <= 0.66 ? 'Lively' : 'Hype');
 
-export function MomentsStyleStep({ project, meta, refresh, busy, setBusy }: MomentStepProps) {
+export function MomentsStyleStep({ project, meta, refresh, busy, setBusy, commit }: MomentStepProps) {
   // The slider owns its value while this step is mounted: a refetch must never move it under the user's hand.
   const [energy, setEnergy] = useState(Math.round(project.energy * 100));
   /** The last value saved (or being saved), so release + blur + key-up on one change save once. */
@@ -18,7 +18,7 @@ export function MomentsStyleStep({ project, meta, refresh, busy, setBusy }: Mome
   const save = async (patch: MomentPatch): Promise<boolean> => {
     setBusy(true);
     try {
-      await momentsApi.update(project.projectId, patch);
+      commit(await momentsApi.update(project.projectId, patch));
       refresh();
       return true;
     } catch (e) {

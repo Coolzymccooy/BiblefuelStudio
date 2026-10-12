@@ -13,7 +13,7 @@ import { fieldLabelCls, inputCls, panelCls, primaryBtnCls, secondaryBtnCls } fro
 const MIN_SCRIPT_CHARS = 3;
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 
-export function MomentsSoundStep({ project, meta, refresh, busy, setBusy }: MomentStepProps) {
+export function MomentsSoundStep({ project, meta, refresh, busy, setBusy, commit }: MomentStepProps) {
   const song = project.sound.song;
   const vo = project.sound.voiceover;
   const [script, setScript] = useState('');
@@ -38,7 +38,7 @@ export function MomentsSoundStep({ project, meta, refresh, busy, setBusy }: Mome
   const save = async (patch: MomentPatch) => {
     setBusy(true);
     try {
-      await momentsApi.update(project.projectId, patch);
+      commit(await momentsApi.update(project.projectId, patch));
       refresh();
     } catch (e) {
       toastError(e);
@@ -51,7 +51,7 @@ export function MomentsSoundStep({ project, meta, refresh, busy, setBusy }: Mome
     setMaking(true);
     setBusy(true);
     try {
-      await momentsApi.voiceover(project.projectId, { ...body, voiceId });
+      commit(await momentsApi.voiceover(project.projectId, { ...body, voiceId }));
       setScript('');
       refresh();
     } catch (e) {
