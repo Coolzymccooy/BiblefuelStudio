@@ -73,16 +73,15 @@ Statements reuse the Story LLM helper (`defaultLlmComplete`). The voiceover reus
 - Test: `server/src/lib/moments/occasions.test.js`
 
 **Interfaces:**
-- Consumes: `STYLE_IDS` from `../motion/styles.js`.
+- Consumes: `STYLE_IDS` from `../motion/styles.js`; `statementLimit`, `STATEMENT_LIMITS`, `TITLE_MAX`, `STATEMENT_MAX` from `../motion/director.js` (the engine owns the word limits — re-export them, never redeclare, so the server and the director cannot drift).
 - Produces:
   - `LENGTHS = [15, 30, 60]`.
-  - `STATEMENT_LIMIT = {15: 3, 30: 5, 60: 8}`.
-  - `TITLE_MAX = 40`, `STATEMENT_MAX = 60`, `DETAIL_MAX = 80`, `MAX_STATEMENTS = 8`.
+  - Re-exported from the engine: `STATEMENT_LIMIT` (= the engine's `STATEMENT_LIMITS`, `{15: 3, 30: 5, 60: 8}`), `statementLimit`, `TITLE_MAX = 40`, `STATEMENT_MAX = 60`.
+  - `DETAIL_MAX = 80`, `MAX_STATEMENTS = 8`.
   - `DETAIL_FIELDS = ['name','milestone','eventTitle','date','venue','verse']`.
   - `OCCASIONS`: frozen map id → `{ id, label, church, fields, style, energy, song, titles: string[], statements: string[], voicePrompt }`.
   - `OCCASION_IDS`.
   - `resolveOccasion(id)` (own keys only, else `null`).
-  - `statementLimit(lengthSec)`.
   - `templatesFor(occasionId, details, lengthSec) → { title, statements }`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -125,7 +124,16 @@ test("church occasions are marked", () => {
 
 test("statement limits follow the length", () => {
   assert.deepEqual(LENGTHS.map(statementLimit), [3, 5, 8]);
-  assert.equal(statementLimit(999), 3);
+  // The engine's rule: the nearest limit at or below the length, at least 3.
+  assert.equal(statementLimit(999), 8);
+  assert.equal(statementLimit(10), 3);
+});
+
+test("the word limits are the engine's own, not a copy", async () => {
+  const engine = await import("../motion/director.js");
+  assert.equal(statementLimit, engine.statementLimit);
+  assert.equal(TITLE_MAX, engine.TITLE_MAX);
+  assert.equal(STATEMENT_MAX, engine.STATEMENT_MAX);
 });
 
 test("templates fill the details and drop lines whose details are missing", () => {
@@ -171,10 +179,12 @@ Expected: FAIL with `Cannot find module`.
  * work (style, Energy, a bundled song) and carries template statements used
  * whenever the AI is unavailable, so a user always gets editable text.
  */
+import { STATEMENT_LIMITS, statementLimit, TITLE_MAX, STATEMENT_MAX } from "../motion/director.js";
+
+// The director owns the word limits; re-exporting keeps one source of truth.
+export { statementLimit, TITLE_MAX, STATEMENT_MAX };
+export const STATEMENT_LIMIT = STATEMENT_LIMITS;
 export const LENGTHS = Object.freeze([15, 30, 60]);
-export const STATEMENT_LIMIT = Object.freeze({ 15: 3, 30: 5, 60: 8 });
-export const TITLE_MAX = 40;
-export const STATEMENT_MAX = 60;
 export const DETAIL_MAX = 80;
 export const MAX_STATEMENTS = 8;
 export const DETAIL_FIELDS = Object.freeze(["name", "milestone", "eventTitle", "date", "venue", "verse"]);
@@ -244,10 +254,6 @@ export const OCCASION_IDS = Object.freeze(Object.keys(OCCASIONS));
 
 export function resolveOccasion(id) {
   return typeof id === "string" && Object.hasOwn(OCCASIONS, id) ? OCCASIONS[id] : null;
-}
-
-export function statementLimit(lengthSec) {
-  return STATEMENT_LIMIT[lengthSec] ?? STATEMENT_LIMIT[15];
 }
 
 /** A template with every {field} filled, or null when one is missing. Too long for `max` is null too. */
@@ -1144,6 +1150,16 @@ test("a song is analysed once, then served from the cache", async () => {
   assert.equal(fs.readdirSync(path.join(ctx.dataDir, "moments", "beats")).length, 1);
 });
 
+test("a cache miss and a cache hit give the same window and grid (Shuffle stays reproducible)", async () => {
+  // Uneven loudness so the window choice and the beat phase depend on fine envelope values.
+  const decode = async () => clickTrack({ bpm: 97, sec: 50, level: (t) => 0.3 + 0.5 * Math.abs(Math.sin(t * 0.7)) });
+  const miss = await songGrid(ctx, song, { lengthSec: 15, decode });
+  const hit = await songGrid(ctx, song, { lengthSec: 15, decode });
+  assert.equal(hit.windowStartSec, miss.windowStartSec);
+  assert.deepEqual(hit.grid, miss.grid);
+  assert.equal(hit.tempo, miss.tempo);
+});
+
 test("the user's own window start wins, clamped so the window fits the song", async () => {
   const decode = async () => clickTrack({ bpm: 120, sec: 40 });
   const own = await songGrid(ctx, song, { lengthSec: 15, windowStartSec: 10, decode });
@@ -1208,11 +1224,14 @@ async function analysis(ctx, file, decode) {
       return { tempo: c.tempo, durationSec: c.durationSec, env: Float64Array.from(c.env) };
     } catch { /* a corrupt cache entry is rebuilt below */ }
   }
-  const env = onsetEnvelope(await decode(file));
+  // Rounded BEFORE use, exactly as it is cached: a first render (cache miss) and a
+  // re-render (cache hit) must see the same envelope, or the window and beat phase
+  // can flip and "same seed, same video" breaks.
+  const env = Float64Array.from(onsetEnvelope(await decode(file)), (v) => Math.round(v * 1e4) / 1e4);
   const result = { tempo: estimateTempo(env), durationSec: env.length / FRAME_RATE, env };
   fs.mkdirSync(cacheDir(ctx.dataDir), { recursive: true });
   const tmp = `${cacheFile}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify({ tempo: result.tempo, durationSec: result.durationSec, env: Array.from(env, (v) => Math.round(v * 1e4) / 1e4) }));
+  fs.writeFileSync(tmp, JSON.stringify({ tempo: result.tempo, durationSec: result.durationSec, env: Array.from(env) }));
   fs.renameSync(tmp, cacheFile);
   return result;
 }
@@ -1552,7 +1571,7 @@ export async function momentRenderStage(ctx, projectId, jobId, { seed } = {}) {
       lengthSec: project.lengthSec,
       seed: project.seed,
     });
-    const checked = validatePlan(plan, { photoCount: usable.length });
+    const checked = validatePlan(plan, { photoCount: usable.length, shapes: usable.map((u) => u.shape) });
     if (!checked.ok) {
       console.error(`[moments] invalid plan for ${projectId}: ${checked.errors.join("; ")}`);
       throw new StageError("Couldn't plan this Moment. Try Shuffle or a different length.");

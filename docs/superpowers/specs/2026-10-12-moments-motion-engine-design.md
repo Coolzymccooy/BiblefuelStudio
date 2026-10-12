@@ -58,7 +58,7 @@ It follows the structure of `server/src/lib/kinetic/`: small pure modules, each 
 | `plan.js` | The motion-plan schema plus `validatePlan(plan)`, which reports clear errors. This is the single contract between the director, the renderer and (in Phase 3) "Open in Timeline". |
 | `effects/` | One file per effect. Each one exports `{ id, kind: 'move' \| 'entrance' \| 'overlay', needs: [], graph({ input, output, shot, ctx, tag }) }`, where `graph` returns ffmpeg filter fragments (ASS-drawn overlays export `assEvents` instead). `needs` lists capabilities such as `'mask'` (Phase 2). The director never picks an effect whose needs are not met; this is how the vision fallback works. |
 | `styles.js` | The four launch styles. Each has weighted move, entrance and overlay palettes, a colour grade, and a Studio caption look. Every palette entry must name an existing effect. |
-| `render.js` | `renderPlan(plan, { workDir, onProgress, signal })` turns a motion plan into an MP4 (see §6). |
+| `render.js` | `renderPlan({ plan, workImages, song, voice, workDir, out, onProgress, signal })` turns a motion plan into an MP4 (see §6), writing only inside `workDir` and `out` and moving the finished file into `out` atomically. |
 
 **Phase 1 effects.** All were proven in the spike, using plain ffmpeg 5.1-compatible filters.
 
