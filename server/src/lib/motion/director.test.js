@@ -1,7 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { directMoment, assignPhotos, placeCaptions } from "./director.js";
-import { beatGridOf, pulseGrid } from "./cuts.js";
+import { beatGridOf, pulseGrid, cutPoints } from "./cuts.js";
+import { mulberry32 } from "../kinetic/director.js";
+import { STYLES } from "./styles.js";
 import { validatePlan } from "./plan.js";
 import { getEffect } from "./effects/index.js";
 
@@ -116,15 +118,93 @@ test("statements start near a downbeat shot and never overlap", () => {
   }
 });
 
-test("captions hold to their end and reveal within them", () => {
+// Fix round 1: spec section 6.4 wins over the brief. A caption's words are placed by `end`
+// but stay up (holdUntil) until the next caption starts; the last one holds to the end.
+test("captions reveal within their words and hold until the next caption starts", () => {
   const caps = placeCaptions({
     cuts: [{ start: 0, end: 2 }, { start: 2, end: 4 }, { start: 4, end: 6 }, { start: 6, end: 8 }, { start: 8, end: 10 }],
     title: "Hi", statements: ["one two three", "end"], period: 0.5,
   });
-  for (const c of caps) {
-    assert.equal(c.holdUntil, c.end);
+  assert.equal(caps.length, 3);
+  caps.forEach((c, i) => {
+    assert.equal(c.holdUntil, i + 1 < caps.length ? caps[i + 1].start : 10, `caption ${i}`);
+    assert.ok(c.holdUntil >= c.end);
     assert.ok(c.reveal > 0 && c.reveal <= c.end - c.start);
+  });
+});
+
+test("a lone title holds until the end of the Moment", () => {
+  const { plan } = directMoment(base({ statements: [] }));
+  assert.equal(plan.captions.length, 1);
+  assert.equal(plan.captions[0].holdUntil, plan.durationSec);
+  assert.equal(validatePlan(plan, { photoCount: 6 }).ok, true);
+});
+
+test("in a plan, the title holds until the first statement and the last caption to durationSec", () => {
+  const { plan } = directMoment(base({ energy: 0.5 }));
+  assert.equal(plan.captions[0].holdUntil, plan.captions[1].start);
+  assert.equal(plan.captions.at(-1).holdUntil, plan.durationSec);
+  assert.equal(validatePlan(plan, { photoCount: 6 }).ok, true);
+});
+
+test("statements start on the first downbeat shot of their group, else the group's first shot", () => {
+  const cut = (i, downbeat) => ({ start: i * 2, end: i * 2 + 2, downbeat });
+  const cutsWith = (downs) => Array.from({ length: 8 }, (_, i) => cut(i, downs.includes(i)));
+  // title "T": slots 2..6, two body statements: groups [2,3] and [4,5,6].
+  const starts = (downs) => placeCaptions({ cuts: cutsWith(downs), title: "T", statements: ["a", "b", "end"], period: 0.5 })
+    .slice(1, 3).map((c) => c.start);
+  assert.deepEqual(starts([3, 5]), [6.05, 10.05]);
+  assert.deepEqual(starts([2, 4]), [4.05, 8.05]);
+  assert.deepEqual(starts([]), [4.05, 8.05]);
+});
+
+test("in a real plan every body statement starts 0.05 s into a downbeat shot", () => {
+  for (const seed of [3, 11, 12, 40]) {
+    const input = base({ energy: 0.5, seed });
+    const { plan } = directMoment(input);
+    const cuts = cutPoints({ grid: input.grid, energy: 0.5, lengthSec: 30, rnd: mulberry32(seed) });
+    plan.captions.slice(1, -1).forEach((c, i) => {
+      const hit = cuts.find((k) => Math.abs(k.start + 0.05 - c.start) < 1e-9);
+      assert.ok(hit, `seed ${seed} caption ${i} starts on a shot`);
+      assert.ok(hit.downbeat, `seed ${seed} caption ${i} starts on a downbeat shot`);
+    });
   }
+});
+
+test("words are capped per length: the first N statements, the Nth on the end card", () => {
+  const twelve = Array.from({ length: 12 }, (_, i) => `line ${i + 1}`);
+  const long = directMoment(base({ statements: twelve, lengthSec: 60, grid: grid120(60), energy: 0.9 }));
+  assert.equal(validatePlan(long.plan, { photoCount: 6 }).ok, true);
+  assert.equal(long.plan.captions.length, 1 + 8);
+  assert.equal(long.plan.captions.at(-1).text, "line 8");
+
+  const five = ["s1", "s2", "s3", "s4", "s5"];
+  const short = directMoment(base({ statements: five, lengthSec: 15, grid: grid120(15), energy: 0.5 }));
+  assert.equal(validatePlan(short.plan, { photoCount: 6 }).ok, true);
+  assert.deepEqual(short.plan.captions.map((c) => c.text), ["HAPPY 40TH, TOLU", "s1", "s2", "s3"]);
+  assert.ok(short.plan.captions.at(-1).start >= short.plan.shots.at(-1).start);
+});
+
+test("the per-length limit for other lengths is the nearest at or below, minimum 3", () => {
+  const many = Array.from({ length: 12 }, (_, i) => `line ${i + 1}`);
+  const count = (lengthSec) => directMoment(base({
+    statements: many, lengthSec, grid: grid120(lengthSec), energy: 0.9, title: "",
+  })).plan.captions.length;
+  assert.equal(count(10), 3);
+  assert.equal(count(20), 3);
+  assert.equal(count(45), 5);
+});
+
+test("an over-long title and statement are truncated to 40 and 60 characters", () => {
+  const { plan } = directMoment(base({
+    title: `  ${"T".repeat(70)}  `,
+    statements: ["  short one  ", "x".repeat(80)],
+    lengthSec: 15, grid: grid120(15), energy: 0.5,
+  }));
+  assert.equal(validatePlan(plan, { photoCount: 6 }).ok, true);
+  assert.equal(plan.captions[0].text, "T".repeat(40));
+  assert.equal(plan.captions.at(-1).text, "x".repeat(60));
+  assert.equal(plan.captions[1].text, "short one");
 });
 
 test("no statements and no title gives no captions", () => {
@@ -137,23 +217,82 @@ test("a pulse grid (no music) still makes a valid plan", () => {
   assert.equal(validatePlan(plan, { photoCount: 6 }).ok, true);
 });
 
-test("every seed, style, energy and length gives a valid, reproducible plan", () => {
-  const photoCount = 6;
-  for (const lengthSec of [15, 30, 60]) {
-    const grids = { beats: grid120(lengthSec), pulse: pulseGrid(lengthSec) };
-    for (const [gridName, grid] of Object.entries(grids)) {
-      for (const styleId of ["glow", "celebrate", "hype", "gallery"]) {
-        for (const energy of [0.1, 0.5, 0.9]) {
-          for (let seed = 1; seed <= 30; seed += 1) {
-            const input = base({ photos: tall(photoCount), grid, lengthSec, styleId, energy, seed });
-            const { plan } = directMoment(input);
-            const label = `${gridName} ${styleId}@${energy} ${lengthSec}s seed ${seed}`;
-            const r = validatePlan(plan, { photoCount });
-            assert.equal(r.ok, true, `${label}: ${JSON.stringify(r.errors)}`);
-            assert.deepEqual(directMoment(input).plan, plan, `${label} is not reproducible`);
+const MIXED = ["tall", "wide", "tall", "wide", "wide", "tall"].map((shape) => ({ shape }));
+const WIDE_ONLY = Array.from({ length: 4 }, () => ({ shape: "wide" }));
+const STYLE_IDS = ["glow", "celebrate", "hype", "gallery"];
+const TWELVE = Array.from({ length: 12 }, (_, i) => `line number ${i + 1}`);
+
+test("every seed, style, energy, length and photo set gives a valid, reproducible plan", () => {
+  const photoSets = { tall: tall(6), mixed: MIXED, wide: WIDE_ONLY };
+  for (const [setName, photos] of Object.entries(photoSets)) {
+    for (const lengthSec of [15, 30, 60]) {
+      const grids = { beats: grid120(lengthSec), pulse: pulseGrid(lengthSec) };
+      for (const [gridName, grid] of Object.entries(grids)) {
+        for (const styleId of STYLE_IDS) {
+          for (const energy of [0.1, 0.5, 0.9]) {
+            for (let seed = 1; seed <= 30; seed += 1) {
+              const input = base({ photos, grid, lengthSec, styleId, energy, seed, statements: TWELVE });
+              const { plan } = directMoment(input);
+              const label = `${setName} ${gridName} ${styleId}@${energy} ${lengthSec}s seed ${seed}`;
+              const r = validatePlan(plan, { photoCount: photos.length });
+              assert.equal(r.ok, true, `${label}: ${JSON.stringify(r.errors)}`);
+              assert.deepEqual(directMoment(input).plan, plan, `${label} is not reproducible`);
+            }
           }
         }
       }
+    }
+  }
+});
+
+test("glow and celebrate never get a split, whatever the photos", () => {
+  for (const styleId of ["glow", "celebrate"]) {
+    for (const photos of [MIXED, WIDE_ONLY]) {
+      for (const energy of [0, 0.5, 1]) {
+        for (let seed = 1; seed <= 30; seed += 1) {
+          const { plan } = directMoment(base({ photos, styleId, energy, seed }));
+          for (const s of plan.shots) {
+            assert.ok(!s.move.id.startsWith("split"), `${styleId}@${energy} seed ${seed}: ${s.move.id}`);
+          }
+        }
+      }
+    }
+  }
+});
+
+test("with mixed photos no move repeats back to back unless two wide photos leave no alternative", () => {
+  for (const styleId of STYLE_IDS) {
+    const hasSplit = Object.keys(STYLES[styleId].moves).some((m) => m.startsWith("split"));
+    for (const lengthSec of [15, 30, 60]) {
+      for (const energy of [0.5, 0.9]) {
+        for (let seed = 1; seed <= 30; seed += 1) {
+          const input = base({ photos: MIXED, styleId, energy, seed, lengthSec, grid: grid120(lengthSec) });
+          const { plan } = directMoment(input);
+          const cuts = cutPoints({ grid: input.grid, energy, lengthSec, rnd: mulberry32(seed) });
+          for (let i = 1; i < plan.shots.length; i += 1) {
+            const [a, b] = [plan.shots[i - 1], plan.shots[i]];
+            if (a.move.id !== b.move.id) continue;
+            const bothWide = MIXED[a.photo].shape === "wide" && MIXED[b.photo].shape === "wide";
+            const splitPossible = hasSplit && b.role === "body" && (cuts[i].downbeat || cuts[i].strong);
+            assert.ok(bothWide && b.move.id === "pan" && !splitPossible,
+              `${styleId}@${energy} ${lengthSec}s seed ${seed}: ${b.move.id} repeats at shot ${i}`);
+          }
+        }
+      }
+    }
+  }
+});
+
+test("dropped is the number of photos the plan never uses", () => {
+  for (const energy of [0.1, 0.5, 0.9]) {
+    for (const seed of [1, 2, 3]) {
+      const photos = Array.from({ length: 20 }, () => ({ shape: "tall" }));
+      const { plan, dropped } = directMoment(base({ photos, lengthSec: 15, grid: grid120(15), energy, seed }));
+      const used = new Set(plan.shots.map((s) => s.photo));
+      // Calm and medium cut few shots in 15 s, so photos are left out; hype has enough shots for all 20.
+      if (energy < 0.9) assert.ok(dropped > 0, `energy ${energy} drops some`);
+      assert.equal(dropped, 20 - used.size, `energy ${energy} seed ${seed}`);
+      assert.equal(validatePlan(plan, { photoCount: 20 }).ok, true);
     }
   }
 });

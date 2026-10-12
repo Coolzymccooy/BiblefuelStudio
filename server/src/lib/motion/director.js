@@ -49,17 +49,25 @@ function usable(id, { kind, shape, capabilities, strongOk, avoid }) {
   return !avoid.includes(id);
 }
 
-function chooseMove({ style, shape, role, capabilities, strongOk, prevMove, lastForPhoto, r }) {
+function chooseMove({ style, shape, role, capabilities, strongOk, prevMove, lastForPhoto, nextWide, r }) {
   const base = { kind: "move", shape, capabilities, strongOk };
   const noSplit = (id) => role === "body" || !id.startsWith("split");
+  // A wide photo next takes pan (its only non-split move), so a tall photo before it leaves pan alone.
+  const leavesPan = (id) => !(shape === "tall" && nextWide && id === "pan");
   const tries = [[prevMove, lastForPhoto], [prevMove]];
   for (const avoid of tries) {
-    const id = pick(style.moves, (m) => noSplit(m) && usable(m, { ...base, avoid }), r);
+    const id = pick(style.moves, (m) => noSplit(m) && leavesPan(m) && usable(m, { ...base, avoid }), r);
     if (id) return id;
   }
-  // A wide photo can only pan or split. A split is strong and needs a strong
-  // beat; when there is none, a repeated pan beats breaking the beat rule.
-  if (shape === "wide") return prevMove !== "pan" ? "pan" : strongOk && role === "body" ? "split2" : "pan";
+  // A wide photo can only pan or split. Pan is the only non-split move that suits a
+  // landscape photo, so it is allowed even outside the style's palette. A split is
+  // strong and needs a strong beat, and only styles that list one may use it; when
+  // there is none, a repeated pan beats breaking the beat or style rules.
+  if (shape === "wide") {
+    const split = ["split2", "split3"].find((m) => style.moves[m] !== undefined && usable(m, { ...base, avoid: [prevMove] }));
+    return prevMove !== "pan" || !split || role !== "body" ? "pan" : split;
+  }
+  // push/still are the neutral tall-photo moves: they stand in even when outside the style's palette.
   return prevMove === "push" ? "still" : "push";
 }
 
@@ -67,6 +75,7 @@ function chooseEntrance({ style, index, capabilities, strongOk, prev, r }) {
   if (index === 0) return "cut";
   const id = pick(style.entrances, (m) => usable(m, { kind: "entrance", capabilities, strongOk, avoid: [prev] }), r);
   if (id) return id;
+  // cut (crossfade right after a cut) is the universal neutral entrance: it stands in even when outside the style's palette.
   return prev === "cut" ? "crossfade" : "cut";
 }
 
@@ -79,12 +88,41 @@ function chooseOverlays({ style, role, move, energy, capabilities, strongOk, pre
   return id ? [{ id }] : [];
 }
 
+const TITLE_MAX = 40;
+const STATEMENT_MAX = 60;
+const STATEMENT_LIMITS = Object.freeze({ 15: 3, 30: 5, 60: 8 });
+const MIN_STATEMENTS = 3;
+
+/** How many statements a Moment of this length uses: the nearest limit at or below it, at least 3. */
+export function statementLimit(lengthSec) {
+  const keys = Object.keys(STATEMENT_LIMITS).map(Number).filter((k) => k <= lengthSec);
+  return keys.length ? Math.max(MIN_STATEMENTS, STATEMENT_LIMITS[Math.max(...keys)]) : MIN_STATEMENTS;
+}
+
+const clip = (text, max) => String(text ?? "").trim().slice(0, max).trim();
+
+/** The words a Moment actually uses: the first N statements, each cut to its limit, and a capped title. */
+export function limitWords({ title, statements, lengthSec }) {
+  return {
+    title: clip(title, TITLE_MAX),
+    statements: statements.map((s) => clip(s, STATEMENT_MAX)).filter(Boolean).slice(0, statementLimit(lengthSec)),
+  };
+}
+
 /**
  * Title on the opening shots; the last statement on the end card; the rest
  * spread over the body, each starting on a shot (a downbeat one where the
- * group has one) and spanning up to 3 shots, so some shots breathe.
+ * group has one) and spanning up to 3 shots, so some shots breathe. Each
+ * caption's words are placed by `end`; it stays up (holdUntil) until the next
+ * caption starts, and the last one until the Moment ends.
  */
 export function placeCaptions({ cuts, title = "", statements = [], period }) {
+  const placed = layoutCaptions({ cuts, title, statements, period });
+  const endOfMoment = r3(cuts.at(-1).end);
+  return placed.map((c, i) => ({ ...c, holdUntil: i + 1 < placed.length ? placed[i + 1].start : endOfMoment }));
+}
+
+function layoutCaptions({ cuts, title, statements, period }) {
   const beat = period && period > 0 ? period : 0.5;
   const out = [];
   const line = (text, start, end, effect) => {
@@ -137,7 +175,8 @@ export function directMoment({
     const prev = shots[i - 1];
     const strongOk = Boolean(c.downbeat || c.strong);
     const move = chooseMove({
-      style, shape, role, capabilities, strongOk, prevMove: prev?.move.id, lastForPhoto: lastMoveOf.get(photo), r: rMove,
+      style, shape, role, capabilities, strongOk, prevMove: prev?.move.id, lastForPhoto: lastMoveOf.get(photo),
+      nextWide: photos[sequence[i + 1]]?.shape === "wide", r: rMove,
     });
     lastMoveOf.set(photo, move);
     const entrance = chooseEntrance({ style, index: i, capabilities, strongOk, prev: prev?.entrance.id, r: rEntrance });
@@ -155,7 +194,8 @@ export function directMoment({
       anchor: { ...(shape === "wide" ? WIDE_ANCHOR : TALL_ANCHOR) },
     });
   });
-  const captions = placeCaptions({ cuts, title, statements, period: grid.period });
+  const words = limitWords({ title, statements, lengthSec });
+  const captions = placeCaptions({ cuts, ...words, period: grid.period });
   return {
     plan: { version: 1, ...OUTPUT, durationSec: lengthSec, seed, style: style.id, energy: e, shots, captions },
     dropped,
