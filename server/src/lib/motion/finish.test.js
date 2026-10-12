@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { statementsAss, fxAss, finishArgs, LOUDNESS } from "./finish.js";
 import { shotArgs } from "./shotArgs.js";
 import { filterNames, ffmpegAvailable, FFMPEG } from "./testkit.js";
@@ -53,15 +53,20 @@ test("FX gathers every shot's ASS overlay events, deterministically", () => {
 });
 
 const common = { body: "body.mp4", out: "out.mp4", workDir: "wd", statementsPath: "wd/s.ass", fxPath: "wd/fx.ass" };
-const graphOf = (r) => r.sideFiles[0].text;
+// Picture and sound are separate graphs (see finish.js); joined, the picture comes first.
+const graphOf = (r) => r.sideFiles.map((f) => f.text).join(";");
 
 test("song only: trimmed from its window, padded to length, faded, loudness-normalised", () => {
   const r = finishArgs({ ...common, plan: plan(), song: { file: "song.mp3", startSec: 42.5 }, voice: null });
   const a = r.args;
   assert.deepEqual(a.slice(a.indexOf("-ss"), a.indexOf("-ss") + 4), ["-ss", "42.500", "-i", "song.mp3"]);
-  assert.match(graphOf(r), /\[1:a\]aresample=48000,apad,atrim=0:15\.000,afade=t=in:d=0\.3,afade=t=out:st=13\.800:d=1\.2,loudnorm=I=-14:TP=-1\.5:LRA=11,aresample=48000\[a\]/);
-  assert.equal(a[a.indexOf("-filter_complex_script") + 1], path.join("wd", "finish.txt"));
-  assert.deepEqual(a.slice(a.indexOf("-t"), a.indexOf("-t") + 2), ["-t", "15.000"]);
+  assert.match(graphOf(r), /\[1:a\]aresample=48000,apad=whole_dur=15\.000,atrim=0:15\.000,afade=t=in:d=0\.3,afade=t=out:st=13\.800:d=1\.2,loudnorm=I=-14:TP=-1\.5:LRA=11,aresample=48000\[a\]/);
+  const scripts = a.flatMap((x, i) => (x === "-filter_complex_script" ? [a[i + 1]] : []));
+  assert.deepEqual(scripts, [path.join("wd", "finish-video.txt"), path.join("wd", "finish-audio.txt")]);
+  assert.deepEqual(r.sideFiles.map((f) => f.path), scripts);
+  // Length is bounded inside the graphs, not by an output -t that could race the audio flush.
+  assert.ok(!a.includes("-t"), "no output-side -t");
+  assert.match(graphOf(r), /\[0:v\][^;]*,trim=end_frame=450,setpts=N\/30\/TB\[v\]/);
 });
 
 test("song plus voice: the song ducks under the voice", () => {
@@ -72,7 +77,7 @@ test("song plus voice: the song ducks under the voice", () => {
 
 test("voice only and silence both give a full-length audio track", () => {
   const v = graphOf(finishArgs({ ...common, plan: plan(), song: null, voice: { file: "vo.mp3" } }));
-  assert.match(v, /\[1:a\]aresample=48000,apad,atrim=0:15\.000/);
+  assert.match(v, /\[1:a\]aresample=48000,apad=whole_dur=15\.000,atrim=0:15\.000/);
   const s = finishArgs({ ...common, plan: plan(), song: null, voice: null });
   assert.ok(s.args.join(" ").includes("anullsrc=r=48000:cl=stereo"));
 });
@@ -107,13 +112,13 @@ test("the output is a social-ready MP4", () => {
 });
 
 test("the finish keeps the body's colour tags: no matrix conversion or retag", () => {
-  const { args, sideFiles } = finishArgs({ ...common, plan: plan(), song: { file: "s", startSec: 0 }, voice: { file: "v" } });
-  assert.ok(!/colorspace|colormatrix|bt709/i.test(args.join(" ") + sideFiles[0].text));
+  const r = finishArgs({ ...common, plan: plan(), song: { file: "s", startSec: 0 }, voice: { file: "v" } });
+  assert.ok(!/colorspace|colormatrix|bt709/i.test(r.args.join(" ") + graphOf(r)));
 });
 
 test("the finish graph uses only ffmpeg 5.1 filters", () => {
   for (const [song, voice] of [[{ file: "s", startSec: 0 }, null], [{ file: "s", startSec: 0 }, { file: "v" }], [null, { file: "v" }], [null, null]]) {
-    const g = finishArgs({ ...common, plan: plan(), song, voice }).sideFiles[0].text;
+    const g = graphOf(finishArgs({ ...common, plan: plan(), song, voice }));
     for (const name of filterNames([g])) assert.ok(FFMPEG_51_FILTERS.has(name), `${name} not allowed`);
   }
 });
@@ -282,4 +287,52 @@ test("the song ducks while the voice speaks", { skip }, () => {
   const under = windowVolume(out, 0.7, 1, band(440));
   const clear = windowVolume(out, 3.2, 1, band(440));
   assert.ok(clear - under >= 6, `song band should drop at least 6 dB under the voice: ${under} vs ${clear}`);
+});
+
+// A timing race, not a logic error: with the output bounded by -t, the muxer could close the audio
+// before loudnorm's end-of-stream flush arrived, and the AAC went to silence packets near the end.
+// It only shows when ffmpeg is busy, so the same render runs several times at once.
+const spawnAsync = (bin, args) => new Promise((resolve) => {
+  const child = spawn(bin, args, { stdio: ["ignore", "ignore", "pipe"] });
+  let stderr = "";
+  child.stderr.on("data", (d) => { stderr += d; });
+  child.on("close", (status) => resolve({ status, stderr }));
+});
+
+test("under load the mixed audio never drops to silence before the end", { skip }, async () => {
+  const SEC = 8;
+  const RUNS = Number(process.env.FINISH_STRESS_RUNS) || 8;
+  const gen = (name, expr, sec) => {
+    const file = path.join(fx.dir, name);
+    run(FFMPEG, ["-hide_banner", "-v", "error", "-y", "-f", "lavfi", "-i", `aevalsrc=${expr}:s=44100:d=${sec}`, "-ac", "1", "-c:a", "pcm_s16le", file]);
+    return file;
+  };
+  const song = gen("stress-song.wav", "'0.3*sin(2*PI*t*(300+300*gte(t,10)))'", 30);
+  const voice = gen("stress-voice.wav", "'0.3*sin(2*PI*1500*t)*between(t,2,5)'", 3);
+  const p = plan({ durationSec: SEC, shots: [{ ...plan().shots[0], start: 0, end: SEC, overlays: [] }], captions: [] });
+  const photo = path.join(fx.dir, "photo.jpg");
+  const body = path.join(fx.dir, "stress-body.mp4");
+  const shot = shotArgs({ shot: p.shots[0], index: 0, workImage: photo, prevFrame: null, out: body, w: 1080, h: 1920, fps: 30, workDir: fx.dir });
+  for (const f of shot.sideFiles) fs.writeFileSync(f.path, f.text);
+  run(FFMPEG, shot.args);
+
+  const results = await Promise.all(Array.from({ length: RUNS }, async (_, i) => {
+    const workDir = path.join(fx.dir, `stress-${i}`);
+    fs.mkdirSync(workDir);
+    const out = path.join(workDir, "out.mp4");
+    const { args, sideFiles } = finishArgs({ body, out, plan: p, statementsPath: null, fxPath: null, song: { file: song, startSec: 8 }, voice: { file: voice }, workDir });
+    for (const f of sideFiles) fs.writeFileSync(f.path, f.text);
+    const r = await spawnAsync(FFMPEG, args);
+    return { i, out, ...r };
+  }));
+
+  for (const r of results) {
+    assert.equal(r.status, 0, `run ${r.i}\n${r.stderr}`);
+    const pk = run(FFPROBE, ["-v", "error", "-select_streams", "a", "-show_entries", "packet=pts_time,size", "-of", "json", r.out]);
+    const early = JSON.parse(pk.stdout).packets.filter((x) => Number(x.pts_time) < SEC - 0.1);
+    const tiny = early.filter((x) => Number(x.size) < 20);
+    assert.equal(tiny.length, 0, `run ${r.i}: silence packets from ${tiny[0]?.pts_time} s`);
+    const tail = windowVolume(r.out, 7.55, 0.35);
+    assert.ok(tail > -60, `run ${r.i}: 7.55-7.9 s should be audible in the fade, got ${tail} dB`);
+  }
 });

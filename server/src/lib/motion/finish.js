@@ -54,7 +54,8 @@ export function fxAss(plan) {
 const assFilter = (p) => `ass=filename='${escapeFontPath(p)}':fontsdir='${escapeFontPath(FONT_DIR)}'`;
 
 function audioGraph({ song, voice, D }) {
-  const fit = `aresample=48000,apad,atrim=0:${n3(D)}`;
+  // apad=whole_dur pads to exactly D; atrim is a hard ceiling for a source that runs long.
+  const fit = `aresample=48000,apad=whole_dur=${n3(D)},atrim=0:${n3(D)}`;
   const tail = (sec) => `afade=t=out:st=${n3(Math.max(0, D - sec))}:d=${sec}`;
   // loudnorm emits 192 kHz. Resampling back to 48 kHz here, explicitly, stops the
   // implicit conversion in front of the AAC encoder from dropping the end of a mixed track.
@@ -79,19 +80,31 @@ export function finishArgs({ body, out, plan, statementsPath, fxPath, song, voic
   if (song) inputs.push("-ss", n3(song.startSec || 0), "-i", song.file);
   if (voice) inputs.push("-i", voice.file);
   if (!song && !voice) inputs.push("-f", "lavfi", "-t", n3(D), "-i", "anullsrc=r=48000:cl=stereo");
-  const video = [style.grade, statementsPath && assFilter(statementsPath), fxPath && assFilter(fxPath)].filter(Boolean);
-  const graph = [`[0:v]${video.join(",") || "null"}[v]`, ...audioGraph({ song, voice, D })].join(";");
-  const script = path.join(workDir, "finish.txt");
+  // Both streams are bounded inside the graph. An output-side -t raced loudnorm's end-of-stream
+  // flush (it buffers about 3 s), and the muxer could close the audio before the flush landed.
+  const bound = `trim=end_frame=${Math.round(D * plan.fps)},setpts=N/${plan.fps}/TB`;
+  const video = [style.grade, statementsPath && assFilter(statementsPath), fxPath && assFilter(fxPath), bound].filter(Boolean);
+  // Picture and sound are two separate filtergraphs. In ffmpeg 8.0.1 a single graph holding both
+  // lost the end of the mixed audio now and then when the machine was busy (the audio went to
+  // silence from a random point in the last 1.5 s); separate graphs never did in repeated trials.
+  const videoScript = path.join(workDir, "finish-video.txt");
+  const audioScript = path.join(workDir, "finish-audio.txt");
   const args = [
     "-hide_banner", "-v", "error", "-y",
     ...inputs,
-    "-filter_complex_script", script,
+    "-filter_complex_script", videoScript,
+    "-filter_complex_script", audioScript,
     "-map", "[v]", "-map", "[a]",
     "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-pix_fmt", "yuv420p",
     "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
     "-movflags", "+faststart",
-    "-t", n3(D),
     out,
   ];
-  return { args, sideFiles: [{ path: script, text: graph }] };
+  return {
+    args,
+    sideFiles: [
+      { path: videoScript, text: `[0:v]${video.join(",") || "null"}[v]` },
+      { path: audioScript, text: audioGraph({ song, voice, D }).join(";") },
+    ],
+  };
 }
