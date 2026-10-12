@@ -41,4 +41,12 @@ describe('momentsApi', () => {
     expect(err.payload.bucket).toBe('render');
     expect(err.message).toBe(body.hint);
   });
+  it('a coded error with no message reads as its code', async () => {
+    vi.spyOn(api, 'put').mockResolvedValueOnce({ ok: false, status: 500, data: { ok: false, error: 'RENDER_BROKEN' } });
+    const err = await momentsApi.update('m1', { title: 'x' }).catch((e: unknown) => e);
+    expect(isApiError(err)).toBe(true);
+    if (!isApiError(err)) throw new Error('expected an ApiError');
+    expect(err.code).toBe('RENDER_BROKEN');
+    expect(err.message).toBe('RENDER_BROKEN');
+  });
 });

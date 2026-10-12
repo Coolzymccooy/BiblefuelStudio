@@ -17,6 +17,7 @@ export function isRunning(project: Pick<MomentProject, 'render'>): boolean {
 
 export function canMake(project: MomentProject, meta: MomentMeta): { ok: boolean; reason?: string } {
   if (isRunning(project)) return { ok: false, reason: 'Already making this Moment.' };
+  if (!project.occasion) return { ok: false, reason: 'Pick an occasion first.' };
   const min = meta.limits.minPhotos;
   if (project.photos.length < min) return { ok: false, reason: `Add at least ${min} photos.` };
   return { ok: true };
@@ -32,6 +33,7 @@ export function statementOverflow(project: MomentProject, meta: MomentMeta): num
 
 /** Remove one photo. The star stays on its photo, or goes to the first when its photo is removed. */
 export function removePhoto(photos: MomentPhoto[], heroIndex: number, index: number) {
+  if (index < 0 || index >= photos.length) return { photos, heroIndex };
   const next = photos.filter((_, i) => i !== index);
   let hero = heroIndex;
   if (index === heroIndex) hero = 0;

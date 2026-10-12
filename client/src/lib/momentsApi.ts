@@ -15,8 +15,9 @@ const CODE_PATTERN = /^[A-Z][A-Z0-9_]*$/;
 
 /**
  * Turn a failed response into an ApiError. The message is the server's human
- * sentence (the quota hint, or the error text) so it reads well in a toast; the
- * code and the full body are kept so toastError can render coded errors.
+ * sentence (the quota hint, or the error text) so it reads well in a toast, and
+ * falls back to the code when there is no sentence; the code and the full body
+ * are kept so toastError can render coded errors.
  */
 function failure(res: Res, fallback: string): ApiError {
   const body = res.data ?? {};
@@ -24,7 +25,7 @@ function failure(res: Res, fallback: string): ApiError {
   const code = [bodyError, res.error].find((v): v is string => typeof v === 'string' && CODE_PATTERN.test(v)) ?? '';
   const human = [body.hint, res.error, bodyError]
     .find((v): v is string => typeof v === 'string' && v.length > 0 && v !== code);
-  return new ApiError(human || fallback, code, body);
+  return new ApiError(human || code || fallback, code, body);
 }
 
 function unwrap<T>(res: Res, key: string): T {

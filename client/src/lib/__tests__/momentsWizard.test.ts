@@ -9,6 +9,14 @@ const meta = {
   limits: { statements: { 15: 3, 30: 5, 60: 8 }, maxStatements: 8, title: 40, statement: 60, detail: 80, minPhotos: 3, maxPhotos: 20 },
 } as MomentMeta;
 const photo = (n: number): MomentPhoto => ({ ref: { kind: 'upload', path: `p${n}` }, url: `/outputs/p${n}.jpg`, width: 1, height: 1 });
+/** Freeze a value and everything under it, so any in-place write throws in strict mode. */
+function deepFreeze<T>(value: T): T {
+  if (value && typeof value === 'object') {
+    Object.values(value as object).forEach(deepFreeze);
+    Object.freeze(value);
+  }
+  return value;
+}
 const project = (over: Partial<MomentProject> = {}) => ({
   projectId: 'm1', occasion: 'birthday', photos: [photo(1), photo(2), photo(3)], heroIndex: 0, statements: [], title: '',
   lengthSec: 15, render: null, ...over,
@@ -23,6 +31,11 @@ describe('canMake', () => {
   });
   it('is off while rendering', () => {
     expect(canMake(project({ render: { jobId: 'j', status: 'running', percent: 10, stage: 'shots' } }), meta).ok).toBe(false);
+  });
+  it('needs an occasion', () => {
+    const r = canMake(project({ occasion: '' }), meta);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/occasion/i);
   });
 });
 
@@ -57,6 +70,28 @@ describe('photo bookkeeping', () => {
     const list = [photo(1), photo(2)];
     expect(movePhoto(list, 0, 0, -1)).toEqual({ photos: list, heroIndex: 0 });
   });
+  it('a removal out of range changes nothing', () => {
+    const list = [photo(1), photo(2)];
+    const r = removePhoto(list, 1, 5);
+    expect(r).toEqual({ photos: list, heroIndex: 1 });
+    expect(r.photos).toBe(list);
+    expect(removePhoto(list, 0, -1).photos).toBe(list);
+  });
+  it('the star shifts when another photo moves across it', () => {
+    const r = movePhoto([photo(1), photo(2), photo(3)], 0, 2, 0);
+    expect(r.photos.map((p) => p.url)).toEqual(['/outputs/p3.jpg', '/outputs/p1.jpg', '/outputs/p2.jpg']);
+    expect(r.heroIndex).toBe(1);
+  });
+  it('removing the last photo leaves an empty list with the star at 0', () => {
+    expect(removePhoto([photo(1)], 0, 0)).toEqual({ photos: [], heroIndex: 0 });
+  });
+  it('removing and moving never mutate the inputs', () => {
+    const list = deepFreeze([photo(1), photo(2), photo(3)]);
+    const snapshot = JSON.stringify(list);
+    expect(() => removePhoto(list, 1, 0)).not.toThrow();
+    expect(() => movePhoto(list, 0, 0, 2)).not.toThrow();
+    expect(JSON.stringify(list)).toBe(snapshot);
+  });
 });
 
 describe('verseStatement', () => {
@@ -65,6 +100,12 @@ describe('verseStatement', () => {
   });
   it('falls back to the reference when the verse is too long', () => {
     expect(verseStatement({ reference: 'John 3:16', text: 'x'.repeat(80) }, 60)).toBe('John 3:16');
+  });
+  it('a reference longer than the limit is cut to the limit', () => {
+    const reference = 'R'.repeat(70);
+    const out = verseStatement({ reference, text: 'hi' }, 60);
+    expect(out).toBe(reference.slice(0, 60));
+    expect(out).toHaveLength(60);
   });
 });
 
