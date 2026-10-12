@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { directMoment, assignPhotos, placeCaptions } from "./director.js";
+import { directMoment, assignPhotos, placeCaptions, TITLE_MAX, STATEMENT_MAX, STATEMENT_LIMITS } from "./director.js";
 import { beatGridOf, pulseGrid, cutPoints } from "./cuts.js";
 import { mulberry32 } from "../kinetic/director.js";
 import { STYLES } from "./styles.js";
@@ -310,4 +310,44 @@ test("a tall photo is never panned: its 9:16 window is the whole picture, so pan
       }
     }
   }
+});
+
+function gridEvery(len, step) {
+  const beats = [];
+  for (let t = 0.2; t < len; t += step) beats.push(Math.round(t * 1000) / 1000);
+  return beatGridOf({ beats, downbeats: beats.map((_, i) => i).filter((i) => i % 4 === 0), strong: [8, 16, 40], period: step });
+}
+
+test("the title stays up for 2.5 s of shots, even when high Energy cuts every half second", () => {
+  for (const [name, step] of [["120 bpm", 0.5], ["fast", 0.35]]) {
+    for (const lengthSec of [15, 30, 60]) {
+      for (const styleId of STYLE_IDS) {
+        for (const energy of [0, 0.5, 1]) {
+          for (let seed = 1; seed <= 30; seed += 1) {
+            const input = base({ photos: tall(6), styleId, energy, seed, lengthSec, grid: gridEvery(lengthSec, step) });
+            const { plan } = directMoment(input);
+            const label = `${name} ${styleId}@${energy} ${lengthSec}s seed ${seed}`;
+            const [title, ...rest] = plan.captions;
+            assert.equal(title.effect, "title", label);
+            assert.ok(title.holdUntil - title.start >= 2.2, `${label}: title holds ${title.holdUntil - title.start} s`);
+            // The title shot ends at or after 2.5 s, and everything else starts after it.
+            const titleShot = plan.shots.find((s) => s.end >= 2.5);
+            assert.ok(title.end <= titleShot.end + 1e-9, label);
+            for (const c of rest) assert.ok(c.start >= titleShot.end - 1e-9, `${label}: "${c.text}" starts inside the title`);
+            assert.ok(plan.captions.at(-1).start >= plan.shots.at(-1).start, `${label}: last statement on the end card`);
+            assert.ok(plan.captions.every((c) => c.start <= plan.durationSec - 0.3), `${label}: nothing starts in the last 0.3 s`);
+            const r = validatePlan(plan, { photoCount: 6 });
+            assert.equal(r.ok, true, `${label}: ${JSON.stringify(r.errors)}`);
+          }
+        }
+      }
+    }
+  }
+});
+
+test("the word limits are exported for the server to share", () => {
+  assert.equal(TITLE_MAX, 40);
+  assert.equal(STATEMENT_MAX, 60);
+  assert.deepEqual(STATEMENT_LIMITS, { 15: 3, 30: 5, 60: 8 });
+  assert.ok(Object.isFrozen(STATEMENT_LIMITS));
 });

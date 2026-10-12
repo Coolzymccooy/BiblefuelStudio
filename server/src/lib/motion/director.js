@@ -86,10 +86,12 @@ function chooseOverlays({ style, role, move, energy, capabilities, strongOk, pre
   return id ? [{ id }] : [];
 }
 
-const TITLE_MAX = 40;
-const STATEMENT_MAX = 60;
-const STATEMENT_LIMITS = Object.freeze({ 15: 3, 30: 5, 60: 8 });
+export const TITLE_MAX = 40;
+export const STATEMENT_MAX = 60;
+export const STATEMENT_LIMITS = Object.freeze({ 15: 3, 30: 5, 60: 8 });
 const MIN_STATEMENTS = 3;
+/** The title stays up at least this long (to the end of the shot it falls in). */
+const TITLE_MIN_SEC = 2.5;
 
 /** How many statements a Moment of this length uses: the nearest limit at or below it, at least 3. */
 export function statementLimit(lengthSec) {
@@ -108,7 +110,7 @@ export function limitWords({ title, statements, lengthSec }) {
 }
 
 /**
- * Title on the opening shots; the last statement on the end card; the rest
+ * Title on the opening shots (until one ends at or after 2.5 s); the last statement on the end card; the rest
  * spread over the body, each starting on a shot (a downbeat one where the
  * group has one) and spanning up to 3 shots, so some shots breathe. Each
  * caption's words are placed by `end`; it stays up (holdUntil) until the next
@@ -118,6 +120,12 @@ export function placeCaptions({ cuts, title = "", statements = [], period }) {
   const placed = layoutCaptions({ cuts, title, statements, period });
   const endOfMoment = r3(cuts.at(-1).end);
   return placed.map((c, i) => ({ ...c, holdUntil: i + 1 < placed.length ? placed[i + 1].start : endOfMoment }));
+}
+
+/** The first shot that ends at or after TITLE_MIN_SEC, but never the end card (unless it is the only shot). */
+function titleShotIndex(cuts) {
+  const found = cuts.findIndex((c) => c.end >= TITLE_MIN_SEC);
+  return Math.min(found < 0 ? cuts.length - 1 : found, Math.max(0, cuts.length - 2));
 }
 
 function layoutCaptions({ cuts, title, statements, period }) {
@@ -132,12 +140,15 @@ function layoutCaptions({ cuts, title, statements, period }) {
   };
   const last = cuts.length - 1;
   const t = String(title || "").trim();
-  if (t) line(t, cuts[0].start + 0.15, cuts[Math.min(1, Math.max(0, last - 1))].end - 0.05, "title");
+  // The title spans whole shots until one ends at or after TITLE_MIN_SEC, so a fast edit can't flash it
+  // away. It never takes the end card, which carries the closing statement.
+  const titleLast = t ? titleShotIndex(cuts) : -1;
+  if (t) line(t, cuts[0].start + 0.15, cuts[titleLast].end - 0.05, "title");
   const texts = statements.map((s) => String(s || "").trim()).filter(Boolean);
   if (!texts.length) return out;
   const closing = texts.at(-1);
   const body = texts.slice(0, -1);
-  const firstBody = t ? Math.min(2, last) : 1;
+  const firstBody = t ? Math.min(titleLast + 1, last) : 1;
   const slots = [];
   for (let i = firstBody; i < last; i += 1) slots.push(i);
   const kept = body.slice(0, slots.length);
