@@ -1,11 +1,12 @@
 import * as moves from "./moves.js";
+import * as entrances from "./entrances.js";
 
 /**
  * Every motion effect by id. The director picks from here by kind; the plan
  * validator and renderer look effects up by id.
  */
 export const EFFECTS = Object.freeze(
-  Object.fromEntries([...Object.values(moves)].map((e) => [e.id, Object.freeze(e)])),
+  Object.fromEntries([...Object.values(moves), ...Object.values(entrances)].map((e) => [e.id, Object.freeze(e)])),
 );
 
 export function getEffect(id) {
