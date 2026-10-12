@@ -95,3 +95,74 @@ test("the same seed gives the same cuts", () => {
   const b = cutPoints({ grid: grid120(60), energy: 0.2, lengthSec: 60, rnd: mulberry32(9) });
   assert.deepEqual(a, b);
 });
+
+const r3 = (n) => Math.round(n * 1000) / 1000;
+
+test("a snapped split never leaves an end card under END_CARD_MIN", () => {
+  // 69.2 BPM, first beat at 0.448 s, bar downbeats at beat indexes 2 mod 4.
+  const period = 60 / 69.2;
+  const beats = [];
+  for (let i = 0; 0.448 + i * period < 48.496; i += 1) beats.push(0.448 + i * period);
+  const downbeats = beats.map((_, i) => i).filter((i) => i % 4 === 2);
+  const grid = beatGridOf({ beats, downbeats, strong: [], period });
+  for (const seed of [1, 2, 3, 4, 5, 6, 7, 8]) {
+    const cuts = cutPoints({ grid, energy: 0.045, lengthSec: 48.496, rnd: mulberry32(seed) });
+    checkTiling(cuts, 48.496);
+    assert.ok(cuts.at(-1).end - cuts.at(-1).start >= END_CARD_MIN - 1e-9, `seed ${seed}`);
+  }
+});
+
+test("cut times are 3-decimal even when the beat times are not", () => {
+  // Deterministic sweep over tempos, offsets and lengths with 6-decimal beat times.
+  const rng = mulberry32(42);
+  for (let k = 0; k < 300; k += 1) {
+    const period = 0.4 + rng() * 0.6;
+    const offset = rng() * 0.5;
+    const len = r3(10 + rng() * 50);
+    const energy = rng() < 0.5 ? 0.1 : 0.5;
+    const beats = [];
+    for (let i = 0; offset + i * period < len + 5; i += 1) beats.push(Number((offset + i * period).toFixed(6)));
+    const downbeats = beats.map((_, i) => i).filter((i) => i % 4 === 0);
+    const grid = beatGridOf({ beats, downbeats, strong: [8, 24], period });
+    for (const seed of [1, 2]) {
+      const cuts = cutPoints({ grid, energy, lengthSec: len, rnd: mulberry32(seed) });
+      checkTiling(cuts, len);
+      for (const c of cuts) {
+        assert.equal(c.start, r3(c.start), `k ${k} seed ${seed} start ${c.start}`);
+        assert.equal(c.end, r3(c.end), `k ${k} seed ${seed} end ${c.end}`);
+      }
+    }
+  }
+});
+
+test("beat and pause marks are sorted by time", () => {
+  const beatGrid = beatGridOf({ beats: [1.0, 0.5, 0.75], downbeats: [0], strong: [1], period: 0.25 });
+  assert.deepEqual(beatGrid.marks.map((m) => m.t), [0.5, 0.75, 1.0]);
+  assert.deepEqual(beatGrid.marks.map((m) => m.downbeat), [false, false, true]);
+  // Strong index 1 is the beat at 0.5 s, which now sorts first.
+  assert.deepEqual(beatGrid.marks.map((m) => m.strong), [true, false, false]);
+  const pauses = pauseGrid([{ start: 1, end: 5 }, { start: 2, end: 2.2 }], 10);
+  assert.deepEqual(pauses.marks.map((m) => m.t), [2.1, 3]);
+});
+
+test("overlapping pauses still give contiguous, in-range shots", () => {
+  const grid = pauseGrid([{ start: 1, end: 5 }, { start: 2, end: 2.2 }], 10);
+  for (const energy of [0.1, 0.5, 0.9]) {
+    const cuts = cutPoints({ grid, energy, lengthSec: 10, rnd: mulberry32(1) });
+    checkTiling(cuts, 10);
+  }
+});
+
+test("a fractional lengthSec is rounded to 3 decimals", () => {
+  const cuts = cutPoints({ grid: grid120(), energy: 0.5, lengthSec: 15.0004, rnd: mulberry32(1) });
+  checkTiling(cuts, 15);
+});
+
+test("a Moment shorter than the end card plus a shot is one shot", () => {
+  for (const energy of [0.1, 0.5, 0.9]) {
+    for (const len of [1.7, 1.8]) {
+      const cuts = cutPoints({ grid: grid120(), energy, lengthSec: len, rnd: mulberry32(1) });
+      assert.deepEqual(cuts, [{ start: 0, end: len, downbeat: true, strong: false }]);
+    }
+  }
+});
