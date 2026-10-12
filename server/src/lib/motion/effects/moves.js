@@ -62,7 +62,8 @@ function split(n) {
   return {
     id: `split${n}`, kind: "move", needs: [], shapes: ["tall", "wide"], strong: true,
     graph({ input, output, ctx, tag }) {
-      const ph = Math.floor((ctx.h - GAP * (n - 1)) / n);
+      // Even panel height, so every overlay offset is even: yuv420p snaps odd offsets down a row.
+      const ph = 2 * Math.floor((ctx.h - GAP * (n - 1)) / (2 * n));
       const bands = n === 3 ? [0.1, 0.5, 0.9] : [0.15, 0.75];
       const lines = [`${input}split=${n}${bands.map((_, k) => `[s${tag}${k}]`).join("")}`];
       bands.forEach((band, k) => {

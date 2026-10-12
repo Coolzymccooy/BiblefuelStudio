@@ -60,14 +60,15 @@ test("pan travels a 9:16 window across a wide photo", () => {
 
 test("split panels crop to the panel's own shape, so wide photos are never squashed", () => {
   const g = getEffect("split3").graph({ input: "[0:v]", output: "[mv]", shot: shot("split3"), ctx, tag: "m" }).join(";");
-  // Panels at h=1920 with 4 px gaps: 1080x637, 1080x637, and the last takes the remainder, 1080x638.
+  // Panels at h=1920 with 4 px gaps: 1080x636, 1080x636, and the last takes the remainder, 1080x640.
   // Each crop keeps its panel's own w:h whichever side limits it.
-  assert.match(g, /crop=w='min\(iw,ih\*1080\/637\)':h='min\(ih,iw\*637\/1080\)'/);
-  assert.match(g, /crop=w='min\(iw,ih\*1080\/638\)':h='min\(ih,iw\*638\/1080\)'/);
+  assert.match(g, /crop=w='min\(iw,ih\*1080\/636\)':h='min\(ih,iw\*636\/1080\)'/);
+  assert.match(g, /crop=w='min\(iw,ih\*1080\/640\)':h='min\(ih,iw\*640\/1080\)'/);
   assert.equal((g.match(/zoompan=/g) || []).length, 3);
 });
 
 const GAP = 4;
+const EXPECTED_HEIGHTS = { 2: [958, 958], 3: [636, 636, 640] };
 const panelHeights = (g) => [...g.matchAll(/zoompan=.*?:s=1080x(\d+):fps=/g)].map((m) => Number(m[1]));
 const panelYs = (g) => [...g.matchAll(/overlay=0:(\d+):/g)].map((m) => Number(m[1]));
 
@@ -78,7 +79,10 @@ for (const n of [2, 3]) {
     const ys = panelYs(g);
     assert.equal(heights.length, n);
     assert.equal(ys.length, n);
+    assert.deepEqual(heights, EXPECTED_HEIGHTS[n], "even panel heights, last panel takes the remainder");
     assert.equal(heights.reduce((a, b) => a + b, 0) + (n - 1) * GAP, ctx.h, "panels plus gaps = frame height");
+    // yuv420p snaps odd overlay offsets to the even row below, which would shrink one divider and widen another.
+    ys.forEach((y, k) => assert.equal(y % 2, 0, `panel ${k} at y=${y} is on an even row`));
     ys.forEach((y, k) => assert.equal(y, k === 0 ? 0 : ys[k - 1] + heights[k - 1] + GAP, `panel ${k} sits one gap below the last`));
     assert.equal(ys.at(-1) + heights.at(-1), ctx.h, "last panel ends at the bottom");
     heights.forEach((h) => assert.ok(g.includes(`crop=w='min(iw,ih*1080/${h})':h='min(ih,iw*${h}/1080)'`), `panel ${h}px crops to its own height`));
@@ -134,6 +138,43 @@ for (const id of MOVES) {
     });
   }
 }
+
+test("split3 dividers are exactly 4 black rows, at rows 636 and 1276", { skip: !renderable }, () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "motion-split-"));
+  try {
+    const photo = path.join(dir, "photo.png");
+    run(["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=gray:s=2160x3840:d=1", "-frames:v", "1", photo]);
+    // Column 540 of the composed frame, as one gray byte per row. Panel 2 enters at 0.3 s, so the
+    // last frame (0.47 s) is the first with all three panels showing.
+    const graph = getEffect("split3").graph({ input: "[0:v]", output: "[mv]", shot: shot("split3"), ctx: RENDER_CTX, tag: "m" });
+    // A 2 px crop: yuv420p cannot crop to 1 px wide. Both columns carry the same luma, so take the first.
+    graph.push("[mv]crop=2:1920:540:0,format=gray[col]");
+    const script = path.join(dir, "graph.txt");
+    fs.writeFileSync(script, graph.join(";\n"));
+    const out = path.join(dir, "col.gray");
+    run(["-hide_banner", "-loglevel", "error", "-i", photo, "-filter_complex_script", script, "-map", "[col]", "-pix_fmt", "gray", "-f", "rawvideo", out]);
+    const bytes = fs.readFileSync(out);
+    const frameBytes = 2 * 1920;
+    assert.equal(bytes.length, frameBytes * RENDER_CTX.frames, "two 1920-row columns per frame");
+    const last = bytes.length - frameBytes;
+    const col = Buffer.from(Array.from({ length: 1920 }, (_, r) => bytes[last + 2 * r]));
+    // Runs of near-black rows (black is luma 16 in limited range).
+    const runs = [];
+    for (let y = 0; y < col.length;) {
+      if (col[y] < 20) {
+        let e = y;
+        while (e < col.length && col[e] < 20) e += 1;
+        runs.push([y, e - y]);
+        y = e;
+      } else {
+        y += 1;
+      }
+    }
+    assert.deepEqual(runs, [[636, 4], [1276, 4]]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test("only pan and the splits take wide photos", () => {
   const wide = MOVES.filter((id) => getEffect(id).shapes.includes("wide")).sort();
