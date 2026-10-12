@@ -75,8 +75,28 @@ test("no occasion's fallback title repeats its first statement (every length)", 
   }
 });
 
+test("every occasion yields at least three statements with no details, at every length", () => {
+  for (const id of OCCASION_IDS) {
+    for (const len of LENGTHS) {
+      const t = templatesFor(id, {}, len);
+      assert.ok(t.statements.length >= 3, `${id}@${len}: ${t.statements.length}`);
+    }
+  }
+});
+
 test("unknown occasions resolve to null, ignoring the prototype chain", () => {
   assert.equal(resolveOccasion("constructor"), null);
   assert.equal(resolveOccasion("party"), null);
   assert.equal(resolveOccasion("birthday").id, "birthday");
+});
+
+test("unknown occasion ids fall back to fun's templates", () => {
+  assert.deepEqual(templatesFor("party", { name: "Ada" }, 30), templatesFor("fun", { name: "Ada" }, 30));
+  assert.deepEqual(templatesFor("constructor", {}, 15), templatesFor("fun", {}, 15));
+});
+
+test("a null details object is accepted", () => {
+  const t = templatesFor("birthday", null, 15);
+  assert.equal(t.title, "Happy birthday!");
+  assert.ok(t.statements.length >= 1 && t.statements.every((s) => !s.includes("{")));
 });

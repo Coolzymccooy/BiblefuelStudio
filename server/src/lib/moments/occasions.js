@@ -48,7 +48,7 @@ export const OCCASIONS = Object.freeze({
     id: "event", label: "Church event", church: true, fields: ["eventTitle", "date", "venue", "verse"],
     style: "gallery", energy: 0.6, song: "library:epic-anthem",
     titles: ["{eventTitle}", "You're invited"],
-    statements: ["Save the date", "{date}", "{venue}", "Don't miss it"],
+    statements: ["Save the date", "{date}", "{venue}", "Don't miss it", "Come and celebrate with us"],
     voicePrompt: "An exciting invitation to a church event.",
   }),
   thanksgiving: o({
