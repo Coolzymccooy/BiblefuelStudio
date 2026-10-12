@@ -14,7 +14,6 @@ export const WORK = Object.freeze({ tallW: 2160, tallH: 3840, wideH: 2160 });
 
 /** Wide working images are capped at 4:1 (8640 wide at height 2160). */
 const PANORAMA_MAX_RATIO = 4;
-const PANORAMA_MAX_W = WORK.wideH * PANORAMA_MAX_RATIO;
 
 const ROTATE = { 2: "hflip", 3: "hflip,vflip", 4: "vflip", 5: "transpose=0", 6: "transpose=1", 7: "transpose=3", 8: "transpose=2" };
 
@@ -105,10 +104,11 @@ export function workImageArgs({ src, out, width, height, orientation }) {
   const w = swaps ? height : width;
   const h = swaps ? width : height;
   const shape = w > h ? "wide" : "tall";
-  const panoramaCap = w > PANORAMA_MAX_RATIO * h ? `,crop='min(iw,${PANORAMA_MAX_W})':ih` : "";
+  // Panoramas are centre-cropped to 4:1 before the scale, so ffmpeg never builds a huge intermediate frame.
+  const panoramaCrop = w > PANORAMA_MAX_RATIO * h ? `crop='min(iw,ih*${PANORAMA_MAX_RATIO})':ih,` : "";
   const fit = shape === "tall"
     ? `scale=${WORK.tallW}:${WORK.tallH}:force_original_aspect_ratio=increase,crop=${WORK.tallW}:${WORK.tallH}:(iw-ow)/2:(ih-oh)*0.38,setsar=1`
-    : `scale=-2:${WORK.wideH}${panoramaCap},setsar=1`;
+    : `${panoramaCrop}scale=-2:${WORK.wideH},setsar=1`;
   const vf = rotate ? `${rotate},${fit}` : fit;
   return {
     shape,

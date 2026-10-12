@@ -78,6 +78,16 @@ test("a landscape photo keeps its shape at height 2160", () => {
   assert.equal(args[args.indexOf("-vf") + 1], "scale=-2:2160,setsar=1");
 });
 
+test("a panorama is cropped to 4:1 before it is scaled, after any rotation", () => {
+  const vfOf = (width, height, orientation) => {
+    const { args } = workImageArgs({ src: "a", out: "b", width, height, orientation });
+    return args[args.indexOf("-vf") + 1];
+  };
+  assert.equal(vfOf(6000, 100, 1), "crop='min(iw,ih*4)':ih,scale=-2:2160,setsar=1");
+  assert.equal(vfOf(100, 6000, 6), "transpose=1,crop='min(iw,ih*4)':ih,scale=-2:2160,setsar=1");
+  assert.equal(vfOf(4000, 3000, 1), "scale=-2:2160,setsar=1");
+});
+
 // ---- Hostile input: orientationOf parses untrusted user uploads ----
 
 const isOrientation = (o) => Number.isInteger(o) && o >= 1 && o <= 8;
