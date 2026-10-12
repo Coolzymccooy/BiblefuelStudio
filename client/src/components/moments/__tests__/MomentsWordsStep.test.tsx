@@ -104,15 +104,16 @@ describe('MomentsWordsStep', () => {
     expect(update).toHaveBeenCalledWith('m1', { title: 'Hi!' });
   });
 
-  it('reorders, deletes and adds statements', async () => {
+  it('reorders, deletes and adds statements, each building from the words just saved', async () => {
     const update = vi.spyOn(momentsApi, 'update').mockResolvedValue(mkMoment());
     render(<MomentsWordsStep {...props({ statements: ['A', 'B'] })} />);
     await userEvent.click(screen.getByRole('button', { name: /move statement 2 up/i }));
     expect(update).toHaveBeenLastCalledWith('m1', { statements: ['B', 'A'] });
     await userEvent.click(screen.getByRole('button', { name: /delete statement 1/i }));
-    expect(update).toHaveBeenLastCalledWith('m1', { statements: ['B'] });
+    expect(update).toHaveBeenLastCalledWith('m1', { statements: ['A'] });
     await userEvent.type(screen.getByLabelText(/new statement/i), 'C{Enter}');
-    expect(update).toHaveBeenLastCalledWith('m1', { statements: ['A', 'B', 'C'] });
+    expect(update).toHaveBeenLastCalledWith('m1', { statements: ['A', 'C'] });
+    expect(screen.getByLabelText('Statement 2')).toHaveValue('C');
   });
 
   it('a refused add is toasted and keeps what was typed', async () => {
@@ -146,18 +147,18 @@ describe('MomentsWordsStep', () => {
     render(<MomentsWordsStep {...props({ occasion: 'memorial' })} />);
     await userEvent.click(screen.getByRole('button', { name: /suggest/i }));
     await userEvent.click(await screen.findByRole('button', { name: /add john 11:35/i }));
-    expect(update).toHaveBeenLastCalledWith('m1', { statements: ['“Jesus wept.” John 11:35'] });
+    expect(update).toHaveBeenLastCalledWith('m1', { statements: ['Forever loved', '“Jesus wept.” John 11:35'] });
   });
 
   describe('Add verse at the length limit', () => {
-    const suggestVerse = () => vi.spyOn(momentsApi, 'suggest').mockResolvedValue({
-      title: 'T', statements: ['One'], verse: { reference: 'John 11:35', text: 'Jesus wept.' }, source: 'ai',
+    const suggestVerse = (statements: string[]) => vi.spyOn(momentsApi, 'suggest').mockResolvedValue({
+      title: 'T', statements, verse: { reference: 'John 11:35', text: 'Jesus wept.' }, source: 'ai',
     });
 
     it('is disabled with a hint when the statements already fill the current length', async () => {
-      suggestVerse();
+      suggestVerse(['A', 'B', 'C']);
       vi.spyOn(momentsApi, 'update').mockResolvedValue(mkMoment());
-      render(<MomentsWordsStep {...props({ occasion: 'memorial', statements: ['A', 'B', 'C'], lengthSec: 15 })} />);
+      render(<MomentsWordsStep {...props({ occasion: 'memorial', statements: ['X'], lengthSec: 15 })} />);
       await userEvent.click(screen.getByRole('button', { name: /reshuffle/i }));
       const add = await screen.findByRole('button', { name: /add john 11:35/i });
       expect(add).toBeDisabled();
@@ -165,11 +166,76 @@ describe('MomentsWordsStep', () => {
     });
 
     it('is enabled while there is room', async () => {
-      suggestVerse();
+      suggestVerse(['A', 'B']);
       vi.spyOn(momentsApi, 'update').mockResolvedValue(mkMoment());
-      render(<MomentsWordsStep {...props({ occasion: 'memorial', statements: ['A', 'B'], lengthSec: 15 })} />);
+      render(<MomentsWordsStep {...props({ occasion: 'memorial', statements: ['X'], lengthSec: 15 })} />);
       await userEvent.click(screen.getByRole('button', { name: /reshuffle/i }));
       expect(await screen.findByRole('button', { name: /add john 11:35/i })).toBeEnabled();
+    });
+  });
+  describe('slow saves (deferred, not instant)', () => {
+    const deferred = () => {
+      let resolve!: () => void;
+      const promise = new Promise<ReturnType<typeof mkMoment>>((r) => { resolve = () => r(mkMoment()); });
+      return { promise, resolve };
+    };
+
+    it('typing in another statement survives while an earlier blur-save is in flight', async () => {
+      const d = deferred();
+      const update = vi.spyOn(momentsApi, 'update').mockReturnValue(d.promise);
+      render(<MomentsWordsStep {...props({ statements: ['A', 'B'] })} />);
+      await userEvent.type(screen.getByLabelText('Statement 1'), '1');
+      await userEvent.click(screen.getByLabelText('Statement 2'));
+      await waitFor(() => expect(update).toHaveBeenCalledWith('m1', { statements: ['A1', 'B'] }));
+      await userEvent.type(screen.getByLabelText('Statement 2'), 'xyz');
+      d.resolve();
+      await waitFor(() => expect(screen.getByLabelText('Statement 1')).toHaveValue('A1'));
+      expect(screen.getByLabelText('Statement 2')).toHaveValue('Bxyz');
+    });
+
+    it('a move straight after an edit carries the edited text even though the project has not refetched', async () => {
+      const update = vi.spyOn(momentsApi, 'update').mockResolvedValue(mkMoment());
+      render(<MomentsWordsStep {...props({ statements: ['A', 'B'] })} />);
+      await userEvent.type(screen.getByLabelText('Statement 1'), '1');
+      await userEvent.click(screen.getByRole('button', { name: /move statement 2 up/i }));
+      expect(update).toHaveBeenNthCalledWith(1, 'm1', { statements: ['A1', 'B'] });
+      expect(update).toHaveBeenNthCalledWith(2, 'm1', { statements: ['B', 'A1'] });
+    });
+
+    it('a move queued behind a slow edit still builds from the edit', async () => {
+      const d = deferred();
+      const update = vi.spyOn(momentsApi, 'update')
+        .mockReturnValueOnce(d.promise)
+        .mockResolvedValue(mkMoment());
+      render(<MomentsWordsStep {...props({ statements: ['A', 'B'] })} />);
+      await userEvent.type(screen.getByLabelText('Statement 1'), '1');
+      await userEvent.click(screen.getByRole('button', { name: /move statement 2 up/i }));
+      expect(update).toHaveBeenCalledTimes(1);
+      d.resolve();
+      await waitFor(() => expect(update).toHaveBeenCalledTimes(2));
+      expect(update).toHaveBeenLastCalledWith('m1', { statements: ['B', 'A1'] });
+    });
+
+    it('text fields wait while a structural save is in flight', async () => {
+      const d = deferred();
+      vi.spyOn(momentsApi, 'update').mockReturnValue(d.promise);
+      render(<MomentsWordsStep {...props({ statements: ['A', 'B'] })} />);
+      await userEvent.click(screen.getByRole('button', { name: /delete statement 1/i }));
+      await waitFor(() => expect(screen.getByLabelText('Statement 1')).toBeDisabled());
+      d.resolve();
+      await waitFor(() => expect(screen.getByLabelText('Statement 1')).toBeEnabled());
+      expect(screen.getByLabelText('Statement 1')).toHaveValue('B');
+    });
+
+    it('the title is compared with what was last saved, not the stale project', async () => {
+      const update = vi.spyOn(momentsApi, 'update').mockResolvedValue(mkMoment());
+      render(<MomentsWordsStep {...props({ title: 'Hi' })} />);
+      await userEvent.type(screen.getByLabelText('Title'), '!');
+      await userEvent.tab();
+      await userEvent.click(screen.getByLabelText('Title'));
+      await userEvent.tab();
+      expect(update).toHaveBeenCalledTimes(1);
+      expect(update).toHaveBeenCalledWith('m1', { title: 'Hi!' });
     });
   });
 });
