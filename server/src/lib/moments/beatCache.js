@@ -11,44 +11,77 @@ import { beatGridOf, pulseGrid, pauseGrid } from "../motion/cuts.js";
  */
 const cacheDir = (dataDir) => path.join(dataDir, "moments", "beats");
 
+const round2 = (v) => Math.round(v * 100) / 100;
+
 function hashOf(file) {
   return crypto.createHash("sha1").update(fs.readFileSync(file)).digest("hex");
 }
 
-async function analysis(ctx, file, decode) {
-  const cacheFile = path.join(cacheDir(ctx.dataDir), `${hashOf(file)}.json`);
-  if (fs.existsSync(cacheFile)) {
-    try {
-      const c = JSON.parse(fs.readFileSync(cacheFile, "utf8"));
-      return { tempo: c.tempo, durationSec: c.durationSec, env: Float64Array.from(c.env) };
-    } catch { /* a corrupt cache entry is rebuilt below */ }
+// A cache entry is used only when it has the shape analysis() writes. Anything
+// else (hand-edited, truncated, or from an older build) is rebuilt: a negative
+// tempo, for example, would hang beatGrid.
+function validEntry(c) {
+  return Array.isArray(c.env)
+    && Number.isFinite(c.durationSec)
+    && (c.tempo === null || (Number.isFinite(c.tempo) && c.tempo > 0));
+}
+
+function readEntry(cacheFile) {
+  if (!fs.existsSync(cacheFile)) return null;
+  try {
+    const c = JSON.parse(fs.readFileSync(cacheFile, "utf8"));
+    if (!validEntry(c)) return null;
+    return { tempo: c.tempo, durationSec: c.durationSec, env: Float64Array.from(c.env) };
+  } catch {
+    return null; // unreadable or corrupt: rebuilt below
   }
+}
+
+// The cache is best-effort: a failed write is reported, and the analysis still returns.
+function writeEntry(dir, cacheFile, data) {
+  const tmp = `${cacheFile}.${process.pid}.tmp`;
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(tmp, JSON.stringify(data));
+    fs.renameSync(tmp, cacheFile);
+  } catch (err) {
+    console.warn(`beat cache not written (${cacheFile}): ${err.message}`);
+    try { fs.unlinkSync(tmp); } catch { /* no tmp file was left behind */ }
+  }
+}
+
+async function analysis(ctx, file, decode) {
+  const dir = cacheDir(ctx.dataDir);
+  const cacheFile = path.join(dir, `${hashOf(file)}.json`);
+  const cached = readEntry(cacheFile);
+  if (cached) return cached;
   // Rounded BEFORE use, exactly as it is cached: a first render (cache miss) and a
   // re-render (cache hit) must see the same envelope, or the window and beat phase
   // can flip and "same seed, same video" breaks.
   const env = Float64Array.from(onsetEnvelope(await decode(file)), (v) => Math.round(v * 1e4) / 1e4);
   const result = { tempo: estimateTempo(env), durationSec: env.length / FRAME_RATE, env };
-  fs.mkdirSync(cacheDir(ctx.dataDir), { recursive: true });
-  const tmp = `${cacheFile}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify({ tempo: result.tempo, durationSec: result.durationSec, env: Array.from(env) }));
-  fs.renameSync(tmp, cacheFile);
+  writeEntry(dir, cacheFile, { tempo: result.tempo, durationSec: result.durationSec, env: Array.from(env) });
   return result;
 }
 
 export async function songGrid(ctx, file, { lengthSec, windowStartSec = null, decode = decodePcm }) {
   const { tempo, durationSec, env } = await analysis(ctx, file, decode);
   const latest = Math.max(0, durationSec - lengthSec);
-  const start = windowStartSec === null || windowStartSec === undefined
+  const requested = Number.isFinite(windowStartSec) ? windowStartSec : null;
+  // Rounded once: the grid and the returned windowStartSec are the same value.
+  const start = round2(requested === null
     ? chooseWindow(env, lengthSec)
-    : Math.min(Math.max(0, windowStartSec), latest);
+    : Math.min(Math.max(0, requested), latest));
   const grid = tempo ? beatGridOf(beatGrid(env, tempo, start, lengthSec)) : pulseGrid(lengthSec);
-  return { grid, tempo, durationSec, windowStartSec: Math.round(start * 100) / 100 };
+  return { grid, tempo, durationSec, windowStartSec: start };
 }
 
 export async function voiceGrid(file, { lengthSec, decode = decodePcm }) {
   const pcm = await decode(file);
-  const durationSec = Math.round((pcm.length / 2 / SAMPLE_RATE) * 100) / 100;
+  const durationSec = round2(pcm.length / 2 / SAMPLE_RATE);
   const pauses = pausesFrom(pcm).filter((p) => p.start < lengthSec);
-  const grid = pauses.length ? pauseGrid(pauses, lengthSec) : pulseGrid(lengthSec);
+  const paused = pauses.length ? pauseGrid(pauses, lengthSec) : null;
+  // A pause grid with no marks inside the Moment (every pause falls after its end) has nothing to cut on.
+  const grid = paused && paused.marks.length ? paused : pulseGrid(lengthSec);
   return { ...grid, durationSec };
 }
