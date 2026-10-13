@@ -8,8 +8,8 @@ const MIN_GAP = 0.05;
 
 type PlacedLine = LyricLine & { start: number; end: number };
 
-/** Same test as the server's `placed`: has words and a finite start and end. */
-const isPlaced = (l: LyricLine | undefined): l is PlacedLine =>
+/** Same test as the server's `placed`: has words and a finite start and end. A line that fails it has no time to move. */
+export const isPlacedLine = (l: LyricLine | undefined): l is PlacedLine =>
   !!l && Array.isArray(l.words) && l.words.length > 0 && Number.isFinite(l.start) && Number.isFinite(l.end);
 
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
@@ -18,7 +18,7 @@ const round3 = (n: number) => Math.round(n * 1000) / 1000;
 function nearestPlaced(lines: LyricLine[], index: number, step: 1 | -1): PlacedLine | undefined {
   for (let i = index + step; i >= 0 && i < lines.length; i += step) {
     const candidate = lines[i];
-    if (isPlaced(candidate)) return candidate;
+    if (isPlacedLine(candidate)) return candidate;
   }
   return undefined;
 }
@@ -31,7 +31,7 @@ function nearestPlaced(lines: LyricLine[], index: number, step: 1 | -1): PlacedL
  */
 export function nudgeLine(lines: LyricLine[], index: number, delta: number, songEnd: number): number {
   const line = lines[index];
-  if (!isPlaced(line)) throw new Error('That line has no timing yet — run timing first.');
+  if (!isPlacedLine(line)) throw new Error('That line has no timing yet — run timing first.');
   const start = line.start;
   const len = line.end - start;
   const prev = nearestPlaced(lines, index, -1);
@@ -55,6 +55,12 @@ export function formatTime(sec: number): string {
   const rest = tenths - minutes * 600;
   const seconds = Math.floor(rest / 10);
   return `${minutes}:${String(seconds).padStart(2, '0')}.${rest % 10}`;
+}
+
+/** "3:01" for a song 181.4 seconds long. */
+export function formatSongLength(sec: number): string {
+  const whole = Math.max(0, Math.round(sec));
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
 }
 
 export function flaggedCount(lines: LyricLine[]): number {

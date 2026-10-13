@@ -10,6 +10,7 @@ export function useLyricProject(projectId: string | null) {
     queryKey: ['lyric-project', projectId],
     queryFn: () => lyricVideoApi.get(projectId as string),
     enabled: Boolean(projectId),
-    refetchInterval: (query) => (query.state.data?.timing?.status === 'running' ? LYRIC_POLL_MS : false),
+    // A failed fetch stops the polling: retrying every 2 s against a server that is down only piles up requests.
+    refetchInterval: (query) => (query.state.status !== 'error' && query.state.data?.timing?.status === 'running' ? LYRIC_POLL_MS : false),
   });
 }

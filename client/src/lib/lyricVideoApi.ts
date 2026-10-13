@@ -8,14 +8,26 @@ import type {
 const BASE = '/api/lyric-video';
 
 const GENERIC_ERROR = 'Something went wrong. Please try again.';
+const NETWORK_ERROR = "Couldn't reach the server — check your connection and try again.";
 const QUOTA_ERROR = "You've used today's free renders — upgrade to Premium or come back tomorrow.";
+
+/** The song and background calls wait on server-side file probes that can run past the 15 s default. */
+const SLOW_CALL = { timeout: 60_000 } as const;
+
+/** Raw axios messages (not sentences) that the api client passes through when the server said nothing. */
+const RAW_NETWORK = /^(network error|timeout of \d+ms exceeded)$/i;
+const RAW_STATUS = /^request failed with status code/i;
 
 /** Throws Error(message) with a sentence fit for the user when the call failed. */
 function check(res: ApiResponse): void {
   if (res.ok) return;
   // The quota middleware answers 429 with the code "QUOTA_EXCEEDED", not a sentence.
   if (res.error === 'QUOTA_EXCEEDED') throw new Error(QUOTA_ERROR);
-  throw new Error(res.error || GENERIC_ERROR);
+  const message = res.error?.trim();
+  if (message && RAW_NETWORK.test(message)) throw new Error(NETWORK_ERROR);
+  // Any other message is the server's own sentence (it answers 429 for more than the daily limit).
+  if (!message || RAW_STATUS.test(message)) throw new Error(GENERIC_ERROR);
+  throw new Error(message);
 }
 
 /** `api` already unwraps axios, so `data` is the server's body itself. */
@@ -45,7 +57,7 @@ export const lyricVideoApi = {
   async uploadSong(id: string, file: File, onProgress?: (pct: number) => void): Promise<LyricProject> {
     const up = await uploadMedia(file, file.name, 'source-video', onProgress);
     if (!up.file) throw new Error('The song did not upload. Please try again.');
-    return project(api.post(`${BASE}/${id}/song`, { path: up.file }));
+    return project(api.post(`${BASE}/${id}/song`, { path: up.file }, undefined, SLOW_CALL));
   },
   setSheet: (id: string, sheet: string) => project(api.put(`${BASE}/${id}/sheet`, { sheet })),
   align: (id: string) => project(api.post(`${BASE}/${id}/align`, {})),
@@ -53,7 +65,7 @@ export const lyricVideoApi = {
     project(api.patch(`${BASE}/${id}/lines/${lineId}`, patch)),
   setLook: (id: string, look: Partial<LyricProject['look']>) => project(api.put(`${BASE}/${id}/look`, look)),
   setBackground: (id: string, path: string | null, fit?: BackgroundFit) =>
-    project(api.put(`${BASE}/${id}/background`, { path, ...(fit ? { fit } : {}) })),
+    project(api.put(`${BASE}/${id}/background`, { path, ...(fit ? { fit } : {}) }, undefined, SLOW_CALL)),
   async uploadBackground(id: string, file: File, onProgress?: (pct: number) => void): Promise<LyricProject> {
     const up = await uploadMedia(file, file.name, 'background', onProgress);
     if (!up.file) throw new Error('The background did not upload. Please try again.');

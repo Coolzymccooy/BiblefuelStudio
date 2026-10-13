@@ -1,6 +1,6 @@
 // client/src/lib/__tests__/lyricTiming.test.ts
 import { describe, it, expect } from 'vitest';
-import { nudgeLine, lineAt, formatTime, flaggedCount } from '../lyricTiming';
+import { nudgeLine, lineAt, formatTime, flaggedCount, isPlacedLine, formatSongLength } from '../lyricTiming';
 import type { LyricLine } from '../lyricVideoTypes';
 
 const line = (start: number, end: number, flag: 'check' | null = null): LyricLine =>
@@ -86,3 +86,22 @@ it('does not round a minute up into "0:60.0"', () => {
 });
 
 it('counts flagged lines', () => expect(flaggedCount(lines)).toBe(1));
+
+describe('isPlacedLine', () => {
+  it('is true for a line with words and a start and end', () => expect(isPlacedLine(lines[0])).toBe(true));
+  it('is false for a line that was never placed', () => expect(isPlacedLine(untimed('u'))).toBe(false));
+  it('is false when the words are empty or the times are not numbers', () => {
+    expect(isPlacedLine({ ...lines[0], words: [] })).toBe(false);
+    expect(isPlacedLine({ ...lines[0], start: Number.NaN })).toBe(false);
+    expect(isPlacedLine({ ...lines[0], end: undefined })).toBe(false);
+  });
+});
+
+describe('formatSongLength', () => {
+  it('shows whole minutes and seconds', () => {
+    expect(formatSongLength(181.4)).toBe('3:01');
+    expect(formatSongLength(30)).toBe('0:30');
+    expect(formatSongLength(0)).toBe('0:00');
+  });
+  it('rounds to the nearest second without showing 0:60', () => expect(formatSongLength(59.6)).toBe('1:00'));
+});

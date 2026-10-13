@@ -66,13 +66,35 @@ describe('lyricVideoApi', () => {
     await expect(lyricVideoApi.align('lv_1')).rejects.toThrow(/today's free renders/);
   });
 
+  it("shows the server's own sentence for a refusal that is not the daily limit", async () => {
+    vi.mocked(api.post).mockResolvedValue({
+      ok: false, status: 429, error: 'You already have a video being made — wait for it to finish.',
+    });
+    await expect(lyricVideoApi.render('lv_1', 'portrait', '720p')).rejects.toThrow('You already have a video being made');
+  });
+
+  it('turns raw network messages into a plain sentence', async () => {
+    const plain = "Couldn't reach the server — check your connection and try again.";
+    vi.mocked(api.get).mockResolvedValue({ ok: false, status: 500, error: 'Network Error' });
+    await expect(lyricVideoApi.get('lv_1')).rejects.toThrow(plain);
+    vi.mocked(api.get).mockResolvedValue({ ok: false, status: 500, error: 'timeout of 15000ms exceeded' });
+    await expect(lyricVideoApi.get('lv_1')).rejects.toThrow(plain);
+  });
+
+  it('never shows a raw "Request failed with status code" message', async () => {
+    vi.mocked(api.post).mockResolvedValue({ ok: false, status: 429, error: 'Request failed with status code 429' });
+    await expect(lyricVideoApi.align('lv_1')).rejects.toThrow('Something went wrong');
+  });
+
   it('uploads the song then attaches it', async () => {
     vi.mocked(uploadMedia).mockResolvedValue({ file: '/app/outputs/source-video-1.mp4' });
     vi.mocked(api.post).mockResolvedValue(reply({ project }));
     const f = new File(['x'], 'song.mp4', { type: 'video/mp4' });
     await lyricVideoApi.uploadSong('lv_1', f);
     expect(uploadMedia).toHaveBeenCalledWith(f, 'song.mp4', 'source-video', undefined);
-    expect(api.post).toHaveBeenCalledWith('/api/lyric-video/lv_1/song', { path: '/app/outputs/source-video-1.mp4' });
+    expect(api.post).toHaveBeenCalledWith(
+      '/api/lyric-video/lv_1/song', { path: '/app/outputs/source-video-1.mp4' }, undefined, { timeout: 60_000 },
+    );
   });
 
   it('forwards upload progress', async () => {
@@ -115,9 +137,11 @@ describe('lyricVideoApi', () => {
   it('sets and clears the background', async () => {
     vi.mocked(api.put).mockResolvedValue(reply({ project }));
     await lyricVideoApi.setBackground('lv_1', '/o/b.jpg', 'cover');
-    expect(api.put).toHaveBeenCalledWith('/api/lyric-video/lv_1/background', { path: '/o/b.jpg', fit: 'cover' });
+    expect(api.put).toHaveBeenCalledWith(
+      '/api/lyric-video/lv_1/background', { path: '/o/b.jpg', fit: 'cover' }, undefined, { timeout: 60_000 },
+    );
     await lyricVideoApi.setBackground('lv_1', null);
-    expect(api.put).toHaveBeenLastCalledWith('/api/lyric-video/lv_1/background', { path: null });
+    expect(api.put).toHaveBeenLastCalledWith('/api/lyric-video/lv_1/background', { path: null }, undefined, { timeout: 60_000 });
   });
 
   it('uploads a background then attaches it', async () => {
@@ -126,7 +150,7 @@ describe('lyricVideoApi', () => {
     const f = new File(['x'], 'bg.mp4', { type: 'video/mp4' });
     await lyricVideoApi.uploadBackground('lv_1', f);
     expect(uploadMedia).toHaveBeenCalledWith(f, 'bg.mp4', 'background', undefined);
-    expect(api.put).toHaveBeenCalledWith('/api/lyric-video/lv_1/background', { path: '/o/bg.mp4' });
+    expect(api.put).toHaveBeenCalledWith('/api/lyric-video/lv_1/background', { path: '/o/bg.mp4' }, undefined, { timeout: 60_000 });
   });
 
   it('builds the captions link and reads the captions as text', async () => {

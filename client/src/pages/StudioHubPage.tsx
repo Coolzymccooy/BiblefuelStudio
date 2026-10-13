@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { Mic, Film, Image, Video, List, ChevronRight, type LucideIcon } from 'lucide-react';
+import { Mic, Film, Image, Video, Music, List, ChevronRight, type LucideIcon } from 'lucide-react';
 import { ScreenHeader } from '../components/ui/ScreenHeader';
 
 interface Tool {
@@ -14,6 +14,7 @@ const tools: Tool[] = [
     { to: '/app/timeline', icon: Film, title: 'Timeline', desc: 'Arrange clips and crossfades.' },
     { to: '/app/backgrounds', icon: Image, title: 'Backgrounds', desc: 'Find and save footage.' },
     { to: '/app/render', icon: Video, title: 'Render', desc: 'Export and share your MP4.' },
+    { to: '/app/lyric-video', icon: Music, title: 'Lyric video', desc: 'Turn your song into a lyric video.' },
 ];
 
 export function StudioHubPage() {

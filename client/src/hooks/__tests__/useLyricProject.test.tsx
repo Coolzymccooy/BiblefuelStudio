@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/react';
+import { renderHook, waitFor, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
 import { lyricVideoApi } from '../../lib/lyricVideoApi';
@@ -53,6 +53,28 @@ describe('useLyricProject', () => {
     const { qc, wrapper } = setup();
     const { result } = renderHook(() => useLyricProject('lv_1'), { wrapper });
     await waitFor(() => expect(result.current.data).toBeDefined());
+    expect(pollInterval(qc, 'lv_1')).toBe(false);
+  });
+
+  it('stops polling once the fetch has failed', async () => {
+    vi.spyOn(lyricVideoApi, 'get').mockRejectedValue(new Error('Network Error'));
+    const { qc, wrapper } = setup();
+    const { result } = renderHook(() => useLyricProject('lv_1'), { wrapper });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(pollInterval(qc, 'lv_1')).toBe(false);
+  });
+
+  it('stops polling after a failed refresh even though the last good copy was still running', async () => {
+    const get = vi.spyOn(lyricVideoApi, 'get').mockResolvedValueOnce(withTiming('running'));
+    const { qc, wrapper } = setup();
+    const { result } = renderHook(() => useLyricProject('lv_1'), { wrapper });
+    await waitFor(() => expect(result.current.data).toBeDefined());
+    expect(pollInterval(qc, 'lv_1')).toBe(2000);
+    get.mockRejectedValue(new Error('Network Error'));
+    let refreshed: Awaited<ReturnType<typeof result.current.refetch>> | undefined;
+    await act(async () => { refreshed = await result.current.refetch(); });
+    expect(refreshed?.isError).toBe(true);
+    expect(refreshed?.data?.timing.status).toBe('running');
     expect(pollInterval(qc, 'lv_1')).toBe(false);
   });
 });
