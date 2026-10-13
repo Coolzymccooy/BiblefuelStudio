@@ -14,6 +14,7 @@ const KEEP_AFTER_SEC = 0.5; // heard words kept just past the frontier
 const PACE_SLACK = 1.5; // songs are not sung at an even pace
 const MAX_SPAN = 24; // most lines a window is ever checked against
 const LOCATE_LINES = 2 * MAX_SPAN; // how far past the frontier an accepted window is looked for
+const NEAR_BEST = 0.75; // a later start must match this much better to beat an earlier one (choruses repeat)
 const MAX_AUDIO_FACTOR = 3; // all passes together send Whisper at most this many times the song's length
 
 /**
@@ -47,9 +48,13 @@ function lineHits(toks, map) {
 
 /**
  * Where a window's words sit in lines [lo, hi): each line in turn is tried as
- * the start, and the start that matches the most words wins (the earliest on a
- * tie). Returns the last line the window heard with confidence (absolute
- * index, -1 when none) and when that line's last heard word ended.
+ * the start, counting only exact word matches (a mishearing kept between two
+ * matches is not evidence). The earliest start within NEAR_BEST of the best
+ * count wins: a chorus repeats, so a later repeat that matches only slightly
+ * more (because the window also caught the end of the chorus before an
+ * unheard verse) must not pull the window past lines still to be sung.
+ * Returns the last line the window heard with confidence (absolute index, -1
+ * when none) and when that line's last heard word ended.
  *
  * Aligning only the window, from the best start, keeps a window's words on
  * the lines they belong to even when earlier lines were never heard; the
@@ -58,14 +63,15 @@ function lineHits(toks, map) {
  */
 function locateWindow(lines, lo, hi, words) {
   const heardNorms = words.map((w) => normWord(w.word));
-  let best = null;
+  const tries = [];
   for (let s = lo; s < hi; s += 1) {
     const toks = tokenize(lines.slice(s, hi));
-    const map = alignTokens(toks.map((t) => t.norm), heardNorms);
-    const matches = map.filter((j) => j >= 0).length;
-    if (!best || matches > best.matches) best = { s, toks, map, matches };
+    const exactMap = alignTokens(toks.map((t) => t.norm), heardNorms).map((j, k) => (j >= 0 && heardNorms[j] === toks[k].norm ? j : -1));
+    tries.push({ s, toks, map: exactMap, matches: exactMap.filter((j) => j >= 0).length });
   }
-  if (!best || !best.matches) return { last: -1, lastEnd: -Infinity };
+  const top = Math.max(0, ...tries.map((t) => t.matches));
+  const best = tries.find((t) => t.matches > 0 && t.matches >= top * NEAR_BEST);
+  if (!best) return { last: -1, lastEnd: -Infinity };
   const sure = [...lineHits(best.toks, best.map)].filter(([, h]) => h.matched.length / h.parts >= LOW);
   if (!sure.length) return { last: -1, lastEnd: -Infinity };
   const [offset, hits] = sure[sure.length - 1];

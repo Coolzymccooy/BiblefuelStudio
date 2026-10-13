@@ -246,10 +246,11 @@ You are, you are
 Now I know that you are here
 And I will go where you go`;
 
-/** A transcriber that hears every word exactly: line i starts at leadIn + 5i s, words 0.45 s apart; ad-libs add "oh yeah" after each line. */
-function perfectSinger(lines, { adlib = false, firstPass = true, leadIn = 10 } = {}) {
+/** A transcriber that hears every word exactly: line i starts at leadIn + pace·i s, words 0.45 s apart; ad-libs add "oh yeah" after each line. */
+function perfectSinger(lines, { adlib = false, firstPass = true, leadIn = 10, unheard = [], pace = 5 } = {}) {
   const truth = lines.flatMap((l, i) => {
-    const t0 = leadIn + i * 5;
+    if (unheard.includes(l.sectionId)) return []; // sung, but Whisper hears none of it
+    const t0 = leadIn + i * pace;
     const sung = String(l.text).split(/[\s-]+/).map((w, k) =>({ word: w, start: t0 + k * 0.45, end: t0 + k * 0.45 + 0.4 }));
     return adlib ? [...sung, { word: "oh", start: t0 + 4, end: t0 + 4.3 }, { word: "yeah", start: t0 + 4.4, end: t0 + 4.8 }] : sung;
   });
@@ -286,4 +287,61 @@ describe("plain-English lyrics", () => {
     assert.ok(timed / lines.length >= 0.85, `only ${timed}/${lines.length} lines timed`);
     assert.ok(Math.abs(placed[0].start - leadIn) <= 0.3, `first line at ${placed[0].start}`);
   });
+});
+
+// Verse, chorus, verse, chorus, chorus: the chorus words repeat three times.
+const REPEATS = `[VERSE 1]
+Morning breaks across the valley floor
+Silver rivers running to the shore
+Lanterns burning in the window pane
+Calling travellers home again
+[CHORUS]
+Lift me higher carry me through
+Every mountain leads to you
+Lift me higher carry me through
+Every river leads to you
+[VERSE 2]
+Thunder rolling over distant hills
+Broken engines standing still
+Paper letters scattered on the floor
+Strangers knocking at the door
+[CHORUS]
+Lift me higher carry me through
+Every mountain leads to you
+Lift me higher carry me through
+Every river leads to you
+[CHORUS]
+Lift me higher carry me through
+Every mountain leads to you
+Lift me higher carry me through
+Every river leads to you`;
+
+describe("sections Whisper never hears", () => {
+  const cases = [
+    { name: "verse 2", unheard: ["s3"] },
+    { name: "verse 1 and verse 2", unheard: ["s1", "s3"] },
+  ];
+  // Lead-ins and paces that put a window's first words on the chorus after the unheard verse (seen to fail).
+  const timings = [{ leadIn: 0, pace: 6 }, { leadIn: 10, pace: 5 }, { leadIn: 10, pace: 6 }, { leadIn: 23, pace: 6 }];
+  for (const { name, unheard } of cases) {
+    for (const firstPass of [false, true]) {
+      test(`with ${name} unheard${firstPass ? " (first pass hears the rest)" : ""}, no window is taken for a later chorus repeat`, async () => {
+        const { lines } = parseSheet(REPEATS);
+        for (const { leadIn, pace } of timings) {
+          const sungAt = (i) => leadIn + i * pace;
+          const durationSec = leadIn + lines.length * pace + 8;
+          const singer = perfectSinger(lines, { firstPass, unheard, leadIn, pace });
+          const { heard, passes } = await transcribeSong({ audioPath: "song.m4a", durationSec, lines, ...singer });
+          const placed = placeLines(lines, heard, { durationSec });
+          const sung = placed.map((l, i) => ({ l, i })).filter(({ l }) => !unheard.includes(l.sectionId));
+          const ok = ({ l, i }) => l.confidence >= 0.6 && Math.abs(l.start - sungAt(i)) <= 0.3;
+          const finalChorus = sung.filter(({ l }) => l.sectionId === "s5");
+          const where = `lead-in ${leadIn} s, ${pace} s a line; passes ${passes.map((p) => `${p.from.toFixed(0)}${p.status[0]}`).join(" ")}`;
+          assert.equal(finalChorus.length, 4);
+          assert.ok(finalChorus.every(ok), `final chorus ${finalChorus.map(({ l, i }) => `${l.confidence}@${l.start} (sung ${sungAt(i)})`).join(", ")}; ${where}`);
+          assert.equal(sung.filter(ok).length, sung.length, `only ${sung.filter(ok).length}/${sung.length} sung lines timed; ${where}`);
+        }
+      });
+    }
+  }
 });
