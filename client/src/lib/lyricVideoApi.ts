@@ -1,6 +1,8 @@
 import { api } from './api';
 import type { ApiResponse } from './api';
 import { uploadMedia } from './mediaUpload';
+import type { UploadKind } from './mediaUpload';
+import { AUDIO_EXTENSIONS } from './audioAccept';
 import type {
   BackgroundFit, LyricEffect, LyricProject, LyricProjectSummary, LyricRenderJob, RenderAspect, RenderQuality,
 } from './lyricVideoTypes';
@@ -59,6 +61,17 @@ function unwrap<T>(res: ApiResponse<T>): T {
 
 const project = async (call: Promise<ApiResponse<{ project: LyricProject }>>) => unwrap(await call).project;
 
+/**
+ * A sound file goes up as audio, so the server keeps its own format and makes no video copy of it;
+ * anything else is a video. A file with no type (some phones send none) is judged by its name.
+ */
+export function songUploadKind(file: File): UploadKind {
+  if (file.type) return file.type.startsWith('audio/') ? 'audio' : 'source-video';
+  const dot = file.name.lastIndexOf('.');
+  const ext = dot >= 0 ? file.name.slice(dot).toLowerCase() : '';
+  return (AUDIO_EXTENSIONS as readonly string[]).includes(ext) ? 'audio' : 'source-video';
+}
+
 export const lyricVideoApi = {
   async list(): Promise<LyricProjectSummary[]> {
     return unwrap(await api.get<{ projects: LyricProjectSummary[] }>(BASE)).projects;
@@ -75,7 +88,7 @@ export const lyricVideoApi = {
     check(await api.put(`${BASE}/prefs`, { artist }));
   },
   async uploadSong(id: string, file: File, onProgress?: (pct: number) => void): Promise<LyricProject> {
-    const up = await upload(file, file.name, 'source-video', onProgress);
+    const up = await upload(file, file.name, songUploadKind(file), onProgress);
     if (!up.file) throw new Error('The song did not upload. Please try again.');
     return project(api.post(`${BASE}/${id}/song`, { path: up.file }, undefined, SLOW_CALL));
   },

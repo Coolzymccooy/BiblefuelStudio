@@ -116,7 +116,25 @@ describe('lyricVideoApi', () => {
     const f = new File(['x'], 'song.mp3', { type: 'audio/mpeg' });
     const onProgress = vi.fn();
     await lyricVideoApi.uploadSong('lv_1', f, onProgress);
-    expect(uploadMedia).toHaveBeenCalledWith(f, 'song.mp3', 'source-video', onProgress);
+    expect(uploadMedia).toHaveBeenCalledWith(f, 'song.mp3', 'audio', onProgress);
+  });
+
+  it('uploads a sound file as audio and a video as video, by type or else by name', async () => {
+    vi.mocked(uploadMedia).mockResolvedValue({ file: '/o/s' });
+    vi.mocked(api.post).mockResolvedValue(reply({ project }));
+    const cases: Array<[File, string]> = [
+      [new File(['x'], 'song.wav', { type: 'audio/wav' }), 'audio'],
+      [new File(['x'], 'memo.m4a', { type: 'audio/x-m4a' }), 'audio'],
+      [new File(['x'], 'memo.M4A'), 'audio'],
+      [new File(['x'], 'bounce.aiff'), 'audio'],
+      [new File(['x'], 'clip.mp4', { type: 'video/mp4' }), 'source-video'],
+      [new File(['x'], 'clip.mov'), 'source-video'],
+    ];
+    for (const [file, kind] of cases) {
+      vi.mocked(uploadMedia).mockClear();
+      await lyricVideoApi.uploadSong('lv_1', file);
+      expect(uploadMedia, file.name).toHaveBeenCalledWith(file, file.name, kind, undefined);
+    }
   });
 
   it('does not attach a song that failed to upload', async () => {
