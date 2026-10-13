@@ -1,4 +1,4 @@
-import { LOWER, maxWidthFor } from "../layout.js";
+import { LOWER, maxWidthFor, isTall } from "../layout.js";
 import { bodyScale, caseText, fontsFor, holdEnd, inkAllowance, lineEvent, wrapWords } from "./common.js";
 
 const MIN_FS = 24;
@@ -16,7 +16,7 @@ export function render({ planned, look, w, h, aspect, nextStart }) {
   const anchor = LOWER[aspect];
   const maxWidth = maxWidthFor({ side: false }, w, aspect);
   const words = phrase.words.map((x) => ({ text: caseText(look, x.text), t: x.start, colour: fonts.body.colour }));
-  let fs = Math.round((aspect === "tall" ? w * 0.12 : h * 0.11) * bodyScale(fonts.body));
+  let fs = Math.round((isTall(aspect) ? w * 0.12 : h * 0.11) * bodyScale(fonts.body));
   // Held back at the starting size, which bounds the ink at every smaller size too.
   const budget = maxWidth - inkAllowance(fs, { bord: BORD, shad: SHAD, italic: fonts.body.italic, bold: fonts.body.bold });
   let lines = wrapWords(words, fonts.body.file, fs, budget);

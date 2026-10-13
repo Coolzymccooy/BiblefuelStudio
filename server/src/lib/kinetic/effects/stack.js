@@ -1,5 +1,5 @@
 import { fitSize } from "../text.js";
-import { slotsFor, maxWidthFor, clampBlockY } from "../layout.js";
+import { slotsFor, maxWidthFor, clampBlockY, isTall } from "../layout.js";
 import { bodyScale, caseText, fontsFor, holdEnd, inkAllowance, keyWordIndex, lineEvent } from "./common.js";
 
 const BORD = 5;
@@ -37,7 +37,7 @@ export function render({ planned, look, energy, w, h, aspect, nextStart }) {
   }));
   const lines = chunk(words);
   const maxWidth = maxWidthFor(slot, w, aspect);
-  const preferred = Math.round((aspect === "tall" ? w * 0.14 : h * 0.13) * bodyScale(fonts.body));
+  const preferred = Math.round((isTall(aspect) ? w * 0.14 : h * 0.13) * bodyScale(fonts.body));
   const budget = maxWidth - inkAllowance(preferred, { bord: BORD, shad: SHAD, italic: fonts.body.italic, bold: fonts.body.bold });
   const fs = fitSize(fonts.body.file, lines.map((ln) => ln.map((x) => x.text).join(" ")), preferred, budget);
   const lineGap = fs * 1.05;

@@ -1,5 +1,5 @@
 import { widthAt, assEscape, assColour, assTime } from "../text.js";
-import { ARC } from "../layout.js";
+import { ARC, isTall } from "../layout.js";
 import { bodyScale, caseText, fontsFor, holdEnd, keyWordIndex } from "./common.js";
 import { render as stack } from "./stack.js";
 
@@ -42,7 +42,7 @@ export function render(ctx) {
   const arc = ARC[aspect] || ARC.wide;
   const R = arc.r * w;
   const maxArc = 2 * R * Math.asin(Math.min(1, (arc.half * w) / R));
-  const preferred = Math.round((aspect === "tall" ? w * 0.11 : h * 0.12) * bodyScale(font));
+  const preferred = Math.round((isTall(aspect) ? w * 0.11 : h * 0.12) * bodyScale(font));
   const letters = lettersOf(words);
   const lengthAt = (size) => letters.reduce((sum, l) => sum + advance(font.file, l, size), 0);
   let fs = preferred;

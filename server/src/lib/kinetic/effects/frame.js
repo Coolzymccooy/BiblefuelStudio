@@ -1,6 +1,7 @@
 import { covers, fitSize, widthAt, assEscape, assColour, assTime } from "../text.js";
 import { caseText, fontsFor, holdEnd, inkAllowance, lineEvent } from "./common.js";
 import { chunk } from "./stack.js";
+import { isTall } from "../layout.js";
 
 const BORD = 6; // the centre lines' outline and shadow
 const SHAD = 4;
@@ -9,7 +10,8 @@ const MAX_REPEATS = 40;
 
 /** The rectangle the bands run round. Tall frames keep clear of the TikTok/Reels controls. */
 export function frameBox(w, h, aspect) {
-  return aspect === "tall"
+  if (aspect === "shorts") return { left: 0.06 * w, top: 0.11 * h, right: 0.88 * w, bottom: 0.75 * h };
+  return isTall(aspect)
     ? { left: 0.06 * w, top: 0.05 * h, right: 0.88 * w, bottom: 0.82 * h }
     : { left: 0.04 * w, top: 0.05 * h, right: 0.96 * w, bottom: 0.95 * h };
 }
@@ -55,7 +57,7 @@ export function render({ planned, look, w, h, aspect, nextStart }) {
   const fonts = fontsFor(look, shown);
   const band = fonts.body;
   const box = frameBox(w, h, aspect);
-  const bandFs = Math.round(Math.min(w, h) * (aspect === "tall" ? 0.06 : 0.055));
+  const bandFs = Math.round(Math.min(w, h) * (isTall(aspect) ? 0.06 : 0.055));
   const sep = covers(band.file, "•") ? " • " : " / ";
   const unit = `${shown}${sep}`;
   const unitWidth = Math.max(1, widthAt(band.file, unit, bandFs));
@@ -75,7 +77,7 @@ export function render({ planned, look, w, h, aspect, nextStart }) {
   const lines = chunk(words);
   const room = (box.right - box.left) - 2 * (inset + bandFs);
   const roomY = (box.bottom - box.top) - 2 * (inset + bandFs);
-  const preferred = aspect === "tall" ? Math.round(w * 0.16) : Math.round(h * 0.15);
+  const preferred = isTall(aspect) ? Math.round(w * 0.16) : Math.round(h * 0.15);
   const budget = room * 0.9 - inkAllowance(preferred, { bord: BORD, shad: SHAD, italic: fonts.hit.italic, bold: fonts.hit.bold });
   const wide = fitSize(fonts.hit.file, lines.map((ln) => ln.map((x) => x.text).join(" ")), preferred, budget, 32);
   // A long phrase stacks many lines: shrink until the block fits between the top and bottom bands.

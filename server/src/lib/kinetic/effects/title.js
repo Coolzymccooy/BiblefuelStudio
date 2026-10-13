@@ -1,5 +1,5 @@
 import { fitSize } from "../text.js";
-import { CENTRE, maxWidthFor } from "../layout.js";
+import { CENTRE, maxWidthFor, isTall } from "../layout.js";
 import { caseText, fontsFor, holdEnd, inkAllowance, lineEvent } from "./common.js";
 
 const BORD = 6;
@@ -31,7 +31,7 @@ function titleEvents({ words, look, w, h, aspect, end, rot }) {
     ...x, colour: li === split.length - 1 ? fonts.hit.colour : fonts.body.colour,
   })));
   const maxWidth = maxWidthFor({ side: false }, w, aspect) * 0.92;
-  const preferred = aspect === "tall" ? Math.round(w * 0.22) : Math.round(h * 0.26);
+  const preferred = isTall(aspect) ? Math.round(w * 0.22) : Math.round(h * 0.26);
   const budget = maxWidth - inkAllowance(preferred, { bord: BORD, shad: SHAD, italic: fonts.hit.italic, bold: fonts.hit.bold });
   const fs = fitSize(fonts.hit.file, lines.map((ln) => ln.map((x) => x.text).join(" ")), preferred, budget, 40);
   const anchor = CENTRE[aspect] || CENTRE.wide;
