@@ -275,3 +275,60 @@ describe("placeLines: order, flags and the song's edges", () => {
   });
 });
 
+
+describe("placeLines: the audible end bounds placement", () => {
+  // Heard up to about 10 s; the music stops at 12 s; the file runs to 30 s.
+  const outro = ["going home today", "the driver knows the way", "no more crying there", "we shall rest at last", "going home going home"];
+  const lines = [L("l1", "i know the driver"), L("l2", "he will carry me"), ...outro.map((t, i) => L(`o${i + 1}`, t))];
+  const heard = [H("i", 6), H("know", 6.4), H("the", 6.8), H("driver", 7.2), H("he", 8.4), H("will", 8.8), H("carry", 9.2), H("me", 9.6)];
+
+  test("unheard tail lines end by the audible end and are flagged", () => {
+    const out = placeLines(lines, heard, { durationSec: 30, audibleEnd: 12 });
+    assertSong(out, { durationSec: 12 });
+    for (const l of out.slice(2)) {
+      assert.equal(l.confidence, 0);
+      assert.equal(l.flag, "check");
+    }
+    assert.equal(out[0].start, 6, "heard lines keep their times");
+    assert.equal(out[1].start, 8.4);
+  });
+  test("without an audible end, the song's length is the bound (as before)", () => {
+    const out = placeLines(lines, heard, { durationSec: 30 });
+    assertSong(out, { durationSec: 30 });
+    assert.ok(out[out.length - 1].end > 12, "the tail ran past 12 s before the fix");
+  });
+  test("an audible end past the song's length is held to the song", () => {
+    assertSong(placeLines(lines, heard, { durationSec: 11, audibleEnd: 40 }), { durationSec: 11 });
+  });
+  test("a heard word in the silence is pulled inside and its line flagged", () => {
+    const out = placeLines([L("l1", "aa bb"), L("l2", "cc dd")], [H("aa", 1), H("bb", 1.5), H("cc", 13), H("dd", 13.5)], { durationSec: 30, audibleEnd: 12 });
+    assertSong(out, { durationSec: 12 });
+    assert.equal(out[1].flag, "check");
+  });
+  test("an unheard response at the tail stays inside the audible end", () => {
+    const out = placeLines([L("l1", "shine bright today"), L("r", "(oh oh)", "response")], [H("shine", 1), H("bright", 1.5)], { durationSec: 30, audibleEnd: 2.2 });
+    assertSong(out, { durationSec: 2.2 });
+  });
+  test("a tail response after a call squeezed up to the audible end still ends in time", () => {
+    const out = placeLines([L("l1", "a b c d e f g h i j k l m n o p"), L("r", "(oh oh oh)", "response")], [H("a", 9.5)], { durationSec: 30, audibleEnd: 10 });
+    assertSong(out, { durationSec: 10 });
+    assert.equal(out[1].flag, "check");
+  });
+  test("a lock after the audible end is kept exactly; the lines around it stay in order", () => {
+    const lk = new Map([["o3", lock(["no", 20, 20.4], ["more", 20.4, 20.8], ["crying", 20.8, 21.3], ["there", 21.3, 22])]]);
+    const out = placeLines(lines, heard, { locked: lk, durationSec: 30, audibleEnd: 12 });
+    assertSong(out, { durationSec: 30, locked: lk });
+    assert.ok(out[3].end <= 12, `the lines before the lock end by the audible end (${out[3].end})`);
+    assert.ok(out[5].start >= 22, "the lines after the lock follow it");
+    assert.equal(out[4].confidence, 1);
+    assert.equal(out[4].flag, null);
+  });
+  test("a lock at the very end of the song does not reorder the lines after it", () => {
+    const lk = new Map([["o4", lock(["we", 29.5, 29.6], ["shall", 29.6, 29.7], ["rest", 29.7, 29.8], ["at", 29.8, 29.9], ["last", 29.9, 30])]]);
+    const out = placeLines(lines, heard, { locked: lk, durationSec: 30, audibleEnd: 12 });
+    const starts = out.flatMap((l) => l.words.map((w) => w.start));
+    starts.forEach((s, i) => { if (i > 0) assert.ok(s > starts[i - 1], `start ${s} not after ${starts[i - 1]}`); });
+    assert.deepEqual(out[5].words, lk.get("o4").words);
+    assert.ok(out[6].start > 29.9, "the line after the lock follows it");
+  });
+});

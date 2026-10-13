@@ -35,6 +35,7 @@ const deps = (over = {}) => ({
   cutAudio: async (from, to) => `cut:${from}:${to}`,
   transcribe: hearsFullSong(),
   detectBeats: async () => ({ bpm: 120, times: [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5] }),
+  measureAudibleEnd: async (_file, durationSec) => durationSec,
   log: () => {},
   ...over,
 });
@@ -308,6 +309,61 @@ describe("edits made while the job runs", () => {
     const p = setup();
     deleteProject(dir, p.projectId);
     assert.equal(await run(p), null);
+  });
+});
+
+describe("the song's audible end", () => {
+  // Heard to 6 s; the long unheard outro would spread to 20 s without a bound.
+  const OUTRO = "\n[OUTRO]\ngoing home going home today\nthe driver knows the way to go\nno more crying no more pain there\nwe shall rest at last my friend";
+  const outroSetup = () => {
+    let p = createProject(dir, { title: "T", artist: "A" });
+    p = applySheet(p, SHEET + OUTRO);
+    p.song = { file: path.join(dir, "song.m4a"), durationSec: 20 };
+    return writeProject(dir, p);
+  };
+  const lastEnd = (lines) => Math.max(...lines.flatMap((l) => l.words.map((w) => w.end)));
+
+  test("is measured on the prepared audio, stored, and no line runs past it", async () => {
+    const p = outroSetup();
+    const asked = [];
+    const done = await run(p, { measureAudibleEnd: async (file, durationSec) => { asked.push([file, durationSec]); return 8; } });
+    assert.equal(done.timing.status, "done");
+    assert.deepEqual(asked, [[PREPARED(), 20]]);
+    assert.equal(done.timing.audibleEnd, 8);
+    assert.ok(lastEnd(done.lines) <= 8, `last line ends at ${lastEnd(done.lines)}`);
+    assert.equal(done.lines[0].start, 1, "heard lines keep their times");
+    for (const l of done.lines.slice(3)) assert.equal(l.flag, "check");
+  });
+  test("without a bound the same outro runs on past it (the bug)", async () => {
+    const p = outroSetup();
+    const done = await run(p);
+    assert.equal(done.timing.audibleEnd, 20);
+    assert.ok(lastEnd(done.lines) > 8);
+  });
+  test("a measurement failure falls back to the song's length, logged once, and the job still finishes", async () => {
+    const p = outroSetup();
+    const logged = [];
+    const done = await run(p, { measureAudibleEnd: async () => { throw new Error("ffmpeg decode exited 1: silence"); }, log: (...a) => logged.push(a.join(" ")) });
+    assert.equal(done.timing.status, "done");
+    assert.equal(done.timing.audibleEnd, 20);
+    assert.equal(logged.filter((l) => l.includes("silence")).length, 1);
+    assert.ok(logged.some((l) => l.includes(p.projectId)));
+  });
+  test("a nonsense measurement is ignored", async () => {
+    const p = outroSetup();
+    const done = await run(p, { measureAudibleEnd: async () => Number.NaN });
+    assert.equal(done.timing.audibleEnd, 20);
+  });
+  test("a failure part-way places the heard lines inside the audible end too", async () => {
+    const p = outroSetup();
+    const done = await run(p, {
+      measureAudibleEnd: async () => 8,
+      transcribe: async (file) => { if (file === PREPARED()) return { words: heardSong }; throw new Error("Whisper 429: busy"); },
+    });
+    assert.equal(done.timing.status, "error");
+    assert.equal(done.lines[1].start, 5);
+    assert.ok(lastEnd(done.lines) <= 8, `last line ends at ${lastEnd(done.lines)}`);
+    assert.equal(done.timing.audibleEnd, 8);
   });
 });
 

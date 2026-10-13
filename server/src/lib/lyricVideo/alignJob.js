@@ -8,6 +8,7 @@ import { transcribeSong } from "./transcribeWindows.js";
 import { transcribePrompted } from "./whisperPrompted.js";
 import { placeLines } from "./align.js";
 import { detectBeats as realDetectBeats } from "./beats.js";
+import { measureAudibleEnd as realMeasureAudibleEnd } from "./audibleEnd.js";
 
 const WINDOW_SEC_ESTIMATE = 28; // a window of 30 s that placed something moves the frontier about this far
 const CUT_RATE = 16000;
@@ -58,6 +59,7 @@ function defaultDeps(workDir, projectId) {
     },
     transcribe: (file, prompt) => transcribePrompted(file, prompt),
     detectBeats: realDetectBeats,
+    measureAudibleEnd: realMeasureAudibleEnd,
     // A cut is used once; removing it right away keeps one cut on disk at a time.
     discard: (file) => { if (cuts.delete(file)) { made.delete(file); fs.rmSync(file, { force: true }); } },
     cleanup: () => { for (const f of made) fs.rmSync(f, { force: true }); made.clear(); },
@@ -173,15 +175,29 @@ const lyricsChanged = (latest) => ({ ...latest, timing: { ...withoutRerun(latest
  * Places what Whisper heard before a failure and stores it with the failure, so the lines that were
  * heard keep their times. A re-run keeps the earlier full timing instead of these partial placements.
  */
-function savePartial({ dataDir, projectId, snapshot, partial, err, durationSec, lockedLines }) {
+function savePartial({ dataDir, projectId, snapshot, partial, err, durationSec, audibleEnd, lockedLines }) {
   const rerun = snapshot.timing?.status === "done";
-  const placed = !rerun && partial?.heard?.length ? placeLines(snapshot.lines, partial.heard, { locked: lockedLines, durationSec }) : null;
+  const placed = !rerun && partial?.heard?.length ? placeLines(snapshot.lines, partial.heard, { locked: lockedLines, durationSec, audibleEnd }) : null;
   const message = explainFailure(err);
   return updateProject(dataDir, projectId, (latest) => {
     const merged = placed ? mergePlacement(latest, snapshot, placed, { bpm: 0, times: [] }) : null;
     if (placed && !merged) return lyricsChanged(latest);
-    return { ...latest, ...(merged || {}), timing: { ...failedTiming(latest.timing, message), ...(merged ? { passes: partial.passes } : {}) } };
+    return { ...latest, ...(merged || {}), timing: { ...failedTiming(latest.timing, message), ...(merged ? { passes: partial.passes, audibleEnd } : {}) } };
   });
+}
+
+/**
+ * Where the music stops, measured once on the prepared audio. Never fails the
+ * job: a failed or nonsense measurement falls back to the song's length.
+ */
+async function findAudibleEnd({ d, audio, durationSec, projectId, log }) {
+  try {
+    const end = Number(await d.measureAudibleEnd(audio, durationSec));
+    return Number.isFinite(end) && end > 0 ? Math.min(end, durationSec) : durationSec;
+  } catch (err) {
+    log(`[lyric-video] could not measure where the music stops for ${projectId}; using the song's length:`, err);
+    return durationSec;
+  }
 }
 
 async function timeLyrics({ dataDir, projectId, snapshot, d, log }) {
@@ -196,6 +212,7 @@ async function timeLyrics({ dataDir, projectId, snapshot, d, log }) {
   };
 
   const audio = await d.prepareAudio(snapshot.song.file);
+  const audibleEnd = await findAudibleEnd({ d, audio, durationSec, projectId, log });
   const total = Math.max(1, Math.ceil(durationSec / WINDOW_SEC_ESTIMATE));
   progress("listening");
   const locked = new Map(snapshot.lines.filter((l) => l.locked && l.words?.length).map((l) => [l.id, { words: l.words }]));
@@ -212,13 +229,14 @@ async function timeLyrics({ dataDir, projectId, snapshot, d, log }) {
   } catch (err) {
     if (err instanceof ProjectGone || !err?.partial) throw err;
     log(`[lyric-video] timing failed for ${projectId}:`, err);
-    const saved = savePartial({ dataDir, projectId, snapshot, partial: err.partial, err, durationSec, lockedLines: locked });
+    const saved = savePartial({ dataDir, projectId, snapshot, partial: err.partial, err, durationSec, audibleEnd, lockedLines: locked });
     if (!saved) throw new ProjectGone(projectId);
     return saved;
   }
   const { heard, passes } = song;
   progress("matching");
-  const placed = placeLines(snapshot.lines, heard, { locked, durationSec });
+  // No line is placed after the music stops (lines still unheard there are squeezed in and flagged).
+  const placed = placeLines(snapshot.lines, heard, { locked, durationSec, audibleEnd });
   progress("beats");
   // Beats are optional: without them, section starts are the first line's start.
   let beats = { bpm: 0, times: [] };
@@ -231,7 +249,7 @@ async function timeLyrics({ dataDir, projectId, snapshot, d, log }) {
   const done = updateProject(dataDir, projectId, (latest) => {
     const merged = mergePlacement(latest, snapshot, placed, beats);
     if (!merged) return lyricsChanged(latest);
-    return { ...latest, ...merged, timing: { ...withoutRerun(latest.timing), status: "done", progress: null, error: null, lastError: null, beats, passes, finishedAt: new Date().toISOString() } };
+    return { ...latest, ...merged, timing: { ...withoutRerun(latest.timing), status: "done", progress: null, error: null, lastError: null, beats, passes, audibleEnd, finishedAt: new Date().toISOString() } };
   });
   if (!done) throw new ProjectGone(projectId);
   return done;

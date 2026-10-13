@@ -23,8 +23,8 @@ p.song = { file: path.resolve(song), durationSec: await probeAudioDurationSec(so
 writeProject(dir, p);
 const t0 = Date.now();
 const done = await runAlignJob({ dataDir: dir, workDir: dir, projectId: p.projectId });
-console.log(`timing: ${done.timing.status} in ${((Date.now() - t0) / 1000).toFixed(0)}s; ${done.lines.length} lines, ${done.lines.filter((l) => l.flag).length} flagged; ${done.timing.passes?.length} passes; ${done.timing.beats?.bpm} BPM`);
-for (const l of done.lines) console.log(`${l.start?.toFixed(2).padStart(7)} ${l.flag ? "CHECK" : "     "} ${l.text}`);
+console.log(`timing: ${done.timing.status} in ${((Date.now() - t0) / 1000).toFixed(0)}s; ${done.lines.length} lines, ${done.lines.filter((l) => l.flag).length} flagged; ${done.timing.passes?.length} passes; ${done.timing.beats?.bpm} BPM; music stops at ${done.timing.audibleEnd?.toFixed(2)}s of ${done.song.durationSec.toFixed(2)}s`);
+for (const l of done.lines) console.log(`${l.start?.toFixed(2).padStart(7)} ${l.end?.toFixed(2).padStart(7)} ${l.flag ? "CHECK" : "     "} ${l.text}`);
 if (outArg) {
   const ass = path.join(dir, "c.ass");
   fs.writeFileSync(ass, buildLyricAss(readProject(dir, p.projectId), { w: 720, h: 1280 }));
