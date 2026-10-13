@@ -199,6 +199,43 @@ describe('MomentsStyleStep', () => {
     expect(screen.getByText(/energy: hype/i)).toBeInTheDocument();
   });
 
+  it('overlapping Energy saves go out in order, and an older failure never undoes a newer change', async () => {
+    vi.spyOn(errors, 'toastError').mockImplementation(() => {});
+    let failFirst: (e: Error) => void = () => {};
+    const update = vi.spyOn(momentsApi, 'update')
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => { failFirst = reject; }))
+      .mockResolvedValueOnce(mkMoment({ energy: 0.4 }));
+    renderLive(mkMoment({ energy: 0.8 }));
+    const slider = screen.getByLabelText(/energy/i) as HTMLInputElement;
+    fireEvent.change(slider, { target: { value: '25' } });
+    fireEvent.mouseUp(slider);
+    fireEvent.change(slider, { target: { value: '40' } });
+    fireEvent.keyUp(slider);
+    expect(update).toHaveBeenCalledTimes(1); // the second save waits for the first
+    failFirst(new Error('network'));
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(2));
+    expect(update.mock.calls[1][1]).toEqual({ energy: 0.4 });
+    await waitFor(() => expect(slider).not.toBeDisabled());
+    expect(slider.value).toBe('40');
+  });
+
+  it('when the newest Energy save fails, the slider returns to the last value the server accepted', async () => {
+    vi.spyOn(errors, 'toastError').mockImplementation(() => {});
+    let failSecond: (e: Error) => void = () => {};
+    const update = vi.spyOn(momentsApi, 'update')
+      .mockResolvedValueOnce(mkMoment({ energy: 0.25 }))
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => { failSecond = reject; }));
+    renderLive(mkMoment({ energy: 0.8 }));
+    const slider = screen.getByLabelText(/energy/i) as HTMLInputElement;
+    fireEvent.change(slider, { target: { value: '25' } });
+    fireEvent.mouseUp(slider);
+    fireEvent.change(slider, { target: { value: '40' } });
+    fireEvent.keyUp(slider);
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(2));
+    failSecond(new Error('network'));
+    await waitFor(() => expect(slider.value).toBe('25'));
+  });
+
   it('previews load metadata only until played', () => {
     render(<MomentsStyleStep {...props()} />);
     expect(document.querySelector('video[src="/moments/previews/glow.mp4"]')).toHaveAttribute('preload', 'metadata');

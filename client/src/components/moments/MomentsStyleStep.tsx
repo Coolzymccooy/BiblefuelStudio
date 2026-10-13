@@ -17,6 +17,12 @@ export function MomentsStyleStep({ project, meta, refresh, busy, setBusy, commit
   const savedEnergy = useRef(Math.round(project.energy * 100));
   /** The slider's own save is running: it stays enabled so keyboard focus is not lost on every arrow press. */
   const [savingEnergy, setSavingEnergy] = useState(false);
+  /** The Energy the server last accepted: where a failed save rolls the slider back to. */
+  const confirmedEnergy = useRef(Math.round(project.energy * 100));
+  /** Energy saves run one after another, and only the newest one settles the slider. */
+  const energyChain = useRef<Promise<void>>(Promise.resolve());
+  const energyTicket = useRef(0);
+  const energyPending = useRef(0);
 
   const save = async (patch: MomentPatch): Promise<boolean> => {
     setBusy(true);
@@ -44,23 +50,34 @@ export function MomentsStyleStep({ project, meta, refresh, busy, setBusy, commit
     }
     if (await save({ style: style.id, energy: style.energy })) {
       savedEnergy.current = Math.round(style.energy * 100);
+      confirmedEnergy.current = savedEnergy.current;
       setEnergy(savedEnergy.current);
     }
   };
 
-  const commitEnergy = async (e: SyntheticEvent<HTMLInputElement>) => {
+  const commitEnergy = (e: SyntheticEvent<HTMLInputElement>) => {
     const value = Number(e.currentTarget.value);
     if (value === savedEnergy.current) return;
-    const previous = savedEnergy.current;
     savedEnergy.current = value;
+    const ticket = ++energyTicket.current;
     setSavingEnergy(true);
-    const ok = await save({ energy: value / 100 });
-    if (!ok) {
-      // Roll the slider back so the screen matches what the server has.
-      savedEnergy.current = previous;
-      setEnergy(previous);
-    }
-    setSavingEnergy(false);
+    const run = async () => {
+      const ok = await save({ energy: value / 100 });
+      if (ok) confirmedEnergy.current = value;
+      if (ticket !== energyTicket.current) return; // a newer change is queued and decides the screen
+      if (!ok) {
+        // Back to what the server last accepted, so the screen matches it.
+        savedEnergy.current = confirmedEnergy.current;
+        setEnergy(confirmedEnergy.current);
+      }
+      setSavingEnergy(false);
+    };
+    // The slider stays usable while it saves, so a change made meanwhile queues behind it:
+    // saves reach the server in order. With nothing pending, the save goes out at once.
+    const idle = energyPending.current === 0;
+    energyPending.current += 1;
+    energyChain.current = (idle ? run() : energyChain.current.then(run))
+      .finally(() => { energyPending.current -= 1; });
   };
 
   return (
