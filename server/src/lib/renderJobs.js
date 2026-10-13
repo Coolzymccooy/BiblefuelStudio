@@ -17,6 +17,9 @@ import path from "path";
 // client that opened the SSE connection seconds after completion still sees
 // the terminal event.
 const JOB_TTL_MS = 60 * 60 * 1000; // 1 hour
+// A queued or running job may legitimately sit unchanged for a long time (a render
+// waiting behind another heavy job); dropping its record early orphans the render.
+const ACTIVE_JOB_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
 
 /** @typedef {'queued' | 'running' | 'done' | 'error'} JobStatus */
 
@@ -137,7 +140,8 @@ export function cancelJob(jobId, userId) {
 // timer; volume on this endpoint is low so an opportunistic GC is plenty.
 export function gcJobs(now = Date.now()) {
   for (const [id, record] of jobs) {
-    if (now - record.updatedAt > JOB_TTL_MS) jobs.delete(id);
+    const active = record.status === "queued" || record.status === "running";
+    if (now - record.updatedAt > (active ? ACTIVE_JOB_TTL_MS : JOB_TTL_MS)) jobs.delete(id);
   }
 }
 

@@ -27,6 +27,7 @@ const HelpPage = lazy(() => import('./pages/HelpPage').then((m) => ({ default: m
 const AdminPage = lazy(() => import('./pages/AdminPage').then((m) => ({ default: m.AdminPage })));
 const StoryVideoPage = lazy(() => import('./pages/StoryVideoPage').then((m) => ({ default: m.StoryVideoPage })));
 const AmbientPage = lazy(() => import('./pages/AmbientPage').then((m) => ({ default: m.AmbientPage })));
+const MomentsPage = lazy(() => import('./pages/MomentsPage').then((m) => ({ default: m.MomentsPage })));
 const CreateHubPage = lazy(() => import('./pages/CreateHubPage').then((m) => ({ default: m.CreateHubPage })));
 const StudioHubPage = lazy(() => import('./pages/StudioHubPage').then((m) => ({ default: m.StudioHubPage })));
 
@@ -73,6 +74,7 @@ function App() {
                   <Route path="render" element={<RenderPage />} />
                   <Route path="story" element={<StoryVideoPage />} />
                   <Route path="ambient" element={<AmbientPage />} />
+                  <Route path="moments" element={<MomentsPage />} />
                   <Route path="gumroad" element={<GumroadPage />} />
                   <Route path="series" element={<SeriesPage />} />
                   <Route path="settings" element={<SettingsPage />} />
