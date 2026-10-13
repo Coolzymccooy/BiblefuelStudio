@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createProject, readProject, writeProject, listProjects, deleteProject, readPrefs, writePrefs, cleanText, applySheet, carryOverTiming } from "./projectStore.js";
+import { createProject, readProject, writeProject, updateProject, listProjects, deleteProject, readPrefs, writePrefs, cleanText, applySheet, carryOverTiming } from "./projectStore.js";
 
 let dir;
 beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), "lyric-store-")); });
@@ -23,6 +23,21 @@ describe("projects", () => {
   });
   test("a malicious id never escapes the folder", () => {
     assert.equal(readProject(dir, "../../etc/passwd"), null);
+  });
+  test("a file of the wrong shape is skipped, not fatal to the list", () => {
+    const good = createProject(dir, { title: "Good", artist: "" });
+    const folder = path.join(dir, "lyric-projects");
+    fs.writeFileSync(path.join(folder, "lv_trunc.json"), '{"projectId":"lv_tru');
+    fs.writeFileSync(path.join(folder, "lv_obj.json"), "{}");
+    fs.writeFileSync(path.join(folder, "lv_arr.json"), "[]");
+    fs.writeFileSync(path.join(folder, "lv_mismatch.json"), JSON.stringify({ ...good, projectId: "lv_other" }));
+    assert.deepEqual(listProjects(dir).map((p) => p.projectId), [good.projectId]);
+    assert.equal(readProject(dir, "lv_obj"), null);
+    assert.equal(readProject(dir, "lv_mismatch"), null);
+  });
+  test("writeProject rejects a non-string projectId", () => {
+    const p = createProject(dir, { title: "A", artist: "" });
+    assert.throws(() => writeProject(dir, { ...p, projectId: [p.projectId] }), /invalid projectId/);
   });
   test("writes are atomic and bump updatedAt", async () => {
     const p = createProject(dir, { title: "A", artist: "" });
@@ -55,6 +70,62 @@ describe("carryOverTiming", () => {
     assert.equal(out[1].words, undefined);
     assert.equal(out[2].start, 20);
     assert.equal(out[3].effect, "slam");
+  });
+});
+
+describe("updateProject", () => {
+  test("a deleted project is not recreated", () => {
+    const p = createProject(dir, { title: "Gone", artist: "" });
+    deleteProject(dir, p.projectId);
+    let called = false;
+    const result = updateProject(dir, p.projectId, (latest) => { called = true; return { ...latest }; });
+    assert.equal(result, null);
+    assert.equal(called, false);
+    assert.equal(fs.existsSync(path.join(dir, "lyric-projects", `${p.projectId}.json`)), false);
+  });
+  test("fn receives the latest on-disk version and its result is written", () => {
+    const p = createProject(dir, { title: "A", artist: "" });
+    writeProject(dir, { ...p, title: "B" });
+    let seen = null;
+    const out = updateProject(dir, p.projectId, (latest) => { seen = latest.title; return { ...latest, artist: "X" }; });
+    assert.equal(seen, "B");
+    assert.equal(out.artist, "X");
+    assert.equal(readProject(dir, p.projectId).title, "B");
+    assert.equal(readProject(dir, p.projectId).artist, "X");
+  });
+});
+
+describe("carryOverTiming with repeated lines", () => {
+  const timed = (text, start, locked = true) => ({ text, words: [{ text, start, end: start + 1 }], start, end: start + 1, locked, effect: "slam" });
+  const X = "Who talk say?";
+  test("editing the first of three repeats keeps the other two timings", () => {
+    const old = [timed(X, 10), timed(X, 70), timed(X, 130)];
+    const next = [{ text: "Who talk say now?" }, { text: X }, { text: X }];
+    const out = carryOverTiming(old, next);
+    assert.equal(out[0].words, undefined);
+    assert.equal(out[0].start, undefined);
+    assert.equal(out[1].start, 70);
+    assert.equal(out[2].start, 130);
+  });
+  test("removing the middle one of three keeps the first and last timings", () => {
+    const A = "Eh, eh!";
+    const B = "Shake am";
+    const old = [timed(X, 10), timed(A, 40), timed(X, 70), timed(B, 100), timed(X, 130)];
+    const next = [{ text: X }, { text: A }, { text: B }, { text: X }];
+    const out = carryOverTiming(old, next);
+    assert.equal(out[0].start, 10);
+    assert.equal(out[1].start, 40);
+    assert.equal(out[2].start, 100);
+    assert.equal(out[3].start, 130);
+  });
+  test("a new line inserted between repeats gets no timing and the repeats keep theirs", () => {
+    const old = [timed(X, 10), timed(X, 70), timed(X, 130)];
+    const next = [{ text: X }, { text: "New line" }, { text: X }, { text: X }];
+    const out = carryOverTiming(old, next);
+    assert.equal(out[0].start, 10);
+    assert.equal(out[1].words, undefined);
+    assert.equal(out[2].start, 70);
+    assert.equal(out[3].start, 130);
   });
 });
 

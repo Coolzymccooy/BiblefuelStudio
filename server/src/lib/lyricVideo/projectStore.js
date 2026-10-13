@@ -41,13 +41,21 @@ export function createProject(dataDir, { title, artist }) {
   return project;
 }
 
+function isProjectOf(value, id) {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    && typeof value.projectId === "string" && value.projectId === String(id);
+}
+
 export function readProject(dataDir, id) {
   const file = fileOf(dataDir, id);
   if (!file || !fs.existsSync(file)) return null;
-  try { return JSON.parse(fs.readFileSync(file, "utf8")); } catch { return null; }
+  let parsed;
+  try { parsed = JSON.parse(fs.readFileSync(file, "utf8")); } catch { return null; }
+  return isProjectOf(parsed, id) ? parsed : null;
 }
 
 export function writeProject(dataDir, project) {
+  if (typeof project?.projectId !== "string") throw new Error("invalid projectId");
   const file = fileOf(dataDir, project.projectId);
   if (!file) throw new Error("invalid projectId");
   const next = { ...project, updatedAt: new Date().toISOString() };
@@ -55,12 +63,23 @@ export function writeProject(dataDir, project) {
   return next;
 }
 
+/** Reads the latest on-disk version, applies fn, writes it back. Never recreates a deleted project. */
+export function updateProject(dataDir, id, fn) {
+  const latest = readProject(dataDir, id);
+  if (!latest) return null;
+  const next = fn(latest);
+  if (typeof next?.projectId !== "string" || next.projectId !== latest.projectId) {
+    throw new Error("updateProject cannot change projectId");
+  }
+  return writeProject(dataDir, next);
+}
+
 export function listProjects(dataDir) {
   if (!fs.existsSync(dirOf(dataDir))) return [];
   return fs.readdirSync(dirOf(dataDir)).filter((f) => /^lv_[a-z0-9]+\.json$/.test(f))
     .map((f) => readProject(dataDir, f.replace(/\.json$/, ""))).filter(Boolean)
-    .map((p) => ({ projectId: p.projectId, title: p.title, artist: p.artist, updatedAt: p.updatedAt, hasRender: (p.renders || []).length > 0 }))
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    .map((p) => ({ projectId: p.projectId, title: p.title, artist: p.artist, updatedAt: p.updatedAt, hasRender: Array.isArray(p.renders) && p.renders.length > 0 }))
+    .sort((a, b) => String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? "")));
 }
 
 export function deleteProject(dataDir, id) {
@@ -80,23 +99,47 @@ export function writePrefs(dataDir, { artist }) {
   return prefs;
 }
 
-export function carryOverTiming(oldLines, newLines) {
-  const pool = new Map();
-  for (const l of oldLines || []) {
-    const k = l.text.trim();
-    if (!pool.has(k)) pool.set(k, []);
-    pool.get(k).push(l);
+/** Index pairs [i, j] of an order-preserving longest common subsequence of a and b. */
+function matchedPairs(a, b) {
+  const n = a.length;
+  const m = b.length;
+  const dp = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
   }
-  const seen = new Map();
-  return newLines.map((l) => {
-    const k = l.text.trim();
-    const n = seen.get(k) || 0;
-    seen.set(k, n + 1);
-    const old = pool.get(k)?.[n];
-    if (!old) return l;
-    const { words, start, end, locked, effect, confidence, flag } = old;
-    return { ...l, words, start, end, locked, effect, confidence, flag };
-  });
+  const pairs = [];
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) {
+      pairs.push([i, j]);
+      i++;
+      j++;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      i++;
+    } else {
+      j++;
+    }
+  }
+  return pairs;
+}
+
+/**
+ * Pairs old and new lines by their trimmed text, in order, so a repeated line
+ * keeps the timing of the same occurrence even when another copy is edited or removed.
+ */
+export function carryOverTiming(oldLines, newLines) {
+  const oldArr = oldLines || [];
+  const oldKeys = oldArr.map((l) => String(l.text ?? "").trim());
+  const newKeys = newLines.map((l) => String(l.text ?? "").trim());
+  const out = newLines.slice();
+  for (const [i, j] of matchedPairs(oldKeys, newKeys)) {
+    const { words, start, end, locked, effect, confidence, flag } = oldArr[i];
+    out[j] = { ...newLines[j], words, start, end, locked, effect, confidence, flag };
+  }
+  return out;
 }
 
 export function applySheet(project, raw) {
