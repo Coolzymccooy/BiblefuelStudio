@@ -71,7 +71,8 @@ export interface MomentOccasion {
 
 export interface MomentMeta {
   occasions: MomentOccasion[];
-  styles: Array<{ id: MomentStyle; label: string; description: string }>;
+  /** `energy` is the style's natural level (0..1): picking the style moves the slider there. */
+  styles: Array<{ id: MomentStyle; label: string; description: string; energy: number }>;
   lengths: number[];
   limits: {
     statements: Record<string, number>;

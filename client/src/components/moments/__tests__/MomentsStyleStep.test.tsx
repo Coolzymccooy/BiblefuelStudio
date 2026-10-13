@@ -33,13 +33,72 @@ describe('MomentsStyleStep', () => {
     expect(video).toHaveAttribute('loop');
   });
 
-  it('picking a style saves it', async () => {
+  it("picking a style saves it with the style's natural Energy", async () => {
     const update = vi.spyOn(momentsApi, 'update').mockResolvedValue(mkMoment());
     const p = props();
     render(<MomentsStyleStep {...p} />);
     await userEvent.click(screen.getByRole('button', { name: /hype/i }));
-    expect(update).toHaveBeenCalledWith('m1', { style: 'hype' });
+    expect(update).toHaveBeenCalledWith('m1', { style: 'hype', energy: 0.85 });
     await waitFor(() => expect(p.refresh).toHaveBeenCalled());
+  });
+
+  it('the picked style is visibly marked: a Selected badge and an outline (not a ring the card shadow hides)', () => {
+    render(<MomentsStyleStep {...props()} />);
+    const picked = screen.getByRole('button', { name: /celebrate/i });
+    expect(picked).toHaveTextContent(/selected/i);
+    expect(picked.className).toMatch(/outline-bf-gold/);
+    expect(picked.className).not.toMatch(/\bring-/);
+    for (const name of [/glow/i, /hype/i, /gallery/i]) expect(screen.getByRole('button', { name })).not.toHaveTextContent(/selected/i);
+  });
+
+  it('the badge is visual only: the name starts with the style and the state is aria-pressed', () => {
+    render(<MomentsStyleStep {...props()} />);
+    expect(screen.getByRole('button', { name: /^celebrate/i, pressed: true })).toBeInTheDocument();
+  });
+
+  it('the selected card still shows keyboard focus over its outline', () => {
+    render(<MomentsStyleStep {...props()} />);
+    expect(screen.getByRole('button', { name: /celebrate/i }).className).toMatch(/focus-visible:outline-/);
+  });
+
+  it('a style without a natural Energy (stale meta) saves just the style and leaves the slider', async () => {
+    const update = vi.spyOn(momentsApi, 'update').mockResolvedValue(mkMoment({ style: 'glow' }));
+    const meta = { ...META, styles: META.styles.map((s) => ({ ...s, energy: undefined as unknown as number })) };
+    function Host() {
+      const [busy, setBusy] = useState(false);
+      return <MomentsStyleStep project={mkMoment({ energy: 0.8 })} meta={meta} refresh={vi.fn()} busy={busy} setBusy={setBusy} track={vi.fn()} commit={vi.fn()} />;
+    }
+    render(<Host />);
+    await userEvent.click(screen.getByRole('button', { name: /glow/i }));
+    expect(update).toHaveBeenCalledWith('m1', { style: 'glow' });
+    await waitFor(() => expect(screen.getByRole('button', { name: /glow/i })).not.toBeDisabled());
+    expect((screen.getByLabelText(/energy/i) as HTMLInputElement).value).toBe('80');
+  });
+
+  it('picking Glow moves the Energy slider to Calm', async () => {
+    vi.spyOn(momentsApi, 'update').mockResolvedValue(mkMoment({ style: 'glow', energy: 0.2 }));
+    renderLive(mkMoment({ energy: 0.8 }));
+    expect(screen.getByText(/energy: hype/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /glow/i }));
+    await waitFor(() => expect((screen.getByLabelText(/energy/i) as HTMLInputElement).value).toBe('20'));
+    expect(screen.getByText(/energy: calm/i)).toBeInTheDocument();
+  });
+
+  it('picking the style already chosen keeps a fine-tuned Energy (no save)', async () => {
+    const update = vi.spyOn(momentsApi, 'update').mockResolvedValue(mkMoment());
+    render(<MomentsStyleStep {...props({ energy: 0.3 })} />);
+    await userEvent.click(screen.getByRole('button', { name: /celebrate/i }));
+    expect(update).not.toHaveBeenCalled();
+    expect((screen.getByLabelText(/energy/i) as HTMLInputElement).value).toBe('30');
+  });
+
+  it('a failed style save leaves the Energy slider where it was', async () => {
+    vi.spyOn(momentsApi, 'update').mockRejectedValue(new Error('nope'));
+    vi.spyOn(errors, 'toastError').mockImplementation(() => {});
+    renderLive(mkMoment({ energy: 0.8 }));
+    await userEvent.click(screen.getByRole('button', { name: /glow/i }));
+    await waitFor(() => expect(errors.toastError).toHaveBeenCalled());
+    expect((screen.getByLabelText(/energy/i) as HTMLInputElement).value).toBe('80');
   });
 
   it('Energy saves on release, as 0..1', async () => {

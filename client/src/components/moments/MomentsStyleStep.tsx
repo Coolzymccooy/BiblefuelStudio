@@ -1,9 +1,12 @@
 import { useRef, useState, type SyntheticEvent } from 'react';
+import { Check } from 'lucide-react';
 import { momentsApi } from '../../lib/momentsApi';
 import { toastError } from '../../lib/errors';
-import type { MomentPatch } from '../../lib/momentsTypes';
+import type { MomentPatch, MomentMeta } from '../../lib/momentsTypes';
 import type { MomentStepProps } from '../../pages/MomentsPage';
 import { fieldLabelCls, panelCls, segmentCls, segmentedCls } from '../story/formStyles';
+
+type MomentStyleMeta = MomentMeta['styles'][number];
 
 const energyWord = (e: number) => (e < 0.34 ? 'Calm' : e <= 0.66 ? 'Lively' : 'Hype');
 
@@ -29,6 +32,22 @@ export function MomentsStyleStep({ project, meta, refresh, busy, setBusy, commit
     }
   };
 
+  /**
+   * A style brings its natural Energy with it; picking the current one keeps a fine-tuned slider.
+   * Meta cached from before styles carried an Energy saves just the style.
+   */
+  const pickStyle = async (style: MomentStyleMeta) => {
+    if (style.id === project.style) return;
+    if (!Number.isFinite(style.energy)) {
+      await save({ style: style.id });
+      return;
+    }
+    if (await save({ style: style.id, energy: style.energy })) {
+      savedEnergy.current = Math.round(style.energy * 100);
+      setEnergy(savedEnergy.current);
+    }
+  };
+
   const commitEnergy = async (e: SyntheticEvent<HTMLInputElement>) => {
     const value = Number(e.currentTarget.value);
     if (value === savedEnergy.current) return;
@@ -47,22 +66,34 @@ export function MomentsStyleStep({ project, meta, refresh, busy, setBusy, commit
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {meta.styles.map((s) => (
-          <button
-            key={s.id}
-            type="button"
-            aria-pressed={project.style === s.id}
-            disabled={busy}
-            onClick={() => save({ style: s.id })}
-            className={`glass overflow-hidden rounded-bf text-left disabled:opacity-60 ${project.style === s.id ? 'ring-2 ring-bf-gold' : ''}`}
-          >
-            <video src={`/moments/previews/${s.id}.mp4`} autoPlay muted loop playsInline preload="metadata" aria-hidden="true" className="aspect-[9/16] w-full object-cover" />
-            <div className="p-2">
-              <div className="text-sm font-semibold text-bf-cream">{s.label}</div>
-              <div className="text-help">{s.description}</div>
-            </div>
-          </button>
-        ))}
+        {meta.styles.map((s) => {
+          const picked = project.style === s.id;
+          return (
+            <button
+              key={s.id}
+              type="button"
+              aria-pressed={picked}
+              disabled={busy}
+              onClick={() => { void pickStyle(s); }}
+              // An outline, not a ring: the glass card's own box-shadow would paint over a ring.
+              // Keyboard focus thickens it in the text colour, so a focused picked card still shows focus.
+              className={`glass relative overflow-hidden rounded-bf text-left disabled:opacity-60 ${picked ? 'outline outline-2 outline-offset-2 outline-bf-gold focus-visible:outline-4 focus-visible:outline-bf-cream' : ''}`}
+            >
+              <video src={`/moments/previews/${s.id}.mp4`} autoPlay muted loop playsInline preload="metadata" aria-hidden="true" className="aspect-[9/16] w-full object-cover" />
+              {picked && (
+                // Visual only: aria-pressed already tells assistive tech which style is picked.
+                <span aria-hidden="true" className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-bf-gold px-2 py-0.5 text-xs font-semibold text-bf-bg shadow">
+                  <Check className="h-3 w-3" aria-hidden="true" />
+                  Selected
+                </span>
+              )}
+              <div className="p-2">
+                <div className="text-sm font-semibold text-bf-cream">{s.label}</div>
+                <div className="text-help">{s.description}</div>
+              </div>
+            </button>
+          );
+        })}
       </div>
       <div className={panelCls}>
         <label className={fieldLabelCls}>

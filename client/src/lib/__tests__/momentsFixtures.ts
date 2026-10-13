@@ -6,8 +6,8 @@ export const META: MomentMeta = {
     { id: 'memorial', label: 'Memorial', church: true, fields: ['name', 'date', 'verse'], style: 'glow', energy: 0.15, song: 'library:prayer-piano' },
   ],
   styles: [
-    { id: 'glow', label: 'Glow', description: 'Calm' }, { id: 'celebrate', label: 'Celebrate', description: 'Party' },
-    { id: 'hype', label: 'Hype', description: 'Energy' }, { id: 'gallery', label: 'Gallery', description: 'Clean' },
+    { id: 'glow', label: 'Glow', description: 'Calm', energy: 0.2 }, { id: 'celebrate', label: 'Celebrate', description: 'Party', energy: 0.6 },
+    { id: 'hype', label: 'Hype', description: 'Energy', energy: 0.85 }, { id: 'gallery', label: 'Gallery', description: 'Clean', energy: 0.45 },
   ],
   lengths: [15, 30, 60],
   limits: { statements: { 15: 3, 30: 5, 60: 8 }, maxStatements: 8, title: 40, statement: 60, detail: 80, minPhotos: 3, maxPhotos: 20, scriptMax: 1200 },
