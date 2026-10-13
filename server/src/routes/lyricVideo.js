@@ -41,6 +41,8 @@ const CAPTION_MIN = 160;
 const CAPTION_MAX = 3840;
 const PROBE_TIMEOUT_MS = 15_000;
 const COVER_TIMEOUT_MS = 30_000;
+// Taking the sound out of a 15-minute video: a copy takes seconds, an AAC encode well under a minute.
+const EXTRACT_TIMEOUT_MS = 180_000;
 
 const NOT_FOUND = "That song project was not found";
 const INTERRUPTED = "Timing stopped before it finished — run it again.";
@@ -109,6 +111,70 @@ async function probeAudio(file) {
   const r = await run(probe, ["-v", "error", "-select_streams", "a", "-show_entries", "stream=index", "-of", "csv=p=0", file], PROBE_TIMEOUT_MS);
   if (r.error || r.code !== 0) return "unreadable";
   return r.out.trim().length > 0 ? "audio" : "silent";
+}
+
+/**
+ * True when the file has moving pictures (a video), not just sound. Cover art in an
+ * audio file is an "attached picture" stream, which the capital-V selector skips.
+ */
+async function hasMovingPicture(file) {
+  const probe = process.env.FFPROBE_PATH?.trim() || "ffprobe";
+  const r = await run(probe, ["-v", "error", "-select_streams", "V", "-show_entries", "stream=index", "-of", "csv=p=0", file], PROBE_TIMEOUT_MS);
+  return !r.error && r.code === 0 && r.out.trim().length > 0;
+}
+
+/** The codec of the file's first sound stream ("aac", "pcm_s16le", ...), or "" when unknown. */
+async function firstAudioCodec(file) {
+  const probe = process.env.FFPROBE_PATH?.trim() || "ffprobe";
+  const r = await run(probe, ["-v", "error", "-select_streams", "a:0", "-show_entries", "stream=codec_name", "-of", "csv=p=0", file], PROBE_TIMEOUT_MS);
+  if (r.error || r.code !== 0) return "";
+  return r.out.trim().split(/\r?\n/)[0].trim().toLowerCase();
+}
+
+const OWNED_SONG = /^lyric-song-[0-9a-f-]+\.m4a$/i;
+
+/** True for a song file this feature took out of a video (never a user's own upload). */
+const isExtractedSong = (file) => typeof file === "string" && OWNED_SONG.test(path.basename(file));
+
+/**
+ * The first sound track of a video, saved on its own as an .m4a in the user's outputs, so the
+ * preview and the timing never have to read the whole video. AAC is copied as it is; anything
+ * else is encoded to AAC 192k. Returns the new file, or null when it could not be made.
+ */
+async function extractSongAudio(file, outputDir) {
+  const out = path.join(outputDir, `lyric-song-${uuid()}.m4a`);
+  const ffmpeg = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
+  const attempt = async (codecArgs) => {
+    const r = await run(ffmpeg, [
+      "-nostdin", "-v", "error", "-y", "-i", file,
+      "-map", "0:a:0", "-vn", "-sn", "-dn", ...codecArgs,
+      "-movflags", "+faststart", out,
+    ], EXTRACT_TIMEOUT_MS);
+    if (r.error || r.code !== 0 || !isFile(out)) { removeFile(out); return false; }
+    return true;
+  };
+  const encode = ["-c:a", "aac", "-b:a", "192k"];
+  // A copy that the .m4a container refuses (an odd AAC framing) falls back to an encode.
+  if ((await firstAudioCodec(file)) === "aac" && (await attempt(["-c:a", "copy"]))) return out;
+  return (await attempt(encode)) ? out : null;
+}
+
+/**
+ * The file the project plays and times as its song, and its length. An audio upload is used
+ * as it is; a video's sound is taken out into a file of its own (the length then comes from
+ * that file). Throws a Refusal when the sound cannot be taken out.
+ */
+async function songFromUpload(file, outputDir, uploadDuration) {
+  const round = (sec) => Math.round(sec * 100) / 100;
+  if (!(await hasMovingPicture(file))) return { songFile: file, durationSec: round(uploadDuration) };
+  const songFile = await extractSongAudio(file, outputDir);
+  if (!songFile) throw new Refusal(400, "The sound in that video could not be read. Try the song as an MP3, M4A or WAV file.");
+  const duration = await probeAudioDurationSec(songFile);
+  if (!Number.isFinite(duration) || duration <= 0) {
+    removeOwned(outputDir, songFile);
+    throw new Refusal(400, "The sound in that video could not be read. Try the song as an MP3, M4A or WAV file.");
+  }
+  return { songFile, durationSec: round(duration) };
 }
 
 /** One frame of the song's picture to use as the default background; null when there is none. */
@@ -300,6 +366,7 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
     if (!deleteProject(req.ctx.dataDir, project.projectId)) throw new Refusal(404, NOT_FOUND);
     // Only what this feature made. The uploaded song and backgrounds are the user's own files.
     removeOwned(req.ctx.outputDir, project.song?.coverStill);
+    if (isExtractedSong(project.song?.file)) removeOwned(req.ctx.outputDir, project.song.file);
     for (const render of project.renders || []) removeOwned(req.ctx.outputDir, render?.file);
     ok(res, {});
   }));
@@ -315,30 +382,37 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
     const duration = await probeAudioDurationSec(file);
     if (!Number.isFinite(duration) || duration <= 0) throw new Refusal(400, "That song could not be read. Try an MP3, M4A or WAV file.");
     if (duration > MAX_SONG_SEC) throw new Refusal(400, "That song is longer than 15 minutes. Trim it and upload again.");
-    const durationSec = Math.round(duration * 100) / 100;
+    const { songFile, durationSec } = await songFromUpload(file, req.ctx.outputDir, duration);
+    // The picture comes from the original upload: the extracted song has none.
     const coverStill = await extractCoverStill(file, req.ctx.outputDir, durationSec);
-    await songProbed?.(project.projectId);
+    // Everything this request made, removed again if the song is not attached after all.
+    const discardMade = () => {
+      removeOwned(req.ctx.outputDir, coverStill);
+      if (songFile !== file) removeOwned(req.ctx.outputDir, songFile);
+    };
     let replaced = null;
     let next;
     try {
+      await songProbed?.(project.projectId);
       next = updateProject(req.ctx.dataDir, project.projectId, (latest) => {
         busy(project.projectId); // timing or a render may have started while the file was probed
-        replaced = latest.song?.coverStill;
+        replaced = latest.song || null;
         // A different song: every time and every hand-moved line belonged to the old one.
         return {
           ...latest,
-          song: { file, durationSec, coverStill },
+          song: { file: songFile, durationSec, coverStill },
           lines: (latest.lines || []).map(untimedLine),
           sections: (latest.sections || []).map(({ start, ...section }) => section),
           timing: { status: "idle" },
         };
       });
     } catch (err) {
-      removeOwned(req.ctx.outputDir, coverStill);
+      discardMade();
       throw err;
     }
-    if (!next) { removeOwned(req.ctx.outputDir, coverStill); throw new Refusal(404, NOT_FOUND); }
-    if (replaced && replaced !== coverStill) removeOwned(req.ctx.outputDir, replaced);
+    if (!next) { discardMade(); throw new Refusal(404, NOT_FOUND); }
+    if (replaced?.coverStill && replaced.coverStill !== coverStill) removeOwned(req.ctx.outputDir, replaced.coverStill);
+    if (isExtractedSong(replaced?.file) && replaced.file !== songFile) removeOwned(req.ctx.outputDir, replaced.file);
     ok(res, { project: next });
   }));
 

@@ -274,10 +274,14 @@ describe("song upload", () => {
     let release;
     stub.align = { prepareAudio: () => new Promise((res) => { release = res; }), log: () => {} };
     stub.songProbed = async () => { assert.equal((await call("POST", `/${p.projectId}/align`)).status, 202); };
+    const sounds = () => fs.readdirSync(ctx.outputDir).filter((n) => n.startsWith("lyric-song-"));
+    const soundsBefore = sounds();
     try {
       const r = await call("POST", `/${p.projectId}/song`, { path: clip });
       assert.equal(r.status, 409);
       assert.deepEqual(covers(), before, "the picture taken from the refused song is removed");
+      assert.deepEqual(sounds(), soundsBefore, "the sound taken from the refused song is removed");
+      assert.ok(fs.existsSync(clip), "the user's own upload stays");
     } finally {
       stub.songProbed = null;
       release?.();
@@ -303,6 +307,116 @@ describe("song upload", () => {
     assert.equal(r.status, 200);
     const still = r.json.project.song.coverStill;
     assert.ok(still && fs.existsSync(still), `cover still ${still}`);
+  });
+});
+
+describe("song taken from a video (Codex #60)", { skip: !hasFfmpeg && "ffmpeg not installed" }, () => {
+  const FP = process.env.FFPROBE_PATH?.trim() || "ffprobe";
+  const streams = (file, sel) => spawnSync(FP, ["-v", "error", "-select_streams", sel, "-show_entries", "stream=codec_name", "-of", "csv=p=0", file], { encoding: "utf8" }).stdout.trim();
+  const durationOf = (file) => Number(spawnSync(FP, ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", file], { encoding: "utf8" }).stdout.trim());
+  const extracted = () => fs.readdirSync(ctx.outputDir).filter((n) => n.startsWith("lyric-song-"));
+  const makeClip = (name, { d = 3, audio = ["-c:a", "aac"] } = {}) => {
+    const clip = path.join(ctx.outputDir, name);
+    spawnSync(FF, ["-v", "error", "-y", "-f", "lavfi", "-i", `testsrc=s=160x90:d=${d}`, "-f", "lavfi", "-i", `sine=d=${d}`, "-shortest", "-c:v", "libx264", "-pix_fmt", "yuv420p", ...audio, clip]);
+    assert.ok(fs.existsSync(clip), `made ${name}`);
+    return clip;
+  };
+
+  test("a video's sound is taken out as an .m4a song; the picture still comes from the video", async () => {
+    const id = await newProject();
+    const clip = makeClip("source-video-aac.mp4");
+    const r = await call("POST", `/${id}/song`, { path: clip });
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    const song = r.json.project.song;
+    assert.match(path.basename(song.file), /^lyric-song-[\w-]+\.m4a$/);
+    assert.equal(fs.realpathSync(path.dirname(song.file)), fs.realpathSync(ctx.outputDir), "kept in the user's outputs");
+    assert.equal(streams(song.file, "v"), "", "no picture in the song");
+    assert.equal(streams(song.file, "a"), "aac");
+    assert.ok(Math.abs(durationOf(song.file) - 3) < 0.2, `duration ${durationOf(song.file)}`);
+    assert.ok(Math.abs(song.durationSec - 3) < 0.2, `durationSec ${song.durationSec}`);
+    assert.ok(song.coverStill && fs.existsSync(song.coverStill), "cover still from the video");
+    assert.ok(fs.existsSync(clip), "the user's own upload stays");
+  });
+
+  test("a video whose sound is not AAC is encoded to AAC", async () => {
+    const id = await newProject();
+    const clip = makeClip("source-video-pcm.mov", { audio: ["-c:a", "pcm_s16le"] });
+    const r = await call("POST", `/${id}/song`, { path: clip });
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    assert.match(r.json.project.song.file, /\.m4a$/);
+    assert.equal(streams(r.json.project.song.file, "a"), "aac");
+    assert.equal(streams(r.json.project.song.file, "v"), "");
+  });
+
+  test("an audio upload is used as it is, even one with cover art", async () => {
+    const id = await newProject();
+    const before = extracted();
+    const mp3 = path.join(ctx.outputDir, "audio-with-art.mp3");
+    spawnSync(FF, ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=d=2", "-f", "lavfi", "-i", "testsrc=s=64x64:d=1",
+      "-map", "0:a", "-map", "1:v", "-frames:v", "1", "-c:a", "libmp3lame", "-c:v", "mjpeg", "-disposition:v", "attached_pic", "-id3v2_version", "3", mp3]);
+    assert.ok(fs.existsSync(mp3));
+    const r = await call("POST", `/${id}/song`, { path: mp3 });
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    assert.equal(r.json.project.song.file, fs.realpathSync(mp3));
+    assert.deepEqual(extracted(), before, "no copy of an audio file is made");
+  });
+
+  test("replacing a video song removes the sound taken from it, never the user's upload", async () => {
+    const id = await newProject();
+    const first = makeClip("source-video-first.mp4");
+    const a = await call("POST", `/${id}/song`, { path: first });
+    assert.equal(a.status, 200);
+    const firstSong = a.json.project.song.file;
+    const second = makeClip("source-video-second.mp4", { d: 2 });
+    const b = await call("POST", `/${id}/song`, { path: second });
+    assert.equal(b.status, 200);
+    assert.ok(!fs.existsSync(firstSong), "the old extracted sound is removed");
+    assert.ok(fs.existsSync(b.json.project.song.file));
+    assert.ok(fs.existsSync(first) && fs.existsSync(second), "both uploads stay");
+    // Swapping to plain audio removes the extracted sound too, and keeps the audio upload.
+    const audio = path.join(ctx.outputDir, "audio-replace.m4a");
+    spawnSync(FF, ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=d=2", "-c:a", "aac", audio]);
+    const c = await call("POST", `/${id}/song`, { path: audio });
+    assert.equal(c.status, 200);
+    assert.ok(!fs.existsSync(b.json.project.song.file), "the second extracted sound is removed");
+    // And replacing a plain audio song never deletes that upload.
+    const d = await call("POST", `/${id}/song`, { path: makeClip("source-video-third.mp4", { d: 1 }) });
+    assert.equal(d.status, 200);
+    assert.ok(fs.existsSync(audio), "the user's audio upload stays");
+  });
+
+  test("deleting the project removes the extracted sound, never the user's upload", async () => {
+    const id = await newProject();
+    const clip = makeClip("source-video-delete.mp4", { d: 1 });
+    const r = await call("POST", `/${id}/song`, { path: clip });
+    assert.equal(r.status, 200);
+    const song = r.json.project.song.file;
+    assert.equal((await call("DELETE", `/${id}`)).status, 200);
+    assert.ok(!fs.existsSync(song), "the extracted sound is removed");
+    assert.ok(fs.existsSync(clip), "the upload stays");
+  });
+
+  test("a song whose project vanished while it was probed leaves no extracted sound behind", async () => {
+    const id = await newProject();
+    const clip = makeClip("source-video-vanish.mp4", { d: 1 });
+    const before = extracted();
+    stub.songProbed = async () => { assert.equal((await call("DELETE", `/${id}`)).status, 200); };
+    try {
+      const r = await call("POST", `/${id}/song`, { path: clip });
+      assert.equal(r.status, 404);
+      assert.deepEqual(extracted(), before);
+      assert.ok(fs.existsSync(clip));
+    } finally {
+      stub.songProbed = null;
+    }
+  });
+
+  test("a project with an old video song.file still deletes cleanly without touching that video", async () => {
+    const p = placedProject(ctx, { n: 1 });
+    const clip = makeClip("source-video-legacy.mp4", { d: 1 });
+    writeProject(ctx.dataDir, { ...readProject(ctx.dataDir, p.projectId), song: { file: clip, durationSec: 1, coverStill: null } });
+    assert.equal((await call("DELETE", `/${p.projectId}`)).status, 200);
+    assert.ok(fs.existsSync(clip), "a legacy video song is the user's upload and stays");
   });
 });
 
