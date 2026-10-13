@@ -53,3 +53,12 @@ test("the reference project keeps the engine's spacing rules on a Shorts frame",
   assert.ok(fx.includes("slam") && fx.includes("frame"), "the song still gets its big moments");
   assert.ok(buildLyricAss(project, { w: 720, h: 1280 }).length > 0);
 });
+
+test("the project's energy reaches the effect choice: a calm video has no slams (R42)", () => {
+  const calm = { ...project, look: { ...project.look, energy: "calm" } };
+  const fx = chooseEffects({ lines: calm.lines, sections: calm.sections, title: calm.title, energy: "calm" });
+  assert.ok(!fx.some((e) => e === "slam" || e === "frame" || e === "curve"));
+  // The same calm project with those choices written onto its lines draws exactly the same.
+  const pinned = { ...calm, lines: calm.lines.map((l, i) => ({ ...l, effect: fx[i] })) };
+  assert.equal(buildLyricAss(calm, { w: 720, h: 1280 }), buildLyricAss(pinned, { w: 720, h: 1280 }));
+});

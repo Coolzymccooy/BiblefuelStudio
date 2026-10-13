@@ -80,6 +80,39 @@ describe("chooseEffects", () => {
   });
 });
 
+describe("energy (R42)", () => {
+  const L = lineMaker();
+  const sections = [S("s1", "intro"), S("s2", "pre"), S("s3", "chorus"), S("s4", "outro")];
+  const lines = [
+    L("s1", "Eh-yeah, eh-yeah!"), L("s1", "Oya!"),
+    L("s2", "Long line number one here today"), L("s2", "Short one here"), L("s2", "Another long line for the pre"),
+    L("s3", "My time no late!"), L("s3", "Who talk say?"), L("s3", "My time no late!"),
+    L("s4", "Who talk say?"), L("s4", "Eh-yeah!"),
+  ];
+  const BIG = ["slam", "frame", "curve"];
+  test("calm draws no slams, frames or curves; they step down to pop and stack", () => {
+    const wild = chooseEffects({ lines, sections, title: "My Time No Late" });
+    const calm = chooseEffects({ lines, sections, title: "My Time No Late", energy: "calm" });
+    assert.ok(BIG.every((fx) => wild.includes(fx)), `the wild plan has all three: ${wild}`);
+    assert.deepEqual(calm.filter((fx) => BIG.includes(fx)), [], `calm: ${calm}`);
+    calm.forEach((fx, i) => {
+      if (wild[i] === "slam") assert.equal(fx, "pop", `line ${i}`);
+      else if (wild[i] === "frame" || wild[i] === "curve") assert.equal(fx, "stack", `line ${i}`);
+      else assert.equal(fx, wild[i], `line ${i} is unchanged`);
+    });
+  });
+  test("lively and wild, and no energy at all, are unchanged", () => {
+    const plain = chooseEffects({ lines, sections, title: "My Time No Late" });
+    for (const energy of ["lively", "wild", undefined]) {
+      assert.deepEqual(chooseEffects({ lines, sections, title: "My Time No Late", energy }), plain, String(energy));
+    }
+  });
+  test("a line's own choice is still the user's call on calm", () => {
+    const own = lines.map((l, i) => (i === 0 ? { ...l, effect: "slam" } : l));
+    assert.equal(chooseEffects({ lines: own, sections, title: "x", energy: "calm" })[0], "slam");
+  });
+});
+
 describe("titleLineIndexes", () => {
   test("by the song title, else the most repeated chorus line", () => {
     const sections = [S("c", "chorus")];

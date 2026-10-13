@@ -14,7 +14,7 @@ export function buildLyricAss(project, { w, h, layout = "shorts" }) {
   const aspect = layout === "shorts" && base === "tall" ? "shorts" : base;
   const look = resolveLook(project.look?.id || "studio-lagos-night");
   const energy = resolveEnergy(project.look?.energy, "wild");
-  const effects = chooseEffects({ lines: placed, sections: project.sections || [], title: project.title || "" });
+  const effects = chooseEffects({ lines: placed, sections: project.sections || [], title: project.title || "", energy });
   const phrases = placed.map((l) => ({ text: l.text, start: l.start, end: l.end, words: l.words }));
   const overrides = Object.fromEntries(effects.map((fx, i) => [i, fx]));
   const plan = planPhrases({

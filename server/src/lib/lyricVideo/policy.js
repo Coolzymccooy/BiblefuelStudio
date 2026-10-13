@@ -10,6 +10,8 @@ const FRAME_GAP = 30;
 const CURVE_GAP = 20;
 const SLAM_MAX_WORDS = 4;
 const SHORT_WORDS = 5;
+/** On the calm energy the big moves step down to the quiet ones (a line's own choice is kept). */
+const CALM_STEP = Object.freeze({ slam: "pop", frame: "stack", curve: "stack" });
 
 const norm = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/\p{M}/gu, "").replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
 const wordCount = (s) => String(s || "").trim().split(/\s+/).filter(Boolean).length;
@@ -59,8 +61,8 @@ function preCurveLines(lines, kindOf, first, last) {
   return pick;
 }
 
-/** One effect id per line. */
-export function chooseEffects({ lines, sections, title }) {
+/** One effect id per line. `energy` is the project's energy id; "calm" leaves out slams, frames and curves. */
+export function chooseEffects({ lines, sections, title, energy }) {
   const kindOf = new Map(sections.map((s) => [s.id, s.kind]));
   const titleLines = titleLineIndexes(lines, title, sections);
   const { first, last } = sectionBounds(lines);
@@ -112,6 +114,7 @@ export function chooseEffects({ lines, sections, title }) {
     if (fx === "slam") lastSlamEnd = l.end;
     if (fx === "frame") { lastFrame = l.start; framed.add(l.sectionId); }
     if (fx === "curve") { lastCurve = l.start; curved.add(l.sectionId); }
-    return fx;
+    // Stepped down after the spacing above, so calm is the same plan with the big moves made quiet.
+    return !own && energy === "calm" ? CALM_STEP[fx] ?? fx : fx;
   });
 }
