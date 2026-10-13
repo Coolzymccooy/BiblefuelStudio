@@ -189,6 +189,51 @@ describe("failures are stored in plain English, with the detail in the log", () 
   });
 });
 
+describe("a failed re-run keeps the earlier good timing (R44)", () => {
+  /** A project timed once already: run it, then hand it back for a second run. */
+  async function timedOnce() {
+    const p = setup();
+    const done = await run(p);
+    assert.equal(done.timing.status, "done");
+    return done;
+  }
+  test("a re-run that fails outright: still done, the earlier lines kept, the failure noted", async () => {
+    const before = await timedOnce();
+    const after = await run(before, { transcribe: async () => { throw new Error("Whisper 503: upstream"); } });
+    assert.equal(after.timing.status, "done");
+    assert.equal(after.timing.error, null);
+    assert.match(after.timing.lastError, /speech service had a problem/);
+    assert.doesNotMatch(after.timing.lastError, /Whisper|503/);
+    assert.deepEqual(after.lines, before.lines);
+    assert.deepEqual(after.sections, before.sections);
+    assert.deepEqual(after.timing.beats, before.timing.beats);
+    assert.equal(readProject(dir, before.projectId).timing.status, "done", "saved so");
+  });
+  test("a re-run that fails part-way keeps the earlier placements, not the partial ones", async () => {
+    const before = await timedOnce();
+    const moved = heardSong.map((w) => ({ ...w, start: w.start + 3, end: w.end + 3 }));
+    const after = await run(before, { transcribe: async (file) => { if (file === PREPARED()) return { words: moved }; throw new Error("Whisper 429: busy"); } });
+    assert.equal(after.timing.status, "done");
+    assert.match(after.timing.lastError, /busy/);
+    assert.deepEqual(after.lines, before.lines);
+  });
+  test("a re-run that works clears the earlier failure note", async () => {
+    const before = await timedOnce();
+    const failed = await run(before, { transcribe: async () => { throw new Error("Whisper 429: busy"); } });
+    assert.ok(failed.timing.lastError);
+    const again = await run(failed);
+    assert.equal(again.timing.status, "done");
+    assert.equal(again.timing.lastError ?? null, null);
+  });
+  test("a first run that fails is still an error", async () => {
+    const p = setup();
+    const done = await run(p, { transcribe: async () => { throw new Error("Whisper 429: busy"); } });
+    assert.equal(done.timing.status, "error");
+    assert.match(done.timing.error, /busy/);
+    assert.equal(done.timing.lastError ?? null, null);
+  });
+});
+
 test("locked lines keep their timing on a re-run", async () => {
   let p = setup();
   p.lines[0] = { ...p.lines[0], locked: true, words: [{ text: "My", start: 0.5, end: 0.8 }, { text: "time", start: 0.8, end: 1 }, { text: "no", start: 1, end: 1.2 }, { text: "late", start: 1.2, end: 1.5 }], start: 0.5, end: 1.5 };

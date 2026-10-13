@@ -357,6 +357,16 @@ describe("timing", () => {
     assert.equal(readProject(ctx.dataDir, p.projectId).timing.status, "error", "persisted, not just reported");
     assert.equal(r.json.project.timing.progress, null);
   });
+  test("an interrupted re-run keeps the earlier timing and notes that it stopped (R44)", async () => {
+    const p = placedProject(ctx);
+    writeProject(ctx.dataDir, { ...p, timing: { status: "running", progress: { step: "listening" }, rerun: true } });
+    const r = await call("GET", `/${p.projectId}`);
+    assert.equal(r.json.project.timing.status, "done");
+    assert.equal(r.json.project.timing.lastError, "Timing stopped before it finished — run it again.");
+    assert.equal(r.json.project.timing.progress, null);
+    assert.deepEqual(r.json.project.lines, p.lines);
+    assert.equal(readProject(ctx.dataDir, p.projectId).timing.status, "done", "persisted");
+  });
   test("listing also settles an interrupted timing job", async () => {
     const p = placedProject(ctx);
     writeProject(ctx.dataDir, { ...p, timing: { status: "running" } });

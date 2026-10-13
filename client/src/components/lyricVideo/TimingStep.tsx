@@ -96,6 +96,11 @@ export function TimingStep({ project, onChange }: Props) {
   const flagged = flaggedCount(lines);
   return (
     <div className="space-y-4">
+      {timing.lastError && (
+        <p role="status" className={`${panelCls} text-sm text-bf-gold`}>
+          Timing again didn't work: {timing.lastError} Your earlier timing is kept.
+        </p>
+      )}
       <div ref={previewBox}>
         <LazyLivePreview project={project} assVersion={assVersion} onTime={onTime} />
       </div>

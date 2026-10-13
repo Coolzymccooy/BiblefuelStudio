@@ -22,7 +22,7 @@ import { SHEET_MAX_CHARS, SHEET_MAX_LINES } from "../lib/lyricVideo/sheetParser.
 import {
   createProject, readProject, updateProject, listProjects, deleteProject, readPrefs, writePrefs, applySheet,
 } from "../lib/lyricVideo/projectStore.js";
-import { runAlignJob, isAligning } from "../lib/lyricVideo/alignJob.js";
+import { runAlignJob, isAligning, failedTiming } from "../lib/lyricVideo/alignJob.js";
 import { buildLyricAss } from "../lib/lyricVideo/lyricAss.js";
 import { renderSize, runLyricRender } from "../lib/lyricVideo/lyricRender.js";
 import { quota } from "../middleware/quota.js";
@@ -153,7 +153,8 @@ function removeOwned(outputDir, file) {
 
 /**
  * A saved "running" timing state with no live job in this process means the
- * server restarted mid-run: persist it as stopped so the page stops spinning.
+ * server restarted mid-run: persist it as stopped so the page stops spinning
+ * (a re-run keeps the earlier timing, as any failed re-run does).
  * Returns the project as it now stands (null when it vanished meanwhile).
  */
 function settleInterrupted(dataDir, project) {
@@ -161,7 +162,7 @@ function settleInterrupted(dataDir, project) {
   if (project.timing?.status !== "running" || isAligning(id)) return project;
   return updateProject(dataDir, id, (latest) => {
     if (latest.timing?.status !== "running" || isAligning(id)) return latest;
-    return { ...latest, timing: { ...latest.timing, status: "error", progress: null, error: INTERRUPTED } };
+    return { ...latest, timing: failedTiming(latest.timing, INTERRUPTED) };
   });
 }
 

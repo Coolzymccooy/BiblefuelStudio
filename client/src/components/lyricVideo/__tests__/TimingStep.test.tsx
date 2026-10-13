@@ -25,6 +25,21 @@ const done = { projectId: 'lv_1', song: { file: 'x', durationSec: 30, coverStill
 describe('TimingStep', () => {
   beforeEach(() => vi.clearAllMocks());
 
+  it('says when timing again did not work, and keeps the earlier timing on show (R44)', async () => {
+    const failedAgain = { ...done, timing: { status: 'done', lastError: 'The speech service is busy right now — wait a minute, then run timing again.' } } as unknown as LyricProject;
+    render(<TimingStep project={failedAgain} onChange={vi.fn()} />);
+    expect(screen.getByText(/^Timing again didn't work/).textContent).toBe(
+      "Timing again didn't work: The speech service is busy right now — wait a minute, then run timing again. Your earlier timing is kept.",
+    );
+    expect(screen.getByText('1 line to check')).toBeTruthy();
+    expect(await screen.findByTestId('lyric-preview')).toBeTruthy();
+  });
+
+  it('shows no such notice after a run that worked', () => {
+    render(<TimingStep project={done} onChange={vi.fn()} />);
+    expect(screen.queryByText(/didn't work/)).toBeNull();
+  });
+
   it('lists lines, tags the flagged one and counts it', () => {
     render(<TimingStep project={done} onChange={vi.fn()} />);
     expect(screen.getByText('1 line to check')).toBeTruthy();

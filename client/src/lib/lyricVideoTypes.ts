@@ -42,6 +42,8 @@ export interface LyricTiming {
   progress?: { step: TimingStep; window?: number; total?: number } | null;
   /** A plain sentence, set when status is "error". */
   error?: string | null;
+  /** A plain sentence, set when timing was run again and failed; the earlier timing (status "done") is kept. */
+  lastError?: string | null;
   beats?: { bpm: number; times: number[] };
   finishedAt?: string;
 }

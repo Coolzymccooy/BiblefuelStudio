@@ -89,6 +89,18 @@ function snapToBeat(t, beats) {
   return beats.reduce((best, b) => (Math.abs(b - t) < Math.abs(best - t) ? b : best), beats[0]);
 }
 
+/**
+ * The timing after a run that failed with `message`. A re-run (one started on
+ * lyrics already timed) keeps the earlier good timing, still "done", and notes
+ * the failure in lastError; a first run is an error, as before.
+ */
+export function failedTiming(timing, message) {
+  const { rerun, ...rest } = timing || {};
+  return rerun
+    ? { ...rest, status: "done", progress: null, error: null, lastError: message }
+    : { ...rest, status: "error", progress: null, error: message };
+}
+
 const sameLyrics = (a, b) => a.length === b.length && a.every((l, i) => l.id === b[i].id && l.text === b[i].text);
 const timingOf = ({ words, start, end, confidence, flag }) => ({ words, start, end, confidence, flag });
 
@@ -122,7 +134,9 @@ export async function runAlignJob({ dataDir, workDir, projectId, deps }) {
     let snapshot = null;
     const begun = updateProject(dataDir, projectId, (latest) => {
       snapshot = latest;
-      return { ...latest, timing: { ...latest.timing, status: "running", progress: { step: "preparing" }, error: null } };
+      // A re-run keeps the earlier timing if it fails, so remember that there was one.
+      const rerun = latest.timing?.status === "done";
+      return { ...latest, timing: { ...latest.timing, status: "running", progress: { step: "preparing" }, error: null, lastError: null, rerun } };
     });
     if (!begun) return null;
     return await timeLyrics({ dataDir, projectId, snapshot, d, log });
@@ -130,7 +144,7 @@ export async function runAlignJob({ dataDir, workDir, projectId, deps }) {
     if (err instanceof ProjectGone) return null;
     log(`[lyric-video] timing failed for ${projectId}:`, err);
     try {
-      return updateProject(dataDir, projectId, (latest) => ({ ...latest, timing: { ...latest.timing, status: "error", progress: null, error: explainFailure(err) } }));
+      return updateProject(dataDir, projectId, (latest) => ({ ...latest, timing: failedTiming(latest.timing, explainFailure(err)) }));
     } catch (writeErr) {
       log(`[lyric-video] could not save the timing error for ${projectId}:`, writeErr);
       return null;
@@ -152,16 +166,21 @@ function mergePlacement(latest, snapshot, placed, beats) {
   return { lines, sections: sectionStarts(latest.sections, lines, beats) };
 }
 
-const lyricsChanged = (latest) => ({ ...latest, timing: { ...latest.timing, status: "error", progress: null, error: LYRICS_CHANGED } });
+const withoutRerun = ({ rerun, ...timing } = {}) => timing;
+const lyricsChanged = (latest) => ({ ...latest, timing: { ...withoutRerun(latest.timing), status: "error", progress: null, error: LYRICS_CHANGED } });
 
-/** Places what Whisper heard before a failure and stores it with the failure, so the lines that were heard keep their times. */
+/**
+ * Places what Whisper heard before a failure and stores it with the failure, so the lines that were
+ * heard keep their times. A re-run keeps the earlier full timing instead of these partial placements.
+ */
 function savePartial({ dataDir, projectId, snapshot, partial, err, durationSec, lockedLines }) {
-  const placed = partial?.heard?.length ? placeLines(snapshot.lines, partial.heard, { locked: lockedLines, durationSec }) : null;
-  const failed = { status: "error", progress: null, error: explainFailure(err) };
+  const rerun = snapshot.timing?.status === "done";
+  const placed = !rerun && partial?.heard?.length ? placeLines(snapshot.lines, partial.heard, { locked: lockedLines, durationSec }) : null;
+  const message = explainFailure(err);
   return updateProject(dataDir, projectId, (latest) => {
     const merged = placed ? mergePlacement(latest, snapshot, placed, { bpm: 0, times: [] }) : null;
     if (placed && !merged) return lyricsChanged(latest);
-    return { ...latest, ...(merged || {}), timing: { ...latest.timing, ...failed, ...(merged ? { passes: partial.passes } : {}) } };
+    return { ...latest, ...(merged || {}), timing: { ...failedTiming(latest.timing, message), ...(merged ? { passes: partial.passes } : {}) } };
   });
 }
 
@@ -212,7 +231,7 @@ async function timeLyrics({ dataDir, projectId, snapshot, d, log }) {
   const done = updateProject(dataDir, projectId, (latest) => {
     const merged = mergePlacement(latest, snapshot, placed, beats);
     if (!merged) return lyricsChanged(latest);
-    return { ...latest, ...merged, timing: { ...latest.timing, status: "done", progress: null, error: null, beats, passes, finishedAt: new Date().toISOString() } };
+    return { ...latest, ...merged, timing: { ...withoutRerun(latest.timing), status: "done", progress: null, error: null, lastError: null, beats, passes, finishedAt: new Date().toISOString() } };
   });
   if (!done) throw new ProjectGone(projectId);
   return done;
