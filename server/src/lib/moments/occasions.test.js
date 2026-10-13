@@ -20,9 +20,9 @@ test("every occasion's defaults are real: a style, an Energy, a bundled song", (
   }
 });
 
-test("birthday is Celebrate at 0.8 and memorial is Glow at 0.15", () => {
+test("birthday is Celebrate at 0.6 and memorial is Glow at 0.15", () => {
   assert.equal(OCCASIONS.birthday.style, "celebrate");
-  assert.equal(OCCASIONS.birthday.energy, 0.8);
+  assert.equal(OCCASIONS.birthday.energy, 0.6);
   assert.equal(OCCASIONS.memorial.style, "glow");
   assert.equal(OCCASIONS.memorial.energy, 0.15);
 });

@@ -13,7 +13,20 @@ import { resolveStyle, captionEnergyFor } from "./styles.js";
  * Nothing here converts the matrix or retags, so the output keeps those tags.
  */
 export const LOUDNESS = "loudnorm=I=-14:TP=-1.5:LRA=11";
+/** The picture's fade to black at the very end. */
+export const FADE_OUT_SEC = 0.8;
+/** The song's fade-out: a little longer than the picture's, so the sound settles as it goes. */
+const SONG_TAIL_SEC = 1.5;
+/** How dark the closing card gets behind its words, so they read over any photo. */
+const SCRIM = "black@0.4";
 const n3 = (x) => Number(x).toFixed(3);
+
+/** Darkens the closing card from its first frame (none when the Moment has no end card). */
+function closingScrim(plan) {
+  const end = plan.shots.at(-1);
+  if (!end || end.role !== "end") return null;
+  return `drawbox=x=0:y=0:w=iw:h=ih:color=${SCRIM}:t=fill:enable='gte(t,${n3(end.start)})'`;
+}
 
 export function statementsAss(plan) {
   if (!plan.captions.length) return "";
@@ -65,10 +78,10 @@ function audioGraph({ song, voice, D }) {
       `[1:a]${fit},volume=0.35[m]`,
       `[2:a]${fit},asplit=2[v1][v2]`,
       `[m][v1]sidechaincompress=threshold=0.01:ratio=12:attack=5:release=350:makeup=2[duck]`,
-      `[v2][duck]amix=inputs=2:duration=first:dropout_transition=2,${tail(1.2)},${end}`,
+      `[v2][duck]amix=inputs=2:duration=first:dropout_transition=2,${tail(SONG_TAIL_SEC)},${end}`,
     ];
   }
-  if (song) return [`[1:a]${fit},afade=t=in:d=0.3,${tail(1.2)},${end}`];
+  if (song) return [`[1:a]${fit},afade=t=in:d=0.3,${tail(SONG_TAIL_SEC)},${end}`];
   if (voice) return [`[1:a]${fit},${tail(0.6)},${end}`];
   return ["[1:a]anull,aresample=48000[a]"];
 }
@@ -86,7 +99,11 @@ export function finishArgs({ body, out, plan, statementsPath, fxPath, song, voic
   // Both streams are bounded inside the graph. An output-side -t raced loudnorm's end-of-stream
   // flush (it buffers about 3 s), and the muxer could close the audio before the flush landed.
   const bound = `trim=end_frame=${Math.round(D * plan.fps)},setpts=N/${plan.fps}/TB`;
-  const video = [style.grade, statementsPath && assFilter(statementsPath), fxPath && assFilter(fxPath), bound].filter(Boolean);
+  // The scrim sits under the words; the fade to black closes everything, words included.
+  const fadeOut = `fade=t=out:st=${n3(Math.max(0, D - FADE_OUT_SEC))}:d=${FADE_OUT_SEC}`;
+  const video = [
+    style.grade, closingScrim(plan), statementsPath && assFilter(statementsPath), fxPath && assFilter(fxPath), fadeOut, bound,
+  ].filter(Boolean);
   // Picture and sound are two separate filtergraphs. In ffmpeg 8.0.1 a single graph holding both
   // lost the end of the mixed audio now and then when the machine was busy (the audio went to
   // silence from a random point in the last 1.5 s); separate graphs never did in repeated trials.

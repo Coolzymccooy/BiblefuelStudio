@@ -5,11 +5,19 @@
  */
 export const MIN_SHOT = 0.35;
 export const MAX_SHOT = 4;
-export const END_CARD_MIN = 1.5;
+/** The closing card stays up long enough to read its words before the fade to black. */
+export const END_CARD_MIN = 3;
 export const PULSE_SEC = 2;
 
 const r3 = (n) => Math.round(n * 1000) / 1000;
-const MAX_BY_BAND = { calm: 4, medium: 3, hype: 1.5 };
+const MAX_BY_BAND = { calm: 4, medium: 3, hype: 2 };
+/**
+ * The longest the photo-count gap gets. Below MAX_SHOT, so a span kept at the gap still has room
+ * for one more grid step before it would need an off-beat split.
+ */
+const GAP_CAP = 3;
+/** Beats between cuts on a beat grid; calm picks 4 or 8 per cut. */
+const STEP_BY_BAND = { medium: 4, hype: 2 };
 
 export function energyBand(energy) {
   if (energy < 0.34) return "calm";
@@ -49,22 +57,13 @@ function rawBoundaries({ grid, band, rnd }) {
   const marks = grid.marks;
   if (grid.kind !== "beats") return marks.map((m) => ({ ...m }));
   const out = [];
-  if (band === "hype") {
-    marks.forEach((m, i) => {
-      out.push({ ...m });
-      const next = marks[i + 1];
-      if (m.strong && next && (next.t - m.t) / 2 >= MIN_SHOT) {
-        out.push({ t: r3((m.t + next.t) / 2), downbeat: false, strong: false });
-      }
-    });
-    return out;
-  }
-  // Calm and medium step from the first downbeat so steps of 2/4/8 stay on the bar.
+  // Every band steps from the first downbeat so steps of 2/4/8 stay on the bar.
   let i = Math.max(0, marks.findIndex((m) => m.downbeat));
   while (i < marks.length) {
     out.push({ ...marks[i] });
-    const step = band === "medium" ? 2 : rnd() < 0.5 ? 4 : 8;
-    i += step;
+    // Hype punches a strong beat with a quick double cut: one beat, then back on the step.
+    if (band === "hype" && marks[i].strong && marks[i + 1]) out.push({ ...marks[i + 1] });
+    i += STEP_BY_BAND[band] ?? (rnd() < 0.5 ? 4 : 8);
   }
   return out;
 }
@@ -78,13 +77,18 @@ function rawBoundaries({ grid, band, rnd }) {
 function splitEdges({ from, to, pieces, maxLen, marks, minTail = MIN_SHOT }) {
   const span = to - from;
   const even = (k) => ({ t: r3(from + (span * k) / pieces), downbeat: false, strong: false });
-  if (pieces !== 2 || marks.length === 0) return Array.from({ length: pieces - 1 }, (_, k) => even(k + 1));
-  const mid = even(1);
+  // A two-way split with no bar to land on keeps the tail at least minTail long.
+  const mid = { t: r3(to - Math.max(minTail, span / 2)), downbeat: false, strong: false };
+  if (pieces === 2 && marks.length === 0) return [mid];
+  if (pieces !== 2) return Array.from({ length: pieces - 1 }, (_, k) => even(k + 1));
+  // A tolerance, so a bar exactly maxLen away (34.2 - 30.2 is 4.000000000000004) still counts.
+  const EPS = 1e-9;
   const fits = marks.filter((m) => m.downbeat
-    && m.t - from >= MIN_SHOT && to - m.t >= minTail
-    && m.t - from <= maxLen && to - m.t <= maxLen);
+    && m.t - from >= MIN_SHOT - EPS && to - m.t >= minTail - EPS
+    && m.t - from <= maxLen + EPS && to - m.t <= maxLen + EPS);
   if (fits.length === 0) return [mid];
-  const best = fits.reduce((p, m) => (Math.abs(m.t - mid.t) < Math.abs(p.t - mid.t) ? m : p));
+  const centre = from + span / 2;
+  const best = fits.reduce((p, m) => (Math.abs(m.t - centre) < Math.abs(p.t - centre) ? m : p));
   return [{ t: r3(best.t), downbeat: true, strong: best.strong }];
 }
 
@@ -101,20 +105,28 @@ function shotsOf({ from, to, first, maxLen, marks }) {
   }));
 }
 
-/** Contiguous shots from 0 to lengthSec, every one MIN_SHOT..MAX_SHOT, the last at least END_CARD_MIN. */
-export function cutPoints({ grid: rawGrid, energy, lengthSec: rawLength, rnd }) {
+/**
+ * Contiguous shots from 0 to lengthSec, every one MIN_SHOT..MAX_SHOT, the last at least END_CARD_MIN.
+ * `maxShots` (from the photo count) spaces the cuts out so a few photos are not cycled over and
+ * over. It is a target: no shot outgrows MAX_SHOT, so a long Moment never gets fewer than about
+ * lengthSec / MAX_SHOT shots.
+ */
+export function cutPoints({ grid: rawGrid, energy, lengthSec: rawLength, rnd, maxShots }) {
   const lengthSec = r3(rawLength);
   // Round every candidate time once, so each length check compares the times that get emitted.
   const grid = { ...rawGrid, marks: rawGrid.marks.map((m) => ({ ...m, t: r3(m.t) })) };
   const band = energyBand(energy);
-  const maxLen = grid.kind === "beats" ? MAX_SHOT : MAX_BY_BAND[band];
+  // The shortest a shot may be, from the photo count (see GAP_CAP).
+  const gap = Math.min(GAP_CAP, maxShots > 0 ? Math.max(MIN_SHOT, lengthSec / maxShots) : MIN_SHOT);
+  // Phrase and pulse grids split long spans by band, unless few photos already hold shots that long.
+  const maxLen = grid.kind === "beats" || gap >= MAX_BY_BAND[band] ? MAX_SHOT : MAX_BY_BAND[band];
   const inner = rawBoundaries({ grid, band, rnd }).filter((m) => m.t >= MIN_SHOT && m.t <= lengthSec - MIN_SHOT);
 
   // Starts of shots: 0, then each boundary.
   let starts = [{ t: 0, downbeat: true, strong: false }, ...inner];
-  // Drop boundaries that make a shot shorter than MIN_SHOT, measured from the last start kept.
+  // Drop boundaries that make a shot shorter than the gap, measured from the last start kept.
   const [first, ...rest] = starts;
-  starts = rest.reduce((kept, s) => (s.t - kept.at(-1).t >= MIN_SHOT - 1e-9 ? [...kept, s] : kept), [first]);
+  starts = rest.reduce((kept, s) => (s.t - kept.at(-1).t >= gap - 1e-9 ? [...kept, s] : kept), [first]);
   while (starts.length > 1 && lengthSec - starts.at(-1).t < MIN_SHOT) starts.pop();
   // The end card: merge trailing shots until it is long enough.
   while (starts.length > 1 && lengthSec - starts.at(-1).t < END_CARD_MIN) starts.pop();

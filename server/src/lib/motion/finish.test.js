@@ -60,7 +60,7 @@ test("song only: trimmed from its window, padded to length, faded, loudness-norm
   const r = finishArgs({ ...common, plan: plan(), song: { file: "song.mp3", startSec: 42.5 }, voice: null });
   const a = r.args;
   assert.deepEqual(a.slice(a.indexOf("-ss"), a.indexOf("-ss") + 6), ["-ss", "42.500", "-t", "15.000", "-i", "song.mp3"]);
-  assert.match(graphOf(r), /\[1:a\]aresample=48000,apad=whole_dur=15\.000,atrim=0:15\.000,afade=t=in:d=0\.3,afade=t=out:st=13\.800:d=1\.2,loudnorm=I=-14:TP=-1\.5:LRA=11,aresample=48000\[a\]/);
+  assert.match(graphOf(r), /\[1:a\]aresample=48000,apad=whole_dur=15\.000,atrim=0:15\.000,afade=t=in:d=0\.3,afade=t=out:st=13\.500:d=1\.5,loudnorm=I=-14:TP=-1\.5:LRA=11,aresample=48000\[a\]/);
   const scripts = a.flatMap((x, i) => (x === "-filter_complex_script" ? [a[i + 1]] : []));
   assert.deepEqual(scripts, [path.join("wd", "finish-video.txt"), path.join("wd", "finish-audio.txt")]);
   assert.deepEqual(r.sideFiles.map((f) => f.path), scripts);
@@ -81,6 +81,7 @@ test("song plus voice: the song ducks under the voice", () => {
   const g = graphOf(finishArgs({ ...common, plan: plan(), song: { file: "song.mp3", startSec: 0 }, voice: { file: "vo.mp3" } }));
   assert.match(g, /sidechaincompress=threshold=0\.01:ratio=12:attack=5:release=350:makeup=2/);
   assert.match(g, /amix=inputs=2:duration=first/);
+  assert.match(g, /dropout_transition=2,afade=t=out:st=13\.500:d=1\.5,/, "a voice-over Moment ends like a song-only one");
 });
 
 test("voice only and silence both give a full-length audio track", () => {
@@ -98,12 +99,32 @@ test("every audio graph ends back at 48 kHz (loudnorm emits 192 kHz)", () => {
   }
 });
 
-test("the picture is graded, then statements, then FX, with escaped paths", () => {
+test("the picture is graded, then the closing scrim, then statements, then FX, with escaped paths", () => {
   const g = graphOf(finishArgs({ ...common, statementsPath: "C:\\w\\s.ass", fxPath: "C:\\w\\fx.ass", plan: plan(), song: null, voice: null }));
   const v = g.split(";")[0];
-  assert.ok(v.startsWith("[0:v]eq=saturation=1.2:contrast=1.05,ass=filename='C\\:/w/s.ass'"), v);
+  assert.ok(v.startsWith("[0:v]eq=saturation=1.2:contrast=1.05,drawbox="), v);
+  assert.ok(v.includes("'gte(t,12.000)',ass=filename='C\\:/w/s.ass'"), v);
   assert.ok(v.includes(",ass=filename='C\\:/w/fx.ass'"), v);
   assert.ok(v.endsWith("[v]"));
+});
+
+test("the closing card darkens behind its words from its first frame, under the statements", () => {
+  const v = graphOf(finishArgs({ ...common, plan: plan(), song: null, voice: null })).split(";")[0];
+  const scrim = "drawbox=x=0:y=0:w=iw:h=ih:color=black@0.4:t=fill:enable='gte(t,12.000)'";
+  assert.ok(v.includes(`eq=saturation=1.2:contrast=1.05,${scrim},ass=filename='wd/s.ass'`), v);
+});
+
+test("the picture fades to black over the last 0.8 s, after the words and FX", () => {
+  const v = graphOf(finishArgs({ ...common, plan: plan(), song: null, voice: null })).split(";")[0];
+  assert.ok(v.includes("ass=filename='wd/fx.ass':fontsdir="), v);
+  assert.match(v, /fx\.ass'[^,]*,fade=t=out:st=14\.200:d=0\.8,trim=end_frame=450/);
+});
+
+test("a Moment with no closing card is neither darkened nor sent to black early", () => {
+  const one = plan({ shots: [{ ...plan().shots[0], end: 15 }] });
+  const v = graphOf(finishArgs({ ...common, plan: one, song: null, voice: null })).split(";")[0];
+  assert.ok(!v.includes("drawbox"), v);
+  assert.match(v, /fade=t=out:st=14\.200:d=0\.8/, "the fade to black still closes it");
 });
 
 test("missing statements and FX files are simply left out", () => {
@@ -265,7 +286,7 @@ test("the mixed audio keeps sounding to the end of the video", { skip }, () => {
     const out = finishAudio({ sec: 8, song: { file: song, startSec: 0 }, voice: { file: vo }, name: `tail-${label.replace(/\W+/g, "-")}` });
     const mean = windowVolume(out, 6, 0.5);
     assert.ok(mean > -50, `${label}: the song should still play at 6.0-6.5 s, got ${mean} dB`);
-    const late = windowVolume(out, 7.0, 0.5); // inside the 1.2 s fade-out, so quieter but never silent
+    const late = windowVolume(out, 7.0, 0.5); // inside the 1.5 s fade-out, so quieter but never silent
     assert.ok(late > -45, `${label}: the tail should fade, not drop out, at 7.0-7.5 s, got ${late} dB`);
   }
 });

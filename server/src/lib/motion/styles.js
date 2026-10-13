@@ -1,11 +1,13 @@
 /**
  * Smart styles: which moves, entrances and overlays a Moment draws from
  * (weighted), its colour grade, and its Studio caption look. Energy then
- * sets intensity within the style.
+ * sets intensity within the style; `energy` is the style's natural level,
+ * which picking the style moves the slider to.
  */
 export const STYLES = Object.freeze({
   glow: Object.freeze({
     id: "glow",
+    energy: 0.2,
     label: "Glow",
     description: "Calm and devotional: slow pushes, soft fades, warm light.",
     look: "studio-gospel-gold",
@@ -18,6 +20,7 @@ export const STYLES = Object.freeze({
   }),
   celebrate: Object.freeze({
     id: "celebrate",
+    energy: 0.6,
     label: "Celebrate",
     description: "Birthdays and parties: punch-ins, flashes and sparkles.",
     look: "studio-lagos-night",
@@ -30,6 +33,7 @@ export const STYLES = Object.freeze({
   }),
   hype: Object.freeze({
     id: "hype",
+    energy: 0.85,
     label: "Hype",
     description: "TikTok energy: shakes, whips, glitches and splits.",
     look: "studio-lagos-night",
@@ -42,6 +46,7 @@ export const STYLES = Object.freeze({
   }),
   gallery: Object.freeze({
     id: "gallery",
+    energy: 0.45,
     label: "Gallery",
     description: "Clean and steady for events and sermon promos.",
     look: "studio-clean-white",

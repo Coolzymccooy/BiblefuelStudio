@@ -85,7 +85,7 @@ router.get("/meta", (_req, res) => {
   res.json({
     ok: true,
     occasions: Object.values(OCCASIONS).map(({ id, label, church, fields, style, energy, song }) => ({ id, label, church, fields, style, energy, song })),
-    styles: Object.values(STYLES).map(({ id, label, description }) => ({ id, label, description })),
+    styles: Object.values(STYLES).map(({ id, label, description, energy }) => ({ id, label, description, energy })),
     lengths: LENGTHS,
     limits: {
       statements: STATEMENT_LIMIT, maxStatements: MAX_STATEMENTS, title: TITLE_MAX, statement: STATEMENT_MAX,

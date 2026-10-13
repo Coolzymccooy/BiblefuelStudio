@@ -38,7 +38,12 @@ test("flash fades in from white at the start of the shot", () => {
 test("crossfade blends from the previous shot's last frame", () => {
   const g = getEffect("crossfade").graph({ input: "[ov]", output: "[en]", shot, ctx: ctx({ prev: "[1:v]" }), tag: "e" }).join(";");
   assert.match(g, /\[1:v\]scale=1080:1920/);
-  assert.match(g, /xfade=transition=fade:duration=0\.500:offset=0\[en\]/);
+  assert.match(g, /xfade=transition=fade:duration=0\.600:offset=0\[en\]/);
+});
+
+test("a long shot gets a soft 0.8 s crossfade, no longer", () => {
+  const g = getEffect("crossfade").graph({ input: "[ov]", output: "[en]", shot, ctx: ctx({ prev: "[1:v]", dur: 3, frames: 90 }), tag: "e" }).join(";");
+  assert.match(g, /duration=0\.800/);
 });
 
 test("crossfade with no previous frame is a cut", () => {

@@ -18,7 +18,7 @@ const o = (def) => Object.freeze({ ...def, fields: Object.freeze(def.fields), ti
 export const OCCASIONS = Object.freeze({
   birthday: o({
     id: "birthday", label: "Birthday", church: false, fields: ["name", "milestone"],
-    style: "celebrate", energy: 0.8, song: "library:gospel-fire",
+    style: "celebrate", energy: 0.6, song: "library:gospel-fire",
     titles: ["Happy birthday, {name}!", "Happy birthday!"],
     statements: ["Another year of grace", "{milestone} and still rising", "Favour looks good on you", "God's not done with you", "Celebrate!"],
     voicePrompt: "A warm, joyful birthday blessing.",

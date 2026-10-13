@@ -47,31 +47,84 @@ test("calm cuts every 4 or 8 beats, on downbeats", () => {
   }
 });
 
-test("medium cuts every 2 beats", () => {
-  const cuts = cutPoints({ grid: grid120(), energy: 0.5, lengthSec: 15, rnd: mulberry32(1) });
-  checkTiling(cuts, 15);
-  const inner = cuts.slice(1, -1).map((c) => Math.round((c.end - c.start) * 1000) / 1000);
-  assert.ok(inner.every((d) => d === 1), JSON.stringify(inner));
+const lengths = (cuts) => cuts.map((c) => Math.round((c.end - c.start) * 1000) / 1000);
+
+test("medium cuts every 4 beats (a bar), so photos have time to land", () => {
+  const cuts = cutPoints({ grid: grid120(30), energy: 0.5, lengthSec: 30, rnd: mulberry32(1) });
+  checkTiling(cuts, 30);
+  // The last two shots may be the halves of an over-long end card.
+  const inner = lengths(cuts.slice(1, -2));
+  assert.ok(inner.length > 0 && inner.every((d) => d === 2), JSON.stringify(inner));
 });
 
-test("hype cuts every beat", () => {
-  const cuts = cutPoints({ grid: grid120(), energy: 0.9, lengthSec: 15, rnd: mulberry32(1) });
-  checkTiling(cuts, 15);
-  const inner = cuts.slice(1, -1).map((c) => Math.round((c.end - c.start) * 1000) / 1000);
-  assert.ok(inner.every((d) => d === 0.5), JSON.stringify(inner));
+test("hype cuts every 2 beats, with a quick double cut on a strong beat", () => {
+  const cuts = cutPoints({ grid: grid120(30), energy: 0.9, lengthSec: 30, rnd: mulberry32(1) });
+  checkTiling(cuts, 30);
+  const inner = lengths(cuts.slice(1, -2));
+  assert.ok(inner.every((d) => d === 1 || d === 0.5), JSON.stringify(inner));
+  assert.ok(inner.filter((d) => d === 1).length > inner.filter((d) => d === 0.5).length, "most shots are 2 beats");
+  // Beat 8 (4.2 s) is strong: one beat to the next cut, then one more back on the 2-beat step.
+  const at = (t) => cuts.find((c) => Math.abs(c.start - t) < 1e-6);
+  assert.equal(at(4.2)?.end, 4.7, JSON.stringify(cuts.slice(0, 6)));
+  assert.equal(at(4.7)?.end, 5.2, JSON.stringify(cuts.slice(0, 6)));
   assert.ok(cuts.some((c) => c.strong), "the strong beats are marked");
 });
 
-test("hype bursts split a strong beat in two when half a beat is long enough", () => {
-  // 80 BPM: half a beat is 0.375 s, just over MIN_SHOT.
-  const period = 0.75;
-  const beats = [];
-  for (let t = 0; t < 20; t += period) beats.push(Math.round(t * 1000) / 1000);
-  const grid = beatGridOf({ beats, downbeats: beats.map((_, i) => i).filter((i) => i % 4 === 0), strong: [8], period });
-  const cuts = cutPoints({ grid, energy: 0.9, lengthSec: 15, rnd: mulberry32(1) });
+test("maxShots spaces the cuts so a few photos are not repeated over and over", () => {
+  for (const energy of [0.1, 0.5, 0.9]) {
+    const cuts = cutPoints({ grid: grid120(), energy, lengthSec: 15, rnd: mulberry32(1), maxShots: 8 });
+    checkTiling(cuts, 15);
+    assert.ok(cuts.length <= 8, `energy ${energy}: ${cuts.length} shots ${JSON.stringify(lengths(cuts))}`);
+  }
+});
+
+test("without maxShots, a hype 15 s Moment still cuts no faster than every 2 beats on average", () => {
+  const cuts = cutPoints({ grid: grid120(), energy: 0.9, lengthSec: 15, rnd: mulberry32(1) });
   checkTiling(cuts, 15);
-  const at6 = cuts.find((c) => Math.abs(c.start - 6) < 1e-6);
-  assert.ok(at6 && Math.abs(at6.end - 6.375) < 1e-6, JSON.stringify(cuts.slice(6, 10)));
+  // 2 beats at 120 BPM is 1 s, so at most 15 shots (13 here: the end card takes 3 s).
+  assert.ok(cuts.length <= 15, `${cuts.length} shots`);
+});
+
+test("a long Moment with few photos keeps its cuts on the beat and Energy still matters", () => {
+  // 60 s from 3 photos: maxShots 6 is below what MAX_SHOT allows, so shots run near MAX_SHOT, on beats.
+  const grid = grid120(60);
+  const beatTimes = new Set(grid.marks.map((m) => m.t));
+  const counts = [0.1, 0.5, 0.9].map((energy) => {
+    const cuts = cutPoints({ grid, energy, lengthSec: 60, rnd: mulberry32(2), maxShots: 6 });
+    checkTiling(cuts, 60);
+    // Without maxShots this is 21-59 shots; with it, about 3 s each (MAX_SHOT bounds the rest).
+    assert.ok(cuts.length <= 20, `energy ${energy}: ${cuts.length} shots`);
+    for (const c of cuts.slice(1)) assert.ok(beatTimes.has(c.start), `energy ${energy}: cut at ${c.start} is off the beat`);
+    if (energy < 0.67) for (const c of cuts.slice(1)) assert.ok(c.downbeat, `energy ${energy}: cut at ${c.start} is off the bar`);
+    return cuts.length;
+  });
+  assert.ok(new Set(counts).size > 1, `Energy still changes the edit: ${JSON.stringify(counts)}`);
+});
+
+test("maxShots also spaces a voice Moment's phrase cuts and an even pulse", () => {
+  const pauses = Array.from({ length: 40 }, (_, i) => ({ start: 1.4 + i * 1.5, end: 1.6 + i * 1.5 }));
+  for (const [label, grid] of [["pauses", pauseGrid(pauses, 60)], ["pulse", pulseGrid(60)]]) {
+    for (const energy of [0.1, 0.5, 0.9]) {
+      const cuts = cutPoints({ grid, energy, lengthSec: 60, rnd: mulberry32(1), maxShots: 6 });
+      checkTiling(cuts, 60);
+      // Without maxShots: 39 phrase cuts, 29 pulse cuts.
+      assert.ok(cuts.length <= 20, `${label} @${energy}: ${cuts.length} shots`);
+    }
+  }
+});
+
+test("the end card holds at least END_CARD_MIN and at most MAX_SHOT, at every energy and tempo", () => {
+  for (const period of [0.4, 0.5, 0.75, 0.9]) {
+    const beats = [];
+    for (let t = 0.1; t < 70; t += period) beats.push(Math.round(t * 1000) / 1000);
+    const grid = beatGridOf({ beats, downbeats: beats.map((_, i) => i).filter((i) => i % 4 === 0), strong: [8, 24], period });
+    for (const energy of [0.1, 0.5, 0.9]) {
+      for (const len of [15, 30, 60]) {
+        const cuts = cutPoints({ grid, energy, lengthSec: len, rnd: mulberry32(3), maxShots: 8 });
+        checkTiling(cuts, len);
+      }
+    }
+  }
 });
 
 test("a pulse grid cuts every 2 s and every cut is a downbeat", () => {
@@ -87,7 +140,8 @@ test("a pause grid cuts in the voice's gaps and splits long phrases by energy", 
   assert.ok(calm.some((c) => Math.abs(c.start - 3) < 1e-6));
   assert.ok(calm.some((c) => Math.abs(c.start - 10) < 1e-6));
   const hype = cutPoints({ grid, energy: 0.9, lengthSec: 15, rnd: mulberry32(1) });
-  assert.ok(hype.slice(0, -1).every((c) => c.end - c.start <= 1.5 + 1e-9), JSON.stringify(hype));
+  assert.ok(hype.slice(0, -1).every((c) => c.end - c.start <= 2 + 1e-9), JSON.stringify(hype));
+  assert.ok(hype.length > calm.length, "hype still cuts more than calm");
 });
 
 test("the same seed gives the same cuts", () => {
@@ -119,7 +173,7 @@ test("cut times are 3-decimal even when the beat times are not", () => {
     const period = 0.4 + rng() * 0.6;
     const offset = rng() * 0.5;
     const len = r3(10 + rng() * 50);
-    const energy = rng() < 0.5 ? 0.1 : 0.5;
+    const energy = [0.1, 0.5, 0.9][Math.floor(rng() * 3)];
     const beats = [];
     for (let i = 0; offset + i * period < len + 5; i += 1) beats.push(Number((offset + i * period).toFixed(6)));
     const downbeats = beats.map((_, i) => i).filter((i) => i % 4 === 0);
@@ -160,7 +214,7 @@ test("a fractional lengthSec is rounded to 3 decimals", () => {
 
 test("a Moment shorter than the end card plus a shot is one shot", () => {
   for (const energy of [0.1, 0.5, 0.9]) {
-    for (const len of [1.7, 1.8]) {
+    for (const len of [1.7, 1.8, 3.2]) {
       const cuts = cutPoints({ grid: grid120(), energy, lengthSec: len, rnd: mulberry32(1) });
       assert.deepEqual(cuts, [{ start: 0, end: len, downbeat: true, strong: false }]);
     }

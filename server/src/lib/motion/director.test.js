@@ -64,6 +64,37 @@ test("the hero opens and closes; the end card carries its overlay", () => {
   assert.equal(plan.shots[0].entrance.id, "cut");
 });
 
+test("the end card is a slow, steady push (a still after a push), whatever the style", () => {
+  for (const styleId of ["glow", "celebrate", "hype", "gallery"]) {
+    for (const energy of [0.1, 0.5, 0.95]) {
+      for (const seed of [1, 2, 3, 4]) {
+        const end = directMoment(base({ styleId, energy, seed })).plan.shots.at(-1);
+        assert.ok(["push", "still"].includes(end.move.id), `${styleId}@${energy}#${seed}: ${end.move.id}`);
+        assert.ok(end.move.intensity <= 0.3, `${styleId}@${energy}#${seed}: intensity ${end.move.intensity}`);
+      }
+    }
+  }
+});
+
+test("a wide hero closes on a slow pan", () => {
+  const photos = [{ shape: "wide" }, ...tall(5)];
+  for (const seed of [1, 2, 3]) {
+    const end = directMoment(base({ photos, seed })).plan.shots.at(-1);
+    assert.equal(end.move.id, "pan", `seed ${seed}`);
+    assert.equal(end.move.intensity, 0.3);
+  }
+});
+
+test("a few photos are not cycled over and over: about two shots per photo", () => {
+  for (const styleId of ["celebrate", "hype"]) {
+    const { plan } = directMoment(base({ photos: tall(4), styleId, energy: 0.9, lengthSec: 15, grid: grid120(15) }));
+    assert.ok(plan.shots.length <= 8, `${styleId}: ${plan.shots.length} shots`);
+    const uses = new Map();
+    plan.shots.forEach((s) => uses.set(s.photo, (uses.get(s.photo) ?? 0) + 1));
+    assert.ok([...uses.values()].every((n) => n <= 2), `${styleId}: ${JSON.stringify([...uses])}`);
+  }
+});
+
 test("the same photo never appears in consecutive shots, even with 3 photos for 60 s of hype", () => {
   const { plan } = directMoment(base({ photos: tall(3), energy: 0.95, lengthSec: 60, grid: grid120(60), styleId: "hype" }));
   for (let i = 1; i < plan.shots.length; i += 1) assert.notEqual(plan.shots[i].photo, plan.shots[i - 1].photo, `at ${i}`);
@@ -270,9 +301,10 @@ test("with mixed photos no move repeats back to back unless two wide photos leav
         for (let seed = 1; seed <= 30; seed += 1) {
           const input = base({ photos: MIXED, styleId, energy, seed, lengthSec, grid: grid120(lengthSec) });
           const { plan } = directMoment(input);
-          const cuts = cutPoints({ grid: input.grid, energy, lengthSec, rnd: mulberry32(seed) });
+          const cuts = cutPoints({ grid: input.grid, energy, lengthSec, rnd: mulberry32(seed), maxShots: MIXED.length * 2 });
           for (let i = 1; i < plan.shots.length; i += 1) {
             const [a, b] = [plan.shots[i - 1], plan.shots[i]];
+            assert.equal(b.start, cuts[i].start, "the test's cuts match the director's");
             if (a.move.id !== b.move.id) continue;
             const bothWide = MIXED[a.photo].shape === "wide" && MIXED[b.photo].shape === "wide";
             const splitPossible = hasSplit && b.role === "body" && (cuts[i].downbeat || cuts[i].strong);

@@ -69,6 +69,20 @@ function chooseMove({ style, shape, role, capabilities, strongOk, prevMove, last
   return prevMove === "push" ? "still" : "push";
 }
 
+/** The closing card settles: a slow push on a tall photo (a still right after a push), a pan on a wide one. */
+function chooseEndMove({ shape, capabilities, prevMove }) {
+  const calm = shape === "wide" ? ["pan", "push"] : ["push", "still"];
+  const ok = (m) => m !== prevMove && usable(m, { kind: "move", shape, capabilities, strongOk: false, avoid: [] });
+  return calm.find(ok) ?? calm[0];
+}
+/** How strong the closing card's move is: slow, whatever the Energy. */
+const END_INTENSITY = 0.3;
+/**
+ * About this many shots per photo, so a few photos are not cycled over and over. The photo count
+ * therefore shapes the cuts: adding or removing a photo can re-time the whole edit.
+ */
+const SHOTS_PER_PHOTO = 2;
+
 function chooseEntrance({ style, index, capabilities, strongOk, prev, r }) {
   if (index === 0) return "cut";
   const id = pick(style.entrances, (m) => usable(m, { kind: "entrance", capabilities, strongOk, avoid: [prev] }), r);
@@ -172,7 +186,7 @@ export function directMoment({
   const rnd = mulberry32(seed);
   const style = resolveStyle(styleId);
   const e = clamp01(energy);
-  const cuts = cutPoints({ grid, energy: e, lengthSec, rnd });
+  const cuts = cutPoints({ grid, energy: e, lengthSec, rnd, maxShots: Math.max(4, photos.length * SHOTS_PER_PHOTO) });
   const { sequence, dropped } = assignPhotos(photos.length, heroIndex, cuts.length);
   const lastMoveOf = new Map();
   const shots = [];
@@ -183,9 +197,11 @@ export function directMoment({
     const role = i === 0 ? "open" : i === cuts.length - 1 ? "end" : "body";
     const prev = shots[i - 1];
     const strongOk = Boolean(c.downbeat || c.strong);
-    const move = chooseMove({
-      style, shape, role, capabilities, strongOk, prevMove: prev?.move.id, lastForPhoto: lastMoveOf.get(photo), r: rMove,
-    });
+    const move = role === "end"
+      ?chooseEndMove({ shape, capabilities, prevMove: prev?.move.id })
+      : chooseMove({
+        style, shape, role, capabilities, strongOk, prevMove: prev?.move.id, lastForPhoto: lastMoveOf.get(photo), r: rMove,
+      });
     lastMoveOf.set(photo, move);
     const entrance = chooseEntrance({ style, index: i, capabilities, strongOk, prev: prev?.entrance.id, r: rEntrance });
     const overlays = chooseOverlays({
@@ -196,7 +212,7 @@ export function directMoment({
       end: c.end,
       photo,
       role,
-      move: { id: move, intensity: r3(clamp01(0.25 + 0.6 * e + 0.15 * rIntensity)) },
+      move: { id: move, intensity: role === "end" ? END_INTENSITY : r3(clamp01(0.25 + 0.6 * e + 0.15 * rIntensity)) },
       entrance: { id: entrance },
       overlays,
       anchor: { ...(shape === "wide" ? WIDE_ANCHOR : TALL_ANCHOR) },

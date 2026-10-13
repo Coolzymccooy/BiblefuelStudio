@@ -71,6 +71,7 @@ test("GET /meta lists occasions, styles, lengths and limits", async () => {
   assert.equal(r.status, 200);
   assert.equal(r.body.occasions.length, 8);
   assert.deepEqual(r.body.styles.map((s) => s.id), ["glow", "celebrate", "hype", "gallery"]);
+  assert.deepEqual(r.body.styles.map((s) => s.energy), [0.2, 0.6, 0.85, 0.45], "each style's natural Energy");
   assert.deepEqual(r.body.lengths, [15, 30, 60]);
   assert.deepEqual(r.body.limits.statements, { 15: 3, 30: 5, 60: 8 });
   assert.equal(r.body.limits.scriptMax, 1200);

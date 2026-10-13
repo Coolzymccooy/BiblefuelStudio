@@ -46,7 +46,7 @@ export const glitch = entrance("glitch", true, ({ input, output, ctx, tag }) => 
  */
 export const crossfade = entrance("crossfade", false, ({ input, output, ctx, tag }) => {
   if (!ctx.prev) return [`${input}null${output}`];
-  const d = Math.min(0.5, ctx.dur * 0.4);
+  const d = Math.min(0.8, ctx.dur * 0.4);
   return [
     `${ctx.prev}scale=${ctx.w}:${ctx.h},setsar=1,format=yuv420p,loop=loop=${ctx.frames - 1}:size=1:start=0,setpts=N/${ctx.fps}/TB,fps=${ctx.fps}[xp${tag}]`,
     `${input}format=yuv420p,setsar=1,setpts=N/${ctx.fps}/TB,fps=${ctx.fps}[xc${tag}]`,

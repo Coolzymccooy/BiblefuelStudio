@@ -8,6 +8,15 @@ test("the four launch styles, in order", () => {
   assert.deepEqual(STYLE_IDS, ["glow", "celebrate", "hype", "gallery"]);
 });
 
+test("each style has a natural Energy that matches its feel", () => {
+  const band = (id) => captionEnergyFor(STYLES[id].energy);
+  assert.equal(band("glow"), "calm");
+  assert.equal(band("gallery"), "lively");
+  assert.equal(band("celebrate"), "lively");
+  assert.equal(band("hype"), "wild");
+  for (const s of Object.values(STYLES)) assert.ok(s.energy >= 0 && s.energy <= 1, s.id);
+});
+
 test("every palette entry names an existing effect of the right kind", () => {
   for (const s of Object.values(STYLES)) {
     for (const [kind, palette] of [["move", s.moves], ["entrance", s.entrances], ["overlay", s.overlays]]) {
