@@ -72,11 +72,20 @@ describe('LookStep', () => {
     await waitFor(() => expect(onChange).toHaveBeenCalledWith(withBg));
   });
 
-  it("goes back to the song's cover", async () => {
+  it("goes back to the song's picture, saying what happens when it has none (R45)", async () => {
     vi.mocked(lyricVideoApi.setBackground).mockResolvedValue(project);
     render(<LookStep project={withBg} onChange={vi.fn()} />);
-    fireEvent.click(screen.getByRole('button', { name: /use the song.s cover/i }));
+    fireEvent.click(screen.getByRole('button', { name: "Use the song's picture (or a plain dark background if it has none)" }));
     await waitFor(() => expect(lyricVideoApi.setBackground).toHaveBeenCalledWith('lv_1', null));
+  });
+
+  it('says what sits behind the words when no background was chosen (R45)', () => {
+    const { rerender } = render(<LookStep project={project} onChange={vi.fn()} />);
+    expect(screen.getByText("Right now the song's picture sits behind the words.")).toBeTruthy();
+    const noPicture = { ...project, song: { ...project.song, coverStill: null } } as unknown as LyricProject;
+    rerender(<LookStep project={noPicture} onChange={vi.fn()} />);
+    expect(screen.getByText('Right now a plain dark background sits behind the words.')).toBeTruthy();
+    expect(screen.queryByText(/song's picture sits/)).toBeNull();
   });
 
   it('sets how the background fills the frame, only when there is a background', async () => {

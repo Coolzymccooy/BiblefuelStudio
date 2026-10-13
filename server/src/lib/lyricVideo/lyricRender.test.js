@@ -31,7 +31,8 @@ describe("buildLyricRenderArgs", () => {
     assert.match(s, /boxblur/);
     assert.match(s, /ass=filename=/);
     assert.match(s, /setparams=range=tv:colorspace=bt470bg,format=yuv420p/);
-    assert.match(s, /-map 1:a/);
+    // Only the song's first sound track: a file with several would otherwise put them all in the video.
+    assert.match(s, /-map 1:a:0 /);
     assert.match(s, /-c:a aac -b:a 192k -ac 2/);
     assert.match(s, /-movflags \+faststart/);
   });

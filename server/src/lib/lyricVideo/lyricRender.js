@@ -53,7 +53,7 @@ export function buildLyricRenderArgs({ songPath, background, assPath, width, hei
     "-t", String(durationSec), "-i", songPath,
     "-filter_complex", [...framed, captions].join(";"),
     // The song's audio goes straight to the encoder, never through the graph.
-    "-map", "[v]", "-map", "1:a",
+    "-map", "[v]", "-map", "1:a:0",
     "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-r", String(FPS),
     "-c:a", "aac", "-b:a", "192k", "-ac", "2",
     "-movflags", "+faststart", outPath,

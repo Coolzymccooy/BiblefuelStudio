@@ -129,7 +129,7 @@ export function LookStep({ project, onChange }: Props) {
             disabled={busy || !background}
             onClick={() => void apply(() => lyricVideoApi.setBackground(project.projectId, null))}
           >
-            Use the song's cover
+            Use the song's picture (or a plain dark background if it has none)
           </button>
           <div className="min-w-[10rem]">
             <label htmlFor="lyric-fit" className={fieldLabelCls}>Fit</label>
@@ -146,7 +146,11 @@ export function LookStep({ project, onChange }: Props) {
             </select>
           </div>
         </div>
-        {!background && <p className="text-xs text-content-secondary">Right now the song's cover sits behind the words.</p>}
+        {!background && (
+          <p className="text-xs text-content-secondary">
+            {project.song?.coverStill ? "Right now the song's picture sits behind the words." : 'Right now a plain dark background sits behind the words.'}
+          </p>
+        )}
       </div>
     </div>
   );
