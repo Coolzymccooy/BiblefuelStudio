@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2, Wand2 } from 'lucide-react';
+import { Loader2, Plus, Wand2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { momentsApi } from '../lib/momentsApi';
 import { canMake, isRunning, newSeed } from '../lib/momentsWizard';
@@ -16,7 +16,7 @@ import { MomentsSoundStep } from '../components/moments/MomentsSoundStep';
 import { MomentsWordsStep } from '../components/moments/MomentsWordsStep';
 import { MomentsStyleStep } from '../components/moments/MomentsStyleStep';
 import { MomentsResult } from '../components/moments/MomentsResult';
-import { primaryBtnCls, segmentCls, segmentedCls } from '../components/story/formStyles';
+import { primaryBtnCls, secondaryBtnCls, segmentCls, segmentedCls } from '../components/story/formStyles';
 
 const ACTIVE_KEY = 'BF_MOMENTS_ACTIVE';
 const POLL_MS = 2500;
@@ -234,18 +234,24 @@ export function MomentsPage() {
     return <Loader2 className="animate-spin text-primary-400" />;
   }
 
+  // Start new sits beside the title and the tabs get a row of their own: on a
+  // phone the six tabs are wider than the screen, and sharing their row pushed
+  // Start new off the right edge and made the whole page scroll sideways.
+  const startNew = project && (
+    <button type="button" disabled={busy} onClick={() => setActive(null)} className={`${secondaryBtnCls} whitespace-nowrap px-3 py-1.5 text-sm disabled:opacity-50`}>
+      <Plus size={16} aria-hidden="true" /> Start new
+    </button>
+  );
+
   const tabs = project && (
-    <div className="flex max-w-full items-center gap-3">
-      <div className="min-w-0 overflow-x-auto">
-        <div className={`${segmentedCls} whitespace-nowrap`} role="group" aria-label="Moment step">
-          {STEPS.map((s) => (
-            <button key={s.id} type="button" aria-pressed={step === s.id} disabled={busy} onClick={() => { void goTo(s.id); }} className={`${segmentCls(step === s.id)} shrink-0`}>
-              {s.label}
-            </button>
-          ))}
-        </div>
+    <div className="max-w-full overflow-x-auto pb-1">
+      <div className={`${segmentedCls} whitespace-nowrap`} role="group" aria-label="Moment step">
+        {STEPS.map((s) => (
+          <button key={s.id} type="button" aria-pressed={step === s.id} disabled={busy} onClick={() => { void goTo(s.id); }} className={`${segmentCls(step === s.id)} shrink-0`}>
+            {s.label}
+          </button>
+        ))}
       </div>
-      <button type="button" disabled={busy} onClick={() => setActive(null)} className="shrink-0 text-xs text-content-tertiary hover:text-bf-cream disabled:opacity-50">Start new</button>
     </div>
   );
 
@@ -264,8 +270,9 @@ export function MomentsPage() {
         eyebrow={project ? 'Create · Moments' : 'Create'}
         title={project ? (project.title || 'Your Moment') : <>Photos that <em>speak</em>.</>}
         subtitle={project ? undefined : 'Birthdays, sermons, events: your photos, cut to the beat, with words that land.'}
-        right={tabs || undefined}
+        right={startNew || undefined}
       />
+      {tabs && <div className="mt-4">{tabs}</div>}
       <div className="h-5" />
       {!project && (
         <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">

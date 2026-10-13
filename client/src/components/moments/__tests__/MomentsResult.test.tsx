@@ -31,7 +31,12 @@ describe('MomentsResult', () => {
       project={mkMoment({ render: { jobId: 'j', status: 'done', percent: 100, stage: 'done', file: '/outputs/moment-1.mp4', notes: ['4 photos didn\'t fit 15 s. Try 30 s?'] } })}
       {...h}
     />);
-    expect(document.querySelector('video')?.getAttribute('src')).toContain('/outputs/moment-1.mp4');
+    const video = document.querySelector('video');
+    expect(video?.getAttribute('src')).toContain('/outputs/moment-1.mp4');
+    // iPhone Safari draws nothing before play unless it loads a frame: the
+    // fragment asks for the first one, so the player shows the Moment, not black.
+    expect(video?.getAttribute('src')).toMatch(/#t=0\.001$/);
+    expect(video).toHaveAttribute('preload', 'metadata');
     expect(screen.getByText(/try 30 s/i)).toBeInTheDocument();
     // A button, not <a download>: the attribute is ignored on the prod media host and iOS plays inline.
     expect(screen.queryByRole('link', { name: /download/i })).toBeNull();
