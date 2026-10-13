@@ -47,6 +47,7 @@ const INTERRUPTED = "Timing stopped before it finished — run it again.";
 const RENDER_FAILED = "The video could not be made. Try again, or choose a different background.";
 const RENDER_INTERRUPTED = "The render was interrupted — start it again.";
 const SERVER_ERROR = "Something went wrong on our side. Please try again.";
+const LYRICS_LOCKED = "Wait for the timing to finish before changing the lyrics.";
 
 /** A refusal with a status and a message that is fit to show the user. */
 class Refusal extends Error {
@@ -322,6 +323,8 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
     if (sheet.length > SHEET_MAX_CHARS) throw new Refusal(400, `The lyrics are too long (over ${SHEET_MAX_CHARS} characters).`);
     if (sheet.split(/\r?\n/).length > SHEET_MAX_LINES) throw new Refusal(400, `The lyrics are too long (over ${SHEET_MAX_LINES} lines).`);
     const next = updateProject(req.ctx.dataDir, project.projectId, (latest) => {
+      // The run is timing the lyrics it started with; changing them now would throw its work away.
+      if (isAligning(project.projectId)) throw new Refusal(409, LYRICS_LOCKED);
       const applied = applySheet(latest, sheet);
       if (!applied.lines.length) throw new Refusal(400, "Paste the lyrics, one line per line.");
       return applied;

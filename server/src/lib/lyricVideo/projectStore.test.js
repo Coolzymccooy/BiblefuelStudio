@@ -129,6 +129,32 @@ describe("carryOverTiming with repeated lines", () => {
   });
 });
 
+describe("re-reading the lyrics keeps the timing state when no line lost its timing (R40)", () => {
+  const SHEET = "[INTRO]\nMy time no late\n[CHORUS]\nWho talk say?\nNa grace";
+  /** A project whose lyrics were timed: every line placed, the section starts set, status done. */
+  function timedProject() {
+    const p = applySheet(createProject(dir, { title: "T", artist: "" }), SHEET);
+    const lines = p.lines.map((l, i) => ({ ...l, words: [{ text: "x", start: i * 2, end: i * 2 + 1 }], start: i * 2, end: i * 2 + 1, confidence: 1, flag: null }));
+    const sections = p.sections.map((s, i) => ({ ...s, start: i * 2 }));
+    return { ...p, lines, sections, timing: { status: "done", beats: { bpm: 120, times: [0] }, finishedAt: "t" } };
+  }
+  test("the same lyrics read again: still done, section starts kept", () => {
+    const next = applySheet(timedProject(), SHEET);
+    assert.equal(next.timing.status, "done");
+    assert.deepEqual(next.timing.beats, { bpm: 120, times: [0] });
+    assert.equal(next.lines[2].start, 4);
+    assert.deepEqual(next.sections.map((s) => s.start), [0, 2]);
+  });
+  test("a line removed: every remaining line kept its timing, so still done", () => {
+    const next = applySheet(timedProject(), "[INTRO]\nMy time no late\n[CHORUS]\nWho talk say?");
+    assert.equal(next.timing.status, "done");
+  });
+  test("a changed or added line has no timing, so the lyrics need timing again", () => {
+    assert.equal(applySheet(timedProject(), "[INTRO]\nMy time no late\n[CHORUS]\nWho talk say now?\nNa grace").timing.status, "idle");
+    assert.equal(applySheet(timedProject(), `${SHEET}\nA new line`).timing.status, "idle");
+  });
+});
+
 test("applySheet parses the sheet and records it", () => {
   const p = createProject(dir, { title: "T", artist: "" });
   const next = applySheet(p, "[CHORUS]\nWho talk say?\n(WHO TALK SAY?!)");

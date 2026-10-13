@@ -73,7 +73,8 @@ export function LyricsStep({ project, onChange, onNext }: Props) {
         />
       </div>
 
-      <button type="button" className={secondaryBtnCls} disabled={busy !== null || !text.trim()} onClick={read}>
+      {/* Reading the same lyrics again would change nothing. */}
+      <button type="button" className={secondaryBtnCls} disabled={busy !== null || !text.trim() || !edited} onClick={read}>
         {busy === 'reading' && <Loader2 size={16} className="animate-spin" />} Read lyrics
       </button>
 

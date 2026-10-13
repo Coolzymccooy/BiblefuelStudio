@@ -48,6 +48,16 @@ describe('LyricsStep', () => {
     expect((screen.getByRole('button', { name: /time the lyrics/i }) as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it('cannot read lyrics that are already read, only edited ones (R40)', () => {
+    const readBtn = () => screen.getByRole('button', { name: /read lyrics/i }) as HTMLButtonElement;
+    render(<LyricsStep project={{ ...parsed, sheet: { ...parsed.sheet, raw: '[CHORUS]\nWho talk say?' } }} onChange={vi.fn()} />);
+    expect(readBtn().disabled).toBe(true);
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: '[CHORUS]\nWho talk say now?' } });
+    expect(readBtn().disabled).toBe(false);
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: '[CHORUS]\nWho talk say?' } });
+    expect(readBtn().disabled).toBe(true);
+  });
+
   it('asks to read the lyrics again after they are edited', () => {
     render(<LyricsStep project={parsed} onChange={vi.fn()} />);
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'something new' } });

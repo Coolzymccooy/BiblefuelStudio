@@ -131,25 +131,48 @@ function matchedPairs(a, b) {
  * keeps the timing of the same occurrence even when another copy is edited or removed.
  */
 export function carryOverTiming(oldLines, newLines) {
+  return carryOver(oldLines, newLines).lines;
+}
+
+/** carryOverTiming, plus whether every new line was paired with an old one (so none lost its timing). */
+function carryOver(oldLines, newLines) {
   const oldArr = oldLines || [];
   const oldKeys = oldArr.map((l) => String(l.text ?? "").trim());
   const newKeys = newLines.map((l) => String(l.text ?? "").trim());
   const out = newLines.slice();
-  for (const [i, j] of matchedPairs(oldKeys, newKeys)) {
+  const pairs = matchedPairs(oldKeys, newKeys);
+  for (const [i, j] of pairs) {
     const { words, start, end, locked, effect, confidence, flag } = oldArr[i];
     out[j] = { ...newLines[j], words, start, end, locked, effect, confidence, flag };
   }
-  return out;
+  return { lines: out, allKept: pairs.length === newLines.length };
 }
 
+/** The new sections, each keeping the start of the old section it is plainly the same as. */
+function carrySectionStarts(oldSections, newSections) {
+  const old = new Map((oldSections || []).map((s) => [s.id, s]));
+  return newSections.map((s) => {
+    const before = old.get(s.id);
+    const same = before && before.kind === s.kind && before.label === s.label && Number.isFinite(before.start);
+    return same ? { ...s, start: before.start } : s;
+  });
+}
+
+/**
+ * Reads a lyric sheet into the project. When every new line kept its timing (the same
+ * lyrics read again, or lines only removed) the timing state stays as it was; otherwise
+ * the lyrics need timing again and the state goes back to idle.
+ */
 export function applySheet(project, raw) {
   const parsed = parseSheet(raw);
   const fresh = parsed.lines.map((l) => ({ ...l, effect: "auto", locked: false }));
+  const { lines, allKept } = carryOver(project.lines, fresh);
+  const timing = project.timing || { status: "idle" };
   return {
     ...project,
     sheet: { raw: String(raw), parsedAt: new Date().toISOString(), skipped: parsed.skipped },
-    sections: parsed.sections,
-    lines: carryOverTiming(project.lines, fresh),
-    timing: { ...(project.timing || {}), status: "idle" },
+    sections: allKept ? carrySectionStarts(project.sections, parsed.sections) : parsed.sections,
+    lines,
+    timing: allKept ? timing : { ...timing, status: "idle" },
   };
 }

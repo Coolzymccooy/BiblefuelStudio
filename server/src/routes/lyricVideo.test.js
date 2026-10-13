@@ -363,6 +363,21 @@ describe("timing", () => {
     await call("GET", "/");
     assert.equal(readProject(ctx.dataDir, p.projectId).timing.status, "error");
   });
+  test("the lyrics cannot be changed while timing runs (R40)", async () => {
+    const p = placedProject(ctx);
+    let release;
+    stub.align = { prepareAudio: () => new Promise((r) => { release = r; }), log: () => {} };
+    assert.equal((await call("POST", `/${p.projectId}/align`)).status, 202);
+    const r = await call("PUT", `/${p.projectId}/sheet`, { sheet: "something else" });
+    assert.equal(r.status, 409);
+    assert.equal(r.json.error, "Wait for the timing to finish before changing the lyrics.");
+    const saved = readProject(ctx.dataDir, p.projectId);
+    assert.equal(saved.timing.status, "running", "the page keeps following the run");
+    assert.deepEqual(saved.lines.map((l) => l.text), p.lines.map((l) => l.text));
+    release();
+    assert.ok(await until(() => !isAligning(p.projectId)));
+    stub.align = {};
+  });
   test("a timing job that is really running is left alone by GET", async () => {
     const p = placedProject(ctx);
     let release;
