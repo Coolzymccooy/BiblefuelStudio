@@ -72,6 +72,31 @@ describe('RenderStep', () => {
     expect(screen.getByText(/time the lyrics first/i)).toBeTruthy();
   });
 
+  it('picks a render that is still running back up when you come back to the page (R43)', async () => {
+    const away = { ...p, render: { activeJobId: 'job9' } } as unknown as LyricProject;
+    const running = { jobId: 'job9', status: 'running', progress: 37, error: null, file: null };
+    const finished = { jobId: 'job9', status: 'done', progress: 100, error: null, file: 'lyric-job9.mp4' };
+    const refreshed = { ...p, render: null, renders: [] } as unknown as LyricProject;
+    vi.mocked(lyricVideoApi.renderStatus).mockResolvedValueOnce(running).mockResolvedValue(finished);
+    vi.mocked(lyricVideoApi.get).mockResolvedValue(refreshed);
+    const onChange = vi.fn();
+    render(<RenderStep project={away} onChange={onChange} />);
+    expect(await screen.findByText(/37%/)).toBeTruthy();
+    expect(lyricVideoApi.renderStatus).toHaveBeenCalledWith('lv_1', 'job9');
+    expect((screen.getByRole('button', { name: /render video/i }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole('button', { name: /cancel/i })).toBeTruthy();
+    expect(lyricVideoApi.render).not.toHaveBeenCalled();
+    const link = await screen.findByRole('link', { name: /download/i }, { timeout: 4000 });
+    expect(link.getAttribute('href')).toMatch(/lyric-job9\.mp4/);
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith(refreshed));
+  });
+
+  it('starts idle when no render is saved on the project', () => {
+    render(<RenderStep project={{ ...p, render: null } as unknown as LyricProject} onChange={vi.fn()} />);
+    expect(lyricVideoApi.renderStatus).not.toHaveBeenCalled();
+    expect((screen.getByRole('button', { name: /render video/i }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it('lists earlier videos with a download link each, newest first', () => {
     const earlier = { ...p, renders: [
       { jobId: 'a', aspect: 'portrait', quality: '720p', file: 'C:\\out\\lyric-a.mp4', durationSec: 181, at: '2026-10-01T10:00:00Z' },

@@ -487,6 +487,44 @@ describe("render", () => {
     release();
     stub.render = finishingRender();
   });
+  test("the running render's job is kept on the project until it is done, so the page can find it again (R43)", async () => {
+    const p = placedProject(ctx);
+    let release;
+    stub.render = finishingRender(() => new Promise((r) => { release = r; }));
+    const r = await call("POST", `/${p.projectId}/render`, {});
+    assert.equal(r.status, 202);
+    assert.deepEqual(readProject(ctx.dataDir, p.projectId).render, { activeJobId: r.json.jobId });
+    assert.deepEqual((await call("GET", `/${p.projectId}`)).json.project.render, { activeJobId: r.json.jobId }, "a live render is left alone");
+    release();
+    assert.ok(await until(() => readProject(ctx.dataDir, p.projectId).render === null));
+    const saved = readProject(ctx.dataDir, p.projectId);
+    assert.equal(saved.renders.length, 1, "the video is on the project by the time the job is cleared");
+    stub.render = finishingRender();
+  });
+  test("a failed or cancelled render clears the saved job too (R43)", async () => {
+    const p = placedProject(ctx);
+    const { markError } = await import("../lib/renderJobs.js");
+    stub.render = async (o) => { markRunning(o.jobId); markError(o.jobId, "ffmpeg exited 1"); return { ok: false }; };
+    await call("POST", `/${p.projectId}/render`, {});
+    assert.ok(await until(() => readProject(ctx.dataDir, p.projectId).render === null));
+    let release;
+    stub.render = finishingRender(() => new Promise((r) => { release = r; }));
+    const second = await call("POST", `/${p.projectId}/render`, {});
+    assert.equal(readProject(ctx.dataDir, p.projectId).render.activeJobId, second.json.jobId);
+    assert.equal((await call("POST", `/${p.projectId}/render/${second.json.jobId}/cancel`)).status, 200);
+    release();
+    assert.ok(await until(() => readProject(ctx.dataDir, p.projectId).render === null));
+    stub.render = finishingRender();
+  });
+  test("a saved render that is not running any more (a restart) is cleared when the project is read (R43)", async () => {
+    const p = placedProject(ctx);
+    writeProject(ctx.dataDir, { ...readProject(ctx.dataDir, p.projectId), render: { activeJobId: "gone-after-restart" } });
+    assert.equal((await call("GET", `/${p.projectId}`)).json.project.render, null);
+    assert.equal(readProject(ctx.dataDir, p.projectId).render, null, "persisted, not just reported");
+    writeProject(ctx.dataDir, { ...readProject(ctx.dataDir, p.projectId), render: { activeJobId: "gone-again" } });
+    await call("GET", "/");
+    assert.equal(readProject(ctx.dataDir, p.projectId).render, null, "listing settles it too");
+  });
   test("an unknown job is a 404", async () => {
     const p = placedProject(ctx);
     assert.equal((await call("GET", `/${p.projectId}/render/nope`)).status, 404);

@@ -96,7 +96,9 @@ export function RenderStep({ project, onChange }: Props) {
   const [aspect, setAspect] = useState<RenderAspect>('portrait');
   const [quality, setQuality] = useState<RenderQuality>('720p');
   const [starting, setStarting] = useState(false);
-  const [jobId, setJobId] = useState<string | null>(null);
+  const [startedJobId, setJobId] = useState<string | null>(null);
+  // A render started before the user left this page is saved on the project: follow it again.
+  const jobId = startedJobId ?? project.render?.activeJobId ?? null;
   const [shown, setShown] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const { job, lostTrack } = useRenderJob(project.projectId, jobId, (finished) => {

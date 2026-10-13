@@ -35,7 +35,7 @@ function LyricSteps({ project, error, onRetry }: { project: LyricProject; error:
   // when it finishes, so the lines to check are seen, instead of jumping on to the Look step.
   const [step, setStep] = useState<LyricStepId>(() => firstOpenStep(project));
   // The render step keeps its progress, so once opened it stays mounted (hidden) while other steps show.
-  const [renderOpened, setRenderOpened] = useState(false);
+  const [renderOpened, setRenderOpened] = useState(() => step === 'render');
   const onChange = (next: LyricProject) => qc.setQueryData(['lyric-project', project.projectId], next);
   const goTo = (next: LyricStepId) => { setStep(next); if (next === 'render') setRenderOpened(true); };
 

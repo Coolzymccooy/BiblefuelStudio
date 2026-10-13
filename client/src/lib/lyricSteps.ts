@@ -15,6 +15,8 @@ export function reachableSteps(project: LyricProject): Record<LyricStepId, boole
 export function firstOpenStep(project: LyricProject): LyricStepId {
   if (!project.song) return 'song';
   if (project.lines.length === 0) return 'lyrics';
+  // A video being made when the user left: show its progress.
+  if (project.render?.activeJobId && project.timing.status === 'done') return 'render';
   switch (project.timing.status) {
     case 'running': case 'error': return 'timing';
     case 'done': return 'look';

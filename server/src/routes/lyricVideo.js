@@ -247,10 +247,35 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
   router.get("/prefs", (req, res) => ok(res, readPrefs(req.ctx.dataDir)));
   router.put("/prefs", route((req, res) => ok(res, writePrefs(req.ctx.dataDir, { artist: bodyOf(req).artist }))));
 
+  /** Clears the saved render job when it is the one given, or when no render for this project is running here. */
+  function clearActiveRender(dataDir, id, jobId = null) {
+    return updateProject(dataDir, id, (latest) => {
+      const active = latest.render?.activeJobId;
+      if (!active || (jobId ? active !== jobId : rendering.has(id))) return latest;
+      return { ...latest, render: null };
+    });
+  }
+
+  /**
+   * A saved render job with no render running in this process means the server
+   * restarted mid-render (or the render ended without clearing it): clear it so
+   * the page does not wait on it. Returns the project as it now stands.
+   */
+  function settleStaleRender(dataDir, project) {
+    if (!project?.render?.activeJobId || rendering.has(project.projectId)) return project;
+    return clearActiveRender(dataDir, project.projectId);
+  }
+
+  /** Both settle steps for a project about to be shown; null when it vanished meanwhile. */
+  const settled = (dataDir, project) => {
+    const timing = settleInterrupted(dataDir, project);
+    return timing ? settleStaleRender(dataDir, timing) : null;
+  };
+
   router.get("/", route((req, res) => {
     for (const summary of listProjects(req.ctx.dataDir)) {
       const project = readProject(req.ctx.dataDir, summary.projectId);
-      if (project) settleInterrupted(req.ctx.dataDir, project);
+      if (project) settled(req.ctx.dataDir, project);
     }
     ok(res, { projects: listProjects(req.ctx.dataDir) });
   }));
@@ -263,7 +288,7 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
   }));
 
   router.get("/:id", route((req, res) => {
-    const project = settleInterrupted(req.ctx.dataDir, load(req));
+    const project = settled(req.ctx.dataDir, load(req));
     if (!project) throw new Refusal(404, NOT_FOUND);
     ok(res, { project });
   }));
@@ -413,7 +438,7 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
   }));
 
   /** Finishes a render: records the job's end state, files the result on the project, frees the slot. */
-  async function settleRender({ req, project, job, aspect, quality, width, height, durationSec, outPath, assPath }) {
+  async function finishRender({ req, project, job, aspect, quality, width, height, durationSec, outPath, assPath }) {
     const dataDir = req.ctx.dataDir;
     const id = project.projectId;
     try {
@@ -434,6 +459,7 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
         updateProject(dataDir, id, (latest) => ({
           ...latest,
           renders: [...(latest.renders || []), { jobId: job.jobId, aspect, quality, file: outPath, durationSec, at: new Date().toISOString() }],
+          render: latest.render?.activeJobId === job.jobId ? null : latest.render ?? null,
         }));
       } else {
         if (live && live.status !== "error") markError(job.jobId, "The render did not finish");
@@ -446,6 +472,7 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
       console.error(`[lyric-video] could not finish render ${job.jobId}:`, err);
     } finally {
       removeFile(assPath);
+      try { clearActiveRender(dataDir, id, job.jobId); } catch (err) { console.error(`[lyric-video] could not clear render ${job.jobId}:`, err); }
       rendering.delete(id);
     }
   }
@@ -488,13 +515,15 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
       job = createJob(req.ctx.userId, { durationSec });
       updateJob(job.jobId, { projectId: project.projectId });
       persistJob(req.ctx.dataDir, { ...job, projectId: project.projectId, status: "running" });
+      // Saved on the project so the page can pick the render up again after leaving.
+      updateProject(req.ctx.dataDir, project.projectId, (latest) => ({ ...latest, render: { activeJobId: job.jobId } }));
     } catch (err) {
       rendering.delete(project.projectId);
       removeFile(assPath);
       throw err;
     }
     // Detached: the response below does not wait for the render.
-    settleRender({ req, project, job, aspect, quality, width, height, durationSec, outPath, assPath });
+    finishRender({ req, project, job, aspect, quality, width, height, durationSec, outPath, assPath });
     res.status(202).json({ jobId: job.jobId });
   }));
 

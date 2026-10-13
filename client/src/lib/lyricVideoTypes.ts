@@ -73,6 +73,8 @@ export interface LyricProject {
   look: LyricLook;
   background: LyricBackground | null;
   renders: LyricRender[];
+  /** The render being made now, saved so the page can pick it up again after leaving. */
+  render?: { activeJobId: string } | null;
 }
 
 export interface LyricProjectSummary {

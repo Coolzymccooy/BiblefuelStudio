@@ -20,6 +20,10 @@ describe('firstOpenStep', () => {
   it('moves on to the look once timing is done', () => {
     expect(firstOpenStep(make({ song, lines, timing: { status: 'done' } }))).toBe('look');
   });
+  it('reopens on the render while a video is being made (R43)', () => {
+    expect(firstOpenStep(make({ song, lines, timing: { status: 'done' }, render: { activeJobId: 'j1' } }))).toBe('render');
+    expect(firstOpenStep(make({ song, lines, timing: { status: 'done' }, render: null }))).toBe('look');
+  });
 });
 
 describe('reachableSteps', () => {
