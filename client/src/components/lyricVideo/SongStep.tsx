@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { Loader2, Upload } from 'lucide-react';
 import { api } from '../../lib/api';
+import { AUDIO_ACCEPT, AUDIO_ACCEPT_LIST } from '../../lib/audioAccept';
 import { lyricVideoApi } from '../../lib/lyricVideoApi';
 import { formatSongLength } from '../../lib/lyricTiming';
 import type { LyricProject } from '../../lib/lyricVideoTypes';
@@ -10,8 +11,9 @@ import { messageOf } from './messageOf';
 
 interface Props { project: LyricProject; onChange: (p: LyricProject) => void; onNext?: () => void }
 
-const ACCEPT = 'audio/*,video/*';
-const ACCEPT_LIST = ['audio/*', 'video/*'];
+// The extensions matter: on iOS, audio/* alone cannot pick a song saved in Files (see lib/audioAccept.ts).
+const ACCEPT = `${AUDIO_ACCEPT},video/*,.mp4,.mov`;
+const ACCEPT_LIST = [...AUDIO_ACCEPT_LIST, 'video/*', '.mp4', '.mov'];
 
 /** Step 1: put the song in. The title and artist were chosen on the start screen. */
 export function SongStep({ project, onChange, onNext }: Props) {

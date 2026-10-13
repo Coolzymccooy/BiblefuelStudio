@@ -86,6 +86,19 @@ describe('lyricVideoApi', () => {
     await expect(lyricVideoApi.align('lv_1')).rejects.toThrow('Something went wrong');
   });
 
+  it('turns raw upload failures into plain sentences', async () => {
+    const f = new File(['x'], 'song.mp3');
+    vi.mocked(uploadMedia).mockRejectedValue(new Error('Network Error'));
+    await expect(lyricVideoApi.uploadSong('lv_1', f)).rejects.toThrow("Couldn't reach the server — check your connection and try again.");
+    vi.mocked(uploadMedia).mockRejectedValue(new Error('timeout of 600000ms exceeded'));
+    await expect(lyricVideoApi.uploadBackground('lv_1', f)).rejects.toThrow("Couldn't reach the server");
+    vi.mocked(uploadMedia).mockRejectedValue(new Error('Request failed with status code 413'));
+    await expect(lyricVideoApi.uploadSong('lv_1', f)).rejects.toThrow('That file is too big to upload.');
+    vi.mocked(uploadMedia).mockRejectedValue(new Error('File is 2000 MB. The maximum is 1024 MB.'));
+    await expect(lyricVideoApi.uploadSong('lv_1', f)).rejects.toThrow('File is 2000 MB. The maximum is 1024 MB.');
+    expect(api.post).not.toHaveBeenCalled();
+  });
+
   it('uploads the song then attaches it', async () => {
     vi.mocked(uploadMedia).mockResolvedValue({ file: '/app/outputs/source-video-1.mp4' });
     vi.mocked(api.post).mockResolvedValue(reply({ project }));

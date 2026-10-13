@@ -2,6 +2,7 @@ import { useState } from 'react';
 import toast from 'react-hot-toast';
 import { Loader2 } from 'lucide-react';
 import { lyricVideoApi } from '../../lib/lyricVideoApi';
+import { confirmRetime } from '../../lib/lyricRetime';
 import type { LyricLine, LyricProject, LyricSection } from '../../lib/lyricVideoTypes';
 import { fieldLabelCls, inputCls, panelCls, primaryBtnCls, secondaryBtnCls } from '../story/formStyles';
 import { messageOf } from './messageOf';
@@ -43,7 +44,10 @@ export function LyricsStep({ project, onChange, onNext }: Props) {
     }
   };
 
+  const timedBefore = project.timing.status === 'done';
+
   const time = async () => {
+    if (timedBefore && !confirmRetime()) return;
     setBusy('timing');
     try {
       onChange(await lyricVideoApi.align(project.projectId));
@@ -95,7 +99,7 @@ export function LyricsStep({ project, onChange, onNext }: Props) {
       {!project.song && <p className="text-xs text-content-secondary">Upload the song first, then you can time the lyrics.</p>}
 
       <button type="button" className={primaryBtnCls} disabled={!canTime} onClick={time}>
-        {busy === 'timing' && <Loader2 size={16} className="animate-spin" />} Time the lyrics
+        {busy === 'timing' && <Loader2 size={16} className="animate-spin" />} {timedBefore ? 'Time the lyrics again' : 'Time the lyrics'}
       </button>
     </div>
   );

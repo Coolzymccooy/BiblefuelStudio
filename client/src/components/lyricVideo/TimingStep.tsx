@@ -52,10 +52,12 @@ function useTimingRun(project: LyricProject, onChange: (p: LyricProject) => void
 export function TimingStep({ project, onChange }: Props) {
   const [assVersion, setAssVersion] = useState(1);
   const [saving, setSaving] = useState(false);
+  // "Start here" needs a moment to start from, so it waits until the preview has reported one.
+  const [hasTime, setHasTime] = useState(false);
   // Where the preview is playing. A ref, not state: it changes about four times a second and
   // only "Start here" reads it, so the line list must not redraw each time.
   const nowRef = useRef(0);
-  const onTime = useCallback((t: number) => { nowRef.current = t; }, []);
+  const onTime = useCallback((t: number) => { nowRef.current = t; setHasTime(true); }, []);
   const previewBox = useRef<HTMLDivElement>(null);
   const run = useTimingRun(project, onChange);
   const { timing, lines } = project;
@@ -120,7 +122,7 @@ export function TimingStep({ project, onChange }: Props) {
                 <span className="flex flex-wrap gap-1.5 pl-14">
                   <button type="button" className={smallBtnCls} disabled={saving} onClick={() => save(l.id, nudgeLine(lines, i, -0.1, songEnd))}>−0.1 s</button>
                   <button type="button" className={smallBtnCls} disabled={saving} onClick={() => save(l.id, nudgeLine(lines, i, 0.1, songEnd))}>+0.1 s</button>
-                  <button type="button" className={smallBtnCls} disabled={saving} onClick={() => save(l.id, nudgeLine(lines, i, nowRef.current - l.start, songEnd))}>Start here</button>
+                  <button type="button" className={smallBtnCls} disabled={saving || !hasTime} title={hasTime ? undefined : 'Play the song to the right spot first'} onClick={() => save(l.id, nudgeLine(lines, i, nowRef.current - l.start, songEnd))}>Start here</button>
                   <button type="button" className={smallBtnCls} onClick={() => playPreviewFrom(previewBox.current, l.start)}>Play from here</button>
                 </span>
               ) : (

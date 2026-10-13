@@ -9,6 +9,7 @@ const BASE = '/api/lyric-video';
 
 const GENERIC_ERROR = 'Something went wrong. Please try again.';
 const NETWORK_ERROR = "Couldn't reach the server — check your connection and try again.";
+const TOO_BIG_ERROR = 'That file is too big to upload.';
 const QUOTA_ERROR = "You've used today's free renders — upgrade to Premium or come back tomorrow.";
 
 /** The song and background calls wait on server-side file probes that can run past the 15 s default. */
@@ -16,18 +17,37 @@ const SLOW_CALL = { timeout: 60_000 } as const;
 
 /** Raw axios messages (not sentences) that the api client passes through when the server said nothing. */
 const RAW_NETWORK = /^(network error|timeout of \d+ms exceeded)$/i;
-const RAW_STATUS = /^request failed with status code/i;
+const RAW_STATUS = /^request failed with status code (\d+)/i;
 
 /** Throws Error(message) with a sentence fit for the user when the call failed. */
 function check(res: ApiResponse): void {
   if (res.ok) return;
   // The quota middleware answers 429 with the code "QUOTA_EXCEEDED", not a sentence.
   if (res.error === 'QUOTA_EXCEEDED') throw new Error(QUOTA_ERROR);
-  const message = res.error?.trim();
-  if (message && RAW_NETWORK.test(message)) throw new Error(NETWORK_ERROR);
-  // Any other message is the server's own sentence (it answers 429 for more than the daily limit).
-  if (!message || RAW_STATUS.test(message)) throw new Error(GENERIC_ERROR);
-  throw new Error(message);
+  throw new Error(plainMessage(res.error));
+}
+
+/**
+ * A sentence fit for the user from whatever message a failed call carried: raw axios text
+ * ("Network Error", a timeout, "Request failed with status code ...") becomes plain words, and
+ * anything else is the server's own sentence (it answers 429 for more than the daily limit).
+ */
+export function plainMessage(raw: string | undefined | null): string {
+  const message = raw?.trim();
+  if (!message) return GENERIC_ERROR;
+  if (RAW_NETWORK.test(message)) return NETWORK_ERROR;
+  const status = RAW_STATUS.exec(message);
+  if (status) return status[1] === '413' ? TOO_BIG_ERROR : GENERIC_ERROR;
+  return message;
+}
+
+/** uploadMedia throws the api client's raw messages; give them the same plain wording as every other call. */
+async function upload(...args: Parameters<typeof uploadMedia>): ReturnType<typeof uploadMedia> {
+  try {
+    return await uploadMedia(...args);
+  } catch (e) {
+    throw new Error(plainMessage(e instanceof Error ? e.message : undefined));
+  }
 }
 
 /** `api` already unwraps axios, so `data` is the server's body itself. */
@@ -55,7 +75,7 @@ export const lyricVideoApi = {
     check(await api.put(`${BASE}/prefs`, { artist }));
   },
   async uploadSong(id: string, file: File, onProgress?: (pct: number) => void): Promise<LyricProject> {
-    const up = await uploadMedia(file, file.name, 'source-video', onProgress);
+    const up = await upload(file, file.name, 'source-video', onProgress);
     if (!up.file) throw new Error('The song did not upload. Please try again.');
     return project(api.post(`${BASE}/${id}/song`, { path: up.file }, undefined, SLOW_CALL));
   },
@@ -67,7 +87,7 @@ export const lyricVideoApi = {
   setBackground: (id: string, path: string | null, fit?: BackgroundFit) =>
     project(api.put(`${BASE}/${id}/background`, { path, ...(fit ? { fit } : {}) }, undefined, SLOW_CALL)),
   async uploadBackground(id: string, file: File, onProgress?: (pct: number) => void): Promise<LyricProject> {
-    const up = await uploadMedia(file, file.name, 'background', onProgress);
+    const up = await upload(file, file.name, 'background', onProgress);
     if (!up.file) throw new Error('The background did not upload. Please try again.');
     return lyricVideoApi.setBackground(id, up.file);
   },

@@ -68,6 +68,14 @@ describe('TimingStep', () => {
     await waitFor(() => expect(lyricVideoApi.patchLine).toHaveBeenCalledWith('lv_1', 'l2', { start: 4.9 }));
   });
 
+  it("'Start here' waits until the preview has reported a time", async () => {
+    render(<TimingStep project={done} onChange={vi.fn()} />);
+    const starts = screen.getAllByRole('button', { name: /start here/i }) as HTMLButtonElement[];
+    expect(starts.every((b) => b.disabled)).toBe(true);
+    fireEvent.click(await screen.findByRole('button', { name: 'tick 6' }));
+    await waitFor(() => expect(screen.getAllByRole('button', { name: /start here/i }).every((b) => !(b as HTMLButtonElement).disabled)).toBe(true));
+  });
+
   it("'Start here' moves the line to where the preview is playing", async () => {
     vi.mocked(lyricVideoApi.patchLine).mockResolvedValue(done);
     render(<TimingStep project={done} onChange={vi.fn()} />);

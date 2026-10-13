@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 vi.mock('../../../lib/lyricVideoApi', () => ({ lyricVideoApi: { setSheet: vi.fn(), align: vi.fn() } }));
 vi.mock('react-hot-toast', () => ({ default: { error: vi.fn(), success: vi.fn() } }));
@@ -65,6 +65,38 @@ describe('LyricsStep', () => {
     await waitFor(() => expect(onChange).toHaveBeenCalledWith(running));
     expect(lyricVideoApi.align).toHaveBeenCalledWith('lv_1');
     expect(onNext).toHaveBeenCalled();
+  });
+
+  describe('when the lyrics were timed before', () => {
+    const timed = { ...parsed, timing: { status: 'done' } } as LyricProject;
+    afterEach(() => vi.restoreAllMocks());
+
+    it('says "again" and does nothing if the user backs out of the warning', () => {
+      const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+      render(<LyricsStep project={timed} onChange={vi.fn()} />);
+      fireEvent.click(screen.getByRole('button', { name: 'Time the lyrics again' }));
+      expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/free renders.*by hand/));
+      expect(lyricVideoApi.align).not.toHaveBeenCalled();
+    });
+
+    it('times them again once the user agrees', async () => {
+      vi.spyOn(window, 'confirm').mockReturnValue(true);
+      const running = { ...timed, timing: { status: 'running' } } as LyricProject;
+      vi.mocked(lyricVideoApi.align).mockResolvedValue(running);
+      const onChange = vi.fn();
+      render(<LyricsStep project={timed} onChange={onChange} />);
+      fireEvent.click(screen.getByRole('button', { name: 'Time the lyrics again' }));
+      await waitFor(() => expect(onChange).toHaveBeenCalledWith(running));
+    });
+
+    it('does not ask the first time', async () => {
+      const confirm = vi.spyOn(window, 'confirm');
+      vi.mocked(lyricVideoApi.align).mockResolvedValue(parsed);
+      render(<LyricsStep project={parsed} onChange={vi.fn()} />);
+      fireEvent.click(screen.getByRole('button', { name: 'Time the lyrics' }));
+      await waitFor(() => expect(lyricVideoApi.align).toHaveBeenCalled());
+      expect(confirm).not.toHaveBeenCalled();
+    });
   });
 
   it("shows the server's sentence when the lyrics are refused", async () => {

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
@@ -19,15 +19,49 @@ const header = (
   <ScreenHeader eyebrow="Studio" title={<>Lyric <em>video</em></>} subtitle="Turn your song into a lyric video." />
 );
 
-/** One song, step by step. The project lives in the query cache; each step hands back the project it changed. */
-function LyricProjectView({ projectId }: { projectId: string }) {
+/** Keeps its children mounted but out of sight, and stops any sound they were making while it is away. */
+function KeptWhileAway({ away, children }: { away: boolean; children: ReactNode }) {
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (away) box.current?.querySelectorAll('video, audio').forEach((m) => (m as HTMLMediaElement).pause());
+  }, [away]);
+  return <div ref={box} hidden={away}>{children}</div>;
+}
+
+/** The five steps for a loaded project. It opens on the first step that needs something, once, and then only the user moves it. */
+function LyricSteps({ project, error, onRetry }: { project: LyricProject; error: unknown; onRetry: () => void }) {
   const qc = useQueryClient();
-  const { data: project, error, isLoading, refetch } = useLyricProject(projectId);
-  // The step the user picked; until they pick one, the first step that still needs something.
-  const [picked, setPicked] = useState<LyricStepId | null>(null);
+  // Settled when the project first arrives. A project reopened while timing runs stays on Timing
+  // when it finishes, so the lines to check are seen, instead of jumping on to the Look step.
+  const [step, setStep] = useState<LyricStepId>(() => firstOpenStep(project));
   // The render step keeps its progress, so once opened it stays mounted (hidden) while other steps show.
   const [renderOpened, setRenderOpened] = useState(false);
+  const onChange = (next: LyricProject) => qc.setQueryData(['lyric-project', project.projectId], next);
+  const goTo = (next: LyricStepId) => { setStep(next); if (next === 'render') setRenderOpened(true); };
 
+  return (
+    <div className="space-y-6">
+      {error != null && (
+        <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-bf-danger">
+          <span>{messageOf(error)}</span>
+          <button type="button" className="btn btn-secondary" onClick={onRetry}>Check again</button>
+        </div>
+      )}
+      <LyricStepper project={project} step={step} onStep={goTo} />
+      {step === 'song' && <SongStep project={project} onChange={onChange} onNext={() => goTo('lyrics')} />}
+      {step === 'lyrics' && <LyricsStep project={project} onChange={onChange} onNext={() => goTo('timing')} />}
+      {step === 'timing' && <TimingStep project={project} onChange={onChange} />}
+      {step === 'look' && <LookStep project={project} onChange={onChange} />}
+      {(step === 'render' || renderOpened) && (
+        <KeptWhileAway away={step !== 'render'}><RenderStep project={project} onChange={onChange} /></KeptWhileAway>
+      )}
+    </div>
+  );
+}
+
+/** One song, step by step: loads the project, then hands it to the steps. */
+function LyricProjectView({ projectId }: { projectId: string }) {
+  const { data: project, error, isLoading, refetch } = useLyricProject(projectId);
   if (isLoading) {
     return <div role="status" className="flex items-center gap-2 text-content-secondary"><Loader2 className="animate-spin" size={18} aria-hidden /> Opening your song…</div>;
   }
@@ -39,29 +73,7 @@ function LyricProjectView({ projectId }: { projectId: string }) {
       </div>
     );
   }
-
-  const step = picked ?? firstOpenStep(project);
-  const onChange = (next: LyricProject) => qc.setQueryData(['lyric-project', projectId], next);
-  const goTo = (next: LyricStepId) => { setPicked(next); if (next === 'render') setRenderOpened(true); };
-
-  return (
-    <div className="space-y-6">
-      {error && (
-        <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-bf-danger">
-          <span>{messageOf(error)}</span>
-          <button type="button" className="btn btn-secondary" onClick={() => void refetch()}>Check again</button>
-        </div>
-      )}
-      <LyricStepper project={project} step={step} onStep={goTo} />
-      {step === 'song' && <SongStep project={project} onChange={onChange} onNext={() => goTo('lyrics')} />}
-      {step === 'lyrics' && <LyricsStep project={project} onChange={onChange} onNext={() => goTo('timing')} />}
-      {step === 'timing' && <TimingStep project={project} onChange={onChange} />}
-      {step === 'look' && <LookStep project={project} onChange={onChange} />}
-      {(step === 'render' || renderOpened) && (
-        <div hidden={step !== 'render'}><RenderStep project={project} onChange={onChange} /></div>
-      )}
-    </div>
-  );
+  return <LyricSteps project={project} error={error} onRetry={() => void refetch()} />;
 }
 
 /** Studio > Lyric video: start a song, or carry on with one. */

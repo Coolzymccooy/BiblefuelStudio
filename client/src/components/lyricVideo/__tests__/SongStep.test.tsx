@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 vi.mock('../../../lib/lyricVideoApi', () => ({ lyricVideoApi: { uploadSong: vi.fn() } }));
 import { lyricVideoApi } from '../../../lib/lyricVideoApi';
+import { AUDIO_ACCEPT } from '../../../lib/audioAccept';
 import { SongStep } from '../SongStep';
 import type { LyricProject } from '../../../lib/lyricVideoTypes';
 
@@ -17,7 +18,8 @@ describe('SongStep', () => {
     const { container } = render(<SongStep project={empty} onChange={vi.fn()} />);
     expect(screen.getByText('My Time')).toBeTruthy();
     expect(screen.getByText(/Sthill Waters/)).toBeTruthy();
-    expect(fileInput(container).accept).toBe('audio/*,video/*');
+    expect(fileInput(container).accept).toBe(`${AUDIO_ACCEPT},video/*,.mp4,.mov`);
+    expect(fileInput(container).accept).toContain('.m4a');
   });
 
   it('uploads the picked song, shows progress and moves on', async () => {
