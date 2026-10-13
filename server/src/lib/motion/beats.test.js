@@ -127,6 +127,30 @@ test("decodePcm asks ffmpeg for mono s16le at the sample rate, capped in length"
   assert.ok(a.includes("s16le") && a.includes("11025") && a.includes("1"));
 });
 
+test("decodePcm stops ffmpeg and rejects as cancelled when its signal aborts", async () => {
+  let killed = null;
+  const impl = () => {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.kill = (sig) => { killed = sig ?? "SIGTERM"; setImmediate(() => child.emit("close", null)); return true; };
+    return child; // never finishes on its own
+  };
+  const ac = new AbortController();
+  const running = decodePcm("long.mp3", { spawnImpl: impl, signal: ac.signal });
+  ac.abort();
+  await assert.rejects(running, /cancelled/);
+  assert.ok(killed, "the decoder process was killed");
+});
+
+test("decodePcm with an already-aborted signal never starts ffmpeg", async () => {
+  const { impl, calls } = fakeSpawn();
+  const ac = new AbortController();
+  ac.abort();
+  await assert.rejects(decodePcm("song.mp3", { spawnImpl: impl, signal: ac.signal }), /cancelled/);
+  assert.equal(calls.length, 0);
+});
+
 test("decodePcm rejects with ffmpeg's error when the file can't be read", async () => {
   const { impl } = fakeSpawn({ code: 1, out: Buffer.alloc(0), err: "Invalid data found" });
   await assert.rejects(decodePcm("bad.mp3", { spawnImpl: impl }), /Invalid data found/);

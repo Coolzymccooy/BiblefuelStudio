@@ -25,17 +25,29 @@ const DOUBLE_SHARE = 0.8;
 const STRONG_SHARE = 0.15;
 
 /** Mono signed 16-bit PCM at SAMPLE_RATE from any audio file ffmpeg can read. */
-export function decodePcm(file, { ffmpegPath = process.env.FFMPEG_PATH?.trim() || "ffmpeg", maxSec = 900, spawnImpl = spawn } = {}) {
+export function decodePcm(file, { ffmpegPath = process.env.FFMPEG_PATH?.trim() || "ffmpeg", maxSec = 900, spawnImpl = spawn, signal } = {}) {
   return new Promise((resolve, reject) => {
+    const cancelled = () => new Error("audio decode cancelled");
+    if (signal?.aborted) { reject(cancelled()); return; }
     const args = ["-v", "error", "-t", String(maxSec), "-i", file, "-ac", "1", "-ar", String(SAMPLE_RATE), "-f", "s16le", "pipe:1"];
     const child = spawnImpl(ffmpegPath, args, { windowsHide: true });
     const chunks = [];
     let stderr = "";
+    let stopped = false;
+    // A cancel kills the decoder at once, so a long song cannot hold the render slot.
+    const onAbort = () => {
+      stopped = true;
+      try { child.kill("SIGKILL"); } catch { /* already gone */ }
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    const done = () => signal?.removeEventListener("abort", onAbort);
     child.stdout.on("data", (c) => chunks.push(c));
     child.stderr.on("data", (c) => { stderr += c.toString(); });
-    child.on("error", reject);
+    child.on("error", (err) => { done(); reject(stopped ? cancelled() : err); });
     child.on("close", (code) => {
-      if (code === 0) resolve(Buffer.concat(chunks));
+      done();
+      if (stopped) reject(cancelled());
+      else if (code === 0) resolve(Buffer.concat(chunks));
       else reject(new Error(`audio decode failed (${code}): ${stderr.trim().slice(-300)}`));
     });
   });

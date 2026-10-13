@@ -113,7 +113,12 @@ function resolveSound(ctx, project) {
   return { song, songFile, voiceFile, voiceMissing: Boolean(voiceover?.file) && !voiceFile };
 }
 
-async function timing(ctx, project, sound) {
+/** A cancel that landed during song or voice analysis reads as Cancelled, never as an audio problem. */
+function throwIfCancelled(signal) {
+  if (signal.aborted) throw new StageError("Cancelled.");
+}
+
+async function timing(ctx, project, sound, signal) {
   const lengthSec = project.lengthSec;
   const notes = [];
   if (sound.voiceMissing) notes.push(VOICE_MISSING_NOTE);
@@ -123,19 +128,26 @@ async function timing(ctx, project, sound) {
   let voiceGridResult = null;
   if (sound.voiceFile) {
     try {
-      voiceGridResult = await voiceGrid(sound.voiceFile, { lengthSec, decode: engine.decode });
+      voiceGridResult = await voiceGrid(sound.voiceFile, { lengthSec, decode: engine.decode, signal });
       voice = { file: sound.voiceFile };
       if (voiceGridResult.durationSec > lengthSec + VOICE_SLACK_SEC) {
         notes.push(`Your voiceover is ${voiceGridResult.durationSec.toFixed(1)} s, so it's cut at ${lengthSec} s.`);
       }
     } catch (err) {
+      throwIfCancelled(signal);
       console.error("[moments] voiceover could not be read:", err?.message || err);
       notes.push(VOICE_UNREADABLE_NOTE);
     }
   }
 
   if (sound.songFile) {
-    const g = await songGrid(ctx, sound.songFile, { lengthSec, windowStartSec: sound.song.windowStartSec, decode: engine.decode });
+    let g;
+    try {
+      g = await songGrid(ctx, sound.songFile, { lengthSec, windowStartSec: sound.song.windowStartSec, decode: engine.decode, signal });
+    } catch (err) {
+      throwIfCancelled(signal);
+      throw err;
+    }
     return { grid: g.grid, song: { file: sound.songFile, startSec: g.windowStartSec }, voice, notes };
   }
   return { grid: voiceGridResult || pulseGrid(lengthSec), song: null, voice, notes };
@@ -232,7 +244,7 @@ export async function momentRenderStage(ctx, projectId, jobId, { seed, signal } 
     const sound = resolveSound(ctx, project);
     const { usable, notes } = await preparePhotos(ctx, project, workDir, controller.signal);
     progress("prepare", 1);
-    const timed = await timing(ctx, project, sound);
+    const timed = await timing(ctx, project, sound, controller.signal);
     notes.push(...timed.notes);
     const { grid, song, voice } = timed;
     const heroAt = usable.findIndex((u) => u.index === project.heroIndex);

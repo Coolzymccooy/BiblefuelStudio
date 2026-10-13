@@ -13,8 +13,15 @@ const cacheDir = (dataDir) => path.join(dataDir, "moments", "beats");
 
 const round2 = (v) => Math.round(v * 100) / 100;
 
+/** The song's sha1, streamed: an upload can be very large, and this must not block or buffer it whole. */
 function hashOf(file) {
-  return crypto.createHash("sha1").update(fs.readFileSync(file)).digest("hex");
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash("sha1");
+    fs.createReadStream(file)
+      .on("error", reject)
+      .on("data", (chunk) => hash.update(chunk))
+      .on("end", () => resolve(hash.digest("hex")));
+  });
 }
 
 // A cache entry is used only when it has the shape analysis() writes. Anything
@@ -50,22 +57,22 @@ function writeEntry(dir, cacheFile, data) {
   }
 }
 
-async function analysis(ctx, file, decode) {
+async function analysis(ctx, file, decode, signal) {
   const dir = cacheDir(ctx.dataDir);
-  const cacheFile = path.join(dir, `${hashOf(file)}.json`);
+  const cacheFile = path.join(dir, `${await hashOf(file)}.json`);
   const cached = readEntry(cacheFile);
   if (cached) return cached;
   // Rounded BEFORE use, exactly as it is cached: a first render (cache miss) and a
   // re-render (cache hit) must see the same envelope, or the window and beat phase
   // can flip and "same seed, same video" breaks.
-  const env = Float64Array.from(onsetEnvelope(await decode(file)), (v) => Math.round(v * 1e4) / 1e4);
+  const env = Float64Array.from(onsetEnvelope(await decode(file, { signal })), (v) => Math.round(v * 1e4) / 1e4);
   const result = { tempo: estimateTempo(env), durationSec: env.length / FRAME_RATE, env };
   writeEntry(dir, cacheFile, { tempo: result.tempo, durationSec: result.durationSec, env: Array.from(env) });
   return result;
 }
 
-export async function songGrid(ctx, file, { lengthSec, windowStartSec = null, decode = decodePcm }) {
-  const { tempo, durationSec, env } = await analysis(ctx, file, decode);
+export async function songGrid(ctx, file, { lengthSec, windowStartSec = null, decode = decodePcm, signal }) {
+  const { tempo, durationSec, env } = await analysis(ctx, file, decode, signal);
   const latest = Math.max(0, durationSec - lengthSec);
   const requested = Number.isFinite(windowStartSec) ? windowStartSec : null;
   // Rounded once: the grid and the returned windowStartSec are the same value.
@@ -76,8 +83,8 @@ export async function songGrid(ctx, file, { lengthSec, windowStartSec = null, de
   return { grid, tempo, durationSec, windowStartSec: start };
 }
 
-export async function voiceGrid(file, { lengthSec, decode = decodePcm }) {
-  const pcm = await decode(file);
+export async function voiceGrid(file, { lengthSec, decode = decodePcm, signal }) {
+  const pcm = await decode(file, { signal });
   const durationSec = round2(pcm.length / 2 / SAMPLE_RATE);
   const pauses = pausesFrom(pcm).filter((p) => p.start < lengthSec);
   const paused = pauses.length ? pauseGrid(pauses, lengthSec) : null;

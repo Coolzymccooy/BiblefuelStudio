@@ -258,6 +258,29 @@ test("aborting the external signal mid-render stops it", async () => {
   assert.equal(getJob(job.jobId).status, "error");
 });
 
+test("a cancel during song analysis stops the decoder and frees the stage", async () => {
+  const decodes = [];
+  _setEngineForTest({
+    decode: (_file, opts) => new Promise((_resolve, reject) => {
+      decodes.push(opts);
+      opts?.signal?.addEventListener("abort", () => reject(new Error("audio decode cancelled")), { once: true });
+    }),
+  });
+  const p = moment();
+  const job = createJob("u1", { durationSec: 15 });
+  const ac = new AbortController();
+  const running = momentRenderStage(ctx, p.projectId, job.jobId, { signal: ac.signal });
+  const deadline = Date.now() + 5000;
+  while (decodes.length === 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 5));
+  assert.equal(decodes.length, 1, "the song is being decoded");
+  ac.abort();
+  await running; // settles: the decoder was told to stop
+  const stopped = readProject(ctx.dataDir, p.projectId);
+  assert.equal(stopped.render.error, "Cancelled.");
+  assert.equal(calls.render.length, 0, "nothing was rendered");
+  assert.equal(getJob(job.jobId).status, "error");
+});
+
 test("cancelMomentRender still stops a running render", async () => {
   _setEngineForTest({
     renderPlan: (opts) => new Promise((resolve) => {

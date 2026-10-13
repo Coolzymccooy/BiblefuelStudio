@@ -72,6 +72,32 @@ test("a voiceover grid carries the decoded voice length as durationSec", async (
   assert.ok(Math.abs(solid.durationSec - 5) <= 0.01, `${solid.durationSec}`);
 });
 
+test("the cache key is the song's sha1, hashed as a stream rather than read whole", async () => {
+  const big = path.join(ctx.dataDir, "big.mp3");
+  fs.writeFileSync(big, crypto.randomBytes(3 * 1024 * 1024));
+  const expected = crypto.createHash("sha1").update(fs.readFileSync(big)).digest("hex");
+  const original = fs.readFileSync;
+  fs.readFileSync = (file, ...rest) => {
+    assert.notEqual(path.resolve(String(file)), path.resolve(big), "the song is never read into memory whole");
+    return original(file, ...rest);
+  };
+  try {
+    await songGrid(ctx, big, { lengthSec: 15, decode: async () => clickTrack({ bpm: 120, sec: 40 }) });
+  } finally {
+    fs.readFileSync = original;
+  }
+  assert.deepEqual(fs.readdirSync(path.join(ctx.dataDir, "moments", "beats")), [`${expected}.json`]);
+});
+
+test("songGrid and voiceGrid hand the cancel signal to the decoder", async () => {
+  const seen = [];
+  const decode = async (_file, opts) => { seen.push(opts?.signal); return clickTrack({ bpm: 120, sec: 40 }); };
+  const ac = new AbortController();
+  await songGrid(ctx, song, { lengthSec: 15, decode, signal: ac.signal });
+  await voiceGrid(song, { lengthSec: 15, decode, signal: ac.signal });
+  assert.deepEqual(seen, [ac.signal, ac.signal]);
+});
+
 test("a decode failure is reported, not cached", async () => {
   await assert.rejects(songGrid(ctx, song, { lengthSec: 15, decode: async () => { throw new Error("bad audio"); } }), /bad audio/);
   assert.equal(fs.existsSync(path.join(ctx.dataDir, "moments", "beats")), false);
