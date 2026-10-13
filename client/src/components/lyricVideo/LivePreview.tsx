@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import JASSUB from 'jassub';
 import workerUrl from 'jassub/dist/jassub-worker.js?url';
 import wasmUrl from 'jassub/dist/jassub-worker.wasm?url';
@@ -6,6 +6,8 @@ import modernWasmUrl from 'jassub/dist/jassub-worker-modern.wasm?url';
 import { api } from '../../lib/api';
 import { lyricVideoApi } from '../../lib/lyricVideoApi';
 import { CAPTION_FALLBACK_FONT, CAPTION_FONTS } from '../../lib/lyricPreviewFonts';
+import { chooseBackdropFit } from '../../lib/lyricPreviewFit';
+import { LyricBackdrop } from './LyricBackdrop';
 import type { LyricProject } from '../../lib/lyricVideoTypes';
 
 /** The size the captions are laid out at (the tall, Shorts-safe frame); the canvas scales to the box. */
@@ -51,15 +53,21 @@ function playQuietly(media: HTMLMediaElement): void {
  */
 export function LivePreview({ project, assVersion, onTime }: Props) {
   const song = useRef<HTMLVideoElement>(null);
-  const backdrop = useRef<HTMLVideoElement>(null);
+  const frame = useRef<HTMLDivElement>(null);
+  const [measured, setMeasured] = useState<{ url: string; width: number; height: number } | null>(null);
   const renderer = useRef<JASSUB | null>(null);
 
   const songUrl = api.mediaUrl(project.song?.file) || undefined;
+  // What the render draws under the captions: the chosen background, else the cover still.
   const background = project.background;
-  const backdropVideo = background?.kind === 'video' ? api.mediaUrl(background.file) || undefined : undefined;
-  const stillFile = background?.kind === 'image' ? background.file : project.song?.coverStill;
-  const stillUrl = backdropVideo ? undefined : api.mediaUrl(stillFile) || undefined;
-  const fitClass = background?.fit === 'contain' ? 'object-contain' : 'object-cover';
+  const backdropFile = background?.file ?? project.song?.coverStill ?? null;
+  const backdropUrl = api.mediaUrl(backdropFile) || undefined;
+  const backdropIsVideo = background?.kind === 'video';
+  const requestedFit = background?.fit ?? 'auto';
+  const size = measured && measured.url === backdropUrl ? measured : null;
+  const fit = requestedFit === 'auto'
+    ? chooseBackdropFit(size, { width: PREVIEW_W, height: PREVIEW_H })
+    : requestedFit;
 
   // One renderer per project: a different project gets a fresh one, and none outlives the preview.
   useEffect(() => () => { renderer.current?.destroy(); renderer.current = null; }, [project.projectId]);
@@ -95,56 +103,56 @@ export function LivePreview({ project, assVersion, onTime }: Props) {
     return () => { cancelled = true; };
   }, [project.projectId, assVersion]);
 
-  /** Keeps the looping background at the place in its loop that the song's time implies. */
-  const alignBackdrop = () => {
+  /** Every video copy of the background (a whole picture has two: the sharp one and its blurred fill). */
+  const backdropVideos = () => Array.from(frame.current?.querySelectorAll<HTMLVideoElement>('video[data-backdrop]') ?? []);
+
+  /** Puts a looping background at the place in its loop that the song's time implies. */
+  const align = (bg: HTMLVideoElement) => {
     const clock = song.current;
-    const bg = backdrop.current;
-    if (!clock || !bg || !Number.isFinite(bg.duration) || bg.duration <= 0) return;
+    if (!clock || !Number.isFinite(bg.duration) || bg.duration <= 0) return;
     bg.currentTime = clock.currentTime % bg.duration;
   };
 
+  const startBackdrop = (bg: HTMLVideoElement) => { align(bg); playQuietly(bg); };
+
   return (
     <div
+      ref={frame}
       data-testid="lyric-preview"
       className="relative mx-auto w-full max-w-[360px] overflow-hidden rounded-xl bg-[#101820]"
       style={{ aspectRatio: `${PREVIEW_W} / ${PREVIEW_H}` }}
     >
-      {backdropVideo && (
-        <video
-          ref={backdrop}
-          src={backdropVideo}
-          muted
-          loop
-          playsInline
-          preload="auto"
-          aria-hidden="true"
-          className={`absolute inset-0 h-full w-full ${fitClass}`}
+      {backdropUrl && (
+        <LyricBackdrop
+          url={backdropUrl}
+          isVideo={backdropIsVideo}
+          fit={fit}
+          onSize={(width, height) => setMeasured({ url: backdropUrl, width, height })}
+          onVideoReady={(bg) => { if (song.current && !song.current.paused) startBackdrop(bg); else align(bg); }}
         />
       )}
-      {stillUrl && <img src={stillUrl} alt="" className={`absolute inset-0 h-full w-full ${fitClass} opacity-90`} />}
+      {/*
+        The song's own player: a transport over the picture, and the clock the captions follow. A song
+        uploaded as a video file would show its own picture, which the render never draws, so the
+        picture is pushed out of the box (the native controls and the caption canvas stay).
+      */}
       <video
         ref={song}
         src={songUrl}
         controls
         playsInline
         preload="metadata"
-        className="absolute inset-0 h-full w-full bg-transparent object-cover"
-        onPlay={() => {
-          const bg = backdrop.current;
-          if (!bg) return;
-          alignBackdrop();
-          playQuietly(bg);
-        }}
-        onPause={() => backdrop.current?.pause()}
-        onEnded={() => backdrop.current?.pause()}
-        onSeeked={() => { alignBackdrop(); onTime?.(song.current?.currentTime ?? 0); }}
+        className="absolute inset-0 h-full w-full bg-transparent object-none [object-position:100000px_100000px]"
+        onPlay={() => backdropVideos().forEach(startBackdrop)}
+        onPause={() => backdropVideos().forEach((bg) => bg.pause())}
+        onEnded={() => backdropVideos().forEach((bg) => bg.pause())}
+        onSeeked={() => { backdropVideos().forEach(align); onTime?.(song.current?.currentTime ?? 0); }}
         onTimeUpdate={() => {
           const clock = song.current;
           if (!clock) return;
-          // The browser may have paused the muted background (not loaded yet, or to save power):
+          // The browser may have paused a muted background (not loaded yet, or to save power):
           // pick it back up while the song is playing.
-          const bg = backdrop.current;
-          if (bg?.paused && !clock.paused) playQuietly(bg);
+          if (!clock.paused) backdropVideos().forEach((bg) => { if (bg.paused) playQuietly(bg); });
           onTime?.(clock.currentTime);
         }}
       />

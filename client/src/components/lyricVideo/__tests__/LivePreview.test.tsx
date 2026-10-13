@@ -79,6 +79,93 @@ describe('LivePreview', () => {
     expect(bg.hasAttribute('controls')).toBe(false);
   });
 
+  it('hands the renderer the preview size, the player clock, and the modern wasm', async () => {
+    render(<LivePreview project={project} assVersion={1} />);
+    await waitFor(() => expect(ctor).toHaveBeenCalled());
+    const opts = firstOpts();
+    expect(opts.video.videoWidth).toBe(360);
+    expect(opts.video.videoHeight).toBe(640);
+    expect(opts.onDemandRender).toBe(false);
+    expect(opts.wasmUrl).toBe('/w.wasm');
+    expect(opts.modernWasmUrl).toBe('/w-modern.wasm');
+  });
+
+  it("keeps a video song's own picture out of the frame, so only the chosen background shows", async () => {
+    render(<LivePreview project={withVideoBackground} assVersion={1} />);
+    await waitFor(() => expect(ctor).toHaveBeenCalled());
+    const cls = firstOpts().video.className;
+    expect(cls).toContain('object-none');
+    expect(cls).toContain('[object-position:100000px_100000px]');
+    expect(cls).not.toContain('object-cover');
+    expect(firstOpts().video.hasAttribute('controls')).toBe(true);
+  });
+
+  describe('background fit (same rule as the render)', () => {
+    const sized = (el: HTMLElement, width: number, height: number) => {
+      Object.defineProperty(el, 'videoWidth', { value: width, configurable: true });
+      Object.defineProperty(el, 'videoHeight', { value: height, configurable: true });
+      el.dispatchEvent(new Event('loadedmetadata'));
+    };
+    const videos = (c: HTMLElement) => c.querySelectorAll('video[src="/outputs/bg.mp4"]');
+
+    it('fills the frame when the picture is the frame shape', async () => {
+      const { container } = render(<LivePreview project={withVideoBackground} assVersion={1} />);
+      await waitFor(() => expect(ctor).toHaveBeenCalled());
+      sized(videos(container)[0] as HTMLElement, 1080, 1920);
+      await waitFor(() => expect(videos(container)).toHaveLength(1));
+      expect(videos(container)[0].className).toContain('object-cover');
+    });
+
+    it('shows a landscape background whole over a blurred, dimmed copy of itself', async () => {
+      const { container } = render(<LivePreview project={withVideoBackground} assVersion={1} />);
+      await waitFor(() => expect(ctor).toHaveBeenCalled());
+      sized(videos(container)[0] as HTMLElement, 1920, 1080);
+      await waitFor(() => expect(videos(container)).toHaveLength(2));
+      const blurred = container.querySelector('[data-backdrop="blur"]') as HTMLElement;
+      const whole = container.querySelector('[data-backdrop="whole"]') as HTMLElement;
+      expect(blurred.className).toContain('object-cover');
+      expect(blurred.className).toContain('blur');
+      expect(blurred.getAttribute('aria-hidden')).toBe('true');
+      expect(whole.className).toContain('object-contain');
+      expect(whole.className).not.toContain('blur');
+    });
+
+    it('honours an explicit contain, and an explicit cover, whatever the shape', async () => {
+      const contain = { ...project, background: { kind: 'video', file: '/o/bg.mp4', fit: 'contain' } } as unknown as LyricProject;
+      const first = render(<LivePreview project={contain} assVersion={1} />);
+      await waitFor(() => expect(ctor).toHaveBeenCalled());
+      expect(videos(first.container)).toHaveLength(2);
+      first.unmount();
+      const cover = { ...project, background: { kind: 'video', file: '/o/bg.mp4', fit: 'cover' } } as unknown as LyricProject;
+      const second = render(<LivePreview project={cover} assVersion={1} />);
+      await waitFor(() => expect(ctor).toHaveBeenCalledTimes(2));
+      sized(videos(second.container)[0] as HTMLElement, 1920, 1080);
+      expect(videos(second.container)).toHaveLength(1);
+    });
+
+    it('measures a background picture the same way', async () => {
+      const img = { ...project, background: { kind: 'image', file: '/o/bg.jpg', fit: 'auto' } } as unknown as LyricProject;
+      const { container } = render(<LivePreview project={img} assVersion={1} />);
+      await waitFor(() => expect(ctor).toHaveBeenCalled());
+      const pic = container.querySelector('img[src="/outputs/bg.jpg"]') as HTMLImageElement;
+      Object.defineProperty(pic, 'naturalWidth', { value: 1600, configurable: true });
+      Object.defineProperty(pic, 'naturalHeight', { value: 900, configurable: true });
+      pic.dispatchEvent(new Event('load'));
+      await waitFor(() => expect(container.querySelectorAll('img[src="/outputs/bg.jpg"]')).toHaveLength(2));
+    });
+
+    it('plays and pauses both copies of a background with the song', async () => {
+      const contain = { ...project, background: { kind: 'video', file: '/o/bg.mp4', fit: 'contain' } } as unknown as LyricProject;
+      render(<LivePreview project={contain} assVersion={1} />);
+      await waitFor(() => expect(ctor).toHaveBeenCalled());
+      const song = firstOpts().video;
+      song.dispatchEvent(new Event('play'));
+      expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(2);
+      song.dispatchEvent(new Event('pause'));
+      expect(HTMLMediaElement.prototype.pause).toHaveBeenCalledTimes(2);
+    });
+  });
+
   it('plays, pauses and seeks the background with the song', async () => {
     const { container } = render(<LivePreview project={withVideoBackground} assVersion={1} />);
     await waitFor(() => expect(ctor).toHaveBeenCalled());
