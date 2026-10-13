@@ -5,6 +5,7 @@ import { Toaster } from 'react-hot-toast';
 import userEvent from '@testing-library/user-event';
 import { MomentsStyleStep } from '../MomentsStyleStep';
 import { momentsApi } from '../../../lib/momentsApi';
+import { api } from '../../../lib/api';
 import * as errors from '../../../lib/errors';
 import { ApiError } from '../../../lib/apiError';
 import { META, mkMoment } from '../../../lib/__tests__/momentsFixtures';
@@ -28,7 +29,7 @@ describe('MomentsStyleStep', () => {
     render(<MomentsStyleStep {...props()} />);
     for (const name of ['Glow', 'Celebrate', 'Hype', 'Gallery']) expect(screen.getByRole('button', { name: new RegExp(name) })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /celebrate/i })).toHaveAttribute('aria-pressed', 'true');
-    const video = document.querySelector('video[src="/moments/previews/glow.mp4#t=0.001"]');
+    const video = document.querySelector('video[src$="/moments/previews/glow.mp4#t=0.001"]');
     expect(video).not.toBeNull();
     expect(video).toHaveAttribute('loop');
   });
@@ -236,9 +237,23 @@ describe('MomentsStyleStep', () => {
     await waitFor(() => expect(slider.value).toBe('25'));
   });
 
+  // One Cloudflare location gzipped the previews and ignored Range, so an
+  // iPhone sometimes got a whole-file 200 and drew a blank card. The media
+  // origin bypasses Cloudflare, as rendered videos already do.
+  it('loads the previews from the media origin', () => {
+    const before = Object.getOwnPropertyDescriptor(api, 'mediaBaseUrl');
+    Object.defineProperty(api, 'mediaBaseUrl', { value: 'https://media.example', configurable: true });
+    try {
+      render(<MomentsStyleStep {...props()} />);
+      expect(document.querySelector('video[src="https://media.example/moments/previews/glow.mp4#t=0.001"]')).not.toBeNull();
+    } finally {
+      if (before) Object.defineProperty(api, 'mediaBaseUrl', before);
+    }
+  });
+
   it('previews load metadata only until played', () => {
     render(<MomentsStyleStep {...props()} />);
-    expect(document.querySelector('video[src="/moments/previews/glow.mp4#t=0.001"]')).toHaveAttribute('preload', 'metadata');
+    expect(document.querySelector('video[src$="/moments/previews/glow.mp4#t=0.001"]')).toHaveAttribute('preload', 'metadata');
   });
 
   it('disables everything while busy', () => {
