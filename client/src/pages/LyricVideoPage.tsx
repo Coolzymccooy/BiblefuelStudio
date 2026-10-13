@@ -91,6 +91,10 @@ export function LyricVideoPage() {
       {projectId
         ? <LyricProjectView key={projectId} projectId={projectId} />
         : <LyricStart onCreated={opened} />}
+      {/* The preview's word drawing ships open-source libraries whose licences ask to be credited. */}
+      <p className="text-xs text-content-secondary">
+        <a href="/third-party-notices.txt" target="_blank" rel="noopener noreferrer" className="underline">Open-source credits</a>
+      </p>
     </div>
   );
 }

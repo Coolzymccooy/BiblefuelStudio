@@ -42,6 +42,17 @@ describe('LyricVideoPage', () => {
     vi.mocked(lyricVideoApi.prefs).mockResolvedValue({ artist: 'Sthill Waters' });
   });
 
+  it('links to the open-source credits in small print, on the start screen and in a song (R41)', async () => {
+    renderAt('/app/lyric-video');
+    const link = await screen.findByRole('link', { name: 'Open-source credits' });
+    expect(link.getAttribute('href')).toBe('/third-party-notices.txt');
+    expect(link.getAttribute('target')).toBe('_blank');
+    vi.mocked(lyricVideoApi.get).mockResolvedValue(project());
+    renderAt('/app/lyric-video/lv_1'); // a second page, alongside the first
+    await waitFor(() => expect(lyricVideoApi.get).toHaveBeenCalledWith('lv_1'));
+    await waitFor(() => expect(screen.getAllByRole('link', { name: 'Open-source credits' })).toHaveLength(2));
+  });
+
   it('shows the start screen with the remembered artist', async () => {
     renderAt('/app/lyric-video');
     expect(await screen.findByRole('heading', { name: /lyric video/i })).toBeTruthy();
