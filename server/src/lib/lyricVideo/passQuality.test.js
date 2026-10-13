@@ -1,7 +1,7 @@
 // server/src/lib/lyricVideo/passQuality.test.js
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { trimLoops, rejectPass, promptFor } from "./passQuality.js";
+import { trimLoops, rejectPass, promptFor, expectedFrom } from "./passQuality.js";
 
 const W = (text, t0 = 0) => text.split(" ").map((w, i) => ({ word: w, start: t0 + i * 0.3, end: t0 + i * 0.3 + 0.25 }));
 
@@ -37,6 +37,19 @@ describe("rejectPass", () => {
     assert.match(rejectPass(W("I don't know what to say I don't know what to do"), lyric), /lyrics/);
     assert.match(rejectPass(W("you you you know what I mean"), lyric), /lyrics/);
     assert.equal(rejectPass(W("eh yeah dem say make I calm down"), lyric), null);
+  });
+  test("plain-English lyrics count through the word pairs they share with the sheet", () => {
+    const lines = [{ text: "You are here with me" }, { text: "In the night you are my light" }, { text: "Here I am, here I am" }];
+    const exp = expectedFrom(lines);
+    assert.equal(rejectPass(W("You are here with me In the night you are my light"), exp), null);
+    assert.equal(rejectPass(W("Here I am here I am"), exp), null);
+    assert.equal(rejectPass(W("oh yeah you are here with me oh yeah"), exp), null);
+    assert.match(rejectPass(W("I don't know what to say I don't know what to do"), exp), /lyrics/);
+    assert.match(rejectPass(W("Thank you so much for watching and I will see you in the next video"), exp), /lyrics/);
+  });
+  test("expectedFrom pairs words across a line break too", () => {
+    const exp = expectedFrom([{ text: "Eh-yeah, eh-yeah!" }, { text: "Dem say" }]);
+    assert.ok(exp.words.has("dem") && exp.pairs.has("eh yeah") && exp.pairs.has("yeah dem"));
   });
   test("rejects times that go backwards", () => {
     const words = W("from lagos traffic");

@@ -3,7 +3,7 @@ import { normWord } from "./align.js";
 
 const LOOP_REPEATS = 6;
 const MAX_GRAM = 3;
-const MIN_HIT_RATE = 0.2;
+const MIN_HIT_RATE = 0.4; // measured: real windows 0.62+ (ad-libs included), chatter 0.2 or less bar a few short phrases
 const HALLUCINATIONS = [["thanks", "for", "watching"], ["like", "and", "subscribe"], ["subscribe"]];
 
 /**
@@ -19,7 +19,7 @@ const COMMON = new Set([
   "up", "out", "if", "when", "now", "then", "get", "got",
 ]);
 
-const isMusic =(w) => /♪/.test(w.word) || !normWord(w.word);
+const isMusic = (w) => /♪/.test(w.word) || !normWord(w.word);
 
 /** Drop every run of the given hallucinated phrase. */
 function dropPhrase(words, phrase) {
@@ -51,16 +51,37 @@ export function trimLoops(words) {
   return kept;
 }
 
-/** Why a pass's words should be thrown away, or null when they are usable. */
+/**
+ * The words a pass may hear and the consecutive pairs they make, across line
+ * breaks too (sung lines run on). Hyphenated words count as their parts.
+ */
+export function expectedFrom(lines) {
+  const toks = lines.flatMap((l) => String(l.text).split(/\s+/).flatMap((w) => w.split("-")).map(normWord)).filter(Boolean);
+  return { words: new Set(toks), pairs: new Set(toks.slice(1).map((t, i) => `${toks[i]} ${t}`)) };
+}
+
+/**
+ * A heard word is evidence of the lyrics when it is an expected word that is
+ * not an everyday one, or when it and the word heard before it make a pair the
+ * expected lines make ("you are", "here with"). Chatter shares words with any
+ * lyric but rarely its word order.
+ */
+function hitRate(real, expected) {
+  const { words, pairs } = expected instanceof Set ? { words: expected, pairs: new Set() } : expected;
+  const norms = real.map((w) => normWord(w.word));
+  const hits = norms.filter((n, i) => (words.has(n) && !COMMON.has(n)) || (i > 0 && pairs.has(`${norms[i - 1]} ${n}`))).length;
+  return hits / norms.length;
+}
+
+/**
+ * Why a pass's words should be thrown away, or null when they are usable.
+ * `expected` is `expectedFrom(lines)`, or a plain Set of words (no pairs).
+ */
 export function rejectPass(words, expected) {
   const real = (words || []).filter((w) => !isMusic(w));
   if (!real.length) return "heard nothing";
   for (let i = 1; i < real.length; i += 1) if (real[i].start < real[i - 1].start) return "times out of order";
-  const hits = real.filter((w) => {
-    const norm = normWord(w.word);
-    return expected.has(norm) && !COMMON.has(norm);
-  }).length;
-  if (hits / real.length < MIN_HIT_RATE) return "did not hear the expected lyrics";
+  if (hitRate(real, expected) < MIN_HIT_RATE) return "did not hear the expected lyrics";
   return null;
 }
 

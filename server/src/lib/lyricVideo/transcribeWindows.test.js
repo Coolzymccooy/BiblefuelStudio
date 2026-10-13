@@ -153,6 +153,18 @@ describe("transcribeSong on the reference song", () => {
     assert.ok(audio <= 3 * DURATION, `sent ${audio.toFixed(0)} s`);
   });
 
+  test("when a 30 s window no longer fits the audio budget, its 15 s retry still runs", async () => {
+    const { lines } = parseSheet(HEAVY);
+    const durationSec = 100; // budget 200 s after pass 0: four 30+15 s pairs, then 20 s left
+    const sent = [];
+    const transcribe = async (file) => {
+      if (file !== "song.m4a") { const [, a, b] = file.split(":").map(Number); sent.push(b - a); }
+      return { words: [] };
+    };
+    await transcribeSong({ audioPath: "song.m4a", durationSec, lines, transcribe, cutAudio: async (a, b) => `cut:${a}:${b}` });
+    assert.deepEqual(sent, [30, 15, 30, 15, 30, 15, 30, 15, 15]);
+  });
+
   test("everyday English junk in the windows is rejected and places no line", async () => {
     const { lines } = parseSheet(sheet);
     for (const junk of ["I don't know what to say I don't know what to do", "Thank you so much for watching and I will see you in the next video"]) {
@@ -209,5 +221,69 @@ describe("transcribeSong on the reference song", () => {
     const seen = [];
     await transcribeSong({ audioPath: "song.m4a", durationSec: DURATION, lines, ...fakes(), onProgress: (p) => seen.push(p) });
     assert.ok(seen.length >= 2 && seen.every((p) => typeof p.window === "number"));
+  });
+});
+
+// A worship song made almost entirely of everyday words: what a plain-English gospel sheet looks like.
+const HEAVY = `[VERSE]
+You are who you are
+I am yours and you are mine
+Here I am, here I am
+All of me is all for you
+[CHORUS]
+Oh, oh, oh
+You are, you are
+Now I know that you are here
+And I will go where you go
+[VERSE]
+You are who you are
+I am yours and you are mine
+Here I am, here I am
+All of me is all for you
+[CHORUS]
+Oh, oh, oh
+You are, you are
+Now I know that you are here
+And I will go where you go`;
+
+/** A transcriber that hears every word exactly: line i starts at leadIn + 5i s, words 0.45 s apart; ad-libs add "oh yeah" after each line. */
+function perfectSinger(lines, { adlib = false, firstPass = true, leadIn = 10 } = {}) {
+  const truth = lines.flatMap((l, i) => {
+    const t0 = leadIn + i * 5;
+    const sung = String(l.text).split(/[\s-]+/).map((w, k) =>({ word: w, start: t0 + k * 0.45, end: t0 + k * 0.45 + 0.4 }));
+    return adlib ? [...sung, { word: "oh", start: t0 + 4, end: t0 + 4.3 }, { word: "yeah", start: t0 + 4.4, end: t0 + 4.8 }] : sung;
+  });
+  const transcribe = async (file) => {
+    if (file === "song.m4a") return { words: firstPass ? truth : [] };
+    const [, a, b] = file.split(":").map(Number);
+    return { words: truth.filter((w) => w.start >= a && w.start < b).map((w) => ({ ...w, start: w.start - a, end: w.end - a })) };
+  };
+  return { transcribe, cutAudio: async (a, b) => `cut:${a}:${b}` };
+}
+
+describe("plain-English lyrics", () => {
+  for (const adlib of [false, true]) {
+    for (const firstPass of [true, false]) {
+      test(`a common-word worship song is timed${adlib ? " through ad-libs" : ""}${firstPass ? "" : " from windows alone"}`, async () => {
+        const { lines } = parseSheet(HEAVY);
+        const durationSec = 20 + lines.length * 5;
+        const { heard, passes } = await transcribeSong({ audioPath: "song.m4a", durationSec, lines, ...perfectSinger(lines, { adlib, firstPass }) });
+        const placed = placeLines(lines, heard, { durationSec });
+        const timed = placed.filter((l, i) => l.confidence >= 0.6 && Math.abs(l.start - (10 + i * 5)) <= 0.3).length;
+        const trail = passes.map((p) => `${p.from.toFixed(0)}${p.status[0]}`).join(" ");
+        assert.ok(timed >= lines.length - 2, `only ${timed}/${lines.length} lines timed; passes ${trail}`);
+      });
+    }
+  }
+
+  test("a long instrumental intro: the first words heard are the first lines", async () => {
+    const { lines } = parseSheet(sheet);
+    const leadIn = 50;
+    const durationSec = leadIn + lines.length * 5 + 10;
+    const { heard } = await transcribeSong({ audioPath: "song.m4a", durationSec, lines, ...perfectSinger(lines, { firstPass: false, leadIn }) });
+    const placed = placeLines(lines, heard, { durationSec });
+    const timed = placed.filter((l, i) => l.confidence >= 0.6 && Math.abs(l.start - (leadIn + i * 5)) <= 0.3).length;
+    assert.ok(timed / lines.length >= 0.85, `only ${timed}/${lines.length} lines timed`);
+    assert.ok(Math.abs(placed[0].start - leadIn) <= 0.3, `first line at ${placed[0].start}`);
   });
 });

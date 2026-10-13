@@ -9,7 +9,7 @@ const PROMPT_MAX = 900;
 /** A word time, or NaN when Whisper sent something that is not one (null and "" would otherwise read as 0). */
 const toTime = (v) => (v === null || v === undefined || v === "" ? NaN : Number(v));
 
-const envKey =() => (process.env.OPENAI_API_KEY || "").replace(/['"]/g, "").trim();
+const envKey = () => (process.env.OPENAI_API_KEY || "").replace(/['"]/g, "").trim();
 
 /** Whisper with a lyric prompt and word timestamps. Throws on failure, so the timing job can say why. */
 export async function transcribePrompted(audioPath, prompt, { fetchImpl = fetch, apiKey = envKey() } = {}) {
