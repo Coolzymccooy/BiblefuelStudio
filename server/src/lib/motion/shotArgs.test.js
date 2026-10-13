@@ -20,7 +20,19 @@ test("the graph runs move, then overlays, then entrance, then trims to the frame
   const iLeak = g.indexOf("blend=all_mode=screen");
   const iFlash = g.indexOf("fade=t=in");
   assert.ok(iMove >= 0 && iMove < iLeak && iLeak < iFlash, g);
-  assert.match(g, /format=yuv420p,trim=end_frame=18,setpts=N\/30\/TB\[v\]$/);
+  assert.match(g, /format=yuv420p,setparams=range=tv:colorspace=bt470bg,trim=end_frame=18,setpts=N\/30\/TB\[v\]$/);
+});
+
+test("every clip is tagged limited-range BT.601 in its frames, whatever path made it", () => {
+  // ffmpeg 5.1 (production) does not carry these tags through every move: a tall push came out
+  // untagged while a wide pan was tv/bt470bg, so the clips no longer matched for the join.
+  for (const over of [{}, { move: { id: "pan", intensity: 0.5 } }, { entrance: { id: "flash" } }, { overlays: [{ id: "lightLeak" }] }]) {
+    for (const hasPrev of [false, true]) {
+      const g = shotGraph({ shot: shot(over), w: 1080, h: 1920, fps: 30, hasPrev });
+      const last = g.split(";").at(-1);
+      assert.match(last, /,setparams=range=tv:colorspace=bt470bg,trim=end_frame=/, last);
+    }
+  }
 });
 
 test("ASS overlays add nothing to the shot graph (the finish stage draws them)", () => {

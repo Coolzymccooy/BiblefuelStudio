@@ -4,6 +4,12 @@ import { FONT_DIR, escapeFontPath } from "../../videoFilters.js";
 /** Anton, escaped for a drawtext fontfile inside a filtergraph. */
 export const FONT_ANTON = escapeFontPath(path.join(FONT_DIR, "Anton.ttf"));
 
+/**
+ * The colour tags every clip and the finished Moment carry: limited range, BT.601 matrix. A
+ * frame-level tag only (no conversion), set explicitly because ffmpeg 5.1 drops them on some paths.
+ */
+export const CLIP_TAGS = "setparams=range=tv:colorspace=bt470bg";
+
 /** A number for a filter expression: fixed decimals, never exponent notation. */
 export const num = (n, d = 3) => Number(n).toFixed(d);
 

@@ -3,6 +3,7 @@ import { buildAss } from "../kinetic/ass.js";
 import { mulberry32 } from "../kinetic/director.js";
 import { escapeFontPath, FONT_DIR } from "../videoFilters.js";
 import { getEffect } from "./effects/index.js";
+import { CLIP_TAGS } from "./effects/common.js";
 import { resolveStyle, captionEnergyFor } from "./styles.js";
 
 /**
@@ -20,6 +21,7 @@ const SONG_TAIL_SEC = 1.5;
 /** How dark the closing card gets behind its words, so they read over any photo. */
 const SCRIM = "black@0.4";
 const n3 = (x) => Number(x).toFixed(3);
+const STEREO = "aformat=channel_layouts=stereo";
 
 /** Darkens the closing card from its first frame (none when the Moment has no end card). */
 function closingScrim(plan) {
@@ -72,7 +74,9 @@ function audioGraph({ song, voice, D }) {
   const tail = (sec) => `afade=t=out:st=${n3(Math.max(0, D - sec))}:d=${sec}`;
   // loudnorm emits 192 kHz. Resampling back to 48 kHz here, explicitly, stops the
   // implicit conversion in front of the AAC encoder from dropping the end of a mixed track.
-  const end = `${LOUDNESS},aresample=48000[a]`;
+  // ffmpeg 5.1 loses the channel layout through loudnorm, so the encoder could not pick one:
+  // the finished sound is set to stereo explicitly.
+  const end = `${LOUDNESS},aresample=48000,${STEREO}[a]`;
   if (song && voice) {
     return [
       `[1:a]${fit},volume=0.35[m]`,
@@ -83,7 +87,7 @@ function audioGraph({ song, voice, D }) {
   }
   if (song) return [`[1:a]${fit},afade=t=in:d=0.3,${tail(SONG_TAIL_SEC)},${end}`];
   if (voice) return [`[1:a]${fit},${tail(0.6)},${end}`];
-  return ["[1:a]anull,aresample=48000[a]"];
+  return [`[1:a]anull,aresample=48000,${STEREO}[a]`];
 }
 
 export function finishArgs({ body, out, plan, statementsPath, fxPath, song, voice, workDir }) {
@@ -98,7 +102,8 @@ export function finishArgs({ body, out, plan, statementsPath, fxPath, song, voic
   if (!song && !voice) inputs.push("-f", "lavfi", "-t", n3(D), "-i", "anullsrc=r=48000:cl=stereo");
   // Both streams are bounded inside the graph. An output-side -t raced loudnorm's end-of-stream
   // flush (it buffers about 3 s), and the muxer could close the audio before the flush landed.
-  const bound = `trim=end_frame=${Math.round(D * plan.fps)},setpts=N/${plan.fps}/TB`;
+  // The body's colour tags, re-applied after the grade, words, FX and fade (5.1 drops them).
+  const bound = `${CLIP_TAGS},trim=end_frame=${Math.round(D * plan.fps)},setpts=N/${plan.fps}/TB`;
   // The scrim sits under the words; the fade to black closes everything, words included.
   const fadeOut = `fade=t=out:st=${n3(Math.max(0, D - FADE_OUT_SEC))}:d=${FADE_OUT_SEC}`;
   const video = [

@@ -1,6 +1,6 @@
 import path from "node:path";
 import { getEffect } from "./effects/index.js";
-import { frameCount } from "./effects/common.js";
+import { frameCount, CLIP_TAGS } from "./effects/common.js";
 
 /**
  * One shot's filtergraph: the move from the working image (input 0, a single
@@ -30,7 +30,9 @@ export function shotGraph({ shot, w, h, fps, hasPrev }) {
   // JPEG working images are full range (yuvj420p) and format=yuv420p alone keeps that flag, which
   // would make a clip that starts from a JPEG differ from one that went through RGB (an overlay).
   // scale=out_range=tv converts the range itself, so every clip is limited-range yuv420p.
-  lines.push(`[en]scale=in_range=auto:out_range=tv,format=yuv420p,trim=end_frame=${frames},setpts=N/${fps}/TB[v]`);
+  // setparams tags every clip limited-range BT.601 in its frames (no conversion): ffmpeg 5.1 does
+  // not carry these tags through every move, and clips that differ cannot be joined safely.
+  lines.push(`[en]scale=in_range=auto:out_range=tv,format=yuv420p,${CLIP_TAGS},trim=end_frame=${frames},setpts=N/${fps}/TB[v]`);
   return lines.join(";\n");
 }
 

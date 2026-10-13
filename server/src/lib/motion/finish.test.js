@@ -60,13 +60,13 @@ test("song only: trimmed from its window, padded to length, faded, loudness-norm
   const r = finishArgs({ ...common, plan: plan(), song: { file: "song.mp3", startSec: 42.5 }, voice: null });
   const a = r.args;
   assert.deepEqual(a.slice(a.indexOf("-ss"), a.indexOf("-ss") + 6), ["-ss", "42.500", "-t", "15.000", "-i", "song.mp3"]);
-  assert.match(graphOf(r), /\[1:a\]aresample=48000,apad=whole_dur=15\.000,atrim=0:15\.000,afade=t=in:d=0\.3,afade=t=out:st=13\.500:d=1\.5,loudnorm=I=-14:TP=-1\.5:LRA=11,aresample=48000\[a\]/);
+  assert.match(graphOf(r), /\[1:a\]aresample=48000,apad=whole_dur=15\.000,atrim=0:15\.000,afade=t=in:d=0\.3,afade=t=out:st=13\.500:d=1\.5,loudnorm=I=-14:TP=-1\.5:LRA=11,aresample=48000,aformat=channel_layouts=stereo\[a\]/);
   const scripts = a.flatMap((x, i) => (x === "-filter_complex_script" ? [a[i + 1]] : []));
   assert.deepEqual(scripts, [path.join("wd", "finish-video.txt"), path.join("wd", "finish-audio.txt")]);
   assert.deepEqual(r.sideFiles.map((f) => f.path), scripts);
   // Length is bounded inside the graphs, not by an output -t that could race the audio flush.
   assert.ok(a.lastIndexOf("-t") < a.lastIndexOf("-i"), "-t only appears before an input, never on the output");
-  assert.match(graphOf(r), /\[0:v\][^;]*,trim=end_frame=450,setpts=N\/30\/TB\[v\]/);
+  assert.match(graphOf(r), /\[0:v\][^;]*,setparams=range=tv:colorspace=bt470bg,trim=end_frame=450,setpts=N\/30\/TB\[v\]/);
 });
 
 test("every audio input is bounded at the demuxer, so the graph sees a natural EOF", () => {
@@ -91,11 +91,13 @@ test("voice only and silence both give a full-length audio track", () => {
   assert.ok(s.args.join(" ").includes("anullsrc=r=48000:cl=stereo"));
 });
 
-test("every audio graph ends back at 48 kHz (loudnorm emits 192 kHz)", () => {
+test("every audio graph ends back at 48 kHz stereo (loudnorm emits 192 kHz)", () => {
+  // ffmpeg 5.1 (production) loses the channel layout through loudnorm, and the AAC encoder then
+  // cannot pick one ("Cannot select channel layout"): the layout is set explicitly at the end.
   for (const [song, voice] of [[{ file: "s", startSec: 0 }, null], [{ file: "s", startSec: 0 }, { file: "v" }], [null, { file: "v" }], [null, null]]) {
     const g = graphOf(finishArgs({ ...common, plan: plan(), song, voice }));
-    assert.ok(g.endsWith(",aresample=48000[a]"), g);
-    if (song || voice) assert.ok(g.endsWith(`${LOUDNESS},aresample=48000[a]`), "resample comes after loudnorm");
+    assert.ok(g.endsWith(",aresample=48000,aformat=channel_layouts=stereo[a]"), g);
+    if (song || voice) assert.ok(g.endsWith(`${LOUDNESS},aresample=48000,aformat=channel_layouts=stereo[a]`), "resample comes after loudnorm");
   }
 });
 
@@ -117,7 +119,7 @@ test("the closing card darkens behind its words from its first frame, under the 
 test("the picture fades to black over the last 0.8 s, after the words and FX", () => {
   const v = graphOf(finishArgs({ ...common, plan: plan(), song: null, voice: null })).split(";")[0];
   assert.ok(v.includes("ass=filename='wd/fx.ass':fontsdir="), v);
-  assert.match(v, /fx\.ass'[^,]*,fade=t=out:st=14\.200:d=0\.8,trim=end_frame=450/);
+  assert.match(v, /fx\.ass'[^,]*,fade=t=out:st=14\.200:d=0\.8,setparams=range=tv:colorspace=bt470bg,trim=end_frame=450/);
 });
 
 test("a Moment with no closing card is neither darkened nor sent to black early", () => {
@@ -142,7 +144,10 @@ test("the output is a social-ready MP4", () => {
 
 test("the finish keeps the body's colour tags: no matrix conversion or retag", () => {
   const r = finishArgs({ ...common, plan: plan(), song: { file: "s", startSec: 0 }, voice: { file: "v" } });
-  assert.ok(!/colorspace|colormatrix|bt709/i.test(r.args.join(" ") + graphOf(r)));
+  const all = r.args.join(" ") + graphOf(r);
+  // No conversion filter, and nothing but the body's own tags (limited range, BT.601) re-applied.
+  assert.ok(!/(^|[,;\]\s])(colorspace|colormatrix)=|bt709/i.test(all), all);
+  assert.match(all, /setparams=range=tv:colorspace=bt470bg,/);
 });
 
 test("the finish graph uses only ffmpeg 5.1 filters", () => {
