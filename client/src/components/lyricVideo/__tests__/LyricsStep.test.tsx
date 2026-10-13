@@ -75,7 +75,7 @@ describe('LyricsStep', () => {
       const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
       render(<LyricsStep project={timed} onChange={vi.fn()} />);
       fireEvent.click(screen.getByRole('button', { name: 'Time the lyrics again' }));
-      expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/free renders.*by hand/));
+      expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/render allowance.*moved by hand stay/));
       expect(lyricVideoApi.align).not.toHaveBeenCalled();
     });
 
