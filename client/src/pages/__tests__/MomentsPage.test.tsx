@@ -125,6 +125,20 @@ describe('MomentsPage shell', () => {
     expect(localStorage.getItem('BF_MOMENTS_ACTIVE')).toBeNull();
   });
 
+  it('keeps Start new beside the title and lets the step tabs scroll on their own row', async () => {
+    localStorage.setItem('BF_MOMENTS_ACTIVE', 'm1');
+    vi.spyOn(momentsApi, 'get').mockResolvedValue(mkMoment());
+    renderPage();
+    const group = await screen.findByRole('group', { name: 'Moment step' });
+    const startNew = screen.getByRole('button', { name: /start new/i });
+    const header = screen.getByRole('heading', { level: 1 }).parentElement?.parentElement;
+    // On a phone the six tabs are wider than the screen. Sharing a row with
+    // them pushed Start new off the right edge and the page scrolled sideways.
+    expect(header?.contains(startNew)).toBe(true);
+    expect(header?.contains(group)).toBe(false);
+    expect(group.parentElement).toHaveClass('overflow-x-auto');
+  });
+
   it('Start new returns to the list', async () => {
     localStorage.setItem('BF_MOMENTS_ACTIVE', 'm1');
     vi.spyOn(momentsApi, 'get').mockResolvedValue(mkMoment());

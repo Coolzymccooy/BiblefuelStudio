@@ -3,6 +3,7 @@ import { Field } from '../ui/Field';
 import { Select } from '../ui/Select';
 import { mixFor, recordShuffle, type ShuffleSeed } from '../../lib/shuffleMixes';
 import { FALLBACK_ENERGIES, isStudioLook, lookSlug, readableLook, type CaptionEnergy, type StudioOption } from '../../lib/studioCaptions';
+import { api } from '../../lib/api';
 
 /**
  * Studio effects controls shared by every caption picker (Story, Render,
@@ -98,7 +99,8 @@ export function StudioEffectsControls({
       {failedPreview !== look && (
         <video
           key={look}
-          src={`/studio-looks/${lookSlug(look)}.mp4`}
+          // The media origin skips Cloudflare, which can gzip a video and ignore Range (iOS then plays nothing).
+          src={`${api.mediaBaseUrl}/studio-looks/${lookSlug(look)}.mp4`}
           autoPlay
           muted
           loop

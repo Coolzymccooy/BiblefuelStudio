@@ -77,6 +77,19 @@ describe('StoryVideoPage', () => {
     expect(await screen.findByText('a')).toBeInTheDocument();
   });
 
+  it('shows the shared Start new button in the header and returns to the form', async () => {
+    localStorage.setItem('BF_STORY_ACTIVE', 'p1');
+    vi.spyOn(storyApi, 'getProject').mockResolvedValue({ ...mkDraft('p1'), status: 'ready_to_render' });
+    renderPage();
+    const startNew = await screen.findByRole('button', { name: 'Start new' });
+    const header = screen.getByRole('heading', { level: 1 }).parentElement?.parentElement;
+    expect(header?.contains(startNew)).toBe(true);
+    expect(startNew).toHaveClass('btn');
+    await userEvent.click(startNew);
+    expect(await screen.findByRole('button', { name: /upload a sermon/i })).toBeInTheDocument();
+    expect(localStorage.getItem('BF_STORY_ACTIVE')).toBeNull();
+  });
+
   it('Render stays off while Upload several is still putting pictures on scenes', async () => {
     localStorage.setItem('BF_STORY_ACTIVE', 'p1');
     const done = (id: string) => ({ id, text: id, startMs: 0, endMs: 8000, imagePrompt: 'p', imagePath: '/a.png', imageUrl: '/outputs/x.png', imageStatus: 'done', promptEditedByUser: false });

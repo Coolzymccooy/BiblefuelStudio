@@ -4,6 +4,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { StudioLookOptions, StudioEffectsControls } from '../StudioEffects';
 import { resetShuffleMixesForTests } from '../../../lib/shuffleMixes';
+import { api } from '../../../lib/api';
 
 const LOOKS = [{ id: 'studio-lagos-night', label: 'Lagos Night' }];
 
@@ -43,6 +44,21 @@ describe('StudioEffectsControls', () => {
     expect(video.getAttribute('src')).toBe('/studio-looks/lagos-night.mp4');
     fireEvent.error(video);
     expect(container.querySelector('video')).toBeNull();
+  });
+
+  // Same-origin samples went through Cloudflare, where one edge gzipped the
+  // MP4 and ignored Range: iOS then plays nothing. The media origin does not.
+  it('loads the look sample from the media origin', () => {
+    const before = Object.getOwnPropertyDescriptor(api, 'mediaBaseUrl');
+    Object.defineProperty(api, 'mediaBaseUrl', { value: 'https://media.example', configurable: true });
+    try {
+      const { container } = render(
+        <StudioEffectsControls look="studio-lagos-night" energy="lively" onEnergyChange={vi.fn()} onShuffle={vi.fn()} />,
+      );
+      expect(container.querySelector('video')?.getAttribute('src')).toBe('https://media.example/studio-looks/lagos-night.mp4');
+    } finally {
+      if (before) Object.defineProperty(api, 'mediaBaseUrl', before);
+    }
   });
 
   it('reports an energy change and a shuffle', async () => {

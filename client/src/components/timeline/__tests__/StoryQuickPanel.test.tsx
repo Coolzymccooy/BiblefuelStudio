@@ -109,6 +109,16 @@ describe('StoryQuickPanel', () => {
     expect(await screen.findByText('Trusting God in the waiting')).toBeInTheDocument();
   });
 
+  it('offers the shared Start new, compact for the panel, and clears the project', async () => {
+    localStorage.setItem('BF_STORY_ACTIVE', 'p1');
+    vi.spyOn(storyApi, 'getProject').mockResolvedValue(DONE_PROJECT as any);
+    renderWith(<StoryQuickPanel onUseVideo={() => {}} onPreviewVideo={() => {}} />);
+    const startNew = await screen.findByRole('button', { name: 'Start new' });
+    expect(startNew.className).toMatch(/border/);
+    await userEvent.click(startNew);
+    expect(localStorage.getItem('BF_STORY_ACTIVE')).toBeNull();
+  });
+
   it('LANDS the finished render on the timeline as source media', async () => {
     const user = userEvent.setup();
     localStorage.setItem('BF_STORY_ACTIVE', 'p1');
