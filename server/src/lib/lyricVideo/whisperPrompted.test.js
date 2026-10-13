@@ -47,3 +47,17 @@ test("an HTTP error throws with the status", async () => {
 test("no API key throws a clear error", async () => {
   await assert.rejects(transcribePrompted("x.m4a", "x", { apiKey: "" }), /OPENAI_API_KEY/);
 });
+
+test("the upload is typed by the file's extension", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wp-mime-"));
+  try {
+    const types = {};
+    const fetchImpl = async (url, opts) => { types.last = opts.body.get("file").type; return { ok: true, json: async () => ({ words: [] }) }; };
+    for (const [name, want] of [["a.wav", "audio/wav"], ["a.m4a", "audio/mp4"], ["a.mp4", "audio/mp4"], ["a.mp3", "audio/mpeg"], ["a.webm", "audio/webm"], ["a.bin", "audio/mp4"]]) {
+      const f = path.join(dir, name);
+      fs.writeFileSync(f, "x");
+      await transcribePrompted(f, "x", { fetchImpl, apiKey: "k" });
+      assert.equal(types.last, want, name);
+    }
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

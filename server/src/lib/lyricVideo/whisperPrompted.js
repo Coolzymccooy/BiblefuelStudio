@@ -6,6 +6,10 @@ const URL_ = "https://api.openai.com/v1/audio/transcriptions";
 const TIMEOUT_MS = 120_000;
 const PROMPT_MAX = 900;
 
+/** The upload part's type from its file extension (the map voice/alignment.js uses); the job's old default, audio/mp4, for anything else. */
+const MIME = { ".wav": "audio/wav", ".m4a": "audio/mp4", ".mp4": "audio/mp4", ".mp3": "audio/mpeg", ".webm": "audio/webm", ".ogg": "audio/ogg", ".flac": "audio/flac" };
+const mimeFromPath = (p) => MIME[path.extname(String(p || "")).toLowerCase()] || "audio/mp4";
+
 /** A word time, or NaN when Whisper sent something that is not one (null and "" would otherwise read as 0). */
 const toTime = (v) => (v === null || v === undefined || v === "" ? NaN : Number(v));
 
@@ -15,7 +19,7 @@ const envKey = () => (process.env.OPENAI_API_KEY || "").replace(/['"]/g, "").tri
 export async function transcribePrompted(audioPath, prompt, { fetchImpl = fetch, apiKey = envKey() } = {}) {
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set on the server");
   const form = new FormData();
-  form.set("file", new File([fs.readFileSync(audioPath)], path.basename(audioPath), { type: "audio/mp4" }));
+  form.set("file", new File([fs.readFileSync(audioPath)], path.basename(audioPath), { type: mimeFromPath(audioPath) }));
   form.set("model", "whisper-1");
   form.set("response_format", "verbose_json");
   form.append("timestamp_granularities[]", "word");

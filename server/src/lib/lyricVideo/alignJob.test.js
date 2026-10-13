@@ -76,6 +76,77 @@ test("with no beat found, section starts are the first line's start, unsnapped",
   assert.deepEqual(done.timing.beats, { bpm: 0, times: [] });
 });
 
+test("a beat failure does not lose the placements", async () => {
+  const p = setup();
+  const logged = [];
+  const done = await run(p, { detectBeats: async () => { throw new Error("ffmpeg decode exited 1: boom"); }, log: (...a) => logged.push(a.join(" ")) });
+  assert.equal(done.timing.status, "done");
+  assert.equal(done.timing.error, null);
+  assert.equal(done.lines[1].start, 5);
+  assert.equal(done.sections[1].start, 5, "unsnapped, as when no beat is found");
+  assert.deepEqual(done.timing.beats, { bpm: 0, times: [] });
+  assert.ok(logged.some((l) => l.includes(p.projectId) && l.includes("boom")));
+});
+
+test("a section never starts after its first line", async () => {
+  const p = setup();
+  const done = await run(p, { detectBeats: async () => ({ bpm: 120, times: [0, 6] }) });
+  assert.equal(done.lines[1].start, 5);
+  assert.equal(done.sections[1].start, 5); // the nearest beat to 4.75 is 6, which is after the line
+  assert.ok(done.sections.every((s, i) => s.start <= done.lines.find((l) => l.sectionId === s.id).start));
+});
+
+describe("a Whisper failure part-way keeps what was heard", () => {
+  const failOnWindows = () => ({ transcribe: async (file) => { if (file === PREPARED()) return { words: heardSong }; throw new Error("Whisper 429: busy"); } });
+  test("429 on the first window: pass 0's lines keep their times and the status is error", async () => {
+    const p = setup();
+    const done = await run(p, failOnWindows());
+    assert.equal(done.timing.status, "error");
+    assert.match(done.timing.error, /busy/);
+    assert.equal(done.lines[0].start, 1);
+    assert.equal(done.lines[1].start, 5);
+    assert.ok(Array.isArray(done.timing.passes) && done.timing.passes.length >= 1);
+    assert.deepEqual(readProject(dir, p.projectId).lines, done.lines);
+  });
+  test("a line locked mid-job still wins", async () => {
+    const p = setup();
+    const done = await run(p, {
+      transcribe: async (file) => {
+        if (file !== PREPARED()) {
+          updateProject(dir, p.projectId, (l) => ({ ...l, lines: l.lines.map((x, i) => (i === 0 ? { ...x, locked: true, start: 0.2, end: 0.9, words: [{ text: "My", start: 0.2, end: 0.9 }] } : x)) }));
+          throw new Error("Whisper 429: busy");
+        }
+        return { words: heardSong };
+      },
+    });
+    assert.equal(done.timing.status, "error");
+    assert.equal(done.lines[0].start, 0.2);
+    assert.equal(done.lines[1].start, 5);
+  });
+  test("lyrics changed before the failure: the lyrics-changed error, no placements", async () => {
+    const p = setup();
+    let mid = null;
+    const done = await run(p, {
+      transcribe: async (file) => {
+        if (file !== PREPARED()) {
+          updateProject(dir, p.projectId, (l) => applySheet(l, "[INTRO]\nSomething else entirely"));
+          mid = readProject(dir, p.projectId);
+          throw new Error("Whisper 429: busy");
+        }
+        return { words: heardSong };
+      },
+    });
+    assert.equal(done.timing.error, "The lyrics changed while timing ran — run timing again.");
+    assert.deepEqual(done.lines, mid.lines);
+  });
+  test("a deleted project ends silently", async () => {
+    const p = setup();
+    const done = await run(p, { transcribe: async (file) => { if (file !== PREPARED()) { deleteProject(dir, p.projectId); throw new Error("Whisper 429: busy"); } return { words: heardSong }; } });
+    assert.equal(done, null);
+    assert.equal(readProject(dir, p.projectId), null);
+  });
+});
+
 describe("failures are stored in plain English, with the detail in the log", () => {
   const cases = [
     ["Whisper 429: rate limited", /busy/],
@@ -265,6 +336,26 @@ describe("with real ffmpeg", { skip: !hasFfmpeg && "ffmpeg not installed" }, () 
       assert.ok(path.basename(s.file).startsWith(`lyric-${s.id === "A" ? a.projectId : b.projectId}-`), "cut files are named for their own project");
       assert.ok(s.size < 1.1e6 + 1000, `a cut is small (${s.size} bytes)`);
     }
+    assert.deepEqual(leftovers(), []);
+  });
+
+  test("each cut is removed right after it is used, so one exists at a time", async () => {
+    makeSong.file = makeSong();
+    const p = realSetup("A");
+    const counts = [];
+    const done = await runAlignJob({
+      dataDir: dir, workDir: dir, projectId: p.projectId,
+      deps: {
+        transcribe: async (file) => {
+          if (file.endsWith(".wav")) counts.push(fs.readdirSync(dir).filter((f) => /^lyric-lv_.*-cut-.*\.wav$/.test(f)).length);
+          return { words: [] };
+        },
+        detectBeats: async () => ({ bpm: 0, times: [] }), log: () => {},
+      },
+    });
+    assert.equal(done.timing.status, "done");
+    assert.ok(counts.length >= 4, `windows heard: ${counts.length}`);
+    assert.ok(counts.every((n) => n === 1), `cuts on disk at each call: ${counts}`);
     assert.deepEqual(leftovers(), []);
   });
 

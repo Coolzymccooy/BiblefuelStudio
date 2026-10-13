@@ -40,6 +40,7 @@ function defaultDeps(workDir, projectId) {
   const stem = path.join(workDir, `lyric-${projectId}-${crypto.randomBytes(4).toString("hex")}`);
   const made = new Set();
   let prepared = null;
+  const cuts = new Set();
   const track = (file) => { made.add(file); return file; };
   return {
     prepareAudio: async (song) => {
@@ -51,11 +52,14 @@ function defaultDeps(workDir, projectId) {
     cutAudio: async (from, to) => {
       if (!prepared) throw new Error("ffmpeg cut asked before the audio was prepared");
       const out = track(`${stem}-cut-${Math.round(from * 1000)}-${Math.round(to * 1000)}.wav`);
+      cuts.add(out);
       await ffmpeg(["-ss", String(from), "-i", prepared, "-t", String(to - from), "-vn", "-ac", "1", "-ar", String(CUT_RATE), "-c:a", "pcm_s16le", out]);
       return out;
     },
     transcribe: (file, prompt) => transcribePrompted(file, prompt),
     detectBeats: realDetectBeats,
+    // A cut is used once; removing it right away keeps one cut on disk at a time.
+    discard: (file) => { if (cuts.delete(file)) { made.delete(file); fs.rmSync(file, { force: true }); } },
     cleanup: () => { for (const f of made) fs.rmSync(f, { force: true }); made.clear(); },
   };
 }
@@ -95,7 +99,9 @@ function sectionStarts(sections, lines, beats) {
   return sections.map((s) => {
     const first = lines.find((l) => l.sectionId === s.id && Number.isFinite(l.start));
     if (!first) return s;
-    return { ...s, start: snap ? snapToBeat(first.start - period / 2, beats.times) : Math.max(0, first.start) };
+    // On the grid, but never after the line it introduces.
+    const start = snap ? Math.min(first.start, snapToBeat(first.start - period / 2, beats.times)) : first.start;
+    return { ...s, start: Math.max(0, start) };
   });
 }
 
@@ -119,7 +125,7 @@ export async function runAlignJob({ dataDir, workDir, projectId, deps }) {
       return { ...latest, timing: { ...latest.timing, status: "running", progress: { step: "preparing" }, error: null } };
     });
     if (!begun) return null;
-    return await timeLyrics({ dataDir, projectId, snapshot, d });
+    return await timeLyrics({ dataDir, projectId, snapshot, d, log });
   } catch (err) {
     if (err instanceof ProjectGone) return null;
     log(`[lyric-video] timing failed for ${projectId}:`, err);
@@ -135,7 +141,31 @@ export async function runAlignJob({ dataDir, workDir, projectId, deps }) {
   }
 }
 
-async function timeLyrics({ dataDir, projectId, snapshot, d }) {
+/**
+ * The latest project with the job's placements merged in, or null when its
+ * lyrics differ from the ones the job started with. A line the user locked
+ * while the job ran keeps the user's timing; the rest takes the job's.
+ */
+function mergePlacement(latest, snapshot, placed, beats) {
+  if (!sameLyrics(latest.lines, snapshot.lines)) return null;
+  const lines = latest.lines.map((line, i) => (line.locked ? line : { ...line, ...timingOf(placed[i]) }));
+  return { lines, sections: sectionStarts(latest.sections, lines, beats) };
+}
+
+const lyricsChanged = (latest) => ({ ...latest, timing: { ...latest.timing, status: "error", progress: null, error: LYRICS_CHANGED } });
+
+/** Places what Whisper heard before a failure and stores it with the failure, so the lines that were heard keep their times. */
+function savePartial({ dataDir, projectId, snapshot, partial, err, durationSec, lockedLines }) {
+  const placed = partial?.heard?.length ? placeLines(snapshot.lines, partial.heard, { locked: lockedLines, durationSec }) : null;
+  const failed = { status: "error", progress: null, error: explainFailure(err) };
+  return updateProject(dataDir, projectId, (latest) => {
+    const merged = placed ? mergePlacement(latest, snapshot, placed, { bpm: 0, times: [] }) : null;
+    if (placed && !merged) return lyricsChanged(latest);
+    return { ...latest, ...(merged || {}), timing: { ...latest.timing, ...failed, ...(merged ? { passes: partial.passes } : {}) } };
+  });
+}
+
+async function timeLyrics({ dataDir, projectId, snapshot, d, log }) {
   const durationSec = Number(snapshot.song?.durationSec) || 0;
   if (!snapshot.song?.file || durationSec <= 0) throw new UserFacing("Add the song first, then run timing.");
   if (!snapshot.lines.length) throw new UserFacing("Paste the lyrics, one line per line, then run timing.");
@@ -149,27 +179,40 @@ async function timeLyrics({ dataDir, projectId, snapshot, d }) {
   const audio = await d.prepareAudio(snapshot.song.file);
   const total = Math.max(1, Math.ceil(durationSec / WINDOW_SEC_ESTIMATE));
   progress("listening");
-  const { heard, passes } = await transcribeSong({
-    audioPath: audio, durationSec, lines: snapshot.lines,
-    transcribe: d.transcribe, cutAudio: d.cutAudio,
-    onProgress: ({ window }) => progress("listening", { window, total: Math.max(window, total) }),
-  });
-  progress("matching");
   const locked = new Map(snapshot.lines.filter((l) => l.locked && l.words?.length).map((l) => [l.id, { words: l.words }]));
+  let song;
+  try {
+    song = await transcribeSong({
+      audioPath: audio, durationSec, lines: snapshot.lines,
+      transcribe: async (file, prompt) => {
+        try { return await d.transcribe(file, prompt); } finally { d.discard?.(file); }
+      },
+      cutAudio: d.cutAudio,
+      onProgress: ({ window }) => progress("listening", { window, total: Math.max(window, total) }),
+    });
+  } catch (err) {
+    if (err instanceof ProjectGone || !err?.partial) throw err;
+    log(`[lyric-video] timing failed for ${projectId}:`, err);
+    const saved = savePartial({ dataDir, projectId, snapshot, partial: err.partial, err, durationSec, lockedLines: locked });
+    if (!saved) throw new ProjectGone(projectId);
+    return saved;
+  }
+  const { heard, passes } = song;
+  progress("matching");
   const placed = placeLines(snapshot.lines, heard, { locked, durationSec });
   progress("beats");
-  const beats = await d.detectBeats(snapshot.song.file);
+  // Beats are optional: without them, section starts are the first line's start.
+  let beats = { bpm: 0, times: [] };
+  try {
+    beats = await d.detectBeats(snapshot.song.file);
+  } catch (err) {
+    log(`[lyric-video] beat detection failed for ${projectId}:`, err);
+  }
 
   const done = updateProject(dataDir, projectId, (latest) => {
-    if (!sameLyrics(latest.lines, snapshot.lines)) {
-      return { ...latest, timing: { ...latest.timing, status: "error", progress: null, error: LYRICS_CHANGED } };
-    }
-    // A line the user locked while the job ran keeps the user's timing.
-    const lines = latest.lines.map((line, i) => (line.locked ? line : { ...line, ...timingOf(placed[i]) }));
-    return {
-      ...latest, lines, sections: sectionStarts(latest.sections, lines, beats),
-      timing: { ...latest.timing, status: "done", progress: null, error: null, beats, passes, finishedAt: new Date().toISOString() },
-    };
+    const merged = mergePlacement(latest, snapshot, placed, beats);
+    if (!merged) return lyricsChanged(latest);
+    return { ...latest, ...merged, timing: { ...latest.timing, status: "done", progress: null, error: null, beats, passes, finishedAt: new Date().toISOString() } };
   });
   if (!done) throw new ProjectGone(projectId);
   return done;

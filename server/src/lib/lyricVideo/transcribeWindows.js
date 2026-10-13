@@ -140,9 +140,22 @@ async function hearWindow({ from, durationSec, budget, prompt, expected, transcr
  * next lines of the sheet, carry on to the end. See spec §5.3.
  */
 export async function transcribeSong({ audioPath, durationSec, lines, transcribe, cutAudio, onProgress }) {
+  let heard = [];
+  let passes = [];
+  try {
+    return await hearSong({ audioPath, durationSec, lines, transcribe, cutAudio, onProgress }, (h, p) => { heard = h; passes = p; });
+  } catch (err) {
+    // What was heard before the failure rides on the error, so the caller can place those lines (spec §12: partially placed lines kept).
+    if (err && typeof err === "object") err.partial = { heard, passes };
+    throw err;
+  }
+}
+
+async function hearSong({ audioPath, durationSec, lines, transcribe, cutAudio, onProgress }, remember) {
   const first = await firstPass({ audioPath, durationSec, lines, transcribe });
   let passes = [first.pass];
   let { heard, frontier, frontierTime } = first;
+  remember(heard, passes);
   let anchorTime = frontierTime; // end of the last line placed with confidence
   let budget = MAX_AUDIO_FACTOR * durationSec - durationSec; // pass 0 heard the whole song once
   let windowNo = 0;
@@ -153,6 +166,7 @@ export async function transcribeSong({ audioPath, durationSec, lines, transcribe
     const prompt = promptFor(lines.slice(frontier, frontier + NEXT_LINES));
     const span = expectedSpan(lines.length / durationSec, Math.min(durationSec, from + WINDOW_SEC) - anchorTime);
     const expected = expectedFrom(lines.slice(Math.max(0, frontier - 1), frontier + span));
+    remember(heard, passes);
     const { got, records, spent, broke } = await hearWindow({ from, durationSec, budget, prompt, expected, transcribe, cutAudio, onProgress, windowNo });
     passes = [...passes, ...records];
     budget -= spent;

@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { onsetEnvelope, estimateTempo, beatTimes, detectBeats, analyseBeats } from "./beats.js";
+import { onsetEnvelope, estimateTempo, beatTimes, detectBeats, analyseBeats, pulseStrength } from "./beats.js";
 
 const SR = 11025;
 const HOP = 256;
@@ -98,5 +98,67 @@ describe("decoding", { skip: !hasFfmpeg && "ffmpeg not installed" }, () => {
   });
   test("a file ffmpeg cannot read rejects with ffmpeg's reason", async () => {
     await assert.rejects(detectBeats(path.join(os.tmpdir(), "no-such-beats-file.m4a")), /no-such-beats-file|No such file|Error opening/i);
+  });
+});
+
+function syllable(s, t, dur, f0, amp) {
+  const i0 = Math.floor(t * SR);
+  const i1 = Math.floor((t + dur) * SR);
+  for (let i = i0; i < i1 && i < s.length; i += 1) {
+    const tt = (i - i0) / SR;
+    const env = Math.min(1, tt / 0.03) * Math.min(1, (i1 - i) / SR / 0.05);
+    let v = 0;
+    for (let h = 1; h <= 6; h += 1) v += Math.sin(2 * Math.PI * f0 * h * tt) / h;
+    s[i] += amp * env * v;
+  }
+}
+function lcg(seed) {
+  let x = seed >>> 0;
+  return () => { x = (x * 1664525 + 1013904223) >>> 0; return x / 2 ** 32; };
+}
+/** Sung syllables with no pulse: random lengths, gaps and pitches, and now and then a breath. */
+function unpulsedVoice(seconds, seed) {
+  const rnd = lcg(seed * 31);
+  const s = new Float32Array(SR * seconds);
+  let t = 0.2;
+  while (t < seconds - 0.6) {
+    const dur = 0.15 + rnd() * 0.35;
+    syllable(s, t, dur, 180 + rnd() * 160, 0.15);
+    t += dur + rnd() * 0.15;
+    if (rnd() < 0.08) t += 0.5 + rnd();
+  }
+  return s;
+}
+/** A cappella in time: one syllable per beat, each a little early or late. */
+function meteredVoice(seconds, seed, bpm, jitterSec) {
+  const rnd = lcg(seed * 77);
+  const s = new Float32Array(SR * seconds);
+  for (let t = 0.3; t < seconds - 0.5; t += 60 / bpm) {
+    syllable(s, t + (rnd() - 0.5) * 2 * jitterSec, 0.25 + rnd() * 0.1, 180 + rnd() * 160, 0.12 + rnd() * 0.08);
+  }
+  return s;
+}
+
+describe("singing with no instruments", () => {
+  test("syllables with no pulse give no beats, at several lengths", () => {
+    for (const secs of [15, 30, 120]) {
+      for (const seed of [1, 2, 3, 4]) {
+        assert.deepEqual(analyseBeats(unpulsedVoice(secs, seed), SR), { bpm: 0, times: [] }, `${secs}s seed ${seed}`);
+      }
+    }
+  });
+  test("syllables sung in time still give a grid", () => {
+    for (const [bpm, jitter] of [[100, 0.02], [120, 0.04], [90, 0.03], [130, 0.06]]) {
+      const { bpm: got, times } = analyseBeats(meteredVoice(30, 2, bpm, jitter), SR);
+      assert.ok(Math.abs(got - bpm) <= 1.5, `${bpm} BPM sung: got ${got}`);
+      assert.ok(times.length > 30);
+    }
+  });
+  test("pulse strength separates the two by a wide margin", () => {
+    const strength = (x) => pulseStrength(onsetEnvelope(x, SR, HOP), SR, HOP);
+    const worstUnpulsed = Math.max(...[1, 2, 3, 4].map((i) => strength(unpulsedVoice(15, i))));
+    const weakestSung = Math.min(...[1, 2, 3].map((i) => strength(meteredVoice(30, i, 130, 0.06))));
+    assert.ok(worstUnpulsed < 0.2, `unpulsed ${worstUnpulsed}`);
+    assert.ok(weakestSung > 0.26, `in time ${weakestSung}`);
   });
 });

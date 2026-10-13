@@ -345,3 +345,30 @@ describe("sections Whisper never hears", () => {
     }
   }
 });
+
+describe("a failure part-way carries what was heard", () => {
+  test("a failing window keeps pass 0's heard words and passes on the error", async () => {
+    const f = fakes();
+    const lines = parseSheet(sheet).lines;
+    const boom = new Error("Whisper 429: busy");
+    let calls = 0;
+    const transcribe = async (file, prompt) => { calls += 1; if (calls > 1) throw boom; return f.transcribe(file, prompt); };
+    await assert.rejects(
+      transcribeSong({ audioPath: "song.m4a", durationSec: DURATION, lines, transcribe, cutAudio: f.cutAudio }),
+      (err) => {
+        assert.equal(err, boom);
+        assert.ok(err.partial.heard.length > 0, "pass 0's reliable prefix is kept");
+        assert.equal(err.partial.passes[0].from, 0);
+        assert.ok(err.partial.heard.every((w) => Number.isFinite(w.start)));
+        return true;
+      },
+    );
+  });
+  test("a failing first pass carries nothing heard", async () => {
+    const lines = parseSheet(sheet).lines;
+    await assert.rejects(
+      transcribeSong({ audioPath: "song.m4a", durationSec: DURATION, lines, transcribe: async () => { throw new Error("Whisper 500"); }, cutAudio: async () => "cut" }),
+      (err) => { assert.deepEqual(err.partial, { heard: [], passes: [] }); return true; },
+    );
+  });
+});

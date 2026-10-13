@@ -181,30 +181,33 @@ export function beatTimes(env, sr, hop, bpm, durationSec) {
 }
 
 /**
- * How clearly a constant grid at `bpm` beats the average grid: the best phase's
- * mean envelope on the grid divided by the mean over all phases. About 1.0-1.15
- * for noise (every phase fits alike), 1.45-1.75 on real music, 3+ on clicks.
+ * How pulsed the onsets are: the strongest autocorrelation of the onset
+ * envelope over the 70-180 BPM lags, as a share of its zero-lag energy
+ * (0 = no repeating pulse, 1 = perfectly periodic). Measured: noise < 0.05,
+ * unpulsed sung syllables 0.05-0.18, loosely metered singing 0.28+, music 0.31 (a 15 s slice) to 0.53.
  */
-export function gridContrast(env, sr, hop, bpm) {
-  const period = (60 * (sr / hop)) / bpm;
-  const sm = smooth(env);
-  let best = -Infinity;
-  let sum = 0;
-  let count = 0;
-  for (let off = 0; off < period; off += 0.25) {
-    const score = gridScore(sm, period, off);
-    best = Math.max(best, score);
-    sum += score;
-    count += 1;
+export function pulseStrength(env, sr, hop, { min = 70, max = 180 } = {}) {
+  const fps = sr / hop;
+  const mean = env.reduce((a, b) => a + b, 0) / (env.length || 1);
+  const x = Array.from(env, (v) => v - mean);
+  const at = (lag) => {
+    let t = 0;
+    for (let i = 0; i + lag < x.length; i += 1) t += x[i] * x[i + lag];
+    return t / (x.length - lag);
+  };
+  const zero = at(0);
+  if (!(zero > 0)) return 0;
+  let best = 0;
+  for (let lag = Math.floor((60 * fps) / max); lag <= Math.ceil((60 * fps) / min); lag += 1) {
+    if (lag < x.length) best = Math.max(best, at(lag) / zero);
   }
-  const avg = count > 0 ? sum / count : 0;
-  return avg > 0 ? best / avg : 0;
+  return best;
 }
 
 /** Mean onset strength below which there is nothing to time to: silence and steady tones (measured 0.00-0.01; noise 0.17, music 0.25+). */
 const MIN_ONSET_MEAN = 0.05;
-/** Grid contrast below which the "beat" is chance: midway between noise (<= 1.14) and music (>= 1.47). */
-const MIN_GRID_CONTRAST = 1.3;
+/** Pulse strength below which there is no steady beat: between unpulsed voices (<= 0.18 over 15-120 s) and in-tempo singing or music (>= 0.28). */
+const MIN_PULSE = 0.23;
 const noBeats = () => ({ bpm: 0, times: [] });
 
 /** The beat grid for decoded mono samples, or { bpm: 0, times: [] } when the audio has no steady pulse (silence, noise, a cappella). */
@@ -213,8 +216,8 @@ export function analyseBeats(samples, sr = 11025, hop = 256) {
   if (env.length < 2) return noBeats();
   const mean = env.reduce((a, b) => a + b, 0) / env.length;
   if (!(mean >= MIN_ONSET_MEAN)) return noBeats();
+  if (pulseStrength(env, sr, hop) < MIN_PULSE) return noBeats();
   const bpm = estimateTempo(env, sr, hop);
-  if (gridContrast(env, sr, hop, bpm) < MIN_GRID_CONTRAST) return noBeats();
   return { bpm, times: beatTimes(env, sr, hop, bpm, samples.length / sr) };
 }
 
