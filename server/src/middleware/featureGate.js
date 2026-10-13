@@ -8,16 +8,17 @@
  *   - "tts.elevenlabs" + "voice.clone": premium only (operator's cost driver)
  *   - "gumroad":                        super-admin only (business plan TBD)
  *   - "tts.edge" / "tts.chatterbox":    free (self-hosted, no per-call $)
+ *   - "lyric.video":                   free + premium (Song mode; quota("render") is charged per timing/render run)
  */
 export const PLAN_CAPABILITIES = Object.freeze({
   super_admin: new Set(["*"]),
   premium: new Set([
     "scripts", "tts.edge", "tts.chatterbox", "tts.elevenlabs",
-    "voice.clone", "render", "library", "series", "bible", "social.connect",
+    "voice.clone", "render", "library", "series", "bible", "social.connect", "lyric.video",
   ]),
   free: new Set([
     "scripts", "tts.edge", "tts.chatterbox",
-    "render", "library", "series", "bible", "social.connect",
+    "render", "library", "series", "bible", "social.connect", "lyric.video",
   ]),
 });
 

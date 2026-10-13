@@ -30,6 +30,8 @@ import transcriptsRouter from "./src/routes/transcripts.js";
 import imagegenRouter from "./src/routes/imagegen.js";
 import videogenRouter from "./src/routes/videogen.js";
 import storyRouter from "./src/routes/story.js";
+import lyricVideoRouter from "./src/routes/lyricVideo.js";
+import { FONT_DIR } from "./src/lib/videoFilters.js";
 import ambientRouter from "./src/routes/ambient.js";
 import longformRouter from "./src/routes/longform.js";
 import timelineRouter from "./src/routes/timeline.js";
@@ -178,6 +180,9 @@ app.use("/outputs", express.static(outputDir, {
 }));
 
 app.use("/music", express.static(path.resolve(__dirname, "assets/music"), { acceptRanges: true }));
+// The caption fonts (Anton, Knewave, ...) the browser preview of a lyric video draws with.
+// Public like /music: they are the app's own bundled fonts, and a Web Worker fetches them without credentials.
+app.use("/caption-fonts", express.static(FONT_DIR, { maxAge: "7d" }));
 
 // Per-user outputs fallback. With multi-tenant on, renders + processed audio
 // land in DATA_DIR/users/<userId>/outputs/, NOT the global outputDir served
@@ -358,6 +363,9 @@ app.use("/api/tts",       requireAuth, withUserScope, requireVerifiedEmail, quot
 app.use("/api/abi",       abiRouter);
 app.use("/api/render",    requireAuth, withUserScope, requireVerifiedEmail, quota("render"),     renderRouter);
 app.use("/api/story",     requireAuth, withUserScope, requireVerifiedEmail, quota("render"),     storyRouter);
+// Lyric video carries NO blanket quota (the page polls the project and the render job);
+// quota("render") is charged inside routes/lyricVideo.js on POST /:id/align and /:id/render only.
+app.use("/api/lyric-video", requireAuth, withUserScope, requireVerifiedEmail, featureGate("lyric.video"), lyricVideoRouter);
 // Ambient carries NO blanket quota. The page polls GET /api/ambient/:id about
 // once a second while a bed assembles or a render runs; charging render quota
 // per REQUEST would exhaust a free user's whole allowance within seconds (the

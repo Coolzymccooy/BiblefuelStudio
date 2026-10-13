@@ -78,3 +78,11 @@ test("PLAN_CAPABILITIES: gumroad is super_admin only", () => {
   assert.equal(PLAN_CAPABILITIES.premium.has("gumroad"), false);
   assert.equal(PLAN_CAPABILITIES.free.has("gumroad"), false);
 });
+
+test("PLAN_CAPABILITIES: lyric.video (Song mode) is open to free and premium", () => {
+  assert.equal(PLAN_CAPABILITIES.free.has("lyric.video"), true);
+  assert.equal(PLAN_CAPABILITIES.premium.has("lyric.video"), true);
+  const ctx = makeReqRes("free");
+  featureGate("lyric.video")(ctx.req, ctx.res, ctx.next);
+  assert.equal(ctx.nextCalled, true);
+});
