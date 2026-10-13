@@ -6,7 +6,7 @@ import { spawn } from "node:child_process";
 import { readProject, updateProject } from "./projectStore.js";
 import { transcribeSong } from "./transcribeWindows.js";
 import { transcribePrompted } from "./whisperPrompted.js";
-import { placeLines } from "./align.js";
+import { placeLines, FLAG_CONFIDENCE } from "./align.js";
 import { detectBeats as realDetectBeats } from "./beats.js";
 import { measureAudibleEnd as realMeasureAudibleEnd } from "./audibleEnd.js";
 
@@ -175,8 +175,9 @@ const lyricsChanged = (latest) => ({ ...latest, timing: { ...withoutRerun(latest
  * Places what Whisper heard before a failure and stores it with the failure, so the lines that were
  * heard keep their times. A re-run keeps the earlier full timing instead of these partial placements.
  */
-function savePartial({ dataDir, projectId, snapshot, partial, err, durationSec, audibleEnd, lockedLines }) {
+function savePartial({ dataDir, projectId, snapshot, partial, err, durationSec, measuredEnd, lockedLines }) {
   const rerun = snapshot.timing?.status === "done";
+  const audibleEnd = atLeastHeard(measuredEnd, snapshot.lines, partial?.heard, lockedLines, durationSec);
   const placed = !rerun && partial?.heard?.length ? placeLines(snapshot.lines, partial.heard, { locked: lockedLines, durationSec, audibleEnd }) : null;
   const message = explainFailure(err);
   return updateProject(dataDir, projectId, (latest) => {
@@ -200,6 +201,20 @@ async function findAudibleEnd({ d, audio, durationSec, projectId, log }) {
   }
 }
 
+/**
+ * The audible end, never earlier than the end of the last word heard with
+ * confidence (inside a line placed unflagged against the song's full length):
+ * a click and then near-silence must not squeeze lyrics that were plainly heard.
+ */
+export function atLeastHeard(audibleEnd, lines, heard, locked, durationSec) {
+  if (audibleEnd >= durationSec || !heard?.length) return audibleEnd;
+  const confident = placeLines(lines, heard, { locked, durationSec })
+    .filter((l) => !locked.has(l.id) && l.flag === null && l.confidence >= FLAG_CONFIDENCE);
+  const inConfidentLine = (h) => confident.some((l) => h.start >= l.start && h.start <= l.end);
+  const heardEnd = heard.reduce((latest, h) => (Number.isFinite(h.end) && inConfidentLine(h) ? Math.max(latest, h.end) : latest), 0);
+  return Math.min(durationSec, Math.max(audibleEnd, heardEnd));
+}
+
 async function timeLyrics({ dataDir, projectId, snapshot, d, log }) {
   const durationSec = Number(snapshot.song?.durationSec) || 0;
   if (!snapshot.song?.file || durationSec <= 0) throw new UserFacing("Add the song first, then run timing.");
@@ -212,7 +227,7 @@ async function timeLyrics({ dataDir, projectId, snapshot, d, log }) {
   };
 
   const audio = await d.prepareAudio(snapshot.song.file);
-  const audibleEnd = await findAudibleEnd({ d, audio, durationSec, projectId, log });
+  const measuredEnd = await findAudibleEnd({ d, audio, durationSec, projectId, log });
   const total = Math.max(1, Math.ceil(durationSec / WINDOW_SEC_ESTIMATE));
   progress("listening");
   const locked = new Map(snapshot.lines.filter((l) => l.locked && l.words?.length).map((l) => [l.id, { words: l.words }]));
@@ -229,11 +244,12 @@ async function timeLyrics({ dataDir, projectId, snapshot, d, log }) {
   } catch (err) {
     if (err instanceof ProjectGone || !err?.partial) throw err;
     log(`[lyric-video] timing failed for ${projectId}:`, err);
-    const saved = savePartial({ dataDir, projectId, snapshot, partial: err.partial, err, durationSec, audibleEnd, lockedLines: locked });
+    const saved = savePartial({ dataDir, projectId, snapshot, partial: err.partial, err, durationSec, measuredEnd, lockedLines: locked });
     if (!saved) throw new ProjectGone(projectId);
     return saved;
   }
   const { heard, passes } = song;
+  const audibleEnd = atLeastHeard(measuredEnd, snapshot.lines, heard, locked, durationSec);
   progress("matching");
   // No line is placed after the music stops (lines still unheard there are squeezed in and flagged).
   const placed = placeLines(snapshot.lines, heard, { locked, durationSec, audibleEnd });

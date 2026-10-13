@@ -31,6 +31,10 @@ describe("trailingSilenceStart", () => {
   test("quiet below -40 dB is silence", () => {
     assert.equal(trailingSilenceStart(signal(3, 2, 0.5, 0.005), SR), 3);
   });
+  test("a silence in the middle of the song is not its end", () => {
+    const gap = Float32Array.from({ length: 8 * SR }, (_, i) => (i < 3 * SR || i >= 5 * SR ? 0.5 : 0));
+    assert.equal(trailingSilenceStart(gap, SR), null);
+  });
   test("nothing above the threshold at all: null (nothing to measure)", () => {
     assert.equal(trailingSilenceStart(new Float32Array(500), SR), null);
   });
@@ -74,6 +78,10 @@ describe("measureAudibleEnd on real audio", { skip: !hasFfmpeg && "ffmpeg not in
     const file = make("tone-then-silence.m4a", "sine=frequency=440:duration=3:sample_rate=16000,apad=pad_dur=2");
     const end = await measureAudibleEnd(file, 5);
     assert.ok(Math.abs(end - 3) < 0.1, `audible end ${end}`);
+  });
+  test("3 s tone, 2 s silence, 3 s tone: the song's length", async () => {
+    const file = make("gap.m4a", "sine=frequency=440:duration=8:sample_rate=16000,volume=enable='between(t,3,5)':volume=0");
+    assert.equal(await measureAudibleEnd(file, 8), 8);
   });
   test("tone to the very end: the song's length", async () => {
     const file = make("tone.m4a", "sine=frequency=440:duration=4:sample_rate=16000");

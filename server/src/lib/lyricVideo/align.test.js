@@ -331,4 +331,134 @@ describe("placeLines: the audible end bounds placement", () => {
     assert.deepEqual(out[5].words, lk.get("o4").words);
     assert.ok(out[6].start > 29.9, "the line after the lock follows it");
   });
+
+  // Heard at 10–13 s, then unheard lines and a response, then a last line far past the audible end.
+  const pile = [L("a", "one two three"), L("b", "four five six"), L("c", "going home today"), L("d", "the driver knows the way"), L("r", "(oh oh oh)", "response"), L("e", "no more crying there"), L("z", "we shall rest at last")];
+  const pileHeard = [H("one", 10), H("two", 10.5), H("three", 11), H("four", 12), H("five", 12.5), H("six", 13)];
+  const assertPile = (out, lk) => {
+    assertSong(out, { durationSec: 60, locked: lk });
+    for (const l of out.slice(0, 6)) assert.ok(l.end <= 20, `${l.id} ends at ${l.end}, after the audible end`);
+    for (const l of out.slice(2, 6)) assert.equal(l.flag, "check");
+    assert.equal(out[0].start, 10);
+    assert.equal(out[1].start, 12);
+  };
+  test("unheard lines before a lock past the audible end are spread up to the audible end, not piled at it", () => {
+    const lk = new Map([["z", lock(["we", 40, 40.3], ["shall", 40.3, 40.6], ["rest", 40.6, 40.9], ["at", 40.9, 41.1], ["last", 41.1, 41.6])]]);
+    const out = placeLines(pile, pileHeard, { locked: lk, durationSec: 60, audibleEnd: 20 });
+    assertPile(out, lk);
+    assert.ok(out[3].end - out[2].start > 2, "the unheard lines are spread, not squeezed into the last moment");
+  });
+  test("unheard lines before a word heard past the audible end are spread up to the audible end too", () => {
+    const heard = [...pileHeard, H("we", 24), H("shall", 24.3), H("rest", 24.6), H("at", 24.9), H("last", 25.2)];
+    const out = placeLines(pile, heard, { durationSec: 60, audibleEnd: 20 });
+    assertSong(out, { durationSec: 20 });
+    assertPile(out, new Map());
+    assert.equal(out[6].flag, "check", "the line heard in the silence is pulled inside and flagged");
+  });
+  test("a heard word just after a lock, pulled back by a squeeze, never lands inside the lock", () => {
+    const lines = [L("k", "kk ll gg"), L("r1", "(dd ii)", "response"), L("r2", "(ll hh)", "response"), L("m", "cc ff ii dd")];
+    const lk = new Map([["k", lock(["kk", 15.673, 15.923], ["ll", 15.973, 16.223], ["gg", 16.273, 16.523])]]);
+    const out = placeLines(lines, [H("dd", 16.723), H("ii", 17.235), H("ll", 17.715), H("hh", 18.212), H("cc", 18.786), H("ff", 19.341)], { locked: lk, durationSec: 36, audibleEnd: 16.88 });
+    assertSong(out, { durationSec: 16.88, locked: lk });
+  });
+  test("responses squeezed into a pile-up at the audible end keep every word a real length", () => {
+    const lines = [L("a", "aa bb cc dd"), L("b", "ee ff gg hh ii"), L("c", "jj kk"), L("r1", "(aa bb cc dd ee)", "response"), L("r2", "(ff gg hh ii jj)", "response"), L("r3", "(kk ll aa bb cc)", "response")];
+    const out = placeLines(lines, [H("aa", 19), H("bb", 30), H("cc", 31), H("dd", 32)], { durationSec: 52, audibleEnd: 19.96 });
+    assertSong(out, { durationSec: 19.96 });
+  });
+  test("a response before anything is heard does not run into the first line", () => {
+    assertSong(placeLines([L("r", "(ll aa gg cc)", "response"), L("a", "cc ff")], [], { durationSec: 56, audibleEnd: 34.12 }), { durationSec: 34.12 });
+  });
+});
+
+describe("placeLines: seeded fuzz of bounds, order and locks", () => {
+  // A small deterministic generator (mulberry32): random sheets with heard and unheard lines,
+  // responses, and locks before or after the audible end, sometimes with words heard in the silence.
+  const rng = (seed) => {
+    let s = seed >>> 0;
+    return () => { s = (s + 0x6d2b79f5) >>> 0; let t = s; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  };
+  const VOCAB = ["aa", "bb", "cc", "dd", "ee", "ff", "gg", "hh", "ii", "jj", "kk", "ll"];
+  const ms = (n) => Math.round(n * 1000) / 1000;
+  function makeCase(seed) {
+    const r = rng(seed);
+    const durationSec = 30 + Math.floor(r() * 60);
+    const audibleEnd = Math.round((10 + r() * (durationSec - 18)) * 100) / 100;
+    const n = 2 + Math.floor(r() * 10);
+    const lines = [];
+    const heard = [];
+    const locked = new Map();
+    let t = r() * 3;
+    for (let i = 0; i < n; i += 1) {
+      const kind = r() < 0.2 ? "response" : "lead";
+      const words = Array.from({ length: 1 + Math.floor(r() * 5) }, () => VOCAB[Math.floor(r() * VOCAB.length)]);
+      lines.push(L(`l${i}`, kind === "response" ? `(${words.join(" ")})` : words.join(" "), kind));
+      const roll = r();
+      if (roll < 0.15 && kind === "lead") {
+        const at = r() < 0.5 ? t : audibleEnd + r() * (durationSec - audibleEnd) * 0.5;
+        const lw = words.map((w, k) => ({ text: w, start: ms(at + k * 0.3), end: ms(at + k * 0.3 + 0.25) }));
+        const prev = [...locked.values()].at(-1);
+        if (lw[lw.length - 1].end <= durationSec && (!prev || lw[0].start > prev.words.at(-1).end)) {
+          locked.set(`l${i}`, { words: lw });
+          t = Math.max(t, lw[lw.length - 1].end + 0.2);
+          continue;
+        }
+      }
+      if (roll < 0.6) {
+        for (const w of words) { if (t > durationSec - 1) break; heard.push({ word: w, start: ms(t), end: ms(t + 0.3) }); t += 0.35 + r() * 0.3; }
+      } else t += r() * 3;
+      if (r() < 0.1) t += r() * 10; // words heard later, sometimes in the silence
+    }
+    return { lines, heard, locked, durationSec, audibleEnd };
+  }
+  /** Room for every unlocked word (0.02 s each, plus a margin) between the anchors around it; without it the bound cannot hold. */
+  function feasible({ lines, locked, durationSec, audibleEnd }) {
+    let lower = 0;
+    let past = false;
+    let words = 0;
+    for (const l of lines) {
+      const lk = locked.get(l.id);
+      if (!lk) { words += l.text.split(" ").length; continue; }
+      if (words && words * 0.02 + 0.05 > Math.min(lk.words[0].start, past ? durationSec : audibleEnd) - lower) return false;
+      lower = lk.words.at(-1).end;
+      words = 0;
+      if (lower > audibleEnd) past = true;
+    }
+    return !words || words * 0.02 + 0.05 <= (past ? durationSec : audibleEnd) - lower;
+  }
+  function problems({ lines, heard, locked, durationSec, audibleEnd }) {
+    const out = placeLines(lines, heard, { locked, durationSec, audibleEnd });
+    const errs = [];
+    let past = false;
+    const all = [];
+    out.forEach((l) => {
+      const lk = locked.get(l.id);
+      if (lk) {
+        if (JSON.stringify(l.words) !== JSON.stringify(lk.words)) errs.push(`${l.id}: the lock moved`);
+        if (lk.words.at(-1).end > audibleEnd) past = true;
+      } else {
+        const bound = past ? durationSec : audibleEnd;
+        for (const w of l.words) if (w.start < 0 || w.end > bound) errs.push(`${l.id}: ${w.start}-${w.end} outside ${bound}`);
+      }
+      for (const w of l.words) { if (!(w.end > w.start)) errs.push(`${l.id}: empty word at ${w.start}`); all.push({ ...w, id: l.id }); }
+    });
+    all.forEach((w, i) => { if (i > 0 && !(w.start > all[i - 1].start)) errs.push(`${w.id}: start ${w.start} not after ${all[i - 1].start}`); });
+    out.forEach((l, i) => { if (out[i + 1] && l.end > out[i + 1].start) errs.push(`${l.id}: ends ${l.end}, after ${out[i + 1].id} starts ${out[i + 1].start}`); });
+    return errs;
+  }
+
+  test("3000 seeded cases (plus earlier failures) keep bounds, strict order and exact locks", () => {
+    const seeds = [...Array.from({ length: 3000 }, (_, i) => i + 1), 13058];
+    const failures = [];
+    let checked = 0;
+    for (const seed of seeds) {
+      const c = makeCase(seed);
+      if (!feasible(c)) continue;
+      checked += 1;
+      const errs = problems(c);
+      if (errs.length) failures.push(`seed ${seed}: ${errs[0]}`);
+    }
+    assert.ok(checked > 2900, `checked ${checked}`);
+    assert.deepEqual(failures.slice(0, 5), []);
+  });
 });

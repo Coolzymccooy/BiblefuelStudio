@@ -354,6 +354,28 @@ describe("the song's audible end", () => {
     const done = await run(p, { measureAudibleEnd: async () => Number.NaN });
     assert.equal(done.timing.audibleEnd, 20);
   });
+  test("never earlier than the last confidently heard line (a click, then near-silence)", async () => {
+    const p = outroSetup();
+    const done = await run(p, { measureAudibleEnd: async () => 0.5 });
+    assert.equal(done.timing.status, "done");
+    // "say", the last word heard with confidence, ends at 6.0.
+    assert.equal(done.timing.audibleEnd, 6);
+    assert.equal(done.lines[0].start, 1);
+    assert.equal(done.lines[1].start, 5);
+    assert.equal(done.lines[0].flag, null);
+    assert.deepEqual(done.lines[1].words.map((w) => w.start), [5, 5.3, 5.6], "the heard words keep their times");
+    assert.ok(lastEnd(done.lines) <= done.timing.audibleEnd);
+  });
+  test("the same floor holds when a failure part-way keeps what was heard", async () => {
+    const p = outroSetup();
+    const done = await run(p, {
+      measureAudibleEnd: async () => 0.5,
+      transcribe: async (file) => { if (file === PREPARED()) return { words: heardSong }; throw new Error("Whisper 429: busy"); },
+    });
+    assert.equal(done.timing.status, "error");
+    assert.equal(done.lines[1].start, 5);
+    assert.equal(done.timing.audibleEnd, 6);
+  });
   test("a failure part-way places the heard lines inside the audible end too", async () => {
     const p = outroSetup();
     const done = await run(p, {

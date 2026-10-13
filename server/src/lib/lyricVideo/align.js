@@ -211,7 +211,9 @@ function interpolate(flat, bounds) {
     const prev = k > 0 ? flat[k - 1].slot : null;
     const left = prev ? (prev.kind === "locked" ? prev.end : prev.start) : null;
     const right = e < flat.length ? flat[e].slot.start : null;
-    spreadRun(flat.slice(k, e).map((f) => f.slot), left, right, bounds[k]);
+    // A neighbour past the bound (a late lock, a word heard in the silence) does not stretch the run past it.
+    const room = right === null ? null : Math.max(left ?? 0, Math.min(right, bounds[k]));
+    spreadRun(flat.slice(k, e).map((f) => f.slot), left, room, bounds[k]);
     if (left === null || right === null || right - left > MAX_INTERP_GAP) for (let q = k; q < e; q += 1) gapLines.add(flat[q].li);
     k = e;
   }
@@ -236,19 +238,21 @@ const gapNeeded = (prev, cur) => (prev.kind === "interp" || cur.kind === "interp
  * words never move, and nothing is pulled back before a lock that precedes it;
  * interpolated words are squeezed before a heard word is pushed.
  */
-function enforceOrder(slots, bounds) {
+function enforceOrder(slots, bounds, { reserves = [], leadIn = 0 } = {}) {
+  const keep = (q) => reserves[q] || 0; // room kept after slot q for the unheard responses that follow it
+  if (slots.length && slots[0].kind !== "locked" && slots[0].start < leadIn) slots[0].start = leadIn;
   for (let q = 1; q < slots.length; q += 1) {
-    const need = slots[q - 1].start + gapNeeded(slots[q - 1], slots[q]);
+    const need = slots[q - 1].start + gapNeeded(slots[q - 1], slots[q]) + keep(q - 1);
     if (slots[q].kind !== "locked" && slots[q].start < need) slots[q].start = need;
   }
   if (!bounds.some(Number.isFinite)) return;
-  // The earliest a word may sit: a step after each word since the last lock before it.
-  let floor = -Infinity;
-  const floors = slots.map((s) => { floor = s.kind === "locked" ? s.start : floor + STEP; return floor; });
+  // The earliest a word may sit: after the end of the last lock before it, a step per word since.
+  let floor = leadIn - STEP;
+  const floors = slots.map((s) => { floor = s.kind === "locked" ? s.end : floor + STEP; return floor; });
   for (let q = slots.length - 1; q >= 0; q -= 1) {
     if (slots[q].kind === "locked") continue;
-    const own = bounds[q] - STEP;
-    const upper = q === slots.length - 1 ? own : Math.min(own, slots[q + 1].start - gapNeeded(slots[q], slots[q + 1]));
+    const own = bounds[q] - STEP - keep(q);
+    const upper = q === slots.length - 1 ? own : Math.min(own, slots[q + 1].start - gapNeeded(slots[q], slots[q + 1]) - keep(q));
     if (slots[q].start > upper) slots[q].start = Math.max(0, upper, floors[q]);
   }
 }
@@ -287,6 +291,21 @@ function hasConflict(plan, nextStart) {
 
 const MIN_FIT = 0.01; // tightest squeeze of a response run
 
+/** Lengths of a run of unheard responses (from li up to the next placed line) and their full span. */
+function responseRun(plan, li) {
+  let end = li;
+  while (end < plan.length && plan[end].unheard) end += 1;
+  const lens = plan.slice(li, end).map((p) => Math.max(RESPONSE_MIN, RESPONSE_PER_WORD * p.texts.length));
+  return { end, lens, span: lens.reduce((sum, len) => sum + RESPONSE_AFTER + len, 0) };
+}
+
+/** Room each line keeps after it for the unheard responses that follow (their tightest squeeze), and before the first line. */
+function responseRoom(plan) {
+  const after = plan.map((p, li) => (li + 1 < plan.length && plan[li + 1].unheard && !p.unheard ? responseRun(plan, li + 1).span * MIN_FIT : 0));
+  const leadIn = plan.length && plan[0].unheard ? responseRun(plan, 0).span * MIN_FIT : 0;
+  return { after, leadIn };
+}
+
 /**
  * Where a run of responses may start: the end of its call. When the call
  * already reaches the next line or the bound (a squeezed tail), its last word
@@ -297,7 +316,7 @@ function makeRoom(plan, words, li, nextStart, need) {
   const call = words[li - 1];
   const last = call[call.length - 1];
   if (nextStart - last.end >= need || plan[li - 1].locked || !Number.isFinite(nextStart)) return last.end;
-  const shared = round(Math.min(last.end, (last.start + nextStart) / 2));
+  const shared = round(Math.min(last.end, Math.max(last.start + STEP / 10, nextStart - need)));
   call[call.length - 1] = { ...last, end: Math.max(shared, last.start + STEP / 10) };
   return call[call.length - 1].end;
 }
@@ -307,13 +326,12 @@ function placeResponses(plan, words, bounds) {
   let li = 0;
   while (li < plan.length) {
     if (!plan[li].unheard) { li += 1; continue; }
-    let end = li;
-    while (end < plan.length && plan[end].unheard) end += 1;
+    const { end, lens, span } = responseRun(plan, li);
     const nextStart = Math.min(end < plan.length ? words[end][0].start : Infinity, bounds[li]);
-    const lens = plan.slice(li, end).map((p) => Math.max(RESPONSE_MIN, RESPONSE_PER_WORD * p.texts.length));
-    const span = lens.reduce((sum, len) => sum + RESPONSE_AFTER + len, 0);
     const callEnd = makeRoom(plan, words, li, nextStart, span * MIN_FIT);
-    const fit = Math.max(Math.min(1, (nextStart - callEnd) / span), MIN_FIT);
+    const room = nextStart - callEnd;
+    // Squeezed to the room that is left; a lock that leaves none gets the tightest squeeze.
+    const fit = room > 0 ? Math.min(1, room / span) : MIN_FIT;
     let cursor = callEnd;
     for (let q = li; q < end; q += 1) {
       const len = lens[q - li] * fit;
@@ -367,8 +385,10 @@ export function placeLines(lines, heard, { locked = new Map(), durationSec = Inf
   const bounds = lineBounds(plan, endSec, durationSec);
   const flat = plan.flatMap((p, li) => (p.unheard ? [] : p.slots.map((slot) => ({ li, slot }))));
   const slotBounds = flat.map((f) => bounds[f.li]);
+  const room = responseRoom(plan);
+  const reserves = flat.map((f, q) => (q + 1 === flat.length || flat[q + 1].li !== f.li ? room.after[f.li] : 0));
   const gapLines = interpolate(flat, slotBounds);
-  enforceOrder(flat.map((f) => f.slot), slotBounds);
+  enforceOrder(flat.map((f) => f.slot), slotBounds, { reserves, leadIn: room.leadIn });
   const words = plan.map((p, li) => (p.unheard ? null : lineWords(p, nextPlacedStartRaw(plan, li), bounds[li])));
   placeResponses(plan, words, bounds);
   return assemble(plan, words, gapLines);
