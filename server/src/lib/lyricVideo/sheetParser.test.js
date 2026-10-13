@@ -77,6 +77,29 @@ describe("parseSheet edge cases", () => {
     const out = parseSheet("VERSE 1:\nHello there\nCHORUS:\nSing it");
     assert.deepEqual(out.sections.map((s) => s.kind), ["verse", "chorus"]);
   });
+  test("a bracketed note between sung lines in a verse is skipped, not a response", () => {
+    const out = parseSheet("[VERSE 1]\nFirst sung line\n(Female harmonies enter)\nSecond sung line");
+    assert.deepEqual(out.lines.map((l) => [l.kind, l.text]), [["lead", "First sung line"], ["lead", "Second sung line"]]);
+    assert.ok(out.skipped.includes("(Female harmonies enter)"));
+  });
+  test("the same bracketed line in a chorus is a response", () => {
+    const out = parseSheet("[CHORUS]\nWho talk say\n(WHO TALK SAY?!)\nSecond sung line");
+    assert.deepEqual(out.lines.map((l) => l.kind), ["lead", "response", "lead"]);
+    assert.deepEqual(out.skipped, []);
+  });
+  test("a bracketed line in a final chorus is a response", () => {
+    const out = parseSheet("[FINAL CHORUS]\nMy time no late\n(NO DEY LATE!)");
+    assert.deepEqual(out.lines.map((l) => l.kind), ["lead", "response"]);
+  });
+  test("a bracketed line with no heading, after a sung line, is a response", () => {
+    const out = parseSheet("Who talk say\n(WHO TALK SAY?!)");
+    assert.deepEqual(out.lines.map((l) => l.kind), ["lead", "response"]);
+  });
+  test("emoji-prefixed headings are still headings", () => {
+    const out = parseSheet("🎤 [CHORUS]\nSing it\n🔥 **FINAL CHORUS**\nLoud now\n🎵 VERSE 1:\nSoft start");
+    assert.deepEqual(out.sections.map((s) => s.kind), ["chorus", "final", "verse"]);
+    assert.deepEqual(out.lines.map((l) => l.text), ["Sing it", "Loud now", "Soft start"]);
+  });
   test("empty input gives no lines", () => {
     assert.deepEqual(parseSheet("   \n  ").lines, []);
   });

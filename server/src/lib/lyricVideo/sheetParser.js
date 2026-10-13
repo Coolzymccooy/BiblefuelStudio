@@ -14,6 +14,7 @@ const BRACKET_HEADING = /^\s*\[(.+)\]\s*$/;
 const BOLD_HEADING = /^\s*\*\*(.+)\*\*\s*$/;
 const WORD_HEADING = /^\s*((?:final\s+)?(?:intro|verse|pre-?\s?chorus|chorus|hook|refrain|bridge|outro|ending|coda)\b[^a-z]{0,6}):?\s*$/i;
 const WHOLE_PAREN = /^\(.*\)$/;
+const RESPONSE_SECTIONS = new Set(["chorus", "final", "other"]);
 const INLINE_RESPONSE = /^(.*?\S)\s*(\([^()]+\))\s*$/;
 
 export function sectionKind(label) {
@@ -52,7 +53,9 @@ function clean(raw) {
   return raw.replace(EMOJI, " ").replace(BULLETS, "").replace(/\s+/g, " ").trim().normalize("NFC");
 }
 
-function headingOf(line) {
+/** Heading label for a raw row, or null. Emoji are stripped first so "🎤 [CHORUS]" still reads as a heading. */
+function headingOf(row) {
+  const line = row.replace(EMOJI, " ").trim();
   const m = line.match(BRACKET_HEADING) || line.match(BOLD_HEADING) || line.match(WORD_HEADING);
   if (!m) return null;
   return m[1].split(/\s+[—–-]\s+/)[0].replace(/:$/, "").trim();
@@ -60,12 +63,11 @@ function headingOf(line) {
 
 export function parseSheet(raw) {
   const rows = String(raw || "").slice(0, SHEET_MAX_CHARS).split(/\r?\n/).slice(0, SHEET_MAX_LINES);
-  const hasHeadings = rows.some((r) => headingOf(r.trim()));
+  const hasHeadings = rows.some((r) => headingOf(r));
   const sections = [];
   const lines = [];
   const skipped = [];
   let current = null;
-  let prevWasHeading = false;
   const ensureSection = () => {
     if (!current) {
       current = { id: `s${sections.length + 1}`, kind: "other", label: "" };
@@ -79,24 +81,22 @@ export function parseSheet(raw) {
     lines.push({ id: `l${lines.length + 1}`, sectionId: section.id, kind: soft ? "soft" : kind, text });
   };
   for (const row of rows) {
-    const label = headingOf(row.trim());
+    const label = headingOf(row);
     if (label) {
       current = { id: `s${sections.length + 1}`, kind: sectionKind(label), label };
       sections.push(current);
-      prevWasHeading = true;
       continue;
     }
     const text = clean(row);
     if (!text) continue;
     if (hasHeadings && !current) { skipped.push(text); continue; } // preamble before the first heading
     if (WHOLE_PAREN.test(text)) {
+      // Crowd responses belong to chorus-like sections and follow a sung line; elsewhere it is a stage note.
       const leadsSoFar = lines.some((l) => l.sectionId === current?.id && l.kind !== "response");
-      if (prevWasHeading || !leadsSoFar) skipped.push(text);
-      else push("response", text);
-      prevWasHeading = false;
+      if (leadsSoFar && RESPONSE_SECTIONS.has(current.kind)) push("response", text);
+      else skipped.push(text);
       continue;
     }
-    prevWasHeading = false;
     const inline = text.match(INLINE_RESPONSE);
     if (inline && !WHOLE_PAREN.test(inline[1])) {
       for (const part of splitLongLine(inline[1])) push("lead", part);
