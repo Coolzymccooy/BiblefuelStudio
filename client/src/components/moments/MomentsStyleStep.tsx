@@ -96,7 +96,8 @@ export function MomentsStyleStep({ project, meta, refresh, busy, setBusy, commit
               // Keyboard focus thickens it in the text colour, so a focused picked card still shows focus.
               className={`glass relative overflow-hidden rounded-bf text-left disabled:opacity-60 ${picked ? 'outline outline-2 outline-offset-2 outline-bf-gold focus-visible:outline-4 focus-visible:outline-bf-cream' : ''}`}
             >
-              <video src={`/moments/previews/${s.id}.mp4`} autoPlay muted loop playsInline preload="metadata" aria-hidden="true" className="aspect-[9/16] w-full object-cover" />
+              {/* The first-frame fragment keeps the card from staying blank where iOS will not autoplay (Low Power Mode). */}
+              <video src={`/moments/previews/${s.id}.mp4#t=0.001`} autoPlay muted loop playsInline preload="metadata" aria-hidden="true" className="aspect-[9/16] w-full object-cover" />
               {picked && (
                 // Visual only: aria-pressed already tells assistive tech which style is picked.
                 <span aria-hidden="true" className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-bf-gold px-2 py-0.5 text-xs font-semibold text-bf-bg shadow">

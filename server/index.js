@@ -56,6 +56,7 @@ import postizRouter from "./src/routes/postiz.js";
 import { createAdminRouter } from "./src/routes/admin.js";
 import issuesRouter from "./src/routes/issues.js";
 import { DATA_DIR, OUTPUT_DIR } from "./src/lib/paths.js";
+import { cacheControlForOutput, publicAssetHeaders } from "./src/lib/mediaCache.js";
 import { reconcilePersistedJobs } from "./src/lib/renderJobs.js";
 import { hasLibass } from "./src/lib/kinetic/capability.js";
 
@@ -134,24 +135,8 @@ if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 // strips Range-request support. The MP4 then arrives as a single 200 OK
 // stream instead of a 206 partial, and iOS shows the broken-play icon.
 // See: https://www.rfc-editor.org/rfc/rfc7234#section-5.2.1.6
-// Cache-Control depends on whether the file needs byte-range playback.
-//
-// Video/audio MUST be range-served (esp. iOS Safari + QuickTime, which refuse
-// to play without a 206 and show the broken-play icon). The origin honours
-// Range correctly (res.sendFile / express.static both emit 206), but
-// Cloudflare's shared cache stores these as chunked 200s and then answers
-// Range requests with a full 200 — so iOS breaks while desktop/Android (which
-// tolerate a plain 200) still play. Marking range-sensitive media `private`
-// keeps Cloudflare's SHARED cache from storing them, so it proxies the request
-// through and the origin's 206 reaches the device. Browsers still cache
-// (private allows the local cache). Images don't need ranges, so they stay
-// `public` and edge-cacheable.
-function cacheControlForOutput(name) {
-  const isRangeMedia = /\.(mp4|mov|webm|m4v|mp3|wav|m4a|aac|ogg)$/i.test(String(name || ""));
-  return isRangeMedia
-    ? "private, max-age=86400, no-transform"
-    : "public, max-age=86400, no-transform";
-}
+// Cache-Control depends on whether the file needs byte-range playback; see
+// src/lib/mediaCache.js for why video/audio must stay out of shared caches.
 
 // Force a real download when the client asks for it via ?dl=<filename>.
 // Without Content-Disposition: attachment the browser serves the MP4/MP3
@@ -337,7 +322,7 @@ app.use(["/sw.js", "/registerSW.js", "/manifest.webmanifest"], (req, res, next) 
   next();
 });
 
-app.use("/", express.static(publicDir));
+app.use("/", express.static(publicDir, { setHeaders: publicAssetHeaders }));
 
 app.use("/api/auth", authRouter);
 app.use("/api/jobs", requireAuth, withUserScope, jobsRouter);

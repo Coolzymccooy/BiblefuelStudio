@@ -28,7 +28,7 @@ describe('MomentsStyleStep', () => {
     render(<MomentsStyleStep {...props()} />);
     for (const name of ['Glow', 'Celebrate', 'Hype', 'Gallery']) expect(screen.getByRole('button', { name: new RegExp(name) })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /celebrate/i })).toHaveAttribute('aria-pressed', 'true');
-    const video = document.querySelector('video[src="/moments/previews/glow.mp4"]');
+    const video = document.querySelector('video[src="/moments/previews/glow.mp4#t=0.001"]');
     expect(video).not.toBeNull();
     expect(video).toHaveAttribute('loop');
   });
@@ -238,7 +238,7 @@ describe('MomentsStyleStep', () => {
 
   it('previews load metadata only until played', () => {
     render(<MomentsStyleStep {...props()} />);
-    expect(document.querySelector('video[src="/moments/previews/glow.mp4"]')).toHaveAttribute('preload', 'metadata');
+    expect(document.querySelector('video[src="/moments/previews/glow.mp4#t=0.001"]')).toHaveAttribute('preload', 'metadata');
   });
 
   it('disables everything while busy', () => {

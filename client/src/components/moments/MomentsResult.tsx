@@ -43,7 +43,8 @@ export function MomentsResult({ project, onShuffle, onRetry, onCancel, busy }: P
 
       {r?.status === 'done' && r.file && (
         <div className="space-y-3">
-          <video src={api.mediaUrl(r.file)} controls playsInline className="mx-auto aspect-[9/16] max-h-[70vh] rounded-bf bg-black" />
+          {/* iPhone Safari paints nothing before play; asking for the first frame shows the Moment instead of black. */}
+          <video src={`${api.mediaUrl(r.file)}#t=0.001`} controls playsInline preload="metadata" className="mx-auto aspect-[9/16] max-h-[70vh] rounded-bf bg-black" />
           <div className="flex flex-wrap justify-center gap-2">
             <button type="button" className={primaryBtnCls} onClick={() => api.downloadMedia(api.mediaUrl(r.file), 'moment.mp4')}>
               <Download size={16} /> Download
