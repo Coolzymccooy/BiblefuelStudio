@@ -137,6 +137,37 @@ describe('lyricVideoApi', () => {
     }
   });
 
+  it('judges a file with a generic or unrecognised type by its name', async () => {
+    vi.mocked(uploadMedia).mockResolvedValue({ file: '/o/s' });
+    vi.mocked(api.post).mockResolvedValue(reply({ project }));
+    const generic = 'application/octet-stream';
+    const cases: Array<[File, string]> = [
+      [new File(['x'], 'bounce.caf', { type: generic }), 'audio'],
+      [new File(['x'], 'take.aiff', { type: generic }), 'audio'],
+      [new File(['x'], 'master.FLAC', { type: generic }), 'audio'],
+      [new File(['x'], 'memo.m4a', { type: generic }), 'audio'],
+      [new File(['x'], 'song.mp3', { type: 'application/x-unknown' }), 'audio'],
+      [new File(['x'], 'clip.mov', { type: generic }), 'source-video'],
+      [new File(['x'], 'clip.mp4', { type: generic }), 'source-video'],
+      [new File(['x'], 'clip.webm', { type: generic }), 'source-video'],
+      [new File(['x'], 'mystery.bin', { type: generic }), 'source-video'],
+      [new File(['x'], 'noext', { type: generic }), 'source-video'],
+    ];
+    for (const [file, kind] of cases) {
+      vi.mocked(uploadMedia).mockClear();
+      await lyricVideoApi.uploadSong('lv_1', file);
+      expect(uploadMedia, `${file.name} (${file.type})`).toHaveBeenCalledWith(file, file.name, kind, undefined);
+    }
+  });
+
+  it('trusts an explicit video type over an audio-looking name', async () => {
+    vi.mocked(uploadMedia).mockResolvedValue({ file: '/o/s' });
+    vi.mocked(api.post).mockResolvedValue(reply({ project }));
+    const f = new File(['x'], 'clip.m4a', { type: 'video/mp4' });
+    await lyricVideoApi.uploadSong('lv_1', f);
+    expect(uploadMedia).toHaveBeenCalledWith(f, 'clip.m4a', 'source-video', undefined);
+  });
+
   it('does not attach a song that failed to upload', async () => {
     vi.mocked(uploadMedia).mockResolvedValue({ file: '' });
     const f = new File(['x'], 'song.mp3');

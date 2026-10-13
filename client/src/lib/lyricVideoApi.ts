@@ -63,13 +63,18 @@ const project = async (call: Promise<ApiResponse<{ project: LyricProject }>>) =>
 
 /**
  * A sound file goes up as audio, so the server keeps its own format and makes no video copy of it;
- * anything else is a video. A file with no type (some phones send none) is judged by its name.
+ * anything else is a video. An `audio/` or `video/` type is trusted; a file with no type or a
+ * generic one (some phones send `application/octet-stream` for a .caf or .flac) is judged by its name.
  */
 export function songUploadKind(file: File): UploadKind {
-  if (file.type) return file.type.startsWith('audio/') ? 'audio' : 'source-video';
+  const type = file.type.toLowerCase();
+  if (type.startsWith('audio/')) return 'audio';
+  if (type.startsWith('video/')) return 'source-video';
   const dot = file.name.lastIndexOf('.');
   const ext = dot >= 0 ? file.name.slice(dot).toLowerCase() : '';
-  return (AUDIO_EXTENSIONS as readonly string[]).includes(ext) ? 'audio' : 'source-video';
+  if ((AUDIO_EXTENSIONS as readonly string[]).includes(ext)) return 'audio';
+  // A video name (.mp4, .mov, .m4v, .webm, .mkv) and anything unrecognised go up as a video, as before.
+  return 'source-video';
 }
 
 export const lyricVideoApi = {
