@@ -18,6 +18,7 @@ describe('pageWidthClass', () => {
 
   it('gives the Ambient session the width of a music editor', () => {
     expect(pageWidthClass('/app/ambient')).toBe('max-w-[1400px]');
+    expect(pageWidthClass('/app/moments')).toBe('max-w-[1400px]');
   });
 
   it('gives Story Video the same width as Ambient (scenes beside their settings)', () => {

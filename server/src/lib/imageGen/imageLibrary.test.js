@@ -136,6 +136,51 @@ describe("pruneLibrary", () => {
     assert.equal(fs.existsSync(entries[0].path), true);
   });
 
+  describe("pictures a Moment references by id", () => {
+    const seed = async () => {
+      const entries = [];
+      for (let i = 0; i < 4; i++) {
+        entries.push(await registerImage({ dataDir, outputDir, sourcePath: writeImage(`m${i}.png`, [i]), prompt: `p${i}`, style: "s", aspect: "landscape", provider: "x", projectId: "p" }));
+      }
+      const lib = readLibrary(dataDir);
+      lib.items.find((it) => it.id === entries[0].id).lastUsedAt = 1; // oldest: referenced by a Moment
+      lib.items.find((it) => it.id === entries[1].id).lastUsedAt = 2; // next oldest: referenced by nothing
+      fs.writeFileSync(path.join(dataDir, "imageLibrary.json"), JSON.stringify(lib));
+      return entries;
+    };
+    const writeMoment = (name, body) => {
+      fs.mkdirSync(path.join(dataDir, "moments"), { recursive: true });
+      fs.writeFileSync(path.join(dataDir, "moments", name), typeof body === "string" ? body : JSON.stringify(body));
+    };
+
+    test("keeps a library image a Moment uses while evicting an unreferenced one", async () => {
+      const entries = await seed();
+      writeMoment("m1.json", { projectId: "m1", photos: [{ ref: { kind: "upload", path: "bg-image-x.png" } }, { ref: { kind: "library", id: entries[0].id } }] });
+      assert.equal(pruneLibrary({ dataDir, max: 2 }), 1);
+      assert.equal(fs.existsSync(entries[0].path), true, "the Moment's picture survives");
+      assert.equal(fs.existsSync(entries[1].path), false, "the unreferenced one is evicted");
+      assert.equal(readLibrary(dataDir).items.length, 3);
+    });
+
+    test("an upload ref whose path looks like a library id protects nothing", async () => {
+      const entries = await seed();
+      writeMoment("m1.json", { photos: [{ ref: { kind: "upload", id: entries[0].id, path: "bg-image-x.png" } }] });
+      assert.equal(pruneLibrary({ dataDir, max: 2 }), 2);
+      assert.equal(fs.existsSync(entries[0].path), false);
+    });
+
+    test("a corrupt Moment file and the beats subfolder do not break the prune", async () => {
+      const entries = await seed();
+      writeMoment("broken.json", "{ not json");
+      writeMoment("m1.json", { photos: [{ ref: { kind: "library", id: entries[0].id } }] });
+      fs.mkdirSync(path.join(dataDir, "moments", "beats"), { recursive: true });
+      fs.writeFileSync(path.join(dataDir, "moments", "beats", "analysis.json"), JSON.stringify({ photos: [{ ref: { kind: "library", id: entries[1].id } }] }));
+      assert.equal(pruneLibrary({ dataDir, max: 2 }), 1);
+      assert.equal(fs.existsSync(entries[0].path), true);
+      assert.equal(fs.existsSync(entries[1].path), false, "beats/ is not a project and protects nothing");
+    });
+  });
+
   test("does nothing when the library is under the cap", async () => {
     await registerImage({ dataDir, outputDir, sourcePath: writeImage("one.png", [4]), prompt: "p", style: "s", aspect: "landscape", provider: "x", projectId: "p" });
     assert.equal(pruneLibrary({ dataDir, max: 10 }), 0);

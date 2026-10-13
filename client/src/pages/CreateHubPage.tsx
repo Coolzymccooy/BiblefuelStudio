@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { Wand2, FileText, Clapperboard, BookOpen, Waves, ChevronRight, type LucideIcon } from 'lucide-react';
+import { Wand2, FileText, Clapperboard, BookOpen, Waves, PartyPopper, ChevronRight, type LucideIcon } from 'lucide-react';
 import { ScreenHeader } from '../components/ui/ScreenHeader';
 
 interface Tool {
@@ -10,6 +10,7 @@ interface Tool {
 }
 
 const tools: Tool[] = [
+    { to: '/app/moments', icon: PartyPopper, title: 'Moments', desc: 'Your photos cut to the beat: birthdays, sermons, events.' },
     { to: '/app/wizard', icon: Wand2, title: 'Wizard', desc: 'Guided end-to-end: script, voice, timeline, render.' },
     { to: '/app/scripts', icon: FileText, title: 'Scripts', desc: 'Write or generate a hook, verse, reflection, and CTA.' },
     { to: '/app/story', icon: Clapperboard, title: 'Story Video', desc: 'Turn a passage into cinematic, captioned scenes.' },

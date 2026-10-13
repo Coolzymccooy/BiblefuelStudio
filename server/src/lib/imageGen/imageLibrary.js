@@ -210,6 +210,31 @@ export function referencedImagePaths(dataDir) {
 }
 
 /**
+ * Library item ids the user's Moments still point at. A Moment keeps a library
+ * photo as `ref: { kind: "library", id }`, not as a path, so referencedImagePaths
+ * cannot see it. Reads only the project files directly in the folder: a beats/
+ * subfolder holds analyses, not projects. Unreadable files are skipped.
+ */
+export function referencedLibraryIds(dataDir) {
+  const found = new Set();
+  // Must match PROJECTS_SUBDIR in lib/moments/projectStore.js (not imported: that
+  // would drag the Moments engine into the image library).
+  const dir = path.join(dataDir, "moments");
+  let names = [];
+  try { names = fs.readdirSync(dir).filter((n) => n.endsWith(".json")); } catch { return found; }
+  for (const name of names) {
+    try {
+      const photos = JSON.parse(fs.readFileSync(path.join(dir, name), "utf8"))?.photos;
+      if (!Array.isArray(photos)) continue;
+      for (const p of photos) {
+        if (p?.ref?.kind === "library" && p.ref.id != null) found.add(String(p.ref.id));
+      }
+    } catch { /* unreadable or a directory: skip */ }
+  }
+  return found;
+}
+
+/**
  * Cap the library, evicting least-recently-used entries and their files.
  * Entries a project still uses are kept even past the cap: they are in use,
  * and they are evicted in a later prune once nothing points at them.
@@ -220,10 +245,12 @@ export function pruneLibrary({ dataDir, max = DEFAULT_MAX_ITEMS }) {
     if (lib.items.length <= max) return 0;
     const sorted = [...lib.items].sort((a, b) => (Number(b?.lastUsedAt) || 0) - (Number(a?.lastUsedAt) || 0));
     const inUse = referencedImagePaths(dataDir);
+    const momentIds = referencedLibraryIds(dataDir);
     const keep = [];
     const evict = [];
     sorted.forEach((item, i) => {
-      if (i < max || (item?.path && inUse.has(path.resolve(item.path)))) keep.push(item);
+      const used = (item?.path && inUse.has(path.resolve(item.path))) || (item?.id != null && momentIds.has(String(item.id)));
+      if (i < max || used) keep.push(item);
       else evict.push(item);
     });
     if (evict.length === 0) return 0;
