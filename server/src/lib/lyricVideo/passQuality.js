@@ -6,7 +6,20 @@ const MAX_GRAM = 3;
 const MIN_HIT_RATE = 0.2;
 const HALLUCINATIONS = [["thanks", "for", "watching"], ["like", "and", "subscribe"], ["subscribe"]];
 
-const isMusic = (w) => /♪/.test(w.word) || !normWord(w.word);
+/**
+ * Everyday words that any chatter shares with any lyric ("I don't know what
+ * to say"), so hearing them is no evidence that the lyrics were heard. They
+ * still count as heard words; they just never count as hits.
+ */
+const COMMON = new Set([
+  "i", "me", "my", "you", "your", "we", "us", "our", "he", "she", "it", "they", "them", "his", "her",
+  "the", "a", "an", "and", "or", "but", "so", "to", "of", "in", "on", "at", "for", "with", "by", "from",
+  "is", "am", "are", "was", "be", "do", "don't", "dont", "not", "no", "yes", "oh", "eh", "yeah", "ah",
+  "go", "know", "what", "that", "this", "there", "here", "will", "can", "just", "like", "all", "one",
+  "up", "out", "if", "when", "now", "then", "get", "got",
+]);
+
+const isMusic =(w) => /♪/.test(w.word) || !normWord(w.word);
 
 /** Drop every run of the given hallucinated phrase. */
 function dropPhrase(words, phrase) {
@@ -43,7 +56,10 @@ export function rejectPass(words, expected) {
   const real = (words || []).filter((w) => !isMusic(w));
   if (!real.length) return "heard nothing";
   for (let i = 1; i < real.length; i += 1) if (real[i].start < real[i - 1].start) return "times out of order";
-  const hits = real.filter((w) => expected.has(normWord(w.word))).length;
+  const hits = real.filter((w) => {
+    const norm = normWord(w.word);
+    return expected.has(norm) && !COMMON.has(norm);
+  }).length;
   if (hits / real.length < MIN_HIT_RATE) return "did not hear the expected lyrics";
   return null;
 }

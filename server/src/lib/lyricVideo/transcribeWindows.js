@@ -11,6 +11,8 @@ const NEXT_LINES = 8;
 const LOW = 0.5;
 const RUN = 3;
 const KEEP_AFTER_SEC = 0.5; // heard words kept just past the frontier
+const PACE_SLACK = 1.5; // songs are not sung at an even pace
+const MAX_AUDIO_FACTOR = 3; // all passes together send Whisper at most this many times the song's length
 
 /**
  * The last line heard with confidence, before the first run of RUN lines heard
@@ -44,7 +46,19 @@ function expectedWords(lines) {
   return new Set(lines.flatMap((l) => String(l.text).split(/\s+/).flatMap((w) => w.split("-")).map(normWord)).filter(Boolean));
 }
 
-const passRecord = (from, to, reason) => ({ from, to, status: reason ? "rejected" : "used", ...(reason ? { reason } : {}) });
+/**
+ * How many lines past the frontier a window's words may come from: the next
+ * NEXT_LINES, or as many as the song could sing (at its average pace, with
+ * slack) between the last confidently placed line and the window's end. A
+ * window right after the frontier is held to the lines its prompt names; one
+ * far past it (earlier windows heard nothing) may be anywhere in that stretch.
+ * Bounded either way, so chatter cannot match the whole sheet's vocabulary.
+ */
+function expectedSpan(linesPerSec, secsSinceAnchor) {
+  return Math.max(NEXT_LINES, Math.ceil(Math.max(0, secsSinceAnchor) * linesPerSec * PACE_SLACK));
+}
+
+const passRecord =(from, to, reason) => ({ from, to, status: reason ? "rejected" : "used", ...(reason ? { reason } : {}) });
 
 /** Pass 0: the whole song, prompted with the sheet, kept only up to its reliable prefix (spec §5.3 steps 1–2). */
 async function firstPass({ audioPath, durationSec, lines, transcribe }) {
@@ -59,19 +73,26 @@ async function firstPass({ audioPath, durationSec, lines, transcribe }) {
   return { pass, heard: words.filter((w) => w.start < frontierTime + KEEP_AFTER_SEC), frontier: last + 1, frontierTime };
 }
 
-/** One window from `from`, retried once narrower when its words are rejected. `got` is null when both tries were. */
-async function hearWindow({ from, durationSec, prompt, expected, transcribe, cutAudio, onProgress, windowNo }) {
+/**
+ * One window from `from`, retried once narrower when its words are rejected.
+ * `got` is null when no try was used; `spent` is the audio sent; `broke` says
+ * a try was skipped because it would go over `budget` seconds of audio.
+ */
+async function hearWindow({ from, durationSec, budget, prompt, expected, transcribe, cutAudio, onProgress, windowNo }) {
   const records = [];
+  let spent = 0;
   for (const len of [WINDOW_SEC, RETRY_SEC]) {
     const to = Math.min(durationSec, from + len);
+    if (spent + (to - from) > budget) return { got: null, records, spent, broke: true };
     onProgress?.({ window: windowNo, from, to });
     const res = await transcribe(await cutAudio(from, to), prompt);
+    spent += to - from;
     const words = trimLoops(shift(res.words || [], from));
     const reason = rejectPass(words, expected);
     records.push(passRecord(from, to, reason));
-    if (!reason) return { got: { words, to }, records };
+    if (!reason) return { got: { words, to }, records, spent, broke: false };
   }
-  return { got: null, records };
+  return { got: null, records, spent, broke: false };
 }
 
 /**
@@ -83,16 +104,20 @@ export async function transcribeSong({ audioPath, durationSec, lines, transcribe
   const first = await firstPass({ audioPath, durationSec, lines, transcribe });
   let passes = [first.pass];
   let { heard, frontier, frontierTime } = first;
+  let anchorTime = frontierTime; // end of the last line placed with confidence
+  let budget = MAX_AUDIO_FACTOR * durationSec - durationSec; // pass 0 heard the whole song once
   let windowNo = 0;
   const maxWindows = Math.ceil(durationSec / 10) + 5;
   while (frontier < lines.length && frontierTime < durationSec - 1 && windowNo < maxWindows) {
     windowNo += 1;
     const from = Math.max(0, frontierTime - BACKUP_SEC);
     const prompt = promptFor(lines.slice(frontier, frontier + NEXT_LINES));
-    // Anything still to come counts as expected: the singer may be further on than the frontier.
-    const expected = expectedWords(lines.slice(Math.max(0, frontier - 1)));
-    const { got, records } = await hearWindow({ from, durationSec, prompt, expected, transcribe, cutAudio, onProgress, windowNo });
+    const span = expectedSpan(lines.length / durationSec, Math.min(durationSec, from + WINDOW_SEC) - anchorTime);
+    const expected = expectedWords(lines.slice(Math.max(0, frontier - 1), frontier + span));
+    const { got, records, spent, broke } = await hearWindow({ from, durationSec, budget, prompt, expected, transcribe, cutAudio, onProgress, windowNo });
     passes = [...passes, ...records];
+    budget -= spent;
+    if (broke) break;
     if (!got) { frontierTime = Math.min(durationSec, from + RETRY_SEC); continue; }
     heard = [...heard.filter((w) => w.start < frontierTime), ...got.words.filter((w) => w.start >= frontierTime)];
     if (got.to >= durationSec) break;
@@ -102,6 +127,7 @@ export async function transcribeSong({ audioPath, durationSec, lines, transcribe
     const advanced = lineTime > frontierTime + MIN_ADVANCE_SEC;
     if (last >= frontier) frontier = last + 1;
     frontierTime = advanced ? lineTime : got.to - OVERLAP_SEC;
+    if (advanced) anchorTime = lineTime;
     heard = heard.filter((w) => w.start < frontierTime + KEEP_AFTER_SEC);
   }
   return { heard, passes };

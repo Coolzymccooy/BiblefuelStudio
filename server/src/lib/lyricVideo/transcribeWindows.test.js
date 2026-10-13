@@ -137,18 +137,48 @@ describe("transcribeSong on the reference song", () => {
     assert.equal(heard.filter((w) => w.start < 70).length, pass0.filter((w) => w.start < 70).length);
   });
 
-  test("a song Whisper never hears still ends, each window tried twice", async () => {
+  test("a song Whisper never hears still ends within the budget, each window tried twice", async () => {
     const { lines } = parseSheet(sheet);
     const transcribe = async () => ({ words: [{ word: "♪", start: 0, end: 1 }, { word: "Thanks", start: 1, end: 2 }, { word: "for", start: 2, end: 3 }, { word: "watching", start: 3, end: 4 }] });
     const { heard, passes } = await transcribeSong({ audioPath: "song.m4a", durationSec: DURATION, lines, transcribe, cutAudio: async (a, b) => `cut:${a}:${b}` });
     assert.deepEqual(heard, []);
     assert.ok(passes.every((p) => p.status === "rejected" && /nothing/.test(p.reason)));
     const windows = passes.slice(1);
+    assert.ok(windows.length >= 4, "tried several windows");
     for (let k = 0; k + 1 < windows.length; k += 2) {
       assert.equal(windows[k + 1].from, windows[k].from);
       assert.ok(windows[k + 1].to - windows[k + 1].from <= 15);
     }
-    assert.ok(windows[windows.length - 1].to >= DURATION - 1);
+    const audio = DURATION + windows.reduce((sum, p) => sum + (p.to - p.from), 0);
+    assert.ok(audio <= 3 * DURATION, `sent ${audio.toFixed(0)} s`);
+  });
+
+  test("everyday English junk in the windows is rejected and places no line", async () => {
+    const { lines } = parseSheet(sheet);
+    for (const junk of ["I don't know what to say I don't know what to do", "Thank you so much for watching and I will see you in the next video"]) {
+      const words = junk.split(" ").map((w, i) => ({ word: w, start: 3 + i * 0.4, end: 3 + i * 0.4 + 0.3 }));
+      const transcribe = async (file) => ({ words: file === "song.m4a" ? [] : words });
+      const { heard, passes } = await transcribeSong({ audioPath: "song.m4a", durationSec: DURATION, lines, transcribe, cutAudio: async (a, b) => `cut:${a}:${b}` });
+      const windows = passes.slice(1);
+      assert.ok(windows.length > 0 && windows.every((p) => p.status === "rejected"), `${junk}: ${windows.filter((p) => p.status === "used").length} windows used`);
+      const placed = placeLines(lines, heard, { durationSec: DURATION });
+      const sure = placed.filter((l) => l.confidence >= 0.6);
+      assert.equal(sure.length, 0, `${junk}: placed ${sure.map((l) => `${l.start} ${l.text}`).join(", ")}`);
+    }
+  });
+
+  test("never sends Whisper more than three times the song's audio", async () => {
+    const { lines } = parseSheet(sheet);
+    let sent = 0;
+    const cutAudio = async (a, b) => `cut:${a}:${b}`;
+    const transcribe = async (file) => {
+      if (file === "song.m4a") sent += DURATION;
+      else { const [, a, b] = file.split(":").map(Number); sent += b - a; }
+      return { words: [] };
+    };
+    const { passes } = await transcribeSong({ audioPath: "song.m4a", durationSec: DURATION, lines, transcribe, cutAudio });
+    assert.ok(sent <= 3 * DURATION, `sent ${sent.toFixed(0)} s for a ${DURATION} s song`);
+    assert.ok(passes.length >= 3, "still tried some windows");
   });
 
   test("after an empty first pass the prompts catch up with the song", async () => {
@@ -156,7 +186,9 @@ describe("transcribeSong on the reference song", () => {
     const f = fakes({ first: [] });
     await transcribeSong({ audioPath: "song.m4a", durationSec: DURATION, lines, ...f });
     const last = f.calls[f.calls.length - 1];
-    assert.match(last.prompt, /Nobody fit stop wetin God don start!/, `last prompt was: ${last.prompt}`);
+    // The outro: "Who talk say?" ×2, "Nobody fit stop wetin God don start!", "Eh-yeah!"
+    const outro = lines.slice(-4).map((l) => l.text);
+    assert.ok(outro.some((t) => last.prompt.startsWith(t)), `last prompt was: ${last.prompt}`);
   });
 
   test("windows move on instead of crawling after a looping first pass", async () => {

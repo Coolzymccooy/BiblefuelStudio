@@ -22,6 +22,21 @@ test("sends the prompt and word timestamps, returns words", async () => {
   assert.equal(sent.getAll("timestamp_granularities[]")[0], "word");
 });
 
+test("drops words whose times are not numbers", async () => {
+  const f = path.join(os.tmpdir(), "wp-test.m4a");
+  fs.writeFileSync(f, "x");
+  const words = [
+    { word: "Eh", start: 0, end: 0.4 },
+    { word: "yeah", start: "soon", end: 0.9 },
+    { word: "eh", start: 1, end: null },
+    { word: "yeah", start: 1.2 },
+    { word: "Dem", start: 1.5, end: 1.8 },
+  ];
+  const fetchImpl = async () => ({ ok: true, json: async () => ({ words }) });
+  const out = await transcribePrompted(f, "x", { fetchImpl, apiKey: "k" });
+  assert.deepEqual(out.words, [{ word: "Eh", start: 0, end: 0.4 }, { word: "Dem", start: 1.5, end: 1.8 }]);
+});
+
 test("an HTTP error throws with the status", async () => {
   const f = path.join(os.tmpdir(), "wp-test.m4a");
   fs.writeFileSync(f, "x");

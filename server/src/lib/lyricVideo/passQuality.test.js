@@ -32,6 +32,12 @@ describe("rejectPass", () => {
     assert.match(rejectPass(W("♪ ♪"), expected), /nothing/);
     assert.match(rejectPass(W("subscribe now please like share"), expected), /lyrics/);
   });
+  test("everyday words alone are no evidence of the lyrics", () => {
+    const lyric = new Set(["dem", "say", "make", "i", "calm", "down", "no", "wahala", "you", "to", "the", "know", "what"]);
+    assert.match(rejectPass(W("I don't know what to say I don't know what to do"), lyric), /lyrics/);
+    assert.match(rejectPass(W("you you you know what I mean"), lyric), /lyrics/);
+    assert.equal(rejectPass(W("eh yeah dem say make I calm down"), lyric), null);
+  });
   test("rejects times that go backwards", () => {
     const words = W("from lagos traffic");
     words[2].start = 0;
