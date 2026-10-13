@@ -1,9 +1,10 @@
-import { fitSize } from "../text.js";
+import { fitSize, widthAt } from "../text.js";
 import { CENTRE, maxWidthFor, isTall } from "../layout.js";
-import { caseText, fontsFor, holdEnd, inkAllowance, lineEvent } from "./common.js";
+import { caseText, fontsFor, holdEnd, inkAllowance, lineEvent, shortsCentre, shortsMargin } from "./common.js";
 
 const BORD = 6;
 const SHAD = 4;
+const POP = 150;
 const INTRO_MIN = 0.6; // a card on screen for less than this is too short to read, so it is skipped
 const INTRO_MAX = 3;
 const SECOND_LINE_DELAY = 0.25;
@@ -36,10 +37,13 @@ function titleEvents({ words, look, w, h, aspect, end, rot }) {
   const fs = fitSize(fonts.hit.file, lines.map((ln) => ln.map((x) => x.text).join(" ")), preferred, budget, 40);
   const anchor = CENTRE[aspect] || CENTRE.wide;
   const lineGap = fs * 1.0;
-  const y0 = anchor.y * h - ((lines.length - 1) * lineGap) / 2;
+  const widest = Math.max(...lines.map((ln) => widthAt(fonts.hit.file, ln.map((x) => x.text).join(" "), fs)));
+  const margin = shortsMargin({ aspect, lineGap, fs, bord: BORD, rot, width: widest, pop: POP });
+  const cy = shortsCentre({ aspect, cy: anchor.y * h, blockHeight: lines.length * lineGap, margin, h });
+  const y0 = cy - ((lines.length - 1) * lineGap) / 2;
   return lines.map((ln, i) => lineEvent({
     start: ln[0].t, end, x: anchor.x * w, y: y0 + i * lineGap, fs, family: fonts.hit.family,
-    rot, pop: 150, bord: BORD, shad: SHAD, outline: look.outline, words: ln, layer: 2,
+    rot, pop: POP, bord: BORD, shad: SHAD, outline: look.outline, words: ln, layer: 2,
   }));
 }
 
