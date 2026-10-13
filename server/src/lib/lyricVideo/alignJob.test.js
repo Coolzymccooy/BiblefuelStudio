@@ -1,0 +1,290 @@
+// server/src/lib/lyricVideo/alignJob.test.js
+import { test, describe, beforeEach, afterEach } from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { createProject, readProject, writeProject, updateProject, deleteProject, applySheet } from "./projectStore.js";
+import { runAlignJob, isAligning, explainFailure } from "./alignJob.js";
+import { decodeMono } from "./beats.js";
+
+let dir;
+beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), "lyric-job-")); });
+afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+
+const SHEET = "[INTRO]\nMy time no late\n[CHORUS]\nWho talk say?\n(WHO TALK SAY?!)";
+function setup() {
+  let p = createProject(dir, { title: "T", artist: "A" });
+  p = applySheet(p, SHEET);
+  p.song = { file: path.join(dir, "song.m4a"), durationSec: 20 };
+  return writeProject(dir, p);
+}
+const heardSong = [
+  { word: "My", start: 1, end: 1.3 }, { word: "time", start: 1.3, end: 1.6 }, { word: "no", start: 1.6, end: 1.9 }, { word: "late", start: 1.9, end: 2.4 },
+  { word: "Who", start: 5, end: 5.3 }, { word: "talk", start: 5.3, end: 5.6 }, { word: "say", start: 5.6, end: 6 },
+];
+const PREPARED = () => path.join(dir, "prepared.m4a");
+/** Hears the song only in the full prepared file; a cut window returns times relative to its cut, so a fake must not hand back song-time words for it. */
+const hearsFullSong = (onCall) => async (file, prompt) => {
+  await onCall?.(file, prompt);
+  return { words: file === PREPARED() ? heardSong : [] };
+};
+const deps = (over = {}) => ({
+  prepareAudio: async () => PREPARED(),
+  cutAudio: async (from, to) => `cut:${from}:${to}`,
+  transcribe: hearsFullSong(),
+  detectBeats: async () => ({ bpm: 120, times: [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5] }),
+  log: () => {},
+  ...over,
+});
+const run = (p, over) => runAlignJob({ dataDir: dir, workDir: dir, projectId: p.projectId, deps: deps(over) });
+
+test("places lines, sets section starts on the beat, stores beats", async () => {
+  const p = setup();
+  const done = await run(p);
+  assert.equal(done.timing.status, "done");
+  assert.equal(done.timing.progress, null);
+  assert.equal(done.lines[0].start, 1);
+  assert.equal(done.lines[1].start, 5);
+  assert.equal(done.lines[2].kind, "response");
+  assert.equal(done.lines[2].flag, "check");
+  assert.equal(done.sections[1].start, 4.5); // 5 minus half a beat (0.25) snapped to the grid
+  assert.equal(done.timing.beats.bpm, 120);
+  assert.ok(Array.isArray(done.timing.passes) && done.timing.passes.length >= 1);
+  assert.equal(readProject(dir, p.projectId).timing.status, "done");
+  assert.equal(isAligning(p.projectId), false);
+});
+
+test("saves progress into the project while it runs", async () => {
+  const p = setup();
+  const seen = [];
+  await run(p, { transcribe: hearsFullSong(() => seen.push(readProject(dir, p.projectId).timing)) });
+  assert.equal(seen[0].status, "running");
+  assert.equal(seen[0].progress.step, "listening");
+  const windowed = seen.find((t) => t.progress?.window);
+  assert.ok(windowed, "a window's progress was saved");
+  assert.ok(windowed.progress.total >= windowed.progress.window);
+});
+
+test("with no beat found, section starts are the first line's start, unsnapped", async () => {
+  const p = setup();
+  const done = await run(p, { detectBeats: async () => ({ bpm: 0, times: [] }) });
+  assert.equal(done.timing.status, "done");
+  assert.equal(done.sections[1].start, 5);
+  assert.equal(done.sections[0].start, 1);
+  assert.deepEqual(done.timing.beats, { bpm: 0, times: [] });
+});
+
+describe("failures are stored in plain English, with the detail in the log", () => {
+  const cases = [
+    ["Whisper 429: rate limited", /busy/],
+    ["Whisper 503: upstream", /problem/],
+    ["Whisper 401: bad key", /key/],
+    ["OPENAI_API_KEY is not set on the server", /not set up/],
+    ["ffmpeg exited 1: Invalid data found when processing input", /audio/],
+    ["fetch failed", /reach/],
+  ];
+  for (const [raw, expected] of cases) {
+    test(raw, async () => {
+      const p = setup();
+      const logged = [];
+      const done = await run(p, { transcribe: async () => { throw new Error(raw); }, log: (...a) => logged.push(a.join(" ")) });
+      assert.equal(done.timing.status, "error");
+      assert.match(done.timing.error, expected);
+      assert.doesNotMatch(done.timing.error, /Whisper|ffmpeg|OPENAI|\d{3}/);
+      assert.ok(logged.some((l) => l.includes(p.projectId) && l.includes(raw)), "the log names the project and keeps the detail");
+      assert.equal(isAligning(p.projectId), false);
+    });
+  }
+  test("a Whisper timeout", async () => {
+    assert.match(explainFailure(Object.assign(new Error("This operation was aborted"), { name: "AbortError" })), /too long/);
+  });
+  test("an unknown failure still gets a plain message", async () => {
+    assert.match(explainFailure(new Error("x is not a function")), /run it again/);
+  });
+  test("a failure keeps the lines as they were", async () => {
+    const p = setup();
+    const before = readProject(dir, p.projectId).lines;
+    const done = await run(p, { transcribe: async () => { throw new Error("Whisper 429: busy"); } });
+    assert.deepEqual(done.lines, before);
+  });
+  test("no song and no lyrics say what to do", async () => {
+    let p = setup();
+    p = writeProject(dir, { ...p, song: null });
+    assert.match((await run(p)).timing.error, /Add the song/);
+    p = writeProject(dir, { ...p, song: { file: "x", durationSec: 20 }, lines: [] });
+    assert.match((await run(p)).timing.error, /Paste the lyrics/);
+  });
+});
+
+test("locked lines keep their timing on a re-run", async () => {
+  let p = setup();
+  p.lines[0] = { ...p.lines[0], locked: true, words: [{ text: "My", start: 0.5, end: 0.8 }, { text: "time", start: 0.8, end: 1 }, { text: "no", start: 1, end: 1.2 }, { text: "late", start: 1.2, end: 1.5 }], start: 0.5, end: 1.5 };
+  p = writeProject(dir, p);
+  const done = await run(p);
+  assert.equal(done.lines[0].start, 0.5);
+  assert.equal(done.lines[0].locked, true);
+});
+
+describe("edits made while the job runs", () => {
+  test("a line the user locked mid-job keeps the user's timing", async () => {
+    const p = setup();
+    let edited = false;
+    const done = await run(p, {
+      detectBeats: async () => ({ bpm: 0, times: [] }),
+      transcribe: hearsFullSong(() => {
+        if (edited) return;
+        edited = true;
+        updateProject(dir, p.projectId, (latest) => ({
+          ...latest,
+          lines: latest.lines.map((l, i) => (i === 1 ? { ...l, locked: true, start: 9, end: 10, words: [{ text: "Who", start: 9, end: 9.3 }, { text: "talk", start: 9.3, end: 9.6 }, { text: "say", start: 9.6, end: 10 }] } : l)),
+        }));
+      }),
+    });
+    assert.equal(done.timing.status, "done");
+    assert.equal(done.lines[1].locked, true);
+    assert.equal(done.lines[1].start, 9);
+    assert.equal(done.lines[1].words[0].start, 9);
+    assert.equal(done.lines[0].start, 1); // the rest uses the job's placement
+    assert.equal(done.sections[1].start, 9); // the section follows the locked line
+  });
+
+  test("an effect picked mid-job is kept", async () => {
+    const p = setup();
+    const done = await run(p, {
+      transcribe: hearsFullSong(() => updateProject(dir, p.projectId, (l) => ({ ...l, lines: l.lines.map((x, i) => (i === 0 ? { ...x, effect: "slam" } : x)) }))),
+    });
+    assert.equal(done.lines[0].effect, "slam");
+    assert.equal(done.lines[0].start, 1);
+  });
+
+  test("lyrics changed mid-job: an error, and no placements are written", async () => {
+    const p = setup();
+    let mid = null;
+    const done = await run(p, {
+      transcribe: hearsFullSong(() => {
+        if (mid) return;
+        updateProject(dir, p.projectId, (latest) => applySheet(latest, "[INTRO]\nSomething else entirely"));
+        mid = readProject(dir, p.projectId);
+      }),
+    });
+    assert.equal(done.timing.status, "error");
+    assert.equal(done.timing.error, "The lyrics changed while timing ran — run timing again.");
+    assert.deepEqual(done.lines, mid.lines);
+    assert.deepEqual(done.sections, mid.sections);
+    assert.equal(readProject(dir, p.projectId).timing.error, done.timing.error);
+  });
+
+  test("project deleted mid-job: ends silently and nothing is recreated", async () => {
+    const p = setup();
+    let calls = 0;
+    const done = await run(p, { transcribe: hearsFullSong(() => { calls += 1; deleteProject(dir, p.projectId); }) });
+    assert.equal(done, null);
+    assert.equal(readProject(dir, p.projectId), null);
+    const left = fs.existsSync(path.join(dir, "lyric-projects")) ? fs.readdirSync(path.join(dir, "lyric-projects")) : [];
+    assert.deepEqual(left, []);
+    assert.equal(calls, 1, "no more Whisper calls once the project is gone");
+    assert.equal(isAligning(p.projectId), false);
+  });
+
+  test("a project that is already gone returns null without throwing", async () => {
+    const p = setup();
+    deleteProject(dir, p.projectId);
+    assert.equal(await run(p), null);
+  });
+});
+
+test("one job per project at a time", async () => {
+  const p = setup();
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  let entered;
+  const inside = new Promise((r) => { entered = r; });
+  const first = run(p, { transcribe: hearsFullSong(async () => { entered(); await gate; }) });
+  await inside;
+  assert.equal(isAligning(p.projectId), true);
+  const second = await run(p);
+  assert.equal(second.timing.status, "running");
+  release();
+  assert.equal((await first).timing.status, "done");
+  assert.equal(isAligning(p.projectId), false);
+});
+
+const FF = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
+const hasFfmpeg = spawnSync(FF, ["-version"]).status === 0;
+
+describe("with real ffmpeg", { skip: !hasFfmpeg && "ffmpeg not installed" }, () => {
+  // 70 s of silence with one second of tone starting at exactly 40.0 s.
+  const BURST_AT = 40;
+  function makeSong() {
+    const file = path.join(dir, "burst.m4a");
+    const r = spawnSync(FF, ["-v", "error", "-f", "lavfi", "-i", `aevalsrc=0.5*sin(2*PI*440*t)*between(t\\,${BURST_AT}\\,${BURST_AT + 1}):d=70:s=16000`, "-c:a", "aac", "-b:a", "96k", file]);
+    assert.equal(r.status, 0, String(r.stderr));
+    return file;
+  }
+  const onsetOf = async (file) => {
+    const x = await decodeMono(file, 16000);
+    return x.findIndex((v) => Math.abs(v) > 0.1) / 16000;
+  };
+  const realSetup = (name) => {
+    let p = createProject(dir, { title: name, artist: "A" });
+    p = applySheet(p, SHEET);
+    p.song = { file: makeSong.file, durationSec: 70 };
+    return writeProject(dir, p);
+  };
+  const leftovers = () => fs.readdirSync(dir).filter((f) => f.startsWith("lyric-lv_"));
+
+  test("windows are cut where they say, temp files are named per project and removed afterwards", async () => {
+    makeSong.file = makeSong();
+    const a = realSetup("A");
+    const b = realSetup("B");
+    const seen = [];
+    const hear = (id) => async (file) => {
+      if (path.extname(file) === ".wav") {
+        const m = /-cut-(\d+)-(\d+)\.wav$/.exec(file);
+        seen.push({ id, file, from: Number(m[1]) / 1000, to: Number(m[2]) / 1000, onset: await onsetOf(file), size: fs.statSync(file).size });
+      } else {
+        assert.ok(fs.existsSync(file), "the prepared file exists while it is used");
+      }
+      return { words: [] };
+    };
+    const real = { detectBeats: async () => ({ bpm: 0, times: [] }), log: () => {} };
+    const [doneA, doneB] = await Promise.all([
+      runAlignJob({ dataDir: dir, workDir: dir, projectId: a.projectId, deps: { ...real, transcribe: hear("A") } }),
+      runAlignJob({ dataDir: dir, workDir: dir, projectId: b.projectId, deps: { ...real, transcribe: hear("B") } }),
+    ]);
+    assert.equal(doneA.timing.status, "done");
+    assert.equal(doneB.timing.status, "done");
+    const hit = seen.filter((s) => s.from < BURST_AT && s.to > BURST_AT + 0.5);
+    assert.ok(hit.length >= 4, `windows over the tone: ${hit.length}`);
+    for (const s of hit) {
+      assert.ok(Math.abs(s.onset - (BURST_AT - s.from)) < 0.02, `window from ${s.from}: tone starts at ${s.onset}, expected ${BURST_AT - s.from}`);
+    }
+    for (const s of seen) {
+      assert.ok(path.basename(s.file).startsWith(`lyric-${s.id === "A" ? a.projectId : b.projectId}-`), "cut files are named for their own project");
+      assert.ok(s.size < 1.1e6 + 1000, `a cut is small (${s.size} bytes)`);
+    }
+    assert.deepEqual(leftovers(), []);
+  });
+
+  test("temp files are removed when the job fails too", async () => {
+    makeSong.file = makeSong();
+    const p = realSetup("A");
+    const done = await runAlignJob({
+      dataDir: dir, workDir: dir, projectId: p.projectId,
+      deps: { transcribe: async (file) => { if (file.endsWith(".wav")) throw new Error("Whisper 503: down"); return { words: [] }; }, log: () => {} },
+    });
+    assert.equal(done.timing.status, "error");
+    assert.match(done.timing.error, /problem/);
+    assert.deepEqual(leftovers(), []);
+  });
+
+  test("a song ffmpeg cannot read is a plain error", async () => {
+    const p = setup(); // song.m4a does not exist
+    const done = await runAlignJob({ dataDir: dir, workDir: dir, projectId: p.projectId, deps: { transcribe: async () => ({ words: [] }), log: () => {} } });
+    assert.equal(done.timing.status, "error");
+    assert.match(done.timing.error, /Could not read this song's audio/);
+    assert.deepEqual(leftovers(), []);
+  });
+});
