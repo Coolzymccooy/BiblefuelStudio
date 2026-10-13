@@ -12,6 +12,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { v4 as uuid } from "uuid";
 import { confineToDir } from "../lib/confinePath.js";
+import { hasDiskHeadroomForUpload } from "../lib/diskHeadroom.js";
 import { probeAudioDurationSec } from "../lib/story/storyRender.js";
 import { probeMediaSize } from "../lib/story/sceneFraming.js";
 import { createJob, persistJob, readPersistedJob, getJob, updateJob, markError, cancelJob } from "../lib/renderJobs.js";
@@ -29,6 +30,11 @@ import { quota } from "../middleware/quota.js";
 const EFFECTS_ALLOWED = new Set(["auto", ...EFFECT_IDS]);
 const ASPECTS = ["portrait", "landscape", "square"];
 const QUALITIES = ["720p", "1080p"];
+const MAX_SONG_SEC = 15 * 60;
+const MAX_CONCURRENT_RENDERS = 2; // prod: 8 cores, no swap, ~0.5-1 GB per x264 encode
+// Output size estimate for the disk check: the encoder's target bitrate plus 192k audio.
+const VIDEO_BPS = { "720p": 6e6, "1080p": 12e6 };
+const AUDIO_BPS = 192000;
 const FITS = ["auto", "cover", "contain"];
 const MIN_GAP = 0.05;
 const CAPTION_MIN = 160;
@@ -119,6 +125,23 @@ function removeFile(file) {
   try { fs.rmSync(file, { force: true }); } catch { /* a leftover scratch file is harmless */ }
 }
 
+/**
+ * Confines a request path to the outputs folder, following links: the real path
+ * of the file must sit inside the real outputs folder (a link inside it that
+ * points elsewhere is refused). Returns the real path, or null.
+ */
+function confineReal(outputDir, candidate) {
+  const lexical = confineToDir(outputDir, candidate);
+  if (!lexical) return null;
+  try {
+    const realFile = fs.realpathSync(lexical);
+    const realRoot = fs.realpathSync(outputDir);
+    return realFile.startsWith(realRoot + path.sep) ? realFile : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Removes a file this feature made, only when it lives inside the user's output folder. */
 function removeOwned(outputDir, file) {
   const confined = typeof file === "string" ? confineToDir(outputDir, file) : null;
@@ -170,7 +193,7 @@ function publicJob(job) {
   let error = null;
   if (job.error) {
     if (job.cancelled) error = "Render cancelled";
-    else { console.error(`[lyric-video] render ${job.jobId} failed:`, job.error); error = RENDER_FAILED; }
+    else error = RENDER_FAILED;
   }
   return { jobId: job.jobId, status: job.status, progress: job.percent, error, file: job.file ? path.basename(job.file) : null };
 }
@@ -194,9 +217,10 @@ function persistedJob(req) {
  * one) replaces the audio and speech steps of the timing job, `runRender`
  * replaces the ffmpeg render.
  */
-export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender } = {}) {
+export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, statfs } = {}) {
   const router = Router();
-  const rendering = new Set(); // project ids with a render in flight in this process
+  const rendering = new Map(); // project id -> { userId, bytes } for each render in flight in this process
+  const timingByUser = new Map(); // user id -> project id of the timing run in flight
 
   function load(req) {
     const project = readProject(req.ctx.dataDir, req.params.id);
@@ -253,13 +277,14 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender }
   router.post("/:id/song", route(async (req, res) => {
     const project = load(req);
     busy(project.projectId);
-    const file = confineToDir(req.ctx.outputDir, bodyOf(req).path);
+    const file = confineReal(req.ctx.outputDir, bodyOf(req).path);
     if (!file || !isFile(file)) throw new Refusal(400, "That upload could not be found. Please upload the song again.");
     const sound = await probeAudio(file);
     if (sound === "unreadable") throw new Refusal(400, "That file could not be read as audio or video. Try an MP3, M4A or WAV file.");
     if (sound === "silent") throw new Refusal(400, "That file has no sound in it. Upload the song itself.");
     const duration = await probeAudioDurationSec(file);
     if (!Number.isFinite(duration) || duration <= 0) throw new Refusal(400, "That song could not be read. Try an MP3, M4A or WAV file.");
+    if (duration > MAX_SONG_SEC) throw new Refusal(400, "That song is longer than 15 minutes. Trim it and upload again.");
     const durationSec = Math.round(duration * 100) / 100;
     const coverStill = await extractCoverStill(file, req.ctx.outputDir, durationSec);
     let replaced = null;
@@ -294,12 +319,14 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender }
     if (!project.lines?.length) throw new Refusal(409, "Paste the lyrics first.");
     if (!isFile(project.song.file)) throw new Refusal(409, "The song file is missing — upload the song again.");
     if (isAligning(project.projectId)) throw new Refusal(409, "Timing is already running for this song.");
+    if (timingByUser.has(req.ctx.userId)) throw new Refusal(409, "Timing is already running for another song — wait for it to finish.");
     if (!charged(req, res)) return;
     // runAlignJob marks the project "running" before it first yields, so the 202 below reports it.
     const deps = typeof alignDeps === "function" ? alignDeps() : alignDeps;
-    runAlignJob({ dataDir: req.ctx.dataDir, workDir: req.ctx.outputDir, projectId: project.projectId, deps }).catch((err) => {
-      console.error("[lyric-video] timing job crashed:", err);
-    });
+    timingByUser.set(req.ctx.userId, project.projectId);
+    runAlignJob({ dataDir: req.ctx.dataDir, workDir: req.ctx.outputDir, projectId: project.projectId, deps })
+      .catch((err) => { console.error("[lyric-video] timing job crashed:", err); })
+      .finally(() => { timingByUser.delete(req.ctx.userId); });
     const marked = readProject(req.ctx.dataDir, project.projectId);
     if (!marked) throw new Refusal(404, NOT_FOUND);
     res.status(202).json({ project: marked });
@@ -347,7 +374,7 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender }
     let background = null;
     if (body.path !== null) {
       if (body.fit !== undefined && !FITS.includes(body.fit)) throw new Refusal(400, "Unknown fit");
-      const file = confineToDir(req.ctx.outputDir, body.path);
+      const file = confineReal(req.ctx.outputDir, body.path);
       if (!file || !isFile(file)) throw new Refusal(400, "That background could not be found");
       if (!(await probeMediaSize(file))) throw new Refusal(400, "That background could not be read as a picture or video.");
       background = { file, kind: /\.(jpe?g|png|webp)$/i.test(file) ? "image" : "video", fit: body.fit ?? "auto" };
@@ -390,6 +417,8 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender }
         }));
       } else {
         if (live && live.status !== "error") markError(job.jobId, "The render did not finish");
+        const ended = getJob(job.jobId);
+        if (!ended?.cancelled) console.error(`[lyric-video] render ${job.jobId} failed:`, ended?.error || result?.error);
         persistJob(dataDir, { ...job, ...getJob(job.jobId), projectId: id, status: "error", outputPath: null });
         removeFile(outPath);
       }
@@ -400,6 +429,9 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender }
       rendering.delete(id);
     }
   }
+
+  /** Bytes the renders in flight may still write, plus this one, for the disk check. */
+  const pendingBytes = () => [...rendering.values()].reduce((sum, r) => sum + r.bytes, 0);
 
   router.post("/:id/render", route((req, res) => {
     const project = load(req);
@@ -414,16 +446,23 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender }
     if (!isFile(project.song.file)) throw new Refusal(409, "The song file is missing — upload the song again.");
     if (project.background?.file && !isFile(project.background.file)) throw new Refusal(409, "The background file is missing — choose it again.");
     if (rendering.has(project.projectId)) throw new Refusal(409, "A video is already being made for this song.");
+    if ([...rendering.values()].some((r) => r.userId === req.ctx.userId)) throw new Refusal(409, "You already have a video being made — wait for it to finish.");
+    if (rendering.size >= MAX_CONCURRENT_RENDERS) throw new Refusal(409, "The studio is busy making other videos — try again in a few minutes.");
     if (isAligning(project.projectId)) throw new Refusal(409, "Timing is still running for this song — wait for it to finish.");
     const { width, height } = renderSize(aspect, quality);
     const ass = buildLyricAss(project, { w: width, h: height, layout: aspect === "portrait" ? "shorts" : "default" });
     if (!ass) throw new Refusal(409, "Time the lyrics before rendering.");
+    const bytes = Math.ceil(((VIDEO_BPS[quality] + AUDIO_BPS) / 8) * durationSec);
+    if (!hasDiskHeadroomForUpload(req.ctx.outputDir, bytes + pendingBytes(), { statfs }).ok) {
+      throw new Refusal(507, "The server is short of space right now — try again later.");
+    }
     if (!charged(req, res)) return;
 
-    rendering.add(project.projectId);
+    rendering.set(project.projectId, { userId: req.ctx.userId, bytes });
     let job;
-    const assPath = path.join(req.ctx.outputDir, `lyric-${project.projectId}-${width}x${height}.ass`);
-    const outPath = path.join(req.ctx.outputDir, `lyric-${project.projectId}-${Date.now()}.mp4`);
+    // Rendered files are served by link: the name must not be guessable from the project id.
+    const assPath = path.join(req.ctx.outputDir, `lyric-${uuid()}.ass`);
+    const outPath = path.join(req.ctx.outputDir, `lyric-${uuid()}.mp4`);
     try {
       fs.writeFileSync(assPath, ass, "utf8");
       job = createJob(req.ctx.userId, { durationSec });

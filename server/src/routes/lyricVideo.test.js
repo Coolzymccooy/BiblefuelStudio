@@ -35,6 +35,7 @@ before(async () => {
   app.use("/api/lyric-video", createLyricVideoRouter({
     alignDeps: () => stub.align,
     runRender: (opts) => stub.render(opts),
+    statfs: (p) => (stub.statfs ? stub.statfs(p) : fs.statfsSync(p)),
   }));
   await new Promise((r) => { server = app.listen(0, r); });
   base = `http://127.0.0.1:${server.address().port}/api/lyric-video`;
@@ -208,7 +209,7 @@ describe("look and background", () => {
     spawnSync(FF, ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=s=160x90:d=1", "-frames:v", "1", img]);
     const ok = await call("PUT", `/${id}/background`, { path: img, fit: "cover" });
     assert.equal(ok.status, 200);
-    assert.deepEqual(ok.json.project.background, { file: img, kind: "image", fit: "cover" });
+    assert.deepEqual(ok.json.project.background, { file: fs.realpathSync(img), kind: "image", fit: "cover" });
     assert.equal((await call("PUT", `/${id}/background`, { path: img, fit: "stretch" })).status, 400);
   });
 });
@@ -243,7 +244,7 @@ describe("song upload", () => {
     const r = await call("POST", `/${id}/song`, { path: song });
     assert.equal(r.status, 200);
     assert.ok(Math.abs(r.json.project.song.durationSec - 3) < 0.2);
-    assert.equal(r.json.project.song.file, song);
+    assert.equal(r.json.project.song.file, fs.realpathSync(song));
   });
   test("a video song gets a cover still that exists, even when shorter than a second", { skip: !hasFfmpeg && "ffmpeg not installed" }, async () => {
     const id = await newProject();
@@ -361,7 +362,9 @@ describe("render", () => {
     const saved = readProject(ctx.dataDir, p.projectId).renders[0];
     assert.equal(saved.jobId, jobId);
     assert.equal(saved.aspect, "square");
-    assert.ok(!fs.existsSync(path.join(ctx.outputDir, `lyric-${p.projectId}-720x720.ass`)), "scratch captions removed");
+    assert.deepEqual(fs.readdirSync(ctx.outputDir).filter((n) => n.endsWith(".ass")), [], "scratch captions removed");
+    assert.match(path.basename(seen.outPath), /^lyric-[0-9a-f-]{36}\.mp4$/, "output name is a UUID, not the project id");
+    assert.ok(!seen.outPath.includes(p.projectId));
   });
   test("a second render of the same project is refused while one runs, and allowed after", async () => {
     const p = placedProject(ctx);
@@ -372,6 +375,7 @@ describe("render", () => {
     const second = await call("POST", `/${p.projectId}/render`, {});
     assert.equal(second.status, 409);
     assert.equal((await call("DELETE", `/${p.projectId}`)).status, 409);
+    assert.equal((await call("POST", `/${p.projectId}/song`, { path: p.song.file })).status, 409, "song swap refused while rendering");
     release();
     assert.ok(await until(async () => (await call("GET", `/${p.projectId}/render/${first.json.jobId}`)).json.job.status === "done"));
     stub.render = finishingRender();
@@ -499,5 +503,155 @@ describe("delete", () => {
     assert.ok(!fs.existsSync(cover));
     assert.ok(!fs.existsSync(rendered));
     assert.ok(fs.existsSync(p.song.file), "the uploaded song stays");
+  });
+});
+
+describe("limits", () => {
+  const holdingRender = () => {
+    const held = { release: null };
+    stub.render = finishingRender(() => new Promise((r) => { held.release = r; }));
+    return held;
+  };
+  const doneJob = (c, p, jobId) => until(async () => { const prev = ctx; ctx = c; const r = (await call("GET", `/${p.projectId}/render/${jobId}`)).json.job.status === "done"; ctx = prev; return r; });
+
+  test("one render per user, across projects", async () => {
+    ctx = userCtx("one-per-user", "premium");
+    const a = placedProject(ctx);
+    const b = placedProject(ctx);
+    const held = holdingRender();
+    const first = await call("POST", `/${a.projectId}/render`, {});
+    assert.equal(first.status, 202);
+    const second = await call("POST", `/${b.projectId}/render`, {});
+    assert.equal(second.status, 409);
+    assert.equal(second.json.error, "You already have a video being made — wait for it to finish.");
+    held.release();
+    assert.ok(await doneJob(ctx, a, first.json.jobId));
+    await sleep(30);
+    stub.render = finishingRender();
+    assert.equal((await call("POST", `/${b.projectId}/render`, {})).status, 202, "free again once the first finished");
+    await sleep(60);
+    ctx = userCtx("u1");
+  });
+
+  test("at most two lyric renders run on the server at once", async () => {
+    const users = ["cap-a", "cap-b", "cap-c"].map((n) => userCtx(n, "premium"));
+    const projects = users.map((c) => placedProject(c));
+    const releases = [];
+    stub.render = finishingRender(() => new Promise((r) => { releases.push(r); }));
+    const jobs = [];
+    for (let i = 0; i < 2; i++) {
+      ctx = users[i];
+      const r = await call("POST", `/${projects[i].projectId}/render`, {});
+      assert.equal(r.status, 202, `render ${i + 1}`);
+      jobs.push(r.json.jobId);
+    }
+    ctx = users[2];
+    const third = await call("POST", `/${projects[2].projectId}/render`, {});
+    assert.equal(third.status, 409);
+    assert.equal(third.json.error, "The studio is busy making other videos — try again in a few minutes.");
+    releases.forEach((r) => r());
+    for (let i = 0; i < 2; i++) assert.ok(await doneJob(users[i], projects[i], jobs[i]));
+    await sleep(30);
+    stub.render = finishingRender();
+    ctx = users[2];
+    assert.equal((await call("POST", `/${projects[2].projectId}/render`, {})).status, 202, "a slot is free again");
+    await sleep(60);
+    ctx = userCtx("u1");
+  });
+
+  test("a render is refused with a plain 507 when the disk is short, before any quota is charged", async () => {
+    ctx = userCtx("disk-free"); // free plan: a charge would show in usage
+    const p = placedProject(ctx);
+    stub.statfs = () => ({ bavail: 1, bsize: 100 * 1024 * 1024 }); // 100 MB free, below the reserve
+    const r = await call("POST", `/${p.projectId}/render`, { aspect: "portrait", quality: "1080p" });
+    assert.equal(r.status, 507);
+    assert.equal(r.json.error, "The server is short of space right now — try again later.");
+    assert.equal(readUsage(ctx.dataDir).counts.render, 0);
+    stub.statfs = null;
+    ctx = userCtx("u1");
+  });
+
+  test("the disk check counts the renders already running", async () => {
+    const a = userCtx("disk-a", "premium");
+    const b = userCtx("disk-b", "premium");
+    const pa = placedProject(a);
+    const pb = placedProject(b);
+    // 10 s at 720p is about 7.7 MB. Room for one with the 1 GB reserve, not for two.
+    stub.statfs = () => ({ bavail: 1034, bsize: 1024 * 1024 });
+    const held = holdingRender();
+    ctx = a;
+    const first = await call("POST", `/${pa.projectId}/render`, {});
+    assert.equal(first.status, 202);
+    ctx = b;
+    assert.equal((await call("POST", `/${pb.projectId}/render`, {})).status, 507);
+    held.release();
+    assert.ok(await doneJob(a, pa, first.json.jobId));
+    await sleep(30);
+    stub.statfs = null;
+    stub.render = finishingRender();
+    ctx = userCtx("u1");
+  });
+
+  test("one timing run per user at a time, across projects", async () => {
+    ctx = userCtx("timing-user");
+    const a = placedProject(ctx);
+    const b = placedProject(ctx);
+    let release;
+    stub.align = { prepareAudio: () => new Promise((r) => { release = r; }), log: () => {} };
+    assert.equal((await call("POST", `/${a.projectId}/align`)).status, 202);
+    const other = await call("POST", `/${b.projectId}/align`);
+    assert.equal(other.status, 409);
+    assert.equal(other.json.error, "Timing is already running for another song — wait for it to finish.");
+    assert.equal(readUsage(ctx.dataDir).counts.render, 1, "the refused run was not charged");
+    release();
+    assert.ok(await until(() => !isAligning(a.projectId)));
+    await sleep(30);
+    stub.align = { prepareAudio: async () => { throw new Error("stop"); }, log: () => {} };
+    assert.equal((await call("POST", `/${b.projectId}/align`)).status, 202, "free again afterwards");
+    assert.ok(await until(() => !isAligning(b.projectId)));
+    stub.align = {};
+    ctx = userCtx("u1");
+  });
+
+  test("a failed render is logged once, however often it is polled", async () => {
+    ctx = userCtx("log-once", "premium");
+    const p = placedProject(ctx);
+    const { markError } = await import("../lib/renderJobs.js");
+    stub.render = async (o) => { markRunning(o.jobId); markError(o.jobId, "ffmpeg exited 1: boom"); return { ok: false, error: "ffmpeg exited 1" }; };
+    const logged = [];
+    const original = console.error;
+    console.error = (...a) => { logged.push(a.join(" ")); };
+    try {
+      const r = await call("POST", `/${p.projectId}/render`, {});
+      assert.ok(await until(async () => (await call("GET", `/${p.projectId}/render/${r.json.jobId}`)).json.job.status === "error"));
+      for (let i = 0; i < 5; i++) await call("GET", `/${p.projectId}/render/${r.json.jobId}`);
+      await sleep(30);
+    } finally { console.error = original; }
+    assert.equal(logged.filter((l) => l.includes("failed")).length, 1, logged.join("\n"));
+    stub.render = finishingRender();
+    ctx = userCtx("u1");
+  });
+});
+
+describe("song limits and links", () => {
+  test("a song over 15 minutes is refused", { skip: !hasFfmpeg && "ffmpeg not installed" }, async () => {
+    const id = await newProject();
+    const long = path.join(ctx.outputDir, "long.m4a");
+    spawnSync(FF, ["-v", "error", "-y", "-f", "lavfi", "-i", "anullsrc=r=8000:cl=mono", "-t", "901", "-c:a", "aac", "-b:a", "8k", long], { timeout: 60000 });
+    const r = await call("POST", `/${id}/song`, { path: long });
+    assert.equal(r.status, 400);
+    assert.equal(r.json.error, "That song is longer than 15 minutes. Trim it and upload again.");
+    assert.equal(readProject(ctx.dataDir, id).song, null);
+  });
+  test("a link inside the outputs folder that points outside it is refused", { skip: !hasFfmpeg && "ffmpeg not installed" }, async (t) => {
+    const id = await newProject();
+    const outside = path.join(root, "outside-dir");
+    fs.mkdirSync(outside, { recursive: true });
+    spawnSync(FF, ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=d=2", "-c:a", "aac", path.join(outside, "secret.m4a")]);
+    const link = path.join(ctx.outputDir, "linked");
+    try { fs.symlinkSync(outside, link, "junction"); } catch { return t.skip("this OS refused to create a link"); }
+    assert.equal((await call("POST", `/${id}/song`, { path: path.join(link, "secret.m4a") })).status, 400);
+    assert.equal((await call("PUT", `/${id}/background`, { path: path.join(link, "secret.m4a") })).status, 400);
+    assert.equal(readProject(ctx.dataDir, id).song, null);
   });
 });
