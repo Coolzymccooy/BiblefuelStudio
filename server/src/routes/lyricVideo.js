@@ -59,6 +59,8 @@ const bodyOf = (req) => (req.body && typeof req.body === "object" && !Array.isAr
 const round3 = (n) => Math.round(n * 1000) / 1000;
 const placed = (l) => Array.isArray(l?.words) && l.words.length > 0 && Number.isFinite(l.start) && Number.isFinite(l.end);
 const isFile = (file) => { try { return fs.statSync(file).isFile(); } catch { return false; } };
+/** The line with its timing and its hand-moved lock removed; its text and effect stay. */
+const untimedLine = ({ words, start, end, confidence, flag, locked, ...line }) => line;
 
 /** Wraps a handler so a refusal answers its status and anything else is logged and answered plainly (no stack, no paths). */
 function route(handler) {
@@ -215,9 +217,10 @@ function persistedJob(req) {
 /**
  * Options exist for tests only: `alignDeps` (an object or a function returning
  * one) replaces the audio and speech steps of the timing job, `runRender`
- * replaces the ffmpeg render.
+ * replaces the ffmpeg render, `songProbed` runs after a new song was read and
+ * before it is saved.
  */
-export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, statfs } = {}) {
+export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, statfs, songProbed } = {}) {
   const router = Router();
   const rendering = new Map(); // project id -> { userId, bytes } for each render in flight in this process
   const timingByUser = new Map(); // user id -> project id of the timing run in flight
@@ -287,12 +290,26 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
     if (duration > MAX_SONG_SEC) throw new Refusal(400, "That song is longer than 15 minutes. Trim it and upload again.");
     const durationSec = Math.round(duration * 100) / 100;
     const coverStill = await extractCoverStill(file, req.ctx.outputDir, durationSec);
+    await songProbed?.(project.projectId);
     let replaced = null;
-    const next = updateProject(req.ctx.dataDir, project.projectId, (latest) => {
-      busy(project.projectId); // timing or a render may have started while the file was probed
-      replaced = latest.song?.coverStill;
-      return { ...latest, song: { file, durationSec, coverStill }, timing: { status: "idle" } };
-    });
+    let next;
+    try {
+      next = updateProject(req.ctx.dataDir, project.projectId, (latest) => {
+        busy(project.projectId); // timing or a render may have started while the file was probed
+        replaced = latest.song?.coverStill;
+        // A different song: every time and every hand-moved line belonged to the old one.
+        return {
+          ...latest,
+          song: { file, durationSec, coverStill },
+          lines: (latest.lines || []).map(untimedLine),
+          sections: (latest.sections || []).map(({ start, ...section }) => section),
+          timing: { status: "idle" },
+        };
+      });
+    } catch (err) {
+      removeOwned(req.ctx.outputDir, coverStill);
+      throw err;
+    }
     if (!next) { removeOwned(req.ctx.outputDir, coverStill); throw new Refusal(404, NOT_FOUND); }
     if (replaced && replaced !== coverStill) removeOwned(req.ctx.outputDir, replaced);
     ok(res, { project: next });

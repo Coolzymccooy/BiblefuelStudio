@@ -36,6 +36,7 @@ before(async () => {
     alignDeps: () => stub.align,
     runRender: (opts) => stub.render(opts),
     statfs: (p) => (stub.statfs ? stub.statfs(p) : fs.statfsSync(p)),
+    songProbed: (id) => stub.songProbed?.(id),
   }));
   await new Promise((r) => { server = app.listen(0, r); });
   base = `http://127.0.0.1:${server.address().port}/api/lyric-video`;
@@ -245,6 +246,54 @@ describe("song upload", () => {
     assert.equal(r.status, 200);
     assert.ok(Math.abs(r.json.project.song.durationSec - 3) < 0.2);
     assert.equal(r.json.project.song.file, fs.realpathSync(song));
+  });
+  test("a new song clears the old timing, hand-moved lines included (R40)", { skip: !hasFfmpeg && "ffmpeg not installed" }, async () => {
+    const p = placedProject(ctx);
+    writeProject(ctx.dataDir, { ...readProject(ctx.dataDir, p.projectId), sections: p.sections.map((s) => ({ ...s, start: 0.5 })) });
+    const nudged = await call("PATCH", `/${p.projectId}/lines/${p.lines[1].id}`, { start: 4.5 });
+    assert.equal(nudged.json.project.lines[1].locked, true);
+    const song = path.join(ctx.outputDir, "new-song.m4a");
+    spawnSync(FF, ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=d=3", "-c:a", "aac", song]);
+    const r = await call("POST", `/${p.projectId}/song`, { path: song });
+    assert.equal(r.status, 200);
+    for (const saved of [r.json.project, readProject(ctx.dataDir, p.projectId)]) {
+      assert.equal(saved.lines.length, 3, "the lyrics stay");
+      for (const l of saved.lines) {
+        for (const key of ["words", "start", "end", "confidence", "flag", "locked"]) assert.equal(l[key], undefined, `${l.id}.${key}`);
+      }
+      for (const s of saved.sections) assert.equal(s.start, undefined, `${s.id}.start`);
+      assert.equal(saved.timing.status, "idle");
+    }
+  });
+  test("a song refused because timing started meanwhile leaves no picture behind (R45)", { skip: !hasFfmpeg && "ffmpeg not installed" }, async () => {
+    const p = placedProject(ctx);
+    const clip = path.join(ctx.outputDir, "race-clip.mp4");
+    spawnSync(FF, ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=s=160x90:d=2", "-f", "lavfi", "-i", "sine=d=2", "-shortest", "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p", clip]);
+    const covers = () => fs.readdirSync(ctx.outputDir).filter((n) => n.startsWith("lyric-cover-"));
+    const before = covers();
+    let release;
+    stub.align = { prepareAudio: () => new Promise((res) => { release = res; }), log: () => {} };
+    stub.songProbed = async () => { assert.equal((await call("POST", `/${p.projectId}/align`)).status, 202); };
+    try {
+      const r = await call("POST", `/${p.projectId}/song`, { path: clip });
+      assert.equal(r.status, 409);
+      assert.deepEqual(covers(), before, "the picture taken from the refused song is removed");
+    } finally {
+      stub.songProbed = null;
+      release?.();
+      assert.ok(await until(() => !isAligning(p.projectId)));
+      stub.align = {};
+    }
+  });
+  test("a song uploaded as plain audio (an .mp3 named by the uploader) is attached (R40)", { skip: !hasFfmpeg && "ffmpeg not installed" }, async () => {
+    const id = await newProject();
+    const song = path.join(ctx.outputDir, "user-audio-1234.mp3");
+    spawnSync(FF, ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=d=2", "-c:a", "libmp3lame", song]);
+    // The upload answers with forward slashes, whatever the platform.
+    const r = await call("POST", `/${id}/song`, { path: song.replace(/\\/g, "/") });
+    assert.equal(r.status, 200);
+    assert.ok(Math.abs(r.json.project.song.durationSec - 2) < 0.2);
+    assert.equal(r.json.project.song.coverStill, null);
   });
   test("a video song gets a cover still that exists, even when shorter than a second", { skip: !hasFfmpeg && "ffmpeg not installed" }, async () => {
     const id = await newProject();
