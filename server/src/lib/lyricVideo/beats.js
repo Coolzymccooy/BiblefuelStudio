@@ -180,15 +180,55 @@ export function beatTimes(env, sr, hop, bpm, durationSec) {
   return times;
 }
 
+/**
+ * How clearly a constant grid at `bpm` beats the average grid: the best phase's
+ * mean envelope on the grid divided by the mean over all phases. About 1.0-1.15
+ * for noise (every phase fits alike), 1.45-1.75 on real music, 3+ on clicks.
+ */
+export function gridContrast(env, sr, hop, bpm) {
+  const period = (60 * (sr / hop)) / bpm;
+  const sm = smooth(env);
+  let best = -Infinity;
+  let sum = 0;
+  let count = 0;
+  for (let off = 0; off < period; off += 0.25) {
+    const score = gridScore(sm, period, off);
+    best = Math.max(best, score);
+    sum += score;
+    count += 1;
+  }
+  const avg = count > 0 ? sum / count : 0;
+  return avg > 0 ? best / avg : 0;
+}
+
+/** Mean onset strength below which there is nothing to time to: silence and steady tones (measured 0.00-0.01; noise 0.17, music 0.25+). */
+const MIN_ONSET_MEAN = 0.05;
+/** Grid contrast below which the "beat" is chance: midway between noise (<= 1.14) and music (>= 1.47). */
+const MIN_GRID_CONTRAST = 1.3;
+const noBeats = () => ({ bpm: 0, times: [] });
+
+/** The beat grid for decoded mono samples, or { bpm: 0, times: [] } when the audio has no steady pulse (silence, noise, a cappella). */
+export function analyseBeats(samples, sr = 11025, hop = 256) {
+  const env = onsetEnvelope(samples, sr, hop);
+  if (env.length < 2) return noBeats();
+  const mean = env.reduce((a, b) => a + b, 0) / env.length;
+  if (!(mean >= MIN_ONSET_MEAN)) return noBeats();
+  const bpm = estimateTempo(env, sr, hop);
+  if (gridContrast(env, sr, hop, bpm) < MIN_GRID_CONTRAST) return noBeats();
+  return { bpm, times: beatTimes(env, sr, hop, bpm, samples.length / sr) };
+}
+
 export function decodeMono(filePath, sr = 11025) {
   return new Promise((resolve, reject) => {
     const ff = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
-    const proc = spawn(ff, ["-v", "error", "-i", filePath, "-ac", "1", "-ar", String(sr), "-f", "f32le", "-"]);
+    const proc = spawn(ff, ["-nostdin", "-v", "error", "-i", filePath, "-ac", "1", "-ar", String(sr), "-f", "f32le", "-"]);
     const chunks = [];
+    let err = "";
     proc.stdout.on("data", (d) => chunks.push(d));
+    proc.stderr.on("data", (d) => { err = (err + d).slice(-500); });
     proc.on("error", reject);
     proc.on("close", (code) => {
-      if (code !== 0) return reject(new Error(`ffmpeg decode exited ${code}`));
+      if (code !== 0) return reject(new Error(`ffmpeg decode exited ${code}: ${err.trim()}`));
       const buf = Buffer.concat(chunks);
       resolve(new Float32Array(buf.buffer, buf.byteOffset, Math.floor(buf.length / 4)));
     });
@@ -197,9 +237,5 @@ export function decodeMono(filePath, sr = 11025) {
 
 export async function detectBeats(filePath) {
   const sr = 11025;
-  const hop = 256;
-  const samples = await decodeMono(filePath, sr);
-  const env = onsetEnvelope(samples, sr, hop);
-  const bpm = estimateTempo(env, sr, hop);
-  return { bpm, times: beatTimes(env, sr, hop, bpm, samples.length / sr) };
+  return analyseBeats(await decodeMono(filePath, sr), sr, 256);
 }
