@@ -29,6 +29,7 @@ import { RenderProgressOverlay } from '../components/RenderProgressOverlay';
 import { MediaTrimmer } from '../components/MediaTrimmer';
 import { DropZone } from '../components/ui/DropZone';
 import { ScreenHeader } from '../components/ui/ScreenHeader';
+import { StartNewButton } from '../components/ui/StartNewButton';
 import { StoryStepper } from '../components/story/StoryStepper';
 import { CastPicker } from '../components/story/CastPicker';
 import { StoryScenePreview } from '../components/story/StoryScenePreview';
@@ -350,9 +351,7 @@ export function StoryVideoPage() {
         eyebrow={project ? 'Create · Story' : 'Create'}
         title={project ? projectTitle : <>Verse to <em>cinematic scenes</em>.</>}
         subtitle={project ? (STORY_STYLES.find((st) => st.id === project.style)?.label ?? project.style) : undefined}
-        right={project ? (
-          <button onClick={() => setActive(null)} className="text-xs text-content-tertiary hover:text-bf-cream">Start new</button>
-        ) : undefined}
+        right={project ? <StartNewButton onClick={() => setActive(null)} /> : undefined}
       />
       <div className="h-5" />
 

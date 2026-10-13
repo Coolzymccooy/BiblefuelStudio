@@ -5,6 +5,7 @@ import { Loader2 } from 'lucide-react';
 import { ambientApi, isAmbientTransient } from '../lib/ambientApi';
 import type { AmbientAspect } from '../lib/ambientTypes';
 import { ScreenHeader } from '../components/ui/ScreenHeader';
+import { StartNewButton } from '../components/ui/StartNewButton';
 import { AmbientSoundStep } from '../components/ambient/AmbientSoundStep';
 import { AmbientWordStep } from '../components/ambient/AmbientWordStep';
 import { AmbientLookStep } from '../components/ambient/AmbientLookStep';
@@ -80,16 +81,19 @@ export function AmbientPage() {
     ? <>{titleWords.slice(0, -1).join(' ')} <em>{titleWords[titleWords.length - 1]}</em></>
     : <em>{titleWords[0]}</em>;
 
+  // Start new sits beside the title and the tabs get a row of their own:
+  // ScreenHeader's right slot does not shrink, so on a phone a row of tabs
+  // there pushed Start new off screen and scrolled the page sideways.
+  const startNew = project && <StartNewButton onClick={() => setActive(null)} />;
   const stepTabs = project && (
-    <div className="flex flex-wrap items-center gap-3">
-      <div className={segmentedCls} role="tablist" aria-label="Ambient step">
+    <div className="max-w-full overflow-x-auto pb-1">
+      <div className={`${segmentedCls} whitespace-nowrap`} role="tablist" aria-label="Ambient step">
         {STEPS.map((s) => (
-          <button key={s.id} type="button" onClick={() => setStep(s.id)} className={segmentCls(step === s.id)}>
+          <button key={s.id} type="button" onClick={() => setStep(s.id)} className={`${segmentCls(step === s.id)} shrink-0`}>
             {s.label}
           </button>
         ))}
       </div>
-      <button onClick={() => setActive(null)} className="text-xs text-content-tertiary hover:text-bf-cream">Start new</button>
     </div>
   );
 
@@ -101,8 +105,9 @@ export function AmbientPage() {
         eyebrow={project ? 'Create · Ambient' : 'Create'}
         title={project ? projectTitle : <>Scripture over an <em>ambient</em> bed.</>}
         subtitle={project ? project.theme : undefined}
-        right={stepTabs || undefined}
+        right={startNew || undefined}
       />
+      {stepTabs && <div className="mt-4">{stepTabs}</div>}
       <div className="h-5" />
 
       {!project && (

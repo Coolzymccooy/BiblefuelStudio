@@ -104,6 +104,22 @@ describe('AmbientPage', () => {
     expect(localStorage.getItem('BF_AMBIENT_ACTIVE')).toBe('a1');
   });
 
+  it('keeps Start new beside the title and gives the step tabs their own scrolling row', async () => {
+    localStorage.setItem('BF_AMBIENT_ACTIVE', 'a1');
+    vi.spyOn(ambientApi, 'getProject').mockResolvedValue(mkProject());
+    vi.spyOn(ambientApi, 'listProjects').mockResolvedValue([]);
+    renderPage();
+    const tabs = await screen.findByRole('tablist', { name: 'Ambient step' });
+    const startNew = screen.getByRole('button', { name: 'Start new' });
+    const header = screen.getByRole('heading', { level: 1 }).parentElement?.parentElement;
+    expect(header?.contains(startNew)).toBe(true);
+    expect(header?.contains(tabs)).toBe(false);
+    expect(tabs.parentElement).toHaveClass('overflow-x-auto');
+    await userEvent.click(startNew);
+    expect(await screen.findByLabelText(/theme/i)).toBeInTheDocument();
+    expect(localStorage.getItem('BF_AMBIENT_ACTIVE')).toBeNull();
+  });
+
   it('renders all four steps for an active project', async () => {
     localStorage.setItem('BF_AMBIENT_ACTIVE', 'a1');
     vi.spyOn(ambientApi, 'getProject').mockResolvedValue(mkProject());

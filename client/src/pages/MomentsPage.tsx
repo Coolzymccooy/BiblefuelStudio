@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2, Plus, Wand2 } from 'lucide-react';
+import { Loader2, Wand2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { momentsApi } from '../lib/momentsApi';
 import { canMake, isRunning, newSeed } from '../lib/momentsWizard';
@@ -8,6 +8,7 @@ import { toastError } from '../lib/errors';
 import { isApiError } from '../lib/apiError';
 import type { MomentMeta, MomentProject } from '../lib/momentsTypes';
 import { ScreenHeader } from '../components/ui/ScreenHeader';
+import { StartNewButton } from '../components/ui/StartNewButton';
 import { MomentsHistory, MOMENTS_LIST_KEY } from '../components/moments/MomentsHistory';
 import { MomentsOccasionPicker } from '../components/moments/MomentsOccasionPicker';
 import { MomentsDetailsStep } from '../components/moments/MomentsDetailsStep';
@@ -16,7 +17,7 @@ import { MomentsSoundStep } from '../components/moments/MomentsSoundStep';
 import { MomentsWordsStep } from '../components/moments/MomentsWordsStep';
 import { MomentsStyleStep } from '../components/moments/MomentsStyleStep';
 import { MomentsResult } from '../components/moments/MomentsResult';
-import { primaryBtnCls, secondaryBtnCls, segmentCls, segmentedCls } from '../components/story/formStyles';
+import { primaryBtnCls, segmentCls, segmentedCls } from '../components/story/formStyles';
 
 const ACTIVE_KEY = 'BF_MOMENTS_ACTIVE';
 const POLL_MS = 2500;
@@ -226,7 +227,7 @@ export function MomentsPage() {
           <p className="text-help">Couldn't open your last Moment.</p>
           <div className="flex items-center gap-3">
             <button type="button" onClick={() => refetchProject()} className="btn btn-secondary px-3 py-1.5 text-sm">Retry</button>
-            <button type="button" onClick={() => setActive(null)} className="text-xs text-content-tertiary hover:text-bf-cream">Start new</button>
+            <StartNewButton onClick={() => setActive(null)} />
           </div>
         </div>
       );
@@ -237,11 +238,7 @@ export function MomentsPage() {
   // Start new sits beside the title and the tabs get a row of their own: on a
   // phone the six tabs are wider than the screen, and sharing their row pushed
   // Start new off the right edge and made the whole page scroll sideways.
-  const startNew = project && (
-    <button type="button" disabled={busy} onClick={() => setActive(null)} className={`${secondaryBtnCls} whitespace-nowrap px-3 py-1.5 text-sm disabled:opacity-50`}>
-      <Plus size={16} aria-hidden="true" /> Start new
-    </button>
-  );
+  const startNew = project && <StartNewButton disabled={busy} onClick={() => setActive(null)} />;
 
   const tabs = project && (
     <div className="max-w-full overflow-x-auto pb-1">

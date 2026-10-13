@@ -19,6 +19,7 @@ import { StoryStepper } from '../story/StoryStepper';
 import { DropZone } from '../ui/DropZone';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
+import { StartNewButton } from '../ui/StartNewButton';
 
 /**
  * The Story QUICK job, docked in the Timeline editor.
@@ -255,13 +256,7 @@ export function StoryQuickPanel({ onUseVideo, onPreviewVideo }: StoryQuickPanelP
     <div className="space-y-3">
       <div className="flex items-start justify-between gap-2">
         <p className="min-w-0 break-words text-xs font-bold text-editor-text">{project.title}</p>
-        <button
-          type="button"
-          onClick={() => setActive(null)}
-          className="shrink-0 text-[10px] text-editor-faint hover:text-editor-text"
-        >
-          Start new
-        </button>
+        <StartNewButton compact onClick={() => setActive(null)} />
       </div>
       <StoryStepper project={project} />
 
