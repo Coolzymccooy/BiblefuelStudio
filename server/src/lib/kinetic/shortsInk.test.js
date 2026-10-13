@@ -68,6 +68,7 @@ const ENERGIES = ["calm", "lively", "wild"];
 
 test("estimated ink of every effect stays inside the Shorts band across looks, energies and seeds", () => {
   const worst = { top: Infinity, bottom: -Infinity, right: -Infinity };
+  const rightBy = {};
   const bad = [];
   for (const effect of Object.keys(EFFECTS)) {
     const overrides = Object.fromEntries(Array.from({ length: 60 }, (_, i) => [i, effect]));
@@ -91,6 +92,8 @@ test("estimated ink of every effect stays inside the Shorts band across looks, e
             worst.top = Math.min(worst.top, box.top);
             worst.bottom = Math.max(worst.bottom, box.bottom);
             worst.right = Math.max(worst.right, box.settledRight);
+            rightBy[effect] = Math.max(rightBy[effect] ?? -Infinity, box.settledRight);
+            if (box.settledRight > RIGHT + SLACK) bad.push(`ink into the right 12% (${box.settledRight.toFixed(1)} > ${RIGHT.toFixed(1)}) ${label}`);
             if (box.top < TOP - SLACK) bad.push(`ink above band (${box.top.toFixed(1)} < ${TOP.toFixed(1)}) ${label}`);
             if (box.bottom > BOTTOM + SLACK) bad.push(`ink below band (${box.bottom.toFixed(1)} > ${BOTTOM}) ${label}`);
           }
@@ -100,5 +103,5 @@ test("estimated ink of every effect stays inside the Shorts band across looks, e
   }
   const byEffect = Object.fromEntries(Object.keys(EFFECTS).map((e) => [e, bad.filter((b) => b.includes(`${e}/studio`)).length]));
   assert.equal(bad.length, 0, `${bad.length} lines leave the band ${JSON.stringify(byEffect)}\n${bad.slice(0, 4).join("\n")}`);
-  if (process.env.SHOW_INK) console.log("worst ink extents", worst, { TOP, BOTTOM, RIGHT });
+  if (process.env.SHOW_INK) console.log("worst ink extents", worst, { TOP, BOTTOM, RIGHT }, "right by effect", rightBy);
 });
