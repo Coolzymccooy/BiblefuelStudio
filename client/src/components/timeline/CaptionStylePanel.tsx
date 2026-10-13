@@ -35,6 +35,8 @@ export interface CaptionStylePanelProps {
   /** Studio looks: Calm / Lively / Wild. Sermons default to Calm. */
   captionEnergy?: string;
   onCaptionEnergyChange?: (next: CaptionEnergy) => void;
+  /** The current caption seed, so Shuffle can tell when a re-roll landed. */
+  captionSeed?: number;
   /** Re-roll which effect each line gets (a new seed). */
   onShuffleEffects?: () => void;
 }
@@ -50,6 +52,7 @@ export function CaptionStylePanel({
   onDepthChange,
   captionEnergy,
   onCaptionEnergyChange,
+  captionSeed,
   onShuffleEffects,
 }: CaptionStylePanelProps) {
   // Whether the server can draw Studio looks, as the picker's catalogue reports it.
@@ -68,6 +71,7 @@ export function CaptionStylePanel({
           <StudioEffectsControls
             look={typographyPreset}
             energy={captionEnergy || 'calm'}
+            seed={captionSeed}
             onEnergyChange={(next) => onCaptionEnergyChange?.(next)}
             onShuffle={() => onShuffleEffects?.()}
             unavailable={!libass}

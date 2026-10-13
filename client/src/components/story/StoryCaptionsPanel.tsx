@@ -197,6 +197,7 @@ export function StoryCaptionsPanel({ value, onChange, busy = false }: StoryCapti
             <StudioEffectsControls
               look={value.captionPreset!}
               energy={value.captionEnergy || 'lively'}
+              seed={value.captionSeed}
               energies={energies}
               onEnergyChange={(next) => onChange({ captionEnergy: next })}
               onShuffle={() => onChange({ captionSeed: nextSeed(value.captionSeed) })}
