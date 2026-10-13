@@ -312,6 +312,13 @@ class ApiClient {
         }
     }
 
+    /** GET a plain-text body (an empty string is a valid answer). Throws `HTTP <status>` when the response is not ok. */
+    async getText(url: string): Promise<string> {
+        const resp = await fetch(url, { headers: this.getHeaders() });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        return resp.text();
+    }
+
     /**
      * Force a real file download for a public /outputs media URL — reliably, on
      * iOS too. Two browser facts make the "obvious" approaches fail on iPhone:
