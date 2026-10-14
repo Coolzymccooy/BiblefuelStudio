@@ -5,6 +5,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildLyricAss, resolvedEffects } from "./lyricAss.js";
 import { chooseEffects } from "./policy.js";
+import { parseSheet } from "./sheetParser.js";
+import { resolveLook } from "../kinetic/looks.js";
+import { eventInk, startOf } from "../kinetic/inkTestkit.js";
 
 const FIX = path.join(path.dirname(fileURLToPath(import.meta.url)), "__fixtures__", "my-time-no-late");
 const expected = JSON.parse(fs.readFileSync(path.join(FIX, "expected-lines.json"), "utf8"));
@@ -115,6 +118,87 @@ test("resolvedEffects maps each placed line to the effect the render uses", () =
 test("resolvedEffects leaves out lines that are not placed", () => {
   const p = mini([timed("l1", "lead", "Who talk say", 10), { ...timed("l2", "lead", "Not timed", 12), words: [] }]);
   assert.deepEqual(Object.keys(resolvedEffects(p)), ["l1"]);
+});
+
+/**
+ * Each line's Dialogue events, told apart by when they come up: a line's events start at or after
+ * its own start and before the next line's.
+ */
+function eventsByLine(ass, lines) {
+  const all = dialogues(ass);
+  return lines.map((l, i) => all.filter((d) => startOf(d) >= l.start - 0.005 && (i + 1 === lines.length || startOf(d) < lines[i + 1].start - 0.005)));
+}
+
+/**
+ * Where two lines' events are on screen together, as text: each pair that shares screen time and
+ * whose ink boxes overlap top to bottom. Empty when the two lines never collide.
+ */
+function collisions(a, b, look, size) {
+  const out = [];
+  for (const x of a) {
+    for (const y of b) {
+      if (!(startOf(x) < endOf(y) && startOf(y) < endOf(x))) continue;
+      const ix = eventInk(x, look, size);
+      const iy = eventInk(y, look, size);
+      if (ix.bottom > iy.top && iy.bottom > ix.top) {
+        out.push(`${shown(x)} [${startOf(x)}-${endOf(x)} y ${ix.top.toFixed(0)}-${ix.bottom.toFixed(0)}] meets ${shown(y)} [${startOf(y)}-${endOf(y)} y ${iy.top.toFixed(0)}-${iy.bottom.toFixed(0)}]`);
+      }
+    }
+  }
+  return out;
+}
+
+const SIZES = [[720, 1280, "shorts"], [720, 1280, "default"], [1280, 720, "default"]];
+const LAGOS = resolveLook("studio-lagos-night");
+
+test("overlap (a): a reply set to a non-echo effect never shares the screen with its call", () => {
+  const bad = [];
+  for (const fx of ["stack", "pop", "slam", "quote", "curve", "frame", "title"]) {
+    const lines = [timed("l1", "lead", "Who talk say", 10), { ...timed("l2", "response", "(WHO TALK SAY?!)", 12), effect: fx }, timed("l3", "lead", "My time no late", 16)];
+    for (const [w, h, layout] of SIZES) {
+      const [call, reply] = eventsByLine(buildLyricAss(mini(lines), { w, h, layout }), lines);
+      assert.ok(call.length && reply.length, `${fx}: both lines drawn`);
+      bad.push(...collisions(call, reply, LAGOS, { w, h }).map((c) => `${fx} ${w}x${h} ${layout}: ${c}`));
+    }
+  }
+  assert.deepEqual(bad, []);
+});
+
+test("overlap (b): two crowd replies in a row never sit on each other", () => {
+  const sheet = parseSheet("[Chorus]\nShine? (WHO TALK SAY?!)\n(YEAH!)\nMy time no late");
+  assert.deepEqual(sheet.lines.map((l) => l.kind), ["lead", "response", "response", "lead"], "the sheet gives a call and two replies");
+  const at = [12, 13.5, 15.5, 19];
+  const lines = sheet.lines.map((l, i) => ({ ...timed(`l${i}`, l.kind, l.text, at[i]), sectionId: "s1" }));
+  const bad = [];
+  for (const [w, h, layout] of SIZES) {
+    const [call, first, second] = eventsByLine(buildLyricAss(mini(lines), { w, h, layout }), lines);
+    assert.ok(first.length && second.length, "both replies drawn");
+    for (const [x, y, what] of [[first, second, "reply/reply"], [call, first, "call/first reply"], [call, second, "call/second reply"]]) {
+      bad.push(...collisions(x, y, LAGOS, { w, h }).map((c) => `${what} ${w}x${h} ${layout}: ${c}`));
+    }
+  }
+  assert.deepEqual(bad, []);
+});
+
+test("overlap (c): a lead line set to Echo never shares the screen with its reply", () => {
+  const lines = [{ ...timed("l1", "lead", "Who talk say", 10), effect: "echo" }, timed("l2", "response", "(WHO TALK SAY?!)", 11.2), timed("l3", "lead", "My time no late", 14)];
+  const bad = [];
+  for (const [w, h, layout] of SIZES) {
+    const [call, reply] = eventsByLine(buildLyricAss(mini(lines), { w, h, layout }), lines);
+    assert.ok(call.length && reply.length, "both lines drawn");
+    bad.push(...collisions(call, reply, LAGOS, { w, h }).map((c) => `${w}x${h} ${layout}: ${c}`));
+  }
+  assert.deepEqual(bad, []);
+});
+
+test("a call with two echoes: the call and the last echo hold to the next lead, the first echo leaves when the second comes", () => {
+  const lines = [timed("l1", "lead", "Who talk say", 10), timed("l2", "response", "(WHO TALK SAY?!)", 11.2),
+    timed("l3", "response", "(YEAH!)", 13), timed("l4", "lead", "My time no late", 15.5)];
+  const [call, first, second] = eventsByLine(buildLyricAss(mini(lines), { w: 720, h: 1280 }), lines);
+  const last = (evs) => Math.max(...evs.map(endOf));
+  assert.ok(Math.abs(last(call) - 15.45) < 0.02, `call ends ${last(call)}`);
+  assert.ok(Math.abs(last(first) - 12.95) < 0.02, `first echo ends ${last(first)}`);
+  assert.ok(Math.abs(last(second) - 15.45) < 0.02, `last echo ends ${last(second)}`);
 });
 
 test("the shuffle seed changes the captions; seed 1 matches the default", () => {

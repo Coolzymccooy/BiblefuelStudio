@@ -13,38 +13,51 @@ const MIN_HOLD = 0.25;
 const ECHO_GAP = 0.02; // a call's ink stays at least this share of the height above its echo's
 
 /**
- * A call and its echoes share the screen until the next lead line (spec 6.2): when a lead line is
- * directly followed by response lines, each of them leaves at min(next lead - 0.05, last echo end + 3),
- * never sooner than its own end + 0.25 and never past the music's end. Other lines are left undefined.
+ * The call-and-echo groups (spec 6.2): a lead line not drawn as an echo, directly followed by
+ * response lines that are all drawn as echoes. Only these share the screen, because only an echo
+ * has its own place under the call. Anything else (a reply pinned to another effect, a lead set to
+ * Echo) is drawn one line after another, as every other line is.
  */
-function holdsFor(placed, songEnd) {
-  const until = new Array(placed.length).fill(undefined);
+function holdGroups(placed, effects) {
+  const groups = [];
   for (let i = 0; i < placed.length; i++) {
     if (isResponse(placed[i]) || !isResponse(placed[i + 1])) continue;
     let j = i + 1;
     while (j < placed.length && isResponse(placed[j])) j++;
-    const nextLead = j < placed.length ? placed[j].start - GAP : Infinity;
-    const bound = Math.min(nextLead, placed[j - 1].end + MAX_HOLD, songEnd);
-    for (let k = i; k < j; k++) until[k] = Math.min(Math.max(placed[k].end + MIN_HOLD, bound), songEnd);
+    const echoes = Array.from({ length: j - i - 1 }, (_, k) => i + 1 + k);
+    if (effects[i] !== "echo" && echoes.every((k) => effects[k] === "echo")) groups.push({ call: i, echoes, next: j });
+    i = j - 1;
+  }
+  return groups;
+}
+
+/**
+ * When the lines of each call-and-echo group leave: the call and its last echo stay up until
+ * min(next lead - 0.05, last echo end + 3), never sooner than their own end + 0.25 and never past
+ * the music's end. An echo before another echo leaves when the next one comes, by the effects'
+ * own rule, so two echoes never share their place. Other lines are left undefined.
+ */
+function holdsFor(placed, groups, songEnd) {
+  const until = new Array(placed.length).fill(undefined);
+  for (const { call, echoes, next } of groups) {
+    const last = echoes[echoes.length - 1];
+    const nextLead = next < placed.length ? placed[next].start - GAP : Infinity;
+    const bound = Math.min(nextLead, placed[last].end + MAX_HOLD, songEnd);
+    for (const k of [call, last]) until[k] = Math.min(Math.max(placed[k].end + MIN_HOLD, bound), songEnd);
   }
   return until;
 }
 
 /**
- * Where a call must keep its ink above, as a pixel y, for each lead line directly followed by
- * response lines drawn as echoes: the highest echo ink among them less a visible gap (2% of the
- * height). The call and its echoes share the screen (spec 6.2), so they must never overlap. Other
- * lines are left undefined, which keeps their captions exactly as before.
+ * Where each group's call must keep its ink above, as a pixel y: the highest ink among its echoes
+ * less a visible gap (2% of the height). The call and its echoes share the screen (spec 6.2), so
+ * they must never overlap. Other lines are left undefined, which keeps their captions exactly as before.
  */
-function clearancesFor(placed, effects, phrases, { look, w, h, aspect }) {
+function clearancesFor(placed, groups, phrases, { look, w, h, aspect }) {
   const below = new Array(placed.length).fill(undefined);
-  for (let i = 0; i < placed.length; i++) {
-    if (isResponse(placed[i])) continue;
-    const tops = [];
-    for (let j = i + 1; j < placed.length && isResponse(placed[j]); j++) {
-      if (effects[j] === "echo") tops.push(echoInkTop({ phrase: phrases[j], look, w, h, aspect }));
-    }
-    if (tops.length) below[i] = Math.floor(Math.min(...tops) - ECHO_GAP * h);
+  for (const { call, echoes } of groups) {
+    const tops = echoes.map((j) => echoInkTop({ phrase: phrases[j], look, w, h, aspect }));
+    below[call] = Math.floor(Math.min(...tops) - ECHO_GAP * h);
   }
   return below;
 }
@@ -75,12 +88,13 @@ export function buildLyricAss(project, { w, h, layout = "shorts" }) {
   const aspect = layout === "shorts" && base === "tall" ? "shorts" : base;
   const look = resolveLook(project.look?.id || "studio-lagos-night");
   const songEnd = Number(project.timing?.audibleEnd) || Number(project.song?.durationSec) || Infinity;
-  const holds = holdsFor(placed, songEnd);
+  const groups = holdGroups(placed, effects);
+  const holds = holdsFor(placed, groups, songEnd);
   const held = placed.map((l, i) => ({
     text: l.text, start: l.start, end: l.end, words: l.words, soft: l.kind === "soft",
     ...(holds[i] !== undefined && { holdUntil: holds[i] }),
   }));
-  const clears = clearancesFor(placed, effects, held, { look, w, h, aspect });
+  const clears = clearancesFor(placed, groups, held, { look, w, h, aspect });
   const phrases = held.map((p, i) => (clears[i] === undefined ? p : { ...p, clearBelow: clears[i] }));
   const overrides = Object.fromEntries(effects.map((fx, i) => [i, fx]));
   const plan = planPhrases({

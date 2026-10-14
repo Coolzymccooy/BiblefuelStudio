@@ -38,6 +38,19 @@ export function titleLineIndexes(lines, title, sections) {
   return out;
 }
 
+/**
+ * Whether line i is directly followed by response lines that will all be drawn as echoes: each
+ * one left on Auto (a response's Auto is always echo) or set to Echo.
+ */
+function repliesEcho(lines, i) {
+  let j = i + 1;
+  for (; lines[j]?.kind === "response"; j++) {
+    const { effect } = lines[j];
+    if (effect && effect !== "auto" && effect !== "echo") return false;
+  }
+  return j > i + 1;
+}
+
 /** First and last line index of each section. */
 function sectionBounds(lines) {
   const first = new Map();
@@ -137,8 +150,10 @@ export function chooseEffects({ lines, sections, title, energy, seed = 1 }) {
     if (fx === "curve") { lastCurve = l.start; curved.add(l.sectionId); }
     // Stepped down after the spacing above, so calm is the same plan with the big moves made quiet.
     let out = !own && energy === "calm" ? CALM_STEP[fx] ?? fx : fx;
-    // A call shares the screen with its echo (§6.2), so it stays out of the echo's lower band.
-    if (!own && l.kind !== "response" && lines[i + 1]?.kind === "response" && LOWER_BAND.has(out)) out = "stack";
+    // A call shares the screen with its echoes (§6.2), so it stays out of their lower band. Only a
+    // run of replies all drawn as echoes shares the screen; a reply the user pinned to another
+    // effect comes after the call, so the call keeps its own move.
+    if (!own && l.kind !== "response" && repliesEcho(lines, i) && LOWER_BAND.has(out)) out = "stack";
     return out;
   });
 }

@@ -153,6 +153,18 @@ describe("Phase 2 direction (§6.1, §6.2)", () => {
     }
   });
 
+  test("a call keeps its own effect when its reply is pinned to something other than echo", () => {
+    // Seed 1 makes the second verse line pop, which a call before an echo would give up.
+    const verse = (replies) => [mk("a", "s2", "lead", "Everywhere you go", 5), mk("b", "s2", "lead", "Everybody get pain", 7),
+      ...replies.map((effect, i) => mk(`r${i}`, "s2", "response", "(PAIN!)", 9 + i * 2, effect))];
+    for (const energy of ["calm", "lively", "wild"]) {
+      assert.equal(chooseEffects({ lines: verse(["stack"]), sections: SECTIONS, title: "x", energy })[1], "pop", `${energy}: pinned stack`);
+      assert.equal(chooseEffects({ lines: verse(["auto", "slam"]), sections: SECTIONS, title: "x", energy })[1], "pop", `${energy}: echo then pinned slam`);
+      assert.equal(chooseEffects({ lines: verse(["echo"]), sections: SECTIONS, title: "x", energy })[1], "stack", `${energy}: pinned echo still moves the call`);
+      assert.equal(chooseEffects({ lines: verse(["auto", "echo"]), sections: SECTIONS, title: "x", energy })[1], "stack", `${energy}: two echoes move the call`);
+    }
+  });
+
   test("lively turns a frame into a slam only when the slam guards allow it", () => {
     const lines = [mk("a", "s1", "lead", "My time no late", 10), mk("b", "s1", "lead", "Go go", 11)];
     const out = chooseEffects({ lines, sections: SECTIONS, title: "My Time No Late", energy: "lively" });
