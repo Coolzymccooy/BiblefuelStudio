@@ -43,6 +43,9 @@ export const LOOKS = Object.freeze({
 /** Used for a phrase whose letters a look's fonts cannot draw (ẹ, ọ, ṣ …). */
 export const FALLBACK_FONT = Object.freeze({ file: "DejaVuSans.ttf", family: "DejaVu Sans" });
 
+/** The handwritten pairing for soft lines (bridges, tone-marked Yoruba): spec §6.3. */
+export const SOFT_FONT = Object.freeze({ file: "Caveat-Bold.ttf", family: "Caveat", scale: 1.35 });
+
 export const ENERGIES = Object.freeze([
   { id: "calm", label: "Calm", description: "Words pop in and stack. Best for sermons and readings." },
   { id: "lively", label: "Lively", description: "Adds big brush slams on the lines that repeat." },

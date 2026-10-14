@@ -1,6 +1,6 @@
 import { fitSize, widthAt } from "../text.js";
 import { CENTRE, maxWidthFor, isTall } from "../layout.js";
-import { caseText, fontsFor, holdEnd, inkAllowance, lineEvent, shortsCentre, shortsMargin } from "./common.js";
+import { bodyScale, caseText, fontsFor, holdEnd, inkAllowance, lineEvent, shortsCentre, shortsMargin } from "./common.js";
 
 const BORD = 6;
 const SHAD = 4;
@@ -24,15 +24,15 @@ export function splitTitle(words) {
 }
 
 /** Two big centred lines in the hit font: the first in the body colour, the last in the hit colour. */
-function titleEvents({ words, look, w, h, aspect, end, rot }) {
+function titleEvents({ words, look, w, h, aspect, end, rot, soft = false }) {
   if (!words.length) return [];
-  const fonts = fontsFor(look, words.map((x) => x.text).join(" "));
+  const fonts = fontsFor(look, words.map((x) => x.text).join(" "), { soft });
   const split = splitTitle(words);
   const lines = split.map((ln, li) => ln.map((x) => ({
     ...x, colour: li === split.length - 1 ? fonts.hit.colour : fonts.body.colour,
   })));
   const maxWidth = maxWidthFor({ side: false }, w, aspect) * 0.92;
-  const preferred = isTall(aspect) ? Math.round(w * 0.22) : Math.round(h * 0.26);
+  const preferred = Math.round((isTall(aspect) ? w * 0.22 : h * 0.26) * bodyScale(fonts.hit));
   const budget = maxWidth - inkAllowance(preferred, { bord: BORD, shad: SHAD, italic: fonts.hit.italic, bold: fonts.hit.bold });
   const fs = fitSize(fonts.hit.file, lines.map((ln) => ln.map((x) => x.text).join(" ")), preferred, budget, 40);
   const anchor = CENTRE[aspect] || CENTRE.wide;
@@ -51,7 +51,7 @@ function titleEvents({ words, look, w, h, aspect, end, rot }) {
 export function render({ planned, look, w, h, aspect, nextStart }) {
   const { phrase, rot } = planned;
   const words = phrase.words.map((x) => ({ text: caseText(look, x.text), t: x.start }));
-  return titleEvents({ words, look, w, h, aspect, end: holdEnd(phrase, nextStart), rot: Math.sign(rot) || -1 });
+  return titleEvents({ words, look, w, h, aspect, end: holdEnd(phrase, nextStart), rot: Math.sign(rot) || -1, soft: phrase.soft === true });
 }
 
 /**

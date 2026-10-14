@@ -14,7 +14,7 @@ const POP = 120;
  */
 export function render({ planned, look, w, h, aspect, nextStart }) {
   const { phrase } = planned;
-  const fonts = fontsFor(look, caseText(look, phrase.words.map((x) => x.text).join(" ")));
+  const fonts = fontsFor(look, caseText(look, phrase.words.map((x) => x.text).join(" ")), { soft: phrase.soft === true });
   const anchor = LOWER[aspect];
   const maxWidth = maxWidthFor({ side: false }, w, aspect);
   const words = phrase.words.map((x) => ({ text: caseText(look, x.text), t: x.start, colour: fonts.body.colour }));

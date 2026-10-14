@@ -2,7 +2,7 @@
 // hit colour, tilted +6°, popping in at 175%, with sparks on the last word (spec §6.2).
 import { ECHO, isTall, maxWidthFor } from "../layout.js";
 import { widthAt } from "../text.js";
-import { caseText, fontsFor, holdEnd, inkAllowance, lineEvent, shortsCentre, shortsMargin, sparksEvent, wrapWords } from "./common.js";
+import { bodyScale, caseText, fontsFor, holdEnd, inkAllowance, lineEvent, shortsCentre, shortsMargin, sparksEvent, wrapWords } from "./common.js";
 
 const BORD = 5;
 const SHAD = 3;
@@ -17,7 +17,7 @@ export function render({ planned, look, w, h, aspect, nextStart }) {
   const anchor = ECHO[aspect];
   const words = phrase.words.map((x) => ({ text: caseText(look, x.text), t: x.start, colour: fonts.body.colour }));
   const maxWidth = maxWidthFor({ side: false }, w, aspect);
-  let fs = Math.round((isTall(aspect) ? w : h) * 0.105);
+  let fs = Math.round((isTall(aspect) ? w : h) * 0.105 * bodyScale(fonts.hit));
   const budget = (size) => maxWidth - inkAllowance(size, { bord: BORD, shad: SHAD, italic: fonts.hit.italic, bold: fonts.hit.bold });
   let lines = wrapWords(words, fonts.hit.file, fs, budget(fs));
   while (lines.length > 2 && fs > MIN_FS) {

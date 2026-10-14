@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { LOOKS, FALLBACK_FONT, isStudioLook, resolveLook, resolveEnergy, listStudioLooks, drawtextPresetFor } from "./looks.js";
+import { LOOKS, FALLBACK_FONT, SOFT_FONT, isStudioLook, resolveLook, resolveEnergy, listStudioLooks, drawtextPresetFor } from "./looks.js";
 import { FONT_DIR, listTypographyPresets } from "../videoFilters.js";
 
 test("every look's fonts are in the repo and its fallback preset exists", () => {
@@ -14,6 +14,7 @@ test("every look's fonts are in the repo and its fallback preset exists", () => 
     assert.ok(listTypographyPresets().includes(look.fallbackPreset), `${look.id} fallback ${look.fallbackPreset}`);
   }
   assert.ok(fs.existsSync(path.join(FONT_DIR, FALLBACK_FONT.file)));
+  assert.ok(fs.existsSync(path.join(FONT_DIR, SOFT_FONT.file)));
 });
 
 test("studio ids are prefixed and resolve; everything else is not a studio look", () => {

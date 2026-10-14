@@ -1,6 +1,6 @@
 import { fitSize, widthAt } from "../text.js";
 import { CENTRE, maxWidthFor, isTall } from "../layout.js";
-import { caseText, fontsFor, holdEnd, inkAllowance, lineEvent, shortsCentre, shortsMargin, sparksEvent } from "./common.js";
+import { bodyScale, caseText, fontsFor, holdEnd, inkAllowance, lineEvent, shortsCentre, shortsMargin, sparksEvent } from "./common.js";
 
 const BORD = 6;
 const SHAD = 4;
@@ -9,11 +9,11 @@ const POP = 150;
 /** A short phrase slammed huge in the hit font, with sparks on its last word. */
 export function render({ planned, look, w, h, aspect, nextStart }) {
   const { phrase, rot } = planned;
-  const fonts = fontsFor(look, caseText(look, phrase.words.map((x) => x.text).join(" ")));
+  const fonts = fontsFor(look, caseText(look, phrase.words.map((x) => x.text).join(" ")), { soft: phrase.soft === true });
   const words = phrase.words.map((x) => ({ text: caseText(look, x.text), t: x.start, colour: fonts.hit.colour }));
   const lines = words.length <= 2 ? [words] : [words.slice(0, Math.ceil(words.length / 2)), words.slice(Math.ceil(words.length / 2))];
   const maxWidth = maxWidthFor({ side: false }, w, aspect) * 0.95;
-  const preferred = isTall(aspect) ? Math.round(w * 0.26) : Math.round(h * 0.30);
+  const preferred = Math.round((isTall(aspect) ? w * 0.26 : h * 0.30) * bodyScale(fonts.hit));
   const budget = maxWidth - inkAllowance(preferred, { bord: BORD, shad: SHAD, italic: fonts.hit.italic, bold: fonts.hit.bold });
   const fs = fitSize(fonts.hit.file, lines.map((ln) => ln.map((x) => x.text).join(" ")), preferred, budget, 48);
   const anchor = CENTRE[aspect];

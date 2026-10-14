@@ -38,6 +38,8 @@ export function phrasesFrom({ words, lines }) {
       };
       // `holdUntil`: when the phrase leaves, overriding the engine's hold rules.
       if (typeof l.holdUntil === "number" && Number.isFinite(l.holdUntil)) phrase.holdUntil = l.holdUntil;
+      // `soft`: draw in the handwritten pairing (a bridge, tone-marked Yoruba).
+      if (l.soft === true) phrase.soft = true;
       return phrase;
     });
 }

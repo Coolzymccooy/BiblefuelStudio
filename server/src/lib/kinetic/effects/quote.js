@@ -40,7 +40,7 @@ export function underlineEvent({ x0, y, width, thickness, at, end, colour }) {
  */
 export function render({ planned, look, energy, w, h, aspect, nextStart }) {
   const { phrase, hook } = planned;
-  const fonts = fontsFor(look, caseText(look, phrase.words.map((x) => x.text).join(" ")));
+  const fonts = fontsFor(look, caseText(look, phrase.words.map((x) => x.text).join(" ")), { soft: phrase.soft === true });
   const [open, close] = marks(fonts.body.file);
   const slots = slotsFor(aspect);
   const slot = slots[planned.slot % slots.length];

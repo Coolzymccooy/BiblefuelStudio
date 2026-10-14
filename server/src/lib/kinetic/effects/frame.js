@@ -1,5 +1,5 @@
 import { covers, fitSize, widthAt, assEscape, assColour, assTime } from "../text.js";
-import { caseText, fontsFor, holdEnd, inkAllowance, lineEvent, shortsMargin } from "./common.js";
+import { bodyScale, caseText, fontsFor, holdEnd, inkAllowance, lineEvent, shortsMargin } from "./common.js";
 import { chunk } from "./stack.js";
 import { isTall } from "../layout.js";
 
@@ -55,7 +55,7 @@ function bands({ box, inset, across, down, acrossLen, downLen, shift, ...common 
 export function render({ planned, look, w, h, aspect, nextStart }) {
   const { phrase } = planned;
   const shown = caseText(look, phrase.words.map((x) => x.text).join(" "));
-  const fonts = fontsFor(look, shown);
+  const fonts = fontsFor(look, shown, { soft: phrase.soft === true });
   const band = fonts.body;
   const box = frameBox(w, h, aspect);
   const bandFs = Math.round(Math.min(w, h) * (isTall(aspect) ? 0.06 : 0.055));
@@ -78,7 +78,7 @@ export function render({ planned, look, w, h, aspect, nextStart }) {
   const lines = chunk(words);
   const room = (box.right - box.left) - 2 * (inset + bandFs);
   const roomY = (box.bottom - box.top) - 2 * (inset + bandFs);
-  const preferred = isTall(aspect) ? Math.round(w * 0.16) : Math.round(h * 0.15);
+  const preferred = Math.round((isTall(aspect) ? w * 0.16 : h * 0.15) * bodyScale(fonts.hit));
   const budget = room * 0.9 - inkAllowance(preferred, { bord: BORD, shad: SHAD, italic: fonts.hit.italic, bold: fonts.hit.bold });
   const wide = fitSize(fonts.hit.file, lines.map((ln) => ln.map((x) => x.text).join(" ")), preferred, budget, 32);
   // A long phrase stacks many lines: shrink until the block fits between the top and bottom bands.

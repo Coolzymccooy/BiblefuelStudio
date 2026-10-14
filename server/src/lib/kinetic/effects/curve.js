@@ -31,7 +31,7 @@ function advance(file, letter, fs) {
 export function render(ctx) {
   const { planned, look, energy, w, h, aspect, nextStart } = ctx;
   const { phrase, hook } = planned;
-  const fonts = fontsFor(look, caseText(look, phrase.words.map((x) => x.text).join(" ")));
+  const fonts = fontsFor(look, caseText(look, phrase.words.map((x) => x.text).join(" ")), { soft: phrase.soft === true });
   const font = fonts.body;
   const key = keyWordIndex(phrase.words.map((x) => x.text));
   const words = phrase.words.map((x, i) => ({

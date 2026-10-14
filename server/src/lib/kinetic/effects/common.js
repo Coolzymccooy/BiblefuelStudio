@@ -1,5 +1,5 @@
 import { widthAt, covers, assEscape, assColour, assTime } from "../text.js";
-import { FALLBACK_FONT } from "../looks.js";
+import { FALLBACK_FONT, SOFT_FONT } from "../looks.js";
 import { clampBlockY } from "../layout.js";
 
 export const MIN_HOLD = 0.25;
@@ -32,8 +32,19 @@ export function bodyScale(font) {
   return Number.isFinite(s) && s > 0 ? s : 1;
 }
 
-export function fontsFor(look, text) {
-  if (covers(look.body.file, text) && covers(look.hit.file, text)) return { body: look.body, hit: look.hit };
+/**
+ * The body and hit fonts for a piece of text. A soft phrase pairs Caveat with
+ * the look's hit font; text the chosen fonts cannot draw falls back to DejaVu.
+ */
+export function fontsFor(look, text, { soft = false } = {}) {
+  const hitOk = covers(look.hit.file, text);
+  if (!soft && covers(look.body.file, text) && hitOk) return { body: look.body, hit: look.hit };
+  if (soft && covers(SOFT_FONT.file, text)) {
+    return {
+      body: { ...SOFT_FONT, colour: look.body.colour },
+      hit: hitOk ? look.hit : { ...SOFT_FONT, colour: look.hit.colour },
+    };
+  }
   return {
     body: { ...FALLBACK_FONT, colour: look.body.colour },
     hit: { ...FALLBACK_FONT, colour: look.hit.colour },
