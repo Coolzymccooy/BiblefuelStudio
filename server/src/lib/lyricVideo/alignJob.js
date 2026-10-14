@@ -15,6 +15,11 @@ const WINDOW_SEC_ESTIMATE = 28; // a window of 30 s that placed something moves 
 const CUT_RATE = 16000;
 const LYRICS_CHANGED = "The lyrics changed while timing ran — run timing again.";
 
+/** Timing from the vocals is opt-in: on only when the server sets LYRIC_VOCALS=1 (see server/.env.example). */
+export function vocalsOptedIn(env = process.env) {
+  return String(env.LYRIC_VOCALS || "").trim() === "1";
+}
+
 const running = new Set();
 /** True while a timing job for this project is in flight in this process (one job per project). */
 export function isAligning(projectId) { return running.has(projectId); }
@@ -54,8 +59,8 @@ function defaultDeps(workDir, projectId, { userId, dataDir } = {}) {
       prepared = out;
       return out;
     },
-    // Without a signed-in user there is nobody to queue the laptop's work for: hear the mix.
-    vocalStem: (song, { onQueued } = {}) => (userId ? requestVocalStem({ userId, input: song, dataDir, outputDir: workDir, onQueued }) : Promise.resolve(null)),
+    // Off unless LYRIC_VOCALS=1 (it has not beaten the mix in testing yet): nothing is queued. With no signed-in user there is nobody to queue the laptop's work for either: hear the mix.
+    vocalStem: (song, { onQueued } = {}) => (userId && vocalsOptedIn() ? requestVocalStem({ userId, input: song, dataDir, outputDir: workDir, onQueued }) : Promise.resolve(null)),
     // Re-encoded, not stream-copied: a copy cuts at packet boundaries and shifts every word.
     cutAudio: async (from, to) => {
       if (!prepared) throw new Error("ffmpeg cut asked before the audio was prepared");

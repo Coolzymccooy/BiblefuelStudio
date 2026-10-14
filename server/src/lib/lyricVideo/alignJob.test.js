@@ -8,6 +8,8 @@ import { spawnSync } from "node:child_process";
 import { createProject, readProject, writeProject, updateProject, deleteProject, applySheet } from "./projectStore.js";
 import { runAlignJob, isAligning, explainFailure } from "./alignJob.js";
 import { decodeMono } from "./beats.js";
+import { claimNext, _resetLaptopQueue } from "../stems/laptopQueue.js";
+import { _resetStemJobs, listStemJobs, updateStemJob } from "../stems/stemJobs.js";
 
 let dir;
 beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), "lyric-job-")); });
@@ -293,6 +295,61 @@ describe("vocals from the laptop", () => {
     }));
     assert.equal(done, null);
     assert.equal(fs.existsSync(VOCALS()), false);
+  });
+});
+
+describe("timing from the vocals is opt-in (LYRIC_VOCALS=1)", () => {
+  const TOKEN = "k".repeat(40);
+  let saved;
+  beforeEach(() => {
+    saved = { token: process.env.STEMS_WORKER_TOKEN, flag: process.env.LYRIC_VOCALS };
+    _resetStemJobs(); _resetLaptopQueue();
+    process.env.STEMS_WORKER_TOKEN = TOKEN;
+    claimNext(Date.now(), { caps: ["vocals"] }); // a laptop that can return vocals is online and the user is signed in
+  });
+  afterEach(() => {
+    for (const [key, value] of [["STEMS_WORKER_TOKEN", saved.token], ["LYRIC_VOCALS", saved.flag]]) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+    _resetStemJobs(); _resetLaptopQueue();
+  });
+  const start = () => {
+    const p = setup();
+    fs.writeFileSync(path.join(dir, "song.m4a"), "the user's own song");
+    const prepared = [];
+    const over = deps({ prepareAudio: async (input) => { prepared.push(input); return PREPARED(); } });
+    return { p, prepared, job: runAlignJob({ dataDir: dir, workDir: dir, projectId: p.projectId, userId: "u1", deps: over }) };
+  };
+
+  test("without the flag the default step queues nothing and timing runs on the mix", async () => {
+    delete process.env.LYRIC_VOCALS;
+    const { prepared, job } = start();
+    const done = await job;
+    assert.equal(done.timing.status, "done");
+    assert.equal(done.timing.usedVocalStem, false);
+    assert.equal(listStemJobs().length, 0);
+    assert.deepEqual(prepared, [path.join(dir, "song.m4a")]);
+  });
+
+  test("anything but 1 leaves it off", async () => {
+    process.env.LYRIC_VOCALS = "0";
+    const { job } = start();
+    await job;
+    assert.equal(listStemJobs().length, 0);
+  });
+
+  test("with LYRIC_VOCALS=1 the default step queues a vocals job for the laptop", async () => {
+    process.env.LYRIC_VOCALS = "1";
+    const { job } = start();
+    const until = Date.now() + 5000;
+    while (!listStemJobs().length && Date.now() < until) await new Promise((r) => setTimeout(r, 20));
+    const [queued] = listStemJobs();
+    assert.equal(queued?.stem, "vocals");
+    assert.equal(queued?.userId, "u1");
+    updateStemJob(queued.jobId, { status: "error", error: "laptop gone" }); // the laptop fails: timing carries on with the mix
+    const done = await job;
+    assert.equal(done.timing.status, "done");
+    assert.equal(done.timing.usedVocalStem, false);
   });
 });
 
