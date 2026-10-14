@@ -1,7 +1,8 @@
 import { fitSize, widthAt } from "../text.js";
 import { CENTRE, maxWidthFor, isTall } from "../layout.js";
-import { bodyScale, caseText, fontsFor, holdEnd, inkAllowance, lineEvent, shortsCentre, shortsMargin } from "./common.js";
+import { blockMargin, bodyScale, caseText, fitsAbove, fontsFor, holdEnd, inkAllowance, lineEvent, shortsCentre } from "./common.js";
 
+const MIN_FS = 40;
 const BORD = 6;
 const SHAD = 4;
 const POP = 150;
@@ -24,7 +25,7 @@ export function splitTitle(words) {
 }
 
 /** Two big centred lines in the hit font: the first in the body colour, the last in the hit colour. */
-function titleEvents({ words, look, w, h, aspect, end, rot, soft = false }) {
+function titleEvents({ words, look, w, h, aspect, end, rot, soft = false, clearBelow }) {
   if (!words.length) return [];
   const fonts = fontsFor(look, words.map((x) => x.text).join(" "), { soft });
   const split = splitTitle(words);
@@ -34,12 +35,20 @@ function titleEvents({ words, look, w, h, aspect, end, rot, soft = false }) {
   const maxWidth = maxWidthFor({ side: false }, w, aspect) * 0.92;
   const preferred = Math.round((isTall(aspect) ? w * 0.22 : h * 0.26) * bodyScale(fonts.hit));
   const budget = maxWidth - inkAllowance(preferred, { bord: BORD, shad: SHAD, italic: fonts.hit.italic, bold: fonts.hit.bold });
-  const fs = fitSize(fonts.hit.file, lines.map((ln) => ln.map((x) => x.text).join(" ")), preferred, budget, 40);
+  const marginAt = (size) => blockMargin({
+    aspect, lineGap: size * 1.0, clearBelow, fs: size, bord: BORD, shad: SHAD, rot, pop: POP,
+    width: Math.max(...lines.map((ln) => widthAt(fonts.hit.file, ln.map((x) => x.text).join(" "), size))),
+  });
+  let fs = fitSize(fonts.hit.file, lines.map((ln) => ln.map((x) => x.text).join(" ")), preferred, budget, MIN_FS);
+  // A call over its echo also shrinks until it fits above the echo, down to the title's floor.
+  while (Number.isFinite(clearBelow) && fs > MIN_FS
+    && !fitsAbove({ clearBelow, blockHeight: lines.length * fs * 1.0, margin: marginAt(fs), h, aspect })) {
+    fs = Math.max(MIN_FS, Math.floor(fs * 0.92));
+  }
   const anchor = CENTRE[aspect] || CENTRE.wide;
   const lineGap = fs * 1.0;
-  const widest = Math.max(...lines.map((ln) => widthAt(fonts.hit.file, ln.map((x) => x.text).join(" "), fs)));
-  const margin = shortsMargin({ aspect, lineGap, fs, bord: BORD, rot, width: widest, pop: POP });
-  const cy = shortsCentre({ aspect, cy: anchor.y * h, blockHeight: lines.length * lineGap, margin, h });
+  const margin = marginAt(fs);
+  const cy = shortsCentre({ aspect, cy: anchor.y * h, blockHeight: lines.length * lineGap, margin, h, clearBelow });
   const y0 = cy - ((lines.length - 1) * lineGap) / 2;
   return lines.map((ln, i) => lineEvent({
     start: ln[0].t, end, x: anchor.x * w, y: y0 + i * lineGap, fs, family: fonts.hit.family,
@@ -51,7 +60,9 @@ function titleEvents({ words, look, w, h, aspect, end, rot, soft = false }) {
 export function render({ planned, look, w, h, aspect, nextStart }) {
   const { phrase, rot } = planned;
   const words = phrase.words.map((x) => ({ text: caseText(look, x.text), t: x.start }));
-  return titleEvents({ words, look, w, h, aspect, end: holdEnd(phrase, nextStart), rot: Math.sign(rot) || -1, soft: phrase.soft === true });
+  return titleEvents({
+    words, look, w, h, aspect, end: holdEnd(phrase, nextStart), rot: Math.sign(rot) || -1, soft: phrase.soft === true, clearBelow: phrase.clearBelow,
+  });
 }
 
 /**

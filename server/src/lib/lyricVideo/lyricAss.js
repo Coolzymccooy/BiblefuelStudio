@@ -2,6 +2,7 @@ import { EFFECTS, assHeader } from "../kinetic/ass.js";
 import { planPhrases } from "../kinetic/director.js";
 import { resolveLook, resolveEnergy } from "../kinetic/looks.js";
 import { aspectOf, slotsFor } from "../kinetic/layout.js";
+import { echoInkTop } from "../kinetic/effects/echo.js";
 import { chooseEffects } from "./policy.js";
 
 const isPlaced = (l) => l && Array.isArray(l.words) && l.words.length > 0 && Number.isFinite(l.start) && Number.isFinite(l.end);
@@ -9,6 +10,7 @@ const isResponse = (l) => l?.kind === "response";
 const MAX_HOLD = 3; // a call and its echoes stay up at most this long after the last echo ends
 const GAP = 0.05;
 const MIN_HOLD = 0.25;
+const ECHO_GAP = 0.02; // a call's ink stays at least this share of the height above its echo's
 
 /**
  * A call and its echoes share the screen until the next lead line (spec 6.2): when a lead line is
@@ -26,6 +28,25 @@ function holdsFor(placed, songEnd) {
     for (let k = i; k < j; k++) until[k] = Math.min(Math.max(placed[k].end + MIN_HOLD, bound), songEnd);
   }
   return until;
+}
+
+/**
+ * Where a call must keep its ink above, as a pixel y, for each lead line directly followed by
+ * response lines drawn as echoes: the highest echo ink among them less a visible gap (2% of the
+ * height). The call and its echoes share the screen (spec 6.2), so they must never overlap. Other
+ * lines are left undefined, which keeps their captions exactly as before.
+ */
+function clearancesFor(placed, effects, phrases, { look, w, h, aspect }) {
+  const below = new Array(placed.length).fill(undefined);
+  for (let i = 0; i < placed.length; i++) {
+    if (isResponse(placed[i])) continue;
+    const tops = [];
+    for (let j = i + 1; j < placed.length && isResponse(placed[j]); j++) {
+      if (effects[j] === "echo") tops.push(echoInkTop({ phrase: phrases[j], look, w, h, aspect }));
+    }
+    if (tops.length) below[i] = Math.floor(Math.min(...tops) - ECHO_GAP * h);
+  }
+  return below;
 }
 
 /**
@@ -55,10 +76,12 @@ export function buildLyricAss(project, { w, h, layout = "shorts" }) {
   const look = resolveLook(project.look?.id || "studio-lagos-night");
   const songEnd = Number(project.timing?.audibleEnd) || Number(project.song?.durationSec) || Infinity;
   const holds = holdsFor(placed, songEnd);
-  const phrases = placed.map((l, i) => ({
+  const held = placed.map((l, i) => ({
     text: l.text, start: l.start, end: l.end, words: l.words, soft: l.kind === "soft",
     ...(holds[i] !== undefined && { holdUntil: holds[i] }),
   }));
+  const clears = clearancesFor(placed, effects, held, { look, w, h, aspect });
+  const phrases = held.map((p, i) => (clears[i] === undefined ? p : { ...p, clearBelow: clears[i] }));
   const overrides = Object.fromEntries(effects.map((fx, i) => [i, fx]));
   const plan = planPhrases({
     phrases, energy, seed, overrides, slotCount: slotsFor(aspect).length, titleFirst: false,

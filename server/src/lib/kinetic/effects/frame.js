@@ -1,5 +1,5 @@
 import { covers, fitSize, widthAt, assEscape, assColour, assTime } from "../text.js";
-import { bodyScale, caseText, fontsFor, holdEnd, inkAllowance, lineEvent, shortsMargin } from "./common.js";
+import { blockMargin, bodyScale, caseText, fontsFor, holdEnd, inkAllowance, lineEvent } from "./common.js";
 import { chunk } from "./stack.js";
 import { isTall } from "../layout.js";
 
@@ -57,7 +57,11 @@ export function render({ planned, look, w, h, aspect, nextStart }) {
   const shown = caseText(look, phrase.words.map((x) => x.text).join(" "));
   const fonts = fontsFor(look, shown, { soft: phrase.soft === true });
   const band = fonts.body;
-  const box = frameBox(w, h, aspect);
+  const { clearBelow } = phrase;
+  // A call over its echo runs its bands round the part of the frame above the echo: the bands
+  // are clipped to the box, so their ink stops at `clearBelow`.
+  const full = frameBox(w, h, aspect);
+  const box = Number.isFinite(clearBelow) ? { ...full, bottom: Math.min(full.bottom, clearBelow) } : full;
   const bandFs = Math.round(Math.min(w, h) * (isTall(aspect) ? 0.06 : 0.055));
   const sep = covers(band.file, "•") ? " • " : " / ";
   const unit = `${shown}${sep}`;
@@ -83,12 +87,14 @@ export function render({ planned, look, w, h, aspect, nextStart }) {
   const wide = fitSize(fonts.hit.file, lines.map((ln) => ln.map((x) => x.text).join(" ")), preferred, budget, 32);
   // A long phrase stacks many lines: shrink until the block fits between the top and bottom bands.
   let fs = Math.max(32, Math.min(wide, Math.floor((roomY * 0.9) / lines.length)));
-  // Shorts: the lines' pop-in overshoot must also fit the band, so shrink until the block does.
+  // Shorts, or a call over its echo on any layout: the lines' pop-in overshoot (and, over an echo,
+  // their shadow) must also fit the box, so shrink until the block does.
   const lineTexts = lines.map((ln) => ln.map((x) => x.text).join(" "));
-  const reachOf = (size) => shortsMargin({
-    aspect, lineGap: size, fs: size, bord: BORD, pop: POP, width: Math.max(...lineTexts.map((t) => widthAt(fonts.hit.file, t, size))),
+  const reachOf = (size) => blockMargin({
+    aspect, lineGap: size, clearBelow, fs: size, bord: BORD, shad: SHAD, pop: POP, width: Math.max(...lineTexts.map((t) => widthAt(fonts.hit.file, t, size))),
   });
-  while (aspect === "shorts" && fs > 32 && lines.length * fs + 2 * reachOf(fs) > box.bottom - box.top) fs -= 2;
+  const mustFit = aspect === "shorts" || Number.isFinite(clearBelow);
+  while (mustFit && fs > 32 && lines.length * fs + 2 * reachOf(fs) > box.bottom - box.top) fs -= 2;
   const lineGap = fs * 1.0;
   const cx = (box.left + box.right) / 2;
   const cy = (box.top + box.bottom) / 2;

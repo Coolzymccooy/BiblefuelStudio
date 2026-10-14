@@ -1,6 +1,6 @@
 import { widthAt, covers, assEscape, assColour, assTime } from "../text.js";
 import { FALLBACK_FONT, SOFT_FONT } from "../looks.js";
-import { clampBlockY } from "../layout.js";
+import { blockFits, clampBlockY } from "../layout.js";
 
 export const MIN_HOLD = 0.25;
 export const MAX_HOLD = 3; // a phrase never stays up more than this past its last word
@@ -82,11 +82,40 @@ export function shortsMargin({ aspect, lineGap, ...line }) {
 }
 
 /**
- * The centre line of a block that has no slot of its own (pop, slam, title,
- * frame). Only a Shorts render moves it, to keep its ink inside the band; every
- * other layout keeps `cy` exactly.
+ * How far a line's ink can reach from its anchor, its drop shadow included:
+ * shortsReach plus the shadow at the pop-in's peak scale.
  */
-export function shortsCentre({ aspect, cy, blockHeight, margin, h }) {
+export function inkReach({ shad = 0, pop, ...line }) {
+  return shortsReach({ ...line, pop }) + (pop / 100) * shad;
+}
+
+/**
+ * Extra height to give each side of a block before placing it. A call that
+ * shares the screen with its crowd echo carries `clearBelow` (a pixel y its
+ * ink must stay above), and gets its full ink reach on every layout; any other
+ * block gets shortsMargin, unchanged.
+ */
+export function blockMargin({ aspect, lineGap, clearBelow, ...line }) {
+  if (!Number.isFinite(clearBelow)) return shortsMargin({ aspect, lineGap, ...line });
+  return Math.max(0, inkReach(line) - lineGap / 2);
+}
+
+/**
+ * Whether a block (its line pitch times its lines, plus `margin` each side)
+ * fits between the safe top and `clearBelow`. Always true without `clearBelow`.
+ */
+export function fitsAbove({ clearBelow, blockHeight, margin, h, aspect }) {
+  return !Number.isFinite(clearBelow) || blockFits(blockHeight + 2 * margin, h, aspect, clearBelow);
+}
+
+/**
+ * The centre line of a block that has no slot of its own (pop, slam, title,
+ * frame). A Shorts render moves it to keep its ink inside the band, and a call
+ * over its echo moves up to keep its ink above `clearBelow`; any other block
+ * keeps `cy` exactly.
+ */
+export function shortsCentre({ aspect, cy, blockHeight, margin, h, clearBelow }) {
+  if (Number.isFinite(clearBelow)) return clampBlockY(cy, blockHeight + 2 * margin, h, aspect, clearBelow);
   return aspect === "shorts" ? clampBlockY(cy, blockHeight + 2 * margin, h, aspect) : cy;
 }
 

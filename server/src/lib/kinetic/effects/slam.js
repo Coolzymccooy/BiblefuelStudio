@@ -1,7 +1,8 @@
 import { fitSize, widthAt } from "../text.js";
 import { CENTRE, maxWidthFor, isTall } from "../layout.js";
-import { bodyScale, caseText, fontsFor, holdEnd, inkAllowance, lineEvent, shortsCentre, shortsMargin, sparksEvent } from "./common.js";
+import { blockMargin, bodyScale, caseText, fitsAbove, fontsFor, holdEnd, inkAllowance, lineEvent, shortsCentre, sparksEvent } from "./common.js";
 
+const MIN_FS = 48;
 const BORD = 6;
 const SHAD = 4;
 const POP = 150;
@@ -15,13 +16,22 @@ export function render({ planned, look, w, h, aspect, nextStart }) {
   const maxWidth = maxWidthFor({ side: false }, w, aspect) * 0.95;
   const preferred = Math.round((isTall(aspect) ? w * 0.26 : h * 0.30) * bodyScale(fonts.hit));
   const budget = maxWidth - inkAllowance(preferred, { bord: BORD, shad: SHAD, italic: fonts.hit.italic, bold: fonts.hit.bold });
-  const fs = fitSize(fonts.hit.file, lines.map((ln) => ln.map((x) => x.text).join(" ")), preferred, budget, 48);
   const anchor = CENTRE[aspect];
-  const lineGap = fs * 1.0;
   const tilt = Math.sign(rot) * Math.min(2, Math.abs(rot));
-  const widest = Math.max(...lines.map((ln) => widthAt(fonts.hit.file, ln.map((x) => x.text).join(" "), fs)));
-  const margin = shortsMargin({ aspect, lineGap, fs, bord: BORD, rot: tilt, width: widest, pop: POP });
-  const cy = shortsCentre({ aspect, cy: anchor.y * h, blockHeight: lines.length * lineGap, margin, h });
+  const { clearBelow } = phrase;
+  const marginAt = (size) => blockMargin({
+    aspect, lineGap: size * 1.0, clearBelow, fs: size, bord: BORD, shad: SHAD, rot: tilt, pop: POP,
+    width: Math.max(...lines.map((ln) => widthAt(fonts.hit.file, ln.map((x) => x.text).join(" "), size))),
+  });
+  let fs = fitSize(fonts.hit.file, lines.map((ln) => ln.map((x) => x.text).join(" ")), preferred, budget, MIN_FS);
+  // A call over its echo also shrinks until it fits above the echo, down to the slam's floor.
+  while (Number.isFinite(clearBelow) && fs > MIN_FS
+    && !fitsAbove({ clearBelow, blockHeight: lines.length * fs * 1.0, margin: marginAt(fs), h, aspect })) {
+    fs = Math.max(MIN_FS, Math.floor(fs * 0.92));
+  }
+  const lineGap = fs * 1.0;
+  const margin = marginAt(fs);
+  const cy = shortsCentre({ aspect, cy: anchor.y * h, blockHeight: lines.length * lineGap, margin, h, clearBelow });
   const y0 = cy - ((lines.length - 1) * lineGap) / 2;
   const end = holdEnd(phrase, nextStart);
   const sparkR = Math.round(Math.min(w, h) * 0.05);

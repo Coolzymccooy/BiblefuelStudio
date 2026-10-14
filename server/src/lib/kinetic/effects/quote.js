@@ -1,6 +1,6 @@
 import { covers, fitSize, widthAt, assColour, assTime } from "../text.js";
 import { slotsFor, maxWidthFor, clampBlockY, isTall } from "../layout.js";
-import { bodyScale, caseText, fontsFor, holdEnd, inkAllowance, keyWordIndex, lineEvent, shortsMargin, wrapWords } from "./common.js";
+import { blockMargin, bodyScale, caseText, fitsAbove, fontsFor, holdEnd, inkAllowance, keyWordIndex, lineEvent, wrapWords } from "./common.js";
 
 const MIN_FS = 24;
 const BORD = 4;
@@ -55,8 +55,18 @@ export function render({ planned, look, energy, w, h, aspect, nextStart }) {
   let fs = Math.round((isTall(aspect) ? w * 0.12 : h * 0.11) * bodyScale(fonts.body));
   // Held back at the starting size, which bounds the ink at every smaller size too.
   const budget = maxWidth - inkAllowance(fs, { bord: BORD, shad: SHAD, italic: fonts.body.italic, bold: fonts.body.bold });
+  const { clearBelow } = phrase;
+  // The underline's rounded drawing can run ~4 px past 3 × thickness, so the block allows for it.
+  const blockAt = (size, count) => count * (size * 1.05) + Math.max(3, size * 0.07) * 3 + 4;
+  const marginAt = (size, lns) => blockMargin({
+    aspect, lineGap: size * 1.05, clearBelow, fs: size, bord: BORD, shad: SHAD, pop: POP,
+    width: Math.max(...lns.map((ln) => widthAt(fonts.body.file, ln.map((x) => x.text).join(" "), size))),
+  });
+  // A call over its echo also shrinks until it fits above the echo.
+  const fits = (size, lns) => !Number.isFinite(clearBelow)
+    || fitsAbove({ clearBelow, blockHeight: blockAt(size, lns.length), margin: marginAt(size, lns), h, aspect });
   let lines = wrapWords(words, fonts.body.file, fs, budget);
-  while (lines.length > 2 && fs > MIN_FS) {
+  while ((lines.length > 2 || !fits(fs, lines)) && fs > MIN_FS) {
     fs = Math.max(MIN_FS, Math.floor(fs * 0.92));
     lines = wrapWords(words, fonts.body.file, fs, budget);
   }
@@ -64,11 +74,9 @@ export function render({ planned, look, energy, w, h, aspect, nextStart }) {
   fs = fitSize(fonts.body.file, texts, fs, budget, MIN_FS); // a single long word can still be too wide
   const lineGap = fs * 1.05;
   const thickness = Math.max(3, fs * 0.07);
-  // The underline's rounded drawing can run ~4 px past 3 × thickness, so the block allows for it.
-  const blockHeight = lines.length * lineGap + thickness * 3 + 4;
-  const widest = Math.max(...texts.map((t) => widthAt(fonts.body.file, t, fs)));
-  const margin = shortsMargin({ aspect, lineGap, fs, bord: BORD, width: widest, pop: POP });
-  const cy = clampBlockY(slot.y * h, blockHeight + 2 * margin, h, aspect);
+  const blockHeight = blockAt(fs, lines.length);
+  const margin = marginAt(fs, lines);
+  const cy = clampBlockY(slot.y * h, blockHeight + 2 * margin, h, aspect, clearBelow);
   const y0 = cy - blockHeight / 2 + lineGap / 2;
   const end = holdEnd(phrase, nextStart);
   const events = lines.map((ln, i) => lineEvent({
