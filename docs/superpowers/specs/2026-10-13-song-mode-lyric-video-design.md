@@ -96,7 +96,7 @@ Input: the pasted sheet. Output: `{ sections, lines, skipped }`.
 ### 5.2 Audio preparation
 
 - Extract mono 16 kHz AAC with ffmpeg for transcription; keep the original for render.
-- **Vocal stem (Phase 2 accuracy boost):** when `laptopOnline()` is true, enqueue a laptop stems job asking for the **Vocals** stem (the worker today writes only the Instrumental — `separator.js` `--single_stem Instrumental`; add a `stem: "vocals"` field). Wait up to 4 minutes; otherwise continue on the mix. Recorded as `timing.usedVocalStem`.
+- **Vocal stem (opt-in, off by default):** only when the server sets `LYRIC_VOCALS=1` and `laptopOnline()` is true, enqueue a laptop stems job asking for the **Vocals** stem (`stem: "vocals"` on the job). Wait up to 4 minutes; otherwise continue on the mix. Recorded as `timing.usedVocalStem`. Measured on the reference songs it gave no gain (11 lines flagged against 10, median error 0.27 s against 0.12 s), so it stays off. Its runs exposed two window fixes that now apply to every song: `trimLoops` keeps a window's words before its first backwards timestamp (never in pass 0, which is still rejected whole), and a window may not move the frontier more than 3× the song's average pace since the last anchor.
 
 ### 5.3 Windowed transcription — `transcribeWindows.js`
 
@@ -150,7 +150,7 @@ The engine's existing guards (no slam within 4 s, frame ≥ 30 s apart, curve �
 
 ### 6.2 New engine effect: `echo` — `server/src/lib/kinetic/effects/echo.js`
 
-Built from the reference: the response in the look's **hit** font, body colour, outlined in the hit colour, ~10.5% of frame width, tilted +6°, pop 175%, placed in the lower band under the call (tall: y = 0.645 h; wide: y = 0.72 h), sparks on the last word. Added to `EFFECT_IDS`; the call before an echo holds until the next *lead* line, so call and response share the screen. Available to every caption feature, not only Song mode.
+Built from the reference: the response in the look's **hit** font, body colour, outlined in the hit colour, sized at 0.105 × frame width on tall and Shorts frames and 0.105 × frame height on wide ones, tilted +6°, pop 175%, placed in the lower band under the call (tall: y = 0.645 h; wide: y = 0.72 h), sparks on the last word. Added to `EFFECT_IDS`; the call before an echo holds until the next *lead* line, so call and response share the screen. This holds only when the call is not itself an echo and every reply after it is drawn as an echo; then the call and the last echo hold, and an earlier echo leaves when the next one comes. Otherwise each line leaves when the next starts. A held call keeps its ink at least 0.02 h above its echoes' ink: it moves up first, then shrinks. Available to every caption feature, not only Song mode.
 
 ### 6.3 Soft style
 
