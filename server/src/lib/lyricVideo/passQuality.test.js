@@ -20,6 +20,18 @@ describe("trimLoops", () => {
   test("drops hallucinated sign-offs and music notes", () => {
     assert.deepEqual(trimLoops(W("eh yeah ♪ thanks for watching")).map((w) => w.word), ["eh", "yeah"]);
   });
+  test("a looped tail whose times go back keeps the words before it", () => {
+    // Shaped like the real reply: 19 lines heard in order, then a 9-word phrase looped at the very end with its time stepping back.
+    const sung = W("from lagos traffic to the london rain everywhere you go everybody get pain", 100);
+    const loop = [...W("sometimes na better road dey after the bend sometimes", sung[sung.length - 1].start - 0.02), ...W("na better road dey after", 104)];
+    const out = trimLoops([...sung, ...loop]);
+    assert.deepEqual(out.map((w) => w.word), sung.map((w) => w.word));
+    assert.equal(rejectPass(out, expectedFrom([{ text: "From Lagos traffic to the London rain" }, { text: "Everywhere you go, everybody get pain" }])), null);
+  });
+  test("a window whose words are all in order comes out unchanged", () => {
+    const words = W("from lagos traffic to the london rain everywhere you go", 5);
+    assert.deepEqual(trimLoops(words), words);
+  });
 });
 
 describe("rejectPass", () => {
