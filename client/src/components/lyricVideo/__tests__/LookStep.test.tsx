@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 vi.mock('../../../lib/lyricVideoApi', () => ({
-  lyricVideoApi: { setLook: vi.fn(), setBackground: vi.fn(), uploadBackground: vi.fn() },
+  lyricVideoApi: { setLook: vi.fn(), setBackground: vi.fn(), uploadBackground: vi.fn(), patchLine: vi.fn(), effects: vi.fn() },
 }));
 vi.mock('../../../lib/api', () => ({
   api: {
@@ -22,22 +22,26 @@ vi.mock('../LivePreview', () => ({
 }));
 import { lyricVideoApi } from '../../../lib/lyricVideoApi';
 import { LookStep } from '../LookStep';
+import { nextSeed } from '../ShuffleButton';
 import type { LyricProject } from '../../../lib/lyricVideoTypes';
 
 const project = {
   projectId: 'lv_1', song: { file: 'x', durationSec: 30, coverStill: 'cover.jpg' }, lines: [], timing: { status: 'done' },
   look: { id: 'studio-lagos-night', energy: 'lively', seed: 1 }, background: null,
 } as unknown as LyricProject;
+const timed = {
+  ...project,
+  lines: [{ id: 'l1', sectionId: 's1', kind: 'lead', text: 'Who talk say', effect: 'auto', words: [{ text: 'Who', start: 1, end: 2 }], start: 1, end: 2 }],
+} as unknown as LyricProject;
 const withBg = { ...project, background: { file: '/o/bg.jpg', kind: 'image', fit: 'auto' } } as unknown as LyricProject;
 
 describe('LookStep', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('lists the looks and energies from the server and offers no shuffle', async () => {
+  it('lists the looks and energies from the server', async () => {
     render(<LookStep project={project} onChange={vi.fn()} />);
     expect(await screen.findByRole('option', { name: 'Gold Rush' })).toBeTruthy();
     expect(screen.getByRole('option', { name: 'Wild' })).toBeTruthy();
-    expect(screen.queryByText(/shuffle/i)).toBeNull();
     expect((screen.getByLabelText(/energy/i) as HTMLSelectElement).value).toBe('lively');
     expect(await screen.findByTestId('lyric-preview')).toBeTruthy();
   });
@@ -99,5 +103,31 @@ describe('LookStep', () => {
     expect(screen.getByRole('option', { name: 'Show it whole' })).toBeTruthy();
     fireEvent.change(fit, { target: { value: 'contain' } });
     await waitFor(() => expect(lyricVideoApi.setBackground).toHaveBeenCalledWith('lv_1', '/o/bg.jpg', 'contain'));
+  });
+
+  it('shuffles the Auto effects and redraws the preview right away', async () => {
+    const shuffled = { ...project, look: { ...project.look, seed: nextSeed(1) } } as LyricProject;
+    vi.mocked(lyricVideoApi.setLook).mockResolvedValue(shuffled);
+    const onChange = vi.fn();
+    render(<LookStep project={project} onChange={onChange} />);
+    expect(screen.getByText('Changes the effects on lines set to Auto. Your own choices stay.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /shuffle effects/i }));
+    await waitFor(() => expect(lyricVideoApi.setLook).toHaveBeenCalledWith('lv_1', { seed: nextSeed(1) }));
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith(shuffled));
+    await waitFor(() => expect(screen.getByTestId('lyric-preview').getAttribute('data-ass-version')).toBe('2'));
+  });
+
+  it('chooses an effect for one line and redraws the preview right away', async () => {
+    vi.mocked(lyricVideoApi.effects).mockResolvedValue({ l1: 'slam' });
+    vi.mocked(lyricVideoApi.patchLine).mockResolvedValue(timed);
+    render(<LookStep project={timed} onChange={vi.fn()} />);
+    fireEvent.change(await screen.findByLabelText('Effect for “Who talk say”'), { target: { value: 'quote' } });
+    await waitFor(() => expect(lyricVideoApi.patchLine).toHaveBeenCalledWith('lv_1', 'l1', { effect: 'quote' }));
+    await waitFor(() => expect(screen.getByTestId('lyric-preview').getAttribute('data-ass-version')).toBe('2'));
+  });
+
+  it('has no line list before any line is timed', () => {
+    render(<LookStep project={project} onChange={vi.fn()} />);
+    expect(screen.queryByText('Effect for each line')).toBeNull();
   });
 });

@@ -2,7 +2,7 @@
 
 export type SectionKind = 'intro' | 'verse' | 'pre' | 'chorus' | 'final' | 'bridge' | 'outro' | 'other';
 export type LineKind = 'lead' | 'response' | 'soft';
-export type LyricEffect = 'auto' | 'pop' | 'stack' | 'slam' | 'quote' | 'curve' | 'frame' | 'title';
+export type LyricEffect = 'auto' | 'pop' | 'stack' | 'slam' | 'quote' | 'curve' | 'frame' | 'echo' | 'title';
 export type LyricEnergy = 'calm' | 'lively' | 'wild';
 export type BackgroundFit = 'auto' | 'cover' | 'contain';
 export type RenderAspect = 'portrait' | 'landscape' | 'square';

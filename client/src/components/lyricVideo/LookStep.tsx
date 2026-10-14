@@ -9,7 +9,9 @@ import { StudioLookOptions } from '../captions/StudioEffects';
 import { DropZone } from '../ui/DropZone';
 import { dropZoneCls, fieldLabelCls, inputCls, panelCls, secondaryBtnCls } from '../story/formStyles';
 import { LazyLivePreview } from './LazyLivePreview';
+import { LineEffects } from './LineEffects';
 import { messageOf } from './messageOf';
+import { ShuffleButton } from './ShuffleButton';
 
 interface Props { project: LyricProject; onChange: (p: LyricProject) => void }
 
@@ -60,6 +62,8 @@ export function LookStep({ project, onChange }: Props) {
     }
   };
 
+  const redrawPreview = () => setAssVersion((v) => v + 1);
+
   const upload = (file: File) => {
     setProgress(0);
     void apply(() => lyricVideoApi.uploadBackground(project.projectId, file, setProgress)).finally(() => setProgress(null));
@@ -95,6 +99,8 @@ export function LookStep({ project, onChange }: Props) {
           </select>
         </div>
       </div>
+
+      <ShuffleButton project={project} onChange={onChange} onPreviewChange={redrawPreview} />
 
       <div className={`${panelCls} space-y-3`}>
         <p className={fieldLabelCls}>Background</p>
@@ -152,6 +158,8 @@ export function LookStep({ project, onChange }: Props) {
           </p>
         )}
       </div>
+
+      <LineEffects project={project} onChange={onChange} onPreviewChange={redrawPreview} />
     </div>
   );
 }
