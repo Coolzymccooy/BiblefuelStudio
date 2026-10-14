@@ -78,3 +78,12 @@ describe("promptFor", () => {
     assert.ok(p.endsWith("goes here"));
   });
 });
+
+describe("trimLoops cutBackwards option", () => {
+  test("cutBackwards: false leaves a backwards step for rejectPass to catch", () => {
+    const words = [...W("from lagos traffic to the london rain", 100), { word: "oh", start: 100.5, end: 100.7 }];
+    assert.equal(trimLoops(words, { cutBackwards: false }).length, words.length);
+    assert.match(rejectPass(trimLoops(words, { cutBackwards: false }), new Set(["from", "lagos", "traffic", "london", "rain"])), /out of order/);
+    assert.equal(trimLoops(words).length, words.length - 1);
+  });
+});

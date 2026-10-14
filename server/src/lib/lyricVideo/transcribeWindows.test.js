@@ -381,7 +381,10 @@ describe("a window that hears only a repeated hook", () => {
     const hook = ["Who", "talk", "say", "Who", "talk", "say", "Who", "talk", "say"].map((word, k) => ({ word, start: 0.5 + k * 0.4, end: 0.8 + k * 0.4 }));
     const prompts = [];
     const transcribe = async (file, prompt) => {
-      if (file === "song.m4a") return { words: (await singer.transcribe(file)).words.filter((w) => w.start < stopsAt) };
+      if (file === "song.m4a") {
+        let max = -Infinity; // pass 0 is strictly in order: it is never trimmed at a backwards step
+        return { words: (await singer.transcribe(file)).words.filter((w) => w.start < stopsAt && w.start >= max && ((max = w.start), true)) };
+      }
       prompts.push(prompt);
       return { words: hook }; // every window hears just the hook, at its start
     };
@@ -390,5 +393,26 @@ describe("a window that hears only a repeated hook", () => {
     const frontierOf = (prompt) => lines.findIndex((l) => prompt.startsWith(l.text));
     assert.ok(prompts.length >= 2, "windows ran after the hook was heard");
     for (const prompt of prompts) assert.ok(frontierOf(prompt) <= 38, `a window was prompted from line ${frontierOf(prompt)}: ${prompt.slice(0, 40)}`);
+  });
+});
+
+describe("a backwards step in time", () => {
+  const { lines } = parseSheet(sheet);
+  const stray = { word: "oh", start: 0.1, end: 0.3 }; // a late word stamped earlier than the words before it
+  test("rejects the first full pass whole (it is never trimmed)", async () => {
+    const singer = perfectSinger(lines, { pace: 4 });
+    const transcribe = async (file) => (file === "song.m4a" ? { words: [...(await singer.transcribe(file)).words, stray] } : { words: [] });
+    const { passes } = await transcribeSong({ audioPath: "song.m4a", durationSec: DURATION, lines, transcribe, cutAudio: singer.cutAudio });
+    assert.equal(passes[0].status, "rejected");
+    assert.equal(passes[0].reason, "times out of order");
+  });
+  test("keeps the words before it in a window", async () => {
+    const singer = perfectSinger(lines, { pace: 4, firstPass: false });
+    const transcribe = async (file, prompt) => {
+      const res = await singer.transcribe(file, prompt);
+      return file === "song.m4a" ? res : { words: res.words.length ? [...res.words, stray] : res.words };
+    };
+    const { passes } = await transcribeSong({ audioPath: "song.m4a", durationSec: DURATION, lines, transcribe, cutAudio: singer.cutAudio });
+    assert.ok(passes.slice(1).some((p) => p.status === "used"), "a window with the step is used, not rejected");
   });
 });

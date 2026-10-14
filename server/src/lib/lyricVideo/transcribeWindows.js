@@ -102,7 +102,7 @@ const passRecord = (from, to, reason) => ({ from, to, status: reason ? "rejected
 /** Pass 0: the whole song, prompted with the sheet, kept only up to its reliable prefix (spec §5.3 steps 1–2). */
 async function firstPass({ audioPath, durationSec, lines, transcribe }) {
   const res = await transcribe(audioPath, promptFor(lines));
-  const words = trimLoops(res.words || []);
+  const words = trimLoops(res.words || [], { cutBackwards: false }); // a backwards step rejects pass 0 whole; only windows keep their prefix
   const reason = rejectPass(words, expectedFrom(lines));
   const pass = passRecord(0, durationSec, reason);
   if (reason) return { pass, heard: [], frontier: 0, frontierTime: 0 };

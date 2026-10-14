@@ -42,12 +42,14 @@ function repeatsAt(norms, i, size) {
  * Whisper's failure modes on sung music: a phrase on loop, music notes, sign-offs.
  * Cuts at the first loop, and at the first time that steps backwards (a long
  * phrase looped at the end of a window: the heard words before it are good).
+ * `cutBackwards: false` skips that cut: the first full pass is rejected whole
+ * by rejectPass instead, since its prefix is not trustworthy as a reliable start.
  */
-export function trimLoops(words) {
+export function trimLoops(words, { cutBackwards = true } = {}) {
   let kept = (words || []).filter((w) => !isMusic(w));
   for (const h of HALLUCINATIONS) kept = dropPhrase(kept, h);
   const back = kept.findIndex((w, i) => i > 0 && w.start < kept[i - 1].start);
-  if (back > 0) kept = kept.slice(0, back);
+  if (back > 0 && cutBackwards) kept = kept.slice(0, back);
   const norms = kept.map((w) => normWord(w.word));
   for (let i = 0; i < norms.length; i += 1) {
     for (let size = 1; size <= MAX_GRAM; size += 1) {
