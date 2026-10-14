@@ -8,9 +8,10 @@ import { render as slam } from "./effects/slam.js";
 import { render as quote } from "./effects/quote.js";
 import { render as curve } from "./effects/curve.js";
 import { render as frame } from "./effects/frame.js";
+import { render as echo } from "./effects/echo.js";
 import { render as titleEffect, titleCard } from "./effects/title.js";
 
-export const EFFECTS = { pop, stack, slam, quote, curve, frame, title: titleEffect };
+export const EFFECTS = { pop, stack, slam, quote, curve, frame, title: titleEffect, echo };
 const TITLE_MAX_CHARS = 60;
 
 /** Phrases from timed words, or from timed lines with their words spread evenly. */

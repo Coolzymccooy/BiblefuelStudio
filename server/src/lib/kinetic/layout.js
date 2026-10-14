@@ -33,6 +33,8 @@ const SLOTS = Object.freeze({
 
 export const LOWER = Object.freeze({ wide: { x: 0.5, y: 0.80 }, tall: { x: TALL_X, y: 0.70 }, shorts: { x: TALL_X, y: 0.66 } });
 export const CENTRE = Object.freeze({ wide: { x: 0.5, y: 0.45 }, tall: { x: TALL_X, y: 0.42 }, shorts: { x: TALL_X, y: 0.42 } });
+/** Where a crowd reply sits: under the call, in the lower band (spec §6.2). */
+export const ECHO = Object.freeze({ wide: { x: 0.5, y: 0.72 }, tall: { x: TALL_X, y: 0.645 }, shorts: { x: TALL_X, y: 0.645 } });
 
 export function aspectOf(w, h) {
   return Number(w) >= Number(h) ? "wide" : "tall";

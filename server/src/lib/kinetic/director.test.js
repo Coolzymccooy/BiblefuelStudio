@@ -95,7 +95,7 @@ test("an override wins over every rule; unknown overrides are ignored", () => {
 const long = Array.from({ length: 40 }, (_, i) => P(i % 4 === 3 ? "Hold my hand" : `Line ${i} of the song`, i * 3));
 
 test("every effect has an id the overrides accept", () => {
-  assert.deepEqual([...EFFECT_IDS].sort(), ["curve", "frame", "pop", "quote", "slam", "stack", "title"]);
+  assert.deepEqual([...EFFECT_IDS].sort(), ["curve", "echo", "frame", "pop", "quote", "slam", "stack", "title"]);
 });
 
 test("calm keeps to pops and stacks; lively adds quotes and curves but never frames or titles", () => {
