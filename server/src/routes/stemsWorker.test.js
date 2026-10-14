@@ -37,6 +37,21 @@ function queueOne(over = {}) {
   });
 }
 
+// A lyric-video vocals job: the same queue, a different result name, never a library track.
+function queueVocals(over = {}) {
+  const jobId = over.jobId || "vocals-1";
+  return queueOne({
+    jobId, stem: "vocals", sourceRef: "lyric-video", sourcePreview: null, sourceLabel: "Song",
+    resultPath: path.join(dir, "out", `lyric-vocals-${jobId}.m4a`), ...over,
+  });
+}
+const claim = (body) => {
+  const r = request(app()).post("/api/stems-worker/claim").set(auth);
+  return body === undefined ? r : r.send(body);
+};
+const uploadResult = (jobId) => request(app()).post(`/api/stems-worker/jobs/${jobId}/result`).set(auth)
+  .set("Content-Type", "audio/mp4").send(M4A);
+
 beforeEach(() => {
   previous = process.env.STEMS_WORKER_TOKEN;
   process.env.STEMS_WORKER_TOKEN = KEY;
@@ -73,7 +88,7 @@ describe("stems worker API", () => {
     queueOne();
     const r = await request(app()).post("/api/stems-worker/claim").set(auth);
     assert.equal(r.status, 200);
-    assert.deepEqual(r.body.job, { jobId: "job-1", quality: "best", sourceName: "song.mp3" });
+    assert.deepEqual(r.body.job, { jobId: "job-1", quality: "best", sourceName: "song.mp3", stem: "instrumental" });
     const again = await request(app()).post("/api/stems-worker/claim").set(auth);
     assert.equal(again.body.job, null);
   });
@@ -225,5 +240,108 @@ describe("stems worker API", () => {
     cancelLaptopJob(job);
     const r = await request(app()).post("/api/stems-worker/jobs/job-1/progress").set(auth).send({ percent: 60 });
     assert.equal(r.body.cancelled, true);
+  });
+
+  describe("vocals jobs", () => {
+    test("a worker that sends no body never receives a vocals job, and still gets instrumental jobs", async () => {
+      queueVocals({ createdAt: 1 });
+      queueOne({ jobId: "inst-1", userId: "u2" });
+      const r = await claim();
+      assert.equal(r.status, 200);
+      assert.deepEqual(r.body.job, { jobId: "inst-1", quality: "best", sourceName: "song.mp3", stem: "instrumental" });
+      assert.equal((await claim()).body.job, null, "only the vocals job is left, and this worker cannot take it");
+      assert.equal(getStemJob("vocals-1", "u1").status, "queued");
+    });
+
+    test("a worker that sends an empty or unrelated body gets no vocals job", async () => {
+      queueVocals();
+      for (const body of [{}, { caps: [] }, { other: ["vocals"] }]) {
+        const r = await claim(body);
+        assert.equal(r.status, 200);
+        assert.equal(r.body.job, null);
+      }
+    });
+
+    test("a vocals-capable worker is handed the vocals job, labelled as such", async () => {
+      queueVocals();
+      const r = await claim({ caps: ["vocals"] });
+      assert.equal(r.status, 200);
+      assert.deepEqual(r.body.job, { jobId: "vocals-1", quality: "best", sourceName: "song.mp3", stem: "vocals" });
+    });
+
+    test("a caps value of the wrong shape means no caps, never a 500", async () => {
+      queueVocals();
+      const bad = [
+        { caps: "vocals" }, { caps: { 0: "vocals" } }, { caps: null }, { caps: 7 },
+        { caps: [{ toString: "vocals" }] }, { caps: [["vocals"]] }, { caps: [7, null] },
+        { caps: ["x".repeat(500), "vocals".padEnd(40, " ")] },
+        [], "vocals",
+      ];
+      for (const body of bad) {
+        const r = await claim(body);
+        assert.equal(r.status, 200, JSON.stringify(body));
+        assert.equal(r.body.job, null, JSON.stringify(body));
+      }
+      assert.equal(getStemJob("vocals-1", "u1").status, "queued");
+    });
+
+    test("only the first few caps are read", async () => {
+      queueVocals();
+      const caps = [...Array(8).fill("a"), "vocals"];
+      assert.equal((await claim({ caps })).body.job, null);
+    });
+
+    test("a vocals result is stored but not added to the music library", async () => {
+      const job = queueVocals();
+      await claim({ caps: ["vocals"] });
+      const r = await uploadResult("vocals-1");
+      assert.equal(r.status, 200);
+      assert.deepEqual(r.body, { ok: true });
+      const done = getStemJob("vocals-1", "u1");
+      assert.equal(done.status, "done");
+      assert.equal(done.percent, 100);
+      assert.equal(done.resultFile, job.resultPath);
+      assert.equal(path.basename(done.resultFile), "lyric-vocals-vocals-1.m4a");
+      assert.ok(done.finishedAt > 0);
+      assert.equal(done.track, undefined, "no library track");
+      assert.equal(fs.existsSync(job.resultPath), true, "the file is kept for the lyric video");
+      assert.equal(fs.existsSync(`${job.resultPath}.upload`), false, "no temp file left behind");
+      assert.equal(readMusicLibrary(dir).items.length, 0, "the music library has no new track");
+    });
+
+    test("a repeated vocals upload is accepted without a second write", async () => {
+      queueVocals();
+      await claim({ caps: ["vocals"] });
+      assert.equal((await uploadResult("vocals-1")).status, 200);
+      const again = await uploadResult("vocals-1");
+      assert.equal(again.status, 200);
+      assert.equal(again.body.already, true);
+      assert.equal(readMusicLibrary(dir).items.length, 0);
+    });
+
+    test("a vocals result that is not audio is refused and no file is kept", async () => {
+      const job = queueVocals();
+      await claim({ caps: ["vocals"] });
+      _setResultProbe(async () => { throw new Error("Invalid data"); });
+      const r = await uploadResult("vocals-1");
+      assert.equal(r.status, 400);
+      assert.equal(fs.existsSync(job.resultPath), false);
+      assert.equal(getStemJob("vocals-1", "u1").status, "running");
+    });
+
+    test("an instrumental job's result is still saved to the library", async () => {
+      queueOne();
+      await claim({ caps: ["vocals"] });
+      assert.equal((await uploadResult("job-1")).status, 200);
+      assert.equal(readMusicLibrary(dir).items.length, 1);
+      assert.equal(getStemJob("job-1", "u1").resultFile, undefined);
+    });
+
+    test("progress from a vocals job renews its lease like any other", async () => {
+      queueVocals();
+      await claim({ caps: ["vocals"] });
+      const r = await request(app()).post("/api/stems-worker/jobs/vocals-1/progress").set(auth).send({ percent: 30 });
+      assert.deepEqual(r.body, { ok: true, cancelled: false });
+    });
   });
 });

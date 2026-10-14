@@ -174,3 +174,103 @@ describe("laptop queue", () => {
     assert.equal(listStemJobs().length, 0);
   });
 });
+
+describe("vocals jobs and the capability handshake", () => {
+  const vocalsFields = (id, over = {}) => fields({ jobId: id, sourceRef: "lyric-video", sourcePreview: null, stem: "vocals", resultPath: `/out/lyric-vocals-${id}.m4a`, ...over });
+  const reload = () => {
+    _resetStemJobs();
+    _resetLaptopQueue();
+    configureLaptopQueue({ file: path.join(dir, "stems-queue.json") });
+    loadLaptopQueue();
+  };
+
+  test("a job is an instrumental job unless it asks for vocals", () => {
+    assert.equal(enqueueLaptopJob(fields({ jobId: "a" })).stem, "instrumental");
+    assert.equal(enqueueLaptopJob(fields({ jobId: "b", stem: "drums" })).stem, "instrumental");
+    assert.equal(enqueueLaptopJob(vocalsFields("c")).stem, "vocals");
+  });
+
+  test("claimNext skips vocals jobs for workers without the vocals capability", () => {
+    const job = enqueueLaptopJob(vocalsFields("j1"));
+    assert.equal(claimNext(Date.now()), null, "an old worker gets nothing");
+    assert.equal(job.status, "queued", "and the job is still waiting");
+    assert.equal(claimNext(Date.now(), { caps: ["vocals"] })?.jobId, job.jobId);
+  });
+
+  test("an old worker still gets instrumental jobs queued behind a vocals job", () => {
+    enqueueLaptopJob(vocalsFields("v-first", { createdAt: 1 }));
+    enqueueLaptopJob(fields({ jobId: "inst", userId: "u2" }));
+    assert.equal(claimNext(10)?.jobId, "inst");
+    assert.equal(claimNext(10), null);
+    assert.equal(claimNext(10, { caps: [] }), null);
+    assert.equal(claimNext(10, { caps: ["something-else"] }), null);
+  });
+
+  test("a vocals-capable worker takes instrumental jobs too", () => {
+    enqueueLaptopJob(fields({ jobId: "inst" }));
+    assert.equal(claimNext(10, { caps: ["vocals"] })?.jobId, "inst");
+  });
+
+  test("a caps value that is not a list grants nothing", () => {
+    enqueueLaptopJob(vocalsFields("j1"));
+    assert.equal(claimNext(5, { caps: "vocals" }), null);
+    assert.equal(claimNext(5, { caps: { includes: () => true } }), null);
+    assert.equal(claimNext(5, { caps: null }), null);
+    assert.equal(laptopOnline(6, { needs: "vocals" }), false);
+  });
+
+  test("laptopOnline can ask for a vocals-capable worker", () => {
+    claimNext(1_000); // an old worker polled
+    assert.equal(laptopOnline(2_000), true);
+    assert.equal(laptopOnline(2_000, { needs: "vocals" }), false);
+    claimNext(3_000, { caps: ["vocals"] });
+    assert.equal(laptopOnline(4_000, { needs: "vocals" }), true);
+    assert.equal(laptopOnline(3_000 + ONLINE_MS + 1, { needs: "vocals" }), false);
+  });
+
+  test("an old worker polling later does not make the laptop look vocals-capable", () => {
+    claimNext(1_000, { caps: ["vocals"] });
+    claimNext(1_000 + ONLINE_MS, {}); // the vocals-capable worker went away; an old one is polling
+    assert.equal(laptopOnline(1_000 + ONLINE_MS + 5, { needs: "vocals" }), false);
+    assert.equal(laptopOnline(1_000 + ONLINE_MS + 5), true);
+  });
+
+  test("a vocals worker busy on a long job stays online through its progress reports", () => {
+    const job = enqueueLaptopJob(vocalsFields("j1"));
+    claimNext(0, { caps: ["vocals"] });
+    reportProgress(job, 40, ONLINE_MS + 10_000);
+    assert.equal(laptopOnline(ONLINE_MS + 10_001, { needs: "vocals" }), true);
+  });
+
+  test("a persisted vocals job survives a reload", () => {
+    enqueueLaptopJob(vocalsFields("v1"));
+    reload();
+    const back = getStemJob("v1", "u1");
+    assert.equal(back.stem, "vocals");
+    assert.equal(back.status, "queued");
+    assert.equal(back.resultPath, "/out/lyric-vocals-v1.m4a");
+    assert.equal(claimNext(0), null, "still hidden from an old worker after the reload");
+    assert.equal(claimNext(0, { caps: ["vocals"] })?.jobId, "v1");
+  });
+
+  test("a persisted job without a stem loads as an instrumental job", () => {
+    const { stem, ...legacy } = fields({ jobId: "old", resultPath: "/out/instrumental-old.m4a" });
+    fs.writeFileSync(path.join(dir, "stems-queue.json"), JSON.stringify([legacy]));
+    reload();
+    assert.equal(getStemJob("old", "u1").stem, "instrumental");
+    assert.equal(claimNext(0)?.jobId, "old", "an old worker may take it");
+  });
+
+  test("a reloaded row's result name must match its stem", () => {
+    const rows = [
+      vocalsFields("v-ok"),
+      fields({ jobId: "i-ok", resultPath: "/out/instrumental-i-ok.m4a" }),
+      vocalsFields("v-bad", { resultPath: "/out/instrumental-v-bad.m4a" }),
+      fields({ jobId: "i-bad", resultPath: "/out/lyric-vocals-i-bad.m4a" }),
+      vocalsFields("v-evil", { resultPath: "/out/lyric-vocals-x.mp3" }),
+    ];
+    fs.writeFileSync(path.join(dir, "stems-queue.json"), JSON.stringify(rows));
+    reload();
+    assert.deepEqual(listStemJobs().map((j) => j.jobId).sort(), ["i-ok", "v-ok"]);
+  });
+});

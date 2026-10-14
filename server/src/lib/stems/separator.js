@@ -37,7 +37,9 @@ export function stemsCli(env = process.env) {
   return p || null;
 }
 
-export function buildSeparatorArgs({ input, outDir, quality, modelDir }) {
+const STEMS = new Set(["Instrumental", "Vocals"]);
+
+export function buildSeparatorArgs({ input, outDir, quality, modelDir, stem = "Instrumental" }) {
   // The input sits where the CLI expects a positional argument; a relative
   // value such as "-rf" would be read as a flag.
   if (!path.isAbsolute(String(input || "")) || !path.isAbsolute(String(outDir || ""))) {
@@ -49,7 +51,7 @@ export function buildSeparatorArgs({ input, outDir, quality, modelDir }) {
     "--model_filename", MODELS[q],
     "--output_dir", outDir,
     "--output_format", "WAV",
-    "--single_stem", "Instrumental",
+    "--single_stem", STEMS.has(stem) ? stem : "Instrumental",
     ...EXTRA_ARGS[q],
   ];
   if (modelDir) args.push("--model_file_dir", modelDir);
@@ -152,12 +154,14 @@ export async function separatorAvailable({ timeoutMs = 20_000 } = {}) {
 }
 
 /**
- * Decode `input` to WAV, separate it, keep only the instrumental, and store
- * it as AAC at `outPath`. The separator reads audio through libsndfile, which
+ * Decode `input` to WAV, separate it, keep only the requested stem (the
+ * instrumental, or the vocals for the lyric video), and store it as AAC at
+ * `outPath`. The separator reads audio through libsndfile, which
  * cannot open m4a/AAC (the usual format of a downloaded song), so ffmpeg
  * decodes first. The WAV working files are removed whatever happens.
  */
-export async function removeVocals({ input, outPath, workDir, quality, onProgress, signal }) {
+export async function separateStem({ input, outPath, workDir, quality, stem = "Instrumental", onProgress, signal }) {
+  const wanted = STEMS.has(stem) ? stem : "Instrumental";
   const py = stemsCli();
   if (!py) throw new Error("vocal removal is not set up on this machine");
   fs.mkdirSync(workDir, { recursive: true });
@@ -170,7 +174,7 @@ export async function removeVocals({ input, outPath, workDir, quality, onProgres
       if (signal?.aborted) throw e;
       throw new Error(`could not read this song file: ${e.message}`);
     }
-    const args = buildSeparatorArgs({ input: source, outDir: workDir, quality, modelDir: process.env.STEMS_MODEL_DIR?.trim() || undefined });
+    const args = buildSeparatorArgs({ input: source, outDir: workDir, quality, stem: wanted, modelDir: process.env.STEMS_MODEL_DIR?.trim() || undefined });
     // The separator runs a second, short pass after the main one, so its bar
     // restarts at 0%; only ever report forward movement.
     let reported = -1;
@@ -181,8 +185,8 @@ export async function removeVocals({ input, outPath, workDir, quality, onProgres
         if (p !== null && p > reported) { reported = p; onProgress?.(p); }
       },
     });
-    const wav = fs.readdirSync(workDir).find((f) => /instrumental/i.test(f) && /\.wav$/i.test(f));
-    if (!wav) throw new Error("the separator finished but wrote no instrumental");
+    const wav = fs.readdirSync(workDir).find((f) => new RegExp(wanted, "i").test(f) && /\.wav$/i.test(f));
+    if (!wav) throw new Error(`the separator finished but wrote no ${wanted.toLowerCase()}`);
     await run(ff, ["-y", "-i", path.join(workDir, wav), "-c:a", "aac", "-b:a", "192k", outPath], { signal });
     return outPath;
   } finally {
@@ -196,3 +200,6 @@ export async function removeVocals({ input, outPath, workDir, quality, onProgres
     } catch { /* swept up later */ }
   }
 }
+
+/** Vocal removal: the instrumental stem. */
+export const removeVocals = (opts) => separateStem({ ...opts, stem: "Instrumental" });

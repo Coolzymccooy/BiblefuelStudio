@@ -43,10 +43,27 @@ router.use((req, res, next) => {
   return next();
 });
 
+const MAX_CAPS = 8;
+const MAX_CAP_LENGTH = 32;
+
+/**
+ * What the worker says it can do, from `{ caps: ["vocals"] }`. An older
+ * worker sends no body at all, which means no capabilities; anything that is
+ * not a list of short strings means the same, rather than an error.
+ */
+function workerCaps(body) {
+  const caps = body?.caps;
+  if (!Array.isArray(caps)) return [];
+  return caps.slice(0, MAX_CAPS).filter((c) => typeof c === "string" && c.length <= MAX_CAP_LENGTH);
+}
+
 router.post("/claim", (req, res) => {
-  const job = claimNext();
+  const job = claimNext(Date.now(), { caps: workerCaps(req.body) });
   if (!job) return res.json({ ok: true, job: null });
-  return res.json({ ok: true, job: { jobId: job.jobId, quality: job.quality, sourceName: path.basename(job.input) } });
+  return res.json({
+    ok: true,
+    job: { jobId: job.jobId, quality: job.quality, sourceName: path.basename(job.input), stem: job.stem === "vocals" ? "vocals" : "instrumental" },
+  });
 });
 
 function held(req, res) {
@@ -124,6 +141,13 @@ router.post(
       if (!(durationSec > 0)) throw Object.assign(new Error("the result has no audio"), { status: 400 });
       if (job.controller.signal.aborted) throw Object.assign(new Error("that job was cancelled"), { status: 409 });
       fs.renameSync(tmp, job.resultPath);
+      if (job.stem === "vocals") {
+        // A working file for the lyric video, not a song: it is never put in the
+        // user's music library, and the weekly sweep reclaims it.
+        updateStemJob(job.jobId, { status: "done", percent: 100, resultFile: job.resultPath, finishedAt: Date.now() });
+        persistLaptopQueue();
+        return res.json({ ok: true });
+      }
       const track = await saveInstrumental(job.dataDir, job, job.outputDir, { durationSec });
       updateStemJob(job.jobId, { status: "done", percent: 100, track, finishedAt: Date.now() });
       persistLaptopQueue();

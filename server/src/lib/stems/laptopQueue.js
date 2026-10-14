@@ -29,12 +29,15 @@ export const FAILED_ON_LAPTOP = "Vocal removal failed on the laptop. Try again, 
 // What a job needs to survive a restart (the AbortController is rebuilt).
 const PERSISTED = [
   "jobId", "userId", "sourceRef", "sourcePreview", "resultPath", "sourceLabel", "sourceMood",
-  "sourceLicence", "sourceCredit", "input", "quality", "dataDir", "outputDir", "attempts", "createdAt",
+  "sourceLicence", "sourceCredit", "input", "quality", "dataDir", "outputDir", "attempts", "createdAt", "stem",
 ];
 
 let storeFile = null;
 let roots = null;
 let lastSeen = 0;
+// The last time a worker that can return a vocals stem polled. A worker
+// running older code never sends the capability, so it can't move this.
+let lastSeenVocals = 0;
 // Round-robin between accounts: the turn each user last had.
 let turn = 0;
 const lastTurn = new Map();
@@ -51,6 +54,9 @@ function inside(child, parent) {
   return Boolean(rel) && !rel.startsWith("..") && !path.isAbsolute(rel);
 }
 
+/** A job's stem: "vocals" only when it says so, so an older row is an instrumental. */
+const stemOf = (job) => (job?.stem === "vocals" ? "vocals" : "instrumental");
+
 /**
  * The queue file is trusted only as far as it agrees with the server's own
  * rules: a row whose result would land outside its owner's media folder, or
@@ -62,7 +68,9 @@ function sane(row) {
   if (!dataDir || !outputDir) return false;
   if (roots && !(roots.some((r) => inside(dataDir, r) || path.resolve(dataDir) === r)
     && roots.some((r) => inside(outputDir, r) || path.resolve(outputDir) === r))) return false;
-  if (!inside(resultPath, outputDir) || !/^instrumental-[\w-]+\.m4a$/.test(path.basename(resultPath))) return false;
+  // The server names a job's result file; the name must agree with the stem.
+  const nameOk = stemOf(row) === "vocals" ? /^lyric-vocals-[\w-]+\.m4a$/ : /^instrumental-[\w-]+\.m4a$/;
+  if (!inside(resultPath, outputDir) || !nameOk.test(path.basename(resultPath))) return false;
   if (inside(input, outputDir) || inside(input, dataDir)) return true;
   let resolved = null;
   try { resolved = resolveTrackFile({ dataDir, outputDir }, row.sourceRef); } catch { /* unresolvable */ }
@@ -74,7 +82,12 @@ export function laptopQueueEnabled(env = process.env) {
   return String(env.STEMS_WORKER_TOKEN || "").trim().length >= MIN_KEY_LENGTH;
 }
 
-export function laptopOnline(now = Date.now()) {
+/**
+ * Whether a laptop worker has polled lately. `needs: "vocals"` asks for one
+ * that can return a vocals stem; an older worker polling doesn't count.
+ */
+export function laptopOnline(now = Date.now(), { needs } = {}) {
+  if (needs === "vocals") return lastSeenVocals > 0 && now - lastSeenVocals <= ONLINE_MS;
   return lastSeen > 0 && now - lastSeen <= ONLINE_MS;
 }
 
@@ -108,7 +121,7 @@ export function loadLaptopQueue() {
     updateStemJob(job.jobId, {
       where: "laptop", input: row.input, quality: row.quality === "fast" ? "fast" : "best",
       dataDir: row.dataDir, outputDir: row.outputDir, attempts: Number(row.attempts) || 0,
-      createdAt: Number(row.createdAt) || job.createdAt,
+      createdAt: Number(row.createdAt) || job.createdAt, stem: stemOf(row),
     });
   }
 }
@@ -117,7 +130,7 @@ export function enqueueLaptopJob(fields) {
   const job = createStemJob(fields);
   updateStemJob(job.jobId, {
     where: "laptop", input: fields.input, quality: fields.quality, dataDir: fields.dataDir,
-    outputDir: fields.outputDir, attempts: 0,
+    outputDir: fields.outputDir, attempts: 0, stem: stemOf(fields),
   });
   persistLaptopQueue();
   return job;
@@ -152,13 +165,17 @@ function requeueExpired(now) {
 }
 
 /** The laptop asks for work: a heartbeat, then the oldest waiting job, leased. */
-export function claimNext(now = Date.now()) {
+export function claimNext(now = Date.now(), { caps = [] } = {}) {
+  // Only a real list of capabilities counts; anything else is "none".
+  const can = new Set(Array.isArray(caps) ? caps : []);
   lastSeen = now;
+  if (can.has("vocals")) lastSeenVocals = now;
   forgetOld(now);
   const changed = requeueExpired(now);
   // The user whose turn was longest ago goes first; within a user, oldest first.
   const next = listStemJobs()
-    .filter((j) => isLaptop(j) && j.status === "queued" && !j.controller.signal.aborted)
+    .filter((j) => isLaptop(j) && j.status === "queued" && !j.controller.signal.aborted
+      && (stemOf(j) !== "vocals" || can.has("vocals")))
     .sort((a, b) => (lastTurn.get(a.userId) ?? -1) - (lastTurn.get(b.userId) ?? -1) || a.createdAt - b.createdAt)[0];
   if (!next) {
     if (changed) persistLaptopQueue();
@@ -197,6 +214,7 @@ export function reclaimJob(jobId, now = Date.now()) {
   if (!job || job.controller.signal.aborted) return null;
   if (job.status !== "running" && job.status !== "queued") return null;
   lastSeen = now;
+  if (stemOf(job) === "vocals") lastSeenVocals = now; // only a vocals-capable worker holds one
   if (job.status !== "running" || job.leaseUntil < now) {
     updateStemJob(job.jobId, { status: "running", leaseUntil: now + LEASE_MS });
     persistLaptopQueue();
@@ -206,6 +224,7 @@ export function reclaimJob(jobId, now = Date.now()) {
 
 export function reportProgress(job, percent, now = Date.now()) {
   lastSeen = now;
+  if (stemOf(job) === "vocals") lastSeenVocals = now;
   if (job.controller.signal.aborted) return { cancelled: true };
   const p = Math.max(0, Math.min(99, Math.round(Number(percent) || 0)));
   updateStemJob(job.jobId, { percent: p, leaseUntil: now + LEASE_MS });
@@ -232,6 +251,7 @@ export function _resetLaptopQueue() {
   storeFile = null;
   roots = null;
   lastSeen = 0;
+  lastSeenVocals = 0;
   turn = 0;
   lastTurn.clear();
 }
