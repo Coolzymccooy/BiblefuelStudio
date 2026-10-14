@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import { lyricVideoApi } from '../../lib/lyricVideoApi';
 import type { LyricEffect, LyricProject } from '../../lib/lyricVideoTypes';
-import { isPlacedLine } from '../../lib/lyricTiming';
+import { formatTime, isPlacedLine } from '../../lib/lyricTiming';
 import { fieldLabelCls, inputCls } from '../story/formStyles';
 import { messageOf } from './messageOf';
+import type { SaveProject } from './useProjectSaves';
 
 const CHOICES: Array<{ value: Exclude<LyricEffect, 'auto' | 'title'>; label: string }> = [
   { value: 'pop', label: 'Pop' },
@@ -24,15 +25,19 @@ const SHORT_NAMES: Record<string, string> = {
 
 interface Props {
   project: LyricProject;
-  onChange: (p: LyricProject) => void;
+  /** The step's writer: queues the change behind any still saving and files the reply. */
+  save: SaveProject;
   /** Called after a change is saved, so the preview can redraw. */
   onPreviewChange: () => void;
 }
 
 /** Step 4: pick how each timed line appears, or leave it on Auto and let the video choose. */
-export function LineEffects({ project, onChange, onPreviewChange }: Props) {
+export function LineEffects({ project, save, onPreviewChange }: Props) {
   const [resolved, setResolved] = useState<Record<string, LyricEffect>>({});
-  const [busy, setBusy] = useState(false);
+  // The choice each line shows while it saves, so a queued choice never flicks back to the old one.
+  const [saving, setSaving] = useState<Record<string, LyricEffect>>({});
+  // The newest choice asked for on each line: only its answer clears that line's "Saving…".
+  const newest = useRef<Record<string, number>>({});
   const lines = project.lines.filter(isPlacedLine);
   // One fetch per change to anything that decides an Auto line's effect, not one per line.
   const key = `${project.look.seed}|${project.look.energy}|${lines.map((l) => `${l.id}:${l.effect}`).join(',')}`;
@@ -48,15 +53,20 @@ export function LineEffects({ project, onChange, onPreviewChange }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.projectId, key]);
 
+  // The selects stay enabled while saving: a disabled select drops keyboard focus to the page.
   const choose = async (lineId: string, effect: LyricEffect) => {
-    setBusy(true);
+    const ticket = (newest.current[lineId] ?? 0) + 1;
+    newest.current = { ...newest.current, [lineId]: ticket };
+    setSaving((s) => ({ ...s, [lineId]: effect }));
     try {
-      onChange(await lyricVideoApi.patchLine(project.projectId, lineId, { effect }));
+      await save(() => lyricVideoApi.patchLine(project.projectId, lineId, { effect }));
       onPreviewChange();
     } catch (e) {
       toast.error(messageOf(e));
     } finally {
-      setBusy(false);
+      if (newest.current[lineId] === ticket) {
+        setSaving((s) => Object.fromEntries(Object.entries(s).filter(([id]) => id !== lineId)));
+      }
     }
   };
 
@@ -64,26 +74,30 @@ export function LineEffects({ project, onChange, onPreviewChange }: Props) {
   return (
     <section aria-labelledby="line-effects-heading" className="space-y-2">
       <h3 id="line-effects-heading" className={fieldLabelCls}>Effect for each line</h3>
+      <p role="status" aria-live="polite" className="sr-only">{Object.keys(saving).length > 0 ? 'Saving…' : ''}</p>
       <ul
         tabIndex={0}
         aria-labelledby="line-effects-heading"
         className="max-h-96 space-y-2 overflow-y-auto pr-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-bf-gold"
       >
-        {lines.map((l) => (
-          <li key={l.id} className="flex items-center gap-3">
-            <span title={l.text} className="min-w-0 flex-1 truncate text-sm text-bf-cream">{l.text}</span>
-            <select
-              aria-label={`Effect for “${l.text}”`}
-              className={`${inputCls} !mt-0 w-44 shrink-0`}
-              value={l.effect}
-              disabled={busy}
-              onChange={(e) => void choose(l.id, e.target.value as LyricEffect)}
-            >
-              <option value="auto">{resolved[l.id] ? `Auto · ${SHORT_NAMES[resolved[l.id]] ?? 'Auto'}` : 'Auto'}</option>
-              {CHOICES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-            </select>
-          </li>
-        ))}
+        {lines.map((l) => {
+          const pending = saving[l.id];
+          return (
+            <li key={l.id} aria-busy={pending ? 'true' : undefined} className="flex items-center gap-3">
+              <span title={l.text} className="min-w-0 flex-1 truncate text-sm text-bf-cream">{l.text}</span>
+              <span aria-hidden="true" className="w-14 shrink-0 text-right text-xs text-content-secondary">{pending ? 'Saving…' : ''}</span>
+              <select
+                aria-label={`Effect for “${l.text}” at ${formatTime(l.start)}`}
+                className={`${inputCls} !mt-0 w-44 shrink-0`}
+                value={pending ?? l.effect}
+                onChange={(e) => void choose(l.id, e.target.value as LyricEffect)}
+              >
+                <option value="auto">{resolved[l.id] ? `Auto · ${SHORT_NAMES[resolved[l.id]] ?? 'Auto'}` : 'Auto'}</option>
+                {CHOICES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+              </select>
+            </li>
+          );
+        })}
       </ul>
     </section>
   );

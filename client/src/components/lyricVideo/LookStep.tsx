@@ -12,6 +12,7 @@ import { LazyLivePreview } from './LazyLivePreview';
 import { LineEffects } from './LineEffects';
 import { messageOf } from './messageOf';
 import { ShuffleButton } from './ShuffleButton';
+import { useProjectSaves } from './useProjectSaves';
 
 interface Props { project: LyricProject; onChange: (p: LyricProject) => void }
 
@@ -44,21 +45,24 @@ function useCaptionCatalogue() {
 export function LookStep({ project, onChange }: Props) {
   const catalogue = useCaptionCatalogue();
   const [assVersion, setAssVersion] = useState(1);
-  const [busy, setBusy] = useState(false);
+  const save = useProjectSaves(onChange);
+  // How many of this step's own changes (look, energy, background) are still saving.
+  const [pending, setPending] = useState(0);
+  const busy = pending > 0;
   const [progress, setProgress] = useState<number | null>(null);
   const input = useRef<HTMLInputElement>(null);
   const { background, look } = project;
 
-  /** Runs one change, files the answer on the project and says why when it did not work. */
+  /** Queues one change behind any still saving, files the answer on the project and says why when it did not work. */
   const apply = async (change: () => Promise<LyricProject>, redrawCaptions = false) => {
-    setBusy(true);
+    setPending((n) => n + 1);
     try {
-      onChange(await change());
+      await save(change);
       if (redrawCaptions) setAssVersion((v) => v + 1);
     } catch (e) {
       toast.error(messageOf(e));
     } finally {
-      setBusy(false);
+      setPending((n) => n - 1);
     }
   };
 
@@ -81,7 +85,10 @@ export function LookStep({ project, onChange }: Props) {
             className={inputCls}
             value={look.id}
             disabled={busy}
-            onChange={(e: ChangeEvent<HTMLSelectElement>) => void apply(() => lyricVideoApi.setLook(project.projectId, { id: e.target.value }), true)}
+            onChange={(e: ChangeEvent<HTMLSelectElement>) => {
+              const id = e.target.value; // read now: the write may wait behind another
+              void apply(() => lyricVideoApi.setLook(project.projectId, { id }), true);
+            }}
           >
             <StudioLookOptions looks={catalogue.studioLooks} libass={catalogue.libass} value={look.id} />
           </select>
@@ -93,14 +100,17 @@ export function LookStep({ project, onChange }: Props) {
             className={inputCls}
             value={look.energy}
             disabled={busy}
-            onChange={(e: ChangeEvent<HTMLSelectElement>) => void apply(() => lyricVideoApi.setLook(project.projectId, { energy: e.target.value as LyricProject['look']['energy'] }), true)}
+            onChange={(e: ChangeEvent<HTMLSelectElement>) => {
+              const energy = e.target.value as LyricProject['look']['energy'];
+              void apply(() => lyricVideoApi.setLook(project.projectId, { energy }), true);
+            }}
           >
             {catalogue.energies.map((en) => <option key={en.id} value={en.id}>{en.label}</option>)}
           </select>
         </div>
       </div>
 
-      <ShuffleButton project={project} onChange={onChange} onPreviewChange={redrawPreview} />
+      <ShuffleButton project={project} save={save} onPreviewChange={redrawPreview} />
 
       <div className={`${panelCls} space-y-3`}>
         <p className={fieldLabelCls}>Background</p>
@@ -145,7 +155,8 @@ export function LookStep({ project, onChange }: Props) {
               value={background?.fit ?? 'auto'}
               disabled={busy || !background}
               onChange={(e: ChangeEvent<HTMLSelectElement>) => {
-                if (background) void apply(() => lyricVideoApi.setBackground(project.projectId, background.file, e.target.value as BackgroundFit));
+                const fit = e.target.value as BackgroundFit;
+                if (background) void apply(() => lyricVideoApi.setBackground(project.projectId, background.file, fit));
               }}
             >
               {FITS.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
@@ -159,7 +170,7 @@ export function LookStep({ project, onChange }: Props) {
         )}
       </div>
 
-      <LineEffects project={project} onChange={onChange} onPreviewChange={redrawPreview} />
+      <LineEffects project={project} save={save} onPreviewChange={redrawPreview} />
     </div>
   );
 }
