@@ -1,5 +1,6 @@
 import { widthAt, covers, assEscape, assColour, assTime } from "../text.js";
 import { FALLBACK_FONT } from "../looks.js";
+import { clampBlockY } from "../layout.js";
 
 export const MIN_HOLD = 0.25;
 export const MAX_HOLD = 3; // a phrase never stays up more than this past its last word
@@ -45,6 +46,37 @@ export function fontsFor(look, text) {
  */
 export function inkAllowance(fs, { bord = 0, shad = 0, italic = false, bold = false } = {}) {
   return 2 * bord + shad + fs * (0.06 + (italic ? 0.22 : 0) + (bold ? 0.03 : 0));
+}
+
+/**
+ * Half the height a line's ink can reach from its anchor in a Shorts render:
+ * a box of the text's width and 0.525 fs + outline high, turned by `rot`
+ * degrees, at the pop-in's peak scale, plus the 8 px the entry move drops
+ * and a pixel for rounding.
+ */
+export function shortsReach({ fs, bord, rot = 0, width, pop }) {
+  const a = (rot * Math.PI) / 180;
+  const halfH = 0.525 * fs + bord;
+  return (pop / 100) * (halfH * Math.abs(Math.cos(a)) + (width / 2) * Math.abs(Math.sin(a))) + 9;
+}
+
+/**
+ * Extra height to give each side of a block of lines before clamping it into
+ * the Shorts band, so tilted, popping lines stay inside it. Zero for every
+ * other layout, which keeps their output unchanged.
+ */
+export function shortsMargin({ aspect, lineGap, ...line }) {
+  if (aspect !== "shorts") return 0;
+  return Math.max(0, shortsReach(line) - lineGap / 2);
+}
+
+/**
+ * The centre line of a block that has no slot of its own (pop, slam, title,
+ * frame). Only a Shorts render moves it, to keep its ink inside the band; every
+ * other layout keeps `cy` exactly.
+ */
+export function shortsCentre({ aspect, cy, blockHeight, margin, h }) {
+  return aspect === "shorts" ? clampBlockY(cy, blockHeight + 2 * margin, h, aspect) : cy;
 }
 
 /** Greedy wrap: words onto lines no wider than maxWidth. */

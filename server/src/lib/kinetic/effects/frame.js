@@ -1,15 +1,18 @@
 import { covers, fitSize, widthAt, assEscape, assColour, assTime } from "../text.js";
-import { caseText, fontsFor, holdEnd, inkAllowance, lineEvent } from "./common.js";
+import { caseText, fontsFor, holdEnd, inkAllowance, lineEvent, shortsMargin } from "./common.js";
 import { chunk } from "./stack.js";
+import { isTall } from "../layout.js";
 
 const BORD = 6; // the centre lines' outline and shadow
 const SHAD = 4;
 const SPEED = 0.06; // bands scroll this share of the frame's long side per second
 const MAX_REPEATS = 40;
+const POP = 140;
 
 /** The rectangle the bands run round. Tall frames keep clear of the TikTok/Reels controls. */
 export function frameBox(w, h, aspect) {
-  return aspect === "tall"
+  if (aspect === "shorts") return { left: 0.06 * w, top: 0.11 * h, right: 0.88 * w, bottom: 0.75 * h };
+  return isTall(aspect)
     ? { left: 0.06 * w, top: 0.05 * h, right: 0.88 * w, bottom: 0.82 * h }
     : { left: 0.04 * w, top: 0.05 * h, right: 0.96 * w, bottom: 0.95 * h };
 }
@@ -55,7 +58,7 @@ export function render({ planned, look, w, h, aspect, nextStart }) {
   const fonts = fontsFor(look, shown);
   const band = fonts.body;
   const box = frameBox(w, h, aspect);
-  const bandFs = Math.round(Math.min(w, h) * (aspect === "tall" ? 0.06 : 0.055));
+  const bandFs = Math.round(Math.min(w, h) * (isTall(aspect) ? 0.06 : 0.055));
   const sep = covers(band.file, "•") ? " • " : " / ";
   const unit = `${shown}${sep}`;
   const unitWidth = Math.max(1, widthAt(band.file, unit, bandFs));
@@ -75,18 +78,24 @@ export function render({ planned, look, w, h, aspect, nextStart }) {
   const lines = chunk(words);
   const room = (box.right - box.left) - 2 * (inset + bandFs);
   const roomY = (box.bottom - box.top) - 2 * (inset + bandFs);
-  const preferred = aspect === "tall" ? Math.round(w * 0.16) : Math.round(h * 0.15);
+  const preferred = isTall(aspect) ? Math.round(w * 0.16) : Math.round(h * 0.15);
   const budget = room * 0.9 - inkAllowance(preferred, { bord: BORD, shad: SHAD, italic: fonts.hit.italic, bold: fonts.hit.bold });
   const wide = fitSize(fonts.hit.file, lines.map((ln) => ln.map((x) => x.text).join(" ")), preferred, budget, 32);
   // A long phrase stacks many lines: shrink until the block fits between the top and bottom bands.
-  const fs = Math.max(32, Math.min(wide, Math.floor((roomY * 0.9) / lines.length)));
+  let fs = Math.max(32, Math.min(wide, Math.floor((roomY * 0.9) / lines.length)));
+  // Shorts: the lines' pop-in overshoot must also fit the band, so shrink until the block does.
+  const lineTexts = lines.map((ln) => ln.map((x) => x.text).join(" "));
+  const reachOf = (size) => shortsMargin({
+    aspect, lineGap: size, fs: size, bord: BORD, pop: POP, width: Math.max(...lineTexts.map((t) => widthAt(fonts.hit.file, t, size))),
+  });
+  while (aspect === "shorts" && fs > 32 && lines.length * fs + 2 * reachOf(fs) > box.bottom - box.top) fs -= 2;
   const lineGap = fs * 1.0;
   const cx = (box.left + box.right) / 2;
   const cy = (box.top + box.bottom) / 2;
   const y0 = cy - ((lines.length - 1) * lineGap) / 2;
   lines.forEach((ln, i) => events.push(lineEvent({
     start: ln[0].t, end, x: cx, y: y0 + i * lineGap, fs, family: fonts.hit.family,
-    rot: 0, pop: 140, bord: BORD, shad: SHAD, outline: look.outline, words: ln, layer: 2,
+    rot: 0, pop: POP, bord: BORD, shad: SHAD, outline: look.outline, words: ln, layer: 2,
   })));
   return events;
 }

@@ -1,11 +1,12 @@
 import { covers, fitSize, widthAt, assColour, assTime } from "../text.js";
-import { slotsFor, maxWidthFor, clampBlockY } from "../layout.js";
-import { bodyScale, caseText, fontsFor, holdEnd, inkAllowance, keyWordIndex, lineEvent, wrapWords } from "./common.js";
+import { slotsFor, maxWidthFor, clampBlockY, isTall } from "../layout.js";
+import { bodyScale, caseText, fontsFor, holdEnd, inkAllowance, keyWordIndex, lineEvent, shortsMargin, wrapWords } from "./common.js";
 
 const MIN_FS = 24;
 const BORD = 4;
 const SHAD = 2;
 const DRAW_MS = 350;
+const POP = 125;
 
 /** Curly quotes where the font has them, straight ones where it doesn't. */
 function marks(file) {
@@ -51,7 +52,7 @@ export function render({ planned, look, energy, w, h, aspect, nextStart }) {
     colour: hook || (energy !== "calm" && i === key) ? fonts.hit.colour : fonts.body.colour,
   }));
   const maxWidth = maxWidthFor(slot, w, aspect);
-  let fs = Math.round((aspect === "tall" ? w * 0.12 : h * 0.11) * bodyScale(fonts.body));
+  let fs = Math.round((isTall(aspect) ? w * 0.12 : h * 0.11) * bodyScale(fonts.body));
   // Held back at the starting size, which bounds the ink at every smaller size too.
   const budget = maxWidth - inkAllowance(fs, { bord: BORD, shad: SHAD, italic: fonts.body.italic, bold: fonts.body.bold });
   let lines = wrapWords(words, fonts.body.file, fs, budget);
@@ -65,12 +66,14 @@ export function render({ planned, look, energy, w, h, aspect, nextStart }) {
   const thickness = Math.max(3, fs * 0.07);
   // The underline's rounded drawing can run ~4 px past 3 × thickness, so the block allows for it.
   const blockHeight = lines.length * lineGap + thickness * 3 + 4;
-  const cy = clampBlockY(slot.y * h, blockHeight, h, aspect);
+  const widest = Math.max(...texts.map((t) => widthAt(fonts.body.file, t, fs)));
+  const margin = shortsMargin({ aspect, lineGap, fs, bord: BORD, width: widest, pop: POP });
+  const cy = clampBlockY(slot.y * h, blockHeight + 2 * margin, h, aspect);
   const y0 = cy - blockHeight / 2 + lineGap / 2;
   const end = holdEnd(phrase, nextStart);
   const events = lines.map((ln, i) => lineEvent({
     start: ln[0].t, end, x: slot.x * w, y: y0 + i * lineGap, fs, family: fonts.body.family,
-    rot: 0, pop: 125, bord: BORD, shad: SHAD, outline: look.outline, words: ln,
+    rot: 0, pop: POP, bord: BORD, shad: SHAD, outline: look.outline, words: ln,
     bold: fonts.body.bold, italic: fonts.body.italic,
   }));
   const width = widthAt(fonts.body.file, texts[texts.length - 1], fs) * 0.9; // under the last line, which it sits beneath

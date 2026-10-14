@@ -10,7 +10,7 @@ import { render as curve } from "./effects/curve.js";
 import { render as frame } from "./effects/frame.js";
 import { render as titleEffect, titleCard } from "./effects/title.js";
 
-const EFFECTS = { pop, stack, slam, quote, curve, frame, title: titleEffect };
+export const EFFECTS = { pop, stack, slam, quote, curve, frame, title: titleEffect };
 const TITLE_MAX_CHARS = 60;
 
 /** Phrases from timed words, or from timed lines with their words spread evenly. */
@@ -41,7 +41,7 @@ export function phrasesFrom({ words, lines }) {
     });
 }
 
-function header(w, h) {
+export function assHeader(w, h) {
   return [
     "[Script Info]",
     "ScriptType: v4.00+",
@@ -64,10 +64,11 @@ function header(w, h) {
  * events. `title` adds a title card before the first lyric. Returns "" when
  * there is nothing to draw.
  */
-export function buildAss({ words, lines, w, h, look, energy, seed = 1, overrides = {}, title = "" }) {
+export function buildAss({ words, lines, w, h, look, energy, seed = 1, overrides = {}, title = "", layout = "default" }) {
   const phrases = phrasesFrom({ words, lines });
   if (!phrases.length) return "";
-  const aspect = aspectOf(w, h);
+  const base = aspectOf(w, h);
+  const aspect = layout === "shorts" && base === "tall" ? "shorts" : base;
   const theLook = resolveLook(look);
   const theEnergy = resolveEnergy(energy);
   const intro = String(title || "").trim().slice(0, TITLE_MAX_CHARS);
@@ -79,5 +80,5 @@ export function buildAss({ words, lines, w, h, look, energy, seed = 1, overrides
     planned, look: theLook, energy: theEnergy, w, h, aspect,
     nextStart: i + 1 < plan.length ? plan[i + 1].phrase.start : Infinity,
   }));
-  return `${header(w, h)}\n${[...card, ...events].join("\n")}\n`;
+  return `${assHeader(w, h)}\n${[...card, ...events].join("\n")}\n`;
 }

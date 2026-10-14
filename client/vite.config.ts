@@ -1,5 +1,6 @@
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
+import { fileURLToPath } from 'node:url'
 
 // NOTE: the PWA / service worker was intentionally removed. The committed-bundle
 // deploy flow (new chunk hashes every deploy, old ones deleted) repeatedly left
@@ -19,6 +20,13 @@ export default defineConfig(({ mode }) => {
     plugins: [
       react(),
     ],
+    resolve: {
+      alias: [
+        // jassub pulls in rvfc-polyfill (GPL-3.0). Swap it for an empty module so none of it ships;
+        // all supported browsers already have requestVideoFrameCallback.
+        { find: /^rvfc-polyfill(?=$|\?)/, replacement: fileURLToPath(new URL('./src/lib/vendor/rvfcPolyfillStub.ts', import.meta.url)) },
+      ],
+    },
     server: {
       port: 5174,
       strictPort: true,

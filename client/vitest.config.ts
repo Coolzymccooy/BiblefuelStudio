@@ -4,6 +4,12 @@ import path from 'node:path';
 
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    alias: [
+      // Same swap as vite.config.ts: jassub's GPL-3.0 rvfc-polyfill becomes an empty module.
+      { find: /^rvfc-polyfill(?=$|\?)/, replacement: path.resolve(__dirname, 'src/lib/vendor/rvfcPolyfillStub.ts') },
+    ],
+  },
   test: {
     environment: 'jsdom',
     globals: true,

@@ -4,6 +4,7 @@ import fs from "fs";
 import path from "path";
 import { v4 as uuid } from "uuid";
 import { spawn, spawnSync } from "child_process";
+import { MB, parsePositiveIntEnv, hasDiskHeadroomForUpload } from "../lib/diskHeadroom.js";
 import { validateTrimRequest } from "../lib/trimValidate.js";
 import { generateVideoThumbnail } from "../lib/mediaThumb.js";
 import {
@@ -87,13 +88,6 @@ function isPlayableAudio(filePath) {
   }
 }
 
-const MB = 1024 * 1024;
-
-function parsePositiveIntEnv(name, fallback) {
-  const value = Number(process.env[name]);
-  return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
-}
-
 export function getUploadLimits() {
   const directMaxMb = parsePositiveIntEnv("DIRECT_UPLOAD_MAX_MB", 200);
   const directClientMaxMb = parsePositiveIntEnv("DIRECT_CLIENT_UPLOAD_MAX_MB", 90);
@@ -124,29 +118,7 @@ const MAX_UPLOAD_BYTES = getUploadLimits().directMaxBytes;
 // source video can use the large-upload path when storage is configured.
 const RESUMABLE_MAX_BYTES = getUploadLimits().resumableMaxBytes;
 
-export function hasDiskHeadroomForUpload(outputDir, incomingBytes, opts = {}) {
-  const size = Number(incomingBytes || 0);
-  if (!Number.isFinite(size) || size <= 0) return { ok: true, availableBytes: null };
-  const minFreeAfterBytes = opts.minFreeAfterBytes ?? getUploadLimits().minFreeAfterUploadBytes;
-  const statfs = opts.statfs || fs.statfsSync?.bind(fs);
-  if (!statfs) return { ok: true, availableBytes: null, warning: "Disk headroom check unavailable" };
-  try {
-    const probeDir = fs.existsSync(outputDir) ? outputDir : path.dirname(outputDir);
-    const stat = statfs(probeDir);
-    const availableBytes = Number(stat.bavail ?? stat.f_bavail ?? 0) * Number(stat.bsize ?? stat.f_bsize ?? 0);
-    if (availableBytes > 0 && availableBytes - size < minFreeAfterBytes) {
-      return {
-        ok: false,
-        availableBytes,
-        requiredBytes: size + minFreeAfterBytes,
-        error: `Not enough disk space to finalize this upload. Free ${(availableBytes / MB).toFixed(0)} MB; need at least ${((size + minFreeAfterBytes) / MB).toFixed(0)} MB including safety reserve.`,
-      };
-    }
-    return { ok: true, availableBytes };
-  } catch {
-    return { ok: true, availableBytes: null, warning: "Disk headroom check failed" };
-  }
-}
+export { hasDiskHeadroomForUpload };
 
 // Audio container/codec → file extension. Pulled out of the route so the raw
 // streaming path (mime from the request's Content-Type header) and the legacy
