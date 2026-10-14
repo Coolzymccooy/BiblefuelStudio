@@ -242,15 +242,18 @@ describe("vocals jobs and the capability handshake", () => {
     assert.equal(laptopOnline(ONLINE_MS + 10_001, { needs: "vocals" }), true);
   });
 
-  test("a persisted vocals job survives a reload", () => {
+  test("a vocals job is dropped on reload: its waiter died with the old process", () => {
     enqueueLaptopJob(vocalsFields("v1"));
+    enqueueLaptopJob(vocalsFields("v2"));
+    claimNext(0, { caps: ["vocals"] }); // v1 was mid-run when the server went down
+    enqueueLaptopJob(fields({ jobId: "inst", resultPath: "/out/instrumental-inst.m4a" }));
     reload();
-    const back = getStemJob("v1", "u1");
-    assert.equal(back.stem, "vocals");
-    assert.equal(back.status, "queued");
-    assert.equal(back.resultPath, "/out/lyric-vocals-v1.m4a");
-    assert.equal(claimNext(0), null, "still hidden from an old worker after the reload");
-    assert.equal(claimNext(0, { caps: ["vocals"] })?.jobId, "v1");
+    assert.equal(getStemJob("v1", "u1"), null);
+    assert.equal(getStemJob("v2", "u1"), null);
+    assert.equal(queueRoomFor("u1"), true, "a dead waiter must not hold a vocal-removal slot");
+    assert.deepEqual(listStemJobs().map((j) => `${j.jobId}:${j.status}`), ["inst:queued"], "instrumental jobs load exactly as before");
+    const saved = JSON.parse(fs.readFileSync(path.join(dir, "stems-queue.json"), "utf8"));
+    assert.deepEqual(saved.map((r) => r.jobId), ["inst"], "and the dropped rows leave the queue file");
   });
 
   test("a persisted job without a stem loads as an instrumental job", () => {
@@ -271,6 +274,6 @@ describe("vocals jobs and the capability handshake", () => {
     ];
     fs.writeFileSync(path.join(dir, "stems-queue.json"), JSON.stringify(rows));
     reload();
-    assert.deepEqual(listStemJobs().map((j) => j.jobId).sort(), ["i-ok", "v-ok"]);
+    assert.deepEqual(listStemJobs().map((j) => j.jobId).sort(), ["i-ok"], "no vocals row reloads, whatever its name");
   });
 });

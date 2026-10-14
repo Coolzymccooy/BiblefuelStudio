@@ -444,7 +444,7 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
     // runAlignJob marks the project "running" before it first yields, so the 202 below reports it.
     const deps = typeof alignDeps === "function" ? alignDeps() : alignDeps;
     timingByUser.set(req.ctx.userId, project.projectId);
-    runAlignJob({ dataDir: req.ctx.dataDir, workDir: req.ctx.outputDir, projectId: project.projectId, deps })
+    runAlignJob({ dataDir: req.ctx.dataDir, workDir: req.ctx.outputDir, projectId: project.projectId, userId: req.ctx.userId, deps })
       .catch((err) => { console.error("[lyric-video] timing job crashed:", err); })
       .finally(() => { timingByUser.delete(req.ctx.userId); });
     const marked = readProject(req.ctx.dataDir, project.projectId);

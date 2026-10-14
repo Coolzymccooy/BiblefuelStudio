@@ -35,7 +35,7 @@ export interface LyricLine {
   flag?: 'check' | null;
 }
 
-export type TimingStep = 'preparing' | 'listening' | 'matching' | 'beats';
+export type TimingStep = 'preparing' | 'vocals' | 'listening' | 'matching' | 'beats';
 
 export interface LyricTiming {
   status: 'idle' | 'running' | 'done' | 'error';
@@ -45,6 +45,8 @@ export interface LyricTiming {
   /** A plain sentence, set when timing was run again and failed; the earlier timing (status "done") is kept. */
   lastError?: string | null;
   beats?: { bpm: number; times: number[] };
+  /** True when the words were heard in the vocals alone (a laptop separated them), false when in the whole mix. */
+  usedVocalStem?: boolean;
   finishedAt?: string;
 }
 

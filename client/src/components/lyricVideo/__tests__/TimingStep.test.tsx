@@ -137,6 +137,11 @@ describe('TimingStep', () => {
     expect(screen.getByRole('button', { name: /try again/i })).toBeTruthy();
   });
 
+  it('says so while the laptop separates the vocals', () => {
+    render(<TimingStep project={{ ...done, timing: { status: 'running', progress: { step: 'vocals' } } }} onChange={vi.fn()} />);
+    expect(screen.getByText('Separating the vocals on your laptop…')).toBeTruthy();
+  });
+
   it('tries timing again after an error', async () => {
     const running = { ...done, timing: { status: 'running' } } as LyricProject;
     vi.mocked(lyricVideoApi.align).mockResolvedValue(running);

@@ -109,13 +109,20 @@ export function persistLaptopQueue() {
   }
 }
 
-/** Reload after a restart; a job that was mid-run starts again from the queue. */
+/**
+ * Reload after a restart; an instrumental job that was mid-run starts again from the queue.
+ * A vocals job is never reloaded: it exists for a timing run that waits on it, and that
+ * run died with the old process. Left in the queue it would hold one of its owner's
+ * vocal-removal slots (and the laptop's time) for nobody.
+ */
 export function loadLaptopQueue() {
   if (!storeFile) return;
   let rows;
   try { rows = JSON.parse(fs.readFileSync(storeFile, "utf8")); } catch { return; }
   if (!Array.isArray(rows)) return;
+  let droppedVocals = false;
   for (const row of rows) {
+    if (stemOf(row) === "vocals") { droppedVocals = true; continue; }
     if (!row?.jobId || !row?.userId || !row?.input || !sane(row)) continue;
     const job = createStemJob(row);
     updateStemJob(job.jobId, {
@@ -124,6 +131,8 @@ export function loadLaptopQueue() {
       createdAt: Number(row.createdAt) || job.createdAt, stem: stemOf(row),
     });
   }
+  // Take the dropped rows out of the file too, so they are not read (and skipped) again.
+  if (droppedVocals) persistLaptopQueue();
 }
 
 export function enqueueLaptopJob(fields) {
