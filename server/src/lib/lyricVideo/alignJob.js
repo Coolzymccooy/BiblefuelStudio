@@ -55,7 +55,7 @@ function defaultDeps(workDir, projectId, { userId, dataDir } = {}) {
       return out;
     },
     // Without a signed-in user there is nobody to queue the laptop's work for: hear the mix.
-    vocalStem: (song) => (userId ? requestVocalStem({ userId, input: song, dataDir, outputDir: workDir }) : Promise.resolve(null)),
+    vocalStem: (song, { onQueued } = {}) => (userId ? requestVocalStem({ userId, input: song, dataDir, outputDir: workDir, onQueued }) : Promise.resolve(null)),
     // Re-encoded, not stream-copied: a copy cuts at packet boundaries and shifts every word.
     cutAudio: async (from, to) => {
       if (!prepared) throw new Error("ffmpeg cut asked before the audio was prepared");
@@ -236,14 +236,18 @@ const VOCALS_FILE = /^lyric-vocals-[\w-]+\.m4a$/;
  * measured on the mix; otherwise both are the mix. This step never fails the job
  * on account of the vocals: any problem with them is logged once and the mix is used.
  */
-async function chooseAudio({ d, song, projectId, log, owned }) {
+async function chooseAudio({ d, song, projectId, log, owned, progress }) {
   let vocals = null;
+  let queued = false;
   try {
-    const found = await d.vocalStem(song);
+    // "vocals" is shown only once the laptop really has a job; with no laptop the user sees the normal steps.
+    const found = await d.vocalStem(song, { onQueued: () => { queued = true; progress("vocals"); } });
     vocals = typeof found === "string" && found && found !== song ? found : null;
   } catch (err) {
+    if (err instanceof ProjectGone) throw err;
     log(`[lyric-video] vocals skipped for ${projectId}: ${err?.message || err}`);
   }
+  if (queued) progress("preparing"); // the wait is over: back to getting the audio ready
   if (vocals && VOCALS_FILE.test(path.basename(vocals))) owned.add(vocals);
   // The mix is prepared first so the vocals, prepared last, are what the windows are cut from.
   const mix = await d.prepareAudio(song);
@@ -267,8 +271,7 @@ async function timeLyrics({ dataDir, projectId, snapshot, d, log, owned }) {
     if (!next) throw new ProjectGone(projectId);
   };
 
-  progress("vocals");
-  const { audio, endSource, usedVocalStem } = await chooseAudio({ d, song: snapshot.song.file, projectId, log, owned });
+  const { audio, endSource, usedVocalStem } = await chooseAudio({ d, song: snapshot.song.file, projectId, log, owned, progress });
   // The mix, not the vocals, decides where the music stops.
   const measuredEnd = await findAudibleEnd({ d, audio: endSource, durationSec, projectId, log });
   const total = Math.max(1, Math.ceil(durationSec / WINDOW_SEC_ESTIMATE));

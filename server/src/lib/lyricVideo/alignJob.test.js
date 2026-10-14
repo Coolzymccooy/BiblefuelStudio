@@ -102,12 +102,18 @@ describe("vocals from the laptop", () => {
   const VOCALS = () => path.join(dir, "lyric-vocals-x.m4a");
   const MIX_PREPARED = () => path.join(dir, "prepared-mix.m4a");
   /** Prepares the vocals file to PREPARED() and the song to a different file, and records every input. */
+  let currentProject = null;
+  const projectIdOf = () => currentProject.projectId;
   const spy = () => {
-    const calls = { prepared: [], measured: [], beats: [], steps: [], logged: [] };
+    const calls = { prepared: [], measured: [], beats: [], steps: [], stepAtPrepare: [], logged: [] };
     return {
       calls,
       over: (extra = {}) => ({
-        prepareAudio: async (input) => { calls.prepared.push(input); return input === VOCALS() ? PREPARED() : MIX_PREPARED(); },
+        prepareAudio: async (input) => {
+          calls.prepared.push(input);
+          calls.stepAtPrepare.push(readProject(dir, projectIdOf())?.timing?.progress?.step);
+          return input === VOCALS() ? PREPARED() : MIX_PREPARED();
+        },
         measureAudibleEnd: async (file, durationSec) => { calls.measured.push(file); return durationSec; },
         detectBeats: async (file) => { calls.beats.push(file); return { bpm: 0, times: [] }; },
         // The mix is also heard in full when no vocals came, so either prepared file answers with the song's words.
@@ -121,11 +127,13 @@ describe("vocals from the laptop", () => {
 
   test("timing listens to the vocals when the laptop returns them", async () => {
     const p = setup();
+    currentProject = p;
     makeSongFiles();
     const s = spy();
     const done = await run(p, s.over({
-      vocalStem: async (song) => {
+      vocalStem: async (song, { onQueued }) => {
         assert.equal(song, SONG(), "the laptop is asked to separate the user's song");
+        onQueued(); // a job is really waiting on the laptop now
         s.calls.steps.push(readProject(dir, p.projectId).timing.progress.step);
         fs.writeFileSync(VOCALS(), "voice only");
         return VOCALS();
@@ -134,6 +142,7 @@ describe("vocals from the laptop", () => {
     assert.equal(done.timing.status, "done");
     assert.equal(done.timing.usedVocalStem, true);
     assert.deepEqual(s.calls.steps, ["vocals"], "the user sees the separating step while the laptop works");
+    assert.equal(s.calls.stepAtPrepare[0], "preparing", "and the normal step again once the wait is over");
     assert.ok(s.calls.prepared.includes(VOCALS()), "the vocals were prepared for transcription");
     assert.equal(done.lines[0].start, 1, "the words were heard in the file made from the vocals");
     assert.equal(done.lines[1].start, 5);
@@ -145,6 +154,7 @@ describe("vocals from the laptop", () => {
 
   test("no capable laptop → no wait, timing runs on the mix", async () => {
     const p = setup();
+    currentProject = p;
     makeSongFiles();
     const s = spy();
     const done = await run(p, s.over({ vocalStem: async () => null }));
@@ -156,8 +166,40 @@ describe("vocals from the laptop", () => {
     assert.equal(fs.readFileSync(SONG(), "utf8"), "the user's own song");
   });
 
+  test("the user is never told about the laptop when none was asked", async () => {
+    const p = setup();
+    currentProject = p;
+    makeSongFiles();
+    const s = spy();
+    const seen = [];
+    const done = await run(p, s.over({
+      vocalStem: async () => { seen.push(readProject(dir, p.projectId).timing.progress.step); return null; }, // onQueued is never called
+      transcribe: async (file) => { seen.push(readProject(dir, p.projectId).timing.progress.step); return { words: file === PREPARED() || file === MIX_PREPARED() ? heardSong : [] }; },
+      measureAudibleEnd: async (_f, durationSec) => { seen.push(readProject(dir, p.projectId).timing.progress.step); return durationSec; },
+    }));
+    assert.equal(done.timing.status, "done");
+    assert.deepEqual([...s.calls.stepAtPrepare, ...seen].filter((x) => x === "vocals"), [], "no step ever said vocals");
+    assert.deepEqual(s.calls.stepAtPrepare, ["preparing"]);
+    assert.deepEqual(seen.slice(0, 2), ["preparing", "preparing"], "the vocal-stem step and the end measurement ran under the normal step");
+  });
+
+  test("the vocals step is shown when the queue job is made, even if the laptop then fails", async () => {
+    const p = setup();
+    currentProject = p;
+    makeSongFiles();
+    const s = spy();
+    const seen = [];
+    const done = await run(p, s.over({
+      vocalStem: async (_song, { onQueued }) => { onQueued(); seen.push(readProject(dir, p.projectId).timing.progress.step); throw new Error("laptop gone"); },
+    }));
+    assert.equal(done.timing.status, "done");
+    assert.deepEqual(seen, ["vocals"]);
+    assert.equal(s.calls.stepAtPrepare[0], "preparing", "a failed wait does not leave the vocals message up");
+  });
+
   test("a vocal-stem error never fails timing, and is logged once", async () => {
     const p = setup();
+    currentProject = p;
     makeSongFiles();
     const s = spy();
     const done = await run(p, s.over({ vocalStem: async () => { throw new Error("laptop gone"); } }));
@@ -170,6 +212,7 @@ describe("vocals from the laptop", () => {
 
   test("the default step, with no signed-in user to ask on behalf of, skips the laptop", async () => {
     const p = setup();
+    currentProject = p;
     makeSongFiles();
     const s = spy();
     // No vocalStem override: the real default runs with no userId, so it must answer "no vocals" without touching the queue.
@@ -180,6 +223,7 @@ describe("vocals from the laptop", () => {
 
   test("the vocals file is deleted when timing fails after using it", async () => {
     const p = setup();
+    currentProject = p;
     makeSongFiles();
     const s = spy();
     const done = await run(p, s.over({
@@ -193,6 +237,7 @@ describe("vocals from the laptop", () => {
 
   test("vocals that cannot be prepared are skipped, not fatal, and still deleted", async () => {
     const p = setup();
+    currentProject = p;
     makeSongFiles();
     const s = spy();
     const done = await run(p, s.over({
@@ -212,6 +257,7 @@ describe("vocals from the laptop", () => {
 
   test("a vocals path that is the song itself is never deleted", async () => {
     const p = setup();
+    currentProject = p;
     makeSongFiles();
     const s = spy();
     await run(p, s.over({ vocalStem: async () => SONG() }));
@@ -220,6 +266,7 @@ describe("vocals from the laptop", () => {
 
   test("a project deleted while the laptop works stops the job and still removes the vocals", async () => {
     const p = setup();
+    currentProject = p;
     makeSongFiles();
     const s = spy();
     const done = await run(p, s.over({

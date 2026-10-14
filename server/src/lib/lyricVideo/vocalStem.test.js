@@ -64,6 +64,62 @@ describe("requestVocalStem with fakes", () => {
     assert.ok(clock.now() >= 240_000);
   });
 
+  test("a job that turns done during the last sleep is returned, not cancelled", async () => {
+    const clock = fakeClock();
+    let cancelled = 0;
+    let removed = 0;
+    const out = await requestVocalStem(base({ deps: { ...clock, ...ready(), enqueue: () => live("j9"),
+      // Waiting at every poll inside the deadline; done by the time the last sleep has ended.
+      getJob: () => (clock.now() >= 240_000 ? { status: "done", resultFile: "/out/lyric-vocals-j9.m4a" } : { status: "running" }),
+      cancel: () => { cancelled++; }, remove: () => { removed++; } } }));
+    assert.equal(out, "/out/lyric-vocals-j9.m4a");
+    assert.equal(cancelled, 0, "a finished job is not relabelled Cancelled");
+    assert.equal(removed, 0, "and its file is kept for the caller");
+  });
+
+  // The abort lands during a sleep; by the time the release step looks, the laptop has finished.
+  const abortThenDone = (resultFile, removedFiles, counts) => {
+    const ctrl = new AbortController();
+    let polls = 0;
+    return requestVocalStem(base({ signal: ctrl.signal, deps: { ...fakeClock(), ...ready(), enqueue: () => live("j10"),
+      sleep: async () => { ctrl.abort(); },
+      getJob: () => { polls += 1; return polls === 1 ? { status: "running" } : { status: "done", resultFile }; },
+      cancel: () => { counts.cancelled++; }, remove: (file) => { removedFiles.push(file); } } }));
+  };
+
+  test("an abort while the job turns done → null, no cancel, and the unused result is removed", async () => {
+    const removedFiles = [];
+    const counts = { cancelled: 0 };
+    assert.equal(await abortThenDone("/out/lyric-vocals-j10.m4a", removedFiles, counts), null);
+    assert.equal(counts.cancelled, 0, "a finished job is not relabelled Cancelled");
+    assert.deepEqual(removedFiles, ["/out/lyric-vocals-j10.m4a"]);
+  });
+
+  test("an unused result that is not named like a vocals result is never removed", async () => {
+    const removedFiles = [];
+    const counts = { cancelled: 0 };
+    assert.equal(await abortThenDone("/out/song.m4a", removedFiles, counts), null);
+    assert.deepEqual(removedFiles, [], "the user's own files are never removed");
+    assert.equal(counts.cancelled, 0);
+  });
+
+  test("onQueued runs once, after the job is queued, and not when nothing is queued", async () => {
+    const order = [];
+    await requestVocalStem(base({ onQueued: () => order.push("queued"), deps: { ...fakeClock(), ...ready(), enqueue: () => { order.push("enqueue"); return live("j13"); }, getJob: () => ({ status: "done", resultFile: "/out/lyric-vocals-j13.m4a" }) } }));
+    assert.deepEqual(order, ["enqueue", "queued"]);
+    let called = 0;
+    await requestVocalStem(base({ onQueued: () => { called++; }, deps: { ...fakeClock(), ...ready({ laptopOnline: () => false }) } }));
+    await requestVocalStem(base({ onQueued: () => { called++; }, deps: { ...fakeClock(), ...ready({ queueRoomFor: () => false }) } }));
+    assert.equal(called, 0, "no laptop or no room: the caller is never told a job is waiting");
+  });
+
+  test("an onQueued that throws still cancels the job", async () => {
+    const job = live("j14");
+    let cancelled = null;
+    await assert.rejects(requestVocalStem(base({ onQueued: () => { throw new Error("project gone"); }, deps: { ...fakeClock(), ...ready(), enqueue: () => job, getJob: () => ({ status: "queued" }), cancel: (j) => { cancelled = j; } } })), /project gone/);
+    assert.equal(cancelled, job);
+  });
+
   test("a failed job → null; it is already over, so there is nothing to cancel", async () => {
     let cancelled = 0;
     const out = await requestVocalStem(base({ deps: { ...fakeClock(), ...ready(),
@@ -174,6 +230,23 @@ describe("requestVocalStem on the real laptop queue", () => {
     const [job] = listStemJobs();
     assert.equal(job.stem, "vocals");
     assert.equal(job.where, "laptop");
+    assert.equal(out, job.resultPath);
+  });
+
+  test("a real job finished during the last sleep stays done, with its file", async () => {
+    claimNext(Date.now(), { caps: ["vocals"] });
+    const clock = fakeClock();
+    const out = await requestVocalStem(base({ deps: {
+      now: clock.now, exists: () => true,
+      sleep: async (ms) => {
+        await clock.sleep(ms);
+        const [job] = listStemJobs();
+        if (clock.now() >= 240_000) updateStemJob(job.jobId, { status: "done", percent: 100, resultFile: job.resultPath });
+      },
+    } }));
+    const [job] = listStemJobs();
+    assert.equal(job.status, "done");
+    assert.equal(job.error, null);
     assert.equal(out, job.resultPath);
   });
 
