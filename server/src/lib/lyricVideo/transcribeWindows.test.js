@@ -392,7 +392,10 @@ describe("a window that hears only a repeated hook", () => {
     // Line 56 "WHO TALK SAY?!" and the outro also sing the hook: hearing it ~30 s on proves nothing about line 56.
     const frontierOf = (prompt) => lines.findIndex((l) => prompt.startsWith(l.text));
     assert.ok(prompts.length >= 2, "windows ran after the hook was heard");
-    for (const prompt of prompts) assert.ok(frontierOf(prompt) <= 38, `a window was prompted from line ${frontierOf(prompt)}: ${prompt.slice(0, 40)}`);
+    for (const prompt of prompts) {
+      assert.ok(frontierOf(prompt) >= 0, `a window prompt starts with no sheet line: ${prompt.slice(0, 40)}`);
+      assert.ok(frontierOf(prompt) <= 38, `a window was prompted from line ${frontierOf(prompt)}: ${prompt.slice(0, 40)}`);
+    }
   });
 });
 

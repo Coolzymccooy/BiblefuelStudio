@@ -9,7 +9,7 @@ import { buildLyricAss, resolvedEffects } from "./lyricAss.js";
 import { parseSheet } from "./sheetParser.js";
 import * as echo from "../kinetic/effects/echo.js";
 import { resolveLook } from "../kinetic/looks.js";
-import { eventInk, startOf } from "../kinetic/inkTestkit.js";
+import { eventInk, inkBox, startOf } from "../kinetic/inkTestkit.js";
 
 const LOOKS = ["studio-lagos-night", "studio-gospel-gold", "studio-clean-white"];
 const ENERGIES = ["calm", "lively", "wild"];
@@ -29,20 +29,28 @@ const project = (lines, look, energy, seed = 1) => ({
 });
 const dialogues = (ass) => ass.split("\n").filter((l) => l.startsWith("Dialogue:"));
 
+const SLACK = 1.5; // rounding of \pos and \fs to whole pixels, as in shortsInk.test.js
+
 /**
  * Lowest ink of the events that start in [from, to) and highest ink of those that start in
- * [to, until): the call's block and its echoes' block, told apart by when they come up.
+ * [to, until): the call's block and its echoes' block, told apart by when they come up. Also the
+ * call's highest ink and the settled right edge of its text (clipped bands and sparks have none).
  */
 function inkSplit(ass, look, { w, h }, from, to, until) {
   let callBottom = -Infinity;
+  let callTop = Infinity;
+  let callRight = -Infinity;
   let echoTop = Infinity;
   for (const d of dialogues(ass)) {
     const t = startOf(d);
     const ink = eventInk(d, look, { w, h });
-    if (t >= from && t < to) callBottom = Math.max(callBottom, ink.bottom);
-    else if (t >= to && t < until) echoTop = Math.min(echoTop, ink.top);
+    if (t >= from && t < to) {
+      callBottom = Math.max(callBottom, ink.bottom);
+      callTop = Math.min(callTop, ink.top);
+      if (!/\\clip|\\p1/.test(d)) callRight = Math.max(callRight, inkBox(d, look).settledRight);
+    } else if (t >= to && t < until) echoTop = Math.min(echoTop, ink.top);
   }
-  return { callBottom, echoTop };
+  return { callBottom, callTop, callRight, echoTop };
 }
 
 /**
@@ -91,11 +99,18 @@ test("a call's whole ink stays above its echo's ink on every effect, look, energ
         for (const effect of CALL_EFFECTS) {
           for (const call of ["Who talk say I no go shine?", "My time no late"]) {
             for (const before of [0, 1, 2]) {
-              const { callBottom, echoTop } = callAndEcho(call, effect, lookId, energy, size, [ECHO], before);
+              const { callBottom, callTop, callRight, echoTop } = callAndEcho(call, effect, lookId, energy, size, [ECHO], before);
               assert.ok(Number.isFinite(callBottom) && Number.isFinite(echoTop), `${effect}: both blocks drawn`);
               checked += 1;
+              const label = `${size[0]}/${lookId}/${energy}/${effect}/slot-run ${before} "${call}"`;
               const room = echoTop - (callBottom + GAP * size[2]);
-              if (room < 0) bad.push(`${size[0]}/${lookId}/${energy}/${effect}/slot-run ${before} "${call}": call ink ${callBottom.toFixed(1)} + gap > echo ink ${echoTop.toFixed(1)} (by ${(-room).toFixed(1)} px)`);
+              if (room < 0) bad.push(`${label}: call ink ${callBottom.toFixed(1)} + gap > echo ink ${echoTop.toFixed(1)} (by ${(-room).toFixed(1)} px)`);
+              if (size[0] === "shorts") {
+                // Moving up over the echo must not push the call out of the Shorts band (0.11 h to the right 12%).
+                const [, w, h] = size;
+                if (callTop < 0.11 * h - SLACK) bad.push(`${label}: call ink top ${callTop.toFixed(1)} above the Shorts band`);
+                if (callRight > 0.88 * w + SLACK) bad.push(`${label}: call ink right ${callRight.toFixed(1)} into the right 12%`);
+              }
             }
           }
         }
