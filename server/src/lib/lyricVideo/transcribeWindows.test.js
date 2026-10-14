@@ -372,3 +372,23 @@ describe("a failure part-way carries what was heard", () => {
     );
   });
 });
+
+describe("a window that hears only a repeated hook", () => {
+  test("does not carry the frontier to a later section that shares the hook", async () => {
+    const { lines } = parseSheet(sheet);
+    const singer = perfectSinger(lines, { pace: 4 });
+    const stopsAt = 10 + 4 * 30; // pass 0 hears lines 0-29, then the singer goes quiet
+    const hook = ["Who", "talk", "say", "Who", "talk", "say", "Who", "talk", "say"].map((word, k) => ({ word, start: 0.5 + k * 0.4, end: 0.8 + k * 0.4 }));
+    const prompts = [];
+    const transcribe = async (file, prompt) => {
+      if (file === "song.m4a") return { words: (await singer.transcribe(file)).words.filter((w) => w.start < stopsAt) };
+      prompts.push(prompt);
+      return { words: hook }; // every window hears just the hook, at its start
+    };
+    await transcribeSong({ audioPath: "song.m4a", durationSec: DURATION, lines, transcribe, cutAudio: singer.cutAudio });
+    // Line 56 "WHO TALK SAY?!" and the outro also sing the hook: hearing it ~30 s on proves nothing about line 56.
+    const frontierOf = (prompt) => lines.findIndex((l) => prompt.startsWith(l.text));
+    assert.ok(prompts.length >= 2, "windows ran after the hook was heard");
+    for (const prompt of prompts) assert.ok(frontierOf(prompt) <= 38, `a window was prompted from line ${frontierOf(prompt)}: ${prompt.slice(0, 40)}`);
+  });
+});
