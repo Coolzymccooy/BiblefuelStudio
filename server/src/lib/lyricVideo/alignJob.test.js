@@ -264,6 +264,25 @@ describe("vocals from the laptop", () => {
     assert.equal(fs.readFileSync(SONG(), "utf8"), "the user's own song");
   });
 
+  test("a project deleted during the wait for a queued laptop job stops the job and still removes the vocals", async () => {
+    const p = setup();
+    currentProject = p;
+    makeSongFiles();
+    const s = spy();
+    const done = await run(p, s.over({
+      vocalStem: async (_song, { onQueued }) => {
+        onQueued();
+        fs.writeFileSync(VOCALS(), "voice only");
+        deleteProject(dir, p.projectId); // the user deletes the project while the laptop works
+        return VOCALS();
+      },
+    }));
+    assert.equal(done, null, "the job ends as project-gone");
+    assert.equal(fs.existsSync(VOCALS()), false, "the vocals file is not orphaned");
+    assert.equal(fs.readFileSync(SONG(), "utf8"), "the user's own song");
+    assert.deepEqual(s.calls.prepared, [], "nothing more was prepared for a deleted project");
+  });
+
   test("a project deleted while the laptop works stops the job and still removes the vocals", async () => {
     const p = setup();
     currentProject = p;

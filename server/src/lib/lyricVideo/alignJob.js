@@ -243,12 +243,13 @@ async function chooseAudio({ d, song, projectId, log, owned, progress }) {
     // "vocals" is shown only once the laptop really has a job; with no laptop the user sees the normal steps.
     const found = await d.vocalStem(song, { onQueued: () => { queued = true; progress("vocals"); } });
     vocals = typeof found === "string" && found && found !== song ? found : null;
+    // Ours to remove from the moment it exists, before any later step (which may end the job) can skip past it.
+    if (vocals && VOCALS_FILE.test(path.basename(vocals))) owned.add(vocals);
   } catch (err) {
     if (err instanceof ProjectGone) throw err;
     log(`[lyric-video] vocals skipped for ${projectId}: ${err?.message || err}`);
   }
   if (queued) progress("preparing"); // the wait is over: back to getting the audio ready
-  if (vocals && VOCALS_FILE.test(path.basename(vocals))) owned.add(vocals);
   // The mix is prepared first so the vocals, prepared last, are what the windows are cut from.
   const mix = await d.prepareAudio(song);
   if (!vocals) return { audio: mix, endSource: mix, usedVocalStem: false };
