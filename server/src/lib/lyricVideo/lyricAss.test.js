@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildLyricAss } from "./lyricAss.js";
+import { buildLyricAss, resolvedEffects } from "./lyricAss.js";
 import { chooseEffects } from "./policy.js";
 
 const FIX = path.join(path.dirname(fileURLToPath(import.meta.url)), "__fixtures__", "my-time-no-late");
@@ -61,4 +61,68 @@ test("the project's energy reaches the effect choice: a calm video has no slams 
   // The same calm project with those choices written onto its lines draws exactly the same.
   const pinned = { ...calm, lines: calm.lines.map((l, i) => ({ ...l, effect: fx[i] })) };
   assert.equal(buildLyricAss(calm, { w: 720, h: 1280 }), buildLyricAss(pinned, { w: 720, h: 1280 }));
+});
+
+const timed = (id, kind, text, start, sectionId = "s1") => {
+  const ws = text.split(" ").map((t, i) => ({ text: t, start: start + i * 0.3, end: start + i * 0.3 + 0.28 }));
+  return { id, sectionId, kind, text, effect: "auto", words: ws, start, end: ws[ws.length - 1].end, confidence: 1, flag: null };
+};
+const mini = (lines, extra = {}) => ({
+  title: "My Time No Late", look: { id: "studio-lagos-night", energy: "wild", seed: 1 },
+  sections: [{ id: "s1", kind: "chorus", label: "CHORUS" }], song: { durationSec: 30 }, timing: { status: "done" }, lines, ...extra,
+});
+const dialogues = (ass) => ass.split("\n").filter((l) => l.startsWith("Dialogue:"));
+const toSec = (t) => { const [h, m, s] = t.split(":"); return +h * 3600 + +m * 60 + +s; };
+const endOf = (d) => toSec(d.split(",")[2]);
+/** What a Dialogue line shows: the text after the style fields, with {override} blocks removed. */
+const shown = (d) => d.replace(/^.*?Kinetic,,0,0,0,,/, "").replace(/\{[^}]*\}/g, "");
+
+test("a call holds on screen until the next lead line when an echo follows it", () => {
+  const p = mini([timed("l1", "lead", "Who talk say", 10), timed("l2", "response", "(WHO TALK SAY?!)", 11.2), timed("l3", "lead", "My time no late", 14)]);
+  const all = dialogues(buildLyricAss(p, { w: 720, h: 1280 }));
+  const call = all.filter((d) => /WHO/i.test(shown(d)) && !shown(d).includes("("));
+  const echo = all.filter((d) => shown(d).includes("("));
+  assert.ok(call.length, "the call is drawn");
+  assert.ok(echo.length, "the echo is drawn");
+  assert.ok(Math.abs(Math.max(...call.map(endOf)) - 13.95) < 0.02, `call ends ${Math.max(...call.map(endOf))}`);
+  assert.ok(Math.abs(Math.max(...echo.map(endOf)) - 13.95) < 0.02, `echo ends ${Math.max(...echo.map(endOf))}`);
+});
+
+test("the last call and echo stop by the audible end", () => {
+  const p = mini([timed("l1", "lead", "Who talk say", 20), timed("l2", "response", "(WHO TALK SAY?!)", 21.2)], { timing: { status: "done", audibleEnd: 22.5 } });
+  const all = dialogues(buildLyricAss(p, { w: 720, h: 1280 }));
+  assert.ok(all.length);
+  for (const d of all) assert.ok(endOf(d) <= 22.5 + 0.01, d);
+});
+
+test("without an audible end the song's length bounds the hold", () => {
+  const p = mini([timed("l1", "lead", "Who talk say", 20), timed("l2", "response", "(WHO TALK SAY?!)", 21.2)], { song: { durationSec: 22.5 } });
+  for (const d of dialogues(buildLyricAss(p, { w: 720, h: 1280 }))) assert.ok(endOf(d) <= 22.5 + 0.01, d);
+});
+
+test("a soft line is drawn in Caveat", () => {
+  const p = mini([timed("l1", "soft", "In the quiet of the night", 5)]);
+  assert.match(buildLyricAss(p, { w: 720, h: 1280 }), /\\fnCaveat/);
+});
+
+test("resolvedEffects maps each placed line to the effect the render uses", () => {
+  const p = mini([timed("l1", "lead", "Who talk say", 10), timed("l2", "response", "(WHO TALK SAY?!)", 11.2)]);
+  const fx = resolvedEffects(p);
+  assert.equal(fx.l2, "echo");
+  assert.ok(typeof fx.l1 === "string");
+});
+
+test("resolvedEffects leaves out lines that are not placed", () => {
+  const p = mini([timed("l1", "lead", "Who talk say", 10), { ...timed("l2", "lead", "Not timed", 12), words: [] }]);
+  assert.deepEqual(Object.keys(resolvedEffects(p)), ["l1"]);
+});
+
+test("the shuffle seed changes the captions; seed 1 matches the default", () => {
+  const lines = [timed("l1", "lead", "Everywhere you go", 5, "s2"), timed("l2", "lead", "Everybody get pain", 7, "s2"), timed("l3", "lead", "Some dey work", 9, "s2")];
+  const p = mini(lines, { sections: [{ id: "s2", kind: "verse", label: "VERSE" }] });
+  const a = buildLyricAss(p, { w: 720, h: 1280 });
+  const seeds = new Set([2, 3, 4, 5, 6].map((seed) => buildLyricAss({ ...p, look: { ...p.look, seed } }, { w: 720, h: 1280 })));
+  assert.ok([...seeds].some((s) => s !== a));
+  const noSeed = { ...p, look: { id: p.look.id, energy: p.look.energy } };
+  assert.equal(buildLyricAss(noSeed, { w: 720, h: 1280 }), a, "a missing seed is seed 1");
 });

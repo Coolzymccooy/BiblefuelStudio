@@ -430,6 +430,45 @@ test("captions.ass returns text for placed lines", async () => {
   assert.match(clamped.text, /PlayResX: 3840/);
 });
 
+describe("effects", () => {
+  /** A timed chorus: a lead line, then a response to it. */
+  function callAndEcho(c) {
+    let p = createProject(c.dataDir, { title: "T", artist: "A" });
+    p = applySheet(p, "[CHORUS]\nWho talk say\n(WHO TALK SAY?!)");
+    const times = [[10, "lead"], [11.2, "response"]];
+    const lines = p.lines.map((l, i) => {
+      const [s, kind] = times[i];
+      const words = l.text.split(" ").map((t, k) => ({ text: t, start: s + k * 0.3, end: s + k * 0.3 + 0.28 }));
+      return { ...l, kind, words, start: s, end: words[words.length - 1].end };
+    });
+    return writeProject(c.dataDir, { ...p, lines });
+  }
+
+  test("GET /:id/effects returns each placed line's resolved effect, and does not charge the render allowance", async () => {
+    ctx = userCtx("effects-user");
+    const p = callAndEcho(ctx);
+    assert.deepEqual(p.lines.map((l) => l.kind), ["lead", "response"]);
+    const before = readUsage(ctx.dataDir).counts.render;
+    const r = await call("GET", `/${p.projectId}/effects`);
+    assert.equal(r.status, 200);
+    assert.deepEqual(Object.keys(r.json.effects), p.lines.map((l) => l.id));
+    assert.equal(r.json.effects[p.lines[1].id], "echo");
+    assert.equal(typeof r.json.effects[p.lines[0].id], "string");
+    assert.equal(readUsage(ctx.dataDir).counts.render, before, "reading effects is free");
+  });
+
+  test("effects leave out lines that are not placed, and an unknown or another user's project is a 404", async () => {
+    ctx = userCtx("effects-owner");
+    const p = callAndEcho(ctx);
+    const untimed = writeProject(ctx.dataDir, { ...p, lines: p.lines.map((l, i) => (i === 0 ? { ...l, words: [], start: undefined, end: undefined } : l)) });
+    const r = await call("GET", `/${untimed.projectId}/effects`);
+    assert.deepEqual(Object.keys(r.json.effects), [untimed.lines[1].id]);
+    assert.equal((await call("GET", "/lv_nope/effects")).status, 404);
+    ctx = userCtx("effects-stranger");
+    assert.equal((await call("GET", `/${p.projectId}/effects`)).status, 404);
+  });
+});
+
 describe("timing", () => {
   test("align without a song, or without lines, is refused", async () => {
     const id = await newProject();

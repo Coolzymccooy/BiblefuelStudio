@@ -23,7 +23,7 @@ import {
   createProject, readProject, updateProject, listProjects, deleteProject, readPrefs, writePrefs, applySheet,
 } from "../lib/lyricVideo/projectStore.js";
 import { runAlignJob, isAligning, failedTiming } from "../lib/lyricVideo/alignJob.js";
-import { buildLyricAss } from "../lib/lyricVideo/lyricAss.js";
+import { buildLyricAss, resolvedEffects } from "../lib/lyricVideo/lyricAss.js";
 import { renderSize, runLyricRender } from "../lib/lyricVideo/lyricRender.js";
 import { quota } from "../middleware/quota.js";
 
@@ -510,6 +510,12 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
     const w = size(req.query.w, 720);
     const h = size(req.query.h, 1280);
     res.type("text/plain").set("Cache-Control", "no-store").send(buildLyricAss(project, { w, h }));
+  }));
+
+  /** The effect each timed line is drawn with, as the render will draw it. Free: it charges nothing. */
+  router.get("/:id/effects", route((req, res) => {
+    const project = load(req);
+    ok(res, { effects: resolvedEffects(project) });
   }));
 
   /** Finishes a render: records the job's end state, files the result on the project, frees the slot. */
