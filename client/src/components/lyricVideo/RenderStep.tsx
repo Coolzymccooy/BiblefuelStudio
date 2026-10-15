@@ -104,6 +104,9 @@ function PublishToYoutube({ project, file }: { project: LyricProject; file: stri
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [draftFailed, setDraftFailed] = useState(false);
+  // The button that opened the panel is gone once it opens, so focus moves to the panel's heading.
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => { if (open) heading.current?.focus(); }, [open]);
 
   const show = async () => {
     setLoading(true);
@@ -120,15 +123,15 @@ function PublishToYoutube({ project, file }: { project: LyricProject; file: stri
 
   if (!open) {
     return (
-      <button type="button" className={secondaryBtnCls} disabled={loading} onClick={show}>
+      <button type="button" className={secondaryBtnCls} disabled={loading} aria-busy={loading} onClick={show}>
         {loading && <Loader2 size={16} className="animate-spin" aria-hidden />} Publish to YouTube
       </button>
     );
   }
   return (
     <div className="space-y-3 border-t border-[rgba(216,184,120,0.14)] pt-3">
-      <h3 className="section-title">Publish to YouTube</h3>
-      {draftFailed && <p className="text-xs text-content-secondary">The details could not be filled in for you. Type them below.</p>}
+      <h3 ref={heading} tabIndex={-1} className="section-title">Publish to YouTube</h3>
+      {draftFailed && <p role="status" className="text-xs text-content-secondary">The details could not be filled in for you. Type them below.</p>}
       <YoutubePublishPanel
         videoUrl={outputsPath(file)}
         initial={draft ? { title: draft.title, description: draft.description, tags: draft.tags } : { title: project.title }}

@@ -101,10 +101,11 @@ export const lyricVideoApi = {
   align: (id: string) => project(api.post(`${BASE}/${id}/align`, {})),
   patchLine: (id: string, lineId: string, patch: { start?: number; effect?: LyricEffect }) =>
     project(api.patch(`${BASE}/${id}/lines/${lineId}`, patch)),
-  /** The effect each timed line will really get (a line set to Auto shows the one the video picks), by line id. */
+  /** The YouTube title, description and tags the publish panel opens with. */
   async publishDraft(id: string): Promise<LyricPublishDraft> {
     return unwrap(await api.get<{ draft: LyricPublishDraft }>(`${BASE}/${id}/publish-draft`)).draft;
   },
+  /** The effect each timed line will really get (a line set to Auto shows the one the video picks), by line id. */
   async effects(id: string): Promise<Record<string, LyricEffect>> {
     return unwrap(await api.get<{ effects: Record<string, LyricEffect> }>(`${BASE}/${id}/effects`)).effects;
   },

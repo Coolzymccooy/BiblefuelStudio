@@ -128,6 +128,7 @@ describe('RenderStep', () => {
     expect(lyricVideoApi.publishDraft).toHaveBeenCalledWith('lv_1');
     expect(panel.textContent).toBe('/outputs/lyric-a.mp4|My Time — A (Official Lyric Video)|My Time,lyrics|10');
     expect(screen.getByText(draft.note)).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByRole('heading', { name: /publish to youtube/i }));
   });
 
   it('still opens the panel, with the song title, when the draft cannot be fetched', async () => {
@@ -137,5 +138,6 @@ describe('RenderStep', () => {
     fireEvent.click(screen.getByRole('button', { name: /publish to youtube/i }));
     const panel = await screen.findByTestId('yt-panel');
     expect(panel.textContent).toBe('/outputs/lyric-a.mp4|My Time||10');
+    expect(screen.getByRole('status').textContent).toMatch(/could not be filled in/i);
   });
 });

@@ -70,6 +70,19 @@ test("very long lyrics are cut at a line so the description fits, and the hashta
   assert.match(d, /of a very long song\n…\n\n#LyricVideo/);
 });
 
+test("the description fits YouTube's limit in bytes, which accented lyrics fill faster than characters", () => {
+  const raw = Array.from({ length: 400 }, () => "Ọlọ́run ṣé o, Ọlọ́run ṣé o, ìyìn fún Ọba").join("\n");
+  const d = buildPublishDraft(project({ sheet: { raw } })).description;
+  assert.ok(Buffer.byteLength(d, "utf8") <= YT_DESCRIPTION_MAX, `got ${Buffer.byteLength(d, "utf8")} bytes`);
+  assert.match(d, /\n…\n\n#LyricVideo/);
+});
+
+test("a comma in the title does not split its tag", () => {
+  const draft = buildPublishDraft(project({ title: "Hello, World" }));
+  assert.ok(draft.tags.every((tag) => !tag.includes(",")));
+  assert.equal(draft.tags[0], "Hello World");
+});
+
 test("tags are the song, the artist and lyric words, inside YouTube's total", () => {
   const draft = buildPublishDraft(project());
   assert.deepEqual(draft.tags, ["Thank God for the Seed", "Sthill Waters", "Thank God for the Seed lyrics", "lyric video", "lyrics"]);

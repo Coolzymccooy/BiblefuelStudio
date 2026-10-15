@@ -58,11 +58,14 @@ function hashtag(text) {
   return tag && tag.length <= HASHTAG_MAX ? `#${tag}` : "";
 }
 
-/** Cuts the lyrics at a whole line, marked with "…", so they fit in `room` characters. */
+// YouTube's description limit is in bytes: emoji, curly quotes and accented words count more than once.
+const bytes = (s) => Buffer.byteLength(s, "utf8");
+
+/** Cuts the lyrics at a whole line, marked with "…", so they fit in `room` bytes. */
 function fitLyrics(lyrics, room) {
-  if (lyrics.length <= room) return lyrics;
+  if (bytes(lyrics) <= room) return lyrics;
   const rows = lyrics.split("\n");
-  while (rows.length && `${rows.join("\n")}\n…`.length > room) rows.pop();
+  while (rows.length && bytes(`${rows.join("\n")}\n…`) > room) rows.pop();
   while (rows.length && !rows[rows.length - 1].trim()) rows.pop();
   return rows.length ? `${rows.join("\n")}\n…` : "";
 }
@@ -74,7 +77,7 @@ function draftDescription(project, title, artist) {
   const fixed = [...head, tags].join("\n\n");
   const lyrics = lyricsOf(project.sheet?.raw);
   // Two blank-line joins sit either side of the lyrics block.
-  const fitted = lyrics ? fitLyrics(lyrics, YT_DESCRIPTION_MAX - fixed.length - 4) : "";
+  const fitted = lyrics ? fitLyrics(lyrics, YT_DESCRIPTION_MAX - bytes(fixed) - 4) : "";
   return [...head, fitted, tags].filter(Boolean).join("\n\n");
 }
 
@@ -82,7 +85,9 @@ function draftDescription(project, title, artist) {
 const tagCost = (t) => t.length + (/\s/.test(t) ? 2 : 0) + 1;
 
 function draftTags(title, artist) {
-  const wanted = [title, artist, title && `${title} lyrics`, "lyric video", "lyrics"].filter(Boolean);
+  // The panel splits its tags box at commas, so a comma inside a tag would split it in two.
+  const wanted = [title, artist, title && `${title} lyrics`, "lyric video", "lyrics"]
+    .map((t) => clean(String(t || "").replace(/,/g, " "))).filter(Boolean);
   const tags = [];
   let total = 0;
   for (const t of wanted) {
