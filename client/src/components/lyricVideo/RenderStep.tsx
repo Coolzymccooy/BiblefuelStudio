@@ -8,7 +8,7 @@ import { shortsTrimOffer } from '../../lib/shortsTrim';
 import type { LyricProject, LyricPublishDraft, LyricRender, LyricRenderJob, RenderAspect, RenderQuality } from '../../lib/lyricVideoTypes';
 import { YoutubePublishPanel } from '../share/YoutubePublishPanel';
 import { RenderProgressOverlay } from '../RenderProgressOverlay';
-import { fieldLabelCls, inputCls, panelCls, primaryBtnCls, secondaryBtnCls } from '../story/formStyles';
+import { checkboxCls, fieldLabelCls, inputCls, panelCls, primaryBtnCls, secondaryBtnCls } from '../story/formStyles';
 import { messageOf } from './messageOf';
 import { BrandingOptions } from './BrandingOptions';
 
@@ -104,7 +104,7 @@ function ShortsTrimOption({ offer, checked, disabled, onChange }: {
       <label className="flex items-center gap-2 text-sm text-content-secondary">
         <input
           type="checkbox"
-          className="accent-bf-gold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bf-gold"
+          className={checkboxCls}
           checked={checked}
           disabled={disabled || !offer.allowed}
           aria-describedby={offer.allowed ? undefined : reasonId}

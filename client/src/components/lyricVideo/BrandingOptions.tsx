@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { lyricVideoApi } from '../../lib/lyricVideoApi';
 import type { LyricBranding, LyricBrandingPatch, LyricProject } from '../../lib/lyricVideoTypes';
+import { checkboxCls } from '../story/formStyles';
 import { messageOf } from './messageOf';
 
 interface Props {
@@ -20,7 +21,8 @@ const CHOICES: Array<{ key: Choice; label: string }> = [
   { key: 'endCard', label: 'End card' },
 ];
 
-const boxCls = 'accent-bf-gold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bf-gold';
+const LOGO_HINT_ID = 'lyric-branding-logo-hint';
+const ARTIST_HINT_ID = 'lyric-branding-artist-hint';
 const hintCls = 'ml-6 text-xs text-content-secondary';
 
 /** The saved choices, and a way to change one: it saves at once and goes back if the save fails. */
@@ -28,12 +30,17 @@ function useBranding(project: LyricProject, onChange: (p: LyricProject) => void)
   const id = project.projectId;
   const [branding, setBranding] = useState<LyricBranding | null>(null);
   const [failed, setFailed] = useState(false);
-  const [saving, setSaving] = useState<Choice | null>(null);
+  // One save at a time: while any is in flight every box is disabled, so saves never overlap.
+  const [saving, setSaving] = useState(false);
+  // The project being shown now; a save for another one that finishes late is ignored.
+  const current = useRef(id);
+  current.current = id;
 
   useEffect(() => {
     let stopped = false;
     setBranding(null);
     setFailed(false);
+    setSaving(false);
     lyricVideoApi.branding(id).then(
       (b) => { if (!stopped) setBranding(b); },
       () => { if (!stopped) setFailed(true); },
@@ -42,18 +49,20 @@ function useBranding(project: LyricProject, onChange: (p: LyricProject) => void)
   }, [id]);
 
   const choose = async (key: Choice, value: boolean) => {
-    if (!branding) return;
-    const before = branding;
+    if (!branding || saving) return;
+    const previous = branding[key];
     const patch: LyricBrandingPatch = { [key]: value };
-    setSaving(key);
-    setBranding({ ...before, [key]: value, ...(key === 'logo' ? { logoFromSettings: false } : {}) });
+    setSaving(true);
+    setBranding((b) => b && { ...b, [key]: value, ...(key === 'logo' ? { logoFromSettings: false } : {}) });
     try {
-      onChange(await lyricVideoApi.setBranding(id, patch));
+      const saved = await lyricVideoApi.setBranding(id, patch);
+      if (current.current === id) onChange(saved);
     } catch (e) {
-      setBranding(before);
+      if (current.current !== id) return;
+      setBranding((b) => b && { ...b, [key]: previous });
       toast.error(messageOf(e));
     } finally {
-      setSaving(null);
+      if (current.current === id) setSaving(false);
     }
   };
 
@@ -64,6 +73,10 @@ function useBranding(project: LyricProject, onChange: (p: LyricProject) => void)
 export function BrandingOptions({ project, disabled, onChange }: Props) {
   const { branding, failed, saving, choose } = useBranding(project, onChange);
   const hasArtist = project.artist.trim() !== '';
+  const noLogo = branding !== null && !branding.hasLogo;
+  const noArtist = branding !== null && !hasArtist;
+  // The Logo checkbox is described by whichever hints are showing.
+  const logoHints = [noLogo && LOGO_HINT_ID, noArtist && ARTIST_HINT_ID].filter(Boolean).join(' ') || undefined;
 
   return (
     <fieldset className="space-y-2">
@@ -77,20 +90,21 @@ export function BrandingOptions({ project, disabled, onChange }: Props) {
           <label className="flex items-center gap-2 text-sm text-content-secondary">
             <input
               type="checkbox"
-              className={boxCls}
+              className={checkboxCls}
               checked={branding?.[key] ?? false}
-              disabled={disabled || !branding || saving === key}
+              disabled={disabled || !branding || saving}
+              aria-describedby={key === 'logo' ? logoHints : undefined}
               onChange={(e) => void choose(key, e.target.checked)}
             />
             {label}
           </label>
-          {key === 'logo' && branding && !branding.hasLogo && (
-            <p className={hintCls}>
+          {key === 'logo' && noLogo && (
+            <p id={LOGO_HINT_ID} className={hintCls}>
               No logo yet. Add one in <Link to="/app/settings" className="underline hover:text-bf-cream">Settings → Branding</Link>.
             </p>
           )}
-          {key === 'logo' && branding && !hasArtist && (
-            <p className={hintCls}>Add the artist&apos;s name on the Song step to show it.</p>
+          {key === 'logo' && noArtist && (
+            <p id={ARTIST_HINT_ID} className={hintCls}>Add the artist&apos;s name on the Song step to show it.</p>
           )}
         </div>
       ))}

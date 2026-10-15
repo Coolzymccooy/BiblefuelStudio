@@ -59,16 +59,53 @@ describe('BrandingOptions', () => {
     await waitFor(() => expect(lyricVideoApi.setBranding).toHaveBeenCalledWith('lv_1', { logo: false }));
   });
 
-  it('disables the checkbox while its save runs', async () => {
+  it('disables all three boxes while a save runs, so saves never overlap', async () => {
     vi.mocked(lyricVideoApi.branding).mockResolvedValue(settings);
     let finish: (p: LyricProject) => void = () => undefined;
     vi.mocked(lyricVideoApi.setBranding).mockReturnValue(new Promise((resolve) => { finish = resolve; }));
     show();
     await waitFor(() => expect(box(/end card/i).disabled).toBe(false));
-    fireEvent.click(box(/end card/i));
+    fireEvent.click(box(/logo and artist name/i));
+    expect(box(/logo and artist name/i).disabled).toBe(true);
+    expect(box(/intro credit/i).disabled).toBe(true);
     expect(box(/end card/i).disabled).toBe(true);
     finish(project);
     await waitFor(() => expect(box(/end card/i).disabled).toBe(false));
+    expect(box(/logo and artist name/i).disabled).toBe(false);
+    expect(lyricVideoApi.setBranding).toHaveBeenCalledTimes(1);
+  });
+
+  it('reverts only the box whose save failed', async () => {
+    vi.mocked(lyricVideoApi.branding).mockResolvedValue(settings);
+    let fail: (e: Error) => void = () => undefined;
+    vi.mocked(lyricVideoApi.setBranding).mockReturnValue(new Promise((_, reject) => { fail = reject; }));
+    show();
+    await waitFor(() => expect(box(/end card/i).disabled).toBe(false));
+    fireEvent.click(box(/logo and artist name/i));
+    expect(box(/logo and artist name/i).checked).toBe(false);
+    fail(new Error('The change was not saved.'));
+    await waitFor(() => expect(box(/logo and artist name/i).checked).toBe(true));
+    expect(box(/intro credit/i).checked).toBe(true);
+    expect(box(/end card/i).checked).toBe(false);
+    expect(box(/logo and artist name/i).disabled).toBe(false);
+  });
+
+  it('ignores a save that finishes after the project changed', async () => {
+    vi.mocked(lyricVideoApi.branding).mockResolvedValue(settings);
+    let finish: (p: LyricProject) => void = () => undefined;
+    vi.mocked(lyricVideoApi.setBranding).mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    const onChange = vi.fn();
+    const { rerender } = show({ onChange });
+    await waitFor(() => expect(box(/end card/i).disabled).toBe(false));
+    fireEvent.click(box(/end card/i));
+    const other = { ...project, projectId: 'lv_2' } as LyricProject;
+    rerender(<MemoryRouter><BrandingOptions project={other} disabled={false} onChange={onChange} /></MemoryRouter>);
+    await waitFor(() => expect(lyricVideoApi.branding).toHaveBeenCalledWith('lv_2'));
+    await waitFor(() => expect(box(/end card/i).disabled).toBe(false));
+    finish(project);
+    await Promise.resolve();
+    expect(onChange).not.toHaveBeenCalled();
+    expect(box(/end card/i).checked).toBe(false);
   });
 
   it('puts the checkbox back and says why when the save fails', async () => {
@@ -100,6 +137,7 @@ describe('BrandingOptions', () => {
     const link = await screen.findByRole('link', { name: /settings → branding/i });
     expect(link.getAttribute('href')).toBe('/app/settings');
     expect(screen.getByText(/no logo yet\. add one in/i)).toBeTruthy();
+    expect(box(/logo and artist name/i)).toHaveAccessibleDescription(/no logo yet/i);
   });
 
   it('has no logo hint when a logo is uploaded', async () => {
@@ -113,6 +151,7 @@ describe('BrandingOptions', () => {
     vi.mocked(lyricVideoApi.branding).mockResolvedValue(settings);
     show({ project: { ...project, artist: '  ' } as LyricProject });
     expect(await screen.findByText("Add the artist's name on the Song step to show it.")).toBeTruthy();
+    expect(box(/logo and artist name/i)).toHaveAccessibleDescription("Add the artist's name on the Song step to show it.");
   });
 
   it('does not ask for the artist when there is one', async () => {
