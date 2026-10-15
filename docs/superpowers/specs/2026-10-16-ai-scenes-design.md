@@ -1,12 +1,15 @@
 # AI Scenes: moving AI video for Series Bible passages
 
 **Date:** 2026-10-16
-**Status:** Draft for the operator's review. Nothing is built until it is approved.
-**Provider:** BytePlus ModelArk, Dreamina Seedance (account active, $30 AI Savings Plan, Seedance 2.0 and 2.0 Mini activated)
+**Status:** Approved by the operator on 2026-10-16. Access is limited to super admins.
+**Provider:** BytePlus ModelArk, Dreamina Seedance.
+- The account is active on the $30 AI Savings Plan.
+- Seedance 2.0, 2.0 Mini and 2.0 Fast are activated.
+- Seedance 1.5 Pro cannot be activated, because BytePlus has stopped new purchases of it.
 
 ## 1. What we are trying to achieve
 
-**In the operator's words:** make 30-second to 3-minute videos for his own curated content. Series sessions should get *real visuals* for Bible passages, and the same engine should later serve his music records. Budget is about £30 a month.
+**In the operator's words:** make 30-second to 3-minute videos for their own curated content. Series sessions should get *real visuals* for Bible passages, and the same engine should later serve their music records. Budget is about £30 a month.
 
 **What this design delivers (phase 1 and 2):**
 - A Series part (a Bible passage) goes to Story Video, as it does today.
@@ -20,8 +23,8 @@
 - Generation never goes past the monthly cap, and a failed clip never blocks the render (the scene keeps its picture).
 - A server restart in the middle of generating does not lose the clips already paid for (lesson from #55).
 
-**Assumptions (please correct):**
-1. **Only the operator's account** (super_admin, and premium if he chooses) can generate AI scenes. Free users must never spend his BytePlus balance.
+**Decisions (confirmed 2026-10-16):**
+1. **Super admins only.** Only accounts the server treats as super admins (`SUPER_ADMIN_EMAIL` / `SUPER_ADMIN_USER_ID`, i.e. `req.ctx.isSuperAdmin`) can generate AI scenes. The operator has added a second account to that list. No plan tier, premium included, gets access. Nobody else can spend the BytePlus balance.
 2. **Default model:** Seedance 2.0 Mini at 720p. It is the cheapest (40% of list price during the current promotion) and the 2026-10-16 test showed good quality. Seedance 2.0 at 1080p is an option per project.
 3. **Default cap:** $30 a month, matching the Savings Plan.
 4. **Silent clips:** Seedance never makes sound. The narration and music come from BibleFuel, as now.
@@ -48,7 +51,8 @@ These things are already in master:
 | The render plays a scene clip (looped, trimmed to the scene, sound dropped) and falls back to the poster if the file is missing | `server/src/lib/story/storyRender.js` L283–330 | No render changes are needed |
 | Series part → Story Video | `client/src/pages/SeriesPage.tsx` `sendPartToStory`, `client/src/lib/sendToStoryVideo.ts` | Gains an "AI motion" option |
 | A video-generation seam with a provider chain | `server/src/lib/videoGen/index.js` (`listVideoProviderChain`, `VIDEO_GEN_PROVIDER`), `providers/veo.js` | Seedance becomes a second provider beside Veo |
-| A per-user scope with its own data and output folders | `middleware/userScope.js`, `lib/paths.js` | The clips and spend ledger live per user |
+| A per-user scope with its own data and output folders | `middleware/userScope.js`, `lib/paths.js` | Clips live in each project's output folder. Every super admin resolves to the shared `DATA_DIR`, so one spend ledger there covers the single BytePlus balance |
+| A super-admin-only route guard | `middleware/requireSuperAdmin.js` | Guards every AI-scene route |
 
 ## 4. Design
 
@@ -82,12 +86,14 @@ These things are already in master:
 
   One place to update when prices change.
 - `estimateTokens({ durationSec, width, height, fps:24 })` uses the formula above. `estimateUsd(model, tokens)` turns tokens into dollars.
-- **Ledger:** `<dataDir>/videogen-spend.json` holds `{ month:"2026-10", usd, tokens, clips }`. It is written atomically and resets when the month changes.
+- **Ledger:** `<DATA_DIR>/videogen-spend.json` holds `{ month:"2026-10", usd, tokens, clips }`. It is written atomically and resets when the month changes.
 - **Cap:** `VIDEO_GEN_MONTHLY_CAP_USD`, default 30.
   - Before a batch, **reserve** the estimated cost. If the reservation would cross the cap, refuse with a plain message: "This would take October's AI video spend to $31.20 of $30."
   - After each clip, settle against BytePlus's real `completion_tokens`.
   - Reservations not used (failures, cancels) are released.
-- **Plan gate:** a new `videoGen` bucket in `middleware/quota.js`. The free plan gets 0; premium and super_admin follow the cap.
+- **The ledger is shared.** `DATA_DIR` is the root data folder, and every super admin resolves to it, so there is one ledger for the one BytePlus balance.
+- **Access gate:** `requireSuperAdmin` on every AI-scene route. There is no quota bucket.
+- **Backstop:** BytePlus billing moves to Pay by Credits, so even a bug in the ledger cannot spend more than the credits bought.
 
 ### 4.3 Story: an "Animate" stage
 
@@ -100,7 +106,7 @@ These things are already in master:
 
 A finished clip sets the existing `videoPath`, `videoUrl` and `mediaKind:"video"`, and keeps the picture as the poster.
 
-**New routes** in `routes/story.js`, all requiring the `videoGen` plan gate:
+**New routes** in `routes/story.js`, all behind `requireSuperAdmin`:
 - `POST /:id/animate/estimate`: given `{ sceneIds? }`, returns `{ clips, seconds, usd, monthSpentUsd, capUsd }`.
 - `POST /:id/animate`: given `{ sceneIds? }` (omitted means every scene with a picture), runs detached.
 - `POST /:id/scenes/:sid/animate`: one scene, including a re-roll.
@@ -118,7 +124,7 @@ A finished clip sets the existing `videoPath`, `videoUrl` and `mediaKind:"video"
 
 ### 4.4 Series: an "AI motion" option
 
-- **The Series part card** (`SeriesPage.tsx`) gains an **"AI motion"** toggle beside "Send to Story Video". It only shows when the plan allows it. It displays the estimate, for example "about 6 clips · ≈ $0.90".
+- **The Series part card** (`SeriesPage.tsx`) gains an **"AI motion"** toggle beside "Send to Story Video". It only shows to super admins, using the `isSuperAdmin` flag that `/api/auth/me` already returns. It displays the estimate, for example "about 6 clips · ≈ $0.90".
 - **`narrateAndSendToStory`** passes `{ aiMotion: true, aspect: "9:16" }` to `import-script`. The project stores `aiMotion` and targets 12 s scenes.
 - **When the images stage finishes on an `aiMotion` project**, the server starts the Animate stage on its own, within the cap. If the cap would be crossed, it animates as many scenes as fit and shows "3 of 6 scenes animated: monthly AI budget reached".
 
@@ -160,6 +166,11 @@ A finished clip sets the existing `videoPath`, `videoUrl` and `mediaKind:"video"
 - Seedance 2.5, Veo and other providers beyond keeping the provider chain.
 - Animating Ambient, Moments or Timeline (they can reuse the provider later).
 - Clips longer than one generation (Seedance's "extend").
+- **Lip sync** (the operator asked on 2026-10-16): a person on screen speaks or sings the actual narration or song, rather than acting silently.
+  - This is a separate phase, starting with a paid test under $3. The test compares two routes on a 10–15 s line of the operator's own vocal and one narration line.
+  - **Route A:** Seedance 2.0 with an audio reference. BytePlus's own API reference must confirm the content type first.
+  - **Route B:** ByteDance OmniHuman 1.5, which takes one picture and an audio track and returns a speaking or singing video. Resellers quote about $0.14–0.18 a second, with 30–60 s of audio per call. Whether BytePlus sells it directly is unconfirmed.
+  - The design reuses this phase's provider, ledger, cap and super-admin gate. Only scenes marked "speaking" would use it, because it costs about twice as much per second as the promotional Mini rate.
 
 ## 7. Testing
 
@@ -187,13 +198,13 @@ A finished clip sets the existing `videoPath`, `videoUrl` and `mediaKind:"video"
 - a new picture clears the clip.
 
 **Routes:**
-- the plan gate (free plan is refused);
+- the super-admin gate (any other account, premium included, gets 403);
 - the estimate endpoint;
 - the single-scene re-roll.
 
 **Render:** a project with a mix of AI clips and pictures renders. The existing path is checked on ffmpeg 5.1.9.
 
-**Client:** buttons, badges, the estimate text, the confirmation above $2, and the Series toggle shown only to allowed plans.
+**Client:** buttons, badges, the estimate text, the confirmation above $2, and the Animate controls and Series toggle shown only to super admins.
 
 **Manual on production:** one 30 s Series part with AI motion, with BytePlus usage compared to the ledger.
 
