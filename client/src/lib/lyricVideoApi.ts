@@ -4,7 +4,7 @@ import { uploadMedia } from './mediaUpload';
 import type { UploadKind } from './mediaUpload';
 import { AUDIO_EXTENSIONS } from './audioAccept';
 import type {
-  BackgroundFit, LyricBranding, LyricBrandingPatch, LyricEffect, LyricProject, LyricProjectSummary, LyricPublishDraft, LyricRenderJob, RenderAspect, RenderQuality,
+  BackgroundFit, LyricBranding, LyricBrandingPatch, LyricEffect, LyricHistoryItem, LyricProject, LyricProjectSummary, LyricPublishDraft, LyricRenderJob, RenderAspect, RenderQuality,
 } from './lyricVideoTypes';
 
 const BASE = '/api/lyric-video';
@@ -80,6 +80,10 @@ export function songUploadKind(file: File): UploadKind {
 export const lyricVideoApi = {
   async list(): Promise<LyricProjectSummary[]> {
     return unwrap(await api.get<{ projects: LyricProjectSummary[] }>(BASE)).projects;
+  },
+  /** Every video made from any of the user's songs, newest first (running ones included). */
+  async renders(): Promise<LyricHistoryItem[]> {
+    return unwrap(await api.get<{ renders: LyricHistoryItem[] }>(`${BASE}/renders`)).renders;
   },
   create: (title: string, artist: string) => project(api.post(BASE, { title, artist })),
   get: (id: string) => project(api.get(`${BASE}/${id}`)),

@@ -3,7 +3,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 vi.mock('../../lib/lyricVideoApi', () => ({
-  lyricVideoApi: { list: vi.fn(), prefs: vi.fn(), create: vi.fn(), get: vi.fn() },
+  lyricVideoApi: { list: vi.fn(), renders: vi.fn(), prefs: vi.fn(), create: vi.fn(), get: vi.fn() },
 }));
 vi.mock('react-hot-toast', () => ({ default: { error: vi.fn(), success: vi.fn() } }));
 import toast from 'react-hot-toast';
@@ -39,6 +39,7 @@ describe('LyricVideoPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(lyricVideoApi.list).mockResolvedValue([]);
+    vi.mocked(lyricVideoApi.renders).mockResolvedValue([]);
     vi.mocked(lyricVideoApi.prefs).mockResolvedValue({ artist: 'Sthill Waters' });
   });
 
@@ -82,6 +83,25 @@ describe('LyricVideoPage', () => {
     renderAt('/app/lyric-video');
     const link = await screen.findByRole('link', { name: /old song/i });
     expect(link.getAttribute('href')).toBe('/app/lyric-video/lv_9');
+  });
+
+  it('lists the videos made, below the songs, once there is a song', async () => {
+    vi.mocked(lyricVideoApi.list).mockResolvedValue([
+      { projectId: 'lv_9', title: 'Old Song', artist: 'A', updatedAt: '2026-10-01T10:00:00Z', hasRender: true },
+    ]);
+    vi.mocked(lyricVideoApi.renders).mockResolvedValue([
+      { projectId: 'lv_9', title: 'Old Song', artist: 'A', jobId: 'j1', aspect: 'portrait', quality: '720p', status: 'done', at: '2026-10-15T12:00:00.000Z', durationSec: 182, file: 'v.mp4' },
+    ]);
+    renderAt('/app/lyric-video');
+    expect(await screen.findByRole('heading', { name: 'Your videos' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Watch Old Song' })).toBeTruthy();
+  });
+
+  it('has no videos section before any song exists', async () => {
+    renderAt('/app/lyric-video');
+    await screen.findByDisplayValue('Sthill Waters');
+    expect(screen.queryByRole('heading', { name: 'Your videos' })).toBeNull();
+    expect(lyricVideoApi.renders).not.toHaveBeenCalled();
   });
 
   it('opens a project on its first unfinished step and lets you move between steps', async () => {

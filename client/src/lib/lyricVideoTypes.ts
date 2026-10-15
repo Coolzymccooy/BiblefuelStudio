@@ -109,6 +109,27 @@ export interface LyricProject {
   render?: { activeJobId: string } | null;
 }
 
+/** One row of "Your videos": a render of any of the user's songs, finished, in progress or failed. */
+export interface LyricHistoryItem {
+  projectId: string;
+  title: string;
+  artist: string;
+  jobId: string;
+  aspect: RenderAspect;
+  quality: RenderQuality;
+  status: 'done' | 'running' | 'failed';
+  /** ISO time: when it was made, or for a running render when it started. */
+  at: string;
+  /** done only */
+  durationSec?: number;
+  /** done only: where the finished video is stored */
+  file?: string;
+  /** running only: 0 to 100 */
+  progress?: number;
+  /** failed only: a sentence fit to show */
+  error?: string;
+}
+
 export interface LyricProjectSummary {
   projectId: string;
   title: string;

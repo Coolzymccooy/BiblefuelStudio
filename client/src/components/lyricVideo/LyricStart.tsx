@@ -7,6 +7,7 @@ import { lyricVideoApi } from '../../lib/lyricVideoApi';
 import type { LyricProject } from '../../lib/lyricVideoTypes';
 import { fieldLabelCls, inputCls, panelCls, primaryBtnCls } from '../story/formStyles';
 import { messageOf } from './messageOf';
+import { VideoHistory } from './VideoHistory';
 
 const MAX_NAME = 100;
 
@@ -65,6 +66,9 @@ export function LyricStart({ onCreated }: { onCreated: (project: LyricProject) =
           </ul>
         </div>
       )}
+
+      {/* Every video made, from any song: only once there is a song. */}
+      {songs.data && songs.data.length > 0 && <VideoHistory />}
     </div>
   );
 }

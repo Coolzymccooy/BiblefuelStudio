@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createProject, readProject, writeProject, updateProject, listProjects, deleteProject, readPrefs, writePrefs, cleanText, applySheet, carryOverTiming, normaliseBranding } from "./projectStore.js";
+import { createProject, readProject, writeProject, updateProject, listProjects, deleteProject, readPrefs, writePrefs, cleanText, applySheet, carryOverTiming, normaliseBranding, normaliseFailedRenders } from "./projectStore.js";
 
 let dir;
 beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), "lyric-store-")); });
@@ -179,5 +179,28 @@ describe("branding options", () => {
     assert.deepEqual(normaliseBranding({ logo: true }), { logo: true, intro: true, endCard: true });
     assert.deepEqual(normaliseBranding({ logo: "yes", intro: 0, endCard: null }), DEFAULTS);
     for (const junk of [undefined, null, "x", 3, []]) assert.deepEqual(normaliseBranding(junk), DEFAULTS);
+  });
+});
+
+describe("failed renders", () => {
+  const entry = { jobId: "j1", aspect: "portrait", quality: "720p", at: "2026-10-15T10:00:00.000Z", error: "The video could not be made." };
+  test("a new project starts with none", () => {
+    assert.deepEqual(createProject(dir, { title: "A", artist: "" }).failedRenders, []);
+  });
+  test("an older project without the field reads as an empty list", () => {
+    const p = createProject(dir, { title: "A", artist: "" });
+    const { failedRenders, ...old } = p;
+    fs.writeFileSync(path.join(dir, "lyric-projects", `${p.projectId}.json`), JSON.stringify(old));
+    assert.deepEqual(readProject(dir, p.projectId).failedRenders, []);
+  });
+  test("good entries are kept; anything malformed is dropped", () => {
+    const junk = [null, "x", 3, [], {}, { ...entry, jobId: "" }, { ...entry, aspect: 4 }, { ...entry, quality: undefined }, { ...entry, at: null }, { ...entry, error: 7 }];
+    assert.deepEqual(normaliseFailedRenders([entry, ...junk, { ...entry, jobId: "j2", extra: "no" }]), [entry, { ...entry, jobId: "j2" }]);
+    for (const bad of [undefined, null, "x", 3, {}]) assert.deepEqual(normaliseFailedRenders(bad), []);
+  });
+  test("a stored project with a malformed list reads with only the good entries", () => {
+    const p = createProject(dir, { title: "A", artist: "" });
+    fs.writeFileSync(path.join(dir, "lyric-projects", `${p.projectId}.json`), JSON.stringify({ ...p, failedRenders: [entry, "junk"] }));
+    assert.deepEqual(readProject(dir, p.projectId).failedRenders, [entry]);
   });
 });

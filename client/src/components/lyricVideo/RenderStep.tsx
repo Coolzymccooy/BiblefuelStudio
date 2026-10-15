@@ -4,6 +4,7 @@ import { Download, Loader2 } from 'lucide-react';
 import { lyricVideoApi } from '../../lib/lyricVideoApi';
 import { lyricDownloadUrl, lyricVideoUrl } from '../../lib/lyricDownload';
 import { formatSongLength } from '../../lib/lyricTiming';
+import { ASPECTS, aspectName } from '../../lib/lyricRenderOptions';
 import { shortsTrimOffer } from '../../lib/shortsTrim';
 import type { LyricProject, LyricPublishDraft, LyricRender, LyricRenderJob, RenderAspect, RenderQuality } from '../../lib/lyricVideoTypes';
 import { YoutubePublishPanel } from '../share/YoutubePublishPanel';
@@ -18,18 +19,12 @@ const POLL_MS = 2000;
 /** Failed progress checks in a row before we stop asking and say so. */
 const MAX_POLL_FAILURES = 5;
 
-const ASPECTS: Array<{ id: RenderAspect; label: string; name: string }> = [
-  { id: 'portrait', label: 'Portrait 9:16 — best for Shorts and TikTok', name: 'Portrait' },
-  { id: 'landscape', label: 'Landscape 16:9', name: 'Landscape' },
-  { id: 'square', label: 'Square 1:1', name: 'Square' },
-];
 const QUALITIES: Array<{ id: RenderQuality; label: string }> = [
   { id: '720p', label: '720p' },
   { id: '1080p', label: '1080p — takes longer' },
 ];
 
 const isFinished = (job: LyricRenderJob) => job.status === 'done' || job.status === 'error' || job.status === 'cancelled';
-const aspectName = (id: RenderAspect) => ASPECTS.find((a) => a.id === id)?.name ?? id;
 
 /** Asks how the video is coming along every 2 seconds until it is finished. */
 function useRenderJob(projectId: string, jobId: string | null, onDone: (job: LyricRenderJob) => void) {
