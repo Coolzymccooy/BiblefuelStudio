@@ -663,7 +663,9 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
     const { width, height } = renderSize(aspect, quality);
     const built = await planRender(project, req.ctx.dataDir, { width, height, aspect, shortsTrim });
     if (!built.ass) throw new Refusal(409, "Time the lyrics before rendering.");
-    // The logo probe above yields; another request may have taken the slot meanwhile.
+    // The logo probe above yields. The song may have been deleted meanwhile (Codex #64), so it is
+    // read again (a 404 if gone) before anything is charged; and another request may have taken the slot.
+    load(req);
     assertRenderSlot(req, project);
     const bytes = Math.ceil(((VIDEO_BPS[quality] + AUDIO_BPS) / 8) * built.plan.totalSec);
     if (!hasDiskHeadroomForUpload(req.ctx.outputDir, bytes + pendingBytes(), { statfs }).ok) {

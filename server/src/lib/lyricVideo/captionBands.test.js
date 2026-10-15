@@ -35,6 +35,13 @@ test("a line that pops in bigger than the usual allowance reaches by its own sta
   assert.equal(small[0].top, 300 - 0.5 * 40, "growing from small still reaches its full size");
 });
 
+test("a tilted line that pops in big swings its scaled width up, not its plain width (Codex #64)", () => {
+  const [e] = parseInkEvents(ev("0:00:01.00", "0:00:02.00", "{\\an5\\pos(360,600)\\fs40\\frz-4\\fscx175\\fscy175\\t(0,180,\\fscx100\\fscy100)}ABCDEFGHIJKLMNOPQRST"));
+  const rad = (4 * Math.PI) / 180;
+  const expected = 600 - 0.5 * 40 * 1.75 * Math.cos(rad) - 0.5 * 20 * 0.6 * 40 * 1.75 * Math.sin(rad);
+  assert.ok(Math.abs(e.top - expected) < 1e-6, `top ${e.top}, expected ${expected}`);
+});
+
 test("captionsEnd is the last moment any caption is on screen", () => {
   assert.equal(captionsEnd(parseInkEvents(ASS)), 9.5);
   assert.equal(captionsEnd([]), 0);

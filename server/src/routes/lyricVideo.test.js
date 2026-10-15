@@ -1138,6 +1138,23 @@ describe("branding options and the branded render", () => {
       return { logged, restore: () => { console.warn = original; } };
     };
 
+    test("a song deleted while its logo is measured is neither rendered nor charged (Codex #64)", async () => {
+      const p = setup();
+      const calls = [];
+      stub.render = async (o) => { calls.push(o); return finishingRender()(o); };
+      const before = readUsage(ctx.dataDir).counts.render ?? 0;
+      // The render request waits on ffprobe for the logo's size; the delete lands in that wait.
+      const rendering = call("POST", `/${p.projectId}/render`, {});
+      await sleep(15);
+      const deleted = await call("DELETE", `/${p.projectId}`);
+      const r = await rendering;
+      assert.equal(deleted.status, 200);
+      assert.equal(r.status, 404, "the song is gone, so there is nothing to render");
+      await sleep(40);
+      assert.equal(calls.length, 0, "no render ran");
+      assert.equal(readUsage(ctx.dataDir).counts.render ?? 0, before, "nothing charged");
+    });
+
     test("one retry with logo null, the same plan and document; the job ends done", async () => {
       const p = setup();
       const calls = [];

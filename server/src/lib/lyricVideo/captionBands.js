@@ -18,6 +18,7 @@ const BORDER_RE = /\\bord(\d+(?:\.\d+)?)/;
 const DRAW_RE = /\\p(\d+)/g;
 const FRZ_RE = /\\frz(-?\d+(?:\.\d+)?)/;
 const FSCY_RE = /\\fscy(\d+(?:\.\d+)?)/;
+const FSCX_RE = /\\fscx(\d+(?:\.\d+)?)/;
 const BLOCK_RE = /\{[^}]*\}/g;
 /** Average glyph width as a fraction of the font size, for the width of a rotated line. */
 const CHAR_WIDTH = 0.6;
@@ -60,10 +61,15 @@ function reachAbove(align, fs, scale = POP_SCALE) {
   return fs * scale;
 }
 
-/** Half the width of the visible text, estimated from its character count. */
+/**
+ * Half the width of the visible text, estimated from its character count, at the line's widest:
+ * its own starting \fscx when it pops in bigger (an echo starts at 175%), else full size.
+ */
 function halfWidthOf(text, fs) {
   const visible = Array.from(text.replace(BLOCK_RE, "")).length;
-  return 0.5 * visible * CHAR_WIDTH * fs;
+  const m = FSCX_RE.exec(text);
+  const scale = m ? Math.max(1, Number(m[1]) / 100) : 1;
+  return 0.5 * visible * CHAR_WIDTH * fs * scale;
 }
 
 /**
