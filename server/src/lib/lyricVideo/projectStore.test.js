@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createProject, readProject, writeProject, updateProject, listProjects, deleteProject, readPrefs, writePrefs, cleanText, applySheet, carryOverTiming } from "./projectStore.js";
+import { createProject, readProject, writeProject, updateProject, listProjects, deleteProject, readPrefs, writePrefs, cleanText, applySheet, carryOverTiming, normaliseBranding } from "./projectStore.js";
 
 let dir;
 beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), "lyric-store-")); });
@@ -161,4 +161,23 @@ test("applySheet parses the sheet and records it", () => {
   assert.equal(next.sheet.raw.includes("CHORUS"), true);
   assert.deepEqual(next.lines.map((l) => [l.kind, l.text, l.effect]), [["lead", "Who talk say?", "auto"], ["response", "(WHO TALK SAY?!)", "auto"]]);
   assert.equal(next.timing.status, "idle");
+});
+
+describe("branding options", () => {
+  const DEFAULTS = { logo: null, intro: true, endCard: true };
+  test("a new project follows Settings for the logo and has the intro and end card on", () => {
+    assert.deepEqual(createProject(dir, { title: "A", artist: "" }).branding, DEFAULTS);
+  });
+  test("an older project without the field reads as the defaults", () => {
+    const p = createProject(dir, { title: "A", artist: "" });
+    const { branding, ...old } = p;
+    fs.writeFileSync(path.join(dir, "lyric-projects", `${p.projectId}.json`), JSON.stringify(old));
+    assert.deepEqual(readProject(dir, p.projectId).branding, DEFAULTS);
+  });
+  test("normaliseBranding keeps booleans (and null for the logo), drops unknown keys and bad values", () => {
+    assert.deepEqual(normaliseBranding({ logo: false, intro: false, endCard: false, extra: 1 }), { logo: false, intro: false, endCard: false });
+    assert.deepEqual(normaliseBranding({ logo: true }), { logo: true, intro: true, endCard: true });
+    assert.deepEqual(normaliseBranding({ logo: "yes", intro: 0, endCard: null }), DEFAULTS);
+    for (const junk of [undefined, null, "x", 3, []]) assert.deepEqual(normaliseBranding(junk), DEFAULTS);
+  });
 });

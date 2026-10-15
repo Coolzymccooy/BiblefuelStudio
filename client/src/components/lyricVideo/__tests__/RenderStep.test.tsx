@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-vi.mock('../../../lib/lyricVideoApi', () => ({ lyricVideoApi: { render: vi.fn(), renderStatus: vi.fn(), cancelRender: vi.fn(), get: vi.fn(), publishDraft: vi.fn() } }));
+vi.mock('../../../lib/lyricVideoApi', () => ({ lyricVideoApi: { render: vi.fn(), renderStatus: vi.fn(), cancelRender: vi.fn(), get: vi.fn(), publishDraft: vi.fn(), branding: vi.fn(), setBranding: vi.fn() } }));
+// The branding group has its own tests (it needs a Router for its Settings link); here only that it is handed the right state.
+vi.mock('../BrandingOptions', () => ({
+  BrandingOptions: (props: { disabled: boolean }) => <div data-testid="branding" data-disabled={String(props.disabled)} />,
+}));
 // The panel has its own tests; here only what the render step hands it matters.
 vi.mock('../../share/YoutubePublishPanel', () => ({
   YoutubePublishPanel: (props: { videoUrl: string; initial?: { title?: string; description?: string; tags?: string[] }; categoryId?: string }) => (
@@ -24,7 +28,7 @@ describe('RenderStep', () => {
     vi.mocked(lyricVideoApi.get).mockResolvedValue(p);
     render(<RenderStep project={p} onChange={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: /render video/i }));
-    await waitFor(() => expect(lyricVideoApi.render).toHaveBeenCalledWith('lv_1', 'portrait', '720p'));
+    await waitFor(() => expect(lyricVideoApi.render).toHaveBeenCalledWith('lv_1', 'portrait', '720p', false));
     const link = await screen.findByRole('link', { name: /download/i }, { timeout: 4000 });
     expect(link.getAttribute('href')).toMatch(/\/outputs\/lyric-lv_1\.mp4\?dl=My%20Time\.mp4$/);
   });
@@ -36,7 +40,7 @@ describe('RenderStep', () => {
     fireEvent.change(screen.getByLabelText(/frame/i), { target: { value: 'landscape' } });
     fireEvent.change(screen.getByLabelText(/quality/i), { target: { value: '1080p' } });
     fireEvent.click(screen.getByRole('button', { name: /render video/i }));
-    await waitFor(() => expect(lyricVideoApi.render).toHaveBeenCalledWith('lv_1', 'landscape', '1080p'));
+    await waitFor(() => expect(lyricVideoApi.render).toHaveBeenCalledWith('lv_1', 'landscape', '1080p', false));
   });
 
   it('explains each frame and quality in plain words', () => {
@@ -139,5 +143,68 @@ describe('RenderStep', () => {
     const panel = await screen.findByTestId('yt-panel');
     expect(panel.textContent).toBe('/outputs/lyric-a.mp4|My Time||10');
     expect(screen.getByRole('status').textContent).toMatch(/could not be filled in/i);
+  });
+  describe('Shorts trim', () => {
+    const trimLabel = /trim to 2:59 so it counts as a short/i;
+    const song = (durationSec: number, end = 60) => (
+      { ...p, song: { file: 'a.mp3', durationSec, coverStill: null }, lines: [{ id: 'l1', end, words: [{ text: 'x', start: 0, end: 1 }] }] } as unknown as LyricProject
+    );
+
+    it('is offered for a portrait song of 185 s, and sent with the render', async () => {
+      vi.mocked(lyricVideoApi.render).mockResolvedValue('job1');
+      vi.mocked(lyricVideoApi.renderStatus).mockResolvedValue({ jobId: 'job1', status: 'running', progress: 10, error: null, file: null });
+      render(<RenderStep project={song(185)} onChange={vi.fn()} />);
+      const box = screen.getByRole('checkbox', { name: trimLabel }) as HTMLInputElement;
+      expect(box.checked).toBe(false);
+      expect(box.disabled).toBe(false);
+      fireEvent.click(box);
+      fireEvent.click(screen.getByRole('button', { name: /render video/i }));
+      await waitFor(() => expect(lyricVideoApi.render).toHaveBeenCalledWith('lv_1', 'portrait', '720p', true));
+    });
+
+    it('is not shown for a song that is not 3:00 to 3:10', () => {
+      render(<RenderStep project={song(150)} onChange={vi.fn()} />);
+      expect(screen.queryByRole('checkbox', { name: trimLabel })).toBeNull();
+    });
+
+    it('is not shown for a landscape frame, and starts unticked when you come back to portrait', () => {
+      render(<RenderStep project={song(185)} onChange={vi.fn()} />);
+      fireEvent.click(screen.getByRole('checkbox', { name: trimLabel }));
+      fireEvent.change(screen.getByLabelText(/frame/i), { target: { value: 'landscape' } });
+      expect(screen.queryByRole('checkbox', { name: trimLabel })).toBeNull();
+      fireEvent.change(screen.getByLabelText(/frame/i), { target: { value: 'portrait' } });
+      expect((screen.getByRole('checkbox', { name: trimLabel }) as HTMLInputElement).checked).toBe(false);
+    });
+
+    it('never sends a trim for a frame that is not portrait', async () => {
+      vi.mocked(lyricVideoApi.render).mockResolvedValue('job1');
+      vi.mocked(lyricVideoApi.renderStatus).mockResolvedValue({ jobId: 'job1', status: 'running', progress: 10, error: null, file: null });
+      render(<RenderStep project={song(185)} onChange={vi.fn()} />);
+      fireEvent.click(screen.getByRole('checkbox', { name: trimLabel }));
+      fireEvent.change(screen.getByLabelText(/frame/i), { target: { value: 'square' } });
+      fireEvent.click(screen.getByRole('button', { name: /render video/i }));
+      await waitFor(() => expect(lyricVideoApi.render).toHaveBeenCalledWith('lv_1', 'square', '720p', false));
+    });
+
+    it('is disabled with the reason underneath when a line ends at 178.6', () => {
+      render(<RenderStep project={song(185, 178.6)} onChange={vi.fn()} />);
+      const box = screen.getByRole('checkbox', { name: trimLabel }) as HTMLInputElement;
+      expect(box.disabled).toBe(true);
+      expect(screen.getByText('A lyric line ends after 2:58, so trimming would cut it.')).toBeTruthy();
+      expect(box.getAttribute('aria-describedby')).toBeTruthy();
+    });
+
+    it('is disabled while a render is running', () => {
+      const running = { ...song(185), render: { activeJobId: 'job9' } } as unknown as LyricProject;
+      vi.mocked(lyricVideoApi.renderStatus).mockResolvedValue({ jobId: 'job9', status: 'running', progress: 5, error: null, file: null });
+      render(<RenderStep project={running} onChange={vi.fn()} />);
+      expect((screen.getByRole('checkbox', { name: trimLabel }) as HTMLInputElement).disabled).toBe(true);
+      expect(screen.getByTestId('branding').getAttribute('data-disabled')).toBe('true');
+    });
+  });
+
+  it('hands the branding group the project and leaves it enabled when idle', () => {
+    render(<RenderStep project={p} onChange={vi.fn()} />);
+    expect(screen.getByTestId('branding').getAttribute('data-disabled')).toBe('false');
   });
 });

@@ -71,7 +71,23 @@ export interface LyricRender {
   file: string;
   durationSec: number;
   at: string;
+  /** True when the video was cut to 2:59 so it counts as a Short. */
+  shortsTrim?: boolean;
 }
+
+/** What the video shows beyond the lyrics, as the render step reads it. */
+export interface LyricBranding {
+  logo: boolean;
+  intro: boolean;
+  endCard: boolean;
+  /** A logo is uploaded in Settings. */
+  hasLogo: boolean;
+  /** `logo` follows the Settings switch rather than a choice made on this project. */
+  logoFromSettings: boolean;
+}
+
+/** The changes a branding save can carry; `logo: null` goes back to following Settings. */
+export type LyricBrandingPatch = Partial<{ logo: boolean | null; intro: boolean; endCard: boolean }>;
 
 export interface LyricProject {
   projectId: string;
@@ -87,6 +103,8 @@ export interface LyricProject {
   look: LyricLook;
   background: LyricBackground | null;
   renders: LyricRender[];
+  /** The project's own branding choices; unset ones follow the usual settings. */
+  branding?: Partial<Pick<LyricBranding, 'logo' | 'intro' | 'endCard'>> | null;
   /** The render being made now, saved so the page can pick it up again after leaving. */
   render?: { activeJobId: string } | null;
 }

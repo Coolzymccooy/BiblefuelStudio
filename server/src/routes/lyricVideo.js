@@ -20,11 +20,14 @@ import { EFFECT_IDS } from "../lib/kinetic/director.js";
 import { ENERGIES, isStudioLook } from "../lib/kinetic/looks.js";
 import { SHEET_MAX_CHARS, SHEET_MAX_LINES } from "../lib/lyricVideo/sheetParser.js";
 import {
-  createProject, readProject, updateProject, listProjects, deleteProject, readPrefs, writePrefs, applySheet,
+  createProject, readProject, updateProject, listProjects, deleteProject, readPrefs, writePrefs, applySheet, normaliseBranding,
 } from "../lib/lyricVideo/projectStore.js";
+import { buildRenderAss } from "../lib/lyricVideo/renderPlan.js";
+import { shortsTrimOffer } from "../lib/lyricVideo/brandingPlan.js";
+import { readBranding, logoFileFor } from "../lib/branding.js";
 import { runAlignJob, isAligning, failedTiming } from "../lib/lyricVideo/alignJob.js";
 import { buildLyricAss, resolvedEffects } from "../lib/lyricVideo/lyricAss.js";
-import { renderSize, runLyricRender } from "../lib/lyricVideo/lyricRender.js";
+import { renderSize, runLyricRender, audioShaped } from "../lib/lyricVideo/lyricRender.js";
 import { buildPublishDraft } from "../lib/lyricVideo/publishDraft.js";
 import { quota } from "../middleware/quota.js";
 
@@ -524,28 +527,62 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
     ok(res, { draft: buildPublishDraft(load(req)) });
   }));
 
+  /** One run of the renderer; a throw becomes a failed result with the job marked as errored. */
+  async function runOnce(job, args) {
+    try {
+      return await runRender(args);
+    } catch (err) {
+      console.error(`[lyric-video] render ${job.jobId} crashed:`, err);
+      markError(job.jobId, "The render could not run");
+      return { ok: false, error: String(err?.message ?? err) };
+    }
+  }
+
+  /** Whether the render leans on the branding filters (the logo, or the song's padding and fade). */
+  const usesNewFilters = (args) => Boolean(args.logo) || audioShaped(args.plan?.audio);
+
+  /**
+   * The retry: no logo and no padding or fade, so it uses nothing newer than the plain render.
+   * The song is still cut to the planned length (a Shorts trim stays 2:59); a tail past the
+   * song's end is simply quiet.
+   */
+  function plainRetry(args) {
+    const audio = args.plan?.audio;
+    const plan = audio ? { ...args.plan, audio: { ...audio, padToSec: audio.inputSec, fadeSec: 0 } } : args.plan;
+    return { ...args, logo: null, plan };
+  }
+
+  /**
+   * Runs the render. When one that uses the branding filters fails for any reason but a cancel,
+   * it is made once more without them (same document), so a surprise in those filters on prod's
+   * ffmpeg never leaves the user without a video.
+   */
+  async function runWithLogoFallback(job, args) {
+    const result = await runOnce(job, args);
+    if (result?.ok || !usesNewFilters(args) || wasCancelled(job.jobId, result)) return result;
+    const why = String(result?.error ?? getJob(job.jobId)?.error ?? "").slice(0, 200);
+    console.warn(`[lyric-video] branded render failed, retrying without the logo: ${why}`);
+    removeFile(args.outPath);
+    updateJob(job.jobId, { status: "running", error: null, percent: 0, phase: "preparing" });
+    return runOnce(job, plainRetry(args));
+  }
+
   /** Finishes a render: records the job's end state, files the result on the project, frees the slot. */
-  async function finishRender({ req, project, job, aspect, quality, width, height, durationSec, outPath, assPath }) {
+  async function finishRender({ req, project, job, aspect, quality, shortsTrim, built, width, height, durationSec, outPath, assPath }) {
     const dataDir = req.ctx.dataDir;
     const id = project.projectId;
     try {
-      let result;
-      try {
-        result = await runRender({
-          jobId: job.jobId, songPath: project.song.file, background: renderBackground(project), assPath,
-          width, height, durationSec, outPath,
-        });
-      } catch (err) {
-        console.error(`[lyric-video] render ${job.jobId} crashed:`, err);
-        markError(job.jobId, "The render could not run");
-        result = { ok: false };
-      }
+      const result = await runWithLogoFallback(job, {
+        jobId: job.jobId, songPath: project.song.file, background: renderBackground(project), assPath,
+        width, height, durationSec, outPath, plan: built.plan, geometry: built.geometry, logo: built.logo,
+      });
       const live = getJob(job.jobId);
       if (result?.ok && live?.status === "done") {
         persistJob(dataDir, { ...job, ...live, projectId: id, outputPath: outPath });
+        const entry = { jobId: job.jobId, aspect, quality, file: outPath, durationSec: built.plan.totalSec, shortsTrim, at: new Date().toISOString() };
         updateProject(dataDir, id, (latest) => ({
           ...latest,
-          renders: [...(latest.renders || []), { jobId: job.jobId, aspect, quality, file: outPath, durationSec, at: new Date().toISOString() }],
+          renders: [...(latest.renders || []), entry],
           render: latest.render?.activeJobId === job.jobId ? null : latest.render ?? null,
         }));
       } else {
@@ -567,26 +604,70 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
   /** Bytes the renders in flight may still write, plus this one, for the disk check. */
   const pendingBytes = () => [...rendering.values()].reduce((sum, r) => sum + r.bytes, 0);
 
-  router.post("/:id/render", route((req, res) => {
+  /** Refuses (409) when this project, this user or the studio already has a video being made, or timing is running. */
+  function assertRenderSlot(req, project) {
+    if (rendering.has(project.projectId)) throw new Refusal(409, "A video is already being made for this song.");
+    if ([...rendering.values()].some((r) => r.userId === req.ctx.userId)) throw new Refusal(409, "You already have a video being made — wait for it to finish.");
+    if (rendering.size >= MAX_CONCURRENT_RENDERS) throw new Refusal(409, "The studio is busy making other videos — try again in a few minutes.");
+    if (isAligning(project.projectId)) throw new Refusal(409, "Timing is still running for this song — wait for it to finish.");
+  }
+
+  router.get("/:id/branding", route((req, res) => {
     const project = load(req);
+    const choice = brandingChoice(project, req.ctx.dataDir);
+    const { intro, endCard } = project.branding;
+    // logoFromSettings: the song has made no choice of its own, so its logo follows Settings.
+    const logoFromSettings = project.branding.logo === null;
+    ok(res, { branding: { logo: choice.logo, intro, endCard, hasLogo: choice.settings.hasLogo, logoFromSettings } });
+  }));
+
+  router.put("/:id/branding", route((req, res) => {
+    const project = load(req);
+    const body = bodyOf(req);
+    const given = ["logo", "intro", "endCard"].filter((key) => body[key] !== undefined);
+    if (!given.length) throw new Refusal(400, "Nothing to change.");
+    for (const key of given) {
+      const fine = typeof body[key] === "boolean" || (key === "logo" && body[key] === null);
+      if (!fine) throw new Refusal(400, "Branding options are on or off.");
+    }
+    const next = updateProject(req.ctx.dataDir, project.projectId, (latest) => ({
+      ...latest,
+      branding: normaliseBranding({ ...latest.branding, ...Object.fromEntries(given.map((key) => [key, body[key]])) }),
+    }));
+    if (!next) throw new Refusal(404, NOT_FOUND);
+    ok(res, { project: next });
+  }));
+
+  /** Checks a render request against the body and the project; returns what the render needs, or throws a Refusal. */
+  function checkRenderRequest(req, project) {
     const body = bodyOf(req);
     if (body.aspect !== undefined && !ASPECTS.includes(body.aspect)) throw new Refusal(400, "Unknown video shape");
     if (body.quality !== undefined && !QUALITIES.includes(body.quality)) throw new Refusal(400, "Unknown quality");
+    if (body.shortsTrim !== undefined && typeof body.shortsTrim !== "boolean") throw new Refusal(400, "Unknown Shorts trim");
     const aspect = body.aspect ?? "portrait";
-    const quality = body.quality ?? "720p";
+    const shortsTrim = body.shortsTrim === true;
     if (!project.song?.file) throw new Refusal(409, "Add the song first.");
     const durationSec = Number(project.song.durationSec);
     if (!Number.isFinite(durationSec) || durationSec <= 0) throw new Refusal(409, "The song's length is not known — upload the song again.");
     if (!isFile(project.song.file)) throw new Refusal(409, "The song file is missing — upload the song again.");
     if (project.background?.file && !isFile(project.background.file)) throw new Refusal(409, "The background file is missing — choose it again.");
-    if (rendering.has(project.projectId)) throw new Refusal(409, "A video is already being made for this song.");
-    if ([...rendering.values()].some((r) => r.userId === req.ctx.userId)) throw new Refusal(409, "You already have a video being made — wait for it to finish.");
-    if (rendering.size >= MAX_CONCURRENT_RENDERS) throw new Refusal(409, "The studio is busy making other videos — try again in a few minutes.");
-    if (isAligning(project.projectId)) throw new Refusal(409, "Timing is still running for this song — wait for it to finish.");
+    const trimRefusal = shortsTrim ? shortsTrimRefusal(project, aspect, durationSec) : null;
+    if (trimRefusal) throw new Refusal(409, trimRefusal);
+    assertRenderSlot(req, project);
+    return { aspect, quality: body.quality ?? "720p", shortsTrim, durationSec };
+  }
+
+  router.post("/:id/render", route(async (req, res) => {
+    const project = load(req);
+    const { aspect, quality, shortsTrim, durationSec } = checkRenderRequest(req, project);
     const { width, height } = renderSize(aspect, quality);
-    const ass = buildLyricAss(project, { w: width, h: height, layout: aspect === "portrait" ? "shorts" : "default" });
-    if (!ass) throw new Refusal(409, "Time the lyrics before rendering.");
-    const bytes = Math.ceil(((VIDEO_BPS[quality] + AUDIO_BPS) / 8) * durationSec);
+    const built = await planRender(project, req.ctx.dataDir, { width, height, aspect, shortsTrim });
+    if (!built.ass) throw new Refusal(409, "Time the lyrics before rendering.");
+    // The logo probe above yields. The song may have been deleted meanwhile (Codex #64), so it is
+    // read again (a 404 if gone) before anything is charged; and another request may have taken the slot.
+    load(req);
+    assertRenderSlot(req, project);
+    const bytes = Math.ceil(((VIDEO_BPS[quality] + AUDIO_BPS) / 8) * built.plan.totalSec);
     if (!hasDiskHeadroomForUpload(req.ctx.outputDir, bytes + pendingBytes(), { statfs }).ok) {
       throw new Refusal(507, "The server is short of space right now — try again later.");
     }
@@ -598,8 +679,8 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
     const assPath = path.join(req.ctx.outputDir, `lyric-${uuid()}.ass`);
     const outPath = path.join(req.ctx.outputDir, `lyric-${uuid()}.mp4`);
     try {
-      fs.writeFileSync(assPath, ass, "utf8");
-      job = createJob(req.ctx.userId, { durationSec });
+      fs.writeFileSync(assPath, built.ass, "utf8");
+      job = createJob(req.ctx.userId, { durationSec: built.plan.totalSec });
       updateJob(job.jobId, { projectId: project.projectId });
       persistJob(req.ctx.dataDir, { ...job, projectId: project.projectId, status: "running" });
       // Saved on the project so the page can pick the render up again after leaving.
@@ -610,7 +691,7 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
       throw err;
     }
     // Detached: the response below does not wait for the render.
-    finishRender({ req, project, job, aspect, quality, width, height, durationSec, outPath, assPath });
+    finishRender({ req, project, job, aspect, quality, shortsTrim, built, width, height, durationSec, outPath, assPath });
     res.status(202).json({ jobId: job.jobId });
   }));
 
@@ -636,6 +717,49 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
   }));
 
   return router;
+}
+
+const CANCELLED = "Render cancelled";
+const NO_LENGTH_SENTENCE = /length is unknown/;
+
+/** True when a render ended because the user cancelled it, not because something broke. */
+const wasCancelled = (jobId, result) => getJob(jobId)?.cancelled === true || result?.error === CANCELLED;
+
+/** The branding switches the project and the account's Settings add up to for one render. */
+function brandingChoice(project, dataDir) {
+  const settings = readBranding(dataDir);
+  const { logo, intro, endCard } = project.branding;
+  return { settings, logo: logo ?? settings.enabled, intro, endCard };
+}
+
+/** The reason a Shorts trim cannot be done for this project, or null when it can. */
+function shortsTrimRefusal(project, aspect, durationSec) {
+  const offer = shortsTrimOffer({ aspect, durationSec, lines: project.lines });
+  return offer.allowed ? null : offer.reason;
+}
+
+/**
+ * The caption and branding document for one render, its plan and the logo to draw.
+ * The logo is drawn only when it is switched on, the file exists and it can be read as a picture.
+ * Throws a Refusal when the song's length is unknown.
+ */
+async function planRender(project, dataDir, { width, height, aspect, shortsTrim }) {
+  const choice = brandingChoice(project, dataDir);
+  const file = logoFileFor(dataDir);
+  const logo = choice.logo && isFile(file) ? { file, opacity: choice.settings.opacity } : null;
+  let built;
+  try {
+    built = await buildRenderAss(project, {
+      width, height, aspect, shortsTrim, logo,
+      options: { logo: choice.logo, intro: choice.intro, endCard: choice.endCard },
+    });
+  } catch (err) {
+    if (NO_LENGTH_SENTENCE.test(err?.message)) throw new Refusal(409, err.message);
+    throw err;
+  }
+  const drawn = built.plan?.showLogo ? logo : null;
+  if (logo && built.plan && !drawn) console.warn("[lyric-video] the logo could not be read, rendering without it");
+  return { ...built, logo: drawn };
 }
 
 /** The project's own background, else its cover still, else the renderer's dark colour. */

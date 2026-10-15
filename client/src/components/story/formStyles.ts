@@ -43,3 +43,6 @@ export const dropZoneCls = 'flex w-full cursor-pointer items-center justify-cent
 
 /** Small eyebrow caption (gold, tracked). */
 export const eyebrowCls = 'bf-eyebrow';
+
+/** A native checkbox in the gold accent, with a visible keyboard focus ring. */
+export const checkboxCls = 'accent-bf-gold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bf-gold';
