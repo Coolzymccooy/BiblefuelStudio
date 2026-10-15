@@ -86,6 +86,14 @@ describe("ledger", () => {
     assert.equal(r.error, "This would take October's AI video spend to $1.20 of $1.");
     assert.equal(ledgerSummary(dir, OCT).reservedUsd, 0.6);
   });
+  test("a cost that is not a real amount is refused and nothing is written", () => {
+    for (const bad of [NaN, Infinity, -0.5, undefined, "0.5"]) {
+      assert.deepEqual(reserveSpend(dir, "p:s1", bad, OCT), { ok: false, error: "Invalid cost estimate." }, String(bad));
+    }
+    assert.equal(ledgerSummary(dir, OCT).reservedUsd, 0);
+    assert.equal(fs.existsSync(path.join(dir, "videogen-spend.json")), false);
+    assert.equal(reserveSpend(dir, "p:s1", 0, OCT).ok, true, "a free clip is still a valid estimate");
+  });
   test("re-reserving the same key replaces it rather than adding", () => {
     process.env.VIDEO_GEN_MONTHLY_CAP_USD = "1";
     reserveSpend(dir, "p:s1", 0.6, OCT);

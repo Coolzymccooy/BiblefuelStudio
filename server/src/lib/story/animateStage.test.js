@@ -4,7 +4,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { createProject, readProject, writeProject } from "./projectStore.js";
-import { ledgerSummary } from "../videoGen/spend.js";
+import { ledgerSummary, reserveSpend } from "../videoGen/spend.js";
 import {
   AI_QUALITY, sceneClipSec, animatePrompt, animatableScenes, estimateAnimation,
   startAnimation, isAnimating, cancelAnimation, resumeAnimations,
@@ -91,6 +91,20 @@ describe("pricing and choice of scenes", () => {
     ]);
     assert.deepEqual(animatableScenes(p).map((s) => s.id), ["s0"]);
     assert.deepEqual(animatableScenes(p, ["s3"]).map((s) => s.id), ["s3"], "an explicit re-roll includes an animated scene");
+  });
+  test("the user's own uploaded clip is never animated, by Animate all or by name", () => {
+    const own = { mediaKind: "video", videoPath: "/own.mp4", videoUrl: "/outputs/own.mp4" };
+    const p = project([
+      scene(0, { ...own, aiVideoStatus: "none" }),
+      scene(1, own), // from before AI motion existed: no aiVideoStatus at all
+      scene(2, { ...own, aiVideoStatus: "done" }), // an AI clip
+      scene(3),
+    ]);
+    assert.deepEqual(animatableScenes(p).map((s) => s.id), ["s3"]);
+    assert.deepEqual(animatableScenes(p, ["s0", "s1"]), [], "naming your own clip does not animate it");
+    assert.deepEqual(animatableScenes(p, ["s2"]).map((s) => s.id), ["s2"], "an AI clip can still be re-rolled");
+    const est = estimateAnimation(p, undefined, "standard");
+    assert.equal(est.clips, 1, "your own clip is not priced either");
   });
   test("the estimate prices 5 s + 10 s of Mini at 720p portrait", () => {
     const p = project([scene(0), scene(1, { endMs: 15000 })]);
@@ -293,6 +307,35 @@ describe("startAnimation", () => {
     assert.equal(startAnimation(ctx(), p.projectId, { ledgerDir, deps, sceneIds: ["s1"] }), null);
   });
 
+  test("Animate all leaves your own clip alone and charges nothing for it", async () => {
+    const p = project([scene(0, { mediaKind: "video", videoPath: "/own.mp4", videoUrl: "/outputs/own.mp4", aiVideoStatus: "none" }), scene(1)]);
+    const { deps, calls } = fakeDeps();
+    startAnimation(ctx(), p.projectId, { ledgerDir, deps });
+    await waitFor(() => !isAnimating(p.projectId));
+    const [own, other] = readProject(dataDir, p.projectId).scenes;
+    assert.equal(calls.submit.length, 1);
+    assert.equal(own.videoUrl, "/outputs/own.mp4");
+    assert.equal(own.aiVideoStatus, "none");
+    assert.equal(other.aiVideoStatus, "done");
+    assert.equal(ledgerSummary(ledgerDir).spentUsd.toFixed(5), MINI_5S_USD.toFixed(5));
+  });
+
+  test("a project write that throws does not leave the project marked animating", () => {
+    const p = project([scene(0)]);
+    const { deps } = fakeDeps();
+    const realRename = fs.renameSync;
+    fs.renameSync = (from, to) => {
+      if (String(to).endsWith(`${p.projectId}.json`)) throw new Error("disk full");
+      return realRename(from, to);
+    };
+    try {
+      assert.throws(() => startAnimation(ctx(), p.projectId, { ledgerDir, deps }), /disk full/);
+    } finally {
+      fs.renameSync = realRename;
+    }
+    assert.equal(isAnimating(p.projectId), false);
+  });
+
   test("nothing to animate returns null and writes nothing", () => {
     const p = project([scene(0, { imageStatus: "error", imagePath: null })]);
     const { deps } = fakeDeps();
@@ -325,11 +368,51 @@ describe("resumeAnimations (after a restart)", () => {
     assert.equal(s.aiVideoError, "Interrupted by a server restart before the clip was ordered. Animate it again.");
   });
 
-  test("a clip ordered more than 24 h ago is marked expired, not polled", async () => {
-    const p = project([scene(0, { aiVideoStatus: "generating", aiVideoTaskId: "t-old", aiVideoStartedAt: Date.now() - 25 * 3600_000 })]);
+  test("the project counts as animating until its clips are collected", async () => {
+    const p = project([scene(0, { aiVideoStatus: "generating", aiVideoTaskId: "t-old", aiVideoStartedAt: Date.now() - 60_000 })]);
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const { deps } = fakeDeps({ wait: async (taskId) => { await gate; return { ok: true, videoUrl: `https://cdn/${taskId}.mp4`, tokens: 108000 }; } });
+    const resumed = resumeAnimations(ctx(), { ledgerDir, deps });
+    assert.equal(isAnimating(p.projectId), true, "image runs are refused while the clip is collected");
+    release();
+    assert.equal(await resumed, 1);
+    assert.equal(isAnimating(p.projectId), false);
+    assert.equal(readProject(dataDir, p.projectId).scenes[0].aiVideoStatus, "done");
+  });
+
+  test("a project with a live run is left to that run", async () => {
+    const p = project([scene(0), scene(1)]);
+    const stuck = fakeDeps({ wait: () => new Promise(() => {}) });
+    assert.ok(startAnimation(ctx(), p.projectId, { ledgerDir, deps: stuck.deps, sceneIds: ["s0"] }));
+    await waitFor(() => readProject(dataDir, p.projectId).scenes[0].aiVideoTaskId === "t-1");
     const { deps, calls } = fakeDeps();
-    await resumeAnimations(ctx(), { ledgerDir, deps });
+    assert.equal(await resumeAnimations(ctx(), { ledgerDir, deps }), 0);
     assert.equal(calls.wait.length, 0);
-    assert.equal(readProject(dataDir, p.projectId).scenes[0].aiVideoError, "This clip expired at BytePlus. Animate it again.");
+    assert.equal(readProject(dataDir, p.projectId).scenes[0].aiVideoStatus, "generating");
+    cancelAnimation(p.projectId);
+  });
+
+  test("a clip ordered more than 24 h ago that BytePlus no longer has is released", async () => {
+    const p = project([scene(0, { aiVideoStatus: "generating", aiVideoTaskId: "t-old", aiVideoStartedAt: Date.now() - 25 * 3600_000 })]);
+    reserveSpend(ledgerDir, `${p.projectId}:s0`, MINI_5S_USD);
+    const { deps, calls } = fakeDeps({ wait: async (taskId) => { calls.wait.push(taskId); return { ok: false, code: "NOT_FOUND", error: "BytePlus no longer has this clip." }; } });
+    await resumeAnimations(ctx(), { ledgerDir, deps });
+    assert.deepEqual(calls.wait, ["t-old"], "BytePlus is still asked");
+    assert.equal(readProject(dataDir, p.projectId).scenes[0].aiVideoError, "BytePlus no longer has this clip.");
+    const sum = ledgerSummary(ledgerDir);
+    assert.equal(sum.reservedUsd, 0);
+    assert.equal(sum.spentUsd, 0);
+  });
+
+  test("a clip ordered more than 24 h ago with no clear answer is counted at its estimate", async () => {
+    const p = project([scene(0, { aiVideoStatus: "generating", aiVideoTaskId: "t-old", aiVideoStartedAt: Date.now() - 25 * 3600_000 })]);
+    reserveSpend(ledgerDir, `${p.projectId}:s0`, MINI_5S_USD);
+    const { deps } = fakeDeps({ wait: async () => ({ ok: false, code: "TIMEOUT", error: "BytePlus took too long to make the clip." }) });
+    await resumeAnimations(ctx(), { ledgerDir, deps });
+    assert.match(readProject(dataDir, p.projectId).scenes[0].aiVideoError, /^BytePlus did not return this clip/);
+    const sum = ledgerSummary(ledgerDir);
+    assert.equal(sum.reservedUsd, 0);
+    assert.ok(Math.abs(sum.spentUsd - MINI_5S_USD) < 1e-9, `spent ${sum.spentUsd}`);
   });
 });

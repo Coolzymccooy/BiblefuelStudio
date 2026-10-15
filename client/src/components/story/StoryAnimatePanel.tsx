@@ -4,12 +4,21 @@ import { Clapperboard, Loader2, Square } from 'lucide-react';
 import { storyApi } from '../../lib/storyApi';
 import { isAnimatingScenes } from '../../lib/storyWizard';
 import type { AnimateEstimate, AnimateQuality, StoryProject } from '../../lib/storyTypes';
-import { panelCls, secondaryBtnCls } from './formStyles';
+import { inputCls, panelCls, secondaryBtnCls } from './formStyles';
 
-/** A batch above this asks before spending. */
+/** Spending more than this in one go asks first: a batch, or a single scene. */
 export const CONFIRM_ABOVE_USD = 2;
 
 const money = (usd: number) => `$${usd.toFixed(2)}`;
+
+/**
+ * One scene's clip: true to go ahead. Above CONFIRM_ABOVE_USD it asks first
+ * (a High-quality 12 s scene is about $4.49); declining means no request.
+ */
+export function confirmSceneSpend(sceneNumber: number, usd: number): boolean {
+  if (!(usd > CONFIRM_ABOVE_USD)) return true;
+  return window.confirm(`Animate scene ${sceneNumber} for about ${money(usd)}? This is charged to your BytePlus balance.`);
+}
 
 interface StoryAnimatePanelProps {
   project: StoryProject;
@@ -19,10 +28,12 @@ interface StoryAnimatePanelProps {
   onChanged: () => void;
   /** A page-wide operation is running. */
   busy: boolean;
+  /** The estimate on screen is the last one while a new one loads, so its price may be stale. */
+  refreshing?: boolean;
 }
 
 /** Animate every scene at once (BytePlus Seedance), with its price and the month's spend. */
-export function StoryAnimatePanel({ project, estimate, quality, onQualityChange, onChanged, busy }: StoryAnimatePanelProps) {
+export function StoryAnimatePanel({ project, estimate, quality, onQualityChange, onChanged, busy, refreshing = false }: StoryAnimatePanelProps) {
   const [starting, setStarting] = useState(false);
   if (!estimate.configured) return null;
   const animating = isAnimatingScenes(project);
@@ -61,7 +72,7 @@ export function StoryAnimatePanel({ project, estimate, quality, onQualityChange,
         value={quality}
         onChange={(e) => onQualityChange(e.target.value as AnimateQuality)}
         disabled={animating || starting}
-        className="rounded-md border border-[rgba(216,184,120,0.18)] bg-bf-input px-2 py-1.5 text-sm text-bf-cream focus:border-[rgba(216,184,120,0.4)] focus:outline-none"
+        className={`${inputCls.replace('mt-1.5', '').trim()} w-auto py-1.5 text-sm`}
       >
         <option value="standard">Standard · 720p</option>
         <option value="high">High · 1080p</option>
@@ -71,7 +82,7 @@ export function StoryAnimatePanel({ project, estimate, quality, onQualityChange,
           <Square size={14} aria-hidden /> Stop ordering clips
         </button>
       ) : (
-        <button type="button" onClick={start} disabled={busy || starting || estimate.clips === 0} className={btnCls}>
+        <button type="button" onClick={start} disabled={busy || starting || refreshing || estimate.clips === 0} className={btnCls}>
           {starting ? <Loader2 size={14} className="animate-spin" aria-hidden /> : <Clapperboard size={14} aria-hidden />}
           {estimate.clips === 0
             ? 'Every scene is animated'

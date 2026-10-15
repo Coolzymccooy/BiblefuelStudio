@@ -4,7 +4,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { createStoryAnimateRouter } from "./storyAnimate.js";
-import storyRouter from "./story.js";
+import storyRouter, { runStoryPipeline, _setImageGenImpl, _resetImageGenImpl } from "./story.js";
 import { createProject, readProject, writeProject } from "../lib/story/projectStore.js";
 import { isAnimating, startAnimation, cancelAnimation } from "../lib/story/animateStage.js";
 import { ledgerSummary, reserveSpend } from "../lib/videoGen/spend.js";
@@ -150,6 +150,47 @@ describe("AI scene routes", () => {
     const res = await call(r, "post", "/:id/animate", { params: { id: p.projectId } });
     assert.equal(res.statusCode, 409);
     assert.equal(res.payload.code, "RENDERING");
+  });
+
+  test("a scene list that is not a list, or names no scene, is refused rather than animating all", async () => {
+    const p = project(2);
+    const r = router();
+    for (const sceneIds of ["s0", null, {}, [], [1, 2]]) {
+      for (const routePath of ["/:id/animate", "/:id/animate/estimate"]) {
+        const res = await call(r, "post", routePath, { params: { id: p.projectId }, body: { sceneIds } });
+        assert.equal(res.statusCode, 400, `${routePath} ${JSON.stringify(sceneIds)}`);
+        assert.deepEqual(res.payload, { ok: false, code: "BAD_SCENE_IDS", error: "Choose at least one scene." });
+      }
+    }
+    assert.equal(isAnimating(p.projectId), false);
+    assert.deepEqual(readProject(dataDir, p.projectId).scenes.map((s) => s.aiVideoStatus), [undefined, undefined]);
+    const named = await call(r, "post", "/:id/animate", { params: { id: p.projectId }, body: { sceneIds: ["s1", 7] } });
+    assert.equal(named.statusCode, 200, JSON.stringify(named.payload));
+    assert.deepEqual(named.payload.project.scenes.map((s) => s.aiVideoStatus), [undefined, "queued"]);
+    await waitFor(() => !isAnimating(p.projectId));
+  });
+
+  test("the pipeline itself refuses to make pictures while clips are being made", async () => {
+    const p = project(1);
+    const stuck = { ...fakeDeps, wait: () => new Promise(() => {}) };
+    writeProject(dataDir, { ...readProject(dataDir, p.projectId), transcript: { words: [{ text: "w", startMs: 0, endMs: 500 }] } });
+    assert.ok(startAnimation({ dataDir, outputDir }, p.projectId, { sceneIds: ["s0"], ledgerDir, deps: stuck }));
+    let pictures = 0;
+    _setImageGenImpl(async () => { pictures += 1; return { ok: true, path: "/img.png", publicUrl: "/outputs/img.png" }; });
+    try {
+      await waitFor(() => readProject(dataDir, p.projectId).scenes[0].aiVideoTaskId === "t-1");
+      await assert.rejects(
+        runStoryPipeline({ dataDir, outputDir }, p.projectId, path.join(outputDir, "voice.mp3")),
+        { code: "ANIMATING", message: "Scenes are being animated. Wait for the clips to arrive, or stop ordering them, then try again." },
+      );
+      assert.equal(pictures, 0);
+      const live = readProject(dataDir, p.projectId).scenes[0];
+      assert.equal(live.aiVideoStatus, "generating", "the live clip was not touched");
+      assert.equal(live.aiVideoTaskId, "t-1");
+    } finally {
+      _resetImageGenImpl();
+      cancelAnimation(p.projectId);
+    }
   });
 
   test("nothing to animate is a 400", async () => {

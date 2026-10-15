@@ -84,7 +84,13 @@ export function SceneCard({
     : ai === 'generating' ? 'Animating…'
       : ai === 'done' ? (scene.aiVideoMode === 'text' ? 'Animated from the prompt' : 'Animated')
         : ai === 'error' ? 'Animation failed' : null;
-  const canAnimate = Boolean(onAnimate) && scene.imageStatus === 'done' && Boolean(scene.imagePath);
+  // Your own uploaded clip is never animated over; an AI clip can be re-rolled.
+  const ownClip = scene.mediaKind === 'video' && ai !== 'done';
+  const canAnimate = Boolean(onAnimate) && scene.imageStatus === 'done' && Boolean(scene.imagePath) && !ownClip;
+  const priceText = animatePriceUsd != null ? `$${animatePriceUsd.toFixed(2)}` : null;
+  // The accessible name says what the button shows, price included.
+  const animateName = animating ? `Animating scene ${n}…`
+    : `Animate scene ${n}${ai === 'done' ? ' again' : ''}${priceText ? `, about ${priceText}` : ''}`;
 
   const copyPrompt = async () => {
     // What the editor shows: an edit may still be saving.
@@ -143,6 +149,8 @@ export function SceneCard({
           {onAnimate && aiLabel && (
             <span
               data-testid="ai-status"
+              role="status"
+              aria-live="polite"
               className={`ml-2 align-middle text-xs ${ai === 'error' ? 'text-bf-danger' : ai === 'done' ? 'text-bf-success' : 'text-bf-gold'}`}
             >
               {aiLabel}
@@ -157,18 +165,18 @@ export function SceneCard({
                 type="button"
                 onClick={() => onAnimate?.(scene.id)}
                 disabled={imageLocked || animating}
-                aria-label={ai === 'done' ? `Animate scene ${n} again` : `Animate scene ${n}`}
+                aria-label={animateName}
                 className={actionCls}
               >
                 {animating ? <Loader2 size={12} className="animate-spin" /> : <Clapperboard size={12} />}
                 {animating ? 'Animating…' : ai === 'done' ? 'Animate again' : 'Animate'}
-                {!animating && animatePriceUsd != null && (
-                  <span className="tabular-nums text-bf-muted">· ${animatePriceUsd.toFixed(2)}</span>
+                {!animating && priceText && (
+                  <span className="tabular-nums text-bf-muted">· {priceText}</span>
                 )}
               </button>
             </div>
           )}
-          {missing && !tuning && ownImageButtons &&<div className="mt-2 flex flex-wrap gap-2">{ownImageButtons}</div>}
+          {missing && !tuning && ownImageButtons && <div className="mt-2 flex flex-wrap gap-2">{ownImageButtons}</div>}
         </div>
         <button
           type="button"

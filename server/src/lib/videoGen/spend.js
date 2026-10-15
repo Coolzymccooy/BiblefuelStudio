@@ -114,6 +114,8 @@ export function wouldExceedCap(dir, extraUsd, now = new Date()) {
 }
 
 export function reserveSpend(dir, key, usd, now = new Date()) {
+  // NaN would pass the cap check and poison every later total.
+  if (typeof usd !== "number" || !Number.isFinite(usd) || usd < 0) return { ok: false, error: "Invalid cost estimate." };
   const l = readLedger(dir, now);
   const others = reservedTotal(l) - (Number(l.reservations[key]) || 0);
   const projected = l.settledUsd + others + usd;

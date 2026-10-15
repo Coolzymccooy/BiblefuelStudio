@@ -28,7 +28,6 @@ export const AI_QUALITY = Object.freeze({
 });
 
 const MOTION_LINE = "Slow push-in, gentle light shift, subtle natural movement.";
-const TASK_LIFETIME_MS = 24 * 60 * 60 * 1000;
 const IN_FLIGHT = new Set(["queued", "generating"]);
 
 const defaultDeps = Object.freeze({
@@ -64,10 +63,16 @@ export function animatePrompt(scene) {
 
 const ledgerKey = (projectId, sceneId) => `${projectId}:${sceneId}`;
 
+/** The user's own uploaded clip (a video that AI motion did not make): never animated over. */
+export function isOwnClip(scene) {
+  return scene.mediaKind === "video" && scene.aiVideoStatus !== "done";
+}
+
 export function animatableScenes(project, sceneIds) {
   const wanted = Array.isArray(sceneIds) && sceneIds.length ? new Set(sceneIds) : null;
   return (project.scenes || []).filter((s) => {
     if (s.imageStatus !== "done" || !s.imagePath || IN_FLIGHT.has(s.aiVideoStatus)) return false;
+    if (isOwnClip(s)) return false;
     // "Animate all" skips scenes already animated; naming one re-rolls it.
     return wanted ? wanted.has(s.id) : s.aiVideoStatus !== "done";
   });
@@ -256,12 +261,13 @@ export function startAnimation(ctx, projectId, { sceneIds, quality = "standard",
   const q = AI_QUALITY[qualityOf(quality)];
   const ids = new Set(animatableScenes(project, sceneIds).map((s) => s.id));
   if (!ids.size) return null;
-  runs.add(projectId);
-  cancels.delete(projectId);
   const scenes = project.scenes.map((s) => (ids.has(s.id)
     ? { ...s, aiVideoStatus: "queued", aiVideoError: null, aiVideoTaskId: null, aiVideoModel: q.model, aiVideoResolution: q.resolution }
     : s));
+  // Written first: a write that throws must not leave the project marked animating.
   const written = writeProject(ctx.dataDir, { ...project, scenes, updatedAt: Date.now() });
+  runs.add(projectId);
+  cancels.delete(projectId);
   runAnimation(ctx, projectId, [...ids], q, { ledgerDir, deps: { ...defaultDeps, ...deps } })
     .catch((e) => console.warn(`[story] animate ${projectId} failed: ${e?.message || e}`))
     .finally(() => { runs.delete(projectId); cancels.delete(projectId); });
@@ -269,26 +275,26 @@ export function startAnimation(ctx, projectId, { sceneIds, quality = "standard",
 }
 
 /**
- * After a restart: collect clips that were ordered (task id saved), fail
- * scenes that were queued but never ordered, and expire orders over 24 h old.
- * Resolves with the number of clips being collected.
+ * After a restart: collect clips that were ordered (task id saved) and fail
+ * scenes that were queued but never ordered. A project counts as animating
+ * until all of its clips are collected, so image runs stay refused meanwhile.
+ * An order over 24 h old is still asked about: BytePlus saying it has no such
+ * clip releases the estimate; any other outcome settles it, in case it was
+ * charged. Resolves with the number of clips being collected.
  */
 export async function resumeAnimations(ctx, { ledgerDir, deps } = {}) {
   const d = { ...defaultDeps, ...deps };
-  const pending = [];
+  const projectRuns = [];
+  let count = 0;
   for (const summary of listProjects(ctx.dataDir)) {
     const project = readProject(ctx.dataDir, summary.projectId);
-    for (const s of project?.scenes || []) {
+    if (!project || runs.has(project.projectId)) continue; // a live run owns its scenes
+    const pending = [];
+    for (const s of project.scenes || []) {
       if (!IN_FLIGHT.has(s.aiVideoStatus)) continue;
-      const key = ledgerKey(project.projectId, s.id);
       if (!s.aiVideoTaskId) {
-        releaseSpend(ledgerDir, key);
+        releaseSpend(ledgerDir, ledgerKey(project.projectId, s.id));
         markError(ctx.dataDir, project.projectId, s.id, null, "Interrupted by a server restart before the clip was ordered. Animate it again.");
-        continue;
-      }
-      if (d.now() - (Number(s.aiVideoStartedAt) || 0) > TASK_LIFETIME_MS) {
-        releaseSpend(ledgerDir, key);
-        markError(ctx.dataDir, project.projectId, s.id, s.aiVideoTaskId, "This clip expired at BytePlus. Animate it again.");
         continue;
       }
       pending.push(
@@ -297,7 +303,12 @@ export async function resumeAnimations(ctx, { ledgerDir, deps } = {}) {
         }).catch((e) => console.warn(`[story] collecting clip ${s.aiVideoTaskId} failed: ${e?.message || e}`)),
       );
     }
+    if (!pending.length) continue;
+    const projectId = project.projectId;
+    runs.add(projectId);
+    count += pending.length;
+    projectRuns.push(Promise.allSettled(pending).finally(() => { runs.delete(projectId); }));
   }
-  await Promise.all(pending);
-  return pending.length;
+  await Promise.all(projectRuns);
+  return count;
 }

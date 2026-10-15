@@ -236,6 +236,12 @@ const sceneRegens = new Set();
 const sceneKey = (projectId, sceneId) => `${projectId}\u0000${sceneId}`;
 
 async function imagesStage(ctx, projectId, opts = {}) {
+  // Every image run comes through here (the routes, the pipeline, long-form
+  // narration), so this is the guard that keeps live AI clips safe; the
+  // routes' own 409 only answers the request sooner.
+  if (isAnimating(projectId)) {
+    throw Object.assign(new Error(ANIMATING_REFUSAL.error), { code: ANIMATING_REFUSAL.code });
+  }
   imageRuns.set(projectId, (imageRuns.get(projectId) || 0) + 1);
   try {
     return await runImagesStage(ctx, projectId, opts);

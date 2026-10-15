@@ -17,9 +17,14 @@ import { estimateAnimation, startAnimation, cancelAnimation, isAnimating, qualit
 export function createStoryAnimateRouter({ sceneBlocked, ledgerDir = DATA_DIR, deps } = {}) {
   const router = Router();
 
-  const sceneIdsFrom = (body) => (Array.isArray(body?.sceneIds)
-    ? body.sceneIds.filter((x) => typeof x === "string").slice(0, 500)
-    : undefined);
+  // Absent means every scene; present must name at least one scene, so a
+  // malformed list can never widen into "animate all".
+  const sceneIdsFrom = (body) => {
+    if (body?.sceneIds === undefined) return { ok: true, ids: undefined };
+    const ids = Array.isArray(body.sceneIds) ? body.sceneIds.filter((x) => typeof x === "string").slice(0, 500) : [];
+    return ids.length ? { ok: true, ids } : { ok: false };
+  };
+  const BAD_SCENE_IDS = Object.freeze({ ok: false, code: "BAD_SCENE_IDS", error: "Choose at least one scene." });
 
   const load = (req, res) => {
     const project = readProject(req.ctx.dataDir, req.params.id);
@@ -30,6 +35,8 @@ export function createStoryAnimateRouter({ sceneBlocked, ledgerDir = DATA_DIR, d
   router.post("/:id/animate/estimate", requireSuperAdmin, (req, res) => {
     const project = load(req, res);
     if (!project) return;
+    const picked = sceneIdsFrom(req.body);
+    if (!picked.ok) return res.status(400).json(BAD_SCENE_IDS);
     const quality = qualityOf(req.body?.quality);
     const { clips: monthClips, ...month } = ledgerSummary(ledgerDir);
     return res.json({
@@ -39,7 +46,7 @@ export function createStoryAnimateRouter({ sceneBlocked, ledgerDir = DATA_DIR, d
       running: isAnimating(project.projectId),
       ...month,
       monthClips,
-      ...estimateAnimation(project, sceneIdsFrom(req.body), quality),
+      ...estimateAnimation(project, picked.ids, quality),
     });
   });
 
@@ -52,8 +59,10 @@ export function createStoryAnimateRouter({ sceneBlocked, ledgerDir = DATA_DIR, d
     if (isAnimating(project.projectId)) {
       return res.status(409).json({ ok: false, code: "RUNNING", error: "Scenes are already being animated. Wait for them to finish, or stop ordering clips." });
     }
+    const picked = pickIds(req);
+    if (!picked.ok) return res.status(400).json(BAD_SCENE_IDS);
     const quality = qualityOf(req.body?.quality);
-    const est = estimateAnimation(project, pickIds(req), quality);
+    const est = estimateAnimation(project, picked.ids, quality);
     if (!est.clips) {
       return res.status(400).json({ ok: false, code: "NOTHING_TO_ANIMATE", error: "No scene with a finished picture to animate." });
     }
@@ -71,7 +80,7 @@ export function createStoryAnimateRouter({ sceneBlocked, ledgerDir = DATA_DIR, d
   };
 
   router.post("/:id/animate", requireSuperAdmin, start((req) => sceneIdsFrom(req.body)));
-  router.post("/:id/scenes/:sid/animate", requireSuperAdmin, start((req) => [req.params.sid]));
+  router.post("/:id/scenes/:sid/animate", requireSuperAdmin, start((req) => ({ ok: true, ids: [req.params.sid] })));
 
   router.post("/:id/animate/cancel", requireSuperAdmin, (req, res) => {
     const project = load(req, res);
