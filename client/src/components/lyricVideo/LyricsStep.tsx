@@ -5,7 +5,11 @@ import { lyricVideoApi } from '../../lib/lyricVideoApi';
 import { confirmRetime } from '../../lib/lyricRetime';
 import type { LyricLine, LyricProject, LyricSection } from '../../lib/lyricVideoTypes';
 import { fieldLabelCls, inputCls, panelCls, primaryBtnCls, secondaryBtnCls } from '../story/formStyles';
+import { InfoTooltip } from '../ui/InfoTooltip';
 import { messageOf } from './messageOf';
+
+const SECTIONS_TIP =
+  'Put section names in square brackets: [VERSE 1], [CHORUS], [BRIDGE]. Put a crowd reply in round brackets at the end of the line it answers, for example: If I only have a seed... (PLANT IT!). Bridge lines appear in a handwritten style.';
 
 interface Props { project: LyricProject; onChange: (p: LyricProject) => void; onNext?: () => void }
 
@@ -62,7 +66,10 @@ export function LyricsStep({ project, onChange, onNext }: Props) {
   return (
     <div className="space-y-4">
       <div>
-        <label htmlFor="lyric-sheet" className={fieldLabelCls}>Lyrics</label>
+        <div className="mb-1.5 flex items-center gap-1.5">
+          <label htmlFor="lyric-sheet" className={`${fieldLabelCls} !mb-0`}>Lyrics</label>
+          <InfoTooltip label="About sections and crowd replies" width="lg" content={SECTIONS_TIP} />
+        </div>
         <textarea
           id="lyric-sheet"
           rows={16}

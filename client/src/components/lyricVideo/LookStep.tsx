@@ -7,6 +7,7 @@ import { FALLBACK_ENERGIES, type StudioOption } from '../../lib/studioCaptions';
 import type { BackgroundFit, LyricProject } from '../../lib/lyricVideoTypes';
 import { StudioLookOptions } from '../captions/StudioEffects';
 import { DropZone } from '../ui/DropZone';
+import { InfoTooltip } from '../ui/InfoTooltip';
 import { dropZoneCls, fieldLabelCls, inputCls, panelCls, secondaryBtnCls } from '../story/formStyles';
 import { LazyLivePreview } from './LazyLivePreview';
 import { LineEffects } from './LineEffects';
@@ -94,7 +95,10 @@ export function LookStep({ project, onChange }: Props) {
           </select>
         </div>
         <div>
-          <label htmlFor="lyric-energy" className={fieldLabelCls}>Energy</label>
+          <div className="mb-1.5 flex items-center gap-1.5">
+            <label htmlFor="lyric-energy" className={`${fieldLabelCls} !mb-0`}>Energy</label>
+            <InfoTooltip label="About energy" content="Calm keeps it gentle. Lively adds some big moments. Wild uses every effect." />
+          </div>
           <select
             id="lyric-energy"
             className={inputCls}

@@ -4,6 +4,7 @@ import { lyricVideoApi } from '../../lib/lyricVideoApi';
 import type { LyricEffect, LyricProject } from '../../lib/lyricVideoTypes';
 import { formatTime, isPlacedLine } from '../../lib/lyricTiming';
 import { fieldLabelCls, inputCls } from '../story/formStyles';
+import { InfoTooltip } from '../ui/InfoTooltip';
 import { messageOf } from './messageOf';
 import type { SaveProject } from './useProjectSaves';
 
@@ -73,7 +74,13 @@ export function LineEffects({ project, save, onPreviewChange }: Props) {
   if (lines.length === 0) return null;
   return (
     <section aria-labelledby="line-effects-heading" className="space-y-2">
-      <h3 id="line-effects-heading" className={fieldLabelCls}>Effect for each line</h3>
+      <div className="flex items-center gap-1.5">
+        <h3 id="line-effects-heading" className={`${fieldLabelCls} !mb-0`}>Effect for each line</h3>
+        <InfoTooltip
+          label="About line effects"
+          content="Auto picks an effect to suit the song's sections. Choose one to fix it. Echo is made for crowd replies."
+        />
+      </div>
       <p role="status" aria-live="polite" className="sr-only">{Object.keys(saving).length > 0 ? 'Saving…' : ''}</p>
       <ul
         tabIndex={0}
