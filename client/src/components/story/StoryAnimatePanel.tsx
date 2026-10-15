@@ -30,7 +30,7 @@ export function StoryAnimatePanel({ project, estimate, quality, onQualityChange,
 
   const start = async () => {
     if (estimate.usd > CONFIRM_ABOVE_USD
-      && !window.confirm(`Animate ${estimate.clips} scenes for about ${money(estimate.usd)}? This is charged to your BytePlus balance.`)) return;
+      && !window.confirm(`Animate ${estimate.clips} ${estimate.clips === 1 ? 'scene' : 'scenes'} for about ${money(estimate.usd)}? This is charged to your BytePlus balance.`)) return;
     setStarting(true);
     try {
       await storyApi.animate(project.projectId, quality);

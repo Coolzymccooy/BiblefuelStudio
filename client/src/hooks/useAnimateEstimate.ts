@@ -13,5 +13,8 @@ export function useAnimateEstimate(project: StoryProject | undefined, quality: A
     queryFn: () => storyApi.estimateAnimation((project as StoryProject).projectId, quality),
     enabled: enabled && Boolean(project?.projectId),
     staleTime: 30_000,
+    // The key changes on every quality toggle and scene status change; keep the last
+    // figures on screen while the new ones load, but never another project's.
+    placeholderData: (prev, prevQuery) => (prevQuery?.queryKey[1] === project?.projectId ? prev : undefined),
   });
 }

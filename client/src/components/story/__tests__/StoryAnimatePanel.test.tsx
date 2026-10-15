@@ -47,6 +47,14 @@ describe('StoryAnimatePanel', () => {
     expect(animate).not.toHaveBeenCalled();
   });
 
+  it('says "scene" in the confirmation when only one is left', async () => {
+    vi.spyOn(storyApi, 'animate').mockResolvedValue(project());
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    render(<StoryAnimatePanel project={project()} estimate={est({ clips: 1, usd: 2.4 })} quality="standard" onQualityChange={vi.fn()} onChanged={vi.fn()} busy={false} />);
+    await userEvent.click(screen.getByRole('button', { name: /animate the 1 scene left/i }));
+    expect(window.confirm).toHaveBeenCalledWith('Animate 1 scene for about $2.40? This is charged to your BytePlus balance.');
+  });
+
   it('while clips are being made it offers Stop instead', async () => {
     const cancel = vi.spyOn(storyApi, 'cancelAnimation').mockResolvedValue(project());
     const animating = project({ scenes: [{ id: 's', aiVideoStatus: 'generating' }] as unknown as StoryProject['scenes'] });
