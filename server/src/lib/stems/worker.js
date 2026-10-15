@@ -3,7 +3,8 @@ import path from "path";
 
 /**
  * The laptop worker's loop (scripts/stems-worker.mjs runs it): ask the live
- * site for a vocal-removal job, separate it here, send the instrumental back.
+ * site for a vocal-removal job, separate it here, send the instrumental (or,
+ * for the lyric video, the vocals) back.
  * One job at a time, so the laptop stays usable.
  */
 
@@ -11,6 +12,9 @@ const AUDIO_EXTS = new Set([".mp3", ".m4a", ".aac", ".wav", ".flac", ".ogg", ".o
 // The lease on the server is 3 minutes; a report every 30 s keeps it alive
 // even through a long stretch where the separator prints no progress.
 const KEEPALIVE_MS = 30_000;
+// What this worker can return besides the instrumental. The server hands a
+// vocals job only to a worker that says so, since older workers can't make one.
+const WORKER_CAPS = ["vocals"];
 
 /** An HTTP client for /api/stems-worker. */
 export function makeWorkerApi({ baseUrl, token, fetchImpl = fetch }) {
@@ -34,7 +38,8 @@ export function makeWorkerApi({ baseUrl, token, fetchImpl = fetch }) {
     return res;
   };
   return {
-    claim: async () => (await (await call("POST", "/claim")).json()).job || null,
+    // `caps` tells the server what this worker can return; an older worker sends none.
+    claim: async (caps) => (await (await call("POST", "/claim", caps ? { json: caps } : {})).json()).job || null,
     download: async (jobId, file) => {
       const res = await call("GET", `/jobs/${encodeURIComponent(jobId)}/source`);
       fs.writeFileSync(file, Buffer.from(await res.arrayBuffer()));
@@ -81,15 +86,16 @@ export function nextDelay(failures) {
 export async function workOnce({
   api, remove, tmpRoot, progressEveryMs = 3_000, log = () => {}, retryDelays = UPLOAD_RETRY_DELAYS,
 }) {
-  const job = await api.claim();
+  const job = await api.claim({ caps: WORKER_CAPS });
   if (!job) return "idle";
-  log(`job ${job.jobId}: ${job.sourceName} (${job.quality})`);
+  const vocals = job.stem === "vocals";
+  log(`job ${job.jobId}: ${job.sourceName} (${job.quality}${vocals ? ", vocals" : ""})`);
 
   const dir = fs.mkdtempSync(path.join(tmpRoot, "bf-stems-"));
   const ext = path.extname(String(job.sourceName || "")).toLowerCase();
   // Only the extension is taken from the server, and only a known audio one.
   const input = path.join(dir, `source${AUDIO_EXTS.has(ext) ? ext : ".audio"}`);
-  const outPath = path.join(dir, "instrumental.m4a");
+  const outPath = path.join(dir, vocals ? "vocals.m4a" : "instrumental.m4a");
   const controller = new AbortController();
   let percent = 0;
   let lastSent = 0;
@@ -112,6 +118,7 @@ export async function workOnce({
       outPath,
       workDir: path.join(dir, "work"),
       quality: job.quality === "fast" ? "fast" : "best",
+      stem: vocals ? "Vocals" : "Instrumental",
       signal: controller.signal,
       onProgress: (p) => {
         percent = p;

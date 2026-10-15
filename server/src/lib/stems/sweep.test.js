@@ -49,3 +49,22 @@ test("a missing stems-work folder is not an error", () => {
   fs.mkdirSync(outputDir);
   assert.doesNotThrow(() => sweepStaleInstrumentals({ dataDir, outputDir }));
 });
+
+test("sweeps vocals working files a week after they were made, never earlier, and leaves instrumentals alone", () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "bf-sweep-vocals-"));
+  const outputDir = path.join(dataDir, "out");
+  fs.mkdirSync(outputDir);
+  const old = path.join(outputDir, "lyric-vocals-old.m4a");
+  const fresh = path.join(outputDir, "lyric-vocals-new.m4a");
+  const notOurs = path.join(outputDir, "lyric-vocals-old.mp3");
+  const keptInstrumental = path.join(outputDir, "instrumental-kept.m4a");
+  for (const f of [old, fresh, notOurs, keptInstrumental]) fs.writeFileSync(f, "x");
+  const eightDaysAgo = (Date.now() - 8 * 86_400_000) / 1000;
+  for (const f of [old, notOurs, keptInstrumental]) fs.utimesSync(f, eightDaysAgo, eightDaysAgo);
+  registerTrack(dataDir, { file: keptInstrumental, label: "Kept" });
+  sweepStaleInstrumentals({ dataDir, outputDir });
+  assert.equal(fs.existsSync(old), false, "an old vocals file is reclaimed");
+  assert.equal(fs.existsSync(fresh), true, "a recent one may still be in use");
+  assert.equal(fs.existsSync(notOurs), true, "only the server's own names are touched");
+  assert.equal(fs.existsSync(keptInstrumental), true, "a kept instrumental is untouched");
+});

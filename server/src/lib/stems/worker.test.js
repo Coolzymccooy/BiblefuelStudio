@@ -3,19 +3,20 @@ import assert from "node:assert/strict";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { workOnce, nextDelay } from "./worker.js";
+import { workOnce, nextDelay, makeWorkerApi } from "./worker.js";
 
 function fakeApi(job, over = {}) {
   const calls = [];
-  return {
+  const api = {
     calls,
-    claim: async () => { calls.push("claim"); return job; },
+    claim: async (...args) => { calls.push("claim"); api.claimArgs = args; return job; },
     download: async (id, file) => { calls.push(`download:${id}`); fs.writeFileSync(file, "song"); },
     progress: async (id, p) => { calls.push(`progress:${p}`); return { cancelled: false }; },
     upload: async (id, file) => { calls.push(`upload:${fs.readFileSync(file, "utf8")}`); },
     fail: async (id, msg) => { calls.push(`fail:${msg}`); },
     ...over,
   };
+  return api;
 }
 const tmpRoot = () => fs.mkdtempSync(path.join(os.tmpdir(), "bf-worker-core-"));
 
@@ -107,5 +108,61 @@ describe("laptop worker", () => {
     assert.equal(outcome, "failed");
     assert.equal(tries, 3);
     assert.match(api.calls.at(-1), /^fail:/);
+  });
+
+  test("it tells the server it can return a vocals stem when it asks for work", async () => {
+    const api = fakeApi(null);
+    await workOnce({ api, remove: async () => {}, tmpRoot: tmpRoot() });
+    assert.deepEqual(api.claimArgs, [{ caps: ["vocals"] }]);
+  });
+
+  test("a vocals job asks the separator for the Vocals stem and uploads that file", async () => {
+    const api = fakeApi({ jobId: "v1", quality: "best", sourceName: "song.mp3", stem: "vocals" });
+    let seen;
+    const remove = async ({ outPath, stem }) => {
+      seen = { stem, name: path.basename(outPath) };
+      fs.writeFileSync(outPath, "vocals-only");
+    };
+    assert.equal(await workOnce({ api, remove, tmpRoot: tmpRoot() }), "done");
+    assert.deepEqual(seen, { stem: "Vocals", name: "vocals.m4a" });
+    assert.equal(api.calls.at(-1), "upload:vocals-only");
+  });
+
+  test("an instrumental job, or one that names no stem, still asks for the Instrumental stem", async () => {
+    for (const stem of ["instrumental", undefined, "drums"]) {
+      const api = fakeApi({ jobId: "i1", quality: "best", sourceName: "song.mp3", stem });
+      let seen;
+      const remove = async ({ outPath, stem: asked }) => {
+        seen = { stem: asked, name: path.basename(outPath) };
+        fs.writeFileSync(outPath, "inst");
+      };
+      assert.equal(await workOnce({ api, remove, tmpRoot: tmpRoot() }), "done");
+      assert.deepEqual(seen, { stem: "Instrumental", name: "instrumental.m4a" }, String(stem));
+    }
+  });
+});
+
+describe("worker api", () => {
+  test("claim posts the capability list as JSON and returns the job", async () => {
+    let seen;
+    const fetchImpl = async (url, init) => {
+      seen = { url, init };
+      return { ok: true, json: async () => ({ ok: true, job: { jobId: "j1", stem: "vocals" } }) };
+    };
+    const api = makeWorkerApi({ baseUrl: "https://example.test/", token: "t", fetchImpl });
+    const job = await api.claim({ caps: ["vocals"] });
+    assert.equal(job.jobId, "j1");
+    assert.equal(seen.url, "https://example.test/api/stems-worker/claim");
+    assert.equal(seen.init.method, "POST");
+    assert.equal(seen.init.headers["Content-Type"], "application/json");
+    assert.deepEqual(JSON.parse(seen.init.body), { caps: ["vocals"] });
+  });
+
+  test("claim with no capabilities still posts a body-less request, as before", async () => {
+    let seen;
+    const fetchImpl = async (url, init) => { seen = init; return { ok: true, json: async () => ({ ok: true, job: null }) }; };
+    const api = makeWorkerApi({ baseUrl: "https://example.test", token: "t", fetchImpl });
+    assert.equal(await api.claim(), null);
+    assert.equal(seen.body, undefined);
   });
 });

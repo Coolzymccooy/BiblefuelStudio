@@ -33,6 +33,8 @@ const SLOTS = Object.freeze({
 
 export const LOWER = Object.freeze({ wide: { x: 0.5, y: 0.80 }, tall: { x: TALL_X, y: 0.70 }, shorts: { x: TALL_X, y: 0.66 } });
 export const CENTRE = Object.freeze({ wide: { x: 0.5, y: 0.45 }, tall: { x: TALL_X, y: 0.42 }, shorts: { x: TALL_X, y: 0.42 } });
+/** Where a crowd reply sits: under the call, in the lower band (spec §6.2). */
+export const ECHO = Object.freeze({ wide: { x: 0.5, y: 0.72 }, tall: { x: TALL_X, y: 0.645 }, shorts: { x: TALL_X, y: 0.645 } });
 
 export function aspectOf(w, h) {
   return Number(w) >= Number(h) ? "wide" : "tall";
@@ -52,14 +54,36 @@ export function maxWidthFor(slot, w, aspect) {
   return slot?.side ? w * 0.42 : w * (1 - 2 * SIDE);
 }
 
-export function clampBlockY(cy, blockHeight, h, aspect) {
+/** The top of the safe area, in pixels: 11% down on Shorts, 6% on every other layout. */
+export function safeTop(h, aspect) {
+  return h * (aspect === "shorts" ? SHORTS_TOP : SIDE);
+}
+
+/**
+ * The highest and lowest centre a block may take. `clearBelow` (a pixel y, optional) is a lower
+ * edge the block must stay above, such as a crowd echo under its call; without it the bottom is
+ * the safe area's.
+ */
+function blockBounds(blockHeight, h, aspect, clearBelow) {
   // Round the top bound up and the bottom bound down so rounding never pushes
   // the block past the safe area (Math.round lifted the bottom edge 0.4 px over).
-  const topFrac = aspect === "shorts" ? SHORTS_TOP : SIDE;
   const bottomFrac = aspect === "shorts" ? SHORTS_BOTTOM : aspect === "tall" ? TALL_BOTTOM : 1 - SIDE;
-  const top = Math.ceil(h * topFrac + blockHeight / 2);
-  const bottom = Math.floor(h * bottomFrac - blockHeight / 2);
+  const floorY = Number.isFinite(clearBelow) ? Math.min(h * bottomFrac, clearBelow) : h * bottomFrac;
+  return {
+    top: Math.ceil(safeTop(h, aspect) + blockHeight / 2),
+    bottom: Math.floor(floorY - blockHeight / 2),
+  };
+}
+
+export function clampBlockY(cy, blockHeight, h, aspect, clearBelow) {
+  const { top, bottom } = blockBounds(blockHeight, h, aspect, clearBelow);
   return Math.round(Math.min(Math.max(cy, top), Math.max(top, bottom)));
+}
+
+/** Whether a block this tall fits between the safe top and its bottom edge (see clampBlockY). */
+export function blockFits(blockHeight, h, aspect, clearBelow) {
+  const { top, bottom } = blockBounds(blockHeight, h, aspect, clearBelow);
+  return top <= bottom;
 }
 
 /**

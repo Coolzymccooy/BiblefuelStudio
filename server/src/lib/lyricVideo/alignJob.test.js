@@ -8,6 +8,8 @@ import { spawnSync } from "node:child_process";
 import { createProject, readProject, writeProject, updateProject, deleteProject, applySheet } from "./projectStore.js";
 import { runAlignJob, isAligning, explainFailure } from "./alignJob.js";
 import { decodeMono } from "./beats.js";
+import { claimNext, _resetLaptopQueue } from "../stems/laptopQueue.js";
+import { _resetStemJobs, listStemJobs, updateStemJob } from "../stems/stemJobs.js";
 
 let dir;
 beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), "lyric-job-")); });
@@ -95,6 +97,260 @@ test("a section never starts after its first line", async () => {
   assert.equal(done.lines[1].start, 5);
   assert.equal(done.sections[1].start, 5); // the nearest beat to 4.75 is 6, which is after the line
   assert.ok(done.sections.every((s, i) => s.start <= done.lines.find((l) => l.sectionId === s.id).start));
+});
+
+describe("vocals from the laptop", () => {
+  const SONG = () => path.join(dir, "song.m4a");
+  const VOCALS = () => path.join(dir, "lyric-vocals-x.m4a");
+  const MIX_PREPARED = () => path.join(dir, "prepared-mix.m4a");
+  /** Prepares the vocals file to PREPARED() and the song to a different file, and records every input. */
+  let currentProject = null;
+  const projectIdOf = () => currentProject.projectId;
+  const spy = () => {
+    const calls = { prepared: [], measured: [], beats: [], steps: [], stepAtPrepare: [], logged: [] };
+    return {
+      calls,
+      over: (extra = {}) => ({
+        prepareAudio: async (input) => {
+          calls.prepared.push(input);
+          calls.stepAtPrepare.push(readProject(dir, projectIdOf())?.timing?.progress?.step);
+          return input === VOCALS() ? PREPARED() : MIX_PREPARED();
+        },
+        measureAudibleEnd: async (file, durationSec) => { calls.measured.push(file); return durationSec; },
+        detectBeats: async (file) => { calls.beats.push(file); return { bpm: 0, times: [] }; },
+        // The mix is also heard in full when no vocals came, so either prepared file answers with the song's words.
+        transcribe: async (file) => ({ words: file === PREPARED() || file === MIX_PREPARED() ? heardSong : [] }),
+        log: (...a) => calls.logged.push(a.join(" ")),
+        ...extra,
+      }),
+    };
+  };
+  const makeSongFiles = () => { fs.writeFileSync(SONG(), "the user's own song"); };
+
+  test("timing listens to the vocals when the laptop returns them", async () => {
+    const p = setup();
+    currentProject = p;
+    makeSongFiles();
+    const s = spy();
+    const done = await run(p, s.over({
+      vocalStem: async (song, { onQueued }) => {
+        assert.equal(song, SONG(), "the laptop is asked to separate the user's song");
+        onQueued(); // a job is really waiting on the laptop now
+        s.calls.steps.push(readProject(dir, p.projectId).timing.progress.step);
+        fs.writeFileSync(VOCALS(), "voice only");
+        return VOCALS();
+      },
+    }));
+    assert.equal(done.timing.status, "done");
+    assert.equal(done.timing.usedVocalStem, true);
+    assert.deepEqual(s.calls.steps, ["vocals"], "the user sees the separating step while the laptop works");
+    assert.equal(s.calls.stepAtPrepare[0], "preparing", "and the normal step again once the wait is over");
+    assert.ok(s.calls.prepared.includes(VOCALS()), "the vocals were prepared for transcription");
+    assert.equal(done.lines[0].start, 1, "the words were heard in the file made from the vocals");
+    assert.equal(done.lines[1].start, 5);
+    assert.deepEqual(s.calls.measured, [MIX_PREPARED()], "where the music ends is measured on the mix, not the vocals");
+    assert.deepEqual(s.calls.beats, [SONG()], "beats come from the original song");
+    assert.equal(fs.existsSync(VOCALS()), false, "the vocals file is deleted after the job");
+    assert.equal(fs.readFileSync(SONG(), "utf8"), "the user's own song", "the user's song is never touched");
+  });
+
+  test("no capable laptop → no wait, timing runs on the mix", async () => {
+    const p = setup();
+    currentProject = p;
+    makeSongFiles();
+    const s = spy();
+    const done = await run(p, s.over({ vocalStem: async () => null }));
+    assert.equal(done.timing.status, "done");
+    assert.equal(done.timing.usedVocalStem, false);
+    assert.deepEqual(s.calls.prepared, [SONG()], "only the song was prepared");
+    assert.deepEqual(s.calls.measured, [MIX_PREPARED()]);
+    assert.equal(done.lines[1].start, 5);
+    assert.equal(fs.readFileSync(SONG(), "utf8"), "the user's own song");
+  });
+
+  test("the user is never told about the laptop when none was asked", async () => {
+    const p = setup();
+    currentProject = p;
+    makeSongFiles();
+    const s = spy();
+    const seen = [];
+    const done = await run(p, s.over({
+      vocalStem: async () => { seen.push(readProject(dir, p.projectId).timing.progress.step); return null; }, // onQueued is never called
+      transcribe: async (file) => { seen.push(readProject(dir, p.projectId).timing.progress.step); return { words: file === PREPARED() || file === MIX_PREPARED() ? heardSong : [] }; },
+      measureAudibleEnd: async (_f, durationSec) => { seen.push(readProject(dir, p.projectId).timing.progress.step); return durationSec; },
+    }));
+    assert.equal(done.timing.status, "done");
+    assert.deepEqual([...s.calls.stepAtPrepare, ...seen].filter((x) => x === "vocals"), [], "no step ever said vocals");
+    assert.deepEqual(s.calls.stepAtPrepare, ["preparing"]);
+    assert.deepEqual(seen.slice(0, 2), ["preparing", "preparing"], "the vocal-stem step and the end measurement ran under the normal step");
+  });
+
+  test("the vocals step is shown when the queue job is made, even if the laptop then fails", async () => {
+    const p = setup();
+    currentProject = p;
+    makeSongFiles();
+    const s = spy();
+    const seen = [];
+    const done = await run(p, s.over({
+      vocalStem: async (_song, { onQueued }) => { onQueued(); seen.push(readProject(dir, p.projectId).timing.progress.step); throw new Error("laptop gone"); },
+    }));
+    assert.equal(done.timing.status, "done");
+    assert.deepEqual(seen, ["vocals"]);
+    assert.equal(s.calls.stepAtPrepare[0], "preparing", "a failed wait does not leave the vocals message up");
+  });
+
+  test("a vocal-stem error never fails timing, and is logged once", async () => {
+    const p = setup();
+    currentProject = p;
+    makeSongFiles();
+    const s = spy();
+    const done = await run(p, s.over({ vocalStem: async () => { throw new Error("laptop gone"); } }));
+    assert.equal(done.timing.status, "done");
+    assert.equal(done.timing.error, null);
+    assert.equal(done.timing.usedVocalStem, false);
+    assert.deepEqual(s.calls.prepared, [SONG()]);
+    assert.equal(s.calls.logged.filter((l) => l.includes("laptop gone")).length, 1);
+  });
+
+  test("the default step, with no signed-in user to ask on behalf of, skips the laptop", async () => {
+    const p = setup();
+    currentProject = p;
+    makeSongFiles();
+    const s = spy();
+    // No vocalStem override: the real default runs with no userId, so it must answer "no vocals" without touching the queue.
+    const done = await run(p, s.over());
+    assert.equal(done.timing.status, "done");
+    assert.equal(done.timing.usedVocalStem, false);
+  });
+
+  test("the vocals file is deleted when timing fails after using it", async () => {
+    const p = setup();
+    currentProject = p;
+    makeSongFiles();
+    const s = spy();
+    const done = await run(p, s.over({
+      vocalStem: async () => { fs.writeFileSync(VOCALS(), "voice only"); return VOCALS(); },
+      transcribe: async (file) => { if (file === PREPARED()) return { words: heardSong }; throw new Error("Whisper 503: down"); },
+    }));
+    assert.equal(done.timing.status, "error");
+    assert.equal(fs.existsSync(VOCALS()), false);
+    assert.equal(fs.existsSync(SONG()), true);
+  });
+
+  test("vocals that cannot be prepared are skipped, not fatal, and still deleted", async () => {
+    const p = setup();
+    currentProject = p;
+    makeSongFiles();
+    const s = spy();
+    const done = await run(p, s.over({
+      vocalStem: async () => { fs.writeFileSync(VOCALS(), "not audio"); return VOCALS(); },
+      prepareAudio: async (input) => {
+        s.calls.prepared.push(input);
+        if (input === VOCALS()) throw new Error("ffmpeg exited 1: broken vocals");
+        return PREPARED();
+      },
+    }));
+    assert.equal(done.timing.status, "done");
+    assert.equal(done.timing.usedVocalStem, false, "it fell back to the mix");
+    assert.equal(done.lines[1].start, 5);
+    assert.equal(fs.existsSync(VOCALS()), false);
+    assert.equal(s.calls.logged.filter((l) => l.includes("broken vocals")).length, 1);
+  });
+
+  test("a vocals path that is the song itself is never deleted", async () => {
+    const p = setup();
+    currentProject = p;
+    makeSongFiles();
+    const s = spy();
+    await run(p, s.over({ vocalStem: async () => SONG() }));
+    assert.equal(fs.readFileSync(SONG(), "utf8"), "the user's own song");
+  });
+
+  test("a project deleted during the wait for a queued laptop job stops the job and still removes the vocals", async () => {
+    const p = setup();
+    currentProject = p;
+    makeSongFiles();
+    const s = spy();
+    const done = await run(p, s.over({
+      vocalStem: async (_song, { onQueued }) => {
+        onQueued();
+        fs.writeFileSync(VOCALS(), "voice only");
+        deleteProject(dir, p.projectId); // the user deletes the project while the laptop works
+        return VOCALS();
+      },
+    }));
+    assert.equal(done, null, "the job ends as project-gone");
+    assert.equal(fs.existsSync(VOCALS()), false, "the vocals file is not orphaned");
+    assert.equal(fs.readFileSync(SONG(), "utf8"), "the user's own song");
+    assert.deepEqual(s.calls.prepared, [], "nothing more was prepared for a deleted project");
+  });
+
+  test("a project deleted while the laptop works stops the job and still removes the vocals", async () => {
+    const p = setup();
+    currentProject = p;
+    makeSongFiles();
+    const s = spy();
+    const done = await run(p, s.over({
+      vocalStem: async () => { fs.writeFileSync(VOCALS(), "voice only"); deleteProject(dir, p.projectId); return VOCALS(); },
+    }));
+    assert.equal(done, null);
+    assert.equal(fs.existsSync(VOCALS()), false);
+  });
+});
+
+describe("timing from the vocals is opt-in (LYRIC_VOCALS=1)", () => {
+  const TOKEN = "k".repeat(40);
+  let saved;
+  beforeEach(() => {
+    saved = { token: process.env.STEMS_WORKER_TOKEN, flag: process.env.LYRIC_VOCALS };
+    _resetStemJobs(); _resetLaptopQueue();
+    process.env.STEMS_WORKER_TOKEN = TOKEN;
+    claimNext(Date.now(), { caps: ["vocals"] }); // a laptop that can return vocals is online and the user is signed in
+  });
+  afterEach(() => {
+    for (const [key, value] of [["STEMS_WORKER_TOKEN", saved.token], ["LYRIC_VOCALS", saved.flag]]) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+    _resetStemJobs(); _resetLaptopQueue();
+  });
+  const start = () => {
+    const p = setup();
+    fs.writeFileSync(path.join(dir, "song.m4a"), "the user's own song");
+    const prepared = [];
+    const over = deps({ prepareAudio: async (input) => { prepared.push(input); return PREPARED(); } });
+    return { p, prepared, job: runAlignJob({ dataDir: dir, workDir: dir, projectId: p.projectId, userId: "u1", deps: over }) };
+  };
+
+  test("without the flag the default step queues nothing and timing runs on the mix", async () => {
+    delete process.env.LYRIC_VOCALS;
+    const { prepared, job } = start();
+    const done = await job;
+    assert.equal(done.timing.status, "done");
+    assert.equal(done.timing.usedVocalStem, false);
+    assert.equal(listStemJobs().length, 0);
+    assert.deepEqual(prepared, [path.join(dir, "song.m4a")]);
+  });
+
+  test("anything but 1 leaves it off", async () => {
+    process.env.LYRIC_VOCALS = "0";
+    const { job } = start();
+    await job;
+    assert.equal(listStemJobs().length, 0);
+  });
+
+  test("with LYRIC_VOCALS=1 the default step queues a vocals job for the laptop", async () => {
+    process.env.LYRIC_VOCALS = "1";
+    const { job } = start();
+    const until = Date.now() + 5000;
+    while (!listStemJobs().length && Date.now() < until) await new Promise((r) => setTimeout(r, 20));
+    const [queued] = listStemJobs();
+    assert.equal(queued?.stem, "vocals");
+    assert.equal(queued?.userId, "u1");
+    updateStemJob(queued.jobId, { status: "error", error: "laptop gone" }); // the laptop fails: timing carries on with the mix
+    const done = await job;
+    assert.equal(done.timing.status, "done");
+    assert.equal(done.timing.usedVocalStem, false);
+  });
 });
 
 describe("a Whisper failure part-way keeps what was heard", () => {
@@ -492,6 +748,40 @@ describe("with real ffmpeg", { skip: !hasFfmpeg && "ffmpeg not installed" }, () 
     assert.equal(done.timing.status, "error");
     assert.match(done.timing.error, /problem/);
     assert.deepEqual(leftovers(), []);
+  });
+
+  test("with vocals, the windows are cut from the vocals and every prepared file is removed", async () => {
+    makeSong.file = makeSong(); // stands in for the vocals: it holds the tone
+    const vocals = path.join(dir, "lyric-vocals-x.m4a");
+    fs.copyFileSync(makeSong.file, vocals);
+    const silent = path.join(dir, "silent-mix.m4a"); // the "mix": the same length, nothing audible
+    const made = spawnSync(FF, ["-v", "error", "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono", "-t", "70", "-c:a", "aac", "-b:a", "96k", silent]);
+    assert.equal(made.status, 0, String(made.stderr));
+    let p = createProject(dir, { title: "V", artist: "A" });
+    p = applySheet(p, SHEET);
+    p.song = { file: silent, durationSec: 70 };
+    p = writeProject(dir, p);
+    const onsets = [];
+    const done = await runAlignJob({
+      dataDir: dir, workDir: dir, projectId: p.projectId,
+      deps: {
+        vocalStem: async () => vocals,
+        transcribe: async (file) => {
+          const m = /-cut-(\d+)-(\d+)\.wav$/.exec(file);
+          if (m) onsets.push({ from: Number(m[1]) / 1000, to: Number(m[2]) / 1000, onset: await onsetOf(file) });
+          return { words: [] };
+        },
+        detectBeats: async () => ({ bpm: 0, times: [] }), log: () => {},
+      },
+    });
+    assert.equal(done.timing.status, "done");
+    assert.equal(done.timing.usedVocalStem, true);
+    const hit = onsets.filter((s) => s.from < BURST_AT && s.to > BURST_AT + 0.5);
+    assert.ok(hit.length >= 3, `windows over the tone: ${hit.length}`);
+    for (const s of hit) assert.ok(Math.abs(s.onset - (BURST_AT - s.from)) < 0.02, `the tone is heard where the vocals put it (${s.onset})`);
+    assert.equal(fs.existsSync(vocals), false, "the vocals file is gone");
+    assert.equal(fs.existsSync(silent), true, "the user's song is not");
+    assert.deepEqual(leftovers(), [], "the prepared mix and vocals are gone");
   });
 
   test("a song ffmpeg cannot read is a plain error", async () => {

@@ -9,10 +9,16 @@ import { transcribePrompted } from "./whisperPrompted.js";
 import { placeLines, FLAG_CONFIDENCE } from "./align.js";
 import { detectBeats as realDetectBeats } from "./beats.js";
 import { measureAudibleEnd as realMeasureAudibleEnd } from "./audibleEnd.js";
+import { requestVocalStem } from "./vocalStem.js";
 
 const WINDOW_SEC_ESTIMATE = 28; // a window of 30 s that placed something moves the frontier about this far
 const CUT_RATE = 16000;
 const LYRICS_CHANGED = "The lyrics changed while timing ran — run timing again.";
+
+/** Timing from the vocals is opt-in: on only when the server sets LYRIC_VOCALS=1 (see server/.env.example). */
+export function vocalsOptedIn(env = process.env) {
+  return String(env.LYRIC_VOCALS || "").trim() === "1";
+}
 
 const running = new Set();
 /** True while a timing job for this project is in flight in this process (one job per project). */
@@ -37,18 +43,24 @@ function ffmpeg(args) {
  * The real audio steps. Temp files are named by project and a per-run token (two jobs
  * cannot collide) and every one is removed by cleanup().
  */
-function defaultDeps(workDir, projectId) {
+function defaultDeps(workDir, projectId, { userId, dataDir } = {}) {
   const stem = path.join(workDir, `lyric-${projectId}-${crypto.randomBytes(4).toString("hex")}`);
   const made = new Set();
   let prepared = null;
+  let preparedCount = 0;
   const cuts = new Set();
   const track = (file) => { made.add(file); return file; };
   return {
+    // Each call writes its own file (the mix and the vocals are both prepared); cuts are taken from the latest that succeeded.
     prepareAudio: async (song) => {
-      prepared = track(`${stem}-16k.m4a`);
-      await ffmpeg(["-i", song, "-vn", "-ac", "1", "-ar", String(CUT_RATE), "-c:a", "aac", "-b:a", "64k", prepared]);
-      return prepared;
+      const out = track(`${stem}-16k${preparedCount ? `-${preparedCount}` : ""}.m4a`);
+      preparedCount += 1;
+      await ffmpeg(["-i", song, "-vn", "-ac", "1", "-ar", String(CUT_RATE), "-c:a", "aac", "-b:a", "64k", out]);
+      prepared = out;
+      return out;
     },
+    // Off unless LYRIC_VOCALS=1 (it has not beaten the mix in testing yet): nothing is queued. With no signed-in user there is nobody to queue the laptop's work for either: hear the mix.
+    vocalStem: (song, { onQueued } = {}) => (userId && vocalsOptedIn() ? requestVocalStem({ userId, input: song, dataDir, outputDir: workDir, onQueued }) : Promise.resolve(null)),
     // Re-encoded, not stream-copied: a copy cuts at packet boundaries and shifts every word.
     cutAudio: async (from, to) => {
       if (!prepared) throw new Error("ffmpeg cut asked before the audio was prepared");
@@ -126,12 +138,14 @@ function sectionStarts(sections, lines, beats) {
  * stored as timing.status "error". Every write goes through updateProject on
  * the latest saved project, so edits made while it runs are not overwritten.
  */
-export async function runAlignJob({ dataDir, workDir, projectId, deps }) {
+export async function runAlignJob({ dataDir, workDir, projectId, userId, deps }) {
   if (running.has(projectId)) return readProject(dataDir, projectId); // already running: report where it stands
   running.add(projectId);
-  const defaults = defaultDeps(workDir, projectId);
+  const defaults = defaultDeps(workDir, projectId, { userId, dataDir });
   const d = { ...defaults, ...(deps || {}) };
   const log = d.log || console.error;
+  // Files this run made that the default cleanup does not know about (the vocals from the laptop).
+  const owned = new Set();
   try {
     let snapshot = null;
     const begun = updateProject(dataDir, projectId, (latest) => {
@@ -141,7 +155,7 @@ export async function runAlignJob({ dataDir, workDir, projectId, deps }) {
       return { ...latest, timing: { ...latest.timing, status: "running", progress: { step: "preparing" }, error: null, lastError: null, rerun } };
     });
     if (!begun) return null;
-    return await timeLyrics({ dataDir, projectId, snapshot, d, log });
+    return await timeLyrics({ dataDir, projectId, snapshot, d, log, owned });
   } catch (err) {
     if (err instanceof ProjectGone) return null;
     log(`[lyric-video] timing failed for ${projectId}:`, err);
@@ -154,6 +168,9 @@ export async function runAlignJob({ dataDir, workDir, projectId, deps }) {
   } finally {
     running.delete(projectId);
     try { defaults.cleanup(); } catch (err) { (d.log || console.error)(`[lyric-video] could not remove timing files for ${projectId}:`, err); }
+    for (const file of owned) {
+      try { fs.rmSync(file, { force: true }); } catch (err) { (d.log || console.error)(`[lyric-video] could not remove the vocals file for ${projectId}:`, err); }
+    }
   }
 }
 
@@ -215,7 +232,41 @@ export function atLeastHeard(audibleEnd, lines, heard, locked, durationSec) {
   return Math.min(durationSec, Math.max(audibleEnd, heardEnd));
 }
 
-async function timeLyrics({ dataDir, projectId, snapshot, d, log }) {
+/** The name the vocal-stem step gives its file; only a file named like this is ever removed as ours. */
+const VOCALS_FILE = /^lyric-vocals-[\w-]+\.m4a$/;
+
+/**
+ * The audio to transcribe, and the audio to measure where the music stops. When a
+ * laptop supplies the song's vocals, the words are heard in those and the end is
+ * measured on the mix; otherwise both are the mix. This step never fails the job
+ * on account of the vocals: any problem with them is logged once and the mix is used.
+ */
+async function chooseAudio({ d, song, projectId, log, owned, progress }) {
+  let vocals = null;
+  let queued = false;
+  try {
+    // "vocals" is shown only once the laptop really has a job; with no laptop the user sees the normal steps.
+    const found = await d.vocalStem(song, { onQueued: () => { queued = true; progress("vocals"); } });
+    vocals = typeof found === "string" && found && found !== song ? found : null;
+    // Ours to remove from the moment it exists, before any later step (which may end the job) can skip past it.
+    if (vocals && VOCALS_FILE.test(path.basename(vocals))) owned.add(vocals);
+  } catch (err) {
+    if (err instanceof ProjectGone) throw err;
+    log(`[lyric-video] vocals skipped for ${projectId}: ${err?.message || err}`);
+  }
+  if (queued) progress("preparing"); // the wait is over: back to getting the audio ready
+  // The mix is prepared first so the vocals, prepared last, are what the windows are cut from.
+  const mix = await d.prepareAudio(song);
+  if (!vocals) return { audio: mix, endSource: mix, usedVocalStem: false };
+  try {
+    return { audio: await d.prepareAudio(vocals), endSource: mix, usedVocalStem: true };
+  } catch (err) {
+    log(`[lyric-video] vocals skipped for ${projectId}: could not prepare them: ${err?.message || err}`);
+    return { audio: mix, endSource: mix, usedVocalStem: false };
+  }
+}
+
+async function timeLyrics({ dataDir, projectId, snapshot, d, log, owned }) {
   const durationSec = Number(snapshot.song?.durationSec) || 0;
   if (!snapshot.song?.file || durationSec <= 0) throw new UserFacing("Add the song first, then run timing.");
   if (!snapshot.lines.length) throw new UserFacing("Paste the lyrics, one line per line, then run timing.");
@@ -226,8 +277,9 @@ async function timeLyrics({ dataDir, projectId, snapshot, d, log }) {
     if (!next) throw new ProjectGone(projectId);
   };
 
-  const audio = await d.prepareAudio(snapshot.song.file);
-  const measuredEnd = await findAudibleEnd({ d, audio, durationSec, projectId, log });
+  const { audio, endSource, usedVocalStem } = await chooseAudio({ d, song: snapshot.song.file, projectId, log, owned, progress });
+  // The mix, not the vocals, decides where the music stops.
+  const measuredEnd = await findAudibleEnd({ d, audio: endSource, durationSec, projectId, log });
   const total = Math.max(1, Math.ceil(durationSec / WINDOW_SEC_ESTIMATE));
   progress("listening");
   const locked = new Map(snapshot.lines.filter((l) => l.locked && l.words?.length).map((l) => [l.id, { words: l.words }]));
@@ -265,7 +317,7 @@ async function timeLyrics({ dataDir, projectId, snapshot, d, log }) {
   const done = updateProject(dataDir, projectId, (latest) => {
     const merged = mergePlacement(latest, snapshot, placed, beats);
     if (!merged) return lyricsChanged(latest);
-    return { ...latest, ...merged, timing: { ...withoutRerun(latest.timing), status: "done", progress: null, error: null, lastError: null, beats, passes, audibleEnd, finishedAt: new Date().toISOString() } };
+    return { ...latest, ...merged, timing: { ...withoutRerun(latest.timing), status: "done", progress: null, error: null, lastError: null, beats, passes, audibleEnd, usedVocalStem, finishedAt: new Date().toISOString() } };
   });
   if (!done) throw new ProjectGone(projectId);
   return done;

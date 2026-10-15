@@ -75,6 +75,7 @@ const FINGERPRINTS = {
   quote: (ev) => ev.some((l) => l.includes("\\t(0,350,\\clip(")),
   slam: (ev) => ev.some((l) => l.includes("\\p1") && !l.includes("\\clip")) && ev.some((l) => l.includes(`\\fn${HIT_FAMILY}`)),
   frame: (ev) => ev.filter((l) => l.includes("\\clip(")).length === 4,
+  echo: (ev) => ev.some((l) => /\\frz6\\/.test(l) && l.includes("\\fscx175")),
   title: (ev) => ev.some((l) => l.startsWith("Dialogue: 2,")) && !ev.some((l) => l.includes("\\clip(")),
   curve: (ev) => ev.length >= 6 && ev.every((l) => l.includes("\\pos(") && l.includes("\\frz") && [...shownText(l)].length === 1),
   stack: (ev) => ev.some((l) => l.includes("\\move(") && /\\frz-?[1-9]/.test(l)),
@@ -92,7 +93,7 @@ test("every effect id renders through buildAss, each with its own fingerprint", 
   }
   // Calm only pops or stacks on its own, so phrase 1 shows none of the other effects.
   const plain = phraseOne(make({}));
-  for (const effect of ["quote", "curve", "frame", "title"]) {
+  for (const effect of ["quote", "curve", "frame", "title", "echo"]) {
     assert.ok(!FINGERPRINTS[effect](plain), `calm phrase 1 looks like ${effect}:\n${plain.join("\n")}`);
   }
 });

@@ -17,7 +17,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(here, "..", ".env") });
 
 const { makeWorkerApi, runWorker } = await import("../src/lib/stems/worker.js");
-const { removeVocals, separatorAvailable } = await import("../src/lib/stems/separator.js");
+const { separateStem, separatorAvailable } = await import("../src/lib/stems/separator.js");
 
 const baseUrl = process.env.BIBLEFUEL_URL?.trim() || "https://biblefuel.tiwaton.co.uk";
 const token = process.env.STEMS_WORKER_TOKEN?.trim() || "";
@@ -47,7 +47,7 @@ for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => { log("stopping")
 log(`removing vocals for ${baseUrl} — leave this running`);
 await runWorker({
   api: makeWorkerApi({ baseUrl, token }),
-  remove: removeVocals,
+  remove: separateStem,
   tmpRoot: os.tmpdir(),
   signal: controller.signal,
   log,

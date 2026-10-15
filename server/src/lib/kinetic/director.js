@@ -3,7 +3,7 @@
  * and seed always give the same plan, so a re-render matches the approved
  * video and Shuffle (a new seed) gives a new one.
  */
-export const EFFECT_IDS = Object.freeze(["pop", "stack", "slam", "quote", "curve", "frame", "title"]);
+export const EFFECT_IDS = Object.freeze(["pop", "stack", "slam", "quote", "curve", "frame", "title", "echo"]);
 
 const MIX = Object.freeze({
   calm: { normal: ["pop", "stack"], hook: ["stack", "pop"] },

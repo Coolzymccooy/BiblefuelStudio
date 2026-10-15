@@ -41,7 +41,7 @@ test("the default layout is unchanged", () => {
 });
 
 test("EFFECTS and assHeader are exported for lyric videos", () => {
-  assert.deepEqual(Object.keys(EFFECTS).sort(), ["curve", "frame", "pop", "quote", "slam", "stack", "title"]);
+  assert.deepEqual(Object.keys(EFFECTS).sort(), ["curve", "echo", "frame", "pop", "quote", "slam", "stack", "title"]);
   assert.match(assHeader(W, H), /PlayResX: 720\nPlayResY: 1280/);
 });
 

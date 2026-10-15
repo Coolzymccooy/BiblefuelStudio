@@ -13,6 +13,7 @@ interface Props { project: LyricProject; onChange: (p: LyricProject) => void }
 
 const PHASE_TEXT: Record<TimingPhase, string> = {
   preparing: 'Getting your song ready…',
+  vocals: 'Separating the vocals on your laptop…',
   listening: 'Listening to your song…',
   matching: 'Matching your lyrics to the song…',
   beats: 'Finding the beat…',

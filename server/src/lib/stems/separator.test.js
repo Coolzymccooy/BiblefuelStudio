@@ -6,7 +6,7 @@ import os from "os";
 import path from "path";
 import {
   MODELS, stemsCli, buildSeparatorArgs, parseProgress,
-  separatorAvailable, removeVocals, _setSpawnImpl, _resetSpawnImpl, _resetAvailability,
+  separatorAvailable, removeVocals, separateStem, _setSpawnImpl, _resetSpawnImpl, _resetAvailability,
   _setKillGraceMs, _resetKillGraceMs,
 } from "./separator.js";
 
@@ -64,6 +64,18 @@ describe("buildSeparatorArgs", () => {
   test("the model folder is passed when set", () => {
     const args = buildSeparatorArgs({ input, outDir, quality: "best", modelDir: path.resolve("/models") });
     assert.equal(args[args.indexOf("--model_file_dir") + 1], path.resolve("/models"));
+  });
+
+  test("the separator can be asked for the vocals stem", () => {
+    const args = buildSeparatorArgs({ input, outDir, quality: "best", stem: "Vocals" });
+    assert.equal(args[args.indexOf("--single_stem") + 1], "Vocals");
+    const plain = buildSeparatorArgs({ input, outDir, quality: "best" });
+    assert.equal(plain[plain.indexOf("--single_stem") + 1], "Instrumental");
+  });
+
+  test("an unknown stem falls back to the instrumental", () => {
+    const args = buildSeparatorArgs({ input, outDir, quality: "best", stem: "Drums" });
+    assert.equal(args[args.indexOf("--single_stem") + 1], "Instrumental");
   });
 
   test("refuses a relative input (it could be read as a flag)", () => {
@@ -313,5 +325,57 @@ describe("removeVocals", () => {
     } finally {
       fs.rmSync = originalRmSync;
     }
+  });
+});
+
+describe("separateStem", () => {
+  afterEach(() => { _resetSpawnImpl(); _resetKillGraceMs(); delete process.env.STEMS_CLI; });
+
+  test("with the Vocals stem it asks the separator for vocals and encodes the vocals WAV", async () => {
+    process.env.STEMS_CLI = "/venv/audio-separator";
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "bf-stems-"));
+    const workDir = path.join(root, "work");
+    const outPath = path.join(root, "vocals.m4a");
+    const calls = [];
+    _setSpawnImpl((cmd, args, opts) => {
+      calls.push({ cmd, args });
+      if (cmd !== "/venv/audio-separator") fs.writeFileSync(args[args.length - 1], "out");
+      else fs.writeFileSync(path.join(workDir, "source_(Vocals)_model.wav"), "wav");
+      return fakeProc()(cmd, args, opts);
+    });
+    const result = await separateStem({ input: path.join(root, "song.m4a"), outPath, workDir, quality: "best", stem: "Vocals" });
+    assert.equal(result, outPath);
+    const [, separate, encode] = calls;
+    assert.equal(separate.args[separate.args.indexOf("--single_stem") + 1], "Vocals");
+    assert.ok(encode.args.includes(path.join(workDir, "source_(Vocals)_model.wav")));
+  });
+
+  test("asking for vocals does not pick up an instrumental WAV, and says what was missing", async () => {
+    process.env.STEMS_CLI = "/venv/audio-separator";
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "bf-stems-"));
+    const workDir = path.join(root, "work");
+    _setSpawnImpl((cmd, args, opts) => {
+      if (cmd !== "/venv/audio-separator") fs.writeFileSync(args[args.length - 1], "out");
+      else fs.writeFileSync(path.join(workDir, "source_(Instrumental)_model.wav"), "wav");
+      return fakeProc()(cmd, args, opts);
+    });
+    await assert.rejects(
+      separateStem({ input: path.join(root, "s.mp3"), outPath: path.join(root, "o.m4a"), workDir, quality: "best", stem: "Vocals" }),
+      /wrote no vocals/,
+    );
+  });
+
+  test("removeVocals still asks for the instrumental", async () => {
+    process.env.STEMS_CLI = "/venv/audio-separator";
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "bf-stems-"));
+    const workDir = path.join(root, "work");
+    const seen = [];
+    _setSpawnImpl((cmd, args, opts) => {
+      if (cmd !== "/venv/audio-separator") fs.writeFileSync(args[args.length - 1], "out");
+      else { seen.push(args[args.indexOf("--single_stem") + 1]); fs.writeFileSync(path.join(workDir, "source_(Instrumental)_m.wav"), "wav"); }
+      return fakeProc()(cmd, args, opts);
+    });
+    await removeVocals({ input: path.join(root, "s.mp3"), outPath: path.join(root, "o.m4a"), workDir, quality: "best" });
+    assert.deepEqual(seen, ["Instrumental"]);
   });
 });

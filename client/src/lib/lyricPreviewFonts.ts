@@ -12,6 +12,7 @@ export const CAPTION_FONTS: Readonly<Record<string, string>> = Object.freeze({
   knewave: `${CAPTION_FONT_BASE}/Knewave-Regular.ttf`,
   anton: `${CAPTION_FONT_BASE}/Anton.ttf`,
   'playfair display': `${CAPTION_FONT_BASE}/PlayfairDisplay-BoldItalic.ttf`,
+  caveat: `${CAPTION_FONT_BASE}/Caveat-Bold.ttf`,
   'dejavu sans': `${CAPTION_FONT_BASE}/DejaVuSans.ttf`,
 });
 

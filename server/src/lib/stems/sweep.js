@@ -5,7 +5,8 @@ import { readMusicLibrary } from "../musicLibraryStore.js";
 const WEEK_MS = 7 * 86_400_000;
 
 /**
- * Delete instrumentals nobody kept, a week after they were made, and any
+ * Delete instrumentals nobody kept (and the lyric video's vocals working
+ * files), a week after they were made, and any
  * leftover `stems-work/<jobId>` folders of the same age.
  *
  * Separator cleanup of its work dir is best-effort (a killed process can
@@ -22,9 +23,11 @@ function sweepInstrumentalFiles(dataDir, outputDir, now) {
   try { names = fs.readdirSync(outputDir); } catch { return; }
   const kept = new Set(readMusicLibrary(dataDir).items.map((t) => path.resolve(t.file)));
   for (const name of names) {
-    if (!/^instrumental-[\w-]+\.m4a$/.test(name)) continue;
+    const instrumental = /^instrumental-[\w-]+\.m4a$/.test(name);
+    // The lyric video's vocals stem is a working file and is never in the library.
+    if (!instrumental && !/^lyric-vocals-[\w-]+\.m4a$/.test(name)) continue;
     const file = path.resolve(outputDir, name);
-    if (kept.has(file)) continue;
+    if (instrumental && kept.has(file)) continue;
     try {
       if (now - fs.statSync(file).mtimeMs > WEEK_MS) fs.rmSync(file, { force: true });
     } catch { /* already gone */ }

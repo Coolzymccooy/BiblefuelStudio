@@ -14,6 +14,7 @@ const KEEP_AFTER_SEC = 0.5; // heard words kept just past the frontier
 const PACE_SLACK = 1.5; // songs are not sung at an even pace
 const MAX_SPAN = 24; // most lines a window is ever checked against
 const LOCATE_LINES = 2 * MAX_SPAN; // how far past the frontier an accepted window is looked for
+const JUMP_SLACK = 3; // a located window may move the frontier at most this many times the song's average pace since the last anchor (1.5 breaks real songs)
 const NEAR_BEST = 0.75; // a later start must match this much better to beat an earlier one (choruses repeat)
 const MAX_AUDIO_FACTOR = 3; // all passes together send Whisper at most this many times the song's length
 
@@ -101,7 +102,7 @@ const passRecord = (from, to, reason) => ({ from, to, status: reason ? "rejected
 /** Pass 0: the whole song, prompted with the sheet, kept only up to its reliable prefix (spec §5.3 steps 1–2). */
 async function firstPass({ audioPath, durationSec, lines, transcribe }) {
   const res = await transcribe(audioPath, promptFor(lines));
-  const words = trimLoops(res.words || []);
+  const words = trimLoops(res.words || [], { cutBackwards: false }); // a backwards step rejects pass 0 whole; only windows keep their prefix
   const reason = rejectPass(words, expectedFrom(lines));
   const pass = passRecord(0, durationSec, reason);
   if (reason) return { pass, heard: [], frontier: 0, frontierTime: 0 };
@@ -176,6 +177,13 @@ async function hearSong({ audioPath, durationSec, lines, transcribe, cutAudio, o
     if (got.to >= durationSec) break;
     const lo = Math.max(0, frontier - 1);
     const { last, lastEnd } = locateWindow(lines, lo, Math.min(lines.length, lo + LOCATE_LINES), got.words);
+    // A hook sung in several sections matches far down the sheet. Moving the frontier further than the song's own pace allows since the last anchor is a mistaken match: move on in time only.
+    const reach = Math.max(NEXT_LINES, Math.ceil(Math.max(0, lastEnd - anchorTime) * (lines.length / durationSec) * JUMP_SLACK));
+    if (last >= frontier && last - frontier + 1 > reach) {
+      frontierTime = got.to - OVERLAP_SEC;
+      heard = heard.filter((w) => w.start < frontierTime + KEEP_AFTER_SEC);
+      continue;
+    }
     const lineTime = last >= frontier ? lastEnd : -Infinity;
     const advanced = lineTime > frontierTime + MIN_ADVANCE_SEC;
     if (last >= frontier) frontier = last + 1;
