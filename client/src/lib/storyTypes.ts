@@ -2,6 +2,29 @@
 /** A Story video's output frame. */
 export type StoryAspect = 'portrait' | 'landscape' | 'square';
 
+export type AiVideoStatus = 'none' | 'queued' | 'generating' | 'done' | 'error';
+export type AnimateQuality = 'standard' | 'high';
+
+/** POST /api/story/:id/animate/estimate */
+export interface AnimateEstimate {
+  configured: boolean;
+  quality: AnimateQuality;
+  running: boolean;
+  clips: number;
+  seconds: number;
+  usd: number;
+  usdPerSecond: number;
+  model: string;
+  resolution: string;
+  sceneIds: string[];
+  /** "2026-10" */
+  month: string;
+  spentUsd: number;
+  reservedUsd: number;
+  capUsd: number;
+  monthClips: number;
+}
+
 export type StoryStatus =
   | 'draft' | 'transcribing' | 'segmenting' | 'generating_images'
   | 'ready_to_render' | 'rendering' | 'done' | 'error'
@@ -37,6 +60,14 @@ export interface StoryScene {
   videoPath?: string | null;
   /** Public /outputs URL of your own clip, when mediaKind === 'video'. */
   videoUrl?: string | null;
+  /** AI motion clip (BytePlus Seedance) made from this scene's picture; super admins only. */
+  aiVideoStatus?: AiVideoStatus;
+  /** Why the last AI clip failed, in plain words. */
+  aiVideoError?: string | null;
+  /** 'image' when the clip started from the picture; 'text' when BytePlus refused the picture (a real person) and it was made from the prompt. */
+  aiVideoMode?: 'image' | 'text' | null;
+  /** What BytePlus charged for this scene's clip, in US$. */
+  aiVideoCostUsd?: number | null;
 }
 
 export interface LongformSection {

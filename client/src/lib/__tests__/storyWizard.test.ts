@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   STORY_STYLES, deriveStep, isTransientStatus, allScenesDone,
   canRender, sceneTimeLabel, progressLabel, imageCounts, isStalled,
-  relativeTime, statusMeta,
+  relativeTime, statusMeta, isAnimatingScenes, clipSeconds,
 } from '../storyWizard';
 import type { StoryProject, StoryScene } from '../storyTypes';
 
@@ -152,5 +152,21 @@ describe('statusMeta', () => {
     expect(statusMeta('rendering').tone).toBe('busy');
     expect(statusMeta('generating_images').tone).toBe('busy');
     expect(statusMeta('draft').tone).toBe('idle');
+  });
+});
+
+describe('AI motion helpers', () => {
+  const base = { id: 's', text: '', startMs: 0, endMs: 5000, imagePrompt: '', imagePath: '/a.png', imageStatus: 'done' as const, promptEditedByUser: false };
+  it('clip length matches the server: whole seconds, 4 to 12', () => {
+    expect(clipSeconds({ ...base, endMs: 2000 })).toBe(4);
+    expect(clipSeconds({ ...base, endMs: 7300 })).toBe(8);
+    expect(clipSeconds({ ...base, endMs: 40000 })).toBe(12);
+  });
+  it('a project is animating while any scene is queued or generating', () => {
+    const p = (status?: 'queued' | 'generating' | 'done') => ({ scenes: [{ ...base, aiVideoStatus: status }] }) as unknown as Parameters<typeof isAnimatingScenes>[0];
+    expect(isAnimatingScenes(p('queued'))).toBe(true);
+    expect(isAnimatingScenes(p('generating'))).toBe(true);
+    expect(isAnimatingScenes(p('done'))).toBe(false);
+    expect(isAnimatingScenes(p(undefined))).toBe(false);
   });
 });

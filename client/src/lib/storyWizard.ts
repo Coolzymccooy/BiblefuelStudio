@@ -124,3 +124,13 @@ export function statusMeta(status: StoryStatus): { label: string; tone: StatusTo
     default: return { label: 'Draft', tone: 'idle' };
   }
 }
+
+/** Any scene still waiting on its AI clip. */
+export function isAnimatingScenes(project: Pick<StoryProject, 'scenes'>): boolean {
+  return project.scenes.some((s) => s.aiVideoStatus === 'queued' || s.aiVideoStatus === 'generating');
+}
+
+/** The AI clip length the server orders for a scene: whole seconds, 4 to 12. */
+export function clipSeconds(scene: Pick<StoryScene, 'startMs' | 'endMs'>): number {
+  return Math.min(12, Math.max(4, Math.ceil(((scene.endMs || 0) - (scene.startMs || 0)) / 1000)));
+}

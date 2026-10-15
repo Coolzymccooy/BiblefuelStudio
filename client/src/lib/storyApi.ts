@@ -1,6 +1,6 @@
 import { api, TRANSCRIBE_TIMEOUT_MS } from './api';
 import { uploadMedia } from './mediaUpload';
-import type { StoryAspect, StoryCaptionSettings, StoryProject, StoryProjectSummary, StoryScene } from './storyTypes';
+import type { AnimateEstimate, AnimateQuality, StoryAspect, StoryCaptionSettings, StoryProject, StoryProjectSummary, StoryScene } from './storyTypes';
 import type { LibraryImage, MovementImageSource } from './ambientApi';
 
 // Generating ~30 images can run for minutes; reuse a generous ceiling.
@@ -124,6 +124,29 @@ export const storyApi = {
   // update never clears the settings it does not mention.
   async setCaptions(id: string, settings: StoryCaptionSettings): Promise<StoryProject> {
     return unwrapProject(await api.patch(`/api/story/${id}/captions`, settings));
+  },
+
+  // AI motion (super admins only): price it, start it, stop ordering more.
+  async estimateAnimation(id: string, quality: AnimateQuality, sceneIds?: string[]): Promise<AnimateEstimate> {
+    const res = await api.post(`/api/story/${id}/animate/estimate`, { quality, ...(sceneIds ? { sceneIds } : {}) });
+    if (!res.ok || !res.data?.ok) throw new Error(res.data?.error || res.error || 'Could not price the animation');
+    return res.data as AnimateEstimate;
+  },
+
+  async animate(id: string, quality: AnimateQuality): Promise<StoryProject> {
+    const res = await api.post(`/api/story/${id}/animate`, { quality });
+    if (res.ok && res.data?.project) return res.data.project as StoryProject;
+    throw Object.assign(new Error(res.data?.error || res.error || 'Could not start the animation'), { code: res.data?.code as string | undefined });
+  },
+
+  async animateScene(id: string, sceneId: string, quality: AnimateQuality): Promise<StoryProject> {
+    const res = await api.post(`/api/story/${id}/scenes/${sceneId}/animate`, { quality });
+    if (res.ok && res.data?.project) return res.data.project as StoryProject;
+    throw Object.assign(new Error(res.data?.error || res.error || 'Could not animate this scene'), { code: res.data?.code as string | undefined });
+  },
+
+  async cancelAnimation(id: string): Promise<StoryProject> {
+    return unwrapProject(await api.post(`/api/story/${id}/animate/cancel`, {}));
   },
 
   async render(id: string): Promise<StoryProject> {
