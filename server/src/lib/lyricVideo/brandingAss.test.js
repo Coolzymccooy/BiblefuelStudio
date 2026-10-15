@@ -7,7 +7,10 @@ import { widthAt, covers } from "../kinetic/text.js";
 
 const look = resolveLook("studio-gospel-gold");
 const LOGO = { width: 400, height: 100 };
-const SIZES = { tall: { w: 1080, h: 1920 }, wide: { w: 1920, h: 1080 } };
+const SIZES = {
+  tall: { w: 1080, h: 1920 }, wide: { w: 1920, h: 1080 },
+  smallTall: { w: 720, h: 1280 }, smallWide: { w: 1280, h: 720 }, square: { w: 720, h: 720 },
+};
 
 const baseArgs = {
   durationSec: 200, audibleEnd: 190, captionsEnd: 180, hideWindows: [[30, 40]],
@@ -126,6 +129,65 @@ test("a title too long even at the smallest size is cut with an ellipsis and sti
   assert.equal(fs, 14);
   assert.match(e.text, /\S\u2026 \u2014 song by Sthill Waters$/u);
   assert.ok(geometry.text.x + widthAt(file, e.text, fs) <= 0.88 * w);
+});
+
+/** Every text line's ink (its width plus the outline on both sides) must sit inside its limit. */
+function assertInside(events, w, geometry, label) {
+  for (const e of events.map(parse).filter((x) => !x.tags.includes("\\p1"))) {
+    const file = [look.body, FALLBACK_FONT].find((f) => f.family === family(e.tags)).file;
+    const bord = num(e.tags, /\\bord(\d+)/u);
+    const ink = widthAt(file, e.text, num(e.tags, /\\fs(\d+)/u)) + 2 * bord;
+    if (e.layer === 20) {
+      assert.ok(geometry.text.x + ink <= 0.88 * w, `${label}: ${e.text} (${ink})`);
+    } else {
+      assert.ok(ink <= 0.84 * w, `${label}: ${e.text} (${ink})`);
+    }
+  }
+}
+
+test("a 100-character artist is cut with an ellipsis and every line fits", () => {
+  const artist = "Obaloluwa Adebayo-Okonkwo ".repeat(4).slice(0, 100);
+  assert.equal(artist.length, 100);
+  for (const size of ["smallTall", "tall", "smallWide", "wide", "square"]) {
+    const { events, geometry, w } = build({ size, artist });
+    assertInside(events, w, geometry, size);
+  }
+  {
+    const { events } = build({ size: "smallTall", artist });
+    const lines = events.map(parse).filter((x) => x.text);
+    assert.ok(lines.some((x) => x.layer === 20 && x.tags.includes("\\an4") && !x.text.includes("♪") && x.text.endsWith("…")), "name line is cut");
+    assert.ok(lines.some((x) => x.text.includes("♪") && x.text.endsWith("…")), "credit is cut at the artist");
+  }
+});
+
+test("the outline stays inside the limit at every aspect", () => {
+  const title = "Bless the Lord O my soul and all that is within me ".repeat(3);
+  for (const size of ["smallTall", "smallWide", "square"]) {
+    const { events, geometry, w } = build({ size, title });
+    assertInside(events, w, geometry, size);
+  }
+});
+
+test("the artist is cut only after the title is down to an ellipsis", () => {
+  const { events } = build({ size: "smallTall", artist: "Obaloluwa Adebayo-Okonkwo ".repeat(4).slice(0, 100) });
+  const text = introLines(events)[0].text;
+  assert.ok(text.startsWith("♪ … — song by Obaloluwa"), text);
+  assert.ok(text.endsWith("…"));
+});
+
+test("cutting keeps whole letters: a Yoruba accent never loses its letter", () => {
+  const letter = "ọ́";
+  const title = letter.repeat(300);
+  // Different artist lengths move the cut point, so an odd and an even code point count both occur.
+  for (const artist of ["", "A", "Ab", "Abc", "Abcd", "Abcde"]) {
+    const { events } = build({ title, artist });
+    const credit = introLines(events)[0].text;
+    const before = credit.slice(0, credit.indexOf("…")).normalize("NFC");
+    assert.ok(before.length > 3, "the fixture must keep some letters");
+    assert.ok(before.endsWith(letter.normalize("NFC")), before.slice(-4));
+    const clusters = Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(before.slice(2)), (s) => s.segment);
+    assert.ok(clusters.every((c) => c === letter.normalize("NFC")), "no lone combining mark");
+  }
 });
 
 test("cutting a title never splits a surrogate pair", () => {

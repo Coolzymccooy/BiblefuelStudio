@@ -13,6 +13,7 @@ const GOLD = "#E6C47A";
 const LAYER_BAND = 20;
 const LAYER_CARD_TEXT = 21;
 const NAME_FLOOR_FS = 14;
+const BAND_BORD = 2;
 const NAME_RIGHT_EDGE = 0.88;
 const CARD_WIDTH = 0.84;
 const ELLIPSIS = "…";
@@ -43,36 +44,53 @@ function layOut(look, text, preferred, maxWidth, min) {
   return { font, fs, fits: widthAt(font.file, text, fs) <= maxWidth };
 }
 
+const GRAPHEMES = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+/** The first `n` whole letters of `text` (an accent stays with its letter), then an ellipsis. */
+const cutAt = (graphemes, n) => `${graphemes.slice(0, n).join("").trimEnd()}${ELLIPSIS}`;
+
 /**
- * Fits `wrap(user)` into `maxWidth`: shrinks the size first, and when even the floor size is too
- * wide cuts `user` (by whole code points) and ends it with an ellipsis. `wrap` puts the user
- * string into the full line, so the rest of the line (the artist) survives the cut.
+ * Cuts parts[index] to the longest prefix (by grapheme cluster) that makes the line fit, and
+ * returns the parts and layout. When even a bare ellipsis does not fit, that part is left as an
+ * ellipsis and the caller moves on to the next part.
  */
-function fitLine({ look, user, wrap, preferred, maxWidth, min }) {
-  const room = Math.max(1, maxWidth);
-  const whole = wrap(user);
-  const first = layOut(look, whole, preferred, room, min);
-  if (first.fits) return { text: whole, ...first };
-  const chars = Array.from(user);
-  const attempt = (n) => {
-    const text = wrap(`${chars.slice(0, n).join("").trimEnd()}${ELLIPSIS}`);
-    return { text, ...layOut(look, text, preferred, room, min) };
-  };
-  let best = attempt(0);
+function cutPart(parts, index, measure) {
+  const graphemes = Array.from(GRAPHEMES.segment(parts[index]), (s) => s.segment);
+  const withCut = (n) => parts.map((p, i) => (i === index ? cutAt(graphemes, n) : p));
+  let best = { parts: withCut(0), ...measure(withCut(0)) };
   let lo = 1;
-  let hi = chars.length - 1;
+  let hi = graphemes.length - 1;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
-    const candidate = attempt(mid);
-    if (candidate.fits) { best = candidate; lo = mid + 1; } else { hi = mid - 1; }
+    const candidate = withCut(mid);
+    const laid = measure(candidate);
+    if (laid.fits) { best = { parts: candidate, ...laid }; lo = mid + 1; } else { hi = mid - 1; }
   }
   return best;
+}
+
+/**
+ * Fits `wrap(parts)` into `maxWidth` with `bord` of outline each side: shrinks the size first,
+ * and when even the floor size is too wide cuts the parts in order (the title, then the artist),
+ * each by whole letters and ending in an ellipsis. `wrap` puts the parts into the full line.
+ */
+function fitLine({ look, parts, wrap, preferred, maxWidth, bord, min }) {
+  const room = Math.max(1, maxWidth - 2 * bord);
+  const measure = (p) => {
+    const text = wrap(p);
+    return { text, ...layOut(look, text, preferred, room, min) };
+  };
+  let result = { parts, ...measure(parts) };
+  for (let i = 0; i < parts.length && !result.fits; i += 1) {
+    result = cutPart(result.parts, i, measure);
+  }
+  return result;
 }
 
 /** The common head of the name line and the intro credit: left-centre, gold, small outline. */
 function bandTags({ geometry, fitted }) {
   const { x, y } = geometry.text;
-  return `\\an4\\pos(${x},${y})\\fn${fitted.font.family}\\fs${fitted.fs}\\c${colour(GOLD)}\\bord2\\shad1\\fad(250,250)`;
+  return `\\an4\\pos(${x},${y})\\fn${fitted.font.family}\\fs${fitted.fs}\\c${colour(GOLD)}\\bord${BAND_BORD}\\shad1\\fad(250,250)`;
 }
 
 function bandMaxWidth({ geometry, w }) {
@@ -84,7 +102,7 @@ function nameEvents({ plan, geometry, look, artist, w }) {
   const name = clean(artist);
   if (!name || !plan.wordmark.length) return [];
   const fitted = fitLine({
-    look, user: name, wrap: (s) => s, preferred: geometry.text.fs, maxWidth: bandMaxWidth({ geometry, w }), min: NAME_FLOOR_FS,
+    look, parts: [name], wrap: ([s]) => s, preferred: geometry.text.fs, maxWidth: bandMaxWidth({ geometry, w }), bord: BAND_BORD, min: NAME_FLOOR_FS,
   });
   const tags = bandTags({ geometry, fitted });
   return plan.wordmark.map((piece) => dialogue(LAYER_BAND, piece, tags, fitted.text));
@@ -95,9 +113,9 @@ function introEvents({ plan, geometry, look, title, artist, w }) {
   const song = clean(title);
   if (!song || !plan.intro.length) return [];
   const by = clean(artist);
-  const wrap = (s) => (by ? `${NOTE} ${s} ${EM_DASH} song by ${by}` : `${NOTE} ${s}`);
+  const wrap = ([s, a]) => (a ? `${NOTE} ${s} ${EM_DASH} song by ${a}` : `${NOTE} ${s}`);
   const fitted = fitLine({
-    look, user: song, wrap, preferred: geometry.text.fs, maxWidth: bandMaxWidth({ geometry, w }), min: NAME_FLOOR_FS,
+    look, parts: by ? [song, by] : [song], wrap, preferred: geometry.text.fs, maxWidth: bandMaxWidth({ geometry, w }), bord: BAND_BORD, min: NAME_FLOOR_FS,
   });
   const tags = bandTags({ geometry, fitted });
   return plan.intro.map((piece) => dialogue(LAYER_BAND, piece, tags, fitted.text));
@@ -105,7 +123,7 @@ function introEvents({ plan, geometry, look, title, artist, w }) {
 
 /** One centred line of end card text. */
 function cardLine({ look, user, wrap, y, size, colourHex, bord, span, w }) {
-  const fitted = fitLine({ look, user, wrap, preferred: size, maxWidth: CARD_WIDTH * w, min: NAME_FLOOR_FS });
+  const fitted = fitLine({ look, parts: [user], wrap, preferred: size, maxWidth: CARD_WIDTH * w, bord, min: NAME_FLOOR_FS });
   const tags = `\\an5\\pos(${Math.round(w / 2)},${Math.round(y)})\\fn${fitted.font.family}\\fs${fitted.fs}`
     + `\\c${colour(colourHex ?? fitted.font.colour)}\\bord${bord}\\shad1\\fad(500,0)`;
   return dialogue(LAYER_CARD_TEXT, span, tags, fitted.text);
@@ -125,11 +143,11 @@ function endCardEvents({ plan, look, title, artist, w, h }) {
   const out = [dim];
   const song = clean(title);
   const by = clean(artist);
-  const common = { look, span, w, wrap: (s) => s };
+  const common = { look, span, w, wrap: ([s]) => s };
   if (song) out.push(cardLine({ ...common, user: song, y, size: shape.title * h, bord: 3 }));
   if (by) {
     out.push(cardLine({
-      ...common, user: by, wrap: (s) => `Song by ${s}`, y: y + BY_OFFSET * h, size: shape.by * h, colourHex: GOLD, bord: 2,
+      ...common, user: by, wrap: ([s]) => `Song by ${s}`, y: y + BY_OFFSET * h, size: shape.by * h, colourHex: GOLD, bord: 2,
     }));
   }
   return out;
