@@ -7,6 +7,23 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { renderSize, buildLyricRenderArgs, runLyricRender } from "./lyricRender.js";
 import { createJob, getJob, cancelJob } from "../renderJobs.js";
+import { bandGeometry, planBranding } from "./brandingPlan.js";
+import { brandingEvents } from "./brandingAss.js";
+import { resolveLook } from "../kinetic/looks.js";
+
+const LOGO = { file: "/b/logo.png", width: 64, height: 64, opacity: 0.85 };
+const GEOMETRY = bandGeometry({ w: 720, h: 1280, logo: LOGO });
+const PLAN_EXTENDED = {
+  totalSec: 15.5,
+  audio: { inputSec: 12.5, padToSec: 15.5, fadeFromSec: 0, fadeSec: 0 },
+  bandPieces: [[0, 4], [6, 11.5]], intro: [], wordmark: [], showLogo: true, endCard: { start: 11.5, end: 15.5 },
+};
+const PLAN_FADED = { ...PLAN_EXTENDED, audio: { inputSec: 12.5, padToSec: 15.5, fadeFromSec: 11, fadeSec: 1.5 } };
+const PLAN_TRIM = {
+  ...PLAN_EXTENDED, totalSec: 10, audio: { inputSec: 10, padToSec: 10, fadeFromSec: 7, fadeSec: 3 }, endCard: { start: 6, end: 10 }, bandPieces: [[0, 6]],
+};
+const PLAN_PLAIN = { ...PLAN_EXTENDED, totalSec: 12.5, audio: { inputSec: 12.5, padToSec: 12.5, fadeFromSec: 0, fadeSec: 0 }, endCard: null };
+const withPlan = (plan, logo = LOGO, geometry = GEOMETRY) => ({ plan, geometry, logo });
 
 describe("renderSize", () => {
   test("720p and 1080p for each frame", () => {
@@ -60,7 +77,12 @@ describe("buildLyricRenderArgs", () => {
   test("the audio is not in the filter graph", () => {
     const args = buildLyricRenderArgs({ ...base, background: null });
     const graph = args[args.indexOf("-filter_complex") + 1];
-    assert.ok(!/\[1:a\]|aresample|apad|atrim/.test(graph));
+    assert.ok(!/\[1:a\]|aresample|apad|atrim|afade/.test(graph));
+    // With a plan the audio is shaped by -af, its own simple graph, and still never by the complex one.
+    const planned = buildLyricRenderArgs({ ...base, background: null, ...withPlan(PLAN_EXTENDED) });
+    const plannedGraph = planned[planned.indexOf("-filter_complex") + 1];
+    assert.ok(!/\[1:a\]|aresample|apad|atrim|afade/.test(plannedGraph));
+    assert.match(planned[planned.indexOf("-af") + 1], /^apad=/);
   });
 
   test("a still image loops; no background uses a dark colour", () => {
@@ -72,6 +94,83 @@ describe("buildLyricRenderArgs", () => {
       buildLyricRenderArgs({ ...base, background: null }).join(" "),
       /-f lavfi -t 12\.5 -i color=c=0x101820:s=720x1280/,
     );
+  });
+});
+
+describe("buildLyricRenderArgs with a branding plan", () => {
+  const base = { songPath: "/s/song.m4a", assPath: "/w/c.ass", width: 720, height: 1280, durationSec: 12.5, outPath: "/o/out.mp4", background: null };
+  const graphOf = (args) => args[args.indexOf("-filter_complex") + 1];
+  const afOf = (args) => (args.includes("-af") ? args[args.indexOf("-af") + 1] : null);
+  const inputT = (args) => args.map((a, i) => (a === "-i" ? args[args.slice(0, i).lastIndexOf("-t") + 1] : null)).filter(Boolean);
+
+  test("the picture runs for the plan's length and the song for its own input length", () => {
+    assert.deepEqual(inputT(buildLyricRenderArgs({ ...base, ...withPlan(PLAN_EXTENDED) })), ["15.5", "12.5"]);
+    assert.deepEqual(inputT(buildLyricRenderArgs({ ...base, ...withPlan(PLAN_TRIM) })), ["10", "10"]);
+    for (const background of [{ file: "/b/clip.mp4", kind: "video", fit: "cover" }, { file: "/b/a.jpg", kind: "image", fit: "cover" }]) {
+      assert.deepEqual(inputT(buildLyricRenderArgs({ ...base, background, ...withPlan(PLAN_EXTENDED) })), ["15.5", "12.5"]);
+    }
+  });
+
+  test("-af pads the song, fades it, or both, and is absent when neither applies", () => {
+    assert.equal(afOf(buildLyricRenderArgs({ ...base, ...withPlan(PLAN_EXTENDED) })), "apad=whole_dur=15.5");
+    assert.equal(afOf(buildLyricRenderArgs({ ...base, ...withPlan(PLAN_FADED) })), "apad=whole_dur=15.5,afade=t=out:st=11:d=1.5");
+    assert.equal(afOf(buildLyricRenderArgs({ ...base, ...withPlan(PLAN_TRIM) })), "afade=t=out:st=7:d=3");
+    assert.equal(afOf(buildLyricRenderArgs({ ...base, ...withPlan(PLAN_PLAIN) })), null);
+    const args = buildLyricRenderArgs({ ...base, ...withPlan(PLAN_FADED) });
+    // The shaping applies to the mapped song, after the maps and before the encoder settings.
+    assert.ok(args.indexOf("-af") > args.indexOf("1:a:0") && args.indexOf("-af") < args.indexOf("-c:a"));
+  });
+
+  test("no plan means no -af", () => {
+    for (const background of [null, { file: "/b/clip.mp4", kind: "video", fit: "cover" }, { file: "/b/a.jpg", kind: "image", fit: "cover" }]) {
+      assert.ok(!buildLyricRenderArgs({ ...base, background }).includes("-af"));
+    }
+  });
+
+  test("the small logo, its time mask and the end card logo, in order", () => {
+    const graph = graphOf(buildLyricRenderArgs({ ...base, ...withPlan(PLAN_EXTENDED) }));
+    const order = ["ass=filename=", "movie=", "geq=lum=", "alphamerge", `overlay=x=${GEOMETRY.logo.x}:y=${GEOMETRY.logo.y}:shortest=1`, "fade=t=in:st=11.5:d=0.4:alpha=1", "enable='gte(t,11.5)'", "setparams=range=tv:colorspace=bt470bg,format=yuv420p[v]"];
+    const at = order.map((s) => graph.indexOf(s));
+    at.forEach((i, k) => assert.ok(i >= 0, `${order[k]} missing from ${graph}`));
+    assert.deepEqual([...at].sort((a, b) => a - b), at, `out of order: ${graph}`);
+    // The mask fades the logo in and out over each band piece, at the logo's opacity.
+    assert.match(graph, /geq=lum='255\*0\.85\*\(clip\(\(T-0\)\/0\.25,0,1\)\*clip\(\(4-T\)\/0\.25,0,1\)\+clip\(\(T-6\)\/0\.25,0,1\)\*clip\(\(11\.5-T\)\/0\.25,0,1\)\)'/);
+    assert.match(graph, new RegExp(`color=c=white:s=16x16:r=30:d=15\\.5,format=gray,geq=.*,scale=${GEOMETRY.logo.w}:${GEOMETRY.logo.h}\\[`));
+    assert.match(graph, /alphaextract/);
+    assert.match(graph, /blend=all_mode=multiply/);
+  });
+
+  test("the logo chains appear only when the plan calls for them", () => {
+    const has = (args) => {
+      const g = graphOf(args);
+      return { movie: g.includes("movie="), alphamerge: g.includes("alphamerge"), fade: g.includes("fade=t=in:st=") };
+    };
+    assert.deepEqual(has(buildLyricRenderArgs({ ...base, ...withPlan(PLAN_EXTENDED) })), { movie: true, alphamerge: true, fade: true });
+    assert.deepEqual(has(buildLyricRenderArgs({ ...base, ...withPlan(PLAN_PLAIN) })), { movie: true, alphamerge: true, fade: false });
+    assert.deepEqual(has(buildLyricRenderArgs({ ...base, ...withPlan({ ...PLAN_EXTENDED, bandPieces: [] }) })), { movie: true, alphamerge: false, fade: true });
+    assert.deepEqual(has(buildLyricRenderArgs({ ...base, ...withPlan({ ...PLAN_EXTENDED, showLogo: false }) })), { movie: false, alphamerge: false, fade: false });
+    assert.deepEqual(has(buildLyricRenderArgs({ ...base, ...withPlan(PLAN_EXTENDED, null) })), { movie: false, alphamerge: false, fade: false });
+  });
+
+  test("a plan without a logo keeps the captions chain exactly as before", () => {
+    const plain = graphOf(buildLyricRenderArgs(base));
+    assert.equal(graphOf(buildLyricRenderArgs({ ...base, ...withPlan(PLAN_EXTENDED, null) })), plain);
+    assert.equal(graphOf(buildLyricRenderArgs({ ...base, ...withPlan({ ...PLAN_EXTENDED, showLogo: false }) })), plain);
+  });
+
+  test("the logo path is escaped for the graph, drive colon and all", () => {
+    const graph = graphOf(buildLyricRenderArgs({ ...base, ...withPlan(PLAN_EXTENDED, { ...LOGO, file: "C:\\brand\\o'brien\\logo.png" }) }));
+    assert.ok(graph.includes("movie=C\\\\:/brand/o\\\\\\'brien/logo.png,"), graph);
+  });
+
+  test("the end card logo is centred a little above the middle: 0.40 h tall, 0.36 h wide", () => {
+    const tall = graphOf(buildLyricRenderArgs({ ...base, ...withPlan(PLAN_EXTENDED) }));
+    assert.match(tall, /scale=260:260:force_original_aspect_ratio=decrease,format=rgba,loop=/);
+    assert.doesNotMatch(tall, /pad=260/, "the overlay centres the end card logo itself");
+    assert.match(tall, /overlay=x=\(main_w-overlay_w\)\/2:y=512-overlay_h\/2:enable='gte\(t,11\.5\)':shortest=1/);
+    const wideGeometry = bandGeometry({ w: 1280, h: 720, logo: LOGO });
+    const wide = graphOf(buildLyricRenderArgs({ ...base, width: 1280, height: 720, ...withPlan(PLAN_EXTENDED, LOGO, wideGeometry) }));
+    assert.match(wide, /y=259-overlay_h\/2:/);
   });
 });
 
@@ -202,6 +301,153 @@ test("cancelling while ffmpeg is running reports Render cancelled and cleans up"
     assert.equal(r.error, "Render cancelled");
     assert.equal(getJob(job.jobId).error, "Render cancelled");
     assert.deepEqual(fs.readdirSync(dir).filter((f) => f.startsWith("filter-")), []);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ---- Branding plan, rendered for real ----
+
+function putRedLogo(dir, size = "64x64") {
+  const file = path.join(dir, `logo-${size}.png`);
+  const r = spawnSync(FF, ["-y", "-v", "error", "-f", "lavfi", "-i", `color=c=red:s=${size}`, "-frames:v", "1", file]);
+  assert.equal(r.status, 0, String(r.stderr));
+  return file;
+}
+
+/** RGB of one pixel of the frame at `t` seconds. */
+function pixelAt(video, x, y, t) {
+  const r = spawnSync(FF, ["-v", "error", "-ss", String(t), "-i", video, "-frames:v", "1",
+    "-vf", `crop=1:1:${x}:${y},format=rgb24`, "-f", "rawvideo", "-"]);
+  assert.equal(r.status, 0, String(r.stderr));
+  return [...r.stdout.subarray(0, 3)];
+}
+
+/** The loudest sample, in dB, of the audio that `inputArgs` select from `file`. */
+function maxVolume(file, inputArgs) {
+  const r = spawnSync(FF, ["-hide_banner", ...inputArgs, "-i", file, "-vn", "-af", "volumedetect", "-f", "null", "-"]);
+  const m = /max_volume:\s*(-?[\d.]+|-inf) dB/.exec(r.stderr.toString());
+  assert.ok(m, `volumedetect reported no level: ${r.stderr.toString().slice(-400)}`);
+  return m[1] === "-inf" ? -Infinity : Number(m[1]);
+}
+
+const isRed = ([r, g, b]) => r > 180 && g < 90 && b < 90;
+
+async function renderPlanned(dir, { song, background = null, ass, plan, geometry, logo, name = "out" }) {
+  const out = path.join(dir, `${name}.mp4`);
+  const job = createJob("u1", { durationSec: plan.totalSec });
+  const r = await runLyricRender({
+    jobId: job.jobId, songPath: song, background, assPath: ass, width: 360, height: 640,
+    durationSec: plan.audio.inputSec, outPath: out, plan, geometry, logo,
+  });
+  assert.equal(r.ok, true, r.error);
+  assert.equal(getJob(job.jobId).status, "done");
+  assert.deepEqual(fs.readdirSync(dir).filter((f) => f.startsWith("filter-")), []);
+  return out;
+}
+
+/** The fixture captions plus the branding lines for `plan`, as the render reads them. */
+function brandedAss(dir, plan, geometry) {
+  const lines = brandingEvents({ plan, geometry, look: resolveLook("studio-lagos-night"), title: "Grace", artist: "Sthill Waters", w: 360, h: 640 });
+  const file = path.join(dir, "branded.ass");
+  fs.writeFileSync(file, `${ASS.slice(0, -1)}\n${lines.join("\n")}\n`);
+  return file;
+}
+
+const SKIP = !hasFfmpeg && "ffmpeg not installed";
+
+test("a song that ends right after its last line gets 3 s more picture and silence", { skip: SKIP }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lyric-brand-"));
+  try {
+    const { song } = makeFixtures(dir);
+    const file = putRedLogo(dir);
+    const logo = { file, width: 64, height: 64, opacity: 0.85 };
+    const geometry = bandGeometry({ w: 360, h: 640, logo });
+    const plan = planBranding({
+      durationSec: 2, audibleEnd: 2, captionsEnd: 1.9, hideWindows: [], options: { logo: true, intro: true, endCard: true },
+      hasLogo: true, artist: "Sthill Waters", shortsTrim: false, aspect: "portrait", lines: [],
+    });
+    assert.equal(plan.totalSec, 5);
+    const out = await renderPlanned(dir, { song, ass: brandedAss(dir, plan, geometry), plan, geometry, logo });
+    const d = streamDurations(out);
+    assert.ok(Math.abs(d.video - 5) <= 0.1, `video duration ${d.video}`);
+    assert.ok(Math.abs(d.audio - 5) <= 0.1, `audio duration ${d.audio}`);
+    const tail = maxVolume(out, ["-sseof", "-1"]);
+    assert.ok(tail <= -60, `the last second should be silent, max_volume ${tail} dB`);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the logo shows during its band pieces and steps aside between them", { skip: SKIP }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lyric-brand-"));
+  try {
+    const { song, ass } = makeFixtures(dir);
+    const file = putRedLogo(dir);
+    const logo = { file, width: 64, height: 64, opacity: 1 };
+    const geometry = bandGeometry({ w: 360, h: 640, logo });
+    const plan = {
+      totalSec: 3.2, audio: { inputSec: 2, padToSec: 3.2, fadeFromSec: 0, fadeSec: 0 },
+      bandPieces: [[0, 0.8], [1.6, 3]], intro: [], wordmark: [], showLogo: true, endCard: null,
+    };
+    const out = await renderPlanned(dir, { song, ass, plan, geometry, logo });
+    const x = geometry.logo.x + Math.round(geometry.logo.w / 4);
+    const y = geometry.logo.y + Math.round(geometry.logo.h / 4);
+    assert.ok(isRed(pixelAt(out, x, y, 0.4)), `logo at 0.4 s: ${pixelAt(out, x, y, 0.4)}`);
+    assert.ok(!isRed(pixelAt(out, x, y, 1.2)), `no logo at 1.2 s: ${pixelAt(out, x, y, 1.2)}`);
+    assert.ok(isRed(pixelAt(out, x, y, 2.5)), `logo at 2.5 s: ${pixelAt(out, x, y, 2.5)}`);
+    const d = streamDurations(out);
+    assert.ok(Math.abs(d.video - 3.2) <= 0.1 && Math.abs(d.audio - 3.2) <= 0.1, JSON.stringify(d));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the end card dims the picture and shows the big logo, centred", { skip: SKIP }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lyric-brand-"));
+  try {
+    const { song } = makeFixtures(dir);
+    // A tall, narrow logo: only centred does it cover the middle of the frame.
+    const file = putRedLogo(dir, "32x96");
+    const white = path.join(dir, "white.png");
+    spawnSync(FF, ["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=white:s=360x640", "-frames:v", "1", white]);
+    const logo = { file, width: 32, height: 96, opacity: 0.85 };
+    const geometry = bandGeometry({ w: 360, h: 640, logo });
+    const plan = planBranding({
+      durationSec: 2, audibleEnd: 2, captionsEnd: 1.9, hideWindows: [], options: { logo: true, intro: true, endCard: true },
+      hasLogo: true, artist: "Sthill Waters", shortsTrim: false, aspect: "portrait", lines: [],
+    });
+    const background = { file: white, kind: "image", fit: "cover" };
+    const out = await renderPlanned(dir, { song, background, ass: brandedAss(dir, plan, geometry), plan, geometry, logo });
+    const sum = (rgb) => rgb[0] + rgb[1] + rgb[2];
+    const before = sum(pixelAt(out, 20, 620, 0.5));
+    const after = sum(pixelAt(out, 20, 620, plan.totalSec - 0.3));
+    assert.ok(after <= 0.2 * before, `the end card should dim the picture: ${before} -> ${after}`);
+    const centre = [180, Math.round(0.4 * 640)];
+    assert.ok(isRed(pixelAt(out, ...centre, plan.totalSec - 0.3)), "the end card logo is drawn");
+    assert.ok(!isRed(pixelAt(out, ...centre, 1)), "the end card logo waits for the end card");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the Shorts trim cuts the song and fades it out", { skip: SKIP }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lyric-brand-"));
+  try {
+    const { ass } = makeFixtures(dir);
+    const song = path.join(dir, "four.m4a");
+    spawnSync(FF, ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=f=440:d=4", "-c:a", "aac", song]);
+    const plan = {
+      totalSec: 3, audio: { inputSec: 3, padToSec: 3, fadeFromSec: 2, fadeSec: 1 },
+      bandPieces: [], intro: [], wordmark: [], showLogo: false, endCard: null,
+    };
+    const out = await renderPlanned(dir, { song, ass, plan, geometry: bandGeometry({ w: 360, h: 640, logo: null }), logo: null });
+    const d = streamDurations(out);
+    assert.ok(Math.abs(d.video - 3) <= 0.1, `video duration ${d.video}`);
+    assert.ok(Math.abs(d.audio - 3) <= 0.1, `audio duration ${d.audio}`);
+    const middle = maxVolume(out, ["-ss", "0.5", "-t", "1"]);
+    const end = maxVolume(out, ["-sseof", "-0.2"]);
+    assert.ok(end <= middle - 12, `the end should be faded: middle ${middle} dB, end ${end} dB`);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

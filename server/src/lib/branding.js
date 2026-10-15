@@ -95,7 +95,7 @@ export function logoGeometry(w, h, size = "medium") {
 // name then reaches the movie source intact.
 const BACKSLASH = String.fromCharCode(92);
 const escapeChars = (s, chars) => [...s].map((c) => (chars.includes(c) ? BACKSLASH + c : c)).join("");
-const filterPath = (p) => escapeChars(
+export const filterPath = (p) => escapeChars(
   escapeChars(String(p).split(BACKSLASH).join("/"), `':${BACKSLASH}`),
   `'[],;${BACKSLASH}`,
 );
