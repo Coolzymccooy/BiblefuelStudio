@@ -28,6 +28,13 @@ describe('lyricVideoApi', () => {
     expect(api.get).toHaveBeenCalledWith('/api/lyric-video');
   });
 
+  it('lists every video made, from the renders route', async () => {
+    const renders = [{ projectId: 'lv_1', title: 'T', artist: '', jobId: 'j', aspect: 'portrait', quality: '720p', status: 'done', at: 'x' }];
+    vi.mocked(api.get).mockResolvedValue(reply({ renders }));
+    await expect(lyricVideoApi.renders()).resolves.toEqual(renders);
+    expect(api.get).toHaveBeenCalledWith('/api/lyric-video/renders');
+  });
+
   it('gets and removes a project', async () => {
     vi.mocked(api.get).mockResolvedValue(reply({ project }));
     vi.mocked(api.delete).mockResolvedValue(reply({}));

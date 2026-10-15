@@ -20,7 +20,7 @@ import { EFFECT_IDS } from "../lib/kinetic/director.js";
 import { ENERGIES, isStudioLook } from "../lib/kinetic/looks.js";
 import { SHEET_MAX_CHARS, SHEET_MAX_LINES } from "../lib/lyricVideo/sheetParser.js";
 import {
-  createProject, readProject, updateProject, listProjects, deleteProject, readPrefs, writePrefs, applySheet, normaliseBranding,
+  createProject, readProject, updateProject, listProjects, deleteProject, readPrefs, writePrefs, applySheet, normaliseBranding, MAX_FAILED_RENDERS, readAllProjects,
 } from "../lib/lyricVideo/projectStore.js";
 import { buildRenderAss } from "../lib/lyricVideo/renderPlan.js";
 import { shortsTrimOffer } from "../lib/lyricVideo/brandingPlan.js";
@@ -52,6 +52,7 @@ const NOT_FOUND = "That song project was not found";
 const INTERRUPTED = "Timing stopped before it finished — run it again.";
 const RENDER_FAILED = "The video could not be made. Try again, or choose a different background.";
 const RENDER_INTERRUPTED = "The render was interrupted — start it again.";
+const RESTARTED = "The server restarted while this video was being made. Render it again.";
 const SERVER_ERROR = "Something went wrong on our side. Please try again.";
 const LYRICS_LOCKED = "Wait for the timing to finish before changing the lyrics.";
 
@@ -316,14 +317,24 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
   };
 
   router.get("/prefs", (req, res) => ok(res, readPrefs(req.ctx.dataDir)));
+
+  /** Every video of every song of this user, newest first. Free, and it changes nothing. */
+  router.get("/renders", route((req, res) => ok(res, { renders: historyOf(req.ctx.dataDir) })));
   router.put("/prefs", route((req, res) => ok(res, writePrefs(req.ctx.dataDir, { artist: bodyOf(req).artist }))));
 
-  /** Clears the saved render job when it is the one given, or when no render for this project is running here. */
+  /**
+   * Clears the saved render job when it is the one given, or when no render for this project is running here.
+   * Clearing a job nobody is running (jobId not given) means a restart killed it: that is filed as a failure
+   * in the same write, unless the user cancelled it, it finished, or it is already on the song.
+   */
   function clearActiveRender(dataDir, id, jobId = null) {
     return updateProject(dataDir, id, (latest) => {
       const active = latest.render?.activeJobId;
       if (!active || (jobId ? active !== jobId : rendering.has(id))) return latest;
-      return { ...latest, render: null };
+      const cleared = { ...latest, render: null };
+      if (jobId || !killedByRestart(dataDir, active)) return cleared;
+      const { aspect = "portrait", quality = "720p" } = latest.render;
+      return withFailure(cleared, { jobId: active, aspect, quality, at: new Date().toISOString(), error: RESTARTED });
     });
   }
 
@@ -591,9 +602,15 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
         if (!ended?.cancelled) console.error(`[lyric-video] render ${job.jobId} failed:`, ended?.error || result?.error);
         persistJob(dataDir, { ...job, ...getJob(job.jobId), projectId: id, status: "error", outputPath: null });
         removeFile(outPath);
+        // The user's own cancel is a choice, not a failure to remember.
+        if (!wasCancelled(job.jobId, result)) recordFailure(dataDir, id, { jobId: job.jobId, aspect, quality });
       }
     } catch (err) {
       console.error(`[lyric-video] could not finish render ${job.jobId}:`, err);
+      // The render did not end cleanly (saving its result failed): it is a failure to remember, unless it was cancelled.
+      if (!wasCancelled(job.jobId, null)) {
+        try { recordFailure(dataDir, id, { jobId: job.jobId, aspect, quality }); } catch (e) { console.error(`[lyric-video] could not record render ${job.jobId}:`, e); }
+      }
     } finally {
       removeFile(assPath);
       try { clearActiveRender(dataDir, id, job.jobId); } catch (err) { console.error(`[lyric-video] could not clear render ${job.jobId}:`, err); }
@@ -684,7 +701,7 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
       updateJob(job.jobId, { projectId: project.projectId });
       persistJob(req.ctx.dataDir, { ...job, projectId: project.projectId, status: "running" });
       // Saved on the project so the page can pick the render up again after leaving.
-      updateProject(req.ctx.dataDir, project.projectId, (latest) => ({ ...latest, render: { activeJobId: job.jobId } }));
+      updateProject(req.ctx.dataDir, project.projectId, (latest) => ({ ...latest, render: { activeJobId: job.jobId, aspect, quality } }));
     } catch (err) {
       rendering.delete(project.projectId);
       removeFile(assPath);
@@ -713,6 +730,9 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
     if (!job) throw new Refusal(404, "No such render");
     const result = cancelJob(job.jobId, req.ctx.userId);
     if (!result.ok) throw new Refusal(result.reason === "terminal" ? 409 : 404, result.reason === "terminal" ? "That render has already finished." : "No such render");
+    // Saved now, not when the render winds down: a restart in between would
+    // otherwise read the saved "running" job as killed and file a failure.
+    persistJob(req.ctx.dataDir, { ...job, ...getJob(job.jobId), projectId: req.params.id, outputPath: null });
     ok(res, {});
   }));
 
@@ -721,6 +741,62 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
 
 const CANCELLED = "Render cancelled";
 const NO_LENGTH_SENTENCE = /length is unknown/;
+
+/** Files a failed render on its song (the newest few are kept). A song deleted meanwhile is left alone. */
+function recordFailure(dataDir, id, { jobId, aspect, quality }) {
+  const entry = { jobId, aspect, quality, at: new Date().toISOString(), error: RENDER_FAILED };
+  updateProject(dataDir, id, (latest) => withFailure(latest, entry));
+}
+
+/** The project with the failure appended (the newest few kept); unchanged when that job is already filed. */
+function withFailure(project, entry) {
+  const filed = [...(project.renders || []), ...(project.failedRenders || [])].some((r) => r?.jobId === entry.jobId);
+  if (filed) return project;
+  return { ...project, failedRenders: [...(project.failedRenders || []), entry].slice(-MAX_FAILED_RENDERS) };
+}
+
+/** True when a saved render job with nothing running it was lost to a restart: it did not finish and was not cancelled. */
+function killedByRestart(dataDir, jobId) {
+  const saved = readPersistedJob(dataDir, jobId);
+  return !(saved?.status === "done" || saved?.cancelled === true);
+}
+
+/** The history items for one song: its videos, its failures and, if one is on the go, that render. */
+function historyOfProject(project) {
+  const song = { projectId: project.projectId, title: project.title, artist: project.artist };
+  const known = new Set();
+  const items = [];
+  for (const r of Array.isArray(project.renders) ? project.renders : []) {
+    if (!r || typeof r.jobId !== "string") continue;
+    known.add(r.jobId);
+    items.push({ ...song, jobId: r.jobId, aspect: r.aspect, quality: r.quality, status: "done", at: r.at, durationSec: r.durationSec, file: r.file });
+  }
+  for (const f of project.failedRenders) {
+    known.add(f.jobId);
+    items.push({ ...song, jobId: f.jobId, aspect: f.aspect, quality: f.quality, status: "failed", at: f.at, error: f.error });
+  }
+  const active = project.render?.activeJobId;
+  const live = typeof active === "string" && !known.has(active) ? activeItem(project, active) : null;
+  return live ? [...items, { ...song, ...live }] : items;
+}
+
+/**
+ * The render saved as in flight, only while it really is running in this process: never a stale
+ * "running". One that was killed by a restart is filed as a failure when the song is next read; a
+ * live job that has just ended is left to the video or failure its render files an instant later.
+ */
+function activeItem(project, jobId) {
+  const job = getJob(jobId);
+  if (!job || (job.status !== "queued" && job.status !== "running")) return null;
+  const at = Number.isFinite(job.createdAt) ? new Date(job.createdAt).toISOString() : project.updatedAt;
+  return { jobId, aspect: project.render.aspect, quality: project.render.quality, status: "running", at, progress: job.percent };
+}
+
+/** Every song's history items, newest first. Each song is read once. */
+function historyOf(dataDir) {
+  const items = readAllProjects(dataDir).flatMap(historyOfProject);
+  return items.sort((a, b) => String(b.at ?? "").localeCompare(String(a.at ?? "")));
+}
 
 /** True when a render ended because the user cancelled it, not because something broke. */
 const wasCancelled = (jobId, result) => getJob(jobId)?.cancelled === true || result?.error === CANCELLED;

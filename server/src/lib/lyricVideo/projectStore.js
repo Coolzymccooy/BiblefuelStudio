@@ -39,6 +39,20 @@ export function normaliseBranding(value) {
   };
 }
 
+/** How many failed renders a song remembers. */
+export const MAX_FAILED_RENDERS = 10;
+
+const isText = (value) => typeof value === "string" && value.length > 0;
+
+/** The failed-render list as stored: only well-formed entries, with only the known fields; older projects read as []. */
+export function normaliseFailedRenders(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((e) => e !== null && typeof e === "object" && !Array.isArray(e)
+      && isText(e.jobId) && isText(e.aspect) && isText(e.quality) && isText(e.at) && isText(e.error))
+    .map(({ jobId, aspect, quality, at, error }) => ({ jobId, aspect, quality, at, error }));
+}
+
 export function createProject(dataDir, { title, artist }) {
   const now = new Date().toISOString();
   const project = {
@@ -49,7 +63,7 @@ export function createProject(dataDir, { title, artist }) {
     timing: { status: "idle" },
     look: { id: "studio-lagos-night", energy: "wild", seed: 1 },
     branding: { ...DEFAULT_BRANDING },
-    background: null, renders: [],
+    background: null, renders: [], failedRenders: [],
   };
   atomicWrite(fileOf(dataDir, project.projectId), project);
   return project;
@@ -65,7 +79,8 @@ export function readProject(dataDir, id) {
   if (!file || !fs.existsSync(file)) return null;
   let parsed;
   try { parsed = JSON.parse(fs.readFileSync(file, "utf8")); } catch { return null; }
-  return isProjectOf(parsed, id) ? { ...parsed, branding: normaliseBranding(parsed.branding) } : null;
+  if (!isProjectOf(parsed, id)) return null;
+  return { ...parsed, branding: normaliseBranding(parsed.branding), failedRenders: normaliseFailedRenders(parsed.failedRenders) };
 }
 
 export function writeProject(dataDir, project) {
@@ -88,10 +103,15 @@ export function updateProject(dataDir, id, fn) {
   return writeProject(dataDir, next);
 }
 
-export function listProjects(dataDir) {
+/** Every readable project, each read once. */
+export function readAllProjects(dataDir) {
   if (!fs.existsSync(dirOf(dataDir))) return [];
   return fs.readdirSync(dirOf(dataDir)).filter((f) => /^lv_[a-z0-9]+\.json$/.test(f))
-    .map((f) => readProject(dataDir, f.replace(/\.json$/, ""))).filter(Boolean)
+    .map((f) => readProject(dataDir, f.replace(/\.json$/, ""))).filter(Boolean);
+}
+
+export function listProjects(dataDir) {
+  return readAllProjects(dataDir)
     .map((p) => ({ projectId: p.projectId, title: p.title, artist: p.artist, updatedAt: p.updatedAt, hasRender: Array.isArray(p.renders) && p.renders.length > 0 }))
     .sort((a, b) => String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? "")));
 }

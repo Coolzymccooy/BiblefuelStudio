@@ -170,6 +170,8 @@ export function persistJob(baseDir, job) {
     status: job.status,
     outputPath: job.outputPath || job.file || null,
     updatedAt: Date.now(),
+    // Only written when true, so a restart can tell a render the user cancelled from one that broke.
+    ...(job.cancelled === true ? { cancelled: true } : {}),
   };
   const file = path.join(dir, `${job.jobId}.json`);
   const tmp = `${file}.${process.pid}.tmp`;
