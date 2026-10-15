@@ -7,7 +7,11 @@ import { api, DIRECT_UPLOAD_MAX_BYTES } from '../lib/api';
 import { storyApi } from '../lib/storyApi';
 import { longformApi } from '../lib/longformApi';
 import { useStoryProject } from '../hooks/useStoryProject';
-import type { StoryAspect, StoryCaptionSettings, StoryProject } from '../lib/storyTypes';
+import type { AnimateQuality, StoryAspect, StoryCaptionSettings, StoryProject } from '../lib/storyTypes';
+import { StoryAnimatePanel } from '../components/story/StoryAnimatePanel';
+import { useAnimateEstimate } from '../hooks/useAnimateEstimate';
+import { useAuth } from '../hooks/useAuth';
+import { clipSeconds } from '../lib/storyWizard';
 import { YoutubePublishPanel } from '../components/share/YoutubePublishPanel';
 import {
   deriveStep, progressLabel, canRender, imageCounts, isTransientStatus, isStalled, ttsProviderLabel, STORY_STYLES,
@@ -76,8 +80,12 @@ export function StoryVideoPage() {
   const [pickingSceneId, setPickingSceneId] = useState<string | null>(null);
   const [defaultTitle, setDefaultTitle] = useState('');
   const [entryMode, setEntryMode] = useState<'upload' | 'script' | 'longform'>('upload');
+  const isSuperAdmin = useAuth((s) => s.isSuperAdmin);
+  const [animateQuality, setAnimateQuality] = useState<AnimateQuality>('standard');
 
   const { data: project } = useStoryProject(projectId);
+  const { data: animateEstimate } = useAnimateEstimate(project, animateQuality, isSuperAdmin);
+  const canAnimate = isSuperAdmin && Boolean(animateEstimate?.configured);
   // Cast descriptions, for the image brief: only fetched when the story has a cast.
   const hasCast = (project?.cast?.length ?? 0) > 0;
   const { data: characters } = useQuery({
@@ -176,6 +184,16 @@ export function StoryVideoPage() {
       else toast.success('Image regenerated');
     } catch (e) { toast.error((e as Error).message); }
     finally { setRegeneratingId(null); }
+  };
+
+  const onAnimateScene = async (sceneId: string) => {
+    if (!projectId) return;
+    try {
+      await storyApi.animateScene(projectId, sceneId, animateQuality);
+      refresh();
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
   };
 
   // A photo from the device on one scene: no image quota, so a project can be
@@ -661,6 +679,17 @@ export function StoryVideoPage() {
             <div className="text-[11px] text-bf-muted">{project.scenes.length} generated</div>
           </div>
 
+          {canAnimate && animateEstimate && (
+            <StoryAnimatePanel
+              project={project}
+              estimate={animateEstimate}
+              quality={animateQuality}
+              onQualityChange={setAnimateQuality}
+              onChanged={refresh}
+              busy={busy || bulkUploading}
+            />
+          )}
+
           <div className="space-y-3">
             {project.scenes.map((s, i) => (
               <SceneCard
@@ -669,6 +698,8 @@ export function StoryVideoPage() {
                 index={i}
                 onPatch={onPatch}
                 onRegenerate={onRegenerate}
+                onAnimate={canAnimate ? onAnimateScene : undefined}
+                animatePriceUsd={canAnimate && animateEstimate ? animateEstimate.usdPerSecond * clipSeconds(s) : undefined}
                 busy={busy || bulkUploading}
                 regenerating={regeneratingId === s.id}
                 onUpload={onUploadSceneImage}
