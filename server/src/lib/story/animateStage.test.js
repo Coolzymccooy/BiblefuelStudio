@@ -57,10 +57,14 @@ function fakeDeps(over = {}) {
     submit: async (args) => { calls.submit.push(args); return { ok: true, taskId: `t-${calls.submit.length}`, mode: "image" }; },
     wait: async (taskId) => { calls.wait.push(taskId); return { ok: true, videoUrl: `https://cdn/${taskId}.mp4`, tokens: 108000 }; },
     download: async (_url, dest) => { fs.writeFileSync(dest, "mp4"); return 3; },
-    resolveClip: async ({ outputDir: dir, uploadPath }) => ({
-      ok: true, videoPath: path.join(dir, uploadPath), videoUrl: `/outputs/${uploadPath}`,
-      posterPath: path.join(dir, `${uploadPath}-poster.jpg`), posterUrl: "/p.jpg", durationSec: 5, width: 720, height: 1280,
-    }),
+    resolveClip: async ({ outputDir: dir, uploadPath }) => {
+      const posterPath = path.join(dir, `${uploadPath}-poster.jpg`);
+      fs.writeFileSync(posterPath, "jpg");
+      return {
+        ok: true, videoPath: path.join(dir, uploadPath), videoUrl: `/outputs/${uploadPath}`,
+        posterPath, posterUrl: "/p.jpg", durationSec: 5, width: 720, height: 1280,
+      };
+    },
     now: () => Date.now(),
     ...over,
   };
@@ -166,6 +170,63 @@ describe("startAnimation", () => {
     assert.equal(s.videoPath, undefined);
     assert.deepEqual(ledgerSummary(ledgerDir).reservedUsd, 0);
     assert.deepEqual(ledgerSummary(ledgerDir).spentUsd, 0);
+  });
+
+  test("a clip BytePlus never returned (timeout) is still counted, in case it was charged", async () => {
+    const p = project([scene(0)]);
+    const { deps } = fakeDeps({ wait: async () => ({ ok: false, code: "TIMEOUT", error: "BytePlus took too long to make the clip." }) });
+    startAnimation(ctx(), p.projectId, { ledgerDir, deps });
+    await waitFor(() => !isAnimating(p.projectId));
+    const s = readProject(dataDir, p.projectId).scenes[0];
+    assert.equal(s.aiVideoStatus, "error");
+    assert.match(s.aiVideoError, /^BytePlus did not return this clip/);
+    const sum = ledgerSummary(ledgerDir);
+    assert.ok(Math.abs(sum.spentUsd - MINI_5S_USD) < 1e-9, `spent ${sum.spentUsd}`);
+    assert.equal(sum.reservedUsd, 0);
+  });
+
+  test("a clip that succeeds with 0 tokens is settled at the estimate, not free", async () => {
+    const p = project([scene(0)]);
+    const { deps } = fakeDeps({ wait: async (taskId) => ({ ok: true, videoUrl: `https://cdn/${taskId}.mp4`, tokens: 0 }) });
+    startAnimation(ctx(), p.projectId, { ledgerDir, deps });
+    await waitFor(() => !isAnimating(p.projectId));
+    assert.equal(readProject(dataDir, p.projectId).scenes[0].aiVideoStatus, "done");
+    assert.ok(Math.abs(ledgerSummary(ledgerDir).spentUsd - MINI_5S_USD) < 1e-9);
+  });
+
+  test("a downloaded clip that cannot be read is deleted", async () => {
+    const p = project([scene(0)]);
+    const { deps } = fakeDeps({ resolveClip: async () => ({ ok: false, error: "bad clip" }) });
+    startAnimation(ctx(), p.projectId, { ledgerDir, deps });
+    await waitFor(() => !isAnimating(p.projectId));
+    assert.equal(readProject(dataDir, p.projectId).scenes[0].aiVideoError, "bad clip");
+    assert.deepEqual(fs.readdirSync(outputDir).filter((f) => f.startsWith("bg-video-")), []);
+  });
+
+  test("on success the clip's own poster is removed; the picture stays the poster", async () => {
+    const p = project([scene(0)]);
+    const { deps } = fakeDeps();
+    startAnimation(ctx(), p.projectId, { ledgerDir, deps });
+    await waitFor(() => !isAnimating(p.projectId));
+    const left = fs.readdirSync(outputDir).filter((f) => f.startsWith("bg-video-"));
+    assert.equal(left.length, 1, "only the clip itself remains");
+    assert.ok(left[0].endsWith(".mp4"));
+    assert.ok(fs.existsSync(readProject(dataDir, p.projectId).scenes[0].imagePath));
+  });
+
+  test("a converted clip leaves only the converted file", async () => {
+    const p = project([scene(0)]);
+    const { deps } = fakeDeps({
+      resolveClip: async ({ outputDir: dir, uploadPath }) => {
+        const converted = path.join(dir, `bg-video-${"c".repeat(8)}-converted.mp4`);
+        fs.writeFileSync(converted, "mp4");
+        return { ok: true, videoPath: converted, videoUrl: "/outputs/converted.mp4", posterPath: null };
+      },
+    });
+    startAnimation(ctx(), p.projectId, { ledgerDir, deps });
+    await waitFor(() => !isAnimating(p.projectId));
+    const left = fs.readdirSync(outputDir).filter((f) => f.startsWith("bg-video-"));
+    assert.deepEqual(left, [`bg-video-${"c".repeat(8)}-converted.mp4`]);
   });
 
   test("a refused order leaves the picture with BytePlus's reason", async () => {

@@ -121,26 +121,57 @@ function removeClipFiles(clip) {
   }
 }
 
+// BytePlus told us outright that no clip exists (so nothing was charged).
+const NOT_CHARGED_CODES = new Set(["FAILED", "NOT_FOUND"]);
+
+/** What this scene's clip is estimated to cost in tokens; 12 s (the longest) if the scene is gone. */
+function estimatedTokensFor(ctx, projectId, sceneId, resolution) {
+  const project = readProject(ctx.dataDir, projectId);
+  const scene = project?.scenes?.find((s) => s.id === sceneId);
+  return estimateTokens({
+    durationSec: scene ? sceneClipSec(scene) : clampSeedanceDuration(12),
+    ratio: seedanceRatio(project?.aspect),
+    resolution,
+  });
+}
+
+function removeFile(file) {
+  try { if (file) fs.rmSync(file, { force: true }); } catch { /* best effort */ }
+}
+
 async function finishTask(ctx, projectId, sceneId, taskId, { model, resolution, ledgerDir, deps }) {
   const key = ledgerKey(projectId, sceneId);
   const done = await deps.wait(taskId);
   if (!done.ok) {
-    releaseSpend(ledgerDir, key);
-    markError(ctx.dataDir, projectId, sceneId, taskId, done.error);
+    if (NOT_CHARGED_CODES.has(done.code)) {
+      releaseSpend(ledgerDir, key);
+      markError(ctx.dataDir, projectId, sceneId, taskId, done.error);
+      return;
+    }
+    // Unknown outcome (timeout, auth, ...): BytePlus may still make and bill
+    // this clip, so count the estimate rather than forgetting the spend.
+    settleSpend(ledgerDir, key, { model, resolution, tokens: estimatedTokensFor(ctx, projectId, sceneId, resolution) });
+    markError(ctx.dataDir, projectId, sceneId, taskId,
+      `BytePlus did not return this clip (${done.error}). Its estimated cost has been counted in case BytePlus charged for it.`);
     return;
   }
-  // Made means paid for, whatever happens to the scene now.
-  const costUsd = settleSpend(ledgerDir, key, { model, resolution, tokens: done.tokens });
+  // Made means paid for, whatever happens to the scene now. A missing or zero
+  // token count is never trusted as free.
+  const tokens = Number(done.tokens) > 0 ? done.tokens : estimatedTokensFor(ctx, projectId, sceneId, resolution);
+  const costUsd = settleSpend(ledgerDir, key, { model, resolution, tokens });
   const name = `bg-video-${randomUUID()}.mp4`;
+  const downloaded = path.join(ctx.outputDir, name);
   try {
     fs.mkdirSync(ctx.outputDir, { recursive: true });
-    await deps.download(done.videoUrl, path.join(ctx.outputDir, name));
+    await deps.download(done.videoUrl, downloaded);
   } catch (e) {
+    removeFile(downloaded);
     markError(ctx.dataDir, projectId, sceneId, taskId, `The clip was made but could not be downloaded: ${e?.message || e}`);
     return;
   }
   const clip = await deps.resolveClip({ outputDir: ctx.outputDir, uploadPath: name });
   if (!clip.ok) {
+    removeFile(downloaded);
     markError(ctx.dataDir, projectId, sceneId, taskId, clip.error);
     return;
   }
@@ -149,8 +180,15 @@ async function finishTask(ctx, projectId, sceneId, taskId, { model, resolution, 
       ? { ...s, videoPath: clip.videoPath, videoUrl: clip.videoUrl, mediaKind: "video", aiVideoStatus: "done", aiVideoError: null, aiVideoCostUsd: costUsd }
       : null
   ));
-  // A new picture was chosen meanwhile: keep it, and drop the late clip.
-  if (!applied) removeClipFiles(clip);
+  // The scene keeps its picture as the poster, so the clip's own poster is spare,
+  // and so is the original download when the clip was converted.
+  if (clip.videoPath !== downloaded) removeFile(downloaded);
+  if (!applied) {
+    // A new picture was chosen meanwhile: keep it, and drop the late clip.
+    removeClipFiles(clip);
+    return;
+  }
+  if (clip.posterPath && clip.posterPath !== applied.imagePath) removeFile(clip.posterPath);
 }
 
 async function animateOne(ctx, projectId, sceneId, { model, resolution }, { ledgerDir, deps }) {
@@ -202,7 +240,8 @@ async function runAnimation(ctx, projectId, ids, quality, opts) {
       }
     }
   };
-  await Promise.all(Array.from({ length: Math.min(ANIMATE_CONCURRENCY, ids.length) }, worker));
+  // allSettled: one worker's throw must not clear the run while others still work.
+  await Promise.allSettled(Array.from({ length: Math.min(ANIMATE_CONCURRENCY, ids.length) }, worker));
 }
 
 /**
