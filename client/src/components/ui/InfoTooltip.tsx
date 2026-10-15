@@ -4,6 +4,8 @@ import { Info } from 'lucide-react';
 
 interface InfoTooltipProps {
     content: ReactNode;
+    /** Names the button for screen readers; set it when a page has several tips. Defaults to "More info". */
+    label?: string;
     side?: 'top' | 'bottom';
     iconClassName?: string;
     width?: 'sm' | 'md' | 'lg';
@@ -26,6 +28,7 @@ const WIDTH_PX: Record<NonNullable<InfoTooltipProps['width']>, number> = {
  */
 export function InfoTooltip({
     content,
+    label = 'More info',
     side = 'top',
     iconClassName = '',
     width = 'md',
@@ -108,7 +111,7 @@ export function InfoTooltip({
             <button
                 ref={triggerRef}
                 type="button"
-                aria-label="More info"
+                aria-label={label}
                 aria-expanded={open}
                 onMouseEnter={() => setOpen(true)}
                 onMouseLeave={() => setOpen(false)}
