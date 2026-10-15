@@ -56,7 +56,6 @@ function LyricSteps({ project, error, onRetry }: { project: LyricProject; error:
           <button type="button" className="btn btn-secondary" onClick={onRetry}>Check again</button>
         </div>
       )}
-      <GuideSteps storageKey="lyric-video" title="How to make a lyric video" steps={GUIDE_STEPS} tip="You can go back to any step. Your changes are saved." />
       <LyricStepper project={project} step={step} onStep={goTo} />
       {step === 'song' && <SongStep project={project} onChange={onChange} onNext={() => goTo('lyrics')} />}
       {step === 'lyrics' && <LyricsStep project={project} onChange={onChange} onNext={() => goTo('timing')} />}
@@ -98,6 +97,8 @@ export function LyricVideoPage() {
   return (
     <div className="space-y-6">
       {header}
+      {/* On the start screen too, so a first-timer sees the whole route before uploading. */}
+      <GuideSteps storageKey="lyric-video" title="How to make a lyric video" steps={GUIDE_STEPS} tip="You can go back to any step. Your changes are saved." />
       {projectId
         ? <LyricProjectView key={projectId} projectId={projectId} />
         : <LyricStart onCreated={opened} />}

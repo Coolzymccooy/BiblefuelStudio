@@ -9,6 +9,7 @@ vi.mock('../../components/lyricVideo/LyricsStep', () => ({ LyricsStep: () => <di
 vi.mock('../../components/lyricVideo/TimingStep', () => ({ TimingStep: () => <div>timing step</div> }));
 vi.mock('../../components/lyricVideo/LookStep', () => ({ LookStep: () => <div>look step</div> }));
 vi.mock('../../components/lyricVideo/RenderStep', () => ({ RenderStep: () => <div>render step</div> }));
+vi.mock('../../components/lyricVideo/LyricStart', () => ({ LyricStart: () => <div>start screen</div> }));
 import { lyricVideoApi } from '../../lib/lyricVideoApi';
 import { LyricVideoPage } from '../LyricVideoPage';
 import type { LyricProject } from '../../lib/lyricVideoTypes';
@@ -19,12 +20,15 @@ const project = (status: string, song: unknown = { file: 'x', durationSec: 30, c
   timing: { status }, look: { id: 'studio-lagos-night', energy: 'wild', seed: 1 }, background: null, renders: [],
 }) as unknown as LyricProject;
 
-function renderPage() {
+function renderPage(entry = '/app/lyric-video/lv_1') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={['/app/lyric-video/lv_1']}>
-        <Routes><Route path="/app/lyric-video/:projectId" element={<LyricVideoPage />} /></Routes>
+      <MemoryRouter initialEntries={[entry]}>
+        <Routes>
+          <Route path="/app/lyric-video" element={<LyricVideoPage />} />
+          <Route path="/app/lyric-video/:projectId" element={<LyricVideoPage />} />
+        </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -52,6 +56,13 @@ describe('LyricVideoPage guide', () => {
     renderPage();
     expect(await screen.findByText('song step')).toBeTruthy();
     expect(screen.getByRole('heading', { name: TITLE })).toBeTruthy();
+  });
+
+  it('shows on the start screen, before any song is chosen', () => {
+    renderPage('/app/lyric-video');
+    expect(screen.getByText('start screen')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: TITLE })).toBeTruthy();
+    for (const label of STEP_LABELS) expect(screen.getByText(label)).toBeTruthy();
   });
 
   it('can be dismissed, leaves "Show steps", and comes back from it', async () => {

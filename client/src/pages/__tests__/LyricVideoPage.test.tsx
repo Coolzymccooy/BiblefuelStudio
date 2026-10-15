@@ -55,7 +55,7 @@ describe('LyricVideoPage', () => {
 
   it('shows the start screen with the remembered artist', async () => {
     renderAt('/app/lyric-video');
-    expect(await screen.findByRole('heading', { name: /lyric video/i })).toBeTruthy();
+    expect(await screen.findByRole('heading', { level: 1, name: /lyric video/i })).toBeTruthy();
     expect(await screen.findByDisplayValue('Sthill Waters')).toBeTruthy();
   });
 

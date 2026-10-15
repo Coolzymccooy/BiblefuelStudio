@@ -11,7 +11,7 @@ import { messageOf } from './messageOf';
 import { playPreviewFrom } from './previewPlayer';
 
 const CHECK_TIP =
-  "We couldn't hear this line clearly. Press Play from here to listen. Press Start here when the line begins, or nudge it earlier or later.";
+  'A line marked “Check this line” was not heard clearly. Press Play from here to listen, then Start here when the line begins, or nudge it earlier or later.';
 
 interface Props { project: LyricProject; onChange: (p: LyricProject) => void }
 

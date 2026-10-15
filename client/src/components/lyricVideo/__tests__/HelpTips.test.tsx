@@ -53,7 +53,7 @@ describe('lyric video help tips', () => {
     expect(screen.getAllByText('Check this line')).toHaveLength(2);
     expect(screen.getAllByRole('button', { name: 'About checking lines' })).toHaveLength(1);
     expect(openTip('About checking lines')).toBe(
-      "We couldn't hear this line clearly. Press Play from here to listen. Press Start here when the line begins, or nudge it earlier or later.",
+      'A line marked “Check this line” was not heard clearly. Press Play from here to listen, then Start here when the line begins, or nudge it earlier or later.',
     );
     expect(await screen.findByTestId('lyric-preview')).toBeTruthy();
   });
