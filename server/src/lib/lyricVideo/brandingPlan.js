@@ -9,6 +9,8 @@ export const SHORTS_TRIM_SEC = 179;
 /** A song whose last caption leaves less than this much tail gets extended by it. */
 export const TAIL_SEC = 3;
 export const END_CARD_SEC = 4;
+/** The most a video grows past the song, however late its captions run. */
+export const MAX_EXTENSION_SEC = 6;
 /** When the "song by" intro credit is on screen. */
 export const INTRO = [0.8, 7.4];
 /** Fade for branding appearing and leaving, in seconds. */
@@ -131,7 +133,11 @@ function planTiming({ durationSec, audibleEnd, captionsEnd, endCardOn, trim }) {
     };
   }
   const extended = endCardOn && durationSec - captionsEnd < TAIL_SEC;
-  const totalSec = extended ? durationSec + TAIL_SEC : durationSec;
+  // Captions can outlive the song, so the extension grows until the card gets its time after
+  // them, but never past MAX_EXTENSION_SEC.
+  const totalSec = extended
+    ? Math.min(durationSec + MAX_EXTENSION_SEC, Math.max(durationSec + TAIL_SEC, captionsEnd + END_CARD_GAP_SEC + TAIL_SEC))
+    : durationSec;
   const abrupt = extended && audibleEnd >= durationSec - ABRUPT_END_SEC;
   return {
     totalSec,

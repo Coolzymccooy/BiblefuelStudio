@@ -379,7 +379,8 @@ test("a song that ends right after its last line gets 3 s more picture and silen
     const logo = { file, width: 64, height: 64, opacity: 0.85 };
     const geometry = bandGeometry({ w: 360, h: 640, logo });
     const plan = planBranding({
-      durationSec: 2, audibleEnd: 2, captionsEnd: 1.9, hideWindows: [], options: { logo: true, intro: true, endCard: true },
+      // captions end 1.8 s in, so the card (0.2 s later, 3 s long) lands exactly 3 s past the song
+      durationSec: 2, audibleEnd: 2, captionsEnd: 1.8, hideWindows: [], options: { logo: true, intro: true, endCard: true },
       hasLogo: true, artist: "Sthill Waters", shortsTrim: false, aspect: "portrait", lines: [],
     });
     assert.equal(plan.totalSec, 5);

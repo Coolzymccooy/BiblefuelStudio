@@ -35,6 +35,22 @@ test("a song that ends right after its last line runs 3 s longer, and the end ca
   assert.deepEqual(p.audio, { inputSec: 120, padToSec: 123, fadeFromSec: 118.5, fadeSec: 1.5 });
 });
 
+test("captions that run past the song's end stretch the video so the end card still gets 3 s", () => {
+  // min(175.37 + 6, max(175.37 + 3, 176.5 + 0.2 + 3)) = 179.7
+  const p = planBranding({ ...base, durationSec: 175.37, captionsEnd: 176.5, audibleEnd: 0 });
+  assert.equal(p.totalSec, 179.7);
+  assert.deepEqual(p.endCard, { start: 176.7, end: 179.7 });
+  assert.equal(p.audio.padToSec, 179.7);
+  assert.equal(p.audio.inputSec, 175.37);
+});
+
+test("the extension is capped at 6 s, and the end card is then dropped if it cannot fit", () => {
+  const p = planBranding({ ...base, durationSec: 175, captionsEnd: 180, audibleEnd: 0 });
+  assert.equal(p.totalSec, 181);
+  assert.equal(p.audio.padToSec, 181);
+  assert.equal(p.endCard, null, "181 - 180.2 is under 2 s");
+});
+
 test("an extended video with a naturally quiet ending is not faded", () => {
   const p = planBranding({ ...base, captionsEnd: 119, audibleEnd: 118 });
   assert.equal(p.totalSec, 123);
@@ -50,12 +66,12 @@ test("without an end card the video is never extended, however short the tail", 
 });
 
 test("the end card is dropped when under 2 s would remain", () => {
-  // captions run past the audio (121 s): the video grows to 123 s, but the card would start at
-  // 121.2 and leave only 1.8 s
-  const p = planBranding({ ...base, captionsEnd: 121, audibleEnd: 118 });
-  assert.equal(p.totalSec, 123);
+  // captions run 7 s past the audio (127 s): the growth is capped at 126 s, but the card would
+  // start at 127.2, after the video ends
+  const p = planBranding({ ...base, captionsEnd: 127, audibleEnd: 118 });
+  assert.equal(p.totalSec, 126);
   assert.equal(p.endCard, null);
-  assert.deepEqual(p.bandPieces, [[0, 123]]);
+  assert.deepEqual(p.bandPieces, [[0, 126]]);
 });
 
 test("the band steps aside while captions reach it", () => {
