@@ -16,7 +16,8 @@ export function LyricStepper({ project, step, onStep }: Props) {
   return (
     <nav aria-label="Steps" className="flex items-start">
       {LYRIC_STEPS.map((id, i) => {
-        const done = i < current && reachable[id];
+        // Render is the last step, so nothing comes after it: it is done once a video has been made.
+        const done = (i < current && reachable[id]) || (id === 'render' && (project.renders?.length ?? 0) > 0);
         const active = id === step;
         return (
           <Fragment key={id}>

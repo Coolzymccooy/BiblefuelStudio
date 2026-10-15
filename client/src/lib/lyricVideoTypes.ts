@@ -54,6 +54,16 @@ export interface LyricLook { id: string; energy: LyricEnergy; seed: number }
 
 export interface LyricBackground { file: string; kind: 'video' | 'image'; fit: BackgroundFit }
 
+/** What the YouTube publish panel opens with; the user can change all of it. */
+export interface LyricPublishDraft {
+  title: string;
+  description: string;
+  tags: string[];
+  categoryId: string;
+  /** A plain sentence on what the upload cannot set, shown beside the panel. */
+  note: string;
+}
+
 export interface LyricRender {
   jobId: string;
   aspect: RenderAspect;

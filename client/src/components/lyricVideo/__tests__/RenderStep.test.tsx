@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-vi.mock('../../../lib/lyricVideoApi', () => ({ lyricVideoApi: { render: vi.fn(), renderStatus: vi.fn(), cancelRender: vi.fn(), get: vi.fn() } }));
+vi.mock('../../../lib/lyricVideoApi', () => ({ lyricVideoApi: { render: vi.fn(), renderStatus: vi.fn(), cancelRender: vi.fn(), get: vi.fn(), publishDraft: vi.fn() } }));
+// The panel has its own tests; here only what the render step hands it matters.
+vi.mock('../../share/YoutubePublishPanel', () => ({
+  YoutubePublishPanel: (props: { videoUrl: string; initial?: { title?: string; description?: string; tags?: string[] }; categoryId?: string }) => (
+    <div data-testid="yt-panel">{props.videoUrl}|{props.initial?.title}|{props.initial?.tags?.join(',')}|{props.categoryId}</div>
+  ),
+}));
 vi.mock('react-hot-toast', () => ({ default: { error: vi.fn(), success: vi.fn() } }));
 import toast from 'react-hot-toast';
 import { lyricVideoApi } from '../../../lib/lyricVideoApi';
@@ -107,5 +113,31 @@ describe('RenderStep', () => {
     expect(links).toHaveLength(2);
     expect(links[0].getAttribute('href')).toMatch(/lyric-b\.mp4\?dl=/);
     expect(links[1].getAttribute('href')).toMatch(/lyric-a\.mp4\?dl=/);
+  });
+
+  const made = { ...p, renders: [{ jobId: 'j1', aspect: 'portrait', quality: '720p', file: '/data/out/lyric-a.mp4', durationSec: 30, at: '2026-10-14T10:00:00Z' }] } as unknown as LyricProject;
+  const draft = { title: 'My Time — A (Official Lyric Video)', description: 'Lyrics', tags: ['My Time', 'lyrics'], categoryId: '10', note: 'Set Altered or synthetic content in YouTube Studio.' };
+
+  it('offers Publish to YouTube for the video being watched, opened with the draft', async () => {
+    vi.mocked(lyricVideoApi.publishDraft).mockResolvedValue(draft);
+    render(<RenderStep project={made} onChange={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: /publish to youtube/i })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /watch/i }));
+    fireEvent.click(screen.getByRole('button', { name: /publish to youtube/i }));
+    const panel = await screen.findByTestId('yt-panel');
+    expect(lyricVideoApi.publishDraft).toHaveBeenCalledWith('lv_1');
+    expect(panel.textContent).toBe('/outputs/lyric-a.mp4|My Time — A (Official Lyric Video)|My Time,lyrics|10');
+    expect(screen.getByText(draft.note)).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByRole('heading', { name: /publish to youtube/i }));
+  });
+
+  it('still opens the panel, with the song title, when the draft cannot be fetched', async () => {
+    vi.mocked(lyricVideoApi.publishDraft).mockRejectedValue(new Error('offline'));
+    render(<RenderStep project={made} onChange={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /watch/i }));
+    fireEvent.click(screen.getByRole('button', { name: /publish to youtube/i }));
+    const panel = await screen.findByTestId('yt-panel');
+    expect(panel.textContent).toBe('/outputs/lyric-a.mp4|My Time||10');
+    expect(screen.getByRole('status').textContent).toMatch(/could not be filled in/i);
   });
 });

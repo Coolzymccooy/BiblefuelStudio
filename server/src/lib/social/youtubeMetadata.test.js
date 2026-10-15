@@ -51,6 +51,26 @@ describe("buildYoutubeDescription", () => {
   });
 });
 
+describe("description byte limit (YouTube counts bytes)", () => {
+  test("a long accented description is cut to 5000 bytes, never in the middle of a character", () => {
+    const r = validateYoutubeMetadata({ title: "T", description: "ọ😀".repeat(2000) });
+    assert.equal(r.ok, true);
+    assert.ok(Buffer.byteLength(r.value.description, "utf8") <= 5000, `got ${Buffer.byteLength(r.value.description, "utf8")} bytes`);
+    assert.ok(!r.value.description.includes("�"));
+    assert.ok(!/[\uD800-\uDBFF]$/.test(r.value.description), "no lone half of an emoji at the end");
+  });
+
+  test("a short description is untouched, and plain text keeps its full 5000 characters", () => {
+    assert.equal(validateYoutubeMetadata({ title: "T", description: "Amen 🙏" }).value.description, "Amen 🙏");
+    assert.equal(validateYoutubeMetadata({ title: "T", description: "a".repeat(6000) }).value.description.length, 5000);
+  });
+
+  test("buildYoutubeDescription stays inside the byte limit too", () => {
+    const d = buildYoutubeDescription({ summary: "ọ".repeat(3000), hashtags: ["x"] });
+    assert.ok(Buffer.byteLength(d, "utf8") <= 5000);
+  });
+});
+
 describe("validateYoutubeMetadata", () => {
   const now = Date.parse("2026-09-21T10:00:00Z");
   test("accepts a minimal payload and applies defaults", () => {

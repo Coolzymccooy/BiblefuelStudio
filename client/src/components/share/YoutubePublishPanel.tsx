@@ -47,6 +47,8 @@ export interface YoutubePublishPanelProps {
    * so the history is right even if the page is closed mid-upload.
    */
   record?: { ambientProjectId: string };
+  /** YouTube's category id, e.g. "10" for Music; left out, the server uses its default. */
+  categoryId?: string;
 }
 
 import { fieldLabelCls, inputCls, primaryBtnCls } from '../story/formStyles';
@@ -62,7 +64,7 @@ export function toIsoPublishAt(local: string): string {
   return Number.isNaN(d.getTime()) ? '' : d.toISOString();
 }
 
-export function YoutubePublishPanel({ videoUrl, initial, thumbnailOptions = [], chapters, existingVideos = [], onPublished, record }: YoutubePublishPanelProps) {
+export function YoutubePublishPanel({ videoUrl, initial, thumbnailOptions = [], chapters, existingVideos = [], onPublished, record, categoryId }: YoutubePublishPanelProps) {
   const [title, setTitle] = useState(initial?.title ?? '');
   const [description, setDescription] = useState(initial?.description ?? '');
   const [tagsRaw, setTagsRaw] = useState((initial?.tags ?? []).join(', '));
@@ -99,6 +101,7 @@ export function YoutubePublishPanel({ videoUrl, initial, thumbnailOptions = [], 
         thumbnailTagline: thumbnailPath && thumbnailTitle ? tagline.trim() : '',
         chapters,
         ...(record ? { record } : {}),
+        ...(categoryId ? { categoryId } : {}),
       }, {
         shouldStop: () => gone.current,
         onJoined: () => toast('This video is already uploading, so the details you changed were not used. Following that upload.', { duration: 8000 }),

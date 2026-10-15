@@ -38,6 +38,24 @@ function chapterLines(chapters) {
   return normalised.map((c) => `${formatChapterTimestamp(c.startMs)} ${unlinkVerseTimes(String(c.title).trim())}`);
 }
 
+/**
+ * Cuts text to at most `maxBytes` of UTF-8. YouTube's description limit is in bytes, so accented
+ * words and emoji fill it faster than their character count shows. Never splits a character.
+ */
+export function truncateBytes(text, maxBytes) {
+  const s = String(text ?? "");
+  if (Buffer.byteLength(s, "utf8") <= maxBytes) return s;
+  let out = "";
+  let used = 0;
+  for (const ch of s) {
+    const size = Buffer.byteLength(ch, "utf8");
+    if (used + size > maxBytes) break;
+    out += ch;
+    used += size;
+  }
+  return out;
+}
+
 export function buildYoutubeDescription({ summary = "", chapters = [], links = [], hashtags = [] } = {}) {
   const blocks = [];
   const s = String(summary || "").trim();
@@ -51,7 +69,7 @@ export function buildYoutubeDescription({ summary = "", chapters = [], links = [
     .filter(Boolean)
     .map((h) => `#${h}`);
   if (hs.length) blocks.push(hs.join(" "));
-  return blocks.join("\n\n").slice(0, YT_DESCRIPTION_MAX);
+  return truncateBytes(blocks.join("\n\n"), YT_DESCRIPTION_MAX);
 }
 
 function parsePublishAt(raw, now) {
@@ -68,7 +86,7 @@ export function validateYoutubeMetadata(input = {}, { now = Date.now() } = {}) {
   if (!title) return { ok: false, error: "title is required" };
   if (title.length > YT_TITLE_MAX) return { ok: false, error: `title must be ${YT_TITLE_MAX} characters or fewer (got ${title.length})` };
 
-  const description = String(input.description || "").slice(0, YT_DESCRIPTION_MAX);
+  const description = truncateBytes(input.description || "", YT_DESCRIPTION_MAX);
 
   const tags = (Array.isArray(input.tags) ? input.tags : []).map((t) => String(t).trim()).filter(Boolean);
   const tagsTotal = tags.reduce((n, t) => n + t.length, 0);
