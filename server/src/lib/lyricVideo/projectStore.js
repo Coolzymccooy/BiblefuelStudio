@@ -26,6 +26,19 @@ function atomicWrite(file, data) {
   fs.renameSync(tmp, file);
 }
 
+/** Branding options: `logo: null` follows the account's Settings; intro credit and end card default to on. */
+export const DEFAULT_BRANDING = Object.freeze({ logo: null, intro: true, endCard: true });
+
+/** The branding options as stored: unknown keys dropped, anything that is not a boolean (or null for the logo) defaulted. */
+export function normaliseBranding(value) {
+  const given = value !== null && typeof value === "object" && !Array.isArray(value) ? value : {};
+  return {
+    logo: typeof given.logo === "boolean" ? given.logo : DEFAULT_BRANDING.logo,
+    intro: typeof given.intro === "boolean" ? given.intro : DEFAULT_BRANDING.intro,
+    endCard: typeof given.endCard === "boolean" ? given.endCard : DEFAULT_BRANDING.endCard,
+  };
+}
+
 export function createProject(dataDir, { title, artist }) {
   const now = new Date().toISOString();
   const project = {
@@ -35,6 +48,7 @@ export function createProject(dataDir, { title, artist }) {
     song: null, sheet: { raw: "", parsedAt: null }, sections: [], lines: [],
     timing: { status: "idle" },
     look: { id: "studio-lagos-night", energy: "wild", seed: 1 },
+    branding: { ...DEFAULT_BRANDING },
     background: null, renders: [],
   };
   atomicWrite(fileOf(dataDir, project.projectId), project);
@@ -51,7 +65,7 @@ export function readProject(dataDir, id) {
   if (!file || !fs.existsSync(file)) return null;
   let parsed;
   try { parsed = JSON.parse(fs.readFileSync(file, "utf8")); } catch { return null; }
-  return isProjectOf(parsed, id) ? parsed : null;
+  return isProjectOf(parsed, id) ? { ...parsed, branding: normaliseBranding(parsed.branding) } : null;
 }
 
 export function writeProject(dataDir, project) {

@@ -10,7 +10,8 @@ import { createLyricVideoRouter } from "./lyricVideo.js";
 import { readProject, writeProject, createProject, applySheet } from "../lib/lyricVideo/projectStore.js";
 import { isAligning } from "../lib/lyricVideo/alignJob.js";
 import { readUsage } from "../lib/usageStore.js";
-import { markRunning, markDone, getJob } from "../lib/renderJobs.js";
+import { markRunning, markDone, getJob, cancelJob } from "../lib/renderJobs.js";
+import { writeBranding, logoFileFor } from "../lib/branding.js";
 
 let root;
 let server;
@@ -918,6 +919,301 @@ describe("limits", () => {
     assert.equal(logged.filter((l) => l.includes("failed")).length, 1, logged.join("\n"));
     stub.render = finishingRender();
     ctx = userCtx("u1");
+  });
+});
+
+describe("branding options and the branded render", () => {
+  const DEFAULTS = { logo: null, intro: true, endCard: true };
+  let n = 0;
+  /** A premium user of its own, so branding.json and the logo never leak between tests. */
+  const freshUser = () => { ctx = userCtx(`brand-${++n}`, "premium"); return ctx; };
+  const writeLogo = (c) => {
+    const file = logoFileFor(c.dataDir);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    spawnSync(FF, ["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=white:s=64x32", "-frames:v", "1", file]);
+    return file;
+  };
+  const jobDone = (p, jobId) => until(async () => ["done", "error"].includes((await call("GET", `/${p.projectId}/render/${jobId}`)).json.job.status));
+  after(() => { stub.render = finishingRender(); stub.statfs = null; ctx = userCtx("u1"); });
+
+  test("a new project and an older one without the field both read as the defaults", async () => {
+    freshUser();
+    const id = await newProject();
+    assert.deepEqual((await call("GET", `/${id}`)).json.project.branding, DEFAULTS);
+    const raw = JSON.parse(fs.readFileSync(path.join(ctx.dataDir, "lyric-projects", `${id}.json`), "utf8"));
+    delete raw.branding;
+    fs.writeFileSync(path.join(ctx.dataDir, "lyric-projects", `${id}.json`), JSON.stringify(raw));
+    assert.deepEqual((await call("GET", `/${id}`)).json.project.branding, DEFAULTS);
+    const b = (await call("GET", `/${id}/branding`)).json.branding;
+    assert.deepEqual(b, { logo: false, intro: true, endCard: true, hasLogo: false, logoFromSettings: false });
+  });
+  test("PUT takes booleans (and null for the logo) and refuses anything else", async () => {
+    freshUser();
+    const id = await newProject();
+    for (const body of [{ logo: "yes" }, { intro: 1 }, { endCard: null }, { intro: "false" }, { logo: [] }, {}]) {
+      assert.equal((await call("PUT", `/${id}/branding`, body)).status, 400, JSON.stringify(body));
+    }
+    const r = await call("PUT", `/${id}/branding`, { logo: true, intro: false, endCard: false, extra: 1 });
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.json.project.branding, { logo: true, intro: false, endCard: false });
+    const partial = await call("PUT", `/${id}/branding`, { intro: true });
+    assert.deepEqual(partial.json.project.branding, { logo: true, intro: true, endCard: false }, "other options keep their value");
+    const back = await call("PUT", `/${id}/branding`, { logo: null });
+    assert.equal(back.json.project.branding.logo, null, "null goes back to following Settings");
+  });
+  test("another user's project is a 404 for both branding routes", async () => {
+    freshUser();
+    const id = await newProject();
+    ctx = userCtx("brand-intruder");
+    assert.equal((await call("GET", `/${id}/branding`)).status, 404);
+    assert.equal((await call("PUT", `/${id}/branding`, { intro: false })).status, 404);
+  });
+  test("GET resolves the logo from the project, else from Settings", async () => {
+    freshUser();
+    const id = await newProject();
+    const get = async () => (await call("GET", `/${id}/branding`)).json.branding;
+    assert.deepEqual(await get(), { logo: false, intro: true, endCard: true, hasLogo: false, logoFromSettings: false });
+    writeBranding(ctx.dataDir, { enabled: true });
+    assert.deepEqual(await get(), { logo: true, intro: true, endCard: true, hasLogo: false, logoFromSettings: true }, "Settings on, no file uploaded");
+    await call("PUT", `/${id}/branding`, { logo: false });
+    assert.deepEqual(await get(), { logo: false, intro: true, endCard: true, hasLogo: false, logoFromSettings: true }, "the project wins");
+    await call("PUT", `/${id}/branding`, { logo: null });
+    writeBranding(ctx.dataDir, { enabled: false });
+    assert.equal((await get()).logo, false);
+    if (hasFfmpeg) { writeLogo(ctx); assert.equal((await get()).hasLogo, true); }
+  });
+  test("a render gets a plan and a document holding the branding events", async () => {
+    freshUser();
+    const p = placedProject(ctx);
+    let seen;
+    let ass = "";
+    stub.render = finishingRender(async (o) => { seen = o; ass = fs.readFileSync(o.assPath, "utf8"); });
+    const r = await call("POST", `/${p.projectId}/render`, { aspect: "landscape" });
+    assert.equal(r.status, 202);
+    assert.ok(await jobDone(p, r.json.jobId));
+    assert.ok(seen.plan && seen.geometry, "the plan and band geometry reach the renderer");
+    assert.equal(seen.plan.totalSec, 13, "a 10 s song whose last line ends near the end gets the 3 s tail");
+    assert.ok(seen.plan.endCard && seen.plan.intro.length > 0);
+    assert.ok(ass.includes("song by A"), "the intro credit is in the document");
+    assert.equal(seen.logo, null, "no logo uploaded, none drawn");
+  });
+  test("the project's intro and end card switches reach the plan", async () => {
+    freshUser();
+    const p = placedProject(ctx);
+    await call("PUT", `/${p.projectId}/branding`, { intro: false, endCard: false });
+    let seen;
+    stub.render = finishingRender(async (o) => { seen = o; });
+    const r = await call("POST", `/${p.projectId}/render`, {});
+    assert.ok(await jobDone(p, r.json.jobId));
+    assert.deepEqual(seen.plan.intro, []);
+    assert.equal(seen.plan.endCard, null);
+    assert.equal(seen.plan.totalSec, 10, "no end card, no tail");
+  });
+  test("a logo is drawn when the project says so, or follows Settings", { skip: !hasFfmpeg && "ffmpeg not installed" }, async () => {
+    freshUser();
+    const file = writeLogo(ctx);
+    const p = placedProject(ctx);
+    const renderOnce = async () => {
+      let seen;
+      stub.render = finishingRender(async (o) => { seen = o; });
+      const r = await call("POST", `/${p.projectId}/render`, {});
+      assert.equal(r.status, 202);
+      assert.ok(await jobDone(p, r.json.jobId));
+      await sleep(40);
+      return seen;
+    };
+    const off = await renderOnce();
+    assert.equal(off.logo, null, "Settings off and the project follows Settings");
+    assert.equal(off.plan.showLogo, false);
+    writeBranding(ctx.dataDir, { enabled: true, opacity: 0.6 });
+    const on = await renderOnce();
+    assert.deepEqual(on.logo, { file, opacity: 0.6 });
+    assert.equal(on.plan.showLogo, true);
+    await call("PUT", `/${p.projectId}/branding`, { logo: false });
+    assert.equal((await renderOnce()).logo, null, "the project overrides Settings");
+    writeBranding(ctx.dataDir, { enabled: false });
+    await call("PUT", `/${p.projectId}/branding`, { logo: true });
+    assert.deepEqual((await renderOnce()).logo, { file, opacity: 0.6 }, "the project can switch it on over Settings");
+  });
+  test("a logo file that cannot be read is left out of the render, with one logged line", async () => {
+    freshUser();
+    const file = logoFileFor(ctx.dataDir);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, "not a png");
+    writeBranding(ctx.dataDir, { enabled: true });
+    const p = placedProject(ctx);
+    let seen;
+    stub.render = finishingRender(async (o) => { seen = o; });
+    const logged = [];
+    const original = console.warn;
+    console.warn = (...a) => { logged.push(a.join(" ")); };
+    try {
+      const r = await call("POST", `/${p.projectId}/render`, {});
+      assert.equal(r.status, 202);
+      assert.ok(await jobDone(p, r.json.jobId));
+    } finally { console.warn = original; }
+    assert.equal(seen.logo, null);
+    assert.equal(seen.plan.showLogo, false);
+    assert.equal(logged.filter((l) => l.includes("logo")).length, 1, logged.join("\n"));
+  });
+
+  describe("the Shorts trim", () => {
+    test("shortsTrim must be a boolean", async () => {
+      freshUser();
+      const p = placedProject(ctx);
+      for (const shortsTrim of ["true", 1, null, {}, []]) {
+        assert.equal((await call("POST", `/${p.projectId}/render`, { shortsTrim })).status, 400, JSON.stringify(shortsTrim));
+      }
+    });
+    test("a trim that is not offered is refused with the offer's sentence, before anything is charged", async () => {
+      freshUser();
+      const p = placedProject(ctx);
+      const r = await call("POST", `/${p.projectId}/render`, { aspect: "portrait", shortsTrim: true });
+      assert.equal(r.status, 409);
+      assert.equal(r.json.error, "Only for portrait songs between 3:00 and 3:10.");
+      assert.equal(readUsage(ctx.dataDir).counts.render, 0);
+    });
+    test("a line that ends after 2:58 refuses the trim with its reason", async () => {
+      freshUser();
+      const p = placedProject(ctx, { n: 2, durationSec: 185, every: 178 });
+      const r = await call("POST", `/${p.projectId}/render`, { aspect: "portrait", shortsTrim: true });
+      assert.equal(r.status, 409);
+      assert.equal(r.json.error, "A lyric line ends after 2:58, so trimming would cut it.");
+      assert.equal(readUsage(ctx.dataDir).counts.render, 0);
+    });
+    test("an allowed trim cuts to 2:59 and is recorded with that length", async () => {
+      freshUser();
+      const p = placedProject(ctx, { n: 3, durationSec: 185, every: 10 });
+      let seen;
+      stub.render = finishingRender(async (o) => { seen = o; });
+      const r = await call("POST", `/${p.projectId}/render`, { aspect: "portrait", shortsTrim: true });
+      assert.equal(r.status, 202);
+      assert.ok(await until(() => readProject(ctx.dataDir, p.projectId).renders.length === 1));
+      assert.equal(seen.plan.totalSec, 179);
+      const saved = readProject(ctx.dataDir, p.projectId).renders[0];
+      assert.equal(saved.durationSec, 179);
+      assert.equal(saved.shortsTrim, true);
+    });
+  });
+
+  test("a recorded render's length is the plan's, and shortsTrim is false by default", async () => {
+    freshUser();
+    const p = placedProject(ctx);
+    let seen;
+    stub.render = finishingRender(async (o) => { seen = o; });
+    await call("POST", `/${p.projectId}/render`, {});
+    assert.ok(await until(() => readProject(ctx.dataDir, p.projectId).renders.length === 1));
+    const saved = readProject(ctx.dataDir, p.projectId).renders[0];
+    assert.equal(saved.durationSec, seen.plan.totalSec);
+    assert.equal(saved.durationSec, 13);
+    assert.equal(saved.shortsTrim, false);
+  });
+  test("the disk check uses the extended length", async () => {
+    freshUser();
+    const p = placedProject(ctx);
+    // 10 s at 720p is about 7.4 MB and 13 s about 9.6 MB. Room for the first with the 1 GB reserve, not the second.
+    stub.statfs = () => ({ bavail: 1033, bsize: 1024 * 1024 });
+    stub.render = finishingRender();
+    const r = await call("POST", `/${p.projectId}/render`, {});
+    assert.equal(r.status, 507);
+    await call("PUT", `/${p.projectId}/branding`, { endCard: false });
+    const fits = await call("POST", `/${p.projectId}/render`, {});
+    assert.equal(fits.status, 202, "no end card, no extension, it fits");
+    assert.ok(await jobDone(p, fits.json.jobId));
+    stub.statfs = null;
+  });
+
+  describe("a branded render that fails is made again without the logo", { skip: !hasFfmpeg && "ffmpeg not installed" }, () => {
+    const setup = () => {
+      freshUser();
+      writeLogo(ctx);
+      writeBranding(ctx.dataDir, { enabled: true });
+      return placedProject(ctx);
+    };
+    const captureWarnings = () => {
+      const logged = [];
+      const original = console.warn;
+      console.warn = (...a) => { logged.push(a.join(" ")); };
+      return { logged, restore: () => { console.warn = original; } };
+    };
+
+    test("one retry with logo null, the same plan and document; the job ends done", async () => {
+      const p = setup();
+      const calls = [];
+      stub.render = async (o) => {
+        calls.push({ ...o, assText: fs.readFileSync(o.assPath, "utf8") });
+        if (calls.length === 1) { markRunning(o.jobId); return { ok: false, error: "x" }; }
+        return finishingRender()(o);
+      };
+      const warn = captureWarnings();
+      try {
+        const r = await call("POST", `/${p.projectId}/render`, {});
+        assert.ok(await jobDone(p, r.json.jobId));
+        assert.equal((await call("GET", `/${p.projectId}/render/${r.json.jobId}`)).json.job.status, "done");
+        assert.equal((await call("GET", `/${p.projectId}/render/${r.json.jobId}`)).json.job.error, null);
+      } finally { warn.restore(); }
+      assert.equal(calls.length, 2);
+      assert.ok(calls[0].logo, "the first try had the logo");
+      assert.equal(calls[1].logo, null);
+      assert.equal(calls[1].plan, calls[0].plan, "the same plan");
+      assert.equal(calls[1].assText, calls[0].assText, "the same document");
+      assert.equal(calls[1].assPath, calls[0].assPath);
+      assert.deepEqual(warn.logged, ["[lyric-video] branded render failed, retrying without the logo: x"]);
+      assert.ok(await until(() => readProject(ctx.dataDir, p.projectId).renders.length === 1));
+    });
+    test("a render that throws is retried too, and a second failure is a plain failed job", async () => {
+      const p = setup();
+      const calls = [];
+      stub.render = async (o) => { calls.push(o); markRunning(o.jobId); throw new Error("filter exploded"); };
+      const warn = captureWarnings();
+      const errors = [];
+      const original = console.error;
+      console.error = (...a) => { errors.push(a.join(" ")); };
+      try {
+        const r = await call("POST", `/${p.projectId}/render`, {});
+        assert.ok(await jobDone(p, r.json.jobId));
+        await sleep(30);
+        assert.equal((await call("GET", `/${p.projectId}/render/${r.json.jobId}`)).json.job.status, "error");
+      } finally { warn.restore(); console.error = original; }
+      assert.equal(calls.length, 2, "one retry only");
+      assert.equal(calls[1].logo, null);
+      assert.equal(readProject(ctx.dataDir, p.projectId).renders.length, 0);
+    });
+    test("a cancelled render is never retried", async () => {
+      const p = setup();
+      const calls = [];
+      stub.render = async (o) => {
+        calls.push(o);
+        markRunning(o.jobId);
+        cancelJob(o.jobId, ctx.userId);
+        return { ok: false, error: "Render cancelled" };
+      };
+      const r = await call("POST", `/${p.projectId}/render`, {});
+      assert.ok(await jobDone(p, r.json.jobId));
+      await sleep(40);
+      assert.equal(calls.length, 1);
+      assert.equal((await call("GET", `/${p.projectId}/render/${r.json.jobId}`)).json.job.error, "Render cancelled");
+    });
+    test("a job cancelled during the run is not retried even when the error is something else", async () => {
+      const p = setup();
+      const calls = [];
+      stub.render = async (o) => { calls.push(o); markRunning(o.jobId); cancelJob(o.jobId, ctx.userId); return { ok: false, error: "ffmpeg exited 255" }; };
+      const r = await call("POST", `/${p.projectId}/render`, {});
+      assert.ok(await jobDone(p, r.json.jobId));
+      await sleep(40);
+      assert.equal(calls.length, 1);
+    });
+    test("a render without a logo is not retried", async () => {
+      freshUser();
+      const p = placedProject(ctx);
+      const calls = [];
+      stub.render = async (o) => { calls.push(o); markRunning(o.jobId); return { ok: false, error: "x" }; };
+      const r = await call("POST", `/${p.projectId}/render`, {});
+      assert.ok(await until(async () => (await call("GET", `/${p.projectId}/render/${r.json.jobId}`)).json.job.status === "error"));
+      await sleep(40);
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0].logo, null);
+    });
   });
 });
 
