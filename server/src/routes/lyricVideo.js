@@ -730,6 +730,9 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
     if (!job) throw new Refusal(404, "No such render");
     const result = cancelJob(job.jobId, req.ctx.userId);
     if (!result.ok) throw new Refusal(result.reason === "terminal" ? 409 : 404, result.reason === "terminal" ? "That render has already finished." : "No such render");
+    // Saved now, not when the render winds down: a restart in between would
+    // otherwise read the saved "running" job as killed and file a failure.
+    persistJob(req.ctx.dataDir, { ...job, ...getJob(job.jobId), projectId: req.params.id, outputPath: null });
     ok(res, {});
   }));
 

@@ -10,7 +10,7 @@ import { createLyricVideoRouter } from "./lyricVideo.js";
 import { readProject, writeProject, createProject, applySheet } from "../lib/lyricVideo/projectStore.js";
 import { isAligning } from "../lib/lyricVideo/alignJob.js";
 import { readUsage } from "../lib/usageStore.js";
-import { markRunning, markDone, markError, markProgress, persistJob, getJob, cancelJob } from "../lib/renderJobs.js";
+import { markRunning, markDone, markError, markProgress, persistJob, readPersistedJob, getJob, cancelJob } from "../lib/renderJobs.js";
 import { writeBranding, logoFileFor } from "../lib/branding.js";
 
 let root;
@@ -671,6 +671,18 @@ describe("render", () => {
     assert.equal(getJob(jobId).status, "error");
     assert.equal((await call("GET", `/${p.projectId}/render/${jobId}`)).json.job.error, "Render cancelled");
     assert.equal((await call("POST", `/${p.projectId}/render/${jobId}/cancel`)).status, 409, "already finished");
+    release();
+    stub.render = finishingRender();
+  });
+  test("a cancel is saved straight away, so a restart before the render ends still knows the user cancelled it", async () => {
+    const p = placedProject(ctx);
+    let release;
+    stub.render = finishingRender(() => new Promise((r) => { release = r; }));
+    const { jobId } = (await call("POST", `/${p.projectId}/render`, {})).json;
+    assert.equal((await call("POST", `/${p.projectId}/render/${jobId}/cancel`)).status, 200);
+    const saved = readPersistedJob(ctx.dataDir, jobId);
+    assert.equal(saved?.cancelled, true);
+    assert.equal(saved?.status, "error");
     release();
     stub.render = finishingRender();
   });
