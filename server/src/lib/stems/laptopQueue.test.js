@@ -242,6 +242,21 @@ describe("vocals jobs and the capability handshake", () => {
     assert.equal(laptopOnline(ONLINE_MS + 10_001, { needs: "vocals" }), true);
   });
 
+  test("a vocals worker busy on a long instrumental job stays vocals-capable", () => {
+    const job = enqueueLaptopJob(fields({ jobId: "inst" }));
+    claimNext(0, { caps: ["vocals"] });
+    reportProgress(job, 40, ONLINE_MS + 10_000);
+    assert.equal(laptopOnline(ONLINE_MS + 10_001, { needs: "vocals" }), true);
+  });
+
+  test("an old worker's instrumental progress never makes the laptop look vocals-capable", () => {
+    const job = enqueueLaptopJob(fields({ jobId: "inst" }));
+    claimNext(0);
+    reportProgress(job, 40, 1_000);
+    assert.equal(laptopOnline(1_001, { needs: "vocals" }), false);
+    assert.equal(laptopOnline(1_001), true);
+  });
+
   test("a vocals job is dropped on reload: its waiter died with the old process", () => {
     enqueueLaptopJob(vocalsFields("v1"));
     enqueueLaptopJob(vocalsFields("v2"));

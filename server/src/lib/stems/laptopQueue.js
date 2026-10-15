@@ -192,7 +192,11 @@ export function claimNext(now = Date.now(), { caps = [] } = {}) {
   }
   turn += 1;
   lastTurn.set(next.userId, turn);
-  updateStemJob(next.jobId, { status: "running", percent: 0, leaseUntil: now + LEASE_MS, attempts: next.attempts + 1 });
+  // Remember that this job's worker can do vocals, so its progress on a long
+  // instrumental job keeps it counted as vocals-capable.
+  updateStemJob(next.jobId, {
+    status: "running", percent: 0, leaseUntil: now + LEASE_MS, attempts: next.attempts + 1, workerVocals: can.has("vocals"),
+  });
   persistLaptopQueue();
   return next;
 }
@@ -223,7 +227,7 @@ export function reclaimJob(jobId, now = Date.now()) {
   if (!job || job.controller.signal.aborted) return null;
   if (job.status !== "running" && job.status !== "queued") return null;
   lastSeen = now;
-  if (stemOf(job) === "vocals") lastSeenVocals = now; // only a vocals-capable worker holds one
+  if (stemOf(job) === "vocals" || job.workerVocals) lastSeenVocals = now; // only a vocals-capable worker holds these
   if (job.status !== "running" || job.leaseUntil < now) {
     updateStemJob(job.jobId, { status: "running", leaseUntil: now + LEASE_MS });
     persistLaptopQueue();
@@ -233,7 +237,7 @@ export function reclaimJob(jobId, now = Date.now()) {
 
 export function reportProgress(job, percent, now = Date.now()) {
   lastSeen = now;
-  if (stemOf(job) === "vocals") lastSeenVocals = now;
+  if (stemOf(job) === "vocals" || job.workerVocals) lastSeenVocals = now;
   if (job.controller.signal.aborted) return { cancelled: true };
   const p = Math.max(0, Math.min(99, Math.round(Number(percent) || 0)));
   updateStemJob(job.jobId, { percent: p, leaseUntil: now + LEASE_MS });
