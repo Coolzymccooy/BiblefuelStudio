@@ -16,6 +16,10 @@ const SIZE_RE = /\\fs(\d+(?:\.\d+)?)/;
 const ALIGN_RE = /\\an(\d)/;
 const BORDER_RE = /\\bord(\d+(?:\.\d+)?)/;
 const DRAW_RE = /\\p(\d+)/g;
+const FRZ_RE = /\\frz(-?\d+(?:\.\d+)?)/;
+const BLOCK_RE = /\{[^}]*\}/g;
+/** Average glyph width as a fraction of the font size, for the width of a rotated line. */
+const CHAR_WIDTH = 0.6;
 
 /** "H:MM:SS.cc" to seconds, or NaN when it does not parse. */
 function toSeconds(stamp) {
@@ -38,11 +42,30 @@ function anchorY(text) {
   return null;
 }
 
-/** How far above the anchor y the ink reaches, by alignment row. */
+/** How far above the anchor y an unrotated line's ink reaches, by alignment row. */
 function reachAbove(align, fs) {
   if (align >= 7) return 0;
   if (align >= 4) return 0.5 * fs * POP_SCALE;
   return fs * POP_SCALE;
+}
+
+/** Half the width of the visible text, estimated from its character count. */
+function halfWidthOf(text, fs) {
+  const visible = Array.from(text.replace(BLOCK_RE, "")).length;
+  return 0.5 * visible * CHAR_WIDTH * fs;
+}
+
+/**
+ * How far above the anchor y the ink reaches once the line is rotated by \frz: the vertical
+ * extent shrinks with cos, and half the line's width swings up by sin.
+ */
+function rotatedReach(align, fs, text) {
+  const reach = reachAbove(align, fs);
+  const rz = FRZ_RE.exec(text);
+  const degrees = rz ? Number(rz[1]) : 0;
+  if (!degrees) return reach;
+  const rad = (degrees * Math.PI) / 180;
+  return reach * Math.abs(Math.cos(rad)) + halfWidthOf(text, fs) * Math.abs(Math.sin(rad));
 }
 
 /** One Dialogue line to { start, end, top }, or null when it draws no positioned text. */
@@ -58,7 +81,7 @@ function inkOf(line) {
   if (y === null || !size) return null;
   const align = Number((ALIGN_RE.exec(text) || [])[1] || DEFAULT_ALIGN);
   const border = Number((BORDER_RE.exec(text) || [])[1] || 0);
-  return { start, end, top: y - reachAbove(align, Number(size[1])) - border };
+  return { start, end, top: y - rotatedReach(align, Number(size[1]), text) - border };
 }
 
 /**

@@ -58,6 +58,28 @@ test("overlapping windows merge and starts are clamped at zero", () => {
   assert.deepEqual(bandHideWindows(events, { bandBottom: 100, pad: 0, joinGap: 0.1 }), [[0.1, 1], [1.5, 2], [5, 6]]);
 });
 
+test("a side band at frz90 reaches half its length above its centre", () => {
+  const [band] = parseInkEvents(ev("0:00:01.00", "0:00:02.00", "{\\an5\\pos(360,600)\\fs40\\frz90}ABCDEFGHIJ"));
+  assert.ok(Math.abs(band.top - (600 - 0.5 * 10 * 0.6 * 40)) < 1e-6);
+  assert.ok(Math.abs(band.top - 480) < 1e-6);
+});
+
+test("a tilted line reaches higher than the same line level", () => {
+  const text = "ABCDEFGHIJKLMNOPQRST";
+  const [level] = parseInkEvents(ev("0:00:01.00", "0:00:02.00", `{\\an5\\pos(360,300)\\fs50}${text}`));
+  const [tilted] = parseInkEvents(ev("0:00:01.00", "0:00:02.00", `{\\an5\\pos(360,300)\\fs50\\frz5}${text}`));
+  const rad = (5 * Math.PI) / 180;
+  const expected = 300 - 0.5 * 50 * 1.35 * Math.cos(rad) - 0.5 * 20 * 0.6 * 50 * Math.sin(rad);
+  assert.ok(Math.abs(tilted.top - expected) < 1e-6);
+  assert.ok(tilted.top < level.top);
+  assert.ok(Math.abs(level.top - tilted.top - 0.5 * 20 * 0.6 * 50 * Math.sin(rad)) < 0.2);
+});
+
+test("override blocks and negative angles do not count towards the tilted width", () => {
+  const [a] = parseInkEvents(ev("0:00:01.00", "0:00:02.00", "{\\an5\\pos(360,600)\\fs40\\frz-90}AB{\\b1}CDEFGHIJ"));
+  assert.ok(Math.abs(a.top - 480) < 1e-6);
+});
+
 const timed = (id, text, start) => {
   const ws = text.split(" ").map((t, i) => ({ text: t, start: start + i * 0.3, end: start + i * 0.3 + 0.28 }));
   return { id, sectionId: "s1", kind: "lead", text, effect: "auto", words: ws, start, end: ws[ws.length - 1].end, confidence: 1, flag: null };
@@ -81,4 +103,5 @@ test("a real project's ASS parses to finite events and captionsEnd passes the la
     assert.ok(e.end > e.start);
   }
   assert.ok(captionsEnd(events) > lines[lines.length - 1].end);
+  assert.ok(events.some((e) => e.top < 0.3 * 1280), "a caption high on the frame is found");
 });
