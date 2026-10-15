@@ -135,9 +135,24 @@ describe("buildLyricRenderArgs with a branding plan", () => {
     assert.deepEqual([...at].sort((a, b) => a - b), at, `out of order: ${graph}`);
     // The mask fades the logo in and out over each band piece, at the logo's opacity.
     assert.match(graph, /geq=lum='255\*0\.85\*\(clip\(\(T-0\)\/0\.25,0,1\)\*clip\(\(4-T\)\/0\.25,0,1\)\+clip\(\(T-6\)\/0\.25,0,1\)\*clip\(\(11\.5-T\)\/0\.25,0,1\)\)'/);
-    assert.match(graph, new RegExp(`color=c=white:s=16x16:r=30:d=15\\.5,format=gray,geq=.*,scale=${GEOMETRY.logo.w}:${GEOMETRY.logo.h}\\[`));
+    assert.match(graph, new RegExp(`color=c=white:s=16x16:r=30:d=15\\.5,format=gray,geq=.*,scale=${GEOMETRY.logo.w}:${GEOMETRY.logo.h},setsar=1\\[`));
     assert.match(graph, /alphaextract/);
     assert.match(graph, /blend=all_mode=multiply/);
+  });
+
+  test("both logo streams count frames in a clean 1/30 time base", () => {
+    const graph = graphOf(buildLyricRenderArgs({ ...base, ...withPlan(PLAN_EXTENDED) }));
+    // setpts=N/(30*TB) in a PNG's 1/25 time base would give frames equal timestamps.
+    assert.equal(graph.split("loop=loop=-1:size=1:start=0,settb=1/30,setpts=N,").length - 1, 2, graph);
+    assert.doesNotMatch(graph, /setpts=N\//);
+  });
+
+  test("everything blend and alphamerge read has square pixels", () => {
+    const graph = graphOf(buildLyricRenderArgs({ ...base, ...withPlan(PLAN_EXTENDED) }));
+    const { w, h } = GEOMETRY.logo;
+    assert.ok(graph.includes(`,scale=${w}:${h},setsar=1[bm]`), graph);
+    assert.ok(graph.includes("[bla]alphaextract,setsar=1[ba0]"), graph);
+    assert.ok(graph.includes("setsar=1,split=2[blg][bla]"), graph);
   });
 
   test("the logo chains appear only when the plan calls for them", () => {
@@ -426,6 +441,31 @@ test("the end card dims the picture and shows the big logo, centred", { skip: SK
     const centre = [180, Math.round(0.4 * 640)];
     assert.ok(isRed(pixelAt(out, ...centre, plan.totalSec - 0.3)), "the end card logo is drawn");
     assert.ok(!isRed(pixelAt(out, ...centre, 1)), "the end card logo waits for the end card");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a very wide logo at half opacity is fitted and padded to its box", { skip: SKIP }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lyric-brand-"));
+  try {
+    const { song, ass } = makeFixtures(dir);
+    const file = putRedLogo(dir, "200x40");
+    const logo = { file, width: 200, height: 40, opacity: 0.5 };
+    const geometry = bandGeometry({ w: 360, h: 640, logo });
+    // 5:1 is wider than the 3:1 box, so the fit leaves padding above and below the logo.
+    const { x, y, w, h } = geometry.logo;
+    assert.ok(w / h < 5, `the box ${w}x${h} is narrower than the logo`);
+    const plan = {
+      totalSec: 2, audio: { inputSec: 2, padToSec: 2, fadeFromSec: 0, fadeSec: 0 },
+      bandPieces: [[0, 2]], intro: [], wordmark: [], showLogo: true, endCard: null,
+    };
+    // Rendering at all proves blend and alphamerge got equal sizes.
+    const out = await renderPlanned(dir, { song, ass, plan, geometry, logo });
+    const [r, g] = pixelAt(out, x + Math.round(w / 4), y + Math.round(h / 2), 1);
+    assert.ok(r > 100 && r < 180 && g < 60, `half-red logo inside its box: ${r},${g}`);
+    const pad = pixelAt(out, x + Math.round(w / 4), y + 1, 1);
+    assert.ok(!isRed(pad) && pad[0] < 60, `the padding stays clear: ${pad}`);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

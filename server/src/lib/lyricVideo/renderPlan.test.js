@@ -120,6 +120,18 @@ describe("buildRenderAss", () => {
     assert.equal(r.plan, null);
   });
 
+  test("a song without a usable length fails clearly instead of planning NaN", async () => {
+    const opts = { width: 720, height: 1280, aspect: "portrait", options: OPTIONS, logo: LOGO };
+    for (const durationSec of [undefined, null, 0, -3, Number.NaN, Infinity, "abc"]) {
+      await assert.rejects(
+        buildRenderAss({ ...project, song: { ...project.song, durationSec } }, opts),
+        { message: "The song's length is unknown, so the video can't be planned." },
+        `durationSec ${durationSec}`,
+      );
+    }
+    await assert.rejects(buildRenderAss({ ...project, song: undefined }, opts), /length is unknown/);
+  });
+
   test("a logo without a known size is measured, and one that cannot be read is left out", async () => {
     const { plan, geometry } = await buildRenderAss(project, {
       width: 720, height: 1280, aspect: "portrait", options: OPTIONS, logo: { file: path.join(FIX, "no-such-logo.png"), opacity: 1 },

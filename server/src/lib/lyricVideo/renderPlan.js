@@ -12,6 +12,7 @@ import { resolveLook } from "../kinetic/looks.js";
 import { probeMediaSize } from "../story/sceneFraming.js";
 
 const DEFAULT_LOOK = "studio-lagos-night";
+const NO_LENGTH = "The song's length is unknown, so the video can't be planned.";
 
 const knownSize = (logo) => Number(logo?.width) > 0 && Number(logo?.height) > 0;
 
@@ -35,16 +36,19 @@ function appendEvents(captions, lines) {
  * `aspect` is the render frame ("portrait" | "landscape" | "square"); `logo` is
  * `{ file, width, height, opacity } | null`. With no placed line there is nothing to render:
  * `ass` is "" (as buildLyricAss gives) and `plan` and `geometry` are null.
+ * Throws when the song's length is not a positive number: nothing can be planned without it.
  * @returns {Promise<{ ass: string, plan: object | null, geometry: object | null }>}
  */
 export async function buildRenderAss(project, { width: w, height: h, aspect, options, logo: rawLogo, shortsTrim } = {}) {
+  const durationSec = Number(project.song?.durationSec);
+  if (!Number.isFinite(durationSec) || durationSec <= 0) throw new Error(NO_LENGTH);
   const captions = buildLyricAss(project, { w, h, layout: aspect === "portrait" ? "shorts" : "default" });
   if (!captions) return { ass: "", plan: null, geometry: null };
   const logo = await sizedLogo(rawLogo);
   const geometry = bandGeometry({ w, h, logo: logo ? { width: logo.width, height: logo.height } : null });
   const events = parseInkEvents(captions);
   const plan = planBranding({
-    durationSec: project.song?.durationSec,
+    durationSec,
     audibleEnd: project.timing?.audibleEnd,
     captionsEnd: captionsEnd(events),
     hideWindows: bandHideWindows(events, { bandBottom: geometry.bandBottom }),

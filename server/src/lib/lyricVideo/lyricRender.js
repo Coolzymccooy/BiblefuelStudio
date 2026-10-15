@@ -70,11 +70,14 @@ function audioShape(audio) {
  * loops, so a large upload is not rescaled every frame. With `exact`, a transparent pad on the
  * right makes the size exactly w x h (the aspect-kept fit can round one side down), so a mask
  * of that size lines up and the logo stays at the band's left edge.
+ *
+ * The time base is set to 1/30 before the frames are numbered: a PNG arrives in image2's 1/25,
+ * where N/(30*TB) rounds to repeated timestamps.
  */
 function loopedLogo(file, w, h, { exact = false } = {}) {
   const pad = exact ? `pad=${w}:${h}:0:(oh-ih)/2:color=black@0,` : "";
   return `movie=${filterPath(file)},scale=${w}:${h}:force_original_aspect_ratio=decrease,format=rgba,`
-    + `${pad}loop=loop=-1:size=1:start=0,setpts=N/(${FPS}*TB)`;
+    + `${pad}loop=loop=-1:size=1:start=0,settb=1/${FPS},setpts=N`;
 }
 
 /** 0 to 1 over time: 1 inside each band piece, with a FADE-second ramp at either end. */
@@ -84,15 +87,19 @@ function pieceMask(pieces) {
     .join("+");
 }
 
-/** The small logo in the band, faded by a tiny time mask (geq runs on 16x16, never on the logo). */
+/**
+ * The small logo in the band, faded by a tiny time mask (geq runs on 16x16, never on the logo).
+ * Scaling changes a stream's sample aspect ratio (the 16x16 mask at 176x70 becomes 35:88), and
+ * blend and alphamerge may refuse inputs whose SAR differs, so every input they read is set square.
+ */
 function smallLogoChain({ plan, geometry, logo, from, to }) {
   const { x, y, w, h } = geometry.logo;
   const opacity = Number.isFinite(Number(logo.opacity)) ? Math.min(1, Math.max(0, Number(logo.opacity))) : 1;
   return [
-    `${loopedLogo(logo.file, w, h, { exact: true })},split=2[blg][bla]`,
+    `${loopedLogo(logo.file, w, h, { exact: true })},setsar=1,split=2[blg][bla]`,
     `color=c=white:s=${MASK_SIZE}x${MASK_SIZE}:r=${FPS}:d=${num(plan.totalSec)},format=gray,`
-      + `geq=lum='255*${num(opacity)}*(${pieceMask(plan.bandPieces)})',scale=${w}:${h}[bm]`,
-    "[bla]alphaextract[ba0]",
+      + `geq=lum='255*${num(opacity)}*(${pieceMask(plan.bandPieces)})',scale=${w}:${h},setsar=1[bm]`,
+    "[bla]alphaextract,setsar=1[ba0]",
     "[ba0][bm]blend=all_mode=multiply[ba1]",
     "[blg][ba1]alphamerge[blogo]",
     `[${from}][blogo]overlay=x=${x}:y=${y}:shortest=1[${to}]`,
