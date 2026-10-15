@@ -225,7 +225,26 @@ describe('lyricVideoApi', () => {
   it('starts a render and returns the job id', async () => {
     vi.mocked(api.post).mockResolvedValue({ ok: true, status: 202, data: { jobId: 'job-9' } });
     await expect(lyricVideoApi.render('lv_1', 'portrait', '720p')).resolves.toBe('job-9');
-    expect(api.post).toHaveBeenCalledWith('/api/lyric-video/lv_1/render', { aspect: 'portrait', quality: '720p' });
+    expect(api.post).toHaveBeenCalledWith('/api/lyric-video/lv_1/render', { aspect: 'portrait', quality: '720p', shortsTrim: false });
+  });
+
+  it('sends the Shorts trim with the render when asked', async () => {
+    vi.mocked(api.post).mockResolvedValue({ ok: true, status: 202, data: { jobId: 'job-9' } });
+    await lyricVideoApi.render('lv_1', 'portrait', '720p', true);
+    expect(api.post).toHaveBeenCalledWith('/api/lyric-video/lv_1/render', { aspect: 'portrait', quality: '720p', shortsTrim: true });
+  });
+
+  it('reads the branding options', async () => {
+    const branding = { logo: true, intro: false, endCard: true, hasLogo: false, logoFromSettings: true };
+    vi.mocked(api.get).mockResolvedValue(reply({ branding }));
+    await expect(lyricVideoApi.branding('lv_1')).resolves.toEqual(branding);
+    expect(api.get).toHaveBeenCalledWith('/api/lyric-video/lv_1/branding');
+  });
+
+  it('saves a branding change and returns the project', async () => {
+    vi.mocked(api.put).mockResolvedValue(reply({ project }));
+    await expect(lyricVideoApi.setBranding('lv_1', { intro: false })).resolves.toEqual(project);
+    expect(api.put).toHaveBeenCalledWith('/api/lyric-video/lv_1/branding', { intro: false });
   });
 
   it('reads a render job and cancels it', async () => {

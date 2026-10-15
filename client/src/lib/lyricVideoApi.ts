@@ -4,7 +4,7 @@ import { uploadMedia } from './mediaUpload';
 import type { UploadKind } from './mediaUpload';
 import { AUDIO_EXTENSIONS } from './audioAccept';
 import type {
-  BackgroundFit, LyricEffect, LyricProject, LyricProjectSummary, LyricPublishDraft, LyricRenderJob, RenderAspect, RenderQuality,
+  BackgroundFit, LyricBranding, LyricBrandingPatch, LyricEffect, LyricProject, LyricProjectSummary, LyricPublishDraft, LyricRenderJob, RenderAspect, RenderQuality,
 } from './lyricVideoTypes';
 
 const BASE = '/api/lyric-video';
@@ -120,8 +120,13 @@ export const lyricVideoApi = {
   captionsUrl: (id: string, w: number, h: number) => `${BASE}/${id}/captions.ass?w=${w}&h=${h}`,
   /** The timed words for the preview player; an empty string when no line has been timed yet. */
   captions: (id: string, w: number, h: number): Promise<string> => api.getText(lyricVideoApi.captionsUrl(id, w, h)),
-  async render(id: string, aspect: RenderAspect, quality: RenderQuality): Promise<string> {
-    return unwrap(await api.post<{ jobId: string }>(`${BASE}/${id}/render`, { aspect, quality })).jobId;
+  /** The logo, intro credit and end card choices, with whether a logo is uploaded. */
+  async branding(id: string): Promise<LyricBranding> {
+    return unwrap(await api.get<{ branding: LyricBranding }>(`${BASE}/${id}/branding`)).branding;
+  },
+  setBranding: (id: string, patch: LyricBrandingPatch) => project(api.put(`${BASE}/${id}/branding`, patch)),
+  async render(id: string, aspect: RenderAspect, quality: RenderQuality, shortsTrim = false): Promise<string> {
+    return unwrap(await api.post<{ jobId: string }>(`${BASE}/${id}/render`, { aspect, quality, shortsTrim })).jobId;
   },
   async renderStatus(id: string, jobId: string): Promise<LyricRenderJob> {
     return unwrap(await api.get<{ job: LyricRenderJob }>(`${BASE}/${id}/render/${jobId}`)).job;

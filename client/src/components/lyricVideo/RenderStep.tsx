@@ -4,11 +4,13 @@ import { Download, Loader2 } from 'lucide-react';
 import { lyricVideoApi } from '../../lib/lyricVideoApi';
 import { lyricDownloadUrl, lyricVideoUrl } from '../../lib/lyricDownload';
 import { formatSongLength } from '../../lib/lyricTiming';
+import { shortsTrimOffer } from '../../lib/shortsTrim';
 import type { LyricProject, LyricPublishDraft, LyricRender, LyricRenderJob, RenderAspect, RenderQuality } from '../../lib/lyricVideoTypes';
 import { YoutubePublishPanel } from '../share/YoutubePublishPanel';
 import { RenderProgressOverlay } from '../RenderProgressOverlay';
 import { fieldLabelCls, inputCls, panelCls, primaryBtnCls, secondaryBtnCls } from '../story/formStyles';
 import { messageOf } from './messageOf';
+import { BrandingOptions } from './BrandingOptions';
 
 interface Props { project: LyricProject; onChange: (p: LyricProject) => void }
 
@@ -92,6 +94,29 @@ function EarlierRender({ render, title, onWatch }: { render: LyricRender; title:
   );
 }
 
+/** Cuts a 3:00 to 3:10 portrait song to 2:59 so it counts as a Short; refused, with the reason, when it would cut a line. */
+function ShortsTrimOption({ offer, checked, disabled, onChange }: {
+  offer: ReturnType<typeof shortsTrimOffer>; checked: boolean; disabled: boolean; onChange: (on: boolean) => void;
+}) {
+  const reasonId = 'lyric-trim-reason';
+  return (
+    <div className="space-y-1">
+      <label className="flex items-center gap-2 text-sm text-content-secondary">
+        <input
+          type="checkbox"
+          className="accent-bf-gold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bf-gold"
+          checked={checked}
+          disabled={disabled || !offer.allowed}
+          aria-describedby={offer.allowed ? undefined : reasonId}
+          onChange={(e) => onChange(e.target.checked)}
+        />
+        Trim to 2:59 so it counts as a Short
+      </label>
+      {!offer.allowed && <p id={reasonId} className="ml-6 text-xs text-content-secondary">{offer.reason}</p>}
+    </div>
+  );
+}
+
 // YouTube's Music category, used if the draft could not be fetched.
 const MUSIC_CATEGORY = '10';
 
@@ -146,6 +171,7 @@ function PublishToYoutube({ project, file }: { project: LyricProject; file: stri
 export function RenderStep({ project, onChange }: Props) {
   const [aspect, setAspect] = useState<RenderAspect>('portrait');
   const [quality, setQuality] = useState<RenderQuality>('720p');
+  const [trim, setTrim] = useState(false);
   const [starting, setStarting] = useState(false);
   const [startedJobId, setJobId] = useState<string | null>(null);
   // A render started before the user left this page is saved on the project: follow it again.
@@ -159,6 +185,7 @@ export function RenderStep({ project, onChange }: Props) {
   });
 
   const working = starting || (jobId !== null && !lostTrack && !(job && isFinished(job)));
+  const trimOffer = shortsTrimOffer(project, aspect);
   const hasTimedLines = project.lines.some((l) => Array.isArray(l.words) && l.words.length > 0);
 
   const start = async () => {
@@ -166,7 +193,7 @@ export function RenderStep({ project, onChange }: Props) {
     setShown(null);
     setCancelling(false);
     try {
-      setJobId(await lyricVideoApi.render(project.projectId, aspect, quality));
+      setJobId(await lyricVideoApi.render(project.projectId, aspect, quality, trim && trimOffer.allowed));
     } catch (e) {
       toast.error(messageOf(e));
     } finally {
@@ -196,7 +223,7 @@ export function RenderStep({ project, onChange }: Props) {
       <div className="grid gap-3 sm:grid-cols-2">
         <div>
           <label htmlFor="lyric-frame" className={fieldLabelCls}>Frame</label>
-          <select id="lyric-frame" className={inputCls} value={aspect} disabled={working} onChange={(e) => setAspect(e.target.value as RenderAspect)}>
+          <select id="lyric-frame" className={inputCls} value={aspect} disabled={working} onChange={(e) => { setAspect(e.target.value as RenderAspect); setTrim(false); }}>
             {ASPECTS.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
           </select>
         </div>
@@ -207,11 +234,14 @@ export function RenderStep({ project, onChange }: Props) {
           </select>
         </div>
       </div>
+      {trimOffer.offered && <ShortsTrimOption offer={trimOffer} checked={trim} disabled={working} onChange={setTrim} />}
       {aspect !== 'portrait' && (
         <p className="text-xs text-content-secondary">
           The preview on the earlier steps is always a tall frame. Your video will be {aspect === 'landscape' ? 'wide' : 'square'}.
         </p>
       )}
+
+      <BrandingOptions project={project} disabled={working} onChange={onChange} />
 
       <div className="flex flex-wrap items-center gap-3">
         <button type="button" className={primaryBtnCls} disabled={working || !hasTimedLines} onClick={start}>
