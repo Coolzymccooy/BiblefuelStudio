@@ -3,6 +3,7 @@ import { Card } from './ui/Card';
 import { Button } from './ui/Button';
 import { Input } from './ui/Input';
 import { api } from '../lib/api';
+import { webhookAdvice } from '../lib/webhookAdvice';
 import toast from 'react-hot-toast';
 import { Zap, CheckCircle2, Loader2, Trash2, ExternalLink, X as XIcon, Plug, Send, AlertCircle, ChevronRight } from 'lucide-react';
 
@@ -65,14 +66,19 @@ function timeAgo(iso: string): string {
  */
 export function WebhookConnectCard() {
     const [webhooks, setWebhooks] = useState<Webhook[]>([]);
+    // TikTok goes straight through Zernio for the operator, so a failing
+    // webhook does not stop TikTok posts. Said here so a red card doesn't
+    // read as "TikTok is down".
+    const [tiktokDirect, setTiktokDirect] = useState(false);
     const [loading, setLoading] = useState(true);
     const [showAddModal, setShowAddModal] = useState(false);
     const [testing, setTesting] = useState<Record<string, boolean>>({});
     const [testResults, setTestResults] = useState<Record<string, TestResult>>({});
 
     const loadWebhooks = useCallback(async () => {
-        const res = await api.get<{ webhooks: Webhook[] }>('/api/social/webhooks');
+        const res = await api.get<{ webhooks: Webhook[]; tiktokDirect?: boolean }>('/api/social/webhooks');
         if (res.ok && Array.isArray(res.data?.webhooks)) setWebhooks(res.data.webhooks);
+        if (res.ok) setTiktokDirect(res.data?.tiktokDirect === true);
         setLoading(false);
     }, []);
 
@@ -121,10 +127,11 @@ export function WebhookConnectCard() {
 
     return (
         <>
-            <Card title="TikTok + Instagram Auto-Publish" className="border-white/10">
+            <Card title="Auto-publish with Make or Zapier" className="border-white/10">
                 <p className="text-xs text-content-secondary mb-4">
-                    <span className="text-gray-300">Powered by Make or Zapier</span> — connect your account once, and your rendered videos
-                    auto-post to TikTok, Instagram, X, LinkedIn, anywhere your scenario is wired up.
+                    Each finished video is sent to your Make or Zapier scenario, which posts it wherever you have set it up:
+                    Instagram, TikTok, X, LinkedIn and more.
+                    {tiktokDirect && ' TikTok posts go straight through Zernio, so they keep going out even when this webhook fails.'}
                 </p>
 
                 {loading ? (
@@ -164,13 +171,16 @@ export function WebhookConnectCard() {
                             const everSucceeded = lastSuccessTs > 0;
                             const showOkBadge = (result?.ok === true) || (!result && everSucceeded && !recentFailure);
                             const showFailBadge = (result && !result.ok) || (!result && recentFailure);
+                            // The error says what Make answered; this says what to do about it.
+                            const shownError = result ? (!result.ok ? result.error : '') : (recentFailure ? w.lastFailureMessage : '');
+                            const advice = webhookAdvice(shownError);
                             return (
                                 <div
                                     key={w.id}
                                     className="rounded-xl border border-white/10 bg-white/[0.02] p-3 flex flex-col sm:flex-row sm:items-center gap-3"
                                 >
-                                    <div className="rounded-xl border border-white/10 bg-white/[0.04] p-2 flex-shrink-0">
-                                        <Zap size={18} className="text-content-secondary" />
+                                    <div className="rounded-xl border border-white/10 bg-white/[0.04] p-2 flex-shrink-0 self-start sm:self-center">
+                                        <Zap size={18} className="text-content-secondary" aria-hidden="true" />
                                     </div>
                                     <div className="flex-1 min-w-0">
                                         <div className="flex items-center gap-2 flex-wrap">
@@ -201,16 +211,19 @@ export function WebhookConnectCard() {
                                                 {recentFailure && (
                                                     <>
                                                         {everSucceeded ? ' · ' : ''}
-                                                        Last failure: <span className="text-rose-300/90">{timeAgo(w.lastFailureAt || '')}</span>
+                                                        Last failure: <span className="text-bf-danger">{timeAgo(w.lastFailureAt || '')}</span>
                                                     </>
                                                 )}
                                             </p>
                                         )}
                                         {(result && !result.ok && result.error) && (
-                                            <p className="text-[11px] text-rose-300 mt-1">{result.error}</p>
+                                            <p className="text-[11px] text-bf-danger mt-1">{result.error}</p>
                                         )}
                                         {(!result && recentFailure && w.lastFailureMessage) && (
-                                            <p className="text-[11px] text-rose-300 mt-1 line-clamp-2">{w.lastFailureMessage}</p>
+                                            <p className="text-[11px] text-bf-danger mt-1 line-clamp-2">{w.lastFailureMessage}</p>
+                                        )}
+                                        {advice && (
+                                            <p className="text-[11px] text-content-secondary mt-1">{advice}</p>
                                         )}
                                     </div>
                                     <div className="flex items-center gap-2 flex-shrink-0">
@@ -226,8 +239,9 @@ export function WebhookConnectCard() {
                                             variant="secondary"
                                             className="text-xs h-8 px-2 border-rose-500/30 text-rose-300 hover:bg-rose-500/10"
                                             onClick={() => handleDelete(w.id, w.name)}
+                                            aria-label={`Remove webhook ${w.name}`}
                                         >
-                                            <Trash2 size={12} />
+                                            <Trash2 size={12} aria-hidden="true" />
                                         </Button>
                                     </div>
                                 </div>

@@ -298,6 +298,14 @@ function recordWebhookDelivery(dataDir, webhookId, outcome) {
   }
 }
 
+/** True when this caller's TikTok posts go straight through Zernio, without Make. Operator-only. */
+function zernioPostsFor(req) {
+  return Boolean(req?.ctx?.isSuperAdmin) && Boolean(
+    String(process.env.ZERNIO_API_KEY || "").trim() &&
+    String(process.env.ZERNIO_TIKTOK_ACCOUNT_ID || "").trim()
+  );
+}
+
 async function postToWebhook({ caption, videoUrl, title, webhookId, webhookUrl }, req, store) {
   const mediaUrl = toAbsolutePublicUrl(req, videoUrl);
   if (!/^https?:\/\//i.test(mediaUrl)) {
@@ -320,10 +328,7 @@ async function postToWebhook({ caption, videoUrl, title, webhookId, webhookUrl }
   // (set in jobs.js when persisting the job ctx, or by the userScope
   // middleware on direct HTTP calls).
   const callerIsSuperAdmin = Boolean(req?.ctx?.isSuperAdmin);
-  const zernioConfigured = callerIsSuperAdmin && Boolean(
-    String(process.env.ZERNIO_API_KEY || "").trim() &&
-    String(process.env.ZERNIO_TIKTOK_ACCOUNT_ID || "").trim()
-  );
+  const zernioConfigured = zernioPostsFor(req);
   if (!url && !zernioConfigured) {
     throw new Error(callerIsSuperAdmin
       ? "No destination configured. Set a Make/Zapier webhook in Settings, or configure ZERNIO_API_KEY + ZERNIO_TIKTOK_ACCOUNT_ID in server/.env."
@@ -1056,6 +1061,7 @@ router.get("/webhooks", (req, res) => {
   const store = readSocialStore(req.ctx.dataDir);
   res.json({
     ok: true,
+    tiktokDirect: zernioPostsFor(req),
     webhooks: (store.webhooks || []).map((w) => ({
       id: w.id,
       name: w.name,
