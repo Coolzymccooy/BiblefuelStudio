@@ -26,6 +26,16 @@ describe('webhookAdvice', () => {
         expect(webhookAdvice('Webhook dispatch error: fetch failed')).toMatch(/couldn't be reached/);
     });
 
+    it("the Test button's own wording gets the same advice", () => {
+        expect(webhookAdvice('Webhook returned HTTP 400. Queue is full.')).toMatch(/scenario is off or out of operations/);
+        expect(webhookAdvice('Webhook returned HTTP 410. There is no scenario listening for this webhook.')).toMatch(/no longer exists/);
+        expect(webhookAdvice('Webhook returned HTTP 404. ')).toMatch(/no longer exists/);
+        expect(webhookAdvice('Webhook returned HTTP 401. ')).toMatch(/copied in full/);
+        expect(webhookAdvice('Webhook returned HTTP 503. ')).toMatch(/on its side/);
+        expect(webhookAdvice("Couldn't reach the webhook URL. fetch failed")).toMatch(/couldn't be reached/);
+        expect(webhookAdvice('Webhook took longer than 10 seconds to respond.')).toMatch(/took too long/);
+    });
+
     it('anything else gets no advice', () => {
         expect(webhookAdvice('Webhook failed: 400 Something new')).toBeNull();
         expect(webhookAdvice('')).toBeNull();

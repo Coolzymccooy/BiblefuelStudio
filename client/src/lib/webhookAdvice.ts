@@ -12,10 +12,12 @@ export function webhookAdvice(message: string | undefined): string | null {
     if (/took longer than/i.test(text)) {
         return "Make or Zapier took too long to reply. Check the scenario's run history there, then press Test.";
     }
-    if (/dispatch error/i.test(text)) {
+    // Live posts say "Webhook dispatch error: …"; the Test button says "Couldn't reach the webhook URL. …".
+    if (/dispatch error|couldn't reach/i.test(text)) {
         return "Make or Zapier couldn't be reached. Check the URL, then press Test.";
     }
-    const status = Number(/Webhook failed: (\d{3})/.exec(text)?.[1] || 0);
+    // Live posts say "Webhook failed: 404 …"; the Test button says "Webhook returned HTTP 404. …".
+    const status = Number(/Webhook (?:failed:|returned HTTP) (\d{3})/.exec(text)?.[1] || 0);
     if (status === 404 || status === 410) {
         return 'This webhook no longer exists in Make or Zapier. Add the new URL with Add another webhook, then remove this one.';
     }
