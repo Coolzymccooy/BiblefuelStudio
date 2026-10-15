@@ -30,6 +30,8 @@ const IMAGE_MIME = Object.freeze({ ".jpg": "image/jpeg", ".jpeg": "image/jpeg", 
 const PERSON_REFUSAL = /^InputImageSensitiveContentDetected/;
 const SENSITIVE = /SensitiveContent/;
 const FAILED_STATES = new Set(["failed", "cancelled", "expired"]);
+// Errors that will not clear by waiting (bad key, forbidden, malformed request).
+const PERMANENT_HTTP = new Set([400, 401, 403]);
 const MAX_FIRST_FRAME_BYTES = 10 * 1024 * 1024;
 
 function apiKey() {
@@ -134,7 +136,12 @@ export async function submitSeedanceTask({
 
 export async function getSeedanceTask(taskId, { fetchImpl } = {}) {
   const fetcher = fetchImpl || fetch;
-  const res = await fetcher(`${tasksUrl()}/${encodeURIComponent(taskId)}`, { headers: headers() });
+  let res;
+  try {
+    res = await fetcher(`${tasksUrl()}/${encodeURIComponent(taskId)}`, { headers: headers() });
+  } catch (e) {
+    return { status: "unknown", error: redact(e?.message || e) };
+  }
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
     const err = errorOf(json, res.status);
@@ -153,6 +160,7 @@ export async function waitForSeedanceTask(taskId, {
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now,
 } = {}) {
   const start = now();
+  let lastError = "";
   for (;;) {
     let task;
     try {
@@ -169,7 +177,14 @@ export async function waitForSeedanceTask(taskId, {
       return { ok: false, code: "FAILED", error: task.error || `BytePlus reported the clip as ${task.status}.` };
     }
     if (task.httpStatus === 404) return { ok: false, code: "NOT_FOUND", error: "BytePlus no longer has this clip." };
-    if (now() - start >= timeoutMs) return { ok: false, code: "TIMEOUT", error: "BytePlus took too long to make the clip." };
+    if (PERMANENT_HTTP.has(task.httpStatus)) {
+      return { ok: false, code: `HTTP_${task.httpStatus}`, error: task.error || `BytePlus refused the request (HTTP ${task.httpStatus}).` };
+    }
+    if (task.error) lastError = task.error;
+    if (now() - start >= timeoutMs) {
+      const detail = lastError ? ` (last error: ${lastError})` : "";
+      return { ok: false, code: "TIMEOUT", error: `BytePlus took too long to make the clip.${detail}` };
+    }
     await sleep(pollMs);
   }
 }
@@ -181,7 +196,12 @@ export async function downloadSeedanceVideo(url, destFile, { fetchImpl } = {}) {
   const buf = Buffer.from(await res.arrayBuffer());
   if (buf.length === 0) throw new Error("The clip BytePlus sent was empty.");
   const tmp = `${destFile}.part`;
-  fs.writeFileSync(tmp, buf);
-  fs.renameSync(tmp, destFile);
+  try {
+    fs.writeFileSync(tmp, buf);
+    fs.renameSync(tmp, destFile);
+  } catch (e) {
+    fs.rmSync(tmp, { force: true });
+    throw e;
+  }
   return buf.length;
 }

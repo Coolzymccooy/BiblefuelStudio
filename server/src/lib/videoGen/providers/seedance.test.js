@@ -6,7 +6,7 @@ import path from "path";
 import {
   SEEDANCE_MODELS, NO_TEXT_LINE,
   isSeedanceConfigured, seedanceRatio, clampSeedanceDuration, withNoText,
-  submitSeedanceTask, waitForSeedanceTask, downloadSeedanceVideo,
+  submitSeedanceTask, getSeedanceTask, waitForSeedanceTask, downloadSeedanceVideo,
 } from "./seedance.js";
 
 const KEY = "ark-test-key-123";
@@ -141,6 +141,55 @@ describe("submitSeedanceTask", () => {
     assert.equal(r.error.includes(KEY), false);
     assert.match(r.error, /\[redacted\]/);
   });
+
+  test("an image refusal then a refused text submit returns the second error", async () => {
+    const pic = path.join(tmp, "scene.png");
+    fs.writeFileSync(pic, PNG);
+    const fetchImpl = fakeFetch([
+      jsonRes(400, { error: { code: "InputImageSensitiveContentDetected.PrivacyInformation", message: "real person" } }),
+      jsonRes(400, { error: { code: "InvalidParameter", message: "duration not valid" } }),
+    ]);
+    const r = await submitSeedanceTask({ prompt: "x", firstFramePath: pic, fetchImpl });
+    assert.equal(r.ok, false);
+    assert.equal(r.code, "InvalidParameter");
+    assert.equal(r.error, "duration not valid");
+    assert.equal(fetchImpl.calls.length, 2);
+  });
+
+  test("a first frame in an unsupported format is sent text-only", async () => {
+    const pic = path.join(tmp, "scene.gif");
+    fs.writeFileSync(pic, PNG);
+    const fetchImpl = fakeFetch([jsonRes(200, { id: "cgt-5" })]);
+    const r = await submitSeedanceTask({ prompt: "x", firstFramePath: pic, fetchImpl });
+    assert.deepEqual(r, { ok: true, taskId: "cgt-5", mode: "text" });
+    assert.equal(fetchImpl.calls.length, 1);
+    assert.equal(fetchImpl.calls[0].body.content.length, 1);
+  });
+
+  test("model and resolution are passed through to the request", async () => {
+    const fetchImpl = fakeFetch([jsonRes(200, { id: "cgt-6" })]);
+    await submitSeedanceTask({ prompt: "x", model: SEEDANCE_MODELS.standard, resolution: "1080p", fetchImpl });
+    const body = fetchImpl.calls[0].body;
+    assert.equal(body.model, SEEDANCE_MODELS.standard);
+    assert.equal(body.resolution, "1080p");
+  });
+});
+
+describe("getSeedanceTask", () => {
+  test("an error response never carries the key", async () => {
+    const fetchImpl = fakeFetch([jsonRes(500, { error: { code: "Bad", message: `key ${KEY} rejected` } })]);
+    const r = await getSeedanceTask("t", { fetchImpl });
+    assert.equal(JSON.stringify(r).includes(KEY), false);
+    assert.match(r.error, /\[redacted\]/);
+  });
+
+  test("a thrown fetch comes back as unknown with the key redacted", async () => {
+    const fetchImpl = async () => { throw new Error(`reset for Bearer ${KEY}`); };
+    const r = await getSeedanceTask("t", { fetchImpl });
+    assert.equal(r.status, "unknown");
+    assert.equal(JSON.stringify(r).includes(KEY), false);
+    assert.match(r.error, /\[redacted\]/);
+  });
 });
 
 describe("waitForSeedanceTask", () => {
@@ -172,6 +221,28 @@ describe("waitForSeedanceTask", () => {
     const r = await waitForSeedanceTask("t", { fetchImpl, sleep: async (ms) => { t += ms; }, now: () => t, pollMs: 10_000, timeoutMs: 30_000 });
     assert.equal(r.code, "TIMEOUT");
   });
+  test("a permanent 401 fails fast after exactly one fetch", async () => {
+    let t = 0;
+    const fetchImpl = fakeFetch([jsonRes(401, { error: { code: "AuthenticationError", message: "invalid key" } })]);
+    const r = await waitForSeedanceTask("t", { fetchImpl, sleep: async (ms) => { t += ms; }, now: () => t, pollMs: 10_000, timeoutMs: 30_000 });
+    assert.deepEqual(r, { ok: false, code: "HTTP_401", error: "invalid key" });
+    assert.equal(fetchImpl.calls.length, 1);
+  });
+  test("a timeout names the last error seen", async () => {
+    let t = 0;
+    const fetchImpl = async () => jsonRes(500, { error: { code: "Busy", message: "model busy" } });
+    const r = await waitForSeedanceTask("t", { fetchImpl, sleep: async (ms) => { t += ms; }, now: () => t, pollMs: 10_000, timeoutMs: 30_000 });
+    assert.equal(r.code, "TIMEOUT");
+    assert.equal(r.error, "BytePlus took too long to make the clip. (last error: model busy)");
+  });
+  test("a network error mid-poll does not end the wait", async () => {
+    const fetchImpl = fakeFetch([
+      async () => { throw new Error("socket reset"); },
+      jsonRes(200, { status: "succeeded", content: { video_url: "https://cdn/y.mp4" }, usage: { completion_tokens: 5 } }),
+    ]);
+    const r = await waitForSeedanceTask("t", { fetchImpl, sleep: noSleep });
+    assert.deepEqual(r, { ok: true, videoUrl: "https://cdn/y.mp4", tokens: 5 });
+  });
 });
 
 describe("downloadSeedanceVideo", () => {
@@ -187,5 +258,13 @@ describe("downloadSeedanceVideo", () => {
     const fetchImpl = async () => ({ ok: false, status: 403, arrayBuffer: async () => new ArrayBuffer(0) });
     await assert.rejects(downloadSeedanceVideo("https://cdn/x.mp4", dest, { fetchImpl }), /HTTP 403/);
     assert.equal(fs.existsSync(dest), false);
+    assert.equal(fs.existsSync(`${dest}.part`), false);
+  });
+  test("a failed rename removes the partial file", async () => {
+    const dest = path.join(tmp, "clip.mp4");
+    fs.mkdirSync(dest); // a directory in the way makes the rename fail
+    const fetchImpl = async () => ({ ok: true, status: 200, arrayBuffer: async () => Uint8Array.from([1]).buffer });
+    await assert.rejects(downloadSeedanceVideo("https://cdn/x.mp4", dest, { fetchImpl }));
+    assert.equal(fs.existsSync(`${dest}.part`), false);
   });
 });
