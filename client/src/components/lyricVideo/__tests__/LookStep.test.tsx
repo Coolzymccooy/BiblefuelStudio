@@ -43,7 +43,7 @@ describe('LookStep', () => {
     render(<LookStep project={project} onChange={vi.fn()} />);
     expect(await screen.findByRole('option', { name: 'Gold Rush' })).toBeTruthy();
     expect(screen.getByRole('option', { name: 'Wild' })).toBeTruthy();
-    expect((screen.getByLabelText(/energy/i) as HTMLSelectElement).value).toBe('lively');
+    expect((screen.getByLabelText(/^energy$/i) as HTMLSelectElement).value).toBe('lively');
     expect(await screen.findByTestId('lyric-preview')).toBeTruthy();
   });
 
@@ -63,7 +63,7 @@ describe('LookStep', () => {
     vi.mocked(lyricVideoApi.setLook).mockResolvedValue(project);
     render(<LookStep project={project} onChange={vi.fn()} />);
     await screen.findByRole('option', { name: 'Wild' });
-    fireEvent.change(screen.getByLabelText(/energy/i), { target: { value: 'wild' } });
+    fireEvent.change(screen.getByLabelText(/^energy$/i), { target: { value: 'wild' } });
     await waitFor(() => expect(lyricVideoApi.setLook).toHaveBeenCalledWith('lv_1', { energy: 'wild' }));
   });
 

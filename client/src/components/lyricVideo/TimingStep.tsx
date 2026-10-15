@@ -5,9 +5,13 @@ import { lyricVideoApi } from '../../lib/lyricVideoApi';
 import { flaggedCount, formatTime, isPlacedLine, nudgeLine } from '../../lib/lyricTiming';
 import type { LyricProject, TimingStep as TimingPhase } from '../../lib/lyricVideoTypes';
 import { panelCls, primaryBtnCls, secondaryBtnCls } from '../story/formStyles';
+import { InfoTooltip } from '../ui/InfoTooltip';
 import { LazyLivePreview } from './LazyLivePreview';
 import { messageOf } from './messageOf';
 import { playPreviewFrom } from './previewPlayer';
+
+const CHECK_TIP =
+  'A line marked “Check this line” was not heard clearly. Press Play from here to listen, then Start here when the line begins, or nudge it earlier or later.';
 
 interface Props { project: LyricProject; onChange: (p: LyricProject) => void }
 
@@ -105,7 +109,10 @@ export function TimingStep({ project, onChange }: Props) {
       <div ref={previewBox}>
         <LazyLivePreview project={project} assVersion={assVersion} onTime={onTime} />
       </div>
-      <p className="text-sm">{flagged === 0 ? 'Every line is timed.' : `${flagged} line${flagged === 1 ? '' : 's'} to check`}</p>
+      <p className="flex items-center gap-1.5 text-sm">
+        {flagged === 0 ? 'Every line is timed.' : `${flagged} line${flagged === 1 ? '' : 's'} to check`}
+        <InfoTooltip label="About checking lines" width="lg" content={CHECK_TIP} />
+      </p>
       {flagged > lines.length / 2 && (
         <p className="text-sm text-bf-danger">Most lines could not be heard — check the lyrics match the song.</p>
       )}

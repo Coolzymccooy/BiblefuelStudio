@@ -77,6 +77,16 @@ test("the description fits YouTube's limit in bytes, which accented lyrics fill 
   assert.match(d, /\n…\n\n#LyricVideo/);
 });
 
+test("one very long line that sings the title gives a short hook, and the description still fits (Codex #63)", () => {
+  const line = `Thank God for the seed ${"ọ́ wá o ".repeat(2500)}`;
+  const d = buildPublishDraft(project({ sheet: { raw: line }, lines: [{ id: "l1", sectionId: "s2", kind: "lead", text: line }] })).description;
+  assert.ok(Buffer.byteLength(d, "utf8") <= YT_DESCRIPTION_MAX, `got ${Buffer.byteLength(d, "utf8")} bytes`);
+  const hook = d.split("\n\n")[1];
+  assert.ok(hook.startsWith("“Thank God for the seed"));
+  assert.ok(hook.length <= 152, `hook is ${hook.length} characters`);
+  assert.match(d, /#LyricVideo #ThankGodForTheSeed #SthillWaters$/, "the hashtags survive");
+});
+
 test("a comma in the title does not split its tag", () => {
   const draft = buildPublishDraft(project({ title: "Hello, World" }));
   assert.ok(draft.tags.every((tag) => !tag.includes(",")));
