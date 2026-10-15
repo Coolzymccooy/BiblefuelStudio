@@ -1,4 +1,4 @@
-import { YT_TITLE_MAX, YT_DESCRIPTION_MAX, YT_TAGS_TOTAL_MAX } from "../social/youtubeMetadata.js";
+import { YT_TITLE_MAX, YT_DESCRIPTION_MAX, YT_TAGS_TOTAL_MAX, truncateBytes } from "../social/youtubeMetadata.js";
 
 /**
  * The YouTube draft for a finished lyric video: the title, a description that
@@ -21,8 +21,15 @@ const REFUSED = /[<>]/g;
 const clean = (s) => String(s ?? "").replace(REFUSED, "").replace(/\s+/g, " ").trim();
 const squash = (s) => String(s ?? "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
 
+// A hook is one line quoted at the top of the description. A sheet can hold one very long line,
+// which must not crowd out the lyrics or push the description past YouTube's limit (Codex #63).
+const HOOK_MAX = 150;
+
 function shorten(text, max) {
-  return text.length <= max ? text : `${text.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
+  if (text.length <= max) return text;
+  // Never leave half of an emoji at the cut.
+  const cut = text.slice(0, Math.max(0, max - 1)).replace(/[\uD800-\uDBFF]$/, "");
+  return `${cut.trimEnd()}…`;
 }
 
 function draftTitle(title, artist) {
@@ -35,10 +42,10 @@ function hookLine(project, title) {
   const leads = (project.lines || []).filter((l) => l.kind !== "response" && clean(l.text));
   const key = squash(title);
   const titled = key && leads.find((l) => squash(l.text).includes(key));
-  if (titled) return clean(titled.text);
+  if (titled) return shorten(clean(titled.text), HOOK_MAX);
   const chorus = new Set((project.sections || []).filter((s) => s.kind === "chorus").map((s) => s.id));
   const first = leads.find((l) => chorus.has(l.sectionId));
-  return first ? clean(first.text) : "";
+  return first ? shorten(clean(first.text), HOOK_MAX) : "";
 }
 
 /** The sheet as the user wrote it, tidied: section labels stay, runs of blank lines become one. */
@@ -78,7 +85,8 @@ function draftDescription(project, title, artist) {
   const lyrics = lyricsOf(project.sheet?.raw);
   // Two blank-line joins sit either side of the lyrics block.
   const fitted = lyrics ? fitLyrics(lyrics, YT_DESCRIPTION_MAX - bytes(fixed) - 4) : "";
-  return [...head, fitted, tags].filter(Boolean).join("\n\n");
+  // The parts above are bounded, so this cut never bites; it keeps the limit a guarantee.
+  return truncateBytes([...head, fitted, tags].filter(Boolean).join("\n\n"), YT_DESCRIPTION_MAX);
 }
 
 /** YouTube counts a tag with a space as quoted, and the commas between tags. */
