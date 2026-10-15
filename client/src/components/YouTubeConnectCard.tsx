@@ -140,8 +140,10 @@ export function YouTubeConnectCard() {
             </p>
 
             <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 flex flex-col sm:flex-row sm:items-center gap-4">
-                <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-3 flex-shrink-0">
-                    <Youtube size={24} className="text-rose-300" />
+                {/* self-start: in the stacked phone layout a flex child stretches to full width,
+                    which turned this icon tile into an empty pink bar. */}
+                <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-3 flex-shrink-0 self-start sm:self-center">
+                    <Youtube size={24} className="text-rose-300" aria-hidden="true" />
                 </div>
                 <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
