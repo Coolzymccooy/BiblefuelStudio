@@ -103,10 +103,15 @@ export function updateProject(dataDir, id, fn) {
   return writeProject(dataDir, next);
 }
 
-export function listProjects(dataDir) {
+/** Every readable project, each read once. */
+export function readAllProjects(dataDir) {
   if (!fs.existsSync(dirOf(dataDir))) return [];
   return fs.readdirSync(dirOf(dataDir)).filter((f) => /^lv_[a-z0-9]+\.json$/.test(f))
-    .map((f) => readProject(dataDir, f.replace(/\.json$/, ""))).filter(Boolean)
+    .map((f) => readProject(dataDir, f.replace(/\.json$/, ""))).filter(Boolean);
+}
+
+export function listProjects(dataDir) {
+  return readAllProjects(dataDir)
     .map((p) => ({ projectId: p.projectId, title: p.title, artist: p.artist, updatedAt: p.updatedAt, hasRender: Array.isArray(p.renders) && p.renders.length > 0 }))
     .sort((a, b) => String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? "")));
 }

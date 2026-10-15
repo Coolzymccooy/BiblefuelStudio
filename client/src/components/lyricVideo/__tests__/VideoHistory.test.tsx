@@ -59,17 +59,17 @@ describe('VideoHistory', () => {
     const row = (await screen.findByText('I Know the Driver')).closest('li') as HTMLElement;
     expect(within(row).getByText('Sthill Waters')).toBeTruthy();
     expect(within(row).getByText('Portrait · 720p · 3:02 · 15/10/2026')).toBeTruthy();
-    expect(within(row).getByRole('button', { name: 'Watch I Know the Driver' })).toBeTruthy();
-    expect(within(row).getByRole('link', { name: 'Download I Know the Driver' }).getAttribute('href'))
+    expect(within(row).getByRole('button', { name: /^Watch I Know the Driver, Portrait 720p, 15\/10\/2026 at \d\d:\d\d$/ })).toBeTruthy();
+    expect(within(row).getByRole('link', { name: /^Download I Know the Driver, Portrait 720p, 15\/10\/2026 at \d\d:\d\d$/ }).getAttribute('href'))
       .toMatch(/\/outputs\/v1\.mp4\?dl=I%20Know%20the%20Driver\.mp4$/);
-    expect(within(row).getByRole('link', { name: 'Open song I Know the Driver' }).getAttribute('href')).toBe('/app/lyric-video/lv_1');
+    expect(within(row).getByRole('link', { name: /^Open song I Know the Driver, Portrait 720p, 15\/10\/2026 at \d\d:\d\d$/ }).getAttribute('href')).toBe('/app/lyric-video/lv_1');
   });
 
   it('a running video shows its progress and Open song, and no Watch', async () => {
     serve([running()]);
     setup();
     const row = (await screen.findByText('Rendering… 45%')).closest('li') as HTMLElement;
-    expect(within(row).getByRole('link', { name: 'Open song I Know the Driver' })).toBeTruthy();
+    expect(within(row).getByRole('link', { name: /^Open song I Know the Driver, Portrait 720p, 15\/10\/2026 at \d\d:\d\d$/ })).toBeTruthy();
     expect(within(row).queryByRole('button', { name: /watch/i })).toBeNull();
     expect(within(row).queryByRole('link', { name: /download/i })).toBeNull();
   });
@@ -80,29 +80,46 @@ describe('VideoHistory', () => {
     const sentence = await screen.findByText('Failed: The video could not be made. Try again, or choose a different background.');
     expect(sentence.className).toContain('text-bf-danger');
     const row = sentence.closest('li') as HTMLElement;
-    expect(within(row).getByRole('link', { name: 'Open song I Know the Driver' })).toBeTruthy();
+    expect(within(row).getByRole('link', { name: /^Open song I Know the Driver, Portrait 720p, 14\/10\/2026 at \d\d:\d\d$/ })).toBeTruthy();
     expect(within(row).queryByRole('button', { name: /watch/i })).toBeNull();
   });
 
   it('Watch opens a player under that row, and opening another closes the first', async () => {
     serve([done(1, { title: 'First' }), done(2, { title: 'Second', jobId: 'done-2' })]);
     setup();
-    fireEvent.click(await screen.findByRole('button', { name: 'Watch First' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Watch First,/ }));
     const players = () => document.querySelectorAll('video');
     expect(players()).toHaveLength(1);
     expect(players()[0].getAttribute('src')).toMatch(/\/outputs\/v1\.mp4$/);
     expect(players()[0].hasAttribute('controls')).toBe(true);
-    expect((screen.getByRole('button', { name: 'Watch First' }).closest('li') as HTMLElement).contains(players()[0])).toBe(true);
-    fireEvent.click(screen.getByRole('button', { name: 'Watch Second' }));
+    expect((screen.getByRole('button', { name: /^Watch First,/ }).closest('li') as HTMLElement).contains(players()[0])).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: /^Watch Second,/ }));
     expect(players()).toHaveLength(1);
     expect(players()[0].getAttribute('src')).toMatch(/\/outputs\/v2\.mp4$/);
-    expect((screen.getByRole('button', { name: 'Watch Second' }).closest('li') as HTMLElement).contains(players()[0])).toBe(true);
+    expect((screen.getByRole('button', { name: /^Watch Second,/ }).closest('li') as HTMLElement).contains(players()[0])).toBe(true);
+  });
+
+  it('gives each video of the same song buttons with names of their own', async () => {
+    serve([
+      done(1, { at: '2026-10-15T12:00:00.000Z' }),
+      done(2, { at: '2026-10-15T09:30:00.000Z' }),
+      done(3, { at: '2026-10-15T12:00:00.000Z', aspect: 'landscape' }),
+      done(4, { at: '2026-10-15T12:00:00.000Z', quality: '1080p' }),
+    ]);
+    setup();
+    await screen.findAllByText('I Know the Driver');
+    for (const verb of ['Watch', 'Open song', 'Download']) {
+      const names = screen.getAllByText(verb, { selector: 'button, a' }).map((el) => el.getAttribute('aria-label'));
+      expect(names).toHaveLength(4);
+      expect(new Set(names).size).toBe(4);
+      for (const n of names) expect(n?.startsWith(`${verb} I Know the Driver, `)).toBe(true);
+    }
   });
 
   it('Watch again closes the player', async () => {
     serve([done(1)]);
     setup();
-    const watch = await screen.findByRole('button', { name: 'Watch I Know the Driver' });
+    const watch = await screen.findByRole('button', { name: /^Watch I Know the Driver, Portrait 720p, 15\/10\/2026 at \d\d:\d\d$/ });
     fireEvent.click(watch);
     expect(document.querySelectorAll('video')).toHaveLength(1);
     expect(watch.getAttribute('aria-expanded')).toBe('true');
@@ -167,7 +184,7 @@ describe('VideoHistory', () => {
       expect(interval(qc)).toBe(5000);
       serve([done(1)]);
       await qc.refetchQueries({ queryKey: ['lyric-renders'] });
-      await screen.findByRole('button', { name: 'Watch I Know the Driver' });
+      await screen.findByRole('button', { name: /^Watch I Know the Driver, Portrait 720p, 15\/10\/2026 at \d\d:\d\d$/ });
       expect(interval(qc)).toBe(false);
     });
   });

@@ -94,7 +94,7 @@ describe('LyricVideoPage', () => {
     ]);
     renderAt('/app/lyric-video');
     expect(await screen.findByRole('heading', { name: 'Your videos' })).toBeTruthy();
-    expect(await screen.findByRole('button', { name: 'Watch Old Song' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: /^Watch Old Song,/ })).toBeTruthy();
   });
 
   it('has no videos section before any song exists', async () => {

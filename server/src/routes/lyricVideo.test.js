@@ -1357,28 +1357,118 @@ describe("the history of every video made (GET /renders)", () => {
     assert.equal((await listed()).length, 1);
     stub.render = finishingRender();
   });
-  test("a saved running job that is gone after a restart is listed as failed, never as running", async () => {
-    ctx = userCtx("history-orphan", "premium");
+  const orphan = (c, p, extra = {}) => withRenders(c, p, { render: { activeJobId: "gone-after-restart", aspect: "landscape", quality: "1080p", ...extra } });
+  test("a render killed by a restart is not listed as running, and is not listed before the song is read", async () => {
+    ctx = userCtx("history-orphan-raw", "premium");
     const p = placedProject(ctx);
-    withRenders(ctx, p, { render: { activeJobId: "gone-after-restart", aspect: "landscape", quality: "1080p" } });
-    const [item] = await listed();
+    orphan(ctx, p);
+    assert.deepEqual(await listed(), [], "never a stale running row");
+    assert.equal(readProject(ctx.dataDir, p.projectId).render.activeJobId, "gone-after-restart", "reading the list changes nothing");
+  });
+  test("a render killed by a restart is a failed row once the start screen has listed the songs (GET /)", async () => {
+    ctx = userCtx("history-orphan-list", "premium");
+    const p = placedProject(ctx);
+    orphan(ctx, p);
+    await call("GET", "/");
+    const [item, ...rest] = await listed();
+    assert.equal(rest.length, 0);
     assert.equal(item.status, "failed");
     assert.equal(item.error, RESTARTED);
     assert.equal(item.jobId, "gone-after-restart");
     assert.deepEqual([item.aspect, item.quality], ["landscape", "1080p"]);
-    assert.equal(item.at, readProject(ctx.dataDir, p.projectId).updatedAt);
     assert.equal(item.progress, undefined);
-    assert.equal(readProject(ctx.dataDir, p.projectId).render.activeJobId, "gone-after-restart", "reading the list changes nothing");
+    assert.ok(Number.isFinite(Date.parse(item.at)));
+    assert.equal(readProject(ctx.dataDir, p.projectId).render, null, "the saved job is cleared as before");
   });
-  test("a persisted job that ended in error, or was still running, is failed too", async () => {
+  test("it is a failed row once the song itself is opened (GET /:id) too", async () => {
+    ctx = userCtx("history-orphan-open", "premium");
+    const p = placedProject(ctx);
+    orphan(ctx, p);
+    assert.equal((await call("GET", `/${p.projectId}`)).json.project.render, null);
+    assert.deepEqual((await listed()).map((i) => [i.jobId, i.status, i.error]), [["gone-after-restart", "failed", RESTARTED]]);
+  });
+  test("it is recorded once, however many times the song is settled", async () => {
+    ctx = userCtx("history-orphan-once", "premium");
+    const p = placedProject(ctx);
+    orphan(ctx, p);
+    await call("GET", "/");
+    await call("GET", `/${p.projectId}`);
+    await call("GET", "/");
+    assert.equal(readProject(ctx.dataDir, p.projectId).failedRenders.length, 1);
+    assert.equal((await listed()).length, 1);
+  });
+  test("a saved job already filed as a video or a failure is not filed again", async () => {
+    ctx = userCtx("history-orphan-known", "premium");
+    const p = placedProject(ctx);
+    withRenders(ctx, p, { renders: [doneEntry(1, "2026-10-10T09:00:00.000Z")], render: { activeJobId: "done-1", aspect: "portrait", quality: "720p" } });
+    await call("GET", "/");
+    assert.deepEqual(readProject(ctx.dataDir, p.projectId).failedRenders, []);
+    assert.deepEqual((await listed()).map((i) => i.status), ["done"]);
+  });
+  test("a render the user cancelled before a restart is not recorded", async () => {
+    ctx = userCtx("history-orphan-cancelled", "premium");
+    const p = placedProject(ctx);
+    persistJob(ctx.dataDir, { jobId: "gone-after-restart", userId: ctx.userId, projectId: p.projectId, status: "error", cancelled: true });
+    orphan(ctx, p);
+    await call("GET", "/");
+    assert.deepEqual(readProject(ctx.dataDir, p.projectId).failedRenders, []);
+    assert.equal(readProject(ctx.dataDir, p.projectId).render, null);
+    assert.deepEqual(await listed(), []);
+  });
+  test("a persisted job that ended in error, or was still running, is recorded as failed too", async () => {
     ctx = userCtx("history-persisted", "premium");
     const p = placedProject(ctx);
     persistJob(ctx.dataDir, { jobId: "persisted-err", userId: ctx.userId, projectId: p.projectId, status: "error" });
-    withRenders(ctx, p, { render: { activeJobId: "persisted-err" } });
-    assert.deepEqual((await listed()).map((i) => [i.jobId, i.status, i.error]), [["persisted-err", "failed", RESTARTED]]);
+    orphan(ctx, p, { activeJobId: "persisted-err" });
+    await call("GET", "/");
     persistJob(ctx.dataDir, { jobId: "persisted-run", userId: ctx.userId, projectId: p.projectId, status: "running" });
-    withRenders(ctx, p, { render: { activeJobId: "persisted-run" } });
-    assert.equal((await listed())[0].status, "failed");
+    orphan(ctx, p, { activeJobId: "persisted-run" });
+    await call("GET", "/");
+    assert.deepEqual((await listed()).map((i) => [i.jobId, i.status, i.error]).sort(), [["persisted-err", "failed", RESTARTED], ["persisted-run", "failed", RESTARTED]]);
+  });
+  test("a render that finished but whose saving failed is recorded as failed, not lost", async () => {
+    ctx = userCtx("history-catch", "premium");
+    const p = placedProject(ctx);
+    const jobsDir = path.join(ctx.dataDir, "render-jobs");
+    stub.render = async (o) => {
+      markRunning(o.jobId);
+      // A file where the saved-jobs folder goes makes persistJob throw into finishRender's catch.
+      fs.rmSync(jobsDir, { recursive: true, force: true });
+      fs.writeFileSync(jobsDir, "x");
+      markError(o.jobId, "ffmpeg exited 1");
+      return { ok: false, error: "ffmpeg exited 1" };
+    };
+    const spy = console.error;
+    console.error = () => {};
+    try {
+      const r = await call("POST", `/${p.projectId}/render`, { aspect: "square", quality: "1080p" });
+      assert.ok(await until(() => readProject(ctx.dataDir, p.projectId).render === null));
+      const [item] = await listed();
+      assert.equal(item.jobId, r.json.jobId);
+      assert.equal(item.status, "failed");
+      assert.equal(item.error, RENDER_FAILED);
+      assert.deepEqual([item.aspect, item.quality], ["square", "1080p"]);
+      assert.equal(readProject(ctx.dataDir, p.projectId).failedRenders.length, 1, "recorded once");
+    } finally { console.error = spy; stub.render = finishingRender(); fs.rmSync(jobsDir, { force: true }); }
+  });
+  test("a cancel is not recorded even when saving the job fails", async () => {
+    ctx = userCtx("history-catch-cancel", "premium");
+    const p = placedProject(ctx);
+    const jobsDir = path.join(ctx.dataDir, "render-jobs");
+    stub.render = async (o) => {
+      markRunning(o.jobId);
+      fs.rmSync(jobsDir, { recursive: true, force: true });
+      fs.writeFileSync(jobsDir, "x");
+      cancelJob(o.jobId, ctx.userId);
+      return { ok: false, error: "Render cancelled" };
+    };
+    const spy = console.error;
+    console.error = () => {};
+    try {
+      await call("POST", `/${p.projectId}/render`, {});
+      assert.ok(await until(() => readProject(ctx.dataDir, p.projectId).render === null));
+      assert.deepEqual(readProject(ctx.dataDir, p.projectId).failedRenders, []);
+    } finally { console.error = spy; stub.render = finishingRender(); fs.rmSync(jobsDir, { force: true }); }
   });
   test("another user's songs never appear", async () => {
     const mine = userCtx("history-mine", "premium");
@@ -1390,6 +1480,7 @@ describe("the history of every video made (GET /renders)", () => {
     ctx = mine;
     assert.deepEqual((await listed()).map((i) => i.title), ["Mine"]);
     ctx = theirs;
+    await call("GET", "/");
     assert.equal((await listed()).length, 3);
     ctx = userCtx("history-user", "premium");
   });

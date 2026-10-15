@@ -19,20 +19,28 @@ const isRunning = (item: LyricHistoryItem) => item.status === 'running';
 /** Running videos first; the rest keep the order the server gave (newest first). */
 const runningFirst = (items: LyricHistoryItem[]) => [...items.filter(isRunning), ...items.filter((i) => !isRunning(i))];
 
-/** "Portrait · 720p · 3:02 · 15/10/2026"; a part that is not known is left out. */
-function detailsOf(item: LyricHistoryItem): string {
+/**
+ * What a row says about its video, built once: `line` is shown ("Portrait · 720p · 3:02 · 15/10/2026";
+ * a part that is not known is left out) and `name` tells this video from the song's others for a screen
+ * reader ("I Know the Driver, Portrait 720p, 15/10/2026 at 14:32").
+ */
+function describe(item: LyricHistoryItem): { line: string; name: string } {
   const when = new Date(item.at);
-  return [
-    aspectName(item.aspect),
-    item.quality,
-    item.durationSec === undefined ? '' : formatSongLength(item.durationSec),
-    Number.isNaN(when.getTime()) ? '' : when.toLocaleDateString('en-GB'),
-  ].filter(Boolean).join(' · ');
+  const valid = !Number.isNaN(when.getTime());
+  const date = valid ? when.toLocaleDateString('en-GB') : '';
+  const time = valid ? when.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '';
+  const shape = [aspectName(item.aspect), item.quality];
+  const length = item.durationSec === undefined ? '' : formatSongLength(item.durationSec);
+  return {
+    line: [...shape, length, date].filter(Boolean).join(' · '),
+    name: [item.title, shape.filter(Boolean).join(' '), valid ? `${date} at ${time}` : ''].filter(Boolean).join(', '),
+  };
 }
 
 function HistoryRow({ item, watching, onWatch }: { item: LyricHistoryItem; watching: boolean; onWatch: () => void }) {
+  const { line, name } = describe(item);
   const openSong = (
-    <Link to={`/app/lyric-video/${item.projectId}`} className={secondaryBtnCls} aria-label={`Open song ${item.title}`}>Open song</Link>
+    <Link to={`/app/lyric-video/${item.projectId}`} className={secondaryBtnCls} aria-label={`Open song ${name}`}>Open song</Link>
   );
   return (
     <li className={`${panelCls} space-y-2`}>
@@ -40,15 +48,15 @@ function HistoryRow({ item, watching, onWatch }: { item: LyricHistoryItem; watch
         <span className="min-w-0 flex-1">
           <span className="block truncate font-medium text-bf-cream">{item.title}</span>
           {item.artist && <span className="block truncate text-xs text-content-secondary">{item.artist}</span>}
-          <span className="block text-sm text-content-secondary">{detailsOf(item)}</span>
+          <span className="block text-sm text-content-secondary">{line}</span>
           {item.status === 'running' && <span className="block text-sm text-bf-cream">Rendering… {Math.round(item.progress ?? 0)}%</span>}
           {item.status === 'failed' && <span className="block text-sm text-bf-danger">Failed: {item.error}</span>}
         </span>
         <span className="flex flex-wrap items-center gap-2">
           {item.status === 'done' && item.file && (
             <>
-              <button type="button" className={secondaryBtnCls} aria-label={`Watch ${item.title}`} aria-expanded={watching} onClick={onWatch}>Watch</button>
-              <a href={lyricDownloadUrl(item.file, item.title)} className={secondaryBtnCls} aria-label={`Download ${item.title}`}>
+              <button type="button" className={secondaryBtnCls} aria-label={`Watch ${name}`} aria-expanded={watching} onClick={onWatch}>Watch</button>
+              <a href={lyricDownloadUrl(item.file, item.title)} className={secondaryBtnCls} aria-label={`Download ${name}`}>
                 <Download size={16} aria-hidden /> Download
               </a>
             </>
@@ -57,7 +65,7 @@ function HistoryRow({ item, watching, onWatch }: { item: LyricHistoryItem; watch
         </span>
       </div>
       {watching && item.file && (
-        <video src={lyricVideoUrl(item.file)} controls playsInline autoPlay className="max-h-96 w-full rounded-xl bg-black" aria-label={`${item.title} video`} />
+        <video src={lyricVideoUrl(item.file)} controls playsInline autoPlay className="max-h-96 w-full rounded-xl bg-black" aria-label={`Video: ${name}`} />
       )}
     </li>
   );
