@@ -73,7 +73,8 @@ These things are already in master:
   - `BYTEPLUS_ARK_BASE_URL`, default `https://ark.ap-southeast.bytepluses.com/api/v3`;
   - `SEEDANCE_MODEL`, default `dreamina-seedance-2-0-mini-260615`;
   - `SEEDANCE_RESOLUTION`, default `720p`.
-- **`videoGen/index.js` changes:** add `seedance` to `listVideoProviderChain`. In `auto` mode Seedance comes first and Veo is the fallback; `VIDEO_GEN_PROVIDER=seedance` forces it. Also pass `seedImagePath` through to the provider, which the current code drops.
+- Seedance is called directly by the Story Animate stage and is not added to `listVideoProviderChain`. The chain serves Timeline video-gen, which expects an R2 public URL. Adding it there is later work.
+- If BytePlus refuses the start frame because it may show a real person (`InputImageSensitiveContentDetected.*`, measured 2026-10-16), the same prompt is resubmitted as text-to-video and the scene records `aiVideoMode:"text"`.
 
 ### 4.2 Spend ledger and cap
 
@@ -119,7 +120,9 @@ A finished clip sets the existing `videoPath`, `videoUrl` and `mediaKind:"video"
 - **Finishing each clip:** pass the downloaded file through the existing `resolveSceneVideo` normalise step, then write the scene fields. The project is written after every clip, so progress survives a crash.
 - **Restart resilience:** `aiVideoTaskId` is saved **before** polling begins. On boot, a sweep finds scenes still `queued` or `generating` with a task id, and resumes polling those tasks. Clips already paid for at BytePlus are collected, not re-bought. A task older than 24 h is marked `error` ("expired at BytePlus — re-animate").
 - **Failures:** a failed clip leaves the scene's picture in place with `aiVideoStatus:"error"`. The render never waits for animation.
-- **Cancel:** it stops polling and submitting. Tasks already submitted may still finish at BytePlus and be charged, and the UI says so.
+- **Cancel:** Stop ends the ordering of new clips. Clips already ordered are still collected, because BytePlus charges for them.
+- A wait that ends without a clip for any reason other than FAILED or NOT_FOUND (a timeout, an auth error, no video) settles the estimated cost rather than releasing it, because BytePlus may still charge.
+- While clips are being made, image runs (/images, /process, /resegment) are refused with 409 ANIMATING, so their stale scene snapshots cannot overwrite a live clip.
 - **Choosing a new picture:** an existing rule clears a scene's video when a new picture is set. That still applies, and it also resets `aiVideoStatus`.
 
 ### 4.4 Series: an "AI motion" option
@@ -140,7 +143,7 @@ A finished clip sets the existing `videoPath`, `videoUrl` and `mediaKind:"video"
 - **Animate all scenes · ≈ $X**, using the estimate endpoint, with "October: $4.20 of $30 used" beside it;
 - a confirmation step before spending more than $2 in one go.
 
-**Settings (admin):** model (2.0 Mini or 2.0), resolution (720p or 1080p), and the monthly cap readout. The API key stays in env and is never shown.
+**Settings (admin):** The quality choice (Standard: 2.0 Mini 720p; High: 2.0 1080p) sits on the Animate panel. The model ids and the price multiplier (`VIDEO_GEN_PRICE_MULTIPLIER`) are env settings. The API key is never shown.
 
 **Design rules:** follow `DESIGN_QUALITY_STANDARD`.
 - Existing button styles (`secondaryBtnCls`) and the shared tokens.
