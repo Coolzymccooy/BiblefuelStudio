@@ -30,13 +30,27 @@ import { findReusableImages, markUsed, registerImage, pruneLibrary, readLibrary 
 import { resolveMovementImage, libraryImageView } from "../lib/ambient/movementImage.js";
 import { isSceneVideoUpload, resolveSceneVideo } from "../lib/story/sceneVideo.js";
 import { normalizeStoryAspect, storyFrameSize } from "../lib/story/sceneFraming.js";
+import { createStoryAnimateRouter } from "./storyAnimate.js";
+import { isAnimating } from "../lib/story/animateStage.js";
 
 const MUSIC_REF_PREFIX = /^(library|mylib):/;
 
 // Spread wherever a new PICTURE goes on a scene. A scene can carry a clip of
 // your own (videoPath), and the render plays the clip when there is one, so
 // a picture put back without this would lose to the stale clip.
-const NO_SCENE_VIDEO = Object.freeze({ videoPath: null, videoUrl: null, mediaKind: "image" });
+// The images stage writes its in-memory scenes back without re-reading them,
+// so it must not run while AI clips are being made: it would overwrite a live
+// clip's task id and status, and the paid clip would be dropped.
+const ANIMATING_REFUSAL = Object.freeze({
+  ok: false, code: "ANIMATING",
+  error: "Scenes are being animated. Wait for the clips to arrive, or stop ordering them, then try again.",
+});
+
+// A new picture also drops any AI motion clip made from the old one.
+const NO_SCENE_VIDEO = Object.freeze({
+  videoPath: null, videoUrl: null, mediaKind: "image",
+  aiVideoStatus: "none", aiVideoTaskId: null, aiVideoError: null,
+});
 
 /**
  * Resolve `project.music.path` for the final ffmpeg render.
@@ -633,7 +647,7 @@ router.post("/:id/segment", async (req, res) => {
  * Why a picture can't go on this scene right now, or null. Each reason has
  * its own code so the client can tell them apart without reading the words.
  */
-function sceneImageBlocked(project, sceneId) {
+export function sceneImageBlocked(project, sceneId) {
   if (!(project.scenes || []).some((s) => s.id === sceneId)) {
     return { status: 404, body: { error: "scene not found" } };
   }
@@ -682,6 +696,8 @@ router.put("/:id/scenes/:sid/image", async (req, res) => {
         videoPath: clip.videoPath,
         videoUrl: clip.videoUrl,
         mediaKind: "video",
+        // Your own clip replaces any AI clip, and a late AI clip must not land on it.
+        aiVideoStatus: "none", aiVideoTaskId: null, aiVideoError: null,
       };
     } else {
       const got = await resolveMovementImage({
@@ -744,6 +760,7 @@ router.get("/:id/library-images", (req, res) => {
 router.post("/:id/images", (req, res) => {
   const project = readProject(req.ctx.dataDir, req.params.id);
   if (!project) return res.status(404).json({ ok: false, error: "project not found" });
+  if (isAnimating(req.params.id)) return res.status(409).json(ANIMATING_REFUSAL);
   if (!(project.scenes || []).length) return res.status(400).json({ ok: false, error: "no scenes to generate — segment first" });
   const force = req.body?.force === true || String(req.query?.force || "") === "true";
 
@@ -778,6 +795,7 @@ router.post("/:id/cancel", (req, res) => {
 router.post("/:id/process", (req, res) => {
   const existing = readProject(req.ctx.dataDir, req.params.id);
   if (!existing) return res.status(404).json({ ok: false, error: "project not found" });
+  if (isAnimating(req.params.id)) return res.status(409).json(ANIMATING_REFUSAL);
   const guard = confineMediaPath(req.ctx, req.body?.mediaPath);
   if (!guard.ok) return res.status(guard.status).json({ ok: false, error: guard.error });
   // What the soundtrack was called and whether it was trimmed: shown back to
@@ -807,6 +825,7 @@ router.post("/:id/process", (req, res) => {
 router.post("/:id/resegment", (req, res) => {
   const project = readProject(req.ctx.dataDir, req.params.id);
   if (!project) return res.status(404).json({ ok: false, error: "project not found" });
+  if (isAnimating(req.params.id)) return res.status(409).json(ANIMATING_REFUSAL);
   if (!project.transcript?.words?.length) {
     return res.status(400).json({ ok: false, error: "no transcript to re-segment — start again" });
   }
@@ -1065,5 +1084,8 @@ router.post("/:id/render", async (req, res) => {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
+
+// AI motion clips on scenes (super admins only); see routes/storyAnimate.js.
+router.use(createStoryAnimateRouter({ sceneBlocked: sceneImageBlocked }));
 
 export default router;

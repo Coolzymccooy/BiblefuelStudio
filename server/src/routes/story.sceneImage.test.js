@@ -467,4 +467,19 @@ describe("your own picture, where it meets the rest of Story", () => {
       fs.rmSync(otherOut, { recursive: true, force: true });
     }
   });
+
+  test("a new picture on an animated scene drops its AI clip", async () => {
+    const p = quotaHitProject();
+    const fresh = readProject(dataDir, p.projectId);
+    writeProject(dataDir, { ...fresh, scenes: fresh.scenes.map((s) => (s.id === "s1"
+      ? { ...s, imageStatus: "done", mediaKind: "video", videoPath: "/x/bg-video-a.mp4", videoUrl: "/outputs/bg-video-a.mp4", aiVideoStatus: "done", aiVideoTaskId: "t-1", aiVideoError: null }
+      : s)) });
+    const res = await putImage(p, "s1", { uploadPath: fakeUpload() });
+    assert.equal(res.statusCode, 200, JSON.stringify(res.payload));
+    const s1 = readProject(dataDir, p.projectId).scenes[1];
+    assert.equal(s1.mediaKind, "image");
+    assert.equal(s1.videoPath, null);
+    assert.equal(s1.aiVideoStatus, "none");
+    assert.equal(s1.aiVideoTaskId, null);
+  });
 });

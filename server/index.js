@@ -60,6 +60,8 @@ import issuesRouter from "./src/routes/issues.js";
 import { DATA_DIR, OUTPUT_DIR } from "./src/lib/paths.js";
 import { cacheControlForOutput, publicAssetHeaders } from "./src/lib/mediaCache.js";
 import { reconcilePersistedJobs } from "./src/lib/renderJobs.js";
+import { resumeAnimations } from "./src/lib/story/animateStage.js";
+import { isSeedanceConfigured } from "./src/lib/videoGen/providers/seedance.js";
 import { hasLibass } from "./src/lib/kinetic/capability.js";
 
 // Load env from CURRENT server directory
@@ -431,6 +433,13 @@ try {
   if (interrupted.length) console.warn(`[story] reconciled ${interrupted.length} interrupted render job(s)`);
 } catch (e) {
   console.warn("[story] job reconciliation skipped:", e?.message || e);
+}
+
+// AI scene clips ordered before a restart are collected, not bought again.
+if (isSeedanceConfigured()) {
+  resumeAnimations({ dataDir: DATA_DIR, outputDir: OUTPUT_DIR }, { ledgerDir: DATA_DIR })
+    .then((n) => { if (n) console.log(`[story] collecting ${n} AI scene clip(s) ordered before the restart`); })
+    .catch((e) => console.warn("[story] AI clip resume skipped:", e?.message || e));
 }
 
 // Vocal-removal requests waiting for the laptop survive a restart.
