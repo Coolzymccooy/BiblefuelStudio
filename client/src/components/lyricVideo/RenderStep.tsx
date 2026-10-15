@@ -4,7 +4,8 @@ import { Download, Loader2 } from 'lucide-react';
 import { lyricVideoApi } from '../../lib/lyricVideoApi';
 import { lyricDownloadUrl, lyricVideoUrl } from '../../lib/lyricDownload';
 import { formatSongLength } from '../../lib/lyricTiming';
-import type { LyricProject, LyricRender, LyricRenderJob, RenderAspect, RenderQuality } from '../../lib/lyricVideoTypes';
+import type { LyricProject, LyricPublishDraft, LyricRender, LyricRenderJob, RenderAspect, RenderQuality } from '../../lib/lyricVideoTypes';
+import { YoutubePublishPanel } from '../share/YoutubePublishPanel';
 import { RenderProgressOverlay } from '../RenderProgressOverlay';
 import { fieldLabelCls, inputCls, panelCls, primaryBtnCls, secondaryBtnCls } from '../story/formStyles';
 import { messageOf } from './messageOf';
@@ -91,7 +92,54 @@ function EarlierRender({ render, title, onWatch }: { render: LyricRender; title:
   );
 }
 
-/** Step 5: make the video, watch it, and save it. */
+// YouTube's Music category, used if the draft could not be fetched.
+const MUSIC_CATEGORY = '10';
+
+/** The publish uploader finds a finished video by its name in the user's outputs. */
+const outputsPath = (file: string) => `/outputs/${file.split(/[\\/]/).pop()}`;
+
+/** Publishes the video being watched, opened with a title, description and tags made from the song. */
+function PublishToYoutube({ project, file }: { project: LyricProject; file: string }) {
+  const [draft, setDraft] = useState<LyricPublishDraft | null>(null);
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [draftFailed, setDraftFailed] = useState(false);
+
+  const show = async () => {
+    setLoading(true);
+    try {
+      setDraft(await lyricVideoApi.publishDraft(project.projectId));
+    } catch {
+      // The panel still opens, with the song's title to start from.
+      setDraftFailed(true);
+    } finally {
+      setLoading(false);
+      setOpen(true);
+    }
+  };
+
+  if (!open) {
+    return (
+      <button type="button" className={secondaryBtnCls} disabled={loading} onClick={show}>
+        {loading && <Loader2 size={16} className="animate-spin" aria-hidden />} Publish to YouTube
+      </button>
+    );
+  }
+  return (
+    <div className="space-y-3 border-t border-[rgba(216,184,120,0.14)] pt-3">
+      <h3 className="section-title">Publish to YouTube</h3>
+      {draftFailed && <p className="text-xs text-content-secondary">The details could not be filled in for you. Type them below.</p>}
+      <YoutubePublishPanel
+        videoUrl={outputsPath(file)}
+        initial={draft ? { title: draft.title, description: draft.description, tags: draft.tags } : { title: project.title }}
+        categoryId={draft?.categoryId ?? MUSIC_CATEGORY}
+      />
+      {draft?.note && <p className="text-xs text-content-secondary">{draft.note}</p>}
+    </div>
+  );
+}
+
+/** Step 5: make the video, watch it, save it, and publish it. */
 export function RenderStep({ project, onChange }: Props) {
   const [aspect, setAspect] = useState<RenderAspect>('portrait');
   const [quality, setQuality] = useState<RenderQuality>('720p');
@@ -186,6 +234,8 @@ export function RenderStep({ project, onChange }: Props) {
         <div className={`${panelCls} space-y-3`}>
           <video key={shown} src={lyricVideoUrl(shown)} controls playsInline className="mx-auto max-h-[70vh] w-full rounded-lg bg-black" />
           <DownloadLink file={shown} title={project.title} />
+          {/* Keyed by the video, so watching another one starts its own draft. */}
+          <PublishToYoutube key={shown} project={project} file={shown} />
         </div>
       )}
 

@@ -25,6 +25,7 @@ import {
 import { runAlignJob, isAligning, failedTiming } from "../lib/lyricVideo/alignJob.js";
 import { buildLyricAss, resolvedEffects } from "../lib/lyricVideo/lyricAss.js";
 import { renderSize, runLyricRender } from "../lib/lyricVideo/lyricRender.js";
+import { buildPublishDraft } from "../lib/lyricVideo/publishDraft.js";
 import { quota } from "../middleware/quota.js";
 
 const EFFECTS_ALLOWED = new Set(["auto", ...EFFECT_IDS]);
@@ -516,6 +517,11 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
   router.get("/:id/effects", route((req, res) => {
     const project = load(req);
     ok(res, { effects: resolvedEffects(project) });
+  }));
+
+  /** The YouTube title, description and tags the publish panel opens with. Free. */
+  router.get("/:id/publish-draft", route((req, res) => {
+    ok(res, { draft: buildPublishDraft(load(req)) });
   }));
 
   /** Finishes a render: records the job's end state, files the result on the project, frees the slot. */

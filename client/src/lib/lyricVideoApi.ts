@@ -4,7 +4,7 @@ import { uploadMedia } from './mediaUpload';
 import type { UploadKind } from './mediaUpload';
 import { AUDIO_EXTENSIONS } from './audioAccept';
 import type {
-  BackgroundFit, LyricEffect, LyricProject, LyricProjectSummary, LyricRenderJob, RenderAspect, RenderQuality,
+  BackgroundFit, LyricEffect, LyricProject, LyricProjectSummary, LyricPublishDraft, LyricRenderJob, RenderAspect, RenderQuality,
 } from './lyricVideoTypes';
 
 const BASE = '/api/lyric-video';
@@ -102,6 +102,9 @@ export const lyricVideoApi = {
   patchLine: (id: string, lineId: string, patch: { start?: number; effect?: LyricEffect }) =>
     project(api.patch(`${BASE}/${id}/lines/${lineId}`, patch)),
   /** The effect each timed line will really get (a line set to Auto shows the one the video picks), by line id. */
+  async publishDraft(id: string): Promise<LyricPublishDraft> {
+    return unwrap(await api.get<{ draft: LyricPublishDraft }>(`${BASE}/${id}/publish-draft`)).draft;
+  },
   async effects(id: string): Promise<Record<string, LyricEffect>> {
     return unwrap(await api.get<{ effects: Record<string, LyricEffect> }>(`${BASE}/${id}/effects`)).effects;
   },

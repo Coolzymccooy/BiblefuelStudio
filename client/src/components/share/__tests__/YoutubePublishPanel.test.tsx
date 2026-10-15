@@ -24,6 +24,18 @@ beforeEach(() => {
 });
 
 describe('YoutubePublishPanel', () => {
+  it('sends a category only when the caller gives one', async () => {
+    const user = userEvent.setup();
+    const post = vi.spyOn(youtubePublish, 'publishToYoutube').mockResolvedValue({ ok: true, result: { videoId: 'v1', videoUrl: 'https://www.youtube.com/watch?v=v1', forcedPrivate: false } } as any);
+    const { unmount } = render(<YoutubePublishPanel videoUrl="/outputs/lyric-1.mp4" initial={{ title: 'Song' }} categoryId="10" />);
+    await user.click(screen.getByRole('button', { name: /publish to youtube/i }));
+    expect(post).toHaveBeenLastCalledWith(expect.objectContaining({ categoryId: '10' }), expect.anything());
+    unmount();
+    render(<YoutubePublishPanel videoUrl="/outputs/lyric-1.mp4" initial={{ title: 'Song' }} />);
+    await user.click(screen.getByRole('button', { name: /publish to youtube/i }));
+    expect(post.mock.calls[post.mock.calls.length - 1][0]).not.toHaveProperty('categoryId');
+  });
+
   it('posts title, tags, schedule and thumbnail to the YouTube destination', async () => {
     const user = userEvent.setup();
     const post = vi.spyOn(youtubePublish, 'publishToYoutube').mockResolvedValue({ ok: true, result: { videoId: 'v1', videoUrl: 'https://www.youtube.com/watch?v=v1', forcedPrivate: true } } as any);

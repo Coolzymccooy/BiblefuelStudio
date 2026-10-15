@@ -469,6 +469,29 @@ describe("effects", () => {
   });
 });
 
+describe("publish draft", () => {
+  test("GET /:id/publish-draft returns the YouTube draft for the project, free of charge", async () => {
+    ctx = userCtx("draft-user");
+    let p = createProject(ctx.dataDir, { title: "My Time", artist: "Sthill Waters" });
+    p = writeProject(ctx.dataDir, applySheet(p, "[CHORUS]\nMy time no late"));
+    const before = readUsage(ctx.dataDir).counts.render;
+    const r = await call("GET", `/${p.projectId}/publish-draft`);
+    assert.equal(r.status, 200);
+    assert.equal(r.json.draft.title, "My Time — Sthill Waters (Official Lyric Video)");
+    assert.ok(r.json.draft.description.includes("[CHORUS]\nMy time no late"));
+    assert.equal(r.json.draft.categoryId, "10");
+    assert.equal(readUsage(ctx.dataDir).counts.render, before, "the draft is free");
+  });
+
+  test("another user's project, or an unknown one, is a 404", async () => {
+    ctx = userCtx("draft-owner");
+    const p = createProject(ctx.dataDir, { title: "Mine", artist: "" });
+    assert.equal((await call("GET", "/lv_nope/publish-draft")).status, 404);
+    ctx = userCtx("draft-stranger");
+    assert.equal((await call("GET", `/${p.projectId}/publish-draft`)).status, 404);
+  });
+});
+
 describe("timing", () => {
   test("align without a song, or without lines, is refused", async () => {
     const id = await newProject();
