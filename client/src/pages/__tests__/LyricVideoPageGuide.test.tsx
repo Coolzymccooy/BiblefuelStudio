@@ -48,7 +48,7 @@ describe('LyricVideoPage guide', () => {
     renderPage();
     expect(await screen.findByRole('heading', { name: TITLE })).toBeTruthy();
     for (const label of STEP_LABELS) expect(screen.getByText(label)).toBeTruthy();
-    expect(screen.getByText('You can go back to any step. Your changes are saved.')).toBeTruthy();
+    expect(screen.getByText('You can go back to any step. Edited lyrics are saved when you press Read lyrics.')).toBeTruthy();
   });
 
   it('shows on a project that opens on the first step too', async () => {

@@ -98,7 +98,7 @@ export function LyricVideoPage() {
     <div className="space-y-6">
       {header}
       {/* On the start screen too, so a first-timer sees the whole route before uploading. */}
-      <GuideSteps storageKey="lyric-video" title="How to make a lyric video" steps={GUIDE_STEPS} tip="You can go back to any step. Your changes are saved." />
+      <GuideSteps storageKey="lyric-video" title="How to make a lyric video" steps={GUIDE_STEPS} tip="You can go back to any step. Edited lyrics are saved when you press Read lyrics." />
       {projectId
         ? <LyricProjectView key={projectId} projectId={projectId} />
         : <LyricStart onCreated={opened} />}
