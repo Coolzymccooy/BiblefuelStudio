@@ -71,6 +71,32 @@ test("intro pieces under 1.5 s are dropped", () => {
   assert.deepEqual(p.intro, [], "0.8-2 is 1.2 s and 6.5-7.4 is 0.9 s");
 });
 
+test("when no intro piece can show, the name takes its place instead of leaving the logo bare", () => {
+  const p = planBranding({ ...base, hideWindows: [[2, 6.5]] });
+  assert.deepEqual(p.intro, []);
+  assert.deepEqual(p.wordmark, [[0, 2], [6.5, 116]]);
+});
+
+test("a non-finite captionsEnd is treated as 0", () => {
+  for (const captionsEnd of [NaN, undefined, Infinity]) {
+    const p = planBranding({ ...base, captionsEnd });
+    assert.deepEqual(p.endCard, { start: 116, end: 120 });
+    assert.ok(p.bandPieces.length > 0);
+    assert.equal(p.totalSec, 120);
+  }
+});
+
+test("missing options mean all on; non-boolean fields take their default", () => {
+  const all = planBranding(base);
+  assert.deepEqual(planBranding({ ...base, options: null }), all);
+  assert.deepEqual(planBranding({ ...base, options: undefined }), all);
+  assert.deepEqual(planBranding({ ...base, options: {} }), all);
+  assert.deepEqual(planBranding({ ...base, options: { logo: "no", intro: 0, endCard: null } }), all);
+  const noCard = planBranding({ ...base, options: { endCard: false } });
+  assert.equal(noCard.endCard, null);
+  assert.deepEqual(noCard.bandPieces, [[0, 120]]);
+});
+
 test("band pieces under 1 s are dropped", () => {
   const p = planBranding({ ...base, hideWindows: [[0.5, 50], [50.5, 60]] });
   assert.deepEqual(p.bandPieces, [[60, 116]]);

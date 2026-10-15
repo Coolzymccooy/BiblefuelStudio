@@ -151,6 +151,16 @@ function planEndCard({ totalSec, captionsEnd, endCardOn }) {
   return totalSec - start < END_CARD_MIN_SEC ? null : { start, end: totalSec };
 }
 
+const DEFAULT_OPTIONS = { logo: true, intro: true, endCard: true };
+
+/** Every toggle that is missing or not a boolean takes its default (on). */
+function withDefaults(options) {
+  const given = options && typeof options === "object" ? options : {};
+  return Object.fromEntries(
+    Object.entries(DEFAULT_OPTIONS).map(([key, dflt]) => [key, typeof given[key] === "boolean" ? given[key] : dflt]),
+  );
+}
+
 /**
  * Plans the branding for one render. `hideWindows` are the (padded, merged) windows where
  * captions reach the band; `captionsEnd` is when the last caption leaves the screen.
@@ -158,18 +168,23 @@ function planEndCard({ totalSec, captionsEnd, endCardOn }) {
  * planned as no trim at all (the route refuses it earlier; this is defence in depth).
  */
 export function planBranding({
-  durationSec, audibleEnd, captionsEnd, hideWindows, options = {}, hasLogo, artist, shortsTrim, aspect, lines,
+  durationSec, audibleEnd, captionsEnd: rawCaptionsEnd, hideWindows, options: rawOptions, hasLogo, artist, shortsTrim, aspect, lines,
 }) {
+  const options = withDefaults(rawOptions);
+  // A missing or broken caption end means "no captions", not NaN all through the plan.
+  const captionsEnd = Number.isFinite(rawCaptionsEnd) ? rawCaptionsEnd : 0;
   const trim = Boolean(shortsTrim) && shortsTrimOffer({ aspect, durationSec, lines }).allowed;
-  const { totalSec, audio } = planTiming({ durationSec, audibleEnd, captionsEnd, endCardOn: Boolean(options.endCard), trim });
-  const endCard = planEndCard({ totalSec, captionsEnd, endCardOn: Boolean(options.endCard) });
+  const { totalSec, audio } = planTiming({ durationSec, audibleEnd, captionsEnd, endCardOn: options.endCard, trim });
+  const endCard = planEndCard({ totalSec, captionsEnd, endCardOn: options.endCard });
 
   // The intro credit and the logo toggle are independent, so work from the visible stretch.
   const visible = complement(hideWindows, [0, endCard ? endCard.start : totalSec]);
   const bandPieces = options.logo ? minLength(visible, BAND_MIN_SEC) : [];
   const intro = options.intro ? minLength(intersect(visible, INTRO), INTRO_MIN_SEC) : [];
   const named = typeof artist === "string" && artist.trim() !== "";
-  const wordmark = named ? minLength(options.intro ? subtract(bandPieces, INTRO) : bandPieces, BAND_MIN_SEC) : [];
+  // The name only steps aside for intro pieces that actually show, so a dropped short piece
+  // leaves the name on screen rather than a bare logo.
+  const wordmark = named ? minLength(intro.reduce(subtract, bandPieces), BAND_MIN_SEC) : [];
 
   return {
     totalSec: round2(totalSec),
