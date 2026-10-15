@@ -5,6 +5,7 @@ import { Loader2 } from 'lucide-react';
 import { useLyricProject } from '../hooks/useLyricProject';
 import type { LyricProject } from '../lib/lyricVideoTypes';
 import { ScreenHeader } from '../components/ui/ScreenHeader';
+import { GuideSteps, type GuideStep } from '../components/ui/GuideSteps';
 import { LyricStart } from '../components/lyricVideo/LyricStart';
 import { LyricStepper } from '../components/lyricVideo/LyricStepper';
 import { firstOpenStep, type LyricStepId } from '../lib/lyricSteps';
@@ -18,6 +19,14 @@ import { messageOf } from '../components/lyricVideo/messageOf';
 const header = (
   <ScreenHeader eyebrow="Studio" title={<>Lyric <em>video</em></>} subtitle="Turn your song into a lyric video." />
 );
+
+const GUIDE_STEPS: GuideStep[] = [
+  { label: 'Upload your song', detail: "An MP3, M4A or WAV file, or a video. A video's sound is used." },
+  { label: 'Paste your lyrics', detail: 'One line per line. Put section names in square brackets, like [CHORUS]. Put a crowd reply in round brackets at the end of the line it answers, like (AMEN!).' },
+  { label: 'Time the lyrics', detail: 'Press Time the lyrics and wait under a minute. Then check any line marked “Check this line”.' },
+  { label: 'Choose the look', detail: 'Pick a style and energy, set an effect for any line, or press Shuffle effects for a new mix.' },
+  { label: 'Render and download', detail: 'Choose portrait, landscape or square, then render.' },
+];
 
 /** Keeps its children mounted but out of sight, and stops any sound they were making while it is away. */
 function KeptWhileAway({ away, children }: { away: boolean; children: ReactNode }) {
@@ -47,6 +56,7 @@ function LyricSteps({ project, error, onRetry }: { project: LyricProject; error:
           <button type="button" className="btn btn-secondary" onClick={onRetry}>Check again</button>
         </div>
       )}
+      <GuideSteps storageKey="lyric-video" title="How to make a lyric video" steps={GUIDE_STEPS} tip="You can go back to any step. Your changes are saved." />
       <LyricStepper project={project} step={step} onStep={goTo} />
       {step === 'song' && <SongStep project={project} onChange={onChange} onNext={() => goTo('lyrics')} />}
       {step === 'lyrics' && <LyricsStep project={project} onChange={onChange} onNext={() => goTo('timing')} />}
