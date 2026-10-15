@@ -27,7 +27,7 @@ import { shortsTrimOffer } from "../lib/lyricVideo/brandingPlan.js";
 import { readBranding, logoFileFor } from "../lib/branding.js";
 import { runAlignJob, isAligning, failedTiming } from "../lib/lyricVideo/alignJob.js";
 import { buildLyricAss, resolvedEffects } from "../lib/lyricVideo/lyricAss.js";
-import { renderSize, runLyricRender } from "../lib/lyricVideo/lyricRender.js";
+import { renderSize, runLyricRender, audioShaped } from "../lib/lyricVideo/lyricRender.js";
 import { buildPublishDraft } from "../lib/lyricVideo/publishDraft.js";
 import { quota } from "../middleware/quota.js";
 
@@ -538,19 +538,33 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
     }
   }
 
+  /** Whether the render leans on the branding filters (the logo, or the song's padding and fade). */
+  const usesNewFilters = (args) => Boolean(args.logo) || audioShaped(args.plan?.audio);
+
   /**
-   * Runs the render. When one that draws the logo fails for any reason but a cancel, it is made
-   * once more without the logo (same plan and document), so a surprise in the logo filters never
-   * leaves the user without a video.
+   * The retry: no logo and no padding or fade, so it uses nothing newer than the plain render.
+   * The song is still cut to the planned length (a Shorts trim stays 2:59); a tail past the
+   * song's end is simply quiet.
+   */
+  function plainRetry(args) {
+    const audio = args.plan?.audio;
+    const plan = audio ? { ...args.plan, audio: { ...audio, padToSec: audio.inputSec, fadeSec: 0 } } : args.plan;
+    return { ...args, logo: null, plan };
+  }
+
+  /**
+   * Runs the render. When one that uses the branding filters fails for any reason but a cancel,
+   * it is made once more without them (same document), so a surprise in those filters on prod's
+   * ffmpeg never leaves the user without a video.
    */
   async function runWithLogoFallback(job, args) {
     const result = await runOnce(job, args);
-    if (result?.ok || !args.logo || wasCancelled(job.jobId, result)) return result;
+    if (result?.ok || !usesNewFilters(args) || wasCancelled(job.jobId, result)) return result;
     const why = String(result?.error ?? getJob(job.jobId)?.error ?? "").slice(0, 200);
     console.warn(`[lyric-video] branded render failed, retrying without the logo: ${why}`);
     removeFile(args.outPath);
     updateJob(job.jobId, { status: "running", error: null, percent: 0, phase: "preparing" });
-    return runOnce(job, { ...args, logo: null });
+    return runOnce(job, plainRetry(args));
   }
 
   /** Finishes a render: records the job's end state, files the result on the project, frees the slot. */
@@ -602,7 +616,9 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
     const project = load(req);
     const choice = brandingChoice(project, req.ctx.dataDir);
     const { intro, endCard } = project.branding;
-    ok(res, { branding: { logo: choice.logo, intro, endCard, hasLogo: choice.settings.hasLogo, logoFromSettings: choice.settings.enabled } });
+    // logoFromSettings: the song has made no choice of its own, so its logo follows Settings.
+    const logoFromSettings = project.branding.logo === null;
+    ok(res, { branding: { logo: choice.logo, intro, endCard, hasLogo: choice.settings.hasLogo, logoFromSettings } });
   }));
 
   router.put("/:id/branding", route((req, res) => {

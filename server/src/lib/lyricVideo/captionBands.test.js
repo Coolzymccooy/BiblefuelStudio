@@ -28,6 +28,13 @@ test("windows cover the captions that reach into the band, padded, and close gap
   assert.deepEqual(bandHideWindows(events, { bandBottom: 50 }), []);
 });
 
+test("a line that pops in bigger than the usual allowance reaches by its own starting scale", () => {
+  const big = parseInkEvents(ev("0:00:01.00", "0:00:02.00", "{\\an5\\pos(360,300)\\fs40\\fscx175\\fscy175\\t(0,180,\\fscx100\\fscy100)}AMEN"));
+  assert.equal(big[0].top, 300 - 0.5 * 40 * 1.75);
+  const small = parseInkEvents(ev("0:00:01.00", "0:00:02.00", "{\\an5\\pos(360,300)\\fs40\\fscx60\\fscy60\\t(0,180,\\fscx100\\fscy100)}AMEN"));
+  assert.equal(small[0].top, 300 - 0.5 * 40, "growing from small still reaches its full size");
+});
+
 test("captionsEnd is the last moment any caption is on screen", () => {
   assert.equal(captionsEnd(parseInkEvents(ASS)), 9.5);
   assert.equal(captionsEnd([]), 0);

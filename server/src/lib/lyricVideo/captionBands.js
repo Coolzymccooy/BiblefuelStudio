@@ -17,6 +17,7 @@ const ALIGN_RE = /\\an(\d)/;
 const BORDER_RE = /\\bord(\d+(?:\.\d+)?)/;
 const DRAW_RE = /\\p(\d+)/g;
 const FRZ_RE = /\\frz(-?\d+(?:\.\d+)?)/;
+const FSCY_RE = /\\fscy(\d+(?:\.\d+)?)/;
 const BLOCK_RE = /\{[^}]*\}/g;
 /** Average glyph width as a fraction of the font size, for the width of a rotated line. */
 const CHAR_WIDTH = 0.6;
@@ -42,11 +43,21 @@ function anchorY(text) {
   return null;
 }
 
+/**
+ * How much bigger than its size the line is drawn at its largest: its own starting \fscy when
+ * it has one (an echo pops in at 175%, then settles to 100%), never less than full size; the
+ * usual pop allowance when it says nothing.
+ */
+function popScale(text) {
+  const m = FSCY_RE.exec(text);
+  return m ? Math.max(1, Number(m[1]) / 100) : POP_SCALE;
+}
+
 /** How far above the anchor y an unrotated line's ink reaches, by alignment row. */
-function reachAbove(align, fs) {
+function reachAbove(align, fs, scale = POP_SCALE) {
   if (align >= 7) return 0;
-  if (align >= 4) return 0.5 * fs * POP_SCALE;
-  return fs * POP_SCALE;
+  if (align >= 4) return 0.5 * fs * scale;
+  return fs * scale;
 }
 
 /** Half the width of the visible text, estimated from its character count. */
@@ -60,7 +71,7 @@ function halfWidthOf(text, fs) {
  * extent shrinks with cos, and half the line's width swings up by sin.
  */
 function rotatedReach(align, fs, text) {
-  const reach = reachAbove(align, fs);
+  const reach = reachAbove(align, fs, popScale(text));
   const rz = FRZ_RE.exec(text);
   const degrees = rz ? Number(rz[1]) : 0;
   if (!degrees) return reach;

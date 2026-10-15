@@ -945,7 +945,7 @@ describe("branding options and the branded render", () => {
     fs.writeFileSync(path.join(ctx.dataDir, "lyric-projects", `${id}.json`), JSON.stringify(raw));
     assert.deepEqual((await call("GET", `/${id}`)).json.project.branding, DEFAULTS);
     const b = (await call("GET", `/${id}/branding`)).json.branding;
-    assert.deepEqual(b, { logo: false, intro: true, endCard: true, hasLogo: false, logoFromSettings: false });
+    assert.deepEqual(b, { logo: false, intro: true, endCard: true, hasLogo: false, logoFromSettings: true });
   });
   test("PUT takes booleans (and null for the logo) and refuses anything else", async () => {
     freshUser();
@@ -972,14 +972,15 @@ describe("branding options and the branded render", () => {
     freshUser();
     const id = await newProject();
     const get = async () => (await call("GET", `/${id}/branding`)).json.branding;
-    assert.deepEqual(await get(), { logo: false, intro: true, endCard: true, hasLogo: false, logoFromSettings: false });
+    assert.deepEqual(await get(), { logo: false, intro: true, endCard: true, hasLogo: false, logoFromSettings: true }, "a new song follows Settings (off)");
     writeBranding(ctx.dataDir, { enabled: true });
     assert.deepEqual(await get(), { logo: true, intro: true, endCard: true, hasLogo: false, logoFromSettings: true }, "Settings on, no file uploaded");
     await call("PUT", `/${id}/branding`, { logo: false });
-    assert.deepEqual(await get(), { logo: false, intro: true, endCard: true, hasLogo: false, logoFromSettings: true }, "the project wins");
+    assert.deepEqual(await get(), { logo: false, intro: true, endCard: true, hasLogo: false, logoFromSettings: false }, "the project wins, and no longer follows Settings");
     await call("PUT", `/${id}/branding`, { logo: null });
     writeBranding(ctx.dataDir, { enabled: false });
     assert.equal((await get()).logo, false);
+    assert.equal((await get()).logoFromSettings, true, "back to following Settings");
     if (hasFfmpeg) { writeLogo(ctx); assert.equal((await get()).hasLogo, true); }
   });
   test("a render gets a plan and a document holding the branding events", async () => {
@@ -1155,7 +1156,12 @@ describe("branding options and the branded render", () => {
       assert.equal(calls.length, 2);
       assert.ok(calls[0].logo, "the first try had the logo");
       assert.equal(calls[1].logo, null);
-      assert.equal(calls[1].plan, calls[0].plan, "the same plan");
+      const { audio: firstAudio, ...firstRest } = calls[0].plan;
+      const { audio: retryAudio, ...retryRest } = calls[1].plan;
+      assert.deepEqual(retryRest, firstRest, "the same plan apart from the song's shaping");
+      assert.equal(retryAudio.inputSec, firstAudio.inputSec);
+      assert.equal(retryAudio.padToSec, retryAudio.inputSec, "the retry does not pad");
+      assert.equal(retryAudio.fadeSec, 0, "nor fade");
       assert.equal(calls[1].assText, calls[0].assText, "the same document");
       assert.equal(calls[1].assPath, calls[0].assPath);
       assert.deepEqual(warn.logged, ["[lyric-video] branded render failed, retrying without the logo: x"]);
@@ -1203,9 +1209,31 @@ describe("branding options and the branded render", () => {
       await sleep(40);
       assert.equal(calls.length, 1);
     });
-    test("a render without a logo is not retried", async () => {
+    test("a render without a logo but with the song padded is retried once, plain", async () => {
       freshUser();
       const p = placedProject(ctx);
+      const calls = [];
+      stub.render = async (o) => {
+        calls.push(o);
+        if (calls.length === 1) { markRunning(o.jobId); return { ok: false, error: "apad" }; }
+        return finishingRender()(o);
+      };
+      const warn = captureWarnings();
+      try {
+        const r = await call("POST", `/${p.projectId}/render`, {});
+        assert.ok(await jobDone(p, r.json.jobId));
+      } finally { warn.restore(); }
+      assert.equal(calls.length, 2);
+      assert.equal(calls[0].logo, null);
+      assert.ok(calls[0].plan.audio.padToSec > calls[0].plan.audio.inputSec, "the first try padded the song");
+      assert.equal(calls[1].plan.audio.padToSec, calls[1].plan.audio.inputSec, "the retry does not pad");
+      assert.equal(calls[1].plan.audio.fadeSec, 0, "nor fade");
+      assert.equal(calls[1].plan.totalSec, calls[0].plan.totalSec, "the video keeps its planned length");
+    });
+    test("a render with neither the logo nor padding is not retried", async () => {
+      freshUser();
+      const p = placedProject(ctx);
+      await call("PUT", `/${p.projectId}/branding`, { endCard: false });
       const calls = [];
       stub.render = async (o) => { calls.push(o); markRunning(o.jobId); return { ok: false, error: "x" }; };
       const r = await call("POST", `/${p.projectId}/render`, {});
@@ -1213,6 +1241,7 @@ describe("branding options and the branded render", () => {
       await sleep(40);
       assert.equal(calls.length, 1);
       assert.equal(calls[0].logo, null);
+      assert.equal(calls[0].plan.audio.padToSec, calls[0].plan.audio.inputSec, "nothing padded");
     });
   });
 });

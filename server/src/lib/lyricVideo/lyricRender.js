@@ -65,6 +65,11 @@ function audioShape(audio) {
   return filters.length ? ["-af", filters.join(",")] : [];
 }
 
+/** Whether the plan pads or fades the song (so the render uses -af at all). */
+export function audioShaped(audio) {
+  return audioShape(audio).length > 0;
+}
+
 /**
  * The logo as an endless 30 fps RGBA stream fitted into w x h. It is scaled once, before it
  * loops, so a large upload is not rescaled every frame. With `exact`, a transparent pad on the
