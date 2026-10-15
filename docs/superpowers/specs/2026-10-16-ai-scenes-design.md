@@ -65,14 +65,13 @@ These things are already in master:
   - Sends an **image-to-video** request when a first frame is given, attaching the scene's picture as an image item in `content`. That keeps the clip faithful to the picture and to the Story cast. Otherwise it sends text-to-video.
   - Clamps the duration to whole seconds within the model's range. 4–12 s is the safe range for 2.0 Mini; confirm the upper limit against the official API reference before building.
   - Accepts `9:16`, `16:9` and `1:1`.
-  - Polls every 10 s until the task succeeds or fails, up to 15 minutes. Cancels with the given `signal`.
+  - Polls every 10 s until the task succeeds or fails, up to 15 minutes. Stop ends ordering; an ordered clip is always collected.
   - Downloads the MP4 at once, because BytePlus links expire after 24 h.
   - Returns `{ ok, taskId, tempFile, completionTokens, model }`, or `{ ok:false, code, error }`. A content-moderation refusal comes back as code `REFUSED`, so the UI can ask for a gentler prompt; BytePlus does not charge for it.
 - **Environment variables:**
   - `BYTEPLUS_ARK_API_KEY` (already set locally and in Coolify);
-  - `BYTEPLUS_ARK_BASE_URL`, default `https://ark.ap-southeast.bytepluses.com/api/v3`;
-  - `SEEDANCE_MODEL`, default `dreamina-seedance-2-0-mini-260615`;
-  - `SEEDANCE_RESOLUTION`, default `720p`.
+  - `BYTEPLUS_ARK_BASE_URL`, default `https://ark.ap-southeast.bytepluses.com/api/v3`.
+- There are no model or resolution variables: the models are fixed per quality in `SEEDANCE_MODELS` (Standard is Mini at 720p, High is Seedance 2.0 at 1080p).
 - Seedance is called directly by the Story Animate stage and is not added to `listVideoProviderChain`. The chain serves Timeline video-gen, which expects an R2 public URL. Adding it there is later work.
 - If BytePlus refuses the start frame because it may show a real person (`InputImageSensitiveContentDetected.*`, measured 2026-10-16), the same prompt is resubmitted as text-to-video and the scene records `aiVideoMode:"text"`.
 
@@ -118,11 +117,12 @@ A finished clip sets the existing `videoPath`, `videoUrl` and `mediaKind:"video"
 - **Prompt:** the scene's existing `imagePrompt`, plus a motion line chosen from the project style, plus "No text, no captions, no logos." Example: "slow push-in, gentle light shift, subtle natural movement".
 - **Clip length:** the scene length, rounded up to a whole second and clamped to the model's range. Longer scenes loop, as the render already does. The Series flow asks the segmenter for scenes of 12 s or less, so loops are rare (see 4.4).
 - **Finishing each clip:** pass the downloaded file through the existing `resolveSceneVideo` normalise step, then write the scene fields. The project is written after every clip, so progress survives a crash.
-- **Restart resilience:** `aiVideoTaskId` is saved **before** polling begins. On boot, a sweep finds scenes still `queued` or `generating` with a task id, and resumes polling those tasks. Clips already paid for at BytePlus are collected, not re-bought. A task older than 24 h is marked `error` ("expired at BytePlus — re-animate").
+- **Restart resilience:** `aiVideoTaskId` is saved **before** polling begins. On boot, a sweep finds scenes still `queued` or `generating` with a task id, and resumes polling those tasks. Clips already paid for at BytePlus are collected, not re-bought. A boot sweep counts the project as animating until all of its clips are collected, and leaves alone a project whose run is still live. A task older than 24 h is still asked about: if BytePlus says it no longer has the clip (not found), the estimate is released; any other outcome settles the estimate, in case BytePlus charged for it.
 - **Failures:** a failed clip leaves the scene's picture in place with `aiVideoStatus:"error"`. The render never waits for animation.
 - **Cancel:** Stop ends the ordering of new clips. Clips already ordered are still collected, because BytePlus charges for them.
 - A wait that ends without a clip for any reason other than FAILED or NOT_FOUND (a timeout, an auth error, no video) settles the estimated cost rather than releasing it, because BytePlus may still charge.
-- While clips are being made, image runs (/images, /process, /resegment) are refused with 409 ANIMATING, so their stale scene snapshots cannot overwrite a live clip.
+- While clips are being made, image runs are refused, so their stale scene snapshots cannot overwrite a live clip. The routes (/images, /process, /resegment) answer 409 ANIMATING at once, and the images stage itself refuses too, which covers the long-form path (narration hands over to the same pipeline); there the project lands in error with the same plain message.
+- **Your own clip:** a scene showing a video you uploaded (`mediaKind:"video"` without a finished AI clip) is never animated, by "Animate all" or by name, and its card offers no Animate button. A scene with a finished AI clip can still be re-rolled.
 - **Choosing a new picture:** an existing rule clears a scene's video when a new picture is set. That still applies, and it also resets `aiVideoStatus`.
 
 ### 4.4 Series: an "AI motion" option
@@ -141,9 +141,9 @@ A finished clip sets the existing `videoPath`, `videoUrl` and `mediaKind:"video"
 
 **Story header:**
 - **Animate all scenes · ≈ $X**, using the estimate endpoint, with "October: $4.20 of $30 used" beside it;
-- a confirmation step before spending more than $2 in one go.
+- a confirmation step before spending more than $2 in one go. This applies to a single scene too (a High-quality 12 s scene is about $4.49), and the panel's Animate button is disabled while a new estimate loads, so a stale price cannot skip it.
 
-**Settings (admin):** The quality choice (Standard: 2.0 Mini 720p; High: 2.0 1080p) sits on the Animate panel. The model ids and the price multiplier (`VIDEO_GEN_PRICE_MULTIPLIER`) are env settings. The API key is never shown.
+**Settings (admin):** The quality choice (Standard: 2.0 Mini 720p; High: 2.0 1080p) sits on the Animate panel. The model ids are fixed per quality in `SEEDANCE_MODELS`; the price multiplier (`VIDEO_GEN_PRICE_MULTIPLIER`) is an env setting. The API key is never shown.
 
 **Design rules:** follow `DESIGN_QUALITY_STANDARD`.
 - Existing button styles (`secondaryBtnCls`) and the shared tokens.
