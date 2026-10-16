@@ -28,6 +28,14 @@ describe('aiMotionEstimate', () => {
         expect(aiMotionEstimate('', 0.1).clips).toBe(1);
     });
 
+    it('prices what BytePlus bills: whole seconds per clip, at least 4 s', () => {
+        // 2 words is 0.77 s, but its one clip is billed as 4 s.
+        expect(aiMotionEstimate(words(2), 0.1).usd).toBeCloseTo(0.4, 6);
+        // 27 words is 10.38 s over 2 clips of 5.19 s, each billed as 6 s: 12 s.
+        expect(aiMotionEstimate(words(27), 0.1).usd).toBeCloseTo(1.2, 6);
+        expect(aiMotionEstimate('', 0.1).usd).toBeCloseTo(0.4, 6);
+    });
+
     it('counts words on any whitespace', () => {
         expect(aiMotionEstimate('  a\n b\tc  ', 1).seconds).toBeCloseTo(3 / 2.6, 6);
     });
