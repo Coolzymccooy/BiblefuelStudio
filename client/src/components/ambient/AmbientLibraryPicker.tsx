@@ -60,7 +60,10 @@ export function AmbientLibraryPicker({ projectId, movementId, movementNumber, on
           No pictures yet. Upload a photo on the movement, or generate images — both land here for next time.
         </p>
       ) : (
-        <div className="grid max-h-[360px] grid-cols-3 gap-2 overflow-y-auto pr-1 sm:grid-cols-4">
+        // content-start + an absolutely placed picture: iPhone Safari otherwise
+        // stretches the rows to fit the scroll box and a full library collapses
+        // into thin overlapping strips (the BackgroundLibraryModal fix, 9695c582).
+        <div className="grid max-h-[360px] grid-cols-3 content-start gap-2 overflow-y-auto pr-1 sm:grid-cols-4">
           {images.map((img, i) => (
             <button
               key={img.id}
@@ -68,9 +71,9 @@ export function AmbientLibraryPicker({ projectId, movementId, movementNumber, on
               disabled={saving}
               onClick={() => choose(img)}
               aria-label={`${img.source === 'upload' ? 'Uploaded' : 'Generated'} picture ${i + 1}`}
-              className="aspect-video overflow-hidden rounded-md border border-white/10 hover:border-bf-gold disabled:opacity-50"
+              className="relative aspect-video overflow-hidden rounded-md border border-white/10 hover:border-bf-gold disabled:opacity-50"
             >
-              <AuthedImage src={img.url} alt="" className="h-full w-full object-cover" openOnClick={false} />
+              <AuthedImage src={img.url} alt="" className="absolute inset-0 h-full w-full object-cover" openOnClick={false} />
             </button>
           ))}
         </div>

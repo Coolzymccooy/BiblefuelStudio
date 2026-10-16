@@ -119,7 +119,7 @@ export function SeriesPage() {
     // Send ONE previewed part to Story Video. The series' own Generate button
     // enqueues the fast caption-over-background pipeline for every part; this
     // is the slower cinematic route for a single part worth more attention.
-    const sendPartToStory = async (seg: { partNumber: number; reference: string; hook?: string; caption: string }) => {
+    const sendPartToStory = async (seg: { partNumber: number; reference: string; verses: { text: string }[] }) => {
         setSendingStoryPart(seg.partNumber);
         const aiMotion = showAiMotion && aiMotionParts.has(seg.partNumber);
         const toastId = toast.loading('Narrating for Story Video…');

@@ -10,9 +10,17 @@ const WORDS_PER_SECOND = 2.6;
 /** The server asks the segmenter for 10 s scenes on an AI motion import. */
 const SCENE_SEC = 10;
 
-/** The words a part is narrated with: the hook leads, so the video opens the way it should. */
-export function partNarration(seg: { hook?: string; caption: string }): string {
-    return [seg.hook, seg.caption].filter(Boolean).join(' ');
+/**
+ * The words a part is narrated with: the passage itself. The caption is the
+ * social post (headline, numbered verses, YouVersion link, "follow" line) and
+ * is never read aloud; the hook is the passage's own opening, so reading it
+ * as well said the first line twice.
+ */
+export function partNarration(seg: { verses: { text: string }[] }): string {
+    return seg.verses
+        .map((v) => String(v.text || '').replace(/\s+/g, ' ').trim())
+        .filter(Boolean)
+        .join(' ');
 }
 
 export interface AiMotionEstimate {

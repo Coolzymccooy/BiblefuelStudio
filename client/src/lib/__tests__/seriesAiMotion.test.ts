@@ -2,12 +2,19 @@ import { describe, it, expect } from 'vitest';
 import { partNarration, aiMotionEstimate, aiMotionEstimateText } from '../seriesAiMotion';
 
 describe('partNarration', () => {
-    it('leads with the hook, then the caption', () => {
-        expect(partNarration({ hook: 'Love came first.', caption: 'For God so loved the world' })).toBe('Love came first. For God so loved the world');
+    const verse = (n: number, text: string) => ({ book: 'John', chapter: 3, verse: n, text });
+    it('is the passage itself: the verses in order, without their numbers', () => {
+        expect(partNarration({ verses: [verse(16, 'For God so loved the world,'), verse(17, ' For God sent not his Son\n into the world')] }))
+            .toBe('For God so loved the world, For God sent not his Son into the world');
     });
-    it('a part with no hook is just its caption', () => {
-        expect(partNarration({ hook: '', caption: 'In the beginning' })).toBe('In the beginning');
-        expect(partNarration({ caption: 'In the beginning' })).toBe('In the beginning');
+    it('never reads the social caption: no headline, link or follow line', () => {
+        const said = partNarration({ verses: [verse(1, 'My little children')] });
+        expect(said).toBe('My little children');
+        expect(said).not.toMatch(/Part|YouVersion|https|Follow/);
+    });
+    it('a part with no verse text says nothing rather than something wrong', () => {
+        expect(partNarration({ verses: [] })).toBe('');
+        expect(partNarration({ verses: [verse(1, '  ')] })).toBe('');
     });
 });
 

@@ -112,6 +112,25 @@ export function detectCharacters(text) {
  * @param {{style?: string, characters?: string[]}} [opts]
  * @returns {string}
  */
+/**
+ * What a scene prompt says about THIS scene: the prompt with the style anchor
+ * taken out. The picture library matches on meaning, and the long style text
+ * every scene shares made unrelated scenes score as near matches. The cast
+ * descriptions stay: they say who is in the picture, so a David scene never
+ * lands on a Jesus scene with the same wording.
+ *
+ * @param {string} prompt a prompt from composeScenePrompt (or any prompt)
+ * @returns {string}
+ */
+export function sceneMatchText(prompt) {
+  const whole = String(prompt || "").trim();
+  const anchors = Object.values(STYLE_ANCHORS).sort((a, b) => b.length - a.length);
+  let text = whole;
+  for (const anchor of anchors) text = text.split(anchor).join("");
+  text = text.replace(/(\s*,\s*)+/g, ", ").replace(/^[\s,]+|[\s,]+$/g, "");
+  return text || whole;
+}
+
 export function composeScenePrompt(subject, { style, characters = [] } = {}) {
   const parts = [String(subject || "").trim()].filter(Boolean);
   for (const key of characters) {

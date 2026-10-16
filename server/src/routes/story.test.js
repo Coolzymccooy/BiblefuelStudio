@@ -156,6 +156,34 @@ describe("story routes", () => {
     assert.equal(harvested[0].provider, "cloudflare");
   });
 
+  test("the library is asked about the scene's own words, and learns whether the picture is watermark-free", async () => {
+    const create = mockReqRes({ body: { title: "T", style: "cinematic-bible" }, dataDir, outputDir });
+    await handlerFor("post", "/")(create.req, create.res);
+    const id = create.res.payload.project.projectId;
+    const proj = readProject(dataDir, id);
+    const composed = "an apostle writing by lamplight, cinematic biblical scene, dramatic warm lighting, film still, photorealistic, vertical 9:16, no text, no watermark";
+    writeProject(dataDir, {
+      ...proj,
+      scenes: [{ id: "scene-001", text: "a", startMs: 0, endMs: 8000, imagePrompt: composed, imagePath: null, imageStatus: "pending", promptEditedByUser: false }],
+    });
+    const sentToGen = [];
+    _setImageGenImpl(async ({ rawPrompt }) => { sentToGen.push(rawPrompt); return { ok: true, path: "/gen-1.png", publicUrl: "/o/gen-1.png", provider: "pollinations", watermarkFree: true }; });
+    const asked = [];
+    const harvested = [];
+    _setImageLibraryImpl({
+      find: async (args) => { asked.push(args.prompt); return []; },
+      mark: () => {},
+      register: async (args) => { harvested.push(args); return null; },
+    });
+    const { req, res } = mockReqRes({ params: { id }, body: {}, dataDir, outputDir });
+    await handlerFor("post", "/:id/images")(req, res);
+    await waitForProject(dataDir, id, (p) => p.status === "ready_to_render");
+    assert.deepEqual(asked, ["an apostle writing by lamplight"], "matched on the scene, not the style text every scene shares");
+    assert.deepEqual(sentToGen, [composed], "the picture is still made from the full prompt");
+    assert.equal(harvested[0].prompt, "an apostle writing by lamplight");
+    assert.equal(harvested[0].watermarkFree, true);
+  });
+
   test("PATCH /:id/captions stores the look and motion, ignoring nonsense values", async () => {
     const create = mockReqRes({ body: { title: "T", style: "cinematic-bible" }, dataDir, outputDir });
     await handlerFor("post", "/")(create.req, create.res);

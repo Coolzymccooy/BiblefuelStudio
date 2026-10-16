@@ -83,7 +83,10 @@ export function SceneLibraryPicker({ projectId, sceneId, sceneNumber, onClose, o
             No pictures yet. Upload one on the scene, or generate images. Both land here for next time.
           </p>
         ) : (
-          <div className="grid max-h-[60vh] grid-cols-3 gap-2 overflow-y-auto pr-1 sm:grid-cols-4">
+          // content-start + an absolutely placed picture: iPhone Safari otherwise
+          // stretches the rows to fit the scroll box and a full library collapses
+          // into thin overlapping strips (the BackgroundLibraryModal fix, 9695c582).
+          <div className="grid max-h-[60vh] grid-cols-3 content-start gap-2 overflow-y-auto pr-1 sm:grid-cols-4">
             {images.map((img, i) => (
               <button
                 key={img.id}
@@ -91,9 +94,9 @@ export function SceneLibraryPicker({ projectId, sceneId, sceneNumber, onClose, o
                 disabled={saving}
                 onClick={() => choose(img)}
                 aria-label={`${img.source === 'upload' ? 'Uploaded' : 'Generated'} picture ${i + 1}`}
-                className={`${frameBoxClass(aspect)} overflow-hidden rounded-md border border-white/10 bg-black/40 hover:border-bf-gold disabled:opacity-50`}
+                className={`relative ${frameBoxClass(aspect)} overflow-hidden rounded-md border border-white/10 bg-black/40 hover:border-bf-gold disabled:opacity-50`}
               >
-                <AuthedImage src={img.url} alt="" className="h-full w-full object-contain" openOnClick={false} />
+                <AuthedImage src={img.url} alt="" className="absolute inset-0 h-full w-full object-contain" openOnClick={false} />
               </button>
             ))}
           </div>
