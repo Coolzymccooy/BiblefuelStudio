@@ -166,6 +166,7 @@ export async function generateBibleImage({
           path: file,
           publicUrl,
           provider: result.provider,
+          ...(result.watermarkFree === undefined ? {} : { watermarkFree: result.watermarkFree }),
           cached: false,
           prompt,
         };

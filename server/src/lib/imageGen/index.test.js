@@ -203,6 +203,26 @@ describe("imageGen orchestrator — generateBibleImage", () => {
     cleanupTestImages(seriesId);
   });
 
+  test("a Pollinations picture made with the token comes back marked watermark-free", async () => {
+    process.env.IMAGE_GEN_PROVIDER = "pollinations";
+    process.env.POLLINATIONS_TOKEN = "tok";
+
+    const seriesId = `test_pl_${Date.now()}`;
+    cleanupTestImages(seriesId);
+    let observedUrl = "";
+    stubFetch(async (url) => {
+      observedUrl = url;
+      return new Response(TINY_PNG_BUFFER, { status: 200, headers: { "content-type": "image/png" } });
+    });
+
+    const result = await generateBibleImage({ seriesId, partNumber: 1, verseText: "Still waters", aspect: "portrait" });
+    assert.equal(result.ok, true);
+    assert.equal(result.provider, "pollinations");
+    assert.equal(result.watermarkFree, true);
+    assert.match(observedUrl, /^https:\/\/gen\.pollinations\.ai\/image\//);
+    cleanupTestImages(seriesId);
+  });
+
   test("Cloudflare failure falls back to Imagen", async () => {
     process.env.CLOUDFLARE_ACCOUNT_ID = "acct";
     process.env.CLOUDFLARE_WORKERS_AI_TOKEN = "tok";

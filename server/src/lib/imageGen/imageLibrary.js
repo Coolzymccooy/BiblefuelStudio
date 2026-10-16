@@ -127,7 +127,7 @@ export function decodeEmbedding(b64) {
  *           style: string, aspect: string, provider?: string, projectId?: string,
  *           ext?: "png"|"jpg"|"webp" }} args
  */
-export async function registerImage({ dataDir, outputDir, sourcePath, prompt, style, aspect, provider, projectId, ext = "png" }) {
+export async function registerImage({ dataDir, outputDir, sourcePath, prompt, style, aspect, provider, projectId, ext = "png", watermarkFree }) {
   try {
     if (!sourcePath || !fs.existsSync(sourcePath)) return null;
     const bytes = fs.readFileSync(sourcePath);
@@ -164,6 +164,9 @@ export async function registerImage({ dataDir, outputDir, sourcePath, prompt, st
       categories: classifySearchQuery(String(prompt || "")),
       embedding,
       provider: String(provider || ""),
+      // Pollinations stamped a watermark until 2026-10-16; only a picture known
+      // to be clean is ever reused (see findReusableImages).
+      ...(watermarkFree === undefined ? {} : { watermarkFree: Boolean(watermarkFree) }),
       projectId: String(projectId || ""),
       createdAt: now,
       lastUsedAt: now,
@@ -308,7 +311,8 @@ export async function findReusableImages({ dataDir, prompt, style, aspect, exclu
   if (!isReuseEnabled()) return [];
   const exclude = new Set(excludeIds);
   const pool = readLibrary(dataDir).items.filter((it) =>
-    it && !exclude.has(it.id) && String(it.aspect) === String(aspect) && String(it.style) === String(style));
+    it && !exclude.has(it.id) && String(it.aspect) === String(aspect) && String(it.style) === String(style)
+    && !(it.provider === "pollinations" && it.watermarkFree !== true));
   if (pool.length === 0) return [];
 
   const vec = await _embed(String(prompt || ""));

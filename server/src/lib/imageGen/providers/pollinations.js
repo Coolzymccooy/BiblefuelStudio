@@ -2,7 +2,8 @@
  * Pollinations.ai adapter — free, keyless text-to-image (FLUX-based).
  *
  * Endpoint (GET, returns the image bytes directly):
- *   https://image.pollinations.ai/prompt/{urlencoded prompt}?width=..&height=..&seed=..&model=flux&nologo=true
+ *   with POLLINATIONS_TOKEN: https://gen.pollinations.ai/image/{prompt}?... (Bearer token; no watermark)
+ *   keyless:                 https://image.pollinations.ai/prompt/{prompt}?... (stamps a watermark)
  *
  * Why it's gated behind an env flag rather than auto-enabled: it needs no API
  * key, so without a flag it would silently become every deployment's image
@@ -21,6 +22,7 @@
 
 import { toDimensions } from "../dimensions.js";
 const ENDPOINT_BASE = "https://image.pollinations.ai/prompt";
+const GEN_ENDPOINT_BASE = "https://gen.pollinations.ai/image";
 // On-demand generation behind a free queue can take a while; give each attempt
 // room but keep it short enough that retries fit under the caller's wrapper.
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -72,9 +74,12 @@ export async function generateImagePollinations({ prompt, seed, aspect, model, s
     nologo: "true",
   });
   if (Number.isFinite(seed)) params.set("seed", String(Number(seed)));
-  if (token) params.set("token", token);
 
-  const url = `${ENDPOINT_BASE}/${encodeURIComponent(prompt.trim().slice(0, 2048))}?${params.toString()}`;
+  // The keyless endpoint stamps "pollinations.ai" on the picture whatever
+  // nologo says, token or not (measured 2026-10-16); the gen endpoint with the
+  // token as a Bearer returns it clean.
+  const base = token ? GEN_ENDPOINT_BASE : ENDPOINT_BASE;
+  const url = `${base}/${encodeURIComponent(prompt.trim().slice(0, 2048))}?${params.toString()}`;
   const headers = { Accept: "image/*" };
   if (token) headers.Authorization = `Bearer ${token}`;
 
@@ -107,7 +112,7 @@ export async function generateImagePollinations({ prompt, seed, aspect, model, s
       if (!contentType.startsWith("image/")) {
         return { ok: false, provider: "pollinations", model: modelId, error: `Pollinations returned a non-image response (${contentType || "unknown content-type"})` };
       }
-      return { ok: true, provider: "pollinations", model: modelId, imageBuffer: buf, contentType: contentType || "image/jpeg" };
+      return { ok: true, provider: "pollinations", model: modelId, imageBuffer: buf, contentType: contentType || "image/jpeg", watermarkFree: Boolean(token) };
     } catch (err) {
       lastError = err?.name === "AbortError" ? "Pollinations request timed out" : String(err?.message || err);
       // timeouts/network blips are worth another try
