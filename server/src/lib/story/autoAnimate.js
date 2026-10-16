@@ -35,10 +35,9 @@ function markStarted(dataDir, projectId, note) {
 }
 
 /** The scenes that fit in what is left of the month's budget, in scene order. */
-function pickWithinBudget(project, quality, ledgerDir) {
+function pickWithinBudget(project, scenes, quality, ledgerDir) {
   const { capUsd, spentUsd, reservedUsd } = ledgerSummary(ledgerDir);
   const left = capUsd - spentUsd - reservedUsd;
-  const scenes = animatableScenes(project);
   const picked = [];
   let total = 0;
   for (const s of scenes) {
@@ -53,10 +52,14 @@ function pickWithinBudget(project, quality, ledgerDir) {
 /**
  * @param {{ dataDir: string, outputDir: string }} ctx
  * @param {string} projectId
- * @param {{ ledgerDir?: string, deps?: object, start?: typeof startAnimation }} [opts]
- *   start is a test seam; deps go to startAnimation.
+ * @param {{ ledgerDir?: string, deps?: object, start?: typeof startAnimation,
+ *   sceneBlocked?: (project: object, sceneId: string) => object | null }} [opts]
+ *   start is a test seam; deps go to startAnimation. sceneBlocked says why a
+ *   scene's picture is locked (being regenerated, a render running), or null:
+ *   a locked scene is left out, and if every scene is locked the one try is
+ *   not used up.
  */
-export async function autoAnimate(ctx, projectId, { ledgerDir = DATA_DIR, deps, start = startAnimation } = {}) {
+export async function autoAnimate(ctx, projectId, { ledgerDir = DATA_DIR, deps, start = startAnimation, sceneBlocked = () => null } = {}) {
   try {
     const project = readProject(ctx.dataDir, projectId);
     if (!project?.aiMotion || project.aiMotion.autoStartedAt) return;
@@ -65,7 +68,11 @@ export async function autoAnimate(ctx, projectId, { ledgerDir = DATA_DIR, deps, 
       return;
     }
     const quality = qualityOf(project.aiMotion.quality);
-    const { picked, total } = pickWithinBudget(project, quality, ledgerDir);
+    const animatable = animatableScenes(project);
+    const open = animatable.filter((s) => !sceneBlocked(project, s.id));
+    // Every scene is locked: leave the one try for the next images run.
+    if (animatable.length && !open.length) return;
+    const { picked, total } = pickWithinBudget(project, open, quality, ledgerDir);
     const note = picked.length < total ? BUDGET_NOTE(picked.length, total) : null;
     // Written first: from here on this project never auto-spends again.
     if (!markStarted(ctx.dataDir, projectId, note)) return;

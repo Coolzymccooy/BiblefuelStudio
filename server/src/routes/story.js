@@ -284,12 +284,16 @@ async function imagesStage(ctx, projectId, opts = {}) {
   }
   // Every picture is in: an "AI motion" project animates its scenes now, within
   // the month's cap. Run after the counter is released, so the scenes are not
-  // still locked by this run. Every image path (pipeline, /images, /process,
-  // /resegment, long-form) comes through here. autoAnimate never throws and
-  // only starts a detached run, but it must never fail the images stage.
-  if (result?.status === STORY_STATUS.READY_TO_RENDER) {
+  // still locked by this run. Another image run on the project still going
+  // would write its own copy of the scenes over the clips, so only the last
+  // run to finish hands over, and a scene locked some other way (being
+  // regenerated, a render running) is left out. Every image path (pipeline,
+  // /images, /process, /resegment, long-form) comes through here. autoAnimate
+  // never throws and only starts a detached run, but it must never fail the
+  // images stage.
+  if (result?.status === STORY_STATUS.READY_TO_RENDER && !imagesRunning(projectId)) {
     try {
-      await _autoAnimateFn(ctx, projectId);
+      await _autoAnimateFn(ctx, projectId, { sceneBlocked: sceneImageBlocked });
     } catch (e) {
       console.warn(`[story] auto-animate ${projectId} failed: ${e?.message || e}`);
     }

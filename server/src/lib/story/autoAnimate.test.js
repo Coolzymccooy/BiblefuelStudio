@@ -161,6 +161,30 @@ describe("autoAnimate", () => {
     assert.equal(fs.readFileSync(path.join(dataDir, "story-projects", `${p.projectId}.json`), "utf8"), before, "not rewritten");
   });
 
+  test("a scene that is locked (being regenerated, say) is left out, and the rest animate", async () => {
+    const p = project(3);
+    const { deps, submitted } = fakeDeps();
+    const sceneBlocked = (_proj, sceneId) => (sceneId === "s1" ? { status: 409, body: { code: "SCENE_REGENERATING" } } : null);
+    await autoAnimate(ctx(), p.projectId, { ledgerDir, deps, sceneBlocked });
+    const after = readProject(dataDir, p.projectId);
+    assert.ok(after.aiMotion.autoStartedAt > 0);
+    assert.equal(after.aiMotion.note, null, "a locked scene is skipped silently");
+    await waitFor(() => !isAnimating(p.projectId));
+    assert.equal(submitted.length, 2);
+    assert.deepEqual(statuses(p.projectId), ["done", undefined, "done"]);
+  });
+
+  test("every scene locked: nothing starts and the one try is not used up", async () => {
+    const p = project(2);
+    const { deps, submitted } = fakeDeps();
+    await autoAnimate(ctx(), p.projectId, { ledgerDir, deps, sceneBlocked: () => ({ status: 409, body: {} }) });
+    const after = readProject(dataDir, p.projectId);
+    assert.equal(after.aiMotion.autoStartedAt, null);
+    assert.equal(after.aiMotion.note, null);
+    assert.equal(isAnimating(p.projectId), false);
+    assert.equal(submitted.length, 0);
+  });
+
   test("High quality is priced and ordered at High", async () => {
     const p = project(1, { quality: "high" });
     const { deps, submitted } = fakeDeps();
