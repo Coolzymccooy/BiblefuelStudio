@@ -217,6 +217,13 @@ describe("findReusableImages", () => {
     assert.equal(hits[0].entry.watermarkFree, true);
   });
 
+  test("never reuses a picture whose source is unknown (a cached file has no provider)", async () => {
+    _setEmbedImpl(async () => [1, 0, 0]);
+    await registerImage({ dataDir, outputDir, sourcePath: writeImage("cached.png", [11]), prompt: "still waters", style: "cinematic-bible", aspect: "landscape", provider: undefined, projectId: "p1" });
+    const hits = await findReusableImages({ dataDir, prompt: "still waters", style: "cinematic-bible", aspect: "landscape" });
+    assert.deepEqual(hits, []);
+  });
+
   test("filters on aspect and style before scoring", async () => {
     await seed([
       { name: "portrait", bytes: [3], vec: [1, 0, 0], prompt: "still waters", aspect: "portrait" },

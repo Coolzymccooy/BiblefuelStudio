@@ -99,12 +99,17 @@ describe('composeScenePrompt', () => {
 });
 
 describe('sceneMatchText', () => {
-  // The library matches pictures by meaning. The style and cast text every
-  // scene shares made unrelated scenes look alike (an apostle at a desk and a
-  // modern man in a gold chain went from 0.16 to 0.53 cosine with the anchor).
-  test('keeps only the scene\'s own description', () => {
+  // The library matches pictures by meaning. The style text every scene shares
+  // made unrelated scenes look alike (an apostle at a desk and a modern man in
+  // a gold chain went from 0.16 to 0.53 cosine with the anchor).
+  test('drops the style text but keeps the scene and who is in it', () => {
     const p = composeScenePrompt('an apostle writing by lamplight', { style: 'cinematic-bible', characters: ['paul'] });
-    assert.equal(sceneMatchText(p), 'an apostle writing by lamplight');
+    assert.equal(sceneMatchText(p), `an apostle writing by lamplight, ${CHARACTER_ANCHORS.paul}`);
+  });
+  test('the same scene with a different cast never matches as the same picture', () => {
+    const david = composeScenePrompt('a lone figure on a hillside', { style: 'cinematic-bible', characters: ['david_young'] });
+    const jesus = composeScenePrompt('a lone figure on a hillside', { style: 'cinematic-bible', characters: ['jesus'] });
+    assert.notEqual(sceneMatchText(david), sceneMatchText(jesus));
   });
   test('works for every style, and leaves a prompt without anchors alone', () => {
     for (const style of listStyles()) {

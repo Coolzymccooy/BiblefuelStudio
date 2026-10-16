@@ -476,6 +476,21 @@ describe("POST /api/ambient/:id/images", () => {
     assert.equal(out.status, AMBIENT_STATUS.READY_TO_RENDER);
   });
 
+  test("a clean Pollinations picture joins the pool marked watermark-free", async () => {
+    const registered = [];
+    _setImageLibraryImpl({
+      find: async () => [],
+      register: async (e) => { registered.push(e); return { id: `n${registered.length}` }; },
+      mark: () => {},
+    });
+    _setImageGenImpl(async ({ partNumber }) => ({ ok: true, path: `/img/${partNumber}.png`, provider: "pollinations", watermarkFree: true }));
+    const p = await createSession();
+    await request(app).post(`/api/ambient/${p.projectId}/images`).send({});
+    await waitFor(p.projectId, (x) => x.movements.every((m) => m.imageStatus === "done"));
+    assert.ok(registered.length > 0);
+    assert.ok(registered.every((e) => e.provider === "pollinations" && e.watermarkFree === true));
+  });
+
   test("only pictures made in the bright style are reused, and new ones join that pool", async () => {
     const asked = [];
     const registered = [];

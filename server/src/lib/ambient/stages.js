@@ -296,7 +296,7 @@ export async function imagesStage(ctx, projectId, { force = false, onlyId = null
         entry = await _imageLib.register({
           dataDir: ctx.dataDir, outputDir: ctx.outputDir, sourcePath: result.path,
           prompt: movements[i].imagePrompt, style: AMBIENT_IMAGE_STYLE, aspect,
-          provider: result.provider, projectId: project.projectId,
+          provider: result.provider, watermarkFree: result.watermarkFree, projectId: project.projectId,
         });
         if (entry?.id) claimed.add(entry.id);
       } catch (err) {

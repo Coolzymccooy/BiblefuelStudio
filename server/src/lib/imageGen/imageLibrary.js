@@ -312,6 +312,9 @@ export async function findReusableImages({ dataDir, prompt, style, aspect, exclu
   const exclude = new Set(excludeIds);
   const pool = readLibrary(dataDir).items.filter((it) =>
     it && !exclude.has(it.id) && String(it.aspect) === String(aspect) && String(it.style) === String(style)
+    // A picture with no recorded source (a cached file harvested without its
+    // provider) might be a stamped Pollinations one, so it is never offered.
+    && String(it.provider || "") !== ""
     && !(it.provider === "pollinations" && it.watermarkFree !== true));
   if (pool.length === 0) return [];
 
