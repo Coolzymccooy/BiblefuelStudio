@@ -4,7 +4,7 @@ import path from "path";
 import { v4 as uuid } from "uuid";
 import {
   createProject, readProject, writeProject, listProjects, deleteProject, STORY_STATUS,
-  normaliseCaptionSettings, sourceDisplayFacts,
+  normaliseCaptionSettings, sourceDisplayFacts, normaliseAiMotion,
 } from "../lib/story/projectStore.js";
 import { segmentScenes } from "../lib/story/sceneSegmenter.js";
 import { runStoryRender, probeAudioDurationSec } from "../lib/story/storyRender.js";
@@ -33,8 +33,13 @@ import { normalizeStoryAspect, storyFrameSize } from "../lib/story/sceneFraming.
 import { createStoryAnimateRouter } from "./storyAnimate.js";
 import { isAnimating } from "../lib/story/animateStage.js";
 import { autoAnimate } from "../lib/story/autoAnimate.js";
+import { isSeedanceConfigured } from "../lib/videoGen/providers/seedance.js";
 
 const MUSIC_REF_PREFIX = /^(library|mylib):/;
+
+// Scene target for an "AI motion" import: keeps most scenes under Seedance's
+// 12 s clip ceiling, since the segmenter's target is soft.
+const AI_MOTION_SCENE_SEC = 10;
 
 // Spread wherever a new PICTURE goes on a scene. A scene can carry a clip of
 // your own (videoPath), and the render plays the clip when there is one, so
@@ -98,6 +103,11 @@ export function _resetTtsImpl() { _ttsFn = synthesizeEdgeTts; }
 let _renderFn = runStoryRender;
 export function _setRenderImpl(impl) { _renderFn = impl; }
 export function _resetRenderImpl() { _renderFn = runStoryRender; }
+
+// The pipeline an import with autoStart fires (route tests stub it).
+let _pipelineFn = (...args) => runStoryPipeline(...args);
+export function _setPipelineImpl(impl) { _pipelineFn = impl; }
+export function _resetPipelineImpl() { _pipelineFn = (...args) => runStoryPipeline(...args); }
 
 let _autoAnimateFn = autoAnimate;
 export function _setAutoAnimateImpl(impl) { _autoAnimateFn = impl; }
@@ -544,9 +554,12 @@ router.post("/script-to-audio", async (req, res) => {
 // transcribeStage short-circuits and the pipeline resumes at segmentation —
 // no lossy speech-recognition round trip over words we already have.
 //
-// Body: { script, audioPath, durationMs, words?, title?, style? }
-// Returns a project already at SEGMENTING; the client then calls
-// /:id/segment and /:id/images exactly as the media path does.
+// Body: { script, audioPath, durationMs, words?, title?, style?, aiMotion?, autoStart? }
+// Returns a project already at SEGMENTING. With autoStart: true the pipeline
+// (segment -> images) runs detached on the server; otherwise the client calls
+// /:id/segment and /:id/images exactly as the media path does. aiMotion
+// (true or { quality }) is kept only for a super admin, and makes the images
+// stage animate the scenes when the pictures are done (lib/story/autoAnimate.js).
 // PATCH /:id/cast — set which figures appear in this story.
 //
 // Changing the cast only affects prompts built AFTERWARDS, so scenes already
@@ -628,6 +641,16 @@ router.post("/import-script", (req, res) => {
       return res.status(400).json({ ok: false, error: "durationMs must be a positive number" });
     }
 
+    // autoStart runs the pipeline on this path, so it is confined exactly as
+    // /process confines mediaPath. Without autoStart nothing reads it here.
+    const autoStart = req.body?.autoStart === true;
+    let startPath = null;
+    if (autoStart) {
+      const guard = confineMediaPath(req.ctx, audioPath);
+      if (!guard.ok) return res.status(400).json({ ok: false, error: guard.error });
+      startPath = guard.path;
+    }
+
     let patch;
     try {
       patch = buildImportedTranscript({ script, audioPath, durationMs, words: req.body?.words });
@@ -635,14 +658,22 @@ router.post("/import-script", (req, res) => {
       return res.status(400).json({ ok: false, error: String(e?.message || e) });
     }
 
+    // AI motion spends the shared BytePlus balance: honoured only for a super
+    // admin on a server that has the key, and silently dropped otherwise. Ten
+    // second scenes keep most clips under Seedance's 12 s ceiling (the
+    // segmenter's target is soft).
+    const aiMotion = req.ctx.isSuperAdmin && isSeedanceConfigured() ? normaliseAiMotion(req.body?.aiMotion) : null;
+    const scene = req.body?.scene ?? (aiMotion ? { targetSceneSec: AI_MOTION_SCENE_SEC } : undefined);
+
     const project = createProject(req.ctx.dataDir, {
       title: req.body?.title || script.slice(0, 60),
       style: req.body?.style,
       cast: req.body?.cast,
       aspect: req.body?.aspect,
       captions: req.body?.captions,
-      scene: req.body?.scene,
+      scene,
       longform: req.body?.longform,
+      aiMotion,
     });
 
     const ready = writeProject(req.ctx.dataDir, {
@@ -650,6 +681,21 @@ router.post("/import-script", (req, res) => {
       ...patch,
       status: STORY_STATUS.SEGMENTING,
     });
+
+    // Build it now (the transcript is already there, so transcription is
+    // skipped) instead of leaving it at segmenting until someone clicks Resume.
+    if (autoStart) {
+      const ctx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir };
+      const id = ready.projectId;
+      Promise.resolve()
+        .then(() => _pipelineFn(ctx, id, startPath))
+        .catch((e) => {
+          try {
+            const fresh = readProject(ctx.dataDir, id);
+            if (fresh) writeProject(ctx.dataDir, { ...fresh, status: STORY_STATUS.ERROR, error: String(e?.message || e) });
+          } catch {}
+        });
+    }
 
     return res.json({ ok: true, project: ready });
   } catch (e) {

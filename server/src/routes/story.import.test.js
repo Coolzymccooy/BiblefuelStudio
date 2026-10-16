@@ -1,4 +1,4 @@
-import { describe, test } from 'node:test';
+import { describe, test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
 import request from 'supertest';
@@ -160,5 +160,120 @@ describe('cast management', () => {
       cast: ['david_young'],
     }).expect(200);
     assert.deepEqual(res.body.project.cast, ['david_young']);
+  });
+});
+
+describe('POST /api/story/import-script: AI motion and auto-start', () => {
+  let savedKey;
+  let pipelineCalls;
+  let story;
+
+  async function adminApp({ admin = false } = {}) {
+    story = await import('./story.js');
+    pipelineCalls = [];
+    story._setPipelineImpl(async (ctx, projectId, audioPath) => { pipelineCalls.push({ ctx, projectId, audioPath }); });
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'story-import-ai-'));
+    const a = express();
+    a.use(express.json());
+    a.use((req, _res, next) => {
+      req.ctx = { userId: 'u', dataDir: dir, outputDir: dir, isSuperAdmin: admin };
+      next();
+    });
+    a.use('/api/story', storyRouter);
+    return { a, dir };
+  }
+
+  const body = (over = {}) => ({ script: 'For God so loved the world', audioPath: '/outputs/n.mp3', durationMs: 4000, ...over });
+
+  beforeEach(() => {
+    savedKey = process.env.BYTEPLUS_ARK_API_KEY;
+    process.env.BYTEPLUS_ARK_API_KEY = 'ark-test';
+  });
+  afterEach(() => {
+    if (savedKey === undefined) delete process.env.BYTEPLUS_ARK_API_KEY; else process.env.BYTEPLUS_ARK_API_KEY = savedKey;
+    story?._resetPipelineImpl();
+  });
+
+  test("a normal account's aiMotion is stored as null, and its scene policy is untouched", async () => {
+    const { a } = await adminApp({ admin: false });
+    const res = await request(a).post('/api/story/import-script').send(body({ aiMotion: true })).expect(200);
+    assert.equal(res.body.project.aiMotion, null);
+    assert.equal(res.body.project.scene, null);
+  });
+
+  test("a super admin's aiMotion is kept and asks for 10 s scenes", async () => {
+    const { a } = await adminApp({ admin: true });
+    const res = await request(a).post('/api/story/import-script').send(body({ aiMotion: true })).expect(200);
+    assert.deepEqual(res.body.project.aiMotion, { quality: 'standard', autoStartedAt: null, note: null });
+    assert.equal(res.body.project.scene.targetSceneSec, 10);
+    const high = await request(a).post('/api/story/import-script').send(body({ aiMotion: { quality: 'high' } })).expect(200);
+    assert.equal(high.body.project.aiMotion.quality, 'high');
+  });
+
+  test('a scene policy the caller sends is kept', async () => {
+    const { a } = await adminApp({ admin: true });
+    const res = await request(a).post('/api/story/import-script').send(body({ aiMotion: true, scene: { targetSceneSec: 7 } })).expect(200);
+    assert.equal(res.body.project.scene.targetSceneSec, 7);
+  });
+
+  test('without a BytePlus key even a super admin gets no AI motion', async () => {
+    delete process.env.BYTEPLUS_ARK_API_KEY;
+    const { a } = await adminApp({ admin: true });
+    const res = await request(a).post('/api/story/import-script').send(body({ aiMotion: true })).expect(200);
+    assert.equal(res.body.project.aiMotion, null);
+    assert.equal(res.body.project.scene, null);
+  });
+
+  test('autoStart runs the pipeline on the confined audio path', async () => {
+    const { a, dir } = await adminApp();
+    const audio = path.join(dir, 'tts-1.mp3');
+    fs.writeFileSync(audio, 'ID3');
+    const res = await request(a).post('/api/story/import-script').send(body({ audioPath: audio, autoStart: true })).expect(200);
+    assert.equal(res.body.project.status, 'segmenting');
+    assert.equal(pipelineCalls.length, 1);
+    assert.equal(pipelineCalls[0].projectId, res.body.project.projectId);
+    assert.equal(pipelineCalls[0].audioPath, path.resolve(audio));
+    assert.deepEqual(pipelineCalls[0].ctx, { dataDir: dir, outputDir: dir });
+  });
+
+  test('autoStart refuses an audio path outside your own folders, and makes no project', async () => {
+    const { a, dir } = await adminApp();
+    const evil = process.platform === 'win32' ? 'C:\Windows\System32\drivers\etc\hosts' : '/etc/passwd';
+    const res = await request(a).post('/api/story/import-script').send(body({ audioPath: evil, autoStart: true })).expect(400);
+    assert.equal(res.body.ok, false);
+    assert.equal(res.body.error, 'mediaPath is outside the allowed directory');
+    assert.equal(pipelineCalls.length, 0);
+    assert.equal(fs.existsSync(path.join(dir, 'story-projects')), false);
+  });
+
+  test('autoStart refuses a missing audio file inside your folders', async () => {
+    const { a, dir } = await adminApp();
+    const res = await request(a).post('/api/story/import-script').send(body({ audioPath: path.join(dir, 'gone.mp3'), autoStart: true })).expect(400);
+    assert.equal(res.body.error, 'mediaPath not found');
+    assert.equal(pipelineCalls.length, 0);
+  });
+
+  test('without autoStart nothing runs and any path is still accepted, as before', async () => {
+    const { a } = await adminApp();
+    const res = await request(a).post('/api/story/import-script').send(body({ audioPath: '/somewhere/else.mp3' })).expect(200);
+    assert.equal(res.body.project.source.audioPath, '/somewhere/else.mp3');
+    assert.equal(pipelineCalls.length, 0);
+  });
+
+  test('a pipeline that fails lands the project in error with its message', async () => {
+    const { a, dir } = await adminApp();
+    story._setPipelineImpl(async () => { throw new Error('segmenter offline'); });
+    const audio = path.join(dir, 'tts-2.mp3');
+    fs.writeFileSync(audio, 'ID3');
+    const res = await request(a).post('/api/story/import-script').send(body({ audioPath: audio, autoStart: true })).expect(200);
+    const id = res.body.project.projectId;
+    let got;
+    for (let i = 0; i < 100; i++) {
+      got = (await request(a).get(`/api/story/${id}`).expect(200)).body.project;
+      if (got.status === 'error') break;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    assert.equal(got.status, 'error');
+    assert.equal(got.error, 'segmenter offline');
   });
 });
