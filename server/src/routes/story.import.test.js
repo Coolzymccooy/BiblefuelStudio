@@ -238,7 +238,7 @@ describe('POST /api/story/import-script: AI motion and auto-start', () => {
 
   test('autoStart refuses an audio path outside your own folders, and makes no project', async () => {
     const { a, dir } = await adminApp();
-    const evil = process.platform === 'win32' ? 'C:\Windows\System32\drivers\etc\hosts' : '/etc/passwd';
+    const evil = process.platform === 'win32' ? 'C:\\Windows\\System32\\drivers\\etc\\hosts' : '/etc/passwd';
     const res = await request(a).post('/api/story/import-script').send(body({ audioPath: evil, autoStart: true })).expect(400);
     assert.equal(res.body.ok, false);
     assert.equal(res.body.error, 'mediaPath is outside the allowed directory');
