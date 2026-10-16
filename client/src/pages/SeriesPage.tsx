@@ -2,7 +2,7 @@
  * Series Mode — turn one Bible chapter into a sequenced set of micro-videos.
  *
  * Flow:
- *  1. User enters chapter reference + part count + translation
+ *  1. User enters chapter reference + verses per video + translation
  *  2. Click "Preview" → server returns the verse partition + captions
  *  3. Review segments inline; if happy, click "Generate" → enqueues one
  *     campaign_auto_post job per segment. Jobs render + publish sequentially
@@ -10,7 +10,7 @@
  *  4. "Your series" list at the bottom shows past series with job ids.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Sparkles, Play, Hash, ListOrdered, BookOpen, RefreshCw, Image as ImageIcon } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
@@ -35,13 +35,13 @@ import {
 import { toastError } from '../lib/errors';
 import { SeriesCaptionStyle } from '../components/series/SeriesCaptionStyle';
 import type { CaptionEnergy } from '../lib/studioCaptions';
+import { VERSES_PER_PART_OPTIONS, parseVersesPerPart, planSummary, lengthNote, type VersesPerPart } from '../lib/seriesSplit';
 
-const PART_COUNT_OPTIONS = [3, 4, 5, 6, 7, 8, 10, 12];
 
 export function SeriesPage() {
     const navigate = useNavigate();
     const [reference, setReference] = useState('John 3');
-    const [parts, setParts] = useState(5);
+    const [versesPerPart, setVersesPerPart] = useState<VersesPerPart>('auto');
     const [translation, setTranslation] = useState('kjv');
     const [destination, setDestination] = useState<'webhook' | 'buffer' | 'youtube'>('webhook');
     const [titlePrefix, setTitlePrefix] = useState('');
@@ -80,6 +80,17 @@ export function SeriesPage() {
         });
     };
 
+    // A preview is only good for the choices it was made with: Generate
+    // splits the passage again on the server, so any change asks for a new
+    // preview rather than queueing a different split from the one shown.
+    // Each preview takes a number; a change bumps it, so a preview still in
+    // flight when the choice changed is dropped when it lands.
+    const previewRun = useRef(0);
+    useEffect(() => {
+        previewRun.current += 1;
+        setPlan(null);
+    }, [reference, versesPerPart, durationSec, translation]);
+
     useEffect(() => {
         bibleApi.listTranslations().then(setCatalog).catch(() => setCatalog(null));
         seriesApi.list(20).then(({ series }) => setHistory(series)).catch(() => setHistory([]));
@@ -99,15 +110,18 @@ export function SeriesPage() {
             return;
         }
         setIsPreviewLoading(true);
+        const run = ++previewRun.current;
         try {
             const result = await seriesApi.preview({
                 reference: reference.trim(),
-                parts,
+                versesPerPart,
+                durationSec,
                 translation,
             });
+            if (run !== previewRun.current) return;
             setPlan(result.plan);
             setAiMotionParts(new Set());
-            toast.success(`Previewing ${result.plan.totalParts} segments`);
+            toast.success(`Previewing ${result.plan.totalParts} ${result.plan.totalParts === 1 ? 'video' : 'videos'}`);
         } catch (err) {
             toastError(err);
             setPlan(null);
@@ -153,7 +167,7 @@ export function SeriesPage() {
         try {
             const result = await seriesApi.generate({
                 reference: reference.trim(),
-                parts,
+                versesPerPart,
                 translation,
                 destination,
                 titlePrefix: titlePrefix.trim() || undefined,
@@ -216,16 +230,23 @@ export function SeriesPage() {
                             Only the verses you pick are split into the videos below.
                         </span>
                     </label>
-                    <label className="flex flex-col gap-1.5">
-                        <span className="text-caption">Split into</span>
-                        <Select value={parts} onChange={(e) => setParts(Number(e.target.value))}>
-                            {PART_COUNT_OPTIONS.map((n) => (
-                                <option key={n} value={n}>
-                                    {n} videos
+                    <div className="flex flex-col gap-1.5">
+                        <label htmlFor="series-verses-per-video" className="text-caption">Verses per video</label>
+                        <Select
+                            id="series-verses-per-video"
+                            value={String(versesPerPart)}
+                            onChange={(e) => setVersesPerPart(parseVersesPerPart(e.target.value))}
+                        >
+                            {VERSES_PER_PART_OPTIONS.map((o) => (
+                                <option key={String(o.value)} value={String(o.value)}>
+                                    {o.label}
                                 </option>
                             ))}
                         </Select>
-                    </label>
+                        <span className="text-help">
+                            Videos end where a sentence ends. Auto fills each one up to {durationSec} s.
+                        </span>
+                    </div>
                     <label className="flex flex-col gap-1.5">
                         <span className="text-caption">Translation</span>
                         <Select value={translation} onChange={(e) => setTranslation(e.target.value)}>
@@ -349,8 +370,11 @@ export function SeriesPage() {
 
             {plan && (
                 <Card title={`Preview — ${plan.chapterReference}`} icon={Hash}>
-                    <div className="text-caption mb-3">
-                        {plan.totalParts} parts · {plan.translation.toUpperCase()}
+                    <div className="mb-3">
+                        <div className="text-caption">
+                            {planSummary(plan)} · {plan.translation.toUpperCase()}
+                        </div>
+                        {lengthNote(plan) && <p className="text-help mt-1">{lengthNote(plan)}</p>}
                     </div>
                     <ol className="space-y-4">
                         {plan.segments.map((seg) => (
@@ -362,7 +386,10 @@ export function SeriesPage() {
                                     <div className="font-semibold text-primary-200">
                                         Part {seg.partNumber} of {seg.totalParts}
                                     </div>
-                                    <div className="text-content-secondary">{seg.reference}</div>
+                                    <div className="text-content-secondary">
+                                        {seg.reference}
+                                        {seg.seconds ? <span className="tabular-nums"> · about {seg.seconds} s</span> : null}
+                                    </div>
                                 </div>
                                 {seg.hook && (
                                     <p className="text-sm text-gray-300 italic mb-2">&ldquo;{seg.hook}&rdquo;</p>

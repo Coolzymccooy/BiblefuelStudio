@@ -7,6 +7,7 @@
  */
 
 import { api } from './api';
+import type { VersesPerPart } from './seriesSplit';
 
 export interface BibleVerse {
     book: string;
@@ -67,6 +68,8 @@ export interface SeriesSegment {
     hook: string;
     caption: string;
     youVersionUrl: string;
+    /** About how long the part runs, intro and closing line included. */
+    seconds?: number;
 }
 
 export interface SeriesPlan {
@@ -76,6 +79,11 @@ export interface SeriesPlan {
     chapter: number;
     translation: string;
     totalParts: number;
+    versesPerPart?: VersesPerPart;
+    /** The video length the split aimed for. */
+    targetSeconds?: number;
+    /** Auto lengthened the videos so the passage fits in 12. */
+    stretched?: boolean;
     segments: SeriesSegment[];
 }
 
@@ -93,7 +101,7 @@ export interface SeriesRecord {
 
 export interface SeriesGenerateInput {
     reference: string;
-    parts: number;
+    versesPerPart: VersesPerPart;
     translation: string;
     destination?: 'webhook' | 'buffer' | 'youtube';
     webhookId?: string;
@@ -165,7 +173,7 @@ export const bibleApi = {
 };
 
 export const seriesApi = {
-    preview: async (input: { reference: string; parts: number; translation: string }): Promise<{ plan: SeriesPlan }> => {
+    preview: async (input: { reference: string; versesPerPart: VersesPerPart; durationSec: number; translation: string }): Promise<{ plan: SeriesPlan }> => {
         const resp = await api.post('/api/series/preview', input);
         return unwrap<{ plan: SeriesPlan }>(resp);
     },

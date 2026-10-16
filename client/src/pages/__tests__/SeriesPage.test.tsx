@@ -7,6 +7,7 @@ import { storyApi } from '../../lib/storyApi';
 import { useAuth } from '../../hooks/useAuth';
 
 const sendMock = vi.hoisted(() => vi.fn());
+const previewMock = vi.hoisted(() => vi.fn());
 vi.mock('../../lib/sendToStoryVideo', () => ({ narrateAndSendToStory: (...a: unknown[]) => sendMock(...a) }));
 vi.mock('../../components/BibleVerseLookup', () => ({ BibleVerseLookup: () => null }));
 vi.mock('../../components/series/SeriesCaptionStyle', () => ({ SeriesCaptionStyle: () => null }));
@@ -23,9 +24,7 @@ vi.mock('../../lib/bibleApi', () => ({
     bibleApi: { listTranslations: () => Promise.resolve({ translations: [] }) },
     seriesApi: {
         list: () => Promise.resolve({ series: [] }),
-        preview: () => Promise.resolve({
-            plan: { seriesId: 's', chapterReference: 'John 3', book: 'John', chapter: 3, translation: 'kjv', totalParts: 2, segments: [segment(1), segment(2)] },
-        }),
+        preview: (...a: unknown[]) => previewMock(...a),
     },
 }));
 
@@ -47,6 +46,10 @@ async function renderWithPlan() {
 let ratesSpy: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
     sendMock.mockReset();
+    previewMock.mockReset();
+    previewMock.mockResolvedValue({
+        plan: { seriesId: 's', chapterReference: 'John 3', book: 'John', chapter: 3, translation: 'kjv', totalParts: 2, targetSeconds: 22, stretched: false, segments: [segment(1), segment(2)] },
+    });
     sendMock.mockResolvedValue({ ok: true, projectId: 'p1' });
     ratesSpy = vi.spyOn(storyApi, 'animateRates').mockResolvedValue(rates());
 });
@@ -100,5 +103,42 @@ describe('SeriesPage: AI motion', () => {
         fireEvent.click(screen.getAllByRole('button', { name: /send to story video/i })[1]);
         await waitFor(() => expect(sendMock).toHaveBeenCalledTimes(1));
         expect(sendMock.mock.calls[0][1].aiMotion).toBe(false);
+    });
+});
+
+describe('SeriesPage: verses per video', () => {
+    it('previews on Auto at the video length by default', async () => {
+        await renderWithPlan();
+        expect(previewMock).toHaveBeenCalledWith({ reference: 'John 3', versesPerPart: 'auto', durationSec: 22, translation: 'kjv' });
+        expect(screen.getByText(/4 verses → 2 videos: 1, 2/)).toBeInTheDocument();
+    });
+
+    it('sends the verses-per-video choice', async () => {
+        const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+        render(<QueryClientProvider client={qc}><MemoryRouter><SeriesPage /></MemoryRouter></QueryClientProvider>);
+        fireEvent.change(screen.getByLabelText('Verses per video'), { target: { value: '2' } });
+        fireEvent.click(screen.getByRole('button', { name: /preview segments/i }));
+        await waitFor(() => expect(previewMock).toHaveBeenCalledWith(expect.objectContaining({ versesPerPart: 2 })));
+    });
+
+    it('a preview that comes back after the choice changed is thrown away', async () => {
+        let resolve: (v: unknown) => void = () => {};
+        previewMock.mockReturnValueOnce(new Promise((r) => { resolve = r; }));
+        const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+        render(<QueryClientProvider client={qc}><MemoryRouter><SeriesPage /></MemoryRouter></QueryClientProvider>);
+        fireEvent.click(screen.getByRole('button', { name: /preview segments/i }));
+        fireEvent.change(screen.getByLabelText('Verses per video'), { target: { value: 'one' } });
+        resolve({ plan: { seriesId: 's', chapterReference: 'John 3', book: 'John', chapter: 3, translation: 'kjv', totalParts: 2, segments: [segment(1), segment(2)] } });
+        await waitFor(() => expect(screen.getByRole('button', { name: /preview segments/i })).toBeEnabled());
+        expect(screen.queryByText('Part 1 of 2')).toBeNull();
+        expect(screen.getByRole('button', { name: /generate series/i })).toBeDisabled();
+    });
+
+    it('changing the choice after a preview clears it, so Generate never sends a different split', async () => {
+        await renderWithPlan();
+        expect(screen.getByRole('button', { name: /generate 2 videos/i })).toBeEnabled();
+        fireEvent.change(screen.getByLabelText('Verses per video'), { target: { value: 'one' } });
+        expect(screen.queryByText('Part 1 of 2')).toBeNull();
+        expect(screen.getByRole('button', { name: /generate series/i })).toBeDisabled();
     });
 });

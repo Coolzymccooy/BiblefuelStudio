@@ -27,6 +27,7 @@ import { generateBibleImage } from "../lib/imageGen/index.js";
 import { resolveLibraryTrack, defaultTrackRef } from "../lib/musicLibrary.js";
 import { resolveTenantTrack } from "../lib/musicLibraryStore.js";
 import { buildSpeakableLines, cleanCaptionLine, cleanSpeakableText, sanitizeScriptObject } from "../lib/speakableScript.js";
+import { splitCaptionLines } from "../lib/captionLines.js";
 
 const router = Router();
 let ffmpegChecked = false;
@@ -1121,7 +1122,9 @@ async function renderAdvancedVideo(payload, jobId) {
   const baseChars = w >= 1800 ? 42 : w >= 1200 ? 34 : 28;
   const maxChars = Math.max(18, Math.floor(baseChars * (captionWidthPct / 100)));
   const wrappedLines = Array.isArray(lines)
-    ? wrapTextLines(lines.map((s) => cleanCaptionLine(String(s).slice(0, 140))).filter(Boolean), maxChars, 12)
+    // Paced line captions show one line at a time across the video, so the
+    // cap only guards against runaway input; 12 cut a long Series part short.
+    ? wrapTextLines(lines.map((s) => cleanCaptionLine(String(s).slice(0, 140))).filter(Boolean), maxChars, 80)
     : [];
   // The preset decides word-vs-line. Marker / Soft Glow / Headline are paced
   // LINE styles: before this, kinetic captions forced word mode for every
@@ -1461,7 +1464,9 @@ async function runCampaignAutoPost(payload, jobId) {
 
   // 4. If we have alignment, build word-level captions + per-beat scenes.
   // Otherwise fall back to the legacy single-bg + line-captions path.
-  const ttsLines = [cleanScript.hook, cleanScript.verse, cleanScript.reflection, cleanScript.cta].filter(Boolean);
+  // The line renderer cuts each line at 140 characters, so a long Series part
+  // is broken into sentence-sized lines first and all of it reaches the screen.
+  const ttsLines = splitCaptionLines([cleanScript.hook, cleanScript.verse, cleanScript.reflection, cleanScript.cta], 140);
   const beatTexts = [
     cleanScript.hook,
     cleanScript.reference ? `${cleanScript.verse} (${cleanScript.reference})` : cleanScript.verse,

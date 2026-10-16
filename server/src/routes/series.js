@@ -16,7 +16,7 @@
 
 import { Router } from "express";
 import { z } from "zod";
-import { buildSeriesPlan } from "../lib/series/seriesBuilder.js";
+import { buildSeriesPlan, charBudgetFor } from "../lib/series/seriesBuilder.js";
 import { extractSpeakableVerseText } from "../lib/series/speakable.js";
 import { lookupVerses, isKnownTranslation } from "../lib/bible/scriptureApi.js";
 import { enqueueCampaignAutoPost } from "./jobs.js";
@@ -25,18 +25,34 @@ import { generateBibleImage, isImageGenEnabled } from "../lib/imageGen/index.js"
 
 const router = Router();
 
-// Hard cap on the spoken/on-screen excerpt. A 22-second short can only
-// narrate ~60-90 words (~300-400 chars); the full verse passage lives in
-// the social caption + YouVersion link. This cap also keeps the ffmpeg
-// filter_complex arg below the Windows command-line limit (~32 KB), which
-// the previous unbounded version was hitting (`spawn ENAMETOOLONG`) when a
-// long verse range produced word-level alignment with hundreds of drawtext
-// filters.
-const SPEAKABLE_VERSE_MAX_CHARS = 280;
+// The longest video the renderer makes (jobs.js clamps every render to it).
+// The plan never makes a part longer than this, so every verse in a part is
+// read: a fixed 280-character cap used to drop the rest of the part silently.
+function maxRenderSeconds() {
+  const n = Number(process.env.MAX_RENDER_SECONDS || 30);
+  return Number.isFinite(n) && n > 0 ? n : 30;
+}
+
+/** @param {{ reference: string, versesPerPart: "auto" | "one" | number, durationSec: number, translation: string }} input */
+function planFor(input) {
+  return buildSeriesPlan({
+    chapterReference: input.reference,
+    versesPerPart: input.versesPerPart,
+    durationSec: input.durationSec,
+    maxRenderSeconds: maxRenderSeconds(),
+    translation: input.translation,
+    fetchVerses: makeVerseFetcher(input.translation),
+  });
+}
 
 const PreviewSchema = z.object({
   reference: z.string().min(1).max(60),
-  parts: z.number().int().min(2).max(12).optional().default(5),
+  // "auto" fits whole sentences into the video length; a number is the
+  // fewest verses per video; "one" is the whole passage in one video.
+  versesPerPart: z.union([z.enum(["auto", "one"]), z.coerce.number().int().min(1).max(10)]).optional().default("auto"),
+  // The video length. Auto splits the passage to fit it, so preview and
+  // generate must both see it.
+  durationSec: z.number().int().min(8).max(60).optional().default(22),
   translation: z.string().min(2).max(8).optional().default("kjv"),
 });
 
@@ -51,7 +67,6 @@ export const GenerateSchema = PreviewSchema.extend({
   tone: z.string().optional(),
   voiceId: z.string().optional(),
   aspect: z.enum(["portrait", "square", "landscape"]).optional().default("portrait"),
-  durationSec: z.number().int().min(8).max(60).optional().default(22),
   backgroundQuery: z.string().optional(),
   titlePrefix: z.string().max(60).optional(),
   // £0 generative artwork (Cloudflare Workers AI → Imagen failover). Off by
@@ -91,13 +106,7 @@ router.post("/preview", async (req, res) => {
       return res.status(422).json({ ok: false, error: `Unknown translation: ${input.translation}` });
     }
 
-    const fetchVerses = makeVerseFetcher(input.translation);
-    const plan = await buildSeriesPlan({
-      chapterReference: input.reference,
-      parts: input.parts,
-      translation: input.translation,
-      fetchVerses,
-    });
+    const plan = await planFor(input);
 
     res.json({ ok: true, plan });
   } catch (err) {
@@ -112,13 +121,7 @@ router.post("/generate", async (req, res) => {
       return res.status(422).json({ ok: false, error: `Unknown translation: ${input.translation}` });
     }
 
-    const fetchVerses = makeVerseFetcher(input.translation);
-    const plan = await buildSeriesPlan({
-      chapterReference: input.reference,
-      parts: input.parts,
-      translation: input.translation,
-      fetchVerses,
-    });
+    const plan = await planFor(input);
 
     // Image gen runs synchronously here (before enqueue) so a provider
     // failure surfaces to the user as a 400 rather than a half-broken series
@@ -147,12 +150,10 @@ router.post("/generate", async (req, res) => {
     const jobIds = [];
     for (let i = 0; i < plan.segments.length; i += 1) {
       const segment = plan.segments[i];
-      // Spoken / on-screen text is capped to fit a short-form video duration
-      // AND to keep the ffmpeg filter graph well under the OS command-line
-      // limit (Windows: ~32 KB). The full passage is preserved in the
-      // social caption via captionOverride, so nothing is lost — only the
-      // narration is shortened.
-      const speakable = extractSpeakableVerseText(segment.verses, SPEAKABLE_VERSE_MAX_CHARS);
+      // Every verse in the part is read: the plan already split the passage
+      // so no part runs past the render limit. The cap here is only a guard
+      // against a part longer than any video can be.
+      const speakable = extractSpeakableVerseText(segment.verses, charBudgetFor(maxRenderSeconds()));
 
       const prebuiltScript = {
         hook: `Part ${segment.partNumber} of ${segment.totalParts} — ${segment.reference}`,
@@ -179,7 +180,9 @@ router.post("/generate", async (req, res) => {
         tone: input.tone,
         voiceId: input.voiceId,
         aspect: input.aspect,
-        durationSec: input.durationSec,
+        // A part Auto lengthened to fit the series in 12 videos runs past the
+        // length the user set; a still picture must last as long as its words.
+        durationSec: Math.max(input.durationSec, segment.seconds),
         backgroundQuery: input.backgroundQuery,
         title,
         prebuiltScript,
