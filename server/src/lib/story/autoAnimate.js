@@ -70,7 +70,8 @@ function pickWithinBudget(project, scenes, quality, ledgerDir) {
   let total = 0;
   for (const s of scenes) {
     const usd = estimateAnimation(project, [s.id], quality).usd;
-    if (total + usd > left + EPSILON) break;
+    // A long scene that does not fit is skipped: a shorter one later may.
+    if (total + usd > left + EPSILON) continue;
     total += usd;
     picked.push({ id: s.id, usd });
   }

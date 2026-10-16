@@ -8,6 +8,9 @@
 const WORDS_PER_SECOND = 2.6;
 /** The server asks the segmenter for 10 s scenes on an AI motion import. */
 const SCENE_SEC = 10;
+/** Seedance's clip range, as the server clamps it. */
+const CLIP_MIN_SEC = 4;
+const CLIP_MAX_SEC = 12;
 
 /** The words a part is narrated with: the hook leads, so the video opens the way it should. */
 export function partNarration(seg: { hook?: string; caption: string }): string {
@@ -24,11 +27,11 @@ export interface AiMotionEstimate {
 export function aiMotionEstimate(narration: string, usdPerSecond: number): AiMotionEstimate {
     const words = narration.split(/\s+/).filter(Boolean).length;
     const seconds = words / WORDS_PER_SECOND;
-    return {
-        clips: Math.max(1, Math.ceil(seconds / SCENE_SEC)),
-        seconds,
-        usd: seconds * usdPerSecond,
-    };
+    const clips = Math.max(1, Math.ceil(seconds / SCENE_SEC));
+    // Priced as the server bills (sceneClipSec): each clip is whole seconds,
+    // at least 4 and at most 12, whatever the narration's exact length.
+    const clipSec = Math.min(CLIP_MAX_SEC, Math.max(CLIP_MIN_SEC, Math.ceil(seconds / clips - 1e-9)));
+    return { clips, seconds, usd: clips * clipSec * usdPerSecond };
 }
 
 export function aiMotionEstimateText({ clips, usd }: AiMotionEstimate): string {

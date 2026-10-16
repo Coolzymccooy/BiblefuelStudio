@@ -98,6 +98,26 @@ describe("autoAnimate", () => {
     assert.deepEqual(statuses(p.projectId), ["done", "done", undefined]);
   });
 
+  test("a long scene that does not fit is skipped, and a later short one still animates", async () => {
+    // 12 s is $0.9072 and 4 s is $0.3024; $0.50 left fits one short clip only.
+    process.env.VIDEO_GEN_MONTHLY_CAP_USD = "0.5";
+    const base = project(3);
+    const lengths = [12000, 4000, 4000];
+    let at = 0;
+    const scenes = base.scenes.map((s, i) => {
+      const scene = { ...s, startMs: at, endMs: at + lengths[i] };
+      at += lengths[i];
+      return scene;
+    });
+    const p = writeProject(dataDir, { ...base, scenes });
+    const { deps, submitted } = fakeDeps();
+    await autoAnimate(ctx(), p.projectId, { ledgerDir, deps });
+    await waitFor(() => !isAnimating(p.projectId));
+    assert.equal(submitted.length, 1);
+    assert.deepEqual(statuses(p.projectId), [undefined, "done", undefined]);
+    assert.equal(readProject(dataDir, p.projectId).aiMotion.note, "1 of 3 scenes animated: monthly AI budget reached");
+  });
+
   test("spend already counted this month, settled or reserved, shrinks what fits", async () => {
     process.env.VIDEO_GEN_MONTHLY_CAP_USD = "1";
     reserveSpend(ledgerDir, "other:s1", 0.5);
