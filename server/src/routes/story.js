@@ -898,7 +898,9 @@ router.post("/:id/process", (req, res) => {
   const existing = readProject(req.ctx.dataDir, req.params.id);
   if (!existing) return res.status(404).json({ ok: false, error: "project not found" });
   if (isAnimating(req.params.id)) return res.status(409).json(ANIMATING_REFUSAL);
-  const guard = confineMediaPath(req.ctx, req.body?.mediaPath);
+  // Same rule as an import's auto-start, so Resume works on an imported
+  // script whose narration is in the shared outputs folder.
+  const guard = confineImportAudio(req.ctx, req.body?.mediaPath);
   if (!guard.ok) return res.status(guard.status).json({ ok: false, error: guard.error });
   // What the soundtrack was called and whether it was trimmed: shown back to
   // the user in the Music panel, never used as a path. A resume sends neither

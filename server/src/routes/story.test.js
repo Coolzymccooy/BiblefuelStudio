@@ -689,6 +689,33 @@ describe("story routes", () => {
     assert.equal(done.source.trimmed, true);
   });
 
+  test("POST /:id/process resumes an imported script whose narration is in the shared outputs folder", async () => {
+    const { OUTPUT_DIR } = await import("../lib/paths.js");
+    const { randomUUID } = await import("crypto");
+    fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+    const narration = path.join(OUTPUT_DIR, `tts-edge-${randomUUID()}.mp3`);
+    fs.writeFileSync(narration, "ID3");
+    try {
+      const created = createProject(dataDir, { title: "Series part", style: "cinematic-bible" });
+      writeProject(dataDir, {
+        ...created,
+        status: "segmenting",
+        source: { audioPath: narration, durationMs: 4000 },
+        transcript: { words: Array.from({ length: 4 }, (_, i) => ({ text: `w${i}`, startMs: i * 1000, endMs: i * 1000 + 800 })), hash: "imported" },
+      });
+      _setTranscribeImpl(async () => { throw new Error("an imported script is never transcribed"); });
+      _setLlmImpl(async () => JSON.stringify({ scenes: [{ text: "a", startWordIndex: 0, endWordIndex: 3, imagePrompt: "p" }] }));
+      _setImageGenImpl(async () => ({ ok: true, path: "/img.png", publicUrl: "/outputs/img.png" }));
+      const { req, res } = mockReqRes({ params: { id: created.projectId }, body: { mediaPath: narration }, dataDir, outputDir });
+      await handlerFor("post", "/:id/process")(req, res);
+      assert.equal(res.statusCode, 200, JSON.stringify(res.payload));
+      const done = await waitForProject(dataDir, created.projectId, (p) => p.status === "ready_to_render");
+      assert.equal(done.status, "ready_to_render");
+    } finally {
+      fs.rmSync(narration, { force: true });
+    }
+  });
+
   test("POST /:id/process with a name that cleans to nothing stores no name", async () => {
     const created = createProject(dataDir, { title: "T", style: "cinematic-bible" });
     const audio = path.join(outputDir, "n.mp3");
