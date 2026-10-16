@@ -14,6 +14,7 @@ import { LyricsStep } from '../components/lyricVideo/LyricsStep';
 import { TimingStep } from '../components/lyricVideo/TimingStep';
 import { LookStep } from '../components/lyricVideo/LookStep';
 import { RenderStep } from '../components/lyricVideo/RenderStep';
+import { MusicVideoCard } from '../components/lyricVideo/MusicVideoCard';
 import { messageOf } from '../components/lyricVideo/messageOf';
 
 const header = (
@@ -61,6 +62,8 @@ function LyricSteps({ project, error, onRetry }: { project: LyricProject; error:
       {step === 'lyrics' && <LyricsStep project={project} onChange={onChange} onNext={() => goTo('timing')} />}
       {step === 'timing' && <TimingStep project={project} onChange={onChange} />}
       {step === 'look' && <LookStep project={project} onChange={onChange} />}
+      {/* Super admins only, once the lyrics are timed; it sits by the background it can supply. */}
+      {step === 'look' && <MusicVideoCard project={project} onChange={onChange} />}
       {(step === 'render' || renderOpened) && (
         <KeptWhileAway away={step !== 'render'}><RenderStep project={project} onChange={onChange} /></KeptWhileAway>
       )}
