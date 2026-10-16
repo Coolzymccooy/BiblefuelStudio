@@ -873,6 +873,10 @@ export function sceneImageBlocked(project, sceneId) {
   if (!(project.scenes || []).some((s) => s.id === sceneId)) {
     return { status: 404, body: { error: "scene not found" } };
   }
+  // The step before the pictures will put its prompts on every scene, then make them.
+  if (preparingProjects.has(project.projectId)) {
+    return { status: 409, body: { code: PREPARING_REFUSAL.code, error: PREPARING_REFUSAL.error } };
+  }
   if (imagesRunning(project.projectId)) {
     return { status: 409, body: { code: "IMAGES_RUNNING", error: "Images are still being generated. Wait for that to finish, or Cancel it, then try again." } };
   }
@@ -1020,8 +1024,13 @@ router.post("/:id/process", (req, res) => {
   if (!existing) return res.status(404).json({ ok: false, error: "project not found" });
   if (isAnimating(req.params.id)) return res.status(409).json(ANIMATING_REFUSAL);
   // The pictures are about to start by themselves (an AI music video's prompts
-  // are being written): Resume has nothing to do, and must not start a second run.
-  if (preparingProjects.has(req.params.id)) return res.json({ ok: true, preparing: true });
+  // are being written): Resume must not start a second run. It only undoes a
+  // Cancel made meanwhile, so the queued start goes ahead instead of stopping.
+  if (preparingProjects.has(req.params.id)) {
+    cancelledProjects.delete(req.params.id);
+    writeProject(req.ctx.dataDir, { ...existing, status: STORY_STATUS.GENERATING_IMAGES, error: null });
+    return res.json({ ok: true, preparing: true });
+  }
   // Same rule as an import's auto-start, so Resume works on an imported
   // script whose narration is in the shared outputs folder.
   const guard = confineImportAudio(req.ctx, req.body?.mediaPath);
@@ -1094,6 +1103,7 @@ router.post("/:id/scenes/:sid/regenerate", async (req, res) => {
     if (!project) return res.status(404).json({ ok: false, error: "project not found" });
     const idx = (project.scenes || []).findIndex((s) => s.id === req.params.sid);
     if (idx < 0) return res.status(404).json({ ok: false, error: "scene not found" });
+    if (preparingProjects.has(project.projectId)) return res.status(409).json(PREPARING_REFUSAL);
     const key = sceneKey(project.projectId, req.params.sid);
     sceneRegens.add(key);
     let image;

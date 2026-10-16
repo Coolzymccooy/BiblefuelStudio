@@ -189,6 +189,57 @@ describe("startStoryImages with a step before the pictures", () => {
   });
 });
 
+describe("while the prompts are being written", () => {
+  /** A project in its prompt step (held open by `gate`), with a Story router over it. */
+  function preparing() {
+    const made = recordImages();
+    const project = createStoryFromScenes(ctx, args());
+    const gate = deferred();
+    const run = startStoryImages(ctx, project.projectId, { before: () => gate.promise });
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => { req.ctx = { userId: "u", ...ctx }; next(); });
+    app.use("/api/story", storyRouter);
+    return { made, project, gate, run, app, id: project.projectId };
+  }
+
+  test("Cancel then Resume puts the queued pictures back on, instead of staying cancelled", async () => {
+    const { made, gate, run, app, id } = preparing();
+    assert.equal((await request(app).post(`/api/story/${id}/cancel`).send({})).status, 200);
+    assert.equal(readProject(ctx.dataDir, id).status, "error");
+    const resumed = await request(app).post(`/api/story/${id}/process`).send({ mediaPath: readProject(ctx.dataDir, id).source.audioPath });
+    assert.equal(resumed.status, 200);
+    const now = readProject(ctx.dataDir, id);
+    assert.equal(now.status, "generating_images");
+    assert.equal(now.error, null);
+    gate.resolve();
+    await run;
+    assert.equal(made.length, 2, "the queued start made the pictures");
+    assert.equal(readProject(ctx.dataDir, id).status, "ready_to_render");
+  });
+
+  test("Cancel without Resume still stops the pictures", async () => {
+    const { made, gate, run, app, id } = preparing();
+    await request(app).post(`/api/story/${id}/cancel`).send({});
+    gate.resolve();
+    await run;
+    assert.equal(made.length, 0);
+    assert.equal(readProject(ctx.dataDir, id).error, "Cancelled.");
+  });
+
+  test("regenerating a scene or putting a picture on one is refused", async () => {
+    const { gate, run, app, id } = preparing();
+    const regen = await request(app).post(`/api/story/${id}/scenes/scene-001/regenerate`).send({});
+    assert.equal(regen.status, 409);
+    assert.equal(regen.body.code, "PREPARING");
+    const put = await request(app).put(`/api/story/${id}/scenes/scene-001/image`).send({ libraryId: "img_x" });
+    assert.equal(put.status, 409);
+    assert.equal(put.body.code, "PREPARING");
+    gate.resolve();
+    await run;
+  });
+});
+
 describe("patchScenePrompts", () => {
   test("puts each new prompt on its scene with the style anchor, and keeps a prompt the user edited", () => {
     const project = createStoryFromScenes(ctx, args());
