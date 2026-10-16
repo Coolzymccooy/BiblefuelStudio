@@ -1,5 +1,5 @@
 import type { StoryProject, StoryScene } from './storyTypes';
-import { STORY_STYLES, sceneTimeLabel } from './storyWizard';
+import { ALL_STORY_STYLES, sceneTimeLabel } from './storyWizard';
 
 /**
  * Everything an outside image AI (ChatGPT, Gemini, …) needs to make a Story
@@ -91,7 +91,7 @@ function sceneBlock(s: StoryScene, number: number, markStatus: boolean): string[
 export function buildImageBrief(project: StoryProject, opts: BriefOptions = {}): string {
   const missing = scenesNeedingImages(project).length;
   const total = project.scenes.length;
-  const style = STORY_STYLES.find((s) => s.id === project.style);
+  const style = ALL_STORY_STYLES.find((s) => s.id === project.style);
   const markStatus = missing < total;
   const scenes = project.scenes
     .map((s, i) => ({ s, number: i + 1 }))

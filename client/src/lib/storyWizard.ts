@@ -7,6 +7,20 @@ export const STORY_STYLES: StoryStyleOption[] = [
   { id: 'ancient-scripture', label: 'Ancient Scripture', blurb: 'Weathered, historical desert' },
 ];
 
+/**
+ * Every style the server knows (styleAnchors.js), for showing a project's style by name.
+ * "Music video" is made only by a lyric video's AI music video, so it is not in the picker.
+ */
+export const ALL_STORY_STYLES: StoryStyleOption[] = [
+  ...STORY_STYLES,
+  { id: 'music-video', label: 'Music video', blurb: 'Cinematic film stills for a song' },
+];
+
+/** A style's name, or '' when the id is unknown. */
+export function storyStyleLabel(id: string): string {
+  return ALL_STORY_STYLES.find((s) => s.id === id)?.label ?? '';
+}
+
 const TRANSIENT: StoryStatus[] = ['transcribing', 'segmenting', 'generating_images', 'rendering', 'narrating'];
 
 export function isTransientStatus(status: StoryStatus): boolean {

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  STORY_STYLES, deriveStep, isTransientStatus, allScenesDone,
+  STORY_STYLES, ALL_STORY_STYLES, storyStyleLabel, deriveStep, isTransientStatus, allScenesDone,
   canRender, sceneTimeLabel, progressLabel, imageCounts, isStalled,
   relativeTime, statusMeta, isAnimatingScenes, clipSeconds,
 } from '../storyWizard';
@@ -27,6 +27,15 @@ describe('STORY_STYLES', () => {
     expect(STORY_STYLES.map((s) => s.id).sort()).toEqual(
       ['ancient-scripture', 'cinematic-bible', 'heavenly-atmosphere', 'modern-devotional'],
     );
+  });
+
+  it('names every backend style, the music video one too (made only from a lyric video, so not in the picker)', () => {
+    expect(ALL_STORY_STYLES.map((s) => s.id).sort()).toEqual(
+      ['ancient-scripture', 'cinematic-bible', 'heavenly-atmosphere', 'modern-devotional', 'music-video'],
+    );
+    expect(storyStyleLabel('music-video')).toBe('Music video');
+    expect(storyStyleLabel('cinematic-bible')).toBe('Cinematic Bible');
+    expect(storyStyleLabel('unknown')).toBe('');
   });
 });
 
