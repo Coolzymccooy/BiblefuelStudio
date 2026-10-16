@@ -102,7 +102,8 @@ These things are already in master:
 - `aiVideoTaskId`;
 - `aiVideoError`;
 - `aiVideoModel`;
-- `aiVideoCostUsd`.
+- `aiVideoCostUsd`;
+- `aiVideoClip`: true while the scene plays an AI clip, so a failed re-roll stays retryable and is never mistaken for the user's own clip. A successful re-roll deletes the clip it replaced, unless a render is running.
 
 A finished clip sets the existing `videoPath`, `videoUrl` and `mediaKind:"video"`, and keeps the picture as the poster.
 

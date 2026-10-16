@@ -85,12 +85,14 @@ export function SceneCard({
       : ai === 'done' ? (scene.aiVideoMode === 'text' ? 'Animated from the prompt' : 'Animated')
         : ai === 'error' ? 'Animation failed' : null;
   // Your own uploaded clip is never animated over; an AI clip can be re-rolled.
-  const ownClip = scene.mediaKind === 'video' && ai !== 'done';
+  // aiVideoClip: an AI clip kept through a failed re-roll still counts as AI.
+  const aiClip = scene.mediaKind === 'video' && (scene.aiVideoClip === true || ai === 'done');
+  const ownClip = scene.mediaKind === 'video' && !aiClip;
   const canAnimate = Boolean(onAnimate) && scene.imageStatus === 'done' && Boolean(scene.imagePath) && !ownClip;
   const priceText = animatePriceUsd != null ? `$${animatePriceUsd.toFixed(2)}` : null;
   // The accessible name says what the button shows, price included.
   const animateName = animating ? `Animating scene ${n}…`
-    : `Animate scene ${n}${ai === 'done' ? ' again' : ''}${priceText ? `, about ${priceText}` : ''}`;
+    : `Animate scene ${n}${aiClip ? ' again' : ''}${priceText ? `, about ${priceText}` : ''}`;
 
   const copyPrompt = async () => {
     // What the editor shows: an edit may still be saving.
@@ -169,7 +171,7 @@ export function SceneCard({
                 className={actionCls}
               >
                 {animating ? <Loader2 size={12} className="animate-spin" /> : <Clapperboard size={12} />}
-                {animating ? 'Animating…' : ai === 'done' ? 'Animate again' : 'Animate'}
+                {animating ? 'Animating…' : aiClip ? 'Animate again' : 'Animate'}
                 {!animating && priceText && (
                   <span className="tabular-nums text-bf-muted">· {priceText}</span>
                 )}

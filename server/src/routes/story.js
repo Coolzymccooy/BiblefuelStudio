@@ -49,7 +49,7 @@ const ANIMATING_REFUSAL = Object.freeze({
 // A new picture also drops any AI motion clip made from the old one.
 const NO_SCENE_VIDEO = Object.freeze({
   videoPath: null, videoUrl: null, mediaKind: "image",
-  aiVideoStatus: "none", aiVideoTaskId: null, aiVideoError: null,
+  aiVideoStatus: "none", aiVideoTaskId: null, aiVideoError: null, aiVideoClip: false,
 });
 
 /**
@@ -703,7 +703,7 @@ router.put("/:id/scenes/:sid/image", async (req, res) => {
         videoUrl: clip.videoUrl,
         mediaKind: "video",
         // Your own clip replaces any AI clip, and a late AI clip must not land on it.
-        aiVideoStatus: "none", aiVideoTaskId: null, aiVideoError: null,
+        aiVideoStatus: "none", aiVideoTaskId: null, aiVideoError: null, aiVideoClip: false,
       };
     } else {
       const got = await resolveMovementImage({

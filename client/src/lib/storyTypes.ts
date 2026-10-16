@@ -66,6 +66,8 @@ export interface StoryScene {
   aiVideoError?: string | null;
   /** 'image' when the clip started from the picture; 'text' when BytePlus refused the picture (a real person) and it was made from the prompt. */
   aiVideoMode?: 'image' | 'text' | null;
+  /** True while the scene plays an AI clip, even after a later re-roll failed. */
+  aiVideoClip?: boolean;
   /** What BytePlus charged for this scene's clip, in US$. */
   aiVideoCostUsd?: number | null;
 }

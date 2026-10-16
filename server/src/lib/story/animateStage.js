@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
-import { readProject, writeProject, listProjects } from "./projectStore.js";
+import { readProject, writeProject, listProjects, STORY_STATUS } from "./projectStore.js";
 import { resolveSceneVideo } from "./sceneVideo.js";
 import {
   SEEDANCE_MODELS, clampSeedanceDuration, seedanceRatio,
@@ -63,9 +63,18 @@ export function animatePrompt(scene) {
 
 const ledgerKey = (projectId, sceneId) => `${projectId}:${sceneId}`;
 
-/** The user's own uploaded clip (a video that AI motion did not make): never animated over. */
+/**
+ * The user's own uploaded clip (a video that AI motion did not make): never
+ * animated over. aiVideoClip marks a kept AI clip, so a failed re-roll
+ * (status "error") still counts as AI and can be tried again.
+ */
 export function isOwnClip(scene) {
-  return scene.mediaKind === "video" && scene.aiVideoStatus !== "done";
+  return scene.mediaKind === "video" && !scene.aiVideoClip && scene.aiVideoStatus !== "done";
+}
+
+/** The scene still plays an AI clip, whatever the last order's status. */
+function hasAiClip(scene) {
+  return scene.mediaKind === "video" && (scene.aiVideoClip === true || scene.aiVideoStatus === "done");
 }
 
 export function animatableScenes(project, sceneIds) {
@@ -74,7 +83,7 @@ export function animatableScenes(project, sceneIds) {
     if (s.imageStatus !== "done" || !s.imagePath || IN_FLIGHT.has(s.aiVideoStatus)) return false;
     if (isOwnClip(s)) return false;
     // "Animate all" skips scenes already animated; naming one re-rolls it.
-    return wanted ? wanted.has(s.id) : s.aiVideoStatus !== "done";
+    return wanted ? wanted.has(s.id) : s.aiVideoStatus !== "done" && !hasAiClip(s);
   });
 }
 
@@ -180,11 +189,15 @@ async function finishTask(ctx, projectId, sceneId, taskId, { model, resolution, 
     markError(ctx.dataDir, projectId, sceneId, taskId, clip.error);
     return;
   }
-  const applied = patchScene(ctx.dataDir, projectId, sceneId, (s) => (
-    s.aiVideoTaskId === taskId && s.aiVideoStatus === "generating"
-      ? { ...s, videoPath: clip.videoPath, videoUrl: clip.videoUrl, mediaKind: "video", aiVideoStatus: "done", aiVideoError: null, aiVideoCostUsd: costUsd }
-      : null
-  ));
+  let superseded = null; // the earlier AI clip a re-roll replaces
+  const applied = patchScene(ctx.dataDir, projectId, sceneId, (s) => {
+    if (s.aiVideoTaskId !== taskId || s.aiVideoStatus !== "generating") return null;
+    superseded = hasAiClip(s) ? s.videoPath : null;
+    return {
+      ...s, videoPath: clip.videoPath, videoUrl: clip.videoUrl, mediaKind: "video",
+      aiVideoClip: true, aiVideoStatus: "done", aiVideoError: null, aiVideoCostUsd: costUsd,
+    };
+  });
   // The scene keeps its picture as the poster, so the clip's own poster is spare,
   // and so is the original download when the clip was converted.
   if (clip.videoPath !== downloaded) removeFile(downloaded);
@@ -194,6 +207,11 @@ async function finishTask(ctx, projectId, sceneId, taskId, { model, resolution, 
     return;
   }
   if (clip.posterPath && clip.posterPath !== applied.imagePath) removeFile(clip.posterPath);
+  // A running render may be about to open the old clip, so it stays until then.
+  if (superseded && superseded !== clip.videoPath
+    && readProject(ctx.dataDir, projectId)?.status !== STORY_STATUS.RENDERING) {
+    removeFile(superseded);
+  }
 }
 
 async function animateOne(ctx, projectId, sceneId, { model, resolution }, { ledgerDir, deps }) {

@@ -8,7 +8,7 @@ import type { AnimateEstimate, AnimateQuality, StoryProject } from '../lib/story
  * on a scene takes it out of the batch).
  */
 export function useAnimateEstimate(project: StoryProject | undefined, quality: AnimateQuality, enabled: boolean) {
-  const signature = project ? project.scenes.map((s) => `${s.id}:${s.imageStatus}:${s.aiVideoStatus ?? 'none'}:${s.mediaKind ?? 'image'}`).join('|') : '';
+  const signature = project ? project.scenes.map((s) => `${s.id}:${s.imageStatus}:${s.aiVideoStatus ?? 'none'}:${s.mediaKind ?? 'image'}:${s.aiVideoClip ? 1 : 0}`).join('|') : '';
   return useQuery<AnimateEstimate>({
     queryKey: ['story-animate-estimate', project?.projectId, quality, signature],
     queryFn: () => storyApi.estimateAnimation((project as StoryProject).projectId, quality),

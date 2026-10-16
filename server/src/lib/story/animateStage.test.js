@@ -106,6 +106,12 @@ describe("pricing and choice of scenes", () => {
     const est = estimateAnimation(p, undefined, "standard");
     assert.equal(est.clips, 1, "your own clip is not priced either");
   });
+  test("an AI clip kept through a failed re-roll can be tried again", () => {
+    const kept = { mediaKind: "video", videoPath: "/ai.mp4", videoUrl: "/outputs/ai.mp4", aiVideoClip: true };
+    const p = project([scene(0, { ...kept, aiVideoStatus: "error" }), scene(1)]);
+    assert.deepEqual(animatableScenes(p, ["s0"]).map((s) => s.id), ["s0"], "not mistaken for your own clip");
+    assert.deepEqual(animatableScenes(p).map((s) => s.id), ["s1"], "Animate all still skips a scene that has an AI clip");
+  });
   test("the estimate prices 5 s + 10 s of Mini at 720p portrait", () => {
     const p = project([scene(0), scene(1, { endMs: 15000 })]);
     const est = estimateAnimation(p, undefined, "standard");
@@ -118,6 +124,44 @@ describe("pricing and choice of scenes", () => {
 });
 
 describe("startAnimation", () => {
+  test("a failed re-roll keeps the AI clip retryable", async () => {
+    const old = path.join(outputDir, "bg-video-old.mp4");
+    fs.writeFileSync(old, "mp4");
+    const p = project([scene(0, { mediaKind: "video", videoPath: old, videoUrl: "/outputs/bg-video-old.mp4", aiVideoStatus: "done", aiVideoClip: true })]);
+    const { deps } = fakeDeps({ wait: async () => ({ ok: false, code: "FAILED", error: "nope" }) });
+    startAnimation(ctx(), p.projectId, { sceneIds: ["s0"], ledgerDir, deps });
+    await waitFor(() => !isAnimating(p.projectId));
+    const s = readProject(dataDir, p.projectId).scenes[0];
+    assert.equal(s.aiVideoStatus, "error");
+    assert.equal(s.videoPath, old, "the earlier clip still plays");
+    assert.ok(fs.existsSync(old));
+    assert.deepEqual(animatableScenes(readProject(dataDir, p.projectId), ["s0"]).map((x) => x.id), ["s0"]);
+  });
+  test("a successful re-roll deletes the clip it replaced", async () => {
+    const old = path.join(outputDir, "bg-video-old.mp4");
+    fs.writeFileSync(old, "mp4");
+    const p = project([scene(0, { mediaKind: "video", videoPath: old, videoUrl: "/outputs/bg-video-old.mp4", aiVideoStatus: "done", aiVideoClip: true })]);
+    const { deps } = fakeDeps();
+    startAnimation(ctx(), p.projectId, { sceneIds: ["s0"], ledgerDir, deps });
+    await waitFor(() => !isAnimating(p.projectId));
+    const s = readProject(dataDir, p.projectId).scenes[0];
+    assert.notEqual(s.videoPath, old);
+    assert.equal(s.aiVideoClip, true);
+    assert.ok(fs.existsSync(s.videoPath), "the new clip is kept");
+    assert.ok(!fs.existsSync(old), "the replaced clip is gone");
+  });
+  test("a re-roll that lands mid-render leaves the old clip for the render", async () => {
+    const old = path.join(outputDir, "bg-video-old.mp4");
+    fs.writeFileSync(old, "mp4");
+    const p = project(
+      [scene(0, { mediaKind: "video", videoPath: old, videoUrl: "/outputs/bg-video-old.mp4", aiVideoStatus: "done", aiVideoClip: true })],
+      { status: "rendering" },
+    );
+    const { deps } = fakeDeps();
+    startAnimation(ctx(), p.projectId, { sceneIds: ["s0"], ledgerDir, deps });
+    await waitFor(() => !isAnimating(p.projectId));
+    assert.ok(fs.existsSync(old));
+  });
   test("marks scenes queued at once, then puts each clip on its scene", async () => {
     const p = project([scene(0), scene(1)]);
     const { deps, calls } = fakeDeps();

@@ -186,6 +186,12 @@ describe('SceneCard', () => {
     expect(screen.getByRole('button', { name: 'Animate scene 1 again, about $4.49' })).toHaveTextContent('$4.49');
   });
 
+  it('a failed re-roll keeps its AI clip and can be tried again', () => {
+    render(<SceneCard scene={scene({ aiVideoStatus: 'error', aiVideoClip: true, aiVideoError: 'nope', mediaKind: 'video', videoUrl: '/outputs/bg-video-x.mp4' })} index={0} onPatch={vi.fn()} onRegenerate={vi.fn()} busy={false} onAnimate={vi.fn()} />);
+    expect(screen.getByRole('button', { name: /^animate scene 1 again$/i })).toBeEnabled();
+    expect(screen.getByTestId('ai-status')).toHaveTextContent('Animation failed');
+  });
+
   it('your own uploaded clip cannot be animated over', () => {
     render(<SceneCard scene={scene({ mediaKind: 'video', videoUrl: '/outputs/own.mp4', imageChosenByUser: true, aiVideoStatus: 'none' })} index={0} onPatch={vi.fn()} onRegenerate={vi.fn()} busy={false} onAnimate={vi.fn()} animatePriceUsd={0.6} />);
     expect(screen.queryByRole('button', { name: /animat/i })).toBeNull();
