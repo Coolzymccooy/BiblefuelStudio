@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -43,11 +43,14 @@ function renderCard(p: LyricProject, onChange = vi.fn()) {
 }
 
 describe('MusicVideoCard', () => {
+  let confirmSpy: MockInstance<(message?: string) => boolean>;
   beforeEach(() => {
     vi.clearAllMocks();
     useAuth.setState({ isSuperAdmin: true });
     vi.mocked(storyApi.animateRates).mockResolvedValue(rates);
+    confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
   });
+  afterEach(() => confirmSpy.mockRestore());
 
   it('is hidden from anyone but a super admin, who never asks for the rates', () => {
     useAuth.setState({ isSuperAdmin: false });
@@ -115,5 +118,55 @@ describe('MusicVideoCard', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Use as lyric background' }));
     await waitFor(() => expect(lyricVideoApi.useStoryVideo).toHaveBeenCalledWith('lv_1'));
     await waitFor(() => expect(onChange).toHaveBeenCalledWith(next));
+  });
+
+  describe('asks before spending again or spending a lot', () => {
+    const cheap = { ...rates, usdPerSecond: { standard: 0.05, high: 0.1 } }; // 24 s → $1.20
+    const AGAIN = 'You already made a music video for this song. Make another? It pays for new pictures and clips.';
+
+    it('does not ask for a first video at $2 or less', async () => {
+      vi.mocked(storyApi.animateRates).mockResolvedValue(cheap);
+      vi.mocked(lyricVideoApi.toStory).mockResolvedValue('sp-1');
+      renderCard(project);
+      await screen.findByText('about 2 clips · ≈ $1.20');
+      await userEvent.click(screen.getByRole('button', { name: 'Make AI music video' }));
+      await waitFor(() => expect(lyricVideoApi.toStory).toHaveBeenCalled());
+      expect(confirmSpy).not.toHaveBeenCalled();
+    });
+
+    it('asks when a music video is already linked; Cancel does nothing', async () => {
+      vi.mocked(storyApi.animateRates).mockResolvedValue(cheap);
+      vi.mocked(storyApi.getProject).mockResolvedValue({ projectId: 'sp-1', status: 'done', render: { status: null } } as never);
+      confirmSpy.mockReturnValue(false);
+      renderCard({ ...project, musicVideo: { storyProjectId: 'sp-1', createdAt: 'x' } } as LyricProject);
+      await screen.findByText('about 2 clips · ≈ $1.20');
+      await userEvent.click(screen.getByRole('button', { name: 'Make a new AI music video' }));
+      expect(confirmSpy).toHaveBeenCalledWith(AGAIN);
+      expect(lyricVideoApi.toStory).not.toHaveBeenCalled();
+      expect(navigate).not.toHaveBeenCalled();
+      confirmSpy.mockReturnValue(true);
+      vi.mocked(lyricVideoApi.toStory).mockResolvedValue('sp-2');
+      await userEvent.click(screen.getByRole('button', { name: 'Make a new AI music video' }));
+      await waitFor(() => expect(navigate).toHaveBeenCalledWith('/app/story?project=sp-2'));
+    });
+
+    it('asks when the estimate is over $2 with Animate ticked; Cancel does nothing', async () => {
+      confirmSpy.mockReturnValue(false);
+      renderCard(project);
+      await screen.findByText('about 2 clips · ≈ $2.40');
+      await userEvent.click(screen.getByRole('button', { name: 'Make AI music video' }));
+      expect(confirmSpy).toHaveBeenCalledTimes(1);
+      expect(confirmSpy.mock.calls[0][0]).toMatch(/2 scenes for about \$2\.40/);
+      expect(lyricVideoApi.toStory).not.toHaveBeenCalled();
+    });
+
+    it('does not ask about the price when Animate is unticked', async () => {
+      vi.mocked(lyricVideoApi.toStory).mockResolvedValue('sp-1');
+      renderCard(project);
+      await userEvent.click(await screen.findByRole('checkbox', { name: /animate the scenes/i }));
+      await userEvent.click(screen.getByRole('button', { name: 'Make AI music video' }));
+      await waitFor(() => expect(lyricVideoApi.toStory).toHaveBeenCalled());
+      expect(confirmSpy).not.toHaveBeenCalled();
+    });
   });
 });

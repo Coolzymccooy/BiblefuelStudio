@@ -10,11 +10,13 @@ import { ASPECTS } from '../../lib/lyricRenderOptions';
 import { musicVideoEstimate, musicVideoEstimateText, planMusicScenes } from '../../lib/musicVideoPlan';
 import type { LyricProject, RenderAspect } from '../../lib/lyricVideoTypes';
 import { checkboxCls, fieldLabelCls, inputCls, panelCls, primaryBtnCls, secondaryBtnCls } from '../story/formStyles';
+import { CONFIRM_ABOVE_USD } from '../story/StoryAnimatePanel';
 import { messageOf } from './messageOf';
 
 interface Props { project: LyricProject; onChange: (p: LyricProject) => void }
 
 const CHARACTER_MAX = 300;
+const MAKE_AGAIN = 'You already made a music video for this song. Make another? It pays for new pictures and clips.';
 const storyLink = (id: string) => `/app/story?project=${encodeURIComponent(id)}`;
 
 /**
@@ -61,9 +63,17 @@ function MusicVideoPanel({ project, onChange }: Props) {
   const estimate = rates.data ? musicVideoEstimateText(musicVideoEstimate(scenes, rates.data.usdPerSecond.standard)) : null;
 
   const make = async () => {
+    const animating = canAnimate && animate;
+    // Cancel at either question does nothing: no request, no spend.
+    if (linked && !window.confirm(MAKE_AGAIN)) return;
+    if (animating && rates.data) {
+      const cost = musicVideoEstimate(scenes, rates.data.usdPerSecond.standard);
+      if (cost.usd > CONFIRM_ABOVE_USD
+        && !window.confirm(`Make the AI music video and animate ${cost.clips} ${cost.clips === 1 ? 'scene' : 'scenes'} for about $${cost.usd.toFixed(2)}? This is charged to your BytePlus balance.`)) return;
+    }
     setMaking(true);
     try {
-      const id = await lyricVideoApi.toStory(project.projectId, { aspect, character: character.trim(), aiMotion: canAnimate && animate });
+      const id = await lyricVideoApi.toStory(project.projectId, { aspect, character: character.trim(), aiMotion: animating });
       // The song now links to the new Story project; read it again for when the user comes back.
       void qc.invalidateQueries({ queryKey: ['lyric-project', project.projectId] });
       navigate(storyLink(id));
