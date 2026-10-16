@@ -6,7 +6,7 @@ import path from "path";
 import { createProject, readProject, writeProject } from "./projectStore.js";
 import { reserveSpend } from "../videoGen/spend.js";
 import { isAnimating } from "./animateStage.js";
-import { autoAnimate, BUDGET_NOTE, NOT_CONFIGURED_NOTE } from "./autoAnimate.js";
+import { autoAnimate, BUDGET_NOTE, BUSY_NOTE, NOT_CONFIGURED_NOTE } from "./autoAnimate.js";
 
 let dataDir, outputDir, ledgerDir, saved;
 
@@ -161,6 +161,70 @@ describe("autoAnimate", () => {
     assert.equal(fs.readFileSync(path.join(dataDir, "story-projects", `${p.projectId}.json`), "utf8"), before, "not rewritten");
   });
 
+  test("a scene that is locked (being regenerated, say) is left out, and the rest animate", async () => {
+    const p = project(3);
+    const { deps, submitted } = fakeDeps();
+    const sceneBlocked = (_proj, sceneId) => (sceneId === "s1" ? { status: 409, body: { code: "SCENE_REGENERATING" } } : null);
+    await autoAnimate(ctx(), p.projectId, { ledgerDir, deps, sceneBlocked });
+    const after = readProject(dataDir, p.projectId);
+    assert.ok(after.aiMotion.autoStartedAt > 0);
+    assert.equal(after.aiMotion.note, null, "a locked scene is skipped silently");
+    await waitFor(() => !isAnimating(p.projectId));
+    assert.equal(submitted.length, 2);
+    assert.deepEqual(statuses(p.projectId), ["done", undefined, "done"]);
+  });
+
+  test("every scene locked: nothing starts and the one try is not used up", async () => {
+    const p = project(2);
+    const { deps, submitted } = fakeDeps();
+    await autoAnimate(ctx(), p.projectId, { ledgerDir, deps, sceneBlocked: () => ({ status: 409, body: {} }) });
+    const after = readProject(dataDir, p.projectId);
+    assert.equal(after.aiMotion.autoStartedAt, null);
+    assert.equal(after.aiMotion.note, null);
+    assert.equal(isAnimating(p.projectId), false);
+    assert.equal(submitted.length, 0);
+  });
+
+  test("two projects picking at once never pick more than what is left of the budget", async () => {
+    // $2 fits five $0.378 clips. A run reserves each clip only as it orders it
+    // (three at a time), so the second project must not count A's fourth as free.
+    process.env.VIDEO_GEN_MONTHLY_CAP_USD = "2";
+    const a = project(4);
+    const b = project(4);
+    let open;
+    const gate = new Promise((r) => { open = r; });
+    const { deps, submitted } = fakeDeps();
+    const gated = { ...deps, submit: async (args) => { await gate; return deps.submit(args); } };
+    await Promise.all([
+      autoAnimate(ctx(), a.projectId, { ledgerDir, deps: gated }),
+      autoAnimate(ctx(), b.projectId, { ledgerDir, deps: gated }),
+    ]);
+    const queued = [a, b].flatMap((p) => statuses(p.projectId)).filter((s) => s === "queued").length;
+    assert.equal(queued, 5, "five clips fit in the budget, across both projects");
+    assert.equal(readProject(dataDir, a.projectId).aiMotion.note, null);
+    assert.equal(readProject(dataDir, b.projectId).aiMotion.note, BUDGET_NOTE(1, 4));
+    open();
+    await waitFor(() => !isAnimating(a.projectId) && !isAnimating(b.projectId));
+    assert.equal(submitted.length, 5);
+    const errors = [a, b].flatMap((p) => readProject(dataDir, p.projectId).scenes).filter((s) => s.aiVideoStatus === "error");
+    assert.deepEqual(errors, [], "no picked clip fails on the cap");
+  });
+
+  test("a project's picks stop counting once its run ends", async () => {
+    process.env.VIDEO_GEN_MONTHLY_CAP_USD = "2";
+    const a = project(4);
+    const first = fakeDeps();
+    await autoAnimate(ctx(), a.projectId, { ledgerDir, deps: first.deps });
+    await waitFor(() => !isAnimating(a.projectId));
+    // A spent four clips ($1.512); $0.488 is left, so one more fits.
+    const b = project(3);
+    const second = fakeDeps();
+    await autoAnimate(ctx(), b.projectId, { ledgerDir, deps: second.deps });
+    assert.equal(readProject(dataDir, b.projectId).aiMotion.note, BUDGET_NOTE(1, 3));
+    await waitFor(() => !isAnimating(b.projectId));
+    assert.equal(second.submitted.length, 1);
+  });
+
   test("High quality is priced and ordered at High", async () => {
     const p = project(1, { quality: "high" });
     const { deps, submitted } = fakeDeps();
@@ -184,7 +248,28 @@ describe("autoAnimate", () => {
     assert.ok(warned.some((w) => /auto-animate/.test(w) && /disk full/.test(w)), warned.join("\n"));
     const after = readProject(dataDir, p.projectId);
     assert.ok(after.aiMotion.autoStartedAt > 0, "a failure still counts as the one try");
-    assert.equal(after.aiMotion.note, "AI motion could not start: disk full");
+    assert.equal(after.aiMotion.note, "AI motion could not start: disk full. Use Animate to try again.");
     assert.equal(isAnimating(p.projectId), false);
+  });
+
+  test("a failure whose message ends a sentence still reads as one", async () => {
+    const p = project(1);
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+      await autoAnimate(ctx(), p.projectId, { ledgerDir, start: () => { throw new Error("The disk is full."); } });
+    } finally {
+      console.warn = warn;
+    }
+    assert.equal(readProject(dataDir, p.projectId).aiMotion.note, "AI motion could not start: The disk is full. Use Animate to try again.");
+  });
+
+  test("another animation already running: the note says so instead of nothing", async () => {
+    const p = project(2);
+    await autoAnimate(ctx(), p.projectId, { ledgerDir, start: () => null });
+    const after = readProject(dataDir, p.projectId);
+    assert.equal(after.aiMotion.note, "AI motion could not start because another animation is running. Use Animate when it finishes.");
+    assert.equal(BUSY_NOTE, after.aiMotion.note);
+    assert.ok(after.aiMotion.autoStartedAt > 0);
   });
 });

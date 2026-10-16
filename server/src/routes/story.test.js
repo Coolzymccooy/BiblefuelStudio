@@ -689,6 +689,33 @@ describe("story routes", () => {
     assert.equal(done.source.trimmed, true);
   });
 
+  test("POST /:id/process resumes an imported script whose narration is in the shared outputs folder", async () => {
+    const { OUTPUT_DIR } = await import("../lib/paths.js");
+    const { randomUUID } = await import("crypto");
+    fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+    const narration = path.join(OUTPUT_DIR, `tts-edge-${randomUUID()}.mp3`);
+    fs.writeFileSync(narration, "ID3");
+    try {
+      const created = createProject(dataDir, { title: "Series part", style: "cinematic-bible" });
+      writeProject(dataDir, {
+        ...created,
+        status: "segmenting",
+        source: { audioPath: narration, durationMs: 4000 },
+        transcript: { words: Array.from({ length: 4 }, (_, i) => ({ text: `w${i}`, startMs: i * 1000, endMs: i * 1000 + 800 })), hash: "imported" },
+      });
+      _setTranscribeImpl(async () => { throw new Error("an imported script is never transcribed"); });
+      _setLlmImpl(async () => JSON.stringify({ scenes: [{ text: "a", startWordIndex: 0, endWordIndex: 3, imagePrompt: "p" }] }));
+      _setImageGenImpl(async () => ({ ok: true, path: "/img.png", publicUrl: "/outputs/img.png" }));
+      const { req, res } = mockReqRes({ params: { id: created.projectId }, body: { mediaPath: narration }, dataDir, outputDir });
+      await handlerFor("post", "/:id/process")(req, res);
+      assert.equal(res.statusCode, 200, JSON.stringify(res.payload));
+      const done = await waitForProject(dataDir, created.projectId, (p) => p.status === "ready_to_render");
+      assert.equal(done.status, "ready_to_render");
+    } finally {
+      fs.rmSync(narration, { force: true });
+    }
+  });
+
   test("POST /:id/process with a name that cleans to nothing stores no name", async () => {
     const created = createProject(dataDir, { title: "T", style: "cinematic-bible" });
     const audio = path.join(outputDir, "n.mp3");
@@ -882,6 +909,97 @@ describe("auto-animate hook after the images stage", () => {
       assert.equal(calls.length, 0);
     } finally {
       _resetAutoAnimateImpl();
+    }
+  });
+
+  test("two image runs at once: auto-animate waits for the last one, and fires once", async () => {
+    const { _setAutoAnimateImpl, _resetAutoAnimateImpl } = await import("./story.js");
+    const p = createProject(dataDir, { title: "T", aiMotion: true });
+    writeProject(dataDir, { ...p, scenes: scenesWith(["pending"]) });
+    const calls = [];
+    _setAutoAnimateImpl(async (ctx, projectId) => { calls.push(projectId); });
+    _setImageLibraryImpl({ find: async () => [], register: async () => null });
+    const gates = [];
+    _setImageGenImpl(() => new Promise((resolve) => {
+      gates.push(() => resolve({ ok: true, path: `/n-${gates.length}.png`, publicUrl: "/o/n.png" }));
+    }));
+    const settle = () => new Promise((r) => setTimeout(r, 30));
+    try {
+      const first = mockReqRes({ params: { id: p.projectId }, body: {}, dataDir, outputDir });
+      await handlerFor("post", "/:id/images")(first.req, first.res);
+      const second = mockReqRes({ params: { id: p.projectId }, body: {}, dataDir, outputDir });
+      await handlerFor("post", "/:id/images")(second.req, second.res);
+      const start = Date.now();
+      while (gates.length < 2 && Date.now() - start < 2000) await settle();
+      assert.equal(gates.length, 2, "both runs are generating");
+      gates[0]();
+      await waitForProject(dataDir, p.projectId, (x) => x.status === "ready_to_render");
+      await settle();
+      assert.equal(calls.length, 0, "the other run still holds the scenes");
+      gates[1]();
+      const t = Date.now();
+      while (!calls.length && Date.now() - t < 2000) await settle();
+      await settle();
+      assert.deepEqual(calls, [p.projectId]);
+    } finally {
+      _resetAutoAnimateImpl();
+    }
+  });
+
+  test("a scene being regenerated is not queued by auto-animate", async () => {
+    const { _setAutoAnimateImpl, _resetAutoAnimateImpl } = await import("./story.js");
+    const { autoAnimate } = await import("../lib/story/autoAnimate.js");
+    const { isAnimating } = await import("../lib/story/animateStage.js");
+    const ledgerDir = fs.mkdtempSync(path.join(os.tmpdir(), "story-route-ledger-"));
+    const savedKey = process.env.BYTEPLUS_ARK_API_KEY;
+    process.env.BYTEPLUS_ARK_API_KEY = "ark-test";
+    const pics = [0, 1].map((i) => { const f = path.join(outputDir, `pic-${i}.png`); fs.writeFileSync(f, "png"); return f; });
+    const p = createProject(dataDir, { title: "T", aiMotion: true });
+    writeProject(dataDir, {
+      ...p,
+      scenes: [
+        { id: "scene-0", text: "a", startMs: 0, endMs: 5000, imagePrompt: "p0", imagePath: null, imageStatus: "pending", promptEditedByUser: false },
+        { id: "scene-1", text: "b", startMs: 5000, endMs: 10000, imagePrompt: "p1", imagePath: pics[1], imageStatus: "done", promptEditedByUser: false },
+      ],
+    });
+    const submitted = [];
+    const deps = {
+      submit: async (args) => { submitted.push(args); return { ok: true, taskId: `t-${submitted.length}`, mode: "image" }; },
+      wait: async () => ({ ok: true, videoUrl: "https://cdn/t.mp4", tokens: 108000 }),
+      download: async (_u, dest) => { fs.writeFileSync(dest, "mp4"); return 3; },
+      resolveClip: async ({ outputDir: dir, uploadPath }) => ({ ok: true, videoPath: path.join(dir, uploadPath), videoUrl: `/outputs/${uploadPath}`, posterPath: null }),
+      now: () => Date.now(),
+    };
+    let hooked = false;
+    _setAutoAnimateImpl(async (ctx, projectId, opts) => {
+      await autoAnimate(ctx, projectId, { ...opts, ledgerDir, deps });
+      hooked = true;
+    });
+    _setImageLibraryImpl({ find: async () => [], register: async () => null });
+    let releaseRegen;
+    _setImageGenImpl(({ rawPrompt }) => (rawPrompt === "p1"
+      ? new Promise((resolve) => { releaseRegen = () => resolve({ ok: true, path: pics[1], publicUrl: "/o/pic-1.png" }); })
+      : Promise.resolve({ ok: true, path: pics[0], publicUrl: "/o/pic-0.png" })));
+    try {
+      const regen = mockReqRes({ params: { id: p.projectId, sid: "scene-1" }, body: {}, dataDir, outputDir });
+      const regenDone = handlerFor("post", "/:id/scenes/:sid/regenerate")(regen.req, regen.res);
+      const images = mockReqRes({ params: { id: p.projectId }, body: {}, dataDir, outputDir });
+      await handlerFor("post", "/:id/images")(images.req, images.res);
+      const start = Date.now();
+      while (!hooked && Date.now() - start < 2000) await new Promise((r) => setTimeout(r, 5));
+      assert.ok(hooked, "the hook ran");
+      const after = readProject(dataDir, p.projectId);
+      assert.ok(after.scenes[0].aiVideoStatus, "the finished scene is animated");
+      assert.equal(after.scenes[1].aiVideoStatus, undefined, "the scene being regenerated is left alone");
+      releaseRegen();
+      await regenDone;
+      const t = Date.now();
+      while (isAnimating(p.projectId) && Date.now() - t < 2000) await new Promise((r) => setTimeout(r, 5));
+      assert.equal(submitted.length, 1);
+    } finally {
+      _resetAutoAnimateImpl();
+      if (savedKey === undefined) delete process.env.BYTEPLUS_ARK_API_KEY; else process.env.BYTEPLUS_ARK_API_KEY = savedKey;
+      fs.rmSync(ledgerDir, { recursive: true, force: true });
     }
   });
 

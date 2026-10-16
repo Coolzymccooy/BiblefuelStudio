@@ -363,6 +363,29 @@ describe('StoryVideoPage', () => {
       expect(await screen.findByText(note)).toBeInTheDocument();
     });
 
+    it('a clip that failed on the cap corrects a note that said every scene was animated', async () => {
+        useAuth.setState({ isSuperAdmin: true });
+        localStorage.setItem('BF_STORY_ACTIVE', 'pc');
+        const base = { text: 'a', imagePrompt: 'p', imagePath: '/a.png', imageUrl: '/outputs/x.png', imageStatus: 'done', promptEditedByUser: false };
+        vi.spyOn(storyApi, 'getProject').mockResolvedValue({
+            projectId: 'pc', title: 'T', style: 'cinematic-bible', status: 'ready_to_render',
+            source: { audioPath: 'a', durationMs: 10000 }, transcript: { words: [], hash: 'h' },
+            scenes: [
+                { ...base, id: 'scene-001', startMs: 0, endMs: 5000, aiVideoStatus: 'done' },
+                { ...base, id: 'scene-002', startMs: 5000, endMs: 10000, aiVideoStatus: 'error', aiVideoError: "This would take October's AI video spend to $30.38 of $30." },
+            ],
+            music: { path: null, volume: 0.3 }, captionPreset: 'default',
+            render: { jobId: null, outputPath: null, status: null }, error: null, createdAt: 0, updatedAt: 0,
+            aiMotion: { quality: 'standard', autoStartedAt: 1, note: null },
+        } as any);
+        vi.spyOn(storyApi, 'estimateAnimation').mockResolvedValue({
+            configured: true, quality: 'standard', running: false, clips: 1, seconds: 5, usd: 0.4, usdPerSecond: 0.0756,
+            model: 'm', resolution: '720p', sceneIds: ['scene-002'], month: '2026-10', spentUsd: 30, reservedUsd: 0, capUsd: 30, monthClips: 1,
+        });
+        renderPage();
+        expect(await screen.findByText('1 of 2 scenes animated: monthly AI budget reached')).toBeInTheDocument();
+    });
+
     it('nobody else sees it', async () => {
       useAuth.setState({ isSuperAdmin: false });
       withNote();

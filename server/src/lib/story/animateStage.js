@@ -61,7 +61,7 @@ export function animatePrompt(scene) {
   return `${String(scene.imagePrompt || scene.text || "").trim()} ${MOTION_LINE}`.trim();
 }
 
-const ledgerKey = (projectId, sceneId) => `${projectId}:${sceneId}`;
+export const ledgerKey = (projectId, sceneId) => `${projectId}:${sceneId}`;
 
 /**
  * The user's own uploaded clip (a video that AI motion did not make): never

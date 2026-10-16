@@ -238,7 +238,7 @@ describe('POST /api/story/import-script: AI motion and auto-start', () => {
 
   test('autoStart refuses an audio path outside your own folders, and makes no project', async () => {
     const { a, dir } = await adminApp();
-    const evil = process.platform === 'win32' ? 'C:\Windows\System32\drivers\etc\hosts' : '/etc/passwd';
+    const evil = process.platform === 'win32' ? 'C:\\Windows\\System32\\drivers\\etc\\hosts' : '/etc/passwd';
     const res = await request(a).post('/api/story/import-script').send(body({ audioPath: evil, autoStart: true })).expect(400);
     assert.equal(res.body.ok, false);
     assert.equal(res.body.error, 'mediaPath is outside the allowed directory');
@@ -300,6 +300,44 @@ describe('confineImportAudio (narration in the shared outputs folder)', () => {
     const got = confineImportAudio({ outputDir: own, dataDir: own }, f, shared);
     assert.equal(got.ok, true);
     assert.equal(got.path, f);
+  });
+  test('accepts every name the narration providers write', () => {
+    const uuid = '0dc7c473-7170-4355-b57f-279780487081';
+    const ctx = { outputDir: own, dataDir: own };
+    for (const name of [
+      `tts-${uuid}.mp3`, // ElevenLabs
+      `tts-edge-${uuid}.mp3`,
+      `tts-azure-${uuid}.mp3`,
+      `tts-fish-${uuid}.mp3`,
+      `tts-chatterbox-${uuid}.wav`,
+      `tts-chatterbox-${uuid}.mp3`,
+      `tts-piper-${uuid}.wav`,
+      `tts-piper-${uuid}.ogg`,
+    ]) {
+      const f = path.join(shared, name);
+      fs.writeFileSync(f, 'audio');
+      assert.equal(confineImportAudio(ctx, f, shared).ok, true, name);
+    }
+  });
+  test('refuses a provider name that is not one of ours, or junk in the name', () => {
+    const uuid = '0dc7c473-7170-4355-b57f-279780487081';
+    const ctx = { outputDir: own, dataDir: own };
+    for (const name of [
+      `tts-evil-${uuid}.mp3`,
+      `tts-edge-edge-${uuid}.mp3`,
+      `tts-EDGE-${uuid}.mp3x`,
+      `tts-edge-${uuid}.m4a`,
+      `tts-edge-${uuid}.mp3.exe`,
+      `xtts-edge-${uuid}.mp3`,
+    ]) {
+      const f = path.join(shared, name);
+      fs.writeFileSync(f, 'audio');
+      assert.equal(confineImportAudio(ctx, f, shared).ok, false, name);
+    }
+    fs.mkdirSync(path.join(shared, 'tts-edge-x'));
+    const sep = path.join(shared, 'tts-edge-x', `${uuid}.mp3`);
+    fs.writeFileSync(sep, 'audio');
+    assert.equal(confineImportAudio(ctx, sep, shared).ok, false, 'a path separator in the provider part');
   });
   test('refuses any other shared file, a nested one, or a missing one', () => {
     const other = path.join(shared, 'someone-elses.mp3');

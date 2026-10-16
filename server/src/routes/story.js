@@ -126,8 +126,13 @@ function confineMediaPath(ctx, rawMediaPath) {
 
 // The narration routes write every user's TTS into the shared outputs folder,
 // so an imported script's audio is either in the user's own folders or is one
-// of those server-named files (tts-<uuid>.mp3: unguessable, never user-named).
-const SHARED_TTS_NAME = /^tts-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.mp3$/i;
+// of those server-named files (unguessable, never user-named). The names the
+// TTS writers in lib/ produce: ElevenLabs tts-<uuid>.mp3, the others
+// tts-<provider>-<uuid>.<ext>, where Edge, Azure and Fish write .mp3,
+// Chatterbox .wav or .mp3, and Piper .wav, .mp3 or .ogg.
+const TTS_PROVIDERS = "edge|azure|fish|chatterbox|piper";
+const UUID_V4 = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+const SHARED_TTS_NAME = new RegExp(`^tts-(?:(?:${TTS_PROVIDERS})-)?${UUID_V4}\\.(?:mp3|wav|ogg)$`);
 
 export function confineImportAudio(ctx, rawPath, sharedOutputDir = OUTPUT_DIR) {
   const own = confineMediaPath(ctx, rawPath);
@@ -284,12 +289,16 @@ async function imagesStage(ctx, projectId, opts = {}) {
   }
   // Every picture is in: an "AI motion" project animates its scenes now, within
   // the month's cap. Run after the counter is released, so the scenes are not
-  // still locked by this run. Every image path (pipeline, /images, /process,
-  // /resegment, long-form) comes through here. autoAnimate never throws and
-  // only starts a detached run, but it must never fail the images stage.
-  if (result?.status === STORY_STATUS.READY_TO_RENDER) {
+  // still locked by this run. Another image run on the project still going
+  // would write its own copy of the scenes over the clips, so only the last
+  // run to finish hands over, and a scene locked some other way (being
+  // regenerated, a render running) is left out. Every image path (pipeline,
+  // /images, /process, /resegment, long-form) comes through here. autoAnimate
+  // never throws and only starts a detached run, but it must never fail the
+  // images stage.
+  if (result?.status === STORY_STATUS.READY_TO_RENDER && !imagesRunning(projectId)) {
     try {
-      await _autoAnimateFn(ctx, projectId);
+      await _autoAnimateFn(ctx, projectId, { sceneBlocked: sceneImageBlocked });
     } catch (e) {
       console.warn(`[story] auto-animate ${projectId} failed: ${e?.message || e}`);
     }
@@ -959,7 +968,9 @@ router.post("/:id/process", (req, res) => {
   const existing = readProject(req.ctx.dataDir, req.params.id);
   if (!existing) return res.status(404).json({ ok: false, error: "project not found" });
   if (isAnimating(req.params.id)) return res.status(409).json(ANIMATING_REFUSAL);
-  const guard = confineMediaPath(req.ctx, req.body?.mediaPath);
+  // Same rule as an import's auto-start, so Resume works on an imported
+  // script whose narration is in the shared outputs folder.
+  const guard = confineImportAudio(req.ctx, req.body?.mediaPath);
   if (!guard.ok) return res.status(guard.status).json({ ok: false, error: guard.error });
   // What the soundtrack was called and whether it was trimmed: shown back to
   // the user in the Music panel, never used as a path. A resume sends neither
