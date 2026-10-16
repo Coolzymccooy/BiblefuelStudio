@@ -223,7 +223,7 @@ describe("imageGen orchestrator — generateBibleImage", () => {
     cleanupTestImages(seriesId);
   });
 
-  test("Cloudflare failure falls back to Imagen", async () => {
+  test("Cloudflare failure falls back to the Google backup", async () => {
     process.env.CLOUDFLARE_ACCOUNT_ID = "acct";
     process.env.CLOUDFLARE_WORKERS_AI_TOKEN = "tok";
     process.env.GEMINI_API_KEY = "key";
@@ -241,7 +241,7 @@ describe("imageGen orchestrator — generateBibleImage", () => {
       if (/generativelanguage\.googleapis\.com/.test(url)) {
         imagenCalled = true;
         return jsonResponse({
-          predictions: [{ bytesBase64Encoded: TINY_PNG_BUFFER.toString("base64"), mimeType: "image/png" }],
+          candidates: [{ content: { parts: [{ inlineData: { mimeType: "image/png", data: TINY_PNG_BUFFER.toString("base64") } }] } }],
         });
       }
       return new Response("unexpected", { status: 500 });
@@ -340,13 +340,13 @@ describe("imageGen orchestrator — generateBibleImage", () => {
     cleanupTestImages(seriesId);
   });
 
-  test("imagen safety filter rejection surfaces as error", async () => {
+  test("a Google safety refusal surfaces as an error", async () => {
     process.env.GEMINI_API_KEY = "key";
 
     stubFetch(async (url) => {
       if (/generativelanguage\.googleapis\.com/.test(url)) {
         return jsonResponse({
-          predictions: [{ raiFilteredReason: "Person/Face" }],
+          candidates: [{ finishReason: "IMAGE_SAFETY", content: { parts: [] } }],
         });
       }
       return new Response("unexpected", { status: 500 });
