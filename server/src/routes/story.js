@@ -21,8 +21,8 @@ import { synthesizeEdgeTts } from "../lib/edgeTts.js";
 import { resolveLibraryTrack } from "../lib/musicLibrary.js";
 import { resolveTenantTrack } from "../lib/musicLibraryStore.js";
 import { cleanCaptionLine, cleanSpeakableText } from "../lib/speakableScript.js";
-import { buildImportedTranscript } from "../lib/story/scriptImport.js";
-import { CHARACTER_ANCHORS } from "../lib/story/styleAnchors.js";
+import { buildImportedTranscript, normalizeWordTimings } from "../lib/story/scriptImport.js";
+import { CHARACTER_ANCHORS, composeScenePrompt } from "../lib/story/styleAnchors.js";
 import { confineToDir } from "../lib/confinePath.js";
 import { OUTPUT_DIR } from "../lib/paths.js";
 import { isNarrationActive } from "../lib/longform/narrationRegistry.js";
@@ -256,6 +256,16 @@ function withTimeout(promise, ms, message) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
+// Projects whose pictures wait on a step before them (an AI music video's
+// prompts being written). Their status already reads generating_images, so
+// the page shows its working state; a Resume meanwhile is a no-op, and a new
+// image run or re-segment is refused, so the pictures are made once.
+const preparingProjects = new Set();
+const PREPARING_REFUSAL = Object.freeze({
+  ok: false, code: "PREPARING",
+  error: "The scene prompts are still being written. The pictures start by themselves in a moment.",
+});
+
 // Image runs in progress, by project. A run works from its own copy of the
 // scenes and writes the whole list back as it goes, so a picture put on a
 // scene meanwhile would be overwritten; PUT /scenes/:sid/image waits for it.
@@ -445,6 +455,165 @@ export async function runStoryPipeline(ctx, projectId, mediaPath) {
   await transcribeStage(ctx, projectId, mediaPath);
   await segmentStage(ctx, projectId);
   await imagesStage(ctx, projectId);
+}
+
+const isFileSync = (file) => { try { return fs.statSync(file).isFile(); } catch { return false; } };
+
+/** Records a detached run's failure on the project, as every detached image run here does. */
+function recordRunError(ctx, projectId, e) {
+  try {
+    const fresh = readProject(ctx.dataDir, projectId);
+    if (fresh) writeProject(ctx.dataDir, { ...fresh, status: STORY_STATUS.ERROR, error: String(e?.message || e) });
+  } catch {}
+}
+
+/**
+ * AI music videos (routes/lyricVideo.js POST /:id/to-story): a Story project
+ * built straight from a timed song. The scenes are given (cut on the song's
+ * sections), so there is no transcribing or segmenting; the song is the only
+ * sound (no music bed) and Story draws no captions, because the lyric render
+ * puts its own over the finished video. Each scene's prompt gets the style
+ * anchor here, as the segmenter's do. AI motion is kept only when the server
+ * has the Seedance key; the caller has already checked the user may spend it.
+ *
+ * @param {{ dataDir: string, outputDir: string }} ctx
+ * @param {{ title: string, style?: string, aspect?: string, audioPath: string, durationMs: number,
+ *   words: Array<{text:string,startMs:number,endMs:number}>,
+ *   scenes: Array<{startMs:number,endMs:number,text?:string,imagePrompt:string}>,
+ *   aiMotion?: boolean | { quality?: string } }} opts
+ * @returns {object} the project, at generating_images
+ */
+export function createStoryFromScenes(ctx, { title, style = "music-video", aspect, audioPath, durationMs, words = [], scenes, aiMotion = null }) {
+  if (!Array.isArray(scenes) || !scenes.length) throw new Error("a music video needs scenes");
+  if (typeof audioPath !== "string" || !audioPath.trim() || !isFileSync(audioPath)) throw new Error("a music video needs the song's audio");
+  const length = Math.round(Number(durationMs));
+  if (!Number.isFinite(length) || length <= 0) throw new Error("the song's duration must be a positive number");
+  const project = createProject(ctx.dataDir, {
+    title, style, aspect, captions: "none",
+    aiMotion: isSeedanceConfigured() ? aiMotion : null,
+  });
+  // The project owns its soundtrack: a copy in its own folder (removed with it), so the lyric
+  // project deleting or replacing its song never leaves this one unable to render. The copy is
+  // made in the background (copyPendingAudio, the first thing startStoryImages does): a song
+  // can be large, and this answers a request. Nothing reads the audio before then.
+  const ownAudio = path.join(storyOutDir(ctx.outputDir, project.projectId), `song${path.extname(audioPath).toLowerCase() || ".m4a"}`);
+  const timed = normalizeWordTimings(words);
+  return writeProject(ctx.dataDir, {
+    ...project,
+    source: { audioPath: ownAudio, durationMs: length, copyFrom: audioPath },
+    transcript: { words: timed, hash: `${length}:${timed.length}` },
+    music: null,
+    scenes: scenes.map((s, i) => ({
+      id: `scene-${String(i + 1).padStart(3, "0")}`,
+      text: String(s.text ?? ""),
+      startMs: Math.round(s.startMs),
+      endMs: Math.round(s.endMs),
+      imagePrompt: composeScenePrompt(String(s.imagePrompt ?? ""), { style: project.style }),
+      imagePath: null,
+      imageStatus: "pending",
+      promptEditedByUser: false,
+    })),
+    status: STORY_STATUS.GENERATING_IMAGES,
+  });
+}
+
+/**
+ * Starts the images stage for a project, detached, exactly as POST /:id/images
+ * does: a failure is recorded on the project. When every picture is in, the
+ * stage's own hook auto-animates an aiMotion project. Returns the run, which
+ * never rejects (callers need not wait for it).
+ * @param {{ dataDir: string, outputDir: string }} ctx
+ * @param {string} projectId
+ * @returns {Promise<void>}
+ */
+export function startStoryImages(ctx, projectId, { before } = {}) {
+  const run = { dataDir: ctx.dataDir, outputDir: ctx.outputDir };
+  cancelledProjects.delete(projectId); // a fresh run supersedes any earlier cancel
+  // Marked at once, so a Resume that lands before the steps end cannot start a second run.
+  preparingProjects.add(projectId);
+  return (async () => {
+    let copied = false;
+    try {
+      // The song first: a project that cannot get its soundtrack can never render, so it makes no
+      // pictures (and pays for no prompts).
+      copied = await copyPendingAudio(run, projectId);
+      if (copied && before) {
+        try {
+          await before();
+        } catch (e) {
+          console.warn(`[story] the step before ${projectId}'s pictures failed; making them anyway: ${e?.message || e}`);
+        }
+      }
+    } finally {
+      preparingProjects.delete(projectId);
+    }
+    if (!copied) return;
+    try {
+      await imagesStage(run, projectId);
+    } catch (e) {
+      recordRunError(run, projectId, e);
+    }
+  })();
+}
+
+/** What a project says when its song could not be copied into its own folder. */
+export const AUDIO_COPY_FAILED = "The song could not be copied for this music video. Make the music video again from the lyric video.";
+
+let _copyFileFn = (from, to) => fs.promises.copyFile(from, to);
+export function _setCopyFileImpl(impl) { _copyFileFn = impl; }
+export function _resetCopyFileImpl() { _copyFileFn = (from, to) => fs.promises.copyFile(from, to); }
+
+/**
+ * Makes the copy of the song a music video project is waiting for (source.copyFrom to
+ * source.audioPath), off the request, without blocking the server. True when there is nothing
+ * left to copy. A failure puts the project in error with a plain message and gives false.
+ * @param {{ dataDir: string, outputDir: string }} ctx
+ * @param {string} projectId
+ * @returns {Promise<boolean>}
+ */
+export async function copyPendingAudio(ctx, projectId) {
+  const project = readProject(ctx.dataDir, projectId);
+  const from = project?.source?.copyFrom;
+  if (!from) return true;
+  const to = project.source.audioPath;
+  try {
+    await fs.promises.mkdir(path.dirname(to), { recursive: true });
+    await _copyFileFn(from, to);
+  } catch (e) {
+    console.warn(`[story] could not copy the song for ${projectId}: ${e?.message || e}`);
+    try { await fs.promises.rm(to, { force: true }); } catch { /* a partial copy is harmless */ }
+    const fresh = readProject(ctx.dataDir, projectId);
+    if (fresh) writeProject(ctx.dataDir, { ...fresh, status: STORY_STATUS.ERROR, error: AUDIO_COPY_FAILED });
+    return false;
+  }
+  const fresh = readProject(ctx.dataDir, projectId);
+  if (!fresh) {
+    // Deleted while the song was copied: take the copy (and the folder it made) away again.
+    try { await fs.promises.rm(path.dirname(to), { recursive: true, force: true }); } catch { /* best effort */ }
+    return false;
+  }
+  const { copyFrom: _done, ...source } = fresh.source || {};
+  writeProject(ctx.dataDir, { ...fresh, source });
+  return true;
+}
+
+/**
+ * Puts new picture prompts on a project's scenes, by scene id, each with the
+ * style anchor (as the segmenter's get). A prompt the user has edited is kept,
+ * and an empty one changes nothing. Returns the project, or null when it is gone.
+ * @param {{ dataDir: string }} ctx
+ * @param {string} projectId
+ * @param {Record<string, string>} prompts scene id -> prompt
+ */
+export function patchScenePrompts(ctx, projectId, prompts) {
+  const fresh = readProject(ctx.dataDir, projectId);
+  if (!fresh) return null;
+  const scenes = (fresh.scenes || []).map((s) => {
+    const prompt = String(prompts?.[s.id] ?? "").trim();
+    if (!prompt || s.promptEditedByUser) return s;
+    return { ...s, imagePrompt: composeScenePrompt(prompt, { style: fresh.style }) };
+  });
+  return writeProject(ctx.dataDir, { ...fresh, scenes });
 }
 
 const router = Router();
@@ -753,6 +922,10 @@ export function sceneImageBlocked(project, sceneId) {
   if (!(project.scenes || []).some((s) => s.id === sceneId)) {
     return { status: 404, body: { error: "scene not found" } };
   }
+  // The step before the pictures will put its prompts on every scene, then make them.
+  if (preparingProjects.has(project.projectId)) {
+    return { status: 409, body: { code: PREPARING_REFUSAL.code, error: PREPARING_REFUSAL.error } };
+  }
   if (imagesRunning(project.projectId)) {
     return { status: 409, body: { code: "IMAGES_RUNNING", error: "Images are still being generated. Wait for that to finish, or Cancel it, then try again." } };
   }
@@ -863,6 +1036,7 @@ router.post("/:id/images", (req, res) => {
   const project = readProject(req.ctx.dataDir, req.params.id);
   if (!project) return res.status(404).json({ ok: false, error: "project not found" });
   if (isAnimating(req.params.id)) return res.status(409).json(ANIMATING_REFUSAL);
+  if (preparingProjects.has(req.params.id)) return res.status(409).json(PREPARING_REFUSAL);
   if (!(project.scenes || []).length) return res.status(400).json({ ok: false, error: "no scenes to generate — segment first" });
   const force = req.body?.force === true || String(req.query?.force || "") === "true";
 
@@ -898,6 +1072,20 @@ router.post("/:id/process", (req, res) => {
   const existing = readProject(req.ctx.dataDir, req.params.id);
   if (!existing) return res.status(404).json({ ok: false, error: "project not found" });
   if (isAnimating(req.params.id)) return res.status(409).json(ANIMATING_REFUSAL);
+  // The pictures are about to start by themselves (an AI music video's prompts
+  // are being written): Resume must not start a second run. It only undoes a
+  // Cancel made meanwhile, so the queued start goes ahead instead of stopping.
+  if (preparingProjects.has(req.params.id)) {
+    cancelledProjects.delete(req.params.id);
+    writeProject(req.ctx.dataDir, { ...existing, status: STORY_STATUS.GENERATING_IMAGES, error: null });
+    return res.json({ ok: true, preparing: true });
+  }
+  // A music video whose song copy never finished (the server restarted): copy it, then the pictures.
+  if (existing.source?.copyFrom) {
+    writeProject(req.ctx.dataDir, { ...existing, status: STORY_STATUS.GENERATING_IMAGES, error: null });
+    startStoryImages({ dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir }, req.params.id);
+    return res.json({ ok: true });
+  }
   // Same rule as an import's auto-start, so Resume works on an imported
   // script whose narration is in the shared outputs folder.
   const guard = confineImportAudio(req.ctx, req.body?.mediaPath);
@@ -930,6 +1118,7 @@ router.post("/:id/resegment", (req, res) => {
   const project = readProject(req.ctx.dataDir, req.params.id);
   if (!project) return res.status(404).json({ ok: false, error: "project not found" });
   if (isAnimating(req.params.id)) return res.status(409).json(ANIMATING_REFUSAL);
+  if (preparingProjects.has(req.params.id)) return res.status(409).json(PREPARING_REFUSAL);
   if (!project.transcript?.words?.length) {
     return res.status(400).json({ ok: false, error: "no transcript to re-segment — start again" });
   }
@@ -969,6 +1158,7 @@ router.post("/:id/scenes/:sid/regenerate", async (req, res) => {
     if (!project) return res.status(404).json({ ok: false, error: "project not found" });
     const idx = (project.scenes || []).findIndex((s) => s.id === req.params.sid);
     if (idx < 0) return res.status(404).json({ ok: false, error: "scene not found" });
+    if (preparingProjects.has(project.projectId)) return res.status(409).json(PREPARING_REFUSAL);
     const key = sceneKey(project.projectId, req.params.sid);
     sceneRegens.add(key);
     let image;

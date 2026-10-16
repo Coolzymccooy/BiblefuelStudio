@@ -3,11 +3,19 @@ import assert from "node:assert/strict";
 import { STYLE_ANCHORS, anchorFor, listStyles, CHARACTER_ANCHORS, characterAnchorFor, detectCharacters, composeScenePrompt } from "./styleAnchors.js";
 
 describe("styleAnchors", () => {
-  test("has the 4 v1 styles", () => {
+  test("has the 4 v1 styles and the music video style", () => {
     assert.deepEqual(
       listStyles().sort(),
-      ["ancient-scripture", "cinematic-bible", "heavenly-atmosphere", "modern-devotional"],
+      ["ancient-scripture", "cinematic-bible", "heavenly-atmosphere", "modern-devotional", "music-video"],
     );
+  });
+
+  test("the music video anchor has no frame shape in it, so it suits any aspect", () => {
+    assert.equal(
+      anchorFor("music-video"),
+      "cinematic music video still, natural film grain, motivated practical light, shallow depth of field, no text, no watermark",
+    );
+    assert.doesNotMatch(anchorFor("music-video"), /9:16|16:9|vertical|portrait|landscape/i);
   });
 
   test("anchorFor returns the style's suffix", () => {

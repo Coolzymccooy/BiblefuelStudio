@@ -1,5 +1,5 @@
 import type { StoryProject } from './storyTypes';
-import { STORY_STYLES } from './storyWizard';
+import { storyStyleLabel } from './storyWizard';
 import { lengthPhrase, unlinkVerseTimes } from './ambientShare';
 
 /**
@@ -10,7 +10,7 @@ import { lengthPhrase, unlinkVerseTimes } from './ambientShare';
 /** Chapters need at least three entries or YouTube ignores them all. */
 const MIN_CHAPTERS = 3;
 
-const styleLabel = (style: string) => STORY_STYLES.find((s) => s.id === style)?.label ?? '';
+const styleLabel = (style: string) => storyStyleLabel(style);
 
 export function storyChapters(project: StoryProject): Array<{ startMs: number; title: string }> {
   return (project.longform?.sections || []).map((s) => ({ startMs: s.startMs ?? 0, title: s.heading }));

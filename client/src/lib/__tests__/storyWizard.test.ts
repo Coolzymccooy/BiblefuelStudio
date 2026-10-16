@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
-  STORY_STYLES, deriveStep, isTransientStatus, allScenesDone,
+  STORY_STYLES, ALL_STORY_STYLES, storyStyleLabel, deriveStep, isTransientStatus, allScenesDone,
   canRender, sceneTimeLabel, progressLabel, imageCounts, isStalled,
-  relativeTime, statusMeta, isAnimatingScenes, clipSeconds,
+  relativeTime, statusMeta, isAnimatingScenes, clipSeconds, clipSecondsOf,
 } from '../storyWizard';
 import type { StoryProject, StoryScene } from '../storyTypes';
 
@@ -27,6 +27,15 @@ describe('STORY_STYLES', () => {
     expect(STORY_STYLES.map((s) => s.id).sort()).toEqual(
       ['ancient-scripture', 'cinematic-bible', 'heavenly-atmosphere', 'modern-devotional'],
     );
+  });
+
+  it('names every backend style, the music video one too (made only from a lyric video, so not in the picker)', () => {
+    expect(ALL_STORY_STYLES.map((s) => s.id).sort()).toEqual(
+      ['ancient-scripture', 'cinematic-bible', 'heavenly-atmosphere', 'modern-devotional', 'music-video'],
+    );
+    expect(storyStyleLabel('music-video')).toBe('Music video');
+    expect(storyStyleLabel('cinematic-bible')).toBe('Cinematic Bible');
+    expect(storyStyleLabel('unknown')).toBe('');
   });
 });
 
@@ -161,6 +170,12 @@ describe('AI motion helpers', () => {
     expect(clipSeconds({ ...base, endMs: 2000 })).toBe(4);
     expect(clipSeconds({ ...base, endMs: 7300 })).toBe(8);
     expect(clipSeconds({ ...base, endMs: 40000 })).toBe(12);
+  });
+  it('one rule for every estimate: a length in seconds billed as the server bills it', () => {
+    expect(clipSecondsOf(0)).toBe(4);
+    expect(clipSecondsOf(10.001)).toBe(11);
+    expect(clipSecondsOf(12)).toBe(12);
+    expect(clipSecondsOf(99)).toBe(12);
   });
   it('a project is animating while any scene is queued or generating', () => {
     const p = (status?: 'queued' | 'generating' | 'done') => ({ scenes: [{ ...base, aiVideoStatus: status }] }) as unknown as Parameters<typeof isAnimatingScenes>[0];

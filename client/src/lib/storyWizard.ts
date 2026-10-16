@@ -7,6 +7,20 @@ export const STORY_STYLES: StoryStyleOption[] = [
   { id: 'ancient-scripture', label: 'Ancient Scripture', blurb: 'Weathered, historical desert' },
 ];
 
+/**
+ * Every style the server knows (styleAnchors.js), for showing a project's style by name.
+ * "Music video" is made only by a lyric video's AI music video, so it is not in the picker.
+ */
+export const ALL_STORY_STYLES: StoryStyleOption[] = [
+  ...STORY_STYLES,
+  { id: 'music-video', label: 'Music video', blurb: 'Cinematic film stills for a song' },
+];
+
+/** A style's name, or '' when the id is unknown. */
+export function storyStyleLabel(id: string): string {
+  return ALL_STORY_STYLES.find((s) => s.id === id)?.label ?? '';
+}
+
 const TRANSIENT: StoryStatus[] = ['transcribing', 'segmenting', 'generating_images', 'rendering', 'narrating'];
 
 export function isTransientStatus(status: StoryStatus): boolean {
@@ -130,7 +144,15 @@ export function isAnimatingScenes(project: Pick<StoryProject, 'scenes'>): boolea
   return project.scenes.some((s) => s.aiVideoStatus === 'queued' || s.aiVideoStatus === 'generating');
 }
 
+/**
+ * The AI clip length the server bills for a stretch of `seconds` (clampSeedanceDuration):
+ * whole seconds, rounded up, at least 4 and at most 12. Every AI motion estimate prices with it.
+ */
+export function clipSecondsOf(seconds: number): number {
+  return Math.min(12, Math.max(4, Math.ceil(Number(seconds) || 0)));
+}
+
 /** The AI clip length the server orders for a scene: whole seconds, 4 to 12. */
 export function clipSeconds(scene: Pick<StoryScene, 'startMs' | 'endMs'>): number {
-  return Math.min(12, Math.max(4, Math.ceil(((scene.endMs || 0) - (scene.startMs || 0)) / 1000)));
+  return clipSecondsOf(((scene.endMs || 0) - (scene.startMs || 0)) / 1000);
 }

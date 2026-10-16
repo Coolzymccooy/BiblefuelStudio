@@ -4,7 +4,7 @@ import { uploadMedia } from './mediaUpload';
 import type { UploadKind } from './mediaUpload';
 import { AUDIO_EXTENSIONS } from './audioAccept';
 import type {
-  BackgroundFit, LyricBranding, LyricBrandingPatch, LyricEffect, LyricHistoryItem, LyricProject, LyricProjectSummary, LyricPublishDraft, LyricRenderJob, RenderAspect, RenderQuality,
+  BackgroundFit, LyricBranding, LyricBrandingPatch, LyricEffect, LyricHistoryItem, LyricProject, LyricProjectSummary, LyricPublishDraft, LyricRenderJob, MusicVideoChoice, RenderAspect, RenderQuality,
 } from './lyricVideoTypes';
 
 const BASE = '/api/lyric-video';
@@ -16,6 +16,11 @@ const QUOTA_ERROR = "You've used today's free renders — upgrade to Premium or 
 
 /** The song and background calls wait on server-side file probes that can run past the 15 s default. */
 const SLOW_CALL = { timeout: 60_000 } as const;
+
+const ALREADY_MADE = 'ALREADY_MADE';
+/** True for to-story's refusal when the song already has an AI music video and `again` was not sent. */
+export const isAlreadyMade = (e: unknown): boolean =>
+  typeof e === 'object' && e !== null && (e as { code?: unknown }).code === ALREADY_MADE;
 
 /** Raw axios messages (not sentences) that the api client passes through when the server said nothing. */
 const RAW_NETWORK = /^(network error|timeout of \d+ms exceeded)$/i;
@@ -138,4 +143,13 @@ export const lyricVideoApi = {
   async cancelRender(id: string, jobId: string): Promise<void> {
     check(await api.post(`${BASE}/${id}/render/${jobId}/cancel`, {}));
   },
+  /** AI music video (super admins only): makes a Story project from the song's sections and returns its id. */
+  async toStory(id: string, choice: MusicVideoChoice): Promise<string> {
+    const res = await api.post<{ storyProjectId: string; code?: string }>(`${BASE}/${id}/to-story`, choice);
+    // The song already has one (another tab made it): marked, so the page can ask and send `again`.
+    if (!res.ok && res.data?.code === ALREADY_MADE) throw Object.assign(new Error(plainMessage(res.error)), { code: ALREADY_MADE });
+    return unwrap(res).storyProjectId;
+  },
+  /** Puts the finished AI music video on as this song's background. */
+  useStoryVideo: (id: string) => project(api.post(`${BASE}/${id}/use-story-video`, {}, undefined, SLOW_CALL)),
 };

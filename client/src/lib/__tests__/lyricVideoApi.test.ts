@@ -7,7 +7,7 @@ vi.mock('../mediaUpload', () => ({ uploadMedia: vi.fn() }));
 
 import { api } from '../api';
 import { uploadMedia } from '../mediaUpload';
-import { lyricVideoApi } from '../lyricVideoApi';
+import { lyricVideoApi, isAlreadyMade } from '../lyricVideoApi';
 
 const project = { projectId: 'lv_1', title: 'T', lines: [] };
 const reply = (data: unknown) => ({ ok: true, status: 200, data });
@@ -262,5 +262,34 @@ describe('lyricVideoApi', () => {
     expect(api.get).toHaveBeenCalledWith('/api/lyric-video/lv_1/render/job-9');
     await lyricVideoApi.cancelRender('lv_1', 'job-9');
     expect(api.post).toHaveBeenCalledWith('/api/lyric-video/lv_1/render/job-9/cancel', {});
+  });
+
+  it('makes an AI music video and returns the Story project id', async () => {
+    vi.mocked(api.post).mockResolvedValue(reply({ ok: true, storyProjectId: 'sp-1' }));
+    const choice = { aspect: 'landscape' as const, character: 'a man in an olive shirt', aiMotion: true };
+    await expect(lyricVideoApi.toStory('lv_1', choice)).resolves.toBe('sp-1');
+    // The server answers at once and writes the scene prompts afterwards, so the default wait is enough.
+    expect(api.post).toHaveBeenCalledWith('/api/lyric-video/lv_1/to-story', choice);
+  });
+
+  it('uses the Story video as the background', async () => {
+    vi.mocked(api.post).mockResolvedValue(reply({ project }));
+    await expect(lyricVideoApi.useStoryVideo('lv_1')).resolves.toEqual(project);
+    expect(api.post).toHaveBeenCalledWith('/api/lyric-video/lv_1/use-story-video', {}, undefined, { timeout: 60_000 });
+  });
+
+  it('says plainly why the music video was refused', async () => {
+    vi.mocked(api.post).mockResolvedValue({ ok: false, status: 409, error: 'Run Timing first.' });
+    await expect(lyricVideoApi.toStory('lv_1', { aspect: 'portrait', character: '', aiMotion: false })).rejects.toThrow('Run Timing first.');
+  });
+
+  it('marks the already-made refusal so the page can ask and send again', async () => {
+    vi.mocked(api.post).mockResolvedValue({ ok: false, status: 409, error: 'You already made a music video for this song.', data: { code: 'ALREADY_MADE' } });
+    const err = await lyricVideoApi.toStory('lv_1', { aspect: 'portrait', character: '', aiMotion: false }).catch((e: unknown) => e);
+    expect(isAlreadyMade(err)).toBe(true);
+    expect(isAlreadyMade(new Error('Run Timing first.'))).toBe(false);
+    vi.mocked(api.post).mockResolvedValue(reply({ ok: true, storyProjectId: 'sp-2' }));
+    await lyricVideoApi.toStory('lv_1', { aspect: 'portrait', character: '', aiMotion: false, again: true });
+    expect(api.post).toHaveBeenLastCalledWith('/api/lyric-video/lv_1/to-story', { aspect: 'portrait', character: '', aiMotion: false, again: true });
   });
 });

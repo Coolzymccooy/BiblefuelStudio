@@ -14,7 +14,7 @@ import { useAuth } from '../hooks/useAuth';
 import { clipSeconds } from '../lib/storyWizard';
 import { YoutubePublishPanel } from '../components/share/YoutubePublishPanel';
 import {
-  deriveStep, progressLabel, canRender, imageCounts, isTransientStatus, isStalled, ttsProviderLabel, STORY_STYLES,
+  deriveStep, progressLabel, canRender, imageCounts, isTransientStatus, isStalled, ttsProviderLabel, storyStyleLabel,
 } from '../lib/storyWizard';
 import { StylePicker } from '../components/story/StylePicker';
 import { SceneCard } from '../components/story/SceneCard';
@@ -378,7 +378,7 @@ export function StoryVideoPage() {
         className="flex-wrap lg:pr-14"
         eyebrow={project ? 'Create · Story' : 'Create'}
         title={project ? projectTitle : <>Verse to <em>cinematic scenes</em>.</>}
-        subtitle={project ? (STORY_STYLES.find((st) => st.id === project.style)?.label ?? project.style) : undefined}
+        subtitle={project ? (storyStyleLabel(project.style) || project.style) : undefined}
         right={project ? <StartNewButton onClick={() => setActive(null)} /> : undefined}
       />
       <div className="h-5" />

@@ -29,7 +29,13 @@ import { runAlignJob, isAligning, failedTiming } from "../lib/lyricVideo/alignJo
 import { buildLyricAss, resolvedEffects } from "../lib/lyricVideo/lyricAss.js";
 import { renderSize, runLyricRender, audioShaped } from "../lib/lyricVideo/lyricRender.js";
 import { buildPublishDraft } from "../lib/lyricVideo/publishDraft.js";
+import { cleanText } from "../lib/lyricVideo/projectStore.js";
+import { planMusicScenes } from "../lib/musicVideo/scenePlan.js";
+import { writeMusicPrompts, fallbackPrompt } from "../lib/musicVideo/scenePrompts.js";
+import { readProject as readStoryProject } from "../lib/story/projectStore.js";
+import { createStoryFromScenes, startStoryImages, patchScenePrompts } from "./story.js";
 import { quota } from "../middleware/quota.js";
+import { requireSuperAdmin } from "../middleware/requireSuperAdmin.js";
 
 const EFFECTS_ALLOWED = new Set(["auto", ...EFFECT_IDS]);
 const ASPECTS = ["portrait", "landscape", "square"];
@@ -47,6 +53,10 @@ const PROBE_TIMEOUT_MS = 15_000;
 const COVER_TIMEOUT_MS = 30_000;
 // Taking the sound out of a 15-minute video: a copy takes seconds, an AAC encode well under a minute.
 const EXTRACT_TIMEOUT_MS = 180_000;
+// AI music videos: the Story style, the AI motion qualities and the longest singer description.
+const MUSIC_VIDEO_STYLE = "music-video";
+const AI_QUALITIES = ["standard", "high"];
+const CHARACTER_MAX = 300;
 
 const NOT_FOUND = "That song project was not found";
 const INTERRUPTED = "Timing stopped before it finished — run it again.";
@@ -54,15 +64,16 @@ const RENDER_FAILED = "The video could not be made. Try again, or choose a diffe
 const RENDER_INTERRUPTED = "The render was interrupted — start it again.";
 const RESTARTED = "The server restarted while this video was being made. Render it again.";
 const SERVER_ERROR = "Something went wrong on our side. Please try again.";
+const ALREADY_MADE = "You already made a music video for this song. Make another? It pays for new pictures and clips.";
 const LYRICS_LOCKED = "Wait for the timing to finish before changing the lyrics.";
 
-/** A refusal with a status and a message that is fit to show the user. */
+/** A refusal with a status and a message that is fit to show the user, and a code when the page acts on it. */
 class Refusal extends Error {
-  constructor(status, message) { super(message); this.status = status; }
+  constructor(status, message, code) { super(message); this.status = status; this.code = code; }
 }
 
 const ok = (res, data) => res.json(data);
-const bad = (res, status, error) => res.status(status).json({ error });
+const bad = (res, status, error, code) => res.status(status).json(code ? { error, code } : { error });
 const bodyOf = (req) => (req.body && typeof req.body === "object" && !Array.isArray(req.body) ? req.body : {});
 const round3 = (n) => Math.round(n * 1000) / 1000;
 const placed = (l) => Array.isArray(l?.words) && l.words.length > 0 && Number.isFinite(l.start) && Number.isFinite(l.end);
@@ -76,7 +87,7 @@ function route(handler) {
     try {
       await handler(req, res);
     } catch (err) {
-      if (err instanceof Refusal) return bad(res, err.status, err.message);
+      if (err instanceof Refusal) return bad(res, err.status, err.message, err.code);
       console.error("[lyric-video] unexpected error:", err);
       if (!res.headersSent) bad(res, 500, SERVER_ERROR);
     }
@@ -216,6 +227,40 @@ function confineReal(outputDir, candidate) {
   }
 }
 
+/**
+ * A background from a path: confined to the user's outputs (links followed), an existing
+ * file, and readable as a picture or video. Throws a 400 Refusal otherwise.
+ */
+async function backgroundFrom(outputDir, candidate, fit) {
+  const file = confineReal(outputDir, candidate);
+  if (!file || !isFile(file)) throw new Refusal(400, "That background could not be found");
+  if (!(await probeMediaSize(file))) throw new Refusal(400, "That background could not be read as a picture or video.");
+  return { file, kind: /\.(jpe?g|png|webp)$/i.test(file) ? "image" : "video", fit };
+}
+
+/** Every timed word of the song in milliseconds, in time order: the Story project's transcript. */
+function timedWords(lines) {
+  return (lines || [])
+    .filter(placed)
+    .flatMap((l) => l.words)
+    .filter((w) => w && Number.isFinite(w.start) && Number.isFinite(w.end) && String(w.text ?? "").trim())
+    .map((w) => ({ text: String(w.text).trim(), startMs: Math.round(w.start * 1000), endMs: Math.round(w.end * 1000) }))
+    .sort((a, b) => a.startMs - b.startMs);
+}
+
+/**
+ * The copy of an AI music video this song made for its background, as recorded when it was made
+ * (musicVideo.backgroundCopy), or null. Only that recorded path is ever deleted: a file of the
+ * user's that merely has a similar name is never touched.
+ */
+const recordedCopy = (project) => {
+  const file = project?.musicVideo?.backgroundCopy;
+  return typeof file === "string" && file ? file : null;
+};
+
+/** The song's musicVideo record with its background copy set, or forgotten with null. */
+const withCopy = (project, file) => ({ ...project.musicVideo, backgroundCopy: file });
+
 /** Removes a file this feature made, only when it lives inside the user's output folder. */
 function removeOwned(outputDir, file) {
   const confined = typeof file === "string" ? confineToDir(outputDir, file) : null;
@@ -291,10 +336,12 @@ function persistedJob(req) {
  * Options exist for tests only: `alignDeps` (an object or a function returning
  * one) replaces the audio and speech steps of the timing job, `runRender`
  * replaces the ffmpeg render, `songProbed` runs after a new song was read and
- * before it is saved.
+ * before it is saved, `story` replaces any of the Story seams the music video
+ * routes call (createStoryFromScenes, startStoryImages, patchScenePrompts, readProject).
  */
-export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, statfs, songProbed } = {}) {
+export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, statfs, songProbed, story } = {}) {
   const router = Router();
+  const storySeam = { createStoryFromScenes, startStoryImages, patchScenePrompts, readProject: readStoryProject, ...story };
   const rendering = new Map(); // project id -> { userId, bytes } for each render in flight in this process
   const timingByUser = new Map(); // user id -> project id of the timing run in flight
 
@@ -383,6 +430,7 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
     removeOwned(req.ctx.outputDir, project.song?.coverStill);
     if (isExtractedSong(project.song?.file)) removeOwned(req.ctx.outputDir, project.song.file);
     for (const render of project.renders || []) removeOwned(req.ctx.outputDir, render?.file);
+    removeOwned(req.ctx.outputDir, recordedCopy(project));
     ok(res, {});
   }));
 
@@ -419,6 +467,10 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
           lines: (latest.lines || []).map(untimedLine),
           sections: (latest.sections || []).map(({ start, ...section }) => section),
           timing: { status: "idle" },
+          // The old song's AI music video is not this song's: its link goes, so the next one is not
+          // a repeat and its render cannot be put on. The background copy record stays (it is still
+          // this song's file to clean up).
+          ...(latest.musicVideo ? { musicVideo: { backgroundCopy: recordedCopy(latest) } } : {}),
         };
       });
     } catch (err) {
@@ -509,13 +561,120 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
     let background = null;
     if (body.path !== null) {
       if (body.fit !== undefined && !FITS.includes(body.fit)) throw new Refusal(400, "Unknown fit");
-      const file = confineReal(req.ctx.outputDir, body.path);
-      if (!file || !isFile(file)) throw new Refusal(400, "That background could not be found");
-      if (!(await probeMediaSize(file))) throw new Refusal(400, "That background could not be read as a picture or video.");
-      background = { file, kind: /\.(jpe?g|png|webp)$/i.test(file) ? "image" : "video", fit: body.fit ?? "auto" };
+      background = await backgroundFrom(req.ctx.outputDir, body.path, body.fit ?? "auto");
     }
-    const next = updateProject(req.ctx.dataDir, project.projectId, (latest) => ({ ...latest, background }));
+    let stale = null;
+    const next = updateProject(req.ctx.dataDir, project.projectId, (latest) => {
+      const copy = recordedCopy(latest);
+      // A render reading the replaced copy keeps it (and its record), so it is deleted next time.
+      if (!copy || copy === background?.file || rendering.has(project.projectId)) return { ...latest, background };
+      stale = copy;
+      return { ...latest, background, musicVideo: withCopy(latest, null) };
+    });
     if (!next) throw new Refusal(404, NOT_FOUND);
+    removeOwned(req.ctx.outputDir, stale);
+    ok(res, { project: next });
+  }));
+
+  // --- AI music videos (super admins only): the song's sections become a Story project
+  // whose pictures are made and animated, and its finished video becomes this song's background.
+
+  /** Checks a to-story request body; returns the choices with their defaults, or throws a 400. */
+  function checkToStoryRequest(body) {
+    if (body.aspect !== undefined && !ASPECTS.includes(body.aspect)) throw new Refusal(400, "Unknown video shape");
+    if (body.character !== undefined && typeof body.character !== "string") throw new Refusal(400, "Describe the singer in words.");
+    const character = cleanText(body.character ?? "", CHARACTER_MAX + 1);
+    if (character.length > CHARACTER_MAX) throw new Refusal(400, `Keep the description of the singer under ${CHARACTER_MAX} characters.`);
+    if (body.aiMotion !== undefined && typeof body.aiMotion !== "boolean") throw new Refusal(400, "Animate the scenes is on or off.");
+    if (body.quality !== undefined && !AI_QUALITIES.includes(body.quality)) throw new Refusal(400, "Unknown quality");
+    if (body.again !== undefined && typeof body.again !== "boolean") throw new Refusal(400, "Make another is yes or no.");
+    return { aspect: body.aspect ?? "portrait", character, aiMotion: body.aiMotion === true, quality: body.quality ?? "standard", again: body.again === true };
+  }
+
+  /** Refuses (409) a song that cannot be made into a music video yet. */
+  function assertMusicVideoReady(project) {
+    busy(project.projectId);
+    if (!(project.lines || []).some(placed)) throw new Refusal(409, "Run Timing first.");
+    if (!project.song?.file || !isFile(project.song.file)) throw new Refusal(409, "The song file is missing — upload the song again.");
+    if (!(Number(project.song.durationSec) > 0)) throw new Refusal(409, "The song's length is not known — upload the song again.");
+  }
+
+  router.post("/:id/to-story", requireSuperAdmin, route(async (req, res) => {
+    const project = load(req);
+    const choice = checkToStoryRequest(bodyOf(req));
+    assertMusicVideoReady(project);
+    // Each one pays for new pictures and clips: a second needs the user to say so (a stale tab may not know).
+    const linked = project.musicVideo?.storyProjectId;
+    if (!choice.again && typeof linked === "string" && storySeam.readProject(req.ctx.dataDir, linked)) {
+      throw new Refusal(409, ALREADY_MADE, "ALREADY_MADE");
+    }
+    const durationSec = Number(project.song.durationSec);
+    const plan = planMusicScenes({ sections: project.sections, lines: project.lines, durationSec });
+    const ctx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir };
+    // Made at once with the plain prompts, so the answer never waits on the LLM (Cloudflare
+    // cuts a request off at 100 s). The LLM's prompts replace them in the step before the pictures.
+    const made = storySeam.createStoryFromScenes(ctx, {
+      title: `${project.title} · music video`,
+      style: MUSIC_VIDEO_STYLE,
+      aspect: choice.aspect,
+      // The song is this project's own file, already checked when it was attached: the body names no path.
+      audioPath: project.song.file,
+      durationMs: Math.round(durationSec * 1000),
+      words: timedWords(project.lines),
+      scenes: plan.map((scene) => ({ ...scene, imagePrompt: fallbackPrompt(scene, choice.character) })),
+      aiMotion: choice.aiMotion ? { quality: choice.quality } : null,
+    });
+    const next = updateProject(req.ctx.dataDir, project.projectId, (current) => ({
+      // Kept: the background copy record, which still names the copy in use.
+      ...current, musicVideo: { ...current.musicVideo, storyProjectId: made.projectId, createdAt: new Date().toISOString() },
+    }));
+    if (!next) throw new Refusal(404, NOT_FOUND);
+    // Detached: the prompts, then the pictures (minutes), which the Story page shows as they come.
+    const sceneIds = (made.scenes || []).map((s) => s.id);
+    storySeam.startStoryImages(ctx, made.projectId, {
+      before: async () => {
+        // Never throws: a failed call gives the plain prompts the scenes already have.
+        const prompts = await writeMusicPrompts({ title: project.title, artist: project.artist, scenes: plan, character: choice.character });
+        storySeam.patchScenePrompts(ctx, made.projectId, Object.fromEntries(sceneIds.map((id, i) => [id, prompts[i]])));
+      },
+    });
+    ok(res, { ok: true, storyProjectId: made.projectId });
+  }));
+
+  router.post("/:id/use-story-video", requireSuperAdmin, route(async (req, res) => {
+    const project = load(req);
+    const storyId = project.musicVideo?.storyProjectId;
+    const story = typeof storyId === "string" ? storySeam.readProject(req.ctx.dataDir, storyId) : null;
+    const video = story?.render?.status === "done" ? story.render.outputPath : null;
+    if (typeof video !== "string" || !video) throw new Refusal(409, "Render the music video in Story Video first.");
+    // A render here may be reading the background this replaces (and deletes).
+    busy(project.projectId);
+    // The same checks as any background the user picks.
+    const source = await backgroundFrom(req.ctx.outputDir, video, "auto");
+    // A copy of the song's own: Story renders to the same file each time, and a re-render there
+    // must not change (or cut short) a lyric render reading it.
+    const bytes = fs.statSync(source.file).size;
+    if (!hasDiskHeadroomForUpload(req.ctx.outputDir, bytes + pendingBytes(), { statfs }).ok) {
+      throw new Refusal(507, "The server is short of space right now — try again later.");
+    }
+    const copy = path.join(req.ctx.outputDir, `lyric-bg-${uuid()}.mp4`);
+    let next;
+    let stale = null;
+    try {
+      await fs.promises.copyFile(source.file, copy);
+      const background = { ...source, file: fs.realpathSync(copy) };
+      next = updateProject(req.ctx.dataDir, project.projectId, (latest) => {
+        busy(project.projectId); // the copy yields: a render may have started meanwhile
+        stale = recordedCopy(latest);
+        // Recorded, so this copy (and only this file) is deleted when it is replaced.
+        return { ...latest, background, musicVideo: withCopy(latest, background.file) };
+      });
+    } catch (err) {
+      removeFile(copy);
+      throw err;
+    }
+    if (!next) { removeFile(copy); throw new Refusal(404, NOT_FOUND); }
+    if (stale !== next.background.file) removeOwned(req.ctx.outputDir, stale);
     ok(res, { project: next });
   }));
 
