@@ -144,7 +144,15 @@ export function isAnimatingScenes(project: Pick<StoryProject, 'scenes'>): boolea
   return project.scenes.some((s) => s.aiVideoStatus === 'queued' || s.aiVideoStatus === 'generating');
 }
 
+/**
+ * The AI clip length the server bills for a stretch of `seconds` (clampSeedanceDuration):
+ * whole seconds, rounded up, at least 4 and at most 12. Every AI motion estimate prices with it.
+ */
+export function clipSecondsOf(seconds: number): number {
+  return Math.min(12, Math.max(4, Math.ceil(Number(seconds) || 0)));
+}
+
 /** The AI clip length the server orders for a scene: whole seconds, 4 to 12. */
 export function clipSeconds(scene: Pick<StoryScene, 'startMs' | 'endMs'>): number {
-  return Math.min(12, Math.max(4, Math.ceil(((scene.endMs || 0) - (scene.startMs || 0)) / 1000)));
+  return clipSecondsOf(((scene.endMs || 0) - (scene.startMs || 0)) / 1000);
 }

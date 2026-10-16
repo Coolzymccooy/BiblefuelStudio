@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   STORY_STYLES, ALL_STORY_STYLES, storyStyleLabel, deriveStep, isTransientStatus, allScenesDone,
   canRender, sceneTimeLabel, progressLabel, imageCounts, isStalled,
-  relativeTime, statusMeta, isAnimatingScenes, clipSeconds,
+  relativeTime, statusMeta, isAnimatingScenes, clipSeconds, clipSecondsOf,
 } from '../storyWizard';
 import type { StoryProject, StoryScene } from '../storyTypes';
 
@@ -170,6 +170,12 @@ describe('AI motion helpers', () => {
     expect(clipSeconds({ ...base, endMs: 2000 })).toBe(4);
     expect(clipSeconds({ ...base, endMs: 7300 })).toBe(8);
     expect(clipSeconds({ ...base, endMs: 40000 })).toBe(12);
+  });
+  it('one rule for every estimate: a length in seconds billed as the server bills it', () => {
+    expect(clipSecondsOf(0)).toBe(4);
+    expect(clipSecondsOf(10.001)).toBe(11);
+    expect(clipSecondsOf(12)).toBe(12);
+    expect(clipSecondsOf(99)).toBe(12);
   });
   it('a project is animating while any scene is queued or generating', () => {
     const p = (status?: 'queued' | 'generating' | 'done') => ({ scenes: [{ ...base, aiVideoStatus: status }] }) as unknown as Parameters<typeof isAnimatingScenes>[0];

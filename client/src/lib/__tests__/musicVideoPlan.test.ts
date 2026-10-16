@@ -89,6 +89,10 @@ describe('musicVideoEstimate', () => {
     expect(estimate.usd).toBeCloseTo(2.6, 9);
   });
 
+  it('a scene a hair over whole seconds is billed the next second up, as the server does', () => {
+    expect(musicVideoEstimate([{ startMs: 0, endMs: 10001 }], 1).seconds).toBe(11);
+  });
+
   it('reads as about N clips and a price', () => {
     expect(musicVideoEstimateText({ clips: 3, seconds: 26, usd: 2.6 })).toBe('about 3 clips · ≈ $2.60');
     expect(musicVideoEstimateText({ clips: 1, seconds: 4, usd: 0.3 })).toBe('about 1 clip · ≈ $0.30');
