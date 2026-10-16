@@ -292,12 +292,55 @@ describe("POST /:id/use-story-video", () => {
     assert.equal(readProject(ctx.dataDir, p.projectId).background, null);
   });
 
-  test("sets the finished Story video as the lyric background, fit auto", { skip: !hasFfmpeg && "ffmpeg not installed" }, async () => {
+  const LYRIC_BG = /^lyric-bg-[0-9a-f-]+\.mp4$/;
+
+  test("puts a copy of the finished Story video on as the background, fit auto, so a re-render in Story cannot change it", { skip: !hasFfmpeg && "ffmpeg not installed" }, async () => {
     const p = timedProject(ctx);
     const story = linkedStory(ctx, p, { rendered: true });
     const r = await call("POST", `/${p.projectId}/use-story-video`, {});
     assert.equal(r.status, 200);
-    assert.deepEqual(r.json.project.background, { file: fs.realpathSync(story.render.outputPath), kind: "video", fit: "auto" });
-    assert.deepEqual(readProject(ctx.dataDir, p.projectId).background, r.json.project.background);
+    const bg = r.json.project.background;
+    assert.equal(bg.kind, "video");
+    assert.equal(bg.fit, "auto");
+    assert.equal(path.dirname(bg.file), fs.realpathSync(ctx.outputDir), "the copy is the song's own, in the user's outputs");
+    assert.match(path.basename(bg.file), LYRIC_BG);
+    assert.notEqual(bg.file, fs.realpathSync(story.render.outputPath));
+    assert.deepEqual(fs.readFileSync(bg.file), fs.readFileSync(story.render.outputPath));
+    assert.deepEqual(readProject(ctx.dataDir, p.projectId).background, bg);
+    // Story renders again over its own file: the lyric background does not move.
+    const copied = fs.readFileSync(bg.file);
+    fs.writeFileSync(story.render.outputPath, "re-rendered");
+    assert.deepEqual(fs.readFileSync(bg.file), copied);
+  });
+
+  test("using it again replaces the earlier copy, which is deleted", { skip: !hasFfmpeg && "ffmpeg not installed" }, async () => {
+    const p = timedProject(ctx);
+    linkedStory(ctx, p, { rendered: true });
+    const first = (await call("POST", `/${p.projectId}/use-story-video`, {})).json.project.background.file;
+    const second = (await call("POST", `/${p.projectId}/use-story-video`, {})).json.project.background.file;
+    assert.notEqual(first, second);
+    assert.equal(fs.existsSync(first), false, "the earlier copy is gone");
+    assert.equal(fs.existsSync(second), true);
+  });
+
+  test("a background of the user's own is never deleted when the copy replaces it", { skip: !hasFfmpeg && "ffmpeg not installed" }, async () => {
+    const p = timedProject(ctx);
+    const own = path.join(ctx.outputDir, "my-background.mp4");
+    spawnSync(FF, ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=s=160x90:d=1", "-pix_fmt", "yuv420p", own]);
+    assert.equal((await call("PUT", `/${p.projectId}/background`, { path: own })).status, 200);
+    linkedStory(ctx, p, { rendered: true });
+    assert.equal((await call("POST", `/${p.projectId}/use-story-video`, {})).status, 200);
+    assert.equal(fs.existsSync(own), true);
+  });
+
+  test("choosing another background, or deleting the song, removes the copy", { skip: !hasFfmpeg && "ffmpeg not installed" }, async () => {
+    const p = timedProject(ctx);
+    linkedStory(ctx, p, { rendered: true });
+    const copy = (await call("POST", `/${p.projectId}/use-story-video`, {})).json.project.background.file;
+    assert.equal((await call("PUT", `/${p.projectId}/background`, { path: null })).status, 200);
+    assert.equal(fs.existsSync(copy), false);
+    const again = (await call("POST", `/${p.projectId}/use-story-video`, {})).json.project.background.file;
+    assert.equal((await call("DELETE", `/${p.projectId}`)).status, 200);
+    assert.equal(fs.existsSync(again), false);
   });
 });

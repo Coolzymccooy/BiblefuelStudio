@@ -247,6 +247,18 @@ function timedWords(lines) {
     .sort((a, b) => a.startMs - b.startMs);
 }
 
+const OWNED_BACKGROUND = /^lyric-bg-[0-9a-f-]+\.mp4$/i;
+
+/**
+ * Deletes the background a song had before, when it is a copy this feature made of an AI music
+ * video (lyric-bg-<uuid>.mp4) and is not the one it has now. A user's own file is never touched.
+ */
+function removeReplacedCopy(outputDir, before, after) {
+  const file = before?.file;
+  if (typeof file !== "string" || !OWNED_BACKGROUND.test(path.basename(file)) || file === after?.file) return;
+  removeOwned(outputDir, file);
+}
+
 /** Removes a file this feature made, only when it lives inside the user's output folder. */
 function removeOwned(outputDir, file) {
   const confined = typeof file === "string" ? confineToDir(outputDir, file) : null;
@@ -416,6 +428,7 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
     removeOwned(req.ctx.outputDir, project.song?.coverStill);
     if (isExtractedSong(project.song?.file)) removeOwned(req.ctx.outputDir, project.song.file);
     for (const render of project.renders || []) removeOwned(req.ctx.outputDir, render?.file);
+    removeReplacedCopy(req.ctx.outputDir, project.background, null);
     ok(res, {});
   }));
 
@@ -544,8 +557,14 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
       if (body.fit !== undefined && !FITS.includes(body.fit)) throw new Refusal(400, "Unknown fit");
       background = await backgroundFrom(req.ctx.outputDir, body.path, body.fit ?? "auto");
     }
-    const next = updateProject(req.ctx.dataDir, project.projectId, (latest) => ({ ...latest, background }));
+    let replaced = null;
+    const next = updateProject(req.ctx.dataDir, project.projectId, (latest) => {
+      replaced = latest.background;
+      return { ...latest, background };
+    });
     if (!next) throw new Refusal(404, NOT_FOUND);
+    // A render reading the replaced copy keeps it; it is left behind rather than cut short.
+    if (!rendering.has(project.projectId)) removeReplacedCopy(req.ctx.outputDir, replaced, next.background);
     ok(res, { project: next });
   }));
 
@@ -613,10 +632,33 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
     const story = typeof storyId === "string" ? storySeam.readProject(req.ctx.dataDir, storyId) : null;
     const video = story?.render?.status === "done" ? story.render.outputPath : null;
     if (typeof video !== "string" || !video) throw new Refusal(409, "Render the music video in Story Video first.");
+    // A render here may be reading the background this replaces (and deletes).
+    busy(project.projectId);
     // The same checks as any background the user picks.
-    const background = await backgroundFrom(req.ctx.outputDir, video, "auto");
-    const next = updateProject(req.ctx.dataDir, project.projectId, (latest) => ({ ...latest, background }));
-    if (!next) throw new Refusal(404, NOT_FOUND);
+    const source = await backgroundFrom(req.ctx.outputDir, video, "auto");
+    // A copy of the song's own: Story renders to the same file each time, and a re-render there
+    // must not change (or cut short) a lyric render reading it.
+    const bytes = fs.statSync(source.file).size;
+    if (!hasDiskHeadroomForUpload(req.ctx.outputDir, bytes + pendingBytes(), { statfs }).ok) {
+      throw new Refusal(507, "The server is short of space right now — try again later.");
+    }
+    const copy = path.join(req.ctx.outputDir, `lyric-bg-${uuid()}.mp4`);
+    let next;
+    let replaced = null;
+    try {
+      await fs.promises.copyFile(source.file, copy);
+      const background = { ...source, file: fs.realpathSync(copy) };
+      next = updateProject(req.ctx.dataDir, project.projectId, (latest) => {
+        busy(project.projectId); // the copy yields: a render may have started meanwhile
+        replaced = latest.background;
+        return { ...latest, background };
+      });
+    } catch (err) {
+      removeFile(copy);
+      throw err;
+    }
+    if (!next) { removeFile(copy); throw new Refusal(404, NOT_FOUND); }
+    removeReplacedCopy(req.ctx.outputDir, replaced, next.background);
     ok(res, { project: next });
   }));
 
