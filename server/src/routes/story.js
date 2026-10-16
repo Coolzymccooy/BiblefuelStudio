@@ -126,8 +126,13 @@ function confineMediaPath(ctx, rawMediaPath) {
 
 // The narration routes write every user's TTS into the shared outputs folder,
 // so an imported script's audio is either in the user's own folders or is one
-// of those server-named files (tts-<uuid>.mp3: unguessable, never user-named).
-const SHARED_TTS_NAME = /^tts-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.mp3$/i;
+// of those server-named files (unguessable, never user-named). The names the
+// TTS writers in lib/ produce: ElevenLabs tts-<uuid>.mp3, the others
+// tts-<provider>-<uuid>.<ext>, where Edge, Azure and Fish write .mp3,
+// Chatterbox .wav or .mp3, and Piper .wav, .mp3 or .ogg.
+const TTS_PROVIDERS = "edge|azure|fish|chatterbox|piper";
+const UUID_V4 = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+const SHARED_TTS_NAME = new RegExp(`^tts-(?:(?:${TTS_PROVIDERS})-)?${UUID_V4}\\.(?:mp3|wav|ogg)$`);
 
 export function confineImportAudio(ctx, rawPath, sharedOutputDir = OUTPUT_DIR) {
   const own = confineMediaPath(ctx, rawPath);
