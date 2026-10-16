@@ -17,8 +17,21 @@
 import { normalizeReference, getChapterVerseCount } from "../bible/bibleReference.js";
 import { buildYouVersionUrl } from "../bible/youversion.js";
 
-const MIN_PARTS = 2;
 const MAX_PARTS = 12;
+// A narrator reads about 12.75 characters a second: 22 seconds is the 280
+// characters a short has always spoken.
+const SPOKEN_CHARS_PER_SECOND = 12.75;
+// "Part 1 of 2 — 1 John 2:1-2" before the verses and "Read on YouVersion"
+// after them.
+const INTRO_OUTRO_SECONDS = 3;
+// Auto lengthens every part by this much at a time until the passage fits in
+// MAX_PARTS videos.
+const STRETCH_STEP = 1.1;
+const DEFAULT_TARGET_SECONDS = 22;
+const DEFAULT_MAX_RENDER_SECONDS = 30;
+// Plan parts to at most 90% of the render limit: the timing is an estimate,
+// and a slow voice past the limit would have its last words cut off.
+const RENDER_SAFETY = 0.9;
 const HOOK_WORD_COUNT = 9;
 const CAPTION_MAX_LENGTH = 2000;
 
@@ -47,53 +60,140 @@ const CAPTION_MAX_LENGTH = 2000;
  */
 
 /**
- * Validate and clamp the requested part count.
- * @param {unknown} value
- * @param {number} maxVerses
- * @returns {number}
+ * A plan the user asked for that cannot be made, with a reason they can act
+ * on. `code` is TOO_MANY_PARTS or PART_TOO_LONG.
  */
-export function clampPartsCount(value, maxVerses) {
-  const fallback = 5;
-  // Treat null/undefined as "use default". Number(null) is 0, which would
-  // otherwise be clamped up to MIN_PARTS and quietly hide a missing param.
-  const requested = (value === null || value === undefined) ? fallback : Number(value);
-  const desired = Number.isFinite(requested) ? Math.round(requested) : fallback;
-  const upperBound = Math.min(MAX_PARTS, Math.max(MIN_PARTS, maxVerses));
-  return Math.min(upperBound, Math.max(MIN_PARTS, desired));
+export class SeriesPlanError extends Error {
+  /** @param {string} code @param {string} message */
+  constructor(code, message) {
+    super(message);
+    this.name = "SeriesPlanError";
+    this.code = code;
+  }
 }
 
 /**
- * Compute the verse ranges for a span of `totalVerses` verses divided into N
- * parts. Even split with the remainder distributed to earlier parts so the
- * span is fully partitioned (no orphan verses at the tail).
- *
- * `startVerse` lets the caller partition an arbitrary window inside a chapter
- * (e.g. "John 3:5-12") rather than always verse 1 onward. Returned `from`/`to`
- * are absolute verse numbers.
- *
- * @param {number} totalVerses  number of verses in the span (not the chapter)
- * @param {number} parts
- * @param {number} [startVerse=1]  first verse of the span (absolute)
- * @returns {Array<{ from: number, to: number }>}
+ * How many characters of verse a video of `seconds` can speak.
+ * @param {number} seconds
+ * @returns {number}
  */
-export function planVerseRanges(totalVerses, parts, startVerse = 1) {
-  const t = Math.max(1, Math.round(totalVerses));
-  const p = Math.max(1, Math.min(t, Math.round(parts)));
-  const start = Math.max(1, Math.round(startVerse));
-  const end = start + t - 1;
-  const base = Math.floor(t / p);
-  const extra = t - base * p;
-  /** @type {Array<{ from: number, to: number }>} */
-  const ranges = [];
-  let cursor = start;
-  for (let i = 0; i < p; i += 1) {
-    const size = base + (i < extra ? 1 : 0);
-    const from = cursor;
-    const to = Math.min(end, cursor + size - 1);
-    ranges.push({ from, to });
-    cursor = to + 1;
+export function charBudgetFor(seconds) {
+  return Math.max(40, Math.floor(Number(seconds) * SPOKEN_CHARS_PER_SECOND));
+}
+
+/**
+ * About how long a part runs when its verses are `chars` characters long,
+ * counting the part intro and the closing line.
+ * @param {number} chars
+ * @returns {number} whole seconds
+ */
+export function spokenSeconds(chars) {
+  return Math.ceil(Math.max(0, chars) / SPOKEN_CHARS_PER_SECOND) + INTRO_OUTRO_SECONDS;
+}
+
+/** @param {unknown} text */
+function cleanText(text) {
+  return String(text || "").replace(/\s+/g, " ").trim();
+}
+
+/** @param {BibleVerse[]} verses */
+function spokenLength(verses) {
+  return verses.map((v) => cleanText(v.text)).filter(Boolean).join(" ").length;
+}
+
+// A full stop, question or exclamation mark, then any closing quotes or
+// brackets.
+const SENTENCE_END = /[.!?]["'’”)\]]*$/;
+
+/**
+ * Whether a verse finishes its sentence. 1 John 2:1 ends "the righteous:" and
+ * its sentence runs on into verse 2, so it does not.
+ * @param {string} text
+ * @returns {boolean}
+ */
+export function endsSentence(text) {
+  return SENTENCE_END.test(cleanText(text));
+}
+
+/**
+ * Verses grouped so no group ends mid-sentence. A group also closes once it
+ * reaches `maxChars`, so a translation without verse-end punctuation can never
+ * run the whole passage into one group.
+ * @param {BibleVerse[]} verses
+ * @param {number} maxChars
+ * @returns {BibleVerse[][]}
+ */
+export function groupSentences(verses, maxChars) {
+  /** @type {BibleVerse[][]} */
+  const groups = [];
+  /** @type {BibleVerse[]} */
+  let current = [];
+  for (const verse of verses) {
+    current = [...current, verse];
+    if (endsSentence(verse.text) || spokenLength(current) >= maxChars) {
+      groups.push(current);
+      current = [];
+    }
   }
-  return ranges;
+  if (current.length) groups.push(current);
+  return groups;
+}
+
+/**
+ * Split a passage into parts without ever splitting a sentence.
+ *  - "auto": as many whole sentences as fit in `budgetChars`.
+ *  - a number N: at least N verses each (more when a sentence runs on).
+ *  - "one": the whole passage.
+ * @param {BibleVerse[]} verses
+ * @param {{ versesPerPart: "auto" | "one" | number, budgetChars: number, sentenceMaxChars?: number }} opts
+ *        sentenceMaxChars: the longest a sentence may run before it is broken
+ *        at a verse (default budgetChars)
+ * @returns {BibleVerse[][]}
+ */
+export function packParts(verses, { versesPerPart, budgetChars, sentenceMaxChars = budgetChars }) {
+  if (!verses.length) return [];
+  if (versesPerPart === "one") return [[...verses]];
+  /** @type {BibleVerse[][]} */
+  const parts = [];
+  /** @type {BibleVerse[]} */
+  let current = [];
+  for (const group of groupSentences(verses, sentenceMaxChars)) {
+    if (versesPerPart === "auto") {
+      if (current.length && spokenLength([...current, ...group]) > budgetChars) {
+        parts.push(current);
+        current = [];
+      }
+      current = [...current, ...group];
+    } else {
+      current = [...current, ...group];
+      if (current.length >= versesPerPart) {
+        parts.push(current);
+        current = [];
+      }
+    }
+  }
+  if (current.length) parts.push(current);
+  return parts;
+}
+
+/**
+ * Auto's parts: the video length first; when that needs more than MAX_PARTS
+ * videos, every part grows a little at a time until the passage fits.
+ * @param {BibleVerse[]} verses
+ * @param {number} targetSeconds
+ * @param {number} sentenceMaxChars  the longest a sentence may run before it is broken
+ * @returns {{ parts: BibleVerse[][], stretched: boolean }}
+ */
+function packAuto(verses, targetSeconds, sentenceMaxChars) {
+  let budgetChars = charBudgetFor(targetSeconds);
+  let parts = packParts(verses, { versesPerPart: "auto", budgetChars, sentenceMaxChars });
+  let stretched = false;
+  while (parts.length > MAX_PARTS) {
+    budgetChars = Math.ceil(budgetChars * STRETCH_STEP);
+    parts = packParts(verses, { versesPerPart: "auto", budgetChars, sentenceMaxChars });
+    stretched = true;
+  }
+  return { parts, stretched };
 }
 
 /**
@@ -171,13 +271,24 @@ export function buildSegmentCaption({ partNumber, totalParts, reference, verses,
  *
  * @param {object} args
  * @param {string} args.chapterReference  e.g. "John 3"
- * @param {number} args.parts
+ * @param {"auto" | "one" | number} [args.versesPerPart="auto"]
+ * @param {number} [args.durationSec=22]  the video length Auto aims for
+ * @param {number} [args.maxRenderSeconds=30]  the longest video the renderer makes
  * @param {string} args.translation
  * @param {(verseRange: string) => Promise<BibleVerse[]>} args.fetchVerses
  *        Async function the route layer wires up to scriptureApi.lookupVerses.
  * @returns {Promise<SeriesPlan>}
+ * @throws {SeriesPlanError} when the choice needs more than 12 videos, or a
+ *         part runs longer than a render allows
  */
-export async function buildSeriesPlan({ chapterReference, parts, translation, fetchVerses }) {
+export async function buildSeriesPlan({
+  chapterReference,
+  versesPerPart = "auto",
+  durationSec = DEFAULT_TARGET_SECONDS,
+  maxRenderSeconds = DEFAULT_MAX_RENDER_SECONDS,
+  translation,
+  fetchVerses,
+}) {
   const parsed = normalizeReference(chapterReference);
   if (!parsed) throw new Error(`Could not parse chapter reference: ${chapterReference}`);
 
@@ -193,72 +304,97 @@ export async function buildSeriesPlan({ chapterReference, parts, translation, fe
   const spanEnd = hasRange
     ? Math.min(parsed.verseTo ?? parsed.verseFrom, chapterVerseCount)
     : chapterVerseCount;
-  const spanVerseCount = Math.max(1, spanEnd - spanStart + 1);
 
-  const requestedParts = clampPartsCount(parts, spanVerseCount);
-  const ranges = planVerseRanges(spanVerseCount, requestedParts, spanStart);
-  // Source of truth for the part count is the ranges we actually produced —
-  // clampPartsCount can ask for more parts than a short span has verses, and
-  // planVerseRanges caps at one verse per part. Deriving totalParts here keeps
-  // captions ("Part X of N") and segment count in lock-step.
-  const totalParts = ranges.length;
+  const book = parsed.book.name;
+  const rangeRef = (from, to) => (from === to ? `${book} ${parsed.chapter}:${from}` : `${book} ${parsed.chapter}:${from}-${to}`);
+  const spanReference = hasRange ? rangeRef(spanStart, spanEnd) : `${book} ${parsed.chapter}`;
 
-  const spanReference = hasRange
-    ? (spanEnd > spanStart
-        ? `${parsed.book.name} ${parsed.chapter}:${spanStart}-${spanEnd}`
-        : `${parsed.book.name} ${parsed.chapter}:${spanStart}`)
-    : `${parsed.book.name} ${parsed.chapter}`;
+  // One fetch for the whole passage: where a part ends depends on where the
+  // sentences end, which is only known once the text is in hand.
+  const fetched = await fetchVerses(rangeRef(spanStart, spanEnd));
+  const verses = (Array.isArray(fetched) ? fetched : []).filter((v) => {
+    const n = Number(v?.verse);
+    return cleanText(v?.text) && Number.isFinite(n) && n >= spanStart && n <= spanEnd;
+  });
+  if (!verses.length) throw new Error(`No verses returned for ${spanReference}`);
 
+  const targetSeconds = Number(durationSec) || DEFAULT_TARGET_SECONDS;
+  const auto = versesPerPart === "auto";
+  const partLimitSeconds = Math.floor(maxRenderSeconds * RENDER_SAFETY);
+  // The verses a part may hold before the voice would pass the render limit.
+  const partLimitVerseSeconds = Math.max(1, partLimitSeconds - INTRO_OUTRO_SECONDS);
+  // A sentence stays whole up to the longest video the server makes, in
+  // every mode; only one longer than that is broken, at a verse.
+  const sentenceMaxChars = charBudgetFor(partLimitVerseSeconds);
+  const { parts, stretched } = auto
+    // Auto never aims past what the server can render.
+    ? packAuto(verses, Math.min(targetSeconds, partLimitVerseSeconds), sentenceMaxChars)
+    : {
+        parts: packParts(verses, { versesPerPart, budgetChars: charBudgetFor(targetSeconds), sentenceMaxChars }),
+        stretched: false,
+      };
+
+  if (parts.length > MAX_PARTS) {
+    const per = versesPerPart === 1 ? "1 verse" : `${versesPerPart} verses`;
+    throw new SeriesPlanError(
+      "TOO_MANY_PARTS",
+      `${spanReference} at ${per} per video makes ${parts.length} videos, and a series holds at most ${MAX_PARTS}. Choose more verses per video, Auto, or a shorter passage.`,
+    );
+  }
+
+  const totalParts = parts.length;
   /** @type {SeriesSegment[]} */
-  const segments = [];
-
-  for (let i = 0; i < ranges.length; i += 1) {
-    const { from, to } = ranges[i];
-    const segmentRef = from === to
-      ? `${parsed.book.name} ${parsed.chapter}:${from}`
-      : `${parsed.book.name} ${parsed.chapter}:${from}-${to}`;
-
-    const verses = await fetchVerses(segmentRef);
-    if (!Array.isArray(verses) || !verses.length) {
-      throw new Error(`No verses returned for ${segmentRef}`);
-    }
-
-    const segmentParsed = normalizeReference(segmentRef);
-    const youVersionUrl = segmentParsed ? buildYouVersionUrl(segmentParsed, translation) : "";
-
-    const hook = extractHook(verses[0]?.text);
+  const segments = parts.map((partVerses, i) => {
     const partNumber = i + 1;
+    const seconds = spokenSeconds(spokenLength(partVerses));
+    const from = Number(partVerses[0].verse);
+    const to = Number(partVerses[partVerses.length - 1].verse);
+    const reference = rangeRef(from, to);
+    if (seconds > partLimitSeconds) {
+      throw new SeriesPlanError(
+        "PART_TOO_LONG",
+        partVerses.length === 1
+          ? `${reference} alone runs about ${seconds} s, and videos on this server stop at ${maxRenderSeconds} s, so it cannot be made into a video here.`
+          : `Part ${partNumber} would run about ${seconds} s, and videos stop at ${maxRenderSeconds} s. Choose fewer verses per video or a shorter passage.`,
+      );
+    }
+    const segmentParsed = normalizeReference(reference);
+    const youVersionUrl = segmentParsed ? buildYouVersionUrl(segmentParsed, translation) : "";
+    const hook = extractHook(partVerses[0].text);
     const caption = buildSegmentCaption({
       partNumber,
       totalParts,
-      reference: segmentRef,
-      verses,
+      reference,
+      verses: partVerses,
       hook,
       youVersionUrl,
       isLast: partNumber === totalParts,
     });
-
-    segments.push({
+    return {
       partNumber,
       totalParts,
-      reference: segmentRef,
+      reference,
       verseFrom: from,
       verseTo: to,
-      verses,
+      verses: partVerses,
       hook,
       caption,
       youVersionUrl,
-    });
-  }
+      seconds,
+    };
+  });
 
   const seriesId = `series_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
   return {
     seriesId,
     chapterReference: spanReference,
-    book: parsed.book.name,
+    book,
     chapter: parsed.chapter,
     translation,
     totalParts,
+    versesPerPart,
+    targetSeconds,
+    stretched,
     segments,
   };
 }

@@ -39,7 +39,7 @@ describe('SeriesQuickPanel', () => {
     const preview = vi.spyOn(seriesApi, 'preview').mockResolvedValue({ plan: PLAN } as any);
     setup();
     await user.click(screen.getByRole('button', { name: /preview segments/i }));
-    expect(preview).toHaveBeenCalledWith({ reference: 'John 3', parts: 5, translation: 'kjv' });
+    expect(preview).toHaveBeenCalledWith({ reference: 'John 3', versesPerPart: 'auto', durationSec: 22, translation: 'kjv' });
     expect(await screen.findByText('John 3:1-7')).toBeInTheDocument();
     expect(screen.getByText('You must be born again.')).toBeInTheDocument();
     expect(screen.getByText('Jesus and Nicodemus on the new birth.')).toBeInTheDocument();

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import { Sparkles, ListOrdered, Play } from 'lucide-react';
 import { seriesApi, type SeriesPlan, type SeriesRecord } from '../../lib/bibleApi';
@@ -7,6 +7,7 @@ import { toastError } from '../../lib/errors';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Select } from '../ui/Select';
+import { VERSES_PER_PART_OPTIONS, parseVersesPerPart, planSummary, type VersesPerPart } from '../../lib/seriesSplit';
 
 /**
  * The Series QUICK job, docked in the Timeline editor.
@@ -18,7 +19,8 @@ import { Select } from '../ui/Select';
  * on the Series page; generation here uses those sane defaults.
  */
 
-const PART_OPTIONS = [3, 4, 5, 6, 7, 8];
+/** Quick series parts run at the Series page's default length. */
+const DURATION_SEC = 22;
 /** Public-domain translations work without an API key; the full catalog
  *  (incl. keyed ones) lives on the Series page. */
 const TRANSLATIONS = [
@@ -49,7 +51,7 @@ const POLL_MS = 4000;
 
 export function SeriesQuickPanel({ defaultAspect, onViewJobs, onPreviewVideo }: SeriesQuickPanelProps) {
   const [reference, setReference] = useState('John 3');
-  const [parts, setParts] = useState(5);
+  const [versesPerPart, setVersesPerPart] = useState<VersesPerPart>('auto');
   const [translation, setTranslation] = useState('kjv');
   const [plan, setPlan] = useState<SeriesPlan | null>(null);
   const [history, setHistory] = useState<SeriesRecord[]>([]);
@@ -59,6 +61,14 @@ export function SeriesQuickPanel({ defaultAspect, onViewJobs, onPreviewVideo }: 
   // the fly - instead of sending the operator to the Jobs page to find out.
   const [trackedLabel, setTrackedLabel] = useState('');
   const [trackedJobs, setTrackedJobs] = useState<TrackedJob[]>([]);
+
+  // Generate splits the passage again, so a changed choice needs a new preview.
+  // A preview still in flight when the choice changed is dropped when it lands.
+  const previewRun = useRef(0);
+  useEffect(() => {
+    previewRun.current += 1;
+    setPlan(null);
+  }, [reference, versesPerPart, translation]);
 
   useEffect(() => {
     seriesApi.list(5).then(({ series }) => setHistory(series)).catch(() => setHistory([]));
@@ -96,10 +106,12 @@ export function SeriesQuickPanel({ defaultAspect, onViewJobs, onPreviewVideo }: 
       return;
     }
     setIsPreviewLoading(true);
+    const run = ++previewRun.current;
     try {
-      const result = await seriesApi.preview({ reference: reference.trim(), parts, translation });
+      const result = await seriesApi.preview({ reference: reference.trim(), versesPerPart, durationSec: DURATION_SEC, translation });
+      if (run !== previewRun.current) return;
       setPlan(result.plan);
-      toast.success(`Previewing ${result.plan.totalParts} segments`);
+      toast.success(`Previewing ${result.plan.totalParts} ${result.plan.totalParts === 1 ? 'video' : 'videos'}`);
     } catch (err) {
       toastError(err);
       setPlan(null);
@@ -117,10 +129,10 @@ export function SeriesQuickPanel({ defaultAspect, onViewJobs, onPreviewVideo }: 
     try {
       const result = await seriesApi.generate({
         reference: reference.trim(),
-        parts,
+        versesPerPart,
         translation,
         aspect: defaultAspect,
-        durationSec: 22,
+        durationSec: DURATION_SEC,
       });
       toast.success(`${result.jobIds.length} part job${result.jobIds.length === 1 ? '' : 's'} queued — watch them below`);
       setHistory((prev) => [result.series, ...prev].slice(0, 5));
@@ -149,9 +161,9 @@ export function SeriesQuickPanel({ defaultAspect, onViewJobs, onPreviewVideo }: 
       </label>
       <div className="grid grid-cols-2 gap-2">
         <label className="min-w-0 text-[10px] font-semibold text-editor-dim">
-          Split into
-          <Select value={String(parts)} onChange={(e) => setParts(Number(e.target.value))} className="mt-1">
-            {PART_OPTIONS.map((n) => <option key={n} value={n}>{n} videos</option>)}
+          Verses per video
+          <Select value={String(versesPerPart)} onChange={(e) => setVersesPerPart(parseVersesPerPart(e.target.value))} className="mt-1">
+            {VERSES_PER_PART_OPTIONS.map((o) => <option key={String(o.value)} value={String(o.value)}>{o.label}</option>)}
           </Select>
         </label>
         <label className="min-w-0 text-[10px] font-semibold text-editor-dim">
@@ -174,7 +186,7 @@ export function SeriesQuickPanel({ defaultAspect, onViewJobs, onPreviewVideo }: 
       {plan && (
         <div className="space-y-1.5">
           <p className="text-[9px] font-bold uppercase tracking-[.1em] text-editor-faint">
-            Segments · {plan.chapterReference}, {plan.totalParts} parts
+            Segments · {plan.chapterReference}, {planSummary(plan)}
           </p>
           {plan.segments.map((seg) => (
             <details key={seg.partNumber} className="rounded-lg border border-editor-line bg-white/[0.02] px-2.5 py-1.5">

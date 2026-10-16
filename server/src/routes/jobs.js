@@ -27,6 +27,7 @@ import { generateBibleImage } from "../lib/imageGen/index.js";
 import { resolveLibraryTrack, defaultTrackRef } from "../lib/musicLibrary.js";
 import { resolveTenantTrack } from "../lib/musicLibraryStore.js";
 import { buildSpeakableLines, cleanCaptionLine, cleanSpeakableText, sanitizeScriptObject } from "../lib/speakableScript.js";
+import { splitCaptionLines } from "../lib/captionLines.js";
 
 const router = Router();
 let ffmpegChecked = false;
@@ -793,11 +794,12 @@ async function renderVideoCore(payload, jobId) {
   const widthPct = Math.min(100, Math.max(60, Number(captionWidthPct || 90)));
   const baseChars = w >= 1800 ? 42 : w >= 1200 ? 34 : 28;
   const maxChars = Math.max(18, Math.floor(baseChars * (widthPct / 100)));
-  // Cap raised from 6 → 12 so longer verses (e.g. a Psalm 23 part) don't
-  // get cut mid-sentence when this fallback path is taken. The kinetic
-  // renderer is now the default for series + auto-publish, but if it
-  // can't get alignment we shouldn't silently truncate.
-  const safeLines = wrapTextLines(rawLines, maxChars, 12);
+  // Lines are paced one at a time across the video (buildLineDrawtext with a
+  // duration), so the cap only guards against runaway input. 12 cut a long
+  // Series part short on screen while the voice read all of it; the kinetic
+  // renderer is the default, but when it can't get alignment this path must
+  // still show every word.
+  const safeLines = wrapTextLines(rawLines, maxChars, 80);
   if (safeLines.length === 0) throw new Error("lines[] required");
 
   const outFile = path.join(currentOutDir(), `video-${uuid()}.mp4`);
@@ -1121,7 +1123,9 @@ async function renderAdvancedVideo(payload, jobId) {
   const baseChars = w >= 1800 ? 42 : w >= 1200 ? 34 : 28;
   const maxChars = Math.max(18, Math.floor(baseChars * (captionWidthPct / 100)));
   const wrappedLines = Array.isArray(lines)
-    ? wrapTextLines(lines.map((s) => cleanCaptionLine(String(s).slice(0, 140))).filter(Boolean), maxChars, 12)
+    // Paced line captions show one line at a time across the video, so the
+    // cap only guards against runaway input; 12 cut a long Series part short.
+    ? wrapTextLines(lines.map((s) => cleanCaptionLine(String(s).slice(0, 140))).filter(Boolean), maxChars, 80)
     : [];
   // The preset decides word-vs-line. Marker / Soft Glow / Headline are paced
   // LINE styles: before this, kinetic captions forced word mode for every
@@ -1461,7 +1465,9 @@ async function runCampaignAutoPost(payload, jobId) {
 
   // 4. If we have alignment, build word-level captions + per-beat scenes.
   // Otherwise fall back to the legacy single-bg + line-captions path.
-  const ttsLines = [cleanScript.hook, cleanScript.verse, cleanScript.reflection, cleanScript.cta].filter(Boolean);
+  // The line renderer cuts each line at 140 characters, so a long Series part
+  // is broken into sentence-sized lines first and all of it reaches the screen.
+  const ttsLines = splitCaptionLines([cleanScript.hook, cleanScript.verse, cleanScript.reflection, cleanScript.cta], 140);
   const beatTexts = [
     cleanScript.hook,
     cleanScript.reference ? `${cleanScript.verse} (${cleanScript.reference})` : cleanScript.verse,

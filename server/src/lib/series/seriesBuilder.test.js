@@ -6,92 +6,100 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import {
-  clampPartsCount,
-  planVerseRanges,
+  endsSentence,
+  groupSentences,
+  packParts,
+  charBudgetFor,
+  spokenSeconds,
   buildSegmentCaption,
   buildSeriesPlan,
+  SeriesPlanError,
 } from "./seriesBuilder.js";
 
-describe("clampPartsCount", () => {
-  test("respects floor (2)", () => {
-    assert.equal(clampPartsCount(1, 30), 2);
-    assert.equal(clampPartsCount(0, 30), 2);
-    assert.equal(clampPartsCount(null, 30), 5); // default
-  });
+// 1 John 2:1-4 (KJV), exactly as the verse service returns it. Verse 1 ends
+// with a colon: its sentence carries on into verse 2.
+const FIRST_JOHN_2 = [
+  { book: "1 John", chapter: 2, verse: 1, text: "My little children, these things write I unto you, that ye sin not. And if any man sin, we have an advocate with the Father, Jesus Christ the righteous:" },
+  { book: "1 John", chapter: 2, verse: 2, text: "And he is the propitiation for our sins: and not for ours only, but also for\nthe sins of the whole world." },
+  { book: "1 John", chapter: 2, verse: 3, text: "And hereby we do know that we know him, if we keep his commandments." },
+  { book: "1 John", chapter: 2, verse: 4, text: "He that saith, I know him, and keepeth not his commandments, is a liar, and the truth is not in him." },
+];
 
-  test("respects ceiling (12)", () => {
-    assert.equal(clampPartsCount(20, 30), 12);
-    assert.equal(clampPartsCount(100, 30), 12);
-  });
+const verseNumbers = (parts) => parts.map((p) => p.map((v) => v.verse));
 
-  test("cannot exceed verse count", () => {
-    assert.equal(clampPartsCount(10, 3), 3);
-    assert.equal(clampPartsCount(5, 4), 4);
+/** A verse service stub: answers any "Book C:a-b" range with numbered verses. */
+function stubFetcher(textFor = (n) => `Verse ${n} text.`, seen = []) {
+  return async (range) => {
+    seen.push(range);
+    const match = range.match(/(\d+)(?:-(\d+))?$/);
+    const from = Number(match[1]);
+    const to = Number(match[2] || match[1]);
+    return Array.from({ length: to - from + 1 }, (_, i) => ({ book: "John", chapter: 3, verse: from + i, text: textFor(from + i) }));
+  };
+}
+
+describe("endsSentence", () => {
+  test("a full stop, question or exclamation ends a sentence", () => {
+    assert.equal(endsSentence("Jesus wept."), true);
+    assert.equal(endsSentence("Who is he?"), true);
+    assert.equal(endsSentence("Praise the Lord!"), true);
+  });
+  test("a closing quote or bracket after the stop still ends it", () => {
+    assert.equal(endsSentence("He said, Follow me.”"), true);
+    assert.equal(endsSentence("(for he was rich.)"), true);
+    assert.equal(endsSentence("It is finished.'  "), true);
+  });
+  test("a colon, semicolon, comma or plain word does not", () => {
+    assert.equal(endsSentence("Jesus Christ the righteous:"), false);
+    assert.equal(endsSentence("and the earth;"), false);
+    assert.equal(endsSentence("In the beginning,"), false);
+    assert.equal(endsSentence("And God said"), false);
   });
 });
 
-describe("planVerseRanges", () => {
-  test("evenly splits when divisible", () => {
-    const ranges = planVerseRanges(30, 3);
-    assert.deepEqual(ranges, [
-      { from: 1, to: 10 },
-      { from: 11, to: 20 },
-      { from: 21, to: 30 },
-    ]);
+describe("groupSentences", () => {
+  test("keeps a verse with the next one when its sentence carries on", () => {
+    assert.deepEqual(verseNumbers(groupSentences(FIRST_JOHN_2, 1000)), [[1, 2], [3], [4]]);
   });
-
-  test("distributes remainder to earlier parts", () => {
-    const ranges = planVerseRanges(11, 3);
-    assert.deepEqual(ranges, [
-      { from: 1, to: 4 },
-      { from: 5, to: 8 },
-      { from: 9, to: 11 },
-    ]);
-    // 4 + 4 + 3 = 11
+  test("a passage that never ends a sentence still closes at the length limit", () => {
+    const verses = [1, 2, 3, 4].map((n) => ({ verse: n, text: "x".repeat(50) + "," }));
+    assert.deepEqual(verseNumbers(groupSentences(verses, 100)), [[1, 2], [3, 4]]);
   });
+});
 
-  test("exhausts all verses (no orphan)", () => {
-    for (const verses of [13, 23, 36, 50, 89, 176]) {
-      for (const parts of [2, 3, 5, 7, 12]) {
-        const ranges = planVerseRanges(verses, parts);
-        assert.equal(ranges[0].from, 1);
-        assert.equal(ranges[ranges.length - 1].to, verses);
-        assert.equal(ranges.length, Math.min(parts, verses));
-      }
+describe("packParts", () => {
+  const budget22 = charBudgetFor(22);
+
+  test("auto fits whole sentences into the video length: 1 John 2:1-4 makes two videos", () => {
+    assert.deepEqual(verseNumbers(packParts(FIRST_JOHN_2, { versesPerPart: "auto", budgetChars: budget22 })), [[1, 2], [3, 4]]);
+  });
+  test("one verse per video still never splits a sentence", () => {
+    assert.deepEqual(verseNumbers(packParts(FIRST_JOHN_2, { versesPerPart: 1, budgetChars: budget22 })), [[1, 2], [3], [4]]);
+  });
+  test("two verses per video", () => {
+    assert.deepEqual(verseNumbers(packParts(FIRST_JOHN_2, { versesPerPart: 2, budgetChars: budget22 })), [[1, 2], [3, 4]]);
+  });
+  test("one video holds the whole passage", () => {
+    assert.deepEqual(verseNumbers(packParts(FIRST_JOHN_2, { versesPerPart: "one", budgetChars: budget22 })), [[1, 2, 3, 4]]);
+  });
+  test("every verse lands in exactly one part, in order", () => {
+    const verses = Array.from({ length: 23 }, (_, i) => ({ verse: i + 1, text: `${"word ".repeat(5 + (i % 7))}${i % 3 === 0 ? ";" : "."}` }));
+    for (const versesPerPart of ["auto", "one", 1, 2, 3]) {
+      const flat = packParts(verses, { versesPerPart, budgetChars: 120 }).flat().map((v) => v.verse);
+      assert.deepEqual(flat, verses.map((v) => v.verse), `mode ${versesPerPart}`);
     }
   });
-
-  test("handles parts >= verses", () => {
-    const ranges = planVerseRanges(3, 5);
-    // Cannot make more parts than verses — clamps to 3 parts of 1 verse each.
-    assert.equal(ranges.length, 3);
-    assert.deepEqual(ranges, [
-      { from: 1, to: 1 },
-      { from: 2, to: 2 },
-      { from: 3, to: 3 },
-    ]);
+  test("no verses, no parts", () => {
+    assert.deepEqual(packParts([], { versesPerPart: "auto", budgetChars: 280 }), []);
   });
+});
 
-  test("offsets ranges by startVerse for a sub-chapter span", () => {
-    // Span = verses 5..8 (4 verses), split into 4 → one verse each, starting at 5.
-    const ranges = planVerseRanges(4, 4, 5);
-    assert.deepEqual(ranges, [
-      { from: 5, to: 5 },
-      { from: 6, to: 6 },
-      { from: 7, to: 7 },
-      { from: 8, to: 8 },
-    ]);
+describe("timing", () => {
+  test("22 seconds is about 280 characters, the length a short has always spoken", () => {
+    assert.equal(charBudgetFor(22), 280);
   });
-
-  test("offset span stays within the requested window", () => {
-    // Span = verses 5..12 (8 verses), split into 3.
-    const ranges = planVerseRanges(8, 3, 5);
-    assert.equal(ranges[0].from, 5);
-    assert.equal(ranges[ranges.length - 1].to, 12);
-    // Contiguous, no gaps or overlaps.
-    for (let i = 1; i < ranges.length; i += 1) {
-      assert.equal(ranges[i].from, ranges[i - 1].to + 1);
-    }
+  test("spoken seconds counts the part intro and the closing line", () => {
+    assert.ok(spokenSeconds(280) >= 22 && spokenSeconds(280) <= 26);
   });
 });
 
@@ -150,121 +158,178 @@ describe("buildSegmentCaption", () => {
 });
 
 describe("buildSeriesPlan", () => {
-  const stubVerse = (n, text) => ({ book: "John", chapter: 3, verse: n, text });
-
-  test("returns one segment per requested part", async () => {
-    const fetchVerses = async (range) => {
-      const match = range.match(/(\d+)(?:-(\d+))?$/);
-      const from = Number(match[1]);
-      const to = Number(match[2] || match[1]);
-      return Array.from({ length: to - from + 1 }, (_, i) => stubVerse(from + i, `Verse ${from + i} text.`));
-    };
+  test("1 John 2:1-4 on Auto at 22 seconds: two videos, verses 1-2 and 3-4", async () => {
     const plan = await buildSeriesPlan({
-      chapterReference: "John 3",
-      parts: 4,
+      chapterReference: "1 John 2:1-4",
       translation: "kjv",
-      fetchVerses,
+      fetchVerses: async () => FIRST_JOHN_2,
     });
-    assert.equal(plan.book, "John");
-    assert.equal(plan.chapter, 3);
-    assert.equal(plan.totalParts, 4);
-    assert.equal(plan.segments.length, 4);
-    // Part numbers are sequential starting at 1.
-    assert.deepEqual(plan.segments.map((s) => s.partNumber), [1, 2, 3, 4]);
-    // Verse ranges exhaust the chapter (John 3 = 36 verses).
-    assert.equal(plan.segments[0].verseFrom, 1);
-    assert.equal(plan.segments[plan.segments.length - 1].verseTo, 36);
+    assert.equal(plan.totalParts, 2);
+    assert.deepEqual(plan.segments.map((s) => s.reference), ["1 John 2:1-2", "1 John 2:3-4"]);
+    assert.deepEqual(plan.segments.map((s) => s.verses.length), [2, 2]);
+    assert.equal(plan.versesPerPart, "auto");
+    assert.equal(plan.targetSeconds, 22);
+    for (const seg of plan.segments) assert.ok(seg.seconds > 0 && seg.seconds <= 26, `part ${seg.partNumber} runs ${seg.seconds}s`);
   });
 
-  test("splits only the requested verse range, not the whole chapter", async () => {
+  test("a passage that fits makes one video", async () => {
+    const plan = await buildSeriesPlan({
+      chapterReference: "1 John 2:3-4",
+      translation: "kjv",
+      fetchVerses: async () => FIRST_JOHN_2.slice(2),
+    });
+    assert.equal(plan.totalParts, 1);
+    assert.equal(plan.segments[0].reference, "1 John 2:3-4");
+  });
+
+  test("fetches the passage once and stays inside the verses asked for", async () => {
     const seen = [];
-    const fetchVerses = async (range) => {
-      seen.push(range);
-      const match = range.match(/(\d+)(?:-(\d+))?$/);
-      const from = Number(match[1]);
-      const to = Number(match[2] || match[1]);
-      return Array.from({ length: to - from + 1 }, (_, i) => stubVerse(from + i, `Verse ${from + i} text.`));
-    };
-    // John 3:5-12 split into 4 → verses 5-6, 7-8, 9-10, 11-12. Must NOT touch
-    // verses outside 5..12 (the whole-chapter bug ballooned 5-12 into 5-36).
     const plan = await buildSeriesPlan({
       chapterReference: "John 3:5-12",
-      parts: 4,
+      versesPerPart: 2,
       translation: "kjv",
-      fetchVerses,
+      fetchVerses: stubFetcher(undefined, seen),
     });
-    assert.equal(plan.totalParts, 4);
-    assert.equal(plan.segments.length, 4);
-    assert.equal(plan.segments[0].verseFrom, 5);
-    assert.equal(plan.segments[plan.segments.length - 1].verseTo, 12);
-    // Span reference reflects the window the user asked for.
+    assert.deepEqual(seen, ["John 3:5-12"]);
     assert.equal(plan.chapterReference, "John 3:5-12");
-    // Every fetched range is inside 5..12.
-    for (const range of seen) {
-      const m = range.match(/(\d+)(?:-(\d+))?$/);
-      assert.ok(Number(m[1]) >= 5 && Number(m[2] || m[1]) <= 12, `range ${range} escaped the window`);
-    }
+    assert.equal(plan.segments[0].verseFrom, 5);
+    assert.equal(plan.segments.at(-1).verseTo, 12);
+    assert.equal(plan.totalParts, 4);
   });
 
-  test("accepts a single verse as a one-part series", async () => {
-    const fetchVerses = async () => [stubVerse(16, "For God so loved the world")];
-    const plan = await buildSeriesPlan({ chapterReference: "John 3:16", parts: 4, translation: "kjv", fetchVerses });
+  test("a whole chapter that needs more than 12 videos at your length gets 12 slightly longer ones", async () => {
+    // 36 verses of ~150 characters: about 20 videos at 22 seconds.
+    const plan = await buildSeriesPlan({
+      chapterReference: "John 3",
+      translation: "kjv",
+      durationSec: 22,
+      maxRenderSeconds: 180,
+      fetchVerses: stubFetcher((n) => `${"and the word ".repeat(11)}verse ${n}.`),
+    });
+    assert.ok(plan.totalParts <= 12, `made ${plan.totalParts} videos`);
+    assert.equal(plan.stretched, true);
+    assert.equal(plan.segments[0].verseFrom, 1);
+    assert.equal(plan.segments.at(-1).verseTo, 36);
+    assert.equal(plan.totalParts, plan.segments.length);
+  });
+
+  test("a verses-per-video choice that needs more than 12 videos is refused with a reason", async () => {
+    await assert.rejects(
+      () => buildSeriesPlan({ chapterReference: "John 3", versesPerPart: 1, translation: "kjv", fetchVerses: stubFetcher() }),
+      (err) => err instanceof SeriesPlanError && err.code === "TOO_MANY_PARTS" && /36 videos/.test(err.message) && /12/.test(err.message),
+    );
+  });
+
+  test("a part is kept a little short of the render limit, so a slow voice is never cut off", async () => {
+    // 330 characters is about 29 s with the intro: under 30, but inside the margin.
+    await assert.rejects(
+      () => buildSeriesPlan({
+        chapterReference: "John 3:1",
+        translation: "kjv",
+        maxRenderSeconds: 30,
+        fetchVerses: async () => [{ book: "John", chapter: 3, verse: 1, text: `${"a".repeat(329)}.` }],
+      }),
+      (err) => err instanceof SeriesPlanError && err.code === "PART_TOO_LONG",
+    );
+  });
+
+  test("one verse too long for any video says so, rather than asking for fewer verses", async () => {
+    await assert.rejects(
+      () => buildSeriesPlan({
+        chapterReference: "Esther 8:9",
+        translation: "kjv",
+        maxRenderSeconds: 30,
+        fetchVerses: async () => [{ book: "Esther", chapter: 8, verse: 9, text: `${"word ".repeat(100)}.` }],
+      }),
+      (err) => err instanceof SeriesPlanError && err.code === "PART_TOO_LONG" && /Esther 8:9 alone/.test(err.message) && !/fewer verses/.test(err.message),
+    );
+  });
+
+  test("a verses-per-video choice keeps a long sentence whole rather than breaking it at the video length", async () => {
+    // Four verses, one sentence, ~480 characters: longer than 22 s, inside the render limit.
+    const verses = [1, 2, 3, 4].map((n) => ({ book: "John", chapter: 3, verse: n, text: `${"blessed be the Lord ".repeat(6)}${n === 4 ? "." : ","}` }));
+    const plan = await buildSeriesPlan({ chapterReference: "John 3:1-4", versesPerPart: 1, translation: "kjv", maxRenderSeconds: 180, fetchVerses: async () => verses });
     assert.equal(plan.totalParts, 1);
-    assert.equal(plan.segments.length, 1);
-    assert.equal(plan.segments[0].verseFrom, 16);
-    assert.equal(plan.segments[0].verseTo, 16);
+    assert.equal(plan.segments[0].reference, "John 3:1-4");
+  });
+
+  test("Auto keeps a long sentence whole too, when a video can hold it", async () => {
+    const verses = [1, 2, 3, 4].map((n) => ({ book: "John", chapter: 3, verse: n, text: `${"blessed be the Lord ".repeat(6)}${n === 4 ? "." : ","}` }));
+    const plan = await buildSeriesPlan({ chapterReference: "John 3:1-4", translation: "kjv", maxRenderSeconds: 180, fetchVerses: async () => verses });
+    assert.equal(plan.totalParts, 1);
+  });
+
+  test("Auto aims no longer than the server can render, splitting rather than refusing", async () => {
+    // 60 s asked for on a 30 s server: about 760 characters per part would fail.
+    const plan = await buildSeriesPlan({
+      chapterReference: "John 3:1-8",
+      translation: "kjv",
+      durationSec: 60,
+      maxRenderSeconds: 30,
+      fetchVerses: stubFetcher((n) => `${"and the word ".repeat(7)}verse ${n}.`),
+    });
+    assert.ok(plan.totalParts > 1);
+    for (const seg of plan.segments) assert.ok(seg.seconds <= 27, `part ${seg.partNumber} runs ${seg.seconds}s`);
+  });
+
+  test("verses the service returns outside the range asked for are left out", async () => {
+    const plan = await buildSeriesPlan({
+      chapterReference: "John 3:2-3",
+      translation: "kjv",
+      fetchVerses: async () => [1, 2, 3, 4].map((n) => ({ book: "John", chapter: 3, verse: n, text: `Verse ${n}.` })),
+    });
+    assert.equal(plan.segments[0].reference, "John 3:2-3");
+    assert.deepEqual(plan.segments.flatMap((s) => s.verses.map((v) => v.verse)), [2, 3]);
+  });
+
+  test("one video longer than a render allows is refused with a reason", async () => {
+    await assert.rejects(
+      () => buildSeriesPlan({
+        chapterReference: "John 3",
+        versesPerPart: "one",
+        translation: "kjv",
+        maxRenderSeconds: 30,
+        fetchVerses: stubFetcher((n) => `${"and the word ".repeat(11)}verse ${n}.`),
+      }),
+      (err) => err instanceof SeriesPlanError && err.code === "PART_TOO_LONG" && /30 s/.test(err.message),
+    );
+  });
+
+  test("totalParts always equals the number of segments and part numbers run from 1", async () => {
+    const plan = await buildSeriesPlan({ chapterReference: "John 3:1-9", versesPerPart: 3, translation: "kjv", fetchVerses: stubFetcher() });
+    assert.equal(plan.totalParts, plan.segments.length);
+    assert.deepEqual(plan.segments.map((s) => s.partNumber), [1, 2, 3]);
+    for (const seg of plan.segments) assert.equal(seg.totalParts, 3);
+  });
+
+  test("a single verse is a one-part series", async () => {
+    const plan = await buildSeriesPlan({
+      chapterReference: "John 3:16",
+      translation: "kjv",
+      fetchVerses: async () => [{ book: "John", chapter: 3, verse: 16, text: "For God so loved the world." }],
+    });
+    assert.equal(plan.totalParts, 1);
+    assert.equal(plan.segments[0].reference, "John 3:16");
     assert.equal(plan.chapterReference, "John 3:16");
   });
 
-  test("totalParts always equals the number of segments produced", async () => {
-    const fetchVerses = async (range) => {
-      const match = range.match(/(\d+)(?:-(\d+))?$/);
-      const from = Number(match[1]);
-      const to = Number(match[2] || match[1]);
-      return Array.from({ length: to - from + 1 }, (_, i) => stubVerse(from + i, `t${from + i}`));
-    };
-    // Ask for more parts than the span has verses (5..7 = 3 verses, ask 8).
-    const plan = await buildSeriesPlan({
-      chapterReference: "John 3:5-7",
-      parts: 8,
-      translation: "kjv",
-      fetchVerses,
-    });
-    assert.equal(plan.totalParts, plan.segments.length);
-    assert.equal(plan.segments.length, 3);
-  });
-
   test("rejects unparseable references", async () => {
-    const fetchVerses = async () => [];
     await assert.rejects(
-      () => buildSeriesPlan({ chapterReference: "Hogwarts 1", parts: 4, translation: "kjv", fetchVerses }),
+      () => buildSeriesPlan({ chapterReference: "Hogwarts 1", translation: "kjv", fetchVerses: async () => [] }),
       /Could not parse/i,
     );
   });
 
-  test("each segment has a YouVersion URL", async () => {
-    const fetchVerses = async (range) => {
-      const match = range.match(/(\d+)(?:-(\d+))?$/);
-      const from = Number(match[1]);
-      const to = Number(match[2] || match[1]);
-      return Array.from({ length: to - from + 1 }, (_, i) => stubVerse(from + i, `text ${from + i}`));
-    };
-    const plan = await buildSeriesPlan({
-      chapterReference: "John 3",
-      parts: 3,
-      translation: "niv",
-      fetchVerses,
-    });
-    for (const seg of plan.segments) {
-      assert.match(seg.youVersionUrl, /bible\.com\/bible\/111\/JHN/);
-      assert.match(seg.youVersionUrl, /\.NIV$/);
-    }
+  test("each segment has a YouVersion URL for its own verses", async () => {
+    const plan = await buildSeriesPlan({ chapterReference: "John 3:1-6", versesPerPart: 3, translation: "niv", fetchVerses: stubFetcher() });
+    assert.match(plan.segments[0].youVersionUrl, /bible\.com\/bible\/111\/JHN\.3\.1-3\.NIV$/);
+    assert.match(plan.segments[1].youVersionUrl, /JHN\.3\.4-6\.NIV$/);
   });
 
   test("produces unique seriesId", async () => {
-    const fetchVerses = async () => [stubVerse(1, "t")];
-    const a = await buildSeriesPlan({ chapterReference: "Jude 1", parts: 2, translation: "kjv", fetchVerses });
-    const b = await buildSeriesPlan({ chapterReference: "Jude 1", parts: 2, translation: "kjv", fetchVerses });
+    const fetchVerses = async () => [{ book: "Jude", chapter: 1, verse: 1, text: "t." }];
+    const a = await buildSeriesPlan({ chapterReference: "Jude 1:1", translation: "kjv", fetchVerses });
+    const b = await buildSeriesPlan({ chapterReference: "Jude 1:1", translation: "kjv", fetchVerses });
     assert.notEqual(a.seriesId, b.seriesId);
   });
 });
