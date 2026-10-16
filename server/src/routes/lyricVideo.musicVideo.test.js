@@ -384,4 +384,29 @@ describe("POST /:id/use-story-video", () => {
     assert.equal((await call("DELETE", `/${p.projectId}`)).status, 200);
     assert.equal(fs.existsSync(again), false);
   });
+
+  test("the copy is recorded on the song, and making another music video keeps the record", { skip: !hasFfmpeg && "ffmpeg not installed" }, async () => {
+    const p = timedProject(ctx);
+    linkedStory(ctx, p, { rendered: true });
+    const copy = (await call("POST", `/${p.projectId}/use-story-video`, {})).json.project.background.file;
+    assert.equal(readProject(ctx.dataDir, p.projectId).musicVideo.backgroundCopy, copy);
+    assert.equal((await call("POST", `/${p.projectId}/to-story`, { again: true })).status, 200);
+    assert.equal(readProject(ctx.dataDir, p.projectId).musicVideo.backgroundCopy, copy);
+    assert.equal((await call("PUT", `/${p.projectId}/background`, { path: null })).status, 200);
+    assert.equal(fs.existsSync(copy), false, "the recorded copy is deleted when replaced");
+    assert.equal(readProject(ctx.dataDir, p.projectId).musicVideo.backgroundCopy ?? null, null);
+  });
+
+  test("a file that only looks like a copy (same name pattern, not made here) is never deleted", { skip: !hasFfmpeg && "ffmpeg not installed" }, async () => {
+    const p = timedProject(ctx);
+    const lookalike = path.join(ctx.outputDir, "lyric-bg-0123abcd.mp4");
+    spawnSync(FF, ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=s=160x90:d=1", "-pix_fmt", "yuv420p", lookalike]);
+    assert.equal((await call("PUT", `/${p.projectId}/background`, { path: lookalike })).status, 200);
+    linkedStory(ctx, p, { rendered: true });
+    assert.equal((await call("POST", `/${p.projectId}/use-story-video`, {})).status, 200);
+    assert.equal(fs.existsSync(lookalike), true, "replaced by the copy, but not deleted");
+    assert.equal((await call("PUT", `/${p.projectId}/background`, { path: lookalike })).status, 200);
+    assert.equal((await call("DELETE", `/${p.projectId}`)).status, 200);
+    assert.equal(fs.existsSync(lookalike), true, "deleting the song leaves it too");
+  });
 });

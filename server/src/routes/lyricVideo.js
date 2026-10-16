@@ -248,17 +248,18 @@ function timedWords(lines) {
     .sort((a, b) => a.startMs - b.startMs);
 }
 
-const OWNED_BACKGROUND = /^lyric-bg-[0-9a-f-]+\.mp4$/i;
-
 /**
- * Deletes the background a song had before, when it is a copy this feature made of an AI music
- * video (lyric-bg-<uuid>.mp4) and is not the one it has now. A user's own file is never touched.
+ * The copy of an AI music video this song made for its background, as recorded when it was made
+ * (musicVideo.backgroundCopy), or null. Only that recorded path is ever deleted: a file of the
+ * user's that merely has a similar name is never touched.
  */
-function removeReplacedCopy(outputDir, before, after) {
-  const file = before?.file;
-  if (typeof file !== "string" || !OWNED_BACKGROUND.test(path.basename(file)) || file === after?.file) return;
-  removeOwned(outputDir, file);
-}
+const recordedCopy = (project) => {
+  const file = project?.musicVideo?.backgroundCopy;
+  return typeof file === "string" && file ? file : null;
+};
+
+/** The song's musicVideo record with its background copy set, or forgotten with null. */
+const withCopy = (project, file) => ({ ...project.musicVideo, backgroundCopy: file });
 
 /** Removes a file this feature made, only when it lives inside the user's output folder. */
 function removeOwned(outputDir, file) {
@@ -429,7 +430,7 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
     removeOwned(req.ctx.outputDir, project.song?.coverStill);
     if (isExtractedSong(project.song?.file)) removeOwned(req.ctx.outputDir, project.song.file);
     for (const render of project.renders || []) removeOwned(req.ctx.outputDir, render?.file);
-    removeReplacedCopy(req.ctx.outputDir, project.background, null);
+    removeOwned(req.ctx.outputDir, recordedCopy(project));
     ok(res, {});
   }));
 
@@ -558,14 +559,16 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
       if (body.fit !== undefined && !FITS.includes(body.fit)) throw new Refusal(400, "Unknown fit");
       background = await backgroundFrom(req.ctx.outputDir, body.path, body.fit ?? "auto");
     }
-    let replaced = null;
+    let stale = null;
     const next = updateProject(req.ctx.dataDir, project.projectId, (latest) => {
-      replaced = latest.background;
-      return { ...latest, background };
+      const copy = recordedCopy(latest);
+      // A render reading the replaced copy keeps it (and its record), so it is deleted next time.
+      if (!copy || copy === background?.file || rendering.has(project.projectId)) return { ...latest, background };
+      stale = copy;
+      return { ...latest, background, musicVideo: withCopy(latest, null) };
     });
     if (!next) throw new Refusal(404, NOT_FOUND);
-    // A render reading the replaced copy keeps it; it is left behind rather than cut short.
-    if (!rendering.has(project.projectId)) removeReplacedCopy(req.ctx.outputDir, replaced, next.background);
+    removeOwned(req.ctx.outputDir, stale);
     ok(res, { project: next });
   }));
 
@@ -618,7 +621,8 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
       aiMotion: choice.aiMotion ? { quality: choice.quality } : null,
     });
     const next = updateProject(req.ctx.dataDir, project.projectId, (current) => ({
-      ...current, musicVideo: { storyProjectId: made.projectId, createdAt: new Date().toISOString() },
+      // Kept: the background copy record, which still names the copy in use.
+      ...current, musicVideo: { ...current.musicVideo, storyProjectId: made.projectId, createdAt: new Date().toISOString() },
     }));
     if (!next) throw new Refusal(404, NOT_FOUND);
     // Detached: the prompts, then the pictures (minutes), which the Story page shows as they come.
@@ -651,21 +655,22 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
     }
     const copy = path.join(req.ctx.outputDir, `lyric-bg-${uuid()}.mp4`);
     let next;
-    let replaced = null;
+    let stale = null;
     try {
       await fs.promises.copyFile(source.file, copy);
       const background = { ...source, file: fs.realpathSync(copy) };
       next = updateProject(req.ctx.dataDir, project.projectId, (latest) => {
         busy(project.projectId); // the copy yields: a render may have started meanwhile
-        replaced = latest.background;
-        return { ...latest, background };
+        stale = recordedCopy(latest);
+        // Recorded, so this copy (and only this file) is deleted when it is replaced.
+        return { ...latest, background, musicVideo: withCopy(latest, background.file) };
       });
     } catch (err) {
       removeFile(copy);
       throw err;
     }
     if (!next) { removeFile(copy); throw new Refusal(404, NOT_FOUND); }
-    removeReplacedCopy(req.ctx.outputDir, replaced, next.background);
+    if (stale !== next.background.file) removeOwned(req.ctx.outputDir, stale);
     ok(res, { project: next });
   }));
 
