@@ -29,7 +29,13 @@ import { runAlignJob, isAligning, failedTiming } from "../lib/lyricVideo/alignJo
 import { buildLyricAss, resolvedEffects } from "../lib/lyricVideo/lyricAss.js";
 import { renderSize, runLyricRender, audioShaped } from "../lib/lyricVideo/lyricRender.js";
 import { buildPublishDraft } from "../lib/lyricVideo/publishDraft.js";
+import { cleanText } from "../lib/lyricVideo/projectStore.js";
+import { planMusicScenes } from "../lib/musicVideo/scenePlan.js";
+import { writeMusicPrompts } from "../lib/musicVideo/scenePrompts.js";
+import { readProject as readStoryProject } from "../lib/story/projectStore.js";
+import { createStoryFromScenes, startStoryImages } from "./story.js";
 import { quota } from "../middleware/quota.js";
+import { requireSuperAdmin } from "../middleware/requireSuperAdmin.js";
 
 const EFFECTS_ALLOWED = new Set(["auto", ...EFFECT_IDS]);
 const ASPECTS = ["portrait", "landscape", "square"];
@@ -47,6 +53,10 @@ const PROBE_TIMEOUT_MS = 15_000;
 const COVER_TIMEOUT_MS = 30_000;
 // Taking the sound out of a 15-minute video: a copy takes seconds, an AAC encode well under a minute.
 const EXTRACT_TIMEOUT_MS = 180_000;
+// AI music videos: the Story style, the AI motion qualities and the longest singer description.
+const MUSIC_VIDEO_STYLE = "music-video";
+const AI_QUALITIES = ["standard", "high"];
+const CHARACTER_MAX = 300;
 
 const NOT_FOUND = "That song project was not found";
 const INTERRUPTED = "Timing stopped before it finished — run it again.";
@@ -216,6 +226,27 @@ function confineReal(outputDir, candidate) {
   }
 }
 
+/**
+ * A background from a path: confined to the user's outputs (links followed), an existing
+ * file, and readable as a picture or video. Throws a 400 Refusal otherwise.
+ */
+async function backgroundFrom(outputDir, candidate, fit) {
+  const file = confineReal(outputDir, candidate);
+  if (!file || !isFile(file)) throw new Refusal(400, "That background could not be found");
+  if (!(await probeMediaSize(file))) throw new Refusal(400, "That background could not be read as a picture or video.");
+  return { file, kind: /\.(jpe?g|png|webp)$/i.test(file) ? "image" : "video", fit };
+}
+
+/** Every timed word of the song in milliseconds, in time order: the Story project's transcript. */
+function timedWords(lines) {
+  return (lines || [])
+    .filter(placed)
+    .flatMap((l) => l.words)
+    .filter((w) => w && Number.isFinite(w.start) && Number.isFinite(w.end) && String(w.text ?? "").trim())
+    .map((w) => ({ text: String(w.text).trim(), startMs: Math.round(w.start * 1000), endMs: Math.round(w.end * 1000) }))
+    .sort((a, b) => a.startMs - b.startMs);
+}
+
 /** Removes a file this feature made, only when it lives inside the user's output folder. */
 function removeOwned(outputDir, file) {
   const confined = typeof file === "string" ? confineToDir(outputDir, file) : null;
@@ -291,10 +322,12 @@ function persistedJob(req) {
  * Options exist for tests only: `alignDeps` (an object or a function returning
  * one) replaces the audio and speech steps of the timing job, `runRender`
  * replaces the ffmpeg render, `songProbed` runs after a new song was read and
- * before it is saved.
+ * before it is saved, `story` replaces any of the Story seams the music video
+ * routes call (createStoryFromScenes, startStoryImages, readProject).
  */
-export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, statfs, songProbed } = {}) {
+export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, statfs, songProbed, story } = {}) {
   const router = Router();
+  const storySeam = { createStoryFromScenes, startStoryImages, readProject: readStoryProject, ...story };
   const rendering = new Map(); // project id -> { userId, bytes } for each render in flight in this process
   const timingByUser = new Map(); // user id -> project id of the timing run in flight
 
@@ -509,11 +542,75 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
     let background = null;
     if (body.path !== null) {
       if (body.fit !== undefined && !FITS.includes(body.fit)) throw new Refusal(400, "Unknown fit");
-      const file = confineReal(req.ctx.outputDir, body.path);
-      if (!file || !isFile(file)) throw new Refusal(400, "That background could not be found");
-      if (!(await probeMediaSize(file))) throw new Refusal(400, "That background could not be read as a picture or video.");
-      background = { file, kind: /\.(jpe?g|png|webp)$/i.test(file) ? "image" : "video", fit: body.fit ?? "auto" };
+      background = await backgroundFrom(req.ctx.outputDir, body.path, body.fit ?? "auto");
     }
+    const next = updateProject(req.ctx.dataDir, project.projectId, (latest) => ({ ...latest, background }));
+    if (!next) throw new Refusal(404, NOT_FOUND);
+    ok(res, { project: next });
+  }));
+
+  // --- AI music videos (super admins only): the song's sections become a Story project
+  // whose pictures are made and animated, and its finished video becomes this song's background.
+
+  /** Checks a to-story request body; returns the choices with their defaults, or throws a 400. */
+  function checkToStoryRequest(body) {
+    if (body.aspect !== undefined && !ASPECTS.includes(body.aspect)) throw new Refusal(400, "Unknown video shape");
+    if (body.character !== undefined && typeof body.character !== "string") throw new Refusal(400, "Describe the singer in words.");
+    const character = cleanText(body.character ?? "", CHARACTER_MAX + 1);
+    if (character.length > CHARACTER_MAX) throw new Refusal(400, `Keep the description of the singer under ${CHARACTER_MAX} characters.`);
+    if (body.aiMotion !== undefined && typeof body.aiMotion !== "boolean") throw new Refusal(400, "Animate the scenes is on or off.");
+    if (body.quality !== undefined && !AI_QUALITIES.includes(body.quality)) throw new Refusal(400, "Unknown quality");
+    return { aspect: body.aspect ?? "portrait", character, aiMotion: body.aiMotion === true, quality: body.quality ?? "standard" };
+  }
+
+  /** Refuses (409) a song that cannot be made into a music video yet. */
+  function assertMusicVideoReady(project) {
+    busy(project.projectId);
+    if (!(project.lines || []).some(placed)) throw new Refusal(409, "Run Timing first.");
+    if (!project.song?.file || !isFile(project.song.file)) throw new Refusal(409, "The song file is missing — upload the song again.");
+    if (!(Number(project.song.durationSec) > 0)) throw new Refusal(409, "The song's length is not known — upload the song again.");
+  }
+
+  router.post("/:id/to-story", requireSuperAdmin, route(async (req, res) => {
+    const project = load(req);
+    const choice = checkToStoryRequest(bodyOf(req));
+    assertMusicVideoReady(project);
+    const durationSec = Number(project.song.durationSec);
+    const plan = planMusicScenes({ sections: project.sections, lines: project.lines, durationSec, audibleEnd: project.timing?.audibleEnd });
+    const prompts = await writeMusicPrompts({ title: project.title, artist: project.artist, scenes: plan, character: choice.character });
+    // The prompt call yields: the song may have been deleted, changed or put to work meanwhile.
+    const latest = load(req);
+    assertMusicVideoReady(latest);
+    if (latest.song.file !== project.song.file) throw new Refusal(409, "The song changed while the scenes were being planned. Try again.");
+    const ctx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir };
+    const made = storySeam.createStoryFromScenes(ctx, {
+      title: `${project.title} · music video`,
+      style: MUSIC_VIDEO_STYLE,
+      aspect: choice.aspect,
+      // The song is this project's own file, already checked when it was attached: the body names no path.
+      audioPath: project.song.file,
+      durationMs: Math.round(durationSec * 1000),
+      words: timedWords(project.lines),
+      scenes: plan.map((scene, i) => ({ ...scene, imagePrompt: prompts[i] })),
+      aiMotion: choice.aiMotion ? { quality: choice.quality } : null,
+    });
+    const next = updateProject(req.ctx.dataDir, project.projectId, (current) => ({
+      ...current, musicVideo: { storyProjectId: made.projectId, createdAt: new Date().toISOString() },
+    }));
+    if (!next) throw new Refusal(404, NOT_FOUND);
+    // Detached: the pictures take minutes, and the Story page shows their progress.
+    storySeam.startStoryImages(ctx, made.projectId);
+    ok(res, { ok: true, storyProjectId: made.projectId });
+  }));
+
+  router.post("/:id/use-story-video", requireSuperAdmin, route(async (req, res) => {
+    const project = load(req);
+    const storyId = project.musicVideo?.storyProjectId;
+    const story = typeof storyId === "string" ? storySeam.readProject(req.ctx.dataDir, storyId) : null;
+    const video = story?.render?.status === "done" ? story.render.outputPath : null;
+    if (typeof video !== "string" || !video) throw new Refusal(409, "Render the music video in Story Video first.");
+    // The same checks as any background the user picks.
+    const background = await backgroundFrom(req.ctx.outputDir, video, "auto");
     const next = updateProject(req.ctx.dataDir, project.projectId, (latest) => ({ ...latest, background }));
     if (!next) throw new Refusal(404, NOT_FOUND);
     ok(res, { project: next });
