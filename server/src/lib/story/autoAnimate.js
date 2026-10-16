@@ -19,6 +19,11 @@ import { DATA_DIR } from "../paths.js";
 
 export const NOT_CONFIGURED_NOTE = "AI motion is not set up on the server.";
 export const BUDGET_NOTE = (picked, total) => `${picked} of ${total} scenes animated: monthly AI budget reached`;
+export const BUSY_NOTE = "AI motion could not start because another animation is running. Use Animate when it finishes.";
+export const FAILED_NOTE = (message) => {
+  const text = String(message).trim();
+  return `AI motion could not start: ${text}${/[.!?]$/.test(text) ? "" : "."} Use Animate to try again.`;
+};
 
 // The ledger's own tolerance, so a batch that exactly meets the cap still fits.
 const EPSILON = 1e-9;
@@ -103,13 +108,18 @@ export async function autoAnimate(ctx, projectId, { ledgerDir = DATA_DIR, deps, 
     // Counted before the run starts: its first clips reserve inside start().
     picks.set(projectId, { dataDir: ctx.dataDir, scenes: picked });
     const started = start(ctx, projectId, { sceneIds: picked.map((p) => p.id), quality, ledgerDir, deps });
-    if (!started) picks.delete(projectId);
+    if (!started) {
+      // A run already holds the project (a manual Animate, or clips being
+      // collected after a restart): say so rather than nothing.
+      picks.delete(projectId);
+      markStarted(ctx.dataDir, projectId, BUSY_NOTE);
+    }
   } catch (e) {
     picks.delete(projectId);
     const message = String(e?.message || e);
     console.warn(`[story] auto-animate ${projectId} failed: ${message}`);
     try {
-      markStarted(ctx.dataDir, projectId, `AI motion could not start: ${message}`);
+      markStarted(ctx.dataDir, projectId, FAILED_NOTE(message));
     } catch { /* the warning above is all that is left */ }
   }
 }

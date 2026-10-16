@@ -6,7 +6,7 @@ import path from "path";
 import { createProject, readProject, writeProject } from "./projectStore.js";
 import { reserveSpend } from "../videoGen/spend.js";
 import { isAnimating } from "./animateStage.js";
-import { autoAnimate, BUDGET_NOTE, NOT_CONFIGURED_NOTE } from "./autoAnimate.js";
+import { autoAnimate, BUDGET_NOTE, BUSY_NOTE, NOT_CONFIGURED_NOTE } from "./autoAnimate.js";
 
 let dataDir, outputDir, ledgerDir, saved;
 
@@ -248,7 +248,28 @@ describe("autoAnimate", () => {
     assert.ok(warned.some((w) => /auto-animate/.test(w) && /disk full/.test(w)), warned.join("\n"));
     const after = readProject(dataDir, p.projectId);
     assert.ok(after.aiMotion.autoStartedAt > 0, "a failure still counts as the one try");
-    assert.equal(after.aiMotion.note, "AI motion could not start: disk full");
+    assert.equal(after.aiMotion.note, "AI motion could not start: disk full. Use Animate to try again.");
     assert.equal(isAnimating(p.projectId), false);
+  });
+
+  test("a failure whose message ends a sentence still reads as one", async () => {
+    const p = project(1);
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+      await autoAnimate(ctx(), p.projectId, { ledgerDir, start: () => { throw new Error("The disk is full."); } });
+    } finally {
+      console.warn = warn;
+    }
+    assert.equal(readProject(dataDir, p.projectId).aiMotion.note, "AI motion could not start: The disk is full. Use Animate to try again.");
+  });
+
+  test("another animation already running: the note says so instead of nothing", async () => {
+    const p = project(2);
+    await autoAnimate(ctx(), p.projectId, { ledgerDir, start: () => null });
+    const after = readProject(dataDir, p.projectId);
+    assert.equal(after.aiMotion.note, "AI motion could not start because another animation is running. Use Animate when it finishes.");
+    assert.equal(BUSY_NOTE, after.aiMotion.note);
+    assert.ok(after.aiMotion.autoStartedAt > 0);
   });
 });
