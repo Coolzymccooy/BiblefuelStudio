@@ -11,6 +11,7 @@ import storyRouter, {
   _setImageGenImpl, _resetImageGenImpl,
   _setImageLibraryImpl, _resetImageLibraryImpl,
   _setAutoAnimateImpl, _resetAutoAnimateImpl,
+  _setCopyFileImpl, _resetCopyFileImpl, copyPendingAudio, AUDIO_COPY_FAILED,
 } from "./story.js";
 import { readProject, writeProject } from "../lib/story/projectStore.js";
 import { anchorFor } from "../lib/story/styleAnchors.js";
@@ -37,7 +38,7 @@ beforeEach(() => {
   delete process.env.BYTEPLUS_ARK_API_KEY;
 });
 afterEach(() => {
-  _resetImageGenImpl(); _resetImageLibraryImpl(); _resetAutoAnimateImpl();
+  _resetImageGenImpl(); _resetImageLibraryImpl(); _resetAutoAnimateImpl(); _resetCopyFileImpl();
   if (savedKey === undefined) delete process.env.BYTEPLUS_ARK_API_KEY; else process.env.BYTEPLUS_ARK_API_KEY = savedKey;
   fs.rmSync(ctx.dataDir, { recursive: true, force: true });
 });
@@ -80,14 +81,69 @@ describe("createStoryFromScenes", () => {
     assert.throws(() => createStoryFromScenes(ctx, args({ audioPath: path.join(ctx.outputDir, "missing.m4a") })), /audio/);
   });
 
-  test("the project owns a copy of the song in its own folder, so the lyric project can lose its song", () => {
+  test("the project owns a copy of the song in its own folder, so the lyric project can lose its song", async () => {
     const project = createStoryFromScenes(ctx, args());
     const own = project.source.audioPath;
+    assert.equal(await copyPendingAudio(ctx, project.projectId), true);
+    assert.equal(readProject(ctx.dataDir, project.projectId).source.copyFrom, undefined, "nothing left to copy");
     assert.equal(path.dirname(own), path.join(ctx.outputDir, "story", project.projectId));
     assert.equal(path.extname(own), ".m4a");
     assert.equal(fs.readFileSync(own, "utf8"), "the song");
     fs.rmSync(songFile);
     assert.equal(fs.existsSync(readProject(ctx.dataDir, project.projectId).source.audioPath), true);
+  });
+});
+
+describe("the song copy runs in the background", () => {
+  test("the project is made at once, pointing at where the copy will be, before any copying", () => {
+    let copies = 0;
+    _setCopyFileImpl(() => { copies += 1; return new Promise(() => {}); }); // a copy that never ends
+    const project = createStoryFromScenes(ctx, args());
+    assert.equal(copies, 0, "making the project does not copy");
+    assert.equal(project.source.audioPath, path.join(ctx.outputDir, "story", project.projectId, "song.m4a"));
+    assert.equal(project.source.copyFrom, songFile);
+  });
+
+  test("startStoryImages copies the song first, then makes the pictures", async () => {
+    const made = recordImages();
+    const order = [];
+    _setCopyFileImpl(async (from, to) => { order.push("copy"); await fs.promises.copyFile(from, to); });
+    _setImageGenImpl(async ({ partNumber }) => { order.push("picture"); return { ok: true, path: `/g-${partNumber}.png`, publicUrl: null }; });
+    const project = createStoryFromScenes(ctx, args());
+    await startStoryImages(ctx, project.projectId);
+    assert.deepEqual(order, ["copy", "picture", "picture"]);
+    assert.equal(fs.readFileSync(project.source.audioPath, "utf8"), "the song");
+    assert.equal(readProject(ctx.dataDir, project.projectId).status, "ready_to_render");
+    assert.equal(made.length, 0);
+  });
+
+  test("a failed copy puts the project in error with a plain message, and makes no pictures", async () => {
+    const made = recordImages();
+    _setCopyFileImpl(async () => { throw new Error("ENOSPC: no space left on device"); });
+    const project = createStoryFromScenes(ctx, args());
+    let before = 0;
+    await startStoryImages(ctx, project.projectId, { before: async () => { before += 1; } });
+    const failed = readProject(ctx.dataDir, project.projectId);
+    assert.equal(failed.status, "error");
+    assert.equal(failed.error, AUDIO_COPY_FAILED);
+    assert.doesNotMatch(failed.error, /ENOSPC|[/]/, "no system text or paths");
+    assert.equal(made.length, 0);
+    assert.equal(before, 0, "no prompt call for a project that cannot render");
+  });
+
+  test("Resume on a project whose copy never finished (a restart) copies, then makes the pictures", async () => {
+    const made = recordImages();
+    const project = createStoryFromScenes(ctx, args());
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => { req.ctx = { userId: "u", ...ctx }; next(); });
+    app.use("/api/story", storyRouter);
+    const resumed = await request(app).post(`/api/story/${project.projectId}/process`).send({ mediaPath: songFile });
+    assert.equal(resumed.status, 200);
+    const done = await (async () => { for (let i = 0; i < 200; i++) { const p = readProject(ctx.dataDir, project.projectId); if (p.status === "ready_to_render") return p; await new Promise((r) => setTimeout(r, 10)); } return readProject(ctx.dataDir, project.projectId); })();
+    assert.equal(done.status, "ready_to_render");
+    assert.equal(fs.existsSync(done.source.audioPath), true);
+    assert.equal(made.length, 2);
   });
 });
 

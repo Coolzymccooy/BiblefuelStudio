@@ -13,6 +13,7 @@ import { readProject as readStory, writeProject as writeStory, createProject as 
 import { _setLlmImpl, _resetLlmImpl } from "../lib/story/sceneSegmenter.js";
 import { planMusicScenes } from "../lib/musicVideo/scenePlan.js";
 import { anchorFor } from "../lib/story/styleAnchors.js";
+import { copyPendingAudio, AUDIO_COPY_FAILED } from "./story.js";
 
 const FF = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
 const hasFfmpeg = spawnSync(FF, ["-version"]).status === 0;
@@ -25,6 +26,9 @@ let savedKey;
 // What the Story seam was asked to do; startStoryImages is always stubbed here.
 const seen = { started: [], created: [] };
 let realCreate = true;
+// When true, the real startStoryImages runs (song copy, prompts, pictures) behind the stub.
+let realStart = false;
+let story;
 
 const userCtx = (name, isSuperAdmin = true) => {
   const dataDir = path.join(root, name);
@@ -39,14 +43,18 @@ before(async () => {
   const app = express();
   app.use(express.json({ limit: "1mb" }));
   app.use((req, _res, next) => { req.ctx = ctx; next(); });
-  const { createStoryFromScenes } = await import("./story.js");
+  story = await import("./story.js");
+  const { createStoryFromScenes } = story;
   app.use("/api/lyric-video", createLyricVideoRouter({
     story: {
       createStoryFromScenes: (c, opts) => {
         seen.created.push({ ctx: c, opts });
         return realCreate ? createStoryFromScenes(c, opts) : { projectId: `story-${seen.created.length}` };
       },
-      startStoryImages: (c, id, opts) => { seen.started.push({ ctx: c, id, before: opts?.before }); return Promise.resolve(); },
+      startStoryImages: (c, id, opts) => {
+        seen.started.push({ ctx: c, id, before: opts?.before });
+        return realStart ? story.startStoryImages(c, id, opts) : Promise.resolve();
+      },
     },
   }));
   await new Promise((r) => { server = app.listen(0, r); });
@@ -57,6 +65,7 @@ beforeEach(() => {
   seen.started = [];
   seen.created = [];
   realCreate = true;
+  realStart = false;
   ctx = userCtx("admin");
   savedKey = process.env.BYTEPLUS_ARK_API_KEY;
   delete process.env.BYTEPLUS_ARK_API_KEY;
@@ -65,6 +74,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   _resetLlmImpl();
+  story._resetCopyFileImpl();
   if (savedKey === undefined) delete process.env.BYTEPLUS_ARK_API_KEY; else process.env.BYTEPLUS_ARK_API_KEY = savedKey;
 });
 
@@ -141,6 +151,7 @@ describe("POST /:id/to-story", () => {
     assert.equal(story.status, "generating_images");
     assert.equal(story.source.durationMs, 24000);
     assert.equal(path.dirname(story.source.audioPath), path.join(ctx.outputDir, "story", id), "the Story project plays its own copy of the song");
+    await copyPendingAudio(ctx, id); // the background step's first job (startStoryImages is stubbed here)
     assert.equal(fs.readFileSync(story.source.audioPath, "utf8"), "x");
     assert.deepEqual(story.aiMotion, { quality: "high", autoStartedAt: null, note: null });
     // Seconds become milliseconds, word by word, in order.
@@ -245,6 +256,7 @@ describe("POST /:id/to-story", () => {
   test("deleting the song project leaves the Story project's soundtrack in place", async () => {
     const p = timedProject(ctx);
     const id = (await call("POST", `/${p.projectId}/to-story`, {})).json.storyProjectId;
+    await copyPendingAudio(ctx, id);
     assert.equal((await call("DELETE", `/${p.projectId}`)).status, 200);
     assert.equal(fs.existsSync(p.song.file), false, "the lyric project's own extracted song is gone");
     assert.equal(fs.existsSync(readStory(ctx.dataDir, id).source.audioPath), true);
@@ -253,6 +265,7 @@ describe("POST /:id/to-story", () => {
   test("replacing the song leaves the Story project's soundtrack in place", { skip: !hasFfmpeg && "ffmpeg not installed" }, async () => {
     const p = timedProject(ctx);
     const id = (await call("POST", `/${p.projectId}/to-story`, {})).json.storyProjectId;
+    await copyPendingAudio(ctx, id);
     const next = path.join(ctx.outputDir, "new-song.wav");
     spawnSync(FF, ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=f=440:d=2", next]);
     assert.equal((await call("POST", `/${p.projectId}/song`, { path: next })).status, 200);
@@ -433,5 +446,36 @@ describe("replacing the song resets its music video link", () => {
     assert.equal((await call("POST", `/${p.projectId}/to-story`, {})).status, 200);
     assert.equal((await call("PUT", `/${p.projectId}/background`, { path: null })).status, 200);
     assert.equal(fs.existsSync(copy), false, "the recorded copy is still deleted when replaced");
+  });
+});
+
+describe("the song copy does not hold up the answer", () => {
+  const waitFor = async (fn, ms = 3000) => { const end = Date.now() + ms; while (Date.now() < end) { const v = fn(); if (v) return v; await new Promise((r) => setTimeout(r, 10)); } return fn(); };
+
+  test("to-story answers while a slow copy of the song is still running", async () => {
+    realStart = true;
+    let copying = 0;
+    story._setCopyFileImpl(() => { copying += 1; return new Promise(() => {}); }); // never finishes
+    const p = timedProject(ctx);
+    const started = Date.now();
+    const r = await call("POST", `/${p.projectId}/to-story`, {});
+    assert.equal(r.status, 200);
+    assert.ok(Date.now() - started < 2000);
+    await waitFor(() => copying > 0);
+    assert.equal(copying, 1, "the copy runs in the background step");
+    const made = readStory(ctx.dataDir, r.json.storyProjectId);
+    assert.equal(made.status, "generating_images");
+    assert.equal(made.source.audioPath, path.join(ctx.outputDir, "story", made.projectId, "song.m4a"));
+  });
+
+  test("a failed copy lands the Story project in error with a plain message", async () => {
+    realStart = true;
+    story._setCopyFileImpl(async () => { throw new Error("EIO: i/o error"); });
+    const p = timedProject(ctx);
+    const r = await call("POST", `/${p.projectId}/to-story`, {});
+    assert.equal(r.status, 200);
+    const failed = await waitFor(() => { const s = readStory(ctx.dataDir, r.json.storyProjectId); return s.status === "error" ? s : null; });
+    assert.equal(failed?.status, "error");
+    assert.equal(failed.error, AUDIO_COPY_FAILED);
   });
 });

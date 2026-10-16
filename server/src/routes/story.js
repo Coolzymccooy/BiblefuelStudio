@@ -493,20 +493,14 @@ export function createStoryFromScenes(ctx, { title, style = "music-video", aspec
     aiMotion: isSeedanceConfigured() ? aiMotion : null,
   });
   // The project owns its soundtrack: a copy in its own folder (removed with it), so the lyric
-  // project deleting or replacing its song never leaves this one unable to render.
+  // project deleting or replacing its song never leaves this one unable to render. The copy is
+  // made in the background (copyPendingAudio, the first thing startStoryImages does): a song
+  // can be large, and this answers a request. Nothing reads the audio before then.
   const ownAudio = path.join(storyOutDir(ctx.outputDir, project.projectId), `song${path.extname(audioPath).toLowerCase() || ".m4a"}`);
-  try {
-    fs.mkdirSync(path.dirname(ownAudio), { recursive: true });
-    fs.copyFileSync(audioPath, ownAudio);
-  } catch (e) {
-    deleteProject(ctx.dataDir, project.projectId);
-    try { fs.rmSync(path.dirname(ownAudio), { recursive: true, force: true }); } catch { /* best effort */ }
-    throw new Error(`the song could not be copied for the music video: ${e?.message || e}`);
-  }
   const timed = normalizeWordTimings(words);
   return writeProject(ctx.dataDir, {
     ...project,
-    source: { audioPath: ownAudio, durationMs: length },
+    source: { audioPath: ownAudio, durationMs: length, copyFrom: audioPath },
     transcript: { words: timed, hash: `${length}:${timed.length}` },
     music: null,
     scenes: scenes.map((s, i) => ({
@@ -535,17 +529,72 @@ export function createStoryFromScenes(ctx, { title, style = "music-video", aspec
 export function startStoryImages(ctx, projectId, { before } = {}) {
   const run = { dataDir: ctx.dataDir, outputDir: ctx.outputDir };
   cancelledProjects.delete(projectId); // a fresh run supersedes any earlier cancel
-  // Marked at once, so a Resume that lands before the step ends cannot start a second run.
-  if (before) preparingProjects.add(projectId);
-  const prepared = before
-    ? Promise.resolve()
-      .then(before)
-      .catch((e) => console.warn(`[story] the step before ${projectId}'s pictures failed; making them anyway: ${e?.message || e}`))
-      .finally(() => preparingProjects.delete(projectId))
-    : Promise.resolve();
-  return prepared
-    .then(() => imagesStage(run, projectId))
-    .then(() => {}, (e) => recordRunError(run, projectId, e));
+  // Marked at once, so a Resume that lands before the steps end cannot start a second run.
+  preparingProjects.add(projectId);
+  return (async () => {
+    let copied = false;
+    try {
+      // The song first: a project that cannot get its soundtrack can never render, so it makes no
+      // pictures (and pays for no prompts).
+      copied = await copyPendingAudio(run, projectId);
+      if (copied && before) {
+        try {
+          await before();
+        } catch (e) {
+          console.warn(`[story] the step before ${projectId}'s pictures failed; making them anyway: ${e?.message || e}`);
+        }
+      }
+    } finally {
+      preparingProjects.delete(projectId);
+    }
+    if (!copied) return;
+    try {
+      await imagesStage(run, projectId);
+    } catch (e) {
+      recordRunError(run, projectId, e);
+    }
+  })();
+}
+
+/** What a project says when its song could not be copied into its own folder. */
+export const AUDIO_COPY_FAILED = "The song could not be copied for this music video. Make the music video again from the lyric video.";
+
+let _copyFileFn = (from, to) => fs.promises.copyFile(from, to);
+export function _setCopyFileImpl(impl) { _copyFileFn = impl; }
+export function _resetCopyFileImpl() { _copyFileFn = (from, to) => fs.promises.copyFile(from, to); }
+
+/**
+ * Makes the copy of the song a music video project is waiting for (source.copyFrom to
+ * source.audioPath), off the request, without blocking the server. True when there is nothing
+ * left to copy. A failure puts the project in error with a plain message and gives false.
+ * @param {{ dataDir: string, outputDir: string }} ctx
+ * @param {string} projectId
+ * @returns {Promise<boolean>}
+ */
+export async function copyPendingAudio(ctx, projectId) {
+  const project = readProject(ctx.dataDir, projectId);
+  const from = project?.source?.copyFrom;
+  if (!from) return true;
+  const to = project.source.audioPath;
+  try {
+    await fs.promises.mkdir(path.dirname(to), { recursive: true });
+    await _copyFileFn(from, to);
+  } catch (e) {
+    console.warn(`[story] could not copy the song for ${projectId}: ${e?.message || e}`);
+    try { await fs.promises.rm(to, { force: true }); } catch { /* a partial copy is harmless */ }
+    const fresh = readProject(ctx.dataDir, projectId);
+    if (fresh) writeProject(ctx.dataDir, { ...fresh, status: STORY_STATUS.ERROR, error: AUDIO_COPY_FAILED });
+    return false;
+  }
+  const fresh = readProject(ctx.dataDir, projectId);
+  if (!fresh) {
+    // Deleted while the song was copied: take the copy (and the folder it made) away again.
+    try { await fs.promises.rm(path.dirname(to), { recursive: true, force: true }); } catch { /* best effort */ }
+    return false;
+  }
+  const { copyFrom: _done, ...source } = fresh.source || {};
+  writeProject(ctx.dataDir, { ...fresh, source });
+  return true;
 }
 
 /**
@@ -1030,6 +1079,12 @@ router.post("/:id/process", (req, res) => {
     cancelledProjects.delete(req.params.id);
     writeProject(req.ctx.dataDir, { ...existing, status: STORY_STATUS.GENERATING_IMAGES, error: null });
     return res.json({ ok: true, preparing: true });
+  }
+  // A music video whose song copy never finished (the server restarted): copy it, then the pictures.
+  if (existing.source?.copyFrom) {
+    writeProject(req.ctx.dataDir, { ...existing, status: STORY_STATUS.GENERATING_IMAGES, error: null });
+    startStoryImages({ dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir }, req.params.id);
+    return res.json({ ok: true });
   }
   // Same rule as an import's auto-start, so Resume works on an imported
   // script whose narration is in the shared outputs folder.
