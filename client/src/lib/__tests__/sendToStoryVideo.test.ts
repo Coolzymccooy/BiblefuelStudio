@@ -27,7 +27,7 @@ afterEach(() => {
 });
 
 const importBody = () => {
-    const call = post.mock.calls.find((c) => c[0] === '/api/story/import-script');
+    const call = post.mock.calls.find((c: unknown[]) => c[0] === '/api/story/import-script');
     expect(call).toBeTruthy();
     return call![1] as Record<string, unknown>;
 };
