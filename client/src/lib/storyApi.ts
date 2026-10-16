@@ -1,6 +1,6 @@
 import { api, TRANSCRIBE_TIMEOUT_MS } from './api';
 import { uploadMedia } from './mediaUpload';
-import type { AnimateEstimate, AnimateQuality, StoryAspect, StoryCaptionSettings, StoryProject, StoryProjectSummary, StoryScene } from './storyTypes';
+import type { AnimateEstimate, AnimateQuality, AnimateRates, StoryAspect, StoryCaptionSettings, StoryProject, StoryProjectSummary, StoryScene } from './storyTypes';
 import type { LibraryImage, MovementImageSource } from './ambientApi';
 
 // Generating ~30 images can run for minutes; reuse a generous ceiling.
@@ -127,6 +127,13 @@ export const storyApi = {
   },
 
   // AI motion (super admins only): price it, start it, stop ordering more.
+  async animateRates(): Promise<AnimateRates> {
+    const res = await api.get('/api/story/animate/rates');
+    if (!res.ok || !res.data?.ok) throw new Error(res.data?.error || res.error || 'Could not load the AI motion prices');
+    const { configured, usdPerSecond, monthSpentUsd, reservedUsd, capUsd } = res.data;
+    return { configured, usdPerSecond, monthSpentUsd, reservedUsd, capUsd } as AnimateRates;
+  },
+
   async estimateAnimation(id: string, quality: AnimateQuality, sceneIds?: string[]): Promise<AnimateEstimate> {
     const res = await api.post(`/api/story/${id}/animate/estimate`, { quality, ...(sceneIds ? { sceneIds } : {}) });
     if (!res.ok || !res.data?.ok) throw new Error(res.data?.error || res.error || 'Could not price the animation');
