@@ -14,6 +14,9 @@ import { _setLlmImpl, _resetLlmImpl } from "../lib/story/sceneSegmenter.js";
 import { planMusicScenes } from "../lib/musicVideo/scenePlan.js";
 import { anchorFor } from "../lib/story/styleAnchors.js";
 
+const FF = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
+const hasFfmpeg = spawnSync(FF, ["-version"]).status === 0;
+
 let root;
 let server;
 let base;
@@ -85,7 +88,8 @@ function timedProject(c, { timed = true } = {}) {
     return { ...l, start: s, end: s + 4, words: [{ text: w1, start: s, end: s + 1 }, { text: rest.join(" "), start: s + 1, end: s + 4 }] };
   });
   const sections = p.sections.map((s, i) => (timed ? { ...s, start: i === 0 ? 0 : 12 } : s));
-  const songFile = path.join(c.outputDir, "song.m4a");
+  // Named as a song taken out of a video, which this feature deletes with the song.
+  const songFile = path.join(c.outputDir, "lyric-song-0a1b2c.m4a");
   fs.writeFileSync(songFile, "x");
   return writeProject(c.dataDir, {
     ...p, lines, sections,
@@ -135,7 +139,9 @@ describe("POST /:id/to-story", () => {
     assert.equal(story.captions, "none");
     assert.equal(story.music, null);
     assert.equal(story.status, "generating_images");
-    assert.deepEqual(story.source, { audioPath: p.song.file, durationMs: 24000 });
+    assert.equal(story.source.durationMs, 24000);
+    assert.equal(path.dirname(story.source.audioPath), path.join(ctx.outputDir, "story", id), "the Story project plays its own copy of the song");
+    assert.equal(fs.readFileSync(story.source.audioPath, "utf8"), "x");
     assert.deepEqual(story.aiMotion, { quality: "high", autoStartedAt: null, note: null });
     // Seconds become milliseconds, word by word, in order.
     assert.deepEqual(story.transcript.words.slice(0, 2), [{ text: "we", startMs: 1000, endMs: 2000 }, { text: "walk by faith", startMs: 2000, endMs: 5000 }]);
@@ -236,6 +242,24 @@ describe("POST /:id/to-story", () => {
     assert.equal(seen.created.length, 0);
   });
 
+  test("deleting the song project leaves the Story project's soundtrack in place", async () => {
+    const p = timedProject(ctx);
+    const id = (await call("POST", `/${p.projectId}/to-story`, {})).json.storyProjectId;
+    assert.equal((await call("DELETE", `/${p.projectId}`)).status, 200);
+    assert.equal(fs.existsSync(p.song.file), false, "the lyric project's own extracted song is gone");
+    assert.equal(fs.existsSync(readStory(ctx.dataDir, id).source.audioPath), true);
+  });
+
+  test("replacing the song leaves the Story project's soundtrack in place", { skip: !hasFfmpeg && "ffmpeg not installed" }, async () => {
+    const p = timedProject(ctx);
+    const id = (await call("POST", `/${p.projectId}/to-story`, {})).json.storyProjectId;
+    const next = path.join(ctx.outputDir, "new-song.wav");
+    spawnSync(FF, ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=f=440:d=2", next]);
+    assert.equal((await call("POST", `/${p.projectId}/song`, { path: next })).status, 200);
+    assert.equal(fs.existsSync(p.song.file), false, "the old extracted song was removed");
+    assert.equal(fs.existsSync(readStory(ctx.dataDir, id).source.audioPath), true);
+  });
+
   test("a second call makes a second Story project, and the link points at the newest", async () => {
     const p = timedProject(ctx);
     const first = (await call("POST", `/${p.projectId}/to-story`, {})).json.storyProjectId;
@@ -247,8 +271,6 @@ describe("POST /:id/to-story", () => {
   });
 });
 
-const FF = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
-const hasFfmpeg = spawnSync(FF, ["-version"]).status === 0;
 
 /** A Story project linked to the lyric project, rendered (a real tiny mp4) or not. */
 function linkedStory(c, p, { rendered }) {

@@ -457,6 +457,8 @@ export async function runStoryPipeline(ctx, projectId, mediaPath) {
   await imagesStage(ctx, projectId);
 }
 
+const isFileSync = (file) => { try { return fs.statSync(file).isFile(); } catch { return false; } };
+
 /** Records a detached run's failure on the project, as every detached image run here does. */
 function recordRunError(ctx, projectId, e) {
   try {
@@ -483,17 +485,28 @@ function recordRunError(ctx, projectId, e) {
  */
 export function createStoryFromScenes(ctx, { title, style = "music-video", aspect, audioPath, durationMs, words = [], scenes, aiMotion = null }) {
   if (!Array.isArray(scenes) || !scenes.length) throw new Error("a music video needs scenes");
-  if (typeof audioPath !== "string" || !audioPath.trim()) throw new Error("a music video needs the song's audio");
+  if (typeof audioPath !== "string" || !audioPath.trim() || !isFileSync(audioPath)) throw new Error("a music video needs the song's audio");
   const length = Math.round(Number(durationMs));
   if (!Number.isFinite(length) || length <= 0) throw new Error("the song's duration must be a positive number");
   const project = createProject(ctx.dataDir, {
     title, style, aspect, captions: "none",
     aiMotion: isSeedanceConfigured() ? aiMotion : null,
   });
+  // The project owns its soundtrack: a copy in its own folder (removed with it), so the lyric
+  // project deleting or replacing its song never leaves this one unable to render.
+  const ownAudio = path.join(storyOutDir(ctx.outputDir, project.projectId), `song${path.extname(audioPath).toLowerCase() || ".m4a"}`);
+  try {
+    fs.mkdirSync(path.dirname(ownAudio), { recursive: true });
+    fs.copyFileSync(audioPath, ownAudio);
+  } catch (e) {
+    deleteProject(ctx.dataDir, project.projectId);
+    try { fs.rmSync(path.dirname(ownAudio), { recursive: true, force: true }); } catch { /* best effort */ }
+    throw new Error(`the song could not be copied for the music video: ${e?.message || e}`);
+  }
   const timed = normalizeWordTimings(words);
   return writeProject(ctx.dataDir, {
     ...project,
-    source: { audioPath, durationMs: length },
+    source: { audioPath: ownAudio, durationMs: length },
     transcript: { words: timed, hash: `${length}:${timed.length}` },
     music: null,
     scenes: scenes.map((s, i) => ({

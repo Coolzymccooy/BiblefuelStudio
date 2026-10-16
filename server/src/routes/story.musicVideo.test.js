@@ -16,6 +16,7 @@ import { readProject, writeProject } from "../lib/story/projectStore.js";
 import { anchorFor } from "../lib/story/styleAnchors.js";
 
 let ctx;
+let songFile;
 let savedKey;
 const SCENES = [
   { startMs: 0, endMs: 6000, kind: "instrumental", label: "Intro", text: "", imagePrompt: "an empty road at dawn" },
@@ -24,12 +25,14 @@ const SCENES = [
 const WORDS = [{ text: "Grace", startMs: 6200, endMs: 6800 }, { text: "beyond", startMs: 6800, endMs: 7400 }];
 const args = (over = {}) => ({
   title: "Grace Beyond the Race · music video", style: "music-video", aspect: "landscape",
-  audioPath: "/out/song.m4a", durationMs: 16500, words: WORDS, scenes: SCENES, aiMotion: false, ...over,
+  audioPath: songFile, durationMs: 16500, words: WORDS, scenes: SCENES, aiMotion: false, ...over,
 });
 
 beforeEach(() => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "story-mv-"));
   ctx = { dataDir: dir, outputDir: dir };
+  songFile = path.join(dir, "lyric-song-1.m4a");
+  fs.writeFileSync(songFile, "the song");
   savedKey = process.env.BYTEPLUS_ARK_API_KEY;
   delete process.env.BYTEPLUS_ARK_API_KEY;
 });
@@ -51,7 +54,7 @@ describe("createStoryFromScenes", () => {
     assert.equal(saved.captions, "none");
     assert.equal(saved.music, null);
     assert.equal(saved.status, "generating_images");
-    assert.deepEqual(saved.source, { audioPath: "/out/song.m4a", durationMs: 16500 });
+    assert.equal(saved.source.durationMs, 16500);
     assert.deepEqual(saved.transcript.words, WORDS);
     assert.equal(saved.aiMotion, null);
     assert.equal(saved.scenes.length, 2);
@@ -74,6 +77,17 @@ describe("createStoryFromScenes", () => {
     assert.throws(() => createStoryFromScenes(ctx, args({ scenes: [] })), /scenes/);
     assert.throws(() => createStoryFromScenes(ctx, args({ audioPath: "" })), /audio/);
     assert.throws(() => createStoryFromScenes(ctx, args({ durationMs: 0 })), /duration/);
+    assert.throws(() => createStoryFromScenes(ctx, args({ audioPath: path.join(ctx.outputDir, "missing.m4a") })), /audio/);
+  });
+
+  test("the project owns a copy of the song in its own folder, so the lyric project can lose its song", () => {
+    const project = createStoryFromScenes(ctx, args());
+    const own = project.source.audioPath;
+    assert.equal(path.dirname(own), path.join(ctx.outputDir, "story", project.projectId));
+    assert.equal(path.extname(own), ".m4a");
+    assert.equal(fs.readFileSync(own, "utf8"), "the song");
+    fs.rmSync(songFile);
+    assert.equal(fs.existsSync(readProject(ctx.dataDir, project.projectId).source.audioPath), true);
   });
 });
 
