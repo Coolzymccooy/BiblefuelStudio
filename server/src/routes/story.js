@@ -22,7 +22,7 @@ import { resolveLibraryTrack } from "../lib/musicLibrary.js";
 import { resolveTenantTrack } from "../lib/musicLibraryStore.js";
 import { cleanCaptionLine, cleanSpeakableText } from "../lib/speakableScript.js";
 import { buildImportedTranscript, normalizeWordTimings } from "../lib/story/scriptImport.js";
-import { CHARACTER_ANCHORS, composeScenePrompt } from "../lib/story/styleAnchors.js";
+import { CHARACTER_ANCHORS, composeScenePrompt, sceneMatchText } from "../lib/story/styleAnchors.js";
 import { confineToDir } from "../lib/confinePath.js";
 import { OUTPUT_DIR } from "../lib/paths.js";
 import { isNarrationActive } from "../lib/longform/narrationRegistry.js";
@@ -365,7 +365,7 @@ async function runImagesStage(ctx, projectId, opts = {}) {
       // 1. Ask the library first — a hit costs no image quota.
       let reused = null;
       try {
-        const candidates = await _imageLib.find({ dataDir: ctx.dataDir, prompt: scenes[i].imagePrompt, style, aspect, excludeIds: [...claimedIds] });
+        const candidates = await _imageLib.find({ dataDir: ctx.dataDir, prompt: sceneMatchText(scenes[i].imagePrompt), style, aspect, excludeIds: [...claimedIds] });
         for (const c of candidates || []) {
           if (!c?.entry?.id || claimedIds.has(c.entry.id)) continue; // a sibling took it while we awaited
           claimedIds.add(c.entry.id); // claim synchronously
@@ -411,7 +411,7 @@ async function runImagesStage(ctx, projectId, opts = {}) {
       if (result?.ok) {
         let entry = null;
         try {
-          entry = await _imageLib.register({ dataDir: ctx.dataDir, outputDir: ctx.outputDir, sourcePath: result.path, prompt: scenes[i].imagePrompt, style, aspect, provider: result.provider, projectId: project.projectId });
+          entry = await _imageLib.register({ dataDir: ctx.dataDir, outputDir: ctx.outputDir, sourcePath: result.path, prompt: sceneMatchText(scenes[i].imagePrompt), style, aspect, provider: result.provider, watermarkFree: result.watermarkFree, projectId: project.projectId });
           if (entry?.id) claimedIds.add(entry.id);
         } catch (err) {
           // The picture exists; the index is only an optimisation.
@@ -1176,7 +1176,7 @@ router.post("/:id/scenes/:sid/regenerate", async (req, res) => {
         // the next project can use it.
         let entry = null;
         try {
-          entry = await _imageLib.register({ dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir, sourcePath: result.path, prompt: project.scenes[idx].imagePrompt, style: String(project.style || ""), aspect: imageAspectFor(project), provider: result.provider, projectId: project.projectId });
+          entry = await _imageLib.register({ dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir, sourcePath: result.path, prompt: sceneMatchText(project.scenes[idx].imagePrompt), style: String(project.style || ""), aspect: imageAspectFor(project), provider: result.provider, watermarkFree: result.watermarkFree, projectId: project.projectId });
         } catch (err) {
           console.warn(`[story] regenerate harvest failed: ${err?.message || err}`);
         }

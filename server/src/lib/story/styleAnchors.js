@@ -112,6 +112,25 @@ export function detectCharacters(text) {
  * @param {{style?: string, characters?: string[]}} [opts]
  * @returns {string}
  */
+/**
+ * What a scene prompt says about THIS scene: the prompt with the style and
+ * character anchors taken out. The picture library matches on meaning, and
+ * the long text every scene shares made unrelated scenes score as near
+ * matches, so it compares only this.
+ *
+ * @param {string} prompt a prompt from composeScenePrompt (or any prompt)
+ * @returns {string}
+ */
+export function sceneMatchText(prompt) {
+  const whole = String(prompt || "").trim();
+  const anchors = [...Object.values(STYLE_ANCHORS), ...Object.values(CHARACTER_ANCHORS)]
+    .sort((a, b) => b.length - a.length);
+  let text = whole;
+  for (const anchor of anchors) text = text.split(anchor).join("");
+  text = text.replace(/(\s*,\s*)+/g, ", ").replace(/^[\s,]+|[\s,]+$/g, "");
+  return text || whole;
+}
+
 export function composeScenePrompt(subject, { style, characters = [] } = {}) {
   const parts = [String(subject || "").trim()].filter(Boolean);
   for (const key of characters) {

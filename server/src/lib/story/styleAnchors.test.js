@@ -1,6 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { STYLE_ANCHORS, anchorFor, listStyles, CHARACTER_ANCHORS, characterAnchorFor, detectCharacters, composeScenePrompt } from "./styleAnchors.js";
+import { STYLE_ANCHORS, anchorFor, listStyles, CHARACTER_ANCHORS, characterAnchorFor, detectCharacters, composeScenePrompt, sceneMatchText } from "./styleAnchors.js";
 
 describe("styleAnchors", () => {
   test("has the 4 v1 styles and the music video style", () => {
@@ -95,5 +95,25 @@ describe('composeScenePrompt', () => {
     const p = composeScenePrompt('a scene', { characters: ['jesus', 'jesus'] });
     const first = p.indexOf('olive-brown Middle Eastern skin');
     assert.equal(p.indexOf('olive-brown Middle Eastern skin', first + 1), -1);
+  });
+});
+
+describe('sceneMatchText', () => {
+  // The library matches pictures by meaning. The style and cast text every
+  // scene shares made unrelated scenes look alike (an apostle at a desk and a
+  // modern man in a gold chain went from 0.16 to 0.53 cosine with the anchor).
+  test('keeps only the scene\'s own description', () => {
+    const p = composeScenePrompt('an apostle writing by lamplight', { style: 'cinematic-bible', characters: ['paul'] });
+    assert.equal(sceneMatchText(p), 'an apostle writing by lamplight');
+  });
+  test('works for every style, and leaves a prompt without anchors alone', () => {
+    for (const style of listStyles()) {
+      assert.equal(sceneMatchText(composeScenePrompt('still waters', { style })), 'still waters');
+    }
+    assert.equal(sceneMatchText('a lamp on a table'), 'a lamp on a table');
+  });
+  test('a prompt that is only anchors falls back to the whole prompt rather than nothing', () => {
+    const p = anchorFor('cinematic-bible');
+    assert.equal(sceneMatchText(p), p);
   });
 });
