@@ -79,6 +79,13 @@ describe("writeMusicPrompts", () => {
     assert.equal(calls, 1);
   });
 
+  test("an LLM that never answers is given up on, and the plain prompts are used", async () => {
+    const started = Date.now();
+    const prompts = await writeMusicPrompts({ title: "T", scenes: SCENES, llm: () => new Promise(() => {}), timeoutMs: 30 });
+    assert.deepEqual(prompts, SCENES.map((s) => fallbackPrompt(s, "")));
+    assert.ok(Date.now() - started < 1000);
+  });
+
   test("no scenes, no call", async () => {
     let calls = 0;
     assert.deepEqual(await writeMusicPrompts({ title: "T", scenes: [], llm: async () => { calls += 1; return "[]"; } }), []);

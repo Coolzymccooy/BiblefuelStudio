@@ -16,8 +16,6 @@ const QUOTA_ERROR = "You've used today's free renders — upgrade to Premium or 
 
 /** The song and background calls wait on server-side file probes that can run past the 15 s default. */
 const SLOW_CALL = { timeout: 60_000 } as const;
-/** Making an AI music video waits on one LLM call for the scene prompts. */
-const PROMPT_CALL = { timeout: 100_000 } as const;
 
 /** Raw axios messages (not sentences) that the api client passes through when the server said nothing. */
 const RAW_NETWORK = /^(network error|timeout of \d+ms exceeded)$/i;
@@ -142,7 +140,7 @@ export const lyricVideoApi = {
   },
   /** AI music video (super admins only): makes a Story project from the song's sections and returns its id. */
   async toStory(id: string, choice: MusicVideoChoice): Promise<string> {
-    return unwrap(await api.post<{ storyProjectId: string }>(`${BASE}/${id}/to-story`, choice, undefined, PROMPT_CALL)).storyProjectId;
+    return unwrap(await api.post<{ storyProjectId: string }>(`${BASE}/${id}/to-story`, choice)).storyProjectId;
   },
   /** Puts the finished AI music video on as this song's background. */
   useStoryVideo: (id: string) => project(api.post(`${BASE}/${id}/use-story-video`, {}, undefined, SLOW_CALL)),

@@ -4,13 +4,15 @@ import assert from "node:assert/strict";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import {
-  createStoryFromScenes, startStoryImages,
+import express from "express";
+import request from "supertest";
+import storyRouter, {
+  createStoryFromScenes, startStoryImages, patchScenePrompts,
   _setImageGenImpl, _resetImageGenImpl,
   _setImageLibraryImpl, _resetImageLibraryImpl,
   _setAutoAnimateImpl, _resetAutoAnimateImpl,
 } from "./story.js";
-import { readProject } from "../lib/story/projectStore.js";
+import { readProject, writeProject } from "../lib/story/projectStore.js";
 import { anchorFor } from "../lib/story/styleAnchors.js";
 
 let ctx;
@@ -98,5 +100,98 @@ describe("startStoryImages", () => {
 
   test("a run that cannot start never rejects", async () => {
     await startStoryImages(ctx, "no-such-project");
+  });
+});
+
+/** Image gen and library stubs that record the prompts each picture was made from. */
+function recordImages() {
+  const prompts = [];
+  _setImageGenImpl(async ({ partNumber, rawPrompt }) => {
+    prompts.push(rawPrompt);
+    return { ok: true, path: `/gen-${partNumber}.png`, publicUrl: `/o/gen-${partNumber}.png`, provider: "cloudflare" };
+  });
+  _setImageLibraryImpl({ find: async () => [], mark: () => {}, register: async () => null });
+  _setAutoAnimateImpl(async () => {});
+  return prompts;
+}
+
+const deferred = () => {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+};
+
+describe("startStoryImages with a step before the pictures", () => {
+  test("the pictures wait for the step, so they are made from the prompts it wrote", async () => {
+    const made = recordImages();
+    const project = createStoryFromScenes(ctx, args());
+    const gate = deferred();
+    const run = startStoryImages(ctx, project.projectId, {
+      before: async () => {
+        await gate.promise;
+        patchScenePrompts(ctx, project.projectId, { "scene-001": "dawn, the singer alone", "scene-002": "the singer runs" });
+      },
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    assert.equal(made.length, 0, "no picture before the step is done");
+    gate.resolve();
+    await run;
+    assert.deepEqual(made.sort(), [`dawn, the singer alone, ${anchorFor("music-video")}`, `the singer runs, ${anchorFor("music-video")}`].sort());
+    assert.equal(readProject(ctx.dataDir, project.projectId).status, "ready_to_render");
+  });
+
+  test("a step that fails still makes the pictures, from the prompts already there", async () => {
+    const made = recordImages();
+    const project = createStoryFromScenes(ctx, args());
+    await startStoryImages(ctx, project.projectId, { before: async () => { throw new Error("LLM down"); } });
+    assert.equal(made.length, 2);
+    assert.ok(made.includes(`an empty road at dawn, ${anchorFor("music-video")}`));
+    assert.equal(readProject(ctx.dataDir, project.projectId).status, "ready_to_render");
+  });
+
+  test("while the step runs, Resume is a no-op and a new image run or re-segment is refused", async () => {
+    const made = recordImages();
+    const project = createStoryFromScenes(ctx, args());
+    const song = path.join(ctx.outputDir, "song.m4a");
+    fs.writeFileSync(song, "x");
+    writeProject(ctx.dataDir, { ...readProject(ctx.dataDir, project.projectId), source: { audioPath: song, durationMs: 16500 } });
+    const gate = deferred();
+    const run = startStoryImages(ctx, project.projectId, { before: () => gate.promise });
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => { req.ctx = { userId: "u", ...ctx }; next(); });
+    app.use("/api/story", storyRouter);
+    const resumed = await request(app).post(`/api/story/${project.projectId}/process`).send({ mediaPath: song });
+    assert.equal(resumed.status, 200);
+    assert.equal(resumed.body.ok, true);
+    assert.equal((await request(app).post(`/api/story/${project.projectId}/images`).send({})).status, 409);
+    assert.equal((await request(app).post(`/api/story/${project.projectId}/resegment`).send({})).status, 409);
+    await new Promise((r) => setTimeout(r, 30));
+    assert.equal(made.length, 0, "Resume did not start a second run");
+    gate.resolve();
+    await run;
+    assert.equal(made.length, 2, "the one run made each picture once");
+  });
+});
+
+describe("patchScenePrompts", () => {
+  test("puts each new prompt on its scene with the style anchor, and keeps a prompt the user edited", () => {
+    const project = createStoryFromScenes(ctx, args());
+    writeProject(ctx.dataDir, {
+      ...project,
+      scenes: project.scenes.map((s) => (s.id === "scene-002" ? { ...s, imagePrompt: "my own words", promptEditedByUser: true } : s)),
+    });
+    const next = patchScenePrompts(ctx, project.projectId, { "scene-001": "a new dawn", "scene-002": "not this", "scene-999": "nobody" });
+    assert.equal(next.scenes[0].imagePrompt, `a new dawn, ${anchorFor("music-video")}`);
+    assert.equal(next.scenes[1].imagePrompt, "my own words");
+    assert.deepEqual(readProject(ctx.dataDir, project.projectId).scenes, next.scenes);
+  });
+
+  test("an empty prompt leaves the scene as it is, and a deleted project gives null", () => {
+    const project = createStoryFromScenes(ctx, args());
+    const next = patchScenePrompts(ctx, project.projectId, { "scene-001": "  " });
+    assert.equal(next.scenes[0].imagePrompt, project.scenes[0].imagePrompt);
+    assert.equal(patchScenePrompts(ctx, "gone", { "scene-001": "x" }), null);
   });
 });

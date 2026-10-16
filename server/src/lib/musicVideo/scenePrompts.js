@@ -7,6 +7,8 @@
 import { completeLlm } from "../story/sceneSegmenter.js";
 
 const PROMPT_MAX = 600;
+/** How long the pictures wait for the LLM's prompts before the plain ones are used. */
+const PROMPT_TIMEOUT_MS = 60_000;
 const SHOT = "cinematic music video shot";
 
 const clean = (value, max) => String(value ?? "").replace(/\s+/g, " ").trim().slice(0, max);
@@ -73,16 +75,24 @@ function parsePrompts(raw) {
  * @param {(prompt:string) => Promise<string>} [args.llm] defaults to the segmenter's helper
  * @returns {Promise<string[]>} one prompt per scene, in order (no style anchor: Story adds it)
  */
-export async function writeMusicPrompts({ title, artist = "", scenes, character = "", llm = completeLlm }) {
+export async function writeMusicPrompts({ title, artist = "", scenes, character = "", llm = completeLlm, timeoutMs = PROMPT_TIMEOUT_MS }) {
   const list = Array.isArray(scenes) ? scenes : [];
   if (!list.length) return [];
   const who = clean(character, 300);
   const fallback = list.map((s) => fallbackPrompt(s, who));
   let prompts = null;
+  let timer;
   try {
-    prompts = parsePrompts(await llm(buildRequest({ title, artist, scenes: list, character: who })));
+    // The LLM helpers set no timeout of their own; the pictures wait on this, so it must end.
+    const giveUp = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`no answer after ${timeoutMs} ms`)), timeoutMs);
+      timer.unref?.();
+    });
+    prompts = parsePrompts(await Promise.race([llm(buildRequest({ title, artist, scenes: list, character: who })), giveUp]));
   } catch (err) {
     console.warn(`[music-video] the scene prompts could not be written, using plain ones: ${err?.message || err}`);
+  } finally {
+    clearTimeout(timer);
   }
   if (!prompts || prompts.length !== list.length) return fallback;
   return prompts.map((p, i) => p || fallback[i]);

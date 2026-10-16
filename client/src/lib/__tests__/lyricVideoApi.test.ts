@@ -268,8 +268,8 @@ describe('lyricVideoApi', () => {
     vi.mocked(api.post).mockResolvedValue(reply({ ok: true, storyProjectId: 'sp-1' }));
     const choice = { aspect: 'landscape' as const, character: 'a man in an olive shirt', aiMotion: true };
     await expect(lyricVideoApi.toStory('lv_1', choice)).resolves.toBe('sp-1');
-    // The scene prompts come from an LLM call, so this waits longer than the default.
-    expect(api.post).toHaveBeenCalledWith('/api/lyric-video/lv_1/to-story', choice, undefined, { timeout: 100_000 });
+    // The server answers at once and writes the scene prompts afterwards, so the default wait is enough.
+    expect(api.post).toHaveBeenCalledWith('/api/lyric-video/lv_1/to-story', choice);
   });
 
   it('uses the Story video as the background', async () => {

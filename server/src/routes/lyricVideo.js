@@ -31,9 +31,9 @@ import { renderSize, runLyricRender, audioShaped } from "../lib/lyricVideo/lyric
 import { buildPublishDraft } from "../lib/lyricVideo/publishDraft.js";
 import { cleanText } from "../lib/lyricVideo/projectStore.js";
 import { planMusicScenes } from "../lib/musicVideo/scenePlan.js";
-import { writeMusicPrompts } from "../lib/musicVideo/scenePrompts.js";
+import { writeMusicPrompts, fallbackPrompt } from "../lib/musicVideo/scenePrompts.js";
 import { readProject as readStoryProject } from "../lib/story/projectStore.js";
-import { createStoryFromScenes, startStoryImages } from "./story.js";
+import { createStoryFromScenes, startStoryImages, patchScenePrompts } from "./story.js";
 import { quota } from "../middleware/quota.js";
 import { requireSuperAdmin } from "../middleware/requireSuperAdmin.js";
 
@@ -323,11 +323,11 @@ function persistedJob(req) {
  * one) replaces the audio and speech steps of the timing job, `runRender`
  * replaces the ffmpeg render, `songProbed` runs after a new song was read and
  * before it is saved, `story` replaces any of the Story seams the music video
- * routes call (createStoryFromScenes, startStoryImages, readProject).
+ * routes call (createStoryFromScenes, startStoryImages, patchScenePrompts, readProject).
  */
 export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, statfs, songProbed, story } = {}) {
   const router = Router();
-  const storySeam = { createStoryFromScenes, startStoryImages, readProject: readStoryProject, ...story };
+  const storySeam = { createStoryFromScenes, startStoryImages, patchScenePrompts, readProject: readStoryProject, ...story };
   const rendering = new Map(); // project id -> { userId, bytes } for each render in flight in this process
   const timingByUser = new Map(); // user id -> project id of the timing run in flight
 
@@ -577,12 +577,9 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
     assertMusicVideoReady(project);
     const durationSec = Number(project.song.durationSec);
     const plan = planMusicScenes({ sections: project.sections, lines: project.lines, durationSec });
-    const prompts = await writeMusicPrompts({ title: project.title, artist: project.artist, scenes: plan, character: choice.character });
-    // The prompt call yields: the song may have been deleted, changed or put to work meanwhile.
-    const latest = load(req);
-    assertMusicVideoReady(latest);
-    if (latest.song.file !== project.song.file) throw new Refusal(409, "The song changed while the scenes were being planned. Try again.");
     const ctx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir };
+    // Made at once with the plain prompts, so the answer never waits on the LLM (Cloudflare
+    // cuts a request off at 100 s). The LLM's prompts replace them in the step before the pictures.
     const made = storySeam.createStoryFromScenes(ctx, {
       title: `${project.title} · music video`,
       style: MUSIC_VIDEO_STYLE,
@@ -591,15 +588,22 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
       audioPath: project.song.file,
       durationMs: Math.round(durationSec * 1000),
       words: timedWords(project.lines),
-      scenes: plan.map((scene, i) => ({ ...scene, imagePrompt: prompts[i] })),
+      scenes: plan.map((scene) => ({ ...scene, imagePrompt: fallbackPrompt(scene, choice.character) })),
       aiMotion: choice.aiMotion ? { quality: choice.quality } : null,
     });
     const next = updateProject(req.ctx.dataDir, project.projectId, (current) => ({
       ...current, musicVideo: { storyProjectId: made.projectId, createdAt: new Date().toISOString() },
     }));
     if (!next) throw new Refusal(404, NOT_FOUND);
-    // Detached: the pictures take minutes, and the Story page shows their progress.
-    storySeam.startStoryImages(ctx, made.projectId);
+    // Detached: the prompts, then the pictures (minutes), which the Story page shows as they come.
+    const sceneIds = (made.scenes || []).map((s) => s.id);
+    storySeam.startStoryImages(ctx, made.projectId, {
+      before: async () => {
+        // Never throws: a failed call gives the plain prompts the scenes already have.
+        const prompts = await writeMusicPrompts({ title: project.title, artist: project.artist, scenes: plan, character: choice.character });
+        storySeam.patchScenePrompts(ctx, made.projectId, Object.fromEntries(sceneIds.map((id, i) => [id, prompts[i]])));
+      },
+    });
     ok(res, { ok: true, storyProjectId: made.projectId });
   }));
 

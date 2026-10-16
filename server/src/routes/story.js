@@ -256,6 +256,16 @@ function withTimeout(promise, ms, message) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
+// Projects whose pictures wait on a step before them (an AI music video's
+// prompts being written). Their status already reads generating_images, so
+// the page shows its working state; a Resume meanwhile is a no-op, and a new
+// image run or re-segment is refused, so the pictures are made once.
+const preparingProjects = new Set();
+const PREPARING_REFUSAL = Object.freeze({
+  ok: false, code: "PREPARING",
+  error: "The scene prompts are still being written. The pictures start by themselves in a moment.",
+});
+
 // Image runs in progress, by project. A run works from its own copy of the
 // scenes and writes the whole list back as it goes, so a picture put on a
 // scene meanwhile would be overwritten; PUT /scenes/:sid/image waits for it.
@@ -509,12 +519,39 @@ export function createStoryFromScenes(ctx, { title, style = "music-video", aspec
  * @param {string} projectId
  * @returns {Promise<void>}
  */
-export function startStoryImages(ctx, projectId) {
+export function startStoryImages(ctx, projectId, { before } = {}) {
   const run = { dataDir: ctx.dataDir, outputDir: ctx.outputDir };
   cancelledProjects.delete(projectId); // a fresh run supersedes any earlier cancel
-  return Promise.resolve()
+  // Marked at once, so a Resume that lands before the step ends cannot start a second run.
+  if (before) preparingProjects.add(projectId);
+  const prepared = before
+    ? Promise.resolve()
+      .then(before)
+      .catch((e) => console.warn(`[story] the step before ${projectId}'s pictures failed; making them anyway: ${e?.message || e}`))
+      .finally(() => preparingProjects.delete(projectId))
+    : Promise.resolve();
+  return prepared
     .then(() => imagesStage(run, projectId))
     .then(() => {}, (e) => recordRunError(run, projectId, e));
+}
+
+/**
+ * Puts new picture prompts on a project's scenes, by scene id, each with the
+ * style anchor (as the segmenter's get). A prompt the user has edited is kept,
+ * and an empty one changes nothing. Returns the project, or null when it is gone.
+ * @param {{ dataDir: string }} ctx
+ * @param {string} projectId
+ * @param {Record<string, string>} prompts scene id -> prompt
+ */
+export function patchScenePrompts(ctx, projectId, prompts) {
+  const fresh = readProject(ctx.dataDir, projectId);
+  if (!fresh) return null;
+  const scenes = (fresh.scenes || []).map((s) => {
+    const prompt = String(prompts?.[s.id] ?? "").trim();
+    if (!prompt || s.promptEditedByUser) return s;
+    return { ...s, imagePrompt: composeScenePrompt(prompt, { style: fresh.style }) };
+  });
+  return writeProject(ctx.dataDir, { ...fresh, scenes });
 }
 
 const router = Router();
@@ -933,6 +970,7 @@ router.post("/:id/images", (req, res) => {
   const project = readProject(req.ctx.dataDir, req.params.id);
   if (!project) return res.status(404).json({ ok: false, error: "project not found" });
   if (isAnimating(req.params.id)) return res.status(409).json(ANIMATING_REFUSAL);
+  if (preparingProjects.has(req.params.id)) return res.status(409).json(PREPARING_REFUSAL);
   if (!(project.scenes || []).length) return res.status(400).json({ ok: false, error: "no scenes to generate — segment first" });
   const force = req.body?.force === true || String(req.query?.force || "") === "true";
 
@@ -968,6 +1006,9 @@ router.post("/:id/process", (req, res) => {
   const existing = readProject(req.ctx.dataDir, req.params.id);
   if (!existing) return res.status(404).json({ ok: false, error: "project not found" });
   if (isAnimating(req.params.id)) return res.status(409).json(ANIMATING_REFUSAL);
+  // The pictures are about to start by themselves (an AI music video's prompts
+  // are being written): Resume has nothing to do, and must not start a second run.
+  if (preparingProjects.has(req.params.id)) return res.json({ ok: true, preparing: true });
   // Same rule as an import's auto-start, so Resume works on an imported
   // script whose narration is in the shared outputs folder.
   const guard = confineImportAudio(req.ctx, req.body?.mediaPath);
@@ -1000,6 +1041,7 @@ router.post("/:id/resegment", (req, res) => {
   const project = readProject(req.ctx.dataDir, req.params.id);
   if (!project) return res.status(404).json({ ok: false, error: "project not found" });
   if (isAnimating(req.params.id)) return res.status(409).json(ANIMATING_REFUSAL);
+  if (preparingProjects.has(req.params.id)) return res.status(409).json(PREPARING_REFUSAL);
   if (!project.transcript?.words?.length) {
     return res.status(400).json({ ok: false, error: "no transcript to re-segment — start again" });
   }

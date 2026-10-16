@@ -43,7 +43,7 @@ before(async () => {
         seen.created.push({ ctx: c, opts });
         return realCreate ? createStoryFromScenes(c, opts) : { projectId: `story-${seen.created.length}` };
       },
-      startStoryImages: (c, id) => { seen.started.push({ ctx: c, id }); return Promise.resolve(); },
+      startStoryImages: (c, id, opts) => { seen.started.push({ ctx: c, id, before: opts?.before }); return Promise.resolve(); },
     },
   }));
   await new Promise((r) => { server = app.listen(0, r); });
@@ -145,7 +145,10 @@ describe("POST /:id/to-story", () => {
     assert.equal(story.scenes[story.scenes.length - 1].endMs, 24000, "the scenes cover the whole song file, quiet tail included");
     // The prompt call failed in this test: every scene got the plain prompt, with the style anchor.
     assert.equal(story.scenes[0].imagePrompt, `cinematic music video shot, VERSE 1: we walk by faith, ${anchorFor("music-video")}`);
-    assert.deepEqual(seen.started, [{ ctx: { dataDir: ctx.dataDir, outputDir: ctx.outputDir }, id }]);
+    assert.equal(seen.started.length, 1);
+    assert.deepEqual(seen.started[0].ctx, { dataDir: ctx.dataDir, outputDir: ctx.outputDir });
+    assert.equal(seen.started[0].id, id);
+    assert.equal(typeof seen.started[0].before, "function", "the pictures wait for the prompts");
   });
 
   test("records the link on the lyric project", async () => {
@@ -173,10 +176,49 @@ describe("POST /:id/to-story", () => {
     let asked = "";
     _setLlmImpl(async (prompt) => { asked = prompt; return JSON.stringify({ prompts: plan.map((_, i) => `shot ${i + 1}`) }); });
     const r = await call("POST", `/${p.projectId}/to-story`, { character: `  ${man}  ` });
+    await seen.started[0].before();
     assert.ok(asked.includes(man));
     assert.match(asked, /Grace Beyond the Race/);
     const story = readStory(ctx.dataDir, r.json.storyProjectId);
     assert.deepEqual(story.scenes.map((s) => s.imagePrompt), plan.map((_, i) => `shot ${i + 1}, ${anchorFor("music-video")}`));
+  });
+
+  test("answers at once with the plain prompts, without waiting for the LLM", async () => {
+    let asked = 0;
+    _setLlmImpl(() => { asked += 1; return new Promise(() => {}); }); // never answers
+    const p = timedProject(ctx);
+    const started = Date.now();
+    const r = await call("POST", `/${p.projectId}/to-story`, {});
+    assert.equal(r.status, 200);
+    assert.ok(Date.now() - started < 2000, "the answer did not wait on the prompt call");
+    assert.equal(asked, 0, "the prompt call runs after the answer, in the step before the pictures");
+    const story = readStory(ctx.dataDir, r.json.storyProjectId);
+    assert.equal(story.status, "generating_images", "the Story page shows it working");
+    assert.ok(story.scenes.every((s) => s.imagePrompt.startsWith("cinematic music video shot")));
+    assert.equal(readProject(ctx.dataDir, p.projectId).musicVideo.storyProjectId, r.json.storyProjectId);
+  });
+
+  test("the LLM's prompts replace the plain ones afterwards, but never a prompt the user edited", async () => {
+    const p = timedProject(ctx);
+    const plan = planMusicScenes({ sections: p.sections, lines: p.lines, durationSec: 24 });
+    _setLlmImpl(async () => JSON.stringify({ prompts: plan.map((_, i) => `shot ${i + 1}`) }));
+    const r = await call("POST", `/${p.projectId}/to-story`, {});
+    const id = r.json.storyProjectId;
+    const story = readStory(ctx.dataDir, id);
+    writeStory(ctx.dataDir, { ...story, scenes: story.scenes.map((s, i) => (i === 1 ? { ...s, imagePrompt: "my own", promptEditedByUser: true } : s)) });
+    await seen.started[0].before();
+    const after = readStory(ctx.dataDir, id).scenes;
+    assert.equal(after[0].imagePrompt, `shot 1, ${anchorFor("music-video")}`);
+    assert.equal(after[1].imagePrompt, "my own");
+  });
+
+  test("when the LLM fails the plain prompts stay, and the step still ends so the pictures start", async () => {
+    _setLlmImpl(async () => { throw new Error("down"); });
+    const p = timedProject(ctx);
+    const r = await call("POST", `/${p.projectId}/to-story`, {});
+    const before = readStory(ctx.dataDir, r.json.storyProjectId).scenes.map((s) => s.imagePrompt);
+    await seen.started[0].before(); // resolves: startStoryImages then makes the pictures
+    assert.deepEqual(readStory(ctx.dataDir, r.json.storyProjectId).scenes.map((s) => s.imagePrompt), before);
   });
 
   test("confines nothing new: the Story plays the lyric project's own song, whatever the body says", async () => {
