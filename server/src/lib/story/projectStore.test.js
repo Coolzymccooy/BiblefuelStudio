@@ -141,3 +141,40 @@ describe("output frame", () => {
     assert.equal(createProject(dir, { title: "W", aspect: "wide" }).aspect, "portrait");
   });
 });
+
+describe("AI motion setting", () => {
+  let dir;
+  beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), "story-aimotion-")); });
+  afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+  const fresh = (quality) => ({ quality, autoStartedAt: null, note: null });
+
+  test("absent, null or false means no AI motion", () => {
+    assert.equal(createProject(dir, { title: "A" }).aiMotion, null);
+    assert.equal(createProject(dir, { title: "A", aiMotion: null }).aiMotion, null);
+    assert.equal(createProject(dir, { title: "A", aiMotion: false }).aiMotion, null);
+  });
+
+  test("true is standard quality, not yet started", () => {
+    const p = createProject(dir, { title: "A", aiMotion: true });
+    assert.deepEqual(p.aiMotion, fresh("standard"));
+    assert.deepEqual(readProject(dir, p.projectId).aiMotion, fresh("standard"));
+  });
+
+  test("a quality is kept when known, and anything else is standard", () => {
+    assert.deepEqual(createProject(dir, { title: "A", aiMotion: { quality: "high" } }).aiMotion, fresh("high"));
+    assert.deepEqual(createProject(dir, { title: "A", aiMotion: { quality: "ultra" } }).aiMotion, fresh("standard"));
+    assert.deepEqual(createProject(dir, { title: "A", aiMotion: { quality: "toString" } }).aiMotion, fresh("standard"));
+    assert.deepEqual(createProject(dir, { title: "A", aiMotion: {} }).aiMotion, fresh("standard"));
+  });
+
+  test("a caller cannot pre-mark it started or plant a note", () => {
+    const p = createProject(dir, { title: "A", aiMotion: { quality: "high", autoStartedAt: 5, note: "x" } });
+    assert.deepEqual(p.aiMotion, fresh("high"));
+  });
+
+  test("anything that is not true or an object is no AI motion", () => {
+    for (const v of ["yes", 1, [], "true"]) {
+      assert.equal(createProject(dir, { title: "A", aiMotion: v }).aiMotion, null, JSON.stringify(v));
+    }
+  });
+});
