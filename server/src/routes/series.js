@@ -16,8 +16,7 @@
 
 import { Router } from "express";
 import { z } from "zod";
-import { buildSeriesPlan, charBudgetFor } from "../lib/series/seriesBuilder.js";
-import { extractSpeakableVerseText } from "../lib/series/speakable.js";
+import { buildSeriesPlan, buildPartScript, charBudgetFor } from "../lib/series/seriesBuilder.js";
 import { lookupVerses, isKnownTranslation } from "../lib/bible/scriptureApi.js";
 import { enqueueCampaignAutoPost } from "./jobs.js";
 import { appendSeries, listSeriesForUser } from "../lib/series/seriesStore.js";
@@ -153,15 +152,7 @@ router.post("/generate", async (req, res) => {
       // Every verse in the part is read: the plan already split the passage
       // so no part runs past the render limit. The cap here is only a guard
       // against a part longer than any video can be.
-      const speakable = extractSpeakableVerseText(segment.verses, charBudgetFor(maxRenderSeconds()));
-
-      const prebuiltScript = {
-        hook: `Part ${segment.partNumber} of ${segment.totalParts} — ${segment.reference}`,
-        verse: speakable,
-        reference: "",
-        reflection: "",
-        cta: "Read on YouVersion",
-      };
+      const prebuiltScript = buildPartScript(segment, charBudgetFor(maxRenderSeconds()));
 
       const title = input.titlePrefix
         ? `${input.titlePrefix} — Part ${segment.partNumber}/${segment.totalParts}`

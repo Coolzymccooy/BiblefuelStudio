@@ -340,7 +340,7 @@ export function SeriesPage() {
                                 </div>
                                 <p className="text-help">
                                     Generates one painterly Bible landscape per part using Cloudflare Workers AI
-                                    (free tier) with Google Imagen as fallback. Same visual style across every part
+                                    (free tier), with Pollinations and Google Gemini as backups. Same visual style across every part
                                     of the series. No biblical figures are depicted — landscapes and symbolic
                                     imagery only. Adds ~5–15s per part during generate.
                                 </p>

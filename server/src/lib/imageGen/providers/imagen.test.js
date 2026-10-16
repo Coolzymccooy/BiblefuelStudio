@@ -1,5 +1,5 @@
 /**
- * Imagen adapter — model self-discovery on 404, and the Cloudflare token
+ * Google backup (Gemini image model, or a pinned Imagen model), and the Cloudflare token
  * alias fix that put the free chain back in front of it.
  *
  * Run: node --test server/src/lib/imageGen/providers/imagen.test.js
@@ -99,65 +99,134 @@ describe("Cloudflare schema retry", () => {
   });
 });
 
-describe("Imagen model self-discovery", () => {
-  test("a retired default model 404s, ListModels finds the live one, retry succeeds", async () => {
-    process.env.GEMINI_API_KEY = "key";
+const geminiImage = (b64 = TINY_PNG_B64) => json({
+  candidates: [{ finishReason: "STOP", content: { parts: [{ inlineData: { mimeType: "image/png", data: b64 } }] } }],
+});
+
+describe("Google backup: Gemini image model by default", () => {
+  test("asks gemini-2.5-flash-image for one picture in the frame shape, key in a header", async () => {
+    process.env.GEMINI_API_KEY = "secret-key";
+    const calls = [];
+    globalThis.fetch = async (url, init) => {
+      calls.push({ url: String(url), init });
+      return geminiImage();
+    };
+
+    const result = await generateImageImagen({ prompt: "a calm sunrise", aspect: "landscape" });
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.model, "gemini-2.5-flash-image");
+    assert.equal(result.contentType, "image/png");
+    assert.ok(Buffer.isBuffer(result.imageBuffer) && result.imageBuffer.length > 0);
+
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].url, /models\/gemini-2\.5-flash-image:generateContent$/);
+    assert.doesNotMatch(calls[0].url, /secret-key/, "the key never goes in the URL");
+    assert.equal(calls[0].init.headers["x-goog-api-key"], "secret-key");
+    const body = JSON.parse(calls[0].init.body);
+    assert.equal(body.contents[0].parts[0].text, "a calm sunrise");
+    assert.deepEqual(body.generationConfig.responseModalities, ["IMAGE"]);
+    assert.equal(body.generationConfig.imageConfig.aspectRatio, "16:9");
+  });
+
+  test("portrait is 9:16 and square is 1:1", async () => {
+    process.env.GEMINI_API_KEY = "k";
+    const ratios = [];
+    globalThis.fetch = async (_url, init) => {
+      ratios.push(JSON.parse(init.body).generationConfig.imageConfig.aspectRatio);
+      return geminiImage();
+    };
+    await generateImageImagen({ prompt: "a", aspect: "portrait" });
+    await generateImageImagen({ prompt: "b", aspect: "square" });
+    await generateImageImagen({ prompt: "c" });
+    assert.deepEqual(ratios, ["9:16", "1:1", "9:16"]);
+  });
+
+  test("a refused picture fails with Google's reason", async () => {
+    process.env.GEMINI_API_KEY = "k";
+    globalThis.fetch = async () => json({ candidates: [{ finishReason: "IMAGE_SAFETY", content: { parts: [] } }] });
+    const result = await generateImageImagen({ prompt: "x" });
+    assert.equal(result.ok, false);
+    assert.match(result.error, /IMAGE_SAFETY/);
+  });
+
+  test("a blocked prompt fails with the block reason", async () => {
+    process.env.GEMINI_API_KEY = "k";
+    globalThis.fetch = async () => json({ promptFeedback: { blockReason: "SAFETY" } });
+    const result = await generateImageImagen({ prompt: "x" });
+    assert.equal(result.ok, false);
+    assert.match(result.error, /SAFETY/);
+  });
+
+  test("a key without billing (429) fails honestly with the status", async () => {
+    process.env.GEMINI_API_KEY = "k";
+    globalThis.fetch = async () => json({ error: { code: 429, message: "You exceeded your current quota" } }, 429);
+    const result = await generateImageImagen({ prompt: "x" });
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 429);
+    assert.match(result.error, /429/);
+  });
+
+  test("a retired default asks ListModels for a live Gemini image model and retries once", async () => {
+    process.env.GEMINI_API_KEY = "k";
     const calls = [];
     globalThis.fetch = async (url) => {
       const u = String(url);
       calls.push(u);
-      if (u.includes(":predict") && u.includes("imagen-4.0-fast-generate-001")) return GONE_404.clone();
-      if (!u.includes(":predict")) {
+      if (u.includes("gemini-2.5-flash-image:generateContent")) {
+        return json({ error: { code: 404, message: "models/gemini-2.5-flash-image is not found for API version v1beta, or is not supported for generateContent." } }, 404);
+      }
+      if (!/:(generateContent|predict)/.test(u)) {
         return json({ models: [
           { name: "models/gemini-3-pro", supportedGenerationMethods: ["generateContent"] },
-          { name: "models/imagen-5.0-generate-001", supportedGenerationMethods: ["predict"] },
+          { name: "models/gemini-3.1-flash-image-preview", supportedGenerationMethods: ["generateContent"] },
+          { name: "models/gemini-3.1-flash-lite-image", supportedGenerationMethods: ["generateContent"] },
+          { name: "models/gemini-3.1-flash-image", supportedGenerationMethods: ["generateContent"] },
           { name: "models/imagen-5.0-fast-generate-001", supportedGenerationMethods: ["predict"] },
         ] });
       }
-      // Retry against the discovered fast model.
-      assert.ok(u.includes("imagen-5.0-fast-generate-001"), `unexpected predict url: ${u}`);
-      return json({ predictions: [{ bytesBase64Encoded: TINY_PNG_B64, mimeType: "image/png" }] });
+      assert.match(u, /gemini-3\.1-flash-image:generateContent$/);
+      return geminiImage();
     };
 
     const result = await generateImageImagen({ prompt: "a calm sunrise" });
-    assert.equal(result.ok, true);
-    assert.equal(result.model, "imagen-5.0-fast-generate-001");
-    assert.equal(calls.filter((u) => u.includes(":predict")).length, 2);
-  });
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.model, "gemini-3.1-flash-image");
 
-  test("the discovered model is remembered for the NEXT call (no re-discovery)", async () => {
+    // Remembered: the next picture goes straight to the live model.
+    calls.length = 0;
+    const second = await generateImageImagen({ prompt: "two" });
+    assert.equal(second.model, "gemini-3.1-flash-image");
+    assert.equal(calls.length, 1);
+  });
+});
+
+describe("Google backup: an Imagen model pinned with IMAGEN_MODEL", () => {
+  test("uses the Imagen predict call", async () => {
     process.env.GEMINI_API_KEY = "key";
-    let listCalls = 0;
+    process.env.IMAGEN_MODEL = "imagen-5.0-fast-generate-001";
+    let seen = "";
     globalThis.fetch = async (url) => {
-      const u = String(url);
-      if (u.includes(":predict") && u.includes("imagen-4.0-fast-generate-001")) return GONE_404.clone();
-      if (!u.includes(":predict")) {
-        listCalls += 1;
-        return json({ models: [{ name: "models/imagen-5.0-fast-generate-001", supportedGenerationMethods: ["predict"] }] });
-      }
+      seen = String(url);
       return json({ predictions: [{ bytesBase64Encoded: TINY_PNG_B64, mimeType: "image/png" }] });
     };
-
-    await generateImageImagen({ prompt: "one" });
-    const second = await generateImageImagen({ prompt: "two" });
-    assert.equal(second.ok, true);
-    assert.equal(second.model, "imagen-5.0-fast-generate-001");
-    assert.equal(listCalls, 1);
+    const result = await generateImageImagen({ prompt: "pinned" });
+    assert.equal(result.ok, true, result.error);
+    assert.match(seen, /imagen-5\.0-fast-generate-001:predict/);
   });
 
-  test("an EXPLICIT IMAGEN_MODEL pin is never silently replaced", async () => {
+  test("an EXPLICIT pin is never silently replaced", async () => {
     process.env.GEMINI_API_KEY = "key";
     process.env.IMAGEN_MODEL = "imagen-4.0-fast-generate-001";
     let listCalled = false;
     globalThis.fetch = async (url) => {
       const u = String(url);
-      if (!u.includes(":predict")) { listCalled = true; return json({ models: [] }); }
+      if (!/:(generateContent|predict)/.test(u)) { listCalled = true; return json({ models: [] }); }
       return GONE_404.clone();
     };
 
     const result = await generateImageImagen({ prompt: "pinned" });
     assert.equal(result.ok, false);
-    assert.match(result.error, /Imagen 404/);
+    assert.match(result.error, /404/);
     assert.equal(listCalled, false);
   });
 });

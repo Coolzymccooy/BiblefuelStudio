@@ -1,40 +1,31 @@
 /**
- * Google Gemini Imagen adapter — free tier on Google AI Studio
- * (100–500 images/day depending on quota tier).
+ * Google image adapter: the paid last resort after Cloudflare and Pollinations.
  *
- * Endpoint:
- *   POST https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:predict?key={API_KEY}
+ * Default model: gemini-2.5-flash-image (about $0.04 a picture, billing
+ * needed: the free tier's image quota is 0). The Imagen models this adapter
+ * was written for stopped being offered to our key (imagen-4.0-fast 404s and
+ * ListModels lists no Imagen at all), so every scene that both free
+ * providers failed ended FAILED.
  *
- * Default model: imagen-3.0-generate-002 (free tier eligible). Override via
- * env IMAGEN_MODEL.
+ * Two Google APIs, chosen by the model id:
+ *   gemini-*  POST {BASE}/{MODEL}:generateContent   (key in x-goog-api-key)
+ *     { contents: [{ parts: [{ text }] }],
+ *       generationConfig: { responseModalities: ["IMAGE"], imageConfig: { aspectRatio } } }
+ *     -> candidates[0].content.parts[].inlineData { mimeType, data }
+ *   imagen-*  POST {BASE}/{MODEL}:predict?key=...
+ *     { instances: [{ prompt }], parameters: { sampleCount: 1, aspectRatio } }
+ *     -> predictions[0] { bytesBase64Encoded, mimeType }
  *
- * Request shape:
- *   {
- *     instances: [{ prompt: "..." }],
- *     parameters: { sampleCount: 1, aspectRatio: "9:16" | "1:1" | "16:9" }
- *   }
+ * IMAGEN_MODEL pins a model (either kind) and is never replaced. Without a
+ * pin, a model-not-found 404 asks ListModels for a live image model once.
  *
- * Response shape:
- *   {
- *     predictions: [{ bytesBase64Encoded: "...", mimeType: "image/png" }]
- *   }
- *
- * Notes:
- *  - Imagen DOES support aspect ratio natively, so we pass it through.
- *  - Imagen embeds an invisible SynthID watermark (no visible badge) — that
- *    is part of Google's ToS and is acceptable for commercial use.
+ * Google embeds an invisible SynthID watermark (no visible badge), which is
+ * acceptable for commercial use.
  */
 
-// Uses Node 18+ global fetch — same rationale as the Cloudflare adapter.
-
 const ENDPOINT_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
-// Imagen 3.x was retired May 2026 in favor of Imagen 4. The "fast" variant
-// has the cheapest cost per image — appropriate for SaaS volume rendering.
-// NOTE (verified 2026-05-20): Imagen models on the Gemini API require a
-// PAID Google AI Studio plan. The free tier explicitly lists image-gen
-// quota as 0 — only call this provider when the user has billing enabled.
-const DEFAULT_MODEL = "imagen-4.0-fast-generate-001";
-const REQUEST_TIMEOUT_MS = 45_000;
+const DEFAULT_MODEL = "gemini-2.5-flash-image";
+const REQUEST_TIMEOUT_MS = 60_000;
 
 /**
  * Reads the configured Google Gemini API key. Two env names are accepted
@@ -58,7 +49,7 @@ export function isImagenConfigured() {
 }
 
 /**
- * Map our internal aspect names to Imagen aspect-ratio strings.
+ * Map our internal aspect names to Google aspect-ratio strings.
  *
  * @param {string} [aspect]
  * @returns {"9:16" | "1:1" | "16:9"}
@@ -71,7 +62,114 @@ function toAspectRatio(aspect) {
 }
 
 /**
- * Generate a single image via Google Imagen.
+ * Model id discovered via ListModels after the shipped default 404'd. Google
+ * retires and renames image models faster than this codebase ships, so on a
+ * model-not-found we ask the API what IS there.
+ */
+let discoveredModel = null;
+
+/** Test hook: forget the discovered model. */
+export function _resetImagenDiscovery() { discoveredModel = null; }
+
+/** @param {{ name?: string }} m */
+const modelName = (m) => String(m?.name || "").replace(/^models\//, "");
+/** @param {{ supportedGenerationMethods?: string[] }} m */
+const methodsOf = (m) => (Array.isArray(m?.supportedGenerationMethods) ? m.supportedGenerationMethods : []);
+
+/**
+ * The best live image model: a released Gemini flash image model first, then
+ * any Gemini image model, then an Imagen model (a fast one if there is one).
+ *
+ * @param {Array<{ name?: string, supportedGenerationMethods?: string[] }>} models
+ * @returns {string | null}
+ */
+export function pickImageModel(models) {
+  const gemini = models.filter((m) => /^gemini-.*image/.test(modelName(m)) && methodsOf(m).includes("generateContent"));
+  const released = gemini.filter((m) => !/preview/.test(modelName(m)));
+  const geminiPick = released.find((m) => /flash-image/.test(modelName(m)) && !/lite/.test(modelName(m)))
+    || released[0] || gemini[0];
+  if (geminiPick) return modelName(geminiPick);
+  const imagen = models.filter((m) => modelName(m).includes("imagen") && methodsOf(m).includes("predict"));
+  const imagenPick = imagen.find((m) => modelName(m).includes("fast")) || imagen[0];
+  return imagenPick ? modelName(imagenPick) : null;
+}
+
+/**
+ * @param {string} apiKey
+ * @param {AbortSignal} [signal]
+ * @returns {Promise<string | null>}
+ */
+async function discoverImageModel(apiKey, signal) {
+  try {
+    const resp = await fetch(`${ENDPOINT_BASE}?pageSize=200`, { headers: { "x-goog-api-key": apiKey }, signal });
+    if (!resp.ok) return null;
+    const data = await resp.json().catch(() => null);
+    return pickImageModel(Array.isArray(data?.models) ? data.models : []);
+  } catch {
+    return null;
+  }
+}
+
+/** @param {string} modelId */
+const isGeminiModel = (modelId) => modelId.startsWith("gemini-");
+
+/**
+ * The request for one picture from `modelId`.
+ * @param {string} modelId
+ * @param {string} apiKey
+ * @param {string} prompt
+ * @param {string} aspectRatio
+ * @returns {{ url: string, init: RequestInit }}
+ */
+function buildRequest(modelId, apiKey, prompt, aspectRatio) {
+  if (isGeminiModel(modelId)) {
+    return {
+      url: `${ENDPOINT_BASE}/${encodeURIComponent(modelId)}:generateContent`,
+      init: {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json", "x-goog-api-key": apiKey },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { responseModalities: ["IMAGE"], imageConfig: { aspectRatio } },
+        }),
+      },
+    };
+  }
+  return {
+    url: `${ENDPOINT_BASE}/${encodeURIComponent(modelId)}:predict?key=${encodeURIComponent(apiKey)}`,
+    init: {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ instances: [{ prompt }], parameters: { sampleCount: 1, aspectRatio } }),
+    },
+  };
+}
+
+/**
+ * The picture in a successful response, or why there is none.
+ * @param {string} modelId
+ * @param {any} data
+ * @returns {{ b64: string, mimeType: string } | { reason: string }}
+ */
+function readPicture(modelId, data) {
+  if (isGeminiModel(modelId)) {
+    const candidate = Array.isArray(data?.candidates) ? data.candidates[0] : null;
+    const parts = Array.isArray(candidate?.content?.parts) ? candidate.content.parts : [];
+    const image = parts.find((p) => typeof p?.inlineData?.data === "string" && p.inlineData.data.length > 0);
+    if (image) return { b64: image.inlineData.data, mimeType: String(image.inlineData.mimeType || "image/png") };
+    const reason = data?.promptFeedback?.blockReason || candidate?.finishReason || "no picture in the response";
+    return { reason: `refused or empty (${reason})` };
+  }
+  const pred = Array.isArray(data?.predictions) ? data.predictions[0] : null;
+  if (typeof pred?.bytesBase64Encoded === "string" && pred.bytesBase64Encoded.length > 0) {
+    return { b64: pred.bytesBase64Encoded, mimeType: String(pred?.mimeType || "image/png") };
+  }
+  const filtered = pred?.raiFilteredReason || pred?.safetyAttributes?.categories?.join(",");
+  return { reason: filtered ? `safety filter (${filtered})` : "missing predictions[0].bytesBase64Encoded" };
+}
+
+/**
+ * Generate a single image from Google.
  *
  * @param {object} args
  * @param {string} args.prompt
@@ -80,49 +178,12 @@ function toAspectRatio(aspect) {
  * @param {AbortSignal} [args.signal]
  * @returns {Promise<import("./cloudflare.js").ImageGenResult>}
  */
-/**
- * Model id discovered via ListModels after the configured default 404'd.
- * Google retires/renames Imagen ids under v1beta faster than this codebase
- * ships (imagen-3.0 retired May 2026; imagen-4.0-fast-generate-001 started
- * 404ing Aug 2026) - so on a model-not-found we ask the API what IS there
- * instead of hardcoding a new name that will rot the same way.
- */
-let discoveredModel = null;
-
-/** Test hook: forget the discovered model. */
-export function _resetImagenDiscovery() { discoveredModel = null; }
-
-/**
- * Ask ListModels for a current Imagen model that supports predict.
- * Prefers a "fast" variant (cheapest per image).
- *
- * @param {string} apiKey
- * @param {AbortSignal} [signal]
- * @returns {Promise<string | null>}
- */
-async function discoverImagenModel(apiKey, signal) {
-  try {
-    const resp = await fetch(`${ENDPOINT_BASE}?key=${encodeURIComponent(apiKey)}&pageSize=200`, { signal });
-    if (!resp.ok) return null;
-    const data = await resp.json().catch(() => null);
-    const models = Array.isArray(data?.models) ? data.models : [];
-    const imagen = models.filter((m) =>
-      String(m?.name || "").includes("imagen")
-      && (Array.isArray(m?.supportedGenerationMethods) ? m.supportedGenerationMethods : []).includes("predict"));
-    if (imagen.length === 0) return null;
-    const pick = imagen.find((m) => String(m.name).includes("fast")) || imagen[0];
-    return String(pick.name).replace(/^models\//, "");
-  } catch {
-    return null;
-  }
-}
-
 export async function generateImageImagen({ prompt, aspect, model, signal }) {
   if (!isImagenConfigured()) {
     return {
       ok: false,
       provider: "imagen",
-      error: "Google Imagen not configured (IMAGEN_API_KEY / GOOGLE_GEMINI_API_KEY / GEMINI_API_KEY)",
+      error: "Google image backup not configured (IMAGEN_API_KEY / GOOGLE_GEMINI_API_KEY / GEMINI_API_KEY)",
     };
   }
   if (!prompt || typeof prompt !== "string" || prompt.trim().length === 0) {
@@ -133,22 +194,15 @@ export async function generateImageImagen({ prompt, aspect, model, signal }) {
   // An EXPLICIT model (arg or env) is respected verbatim - discovery only
   // replaces our own shipped default, never the operator's pin.
   const forced = String(model || process.env.IMAGEN_MODEL || "").trim();
-
-  const body = {
-    instances: [{ prompt: prompt.trim().slice(0, 2048) }],
-    parameters: {
-      sampleCount: 1,
-      aspectRatio: toAspectRatio(aspect),
-    },
-  };
+  const text = prompt.trim().slice(0, 2048);
+  const aspectRatio = toAspectRatio(aspect);
 
   let modelId = forced || discoveredModel || DEFAULT_MODEL;
 
   // At most two attempts: the configured model, then (on a model-not-found
   // 404 with no explicit pin) a ListModels-discovered replacement.
   for (let attempt = 0; attempt < 2; attempt++) {
-    const url = `${ENDPOINT_BASE}/${encodeURIComponent(modelId)}:predict?key=${encodeURIComponent(apiKey)}`;
-
+    const { url, init } = buildRequest(modelId, apiKey, text, aspectRatio);
     const ctrl = new AbortController();
     const timeoutTimer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
     if (signal) {
@@ -157,18 +211,13 @@ export async function generateImageImagen({ prompt, aspect, model, signal }) {
     }
 
     try {
-      const resp = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify(body),
-        signal: ctrl.signal,
-      });
+      const resp = await fetch(url, { ...init, signal: ctrl.signal });
 
       if (!resp.ok) {
-        const text = await resp.text().catch(() => "");
-        const modelGone = resp.status === 404 && /is not found for API version|not supported for predict/i.test(text);
+        const body = await resp.text().catch(() => "");
+        const modelGone = resp.status === 404 && /is not found for API version|not supported for (predict|generateContent)/i.test(body);
         if (modelGone && !forced && attempt === 0) {
-          const found = await discoverImagenModel(apiKey, ctrl.signal);
+          const found = await discoverImageModel(apiKey, ctrl.signal);
           if (found && found !== modelId) {
             discoveredModel = found;
             modelId = found;
@@ -180,31 +229,27 @@ export async function generateImageImagen({ prompt, aspect, model, signal }) {
           provider: "imagen",
           model: modelId,
           status: resp.status,
-          error: `Imagen ${resp.status}: ${text.slice(0, 300)}`,
+          error: `Google image ${resp.status} (${modelId}): ${body.slice(0, 300)}`,
         };
       }
 
-      const data = await resp.json();
-      const pred = Array.isArray(data?.predictions) ? data.predictions[0] : null;
-      const b64 = pred?.bytesBase64Encoded;
-      if (typeof b64 !== "string" || b64.length === 0) {
-        const filtered = pred?.raiFilteredReason || pred?.safetyAttributes?.categories?.join(",");
-        const reason = filtered ? `safety filter (${filtered})` : "missing predictions[0].bytesBase64Encoded";
-        return { ok: false, provider: "imagen", model: modelId, error: `Imagen response: ${reason}` };
+      const picture = readPicture(modelId, await resp.json());
+      if ("reason" in picture) {
+        return { ok: false, provider: "imagen", model: modelId, error: `Google image response: ${picture.reason}` };
       }
       return {
         ok: true,
         provider: "imagen",
         model: modelId,
-        imageBuffer: Buffer.from(b64, "base64"),
-        contentType: String(pred?.mimeType || "image/png"),
+        imageBuffer: Buffer.from(picture.b64, "base64"),
+        contentType: picture.mimeType,
       };
     } catch (err) {
-      const msg = err?.name === "AbortError" ? "Imagen request timed out" : String(err?.message || err);
+      const msg = err?.name === "AbortError" ? "Google image request timed out" : String(err?.message || err);
       return { ok: false, provider: "imagen", model: modelId, error: msg };
     } finally {
       clearTimeout(timeoutTimer);
     }
   }
-  return { ok: false, provider: "imagen", model: modelId, error: "Imagen: model discovery retry exhausted" };
+  return { ok: false, provider: "imagen", model: modelId, error: "Google image: model discovery retry exhausted" };
 }

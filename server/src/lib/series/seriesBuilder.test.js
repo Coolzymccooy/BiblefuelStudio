@@ -14,6 +14,7 @@ import {
   buildSegmentCaption,
   buildSeriesPlan,
   SeriesPlanError,
+  buildPartScript,
 } from "./seriesBuilder.js";
 
 // 1 John 2:1-4 (KJV), exactly as the verse service returns it. Verse 1 ends
@@ -331,5 +332,23 @@ describe("buildSeriesPlan", () => {
     const a = await buildSeriesPlan({ chapterReference: "Jude 1:1", translation: "kjv", fetchVerses });
     const b = await buildSeriesPlan({ chapterReference: "Jude 1:1", translation: "kjv", fetchVerses });
     assert.notEqual(a.seriesId, b.seriesId);
+  });
+});
+
+describe("buildPartScript", () => {
+  const segment = { partNumber: 1, totalParts: 2, reference: "1 John 2:1-2", verses: FIRST_JOHN_2.slice(0, 2) };
+
+  test("opens with the part and reference, then reads every verse", () => {
+    const script = buildPartScript(segment, 2000);
+    assert.equal(script.hook, "Part 1 of 2 — 1 John 2:1-2");
+    assert.match(script.verse, /^My little children/);
+    assert.match(script.verse, /the sins of the whole world.$/);
+  });
+
+  test("says nothing after the verses: the YouVersion link belongs in the post caption, not the video", () => {
+    const script = buildPartScript(segment, 2000);
+    assert.equal(script.cta, "");
+    assert.equal(script.reflection, "");
+    assert.doesNotMatch(JSON.stringify(script), /YouVersion/);
   });
 });

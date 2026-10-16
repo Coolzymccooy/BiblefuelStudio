@@ -10,7 +10,7 @@
  *   1. Cloudflare Workers AI — Lucid Origin, daily free image quota
  *   2. Together AI — FLUX.1-schnell-Free, when Cloudflare's quota is spent
  *   3. Pollinations — free, no key
- *   4. Google Imagen — paid (image generation needs billing)
+ *   4. Google (gemini-2.5-flash-image) — paid, about $0.04 a picture, last resort
  *
  * Cache: deterministic file name derived from { seriesId, partNumber } so a
  * retried series doesn't burn through quota. Existing files are returned as
