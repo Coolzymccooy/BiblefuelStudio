@@ -21,8 +21,8 @@ import { synthesizeEdgeTts } from "../lib/edgeTts.js";
 import { resolveLibraryTrack } from "../lib/musicLibrary.js";
 import { resolveTenantTrack } from "../lib/musicLibraryStore.js";
 import { cleanCaptionLine, cleanSpeakableText } from "../lib/speakableScript.js";
-import { buildImportedTranscript } from "../lib/story/scriptImport.js";
-import { CHARACTER_ANCHORS } from "../lib/story/styleAnchors.js";
+import { buildImportedTranscript, normalizeWordTimings } from "../lib/story/scriptImport.js";
+import { CHARACTER_ANCHORS, composeScenePrompt } from "../lib/story/styleAnchors.js";
 import { confineToDir } from "../lib/confinePath.js";
 import { OUTPUT_DIR } from "../lib/paths.js";
 import { isNarrationActive } from "../lib/longform/narrationRegistry.js";
@@ -436,6 +436,76 @@ export async function runStoryPipeline(ctx, projectId, mediaPath) {
   await transcribeStage(ctx, projectId, mediaPath);
   await segmentStage(ctx, projectId);
   await imagesStage(ctx, projectId);
+}
+
+/** Records a detached run's failure on the project, as every detached image run here does. */
+function recordRunError(ctx, projectId, e) {
+  try {
+    const fresh = readProject(ctx.dataDir, projectId);
+    if (fresh) writeProject(ctx.dataDir, { ...fresh, status: STORY_STATUS.ERROR, error: String(e?.message || e) });
+  } catch {}
+}
+
+/**
+ * AI music videos (routes/lyricVideo.js POST /:id/to-story): a Story project
+ * built straight from a timed song. The scenes are given (cut on the song's
+ * sections), so there is no transcribing or segmenting; the song is the only
+ * sound (no music bed) and Story draws no captions, because the lyric render
+ * puts its own over the finished video. Each scene's prompt gets the style
+ * anchor here, as the segmenter's do. AI motion is kept only when the server
+ * has the Seedance key; the caller has already checked the user may spend it.
+ *
+ * @param {{ dataDir: string, outputDir: string }} ctx
+ * @param {{ title: string, style?: string, aspect?: string, audioPath: string, durationMs: number,
+ *   words: Array<{text:string,startMs:number,endMs:number}>,
+ *   scenes: Array<{startMs:number,endMs:number,text?:string,imagePrompt:string}>,
+ *   aiMotion?: boolean | { quality?: string } }} opts
+ * @returns {object} the project, at generating_images
+ */
+export function createStoryFromScenes(ctx, { title, style = "music-video", aspect, audioPath, durationMs, words = [], scenes, aiMotion = null }) {
+  if (!Array.isArray(scenes) || !scenes.length) throw new Error("a music video needs scenes");
+  if (typeof audioPath !== "string" || !audioPath.trim()) throw new Error("a music video needs the song's audio");
+  const length = Math.round(Number(durationMs));
+  if (!Number.isFinite(length) || length <= 0) throw new Error("the song's duration must be a positive number");
+  const project = createProject(ctx.dataDir, {
+    title, style, aspect, captions: "none",
+    aiMotion: isSeedanceConfigured() ? aiMotion : null,
+  });
+  const timed = normalizeWordTimings(words);
+  return writeProject(ctx.dataDir, {
+    ...project,
+    source: { audioPath, durationMs: length },
+    transcript: { words: timed, hash: `${length}:${timed.length}` },
+    music: null,
+    scenes: scenes.map((s, i) => ({
+      id: `scene-${String(i + 1).padStart(3, "0")}`,
+      text: String(s.text ?? ""),
+      startMs: Math.round(s.startMs),
+      endMs: Math.round(s.endMs),
+      imagePrompt: composeScenePrompt(String(s.imagePrompt ?? ""), { style: project.style }),
+      imagePath: null,
+      imageStatus: "pending",
+      promptEditedByUser: false,
+    })),
+    status: STORY_STATUS.GENERATING_IMAGES,
+  });
+}
+
+/**
+ * Starts the images stage for a project, detached, exactly as POST /:id/images
+ * does: a failure is recorded on the project. When every picture is in, the
+ * stage's own hook auto-animates an aiMotion project. Returns the run, which
+ * never rejects (callers need not wait for it).
+ * @param {{ dataDir: string, outputDir: string }} ctx
+ * @param {string} projectId
+ * @returns {Promise<void>}
+ */
+export function startStoryImages(ctx, projectId) {
+  const run = { dataDir: ctx.dataDir, outputDir: ctx.outputDir };
+  cancelledProjects.delete(projectId); // a fresh run supersedes any earlier cancel
+  return Promise.resolve()
+    .then(() => imagesStage(run, projectId))
+    .then(() => {}, (e) => recordRunError(run, projectId, e));
 }
 
 const router = Router();
