@@ -235,3 +235,46 @@ describe("AI scene routes", () => {
     }
   });
 });
+
+describe("AI motion rates", () => {
+  test("a normal account gets 403", async () => {
+    const res = await call(router(), "get", "/animate/rates", { admin: false });
+    assert.equal(res.statusCode, 403);
+  });
+
+  test("a super admin gets the per-second prices for a portrait frame and the month", async () => {
+    process.env.VIDEO_GEN_MONTHLY_CAP_USD = "20";
+    reserveSpend(ledgerDir, "other:s1", 0.5);
+    const res = await call(router(), "get", "/animate/rates");
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.payload.ok, true);
+    assert.equal(res.payload.configured, true);
+    // 1 s of 720x1280 at 24 fps is 21600 tokens; 1080x1920 is 48600.
+    assert.equal(res.payload.usdPerSecond.standard.toFixed(6), (21600 / 1e6 * 3.5).toFixed(6));
+    assert.equal(res.payload.usdPerSecond.high.toFixed(6), (48600 / 1e6 * 7.7).toFixed(6));
+    assert.equal(res.payload.monthSpentUsd, 0);
+    assert.equal(res.payload.reservedUsd, 0.5);
+    assert.equal(res.payload.capUsd, 20);
+  });
+
+  test("without a BytePlus key it says not configured", async () => {
+    delete process.env.BYTEPLUS_ARK_API_KEY;
+    const res = await call(router(), "get", "/animate/rates");
+    assert.equal(res.payload.configured, false);
+  });
+
+  test("the story router answers it rather than treating 'animate' as a project id", async () => {
+    const { default: express } = await import("express");
+    const { default: request } = await import("supertest");
+    const a = express();
+    a.use((req, _res, next) => { req.ctx = { userId: "u1", dataDir, outputDir, isSuperAdmin: true }; next(); });
+    a.use("/api/story", storyRouter);
+    const res = await request(a).get("/api/story/animate/rates").expect(200);
+    assert.equal(res.body.ok, true);
+    assert.equal(typeof res.body.usdPerSecond.standard, "number");
+    const denied = express();
+    denied.use((req, _res, next) => { req.ctx = { userId: "u2", dataDir, outputDir, isSuperAdmin: false }; next(); });
+    denied.use("/api/story", storyRouter);
+    await request(denied).get("/api/story/animate/rates").expect(403);
+  });
+});

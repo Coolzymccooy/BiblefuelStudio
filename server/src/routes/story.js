@@ -453,6 +453,11 @@ router.get("/characters", (_req, res) => {
   });
 });
 
+// AI motion clips on scenes (super admins only); see routes/storyAnimate.js.
+// Also before "/:id": it serves GET /animate/rates. Its other routes are all
+// POST /:id/... paths that nothing below shares.
+router.use(createStoryAnimateRouter({ sceneBlocked: sceneImageBlocked }));
+
 router.get("/:id", (req, res) => {
   const project = readProject(req.ctx.dataDir, req.params.id);
   if (!project) return res.status(404).json({ ok: false, error: "project not found" });
@@ -1155,8 +1160,5 @@ router.post("/:id/render", async (req, res) => {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
-
-// AI motion clips on scenes (super admins only); see routes/storyAnimate.js.
-router.use(createStoryAnimateRouter({ sceneBlocked: sceneImageBlocked }));
 
 export default router;
