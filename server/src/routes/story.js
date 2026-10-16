@@ -24,6 +24,7 @@ import { cleanCaptionLine, cleanSpeakableText } from "../lib/speakableScript.js"
 import { buildImportedTranscript } from "../lib/story/scriptImport.js";
 import { CHARACTER_ANCHORS } from "../lib/story/styleAnchors.js";
 import { confineToDir } from "../lib/confinePath.js";
+import { OUTPUT_DIR } from "../lib/paths.js";
 import { isNarrationActive } from "../lib/longform/narrationRegistry.js";
 import { expandScenesToBeats } from "../lib/story/visualBeats.js";
 import { findReusableImages, markUsed, registerImage, pruneLibrary, readLibrary as readImageLibrary } from "../lib/imageGen/imageLibrary.js";
@@ -121,6 +122,22 @@ function confineMediaPath(ctx, rawMediaPath) {
   if (!resolved) return { ok: false, status: 403, error: "mediaPath is outside the allowed directory" };
   if (!fs.existsSync(resolved)) return { ok: false, status: 400, error: "mediaPath not found" };
   return { ok: true, path: resolved };
+}
+
+// The narration routes write every user's TTS into the shared outputs folder,
+// so an imported script's audio is either in the user's own folders or is one
+// of those server-named files (tts-<uuid>.mp3: unguessable, never user-named).
+const SHARED_TTS_NAME = /^tts-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.mp3$/i;
+
+export function confineImportAudio(ctx, rawPath, sharedOutputDir = OUTPUT_DIR) {
+  const own = confineMediaPath(ctx, rawPath);
+  if (own.ok) return own;
+  const shared = confineToDir(sharedOutputDir, String(rawPath || "").trim());
+  if (shared && path.dirname(shared) === path.resolve(sharedOutputDir)
+    && SHARED_TTS_NAME.test(path.basename(shared)) && fs.existsSync(shared)) {
+    return { ok: true, path: shared };
+  }
+  return own;
 }
 
 // Image-gen aspect for a project: images are generated in the project's own
@@ -651,7 +668,7 @@ router.post("/import-script", (req, res) => {
     const autoStart = req.body?.autoStart === true;
     let startPath = null;
     if (autoStart) {
-      const guard = confineMediaPath(req.ctx, audioPath);
+      const guard = confineImportAudio(req.ctx, audioPath);
       if (!guard.ok) return res.status(400).json({ ok: false, error: guard.error });
       startPath = guard.path;
     }

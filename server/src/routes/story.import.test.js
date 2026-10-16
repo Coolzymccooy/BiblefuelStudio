@@ -5,7 +5,7 @@ import request from 'supertest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import storyRouter from './story.js';
+import storyRouter, { confineImportAudio } from './story.js';
 
 function app() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'story-import-'));
@@ -275,5 +275,42 @@ describe('POST /api/story/import-script: AI motion and auto-start', () => {
     }
     assert.equal(got.status, 'error');
     assert.equal(got.error, 'segmenter offline');
+  });
+});
+
+describe('confineImportAudio (narration in the shared outputs folder)', () => {
+  const tts = 'tts-0dc7c473-7170-4355-b57f-279780487081.mp3';
+  let own, shared;
+  beforeEach(() => {
+    own = fs.mkdtempSync(path.join(os.tmpdir(), 'imp-own-'));
+    shared = fs.mkdtempSync(path.join(os.tmpdir(), 'imp-shared-'));
+  });
+  afterEach(() => {
+    for (const d of [own, shared]) fs.rmSync(d, { recursive: true, force: true });
+  });
+
+  test('accepts a file in your own folders', () => {
+    const f = path.join(own, 'mine.mp3');
+    fs.writeFileSync(f, 'mp3');
+    assert.deepEqual(confineImportAudio({ outputDir: own, dataDir: own }, f, shared), { ok: true, path: f });
+  });
+  test('accepts a server-named narration file in the shared outputs folder', () => {
+    const f = path.join(shared, tts);
+    fs.writeFileSync(f, 'mp3');
+    const got = confineImportAudio({ outputDir: own, dataDir: own }, f, shared);
+    assert.equal(got.ok, true);
+    assert.equal(got.path, f);
+  });
+  test('refuses any other shared file, a nested one, or a missing one', () => {
+    const other = path.join(shared, 'someone-elses.mp3');
+    fs.writeFileSync(other, 'mp3');
+    fs.mkdirSync(path.join(shared, 'users'));
+    const nested = path.join(shared, 'users', tts);
+    fs.writeFileSync(nested, 'mp3');
+    const ctx = { outputDir: own, dataDir: own };
+    assert.equal(confineImportAudio(ctx, other, shared).ok, false);
+    assert.equal(confineImportAudio(ctx, nested, shared).ok, false);
+    assert.equal(confineImportAudio(ctx, path.join(shared, 'tts-00000000-0000-0000-0000-000000000000.mp3'), shared).ok, false);
+    assert.equal(confineImportAudio(ctx, path.join(shared, '..', tts), shared).ok, false);
   });
 });
