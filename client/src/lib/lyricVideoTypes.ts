@@ -47,6 +47,8 @@ export interface LyricTiming {
   beats?: { bpm: number; times: number[] };
   /** True when the words were heard in the vocals alone (a laptop separated them), false when in the whole mix. */
   usedVocalStem?: boolean;
+  /** Where the song's sound really stops, in seconds (set by timing). */
+  audibleEnd?: number;
   finishedAt?: string;
 }
 
@@ -107,6 +109,15 @@ export interface LyricProject {
   branding?: Partial<Pick<LyricBranding, 'logo' | 'intro' | 'endCard'>> | null;
   /** The render being made now, saved so the page can pick it up again after leaving. */
   render?: { activeJobId: string } | null;
+  /** The AI music video made from this song (super admins only): the newest Story project. */
+  musicVideo?: { storyProjectId: string; createdAt: string } | null;
+}
+
+/** What POST /:id/to-story is sent: the shape, how the singer looks (may be empty) and whether to animate. */
+export interface MusicVideoChoice {
+  aspect: RenderAspect;
+  character: string;
+  aiMotion: boolean;
 }
 
 /** One row of "Your videos": a render of any of the user's songs, finished, in progress or failed. */

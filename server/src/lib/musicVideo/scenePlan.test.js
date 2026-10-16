@@ -83,6 +83,8 @@ describe("planMusicScenes", () => {
     const lines = [line("s1", 0.5, 10), line("s2", 11.2, 12.8), line("s3", 13.2, 24)];
     const scenes = planMusicScenes({ sections, lines, durationSec: 24.5 });
     assertContiguous(scenes, 24500);
+    // The same answer the client copy gives (client/src/lib/__tests__/musicVideoPlan.test.ts).
+    assert.deepEqual(scenes.map((s) => [s.startMs, s.endMs]), [[0, 6500], [6500, 13000], [13000, 24500]]);
   });
 
   test("with no section starts the song is cut at line starts into pieces of about 8 s", () => {

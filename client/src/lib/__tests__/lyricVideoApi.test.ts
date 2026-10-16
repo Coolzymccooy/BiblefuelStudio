@@ -263,4 +263,23 @@ describe('lyricVideoApi', () => {
     await lyricVideoApi.cancelRender('lv_1', 'job-9');
     expect(api.post).toHaveBeenCalledWith('/api/lyric-video/lv_1/render/job-9/cancel', {});
   });
+
+  it('makes an AI music video and returns the Story project id', async () => {
+    vi.mocked(api.post).mockResolvedValue(reply({ ok: true, storyProjectId: 'sp-1' }));
+    const choice = { aspect: 'landscape' as const, character: 'a man in an olive shirt', aiMotion: true };
+    await expect(lyricVideoApi.toStory('lv_1', choice)).resolves.toBe('sp-1');
+    // The scene prompts come from an LLM call, so this waits longer than the default.
+    expect(api.post).toHaveBeenCalledWith('/api/lyric-video/lv_1/to-story', choice, undefined, { timeout: 100_000 });
+  });
+
+  it('uses the Story video as the background', async () => {
+    vi.mocked(api.post).mockResolvedValue(reply({ project }));
+    await expect(lyricVideoApi.useStoryVideo('lv_1')).resolves.toEqual(project);
+    expect(api.post).toHaveBeenCalledWith('/api/lyric-video/lv_1/use-story-video', {}, undefined, { timeout: 60_000 });
+  });
+
+  it('says plainly why the music video was refused', async () => {
+    vi.mocked(api.post).mockResolvedValue({ ok: false, status: 409, error: 'Run Timing first.' });
+    await expect(lyricVideoApi.toStory('lv_1', { aspect: 'portrait', character: '', aiMotion: false })).rejects.toThrow('Run Timing first.');
+  });
 });
