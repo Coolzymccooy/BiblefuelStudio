@@ -148,6 +148,13 @@ function MusicVideoPanel({ project, onChange }: Props) {
       {rates.data && !canAnimate && (
         <p className="text-xs text-content-secondary">AI motion is not set up on the server, so the scenes will be still pictures.</p>
       )}
+      {/* Without the prices the page cannot tell whether to animate, so it waits rather than guess. */}
+      {!rates.data && rates.isError && (
+        <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-bf-danger">
+          <span>The AI motion prices could not be loaded.</span>
+          <button type="button" className={secondaryBtnCls} disabled={rates.isFetching} onClick={() => void rates.refetch()}>Try again</button>
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-3">
         {linked && <Link to={storyLink(linked)} className={primaryBtnCls}>Open in Story Video</Link>}
@@ -157,7 +164,7 @@ function MusicVideoPanel({ project, onChange }: Props) {
             Use as lyric background
           </button>
         )}
-        <button type="button" className={linked ? secondaryBtnCls : primaryBtnCls} disabled={making || scenes.length === 0} onClick={() => void make()}>
+        <button type="button" className={linked ? secondaryBtnCls : primaryBtnCls} disabled={making || scenes.length === 0 || !rates.data} onClick={() => void make()}>
           {making && <Loader2 size={16} className="animate-spin" aria-hidden />}
           {making ? 'Planning the scenes…' : linked ? 'Make a new AI music video' : 'Make AI music video'}
         </button>

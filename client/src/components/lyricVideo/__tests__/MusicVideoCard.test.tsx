@@ -85,6 +85,23 @@ describe('MusicVideoCard', () => {
     expect(screen.queryByRole('checkbox', { name: /animate the scenes/i })).toBeNull();
   });
 
+  it('when the prices cannot be loaded, says so and keeps Make off until they load', async () => {
+    vi.mocked(storyApi.animateRates).mockRejectedValueOnce(new Error('Network down')).mockResolvedValue(rates);
+    renderCard(project);
+    expect(await screen.findByText(/the ai motion prices could not be loaded/i)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Make AI music video' })).toBeDisabled();
+    expect(lyricVideoApi.toStory).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByText('about 2 clips · ≈ $2.40')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Make AI music video' })).not.toBeDisabled();
+  });
+
+  it('keeps Make off while the prices are still loading', () => {
+    vi.mocked(storyApi.animateRates).mockReturnValue(new Promise(() => {}));
+    renderCard(project);
+    expect(screen.getByRole('button', { name: 'Make AI music video' })).toBeDisabled();
+  });
+
   it('makes the music video and opens it in Story Video', async () => {
     vi.mocked(lyricVideoApi.toStory).mockResolvedValue('sp-9');
     renderCard(project);
