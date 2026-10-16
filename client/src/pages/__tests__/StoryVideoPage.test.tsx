@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
@@ -6,6 +6,7 @@ import { StoryVideoPage } from '../StoryVideoPage';
 import { storyApi } from '../../lib/storyApi';
 import userEvent from '@testing-library/user-event';
 import { api } from '../../lib/api';
+import { useAuth } from '../../hooks/useAuth';
 
 const uploadMediaMock = vi.hoisted(() => vi.fn());
 vi.mock('../../lib/mediaUpload', async (orig) => {
@@ -335,5 +336,39 @@ describe('StoryVideoPage', () => {
     expect(setAspect).toHaveBeenCalledWith('pd', 'landscape');
     await userEvent.click(again);
     expect(renderSpy).toHaveBeenCalledWith('pd');
+  });
+  describe('AI motion note', () => {
+    const note = '2 of 5 scenes animated: monthly AI budget reached';
+    function withNote() {
+      localStorage.setItem('BF_STORY_ACTIVE', 'pa');
+      vi.spyOn(storyApi, 'getProject').mockResolvedValue({
+        projectId: 'pa', title: 'T', style: 'cinematic-bible', status: 'ready_to_render',
+        source: { audioPath: 'a', durationMs: 8000 }, transcript: { words: [], hash: 'h' },
+        scenes: [{ id: 'scene-001', text: 'a', startMs: 0, endMs: 8000, imagePrompt: 'p', imagePath: '/a.png', imageUrl: '/outputs/x.png', imageStatus: 'done', promptEditedByUser: false }],
+        music: { path: null, volume: 0.3 }, captionPreset: 'default',
+        render: { jobId: null, outputPath: null, status: null }, error: null, createdAt: 0, updatedAt: 0,
+        aiMotion: { quality: 'standard', autoStartedAt: 1, note },
+      } as any);
+      vi.spyOn(storyApi, 'estimateAnimation').mockResolvedValue({
+        configured: true, quality: 'standard', running: false, clips: 1, seconds: 8, usd: 0.6, usdPerSecond: 0.0756,
+        model: 'm', resolution: '720p', sceneIds: ['scene-001'], month: '2026-10', spentUsd: 0, reservedUsd: 0, capUsd: 30, monthClips: 0,
+      });
+    }
+    afterEach(() => { useAuth.setState({ isSuperAdmin: false }); });
+
+    it('a super admin sees why not every scene was animated', async () => {
+      useAuth.setState({ isSuperAdmin: true });
+      withNote();
+      renderPage();
+      expect(await screen.findByText(note)).toBeInTheDocument();
+    });
+
+    it('nobody else sees it', async () => {
+      useAuth.setState({ isSuperAdmin: false });
+      withNote();
+      renderPage();
+      expect(await screen.findByText('a')).toBeInTheDocument();
+      expect(screen.queryByText(note)).toBeNull();
+    });
   });
 });

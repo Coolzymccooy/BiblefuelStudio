@@ -698,6 +698,10 @@ export function StoryVideoPage() {
               refreshing={animateRefreshing}
             />
           )}
+          {/* A Series "AI motion" project says why not every scene was animated. */}
+          {isSuperAdmin && project.aiMotion?.note && (
+            <p className="text-help">{project.aiMotion.note}</p>
+          )}
 
           <div className="space-y-3">
             {project.scenes.map((s, i) => (
