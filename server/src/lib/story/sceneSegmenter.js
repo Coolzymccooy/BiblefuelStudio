@@ -7,6 +7,14 @@ let _llm = defaultLlmComplete;
 export function _setLlmImpl(impl) { _llm = impl; }
 export function _resetLlmImpl() { _llm = defaultLlmComplete; }
 
+/**
+ * One completion through the same helper the segmenter uses (and the same
+ * _setLlmImpl stub in tests). The music video prompts call it.
+ * @param {string} prompt
+ * @returns {Promise<string>}
+ */
+export function completeLlm(prompt) { return _llm(prompt); }
+
 const TARGET_SEC_DEFAULT = 8;
 // Hard ceiling on scenes per project. Each scene is one AI image generated at
 // render time, so the scene count IS the image-generation cost and wall-clock.

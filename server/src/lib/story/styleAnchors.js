@@ -9,6 +9,10 @@ export const STYLE_ANCHORS = {
     "heavenly atmosphere, glowing light rays, soft clouds, ethereal and serene, vertical 9:16, no text, no watermark",
   "ancient-scripture":
     "ancient near-eastern setting, weathered textures, golden-hour desert light, historical, vertical 9:16, no text, no watermark",
+  // AI music videos (lyric video > AI music video). No frame shape: the
+  // picture is made in the project's own aspect, which may be landscape.
+  "music-video":
+    "cinematic music video still, natural film grain, motivated practical light, shallow depth of field, no text, no watermark",
 };
 
 const DEFAULT_STYLE = "cinematic-bible";
