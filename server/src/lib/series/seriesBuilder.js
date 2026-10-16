@@ -16,13 +16,14 @@
 
 import { normalizeReference, getChapterVerseCount } from "../bible/bibleReference.js";
 import { buildYouVersionUrl } from "../bible/youversion.js";
+import { extractSpeakableVerseText } from "./speakable.js";
 
 const MAX_PARTS = 12;
 // A narrator reads about 12.75 characters a second: 22 seconds is the 280
 // characters a short has always spoken.
 const SPOKEN_CHARS_PER_SECOND = 12.75;
-// "Part 1 of 2 — 1 John 2:1-2" before the verses and "Read on YouVersion"
-// after them.
+// "Part 1 of 2 — 1 John 2:1-2" before the verses, with a little room for
+// a slow voice.
 const INTRO_OUTRO_SECONDS = 3;
 // Auto lengthens every part by this much at a time until the passage fits in
 // MAX_PARTS videos.
@@ -263,6 +264,26 @@ export function buildSegmentCaption({ partNumber, totalParts, reference, verses,
   const room = Math.max(80, CAPTION_MAX_LENGTH - fixedLen);
   const trimmedBody = body.slice(0, room - 1).replace(/[\s,;]+$/, "") + "…";
   return [headline, "", trimmedBody, "", `— ${reference}`, `Read on YouVersion: ${youVersionUrl}`, "", continuity].join("\n").trim();
+}
+
+/**
+ * What one part's video says: the part and its reference, then the verses.
+ * Nothing follows the verses: the YouVersion link is in the post caption,
+ * and reading "Read on YouVersion" out (and showing it as the last caption)
+ * ended every video on an advert rather than on scripture.
+ *
+ * @param {{ partNumber: number, totalParts: number, reference: string, verses: BibleVerse[] }} segment
+ * @param {number} maxChars  guard for the spoken verses (the plan already fits them)
+ * @returns {{ hook: string, verse: string, reference: string, reflection: string, cta: string }}
+ */
+export function buildPartScript(segment, maxChars) {
+  return {
+    hook: `Part ${segment.partNumber} of ${segment.totalParts} — ${segment.reference}`,
+    verse: extractSpeakableVerseText(segment.verses, maxChars),
+    reference: "",
+    reflection: "",
+    cta: "",
+  };
 }
 
 /**
