@@ -1,1 +1,0 @@
-function a(t){return[t.hook,t.caption].filter(Boolean).join(" ")}function s(t,o){const n=t.split(/\s+/).filter(Boolean).length/2.6;return{clips:Math.max(1,Math.ceil(n/10)),seconds:n,usd:n*o}}function e({clips:t,usd:o}){return`about ${t} ${t===1?"clip":"clips"} · ≈ $${o.toFixed(2)}`}export{e as a,s as b,a as p};
