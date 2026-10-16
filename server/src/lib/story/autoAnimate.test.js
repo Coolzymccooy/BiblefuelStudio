@@ -185,6 +185,46 @@ describe("autoAnimate", () => {
     assert.equal(submitted.length, 0);
   });
 
+  test("two projects picking at once never pick more than what is left of the budget", async () => {
+    // $2 fits five $0.378 clips. A run reserves each clip only as it orders it
+    // (three at a time), so the second project must not count A's fourth as free.
+    process.env.VIDEO_GEN_MONTHLY_CAP_USD = "2";
+    const a = project(4);
+    const b = project(4);
+    let open;
+    const gate = new Promise((r) => { open = r; });
+    const { deps, submitted } = fakeDeps();
+    const gated = { ...deps, submit: async (args) => { await gate; return deps.submit(args); } };
+    await Promise.all([
+      autoAnimate(ctx(), a.projectId, { ledgerDir, deps: gated }),
+      autoAnimate(ctx(), b.projectId, { ledgerDir, deps: gated }),
+    ]);
+    const queued = [a, b].flatMap((p) => statuses(p.projectId)).filter((s) => s === "queued").length;
+    assert.equal(queued, 5, "five clips fit in the budget, across both projects");
+    assert.equal(readProject(dataDir, a.projectId).aiMotion.note, null);
+    assert.equal(readProject(dataDir, b.projectId).aiMotion.note, BUDGET_NOTE(1, 4));
+    open();
+    await waitFor(() => !isAnimating(a.projectId) && !isAnimating(b.projectId));
+    assert.equal(submitted.length, 5);
+    const errors = [a, b].flatMap((p) => readProject(dataDir, p.projectId).scenes).filter((s) => s.aiVideoStatus === "error");
+    assert.deepEqual(errors, [], "no picked clip fails on the cap");
+  });
+
+  test("a project's picks stop counting once its run ends", async () => {
+    process.env.VIDEO_GEN_MONTHLY_CAP_USD = "2";
+    const a = project(4);
+    const first = fakeDeps();
+    await autoAnimate(ctx(), a.projectId, { ledgerDir, deps: first.deps });
+    await waitFor(() => !isAnimating(a.projectId));
+    // A spent four clips ($1.512); $0.488 is left, so one more fits.
+    const b = project(3);
+    const second = fakeDeps();
+    await autoAnimate(ctx(), b.projectId, { ledgerDir, deps: second.deps });
+    assert.equal(readProject(dataDir, b.projectId).aiMotion.note, BUDGET_NOTE(1, 3));
+    await waitFor(() => !isAnimating(b.projectId));
+    assert.equal(second.submitted.length, 1);
+  });
+
   test("High quality is priced and ordered at High", async () => {
     const p = project(1, { quality: "high" });
     const { deps, submitted } = fakeDeps();

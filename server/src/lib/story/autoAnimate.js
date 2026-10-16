@@ -1,6 +1,6 @@
 import { readProject, writeProject } from "./projectStore.js";
-import { animatableScenes, estimateAnimation, startAnimation, qualityOf } from "./animateStage.js";
-import { ledgerSummary } from "../videoGen/spend.js";
+import { animatableScenes, estimateAnimation, startAnimation, qualityOf, isAnimating, ledgerKey } from "./animateStage.js";
+import { ledgerSummary, readLedger } from "../videoGen/spend.js";
 import { isSeedanceConfigured } from "../videoGen/providers/seedance.js";
 import { DATA_DIR } from "../paths.js";
 
@@ -34,17 +34,40 @@ function markStarted(dataDir, projectId, note) {
   });
 }
 
+// Scenes an auto run picked whose clip is not reserved in the ledger yet, by
+// project: { dataDir, scenes: [{ id, usd }] }. A run reserves each clip only
+// as it orders it (a few at a time), so another project picking meanwhile
+// must not count that money as free. An entry ends with its run.
+const picks = new Map();
+
+/** What other projects' auto runs have picked but not yet reserved. */
+function unreservedPicksUsd(ledgerDir) {
+  const { reservations } = readLedger(ledgerDir);
+  let usd = 0;
+  for (const [projectId, entry] of picks) {
+    if (!isAnimating(projectId)) { picks.delete(projectId); continue; }
+    const scenes = readProject(entry.dataDir, projectId)?.scenes || [];
+    for (const pick of entry.scenes) {
+      // Queued and not reserved: not ordered yet. Reserved ones are in the
+      // ledger's own total; anything else is done, failed or stopped.
+      const queued = scenes.some((s) => s.id === pick.id && s.aiVideoStatus === "queued");
+      if (queued && !Object.hasOwn(reservations, ledgerKey(projectId, pick.id))) usd += pick.usd;
+    }
+  }
+  return usd;
+}
+
 /** The scenes that fit in what is left of the month's budget, in scene order. */
 function pickWithinBudget(project, scenes, quality, ledgerDir) {
   const { capUsd, spentUsd, reservedUsd } = ledgerSummary(ledgerDir);
-  const left = capUsd - spentUsd - reservedUsd;
+  const left = capUsd - spentUsd - reservedUsd - unreservedPicksUsd(ledgerDir);
   const picked = [];
   let total = 0;
   for (const s of scenes) {
     const usd = estimateAnimation(project, [s.id], quality).usd;
     if (total + usd > left + EPSILON) break;
     total += usd;
-    picked.push(s.id);
+    picked.push({ id: s.id, usd });
   }
   return { picked, total: scenes.length };
 }
@@ -76,8 +99,13 @@ export async function autoAnimate(ctx, projectId, { ledgerDir = DATA_DIR, deps, 
     const note = picked.length < total ? BUDGET_NOTE(picked.length, total) : null;
     // Written first: from here on this project never auto-spends again.
     if (!markStarted(ctx.dataDir, projectId, note)) return;
-    if (picked.length) start(ctx, projectId, { sceneIds: picked, quality, ledgerDir, deps });
+    if (!picked.length) return;
+    // Counted before the run starts: its first clips reserve inside start().
+    picks.set(projectId, { dataDir: ctx.dataDir, scenes: picked });
+    const started = start(ctx, projectId, { sceneIds: picked.map((p) => p.id), quality, ledgerDir, deps });
+    if (!started) picks.delete(projectId);
   } catch (e) {
+    picks.delete(projectId);
     const message = String(e?.message || e);
     console.warn(`[story] auto-animate ${projectId} failed: ${message}`);
     try {
