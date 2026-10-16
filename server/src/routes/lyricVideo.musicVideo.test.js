@@ -140,9 +140,9 @@ describe("POST /:id/to-story", () => {
     // Seconds become milliseconds, word by word, in order.
     assert.deepEqual(story.transcript.words.slice(0, 2), [{ text: "we", startMs: 1000, endMs: 2000 }, { text: "walk by faith", startMs: 2000, endMs: 5000 }]);
     assert.equal(story.transcript.words.length, 8);
-    const plan = planMusicScenes({ sections: p.sections, lines: p.lines, durationSec: 24, audibleEnd: 23.5 });
+    const plan = planMusicScenes({ sections: p.sections, lines: p.lines, durationSec: 24 });
     assert.deepEqual(story.scenes.map((s) => [s.startMs, s.endMs, s.imageStatus]), plan.map((s) => [s.startMs, s.endMs, "pending"]));
-    assert.equal(story.scenes[story.scenes.length - 1].endMs, 23500, "the scenes stop where the sound does");
+    assert.equal(story.scenes[story.scenes.length - 1].endMs, 24000, "the scenes cover the whole song file, quiet tail included");
     // The prompt call failed in this test: every scene got the plain prompt, with the style anchor.
     assert.equal(story.scenes[0].imagePrompt, `cinematic music video shot, VERSE 1: we walk by faith, ${anchorFor("music-video")}`);
     assert.deepEqual(seen.started, [{ ctx: { dataDir: ctx.dataDir, outputDir: ctx.outputDir }, id }]);
@@ -169,7 +169,7 @@ describe("POST /:id/to-story", () => {
   test("the character and the LLM prompts reach the scenes", async () => {
     const man = "a young Black African man in his late twenties, short hair, plain olive shirt";
     const p = timedProject(ctx);
-    const plan = planMusicScenes({ sections: p.sections, lines: p.lines, durationSec: 24, audibleEnd: 23.5 });
+    const plan = planMusicScenes({ sections: p.sections, lines: p.lines, durationSec: 24 });
     let asked = "";
     _setLlmImpl(async (prompt) => { asked = prompt; return JSON.stringify({ prompts: plan.map((_, i) => `shot ${i + 1}`) }); });
     const r = await call("POST", `/${p.projectId}/to-story`, { character: `  ${man}  ` });

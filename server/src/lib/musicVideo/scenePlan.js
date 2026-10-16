@@ -18,11 +18,13 @@ const NO_SECTION = { kind: "other", label: "" };
 
 const finite = (n) => typeof n === "number" && Number.isFinite(n);
 
-/** Where the scenes stop: the measured audible end when it is inside the song, else the song's length. */
-function songEnd(durationSec, audibleEnd) {
-  const length = finite(durationSec) && durationSec > 0 ? durationSec : 0;
-  if (finite(audibleEnd) && audibleEnd > 0 && audibleEnd < length) return audibleEnd;
-  return length;
+/**
+ * Where the scenes stop: the song file's full length, its quiet tail included. The lyric render
+ * plays the whole file (and may pad it for the end card), so the AI video must cover all of it;
+ * a background shorter than the render is looped from its start.
+ */
+function songEnd(durationSec) {
+  return finite(durationSec) && durationSec > 0 ? durationSec : 0;
 }
 
 /** The lines timing has placed, inside the song, in time order. */
@@ -143,16 +145,15 @@ function linesIn(piece, lines) {
  * @param {object} args
  * @param {Array<{id:string,kind:string,label:string,start?:number}>} args.sections
  * @param {Array<{text:string,start?:number,end?:number}>} args.lines
- * @param {number} args.durationSec the song's length
- * @param {number} [args.audibleEnd] where the sound really stops (timing.audibleEnd)
+ * @param {number} args.durationSec the song file's length; the last scene runs to it
  * @returns {Array<{startMs:number,endMs:number,kind:string,label:string,text:string}>}
  *   contiguous from 0 to the end; kind "instrumental" (with empty text) where no line is sung
  */
 export function planMusicScenes({
-  sections = [], lines = [], durationSec, audibleEnd,
+  sections = [], lines = [], durationSec,
   maxSec = SCENE_MAX_SEC, minSec = SCENE_MIN_SEC, targetSec = FALLBACK_SCENE_SEC,
 } = {}) {
-  const end = songEnd(durationSec, audibleEnd);
+  const end = songEnd(durationSec);
   if (!(end > 0)) return [];
   const min = Math.min(minSec, maxSec / 2);
   const timed = timedLines(lines, end);

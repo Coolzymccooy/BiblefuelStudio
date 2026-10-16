@@ -576,7 +576,7 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
     const choice = checkToStoryRequest(bodyOf(req));
     assertMusicVideoReady(project);
     const durationSec = Number(project.song.durationSec);
-    const plan = planMusicScenes({ sections: project.sections, lines: project.lines, durationSec, audibleEnd: project.timing?.audibleEnd });
+    const plan = planMusicScenes({ sections: project.sections, lines: project.lines, durationSec });
     const prompts = await writeMusicPrompts({ title: project.title, artist: project.artist, scenes: plan, character: choice.character });
     // The prompt call yields: the song may have been deleted, changed or put to work meanwhile.
     const latest = load(req);

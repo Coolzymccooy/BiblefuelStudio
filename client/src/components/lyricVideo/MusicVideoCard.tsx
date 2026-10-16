@@ -53,9 +53,9 @@ function MusicVideoPanel({ project, onChange }: Props) {
   const scenes = useMemo(
     () => planMusicScenes({
       sections: project.sections, lines: project.lines,
-      durationSec: project.song?.durationSec ?? 0, audibleEnd: project.timing?.audibleEnd,
+      durationSec: project.song?.durationSec ?? 0,
     }),
-    [project.sections, project.lines, project.song?.durationSec, project.timing?.audibleEnd],
+    [project.sections, project.lines, project.song?.durationSec],
   );
   const canAnimate = rates.data?.configured === true;
   const estimate = rates.data ? musicVideoEstimateText(musicVideoEstimate(scenes, rates.data.usdPerSecond.standard)) : null;

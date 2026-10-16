@@ -33,17 +33,12 @@ describe("planMusicScenes", () => {
     ]);
   });
 
-  test("the last section runs to the audible end when timing measured one", () => {
+  test("the last section runs to the song file's full length, quiet tail included, so the video covers the whole song", () => {
     const sections = [section("s1", "verse", "Verse", 0), section("s2", "chorus", "Chorus", 9)];
     const lines = [line("s1", 1, 5), line("s2", 9.5, 14)];
-    const scenes = planMusicScenes({ sections, lines, durationSec: 20, audibleEnd: 17.5 });
-    assert.equal(scenes[scenes.length - 1].endMs, 17500);
-    assertContiguous(scenes, 17500);
-  });
-
-  test("an audible end past the song's length is ignored", () => {
-    const scenes = planMusicScenes({ sections: [section("s1", "verse", "V", 0)], lines: [line("s1", 1, 6)], durationSec: 10, audibleEnd: 99 });
-    assert.equal(scenes[scenes.length - 1].endMs, 10000);
+    const scenes = planMusicScenes({ sections, lines, durationSec: 20, audibleEnd: 15 });
+    assert.equal(scenes[scenes.length - 1].endMs, 20000);
+    assertContiguous(scenes, 20000);
   });
 
   test("a long section is split at line starts into pieces of at most 12 s", () => {

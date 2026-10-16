@@ -47,8 +47,6 @@ export interface LyricTiming {
   beats?: { bpm: number; times: number[] };
   /** True when the words were heard in the vocals alone (a laptop separated them), false when in the whole mix. */
   usedVocalStem?: boolean;
-  /** Where the song's sound really stops, in seconds (set by timing). */
-  audibleEnd?: number;
   finishedAt?: string;
 }
 

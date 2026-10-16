@@ -31,9 +31,9 @@ interface Timed { start: number; end: number; text: string }
 const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
 const lengthOf = (p: { start: number; end: number }) => p.end - p.start;
 
-function songEnd(durationSec: number, audibleEnd?: number): number {
-  const length = finite(durationSec) && durationSec > 0 ? durationSec : 0;
-  return finite(audibleEnd) && audibleEnd > 0 && audibleEnd < length ? audibleEnd : length;
+/** The song file's full length: the lyric render plays all of it, so the AI video covers all of it. */
+function songEnd(durationSec: number): number {
+  return finite(durationSec) && durationSec > 0 ? durationSec : 0;
 }
 
 function timedLines(lines: LyricLine[], end: number): Timed[] {
@@ -127,13 +127,12 @@ function linesIn(piece: Piece, lines: Timed[]): Timed[] {
   });
 }
 
-export function planMusicScenes({ sections, lines, durationSec, audibleEnd }: {
+export function planMusicScenes({ sections, lines, durationSec }: {
   sections: LyricSection[];
   lines: LyricLine[];
   durationSec: number;
-  audibleEnd?: number;
 }): MusicScene[] {
-  const end = songEnd(durationSec, audibleEnd);
+  const end = songEnd(durationSec);
   if (!(end > 0)) return [];
   const timed = timedLines(lines, end);
   const blocks = sectionBlocks(sections, end);

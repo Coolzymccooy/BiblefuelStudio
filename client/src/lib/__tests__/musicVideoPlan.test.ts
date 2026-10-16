@@ -20,8 +20,8 @@ describe('planMusicScenes (client copy of the server plan)', () => {
     expect(scenes.map((s) => [s.startMs, s.endMs, s.kind])).toEqual([[0, 10000, 'verse'], [10000, 20000, 'chorus']]);
   });
 
-  it('stops at the audible end', () => {
-    const scenes = planMusicScenes({ sections: [section('s1', 'verse', 'V', 0)], lines: [line('s1', 1, 6)], durationSec: 20, audibleEnd: 9 });
+  it("runs to the song file's full length", () => {
+    const scenes = planMusicScenes({ sections: [section('s1', 'verse', 'V', 0)], lines: [line('s1', 1, 6)], durationSec: 9 });
     expect(scenes[scenes.length - 1].endMs).toBe(9000);
   });
 
