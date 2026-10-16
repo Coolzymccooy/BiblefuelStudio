@@ -1,0 +1,36 @@
+/**
+ * Series "AI motion": what a part's narration is, and roughly what animating
+ * its Story video would cost. The estimate and the send both read the
+ * narration from partNarration, so the price shown is for the words sent.
+ */
+
+/** Narration speed used for the estimate, in words a second. */
+const WORDS_PER_SECOND = 2.6;
+/** The server asks the segmenter for 10 s scenes on an AI motion import. */
+const SCENE_SEC = 10;
+
+/** The words a part is narrated with: the hook leads, so the video opens the way it should. */
+export function partNarration(seg: { hook?: string; caption: string }): string {
+    return [seg.hook, seg.caption].filter(Boolean).join(' ');
+}
+
+export interface AiMotionEstimate {
+    clips: number;
+    seconds: number;
+    usd: number;
+}
+
+/** About how many clips, and what they cost, at `usdPerSecond` (Standard, portrait). */
+export function aiMotionEstimate(narration: string, usdPerSecond: number): AiMotionEstimate {
+    const words = narration.split(/\s+/).filter(Boolean).length;
+    const seconds = words / WORDS_PER_SECOND;
+    return {
+        clips: Math.max(1, Math.ceil(seconds / SCENE_SEC)),
+        seconds,
+        usd: seconds * usdPerSecond,
+    };
+}
+
+export function aiMotionEstimateText({ clips, usd }: AiMotionEstimate): string {
+    return `about ${clips} ${clips === 1 ? 'clip' : 'clips'} · ≈ $${usd.toFixed(2)}`;
+}
