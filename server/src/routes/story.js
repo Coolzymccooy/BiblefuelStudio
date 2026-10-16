@@ -32,6 +32,7 @@ import { isSceneVideoUpload, resolveSceneVideo } from "../lib/story/sceneVideo.j
 import { normalizeStoryAspect, storyFrameSize } from "../lib/story/sceneFraming.js";
 import { createStoryAnimateRouter } from "./storyAnimate.js";
 import { isAnimating } from "../lib/story/animateStage.js";
+import { autoAnimate } from "../lib/story/autoAnimate.js";
 
 const MUSIC_REF_PREFIX = /^(library|mylib):/;
 
@@ -97,6 +98,10 @@ export function _resetTtsImpl() { _ttsFn = synthesizeEdgeTts; }
 let _renderFn = runStoryRender;
 export function _setRenderImpl(impl) { _renderFn = impl; }
 export function _resetRenderImpl() { _renderFn = runStoryRender; }
+
+let _autoAnimateFn = autoAnimate;
+export function _setAutoAnimateImpl(impl) { _autoAnimateFn = impl; }
+export function _resetAutoAnimateImpl() { _autoAnimateFn = autoAnimate; }
 
 // Confine a user-supplied mediaPath to the caller's own dirs (anti path-traversal).
 function confineMediaPath(ctx, rawMediaPath) {
@@ -243,12 +248,26 @@ async function imagesStage(ctx, projectId, opts = {}) {
     throw Object.assign(new Error(ANIMATING_REFUSAL.error), { code: ANIMATING_REFUSAL.code });
   }
   imageRuns.set(projectId, (imageRuns.get(projectId) || 0) + 1);
+  let result;
   try {
-    return await runImagesStage(ctx, projectId, opts);
+    result = await runImagesStage(ctx, projectId, opts);
   } finally {
     const left = (imageRuns.get(projectId) || 1) - 1;
     if (left > 0) imageRuns.set(projectId, left); else imageRuns.delete(projectId);
   }
+  // Every picture is in: an "AI motion" project animates its scenes now, within
+  // the month's cap. Run after the counter is released, so the scenes are not
+  // still locked by this run. Every image path (pipeline, /images, /process,
+  // /resegment, long-form) comes through here. autoAnimate never throws and
+  // only starts a detached run, but it must never fail the images stage.
+  if (result?.status === STORY_STATUS.READY_TO_RENDER) {
+    try {
+      await _autoAnimateFn(ctx, projectId);
+    } catch (e) {
+      console.warn(`[story] auto-animate ${projectId} failed: ${e?.message || e}`);
+    }
+  }
+  return result;
 }
 
 async function runImagesStage(ctx, projectId, opts = {}) {

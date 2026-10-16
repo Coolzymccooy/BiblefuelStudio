@@ -832,3 +832,73 @@ describe("output frame", () => {
     assert.equal(res.statusCode, 404);
   });
 });
+
+describe("auto-animate hook after the images stage", () => {
+  const scenesWith = (statuses) => statuses.map((st, i) => ({
+    id: `scene-${i}`, text: "a", startMs: i * 5000, endMs: i * 5000 + 5000, imagePrompt: `p${i}`,
+    imagePath: st === "done" ? `/done-${i}.png` : null, imageStatus: st, promptEditedByUser: false,
+  }));
+
+  async function runImages(statuses, imageResult) {
+    const { _setAutoAnimateImpl, sceneImageBlocked } = await import("./story.js");
+    const p = createProject(dataDir, { title: "T", aiMotion: true });
+    writeProject(dataDir, { ...p, scenes: scenesWith(statuses) });
+    const calls = [];
+    _setAutoAnimateImpl(async (ctx, projectId) => {
+      // The image run has let go of the scenes before animation starts.
+      calls.push({ ctx, projectId, blocked: sceneImageBlocked(readProject(ctx.dataDir, projectId), "scene-0") });
+    });
+    _setImageGenImpl(async () => imageResult);
+    const { req, res } = mockReqRes({ params: { id: p.projectId }, body: {}, dataDir, outputDir });
+    await handlerFor("post", "/:id/images")(req, res);
+    assert.equal(res.payload.ok, true);
+    return { id: p.projectId, calls };
+  }
+
+  test("a run that finishes every picture hands over to auto-animate, after the run lets go", async () => {
+    const { _resetAutoAnimateImpl } = await import("./story.js");
+    try {
+      const { id, calls } = await runImages(["done", "pending"], { ok: true, path: "/new.png", publicUrl: "/o/new.png" });
+      await waitForProject(dataDir, id, (p) => p.status === "ready_to_render");
+      const start = Date.now();
+      while (!calls.length && Date.now() - start < 2000) await new Promise((r) => setTimeout(r, 5));
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0].projectId, id);
+      assert.equal(calls[0].ctx.dataDir, dataDir);
+      assert.equal(calls[0].ctx.outputDir, outputDir);
+      assert.equal(calls[0].blocked, null, "no IMAGES_RUNNING lock is left when animation starts");
+    } finally {
+      _resetAutoAnimateImpl();
+    }
+  });
+
+  test("a run that leaves a picture missing does not auto-animate", async () => {
+    const { _resetAutoAnimateImpl } = await import("./story.js");
+    try {
+      const { id, calls } = await runImages(["pending"], { ok: false, error: "quota exceeded" });
+      await waitForProject(dataDir, id, (p) => p.scenes[0].imageStatus === "error");
+      await new Promise((r) => setTimeout(r, 50));
+      assert.equal(readProject(dataDir, id).status, "generating_images");
+      assert.equal(calls.length, 0);
+    } finally {
+      _resetAutoAnimateImpl();
+    }
+  });
+
+  test("an auto-animate that throws never fails the images stage", async () => {
+    const { _setAutoAnimateImpl, _resetAutoAnimateImpl, runStoryPipeline } = await import("./story.js");
+    const p = createProject(dataDir, { title: "T", aiMotion: true });
+    writeProject(dataDir, { ...p, transcript: { words: [{ text: "w", startMs: 0, endMs: 500 }], hash: "h" }, scenes: scenesWith(["pending"]) });
+    _setAutoAnimateImpl(async () => { throw new Error("boom"); });
+    _setImageGenImpl(async () => ({ ok: true, path: "/n.png", publicUrl: "/o/n.png" }));
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+      await runStoryPipeline({ dataDir, outputDir }, p.projectId, path.join(outputDir, "x.mp3"));
+      assert.equal(readProject(dataDir, p.projectId).status, "ready_to_render");
+    } finally {
+      console.warn = warn;
+      _resetAutoAnimateImpl();
+    }
+  });
+});
