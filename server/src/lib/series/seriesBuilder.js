@@ -181,15 +181,16 @@ export function packParts(verses, { versesPerPart, budgetChars, sentenceMaxChars
  * videos, every part grows a little at a time until the passage fits.
  * @param {BibleVerse[]} verses
  * @param {number} targetSeconds
+ * @param {number} sentenceMaxChars  the longest a sentence may run before it is broken
  * @returns {{ parts: BibleVerse[][], stretched: boolean }}
  */
-function packAuto(verses, targetSeconds) {
+function packAuto(verses, targetSeconds, sentenceMaxChars) {
   let budgetChars = charBudgetFor(targetSeconds);
-  let parts = packParts(verses, { versesPerPart: "auto", budgetChars });
+  let parts = packParts(verses, { versesPerPart: "auto", budgetChars, sentenceMaxChars });
   let stretched = false;
   while (parts.length > MAX_PARTS) {
     budgetChars = Math.ceil(budgetChars * STRETCH_STEP);
-    parts = packParts(verses, { versesPerPart: "auto", budgetChars });
+    parts = packParts(verses, { versesPerPart: "auto", budgetChars, sentenceMaxChars });
     stretched = true;
   }
   return { parts, stretched };
@@ -320,16 +321,16 @@ export async function buildSeriesPlan({
   const targetSeconds = Number(durationSec) || DEFAULT_TARGET_SECONDS;
   const auto = versesPerPart === "auto";
   const partLimitSeconds = Math.floor(maxRenderSeconds * RENDER_SAFETY);
-  // A chosen verse count keeps a long sentence whole up to the longest video
-  // the server makes; Auto breaks one only past the length it is filling.
+  // The verses a part may hold before the voice would pass the render limit.
+  const partLimitVerseSeconds = Math.max(1, partLimitSeconds - INTRO_OUTRO_SECONDS);
+  // A sentence stays whole up to the longest video the server makes, in
+  // every mode; only one longer than that is broken, at a verse.
+  const sentenceMaxChars = charBudgetFor(partLimitVerseSeconds);
   const { parts, stretched } = auto
-    ? packAuto(verses, targetSeconds)
+    // Auto never aims past what the server can render.
+    ? packAuto(verses, Math.min(targetSeconds, partLimitVerseSeconds), sentenceMaxChars)
     : {
-        parts: packParts(verses, {
-          versesPerPart,
-          budgetChars: charBudgetFor(targetSeconds),
-          sentenceMaxChars: charBudgetFor(partLimitSeconds - INTRO_OUTRO_SECONDS),
-        }),
+        parts: packParts(verses, { versesPerPart, budgetChars: charBudgetFor(targetSeconds), sentenceMaxChars }),
         stretched: false,
       };
 

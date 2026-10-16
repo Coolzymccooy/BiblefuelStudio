@@ -794,11 +794,12 @@ async function renderVideoCore(payload, jobId) {
   const widthPct = Math.min(100, Math.max(60, Number(captionWidthPct || 90)));
   const baseChars = w >= 1800 ? 42 : w >= 1200 ? 34 : 28;
   const maxChars = Math.max(18, Math.floor(baseChars * (widthPct / 100)));
-  // Cap raised from 6 → 12 so longer verses (e.g. a Psalm 23 part) don't
-  // get cut mid-sentence when this fallback path is taken. The kinetic
-  // renderer is now the default for series + auto-publish, but if it
-  // can't get alignment we shouldn't silently truncate.
-  const safeLines = wrapTextLines(rawLines, maxChars, 12);
+  // Lines are paced one at a time across the video (buildLineDrawtext with a
+  // duration), so the cap only guards against runaway input. 12 cut a long
+  // Series part short on screen while the voice read all of it; the kinetic
+  // renderer is the default, but when it can't get alignment this path must
+  // still show every word.
+  const safeLines = wrapTextLines(rawLines, maxChars, 80);
   if (safeLines.length === 0) throw new Error("lines[] required");
 
   const outFile = path.join(currentOutDir(), `video-${uuid()}.mp4`);

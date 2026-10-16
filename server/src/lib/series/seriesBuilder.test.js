@@ -253,6 +253,25 @@ describe("buildSeriesPlan", () => {
     assert.equal(plan.segments[0].reference, "John 3:1-4");
   });
 
+  test("Auto keeps a long sentence whole too, when a video can hold it", async () => {
+    const verses = [1, 2, 3, 4].map((n) => ({ book: "John", chapter: 3, verse: n, text: `${"blessed be the Lord ".repeat(6)}${n === 4 ? "." : ","}` }));
+    const plan = await buildSeriesPlan({ chapterReference: "John 3:1-4", translation: "kjv", maxRenderSeconds: 180, fetchVerses: async () => verses });
+    assert.equal(plan.totalParts, 1);
+  });
+
+  test("Auto aims no longer than the server can render, splitting rather than refusing", async () => {
+    // 60 s asked for on a 30 s server: about 760 characters per part would fail.
+    const plan = await buildSeriesPlan({
+      chapterReference: "John 3:1-8",
+      translation: "kjv",
+      durationSec: 60,
+      maxRenderSeconds: 30,
+      fetchVerses: stubFetcher((n) => `${"and the word ".repeat(7)}verse ${n}.`),
+    });
+    assert.ok(plan.totalParts > 1);
+    for (const seg of plan.segments) assert.ok(seg.seconds <= 27, `part ${seg.partNumber} runs ${seg.seconds}s`);
+  });
+
   test("verses the service returns outside the range asked for are left out", async () => {
     const plan = await buildSeriesPlan({
       chapterReference: "John 3:2-3",
