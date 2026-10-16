@@ -119,6 +119,26 @@ describe("planMusicScenes", () => {
     assert.deepEqual(scenes, [{ startMs: 0, endMs: 6000, kind: "instrumental", label: "", text: "" }]);
   });
 
+  test("a 15-minute song plans at most 60 scenes (the daily picture budget), contiguous", () => {
+    const sections = Array.from({ length: 45 }, (_, i) => section(`s${i}`, i % 2 ? "chorus" : "verse", `S${i}`, i * 20));
+    const lines = Array.from({ length: 300 }, (_, i) => line(`s${Math.floor((i * 3) / 20)}`, i * 3, i * 3 + 2.5));
+    const scenes = planMusicScenes({ sections, lines, durationSec: 900 });
+    assert.ok(scenes.length <= 60, `${scenes.length} scenes`);
+    // The same count the client copy gives (client/src/lib/__tests__/musicVideoPlan.test.ts).
+    assert.equal(scenes.length, 60, "the cap makes longer scenes, not a handful");
+    assertContiguous(scenes, 900000, { maxSec: Infinity });
+  });
+
+  test("the cap holds with no sections, and with very many short sections", () => {
+    const fallback = planMusicScenes({ sections: [], lines: Array.from({ length: 400 }, (_, i) => line("s", i * 2.25, i * 2.25 + 2)), durationSec: 900 });
+    assert.ok(fallback.length <= 60, `${fallback.length} scenes`);
+    assertContiguous(fallback, 900000, { maxSec: Infinity });
+    const tiny = Array.from({ length: 150 }, (_, i) => section(`s${i}`, "verse", `S${i}`, i * 6));
+    const many = planMusicScenes({ sections: tiny, lines: tiny.map((s) => line(s.id, s.start + 0.5, s.start + 5)), durationSec: 900 });
+    assert.ok(many.length <= 60, `${many.length} scenes`);
+    assertContiguous(many, 900000, { maxSec: Infinity });
+  });
+
   test("plans are contiguous from 0 to the end across many shapes", () => {
     for (let seed = 1; seed <= 30; seed++) {
       let t = (seed % 5) * 1.3;

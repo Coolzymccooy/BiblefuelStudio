@@ -17,6 +17,7 @@ interface Props { project: LyricProject; onChange: (p: LyricProject) => void }
 
 const CHARACTER_MAX = 300;
 const MAKE_AGAIN = 'You already made a music video for this song. Make another? It pays for new pictures and clips.';
+const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
 const storyLink = (id: string) => `/app/story?project=${encodeURIComponent(id)}`;
 
 /**
@@ -69,7 +70,7 @@ function MusicVideoPanel({ project, onChange }: Props) {
     if (animating && rates.data) {
       const cost = musicVideoEstimate(scenes, rates.data.usdPerSecond.standard);
       if (cost.usd > CONFIRM_ABOVE_USD
-        && !window.confirm(`Make the AI music video and animate ${cost.clips} ${cost.clips === 1 ? 'scene' : 'scenes'} for about $${cost.usd.toFixed(2)}? This is charged to your BytePlus balance.`)) return;
+        && !window.confirm(`Make the AI music video: ${count(cost.clips, 'picture')} and ${count(cost.clips, 'clip')} for about $${cost.usd.toFixed(2)}? This is charged to your BytePlus balance.`)) return;
     }
     setMaking(true);
     try {
@@ -99,7 +100,7 @@ function MusicVideoPanel({ project, onChange }: Props) {
     <section className={`${panelCls} space-y-3`} aria-labelledby="music-video-heading">
       <h3 id="music-video-heading" className="section-title">AI music video</h3>
       <p className="text-sm text-content-secondary">
-        Makes a Story video with an AI picture for each part of the song ({scenes.length} {scenes.length === 1 ? 'scene' : 'scenes'}).
+        Makes a Story video of {count(scenes.length, 'AI picture')}, one for each part of the song.
         The song plays as it is. Render it in Story Video, then use it here as the background, and the lyrics go on top.
       </p>
 

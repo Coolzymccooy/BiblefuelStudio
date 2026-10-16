@@ -15,6 +15,8 @@ import { aiMotionEstimateText, type AiMotionEstimate } from './seriesAiMotion';
 const MAX_SEC = 12;
 const MIN_SEC = 4;
 const FALLBACK_SEC = 8;
+/** At most this many scenes (one picture each), as the server caps it. */
+export const MAX_SCENES = 60;
 const EPS = 1e-6;
 
 export interface MusicScene {
@@ -58,28 +60,28 @@ function sectionBlocks(sections: LyricSection[], end: number): Piece[] | null {
   return blocks;
 }
 
-function atomsOf(block: Piece, lines: Timed[]): Array<{ start: number; end: number }> {
+function atomsOf(block: Piece, lines: Timed[], maxSec: number): Array<{ start: number; end: number }> {
   const cuts = [...new Set(lines.map((l) => l.start).filter((t) => t > block.start + EPS && t < block.end - EPS))];
   const points = [block.start, ...cuts.sort((a, b) => a - b), block.end];
   const atoms: Array<{ start: number; end: number }> = [];
   for (let i = 0; i + 1 < points.length; i++) {
     const a = points[i];
     const b = points[i + 1];
-    const n = Math.max(1, Math.ceil((b - a) / MAX_SEC - EPS));
+    const n = Math.max(1, Math.ceil((b - a) / maxSec - EPS));
     for (let k = 0; k < n; k++) atoms.push({ start: k === 0 ? a : a + ((b - a) * k) / n, end: k === n - 1 ? b : a + ((b - a) * (k + 1)) / n });
   }
   return atoms;
 }
 
-function splitBlock(block: Piece, lines: Timed[], targetSec?: number): Piece[] {
+function splitBlock(block: Piece, lines: Timed[], maxSec: number, targetSec?: number): Piece[] {
   const len = lengthOf(block);
-  if (targetSec === undefined && len <= MAX_SEC + EPS) return [block];
-  const target = targetSec ?? len / Math.ceil(len / MAX_SEC - EPS);
+  if (targetSec === undefined && len <= maxSec + EPS) return [block];
+  const target = targetSec ?? len / Math.ceil(len / maxSec - EPS);
   const pieces: Piece[] = [];
   let cur: Piece | null = null;
-  for (const atom of atomsOf(block, lines)) {
+  for (const atom of atomsOf(block, lines, maxSec)) {
     if (!cur) { cur = { ...block, start: atom.start, end: atom.end }; continue; }
-    if (atom.end - cur.start > MAX_SEC + EPS || lengthOf(cur) >= target - EPS) {
+    if (atom.end - cur.start > maxSec + EPS || lengthOf(cur) >= target - EPS) {
       pieces.push(cur);
       cur = { ...block, start: atom.start, end: atom.end };
     } else {
@@ -90,13 +92,13 @@ function splitBlock(block: Piece, lines: Timed[], targetSec?: number): Piece[] {
   return pieces;
 }
 
-function mergeShort(pieces: Piece[]): Piece[] {
+function mergeShort(pieces: Piece[], minSec: number, maxSec: number): Piece[] {
   let list = pieces;
   for (;;) {
     if (list.length < 2) return list;
-    const i = list.findIndex((p) => lengthOf(p) < MIN_SEC - EPS);
+    const i = list.findIndex((p) => lengthOf(p) < minSec - EPS);
     if (i < 0) return list;
-    const fits = (span: number) => (span <= MAX_SEC + EPS ? 0 : 1);
+    const fits = (span: number) => (span <= maxSec + EPS ? 0 : 1);
     const options = [i - 1, i + 1]
       .filter((j) => j >= 0 && j < list.length)
       .map((j) => ({ j, span: list[Math.max(i, j)].end - list[Math.min(i, j)].start, len: lengthOf(list[j]) }))
@@ -107,7 +109,7 @@ function mergeShort(pieces: Piece[]): Piece[] {
     const first = list[a];
     const second = list[b];
     let joined: Piece[];
-    if (span <= MAX_SEC + EPS) {
+    if (span <= maxSec + EPS) {
       const keeper = lengthOf(first) >= lengthOf(second) ? first : second;
       joined = [{ ...keeper, start: first.start, end: second.end }];
     } else {
@@ -116,6 +118,21 @@ function mergeShort(pieces: Piece[]): Piece[] {
     }
     list = [...list.slice(0, a), ...joined, ...list.slice(b + 1)];
   }
+}
+
+function capCount(pieces: Piece[], count: number): Piece[] {
+  let list = pieces;
+  while (list.length > Math.max(1, count)) {
+    let best = 0;
+    for (let i = 1; i + 1 < list.length; i++) {
+      if (list[i + 1].end - list[i].start < list[best + 1].end - list[best].start) best = i;
+    }
+    const first = list[best];
+    const second = list[best + 1];
+    const keeper = lengthOf(first) >= lengthOf(second) ? first : second;
+    list = [...list.slice(0, best), { ...keeper, start: first.start, end: second.end }, ...list.slice(best + 2)];
+  }
+  return list;
 }
 
 function linesIn(piece: Piece, lines: Timed[]): Timed[] {
@@ -136,10 +153,17 @@ export function planMusicScenes({ sections, lines, durationSec }: {
   if (!(end > 0)) return [];
   const timed = timedLines(lines, end);
   const blocks = sectionBlocks(sections, end);
-  const pieces = blocks
-    ? blocks.flatMap((b) => splitBlock(b, timed))
-    : splitBlock({ kind: 'other', label: '', start: 0, end }, timed, FALLBACK_SEC);
-  const merged = mergeShort(pieces);
+  const piecesAt = (max: number, target: number) => {
+    const pieces = blocks
+      ? blocks.flatMap((b) => splitBlock(b, timed, max))
+      : splitBlock({ kind: 'other', label: '', start: 0, end }, timed, max, target);
+    return mergeShort(pieces, Math.min(MIN_SEC, max / 2), max);
+  };
+  let merged = piecesAt(MAX_SEC, FALLBACK_SEC);
+  if (merged.length > MAX_SCENES) {
+    const wider = Math.ceil(end / MAX_SCENES);
+    merged = capCount(piecesAt(Math.max(MAX_SEC, wider), Math.max(FALLBACK_SEC, wider)), MAX_SCENES);
+  }
   const bounds = [0, ...merged.map((p) => p.end)].map((t) => Math.round(t * 1000));
   bounds[bounds.length - 1] = Math.round(end * 1000);
   const scenes: MusicScene[] = [];

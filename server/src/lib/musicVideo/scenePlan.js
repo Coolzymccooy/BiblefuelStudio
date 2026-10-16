@@ -2,7 +2,9 @@
 //
 // AI music videos: the scene plan for a timed song. Scenes are cut on the
 // song's own sections, so the pictures change where the music does, and every
-// scene fits one Seedance clip (4 to 12 s). Pure: no files, no clock.
+// scene fits one Seedance clip (4 to 12 s). A song long enough to need more
+// than 60 scenes gets longer ones instead (their 12 s clips loop). Pure: no
+// files, no clock.
 //
 // The client mirrors this in client/src/lib/musicVideoPlan.ts to count the
 // clips for its estimate; a change here must be made there too.
@@ -11,6 +13,11 @@ export const SCENE_MAX_SEC = 12;
 export const SCENE_MIN_SEC = 4;
 /** Scene length when the song has no section starts to cut on. */
 export const FALLBACK_SCENE_SEC = 8;
+/**
+ * At most this many scenes (one picture each): the segmenter's MAX_SCENES default, which keeps
+ * one video inside the daily image quota.
+ */
+export const MAX_SCENES = 60;
 
 const EPS = 1e-6;
 const INTRO = { kind: "intro", label: "Intro" };
@@ -131,6 +138,22 @@ function mergeShort(pieces, { minSec, maxSec }) {
   }
 }
 
+/** At most `count` pieces: the neighbouring pair shortest together is joined until it fits. */
+function capCount(pieces, count) {
+  let list = pieces;
+  while (list.length > Math.max(1, count)) {
+    let best = 0;
+    for (let i = 1; i + 1 < list.length; i++) {
+      if (list[i + 1].end - list[i].start < list[best + 1].end - list[best].start) best = i;
+    }
+    const first = list[best];
+    const second = list[best + 1];
+    const keeper = lengthOf(first) >= lengthOf(second) ? first : second;
+    list = [...list.slice(0, best), { ...keeper, start: first.start, end: second.end }, ...list.slice(best + 2)];
+  }
+  return list;
+}
+
 /** A line is in a piece when its middle is, or when it fills at least half of the piece (a held note cut evenly). */
 function linesIn(piece, lines) {
   return lines.filter((l) => {
@@ -151,17 +174,25 @@ function linesIn(piece, lines) {
  */
 export function planMusicScenes({
   sections = [], lines = [], durationSec,
-  maxSec = SCENE_MAX_SEC, minSec = SCENE_MIN_SEC, targetSec = FALLBACK_SCENE_SEC,
+  maxSec = SCENE_MAX_SEC, minSec = SCENE_MIN_SEC, targetSec = FALLBACK_SCENE_SEC, maxScenes = MAX_SCENES,
 } = {}) {
   const end = songEnd(durationSec);
   if (!(end > 0)) return [];
-  const min = Math.min(minSec, maxSec / 2);
   const timed = timedLines(lines, end);
   const blocks = sectionBlocks(sections, end);
-  const pieces = blocks
-    ? blocks.flatMap((b) => splitBlock(b, timed, { maxSec }))
-    : splitBlock({ ...NO_SECTION, start: 0, end }, timed, { maxSec, targetSec });
-  const merged = mergeShort(pieces, { minSec: min, maxSec });
+  const piecesAt = (max, target) => {
+    const pieces = blocks
+      ? blocks.flatMap((b) => splitBlock(b, timed, { maxSec: max }))
+      : splitBlock({ ...NO_SECTION, start: 0, end }, timed, { maxSec: max, targetSec: target });
+    return mergeShort(pieces, { minSec: Math.min(minSec, max / 2), maxSec: max });
+  };
+  let merged = piecesAt(maxSec, targetSec);
+  if (merged.length > maxScenes) {
+    // Too many pictures for the day's budget: longer scenes (their clips loop under them),
+    // then, if many short sections still leave too many, the shortest neighbours joined.
+    const wider = Math.ceil(end / maxScenes);
+    merged = capCount(piecesAt(Math.max(maxSec, wider), Math.max(targetSec, wider)), maxScenes);
+  }
 
   // Shared boundaries rounded once, so each scene starts exactly where the one before ends.
   const bounds = [0, ...merged.map((p) => p.end)].map((t) => Math.round(t * 1000));

@@ -72,6 +72,7 @@ describe('MusicVideoCard', () => {
     const animate = await screen.findByRole('checkbox', { name: /animate the scenes/i });
     expect((animate as HTMLInputElement).checked).toBe(true);
     expect(await screen.findByText('about 2 clips · ≈ $2.40')).toBeTruthy();
+    expect(screen.getByText(/makes a story video of 2 ai pictures/i)).toBeTruthy();
   });
 
   it('without AI motion on the server, offers still pictures only', async () => {
@@ -156,7 +157,7 @@ describe('MusicVideoCard', () => {
       await screen.findByText('about 2 clips · ≈ $2.40');
       await userEvent.click(screen.getByRole('button', { name: 'Make AI music video' }));
       expect(confirmSpy).toHaveBeenCalledTimes(1);
-      expect(confirmSpy.mock.calls[0][0]).toMatch(/2 scenes for about \$2\.40/);
+      expect(confirmSpy.mock.calls[0][0]).toMatch(/2 pictures and 2 clips for about \$2\.40/);
       expect(lyricVideoApi.toStory).not.toHaveBeenCalled();
     });
 

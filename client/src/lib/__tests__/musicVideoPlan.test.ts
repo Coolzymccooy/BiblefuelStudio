@@ -74,6 +74,28 @@ describe('planMusicScenes (client copy of the server plan)', () => {
     ]);
   });
 
+  it('caps a 15-minute song at 60 scenes, contiguous, as the server does', () => {
+    const contiguous = (scenes: Array<{ startMs: number; endMs: number }>) => {
+      expect(scenes[0].startMs).toBe(0);
+      expect(scenes[scenes.length - 1].endMs).toBe(900000);
+      scenes.slice(1).forEach((s, i) => expect(s.startMs).toBe(scenes[i].endMs));
+    };
+    const sectioned = planMusicScenes({
+      sections: Array.from({ length: 45 }, (_, i) => section(`s${i}`, i % 2 ? 'chorus' : 'verse', `S${i}`, i * 20)),
+      lines: Array.from({ length: 300 }, (_, i) => line(`s${Math.floor((i * 3) / 20)}`, i * 3, i * 3 + 2.5)),
+      durationSec: 900,
+    });
+    expect(sectioned).toHaveLength(60);
+    contiguous(sectioned);
+    const fallback = planMusicScenes({ sections: [], lines: Array.from({ length: 400 }, (_, i) => line('s', i * 2.25, i * 2.25 + 2)), durationSec: 900 });
+    expect(fallback).toHaveLength(60);
+    contiguous(fallback);
+    const tiny = Array.from({ length: 150 }, (_, i) => section(`s${i}`, 'verse', `S${i}`, i * 6));
+    const many = planMusicScenes({ sections: tiny, lines: tiny.map((s) => line(s.id, (s.start as number) + 0.5, (s.start as number) + 5)), durationSec: 900 });
+    expect(many).toHaveLength(60);
+    contiguous(many);
+  });
+
   it('is empty for a song with no length', () => {
     expect(planMusicScenes({ sections: [], lines: [], durationSec: 0 })).toEqual([]);
   });
