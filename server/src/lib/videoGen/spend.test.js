@@ -56,6 +56,8 @@ describe("pricing", () => {
   });
   test("the refusal says the month and the totals", () => {
     assert.equal(capMessage(31.2, OCT), "This would take October's AI video spend to $31.20 of $30.");
+    // The Story page's AI motion line (client storyAiMotionNote) spots a cap failure by this phrase.
+    assert.match(capMessage(31.2, OCT), /AI video spend/);
   });
 });
 

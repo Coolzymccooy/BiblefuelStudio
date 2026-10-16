@@ -48,10 +48,12 @@ export function getAudioDurationSec(url: string): Promise<number> {
  * @param opts.title    project title shown in the Story list
  * @param opts.style    style anchor key (cinematic-bible, etc.)
  * @param opts.category voice category for synthesis
+ * @param opts.aiMotion animate the scenes once the pictures are ready (the
+ *   server keeps it only for a super admin); the video is portrait
  */
 export async function narrateAndSendToStory(
     narrationText: string,
-    opts: { title?: string; style?: string; category?: string } = {},
+    opts: { title?: string; style?: string; category?: string; aiMotion?: boolean } = {},
 ): Promise<SendToStoryResult> {
     const text = String(narrationText || '').trim();
     if (!text) return { ok: false, error: 'Nothing to narrate' };
@@ -85,6 +87,10 @@ export async function narrateAndSendToStory(
         words,
         title: opts.title,
         style: opts.style,
+        // The server builds the project itself (segment, pictures) rather than
+        // leaving it for a manual Resume.
+        autoStart: true,
+        ...(opts.aiMotion ? { aiMotion: true, aspect: 'portrait' } : {}),
     });
     if (!created.ok || !created.data?.project) {
         return { ok: false, error: created.error || 'Could not create the Story project' };

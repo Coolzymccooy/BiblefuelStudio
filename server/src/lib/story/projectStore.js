@@ -98,9 +98,27 @@ export function normaliseCaptionSettings(input = {}, current = {}) {
   };
 }
 
+const AI_MOTION_QUALITIES = ["standard", "high"];
+
+/**
+ * A project's AI motion setting (Series "AI motion"): null, or the quality to
+ * animate at once the pictures are ready. autoStartedAt and note always start
+ * empty; only the auto-animate step sets them, so it spends once per project.
+ * The quality follows animateStage's qualityOf: anything unknown is standard.
+ *
+ * @param {unknown} input true, or { quality }
+ * @returns {{ quality: "standard"|"high", autoStartedAt: null, note: null } | null}
+ */
+export function normaliseAiMotion(input) {
+  if (input !== true && (!input || typeof input !== "object" || Array.isArray(input))) return null;
+  const q = input === true ? undefined : input.quality;
+  return { quality: AI_MOTION_QUALITIES.includes(q) ? q : "standard", autoStartedAt: null, note: null };
+}
+
 export function createProject(baseDir, {
   title = "Untitled", style = "cinematic-bible", cast = [],
   aspect = "portrait", captions = "kinetic", scene = null, longform = null,
+  aiMotion = null,
   ...captionOpts
 } = {}) {
   const now = Date.now();
@@ -140,6 +158,8 @@ export function createProject(baseDir, {
       : null,
     // Long-form (script -> chunked narration) metadata; null for the classic flow.
     longform: longform && typeof longform === "object" ? longform : null,
+    // Series "AI motion": animate the scenes once the pictures are ready.
+    aiMotion: normaliseAiMotion(aiMotion),
     createdAt: now,
     updatedAt: now,
   };

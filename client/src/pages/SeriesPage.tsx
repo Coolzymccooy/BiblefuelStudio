@@ -14,9 +14,14 @@ import { useEffect, useMemo, useState } from 'react';
 import { Sparkles, Play, Hash, ListOrdered, BookOpen, RefreshCw, Image as ImageIcon } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { narrateAndSendToStory } from '../lib/sendToStoryVideo';
+import { partNarration, aiMotionEstimate, aiMotionEstimateText } from '../lib/seriesAiMotion';
+import { storyApi } from '../lib/storyApi';
+import { useAuth } from '../hooks/useAuth';
+import { SeriesAiMotionOption } from '../components/series/SeriesAiMotionOption';
 import { Input } from '../components/ui/Input';
 import { Select } from '../components/ui/Select';
 import { BibleVerseLookup } from '../components/BibleVerseLookup';
@@ -54,6 +59,26 @@ export function SeriesPage() {
     const [isPreviewLoading, setIsPreviewLoading] = useState(false);
     const [isGenerating, setIsGenerating] = useState(false);
     const [sendingStoryPart, setSendingStoryPart] = useState<number | null>(null);
+    // Parts ticked for AI motion, by part number (each card has its own tick).
+    const [aiMotionParts, setAiMotionParts] = useState<ReadonlySet<number>>(() => new Set());
+
+    // AI motion is for super admins on a server with BytePlus set up; nobody
+    // else asks for the rates or sees the option.
+    const isSuperAdmin = useAuth((s) => s.isSuperAdmin);
+    const { data: aiRates } = useQuery({
+        queryKey: ['story-animate-rates'],
+        queryFn: () => storyApi.animateRates(),
+        enabled: isSuperAdmin,
+        staleTime: 60_000,
+    });
+    const showAiMotion = isSuperAdmin && Boolean(aiRates?.configured);
+    const setPartAiMotion = (partNumber: number, on: boolean) => {
+        setAiMotionParts((prev) => {
+            const next = new Set(prev);
+            if (on) next.add(partNumber); else next.delete(partNumber);
+            return next;
+        });
+    };
 
     useEffect(() => {
         bibleApi.listTranslations().then(setCatalog).catch(() => setCatalog(null));
@@ -81,6 +106,7 @@ export function SeriesPage() {
                 translation,
             });
             setPlan(result.plan);
+            setAiMotionParts(new Set());
             toast.success(`Previewing ${result.plan.totalParts} segments`);
         } catch (err) {
             toastError(err);
@@ -95,18 +121,23 @@ export function SeriesPage() {
     // is the slower cinematic route for a single part worth more attention.
     const sendPartToStory = async (seg: { partNumber: number; reference: string; hook?: string; caption: string }) => {
         setSendingStoryPart(seg.partNumber);
+        const aiMotion = showAiMotion && aiMotionParts.has(seg.partNumber);
         const toastId = toast.loading('Narrating for Story Video…');
         try {
-            // The hook leads so the narration opens the way the video should.
-            const narration = [seg.hook, seg.caption].filter(Boolean).join(' ');
-            const res = await narrateAndSendToStory(narration, {
+            const res = await narrateAndSendToStory(partNarration(seg), {
                 title: `${seg.reference} · Part ${seg.partNumber}`,
+                aiMotion,
             });
             if (!res.ok || !res.projectId) {
                 toast.error(res.error || 'Could not send to Story Video', { id: toastId });
                 return;
             }
-            toast.success('Sent to Story Video — generating scenes', { id: toastId });
+            toast.success(
+                aiMotion
+                    ? 'Sent to Story Video — scenes will animate once the pictures are ready'
+                    : 'Sent to Story Video — generating scenes',
+                { id: toastId },
+            );
             navigate(`/app/story?project=${encodeURIComponent(res.projectId)}`);
         } finally {
             setSendingStoryPart(null);
@@ -347,7 +378,7 @@ export function SeriesPage() {
                                 >
                                     Verify on YouVersion ↗
                                 </a>
-                                <div className="mt-3">
+                                <div className="mt-3 flex flex-wrap items-center gap-3">
                                     <Button
                                         onClick={() => sendPartToStory(seg)}
                                         isLoading={sendingStoryPart === seg.partNumber}
@@ -357,6 +388,14 @@ export function SeriesPage() {
                                     >
                                         Send to Story Video
                                     </Button>
+                                    {showAiMotion && aiRates && (
+                                        <SeriesAiMotionOption
+                                            checked={aiMotionParts.has(seg.partNumber)}
+                                            onChange={(on) => setPartAiMotion(seg.partNumber, on)}
+                                            disabled={sendingStoryPart !== null}
+                                            estimate={aiMotionEstimateText(aiMotionEstimate(partNarration(seg), aiRates.usdPerSecond.standard))}
+                                        />
+                                    )}
                                 </div>
                             </li>
                         ))}

@@ -117,4 +117,17 @@ describe('storyApi', () => {
     await storyApi.process('p', '/out/a.mp3');
     expect(spy).toHaveBeenCalledWith('/api/story/p/process', { mediaPath: '/out/a.mp3' }, undefined, expect.objectContaining({ timeout: expect.any(Number) }));
   });
+  it('animateRates GETs the AI motion prices and returns only the rate fields', async () => {
+    const spy = vi.spyOn(api, 'get').mockResolvedValue({ ok: true, status: 200, data: {
+      ok: true, configured: true, usdPerSecond: { standard: 0.0756, high: 0.374 }, monthSpentUsd: 1.2, reservedUsd: 0.3, capUsd: 30,
+    } });
+    const r = await storyApi.animateRates();
+    expect(spy).toHaveBeenCalledWith('/api/story/animate/rates');
+    expect(r).toEqual({ configured: true, usdPerSecond: { standard: 0.0756, high: 0.374 }, monthSpentUsd: 1.2, reservedUsd: 0.3, capUsd: 30 });
+  });
+
+  it('animateRates throws the server reason when refused', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({ ok: false, status: 403, error: 'FORBIDDEN', data: { ok: false, error: 'FORBIDDEN' } });
+    await expect(storyApi.animateRates()).rejects.toThrow('FORBIDDEN');
+  });
 });

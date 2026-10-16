@@ -3,8 +3,8 @@ import { readProject } from "../lib/story/projectStore.js";
 import { requireSuperAdmin } from "../middleware/requireSuperAdmin.js";
 import { DATA_DIR } from "../lib/paths.js";
 import { isSeedanceConfigured } from "../lib/videoGen/providers/seedance.js";
-import { ledgerSummary, wouldExceedCap } from "../lib/videoGen/spend.js";
-import { estimateAnimation, startAnimation, cancelAnimation, isAnimating, qualityOf } from "../lib/story/animateStage.js";
+import { ledgerSummary, wouldExceedCap, usdPerSecond } from "../lib/videoGen/spend.js";
+import { estimateAnimation, startAnimation, cancelAnimation, isAnimating, qualityOf, AI_QUALITY } from "../lib/story/animateStage.js";
 
 /**
  * AI motion for Story scenes (BytePlus Seedance). Super admins only: one
@@ -31,6 +31,23 @@ export function createStoryAnimateRouter({ sceneBlocked, ledgerDir = DATA_DIR, d
     if (!project) res.status(404).json({ ok: false, error: "project not found" });
     return project;
   };
+
+  // What a second of clip costs at each quality, in a portrait frame (the
+  // Series flow's shape), and the month so far: the Series page's estimate.
+  // story.js mounts this router before its GET /:id, which would otherwise
+  // take "animate" for a project id.
+  router.get("/animate/rates", requireSuperAdmin, (_req, res) => {
+    const { spentUsd, reservedUsd, capUsd } = ledgerSummary(ledgerDir);
+    const perSecond = (q) => usdPerSecond({ ...AI_QUALITY[q], ratio: "9:16" });
+    return res.json({
+      ok: true,
+      configured: isSeedanceConfigured(),
+      usdPerSecond: { standard: perSecond("standard"), high: perSecond("high") },
+      monthSpentUsd: spentUsd,
+      reservedUsd,
+      capUsd,
+    });
+  });
 
   router.post("/:id/animate/estimate", requireSuperAdmin, (req, res) => {
     const project = load(req, res);

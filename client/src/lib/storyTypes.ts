@@ -25,6 +25,25 @@ export interface AnimateEstimate {
   monthClips: number;
 }
 
+/** GET /api/story/animate/rates (super admins only): what the Series page estimates with. */
+export interface AnimateRates {
+  configured: boolean;
+  /** US$ per second of clip in a portrait frame, at each quality. */
+  usdPerSecond: Record<AnimateQuality, number>;
+  monthSpentUsd: number;
+  reservedUsd: number;
+  capUsd: number;
+}
+
+/** A Series "AI motion" project: its scenes animate once the pictures are ready. */
+export interface StoryAiMotion {
+  quality: AnimateQuality;
+  /** When the automatic animation was tried (it runs once per project); null until then. */
+  autoStartedAt: number | null;
+  /** Why not every scene was animated, in plain words; null when all were. */
+  note: string | null;
+}
+
 export type StoryStatus =
   | 'draft' | 'transcribing' | 'segmenting' | 'generating_images'
   | 'ready_to_render' | 'rendering' | 'done' | 'error'
@@ -151,6 +170,8 @@ export interface StoryProject extends StoryCaptionSettings {
   longform?: StoryLongform;
   /** Output frame, the same choices as the Render tab. Absent on older projects: portrait. */
   aspect?: StoryAspect;
+  /** Series "AI motion"; null or absent on every other project. */
+  aiMotion?: StoryAiMotion | null;
   /** Always present on a stored project; the rest of the caption settings are optional. */
   captionPreset: string;
   render: {

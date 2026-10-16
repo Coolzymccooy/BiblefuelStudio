@@ -21,6 +21,7 @@ import { SceneCard } from '../components/story/SceneCard';
 import { SceneLibraryPicker } from '../components/story/SceneLibraryPicker';
 import { StoryImageTools } from '../components/story/StoryImageTools';
 import { putOwnImage } from '../lib/storyImages';
+import { storyAiMotionNote } from '../lib/storyAiMotionNote';
 import { ProjectHistory } from '../components/story/ProjectHistory';
 import { storyChapters, storyDescription, storyTagline } from '../lib/storyShare';
 import { useMusicLibrary } from '../hooks/useMusicLibrary';
@@ -86,6 +87,7 @@ export function StoryVideoPage() {
   const { data: project } = useStoryProject(projectId);
   const { data: animateEstimate, isPlaceholderData: animateRefreshing } = useAnimateEstimate(project, animateQuality, isSuperAdmin);
   const canAnimate = isSuperAdmin && Boolean(animateEstimate?.configured);
+  const aiMotionNote = project ? storyAiMotionNote(project) : null;
   // Cast descriptions, for the image brief: only fetched when the story has a cast.
   const hasCast = (project?.cast?.length ?? 0) > 0;
   const { data: characters } = useQuery({
@@ -697,6 +699,10 @@ export function StoryVideoPage() {
               busy={busy || bulkUploading}
               refreshing={animateRefreshing}
             />
+          )}
+          {/* A Series "AI motion" project says why not every scene was animated. */}
+          {isSuperAdmin && aiMotionNote && (
+            <p className="text-help">{aiMotionNote}</p>
           )}
 
           <div className="space-y-3">

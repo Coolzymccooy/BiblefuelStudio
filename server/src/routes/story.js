@@ -4,7 +4,7 @@ import path from "path";
 import { v4 as uuid } from "uuid";
 import {
   createProject, readProject, writeProject, listProjects, deleteProject, STORY_STATUS,
-  normaliseCaptionSettings, sourceDisplayFacts,
+  normaliseCaptionSettings, sourceDisplayFacts, normaliseAiMotion,
 } from "../lib/story/projectStore.js";
 import { segmentScenes } from "../lib/story/sceneSegmenter.js";
 import { runStoryRender, probeAudioDurationSec } from "../lib/story/storyRender.js";
@@ -24,6 +24,7 @@ import { cleanCaptionLine, cleanSpeakableText } from "../lib/speakableScript.js"
 import { buildImportedTranscript } from "../lib/story/scriptImport.js";
 import { CHARACTER_ANCHORS } from "../lib/story/styleAnchors.js";
 import { confineToDir } from "../lib/confinePath.js";
+import { OUTPUT_DIR } from "../lib/paths.js";
 import { isNarrationActive } from "../lib/longform/narrationRegistry.js";
 import { expandScenesToBeats } from "../lib/story/visualBeats.js";
 import { findReusableImages, markUsed, registerImage, pruneLibrary, readLibrary as readImageLibrary } from "../lib/imageGen/imageLibrary.js";
@@ -32,8 +33,14 @@ import { isSceneVideoUpload, resolveSceneVideo } from "../lib/story/sceneVideo.j
 import { normalizeStoryAspect, storyFrameSize } from "../lib/story/sceneFraming.js";
 import { createStoryAnimateRouter } from "./storyAnimate.js";
 import { isAnimating } from "../lib/story/animateStage.js";
+import { autoAnimate } from "../lib/story/autoAnimate.js";
+import { isSeedanceConfigured } from "../lib/videoGen/providers/seedance.js";
 
 const MUSIC_REF_PREFIX = /^(library|mylib):/;
+
+// Scene target for an "AI motion" import: keeps most scenes under Seedance's
+// 12 s clip ceiling, since the segmenter's target is soft.
+const AI_MOTION_SCENE_SEC = 10;
 
 // Spread wherever a new PICTURE goes on a scene. A scene can carry a clip of
 // your own (videoPath), and the render plays the clip when there is one, so
@@ -98,6 +105,15 @@ let _renderFn = runStoryRender;
 export function _setRenderImpl(impl) { _renderFn = impl; }
 export function _resetRenderImpl() { _renderFn = runStoryRender; }
 
+// The pipeline an import with autoStart fires (route tests stub it).
+let _pipelineFn = (...args) => runStoryPipeline(...args);
+export function _setPipelineImpl(impl) { _pipelineFn = impl; }
+export function _resetPipelineImpl() { _pipelineFn = (...args) => runStoryPipeline(...args); }
+
+let _autoAnimateFn = autoAnimate;
+export function _setAutoAnimateImpl(impl) { _autoAnimateFn = impl; }
+export function _resetAutoAnimateImpl() { _autoAnimateFn = autoAnimate; }
+
 // Confine a user-supplied mediaPath to the caller's own dirs (anti path-traversal).
 function confineMediaPath(ctx, rawMediaPath) {
   const raw = String(rawMediaPath || "").trim();
@@ -106,6 +122,27 @@ function confineMediaPath(ctx, rawMediaPath) {
   if (!resolved) return { ok: false, status: 403, error: "mediaPath is outside the allowed directory" };
   if (!fs.existsSync(resolved)) return { ok: false, status: 400, error: "mediaPath not found" };
   return { ok: true, path: resolved };
+}
+
+// The narration routes write every user's TTS into the shared outputs folder,
+// so an imported script's audio is either in the user's own folders or is one
+// of those server-named files (unguessable, never user-named). The names the
+// TTS writers in lib/ produce: ElevenLabs tts-<uuid>.mp3, the others
+// tts-<provider>-<uuid>.<ext>, where Edge, Azure and Fish write .mp3,
+// Chatterbox .wav or .mp3, and Piper .wav, .mp3 or .ogg.
+const TTS_PROVIDERS = "edge|azure|fish|chatterbox|piper";
+const UUID_V4 = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+const SHARED_TTS_NAME = new RegExp(`^tts-(?:(?:${TTS_PROVIDERS})-)?${UUID_V4}\\.(?:mp3|wav|ogg)$`);
+
+export function confineImportAudio(ctx, rawPath, sharedOutputDir = OUTPUT_DIR) {
+  const own = confineMediaPath(ctx, rawPath);
+  if (own.ok) return own;
+  const shared = confineToDir(sharedOutputDir, String(rawPath || "").trim());
+  if (shared && path.dirname(shared) === path.resolve(sharedOutputDir)
+    && SHARED_TTS_NAME.test(path.basename(shared)) && fs.existsSync(shared)) {
+    return { ok: true, path: shared };
+  }
+  return own;
 }
 
 // Image-gen aspect for a project: images are generated in the project's own
@@ -243,12 +280,30 @@ async function imagesStage(ctx, projectId, opts = {}) {
     throw Object.assign(new Error(ANIMATING_REFUSAL.error), { code: ANIMATING_REFUSAL.code });
   }
   imageRuns.set(projectId, (imageRuns.get(projectId) || 0) + 1);
+  let result;
   try {
-    return await runImagesStage(ctx, projectId, opts);
+    result = await runImagesStage(ctx, projectId, opts);
   } finally {
     const left = (imageRuns.get(projectId) || 1) - 1;
     if (left > 0) imageRuns.set(projectId, left); else imageRuns.delete(projectId);
   }
+  // Every picture is in: an "AI motion" project animates its scenes now, within
+  // the month's cap. Run after the counter is released, so the scenes are not
+  // still locked by this run. Another image run on the project still going
+  // would write its own copy of the scenes over the clips, so only the last
+  // run to finish hands over, and a scene locked some other way (being
+  // regenerated, a render running) is left out. Every image path (pipeline,
+  // /images, /process, /resegment, long-form) comes through here. autoAnimate
+  // never throws and only starts a detached run, but it must never fail the
+  // images stage.
+  if (result?.status === STORY_STATUS.READY_TO_RENDER && !imagesRunning(projectId)) {
+    try {
+      await _autoAnimateFn(ctx, projectId, { sceneBlocked: sceneImageBlocked });
+    } catch (e) {
+      console.warn(`[story] auto-animate ${projectId} failed: ${e?.message || e}`);
+    }
+  }
+  return result;
 }
 
 async function runImagesStage(ctx, projectId, opts = {}) {
@@ -424,6 +479,11 @@ router.get("/characters", (_req, res) => {
   });
 });
 
+// AI motion clips on scenes (super admins only); see routes/storyAnimate.js.
+// Also before "/:id": it serves GET /animate/rates. Its other routes are all
+// POST /:id/... paths that nothing below shares.
+router.use(createStoryAnimateRouter({ sceneBlocked: sceneImageBlocked }));
+
 router.get("/:id", (req, res) => {
   const project = readProject(req.ctx.dataDir, req.params.id);
   if (!project) return res.status(404).json({ ok: false, error: "project not found" });
@@ -525,9 +585,12 @@ router.post("/script-to-audio", async (req, res) => {
 // transcribeStage short-circuits and the pipeline resumes at segmentation —
 // no lossy speech-recognition round trip over words we already have.
 //
-// Body: { script, audioPath, durationMs, words?, title?, style? }
-// Returns a project already at SEGMENTING; the client then calls
-// /:id/segment and /:id/images exactly as the media path does.
+// Body: { script, audioPath, durationMs, words?, title?, style?, aiMotion?, autoStart? }
+// Returns a project already at SEGMENTING. With autoStart: true the pipeline
+// (segment -> images) runs detached on the server; otherwise the client calls
+// /:id/segment and /:id/images exactly as the media path does. aiMotion
+// (true or { quality }) is kept only for a super admin, and makes the images
+// stage animate the scenes when the pictures are done (lib/story/autoAnimate.js).
 // PATCH /:id/cast — set which figures appear in this story.
 //
 // Changing the cast only affects prompts built AFTERWARDS, so scenes already
@@ -609,6 +672,16 @@ router.post("/import-script", (req, res) => {
       return res.status(400).json({ ok: false, error: "durationMs must be a positive number" });
     }
 
+    // autoStart runs the pipeline on this path, so it is confined exactly as
+    // /process confines mediaPath. Without autoStart nothing reads it here.
+    const autoStart = req.body?.autoStart === true;
+    let startPath = null;
+    if (autoStart) {
+      const guard = confineImportAudio(req.ctx, audioPath);
+      if (!guard.ok) return res.status(400).json({ ok: false, error: guard.error });
+      startPath = guard.path;
+    }
+
     let patch;
     try {
       patch = buildImportedTranscript({ script, audioPath, durationMs, words: req.body?.words });
@@ -616,14 +689,22 @@ router.post("/import-script", (req, res) => {
       return res.status(400).json({ ok: false, error: String(e?.message || e) });
     }
 
+    // AI motion spends the shared BytePlus balance: honoured only for a super
+    // admin on a server that has the key, and silently dropped otherwise. Ten
+    // second scenes keep most clips under Seedance's 12 s ceiling (the
+    // segmenter's target is soft).
+    const aiMotion = req.ctx.isSuperAdmin && isSeedanceConfigured() ? normaliseAiMotion(req.body?.aiMotion) : null;
+    const scene = req.body?.scene ?? (aiMotion ? { targetSceneSec: AI_MOTION_SCENE_SEC } : undefined);
+
     const project = createProject(req.ctx.dataDir, {
       title: req.body?.title || script.slice(0, 60),
       style: req.body?.style,
       cast: req.body?.cast,
       aspect: req.body?.aspect,
       captions: req.body?.captions,
-      scene: req.body?.scene,
+      scene,
       longform: req.body?.longform,
+      aiMotion,
     });
 
     const ready = writeProject(req.ctx.dataDir, {
@@ -631,6 +712,21 @@ router.post("/import-script", (req, res) => {
       ...patch,
       status: STORY_STATUS.SEGMENTING,
     });
+
+    // Build it now (the transcript is already there, so transcription is
+    // skipped) instead of leaving it at segmenting until someone clicks Resume.
+    if (autoStart) {
+      const ctx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir };
+      const id = ready.projectId;
+      Promise.resolve()
+        .then(() => _pipelineFn(ctx, id, startPath))
+        .catch((e) => {
+          try {
+            const fresh = readProject(ctx.dataDir, id);
+            if (fresh) writeProject(ctx.dataDir, { ...fresh, status: STORY_STATUS.ERROR, error: String(e?.message || e) });
+          } catch {}
+        });
+    }
 
     return res.json({ ok: true, project: ready });
   } catch (e) {
@@ -802,7 +898,9 @@ router.post("/:id/process", (req, res) => {
   const existing = readProject(req.ctx.dataDir, req.params.id);
   if (!existing) return res.status(404).json({ ok: false, error: "project not found" });
   if (isAnimating(req.params.id)) return res.status(409).json(ANIMATING_REFUSAL);
-  const guard = confineMediaPath(req.ctx, req.body?.mediaPath);
+  // Same rule as an import's auto-start, so Resume works on an imported
+  // script whose narration is in the shared outputs folder.
+  const guard = confineImportAudio(req.ctx, req.body?.mediaPath);
   if (!guard.ok) return res.status(guard.status).json({ ok: false, error: guard.error });
   // What the soundtrack was called and whether it was trimmed: shown back to
   // the user in the Music panel, never used as a path. A resume sends neither
@@ -1090,8 +1188,5 @@ router.post("/:id/render", async (req, res) => {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
-
-// AI motion clips on scenes (super admins only); see routes/storyAnimate.js.
-router.use(createStoryAnimateRouter({ sceneBlocked: sceneImageBlocked }));
 
 export default router;
