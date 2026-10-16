@@ -392,6 +392,16 @@ describe("POST /api/longform/:id/narrate", () => {
     assert.equal(unhandled.length, 0, "no unhandled rejection");
     assert.ok(warned.some((w) => /\[longform\] failed to record narration error/.test(w)), `expected a warning, got: ${warned.join(" | ")}`);
   });
+  test("a pipeline refused because scenes are being animated lands the project in error with that reason", async () => {
+    const { body } = await request(app).post("/api/longform/draft").send({ idea: "x", templateId: "sleep-30" });
+    const message = "Scenes are being animated. Wait for the clips to arrive, or stop ordering them, then try again.";
+    _setNarrateImpl(async (args) => fakeNarration(args));
+    _setPipelineImpl(async () => { throw Object.assign(new Error(message), { code: "ANIMATING" }); });
+    await request(app).post(`/api/longform/${body.project.projectId}/narrate`).send({});
+    const p = await waitFor(body.project.projectId, (x) => x.status === "error");
+    assert.equal(p.status, "error");
+    assert.equal(p.error, message);
+  });
   test("a narration failure lands the project in error with the reason", async () => {
     const { body } = await request(app).post("/api/longform/draft").send({ idea: "x", templateId: "sleep-30" });
     _setNarrateImpl(async () => { throw new Error("azure quota"); });

@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import toast from 'react-hot-toast';
-import { Loader2, RefreshCw, Wand2, ImageOff, SlidersHorizontal, Check, Clock, Upload, Images, Copy, Film } from 'lucide-react';
+import { Loader2, RefreshCw, Wand2, ImageOff, SlidersHorizontal, Check, Clock, Upload, Images, Copy, Film, Clapperboard } from 'lucide-react';
 import { AuthedImage } from '../AuthedImage';
 import { sceneTimeLabel } from '../../lib/storyWizard';
 import type { ImageStatus, StoryAspect, StoryScene } from '../../lib/storyTypes';
@@ -28,6 +28,10 @@ interface SceneCardProps {
   imagesRunning?: boolean;
   /** The project's output frame; the thumbnail is drawn in that shape. Defaults to portrait. */
   aspect?: StoryAspect;
+  /** Make an AI motion clip from this scene's picture (super admins only; omitted otherwise). */
+  onAnimate?: (sceneId: string) => void;
+  /** What one clip for this scene is expected to cost, in US$. */
+  animatePriceUsd?: number;
 }
 
 const STATUS: Record<ImageStatus, { label: string; cls: string }> = {
@@ -40,7 +44,7 @@ const STATUS: Record<ImageStatus, { label: string; cls: string }> = {
 const actionCls = 'inline-flex items-center gap-1 rounded-md border border-[rgba(216,184,120,0.18)] px-2 py-1 text-xs text-bf-cream hover:border-bf-gold disabled:opacity-50';
 
 export function SceneCard({
-  scene, index = 0, onPatch, onRegenerate, busy, regenerating = false, onUpload, onChooseFromLibrary, uploading = false, imagesRunning = false, aspect,
+  scene, index = 0, onPatch, onRegenerate, busy, regenerating = false, onUpload, onChooseFromLibrary, uploading = false, imagesRunning = false, aspect, onAnimate, animatePriceUsd,
 }: SceneCardProps) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [text, setText] = useState(scene.text);
@@ -74,6 +78,21 @@ export function SceneCard({
   // Your own clip: imageUrl is its poster, so the thumbnail below still works.
   const isVideo = scene.imageStatus === 'done' && scene.mediaKind === 'video';
   const imageLocked = busy || regenerating || uploading;
+  const ai = scene.aiVideoStatus ?? 'none';
+  const animating = ai === 'queued' || ai === 'generating';
+  const aiLabel = ai === 'queued' ? 'Waiting for AI motion'
+    : ai === 'generating' ? 'Animating…'
+      : ai === 'done' ? (scene.aiVideoMode === 'text' ? 'Animated from the prompt' : 'Animated')
+        : ai === 'error' ? 'Animation failed' : null;
+  // Your own uploaded clip is never animated over; an AI clip can be re-rolled.
+  // aiVideoClip: an AI clip kept through a failed re-roll still counts as AI.
+  const aiClip = scene.mediaKind === 'video' && (scene.aiVideoClip === true || ai === 'done');
+  const ownClip = scene.mediaKind === 'video' && !aiClip;
+  const canAnimate = Boolean(onAnimate) && scene.imageStatus === 'done' && Boolean(scene.imagePath) && !ownClip;
+  const priceText = animatePriceUsd != null ? `$${animatePriceUsd.toFixed(2)}` : null;
+  // The accessible name says what the button shows, price included.
+  const animateName = animating ? `Animating scene ${n}…`
+    : `Animate scene ${n}${aiClip ? ' again' : ''}${priceText ? `, about ${priceText}` : ''}`;
 
   const copyPrompt = async () => {
     // What the editor shows: an edit may still be saving.
@@ -123,11 +142,41 @@ export function SceneCard({
           </div>
           {isVideo && (
             <span
-              title="This scene plays your own video clip"
+              title={ai === 'done' ? 'This scene plays its AI motion clip' : 'This scene plays your own video clip'}
               className="ml-2 inline-flex items-center gap-1 rounded-full border border-[rgba(216,184,120,0.3)] px-1.5 py-px align-middle text-[10px] font-semibold uppercase tracking-wide text-bf-gold"
             >
               <Film size={10} aria-hidden /> Video
             </span>
+          )}
+          {onAnimate && aiLabel && (
+            <span
+              data-testid="ai-status"
+              role="status"
+              aria-live="polite"
+              className={`ml-2 align-middle text-xs ${ai === 'error' ? 'text-bf-danger' : ai === 'done' ? 'text-bf-success' : 'text-bf-gold'}`}
+            >
+              {aiLabel}
+            </span>
+          )}
+          {onAnimate && ai === 'error' && scene.aiVideoError && (
+            <p className="mt-1 text-xs text-bf-danger">{scene.aiVideoError}</p>
+          )}
+          {canAnimate && (
+            <div className="mt-2">
+              <button
+                type="button"
+                onClick={() => onAnimate?.(scene.id)}
+                disabled={imageLocked || animating}
+                aria-label={animateName}
+                className={actionCls}
+              >
+                {animating ? <Loader2 size={12} className="animate-spin" /> : <Clapperboard size={12} />}
+                {animating ? 'Animating…' : aiClip ? 'Animate again' : 'Animate'}
+                {!animating && priceText && (
+                  <span className="tabular-nums text-bf-muted">· {priceText}</span>
+                )}
+              </button>
+            </div>
           )}
           {missing && !tuning && ownImageButtons && <div className="mt-2 flex flex-wrap gap-2">{ownImageButtons}</div>}
         </div>

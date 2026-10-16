@@ -153,4 +153,63 @@ describe('SceneCard', () => {
       expect(writeText).toHaveBeenCalledWith('a shepherd at dawn');
     });
   });
+
+  it('shows no Animate button unless the page offers it', () => {
+    render(<SceneCard scene={scene()} index={0} onPatch={vi.fn()} onRegenerate={vi.fn()} busy={false} />);
+    expect(screen.queryByRole('button', { name: /animate scene 1/i })).toBeNull();
+  });
+
+  it('offers Animate with its price and calls back with the scene', async () => {
+    const onAnimate = vi.fn();
+    render(<SceneCard scene={scene()} index={0} onPatch={vi.fn()} onRegenerate={vi.fn()} busy={false} onAnimate={onAnimate} animatePriceUsd={0.189} />);
+    const btn = screen.getByRole('button', { name: /^animate scene 1, about \$0\.19$/i });
+    expect(btn).toHaveTextContent('$0.19');
+    await userEvent.click(btn);
+    expect(onAnimate).toHaveBeenCalledWith('scene-001');
+  });
+
+  it('while a clip is being made the button is busy and says so', () => {
+    render(<SceneCard scene={scene({ aiVideoStatus: 'generating' })} index={0} onPatch={vi.fn()} onRegenerate={vi.fn()} busy={false} onAnimate={vi.fn()} animatePriceUsd={0.189} />);
+    expect(screen.getByRole('button', { name: 'Animating scene 1…' })).toBeDisabled();
+    expect(screen.getByTestId('ai-status')).toHaveTextContent('Animating…');
+    expect(screen.getByRole('status')).toHaveTextContent('Animating…');
+  });
+
+  it('a finished clip offers Animate again and says how it was made', () => {
+    render(<SceneCard scene={scene({ aiVideoStatus: 'done', aiVideoMode: 'text', mediaKind: 'video', videoUrl: '/outputs/bg-video-x.mp4' })} index={0} onPatch={vi.fn()} onRegenerate={vi.fn()} busy={false} onAnimate={vi.fn()} />);
+    expect(screen.getByRole('button', { name: /^animate scene 1 again$/i })).toBeEnabled();
+    expect(screen.getByTestId('ai-status')).toHaveTextContent('Animated from the prompt');
+  });
+
+  it('a priced re-roll says the price in its name too', () => {
+    render(<SceneCard scene={scene({ aiVideoStatus: 'done', mediaKind: 'video', videoUrl: '/outputs/bg-video-x.mp4' })} index={0} onPatch={vi.fn()} onRegenerate={vi.fn()} busy={false} onAnimate={vi.fn()} animatePriceUsd={4.4928} />);
+    expect(screen.getByRole('button', { name: 'Animate scene 1 again, about $4.49' })).toHaveTextContent('$4.49');
+  });
+
+  it('a failed re-roll keeps its AI clip and can be tried again', () => {
+    render(<SceneCard scene={scene({ aiVideoStatus: 'error', aiVideoClip: true, aiVideoError: 'nope', mediaKind: 'video', videoUrl: '/outputs/bg-video-x.mp4' })} index={0} onPatch={vi.fn()} onRegenerate={vi.fn()} busy={false} onAnimate={vi.fn()} />);
+    expect(screen.getByRole('button', { name: /^animate scene 1 again$/i })).toBeEnabled();
+    expect(screen.getByTestId('ai-status')).toHaveTextContent('Animation failed');
+  });
+
+  it('your own uploaded clip cannot be animated over', () => {
+    render(<SceneCard scene={scene({ mediaKind: 'video', videoUrl: '/outputs/own.mp4', imageChosenByUser: true, aiVideoStatus: 'none' })} index={0} onPatch={vi.fn()} onRegenerate={vi.fn()} busy={false} onAnimate={vi.fn()} animatePriceUsd={0.6} />);
+    expect(screen.queryByRole('button', { name: /animat/i })).toBeNull();
+  });
+
+  it('nor can an own clip from before AI motion, which has no AI status', () => {
+    render(<SceneCard scene={scene({ mediaKind: 'video', videoUrl: '/outputs/own.mp4' })} index={0} onPatch={vi.fn()} onRegenerate={vi.fn()} busy={false} onAnimate={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: /animat/i })).toBeNull();
+  });
+
+  it('a failed clip shows the reason in words', () => {
+    render(<SceneCard scene={scene({ aiVideoStatus: 'error', aiVideoError: "This would take October's AI video spend to $31.20 of $30." })} index={0} onPatch={vi.fn()} onRegenerate={vi.fn()} busy={false} onAnimate={vi.fn()} />);
+    expect(screen.getByTestId('ai-status')).toHaveTextContent('Animation failed');
+    expect(screen.getByText(/AI video spend to \$31\.20 of \$30/)).toBeInTheDocument();
+  });
+
+  it('a scene without a finished picture cannot be animated', () => {
+    render(<SceneCard scene={scene({ imageStatus: 'error', imagePath: null, imageUrl: null })} index={0} onPatch={vi.fn()} onRegenerate={vi.fn()} busy={false} onAnimate={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: /animate scene 1/i })).toBeNull();
+  });
 });
