@@ -14,8 +14,10 @@ vi.mock('../../components/series/SeriesCaptionStyle', () => ({ SeriesCaptionStyl
 // 26 + 26 words: 20 s of narration, 2 clips, 20 s at $0.0756 = $1.512.
 const twentySix = (tag: string) => Array.from({ length: 26 }, (_, i) => `${tag}${i}`).join(' ');
 const segment = (n: number) => ({
-    partNumber: n, totalParts: 2, reference: `John 3:${n}`, verseFrom: n, verseTo: n, verses: [],
-    hook: twentySix('h'), caption: twentySix('c'), youVersionUrl: 'https://example.test',
+    partNumber: n, totalParts: 2, reference: `John 3:${n}`, verseFrom: n, verseTo: n,
+    verses: [{ book: 'John', chapter: 3, verse: n, text: twentySix('v') }, { book: 'John', chapter: 3, verse: n + 1, text: twentySix('w') }],
+    // The social caption is never narrated: only the verses are.
+    hook: 'Hook.', caption: 'Part 1 of 2. Read on YouVersion: https://example.test', youVersionUrl: 'https://example.test',
 });
 vi.mock('../../lib/bibleApi', () => ({
     bibleApi: { listTranslations: () => Promise.resolve({ translations: [] }) },
@@ -87,7 +89,7 @@ describe('SeriesPage: AI motion', () => {
         fireEvent.click(screen.getAllByRole('button', { name: /send to story video/i })[0]);
         await waitFor(() => expect(sendMock).toHaveBeenCalledTimes(1));
         const [text, opts] = sendMock.mock.calls[0];
-        expect(text).toBe(`${twentySix('h')} ${twentySix('c')}`);
+        expect(text).toBe(`${twentySix('v')} ${twentySix('w')}`);
         expect(opts).toMatchObject({ title: 'John 3:1 · Part 1', aiMotion: true });
     });
 
