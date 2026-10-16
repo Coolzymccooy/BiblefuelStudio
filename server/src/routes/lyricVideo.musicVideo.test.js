@@ -410,3 +410,28 @@ describe("POST /:id/use-story-video", () => {
     assert.equal(fs.existsSync(lookalike), true, "deleting the song leaves it too");
   });
 });
+
+describe("replacing the song resets its music video link", () => {
+  test("the old song's Story project is no longer linked, so the next one is not a repeat and its render cannot be attached", { skip: !hasFfmpeg && "ffmpeg not installed" }, async () => {
+    const p = timedProject(ctx);
+    const story = linkedStory(ctx, p, { rendered: true });
+    const copy = (await call("POST", `/${p.projectId}/use-story-video`, {})).json.project.background.file;
+    const next = path.join(ctx.outputDir, "new-song.wav");
+    spawnSync(FF, ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=f=440:d=2", next]);
+    assert.equal((await call("POST", `/${p.projectId}/song`, { path: next })).status, 200);
+    const after = readProject(ctx.dataDir, p.projectId);
+    assert.equal(after.musicVideo.storyProjectId ?? null, null, "the link to the old song's video is gone");
+    assert.equal(after.musicVideo.createdAt ?? null, null);
+    assert.equal(after.musicVideo.backgroundCopy, copy, "the copy this song owns is still recorded, so it is still cleaned up");
+    assert.ok(readStory(ctx.dataDir, story.projectId), "the Story project itself is left alone");
+    const use = await call("POST", `/${p.projectId}/use-story-video`, {});
+    assert.equal(use.status, 409);
+    assert.equal(use.json.error, "Render the music video in Story Video first.");
+    // Timed again for the new song: a music video for it is a first one, not a repeat.
+    const retimed = timedProject(ctx);
+    writeProject(ctx.dataDir, { ...readProject(ctx.dataDir, p.projectId), lines: retimed.lines, sections: retimed.sections, song: retimed.song });
+    assert.equal((await call("POST", `/${p.projectId}/to-story`, {})).status, 200);
+    assert.equal((await call("PUT", `/${p.projectId}/background`, { path: null })).status, 200);
+    assert.equal(fs.existsSync(copy), false, "the recorded copy is still deleted when replaced");
+  });
+});

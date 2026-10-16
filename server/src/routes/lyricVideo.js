@@ -467,6 +467,10 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
           lines: (latest.lines || []).map(untimedLine),
           sections: (latest.sections || []).map(({ start, ...section }) => section),
           timing: { status: "idle" },
+          // The old song's AI music video is not this song's: its link goes, so the next one is not
+          // a repeat and its render cannot be put on. The background copy record stays (it is still
+          // this song's file to clean up).
+          ...(latest.musicVideo ? { musicVideo: { backgroundCopy: recordedCopy(latest) } } : {}),
         };
       });
     } catch (err) {

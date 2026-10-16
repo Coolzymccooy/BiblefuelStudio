@@ -107,8 +107,11 @@ export interface LyricProject {
   branding?: Partial<Pick<LyricBranding, 'logo' | 'intro' | 'endCard'>> | null;
   /** The render being made now, saved so the page can pick it up again after leaving. */
   render?: { activeJobId: string } | null;
-  /** The AI music video made from this song (super admins only): the newest Story project. */
-  musicVideo?: { storyProjectId: string; createdAt: string } | null;
+  /**
+   * The AI music video made from this song (super admins only): the newest Story project. A new
+   * song clears the link; `backgroundCopy` is the server's own copy of a render put on as the background.
+   */
+  musicVideo?: { storyProjectId?: string; createdAt?: string; backgroundCopy?: string | null } | null;
 }
 
 /** What POST /:id/to-story is sent: the shape, how the singer looks (may be empty) and whether to animate. */
