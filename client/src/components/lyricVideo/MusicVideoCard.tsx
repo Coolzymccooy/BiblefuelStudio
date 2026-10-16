@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { Loader2 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
-import { lyricVideoApi } from '../../lib/lyricVideoApi';
+import { isAlreadyMade, lyricVideoApi } from '../../lib/lyricVideoApi';
 import { storyApi } from '../../lib/storyApi';
 import { ASPECTS } from '../../lib/lyricRenderOptions';
 import { musicVideoEstimate, musicVideoEstimateText, planMusicScenes } from '../../lib/musicVideoPlan';
@@ -72,9 +72,20 @@ function MusicVideoPanel({ project, onChange }: Props) {
       if (cost.usd > CONFIRM_ABOVE_USD
         && !window.confirm(`Make the AI music video: ${count(cost.clips, 'picture')} and ${count(cost.clips, 'clip')} for about $${cost.usd.toFixed(2)}? This is charged to your BytePlus balance.`)) return;
     }
+    const choice = { aspect, character: character.trim(), aiMotion: animating };
+    // `again` only once the user has said yes to another one; the server refuses a repeat without it.
+    const send = (again: boolean) => lyricVideoApi.toStory(project.projectId, again ? { ...choice, again } : choice);
     setMaking(true);
     try {
-      const id = await lyricVideoApi.toStory(project.projectId, { aspect, character: character.trim(), aiMotion: animating });
+      let id: string;
+      try {
+        id = await send(Boolean(linked));
+      } catch (e) {
+        // This page did not know the song has one (another tab made it): the same question, then again.
+        if (linked || !isAlreadyMade(e)) throw e;
+        if (!window.confirm(MAKE_AGAIN)) { setMaking(false); return; }
+        id = await send(true);
+      }
       // The song now links to the new Story project; read it again for when the user comes back.
       void qc.invalidateQueries({ queryKey: ['lyric-project', project.projectId] });
       navigate(storyLink(id));

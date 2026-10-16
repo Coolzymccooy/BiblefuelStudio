@@ -116,6 +116,8 @@ export interface MusicVideoChoice {
   aspect: RenderAspect;
   character: string;
   aiMotion: boolean;
+  /** Sent only after the user said yes to making another for a song that already has one. */
+  again?: boolean;
 }
 
 /** One row of "Your videos": a render of any of the user's songs, finished, in progress or failed. */

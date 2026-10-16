@@ -11,7 +11,10 @@ vi.mock('react-router-dom', async (importOriginal) => ({
   useNavigate: () => navigate,
 }));
 vi.mock('react-hot-toast', () => ({ default: { error: vi.fn(), success: vi.fn() } }));
-vi.mock('../../../lib/lyricVideoApi', () => ({ lyricVideoApi: { toStory: vi.fn(), useStoryVideo: vi.fn() } }));
+vi.mock('../../../lib/lyricVideoApi', () => ({
+  lyricVideoApi: { toStory: vi.fn(), useStoryVideo: vi.fn() },
+  isAlreadyMade: (e: unknown) => (e as { code?: string })?.code === 'ALREADY_MADE',
+}));
 vi.mock('../../../lib/storyApi', () => ({ storyApi: { animateRates: vi.fn(), getProject: vi.fn() } }));
 
 import toast from 'react-hot-toast';
@@ -149,6 +152,7 @@ describe('MusicVideoCard', () => {
       vi.mocked(lyricVideoApi.toStory).mockResolvedValue('sp-2');
       await userEvent.click(screen.getByRole('button', { name: 'Make a new AI music video' }));
       await waitFor(() => expect(navigate).toHaveBeenCalledWith('/app/story?project=sp-2'));
+      expect(lyricVideoApi.toStory).toHaveBeenCalledWith('lv_1', { aspect: 'portrait', character: '', aiMotion: true, again: true });
     });
 
     it('asks when the estimate is over $2 with Animate ticked; Cancel does nothing', async () => {
@@ -169,5 +173,32 @@ describe('MusicVideoCard', () => {
       await waitFor(() => expect(lyricVideoApi.toStory).toHaveBeenCalled());
       expect(confirmSpy).not.toHaveBeenCalled();
     });
+
+    it('a stale tab told the song already has one asks the same question, then sends again', async () => {
+      vi.mocked(storyApi.animateRates).mockResolvedValue(cheap);
+      vi.mocked(lyricVideoApi.toStory)
+        .mockRejectedValueOnce(Object.assign(new Error(AGAIN), { code: 'ALREADY_MADE' }))
+        .mockResolvedValueOnce('sp-3');
+      renderCard(project);
+      await screen.findByText('about 2 clips · ≈ $1.20');
+      await userEvent.click(screen.getByRole('button', { name: 'Make AI music video' }));
+      await waitFor(() => expect(navigate).toHaveBeenCalledWith('/app/story?project=sp-3'));
+      expect(confirmSpy).toHaveBeenCalledWith(AGAIN);
+      expect(vi.mocked(lyricVideoApi.toStory).mock.calls.map((c) => c[1].again)).toEqual([undefined, true]);
+    });
+
+    it('a stale tab whose question is cancelled sends nothing more and shows no error', async () => {
+      vi.mocked(storyApi.animateRates).mockResolvedValue(cheap);
+      vi.mocked(lyricVideoApi.toStory).mockRejectedValueOnce(Object.assign(new Error(AGAIN), { code: 'ALREADY_MADE' }));
+      confirmSpy.mockReturnValue(false);
+      renderCard(project);
+      await screen.findByText('about 2 clips · ≈ $1.20');
+      await userEvent.click(screen.getByRole('button', { name: 'Make AI music video' }));
+      await waitFor(() => expect(confirmSpy).toHaveBeenCalledWith(AGAIN));
+      expect(lyricVideoApi.toStory).toHaveBeenCalledTimes(1);
+      expect(toast.error).not.toHaveBeenCalled();
+      expect(screen.getByRole('button', { name: 'Make AI music video' })).not.toBeDisabled();
+    });
+
   });
 });

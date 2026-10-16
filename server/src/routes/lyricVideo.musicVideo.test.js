@@ -170,7 +170,7 @@ describe("POST /:id/to-story", () => {
     const p = timedProject(ctx);
     const off = await call("POST", `/${p.projectId}/to-story`, {});
     assert.equal(readStory(ctx.dataDir, off.json.storyProjectId).aiMotion, null);
-    const noKey = await call("POST", `/${p.projectId}/to-story`, { aiMotion: true });
+    const noKey = await call("POST", `/${p.projectId}/to-story`, { aiMotion: true, again: true });
     assert.equal(readStory(ctx.dataDir, noKey.json.storyProjectId).aiMotion, null);
     assert.equal(seen.created[1].opts.aiMotion.quality, "standard");
   });
@@ -260,10 +260,29 @@ describe("POST /:id/to-story", () => {
     assert.equal(fs.existsSync(readStory(ctx.dataDir, id).source.audioPath), true);
   });
 
-  test("a second call makes a second Story project, and the link points at the newest", async () => {
+  test("a second call is refused as already made, unless the body says again", async () => {
     const p = timedProject(ctx);
     const first = (await call("POST", `/${p.projectId}/to-story`, {})).json.storyProjectId;
-    const second = (await call("POST", `/${p.projectId}/to-story`, {})).json.storyProjectId;
+    const refused = await call("POST", `/${p.projectId}/to-story`, {});
+    assert.equal(refused.status, 409);
+    assert.equal(refused.json.code, "ALREADY_MADE");
+    assert.match(refused.json.error, /already/i);
+    assert.equal(seen.created.length, 1, "no second project, no spend");
+    assert.equal((await call("POST", `/${p.projectId}/to-story`, { again: "yes" })).status, 400);
+    assert.equal(readProject(ctx.dataDir, p.projectId).musicVideo.storyProjectId, first);
+  });
+
+  test("a link to a Story project that was deleted does not count as already made", async () => {
+    const p = timedProject(ctx);
+    const first = (await call("POST", `/${p.projectId}/to-story`, {})).json.storyProjectId;
+    fs.rmSync(path.join(ctx.dataDir, "story-projects", `${first}.json`));
+    assert.equal((await call("POST", `/${p.projectId}/to-story`, {})).status, 200);
+  });
+
+  test("with again, a second call makes a second Story project, and the link points at the newest", async () => {
+    const p = timedProject(ctx);
+    const first = (await call("POST", `/${p.projectId}/to-story`, {})).json.storyProjectId;
+    const second = (await call("POST", `/${p.projectId}/to-story`, { again: true })).json.storyProjectId;
     assert.notEqual(first, second);
     assert.ok(readStory(ctx.dataDir, first));
     assert.ok(readStory(ctx.dataDir, second));

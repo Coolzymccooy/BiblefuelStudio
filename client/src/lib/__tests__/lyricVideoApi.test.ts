@@ -7,7 +7,7 @@ vi.mock('../mediaUpload', () => ({ uploadMedia: vi.fn() }));
 
 import { api } from '../api';
 import { uploadMedia } from '../mediaUpload';
-import { lyricVideoApi } from '../lyricVideoApi';
+import { lyricVideoApi, isAlreadyMade } from '../lyricVideoApi';
 
 const project = { projectId: 'lv_1', title: 'T', lines: [] };
 const reply = (data: unknown) => ({ ok: true, status: 200, data });
@@ -281,5 +281,15 @@ describe('lyricVideoApi', () => {
   it('says plainly why the music video was refused', async () => {
     vi.mocked(api.post).mockResolvedValue({ ok: false, status: 409, error: 'Run Timing first.' });
     await expect(lyricVideoApi.toStory('lv_1', { aspect: 'portrait', character: '', aiMotion: false })).rejects.toThrow('Run Timing first.');
+  });
+
+  it('marks the already-made refusal so the page can ask and send again', async () => {
+    vi.mocked(api.post).mockResolvedValue({ ok: false, status: 409, error: 'You already made a music video for this song.', data: { code: 'ALREADY_MADE' } });
+    const err = await lyricVideoApi.toStory('lv_1', { aspect: 'portrait', character: '', aiMotion: false }).catch((e: unknown) => e);
+    expect(isAlreadyMade(err)).toBe(true);
+    expect(isAlreadyMade(new Error('Run Timing first.'))).toBe(false);
+    vi.mocked(api.post).mockResolvedValue(reply({ ok: true, storyProjectId: 'sp-2' }));
+    await lyricVideoApi.toStory('lv_1', { aspect: 'portrait', character: '', aiMotion: false, again: true });
+    expect(api.post).toHaveBeenLastCalledWith('/api/lyric-video/lv_1/to-story', { aspect: 'portrait', character: '', aiMotion: false, again: true });
   });
 });

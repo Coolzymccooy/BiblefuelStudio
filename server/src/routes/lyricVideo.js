@@ -64,15 +64,16 @@ const RENDER_FAILED = "The video could not be made. Try again, or choose a diffe
 const RENDER_INTERRUPTED = "The render was interrupted — start it again.";
 const RESTARTED = "The server restarted while this video was being made. Render it again.";
 const SERVER_ERROR = "Something went wrong on our side. Please try again.";
+const ALREADY_MADE = "You already made a music video for this song. Make another? It pays for new pictures and clips.";
 const LYRICS_LOCKED = "Wait for the timing to finish before changing the lyrics.";
 
-/** A refusal with a status and a message that is fit to show the user. */
+/** A refusal with a status and a message that is fit to show the user, and a code when the page acts on it. */
 class Refusal extends Error {
-  constructor(status, message) { super(message); this.status = status; }
+  constructor(status, message, code) { super(message); this.status = status; this.code = code; }
 }
 
 const ok = (res, data) => res.json(data);
-const bad = (res, status, error) => res.status(status).json({ error });
+const bad = (res, status, error, code) => res.status(status).json(code ? { error, code } : { error });
 const bodyOf = (req) => (req.body && typeof req.body === "object" && !Array.isArray(req.body) ? req.body : {});
 const round3 = (n) => Math.round(n * 1000) / 1000;
 const placed = (l) => Array.isArray(l?.words) && l.words.length > 0 && Number.isFinite(l.start) && Number.isFinite(l.end);
@@ -86,7 +87,7 @@ function route(handler) {
     try {
       await handler(req, res);
     } catch (err) {
-      if (err instanceof Refusal) return bad(res, err.status, err.message);
+      if (err instanceof Refusal) return bad(res, err.status, err.message, err.code);
       console.error("[lyric-video] unexpected error:", err);
       if (!res.headersSent) bad(res, 500, SERVER_ERROR);
     }
@@ -579,7 +580,8 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
     if (character.length > CHARACTER_MAX) throw new Refusal(400, `Keep the description of the singer under ${CHARACTER_MAX} characters.`);
     if (body.aiMotion !== undefined && typeof body.aiMotion !== "boolean") throw new Refusal(400, "Animate the scenes is on or off.");
     if (body.quality !== undefined && !AI_QUALITIES.includes(body.quality)) throw new Refusal(400, "Unknown quality");
-    return { aspect: body.aspect ?? "portrait", character, aiMotion: body.aiMotion === true, quality: body.quality ?? "standard" };
+    if (body.again !== undefined && typeof body.again !== "boolean") throw new Refusal(400, "Make another is yes or no.");
+    return { aspect: body.aspect ?? "portrait", character, aiMotion: body.aiMotion === true, quality: body.quality ?? "standard", again: body.again === true };
   }
 
   /** Refuses (409) a song that cannot be made into a music video yet. */
@@ -594,6 +596,11 @@ export function createLyricVideoRouter({ alignDeps, runRender = runLyricRender, 
     const project = load(req);
     const choice = checkToStoryRequest(bodyOf(req));
     assertMusicVideoReady(project);
+    // Each one pays for new pictures and clips: a second needs the user to say so (a stale tab may not know).
+    const linked = project.musicVideo?.storyProjectId;
+    if (!choice.again && typeof linked === "string" && storySeam.readProject(req.ctx.dataDir, linked)) {
+      throw new Refusal(409, ALREADY_MADE, "ALREADY_MADE");
+    }
     const durationSec = Number(project.song.durationSec);
     const plan = planMusicScenes({ sections: project.sections, lines: project.lines, durationSec });
     const ctx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir };
