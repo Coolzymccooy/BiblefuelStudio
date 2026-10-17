@@ -6,7 +6,7 @@ import path from "path";
 import { createProject, readProject, writeProject } from "./projectStore.js";
 import { ledgerSummary, reserveSpend } from "../videoGen/spend.js";
 import {
-  AI_QUALITY, sceneClipSec, animatePrompt, animatableScenes, estimateAnimation,
+  AI_QUALITY, FRAME_MOTION_PROMPT, sceneClipSec, animatePrompt, animatableScenes, estimateAnimation,
   startAnimation, isAnimating, cancelAnimation, resumeAnimations,
 } from "./animateStage.js";
 
@@ -81,6 +81,12 @@ describe("pricing and choice of scenes", () => {
   });
   test("the prompt is the picture's prompt plus a motion line", () => {
     assert.equal(animatePrompt({ imagePrompt: "A lamp." }), "A lamp. Slow push-in, gentle light shift, subtle natural movement.");
+  });
+  test("motion words for a picture hold people's pose but still let the scene move", () => {
+    assert.match(FRAME_MOTION_PROMPT, /same pose and the same direction they face/);
+    assert.match(FRAME_MOTION_PROMPT, /no hidden hands or faces appear/);
+    assert.match(FRAME_MOTION_PROMPT, /water, clouds, flames, leaves/, "scenes without people are not frozen");
+    assert.ok(FRAME_MOTION_PROMPT.length < 400, "short enough to leave the picture in charge");
   });
   test("only scenes with a finished picture, not already moving, are animated", () => {
     const p = project([
@@ -177,6 +183,8 @@ describe("startAnimation", () => {
       assert.equal(s.aiVideoCostUsd.toFixed(5), MINI_5S_USD.toFixed(5));
     }
     assert.equal(calls.submit[0].firstFramePath, after[0].imagePath);
+    assert.equal(calls.submit[0].framePrompt, FRAME_MOTION_PROMPT, "the picture moves without being described again");
+    assert.equal(calls.submit[0].prompt, animatePrompt(scene(0)), "the full prompt is kept for the text-only fallback");
     assert.equal(calls.submit[0].durationSec, 5);
     assert.equal(calls.submit[0].aspect, "portrait");
     const sum = ledgerSummary(ledgerDir);

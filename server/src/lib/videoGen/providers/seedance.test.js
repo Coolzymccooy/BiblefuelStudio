@@ -119,6 +119,54 @@ describe("submitSeedanceTask", () => {
     assert.equal(fetchImpl.calls[1].body.content.length, 1);
   });
 
+  test("with a picture, the frame prompt is sent instead of the scene prompt", async () => {
+    const pic = path.join(tmp, "scene.png");
+    fs.writeFileSync(pic, PNG);
+    const fetchImpl = fakeFetch([jsonRes(200, { id: "cgt-4" })]);
+    const r = await submitSeedanceTask({
+      prompt: "A man kneels, hands clasped.", framePrompt: "Keep everyone as shown.", firstFramePath: pic, fetchImpl,
+    });
+    assert.deepEqual(r, { ok: true, taskId: "cgt-4", mode: "image" });
+    assert.deepEqual(fetchImpl.calls[0].body.content[0], { type: "text", text: `Keep everyone as shown. ${NO_TEXT_LINE}` });
+  });
+
+  test("the real-person fallback goes back to the full scene prompt", async () => {
+    const pic = path.join(tmp, "face.jpg");
+    fs.writeFileSync(pic, PNG);
+    const fetchImpl = fakeFetch([
+      jsonRes(400, { error: { code: "InputImageSensitiveContentDetected.PrivacyInformation", message: "may contain real person" } }),
+      jsonRes(200, { id: "cgt-5" }),
+    ]);
+    const r = await submitSeedanceTask({
+      prompt: "A man kneels, hands clasped.", framePrompt: "Keep everyone as shown.", firstFramePath: pic, fetchImpl,
+    });
+    assert.deepEqual(r, { ok: true, taskId: "cgt-5", mode: "text" });
+    assert.deepEqual(fetchImpl.calls[1].body.content, [{ type: "text", text: `A man kneels, hands clasped. ${NO_TEXT_LINE}` }]);
+  });
+
+  test("a blank frame prompt leaves the scene prompt with the picture", async () => {
+    const pic = path.join(tmp, "scene.png");
+    fs.writeFileSync(pic, PNG);
+    const fetchImpl = fakeFetch([jsonRes(200, { id: "cgt-7" })]);
+    await submitSeedanceTask({ prompt: "A lamp.", framePrompt: "   ", firstFramePath: pic, fetchImpl });
+    assert.deepEqual(fetchImpl.calls[0].body.content[0], { type: "text", text: `A lamp. ${NO_TEXT_LINE}` });
+  });
+
+  test("a frame prompt does not stand in for a missing scene prompt", async () => {
+    const fetchImpl = fakeFetch([]);
+    const r = await submitSeedanceTask({ prompt: "", framePrompt: "Keep everyone as shown.", fetchImpl });
+    assert.equal(r.code, "BAD_REQUEST");
+    assert.equal(fetchImpl.calls.length, 0);
+  });
+
+  test("a frame prompt without a usable picture is not sent", async () => {
+    const fetchImpl = fakeFetch([jsonRes(200, { id: "cgt-6" })]);
+    await submitSeedanceTask({
+      prompt: "A lamp.", framePrompt: "Keep everyone as shown.", firstFramePath: path.join(tmp, "missing.png"), fetchImpl,
+    });
+    assert.deepEqual(fetchImpl.calls[0].body.content, [{ type: "text", text: `A lamp. ${NO_TEXT_LINE}` }]);
+  });
+
   test("a refused prompt comes back as REFUSED in plain words", async () => {
     const fetchImpl = fakeFetch([jsonRes(400, { error: { code: "InputTextSensitiveContentDetected", message: "sensitive" } })]);
     const r = await submitSeedanceTask({ prompt: "x", fetchImpl });

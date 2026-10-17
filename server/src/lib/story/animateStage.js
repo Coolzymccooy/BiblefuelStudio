@@ -28,6 +28,12 @@ export const AI_QUALITY = Object.freeze({
 });
 
 const MOTION_LINE = "Slow push-in, gentle light shift, subtle natural movement.";
+// Sent with the scene's picture in place of its description: the picture
+// already says what is there, and repeating "hands clasped" over a man seen
+// from behind made Seedance draw his hands through his back.
+export const FRAME_MOTION_PROMPT = "Animate this exact image with a slow camera push-in and soft shifting light. "
+  + "Let what is in the scene move naturally: water, clouds, flames, leaves, hair, cloth, dust and light rays. "
+  + "Any person keeps the same pose and the same direction they face, and no hidden hands or faces appear.";
 const IN_FLIGHT = new Set(["queued", "generating"]);
 
 const defaultDeps = Object.freeze({
@@ -230,7 +236,8 @@ async function animateOne(ctx, projectId, sceneId, { model, resolution }, { ledg
     return;
   }
   const submitted = await deps.submit({
-    prompt: animatePrompt(scene), firstFramePath: scene.imagePath, aspect: project.aspect, durationSec, model, resolution,
+    prompt: animatePrompt(scene), framePrompt: FRAME_MOTION_PROMPT,
+    firstFramePath: scene.imagePath, aspect: project.aspect, durationSec, model, resolution,
   });
   if (!submitted.ok) {
     releaseSpend(ledgerDir, key);
