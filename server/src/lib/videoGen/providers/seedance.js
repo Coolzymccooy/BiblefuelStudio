@@ -104,8 +104,14 @@ async function postTask(body, fetcher) {
   return { ok: res.ok && Boolean(json?.id), status: res.status, json };
 }
 
+/**
+ * framePrompt, when given, is what goes with the first frame instead of
+ * prompt. Describing a picture again makes Seedance "correct" it to match the
+ * words (hands clasped behind a man's back, drawn through his body), so the
+ * picture gets motion-only words. prompt still drives the text-only fallback.
+ */
 export async function submitSeedanceTask({
-  prompt, firstFramePath = null, aspect = "portrait", durationSec = 5,
+  prompt, framePrompt = null, firstFramePath = null, aspect = "portrait", durationSec = 5,
   model = SEEDANCE_MODELS.mini, resolution = "720p", fetchImpl,
 } = {}) {
   if (!isSeedanceConfigured()) {
@@ -113,6 +119,7 @@ export async function submitSeedanceTask({
   }
   const text = withNoText(prompt);
   if (text === NO_TEXT_LINE) return { ok: false, code: "BAD_REQUEST", error: "A prompt is required." };
+  const frameText = String(framePrompt || "").trim() ? withNoText(framePrompt) : text;
   const fetcher = fetchImpl || fetch;
   const base = {
     model, ratio: seedanceRatio(aspect), resolution, duration: clampSeedanceDuration(durationSec),
@@ -121,7 +128,7 @@ export async function submitSeedanceTask({
   try {
     const frame = firstFrameItem(firstFramePath);
     if (frame) {
-      const first = await postTask({ ...base, content: [{ type: "text", text }, frame] }, fetcher);
+      const first = await postTask({ ...base, content: [{ type: "text", text: frameText }, frame] }, fetcher);
       if (first.ok) return { ok: true, taskId: first.json.id, mode: "image" };
       const err = errorOf(first.json, first.status);
       if (!PERSON_REFUSAL.test(err.code)) return refusal(err);
