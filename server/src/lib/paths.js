@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { isSuperAdmin } from "./userPlan.js";
+import { isSuperAdmin, isOwner } from "./userPlan.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -12,10 +12,10 @@ export const OUTPUT_DIR = path.resolve(process.env.OUTPUT_DIR || path.join(SERVE
 
 /**
  * @param {{sub:string, email?:string}} user
- * @returns {string} absolute path. Super-admin => DATA_DIR (legacy). Others => DATA_DIR/users/<sub>/
+ * @returns {string} absolute path. The owner => DATA_DIR (legacy). Everyone else, other super-admins included => DATA_DIR/users/<sub>/
  */
 export function dataDirFor(user) {
-  if (isSuperAdmin(user)) return DATA_DIR;
+  if (isOwner(user)) return DATA_DIR;
   const sub = String(user?.sub || "").trim();
   if (!sub) throw new Error("dataDirFor: user.sub required");
   return path.join(DATA_DIR, "users", sub);
@@ -23,10 +23,10 @@ export function dataDirFor(user) {
 
 /**
  * @param {{sub:string, email?:string}} user
- * @returns {string} absolute path. Super-admin => OUTPUT_DIR (legacy). Others => DATA_DIR/users/<sub>/outputs/
+ * @returns {string} absolute path. The owner => OUTPUT_DIR (legacy). Everyone else => DATA_DIR/users/<sub>/outputs/
  */
 export function outputDirFor(user) {
-  if (isSuperAdmin(user)) return OUTPUT_DIR;
+  if (isOwner(user)) return OUTPUT_DIR;
   return path.join(dataDirFor(user), "outputs");
 }
 
@@ -55,20 +55,37 @@ export function isSingleTenant() {
  * the callback, and YouTube read "Not connected" forever).
  *
  * @param {{sub:string, email?:string}} user
- * @returns {{ dataDir: string, outputDir: string, isSuperAdmin: boolean }}
+ * @returns {{ dataDir: string, outputDir: string, isSuperAdmin: boolean, isOwner: boolean }}
  */
 export function resolveScopeDirs(user) {
   // Single-tenant treats everyone as the operator, on the legacy paths.
   if (isSingleTenant()) {
-    return { dataDir: DATA_DIR, outputDir: OUTPUT_DIR, isSuperAdmin: true };
+    return { dataDir: DATA_DIR, outputDir: OUTPUT_DIR, isSuperAdmin: true, isOwner: true };
   }
-  // The super-admin keeps the legacy paths so the operator's existing
-  // library and jobs are not orphaned; everyone else is isolated per user.
-  if (isSuperAdmin(user)) {
-    return { dataDir: DATA_DIR, outputDir: OUTPUT_DIR, isSuperAdmin: true };
+  // The owner keeps the legacy paths so the operator's existing library and
+  // jobs are not orphaned. Everyone else is isolated per user, OTHER
+  // SUPER-ADMINS INCLUDED: they keep their admin rights, but sharing the
+  // owner's folder let them see, clear and publish the operator's work.
+  if (isOwner(user)) {
+    return { dataDir: DATA_DIR, outputDir: OUTPUT_DIR, isSuperAdmin: true, isOwner: true };
   }
   const { dataDir, outputDir } = ensureUserDirs(user);
-  return { dataDir, outputDir, isSuperAdmin: false };
+  return { dataDir, outputDir, isSuperAdmin: isSuperAdmin(user), isOwner: false };
+}
+
+/**
+ * Does this request or job ctx act as the owner? An explicit ctx.isOwner
+ * wins. A ctx saved before isOwner existed (persisted jobs) is the owner's
+ * only when it is a super-admin's AND ran in the main workspace, which until
+ * this change only the owner's could.
+ *
+ * @param {{ isOwner?: boolean, isSuperAdmin?: boolean, dataDir?: string }|null|undefined} ctx
+ * @returns {boolean}
+ */
+export function isOwnerCtx(ctx) {
+  if (!ctx) return false;
+  if (typeof ctx.isOwner === "boolean") return ctx.isOwner;
+  return Boolean(ctx.isSuperAdmin) && Boolean(ctx.dataDir) && path.resolve(String(ctx.dataDir)) === DATA_DIR;
 }
 
 /**

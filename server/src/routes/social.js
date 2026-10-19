@@ -25,7 +25,7 @@ import { confineToDir } from "../lib/confinePath.js";
 // DATA_DIR is used ONLY by the boot-time cron rehydrator below, which operates
 // on the super-admin's global social.json. Per-user schedule rehydration is
 // Phase 4 work; see specs/2026-05-26-public-multitenancy-design.md §6.
-import { DATA_DIR, OUTPUT_DIR } from "../lib/paths.js";
+import { DATA_DIR, OUTPUT_DIR, isOwnerCtx } from "../lib/paths.js";
 
 const router = Router();
 const scheduleTasks = new Map();
@@ -298,9 +298,13 @@ function recordWebhookDelivery(dataDir, webhookId, outcome) {
   }
 }
 
-/** True when this caller's TikTok posts go straight through Zernio, without Make. Operator-only. */
+/**
+ * True when this caller's TikTok posts go straight through Zernio, without
+ * Make. Owner-only: env Zernio is the owner's TikTok, so another super-admin
+ * using it would post their videos to the owner's account.
+ */
 function zernioPostsFor(req) {
-  return Boolean(req?.ctx?.isSuperAdmin) && Boolean(
+  return isOwnerCtx(req?.ctx) && Boolean(
     String(process.env.ZERNIO_API_KEY || "").trim() &&
     String(process.env.ZERNIO_TIKTOK_ACCOUNT_ID || "").trim()
   );
@@ -324,13 +328,13 @@ async function postToWebhook({ caption, videoUrl, title, webhookId, webhookUrl }
   const url = String(target?.url || webhookUrl || "").trim();
   // Env Zernio is operator-only. For regular users, falling back to env
   // Zernio would post THEIR campaign to the OPERATOR'S TikTok account,
-  // which is a multi-tenant cross-tenant leak. Gate on req.ctx.isSuperAdmin
+  // which is a multi-tenant cross-tenant leak. Gate on the owner flag
   // (set in jobs.js when persisting the job ctx, or by the userScope
   // middleware on direct HTTP calls).
-  const callerIsSuperAdmin = Boolean(req?.ctx?.isSuperAdmin);
+  const callerIsOwner = isOwnerCtx(req?.ctx);
   const zernioConfigured = zernioPostsFor(req);
   if (!url && !zernioConfigured) {
-    throw new Error(callerIsSuperAdmin
+    throw new Error(callerIsOwner
       ? "No destination configured. Set a Make/Zapier webhook in Settings, or configure ZERNIO_API_KEY + ZERNIO_TIKTOK_ACCOUNT_ID in server/.env."
       : "No destination configured for your account. Connect a Make / Zapier webhook in Settings to enable auto-publish.",
     );
@@ -711,8 +715,9 @@ setTimeout(() => {
  *   }
  *
  * Tier rules:
- *   - super-admin: env Zernio counts
- *   - regular user: only their own webhooks count (env Zernio off-limits)
+ *   - the owner: env Zernio counts
+ *   - everyone else, other super-admins included: only their own webhooks
+ *     and YouTube count (env Zernio is the owner's TikTok)
  */
 router.get("/auto-publish-status", (req, res) => {
   const store = readSocialStore(req.ctx.dataDir);
@@ -727,19 +732,14 @@ router.get("/auto-publish-status", (req, res) => {
     destinations.push("youtube");
   }
 
-  if (req.ctx.isSuperAdmin) {
-    const zernioOn = Boolean(
-      String(process.env.ZERNIO_API_KEY || "").trim() &&
-      String(process.env.ZERNIO_TIKTOK_ACCOUNT_ID || "").trim(),
-    );
-    if (zernioOn) destinations.push("zernio");
-  }
+  if (zernioPostsFor(req)) destinations.push("zernio");
 
   res.json({
     ok: true,
     canAutoPublish: destinations.length > 0,
     destinations,
     isSuperAdmin: Boolean(req.ctx.isSuperAdmin),
+    isOwner: isOwnerCtx(req.ctx),
   });
 });
 
@@ -1242,8 +1242,8 @@ router.get("/youtube/connect", (req, res) => {
   // 10-minute TTL — plenty for a user clicking through Google's consent.
   //
   // The email travels too, and it is NOT decoration: dataDirFor() routes a
-  // super-admin to DATA_DIR and everyone else to DATA_DIR/users/<sub>, and
-  // isSuperAdmin identifies the admin by SUPER_ADMIN_EMAIL. Omitting it made
+  // the owner to DATA_DIR and everyone else to DATA_DIR/users/<sub>, and
+  // isOwner identifies the owner by SUPER_ADMIN_EMAIL / OWNER_EMAIL. Omitting it made
   // the callback resolve the per-user directory while every authenticated
   // request resolved the admin one, so the refresh token was written to a
   // file /youtube/status never reads — consent succeeded, the exchange

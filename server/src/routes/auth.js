@@ -6,7 +6,7 @@ import { hasAnyUser, createOwner, verifyUser, signToken, requireAuth, upsertFire
 import { isFirebaseAdminEnabled, verifyFirebaseIdToken, getFirebaseUserVerificationState } from "../lib/firebaseAdmin.js";
 import { writeUserPlan } from "../lib/userPlanStore.js";
 import { dataDirFor, ensureUserDirs } from "../lib/paths.js";
-import { isSuperAdmin as isSuperAdminUser } from "../lib/userPlan.js";
+import { isSuperAdmin as isSuperAdminUser, unverifiedAdminSignIn } from "../lib/userPlan.js";
 import { getAccessRequestsStore } from "../lib/accessRequestsStore.js";
 
 const router = Router();
@@ -184,6 +184,17 @@ router.post("/firebase", authLimiter, async (req, res) => {
     if (!idToken) return res.status(400).json({ ok: false, error: "idToken required" });
 
     const decoded = await verifyFirebaseIdToken(idToken);
+
+    // An admin's email skips the gate below and is matched by email alone, so
+    // a Firebase account that has not proved it owns that address must not
+    // sign in as the admin.
+    if (unverifiedAdminSignIn(decoded)) {
+      return res.status(403).json({
+        ok: false,
+        code: "EMAIL_NOT_VERIFIED",
+        error: "Verify this email address before signing in.",
+      });
+    }
 
     // Signup gate: only known users (already in users.json) OR emails that
     // a super-admin approved via the admin panel can complete sign-in.

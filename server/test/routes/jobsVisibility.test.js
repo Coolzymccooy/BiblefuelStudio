@@ -4,7 +4,15 @@ import { isJobVisibleTo } from "../../src/routes/jobs.js";
 
 const alice = { userId: "u_alice", isSuperAdmin: false };
 const bob = { userId: "u_bob", isSuperAdmin: false };
-const admin = { userId: "u_admin", isSuperAdmin: true };
+const admin = { userId: "u_admin", isSuperAdmin: true, isOwner: true };
+// A second super-admin: admin rights, but not the operator's jobs.
+const otherAdmin = { userId: "u_other", isSuperAdmin: true, isOwner: false };
+
+test("isJobVisibleTo: a super-admin who is not the owner sees only their own jobs", () => {
+  assert.equal(isJobVisibleTo({ id: "j1", ownerId: "u_other" }, otherAdmin), true);
+  assert.equal(isJobVisibleTo({ id: "j2", ownerId: "u_alice" }, otherAdmin), false);
+  assert.equal(isJobVisibleTo({ id: "j3" }, otherAdmin), false, "the owner's untagged jobs stay the owner's");
+});
 
 test("isJobVisibleTo: owner sees their own job", () => {
   const job = { id: "j1", ownerId: "u_alice" };

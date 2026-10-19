@@ -209,6 +209,7 @@ router.post("/generate", async (req, res) => {
         outputDir: req.ctx.outputDir,
         userId: req.ctx.userId,
         isSuperAdmin: Boolean(req.ctx.isSuperAdmin),
+        isOwner: Boolean(req.ctx.isOwner),
       });
       jobIds.push(job.id);
     }

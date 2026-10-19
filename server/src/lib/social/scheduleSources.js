@@ -12,7 +12,8 @@ import { DATA_DIR, OUTPUT_DIR, dataDirFor, outputDirFor } from "../paths.js";
  */
 export function scheduleOwnerCtx(owner) {
   if (owner?.isSuperAdmin) {
-    return { userId: owner.ownerId ?? null, dataDir: DATA_DIR, outputDir: OUTPUT_DIR, isSuperAdmin: true };
+    // The root store is the owner's, so its schedules may use the owner's env Zernio.
+    return { userId: owner.ownerId ?? null, dataDir: DATA_DIR, outputDir: OUTPUT_DIR, isSuperAdmin: true, isOwner: true };
   }
   const user = { sub: String(owner?.ownerId || "") };
   return {
@@ -20,6 +21,7 @@ export function scheduleOwnerCtx(owner) {
     dataDir: dataDirFor(user),
     outputDir: outputDirFor(user),
     isSuperAdmin: false,
+    isOwner: false,
   };
 }
 
