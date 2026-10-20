@@ -47,6 +47,9 @@ export function SettingsPage() {
     // Saves in flight, per schedule: one shared slot let a second card's save
     // clear the first card's busy state while its request was still pending.
     const [savingScheduleIds, setSavingScheduleIds] = useState<ReadonlySet<string>>(() => new Set());
+    // The server never sends secrets back, only whether each one is saved. A
+    // blank secret field on save keeps the saved value.
+    const [savedSecrets, setSavedSecrets] = useState({ youtubeClientSecret: false, youtubeRefreshToken: false, instagramAccessToken: false, tiktokAccessToken: false });
     const [directConfig, setDirectConfig] = useState({
         youtubeClientId: '',
         youtubeClientSecret: '',
@@ -81,12 +84,18 @@ export function SettingsPage() {
             if (res.data.direct) {
                 setDirectConfig({
                     youtubeClientId: res.data.direct.youtube?.clientId || '',
-                    youtubeClientSecret: res.data.direct.youtube?.clientSecret || '',
-                    youtubeRefreshToken: res.data.direct.youtube?.refreshToken || '',
-                    instagramAccessToken: res.data.direct.instagram?.accessToken || '',
+                    youtubeClientSecret: '',
+                    youtubeRefreshToken: '',
+                    instagramAccessToken: '',
                     instagramUserId: res.data.direct.instagram?.userId || '',
-                    tiktokAccessToken: res.data.direct.tiktok?.accessToken || '',
+                    tiktokAccessToken: '',
                     tiktokOpenId: res.data.direct.tiktok?.openId || '',
+                });
+                setSavedSecrets({
+                    youtubeClientSecret: res.data.direct.youtube?.hasClientSecret === true,
+                    youtubeRefreshToken: res.data.direct.youtube?.hasRefreshToken === true,
+                    instagramAccessToken: res.data.direct.instagram?.hasAccessToken === true,
+                    tiktokAccessToken: res.data.direct.tiktok?.hasAccessToken === true,
                 });
             }
         }
@@ -470,17 +479,17 @@ export function SettingsPage() {
                                 <Input
                                     value={directConfig.youtubeClientSecret}
                                     onChange={(e) => setDirectConfig({ ...directConfig, youtubeClientSecret: e.target.value })}
-                                    placeholder="YouTube Client Secret"
+                                    placeholder={savedSecrets.youtubeClientSecret ? 'YouTube Client Secret: saved, leave blank to keep' : 'YouTube Client Secret'}
                                 />
                                 <Input
                                     value={directConfig.youtubeRefreshToken}
                                     onChange={(e) => setDirectConfig({ ...directConfig, youtubeRefreshToken: e.target.value })}
-                                    placeholder="YouTube Refresh Token"
+                                    placeholder={savedSecrets.youtubeRefreshToken ? 'YouTube Refresh Token: saved, leave blank to keep' : 'YouTube Refresh Token'}
                                 />
                                 <Input
                                     value={directConfig.instagramAccessToken}
                                     onChange={(e) => setDirectConfig({ ...directConfig, instagramAccessToken: e.target.value })}
-                                    placeholder="Instagram Access Token"
+                                    placeholder={savedSecrets.instagramAccessToken ? 'Instagram Access Token: saved, leave blank to keep' : 'Instagram Access Token'}
                                 />
                                 <Input
                                     value={directConfig.instagramUserId}
@@ -490,7 +499,7 @@ export function SettingsPage() {
                                 <Input
                                     value={directConfig.tiktokAccessToken}
                                     onChange={(e) => setDirectConfig({ ...directConfig, tiktokAccessToken: e.target.value })}
-                                    placeholder="TikTok Access Token"
+                                    placeholder={savedSecrets.tiktokAccessToken ? 'TikTok Access Token: saved, leave blank to keep' : 'TikTok Access Token'}
                                 />
                                 <Input
                                     value={directConfig.tiktokOpenId}
