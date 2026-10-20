@@ -15,6 +15,7 @@ import { buildZernioPost } from "../lib/zernioPayload.js";
 // check now reads attempt.outcome.atCapacity rather than sniffing the message.
 import { readTikTokOutcome } from "../lib/zernioStatus.js";
 import { readSocialStore, writeSocialStore } from "../lib/socialStore.js";
+import { publicDirectConfig, mergeDirectSecrets } from "../lib/social/directSecrets.js";
 import { scheduleOwnerCtx, listScheduleSources } from "../lib/social/scheduleSources.js";
 import { validateYoutubeMetadata, buildYoutubeDescription } from "../lib/social/youtubeMetadata.js";
 import { uploadToYoutube, setYoutubeThumbnail } from "../lib/social/youtubeUpload.js";
@@ -1010,7 +1011,9 @@ router.get("/config", (req, res) => {
       enabled: Boolean(store.buffer?.accessToken),
       profileIds: store.buffer?.profileIds || [],
     },
-    direct: store.direct || {},
+    // Never the secrets themselves: the store carries the operator's env
+    // YOUTUBE_CLIENT_SECRET in every user's copy.
+    direct: publicDirectConfig(store.direct),
     schedules: store.schedules || [],
     webhooks: (store.webhooks || []).map((w) => ({ id: w.id, name: w.name, url: w.url, enabled: w.enabled })),
   });
@@ -1021,7 +1024,8 @@ router.post("/config", (req, res) => {
   const store = readSocialStore(req.ctx.dataDir);
   const buffer = payload.buffer || store.buffer || {};
   const webhooks = Array.isArray(payload.webhooks) ? payload.webhooks : store.webhooks || [];
-  const direct = payload.direct || store.direct || {};
+  // The page only ever saw has<Secret> flags, so a blank secret means "keep it".
+  const direct = mergeDirectSecrets(payload.direct, store.direct);
   const schedules = Array.isArray(payload.schedules) ? payload.schedules : (store.schedules || []);
 
   const next = {

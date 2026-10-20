@@ -11,6 +11,7 @@ import toast from 'react-hot-toast';
 import { useConfig } from '../lib/config';
 import { SCHEDULE_TIMEZONE, scheduleSnapshot, isScheduleUnsaved, scheduleSavedMessage, scheduleFromServer, type SocialSchedule } from '../lib/socialSchedules';
 import { ScheduleCard } from '../components/settings/ScheduleCard';
+import { SecretField } from '../components/settings/SecretField';
 import { ThemeToggle } from '../components/ThemeToggle';
 import { useAuth } from '../hooks/useAuth';
 import { VoiceSynthesisPanel } from '../components/VoiceSynthesisPanel';
@@ -48,6 +49,13 @@ export function SettingsPage() {
     // Saves in flight, per schedule: one shared slot let a second card's save
     // clear the first card's busy state while its request was still pending.
     const [savingScheduleIds, setSavingScheduleIds] = useState<ReadonlySet<string>>(() => new Set());
+    // The server never sends secrets back, only whether each one is saved. A
+    // blank secret field on save keeps the saved value.
+    const [savedSecrets, setSavedSecrets] = useState({ youtubeClientSecret: false, youtubeRefreshToken: false, instagramAccessToken: false, tiktokAccessToken: false });
+    // Saved secrets the user chose to remove: sent as null on the next save.
+    const [clearedSecrets, setClearedSecrets] = useState<ReadonlySet<keyof typeof savedSecrets>>(() => new Set());
+    const secretOut = (key: keyof typeof savedSecrets, value: string) => (value ? value : clearedSecrets.has(key) ? null : '');
+    const clearSecret = (key: keyof typeof savedSecrets) => setClearedSecrets((prev) => new Set(prev).add(key));
     const [directConfig, setDirectConfig] = useState({
         youtubeClientId: '',
         youtubeClientSecret: '',
@@ -82,12 +90,19 @@ export function SettingsPage() {
             if (res.data.direct) {
                 setDirectConfig({
                     youtubeClientId: res.data.direct.youtube?.clientId || '',
-                    youtubeClientSecret: res.data.direct.youtube?.clientSecret || '',
-                    youtubeRefreshToken: res.data.direct.youtube?.refreshToken || '',
-                    instagramAccessToken: res.data.direct.instagram?.accessToken || '',
+                    youtubeClientSecret: '',
+                    youtubeRefreshToken: '',
+                    instagramAccessToken: '',
                     instagramUserId: res.data.direct.instagram?.userId || '',
-                    tiktokAccessToken: res.data.direct.tiktok?.accessToken || '',
+                    tiktokAccessToken: '',
                     tiktokOpenId: res.data.direct.tiktok?.openId || '',
+                });
+                setClearedSecrets(new Set());
+                setSavedSecrets({
+                    youtubeClientSecret: res.data.direct.youtube?.hasClientSecret === true,
+                    youtubeRefreshToken: res.data.direct.youtube?.hasRefreshToken === true,
+                    instagramAccessToken: res.data.direct.instagram?.hasAccessToken === true,
+                    tiktokAccessToken: res.data.direct.tiktok?.hasAccessToken === true,
                 });
             }
         }
@@ -108,15 +123,15 @@ export function SettingsPage() {
             direct: {
                 youtube: {
                     clientId: directConfig.youtubeClientId,
-                    clientSecret: directConfig.youtubeClientSecret,
-                    refreshToken: directConfig.youtubeRefreshToken,
+                    clientSecret: secretOut('youtubeClientSecret', directConfig.youtubeClientSecret),
+                    refreshToken: secretOut('youtubeRefreshToken', directConfig.youtubeRefreshToken),
                 },
                 instagram: {
-                    accessToken: directConfig.instagramAccessToken,
+                    accessToken: secretOut('instagramAccessToken', directConfig.instagramAccessToken),
                     userId: directConfig.instagramUserId,
                 },
                 tiktok: {
-                    accessToken: directConfig.tiktokAccessToken,
+                    accessToken: secretOut('tiktokAccessToken', directConfig.tiktokAccessToken),
                     openId: directConfig.tiktokOpenId,
                 },
             },
@@ -469,30 +484,42 @@ export function SettingsPage() {
                                     onChange={(e) => setDirectConfig({ ...directConfig, youtubeClientId: e.target.value })}
                                     placeholder="YouTube Client ID"
                                 />
-                                <Input
+                                <SecretField
+                                    label="YouTube Client Secret"
                                     value={directConfig.youtubeClientSecret}
-                                    onChange={(e) => setDirectConfig({ ...directConfig, youtubeClientSecret: e.target.value })}
-                                    placeholder="YouTube Client Secret"
+                                    saved={savedSecrets.youtubeClientSecret}
+                                    cleared={clearedSecrets.has('youtubeClientSecret')}
+                                    onChange={(v) => setDirectConfig({ ...directConfig, youtubeClientSecret: v })}
+                                    onClear={() => clearSecret('youtubeClientSecret')}
                                 />
-                                <Input
+                                <SecretField
+                                    label="YouTube Refresh Token"
                                     value={directConfig.youtubeRefreshToken}
-                                    onChange={(e) => setDirectConfig({ ...directConfig, youtubeRefreshToken: e.target.value })}
-                                    placeholder="YouTube Refresh Token"
+                                    saved={savedSecrets.youtubeRefreshToken}
+                                    cleared={clearedSecrets.has('youtubeRefreshToken')}
+                                    onChange={(v) => setDirectConfig({ ...directConfig, youtubeRefreshToken: v })}
+                                    onClear={() => clearSecret('youtubeRefreshToken')}
                                 />
-                                <Input
+                                <SecretField
+                                    label="Instagram Access Token"
                                     value={directConfig.instagramAccessToken}
-                                    onChange={(e) => setDirectConfig({ ...directConfig, instagramAccessToken: e.target.value })}
-                                    placeholder="Instagram Access Token"
+                                    saved={savedSecrets.instagramAccessToken}
+                                    cleared={clearedSecrets.has('instagramAccessToken')}
+                                    onChange={(v) => setDirectConfig({ ...directConfig, instagramAccessToken: v })}
+                                    onClear={() => clearSecret('instagramAccessToken')}
                                 />
                                 <Input
                                     value={directConfig.instagramUserId}
                                     onChange={(e) => setDirectConfig({ ...directConfig, instagramUserId: e.target.value })}
                                     placeholder="Instagram User ID"
                                 />
-                                <Input
+                                <SecretField
+                                    label="TikTok Access Token"
                                     value={directConfig.tiktokAccessToken}
-                                    onChange={(e) => setDirectConfig({ ...directConfig, tiktokAccessToken: e.target.value })}
-                                    placeholder="TikTok Access Token"
+                                    saved={savedSecrets.tiktokAccessToken}
+                                    cleared={clearedSecrets.has('tiktokAccessToken')}
+                                    onChange={(v) => setDirectConfig({ ...directConfig, tiktokAccessToken: v })}
+                                    onClear={() => clearSecret('tiktokAccessToken')}
                                 />
                                 <Input
                                     value={directConfig.tiktokOpenId}
