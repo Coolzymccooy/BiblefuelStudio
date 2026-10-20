@@ -113,10 +113,22 @@ function normalizePostiz(raw = {}) {
 function normalizeZernio(raw = {}) {
   const tiktok = raw?.tiktok || {};
   const accountId = String(tiktok.accountId || "").trim();
+  // `own`: the user's OWN Zernio key and the TikTok they picked on it. Never
+  // sent back to the browser; the status route shows only the last 4.
+  const own = raw?.own || {};
+  const ownKey = String(own.apiKey || "").trim();
   return {
     profileId: String(raw?.profileId || "").trim(),
     tiktok: accountId
       ? { accountId, username: String(tiktok.username || "").trim(), connectedAt: tiktok.connectedAt ? String(tiktok.connectedAt) : "" }
+      : {},
+    own: ownKey
+      ? {
+          apiKey: ownKey,
+          accountId: String(own.accountId || "").trim(),
+          username: String(own.username || "").trim(),
+          savedAt: own.savedAt ? String(own.savedAt) : "",
+        }
       : {},
   };
 }

@@ -4,14 +4,16 @@ import { Button } from './ui/Button';
 import { api } from '../lib/api';
 import toast from 'react-hot-toast';
 import { Music2, ExternalLink, CheckCircle2, Loader2 } from 'lucide-react';
+import { OwnZernioKeySection, type OwnZernioKey } from './OwnZernioKeySection';
 
 interface TikTokStatus {
     serverConfigured: boolean;
     connected: boolean;
-    source: 'server' | 'connected' | null;
+    source: 'server' | 'connected' | 'own_key' | null;
     username: string;
     connectedAt?: string;
     canConnect: boolean;
+    ownKey?: OwnZernioKey | null;
 }
 
 // What the connect callback appends to /app/settings when it sends the user back.
@@ -24,8 +26,9 @@ const CALLBACK_ERRORS: Record<string, string> = {
 
 /**
  * Per-user "Connect TikTok" card. TikTok posts go out through Zernio: the
- * operator's account comes from the server settings, everyone else connects
- * their own TikTok here, under the server's Zernio key.
+ * operator's account comes from the server settings; an admin can connect
+ * their own TikTok under the server's Zernio key; anyone can bring their own
+ * Zernio API key instead (OwnZernioKeySection).
  *
  * Zernio's sign-in is a full-page redirect, not a popup: the server sends the
  * user back to /app/settings?tiktok=connected (or ?tiktok_error=<reason>),
@@ -105,6 +108,9 @@ export function TikTokConnectCard() {
 
     const connected = Boolean(status?.connected);
     const fromServer = status?.source === 'server';
+    // The own-key option, unless TikTok already goes through the server's
+    // Zernio for this person (the owner, or an admin who connected).
+    const showOwnKey = Boolean(status) && !fromServer && status?.source !== 'connected';
 
     return (
         <Card title="TikTok" className="border-white/10">
@@ -130,7 +136,7 @@ export function TikTokConnectCard() {
                     </p>
                 </div>
                 <div className="flex flex-shrink-0">
-                    {connected && !fromServer ? (
+                    {status?.source === 'connected' ? (
                         <Button variant="secondary" className="text-xs h-9 px-3" onClick={handleDisconnect} isLoading={disconnecting}>
                             Disconnect
                         </Button>
@@ -142,6 +148,7 @@ export function TikTokConnectCard() {
                     ) : null}
                 </div>
             </div>
+            {showOwnKey && <OwnZernioKeySection ownKey={status?.ownKey ?? null} onChange={loadStatus} />}
         </Card>
     );
 }
@@ -153,14 +160,12 @@ function describe(status: TikTokStatus | null): string {
     }
     if (status.connected) {
         const who = status.username ? `@${status.username}` : 'your TikTok';
+        const via = status.source === 'own_key' ? ' through your own Zernio account' : '';
         const when = status.connectedAt ? ` Connected ${new Date(status.connectedAt).toLocaleDateString()}.` : '';
-        return `Auto-publish posts your videos to ${who}.${when}`;
-    }
-    if (!status.serverConfigured) {
-        return 'TikTok posting is not set up on this server yet. Until it is, you can post to TikTok through a Make or Zapier webhook below.';
+        return `Auto-publish posts your videos to ${who}${via}.${when}`;
     }
     if (status.canConnect) {
-        return 'Sign in with TikTok once, and auto-publish posts each finished video to your account. Videos go out on your TikTok, not anyone else’s.';
+        return 'Sign in with TikTok once, and auto-publish posts each finished video to your account. Videos go out on your TikTok, not anyone else’s. Or use your own Zernio account below.';
     }
-    return 'Connecting TikTok here is open to admins for now. You can post to TikTok through a Make or Zapier webhook below.';
+    return 'Connect your TikTok with your own Zernio account below, or post to TikTok through a Make or Zapier webhook.';
 }

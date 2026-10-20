@@ -2,7 +2,7 @@ import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   _setZernioFetch, ensureZernioProfile, tiktokConnectUrl, findTikTokAccount,
-  disconnectZernioAccount, tiktokAccountFor,
+  disconnectZernioAccount, tiktokAccountFor, tiktokTargetFor, cleanZernioKey, listOwnTikTokAccounts,
 } from "./zernioConnect.js";
 import { DATA_DIR } from "../paths.js";
 
@@ -136,5 +136,48 @@ describe("tiktokAccountFor", () => {
     delete process.env.ZERNIO_API_KEY;
     assert.equal(tiktokAccountFor({ isOwner: true }, store()), null);
     assert.equal(tiktokAccountFor({ isOwner: false }, store("acct_mine")), null);
+  });
+});
+
+describe("bring your own Zernio key", () => {
+  const OWN = "sk_own_user_key_1234abcd";
+
+  test("a plausible key is kept, anything else is refused before it is sent anywhere", () => {
+    assert.equal(cleanZernioKey(`  ${OWN} `), OWN);
+    assert.equal(cleanZernioKey("short"), "");
+    assert.equal(cleanZernioKey("has a space in it 12345"), "");
+    assert.equal(cleanZernioKey("line\nbreak_1234567890"), "");
+    assert.equal(cleanZernioKey(undefined), "");
+  });
+
+  test("lists only the active TikToks on the user's own key, sent with that key", async () => {
+    fakeZernio({ "GET /api/v1/accounts": [200, { accounts: [
+      { _id: "a1", platform: "tiktok", username: "one" },
+      { _id: "a2", platform: "tiktok", username: "off", isActive: false },
+      { _id: "a3", platform: "youtube", username: "yt" },
+    ] }] });
+    assert.deepEqual(await listOwnTikTokAccounts(OWN), [{ accountId: "a1", username: "one" }]);
+    assert.equal(calls[0].auth, `Bearer ${OWN}`);
+  });
+
+  test("a user's own key and account win for them; the owner keeps the server's", () => {
+    const store = { zernio: { tiktok: { accountId: "acct_connected" }, own: { apiKey: OWN, accountId: "acct_own" } } };
+    assert.deepEqual(tiktokTargetFor({ isOwner: false }, store), { apiKey: OWN, accountId: "acct_own", source: "own_key" });
+    assert.equal(tiktokTargetFor({ isOwner: true }, store).source, "server");
+  });
+
+  test("an own key with no account picked does not post", () => {
+    assert.equal(tiktokTargetFor({ isOwner: false }, { zernio: { own: { apiKey: OWN } } }), null);
+  });
+
+  test("an own key works even when the server has no Zernio key", () => {
+    delete process.env.ZERNIO_API_KEY;
+    const store = { zernio: { own: { apiKey: OWN, accountId: "acct_own" } } };
+    assert.equal(tiktokAccountFor({ isOwner: false }, store), "acct_own");
+  });
+
+  test("a connected account still posts on the server's key", () => {
+    const target = tiktokTargetFor({ isOwner: false }, { zernio: { tiktok: { accountId: "acct_c" } } });
+    assert.deepEqual(target, { apiKey: "sk_test", accountId: "acct_c", source: "connected" });
   });
 });

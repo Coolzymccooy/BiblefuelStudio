@@ -25,8 +25,8 @@ export function zernioApiKey() {
   return String(process.env.ZERNIO_API_KEY || "").trim();
 }
 
-async function call(path, { method = "GET", query, body } = {}) {
-  const key = zernioApiKey();
+async function call(path, { method = "GET", query, body, apiKey } = {}) {
+  const key = apiKey || zernioApiKey();
   if (!key) throw new Error("Zernio is not set up on this server.");
   const url = new URL(`${BASE}${path}`);
   for (const [k, v] of Object.entries(query || {})) url.searchParams.set(k, String(v));
@@ -118,20 +118,60 @@ export async function disconnectZernioAccount(accountId) {
 }
 
 /**
- * The Zernio TikTok account this caller posts to, or null. The owner uses the
- * server-wide account; everyone else only the account they connected
- * themselves (written by the connect callback after checking it is theirs).
+ * A Zernio key a user pasted: one token, of a plausible length. Checked
+ * before it is ever sent anywhere.
+ */
+export function cleanZernioKey(raw) {
+  const key = String(raw ?? "").trim();
+  return /^[A-Za-z0-9_\-.]{16,300}$/.test(key) ? key : "";
+}
+
+/**
+ * The TikTok accounts on a user's OWN Zernio key (option B: they bring their
+ * own Zernio). Everything on that key is theirs, so no profile filter.
+ *
+ * @param {string} apiKey
+ * @returns {Promise<Array<{ accountId: string, username: string }>>}
+ */
+export async function listOwnTikTokAccounts(apiKey) {
+  const accounts = listOf(await call("/accounts", { apiKey }), "accounts");
+  return accounts
+    .filter((a) => idOf(a) && String(a?.platform || "").toLowerCase() === "tiktok" && a?.isActive !== false)
+    .map((a) => ({ accountId: idOf(a), username: String(a.username || a.displayName || "") }));
+}
+
+/**
+ * Which Zernio key and TikTok account this caller posts with, or null.
+ *
+ *   1. The owner: the server's key and ZERNIO_TIKTOK_ACCOUNT_ID.
+ *   2. Anyone with their own Zernio key and a chosen account: theirs.
+ *   3. An admin who connected through the server's Zernio: the server's key,
+ *      their own account (written by the connect callback after checking it).
+ *
+ * Never another person's account: every source after the first is read from
+ * the caller's own store.
  *
  * @param {object} ctx  req.ctx or a job ctx
  * @param {object} store the caller's social store
- * @returns {string|null}
+ * @returns {{ apiKey: string, accountId: string, source: "server"|"own_key"|"connected" } | null}
  */
-export function tiktokAccountFor(ctx, store) {
-  if (!zernioApiKey()) return null;
-  if (isOwnerCtx(ctx)) {
-    const serverAccount = String(process.env.ZERNIO_TIKTOK_ACCOUNT_ID || "").trim();
-    if (serverAccount) return serverAccount;
+export function tiktokTargetFor(ctx, store) {
+  const serverKey = zernioApiKey();
+  const serverAccount = String(process.env.ZERNIO_TIKTOK_ACCOUNT_ID || "").trim();
+  if (serverKey && serverAccount && isOwnerCtx(ctx)) {
+    return { apiKey: serverKey, accountId: serverAccount, source: "server" };
   }
-  const own = String(store?.zernio?.tiktok?.accountId || "").trim();
-  return own || null;
+  const own = store?.zernio?.own || {};
+  const ownKey = cleanZernioKey(own.apiKey);
+  const ownAccount = String(own.accountId || "").trim();
+  // A pasted copy of the server's own key is never a user's.
+  if (ownKey && ownAccount && ownKey !== serverKey) return { apiKey: ownKey, accountId: ownAccount, source: "own_key" };
+  const connected = String(store?.zernio?.tiktok?.accountId || "").trim();
+  if (serverKey && connected) return { apiKey: serverKey, accountId: connected, source: "connected" };
+  return null;
+}
+
+/** The TikTok account id this caller posts to, or null (see tiktokTargetFor). */
+export function tiktokAccountFor(ctx, store) {
+  return tiktokTargetFor(ctx, store)?.accountId || null;
 }
