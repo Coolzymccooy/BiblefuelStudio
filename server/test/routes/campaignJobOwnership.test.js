@@ -11,7 +11,8 @@ const alice = {
   isSuperAdmin: false,
 };
 const bob = { userId: "u_bob" };
-const admin = { userId: "u_admin", isSuperAdmin: true };
+// The owner: the one admin who sees every job (other super-admins see only their own).
+const admin = { userId: "u_admin", isSuperAdmin: true, isOwner: true };
 
 test("buildCampaignJob tags the job with the caller's ownerId and per-user ctx", () => {
   const job = buildCampaignJob("job_1", { title: "x" }, alice);

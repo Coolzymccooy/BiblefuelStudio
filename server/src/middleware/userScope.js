@@ -5,7 +5,7 @@ import { getPlanForUser } from "../lib/userPlan.js";
  * Express middleware. Must be mounted AFTER requireAuth (i.e. req.user exists).
  *
  * Attaches:
- *   req.ctx = { userId, email, role, plan, dataDir, outputDir, isSuperAdmin }
+ *   req.ctx = { userId, email, role, plan, dataDir, outputDir, isSuperAdmin, isOwner }
  *
  * Multi-tenancy is ON by default — a fresh deploy must isolate user data,
  * or every new sign-up sees every other account's jobs and library. The
@@ -15,10 +15,10 @@ import { getPlanForUser } from "../lib/userPlan.js";
  * When MULTITENANT === "false", everyone (including any signed-in user) is
  * treated as super-admin and reads/writes the legacy DATA_DIR / OUTPUT_DIR.
  *
- * When MULTITENANT is unset or "true", super-admin (matched by
- * SUPER_ADMIN_EMAIL or SUPER_ADMIN_USER_ID) still hits the legacy paths so
- * the operator's existing global library/jobs aren't orphaned. Everyone
- * else resolves to a per-user dir under DATA_DIR/users/<userId>/.
+ * When MULTITENANT is unset or "true", the owner (see isOwner in userPlan.js)
+ * still hits the legacy paths so the operator's existing global library/jobs
+ * aren't orphaned. Everyone else, other super-admins included, resolves to a
+ * per-user dir under DATA_DIR/users/<userId>/.
  */
 export function withUserScope(req, res, next) {
   const user = req.user;
@@ -30,7 +30,7 @@ export function withUserScope(req, res, next) {
   // JWT — the YouTube OAuth callback, which Google redirects to carrying only
   // ?code=&state= — reach the same answer. Duplicating the rules here is what
   // put a refresh token in a directory the status route never read.
-  const { dataDir, outputDir, isSuperAdmin: admin } = resolveScopeDirs(user);
+  const { dataDir, outputDir, isSuperAdmin: admin, isOwner } = resolveScopeDirs(user);
 
   req.ctx = {
     userId: user.sub,
@@ -41,6 +41,9 @@ export function withUserScope(req, res, next) {
     dataDir,
     outputDir,
     isSuperAdmin: admin,
+    // Admin rights (isSuperAdmin) and owning the main workspace plus the
+    // operator's own integrations (isOwner) are separate: only one admin is the owner.
+    isOwner,
   };
   next();
 }

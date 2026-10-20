@@ -5,6 +5,7 @@ import { v4 as uuid } from "uuid";
 import { spawn, spawnSync } from "child_process";
 import { readLibrary } from "../lib/library.js";
 import { DATA_DIR, OUTPUT_DIR, resolveOutputAlias, isLocalOrRemote } from "../lib/mediaThumb.js";
+import { isOwnerCtx } from "../lib/paths.js";
 import { generateScripts } from "../lib/generateScripts.js";
 import { synthesizeTts } from "../lib/ttsOrchestrator.js";
 import { synthesizeForCategory } from "../lib/voice/categorySynthesis.js";
@@ -159,13 +160,15 @@ function nextScriptTypeIndex() {
     return Math.floor(Date.now() / 60000);
   }
 }
-function currentIsSuperAdmin() { return Boolean(currentJobCtx?.isSuperAdmin); }
+// The owner is the one whose destinations include the server's env Zernio.
+function currentIsOwner() { return isOwnerCtx(currentJobCtx); }
 
 /**
  * Tier-aware "does this user have anywhere their video could go?" check.
  *
- * - Super-admin: env Zernio counts (their env IS the operator's env), plus
- *   any of their stored webhooks.
+ * - The owner: env Zernio counts (their env IS the operator's env), plus
+ *   any of their stored webhooks. Other super-admins are treated like
+ *   regular users here: env Zernio posts to the OWNER's TikTok.
  * - Regular user: ONLY their own stored webhooks. Env Zernio is deliberately
  *   off-limits — falling back to it would post regular users' content to
  *   the operator's TikTok account, which is a multi-tenant safety bug.
@@ -192,7 +195,7 @@ function describeConfiguredDestinations(ctx) {
   const ytRefresh = String(store?.direct?.youtube?.refreshToken || "").trim();
   if (ytRefresh) destinations.push("youtube");
 
-  if (ctx?.isSuperAdmin) {
+  if (isOwnerCtx(ctx)) {
     const zernioOn = Boolean(
       String(process.env.ZERNIO_API_KEY || "").trim() &&
       String(process.env.ZERNIO_TIKTOK_ACCOUNT_ID || "").trim(),
@@ -1628,10 +1631,10 @@ async function runCampaignAutoPost(payload, jobId) {
     shareResult = {
       ok: false,
       skipped: true,
-      reason: currentIsSuperAdmin()
+      reason: currentIsOwner()
         ? "no_destination_configured"
         : "no_destination_configured_user_tier",
-      message: currentIsSuperAdmin()
+      message: currentIsOwner()
         ? "No destination configured. Add a webhook in Settings or set ZERNIO_API_KEY in .env."
         : "Auto-publish needs a destination connected to your account. Connect a webhook (Make / Zapier) in Settings to start posting automatically.",
     };
@@ -1660,7 +1663,7 @@ async function runCampaignAutoPost(payload, jobId) {
         headers: { host: stubHost, "x-forwarded-proto": stubProto },
         protocol: stubProto,
         // ctx is THE key plumbing here — social.js's tier-aware Zernio
-        // gate reads ctx.isSuperAdmin to decide whether falling back to
+        // gate reads the ctx's owner flag to decide whether falling back to
         // env Zernio is allowed. Without this, a regular user's
         // campaign could leak to the operator's TikTok.
         ctx: currentJobCtx,
@@ -1887,12 +1890,13 @@ _t.unref();
 
 // Data isolation: jobs.json is a single global store, but each job carries
 // an `ownerId` (the userId that enqueued it). Regular users only see their
-// own jobs; super-admin sees everything (including pre-multitenancy jobs
+// own jobs; the owner sees everything (including pre-multitenancy jobs
 // that have no ownerId yet — these were created by the original operator
-// and belong implicitly to the super-admin).
+// and belong implicitly to the owner). Other super-admins see only their
+// own, like any user.
 export function isJobVisibleTo(job, ctx) {
   if (!job) return false;
-  if (ctx?.isSuperAdmin) return true;
+  if (isOwnerCtx(ctx)) return true;
   const owner = String(job.ownerId || job.ctx?.userId || "").trim();
   if (!owner) return false; // legacy untagged jobs: super-admin only
   return owner === String(ctx?.userId || "").trim();
@@ -1920,7 +1924,7 @@ router.post("/enqueue", (req, res) => {
   // Set currentJobCtx synchronously for validation that reads the library,
   // then restore it. The actual job-execution ctx is set in workerTick.
   const prevCtx = currentJobCtx;
-  currentJobCtx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir, userId: req.ctx.userId, isSuperAdmin: Boolean(req.ctx.isSuperAdmin) };
+  currentJobCtx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir, userId: req.ctx.userId, isSuperAdmin: Boolean(req.ctx.isSuperAdmin), isOwner: Boolean(req.ctx.isOwner) };
   let validation;
   try { validation = validatePayloadForEnqueue(type, payload); }
   finally { currentJobCtx = prevCtx; }
@@ -1933,7 +1937,7 @@ router.post("/enqueue", (req, res) => {
     // isSuperAdmin persisted on the job so the worker can apply
     // tier-aware rules (e.g. only super-admins fall back to env Zernio
     // when no per-user webhook is configured).
-    ctx: { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir, userId: req.ctx.userId, isSuperAdmin: Boolean(req.ctx.isSuperAdmin) },
+    ctx: { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir, userId: req.ctx.userId, isSuperAdmin: Boolean(req.ctx.isSuperAdmin), isOwner: Boolean(req.ctx.isOwner) },
     status: "queued",
     createdAt: new Date().toISOString()
   };
@@ -1974,7 +1978,7 @@ router.post("/:id/retry", (req, res) => {
   const payload = JSON.parse(JSON.stringify(original.payload || {}));
 
   const prevCtx = currentJobCtx;
-  currentJobCtx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir, userId: req.ctx.userId, isSuperAdmin: Boolean(req.ctx.isSuperAdmin) };
+  currentJobCtx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir, userId: req.ctx.userId, isSuperAdmin: Boolean(req.ctx.isSuperAdmin), isOwner: Boolean(req.ctx.isOwner) };
   let validation;
   try { validation = validatePayloadForEnqueue(type, payload); }
   finally { currentJobCtx = prevCtx; }
@@ -1986,7 +1990,7 @@ router.post("/:id/retry", (req, res) => {
     type,
     payload,
     ownerId: req.ctx.userId,
-    ctx: { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir, userId: req.ctx.userId, isSuperAdmin: Boolean(req.ctx.isSuperAdmin) },
+    ctx: { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir, userId: req.ctx.userId, isSuperAdmin: Boolean(req.ctx.isSuperAdmin), isOwner: Boolean(req.ctx.isOwner) },
     status: "queued",
     createdAt: new Date().toISOString(),
     // Provenance — links the retry back to its source so we can show
@@ -2010,7 +2014,7 @@ router.post("/:id/retry", (req, res) => {
 // regular user so we never accidentally leak to env Zernio / global dirs).
 export function buildCampaignJob(id, payload, ctx) {
   const normalizedCtx = ctx
-    ? { ...ctx, isSuperAdmin: Boolean(ctx.isSuperAdmin) }
+    ? { ...ctx, isSuperAdmin: Boolean(ctx.isSuperAdmin), isOwner: isOwnerCtx(ctx) }
     : null;
   return {
     id,
@@ -2031,7 +2035,7 @@ export async function enqueueCampaignAutoPost(payload, ctx) {
   // Callers that don't pass ctx (legacy cron in social.js pre-refactor) get
   // the global super-admin paths, matching pre-multi-tenant behaviour.
   const normalizedCtx = ctx
-    ? { ...ctx, isSuperAdmin: Boolean(ctx.isSuperAdmin) }
+    ? { ...ctx, isSuperAdmin: Boolean(ctx.isSuperAdmin), isOwner: isOwnerCtx(ctx) }
     : null;
   const prevCtx = currentJobCtx;
   currentJobCtx = normalizedCtx;

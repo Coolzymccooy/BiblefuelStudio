@@ -58,6 +58,7 @@ import postizRouter from "./src/routes/postiz.js";
 import { createAdminRouter } from "./src/routes/admin.js";
 import issuesRouter from "./src/routes/issues.js";
 import { DATA_DIR, OUTPUT_DIR } from "./src/lib/paths.js";
+import { ownershipWarning } from "./src/lib/userPlan.js";
 import { cacheControlForOutput, publicAssetHeaders } from "./src/lib/mediaCache.js";
 import { reconcilePersistedJobs } from "./src/lib/renderJobs.js";
 import { resumeAnimations } from "./src/lib/story/animateStage.js";
@@ -466,7 +467,9 @@ app.listen(PORT, () => {
     if (!adminEmail && !adminId) {
       console.warn("⚠️  Multi-tenant mode is ON but neither SUPER_ADMIN_EMAIL nor SUPER_ADMIN_USER_ID is set. The original operator account will be treated as a regular user and will NOT see the legacy global library/jobs. Set SUPER_ADMIN_EMAIL in server/.env before signing in.");
     } else {
-      console.log(`🔐 Multi-tenant: super-admin = ${adminEmail || adminId}; other users isolated under DATA_DIR/users/<id>/`);
+      console.log(`🔐 Multi-tenant: super-admin = ${adminEmail || adminId}; only the owner uses the main data dir, everyone else (other admins too) is isolated under DATA_DIR/users/<id>/`);
+      const ownerNote = ownershipWarning();
+      if (ownerNote) console.warn(`⚠️  ${ownerNote}`);
     }
   }
 });
