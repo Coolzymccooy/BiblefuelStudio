@@ -147,7 +147,7 @@ export function OwnZernioKeySection({ ownKey, onChange }: Props) {
         <div className="mt-3 rounded-xl border border-white/10 p-4 space-y-2">
             <p className="text-sm font-medium text-white">Use your own Zernio account</p>
             <p className="text-xs text-content-secondary">
-                Have a Zernio account with your TikTok connected? Create an API key in Zernio (Settings → API keys) and paste it here.
+                Have a Zernio account with your TikTok connected? Create an API key with read-write permission in Zernio (Settings → API keys) and paste it here.
                 Posts then go through your Zernio account, on your Zernio plan.
             </p>
             <div className="flex flex-col sm:flex-row sm:items-end gap-2">

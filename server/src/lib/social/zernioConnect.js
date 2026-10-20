@@ -141,6 +141,28 @@ export async function listOwnTikTokAccounts(apiKey) {
 }
 
 /**
+ * False only when Zernio clearly says the key cannot post: a key made with
+ * permission "read" is limited to GET requests, so it would list accounts and
+ * then fail every publish. Unknown (no answer, no scope) counts as able.
+ *
+ * @param {string} apiKey
+ * @returns {Promise<boolean>}
+ */
+export async function ownKeyCanPost(apiKey) {
+  let info;
+  try {
+    info = await call("/auth/verify", { apiKey });
+  } catch {
+    return true;
+  }
+  const permission = String(info?.permission || info?.apiKey?.permission || "").toLowerCase();
+  if (permission === "read") return false;
+  const scope = String(info?.scope || "").trim();
+  if (scope && !/\bposts:write\b/.test(scope)) return false;
+  return true;
+}
+
+/**
  * Which Zernio key and TikTok account this caller posts with, or null.
  *
  *   1. The owner: the server's key and ZERNIO_TIKTOK_ACCOUNT_ID.

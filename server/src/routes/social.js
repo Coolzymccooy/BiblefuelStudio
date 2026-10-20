@@ -28,7 +28,7 @@ import { confineToDir } from "../lib/confinePath.js";
 // on the super-admin's global social.json. Per-user schedule rehydration is
 // Phase 4 work; see specs/2026-05-26-public-multitenancy-design.md §6.
 import { DATA_DIR, OUTPUT_DIR, isOwnerCtx, resolveScopeDirs } from "../lib/paths.js";
-import { ensureZernioProfile, tiktokConnectUrl, findTikTokAccount, disconnectZernioAccount, tiktokAccountFor, tiktokTargetFor, zernioApiKey, cleanZernioKey, listOwnTikTokAccounts } from "../lib/social/zernioConnect.js";
+import { ensureZernioProfile, tiktokConnectUrl, findTikTokAccount, disconnectZernioAccount, tiktokAccountFor, tiktokTargetFor, zernioApiKey, cleanZernioKey, listOwnTikTokAccounts, ownKeyCanPost } from "../lib/social/zernioConnect.js";
 
 const router = Router();
 const scheduleTasks = new Map();
@@ -849,6 +849,10 @@ router.post("/tiktok/own-key", ownKeyLimiter, async (req, res) => {
   if (!accounts) return;
   if (touchesServerAccount(accounts)) {
     return res.status(400).json({ ok: false, error: "That key belongs to this server's Zernio account. Use a key from your own Zernio account." });
+  }
+  // A read-only key lists accounts fine and then fails every post.
+  if (!(await ownKeyCanPost(apiKey))) {
+    return res.status(400).json({ ok: false, error: "That Zernio key is read-only, so it cannot post. Create a key with read-write permission in Zernio and paste that." });
   }
   // One TikTok on the key: pick it. Several: the user chooses next.
   const only = accounts.length === 1 ? accounts[0] : null;

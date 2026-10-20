@@ -2,7 +2,7 @@ import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   _setZernioFetch, ensureZernioProfile, tiktokConnectUrl, findTikTokAccount,
-  disconnectZernioAccount, tiktokAccountFor, tiktokTargetFor, cleanZernioKey, listOwnTikTokAccounts,
+  disconnectZernioAccount, tiktokAccountFor, tiktokTargetFor, cleanZernioKey, listOwnTikTokAccounts, ownKeyCanPost,
 } from "./zernioConnect.js";
 import { DATA_DIR } from "../paths.js";
 
@@ -179,5 +179,23 @@ describe("bring your own Zernio key", () => {
   test("a connected account still posts on the server's key", () => {
     const target = tiktokTargetFor({ isOwner: false }, { zernio: { tiktok: { accountId: "acct_c" } } });
     assert.deepEqual(target, { apiKey: "sk_test", accountId: "acct_c", source: "connected" });
+  });
+});
+
+describe("ownKeyCanPost", () => {
+  test("a key Zernio marks read-only cannot post", async () => {
+    fakeZernio({ "GET /api/v1/auth/verify": [200, { valid: true, permission: "read" }] });
+    assert.equal(await ownKeyCanPost("sk_own_user_key_1234abcd"), false);
+    fakeZernio({ "GET /api/v1/auth/verify": [200, { valid: true, scope: "posts:read accounts:read" }] });
+    assert.equal(await ownKeyCanPost("sk_own_user_key_1234abcd"), false);
+  });
+
+  test("a key that can write posts, or no clear answer, counts as able", async () => {
+    fakeZernio({ "GET /api/v1/auth/verify": [200, { valid: true, scope: "posts:read posts:write accounts:read" }] });
+    assert.equal(await ownKeyCanPost("sk_own_user_key_1234abcd"), true);
+    fakeZernio({ "GET /api/v1/auth/verify": [200, { valid: true }] });
+    assert.equal(await ownKeyCanPost("sk_own_user_key_1234abcd"), true);
+    fakeZernio({});
+    assert.equal(await ownKeyCanPost("sk_own_user_key_1234abcd"), true);
   });
 });

@@ -327,6 +327,17 @@ describe("bring your own Zernio key", () => {
     assert.deepEqual(readSocialStore(dirOf(regular)).zernio.own, {});
   });
 
+  test("a read-only key is refused, since every post would fail", async () => {
+    reset(regular);
+    fakeZernio({
+      "GET /api/v1/accounts": [200, { accounts: [{ _id: "acct_mine", platform: "tiktok", username: "mytok" }] }],
+      "GET /api/v1/auth/verify": [200, { valid: true, permission: "read" }],
+    });
+    const res = await request(app(regular)).post("/api/social/tiktok/own-key").send({ apiKey: OWN_KEY }).expect(400);
+    assert.match(res.body.error, /read-only/);
+    assert.deepEqual(readSocialStore(dirOf(regular)).zernio.own, {});
+  });
+
   test("pasting keys is rate limited per user", async () => {
     fakeZernio({ "GET /api/v1/accounts": [401, { error: "Invalid API key" }] });
     for (let i = 0; i < 6; i += 1) {
