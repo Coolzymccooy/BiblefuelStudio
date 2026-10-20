@@ -149,3 +149,15 @@ describe("YouTube OAuth callback error page", () => {
     assert.match(res.text, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
   });
 });
+
+describe("YouTube connect asks for playlist access", () => {
+  test("the consent screen includes the scope playlists need", async () => {
+    const app = express();
+    app.use((req, _res, next) => { req.ctx = { userId: "u1", email: "u@example.com", dataDir: tmpRoot, outputDir: tmpRoot }; next(); });
+    app.use("/api/social", socialRouter);
+    const res = await request(app).get("/api/social/youtube/connect");
+    const scopes = new URL(res.body.authUrl).searchParams.get("scope").split(" ");
+    assert.ok(scopes.includes("https://www.googleapis.com/auth/youtube.force-ssl"), scopes.join(" "));
+    assert.ok(scopes.includes("https://www.googleapis.com/auth/youtube.upload"));
+  });
+});

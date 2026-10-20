@@ -81,6 +81,23 @@ function parsePublishAt(raw, now) {
   return { ok: true, value: new Date(t).toISOString() };
 }
 
+export const YT_PLAYLIST_TITLE_MAX = 150;
+const PLAYLIST_ID = /^[A-Za-z0-9_-]{2,64}$/;
+
+/** At most one of an existing playlist (by id) or a new one (by title). */
+function parsePlaylist(rawId, rawTitle) {
+  const id = String(rawId || "").trim();
+  const title = String(rawTitle || "").trim();
+  if (id && title) return { ok: false, error: "Pick a playlist or name a new one, not both" };
+  if (id) {
+    return PLAYLIST_ID.test(id) ? { ok: true, value: { id } } : { ok: false, error: "That playlist id isn't one YouTube uses" };
+  }
+  if (title.length > YT_PLAYLIST_TITLE_MAX) {
+    return { ok: false, error: `playlist title must be ${YT_PLAYLIST_TITLE_MAX} characters or fewer (got ${title.length})` };
+  }
+  return { ok: true, value: title ? { title } : undefined };
+}
+
 export function validateYoutubeMetadata(input = {}, { now = Date.now() } = {}) {
   const title = String(input.title || "").trim();
   if (!title) return { ok: false, error: "title is required" };
@@ -101,8 +118,16 @@ export function validateYoutubeMetadata(input = {}, { now = Date.now() } = {}) {
   const forcedPrivate = Boolean(publish.value) && privacyStatus !== "private";
   if (publish.value) privacyStatus = "private";
 
+  const playlist = parsePlaylist(input.playlistId, input.newPlaylistTitle);
+  if (!playlist.ok) return playlist;
+  // YouTube's "altered or synthetic content" answer; unanswered stays unset.
+  const containsSyntheticMedia = typeof input.syntheticMedia === "boolean" ? input.syntheticMedia : undefined;
+
   return {
     ok: true,
-    value: { title, description, tags, categoryId, privacyStatus, publishAt: publish.value, forcedPrivate },
+    value: {
+      title, description, tags, categoryId, privacyStatus, publishAt: publish.value, forcedPrivate,
+      containsSyntheticMedia, playlist: playlist.value,
+    },
   };
 }

@@ -15,6 +15,8 @@ export interface PublishOutcomeResult {
   forcedPrivate: boolean;
   thumbnailError?: string;
   thumbnailWarning?: string;
+  playlistId?: string;
+  playlistError?: string;
   /** Set when the server was asked to note the video on an ambient session. */
   recorded?: boolean;
 }

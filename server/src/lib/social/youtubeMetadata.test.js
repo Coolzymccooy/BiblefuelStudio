@@ -112,6 +112,38 @@ describe("validateYoutubeMetadata", () => {
     const r = validateYoutubeMetadata({ title: "ok", privacyStatus: "friends" }, { now });
     assert.equal(r.value.privacyStatus, "private");
   });
+  test("the AI disclosure is carried only when it was answered", () => {
+    assert.equal(validateYoutubeMetadata({ title: "ok", syntheticMedia: true }, { now }).value.containsSyntheticMedia, true);
+    assert.equal(validateYoutubeMetadata({ title: "ok", syntheticMedia: false }, { now }).value.containsSyntheticMedia, false);
+    assert.equal(validateYoutubeMetadata({ title: "ok" }, { now }).value.containsSyntheticMedia, undefined);
+    assert.equal(validateYoutubeMetadata({ title: "ok", syntheticMedia: "yes" }, { now }).value.containsSyntheticMedia, undefined);
+  });
+  test("no playlist by default", () => {
+    assert.equal(validateYoutubeMetadata({ title: "ok" }, { now }).value.playlist, undefined);
+  });
+  test("an existing playlist is passed by id", () => {
+    const r = validateYoutubeMetadata({ title: "ok", playlistId: " PLabc_123-XY " }, { now });
+    assert.deepEqual(r.value.playlist, { id: "PLabc_123-XY" });
+  });
+  test("a playlist id that isn't one is refused by name", () => {
+    const r = validateYoutubeMetadata({ title: "ok", playlistId: "PL abc/../x" }, { now });
+    assert.equal(r.ok, false);
+    assert.match(r.error, /playlist/i);
+  });
+  test("a new playlist is passed by its title", () => {
+    const r = validateYoutubeMetadata({ title: "ok", newPlaylistTitle: "  I Still Dey: Afro-gospel anthems " }, { now });
+    assert.deepEqual(r.value.playlist, { title: "I Still Dey: Afro-gospel anthems" });
+  });
+  test("a new playlist title over 150 characters is refused", () => {
+    const r = validateYoutubeMetadata({ title: "ok", newPlaylistTitle: "p".repeat(151) }, { now });
+    assert.equal(r.ok, false);
+    assert.match(r.error, /playlist.*150/i);
+  });
+  test("choosing a playlist and naming a new one is refused", () => {
+    const r = validateYoutubeMetadata({ title: "ok", playlistId: "PLabc", newPlaylistTitle: "New" }, { now });
+    assert.equal(r.ok, false);
+    assert.match(r.error, /not both/i);
+  });
 });
 
 describe("unlinkVerseTimes", () => {
