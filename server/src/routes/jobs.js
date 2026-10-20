@@ -6,6 +6,7 @@ import { spawn, spawnSync } from "child_process";
 import { readLibrary } from "../lib/library.js";
 import { DATA_DIR, OUTPUT_DIR, resolveOutputAlias, isLocalOrRemote } from "../lib/mediaThumb.js";
 import { isOwnerCtx } from "../lib/paths.js";
+import { tiktokAccountFor } from "../lib/social/zernioConnect.js";
 import { generateScripts } from "../lib/generateScripts.js";
 import { synthesizeTts } from "../lib/ttsOrchestrator.js";
 import { synthesizeForCategory } from "../lib/voice/categorySynthesis.js";
@@ -195,13 +196,9 @@ function describeConfiguredDestinations(ctx) {
   const ytRefresh = String(store?.direct?.youtube?.refreshToken || "").trim();
   if (ytRefresh) destinations.push("youtube");
 
-  if (isOwnerCtx(ctx)) {
-    const zernioOn = Boolean(
-      String(process.env.ZERNIO_API_KEY || "").trim() &&
-      String(process.env.ZERNIO_TIKTOK_ACCOUNT_ID || "").trim(),
-    );
-    if (zernioOn) destinations.push("zernio");
-  }
+  // TikTok through Zernio: the owner's server account, or the TikTok this
+  // user connected themselves. Never someone else's.
+  if (tiktokAccountFor(ctx, store)) destinations.push("zernio");
 
   return { canAutoPublish: destinations.length > 0, destinations };
 }
@@ -1635,8 +1632,8 @@ async function runCampaignAutoPost(payload, jobId) {
         ? "no_destination_configured"
         : "no_destination_configured_user_tier",
       message: currentIsOwner()
-        ? "No destination configured. Add a webhook in Settings or set ZERNIO_API_KEY in .env."
-        : "Auto-publish needs a destination connected to your account. Connect a webhook (Make / Zapier) in Settings to start posting automatically.",
+        ? "No destination configured. Connect YouTube or add a Make or Zapier webhook in Settings, or set ZERNIO_API_KEY and ZERNIO_TIKTOK_ACCOUNT_ID in the server settings for TikTok."
+        : "Auto-publish needs a destination connected to your account. In Settings, connect TikTok or YouTube, or add a Make or Zapier webhook.",
     };
   } else {
     try {

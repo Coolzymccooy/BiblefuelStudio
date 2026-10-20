@@ -105,6 +105,22 @@ function normalizePostiz(raw = {}) {
   };
 }
 
+/**
+ * The user's Zernio profile and the TikTok they connected through it. Written
+ * only by the server (the connect callback, after Zernio confirms the account
+ * belongs to this profile), never from a client payload.
+ */
+function normalizeZernio(raw = {}) {
+  const tiktok = raw?.tiktok || {};
+  const accountId = String(tiktok.accountId || "").trim();
+  return {
+    profileId: String(raw?.profileId || "").trim(),
+    tiktok: accountId
+      ? { accountId, username: String(tiktok.username || "").trim(), connectedAt: tiktok.connectedAt ? String(tiktok.connectedAt) : "" }
+      : {},
+  };
+}
+
 function emptyStore() {
   return {
     buffer: { accessToken: "", profileIds: [] },
@@ -112,6 +128,7 @@ function emptyStore() {
     direct: { youtube: mergeYouTubeConfig({}), instagram: {}, tiktok: {} },
     schedules: [],
     postiz: normalizePostiz({}),
+    zernio: normalizeZernio({}),
   };
 }
 
@@ -156,6 +173,7 @@ export function readSocialStore(dataDir) {
         ? data.schedules.map((r) => normalizeSchedule(recoverScheduleType(r)))
         : [],
       postiz: normalizePostiz(data?.postiz || {}),
+      zernio: normalizeZernio(data?.zernio || {}),
     };
   } catch {
     return emptyStore();
@@ -198,6 +216,7 @@ export function writeSocialStore(dataDir, next) {
     },
     schedules: Array.isArray(next?.schedules) ? next.schedules.map(normalizeSchedule) : [],
     postiz: normalizePostiz(next?.postiz || {}),
+    zernio: normalizeZernio(next?.zernio || {}),
   };
   fs.writeFileSync(file, JSON.stringify(payload, null, 2));
 }

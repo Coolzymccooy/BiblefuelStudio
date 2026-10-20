@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import jwt from "jsonwebtoken";
@@ -142,6 +143,36 @@ export function signToken(user) {
   return jwt.sign(claims, secret, { expiresIn });
 }
 
+const OAUTH_STATE_AUDIENCE = "biblefuel-oauth-state";
+
+// OAuth states travel through Google's and Zernio's redirects, so they land in
+// third-party logs and browser history. Signing them with a key derived from
+// JWT_SECRET, never JWT_SECRET itself, means a leaked state cannot be used as
+// a login token.
+function oauthStateSecret() {
+  const base = process.env.JWT_SECRET || "dev_secret_change_me";
+  return crypto.createHmac("sha256", base).update(OAUTH_STATE_AUDIENCE).digest("hex");
+}
+
+/**
+ * @param {object} claims must include `purpose`
+ * @param {string} expiresIn e.g. "15m"
+ */
+export function signOAuthState(claims, expiresIn) {
+  if (!claims?.purpose) throw new Error("An OAuth state needs a purpose.");
+  return jwt.sign(claims, oauthStateSecret(), { expiresIn, audience: OAUTH_STATE_AUDIENCE });
+}
+
+/** The state's claims when it is valid, unexpired and for `purpose`; otherwise null. */
+export function verifyOAuthState(token, purpose) {
+  try {
+    const decoded = jwt.verify(String(token || ""), oauthStateSecret(), { audience: OAUTH_STATE_AUDIENCE });
+    return decoded && decoded.purpose === purpose ? decoded : null;
+  } catch {
+    return null;
+  }
+}
+
 export function requireAuth(req, res, next) {
   try {
     const header = req.headers["authorization"] || "";
@@ -156,6 +187,12 @@ export function requireAuth(req, res, next) {
 
     const secret = process.env.JWT_SECRET || "dev_secret_change_me";
     const decoded = jwt.verify(token, secret);
+    // A token made for one job (an OAuth state, say) is never a login. OAuth
+    // states are also signed with their own key (signOAuthState); this check
+    // covers any older single-purpose token signed with JWT_SECRET.
+    if (decoded && typeof decoded === "object" && decoded.purpose) {
+      return res.status(401).json({ ok: false, error: "Invalid token" });
+    }
     req.user = decoded;
     return next();
   } catch (e) {

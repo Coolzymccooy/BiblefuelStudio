@@ -208,9 +208,6 @@ export function YouTubeConnectCard() {
                 </div>
             </div>
 
-            {/* Future destinations land in the same card. We'll add
-                Make/Zapier webhook (existing per-user storage) and TikTok
-                (via Zernio) here when we ship those flows. */}
         </Card>
     );
 }

@@ -18,6 +18,7 @@ import { PlanAndUsageCard } from '../components/PlanAndUsageCard';
 import { PostizConnectCard } from '../components/PostizConnectCard';
 import { AutoPublishCard } from '../components/AutoPublishCard';
 import { YouTubeConnectCard } from '../components/YouTubeConnectCard';
+import { TikTokConnectCard } from '../components/TikTokConnectCard';
 import { WebhookConnectCard } from '../components/WebhookConnectCard';
 import { BrandingCard } from '../components/BrandingCard';
 
@@ -286,6 +287,7 @@ export function SettingsPage() {
             <PlanAndUsageCard />
             <BrandingCard />
             <YouTubeConnectCard />
+            <TikTokConnectCard />
             <WebhookConnectCard />
             <PostizConnectCard />
             <AutoPublishCard />

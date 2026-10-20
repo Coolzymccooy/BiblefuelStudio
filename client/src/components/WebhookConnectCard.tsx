@@ -131,7 +131,9 @@ export function WebhookConnectCard() {
                 <p className="text-xs text-content-secondary mb-4">
                     Each finished video is sent to your Make or Zapier scenario, which posts it wherever you have set it up:
                     Instagram, TikTok, X, LinkedIn and more.
-                    {tiktokDirect && ' TikTok posts go straight through Zernio, so they keep going out even when this webhook fails.'}
+                    {tiktokDirect
+                        ? ' TikTok posts go straight through Zernio, so they keep going out even when this webhook fails.'
+                        : ' Admins can connect TikTok in the TikTok card instead, which posts through Zernio without Make or Zapier.'}
                 </p>
 
                 {loading ? (
@@ -145,7 +147,7 @@ export function WebhookConnectCard() {
                         </div>
                         <p className="text-sm font-semibold text-white mt-3">Not connected yet</p>
                         <p className="text-xs text-content-secondary mt-1 mb-4 max-w-md mx-auto">
-                            One connection handles TikTok + Instagram + X + LinkedIn — all at once. Takes about 5 minutes to set up, and Make &amp; Zapier both offer free tiers for testing.
+                            One connection handles TikTok, Instagram, X and LinkedIn at once. Takes about 5 minutes to set up, and Make &amp; Zapier both offer free tiers for testing.
                         </p>
                         <Button
                             className="text-xs h-9 px-4 bg-amber-500 hover:bg-amber-400 text-black font-semibold border-white/10"

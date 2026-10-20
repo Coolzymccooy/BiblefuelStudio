@@ -5,7 +5,8 @@ import path from "path";
 import { v4 as uuid } from "uuid";
 import cron from "node-cron";
 import { google } from "googleapis";
-import jwt from "jsonwebtoken";
+import crypto from "node:crypto";
+import { signOAuthState, verifyOAuthState } from "../auth.js";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import { buildZernioPost } from "../lib/zernioPayload.js";
@@ -25,7 +26,8 @@ import { confineToDir } from "../lib/confinePath.js";
 // DATA_DIR is used ONLY by the boot-time cron rehydrator below, which operates
 // on the super-admin's global social.json. Per-user schedule rehydration is
 // Phase 4 work; see specs/2026-05-26-public-multitenancy-design.md §6.
-import { DATA_DIR, OUTPUT_DIR, isOwnerCtx } from "../lib/paths.js";
+import { DATA_DIR, OUTPUT_DIR, isOwnerCtx, resolveScopeDirs } from "../lib/paths.js";
+import { ensureZernioProfile, tiktokConnectUrl, findTikTokAccount, disconnectZernioAccount, tiktokAccountFor, zernioApiKey } from "../lib/social/zernioConnect.js";
 
 const router = Router();
 const scheduleTasks = new Map();
@@ -188,11 +190,12 @@ function deriveCleanTitle(caption) {
   return cleaned || "Biblefuel Studio";
 }
 
-async function publishToZernioTikTok({ caption, videoUrl, title }) {
-  const apiKey = String(process.env.ZERNIO_API_KEY || "").trim();
-  const accountId = String(process.env.ZERNIO_TIKTOK_ACCOUNT_ID || "").trim();
+// accountId is the caller's own TikTok (see tiktokAccountFor): the server's
+// account for the owner, the one they connected for everyone else.
+async function publishToZernioTikTok({ caption, videoUrl, title, accountId }) {
+  const apiKey = zernioApiKey();
   if (!apiKey || !accountId) {
-    return { skipped: true, reason: "ZERNIO_API_KEY or ZERNIO_TIKTOK_ACCOUNT_ID not set" };
+    return { skipped: true, reason: "No Zernio key on the server, or no TikTok account connected" };
   }
 
   const send = async (draft) => {
@@ -300,14 +303,11 @@ function recordWebhookDelivery(dataDir, webhookId, outcome) {
 
 /**
  * True when this caller's TikTok posts go straight through Zernio, without
- * Make. Owner-only: env Zernio is the owner's TikTok, so another super-admin
- * using it would post their videos to the owner's account.
+ * Make: the owner through the server's account, anyone else only through the
+ * TikTok they connected themselves. Never another person's account.
  */
-function zernioPostsFor(req) {
-  return isOwnerCtx(req?.ctx) && Boolean(
-    String(process.env.ZERNIO_API_KEY || "").trim() &&
-    String(process.env.ZERNIO_TIKTOK_ACCOUNT_ID || "").trim()
-  );
+function zernioPostsFor(req, store) {
+  return Boolean(tiktokAccountFor(req?.ctx, store));
 }
 
 async function postToWebhook({ caption, videoUrl, title, webhookId, webhookUrl }, req, store) {
@@ -332,11 +332,12 @@ async function postToWebhook({ caption, videoUrl, title, webhookId, webhookUrl }
   // (set in jobs.js when persisting the job ctx, or by the userScope
   // middleware on direct HTTP calls).
   const callerIsOwner = isOwnerCtx(req?.ctx);
-  const zernioConfigured = zernioPostsFor(req);
+  const tiktokAccount = tiktokAccountFor(req?.ctx, store);
+  const zernioConfigured = Boolean(tiktokAccount);
   if (!url && !zernioConfigured) {
     throw new Error(callerIsOwner
-      ? "No destination configured. Set a Make/Zapier webhook in Settings, or configure ZERNIO_API_KEY + ZERNIO_TIKTOK_ACCOUNT_ID in server/.env."
-      : "No destination configured for your account. Connect a Make / Zapier webhook in Settings to enable auto-publish.",
+      ? "No destination configured. Add a Make or Zapier webhook in Settings, or set ZERNIO_API_KEY and ZERNIO_TIKTOK_ACCOUNT_ID in the server settings for TikTok."
+      : "No destination configured for your account. In Settings, connect TikTok or add a Make or Zapier webhook.",
     );
   }
 
@@ -390,7 +391,7 @@ async function postToWebhook({ caption, videoUrl, title, webhookId, webhookUrl }
   let zernio = null;
   if (zernioConfigured) {
     try {
-      zernio = await publishToZernioTikTok({ caption, videoUrl: mediaUrl, title: resolvedTitle });
+      zernio = await publishToZernioTikTok({ caption, videoUrl: mediaUrl, title: resolvedTitle, accountId: tiktokAccount });
     } catch (e) {
       zernio = { ok: false, error: e?.message || String(e) };
     }
@@ -732,7 +733,7 @@ router.get("/auto-publish-status", (req, res) => {
     destinations.push("youtube");
   }
 
-  if (zernioPostsFor(req)) destinations.push("zernio");
+  if (zernioPostsFor(req, store)) destinations.push("zernio");
 
   res.json({
     ok: true,
@@ -742,6 +743,150 @@ router.get("/auto-publish-status", (req, res) => {
     isOwner: isOwnerCtx(req.ctx),
   });
 });
+
+// =====================================================================
+// Connect TikTok through Zernio.
+//
+// The owner posts to the server's account (ZERNIO_TIKTOK_ACCOUNT_ID). Other
+// admins connect their OWN TikTok: each gets a Zernio profile under the
+// operator's key, signs in to TikTok via Zernio, and the callback saves the
+// account only after Zernio lists it under that profile. Admin-only because
+// Zernio bills the operator per connected account.
+// =====================================================================
+
+const TIKTOK_STATE_PURPOSE = "tiktok_connect";
+const TIKTOK_STATE_TTL = "15m";
+const TIKTOK_NONCE_COOKIE = "bf_tiktok_nonce";
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+}
+
+function readCookie(req, name) {
+  for (const part of String(req.headers?.cookie || "").split(";")) {
+    const eq = part.indexOf("=");
+    if (eq > 0 && part.slice(0, eq).trim() === name) {
+      try { return decodeURIComponent(part.slice(eq + 1).trim()); } catch { return ""; }
+    }
+  }
+  return "";
+}
+
+router.get("/tiktok/status", (req, res) => {
+  const store = readSocialStore(req.ctx.dataDir);
+  const keySet = Boolean(zernioApiKey());
+  const serverAccount = String(process.env.ZERNIO_TIKTOK_ACCOUNT_ID || "").trim();
+  if (keySet && isOwnerCtx(req.ctx) && serverAccount) {
+    return res.json({ ok: true, serverConfigured: true, connected: true, source: "server", username: "", canConnect: false });
+  }
+  const own = store.zernio?.tiktok || {};
+  res.json({
+    ok: true,
+    serverConfigured: keySet,
+    connected: keySet && Boolean(own.accountId),
+    source: own.accountId ? "connected" : null,
+    username: own.username || "",
+    connectedAt: own.connectedAt || "",
+    canConnect: keySet && Boolean(req.ctx.isSuperAdmin),
+  });
+});
+
+router.post("/tiktok/connect", async (req, res) => {
+  if (!zernioApiKey()) return res.status(503).json({ ok: false, error: "TikTok posting is not set up on this server yet." });
+  if (isOwnerCtx(req.ctx) && String(process.env.ZERNIO_TIKTOK_ACCOUNT_ID || "").trim()) {
+    return res.status(400).json({ ok: false, error: "Your TikTok is already connected through the server settings." });
+  }
+  if (!req.ctx.isSuperAdmin) {
+    return res.status(403).json({ ok: false, error: "Connecting TikTok here is for admins for now. You can post to TikTok through a Make or Zapier webhook." });
+  }
+  const current = readSocialStore(req.ctx.dataDir);
+  // Each connected account is billed, and a second connect would leave the
+  // first one orphaned (and still billed) at Zernio.
+  if (current.zernio?.tiktok?.accountId) {
+    return res.status(409).json({ ok: false, error: "A TikTok is already connected. Disconnect it first to connect a different one." });
+  }
+  try {
+    const store = current;
+    const profileId = store.zernio?.profileId || await ensureZernioProfile({ userId: req.ctx.userId });
+    if (profileId !== store.zernio?.profileId) {
+      writeSocialStore(req.ctx.dataDir, { ...store, zernio: { ...store.zernio, profileId } });
+    }
+    // The callback has no session, so the signed state says whose folder to
+    // write and that this profile is theirs. The nonce, kept in a cookie in
+    // THIS browser, stops someone handing their sign-in link to another person
+    // and collecting that person's TikTok.
+    const nonce = crypto.randomBytes(16).toString("hex");
+    const state = signOAuthState(
+      { sub: req.ctx.userId, email: req.ctx.email || "", purpose: TIKTOK_STATE_PURPOSE, pid: profileId, nonce },
+      TIKTOK_STATE_TTL,
+    );
+    res.cookie(TIKTOK_NONCE_COOKIE, nonce, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: req.secure || String(req.headers["x-forwarded-proto"] || "").startsWith("https"),
+      path: "/api/social/tiktok/callback",
+      maxAge: 15 * 60 * 1000,
+    });
+    // The configured site address first, like the YouTube redirect: a
+    // forwarded Host header should not decide where TikTok sends the browser.
+    const base = getConfiguredPublicBaseUrl() || getRequestPublicBaseUrl(req);
+    const redirectUrl = `${base}/api/social/tiktok/callback?bf_state=${encodeURIComponent(state)}`;
+    const authUrl = await tiktokConnectUrl({ profileId, redirectUrl });
+    res.json({ ok: true, authUrl });
+  } catch (e) {
+    console.error("[SOCIAL] TikTok connect failed:", e?.message || e);
+    res.status(502).json({ ok: false, error: "Zernio could not start the TikTok sign-in. Try again in a minute." });
+  }
+});
+
+router.post("/tiktok/disconnect", async (req, res) => {
+  const store = readSocialStore(req.ctx.dataDir);
+  const accountId = store.zernio?.tiktok?.accountId;
+  let removedAtZernio = true;
+  if (accountId) {
+    try { await disconnectZernioAccount(accountId); }
+    catch (e) {
+      removedAtZernio = false;
+      console.warn("[SOCIAL] Zernio disconnect failed:", e?.message || e);
+    }
+  }
+  writeSocialStore(req.ctx.dataDir, { ...store, zernio: { ...store.zernio, tiktok: {} } });
+  res.json({ ok: true, removedAtZernio });
+});
+
+/**
+ * Where Zernio sends the browser after the TikTok sign-in. Mounted OUTSIDE
+ * requireAuth (the redirect carries no session). Always redirects back to
+ * Settings with a short code, and never echoes query text into a page.
+ */
+export async function tiktokConnectCallback(req, res) {
+  const back = (query) => {
+    res.clearCookie(TIKTOK_NONCE_COOKIE, { path: "/api/social/tiktok/callback" });
+    return res.redirect(302, `/app/settings?${query}`);
+  };
+  if (String(req.query?.error || "").trim()) return back("tiktok_error=cancelled");
+
+  const decoded = verifyOAuthState(req.query?.bf_state, TIKTOK_STATE_PURPOSE);
+  if (!decoded || !decoded.sub || !decoded.pid || !decoded.nonce) return back("tiktok_error=expired");
+  if (readCookie(req, TIKTOK_NONCE_COOKIE) !== decoded.nonce) return back("tiktok_error=expired");
+
+  const { dataDir } = resolveScopeDirs({ sub: String(decoded.sub), email: decoded.email });
+  const store = readSocialStore(dataDir);
+  if (!store.zernio?.profileId || store.zernio.profileId !== decoded.pid) return back("tiktok_error=expired");
+
+  try {
+    const account = await findTikTokAccount({ profileId: decoded.pid, accountId: String(req.query?.accountId || "") });
+    if (!account) return back("tiktok_error=not_found");
+    writeSocialStore(dataDir, {
+      ...store,
+      zernio: { ...store.zernio, tiktok: { ...account, connectedAt: new Date().toISOString() } },
+    });
+    return back("tiktok=connected");
+  } catch (e) {
+    console.error("[SOCIAL] TikTok connect callback failed:", e?.message || e);
+    return back("tiktok_error=failed");
+  }
+}
 
 router.get("/config", (req, res) => {
   const store = readSocialStore(req.ctx.dataDir);
@@ -782,6 +927,10 @@ router.post("/config", (req, res) => {
       tiktok: direct.tiktok || store.direct?.tiktok || {},
     },
     schedules,
+    // Never taken from the payload: the page does not send these, and
+    // leaving them out of `next` wiped a connected TikTok and Postiz on Save all.
+    postiz: store.postiz,
+    zernio: store.zernio,
   };
 
   writeSocialStore(req.ctx.dataDir, next);
@@ -1066,7 +1215,7 @@ router.get("/webhooks", (req, res) => {
   const store = readSocialStore(req.ctx.dataDir);
   res.json({
     ok: true,
-    tiktokDirect: zernioPostsFor(req),
+    tiktokDirect: zernioPostsFor(req, store),
     webhooks: (store.webhooks || []).map((w) => ({
       id: w.id,
       name: w.name,
@@ -1253,11 +1402,9 @@ router.get("/youtube/connect", (req, res) => {
   // request resolved the admin one, so the refresh token was written to a
   // file /youtube/status never reads — consent succeeded, the exchange
   // succeeded, and the UI still said "Not connected" with no error anywhere.
-  const secret = process.env.JWT_SECRET || "dev_secret_change_me";
-  const state = jwt.sign(
+  const state = signOAuthState(
     { sub: req.ctx.userId, email: req.ctx.email || "", purpose: "yt_oauth_connect" },
-    secret,
-    { expiresIn: YOUTUBE_OAUTH_STATE_TTL },
+    YOUTUBE_OAUTH_STATE_TTL,
   );
 
   const authUrl = oauth.generateAuthUrl({
@@ -1328,7 +1475,10 @@ export async function youtubeOauthCallback(req, res) {
 
   // Render a small status page either way — popups and regular tabs both
   // get something useful instead of a JSON dump.
+  // titleText is escaped here; bodyHtml is markup, so anything from outside
+  // (Google's error text, the channel name) is escaped where it is built.
   const renderResultPage = (titleText, bodyHtml, isError = false) => {
+    titleText = escapeHtml(titleText);
     res.status(isError ? 400 : 200).set("Content-Type", "text/html").send(`<!doctype html>
 <html><head><meta charset="utf-8"><title>${titleText}</title>
 <style>
@@ -1364,20 +1514,20 @@ export async function youtubeOauthCallback(req, res) {
   };
 
   if (errParam) {
-    return renderResultPage("YouTube connection cancelled", `<p>Google reported: <code>${errParam}</code></p><p><a href="/app/settings">Back to Settings</a></p>`, true);
+    // Escaped: `error` comes straight from the URL, so anyone could craft a
+    // link that ran script on our origin through this page.
+    const shown = escapeHtml(errParam);
+    return renderResultPage("YouTube connection cancelled", `<p>Google reported: <code>${shown}</code></p><p><a href="/app/settings">Back to Settings</a></p>`, true);
   }
   if (!code || !stateRaw) {
     return renderResultPage("Missing parameters", `<p>Google's callback didn't include the expected code/state.</p><p><a href="/app/settings">Try again</a></p>`, true);
   }
 
-  let decoded;
-  try {
-    const secret = process.env.JWT_SECRET || "dev_secret_change_me";
-    decoded = jwt.verify(stateRaw, secret);
-  } catch {
+  const decoded = verifyOAuthState(stateRaw, "yt_oauth_connect");
+  if (!decoded) {
     return renderResultPage("Session expired", `<p>This connection link has expired (10-minute window). Start the connect flow again from Settings.</p><p><a href="/app/settings">Back to Settings</a></p>`, true);
   }
-  if (!decoded || decoded.purpose !== "yt_oauth_connect" || !decoded.sub) {
+  if (!decoded.sub) {
     return renderResultPage("Invalid state", `<p>The OAuth state didn't match what we issued. For your safety the connection was rejected.</p>`, true);
   }
 
@@ -1397,7 +1547,7 @@ export async function youtubeOauthCallback(req, res) {
     const exchange = await oauth.getToken(code);
     tokens = exchange.tokens;
   } catch (e) {
-    return renderResultPage("Couldn't complete connection", `<p>Google rejected the authorization code. This usually means the redirect URI registered in Google Cloud Console doesn't match the one this server uses (<code>${getOauthRedirectUri()}</code>). Tell your operator.</p>`, true);
+    return renderResultPage("Couldn't complete connection", `<p>Google rejected the authorization code. This usually means the redirect URI registered in Google Cloud Console doesn't match the one this server uses (<code>${escapeHtml(getOauthRedirectUri())}</code>). Tell your operator.</p>`, true);
   }
   if (!tokens?.refresh_token) {
     // Google only issues refresh_token on FIRST consent. If the user
@@ -1440,7 +1590,7 @@ export async function youtubeOauthCallback(req, res) {
 
   renderResultPage(
     channelTitle ? `Connected to ${channelTitle}` : "YouTube connected",
-    `<p>${channelTitle ? `Your videos will now post to <strong>${channelTitle}</strong> on YouTube.` : "Your YouTube account is connected. Videos will post to your channel."}</p><p><a href="/app/settings">Back to Settings</a></p>`,
+    `<p>${channelTitle ? `Your videos will now post to <strong>${escapeHtml(channelTitle)}</strong> on YouTube.` : "Your YouTube account is connected. Videos will post to your channel."}</p><p><a href="/app/settings">Back to Settings</a></p>`,
   );
 }
 
