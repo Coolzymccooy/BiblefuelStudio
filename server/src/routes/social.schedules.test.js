@@ -78,6 +78,31 @@ describe('social schedules — daily automation', () => {
     const after = await request(a).get('/api/social/schedules').expect(200);
     assert.deepEqual(after.body.schedules, []);
   });
+
+  // Codex P2 on PR #80: the per-card Save sent no kineticCaptions, and the
+  // store defaults a missing value to true, so pausing a schedule switched its
+  // captions back on.
+  test('saving one schedule without kineticCaptions keeps an existing opt-out', async () => {
+    const { a } = app();
+    const schedule = {
+      id: 'sch_plain', name: 'Plain', enabled: true, type: 'auto_generate',
+      cron: '0 9 * * 0', timezone: 'Europe/London', destination: 'webhook', caption: '', videoUrl: '',
+    };
+    await request(a).post('/api/social/schedules').send({ schedule: { ...schedule, kineticCaptions: false } }).expect(200);
+    await request(a).post('/api/social/schedules').send({ schedule: { ...schedule, enabled: false } }).expect(200);
+    const list = await request(a).get('/api/social/schedules').expect(200);
+    assert.equal(list.body.schedules[0].enabled, false);
+    assert.equal(list.body.schedules[0].kineticCaptions, false);
+  });
+
+  test('a new auto-generate schedule still gets kinetic captions by default', async () => {
+    const { a } = app();
+    await request(a).post('/api/social/schedules').send({ schedule: {
+      id: 'sch_new', name: 'New', type: 'auto_generate', cron: '0 6 * * *', timezone: 'Europe/London', destination: 'webhook',
+    } }).expect(200);
+    const list = await request(a).get('/api/social/schedules').expect(200);
+    assert.equal(list.body.schedules[0].kineticCaptions, true);
+  });
 });
 
 describe('POST /config — the "Save Schedules" button path', () => {

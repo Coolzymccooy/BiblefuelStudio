@@ -19,7 +19,40 @@ export type SocialSchedule = {
     durationSec?: number;
     voiceId?: string;
     backgroundQuery?: string;
+    /** Word-by-word captions. Carried through untouched: the server treats a missing value as on. */
+    kineticCaptions?: boolean;
 };
+
+/** A schedule as the server sent it, with safe defaults for anything missing. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function scheduleFromServer(s: any): SocialSchedule {
+    return {
+        id: String(s.id || `sch_${Date.now()}`),
+        name: String(s.name || 'Scheduled Post'),
+        enabled: Boolean(s.enabled ?? true),
+        type: s.type === 'auto_generate' ? 'auto_generate' : 'replay',
+        cron: String(s.cron || ''),
+        timezone: String(s.timezone || 'UTC'),
+        destination: (['webhook', 'buffer', 'youtube'].includes(String(s.destination))
+            ? String(s.destination)
+            : 'webhook') as SocialSchedule['destination'],
+        caption: String(s.caption || ''),
+        videoUrl: String(s.videoUrl || ''),
+        webhookId: String(s.webhookId || ''),
+        profileId: String(s.profileId || ''),
+        privacyStatus: (['private', 'unlisted', 'public'].includes(String(s.privacyStatus))
+            ? String(s.privacyStatus)
+            : 'private') as SocialSchedule['privacyStatus'],
+        niche: s.niche ? String(s.niche) : undefined,
+        tone: s.tone ? String(s.tone) : undefined,
+        ctaStyle: s.ctaStyle ? String(s.ctaStyle) : undefined,
+        aspect: s.aspect ? String(s.aspect) : undefined,
+        durationSec: Number.isFinite(Number(s.durationSec)) ? Number(s.durationSec) : undefined,
+        voiceId: s.voiceId ? String(s.voiceId) : undefined,
+        backgroundQuery: s.backgroundQuery ? String(s.backgroundQuery) : undefined,
+        kineticCaptions: typeof s.kineticCaptions === 'boolean' ? s.kineticCaptions : undefined,
+    };
+}
 
 // Posting cadence presets. Cron is `m h dom mon dow`; the timezone below is
 // what makes 06:00 mean 06:00 locally all year (UTC drifts an hour under BST).

@@ -836,6 +836,11 @@ router.post("/schedules", (req, res) => {
     const store = readSocialStore(req.ctx.dataDir);
     const list = Array.isArray(store.schedules) ? store.schedules : [];
     const index = list.findIndex((x) => String(x.id) === schedule.id);
+    // Word-by-word captions: the value sent, else the one already saved, else
+    // the store's default. Leaving it out made the store default it back to
+    // true, so pausing a schedule turned its captions back on.
+    if (incoming.kineticCaptions !== undefined) schedule.kineticCaptions = Boolean(incoming.kineticCaptions);
+    else if (index >= 0 && list[index]?.kineticCaptions !== undefined) schedule.kineticCaptions = list[index].kineticCaptions;
     if (index >= 0) list[index] = schedule;
     else list.unshift(schedule);
 

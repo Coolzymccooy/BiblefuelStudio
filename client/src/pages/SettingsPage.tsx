@@ -9,7 +9,7 @@ import { ScreenHeader } from '../components/ui/ScreenHeader';
 import { api } from '../lib/api';
 import toast from 'react-hot-toast';
 import { useConfig } from '../lib/config';
-import { SCHEDULE_TIMEZONE, scheduleSnapshot, isScheduleUnsaved, scheduleSavedMessage, type SocialSchedule } from '../lib/socialSchedules';
+import { SCHEDULE_TIMEZONE, scheduleSnapshot, isScheduleUnsaved, scheduleSavedMessage, scheduleFromServer, type SocialSchedule } from '../lib/socialSchedules';
 import { ScheduleCard } from '../components/settings/ScheduleCard';
 import { ThemeToggle } from '../components/ThemeToggle';
 import { useAuth } from '../hooks/useAuth';
@@ -44,7 +44,9 @@ export function SettingsPage() {
     const [schedules, setSchedules] = useState<SocialSchedule[]>([]);
     // Each schedule as the server has it, so a card can say it has unsaved changes.
     const [savedSchedules, setSavedSchedules] = useState<Record<string, string>>({});
-    const [savingScheduleId, setSavingScheduleId] = useState<string | null>(null);
+    // Saves in flight, per schedule: one shared slot let a second card's save
+    // clear the first card's busy state while its request was still pending.
+    const [savingScheduleIds, setSavingScheduleIds] = useState<ReadonlySet<string>>(() => new Set());
     const [directConfig, setDirectConfig] = useState({
         youtubeClientId: '',
         youtubeClientSecret: '',
@@ -70,31 +72,7 @@ export function SettingsPage() {
             setSelectedProfiles(res.data.buffer?.profileIds || []);
             const hooks = (res.data.webhooks || []).map((w: any) => ({ ...w }));
             setWebhooks(hooks);
-            const loaded: SocialSchedule[] = (res.data.schedules || []).map((s: any) => ({
-                id: String(s.id || `sch_${Date.now()}`),
-                name: String(s.name || 'Scheduled Post'),
-                enabled: Boolean(s.enabled ?? true),
-                type: (s.type === 'auto_generate' ? 'auto_generate' : 'replay') as SocialSchedule['type'],
-                cron: String(s.cron || ''),
-                timezone: String(s.timezone || 'UTC'),
-                destination: (['webhook', 'buffer', 'youtube'].includes(String(s.destination))
-                    ? String(s.destination)
-                    : 'webhook') as SocialSchedule['destination'],
-                caption: String(s.caption || ''),
-                videoUrl: String(s.videoUrl || ''),
-                webhookId: String(s.webhookId || ''),
-                profileId: String(s.profileId || ''),
-                privacyStatus: (['private', 'unlisted', 'public'].includes(String(s.privacyStatus))
-                    ? String(s.privacyStatus)
-                    : 'private') as SocialSchedule['privacyStatus'],
-                niche: s.niche ? String(s.niche) : undefined,
-                tone: s.tone ? String(s.tone) : undefined,
-                ctaStyle: s.ctaStyle ? String(s.ctaStyle) : undefined,
-                aspect: s.aspect ? String(s.aspect) : undefined,
-                durationSec: Number.isFinite(Number(s.durationSec)) ? Number(s.durationSec) : undefined,
-                voiceId: s.voiceId ? String(s.voiceId) : undefined,
-                backgroundQuery: s.backgroundQuery ? String(s.backgroundQuery) : undefined,
-            }));
+            const loaded: SocialSchedule[] = (res.data.schedules || []).map(scheduleFromServer);
             setSchedules(loaded);
             setSavedSchedules(Object.fromEntries(loaded.map((s) => [s.id, scheduleSnapshot(s)])));
             const firstEnabled = hooks.find((w: any) => w.enabled);
@@ -177,7 +155,8 @@ export function SettingsPage() {
     // Saves one schedule on its own, so pausing it never depends on the
     // list-wide Save at the top of the section.
     const saveSchedule = async (schedule: SocialSchedule) => {
-        setSavingScheduleId(schedule.id);
+        if (savingScheduleIds.has(schedule.id)) return;
+        setSavingScheduleIds((prev) => new Set(prev).add(schedule.id));
         try {
             const res = await api.post('/api/social/schedules', { schedule });
             if (!res.ok) {
@@ -187,7 +166,11 @@ export function SettingsPage() {
             setSavedSchedules((prev) => ({ ...prev, [schedule.id]: scheduleSnapshot(schedule) }));
             toast.success(scheduleSavedMessage(schedule));
         } finally {
-            setSavingScheduleId(null);
+            setSavingScheduleIds((prev) => {
+                const next = new Set(prev);
+                next.delete(schedule.id);
+                return next;
+            });
         }
     };
 
@@ -551,7 +534,7 @@ export function SettingsPage() {
                                     webhooks={webhooks}
                                     profileIds={selectedProfiles}
                                     unsaved={isScheduleUnsaved(s, savedSchedules)}
-                                    saving={savingScheduleId === s.id}
+                                    saving={savingScheduleIds.has(s.id)}
                                     onChange={(patch) => updateSchedule(s.id, patch)}
                                     onSave={() => saveSchedule(s)}
                                     onRemove={() => removeSchedule(s)}
