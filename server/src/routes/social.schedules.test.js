@@ -58,6 +58,51 @@ describe('social schedules — daily automation', () => {
     assert.match(res.body.error, /auto-generate/i,
       'error should point the user at auto_generate, not just say the fields are required');
   });
+
+  // The per-schedule Save button sends { schedule }. Pausing used to come back
+  // Enabled after a refresh because nothing reached the server.
+  test('saving one schedule as disabled keeps it paused after a reload, and Remove deletes it', async () => {
+    const { a } = app();
+    const schedule = {
+      id: 'sch_sunday', name: 'Sunday', enabled: true, type: 'auto_generate',
+      cron: '0 9 * * 0', timezone: 'Europe/London', destination: 'webhook', caption: '', videoUrl: '',
+    };
+    await request(a).post('/api/social/schedules').send({ schedule }).expect(200);
+    await request(a).post('/api/social/schedules').send({ schedule: { ...schedule, enabled: false } }).expect(200);
+
+    const list = await request(a).get('/api/social/schedules').expect(200);
+    assert.equal(list.body.schedules.length, 1, 'the same schedule is updated, not added twice');
+    assert.equal(list.body.schedules[0].enabled, false);
+
+    await request(a).delete('/api/social/schedules/sch_sunday').expect(200);
+    const after = await request(a).get('/api/social/schedules').expect(200);
+    assert.deepEqual(after.body.schedules, []);
+  });
+
+  // Codex P2 on PR #80: the per-card Save sent no kineticCaptions, and the
+  // store defaults a missing value to true, so pausing a schedule switched its
+  // captions back on.
+  test('saving one schedule without kineticCaptions keeps an existing opt-out', async () => {
+    const { a } = app();
+    const schedule = {
+      id: 'sch_plain', name: 'Plain', enabled: true, type: 'auto_generate',
+      cron: '0 9 * * 0', timezone: 'Europe/London', destination: 'webhook', caption: '', videoUrl: '',
+    };
+    await request(a).post('/api/social/schedules').send({ schedule: { ...schedule, kineticCaptions: false } }).expect(200);
+    await request(a).post('/api/social/schedules').send({ schedule: { ...schedule, enabled: false } }).expect(200);
+    const list = await request(a).get('/api/social/schedules').expect(200);
+    assert.equal(list.body.schedules[0].enabled, false);
+    assert.equal(list.body.schedules[0].kineticCaptions, false);
+  });
+
+  test('a new auto-generate schedule still gets kinetic captions by default', async () => {
+    const { a } = app();
+    await request(a).post('/api/social/schedules').send({ schedule: {
+      id: 'sch_new', name: 'New', type: 'auto_generate', cron: '0 6 * * *', timezone: 'Europe/London', destination: 'webhook',
+    } }).expect(200);
+    const list = await request(a).get('/api/social/schedules').expect(200);
+    assert.equal(list.body.schedules[0].kineticCaptions, true);
+  });
 });
 
 describe('POST /config — the "Save Schedules" button path', () => {
