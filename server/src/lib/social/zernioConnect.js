@@ -40,7 +40,10 @@ async function call(path, { method = "GET", query, body } = {}) {
   try { json = JSON.parse(text); } catch { /* not JSON */ }
   if (!resp.ok) {
     const why = String(json?.error || json?.message || text || "").slice(0, 200);
-    throw new Error(`Zernio ${method} ${path} failed: ${resp.status} ${why}`.trim());
+    const err = new Error(`Zernio ${method} ${path} failed: ${resp.status} ${why}`.trim());
+    err.status = resp.status;
+    err.details = json?.details || null;
+    throw err;
   }
   return json || {};
 }
@@ -62,7 +65,18 @@ export async function ensureZernioProfile({ userId }) {
   const existing = listOf(await call("/profiles", { query: { externalId } }), "profiles")
     .find((p) => String(p?.externalId || "") === externalId);
   if (existing && idOf(existing)) return idOf(existing);
-  const created = await call("/profiles", { method: "POST", body: { name: `BibleFuel user ${externalId.slice(0, 12)}`, externalId } });
+  let created;
+  try {
+    // The full id in the name: profile names are unique at Zernio, and a
+    // shortened id could collide between two users.
+    created = await call("/profiles", { method: "POST", body: { name: `BibleFuel user ${externalId}`, externalId } });
+  } catch (e) {
+    // The profile already exists (an earlier create whose reply was lost):
+    // Zernio says which one, so use it instead of failing every retry.
+    const existingId = e?.status === 409 ? String(e?.details?.existingProfileId || "") : "";
+    if (existingId) return existingId;
+    throw e;
+  }
   const id = idOf(created?.profile || created);
   if (!id) throw new Error("Zernio did not return a profile id.");
   return id;

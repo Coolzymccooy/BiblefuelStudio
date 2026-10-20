@@ -55,6 +55,23 @@ describe("ensureZernioProfile", () => {
     });
     assert.equal(await ensureZernioProfile({ userId: "u3" }), "prof_mine");
   });
+
+  test("an earlier create whose reply was lost is recovered from Zernio's 409", async () => {
+    fakeZernio({
+      "GET /api/v1/profiles": [200, { profiles: [] }],
+      "POST /api/v1/profiles": [409, { error: "A profile with this externalId already exists", details: { existingProfileId: "prof_lost" } }],
+    });
+    assert.equal(await ensureZernioProfile({ userId: "user-with-a-long-firebase-uid" }), "prof_lost");
+    assert.equal(calls[1].body.name, "BibleFuel user user-with-a-long-firebase-uid", "the full id, so two users never share a name");
+  });
+
+  test("any other failure to create is still an error", async () => {
+    fakeZernio({
+      "GET /api/v1/profiles": [200, { profiles: [] }],
+      "POST /api/v1/profiles": [402, { error: "Payment required" }],
+    });
+    await assert.rejects(ensureZernioProfile({ userId: "u4" }), /402/);
+  });
 });
 
 describe("tiktokConnectUrl", () => {

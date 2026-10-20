@@ -842,16 +842,20 @@ router.post("/tiktok/connect", async (req, res) => {
 router.post("/tiktok/disconnect", async (req, res) => {
   const store = readSocialStore(req.ctx.dataDir);
   const accountId = store.zernio?.tiktok?.accountId;
-  let removedAtZernio = true;
   if (accountId) {
     try { await disconnectZernioAccount(accountId); }
     catch (e) {
-      removedAtZernio = false;
-      console.warn("[SOCIAL] Zernio disconnect failed:", e?.message || e);
+      // Already gone at Zernio counts as removed. Anything else keeps the
+      // record: it is the only copy of the id, and without it the account
+      // stays connected (and billed) at Zernio with no way to retry.
+      if (e?.status !== 404) {
+        console.warn("[SOCIAL] Zernio disconnect failed:", e?.message || e);
+        return res.status(502).json({ ok: false, error: "Zernio did not confirm the disconnect. Your TikTok is still connected; try again in a minute." });
+      }
     }
   }
   writeSocialStore(req.ctx.dataDir, { ...store, zernio: { ...store.zernio, tiktok: {} } });
-  res.json({ ok: true, removedAtZernio });
+  res.json({ ok: true });
 });
 
 /**

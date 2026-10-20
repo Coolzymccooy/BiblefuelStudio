@@ -242,4 +242,19 @@ describe("posting and disconnecting", () => {
     assert.equal(readSocialStore(dirOf(admin)).zernio.tiktok?.accountId || "", "");
     assert.equal(readSocialStore(dirOf(admin)).zernio.profileId, "prof_admin2", "the profile is kept for a reconnect");
   });
+
+  test("when Zernio does not confirm the disconnect, the account is kept so it can be retried", async () => {
+    writeSocialStore(dirOf(admin), { ...readSocialStore(dirOf(admin)), zernio: { profileId: "prof_admin2", tiktok: { accountId: "acct_a2", username: "g" } } });
+    fakeZernio({ "DELETE /api/v1/accounts/acct_a2": [500, { error: "boom" }] });
+    const res = await request(app(admin)).post("/api/social/tiktok/disconnect").expect(502);
+    assert.match(res.body.error, /still connected/);
+    assert.equal(readSocialStore(dirOf(admin)).zernio.tiktok.accountId, "acct_a2");
+  });
+
+  test("an account already gone at Zernio is cleared here too", async () => {
+    writeSocialStore(dirOf(admin), { ...readSocialStore(dirOf(admin)), zernio: { profileId: "prof_admin2", tiktok: { accountId: "acct_a2", username: "g" } } });
+    fakeZernio({ "DELETE /api/v1/accounts/acct_a2": [404, { error: "Not found" }] });
+    await request(app(admin)).post("/api/social/tiktok/disconnect").expect(200);
+    assert.equal(readSocialStore(dirOf(admin)).zernio.tiktok?.accountId || "", "");
+  });
 });
