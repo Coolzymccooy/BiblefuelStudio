@@ -6,7 +6,7 @@
  *
  * The browser gets the non-secret fields and a has<Secret> flag for each
  * secret. On save, a blank secret means "keep what is stored", because the
- * page never had it to send back.
+ * page never had it to send back; null means "clear it".
  */
 
 const SECRETS = {
@@ -49,7 +49,9 @@ export function mergeDirectSecrets(incoming, current = {}) {
     if (!next || typeof next !== "object") { out[platform] = prev; continue; }
     const section = { ...prev, ...next };
     for (const field of SECRETS[platform]) {
-      if (!present(next[field])) section[field] = prev[field] ?? "";
+      // null is an explicit "clear it"; blank or missing keeps the stored value.
+      if (next[field] === null) section[field] = "";
+      else if (!present(next[field])) section[field] = prev[field] ?? "";
       delete section[flag(field)];
     }
     out[platform] = section;

@@ -67,6 +67,15 @@ describe("POST /config keeps secrets the page never had", () => {
     assert.equal(after.instagram.accessToken, "my-ig-token");
   });
 
+  test("a secret sent as null is removed", async () => {
+    const { a, dataDir } = app();
+    writeSocialStore(dataDir, { ...readSocialStore(dataDir), direct: { youtube: {}, instagram: { accessToken: "old-ig-token", userId: "me" }, tiktok: {} } });
+    await request(a).post("/api/social/config").send({ webhooks: [], schedules: [], direct: { instagram: { accessToken: null, userId: "me" } } }).expect(200);
+    assert.equal(readSocialStore(dataDir).direct.instagram.accessToken, "");
+    const res = await request(a).get("/api/social/config").expect(200);
+    assert.equal(res.body.direct.instagram.hasAccessToken, false);
+  });
+
   test("a secret typed into the page is saved", async () => {
     const { a, dataDir } = app();
     await request(a).post("/api/social/config").send({ webhooks: [], schedules: [], direct: { instagram: { accessToken: "new-ig-token", userId: "me" } } }).expect(200);

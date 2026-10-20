@@ -37,6 +37,13 @@ describe("mergeDirectSecrets", () => {
     assert.equal(out.instagram.accessToken, "new-token");
   });
 
+  test("null clears a stored secret", () => {
+    const out = mergeDirectSecrets({ instagram: { accessToken: null, userId: "ig-user" }, youtube: { clientSecret: null } }, stored);
+    assert.equal(out.instagram.accessToken, "");
+    assert.equal(out.youtube.clientSecret, "");
+    assert.equal(out.youtube.refreshToken, "rt", "only the field sent as null is cleared");
+  });
+
   test("the has<Secret> flags are never written back", () => {
     const out = mergeDirectSecrets({ youtube: { clientId: "cid", hasClientSecret: true } }, stored);
     assert.equal("hasClientSecret" in out.youtube, false);
