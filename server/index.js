@@ -21,7 +21,7 @@ import audioAdvancedRouter from "./src/routes/audio_advanced.js";
 import authRouter from "./src/routes/auth.js";
 import jobsRouter from "./src/routes/jobs.js";
 import libraryRouter from "./src/routes/library.js";
-import socialRouter, { youtubeOauthCallback } from "./src/routes/social.js";
+import socialRouter, { youtubeOauthCallback, tiktokConnectCallback } from "./src/routes/social.js";
 import firebaseRouter from "./src/routes/firebase.js";
 import bibleRouter from "./src/routes/bible.js";
 import seriesRouter from "./src/routes/series.js";
@@ -396,6 +396,8 @@ app.use("/api/stems-worker", stemsWorkerRouter);
 // auth-gated /api/social router so it isn't blocked by requireAuth.
 // The handler recovers the user from the signed `state` itself.
 app.get("/api/social/youtube/callback", youtubeOauthCallback);
+// Zernio's TikTok sign-in redirect: no session either; the signed bf_state says whose it is.
+app.get("/api/social/tiktok/callback", tiktokConnectCallback);
 app.use("/api/social",    requireAuth, withUserScope, requireVerifiedEmail,                       socialRouter);
 app.use("/api/firebase",  requireAuth, withUserScope,                                              firebaseRouter);
 app.use("/api/bible",     requireAuth, withUserScope,                                              bibleRouter);

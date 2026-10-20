@@ -5,7 +5,6 @@ import request from "supertest";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import jwt from "jsonwebtoken";
 
 /**
  * The OAuth callback and the authenticated status route MUST agree on which
@@ -46,6 +45,7 @@ process.env.PUBLIC_BASE_URL = "https://example.test";
 const { dataDirFor, resolveScopeDirs } = await import("../lib/paths.js");
 const { withUserScope } = await import("../middleware/userScope.js");
 const socialRouter = (await import("./social.js")).default;
+const { verifyOAuthState } = await import("../auth.js");
 
 after(() => { fs.rmSync(tmpRoot, { recursive: true, force: true }); });
 
@@ -70,7 +70,7 @@ async function stateFromConnect(ctx) {
   assert.equal(res.status, 200, JSON.stringify(res.body));
   const state = new URL(res.body.authUrl).searchParams.get("state");
   assert.ok(state, "connect must issue a state token");
-  return jwt.verify(state, SECRET);
+  return verifyOAuthState(state, "yt_oauth_connect");
 }
 
 describe("YouTube OAuth callback / status agree on the user's data directory", () => {
@@ -135,5 +135,17 @@ describe("YouTube OAuth callback / status agree on the user's data directory", (
       const expected = await authedDataDir(user);
       assert.equal(resolveScopeDirs(user).dataDir, expected, `mismatch for ${user.sub}`);
     }
+  });
+});
+
+describe("YouTube OAuth callback error page", () => {
+  test("Google's error text is escaped, never run as script on our origin", async () => {
+    const { youtubeOauthCallback } = await import("./social.js");
+    const app = express();
+    app.get("/cb", youtubeOauthCallback);
+    const res = await request(app).get("/cb?error=%3Cscript%3Ealert(1)%3C%2Fscript%3E");
+    assert.equal(res.status, 400);
+    assert.doesNotMatch(res.text, /<script>alert\(1\)<\/script>/);
+    assert.match(res.text, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
   });
 });
