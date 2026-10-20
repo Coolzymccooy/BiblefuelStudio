@@ -9,7 +9,8 @@ import { ScreenHeader } from '../components/ui/ScreenHeader';
 import { api } from '../lib/api';
 import toast from 'react-hot-toast';
 import { useConfig } from '../lib/config';
-import { describeCron } from '../lib/cronDescribe';
+import { SCHEDULE_TIMEZONE, scheduleSnapshot, isScheduleUnsaved, scheduleSavedMessage, type SocialSchedule } from '../lib/socialSchedules';
+import { ScheduleCard } from '../components/settings/ScheduleCard';
 import { ThemeToggle } from '../components/ThemeToggle';
 import { useAuth } from '../hooks/useAuth';
 import { VoiceSynthesisPanel } from '../components/VoiceSynthesisPanel';
@@ -20,38 +21,6 @@ import { YouTubeConnectCard } from '../components/YouTubeConnectCard';
 import { WebhookConnectCard } from '../components/WebhookConnectCard';
 import { BrandingCard } from '../components/BrandingCard';
 
-type SocialSchedule = {
-    id: string;
-    name: string;
-    enabled: boolean;
-    type: 'replay' | 'auto_generate';
-    cron: string;
-    timezone: string;
-    destination: 'webhook' | 'buffer' | 'youtube';
-    caption: string;
-    videoUrl: string;
-    webhookId?: string;
-    profileId?: string;
-    privacyStatus?: 'private' | 'unlisted' | 'public';
-    // auto_generate knobs
-    niche?: string;
-    tone?: string;
-    ctaStyle?: string;
-    aspect?: string;
-    durationSec?: number;
-    voiceId?: string;
-    backgroundQuery?: string;
-};
-
-// Posting cadence presets. Cron is `m h dom mon dow`; the timezone below is
-// what makes 06:00 mean 06:00 locally all year (UTC drifts an hour under BST).
-const SCHEDULE_TIMEZONE = 'Europe/London';
-
-const SCHEDULE_PRESETS: Array<{ key: string; label: string; hint: string; cron: string }> = [
-    { key: 'morning', label: 'Morning', hint: '6:00am daily', cron: '0 6 * * *' },
-    { key: 'night', label: 'Night', hint: '10:00pm daily', cron: '0 22 * * *' },
-    { key: 'sunday', label: 'Sunday', hint: '9:00am Sundays', cron: '0 9 * * 0' },
-];
 
 export function SettingsPage() {
     const { config } = useConfig();
@@ -73,6 +42,9 @@ export function SettingsPage() {
     const [webhooks, setWebhooks] = useState<{ id?: string; name: string; url: string; enabled: boolean }[]>([]);
     const [selectedWebhookKey, setSelectedWebhookKey] = useState('');
     const [schedules, setSchedules] = useState<SocialSchedule[]>([]);
+    // Each schedule as the server has it, so a card can say it has unsaved changes.
+    const [savedSchedules, setSavedSchedules] = useState<Record<string, string>>({});
+    const [savingScheduleId, setSavingScheduleId] = useState<string | null>(null);
     const [directConfig, setDirectConfig] = useState({
         youtubeClientId: '',
         youtubeClientSecret: '',
@@ -98,7 +70,7 @@ export function SettingsPage() {
             setSelectedProfiles(res.data.buffer?.profileIds || []);
             const hooks = (res.data.webhooks || []).map((w: any) => ({ ...w }));
             setWebhooks(hooks);
-            setSchedules((res.data.schedules || []).map((s: any) => ({
+            const loaded: SocialSchedule[] = (res.data.schedules || []).map((s: any) => ({
                 id: String(s.id || `sch_${Date.now()}`),
                 name: String(s.name || 'Scheduled Post'),
                 enabled: Boolean(s.enabled ?? true),
@@ -122,7 +94,9 @@ export function SettingsPage() {
                 durationSec: Number.isFinite(Number(s.durationSec)) ? Number(s.durationSec) : undefined,
                 voiceId: s.voiceId ? String(s.voiceId) : undefined,
                 backgroundQuery: s.backgroundQuery ? String(s.backgroundQuery) : undefined,
-            })));
+            }));
+            setSchedules(loaded);
+            setSavedSchedules(Object.fromEntries(loaded.map((s) => [s.id, scheduleSnapshot(s)])));
             const firstEnabled = hooks.find((w: any) => w.enabled);
             const firstKey = firstEnabled?.id || firstEnabled?.url || (hooks[0]?.id || hooks[0]?.url || '');
             setSelectedWebhookKey(firstKey);
@@ -200,8 +174,43 @@ export function SettingsPage() {
         setSchedules((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));
     };
 
-    const removeSchedule = (id: string) => {
-        setSchedules((prev) => prev.filter((s) => s.id !== id));
+    // Saves one schedule on its own, so pausing it never depends on the
+    // list-wide Save at the top of the section.
+    const saveSchedule = async (schedule: SocialSchedule) => {
+        setSavingScheduleId(schedule.id);
+        try {
+            const res = await api.post('/api/social/schedules', { schedule });
+            if (!res.ok) {
+                toast.error(res.error || 'The schedule could not be saved.');
+                return;
+            }
+            setSavedSchedules((prev) => ({ ...prev, [schedule.id]: scheduleSnapshot(schedule) }));
+            toast.success(scheduleSavedMessage(schedule));
+        } finally {
+            setSavingScheduleId(null);
+        }
+    };
+
+    // A schedule the server has is deleted there, after a confirm; a new one
+    // that was never saved only leaves the screen.
+    const removeSchedule = async (schedule: SocialSchedule) => {
+        if (!(schedule.id in savedSchedules)) {
+            setSchedules((prev) => prev.filter((s) => s.id !== schedule.id));
+            return;
+        }
+        if (!confirm(`Delete the schedule "${schedule.name || 'Auto Post'}"? It will stop posting.`)) return;
+        const res = await api.delete(`/api/social/schedules/${encodeURIComponent(schedule.id)}`);
+        if (!res.ok) {
+            toast.error(res.error || 'The schedule could not be deleted.');
+            return;
+        }
+        setSchedules((prev) => prev.filter((s) => s.id !== schedule.id));
+        setSavedSchedules((prev) => {
+            const next = { ...prev };
+            delete next[schedule.id];
+            return next;
+        });
+        toast.success('Schedule deleted.');
     };
 
     const loadBufferProfiles = async () => {
@@ -523,163 +532,30 @@ export function SettingsPage() {
                                         Add Schedule
                                     </Button>
                                     <Button variant="secondary" className="text-xs h-8" onClick={saveSocialConfig}>
-                                        Save Schedules
+                                        Save all
                                     </Button>
                                 </div>
                             </div>
                             <p className="text-help">
                                 Pick a preset per schedule, or type a cron expression (<code>m h dom mon dow</code>) for a custom time.
                                 Times run in {SCHEDULE_TIMEZONE}. For twice-daily posting add two schedules: Morning and Night.
+                                Each schedule has its own Save: to pause one, set it to Disabled and press its Save.
                             </p>
                             {schedules.length === 0 && (
                                 <div className="text-help">No schedules yet.</div>
                             )}
                             {schedules.map((s) => (
-                                <div key={s.id} className={`rounded-xl border p-3 space-y-2 ${s.type === 'auto_generate' ? 'border-white/10 bg-white/[0.04]' : 'border-white/10 bg-white/[0.03]'}`}>
-                                    <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
-                                        <Input
-                                            value={s.name}
-                                            onChange={(e) => updateSchedule(s.id, { name: e.target.value })}
-                                            placeholder="Schedule name"
-                                        />
-                                        <Select
-                                            value={s.type}
-                                            onChange={(e) => updateSchedule(s.id, { type: e.target.value as SocialSchedule['type'] })}
-                                            title="Replay reposts a fixed URL. Auto-Generate creates a brand new video every tick."
-                                        >
-                                            <option value="replay">Replay URL</option>
-                                            <option value="auto_generate">Auto-Generate</option>
-                                        </Select>
-                                        <Input
-                                            value={s.cron}
-                                            onChange={(e) => updateSchedule(s.id, { cron: e.target.value })}
-                                            placeholder="0 6 * * *"
-                                            title="Cron expression. Use the preset buttons below for common times."
-                                        />
-                                        <Input
-                                            value={s.timezone}
-                                            onChange={(e) => updateSchedule(s.id, { timezone: e.target.value })}
-                                            placeholder="UTC"
-                                        />
-                                        <Select
-                                            value={s.enabled ? 'true' : 'false'}
-                                            onChange={(e) => updateSchedule(s.id, { enabled: e.target.value === 'true' })}
-                                        >
-                                            <option value="true">Enabled</option>
-                                            <option value="false">Disabled</option>
-                                        </Select>
-                                    </div>
-                                    <div className="flex flex-wrap items-center gap-2">
-                                        <span className="text-help">Presets:</span>
-                                        {SCHEDULE_PRESETS.map((p) => (
-                                            <Button
-                                                key={p.key}
-                                                variant={s.cron === p.cron ? 'primary' : 'secondary'}
-                                                className="text-xs h-7 px-2"
-                                                title={p.hint}
-                                                onClick={() => updateSchedule(s.id, { cron: p.cron, timezone: SCHEDULE_TIMEZONE })}
-                                            >
-                                                {p.label}
-                                            </Button>
-                                        ))}
-                                        <span className="text-help ml-auto">{describeCron(s.cron, s.timezone)}</span>
-                                    </div>
-                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                                        <Select
-                                            value={s.destination}
-                                            onChange={(e) => updateSchedule(s.id, { destination: e.target.value as SocialSchedule['destination'] })}
-                                        >
-                                            <option value="webhook">Webhook</option>
-                                            <option value="buffer">Buffer</option>
-                                            <option value="youtube">YouTube</option>
-                                        </Select>
-                                        {s.destination === 'webhook' && (
-                                            <Select
-                                                value={s.webhookId || ''}
-                                                onChange={(e) => updateSchedule(s.id, { webhookId: e.target.value })}
-                                            >
-                                                <option value="">Select webhook...</option>
-                                                {webhooks.map((w, idx) => (
-                                                    <option key={w.id || idx} value={w.id || ''}>{w.name || `Webhook ${idx + 1}`}</option>
-                                                ))}
-                                            </Select>
-                                        )}
-                                        {s.destination === 'buffer' && (
-                                            <Select
-                                                value={s.profileId || ''}
-                                                onChange={(e) => updateSchedule(s.id, { profileId: e.target.value })}
-                                            >
-                                                <option value="">Select profile...</option>
-                                                {selectedProfiles.map((pid) => (
-                                                    <option key={pid} value={pid}>{pid}</option>
-                                                ))}
-                                            </Select>
-                                        )}
-                                        {s.destination === 'youtube' && (
-                                            <Select
-                                                value={s.privacyStatus || 'private'}
-                                                onChange={(e) => updateSchedule(s.id, { privacyStatus: e.target.value as SocialSchedule['privacyStatus'] })}
-                                            >
-                                                <option value="private">YouTube Private</option>
-                                                <option value="unlisted">YouTube Unlisted</option>
-                                                <option value="public">YouTube Public</option>
-                                            </Select>
-                                        )}
-                                        <Button variant="secondary" className="text-xs h-10" onClick={() => removeSchedule(s.id)}>
-                                            Remove
-                                        </Button>
-                                    </div>
-                                    {s.type === 'replay' ? (
-                                        <>
-                                            <Input
-                                                value={s.videoUrl}
-                                                onChange={(e) => updateSchedule(s.id, { videoUrl: e.target.value })}
-                                                placeholder="Video URL or /outputs/video-xxx.mp4"
-                                            />
-                                            <Input
-                                                value={s.caption}
-                                                onChange={(e) => updateSchedule(s.id, { caption: e.target.value })}
-                                                placeholder="Caption for scheduled post"
-                                            />
-                                        </>
-                                    ) : (
-                                        <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
-                                            <Input
-                                                value={s.backgroundQuery || ''}
-                                                onChange={(e) => updateSchedule(s.id, { backgroundQuery: e.target.value })}
-                                                placeholder="Background filter (optional, e.g. 'sunset')"
-                                            />
-                                            <Select
-                                                value={s.aspect || 'portrait'}
-                                                onChange={(e) => updateSchedule(s.id, { aspect: e.target.value })}
-                                            >
-                                                <option value="portrait">Portrait (9:16)</option>
-                                                <option value="landscape">Landscape (16:9)</option>
-                                                <option value="square">Square (1:1)</option>
-                                            </Select>
-                                            <Input
-                                                type="number"
-                                                value={s.durationSec ?? 20}
-                                                onChange={(e) => updateSchedule(s.id, { durationSec: Number(e.target.value) || 20 })}
-                                                placeholder="Duration (s)"
-                                            />
-                                            <Select
-                                                value={s.ctaStyle || 'save'}
-                                                onChange={(e) => updateSchedule(s.id, { ctaStyle: e.target.value })}
-                                            >
-                                                <option value="save">CTA: save</option>
-                                                <option value="follow">CTA: follow</option>
-                                                <option value="share">CTA: share</option>
-                                                <option value="comment">CTA: comment</option>
-                                            </Select>
-                                        </div>
-                                    )}
-                                    {s.type === 'auto_generate' && (
-                                        <p className="text-[10px] text-content-secondary">
-                                            On each cron tick this generates a NEW script + voice + video and posts via the destination above. Requires at least one background in your Library.
-                                        </p>
-                                    )}
-                                </div>
+                                <ScheduleCard
+                                    key={s.id}
+                                    schedule={s}
+                                    webhooks={webhooks}
+                                    profileIds={selectedProfiles}
+                                    unsaved={isScheduleUnsaved(s, savedSchedules)}
+                                    saving={savingScheduleId === s.id}
+                                    onChange={(patch) => updateSchedule(s.id, patch)}
+                                    onSave={() => saveSchedule(s)}
+                                    onRemove={() => removeSchedule(s)}
+                                />
                             ))}
                         </div>
                     </div>
