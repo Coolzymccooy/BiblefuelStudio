@@ -133,7 +133,7 @@ export function WebhookConnectCard() {
                     Instagram, TikTok, X, LinkedIn and more.
                     {tiktokDirect
                         ? ' TikTok posts go straight through Zernio, so they keep going out even when this webhook fails.'
-                        : ' Admins can connect TikTok in the TikTok card instead, which posts through Zernio without Make or Zapier.'}
+                        : ' Or connect TikTok in the TikTok card, which posts through Zernio without Make or Zapier.'}
                 </p>
 
                 {loading ? (

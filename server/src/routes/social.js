@@ -1,4 +1,5 @@
 import { Router } from "express";
+import rateLimit from "express-rate-limit";
 import fetch from "node-fetch";
 import fs from "fs";
 import path from "path";
@@ -28,7 +29,7 @@ import { confineToDir } from "../lib/confinePath.js";
 // on the super-admin's global social.json. Per-user schedule rehydration is
 // Phase 4 work; see specs/2026-05-26-public-multitenancy-design.md §6.
 import { DATA_DIR, OUTPUT_DIR, isOwnerCtx, resolveScopeDirs } from "../lib/paths.js";
-import { ensureZernioProfile, tiktokConnectUrl, findTikTokAccount, disconnectZernioAccount, tiktokAccountFor, zernioApiKey } from "../lib/social/zernioConnect.js";
+import { ensureZernioProfile, tiktokConnectUrl, findTikTokAccount, disconnectZernioAccount, tiktokAccountFor, tiktokTargetFor, zernioApiKey, cleanZernioKey, listOwnTikTokAccounts, ownKeyCanPost } from "../lib/social/zernioConnect.js";
 
 const router = Router();
 const scheduleTasks = new Map();
@@ -191,10 +192,9 @@ function deriveCleanTitle(caption) {
   return cleaned || "Biblefuel Studio";
 }
 
-// accountId is the caller's own TikTok (see tiktokAccountFor): the server's
-// account for the owner, the one they connected for everyone else.
-async function publishToZernioTikTok({ caption, videoUrl, title, accountId }) {
-  const apiKey = zernioApiKey();
+// apiKey + accountId come from tiktokTargetFor: the server's for the owner,
+// the user's own key and account, or their account on the server's key.
+async function publishToZernioTikTok({ caption, videoUrl, title, accountId, apiKey }) {
   if (!apiKey || !accountId) {
     return { skipped: true, reason: "No Zernio key on the server, or no TikTok account connected" };
   }
@@ -333,8 +333,8 @@ async function postToWebhook({ caption, videoUrl, title, webhookId, webhookUrl }
   // (set in jobs.js when persisting the job ctx, or by the userScope
   // middleware on direct HTTP calls).
   const callerIsOwner = isOwnerCtx(req?.ctx);
-  const tiktokAccount = tiktokAccountFor(req?.ctx, store);
-  const zernioConfigured = Boolean(tiktokAccount);
+  const tiktokTarget = tiktokTargetFor(req?.ctx, store);
+  const zernioConfigured = Boolean(tiktokTarget);
   if (!url && !zernioConfigured) {
     throw new Error(callerIsOwner
       ? "No destination configured. Add a Make or Zapier webhook in Settings, or set ZERNIO_API_KEY and ZERNIO_TIKTOK_ACCOUNT_ID in the server settings for TikTok."
@@ -392,7 +392,7 @@ async function postToWebhook({ caption, videoUrl, title, webhookId, webhookUrl }
   let zernio = null;
   if (zernioConfigured) {
     try {
-      zernio = await publishToZernioTikTok({ caption, videoUrl: mediaUrl, title: resolvedTitle, accountId: tiktokAccount });
+      zernio = await publishToZernioTikTok({ caption, videoUrl: mediaUrl, title: resolvedTitle, accountId: tiktokTarget.accountId, apiKey: tiktokTarget.apiKey });
     } catch (e) {
       zernio = { ok: false, error: e?.message || String(e) };
     }
@@ -776,20 +776,130 @@ function readCookie(req, name) {
 router.get("/tiktok/status", (req, res) => {
   const store = readSocialStore(req.ctx.dataDir);
   const keySet = Boolean(zernioApiKey());
-  const serverAccount = String(process.env.ZERNIO_TIKTOK_ACCOUNT_ID || "").trim();
-  if (keySet && isOwnerCtx(req.ctx) && serverAccount) {
-    return res.json({ ok: true, serverConfigured: true, connected: true, source: "server", username: "", canConnect: false });
+  const target = tiktokTargetFor(req.ctx, store);
+  if (target?.source === "server") {
+    return res.json({ ok: true, serverConfigured: true, connected: true, source: "server", username: "", canConnect: false, ownKey: null });
   }
-  const own = store.zernio?.tiktok || {};
+  const connected = store.zernio?.tiktok || {};
+  const own = store.zernio?.own || {};
+  const shown = target?.source === "own_key" ? own : connected;
   res.json({
     ok: true,
     serverConfigured: keySet,
-    connected: keySet && Boolean(own.accountId),
-    source: own.accountId ? "connected" : null,
-    username: own.username || "",
-    connectedAt: own.connectedAt || "",
-    canConnect: keySet && Boolean(req.ctx.isSuperAdmin),
+    connected: Boolean(target),
+    source: target?.source || null,
+    username: target ? (shown.username || "") : "",
+    connectedAt: target?.source === "connected" ? (connected.connectedAt || "") : (own.savedAt || ""),
+    canConnect: keySet && Boolean(req.ctx.isSuperAdmin) && !connected.accountId,
+    // The user's own Zernio key, never echoed: only that one is saved, its
+    // last 4 characters, and the account picked on it.
+    ownKey: own.apiKey
+      ? { hint: String(own.apiKey).slice(-4), accountId: own.accountId || "", username: own.username || "" }
+      : null,
   });
+});
+
+// Option B: bring your own Zernio. Open to every user, since the cost lands
+// on their own Zernio bill, not the operator's.
+const OWN_KEY_REFUSED = "Zernio did not accept that API key. Copy it again from Zernio → Settings → API keys.";
+
+// Each call sends a pasted key to Zernio from our server. Per user, so the
+// routes cannot be used to test keys in bulk or get our IP blocked at Zernio.
+const ownKeyLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 6,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  keyGenerator: (req) => `own-key:${req.ctx?.userId || "anon"}`,
+  message: { ok: false, error: "Too many tries. Wait a minute and try again." },
+});
+
+/** Test seam: forget the own-key rate limit for this user. */
+export function _resetOwnKeyLimit(userId) {
+  ownKeyLimiter.resetKey(`own-key:${userId || "anon"}`);
+}
+
+// A key that can see the server's own TikTok is the operator's (perhaps a
+// second key on the same Zernio account), never a user's.
+const touchesServerAccount = (accounts) => {
+  const serverAccount = String(process.env.ZERNIO_TIKTOK_ACCOUNT_ID || "").trim();
+  return Boolean(serverAccount) && accounts.some((a) => a.accountId === serverAccount);
+};
+
+async function ownAccountsOr502(res, apiKey) {
+  try {
+    return await listOwnTikTokAccounts(apiKey);
+  } catch (e) {
+    if (e?.status === 401 || e?.status === 403) {
+      res.status(400).json({ ok: false, error: OWN_KEY_REFUSED });
+    } else {
+      console.warn("[SOCIAL] Zernio own-key account list failed:", e?.message || e);
+      res.status(502).json({ ok: false, error: "Zernio could not be reached. Try again in a minute." });
+    }
+    return null;
+  }
+}
+
+router.post("/tiktok/own-key", ownKeyLimiter, async (req, res) => {
+  const apiKey = cleanZernioKey(req.body?.apiKey);
+  if (!apiKey) return res.status(400).json({ ok: false, error: "That does not look like a Zernio API key. Paste the whole key." });
+  if (apiKey === zernioApiKey()) {
+    return res.status(400).json({ ok: false, error: "That is this server's own Zernio key. Use a key from your own Zernio account." });
+  }
+  const accounts = await ownAccountsOr502(res, apiKey);
+  if (!accounts) return;
+  if (touchesServerAccount(accounts)) {
+    return res.status(400).json({ ok: false, error: "That key belongs to this server's Zernio account. Use a key from your own Zernio account." });
+  }
+  // A read-only key lists accounts fine and then fails every post.
+  if (!(await ownKeyCanPost(apiKey))) {
+    return res.status(400).json({ ok: false, error: "That Zernio key is read-only, so it cannot post. Create a key with read-write permission in Zernio and paste that." });
+  }
+  // One TikTok on the key: pick it. Several: the user chooses next.
+  const only = accounts.length === 1 ? accounts[0] : null;
+  // Read just before writing, after the wait on Zernio, so a save made
+  // meanwhile is not overwritten.
+  const store = readSocialStore(req.ctx.dataDir);
+  writeSocialStore(req.ctx.dataDir, {
+    ...store,
+    zernio: { ...store.zernio, own: { apiKey, accountId: only?.accountId || "", username: only?.username || "", savedAt: new Date().toISOString() } },
+  });
+  res.json({ ok: true, accounts, selected: only?.accountId || "" });
+});
+
+router.get("/tiktok/own-accounts", ownKeyLimiter, async (req, res) => {
+  const apiKey = cleanZernioKey(readSocialStore(req.ctx.dataDir).zernio?.own?.apiKey);
+  if (!apiKey) return res.status(404).json({ ok: false, error: "Add your Zernio API key first." });
+  const accounts = await ownAccountsOr502(res, apiKey);
+  if (!accounts) return;
+  res.json({ ok: true, accounts });
+});
+
+router.post("/tiktok/own-account", ownKeyLimiter, async (req, res) => {
+  const apiKey = cleanZernioKey(readSocialStore(req.ctx.dataDir).zernio?.own?.apiKey);
+  if (!apiKey) return res.status(404).json({ ok: false, error: "Add your Zernio API key first." });
+  const wanted = String(req.body?.accountId || "").trim();
+  const accounts = await ownAccountsOr502(res, apiKey);
+  if (!accounts) return;
+  // Only an account Zernio lists on THIS user's key.
+  const pick = accounts.find((a) => a.accountId === wanted);
+  if (!pick) return res.status(400).json({ ok: false, error: "That TikTok is not on your Zernio account." });
+  const store = readSocialStore(req.ctx.dataDir);
+  if (cleanZernioKey(store.zernio?.own?.apiKey) !== apiKey) {
+    return res.status(409).json({ ok: false, error: "Your Zernio key changed meanwhile. Reload the page and choose again." });
+  }
+  writeSocialStore(req.ctx.dataDir, {
+    ...store,
+    zernio: { ...store.zernio, own: { ...store.zernio.own, accountId: pick.accountId, username: pick.username, savedAt: new Date().toISOString() } },
+  });
+  res.json({ ok: true, accountId: pick.accountId, username: pick.username });
+});
+
+router.post("/tiktok/own-key/remove", (req, res) => {
+  const store = readSocialStore(req.ctx.dataDir);
+  // Only forgotten here: the TikTok stays connected in the user's own Zernio.
+  writeSocialStore(req.ctx.dataDir, { ...store, zernio: { ...store.zernio, own: {} } });
+  res.json({ ok: true });
 });
 
 router.post("/tiktok/connect", async (req, res) => {

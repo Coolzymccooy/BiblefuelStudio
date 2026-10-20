@@ -41,17 +41,48 @@ describe('TikTokConnectCard', () => {
         expect(screen.getByRole('button', { name: 'Disconnect' })).toBeInTheDocument();
     });
 
-    it('a regular user is told connecting is admin-only and pointed at Make or Zapier', async () => {
+    it('a regular user is offered their own Zernio account, or Make or Zapier', async () => {
         status({ canConnect: false });
         render(<TikTokConnectCard />);
-        expect(await screen.findByText(/open to admins for now/)).toBeInTheDocument();
-        expect(screen.queryByRole('button')).not.toBeInTheDocument();
+        expect(await screen.findByText(/with your own Zernio account below/)).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /Connect TikTok/ })).not.toBeInTheDocument();
+        expect(screen.getByLabelText('Zernio API key')).toHaveAttribute('type', 'password');
     });
 
-    it('says when the server has no Zernio key', async () => {
+    it('works with an own key even when the server has no Zernio key', async () => {
         status({ serverConfigured: false });
         render(<TikTokConnectCard />);
-        expect(await screen.findByText(/not set up on this server yet/)).toBeInTheDocument();
+        expect(await screen.findByLabelText('Zernio API key')).toBeInTheDocument();
+    });
+
+    it('saving a key with one TikTok on it connects it and clears the field', async () => {
+        status({ canConnect: false });
+        const post = vi.spyOn(api, 'post').mockResolvedValue({ ok: true, data: { accounts: [{ accountId: 'a1', username: 'mine' }], selected: 'a1' } } as never);
+        const ok = vi.spyOn(toast, 'success').mockImplementation(() => '');
+        render(<TikTokConnectCard />);
+        const field = await screen.findByLabelText('Zernio API key');
+        fireEvent.change(field, { target: { value: 'sk_own_user_key_1234abcd' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Save key' }));
+        await waitFor(() => expect(ok).toHaveBeenCalledWith('TikTok connected through your Zernio account'));
+        expect(post).toHaveBeenCalledWith('/api/social/tiktok/own-key', { apiKey: 'sk_own_user_key_1234abcd' });
+    });
+
+    it('a connected own key shows only its last 4 and the TikTok, with Remove key', async () => {
+        status({ connected: true, source: 'own_key', username: 'mine', ownKey: { hint: 'abcd', accountId: 'a1', username: 'mine' } });
+        render(<TikTokConnectCard />);
+        expect(await screen.findByText('abcd')).toBeInTheDocument();
+        expect(screen.getByText(/through your own Zernio account/)).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Remove key' })).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Disconnect' })).not.toBeInTheDocument();
+    });
+
+    it('a saved key with several TikToks asks which one to post to', async () => {
+        vi.spyOn(api, 'get').mockImplementation(async (url: string) => (url === '/api/social/tiktok/own-accounts'
+            ? { ok: true, data: { accounts: [{ accountId: 'a1', username: 'one' }, { accountId: 'a2', username: 'two' }] } }
+            : { ok: true, data: { serverConfigured: true, connected: false, source: null, username: '', canConnect: false, ownKey: { hint: 'abcd', accountId: '', username: '' } } }) as never);
+        render(<TikTokConnectCard />);
+        expect(await screen.findByLabelText('Which TikTok should auto-publish post to?')).toBeInTheDocument();
+        expect(screen.getByRole('option', { name: '@two' })).toBeInTheDocument();
     });
 
     it('reports the result of the sign-in and clears it from the address bar', async () => {

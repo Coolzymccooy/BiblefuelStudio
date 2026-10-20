@@ -1,4 +1,4 @@
-import { describe, test, after, afterEach } from "node:test";
+import { describe, test, after, afterEach, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
 import request from "supertest";
@@ -27,13 +27,13 @@ delete process.env.OWNER_EMAIL;
 process.env.MULTITENANT = "true";
 process.env.JWT_SECRET = SECRET;
 process.env.PUBLIC_BASE_URL = "https://example.test";
-process.env.ZERNIO_API_KEY = "sk_test";
+process.env.ZERNIO_API_KEY = "sk_test_server_key_000";
 process.env.ZERNIO_TIKTOK_ACCOUNT_ID = "acct_owner";
 
 const { withUserScope } = await import("../middleware/userScope.js");
 const socialModule = await import("./social.js");
 const socialRouter = socialModule.default;
-const { tiktokConnectCallback } = socialModule;
+const { tiktokConnectCallback, _resetOwnKeyLimit } = socialModule;
 const { _setZernioFetch } = await import("../lib/social/zernioConnect.js");
 const { readSocialStore, writeSocialStore } = await import("../lib/socialStore.js");
 const { resolveScopeDirs } = await import("../lib/paths.js");
@@ -62,7 +62,7 @@ function fakeZernio(routes) {
   _setZernioFetch(async (url, init = {}) => {
     const u = new URL(url);
     const key = `${init.method || "GET"} ${u.pathname}`;
-    calls.push({ key, query: Object.fromEntries(u.searchParams) });
+    calls.push({ key, query: Object.fromEntries(u.searchParams), auth: init.headers?.Authorization });
     const hit = routes[key];
     if (!hit) return new Response("{}", { status: 404 });
     return new Response(JSON.stringify(hit[1]), { status: hit[0] });
@@ -256,5 +256,110 @@ describe("posting and disconnecting", () => {
     fakeZernio({ "DELETE /api/v1/accounts/acct_a2": [404, { error: "Not found" }] });
     await request(app(admin)).post("/api/social/tiktok/disconnect").expect(200);
     assert.equal(readSocialStore(dirOf(admin)).zernio.tiktok?.accountId || "", "");
+  });
+});
+
+describe("bring your own Zernio key", () => {
+  const OWN_KEY = "sk_own_user_key_1234abcd";
+  const reset = (user) => writeSocialStore(dirOf(user), { ...readSocialStore(dirOf(user)), zernio: {} });
+  beforeEach(() => _resetOwnKeyLimit(regular.sub));
+
+  test("a regular user saves their own key; a single TikTok on it is picked for them", async () => {
+    reset(regular);
+    fakeZernio({ "GET /api/v1/accounts": [200, { accounts: [{ _id: "acct_mine", platform: "tiktok", username: "mytok" }, { _id: "acct_ig", platform: "instagram" }] }] });
+    const res = await request(app(regular)).post("/api/social/tiktok/own-key").send({ apiKey: OWN_KEY }).expect(200);
+    assert.deepEqual(res.body.accounts, [{ accountId: "acct_mine", username: "mytok" }]);
+    assert.equal(res.body.selected, "acct_mine");
+    assert.equal(calls[0].auth, `Bearer ${OWN_KEY}`, "their key, not the server's");
+
+    const status = await request(app(regular)).get("/api/social/tiktok/status").expect(200);
+    assert.equal(status.body.connected, true);
+    assert.equal(status.body.source, "own_key");
+    assert.equal(status.body.username, "mytok");
+    assert.equal(status.body.ownKey.hint, "abcd");
+    assert.doesNotMatch(JSON.stringify(status.body), new RegExp(OWN_KEY), "the key is never sent back");
+
+    const auto = await request(app(regular)).get("/api/social/auto-publish-status").expect(200);
+    assert.ok(auto.body.destinations.includes("zernio"));
+  });
+
+  test("a key Zernio refuses is not saved", async () => {
+    reset(regular);
+    fakeZernio({ "GET /api/v1/accounts": [401, { error: "Invalid API key" }] });
+    const res = await request(app(regular)).post("/api/social/tiktok/own-key").send({ apiKey: OWN_KEY }).expect(400);
+    assert.match(res.body.error, /did not accept/);
+    assert.deepEqual(readSocialStore(dirOf(regular)).zernio.own, {});
+  });
+
+  test("junk is refused before anything is sent to Zernio", async () => {
+    fakeZernio({});
+    await request(app(regular)).post("/api/social/tiktok/own-key").send({ apiKey: "not a key\nX-Evil: 1" }).expect(400);
+    assert.equal(calls.length, 0);
+  });
+
+  test("the server's own key cannot be pasted in as a user's key", async () => {
+    fakeZernio({});
+    const res = await request(app(regular)).post("/api/social/tiktok/own-key").send({ apiKey: "sk_test_server_key_000" }).expect(400);
+    assert.equal(calls.length, 0);
+    assert.match(res.body.error, /server's own Zernio key/);
+  });
+
+  test("with several TikToks the user picks one, and only one that is on their key", async () => {
+    reset(regular);
+    const two = { accounts: [{ _id: "acct_1", platform: "tiktok", username: "one" }, { _id: "acct_2", platform: "tiktok", username: "two" }] };
+    fakeZernio({ "GET /api/v1/accounts": [200, two] });
+    const saved = await request(app(regular)).post("/api/social/tiktok/own-key").send({ apiKey: OWN_KEY }).expect(200);
+    assert.equal(saved.body.selected, "");
+    const before = await request(app(regular)).get("/api/social/tiktok/status").expect(200);
+    assert.equal(before.body.connected, false, "no account chosen yet");
+
+    await request(app(regular)).post("/api/social/tiktok/own-account").send({ accountId: "acct_owner" }).expect(400);
+    const pick = await request(app(regular)).post("/api/social/tiktok/own-account").send({ accountId: "acct_2" }).expect(200);
+    assert.equal(pick.body.username, "two");
+    assert.equal(readSocialStore(dirOf(regular)).zernio.own.accountId, "acct_2");
+  });
+
+  test("a key that can see the server's own TikTok is refused", async () => {
+    reset(regular);
+    fakeZernio({ "GET /api/v1/accounts": [200, { accounts: [{ _id: "acct_owner", platform: "tiktok", username: "operator" }] }] });
+    const res = await request(app(regular)).post("/api/social/tiktok/own-key").send({ apiKey: OWN_KEY }).expect(400);
+    assert.match(res.body.error, /server's Zernio account/);
+    assert.deepEqual(readSocialStore(dirOf(regular)).zernio.own, {});
+  });
+
+  test("a read-only key is refused, since every post would fail", async () => {
+    reset(regular);
+    fakeZernio({
+      "GET /api/v1/accounts": [200, { accounts: [{ _id: "acct_mine", platform: "tiktok", username: "mytok" }] }],
+      "GET /api/v1/auth/verify": [200, { valid: true, permission: "read" }],
+    });
+    const res = await request(app(regular)).post("/api/social/tiktok/own-key").send({ apiKey: OWN_KEY }).expect(400);
+    assert.match(res.body.error, /read-only/);
+    assert.deepEqual(readSocialStore(dirOf(regular)).zernio.own, {});
+  });
+
+  test("pasting keys is rate limited per user", async () => {
+    fakeZernio({ "GET /api/v1/accounts": [401, { error: "Invalid API key" }] });
+    for (let i = 0; i < 6; i += 1) {
+      await request(app(regular)).post("/api/social/tiktok/own-key").send({ apiKey: OWN_KEY }).expect(400);
+    }
+    const blocked = await request(app(regular)).post("/api/social/tiktok/own-key").send({ apiKey: OWN_KEY }).expect(429);
+    assert.match(blocked.body.error, /Too many tries/);
+    await request(app(admin)).get("/api/social/tiktok/status").expect(200);
+  });
+
+  test("removing the key forgets it here", async () => {
+    writeSocialStore(dirOf(regular), { ...readSocialStore(dirOf(regular)), zernio: { own: { apiKey: OWN_KEY, accountId: "acct_mine" } } });
+    await request(app(regular)).post("/api/social/tiktok/own-key/remove").expect(200);
+    assert.deepEqual(readSocialStore(dirOf(regular)).zernio.own, {});
+    const status = await request(app(regular)).get("/api/social/tiktok/status").expect(200);
+    assert.equal(status.body.connected, false);
+    assert.equal(status.body.ownKey, null);
+  });
+
+  test("Save all keeps the user's own key", async () => {
+    writeSocialStore(dirOf(regular), { ...readSocialStore(dirOf(regular)), zernio: { own: { apiKey: OWN_KEY, accountId: "acct_mine" } } });
+    await request(app(regular)).post("/api/social/config").send({ webhooks: [], schedules: [], direct: {} }).expect(200);
+    assert.equal(readSocialStore(dirOf(regular)).zernio.own.apiKey, OWN_KEY);
   });
 });
