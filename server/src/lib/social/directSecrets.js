@@ -15,6 +15,11 @@ const SECRETS = {
   tiktok: ["accessToken"],
 };
 
+// Written only by the server (the OAuth callback); the page's copy is ignored.
+const SERVER_ONLY = {
+  youtube: ["scopes"],
+};
+
 const flag = (field) => `has${field[0].toUpperCase()}${field.slice(1)}`;
 const present = (v) => String(v ?? "").trim().length > 0;
 
@@ -53,6 +58,9 @@ export function mergeDirectSecrets(incoming, current = {}) {
       if (next[field] === null) section[field] = "";
       else if (!present(next[field])) section[field] = prev[field] ?? "";
       delete section[flag(field)];
+    }
+    for (const field of SERVER_ONLY[platform] || []) {
+      section[field] = prev[field] ?? "";
     }
     out[platform] = section;
   }

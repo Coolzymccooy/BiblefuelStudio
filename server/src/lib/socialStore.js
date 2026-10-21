@@ -33,6 +33,9 @@ function mergeYouTubeConfig(stored = {}) {
     channelId: String(stored?.channelId || "").trim(),
     channelTitle: String(stored?.channelTitle || "").trim(),
     connectedAt: stored?.connectedAt ? String(stored.connectedAt) : "",
+    // Granted OAuth scopes, space-separated; empty for connections made
+    // before they were recorded.
+    scopes: String(stored?.scopes || "").trim(),
   };
 }
 
@@ -222,6 +225,7 @@ export function writeSocialStore(dataDir, next) {
         channelId: String(next?.direct?.youtube?.channelId || "").trim(),
         channelTitle: String(next?.direct?.youtube?.channelTitle || "").trim(),
         connectedAt: next?.direct?.youtube?.connectedAt ? String(next.direct.youtube.connectedAt) : "",
+        scopes: String(next?.direct?.youtube?.scopes || "").trim(),
       },
       instagram: next?.direct?.instagram || {},
       tiktok: next?.direct?.tiktok || {},

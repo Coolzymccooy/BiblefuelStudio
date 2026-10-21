@@ -18,7 +18,7 @@ import { readSocialStore, writeSocialStore } from "../lib/socialStore.js";
 import { publicDirectConfig, mergeDirectSecrets } from "../lib/social/directSecrets.js";
 import { scheduleOwnerCtx, listScheduleSources } from "../lib/social/scheduleSources.js";
 import { validateYoutubeMetadata, buildYoutubeDescription } from "../lib/social/youtubeMetadata.js";
-import { uploadToYoutube, setYoutubeThumbnail } from "../lib/social/youtubeUpload.js";
+import { uploadToYoutube, setYoutubeThumbnail, listYoutubePlaylists } from "../lib/social/youtubeUpload.js";
 import { resolveThumbnail } from "../lib/social/thumbnailPath.js";
 import { prepareThumbnail } from "../lib/social/youtubeThumbnail.js";
 import { startPublishJob, getPublishJob, _resetPublishJobs as resetPublishJobs } from "../lib/social/youtubePublishJobs.js";
@@ -493,7 +493,10 @@ const THUMBNAIL_PLAIN_WARNING = "The title couldn't be drawn on this picture, so
  * credentials, metadata, the thumbnail's path. Throws on the first problem.
  */
 function checkYoutubePost(payload, req, store) {
-  const { caption, videoUrl, title, description, tags, categoryId, privacyStatus, publishAt, thumbnailPath, chapters, links, hashtags } = payload || {};
+  const {
+    caption, videoUrl, title, description, tags, categoryId, privacyStatus, publishAt, thumbnailPath, chapters, links, hashtags,
+    syntheticMedia, playlistId, newPlaylistTitle,
+  } = payload || {};
   if (!String(videoUrl || "").trim()) throw new Error("videoUrl required");
   const credentials = youtubeCredentials(store);
 
@@ -505,7 +508,7 @@ function checkYoutubePost(payload, req, store) {
     description: (chapters?.length || links?.length || hashtags?.length)
       ? buildYoutubeDescription({ summary, chapters, links, hashtags })
       : summary,
-    tags, categoryId, privacyStatus, publishAt,
+    tags, categoryId, privacyStatus, publishAt, syntheticMedia, playlistId, newPlaylistTitle,
   });
   if (!validated.ok) throw new Error(validated.error);
 
@@ -1313,6 +1316,19 @@ router.post("/youtube/thumbnail", async (req, res) => {
   }
 });
 
+// GET /youtube/playlists — the connected channel's playlists, to choose one
+// before publishing. Reading needs only the scope every connection has.
+router.get("/youtube/playlists", async (req, res) => {
+  let credentials;
+  try { credentials = youtubeCredentials(readSocialStore(req.ctx.dataDir)); }
+  catch (e) { return res.status(400).json({ ok: false, error: String(e?.message || e) }); }
+  try {
+    return res.json({ ok: true, playlists: await listYoutubePlaylists({ credentials }) });
+  } catch (e) {
+    return res.status(502).json({ ok: false, error: `YouTube didn't list the playlists: ${String(e?.message || e)}` });
+  }
+});
+
 // =====================================================================
 // Per-user Make / Zapier / generic webhook destinations.
 //
@@ -1455,10 +1471,18 @@ router.post("/webhooks/:id/test", async (req, res) => {
 // and no JWT; we recover the user from the signed `state` payload.
 // =====================================================================
 
+// force-ssl is the narrowest scope that can add a video to a playlist.
+const YOUTUBE_PLAYLIST_SCOPE = "https://www.googleapis.com/auth/youtube.force-ssl";
 const YOUTUBE_SCOPES = [
   "https://www.googleapis.com/auth/youtube.upload",
   "https://www.googleapis.com/auth/youtube.readonly",
+  YOUTUBE_PLAYLIST_SCOPE,
 ];
+
+/** Connections saved before playlists were offered have no scopes recorded. */
+function grantsPlaylists(scopes) {
+  return String(scopes || "").split(/\s+/).some((s) => s === YOUTUBE_PLAYLIST_SCOPE || s === "https://www.googleapis.com/auth/youtube");
+}
 const YOUTUBE_OAUTH_STATE_TTL = "10m";
 
 function getOperatorYouTubeClient() {
@@ -1498,6 +1522,7 @@ router.get("/youtube/status", (req, res) => {
     // this, no user can connect; the UI should hide the Connect button.
     serverConfigured: Boolean(clientId && clientSecret),
     connected: Boolean(yt?.refreshToken),
+    canUsePlaylists: Boolean(yt?.refreshToken) && grantsPlaylists(yt?.scopes),
     channelTitle: yt?.channelTitle || "",
     channelId: yt?.channelId || "",
     connectedAt: yt?.connectedAt || "",
@@ -1563,6 +1588,7 @@ router.post("/youtube/disconnect", async (req, res) => {
       youtube: {
         ...yt,
         refreshToken: "",
+        scopes: "",
         channelId: "",
         channelTitle: "",
         connectedAt: "",
@@ -1698,6 +1724,8 @@ export async function youtubeOauthCallback(req, res) {
       youtube: {
         ...(store.direct?.youtube || {}),
         refreshToken: String(tokens.refresh_token),
+        // What the user actually ticked on Google's consent screen.
+        scopes: String(tokens.scope || ""),
         channelId,
         channelTitle,
         connectedAt: new Date().toISOString(),

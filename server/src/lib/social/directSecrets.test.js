@@ -32,6 +32,13 @@ describe("mergeDirectSecrets", () => {
     assert.equal(out.instagram.accessToken, "ig-token", "a section the page left out is kept whole");
   });
 
+  test("the granted YouTube scopes are the server's record: the page can neither set nor wipe them", () => {
+    const current = { youtube: { refreshToken: "rt", scopes: "a b" } };
+    assert.equal(mergeDirectSecrets({ youtube: { clientId: "c", scopes: "forged" } }, current).youtube.scopes, "a b");
+    assert.equal(mergeDirectSecrets({ youtube: { clientId: "c", scopes: "" } }, current).youtube.scopes, "a b");
+    assert.equal(mergeDirectSecrets({ youtube: { clientId: "c", scopes: "x" } }, {}).youtube.scopes, "");
+  });
+
   test("a new secret replaces the stored one", () => {
     const out = mergeDirectSecrets({ instagram: { accessToken: "new-token", userId: "ig-user" } }, stored);
     assert.equal(out.instagram.accessToken, "new-token");

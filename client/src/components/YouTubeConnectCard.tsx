@@ -8,6 +8,8 @@ import { Youtube, ExternalLink, CheckCircle2, Loader2, AlertCircle } from 'lucid
 interface YouTubeStatus {
     serverConfigured: boolean;
     connected: boolean;
+    /** False for connections made before playlists were offered. */
+    canUsePlaylists?: boolean;
     channelTitle: string;
     channelId: string;
     connectedAt: string;
@@ -174,6 +176,9 @@ export function YouTubeConnectCard() {
                             {status.connectedAt && (
                                 <> · Connected {new Date(status.connectedAt).toLocaleDateString()}</>
                             )}
+                            {!status.canUsePlaylists && (
+                                <span className="block mt-1">Reconnect once to let Studio add your videos to playlists.</span>
+                            )}
                         </p>
                     ) : status?.serverConfigured ? (
                         <p className="text-xs text-content-secondary mt-1">
@@ -185,7 +190,13 @@ export function YouTubeConnectCard() {
                         </p>
                     )}
                 </div>
-                <div className="flex flex-shrink-0">
+                <div className="flex flex-shrink-0 gap-2">
+                    {status?.connected && !status.canUsePlaylists && (
+                        <Button variant="secondary" className="text-xs h-9 px-3" onClick={handleConnect} isLoading={connecting}>
+                            <ExternalLink size={14} className="mr-1.5" />
+                            Reconnect
+                        </Button>
+                    )}
                     {status?.connected ? (
                         <Button
                             variant="secondary"

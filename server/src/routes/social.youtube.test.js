@@ -24,7 +24,7 @@ function app() {
 }
 
 function fakeGoogle() {
-  const calls = { insert: [], set: [] };
+  const calls = { insert: [], set: [], items: [] };
   class OAuth2 { setCredentials() {} }
   return {
     calls,
@@ -44,6 +44,12 @@ function fakeGoogle() {
             }
             return { data: { id: "vid1" } };
           },
+        },
+        playlists: {
+          list: async () => ({ data: { items: [{ id: "PLa", snippet: { title: "Oba Gba" }, contentDetails: { itemCount: 2 }, status: { privacyStatus: "public" } }] } }),
+        },
+        playlistItems: {
+          insert: async (args) => { calls.items.push(args); return { data: {} }; },
         },
         thumbnails: {
           set: async (args) => {
@@ -380,5 +386,59 @@ describe("POST /api/social/youtube/thumbnail", () => {
     assert.equal(res.status, 400);
     assert.match(res.body.error, /not connected/);
     assert.equal(fake.calls.set.length, 0);
+  });
+});
+
+describe("YouTube playlists and the AI disclosure", () => {
+  let fake;
+  beforeEach(() => { fake = fakeGoogle(); _setGoogleImpl(fake.google); });
+  afterEach(() => { _resetGoogleImpl(); });
+
+  test("a publish carries the AI disclosure and lands in the chosen playlist", async () => {
+    const { a, outputDir } = app();
+    fs.writeFileSync(path.join(outputDir, "song.mp4"), "vid");
+    const res = await request(a).post("/api/social/post").send({
+      destination: "youtube", videoUrl: "/outputs/song.mp4", title: "Oba Gba",
+      syntheticMedia: true, playlistId: "PLa",
+    });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(fake.calls.insert[0].requestBody.status.containsSyntheticMedia, true);
+    assert.equal(fake.calls.items[0].requestBody.snippet.playlistId, "PLa");
+    assert.equal(res.body.playlistId, "PLa");
+  });
+
+  test("a bad playlist choice is refused before anything is uploaded", async () => {
+    const { a, outputDir } = app();
+    fs.writeFileSync(path.join(outputDir, "song.mp4"), "vid");
+    const res = await request(a).post("/api/social/youtube/publish").send({
+      videoUrl: "/outputs/song.mp4", title: "Oba Gba", playlistId: "PLa", newPlaylistTitle: "Also this",
+    });
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /not both/i);
+    assert.equal(fake.calls.insert.length, 0);
+  });
+
+  test("GET /youtube/playlists lists the channel's playlists", async () => {
+    const { a } = app();
+    const res = await request(a).get("/api/social/youtube/playlists");
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.deepEqual(res.body.playlists, [{ id: "PLa", title: "Oba Gba", itemCount: 2, privacyStatus: "public" }]);
+  });
+
+  test("GET /youtube/playlists says so when YouTube isn't connected", async () => {
+    const { a, dataDir } = app();
+    writeSocialStore(dataDir, { direct: { youtube: {} } });
+    const res = await request(a).get("/api/social/youtube/playlists");
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /not connected/i);
+  });
+
+  test("status says whether this connection may add to playlists", async () => {
+    const { a, dataDir } = app();
+    const before = await request(a).get("/api/social/youtube/status");
+    assert.equal(before.body.canUsePlaylists, false, "connections made before playlists lack the permission");
+    writeSocialStore(dataDir, { direct: { youtube: { refreshToken: "ref", scopes: "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.force-ssl" } } });
+    const after = await request(a).get("/api/social/youtube/status");
+    assert.equal(after.body.canUsePlaylists, true);
   });
 });

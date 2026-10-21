@@ -19,6 +19,9 @@ const stubPreview = () => vi.spyOn(api, 'postForBlob').mockResolvedValue({ ok: t
 beforeEach(() => {
   vi.restoreAllMocks();
   stubPreview();
+  localStorage.clear();
+  // Not connected unless a test says otherwise: no playlist field.
+  vi.spyOn(api, 'get').mockResolvedValue({ ok: true, data: { connected: false } } as any);
   globalThis.URL.createObjectURL = vi.fn(() => 'blob:preview');
   globalThis.URL.revokeObjectURL = vi.fn();
 });
@@ -177,5 +180,48 @@ describe('YoutubePublishPanel', () => {
     finish({ ok: true, result: { videoId: 'v1', videoUrl: 'u', forcedPrivate: false } });
     await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument());
   });
-});
 
+  it('marks the upload as made with AI by default, and remembers a "no"', async () => {
+    const user = userEvent.setup();
+    const post = vi.spyOn(youtubePublish, 'publishToYoutube').mockResolvedValue({ ok: true, result: { videoId: 'v1', videoUrl: 'u', forcedPrivate: false } } as any);
+    const { unmount } = render(<YoutubePublishPanel videoUrl="/outputs/a.mp4" initial={{ title: 'T' }} />);
+    const box = screen.getByRole('checkbox', { name: /made with ai/i });
+    expect(box).toBeChecked();
+    await user.click(screen.getByRole('button', { name: /publish to youtube/i }));
+    expect(post).toHaveBeenLastCalledWith(expect.objectContaining({ syntheticMedia: true }), expect.anything());
+    await user.click(box);
+    await user.click(screen.getByRole('button', { name: /publish to youtube/i }));
+    expect(post).toHaveBeenLastCalledWith(expect.objectContaining({ syntheticMedia: false }), expect.anything());
+    unmount();
+    render(<YoutubePublishPanel videoUrl="/outputs/a.mp4" initial={{ title: 'T' }} />);
+    expect(screen.getByRole('checkbox', { name: /made with ai/i })).not.toBeChecked();
+  });
+
+  it('sends the chosen playlist and reports a playlist failure after a good upload', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(api, 'get').mockImplementation(async (url: string) => (url.endsWith('/status')
+      ? { ok: true, data: { connected: true, canUsePlaylists: true } }
+      : { ok: true, data: { playlists: [{ id: 'PLa', title: 'Oba Gba', itemCount: 1 }] } }) as any);
+    const post = vi.spyOn(youtubePublish, 'publishToYoutube').mockResolvedValue({ ok: true, result: { videoId: 'v1', videoUrl: 'u', forcedPrivate: false, playlistError: 'Playlist not found' } } as any);
+    const err = vi.spyOn(toast, 'error');
+    render(<YoutubePublishPanel videoUrl="/outputs/a.mp4" initial={{ title: 'Oba Gba' }} />);
+    await screen.findByRole('option', { name: /oba gba/i });
+    await user.selectOptions(screen.getByRole('combobox', { name: /playlist/i }), 'PLa');
+    await user.click(screen.getByRole('button', { name: /publish to youtube/i }));
+    expect(post).toHaveBeenLastCalledWith(expect.objectContaining({ playlistId: 'PLa' }), expect.anything());
+    expect(err).toHaveBeenCalledWith(expect.stringMatching(/playlist.*Playlist not found/), expect.anything());
+  });
+
+  it('a new playlist needs a name before publishing', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(api, 'get').mockImplementation(async (url: string) => (url.endsWith('/status')
+      ? { ok: true, data: { connected: true, canUsePlaylists: true } }
+      : { ok: true, data: { playlists: [] } }) as any);
+    const post = vi.spyOn(youtubePublish, 'publishToYoutube');
+    render(<YoutubePublishPanel videoUrl="/outputs/a.mp4" initial={{ title: 'T' }} />);
+    await user.selectOptions(await screen.findByRole('combobox', { name: /playlist/i }), 'New playlist…');
+    await user.click(screen.getByRole('button', { name: /publish to youtube/i }));
+    expect(post).not.toHaveBeenCalled();
+    expect(screen.getByText(/name the new playlist/i)).toBeInTheDocument();
+  });
+});

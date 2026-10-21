@@ -6,6 +6,7 @@ import { ThumbnailPreview } from './ThumbnailPreview';
 import { chapterPreviewLines } from '../../lib/youtubeChapters';
 import type { ThumbnailDesign } from '../../lib/youtubeThumbnail';
 import { ApplyThumbnail, type ExistingVideo } from './ApplyThumbnail';
+import { YoutubePlaylistField, NO_PLAYLIST, playlistFields, type PlaylistChoice } from './YoutubePlaylistField';
 
 export type YoutubePrivacy = 'private' | 'unlisted' | 'public';
 
@@ -29,6 +30,10 @@ export interface YoutubePublishResult {
   thumbnailError?: string;
   /** The picture went up, but without the title that was asked for. */
   thumbnailWarning?: string;
+  /** The playlist the video was added to. */
+  playlistId?: string;
+  /** The video is up, but couldn't be added to the playlist. */
+  playlistError?: string;
   /** With `record`: whether the server noted the video on that session. */
   recorded?: boolean;
 }
@@ -64,6 +69,13 @@ export function toIsoPublishAt(local: string): string {
   return Number.isNaN(d.getTime()) ? '' : d.toISOString();
 }
 
+const SYNTHETIC_KEY = 'bf.youtube.syntheticMedia';
+
+/** Last answer to the AI question on this browser; Studio's output is AI-made, so yes until told otherwise. */
+function rememberedSynthetic(): boolean {
+  try { return localStorage.getItem(SYNTHETIC_KEY) !== 'no'; } catch { return true; }
+}
+
 export function YoutubePublishPanel({ videoUrl, initial, thumbnailOptions = [], chapters, existingVideos = [], onPublished, record, categoryId }: YoutubePublishPanelProps) {
   const [title, setTitle] = useState(initial?.title ?? '');
   const [description, setDescription] = useState(initial?.description ?? '');
@@ -73,6 +85,8 @@ export function YoutubePublishPanel({ videoUrl, initial, thumbnailOptions = [], 
   const [thumbnailPath, setThumbnailPath] = useState(initial?.thumbnailPath ?? thumbnailOptions[0]?.path ?? '');
   const [thumbnailTitle, setThumbnailTitle] = useState(initial?.thumbnailTitle ?? false);
   const [tagline, setTagline] = useState(initial?.thumbnailTagline ?? '');
+  const [syntheticMedia, setSyntheticMedia] = useState(rememberedSynthetic);
+  const [playlist, setPlaylist] = useState<PlaylistChoice>(NO_PLAYLIST);
   const [busy, setBusy] = useState(false);
   // Leaving the page stops following the upload, never the upload itself.
   const gone = useRef(false);
@@ -85,6 +99,7 @@ export function YoutubePublishPanel({ videoUrl, initial, thumbnailOptions = [], 
     if (busy) return;
     if (!title.trim()) { setFieldError('Title is required'); return; }
     if (title.trim().length > 100) { setFieldError('Title must be 100 characters or fewer'); return; }
+    if (playlist.kind === 'new' && !playlist.title.trim()) { setFieldError('Name the new playlist, or choose No playlist'); return; }
     setFieldError('');
     setBusy(true);
     try {
@@ -100,6 +115,8 @@ export function YoutubePublishPanel({ videoUrl, initial, thumbnailOptions = [], 
         thumbnailTitle: Boolean(thumbnailPath) && thumbnailTitle,
         thumbnailTagline: thumbnailPath && thumbnailTitle ? tagline.trim() : '',
         chapters,
+        syntheticMedia,
+        ...playlistFields(playlist),
         ...(record ? { record } : {}),
         ...(categoryId ? { categoryId } : {}),
       }, {
@@ -115,6 +132,7 @@ export function YoutubePublishPanel({ videoUrl, initial, thumbnailOptions = [], 
       else toast.success('Uploaded to YouTube');
       if (r.thumbnailError) toast.error(`Uploaded, but the thumbnail was rejected: ${r.thumbnailError}`);
       else if (r.thumbnailWarning) toast(r.thumbnailWarning, { icon: '⚠️', duration: 8000 });
+      if (r.playlistError) toast.error(`Uploaded, but it wasn't added to the playlist: ${r.playlistError}`, { duration: 10000 });
       onPublished?.(r, { privacyStatus: privacy, publishAt });
     } finally {
       setBusy(false);
@@ -162,6 +180,22 @@ export function YoutubePublishPanel({ videoUrl, initial, thumbnailOptions = [], 
           <input type="datetime-local" value={publishAtLocal} onChange={(e) => setPublishAtLocal(e.target.value)} className={inputCls} />
         </label>
       </div>
+      <YoutubePlaylistField value={playlist} onChange={setPlaylist} />
+      <label className="flex items-start gap-2 text-sm text-content-secondary">
+        <input
+          type="checkbox"
+          className="mt-1"
+          checked={syntheticMedia}
+          onChange={(e) => {
+            setSyntheticMedia(e.target.checked);
+            try { localStorage.setItem(SYNTHETIC_KEY, e.target.checked ? 'yes' : 'no'); } catch { /* private mode */ }
+          }}
+        />
+        <span>
+          Made with AI
+          <span className="field-help block font-normal">AI voices, music or realistic pictures. YouTube shows viewers an "Altered or synthetic content" label.</span>
+        </span>
+      </label>
       {thumbnailOptions.length > 0 && (
         <label className={fieldLabelCls}>
           Thumbnail
