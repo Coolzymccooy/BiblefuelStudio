@@ -18,7 +18,7 @@ import { readSocialStore, writeSocialStore } from "../lib/socialStore.js";
 function app() {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "social-yt-disc-"));
   writeSocialStore(dataDir, {
-    direct: { youtube: { refreshToken: "refresh-abc", channelId: "UC1", channelTitle: "Sthill Waters", connectedAt: "2026-09-23" } },
+    direct: { youtube: { refreshToken: "refresh-abc", scopes: "https://www.googleapis.com/auth/youtube.force-ssl", channelId: "UC1", channelTitle: "Sthill Waters", connectedAt: "2026-09-23" } },
   });
   const a = express();
   a.use(express.json());
@@ -41,6 +41,7 @@ describe("POST /api/social/youtube/disconnect", () => {
     const yt = readSocialStore(dataDir).direct.youtube;
     assert.equal(yt.refreshToken, "");
     assert.equal(yt.channelTitle, "");
+    assert.equal(yt.scopes, "", "the next connection records its own permissions");
   });
 
   test("still disconnects here when Google can't be reached, and says so", async () => {

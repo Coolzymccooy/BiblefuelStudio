@@ -151,6 +151,15 @@ describe("uploadToYoutube with a playlist", () => {
     assert.deepEqual(calls.created[0].requestBody, { snippet: { title: "Oba Gba" }, status: { privacyStatus: "public" } });
     assert.equal(calls.items[0].requestBody.snippet.playlistId, "PLnew");
   });
+  test("a channel with too many playlists to search gets no duplicate made", async () => {
+    const pages = Array.from({ length: 11 }, (_, i) => [pl(`PL${i}`, `List ${i}`)]);
+    const { google, calls } = playlistGoogle({ pages });
+    _setGoogleImpl(google);
+    const out = await uploadToYoutube({ credentials: creds, filePath: tmpFile("v.mp4"), metadata: { ...metadata, playlist: { title: "List 10" } } });
+    assert.equal(out.videoId, "abc123");
+    assert.equal(calls.created.length, 0);
+    assert.match(out.playlistError, /too many playlists/i);
+  });
   test("a playlist failure doesn't fail the upload", async () => {
     const { google } = playlistGoogle({ itemError: "Playlist not found" });
     _setGoogleImpl(google);

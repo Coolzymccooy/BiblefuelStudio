@@ -1588,6 +1588,7 @@ router.post("/youtube/disconnect", async (req, res) => {
       youtube: {
         ...yt,
         refreshToken: "",
+        scopes: "",
         channelId: "",
         channelTitle: "",
         connectedAt: "",

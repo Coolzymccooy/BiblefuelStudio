@@ -53,7 +53,7 @@ const THUMBNAIL_NOT_ALLOWED = "YouTube only allows custom thumbnails on verified
 // Pages of 50; a channel with more than 500 playlists stops being searched.
 const MAX_PLAYLIST_PAGES = 10;
 
-async function ownPlaylists(youtube) {
+async function ownPlaylists(youtube, { complete = false } = {}) {
   const out = [];
   let pageToken;
   for (let page = 0; page < MAX_PLAYLIST_PAGES; page += 1) {
@@ -71,13 +71,17 @@ async function ownPlaylists(youtube) {
     pageToken = res?.data?.nextPageToken;
     if (!pageToken) break;
   }
+  // Searching by name must see every playlist, or it would make a duplicate.
+  if (complete && pageToken) {
+    throw new Error("This channel has too many playlists to search by name. Choose the playlist from the list instead.");
+  }
   return out;
 }
 
 /** The named playlist, made public if the channel has none by that name. */
 async function playlistIdByTitle(youtube, title) {
   const wanted = title.toLocaleLowerCase();
-  const found = (await ownPlaylists(youtube)).find((p) => p.title.trim().toLocaleLowerCase() === wanted);
+  const found = (await ownPlaylists(youtube, { complete: true })).find((p) => p.title.trim().toLocaleLowerCase() === wanted);
   if (found) return found.id;
   const made = await youtube.playlists.insert({
     part: ["snippet", "status"],
