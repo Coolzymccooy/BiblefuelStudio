@@ -42,6 +42,8 @@ test("createKey returns the plain key once and lists it without the hash", () =>
   assert.equal(key.userId, "u_1");
   assert.equal(key.publishAllowed, false);
   assert.equal(key.revokedAt, null);
+  assert.equal("hash" in key, false);
+  assert.equal(key.prefix, plain.slice(0, 12));
 
   const listed = store.listKeys("u_1");
   assert.equal(listed.length, 1);

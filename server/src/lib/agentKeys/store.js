@@ -71,7 +71,7 @@ export function toPublic(record) {
 /**
  * @param {string} userId
  * @param {string} name
- * @returns {{ key: KeyRecord, plain: string }}
+ * @returns {{ key: PublicKey, plain: string }}
  */
 export function createKey(userId, name) {
   const cleanName = typeof name === "string" ? name.trim() : "";
@@ -96,7 +96,7 @@ export function createKey(userId, name) {
     caps: {},
   };
   writeKeys([...keys, key]);
-  return { key, plain };
+  return { key: toPublic(key), plain };
 }
 
 /** @param {string} userId @returns {PublicKey[]} */
