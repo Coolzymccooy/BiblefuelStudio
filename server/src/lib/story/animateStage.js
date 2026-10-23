@@ -8,6 +8,7 @@ import {
   submitSeedanceTask, waitForSeedanceTask, downloadSeedanceVideo,
 } from "../videoGen/providers/seedance.js";
 import { estimateTokens, usdForTokens, usdPerSecond, reserveSpend, settleSpend, releaseSpend } from "../videoGen/spend.js";
+import { addClip, aspectOf } from "../visualLibrary/store.js";
 
 /**
  * Animate: turn a Story scene's finished picture into a short Seedance clip.
@@ -41,6 +42,7 @@ const defaultDeps = Object.freeze({
   wait: waitForSeedanceTask,
   download: downloadSeedanceVideo,
   resolveClip: resolveSceneVideo,
+  keep: addClip,
   now: () => Date.now(),
 });
 
@@ -159,6 +161,44 @@ function removeFile(file) {
   try { if (file) fs.rmSync(file, { force: true }); } catch { /* best effort */ }
 }
 
+/**
+ * Put a clip in the visual library, so paid footage outlives the scene that
+ * ordered it. Returns the library id, or null when the library could not
+ * take it; the scene still gets its clip either way.
+ */
+function keepInLibrary(ctx, deps, input) {
+  try {
+    return deps.keep(ctx, input).id;
+  } catch (e) {
+    console.warn("[animate] could not keep a clip in the visual library:", e?.message || e);
+    return null;
+  }
+}
+
+/**
+ * The prompt this clip was ordered with, for finding it again later. A task
+ * ordered before aiVideoPrompt was saved falls back to the scene's prompt now.
+ */
+function scenePrompt(ctx, projectId, sceneId, taskId) {
+  const scene = readProject(ctx.dataDir, projectId)?.scenes?.find((s) => s.id === sceneId);
+  if (!scene) return "";
+  return scene.aiVideoTaskId === taskId && scene.aiVideoPrompt ? scene.aiVideoPrompt : animatePrompt(scene);
+}
+
+/**
+ * A re-roll replaced this clip. One already in the library only loses the
+ * scene's copy; an older one, made before the library, moves into it first.
+ */
+function retireClip(ctx, deps, old, { projectId, sceneId, prompt }) {
+  if (!old.libraryId) {
+    const kept = keepInLibrary(ctx, deps, {
+      file: old.videoPath, prompt, aspect: old.aspect, source: { kind: "story", projectId, sceneId },
+    });
+    if (!kept) return; // never delete footage the library did not take
+  }
+  removeFile(old.videoPath);
+}
+
 async function finishTask(ctx, projectId, sceneId, taskId, { model, resolution, ledgerDir, deps }) {
   const key = ledgerKey(projectId, sceneId);
   const done = await deps.wait(taskId);
@@ -195,28 +235,38 @@ async function finishTask(ctx, projectId, sceneId, taskId, { model, resolution, 
     markError(ctx.dataDir, projectId, sceneId, taskId, clip.error);
     return;
   }
+  const prompt = scenePrompt(ctx, projectId, sceneId, taskId);
+  const aspect = aspectOf(clip.width, clip.height);
+  // Kept before the scene is touched: whatever happens to the scene, the
+  // paid clip stays findable and reusable.
+  const libraryId = keepInLibrary(ctx, deps, {
+    file: clip.videoPath, posterFile: clip.posterPath, copy: true, prompt, model, resolution, aspect,
+    durationSec: clip.durationSec, tokens, costUsd, taskId, source: { kind: "story", projectId, sceneId },
+  });
   let superseded = null; // the earlier AI clip a re-roll replaces
   const applied = patchScene(ctx.dataDir, projectId, sceneId, (s) => {
     if (s.aiVideoTaskId !== taskId || s.aiVideoStatus !== "generating") return null;
-    superseded = hasAiClip(s) ? s.videoPath : null;
+    superseded = hasAiClip(s) ? { videoPath: s.videoPath, libraryId: s.aiVideoLibraryId || null, aspect } : null;
     return {
       ...s, videoPath: clip.videoPath, videoUrl: clip.videoUrl, mediaKind: "video",
       aiVideoClip: true, aiVideoStatus: "done", aiVideoError: null, aiVideoCostUsd: costUsd,
+      aiVideoLibraryId: libraryId,
     };
   });
   // The scene keeps its picture as the poster, so the clip's own poster is spare,
   // and so is the original download when the clip was converted.
   if (clip.videoPath !== downloaded) removeFile(downloaded);
   if (!applied) {
-    // A new picture was chosen meanwhile: keep it, and drop the late clip.
-    removeClipFiles(clip);
+    // A new picture was chosen meanwhile: keep it. The late clip lives on in
+    // the library (when it took it), so only the scene's copy goes.
+    if (libraryId) removeClipFiles(clip);
     return;
   }
   if (clip.posterPath && clip.posterPath !== applied.imagePath) removeFile(clip.posterPath);
   // A running render may be about to open the old clip, so it stays until then.
-  if (superseded && superseded !== clip.videoPath
+  if (superseded && superseded.videoPath !== clip.videoPath
     && readProject(ctx.dataDir, projectId)?.status !== STORY_STATUS.RENDERING) {
-    removeFile(superseded);
+    retireClip(ctx, deps, superseded, { projectId, sceneId, prompt });
   }
 }
 
@@ -235,8 +285,9 @@ async function animateOne(ctx, projectId, sceneId, { model, resolution }, { ledg
     markError(ctx.dataDir, projectId, sceneId, null, reserved.error);
     return;
   }
+  const prompt = animatePrompt(scene);
   const submitted = await deps.submit({
-    prompt: animatePrompt(scene), framePrompt: FRAME_MOTION_PROMPT,
+    prompt, framePrompt: FRAME_MOTION_PROMPT,
     firstFramePath: scene.imagePath, aspect: project.aspect, durationSec, model, resolution,
   });
   if (!submitted.ok) {
@@ -247,7 +298,11 @@ async function animateOne(ctx, projectId, sceneId, { model, resolution }, { ledg
   // Saved before waiting: after a restart the sweep collects this paid-for clip.
   patchScene(ctx.dataDir, projectId, sceneId, (s) => (
     s.aiVideoStatus === "queued"
-      ? { ...s, aiVideoStatus: "generating", aiVideoTaskId: submitted.taskId, aiVideoMode: submitted.mode, aiVideoStartedAt: deps.now() }
+      ? {
+        ...s, aiVideoStatus: "generating", aiVideoTaskId: submitted.taskId, aiVideoMode: submitted.mode, aiVideoStartedAt: deps.now(),
+        // What this clip was ordered with, for its library record; the scene's prompt may be edited meanwhile.
+        aiVideoPrompt: prompt,
+      }
       : null
   ));
   await finishTask(ctx, projectId, sceneId, submitted.taskId, { model, resolution, ledgerDir, deps });

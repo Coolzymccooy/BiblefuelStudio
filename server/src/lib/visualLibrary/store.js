@@ -64,7 +64,8 @@ const cleanTags = (tags) => [...new Set((Array.isArray(tags) ? tags : [])
  * Move a downloaded clip into the library and record it.
  * @param {{ dataDir: string, outputDir: string }} ctx
  * @param {{ file: string, posterFile?: string|null, prompt?: string, lead?: string, model?: string, resolution?: string,
- *           aspect?: string, durationSec?: number, tokens?: number, costUsd?: number, taskId?: string, source?: object, tags?: string[] }} input
+ *           aspect?: string, durationSec?: number, tokens?: number, costUsd?: number, taskId?: string, source?: object, tags?: string[],
+ *           copy?: boolean }} input  copy keeps the caller's files; otherwise they are moved in
  */
 export function addClip(ctx, input) {
   const id = crypto.randomUUID();
@@ -72,11 +73,12 @@ export function addClip(ctx, input) {
   fs.mkdirSync(dir, { recursive: true });
   const target = path.join(dir, "clip.mp4");
   fs.copyFileSync(input.file, target);
-  fs.rmSync(input.file, { force: true });
+  // copy: the caller still plays its own file (a Story scene), so leave it.
+  if (!input.copy) fs.rmSync(input.file, { force: true });
   let poster = null;
   if (input.posterFile && fs.existsSync(input.posterFile)) {
     fs.copyFileSync(input.posterFile, path.join(dir, "poster.jpg"));
-    fs.rmSync(input.posterFile, { force: true });
+    if (!input.copy) fs.rmSync(input.posterFile, { force: true });
     poster = "poster.jpg";
   }
   const clip = {
