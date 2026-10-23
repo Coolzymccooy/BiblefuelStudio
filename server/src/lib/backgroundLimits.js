@@ -40,3 +40,6 @@ export async function remoteContentLength(url, fetchImpl = globalThis.fetch) {
     return 0;
   }
 }
+
+/** Largest input file (MB) accepted for renders and URL imports; MAX_INPUT_MB overrides. */
+export const MAX_INPUT_MB = Number(process.env.MAX_INPUT_MB || 200);

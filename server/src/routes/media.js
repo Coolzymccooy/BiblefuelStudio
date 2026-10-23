@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { sniffImage, UNDECODABLE_IMAGE_ERROR } from "../lib/imageSniff.js";
 import fs from "fs";
+import { createImportUrlHandler } from "./mediaImportUrl.js";
 import path from "path";
 import { v4 as uuid } from "uuid";
 import { spawn, spawnSync } from "child_process";
@@ -723,6 +724,11 @@ router.post("/upload-source-video", async (req, res) => {
     res.status(400).json({ ok: false, error: String(e?.message || e) });
   }
 });
+
+// Pull a file from a public URL (agent/MCP path). Mounted here, after the
+// helpers it needs are initialised: videoMimeToExt is a const further up the
+// file than /upload-audio, so mounting there would hit its temporal dead zone.
+router.post("/import-url", createImportUrlHandler({ processReceivedAudio, audioMimeToExt, videoMimeToExt, startVideoProxyGeneration, finaliseImageFile }));
 
 // Background-clip upload — accepts video (mp4/mov/webm) OR image (jpg/png/webp).
 // Both land in outputDir and are referenced by their local path from the
