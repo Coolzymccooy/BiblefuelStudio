@@ -5,7 +5,7 @@ import {
   SEEDANCE_MODELS, clampSeedanceDuration, seedanceRatio,
   submitSeedanceTask, waitForSeedanceTask, downloadSeedanceVideo,
 } from "../videoGen/providers/seedance.js";
-import { estimateTokens, usdForTokens, reserveSpend, settleSpend, releaseSpend } from "../videoGen/spend.js";
+import { estimateTokens, usdForTokens, reserveSpend, settleSpend, releaseSpend, isReserved } from "../videoGen/spend.js";
 import { runFfmpeg } from "../motion/render.js";
 import { probeAudioDurationSec } from "../story/storyRender.js";
 import { addClip, getClip } from "../visualLibrary/store.js";
@@ -79,14 +79,16 @@ export function estimateShots(project, only) {
   let tokens = 0;
   let seconds = 0;
   for (const s of shots) {
+    if (canRefetch(s)) continue;
     seconds += secs[s.id];
     tokens += estimateTokens({ durationSec: secs[s.id], ratio, resolution: SHOT_RESOLUTION });
   }
   const usd = usdForTokens({ model: SHOT_MODEL, resolution: SHOT_RESOLUTION, tokens });
+  const paid = shots.filter((s) => !canRefetch(s));
   const spentUsd = Number(project.spentUsd) || 0;
   const benchmark = benchmarkUsd();
   return {
-    clips: shots.length, seconds, tokens, usd, shotIds: shots.map((s) => s.id),
+    clips: paid.length, refetch: shots.length - paid.length, seconds, tokens, usd, shotIds: shots.map((s) => s.id),
     fromLibrary: project.shots.filter((s) => s.clip?.fromLibrary).length,
     spentUsd, totalUsd: spentUsd + usd, benchmarkUsd: benchmark, overBenchmark: spentUsd + usd > benchmark + 1e-9,
   };
@@ -118,37 +120,76 @@ async function makePoster(deps, clipFile, posterFile) {
   return r.ok && fs.existsSync(posterFile) ? posterFile : null;
 }
 
+/**
+ * Count a task's cost once. The ledger settles only while the reservation
+ * stands (settling removes it in the same write), and the project total moves
+ * in the same write that marks the shot charged for this task, so collecting
+ * again after a restart never charges twice.
+ */
+function chargeShot(ctx, id, shotId, taskId, { ledgerDir, tokens }) {
+  const key = ledgerKey(id, shotId);
+  const spend = { model: SHOT_MODEL, resolution: SHOT_RESOLUTION, tokens };
+  const usd = isReserved(ledgerDir, key) ? settleSpend(ledgerDir, key, spend) : usdForTokens(spend);
+  updateProject(ctx.dataDir, id, (p) => {
+    const shot = p.shots.find((s) => s.id === shotId);
+    if (!shot || shot.clip?.chargedTaskId === taskId) return null;
+    return {
+      ...p,
+      spentUsd: (Number(p.spentUsd) || 0) + usd,
+      shots: p.shots.map((s) => (s.id === shotId ? { ...s, clip: { ...s.clip, chargedTaskId: taskId } } : s)),
+    };
+  });
+  return usd;
+}
+
+/** BytePlus keeps a finished clip's URL for 24 h. A paid clip that failed to download can be fetched again until then. */
+const REFETCH_MS = 23 * 60 * 60 * 1000;
+export const canRefetch = (shot, now = Date.now()) => shot.clip?.status === "error"
+  && Boolean(shot.clip.taskId) && shot.clip.chargedTaskId === shot.clip.taskId
+  && now - (Number(shot.clip.startedAt) || 0) < REFETCH_MS;
+
+const DOWNLOAD_TRIES = 3;
+
+async function downloadClip(deps, url, file) {
+  for (let i = 1; ; i += 1) {
+    try {
+      await deps.download(url, file);
+      return null;
+    } catch (e) {
+      fs.rmSync(file, { force: true });
+      if (i >= DOWNLOAD_TRIES) return String(e?.message || e);
+      await new Promise((r) => setTimeout(r, (deps.retryDelayMs ?? 2000) * i));
+    }
+  }
+}
+
 async function collect(ctx, id, shotId, taskId, { ledgerDir, deps }) {
   const done = await deps.wait(taskId);
   const project = readProject(ctx.dataDir, id);
   const shot = project?.shots.find((s) => s.id === shotId);
   const secs = shot?.clip?.seconds || SHOT_TARGET_SEC;
-  const key = ledgerKey(id, shotId);
+  const estimated = () => estimateTokens({ durationSec: secs, ratio: seedanceRatio(project?.meta?.aspect), resolution: SHOT_RESOLUTION });
   if (!done.ok) {
     if (NOT_CHARGED.has(done.code)) {
-      releaseSpend(ledgerDir, key);
+      releaseSpend(ledgerDir, ledgerKey(id, shotId));
     } else {
       // Unknown outcome (timeout, auth): BytePlus may still bill it, so the estimate is counted.
-      const counted = settleSpend(ledgerDir, key, { model: SHOT_MODEL, resolution: SHOT_RESOLUTION, tokens: estimateTokens({ durationSec: secs, ratio: seedanceRatio(project?.meta?.aspect), resolution: SHOT_RESOLUTION }) });
-      updateProject(ctx.dataDir, id, (p) => ({ ...p, spentUsd: (Number(p.spentUsd) || 0) + counted }));
+      chargeShot(ctx, id, shotId, taskId, { ledgerDir, tokens: estimated() });
     }
     const refused = /sensitive|copyright|declined/i.test(done.error || "");
     return failShot(ctx.dataDir, id, shotId, taskId, refused
       ? "BytePlus declined this shot's prompt. Reword it and try again."
       : `BytePlus did not return this clip (${done.error}).`);
   }
-  const tokens = Number(done.tokens) > 0 ? done.tokens
-    : estimateTokens({ durationSec: secs, ratio: seedanceRatio(project?.meta?.aspect), resolution: SHOT_RESOLUTION });
-  const costUsd = settleSpend(ledgerDir, key, { model: SHOT_MODEL, resolution: SHOT_RESOLUTION, tokens });
-  updateProject(ctx.dataDir, id, (p) => ({ ...p, spentUsd: (Number(p.spentUsd) || 0) + costUsd }));
+  const tokens = Number(done.tokens) > 0 ? done.tokens : estimated();
+  const costUsd = chargeShot(ctx, id, shotId, taskId, { ledgerDir, tokens });
   const tmpDir = path.join(projectOutputDir(ctx.outputDir, id), "tmp");
   fs.mkdirSync(tmpDir, { recursive: true });
   const file = path.join(tmpDir, `${randomUUID()}.mp4`);
-  try {
-    await deps.download(done.videoUrl, file);
-  } catch (e) {
-    fs.rmSync(file, { force: true });
-    return failShot(ctx.dataDir, id, shotId, taskId, `The clip was made but could not be downloaded: ${e?.message || e}`);
+  const downloadError = await downloadClip(deps, done.videoUrl, file);
+  if (downloadError) {
+    console.warn(`[scene-script] clip ${taskId} paid but not downloaded: ${downloadError}`);
+    return failShot(ctx.dataDir, id, shotId, taskId, "The clip was made and paid for but could not be downloaded. Choose Make this clip within a day to fetch it again at no cost.");
   }
   const poster = await makePoster(deps, file, `${file}.jpg`);
   const durationSec = Number(await deps.probe(file)) || secs;
@@ -168,6 +209,7 @@ async function collect(ctx, id, shotId, taskId, { ledgerDir, deps }) {
 async function orderOne(ctx, id, shotId, { ledgerDir, deps }) {
   const project = readProject(ctx.dataDir, id);
   const shot = project?.shots.find((s) => s.id === shotId);
+  if (shot?.clip?.status === "generating" && shot.clip.taskId) return collect(ctx, id, shotId, shot.clip.taskId, { ledgerDir, deps });
   if (!shot || shot.clip?.status !== "queued") return;
   const seconds = shot.clip.seconds;
   const ratio = seedanceRatio(project.meta?.aspect);
@@ -195,9 +237,11 @@ async function runShots(ctx, id, ids, opts) {
       try {
         await orderOne(ctx, id, shotId, opts);
       } catch (e) {
-        releaseSpend(opts.ledgerDir, ledgerKey(id, shotId));
+        // Once a task is submitted BytePlus may bill it, so its reservation stays until it is collected.
         const taskId = readProject(ctx.dataDir, id)?.shots.find((s) => s.id === shotId)?.clip?.taskId ?? null;
-        failShot(ctx.dataDir, id, shotId, taskId, String(e?.message || e));
+        if (!taskId) releaseSpend(opts.ledgerDir, ledgerKey(id, shotId));
+        console.warn(`[scene-script] shot ${shotId} of ${id} failed: ${e?.message || e}`);
+        failShot(ctx.dataDir, id, shotId, taskId, "Something went wrong making this clip. Try again.");
       }
     }
   };
@@ -218,7 +262,9 @@ export function startShots(ctx, id, { only, ledgerDir, deps } = {}) {
   const secs = clipSeconds(project);
   const written = updateProject(ctx.dataDir, id, (p) => ({
     ...p,
-    shots: p.shots.map((s) => (picked.has(s.id)
+    shots: p.shots.map((s) => (picked.has(s.id) && canRefetch(s)
+      ? { ...s, clip: { ...s.clip, status: "generating", error: null } }
+      : picked.has(s.id)
       ? { ...s, clip: { status: "queued", taskId: null, error: null, seconds: secs[s.id], prompt: shotPrompt(p, s), previous: hasClip(s) ? s.clip : s.clip?.previous || null } }
       : s)),
   }));

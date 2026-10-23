@@ -7,7 +7,7 @@ import { createProject, readProject, updateProject } from "./projectStore.js";
 import { projectFromMarkdown } from "./model.js";
 import { startShots, isOrderingShots, estimateShots, useLibraryClip, resumeShots, shotPrompt, ledgerKey } from "./shotStage.js";
 import { readLibrary, addClip } from "../visualLibrary/store.js";
-import { readLedger } from "../videoGen/spend.js";
+import { readLedger, reserveSpend } from "../videoGen/spend.js";
 
 const SCRIPT = [
   "### Scene 1 — Opening (0:00–0:06)",
@@ -149,5 +149,53 @@ describe("shot stage", () => {
     assert.equal(done.shots[0].clip.status, "done");
     assert.equal(done.shots[1].clip.status, "error");
     assert.equal(readLedger(ledgerDir).reservations[ledgerKey(project.id, "sh2")], undefined);
+  });
+
+  test("a paid clip that fails to download is fetched again for free", async () => {
+    const project = createProject(ctx.dataDir, projectFromMarkdown(SCRIPT));
+    const { deps, calls } = fakeDeps();
+    let downloads = 0;
+    const flaky = { ...deps, retryDelayMs: 0, download: async (url, file) => { downloads += 1; if (downloads <= 3) throw new Error("socket hang up"); return deps.download(url, file); } };
+    startShots(ctx, project.id, { only: ["sh1"], ledgerDir, deps: flaky });
+    await settle(project.id);
+    const failed = readProject(ctx.dataDir, project.id);
+    assert.equal(downloads, 3);
+    assert.equal(failed.shots[0].clip.status, "error");
+    assert.match(failed.shots[0].clip.error, /paid for/);
+    const spent = failed.spentUsd;
+    assert.ok(spent > 0);
+    assert.equal(readLedger(ledgerDir).clips, 1);
+    const estimate = estimateShots(failed, ["sh1"]);
+    assert.equal(estimate.clips, 0);
+    assert.equal(estimate.usd, 0);
+
+    startShots(ctx, project.id, { only: ["sh1"], ledgerDir, deps: flaky });
+    await settle(project.id);
+    const done = readProject(ctx.dataDir, project.id);
+    assert.equal(done.shots[0].clip.status, "done");
+    assert.equal(calls.submit.length, 1, "no second order");
+    assert.equal(done.spentUsd, spent, "no second charge");
+    assert.equal(readLedger(ledgerDir).clips, 1);
+  });
+
+  test("collecting the same task twice charges it once", async () => {
+    const project = createProject(ctx.dataDir, projectFromMarkdown(SCRIPT));
+    const stuck = updateProject(ctx.dataDir, project.id, (p) => ({
+      ...p,
+      shots: [{ ...p.shots[0], clip: { status: "generating", taskId: "task-9", seconds: 6, prompt: "p" } }, p.shots[1]],
+    }));
+    reserveSpend(ledgerDir, ledgerKey(project.id, "sh1"), 0.5);
+    const { deps } = fakeDeps();
+    const crashAfterCharge = { ...deps, download: async () => { throw new Error("restart"); }, retryDelayMs: 0 };
+    await resumeShots(ctx, [stuck], { ledgerDir, deps: crashAfterCharge });
+    const once = readProject(ctx.dataDir, project.id).spentUsd;
+    const again = updateProject(ctx.dataDir, project.id, (p) => ({
+      ...p, shots: p.shots.map((s) => (s.id === "sh1" ? { ...s, clip: { ...s.clip, status: "generating" } } : s)),
+    }));
+    await resumeShots(ctx, [again], { ledgerDir, deps });
+    const done = readProject(ctx.dataDir, project.id);
+    assert.equal(done.shots[0].clip.status, "done");
+    assert.equal(done.spentUsd, once);
+    assert.equal(readLedger(ledgerDir).clips, 1);
   });
 });
