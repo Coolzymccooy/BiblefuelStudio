@@ -4,6 +4,7 @@ import { Search, X } from 'lucide-react';
 import { Input } from '../ui/Input';
 import { toastError } from '../../lib/errors';
 import { visualLibraryApi } from '../../lib/sceneScriptApi';
+import { ImportClips } from './ImportClips';
 import type { LibraryClip, SimilarClip } from '../../lib/sceneScriptTypes';
 
 interface Props {
@@ -31,13 +32,14 @@ function ClipTile({ url, posterUrl, prompt, onPick }: { url: string; posterUrl: 
 export function LibraryPicker({ aspect, similar, onPick, onClose }: Props) {
   const [q, setQ] = useState('');
   const [clips, setClips] = useState<LibraryClip[] | null>(null);
+  const [reload, setReload] = useState(0);
 
   useEffect(() => {
     const t = setTimeout(() => {
       visualLibraryApi.search(q, aspect).then(setClips).catch((e) => { toastError(e); setClips([]); });
     }, 250);
     return () => clearTimeout(t);
-  }, [q, aspect]);
+  }, [q, aspect, reload]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -67,6 +69,7 @@ export function LibraryPicker({ aspect, similar, onPick, onClose }: Props) {
               </div>
             </div>
           )}
+          <ImportClips onImported={() => setReload((n) => n + 1)} />
           <label className="relative block">
             <span className="sr-only">Search the library</span>
             <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-bf-muted" aria-hidden="true" />
@@ -75,7 +78,7 @@ export function LibraryPicker({ aspect, similar, onPick, onClose }: Props) {
           {clips === null ? (
             <p className="text-help">Loading…</p>
           ) : clips.length === 0 ? (
-            <p className="text-help">No clips match. Clips appear here once BibleFuel makes them.</p>
+            <p className="text-help">No clips match. Clips appear here once BibleFuel makes them, or once you import them.</p>
           ) : (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
               {clips.map((c) => <ClipTile key={c.id} url={c.url} posterUrl={c.posterUrl} prompt={c.prompt} onPick={() => onPick(c.id)} />)}

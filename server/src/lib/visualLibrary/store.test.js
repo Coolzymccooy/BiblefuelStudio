@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { addClip, readLibrary, getClip, updateClip, removeClip, searchClips, similarClips, clipFile, isClipId } from "./store.js";
+import { addClip, readLibrary, getClip, updateClip, removeClip, searchClips, similarClips, clipFile, isClipId, aspectOf } from "./store.js";
 
 describe("visual library", () => {
   let ctx;
@@ -58,5 +58,15 @@ describe("visual library", () => {
     assert.equal(removeClip(ctx, clip.id), true);
     assert.equal(readLibrary(ctx.dataDir).length, 0);
     assert.equal(fs.existsSync(path.join(ctx.outputDir, "visual-library", clip.id)), false);
+  });
+});
+
+describe("aspectOf", () => {
+  test("names a clip by its shape", () => {
+    assert.equal(aspectOf(720, 1280), "portrait");
+    assert.equal(aspectOf(1280, 720), "landscape");
+    assert.equal(aspectOf(960, 960), "square");
+    assert.equal(aspectOf(1000, 1050), "square");
+    assert.equal(aspectOf(0, 0), "portrait");
   });
 });

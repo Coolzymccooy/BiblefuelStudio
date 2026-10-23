@@ -88,6 +88,10 @@ export const sceneScriptApi = {
   },
 };
 
+// Above the server worst case for one clip (probe 20 s + H.264 conversion 90 s
+// + poster 30 s), so a conversion that finishes is never reported as failed.
+export const IMPORT_TIMEOUT_MS = 180_000;
+
 export const visualLibraryApi = {
   async search(q: string, aspect?: string): Promise<LibraryClip[]> {
     const params = new URLSearchParams();
@@ -96,5 +100,11 @@ export const visualLibraryApi = {
     const res = await api.get(`/api/visual-library?${params.toString()}`);
     if (!res.ok) throw failure(res, 'Could not load the visual library');
     return res.data.clips as LibraryClip[];
+  },
+  /** Add a clip made elsewhere. uploadPath is what uploadMedia(file, name, 'background') returned. */
+  async importClip(input: { uploadPath: string; prompt?: string; tags?: string[] }): Promise<LibraryClip> {
+    const res = await api.post('/api/visual-library/import', input, undefined, { timeout: IMPORT_TIMEOUT_MS });
+    if (!res.ok) throw failure(res, 'Could not import that clip');
+    return res.data.clip as LibraryClip;
   },
 };
