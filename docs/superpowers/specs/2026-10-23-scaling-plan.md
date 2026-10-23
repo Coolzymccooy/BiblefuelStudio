@@ -20,13 +20,13 @@ Not in scope: new product features. This plan changes how the app runs, not what
 | Heavy jobs | Run inside the web server. `heavyJobGate.js` allows one at a time for Ambient, Moments, Scene script and stems. Story, Timeline and lyric renders are not gated (lyric has its own cap of 2). A Scene script render took 735 s for a 98.6 s video in the container. | About 100 heavy renders a day at most. One long render slows every page. |
 | Deploys | A deploy restarts the process and kills running renders (issue #55). | With users rendering around the clock, every deploy breaks someone's video. |
 | Data | JSON files under DATA_DIR. `users.json`, `usage.json`, `plan.json`, `library.json`, `queue.json`, `social.json` and others are written with a plain `writeFileSync` (not atomic). It is safe only because there is one process. | It can't run two processes. A crash mid-write corrupts a file. There are no queries, indexes or backups. |
-| Files | Outputs are on the box's disk, served publicly from `/outputs` ("the link is the secret"). `perUserOutputs.js` scans every user's folder on a cache miss. `cleanupMediaFiles` exists but is never called. | The disk fills up. The cache-miss scan grows with the number of users. |
+| Files | Outputs are on the box's disk, served publicly from `/outputs` ("the link is the secret"). `perUserOutputs.js` scans every user's folder on a cache miss. `cleanupMediaFiles` exists but is never called, and it deletes every media file older than 14 days under the folder it is given, with no check for what is still in use. | The disk fills up. The cache-miss scan grows with the number of users. |
 | Uploads | Cloudflare caps a request body at 100 MB. Large uploads go straight to GCS. | Fine; keep the direct-upload path. |
 | Restart recovery | `reconcilePersistedJobs` scans only the owner's `render-jobs`, not `users/*`. Seedance clips already ordered are collected after a restart. | Other users' jobs stay "running" for ever. |
 | Paid AI | Seedance has one monthly cap ($30 default) shared by everyone. **The Veo endpoint `/api/video-gen/generate` has no quota, ledger or plan check.** Daily quotas are in memory and reset at midnight UTC. | One user can spend the whole month's budget, or an unlimited amount on Veo. |
 | Billing | Stripe with a single premium price. No credits or metering. | AI video costs $2 to $10 a video. A flat price can't cover heavy users. |
 | Auth | Firebase sign-in, swapped for the app's own 7-day JWT. `JWT_SECRET` falls back to `dev_secret_change_me` if it is not set. The JWT is also accepted as `?token=` in the URL. | A missing secret means forgeable tokens. A token in a URL leaks through logs and the browser history. |
-| Publishing | YouTube OAuth is unverified: 6 uploads a day for the whole app. TikTok goes through Zernio, with per-user connect live but untested end to end. | YouTube publishing stops after the 6th upload of the day. |
+| Publishing | YouTube OAuth is unverified, and the project has the default 10,000-unit daily quota (an upload costs 1,600): about 6 uploads a day for the whole app. TikTok goes through Zernio, with per-user connect live but untested end to end. | YouTube publishing stops after the 6th upload of the day. |
 | Observability | `console.*` and a `debug.log` file. `/api/health` reports uptime, the ffmpeg version and capabilities. No error tracking, metrics or alerts. No backups in code. | Problems are found by users, not by us. |
 | Licences | Remotion is free for companies of up to 3 people. | A company licence is needed when Tiwaton grows past 3. |
 
@@ -57,7 +57,7 @@ Each phase ships on its own and leaves the app working. The order is chosen so t
 - Refuse to start in production without a strong `JWT_SECRET`, and stop accepting `?token=` except on the few media routes that need it, which get short-lived signed URLs instead.
 - Put Veo behind the same plan check, quota and spend ledger as Seedance, or turn it off.
 - Make every plain `writeFileSync` store atomic (temp file plus rename), starting with `users.json`, `plan.json` and `usage.json`.
-- Run `cleanupMediaFiles` on a schedule, with a disk alarm.
+- Clean up media on a schedule, with a disk alarm, but only in folders that hold disposable files (temp files, intermediate render parts). `cleanupMediaFiles` must first be limited to an allowlist of such folders. Pointed at the whole outputs volume, it would delete paid visual library clips (`outputs/visual-library/`) and finished videos users still link to, while their index entries stay behind.
 - Fix `reconcilePersistedJobs` so it covers every user's `render-jobs`.
 - Add nightly backups of the DATA_DIR and outputs volumes (Coolify scheduled backup or rsync to R2), and test a restore once.
 - Add error tracking (Sentry or similar) with alerts for render failures.
@@ -65,6 +65,7 @@ Each phase ships on its own and leaves the app working. The order is chosen so t
 ### Phase 1: a job queue and separate workers
 - Add Redis and BullMQ. Every heavy job becomes a queued job with an id, owner, kind, inputs, progress and result. Start with Scene script and Story renders, then Ambient, Timeline, lyric and Moments.
 - Workers run the same image with `ROLE=worker`. Coolify runs the web and the workers as separate services, both reading the shared volumes until Phase 3.
+- **One writer per store until Phase 2.** Atomic writes stop half-written files but not lost updates: project stores such as Scene script's `updateProject` read the whole file, change it and write it back, so a worker's progress update and a user's edit at the same moment would overwrite each other. Workers therefore write no project or user files. They report progress and results through the queue (BullMQ job progress and completion events), and the single web process records them. Only files a worker owns alone (its render's scratch and output files) are written by the worker.
 - Graceful drain on deploy: SIGTERM stops new pulls, waits for the current job (with a time limit), and puts unfinished work back on the queue.
 - Per-user concurrency (for example 1 heavy render at a time on free, 2 on premium) and a fair queue, so one user can't block everyone.
 - **Done when** a deploy during a render does not lose it, and two workers render in parallel.
@@ -78,7 +79,7 @@ Each phase ships on its own and leaves the app working. The order is chosen so t
 ### Phase 3: object storage (R2) and a CDN
 - Every output, upload, clip, voice and poster goes to R2. Workers download inputs to a scratch disk, render, upload the result and delete the scratch files.
 - Serve files from R2 through Cloudflare with signed, expiring URLs instead of the public `/outputs` folder. This retires the cross-user scan in `perUserOutputs.js`.
-- Lifecycle rules: delete intermediate files after 14 days and keep final videos per plan.
+- Lifecycle rules: delete intermediate files after 14 days and keep final videos per plan. Visual library clips are never expired by a rule; they go only when their owner deletes them.
 - **Done when** the box's disk holds only scratch files.
 
 ### Phase 4: pay for what you use
@@ -88,7 +89,9 @@ Each phase ships on its own and leaves the app working. The order is chosen so t
 - **Done when** no paid call happens without a user's credits behind it.
 
 ### Phase 5: publishing at volume
-- Get the Google OAuth app verified for the YouTube upload scope, which removes the 6-a-day cap. This needs a privacy policy, a demo video and possibly a security assessment, and can take weeks, so start it early.
+- Two separate Google submissions, both described in the runbook [`docs/GOOGLE_OAUTH_VERIFICATION.md`](../../GOOGLE_OAUTH_VERIFICATION.md). Each can take weeks, so start early.
+  - **Part A, OAuth app verification** for the YouTube upload scope. This needs a privacy policy, a demo video and possibly a security assessment. It lets any user connect, but it does **not** raise the upload limit.
+  - **Part B, the YouTube API Services audit and quota extension.** This is what removes the cap of about 6 uploads a day. Ask for a quota sized from the Phase 6 estimate of daily publishes.
 - Test TikTok per-user connect end to end, and move publishing onto the queue with retries.
 
 ### Phase 6: capacity and load testing
@@ -111,4 +114,4 @@ Each phase ships on its own and leaves the app working. The order is chosen so t
 1. **Hosting:** stay on Coolify with more machines, or move workers to a managed container platform?
 2. **Plans:** prices, what each plan includes in credits, and what stays free.
 3. **Launch markets:** this decides voices, currencies and payment methods (for example Paystack for Nigeria alongside Stripe).
-4. **The Google verification application** (Phase 5) needs the operator's details and a demo video.
+4. **The two Google applications** (Phase 5): OAuth verification needs the operator's details and a demo video; the quota extension needs an expected number of uploads a day.
