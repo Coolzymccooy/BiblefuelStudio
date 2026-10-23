@@ -47,9 +47,9 @@ const STATUS_WORDS = {
 
 const CANCEL_MESSAGE = /^(render |job )?cancell?ed\.?$/i;
 
-/** A percent from a number, or from `{ percent }` / `{ pct }`; anything else is null. */
+/** A percent (clamped to 0..100) from a number, or from `{ percent }` / `{ pct }`; anything else is null. */
 function toPercent(value) {
-  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "number") return Number.isFinite(value) ? Math.min(100, Math.max(0, value)) : null;
   if (value && typeof value === "object") return toPercent(value.percent ?? value.pct);
   return null;
 }
@@ -82,6 +82,7 @@ function toHandle(fields, { outputUrl: toUrl }) {
   };
 }
 
+// Prefers result.videoUrl (a /outputs/... path kept intact); only a bare file falls back to its basename, which flattens subfolders.
 function fromJobsRoute(payload, ctx) {
   const job = payload?.job || {};
   const result = job.result && typeof job.result === "object" ? job.result : {};
@@ -107,6 +108,17 @@ function fromCaptioned(payload, ctx) {
   );
 }
 
+/**
+ * The story render writes <outputDir>/story/<projectId>/video.mp4 and serves it
+ * at /outputs/story/<projectId>/video.mp4. The basename alone would be the same
+ * (wrong) URL for every project, so the project folder is kept in the path.
+ */
+function storyUrl(projectId, outputPath) {
+  const name = text(outputPath)?.split(/[\\/]/).pop();
+  const safeId = text(projectId);
+  return name && safeId ? `/outputs/story/${safeId}/${name}` : null;
+}
+
 function fromStory(payload, ctx) {
   const project = payload?.project || {};
   const render = project.render || {};
@@ -119,6 +131,7 @@ function fromStory(payload, ctx) {
       percent: toPercent(render.percent),
       phase: status === "rendering" ? text(render.phase) || "rendering" : null,
       file: render.outputPath,
+      url: storyUrl(project.projectId, render.outputPath),
       error: project.error,
     },
     ctx,

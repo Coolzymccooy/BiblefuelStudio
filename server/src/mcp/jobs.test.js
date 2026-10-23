@@ -123,7 +123,21 @@ test("story: done carries render.outputPath", () => {
   const handle = NORMALISERS.story.normalise(payload, { outputUrl: toUrl });
   assert.equal(handle.status, "done");
   assert.equal(handle.percent, 100);
-  assert.deepEqual(handle.output, { url: `${BASE}/outputs/out.mp4`, path: "/srv/outputs/story/p1/out.mp4" });
+  assert.deepEqual(handle.output, { url: `${BASE}/outputs/story/p1/out.mp4`, path: "/srv/outputs/story/p1/out.mp4" });
+});
+
+test("story: two projects with the same file name get different urls", () => {
+  const make = (projectId) => ({ project: { projectId, status: "done", render: { outputPath: `/srv/outputs/story/${projectId}/video.mp4` } } });
+  const a = NORMALISERS.story.normalise(make("p1"), { outputUrl: toUrl });
+  const b = NORMALISERS.story.normalise(make("p2"), { outputUrl: toUrl });
+  assert.equal(a.output.url, `${BASE}/outputs/story/p1/video.mp4`);
+  assert.equal(b.output.url, `${BASE}/outputs/story/p2/video.mp4`);
+});
+
+test("percent is clamped to 0..100", () => {
+  const read = (progress) => NORMALISERS.job.normalise({ job: { id: "j", status: "running", progress } }, { outputUrl: toUrl }).percent;
+  assert.equal(read(150), 100);
+  assert.equal(read(-5), 0);
 });
 
 test("story: error maps to failed; unknown status is running with the raw phase", () => {
