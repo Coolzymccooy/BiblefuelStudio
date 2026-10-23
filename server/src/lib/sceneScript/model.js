@@ -1,5 +1,6 @@
 import { parseSceneScript } from "./parse.js";
 import { defaultCast } from "./cast.js";
+import { withSuggestedBeds } from "./music.js";
 import { planShots, mentionsLead, DEFAULT_LEAD_MAN, DEFAULT_PEOPLE_NOTE, STYLE_SUFFIX } from "./shots.js";
 
 /**
@@ -32,7 +33,7 @@ export function projectFromMarkdown(markdown) {
     lines: script.lines.map((l) => ({ ...l, audio: null })),
     speakers: script.speakers,
     voiceHints: script.voiceHints,
-    music: { cues: script.music.cues.map((c) => ({ ...c, bed: null, offsetSec: 0 })), drops: script.music.drops },
+    music: { cues: withSuggestedBeds(script.music.cues.map((c) => ({ ...c, bed: null, offsetSec: 0 }))), drops: script.music.drops },
     endCard: script.endCard,
     cast: defaultCast(script),
     look: { lead: lead.descriptor, peopleNote: DEFAULT_PEOPLE_NOTE, style: STYLE_SUFFIX },
