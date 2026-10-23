@@ -5,6 +5,10 @@ import { searchClips, similarClips, updateClip, removeClip, getClip, isClipId, a
 import { backfillStoryClips, makeMissingPosters } from "../lib/visualLibrary/backfill.js";
 import { listProjects, readProject } from "../lib/sceneScript/projectStore.js";
 import { resolveSceneVideo } from "../lib/story/sceneVideo.js";
+import { rerollPrice, startReroll, listRerolls, resumeRerolls, refetchReroll, canRefetch, REROLL_STORE } from "../lib/visualLibrary/reroll.js";
+import { isSeedanceConfigured } from "../lib/videoGen/providers/seedance.js";
+import { ledgerSummary } from "../lib/videoGen/spend.js";
+import { DATA_DIR, OUTPUT_DIR } from "../lib/paths.js";
 
 /**
  * The visual library: every paid AI clip, reusable across videos.
@@ -47,12 +51,18 @@ function usedBy(dataDir, clipId) {
     .map((p) => ({ id: p.id, title: p.meta?.title || "Untitled" }));
 }
 
+/** A re-roll as the page sees it: whether it can be fetched again, not BytePlus's signed URL. */
+function rerollView(job) {
+  const { videoUrl: _url, ...rest } = job;
+  return { ...rest, refetchable: canRefetch(job) };
+}
+
 function joinRun(runs, key, start) {
   if (!runs.has(key)) runs.set(key, Promise.resolve().then(start).finally(() => runs.delete(key)));
   return runs.get(key);
 }
 
-export function createVisualLibraryRouter({ deps = {} } = {}) {
+export function createVisualLibraryRouter({ ledgerDir = DATA_DIR, deps = {} } = {}) {
   const router = Router();
   // One poster run and one Story back-fill at a time per user's library;
   // a second request waits for the run already going.
@@ -73,6 +83,16 @@ export function createVisualLibraryRouter({ deps = {} } = {}) {
   });
 
   router.get("/leads", (req, res) => res.json({ ok: true, leads: leadsOf(req.ctx.dataDir) }));
+
+  router.get("/rerolls", (req, res) => res.json({
+    ok: true, jobs: listRerolls(req.ctx.dataDir).slice(0, 20).map(rerollView), month: ledgerSummary(ledgerDir),
+  }));
+
+  router.post("/rerolls/:jobId/refetch", (req, res) => {
+    const r = refetchReroll(req.ctx, String(req.params.jobId).slice(0, 64), { ledgerDir, deps: deps.reroll });
+    if (!r.ok) return res.status(r.status).json({ ok: false, code: r.code, error: r.error });
+    return res.json({ ok: true, job: rerollView(r.job) });
+  });
 
   router.post("/posters", async (req, res) => {
     try {
@@ -151,5 +171,46 @@ export function createVisualLibraryRouter({ deps = {} } = {}) {
     return res.json({ ok: true });
   });
 
+  // Re-roll from a clip's prompt: the price first, then the paid order.
+  router.get("/:id/reroll-price", (req, res) => {
+    const clip = isClipId(req.params.id) ? getClip(req.ctx.dataDir, req.params.id) : null;
+    if (!clip) return res.status(404).json({ ok: false, error: "Clip not found." });
+    return res.json({ ok: true, price: rerollPrice(clip), month: ledgerSummary(ledgerDir), seedance: isSeedanceConfigured() });
+  });
+
+  router.post("/:id/reroll", (req, res) => {
+    if (!isSeedanceConfigured()) return res.status(503).json({ ok: false, code: "NOT_CONFIGURED", error: "AI video is not set up on this server." });
+    if (!isClipId(req.params.id)) return res.status(404).json({ ok: false, error: "Clip not found." });
+    const expectUsd = Number(req.body?.expectUsd);
+    if (!Number.isFinite(expectUsd) || expectUsd < 0) {
+      return res.status(400).json({ ok: false, code: "NO_PRICE", error: "Check the price before re-rolling." });
+    }
+    const prompt = typeof req.body?.prompt === "string" ? req.body.prompt : undefined;
+    const r = startReroll(req.ctx, req.params.id, { prompt, expectUsd, ledgerDir, deps: deps.reroll });
+    if (!r.ok) return res.status(r.status).json({ ok: false, code: r.code, error: r.error, ...(r.price ? { price: r.price } : {}) });
+    return res.json({ ok: true, job: rerollView(r.job) });
+  });
+
   return router;
+}
+
+/** Every library with re-rolls: the owner's and each other user's. */
+function rerollContexts() {
+  const out = [];
+  if (fs.existsSync(path.join(DATA_DIR, REROLL_STORE))) out.push({ dataDir: DATA_DIR, outputDir: OUTPUT_DIR });
+  const usersDir = path.join(DATA_DIR, "users");
+  if (fs.existsSync(usersDir)) {
+    for (const sub of fs.readdirSync(usersDir)) {
+      const dataDir = path.join(usersDir, sub);
+      if (fs.existsSync(path.join(dataDir, REROLL_STORE))) out.push({ dataDir, outputDir: path.join(dataDir, "outputs") });
+    }
+  }
+  return out;
+}
+
+/** After a restart: collect re-rolls ordered before it. Resolves with how many. */
+export async function resumeLibraryRerolls({ ledgerDir = DATA_DIR } = {}) {
+  let count = 0;
+  for (const ctx of rerollContexts()) count += await resumeRerolls(ctx, { ledgerDir });
+  return count;
 }

@@ -63,7 +63,7 @@ import { cacheControlForOutput, publicAssetHeaders } from "./src/lib/mediaCache.
 import { reconcilePersistedJobs } from "./src/lib/renderJobs.js";
 import { resumeAnimations } from "./src/lib/story/animateStage.js";
 import { createSceneScriptRouter, resumeSceneScriptShots } from "./src/routes/sceneScript.js";
-import { createVisualLibraryRouter } from "./src/routes/visualLibrary.js";
+import { createVisualLibraryRouter, resumeLibraryRerolls } from "./src/routes/visualLibrary.js";
 import { isSeedanceConfigured } from "./src/lib/videoGen/providers/seedance.js";
 import { hasLibass } from "./src/lib/kinetic/capability.js";
 
@@ -451,6 +451,9 @@ if (isSeedanceConfigured()) {
   resumeSceneScriptShots({ ledgerDir: DATA_DIR })
     .then((n) => { if (n) console.log(`[scene-script] collecting ${n} clip(s) ordered before the restart`); })
     .catch((e) => console.warn("[scene-script] clip resume skipped:", e?.message || e));
+  resumeLibraryRerolls({ ledgerDir: DATA_DIR })
+    .then((n) => { if (n) console.log(`[visual-library] collecting ${n} re-roll(s) ordered before the restart`); })
+    .catch((e) => console.warn("[visual-library] re-roll resume skipped:", e?.message || e));
 }
 
 // Vocal-removal requests waiting for the laptop survive a restart.

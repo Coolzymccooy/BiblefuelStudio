@@ -7,6 +7,9 @@ import { Button } from '../components/ui/Button';
 import { segmentCls, segmentedCls } from '../components/story/formStyles';
 import { ImportClips } from '../components/sceneScript/ImportClips';
 import { LibraryClipCard } from '../components/visualLibrary/LibraryClipCard';
+import { RerollPanel } from '../components/visualLibrary/RerollPanel';
+import { RerollJobs } from '../components/visualLibrary/RerollJobs';
+import { useRerolls } from '../components/visualLibrary/useRerolls';
 import { useAuth } from '../hooks/useAuth';
 import { toastError } from '../lib/errors';
 import { isApiError } from '../lib/apiError';
@@ -78,6 +81,7 @@ function LibraryBrowser() {
   const [leads, setLeads] = useState<LibraryLead[] | null>(null);
   const [note, setNote] = useState('');
   const [adding, setAdding] = useState(false);
+  const [rerolling, setRerolling] = useState<LibraryClip | null>(null);
   const makePostersAgain = usePosters(clips, refresh);
 
   const loadLeads = useCallback(() => {
@@ -91,7 +95,8 @@ function LibraryBrowser() {
   }, [setLead]);
   useEffect(loadLeads, [loadLeads]);
 
-  const changed = () => { refresh(); loadLeads(); };
+  const changed = useCallback(() => { refresh(); loadLeads(); }, [refresh, loadLeads]);
+  const rerolls = useRerolls(changed);
   const replace = (next: LibraryClip) => setClips((list) => list && list.map((c) => (c.id === next.id ? next : c)));
   const save = (id: string, patch: { tags?: string[]; rating?: number | null }) => {
     visualLibraryApi.update(id, patch).then(replace).catch(toastError);
@@ -168,6 +173,12 @@ function LibraryBrowser() {
         </Button>
       </div>
       {note && <p className="text-help" role="status">{note}</p>}
+      {rerolling && (
+        <RerollPanel key={rerolling.id} clip={rerolling} onClose={() => setRerolling(null)}
+          onStarted={(job) => { rerolls.started(job); setRerolling(null); }} />
+      )}
+      <RerollJobs jobs={rerolls.jobs} checkedAt={rerolls.checkedAt}
+        onRefetch={(job) => { visualLibraryApi.refetchReroll(job.id).then(rerolls.started).catch(toastError); }} />
       {clips === null ? (
         <p className="text-help">Loading your clips…</p>
       ) : clips.length === 0 ? (
@@ -181,7 +192,8 @@ function LibraryBrowser() {
                 onRate={(rating) => save(c.id, { rating })}
                 onTags={(tags) => save(c.id, { tags })}
                 onTagFilter={(t) => lib.setTag(t === lib.tag ? '' : t)}
-                onDelete={() => { void remove(c); }} />
+                onDelete={() => { void remove(c); }}
+                onReroll={() => { setRerolling(c); window.scrollTo({ top: 0, behavior: 'smooth' }); }} />
             ))}
           </ul>
         </>
