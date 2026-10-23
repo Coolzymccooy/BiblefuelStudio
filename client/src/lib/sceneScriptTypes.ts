@@ -52,6 +52,23 @@ export interface ShotClip {
 
 export interface SimilarClip { id: string; url: string; posterUrl: string | null; prompt: string; score: number }
 
+export type GradeName = 'none' | 'warm' | 'cool' | 'golden' | 'faded' | 'vivid' | 'mono';
+
+/** Free refine of a shot's clip, applied in the render (server: lib/sceneScript/refine.js). */
+export interface ShotRefine {
+  in: number;
+  out: number | null;
+  rate: number | null;
+  flip: boolean;
+  zoom: number;
+  x: number;
+  y: number;
+  grade: GradeName;
+}
+
+/** How the clip fills its place in the video, as the render will play it. */
+export interface ShotPlayback { rate: number; from: number; to: number; hold: number; placeSec: number }
+
 export interface SceneScriptShot {
   id: string;
   sceneId: string;
@@ -65,6 +82,8 @@ export interface SceneScriptShot {
   effectivePrompt: string;
   similar: SimilarClip[];
   clip: ShotClip | null;
+  refine: ShotRefine | null;
+  playback: ShotPlayback | null;
 }
 
 export interface MusicCue {

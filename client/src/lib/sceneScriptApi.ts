@@ -1,7 +1,7 @@
 import { api } from './api';
 import { ApiError } from './apiError';
 import type {
-  LibraryClip, SceneScriptProject, SceneScriptSummary, ShotEstimate, VoiceOption,
+  LibraryClip, SceneScriptProject, ShotRefine, SceneScriptSummary, ShotEstimate, VoiceOption,
 } from './sceneScriptTypes';
 
 type Res = { ok: boolean; status?: number; data?: any; error?: string };
@@ -28,7 +28,7 @@ export interface ProjectEdit {
   captions?: { enabled: boolean };
   endCard?: { reference: string; text: string };
   lines?: { id: string; text?: string; voice?: string | null; gapAfter?: number | null; retake?: boolean }[];
-  shots?: { id: string; prompt?: string | null; offsetSec?: number; accept?: boolean }[];
+  shots?: { id: string; prompt?: string | null; offsetSec?: number; accept?: boolean; refine?: ShotRefine | null }[];
   cues?: { id: string; bed?: string; offsetSec?: number }[];
 }
 

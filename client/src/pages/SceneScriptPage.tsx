@@ -44,19 +44,23 @@ function ProjectEditor({ id }: { id: string }) {
   const [busy, setBusy] = useState<string | null>(null);
 
   useEffect(() => { sceneScriptApi.voices().then((v) => { setVoices(v.voices); setRooms(v.rooms); }).catch(() => {}); }, []);
-  const run = async (name: string, fn: () => Promise<SceneScriptProject | void>) => {
+  /** Runs a step; resolves false when it failed (the error is already shown). */
+  const run = async (name: string, fn: () => Promise<SceneScriptProject | void>): Promise<boolean> => {
     setBusy(name);
     try {
       const next = await fn();
       if (next) apply(next);
       else await load();
+      return true;
     } catch (e) {
       toastError(e);
+      return false;
     } finally {
       setBusy(null);
     }
   };
-  const onEdit = async (edit: ProjectEdit) => run('edit', () => sceneScriptApi.update(id, edit));
+  const editChecked = (edit: ProjectEdit) => run('edit', () => sceneScriptApi.update(id, edit));
+  const onEdit = async (edit: ProjectEdit) => { await editChecked(edit); };
   const order = (confirmOverBenchmark: boolean, only?: string[]) => run('order', async () => {
     try {
       return await sceneScriptApi.orderShots(id, { only, confirmOverBenchmark });
@@ -97,9 +101,9 @@ function ProjectEditor({ id }: { id: string }) {
       </Section>
       <Section title="Shots" subtitle={`${project.shots.length} clips. Reuse a library clip to pay nothing.`} defaultOpen>
         <ShotsPanel
-          project={project} busy={busy !== null || project.running.shots} onEdit={onEdit}
-          onReroll={(shotId) => order(false, [shotId])}
-          onUseLibrary={(shotId, clipId) => run('library', () => sceneScriptApi.useLibraryClip(id, shotId, clipId))}
+          project={project} busy={busy !== null || project.running.shots} onEdit={editChecked}
+          onReroll={async (shotId) => { await order(false, [shotId]); }}
+          onUseLibrary={async (shotId, clipId) => { await run('library', () => sceneScriptApi.useLibraryClip(id, shotId, clipId)); }}
         />
       </Section>
       <Section title="Music" subtitle="One bed per cue, ducked under the voices.">

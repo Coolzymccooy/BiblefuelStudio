@@ -13,7 +13,20 @@ export type Line = {
   reference: string;
 };
 
-export type Shot = { id: string; from: number; to: number; src: string; clipDur: number };
+export type ShotLook = { filter: string; flip: boolean; zoom: number; x: number; y: number };
+
+/** A shot's place in the video and how its clip fills it (see sceneScript/refine.js). */
+export type Shot = {
+  id: string;
+  from: number;
+  to: number;
+  src: string;
+  rate: number;
+  trimFrom: number;
+  trimTo: number;
+  hold: number;
+  look: ShotLook;
+};
 
 export type MusicSection = {
   id: string;

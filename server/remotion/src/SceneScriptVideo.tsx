@@ -2,31 +2,50 @@ import React from "react";
 import { AbsoluteFill, Sequence, interpolate, useCurrentFrame, useVideoConfig } from "remotion";
 import { Audio, Video } from "@remotion/media";
 import { musicVolume } from "../../src/lib/sceneScript/mixCurve.js";
+import { XFADE_SEC } from "../../src/lib/sceneScript/refine.js";
 import type { RenderData, Shot } from "./types";
 import { Captions, EndCard, OpeningTitle } from "./Captions";
 import { useFonts } from "./fonts";
 
-const XFADE = 0.45; // seconds of cross-dissolve between shots
+// Show the last frame of a clip that runs out before its place ends: from
+// where the clip stopped, play a sliver so slowly it does not visibly move.
+const HOLD_SPAN_SEC = 0.04;
+const HOLD_END_GUARD_SEC = 0.08;
 
 function ShotView({ slot, index, hit }: { slot: Shot; index: number; hit: number | null }) {
   const frame = useCurrentFrame(); // local to the Sequence
   const { fps } = useVideoConfig();
-  const len = slot.to - slot.from + (index === 0 ? 0 : XFADE);
+  const len = slot.to - slot.from + (index === 0 ? 0 : XFADE_SEC);
   const t = frame / fps;
-  // Slow the clip just enough to fill its slot, never speed it up.
-  const rate = Math.max(0.5, Math.min(1, (slot.clipDur - 0.08) / len));
   const fadeIn = index === 0
     ? interpolate(t, [0, 0.8], [0, 1], { extrapolateRight: "clamp" })
-    : interpolate(t, [0, XFADE], [0, 1], { extrapolateRight: "clamp" });
-  const scale = interpolate(t, [0, len], [1.03, 1.1]);
-  const hitLocal = hit === null ? -1 : hit - (slot.from - (index === 0 ? 0 : XFADE));
+    : interpolate(t, [0, XFADE_SEC], [0, 1], { extrapolateRight: "clamp" });
+  const kenBurns = interpolate(t, [0, len], [1.03, 1.1]);
+  const hitLocal = hit === null ? -1 : hit - (slot.from - (index === 0 ? 0 : XFADE_SEC));
   const punch = hitLocal > 0 && hitLocal < len
     ? interpolate(t, [hitLocal, hitLocal + 0.12, hitLocal + 1.2], [0, 0.06, 0.02], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })
     : 0;
+  const { look } = slot;
+  // The framing pans within the zoom's overflow ((zoom - 1) / 2 of the frame each side), exactly as
+  // the refine preview does; the slow push-in and the hit's punch then scale that framed picture.
+  const pan = (v: number) => -v * ((look.zoom - 1) / 2) * 100;
+  const transform = `scale(${kenBurns + punch}) translate(${pan(look.x)}%, ${pan(look.y)}%) scale(${look.flip ? -look.zoom : look.zoom}, ${look.zoom})`;
+  const playFrames = Math.max(1, Math.round((len - slot.hold) * fps));
+  const holdFrom = Math.max(slot.trimFrom, slot.trimTo - HOLD_END_GUARD_SEC);
+  const videoStyle = { width: "100%", height: "100%" };
   return (
     <AbsoluteFill style={{ opacity: fadeIn }}>
-      <AbsoluteFill style={{ transform: `scale(${scale + punch})` }}>
-        <Video src={slot.src} muted playbackRate={rate} objectFit="cover" style={{ width: "100%", height: "100%" }} />
+      <AbsoluteFill style={{ transform, filter: look.filter || undefined }}>
+        <Sequence durationInFrames={playFrames} layout="none" name="clip">
+          <Video src={slot.src} muted playbackRate={slot.rate} objectFit="cover" style={videoStyle}
+            trimBefore={Math.round(slot.trimFrom * fps)} trimAfter={Math.round(slot.trimTo * fps)} />
+        </Sequence>
+        {slot.hold > 0 ? (
+          <Sequence from={playFrames} layout="none" name="held last frame">
+            <Video src={slot.src} muted playbackRate={HOLD_SPAN_SEC / 2 / slot.hold} objectFit="cover" style={videoStyle}
+              trimBefore={Math.round(holdFrom * fps)} trimAfter={Math.round((holdFrom + HOLD_SPAN_SEC) * fps) + 1} />
+          </Sequence>
+        ) : null}
       </AbsoluteFill>
     </AbsoluteFill>
   );
@@ -62,7 +81,7 @@ export const SceneScriptVideo: React.FC<RenderData> = (data) => {
   return (
     <AbsoluteFill style={{ background: "#000" }}>
       {data.shots.map((slot, i) => {
-        const start = i === 0 ? 0 : slot.from - XFADE;
+        const start = i === 0 ? 0 : slot.from - XFADE_SEC;
         return (
           <Sequence key={slot.id} from={f(start)} durationInFrames={Math.max(1, f(slot.to - start) + 1)} name={`shot ${slot.id}`}>
             <ShotView slot={slot} index={i} hit={data.hit} />

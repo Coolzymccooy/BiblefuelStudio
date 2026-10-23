@@ -107,6 +107,22 @@ describe("shot stage", () => {
     assert.ok(readLibrary(ctx.dataDir).some((c) => c.id === first));
   });
 
+  test("a new clip starts unrefined, whether ordered or from the library", async () => {
+    const project = createProject(ctx.dataDir, projectFromMarkdown(SCRIPT));
+    startShots(ctx, project.id, { ledgerDir, deps: fakeDeps().deps });
+    await settle(project.id);
+    const refine = { in: 1, out: null, rate: null, flip: true, zoom: 1, x: 0, y: 0, grade: "warm" };
+    updateProject(ctx.dataDir, project.id, (p) => ({ ...p, shots: p.shots.map((s) => ({ ...s, refine })) }));
+    startShots(ctx, project.id, { only: ["sh1"], ledgerDir, deps: fakeDeps().deps });
+    await settle(project.id);
+    const src = path.join(root, "x.mp4");
+    fs.writeFileSync(src, "mp4");
+    const clip = addClip(ctx, { file: src, prompt: "sunrise" });
+    const used = useLibraryClip(ctx, project.id, "sh2", clip.id);
+    assert.equal(used.project.shots[0].refine, null);
+    assert.equal(used.project.shots[1].refine, null);
+  });
+
   test("a library clip fills a shot for free and drops out of the estimate", () => {
     const project = createProject(ctx.dataDir, projectFromMarkdown(SCRIPT));
     const src = path.join(root, "x.mp4");

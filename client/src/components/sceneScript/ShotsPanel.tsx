@@ -1,22 +1,25 @@
 import { useState } from 'react';
-import { Check, Film, Library, Loader2, RefreshCw } from 'lucide-react';
+import { Check, Film, Library, Loader2, RefreshCw, SlidersHorizontal } from 'lucide-react';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { Textarea } from '../ui/Textarea';
 import type { SceneScriptProject, SceneScriptShot } from '../../lib/sceneScriptTypes';
 import type { ProjectEdit } from '../../lib/sceneScriptApi';
 import { LibraryPicker } from './LibraryPicker';
+import { RefineDialog } from './RefineDialog';
+import { previewStyle } from './refine';
 import { money } from './format';
 
 interface Props {
   project: SceneScriptProject;
   busy: boolean;
-  onEdit: (edit: ProjectEdit) => Promise<void>;
+  /** Resolves false when the edit failed. */
+  onEdit: (edit: ProjectEdit) => Promise<boolean | void>;
   onReroll: (shotId: string) => Promise<void>;
   onUseLibrary: (shotId: string, clipId: string) => Promise<void>;
 }
 
-function ShotCard({ shot, project, busy, onEdit, onReroll, onPickLibrary }: Omit<Props, 'onUseLibrary'> & { shot: SceneScriptShot; onPickLibrary: () => void }) {
+function ShotCard({ shot, project, busy, onEdit, onReroll, onPickLibrary, onRefine }: Omit<Props, 'onUseLibrary'> & { shot: SceneScriptShot; onPickLibrary: () => void; onRefine: () => void }) {
   const [prompt, setPrompt] = useState(shot.effectivePrompt);
   const scene = project.scenes.find((s) => s.id === shot.sceneId);
   const clip = shot.clip;
@@ -26,7 +29,9 @@ function ShotCard({ shot, project, busy, onEdit, onReroll, onPickLibrary }: Omit
     <li className="flex flex-col overflow-hidden rounded-card border border-editor-line bg-bf-card">
       <div className="relative aspect-[9/16] max-h-80 bg-editor-stage">
         {clip?.status === 'done' && clip.url ? (
-          <video src={clip.url} poster={clip.posterUrl || undefined} muted loop playsInline preload="metadata" controls className="h-full w-full object-cover" aria-label={`Clip for shot ${shot.id}`} />
+          <div className="h-full w-full overflow-hidden">
+            <video src={clip.url} poster={clip.posterUrl || undefined} muted loop playsInline preload="metadata" controls className="h-full w-full object-cover" style={previewStyle(shot.refine)} aria-label={`Clip for shot ${shot.id}`} />
+          </div>
         ) : (
           <div className="flex h-full flex-col items-center justify-center gap-2 p-4 text-center text-bf-muted">
             {working ? <Loader2 className="animate-spin text-bf-gold" size={22} aria-hidden="true" /> : <Film size={22} aria-hidden="true" />}
@@ -39,6 +44,7 @@ function ShotCard({ shot, project, busy, onEdit, onReroll, onPickLibrary }: Omit
           <span className="font-medium text-bf-sub">Scene {scene?.number} · {shot.id}</span>
           {shot.suggested && <Badge variant="warning">Suggested</Badge>}
           {clip?.fromLibrary && <Badge>From library</Badge>}
+          {shot.refine && <Badge>Refined</Badge>}
           {clip?.status === 'done' && !clip.fromLibrary && <span className="tabular-nums">{money(clip.costUsd || 0)}</span>}
         </div>
         {clip?.status === 'error' && <p className="text-xs text-bf-danger">{clip.error}</p>}
@@ -56,6 +62,11 @@ function ShotCard({ shot, project, busy, onEdit, onReroll, onPickLibrary }: Omit
           <Button variant="ghost" className="!px-3 !py-1.5 text-xs" disabled={working} onClick={onPickLibrary}>
             <Library size={14} aria-hidden="true" /> {shot.similar.length ? `Library (${shot.similar.length} close)` : 'Library'}
           </Button>
+          {clip?.status === 'done' && (
+            <Button variant="ghost" className="!px-3 !py-1.5 text-xs" disabled={busy} onClick={onRefine} title={shot.playback ? undefined : 'Voice the script to see how long this shot is on screen'}>
+              <SlidersHorizontal size={14} aria-hidden="true" /> Refine
+            </Button>
+          )}
         </div>
       </div>
     </li>
@@ -65,13 +76,25 @@ function ShotCard({ shot, project, busy, onEdit, onReroll, onPickLibrary }: Omit
 /** Each shot: its clip, its prompt, and the ways to fill it (order, re-roll, or reuse a library clip). */
 export function ShotsPanel(props: Props) {
   const [picking, setPicking] = useState<SceneScriptShot | null>(null);
+  const [refining, setRefining] = useState<string | null>(null);
+  const refineShot = props.project.shots.find((s) => s.id === refining);
   return (
     <>
       <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {props.project.shots.map((shot) => (
-          <ShotCard key={`${shot.id}-${shot.effectivePrompt}`} {...props} shot={shot} onPickLibrary={() => setPicking(shot)} />
+          <ShotCard key={`${shot.id}-${shot.effectivePrompt}`} {...props} shot={shot} onPickLibrary={() => setPicking(shot)} onRefine={() => setRefining(shot.id)} />
         ))}
       </ul>
+      {refineShot?.clip?.status === 'done' && (
+        <RefineDialog
+          key={refineShot.clip.libraryId}
+          shot={refineShot}
+          aspect={props.project.meta.aspect}
+          busy={props.busy}
+          onClose={() => setRefining(null)}
+          onSave={(refine) => props.onEdit({ shots: [{ id: refineShot.id, refine }] })}
+        />
+      )}
       {picking && (
         <LibraryPicker
           aspect={props.project.meta.aspect}

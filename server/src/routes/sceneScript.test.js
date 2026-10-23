@@ -166,6 +166,27 @@ describe("/api/scene-script", () => {
     }
   });
 
+  test("saves a shot's refine within its limits, shows how it plays, and clears it", async () => {
+    const id = (await request(app).post("/api/scene-script").send({ markdown: SCRIPT })).body.project.id;
+    await request(app).post(`/api/scene-script/${id}/voice`);
+    await until(() => isVoicing(id));
+    await request(app).post(`/api/scene-script/${id}/shots`).send({ confirmOverBenchmark: true });
+    await until(() => isOrderingShots(id));
+    const r = await request(app).patch(`/api/scene-script/${id}`).send({
+      shots: [{ id: "sh1", refine: { in: 1, out: 99, rate: 9, flip: true, zoom: 1.5, grade: "neon" } }],
+    });
+    assert.equal(r.status, 200);
+    const shot = r.body.project.shots[0];
+    assert.deepEqual(shot.refine, { in: 1, out: null, rate: 2, flip: true, zoom: 1.5, x: 0, y: 0, grade: "none" });
+    assert.equal(shot.playback.from, 1);
+    assert.ok(shot.playback.rate >= 0.5 && shot.playback.rate <= 2);
+    assert.ok(shot.playback.placeSec > 0);
+    const junk = await request(app).patch(`/api/scene-script/${id}`).send({ shots: [{ id: "sh1", refine: "x" }, { id: "sh1", refine: false }] });
+    assert.equal(junk.body.project.shots[0].refine.flip, true, "a malformed refine leaves the saved one alone");
+    const cleared = await request(app).patch(`/api/scene-script/${id}`).send({ shots: [{ id: "sh1", refine: null }] });
+    assert.equal(cleared.body.project.shots[0].refine, null);
+  });
+
   test("answers 404 for an id that is not a project id", async () => {
     assert.equal((await request(app).get("/api/scene-script/..%2F..%2Fsecrets")).status, 404);
     assert.equal((await request(app).get("/api/scene-script/not-a-uuid")).status, 404);
