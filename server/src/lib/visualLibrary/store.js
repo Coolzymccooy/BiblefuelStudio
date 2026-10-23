@@ -24,6 +24,15 @@ const STOP = new Set(("a an the and of in on at to with for by from his her thei
 
 export const isClipId = (id) => typeof id === "string" && ID_RE.test(id);
 
+/** The library's frame name for a clip's size: a clip only fits videos of the same shape. */
+export function aspectOf(width, height) {
+  if (!(width > 0 && height > 0)) return "portrait";
+  const ratio = width / height;
+  if (ratio > 1.1) return "landscape";
+  if (ratio < 0.9) return "portrait";
+  return "square";
+}
+
 export function clipDir(outputDir, id) {
   if (!isClipId(id)) throw new Error("invalid clip id");
   return path.join(outputDir, DIR, id);

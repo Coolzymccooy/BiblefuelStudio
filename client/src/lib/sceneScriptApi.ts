@@ -97,4 +97,10 @@ export const visualLibraryApi = {
     if (!res.ok) throw failure(res, 'Could not load the visual library');
     return res.data.clips as LibraryClip[];
   },
+  /** Add a clip made elsewhere. uploadPath is what uploadMedia(file, name, 'background') returned. */
+  async importClip(input: { uploadPath: string; prompt?: string; tags?: string[] }): Promise<LibraryClip> {
+    const res = await api.post('/api/visual-library/import', input);
+    if (!res.ok) throw failure(res, 'Could not import that clip');
+    return res.data.clip as LibraryClip;
+  },
 };

@@ -1,6 +1,9 @@
+import fs from "fs";
+import path from "path";
 import { Router } from "express";
-import { searchClips, similarClips, updateClip, removeClip, getClip, isClipId } from "../lib/visualLibrary/store.js";
+import { searchClips, similarClips, updateClip, removeClip, getClip, isClipId, addClip, aspectOf } from "../lib/visualLibrary/store.js";
 import { listProjects, readProject } from "../lib/sceneScript/projectStore.js";
+import { resolveSceneVideo } from "../lib/story/sceneVideo.js";
 
 /**
  * The visual library: every paid AI clip, reusable across videos.
@@ -8,6 +11,31 @@ import { listProjects, readProject } from "../lib/sceneScript/projectStore.js";
  */
 
 const ASPECTS = new Set(["portrait", "landscape", "square"]);
+
+const MAX_PROMPT = 1500;
+const MAX_COST_USD = 100;
+const UPLOAD_NAME = /^bg-video-[0-9a-f-]{36}\.(mp4|mov|webm|m4v)$/i;
+
+/** The import body's optional fields, or a message saying which one is wrong. */
+function importFields(body) {
+  const { prompt = "", tags = [], costUsd = 0, model = "", taskId = "" } = body || {};
+  if (typeof prompt !== "string" || prompt.length > MAX_PROMPT) return { error: `The prompt must be text of at most ${MAX_PROMPT} characters.` };
+  if (!Array.isArray(tags) || tags.length > 20 || tags.some((t) => typeof t !== "string")) return { error: "Tags must be a list of up to 20 words." };
+  if (typeof costUsd !== "number" || !Number.isFinite(costUsd) || costUsd < 0 || costUsd > MAX_COST_USD) {
+    return { error: `The cost must be between $0 and $${MAX_COST_USD}.` };
+  }
+  if (typeof model !== "string" || model.length > 80) return { error: "The model name is too long." };
+  if (typeof taskId !== "string" || taskId.length > 120) return { error: "The task id is too long." };
+  return { prompt: prompt.trim(), tags, costUsd, model: model || null, taskId: taskId || null };
+}
+
+/** A converted clip leaves the original upload behind; it is not wanted once the clip is in the library. */
+function removeOriginalUpload(outputDir, uploadPath, keptFile) {
+  const name = path.basename(String(uploadPath));
+  if (!UPLOAD_NAME.test(name)) return;
+  const original = path.join(outputDir, name);
+  if (path.resolve(original) !== path.resolve(keptFile)) fs.rmSync(original, { force: true });
+}
 
 function usedBy(dataDir, clipId) {
   return listProjects(dataDir)
@@ -29,6 +57,38 @@ export function createVisualLibraryRouter() {
     const prompt = typeof req.query.prompt === "string" ? req.query.prompt.slice(0, 1500) : "";
     const aspect = ASPECTS.has(req.query.aspect) ? req.query.aspect : null;
     res.json({ ok: true, matches: similarClips(req.ctx.dataDir, prompt, { aspect, limit: 6 }) });
+  });
+
+  // A clip made outside this server (an earlier prototype, another account):
+  // uploaded first with POST /api/media/upload-background, then checked,
+  // converted to H.264 when it needs it, and given a poster, as a Story scene
+  // clip is.
+  router.post("/import", async (req, res) => {
+    const fields = importFields(req.body);
+    if (fields.error) return res.status(400).json({ ok: false, error: fields.error });
+    const uploadPath = req.body?.uploadPath;
+    if (typeof uploadPath !== "string" || !uploadPath) return res.status(400).json({ ok: false, error: "Choose a clip to import." });
+    try {
+      const video = await resolveSceneVideo({ outputDir: req.ctx.outputDir, uploadPath });
+      if (!video.ok) return res.status(video.status).json({ ok: false, error: video.error });
+      removeOriginalUpload(req.ctx.outputDir, uploadPath, video.videoPath);
+      const clip = addClip(req.ctx, {
+        file: video.videoPath,
+        posterFile: video.posterPath,
+        prompt: fields.prompt,
+        tags: fields.tags,
+        costUsd: fields.costUsd,
+        model: fields.model,
+        taskId: fields.taskId,
+        aspect: aspectOf(video.width, video.height),
+        durationSec: video.durationSec,
+        source: { kind: "import" },
+      });
+      return res.json({ ok: true, clip });
+    } catch (e) {
+      console.warn("[visual-library] import failed:", e?.message || e);
+      return res.status(500).json({ ok: false, error: "The clip could not be imported." });
+    }
   });
 
   router.patch("/:id", (req, res) => {
