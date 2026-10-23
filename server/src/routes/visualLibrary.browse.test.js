@@ -33,6 +33,11 @@ describe("browsing the visual library", () => {
         fs.writeFileSync(out, "jpg");
         return true;
       },
+      probe: async (clipFile) => {
+        // A slow probe, so two back-fills started together really overlap.
+        if (clipFile.includes("twice")) await new Promise((r) => setTimeout(r, 150));
+        return path.basename(clipFile).startsWith("story-") ? { durationSec: 8.04 } : null;
+      },
     };
     app = express();
     app.use(express.json());
@@ -112,8 +117,24 @@ describe("browsing the visual library", () => {
     assert.equal(scenes[5].aiVideoLibraryId, undefined, "a file outside the outputs folder is never copied");
     assert.equal(readProject(ctx.dataDir, project.projectId).updatedAt, 1000, "the Story list order is left alone");
     assert.deepEqual(added.tags, ["grace beyond the race"]);
+    assert.equal(added.durationSec, 8.04, "the clip keeps its length so a reused shot can be held or trimmed");
     const again = await request(app).post("/api/visual-library/backfill-story");
     assert.equal(again.body.added, 0);
+  });
+
+  test("two back-fills at once copy each clip only once", async () => {
+    const project = createProject(ctx.dataDir, { title: "Twice" });
+    writeProject(ctx.dataDir, {
+      ...project,
+      scenes: [{ id: "s1", mediaKind: "video", aiVideoClip: true, aiVideoStatus: "done", videoPath: file("story-twice.mp4", ctx.outputDir) }],
+    });
+    const count = readLibrary(ctx.dataDir).length;
+    const [a, b] = await Promise.all([
+      request(app).post("/api/visual-library/backfill-story"),
+      request(app).post("/api/visual-library/backfill-story"),
+    ]);
+    assert.equal(a.body.added + b.body.added <= 2, true);
+    assert.equal(readLibrary(ctx.dataDir).length, count + 1);
   });
 
   test("a Story clip without its prompt is kept as prompt unknown", async () => {
@@ -142,8 +163,9 @@ describe("Story back-fill batches", () => {
         return { id: `s${n}`, mediaKind: "video", aiVideoClip: true, aiVideoStatus: "done", videoPath: f };
       });
       writeProject(ctx.dataDir, { ...project, scenes });
-      assert.deepEqual(backfillStoryClips(ctx, { limit: 2 }), { added: 2, remaining: 1 });
-      assert.deepEqual(backfillStoryClips(ctx, { limit: 2 }), { added: 1, remaining: 0 });
+      const probe = async () => ({ durationSec: 5 });
+      assert.deepEqual(await backfillStoryClips(ctx, { limit: 2, probe }), { added: 2, remaining: 1 });
+      assert.deepEqual(await backfillStoryClips(ctx, { limit: 2, probe }), { added: 1, remaining: 0 });
       assert.deepEqual(readLibrary(ctx.dataDir)[0].tags, ["joseph the dreamer"]);
       assert.equal(titleTag("The Prodigal Son Comes Home After Many Long Years Away"), "The Prodigal Son Comes Home After Many");
     } finally {

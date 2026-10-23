@@ -47,10 +47,17 @@ function usedBy(dataDir, clipId) {
     .map((p) => ({ id: p.id, title: p.meta?.title || "Untitled" }));
 }
 
+function joinRun(runs, key, start) {
+  if (!runs.has(key)) runs.set(key, Promise.resolve().then(start).finally(() => runs.delete(key)));
+  return runs.get(key);
+}
+
 export function createVisualLibraryRouter({ deps = {} } = {}) {
   const router = Router();
-  // One poster run at a time per user's library.
+  // One poster run and one Story back-fill at a time per user's library;
+  // a second request waits for the run already going.
   const posterRuns = new Map();
+  const backfillRuns = new Map();
 
   router.get("/", (req, res) => {
     const q = typeof req.query.q === "string" ? req.query.q.slice(0, 200) : "";
@@ -68,12 +75,8 @@ export function createVisualLibraryRouter({ deps = {} } = {}) {
   router.get("/leads", (req, res) => res.json({ ok: true, leads: leadsOf(req.ctx.dataDir) }));
 
   router.post("/posters", async (req, res) => {
-    const key = req.ctx.dataDir;
-    if (!posterRuns.has(key)) {
-      posterRuns.set(key, makeMissingPosters(req.ctx, { poster: deps.poster }).finally(() => posterRuns.delete(key)));
-    }
     try {
-      const r = await posterRuns.get(key);
+      const r = await joinRun(posterRuns, req.ctx.dataDir, () => makeMissingPosters(req.ctx, { poster: deps.poster }));
       return res.json({ ok: true, ...r });
     } catch (e) {
       console.warn(`[visual-library] posters failed: ${e?.message || e}`);
@@ -81,9 +84,10 @@ export function createVisualLibraryRouter({ deps = {} } = {}) {
     }
   });
 
-  router.post("/backfill-story", (req, res) => {
+  router.post("/backfill-story", async (req, res) => {
     try {
-      return res.json({ ok: true, ...backfillStoryClips(req.ctx) });
+      const r = await joinRun(backfillRuns, req.ctx.dataDir, () => backfillStoryClips(req.ctx, { probe: deps.probe }));
+      return res.json({ ok: true, ...r });
     } catch (e) {
       console.warn(`[visual-library] Story back-fill failed: ${e?.message || e}`);
       return res.status(500).json({ ok: false, error: "Older Story clips could not be added." });

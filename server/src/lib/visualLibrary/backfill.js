@@ -3,6 +3,7 @@ import path from "path";
 import { spawn } from "child_process";
 import { addClip, readLibrary, setPoster, markPosterFailed, clipDir } from "./store.js";
 import { listProjects, readProject, writeProject } from "../story/projectStore.js";
+import { probeSceneVideo } from "../story/sceneVideo.js";
 import { VIDEO_INPUT_GUARD } from "../videoInputGuard.js";
 
 /**
@@ -37,12 +38,16 @@ export function titleTag(title) {
 const storyClipsToKeep = (ctx, project) => (project?.scenes || []).filter((s) => isKeptStoryClip(s) && !s.aiVideoLibraryId
   && typeof s.videoPath === "string" && isInside(ctx.outputDir, s.videoPath) && fs.existsSync(s.videoPath));
 
-function keepProjectClips(ctx, project, scenes, keep) {
+async function keepProjectClips(ctx, project, scenes, keep, probe) {
+  // Probe first: a clip without its length can't be slowed, held or trimmed when reused.
+  const lengths = {};
+  for (const s of scenes) lengths[s.id] = (await probe(s.videoPath).catch(() => null))?.durationSec || null;
+  // From here on nothing awaits, so no other write to the project can come between the re-read and the write.
   const found = {};
   for (const s of scenes) {
     try {
       found[s.id] = keep(ctx, {
-        file: s.videoPath, copy: true, prompt: s.aiVideoPrompt || "",
+        file: s.videoPath, copy: true, prompt: s.aiVideoPrompt || "", durationSec: lengths[s.id],
         aspect: project.aspect || "portrait", costUsd: Number(s.aiVideoCostUsd) || 0,
         source: { kind: "story", projectId: project.projectId, sceneId: s.id },
         tags: [titleTag(project.title)].filter(Boolean),
@@ -69,7 +74,7 @@ function keepProjectClips(ctx, project, scenes, keep) {
  * scene keeps its own copy. A clip ordered before its prompt was saved is
  * kept as "prompt unknown": the prompt it was made with cannot be recovered.
  */
-export function backfillStoryClips(ctx, { keep = addClip, limit = MAX_STORY_CLIPS_PER_CALL } = {}) {
+export async function backfillStoryClips(ctx, { keep = addClip, probe = probeSceneVideo, limit = MAX_STORY_CLIPS_PER_CALL } = {}) {
   let added = 0;
   let remaining = 0;
   for (const summary of listProjects(ctx.dataDir)) {
@@ -79,7 +84,7 @@ export function backfillStoryClips(ctx, { keep = addClip, limit = MAX_STORY_CLIP
       if (!scenes.length) continue;
       const room = Math.max(0, limit - added);
       remaining += scenes.length - Math.min(room, scenes.length);
-      if (room) added += keepProjectClips(ctx, project, scenes.slice(0, room), keep);
+      if (room) added += await keepProjectClips(ctx, project, scenes.slice(0, room), keep, probe);
     } catch (e) {
       console.warn(`[visual-library] Story back-fill skipped project ${summary.projectId}: ${e?.message || e}`);
     }
