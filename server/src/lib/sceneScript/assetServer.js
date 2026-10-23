@@ -1,6 +1,7 @@
 import http from "http";
 import fs from "fs";
 import path from "path";
+import { pipeline } from "stream";
 
 /**
  * A short-lived file server for one render: Chrome (inside Remotion) loads
@@ -36,11 +37,11 @@ function sendFile(req, res, file) {
     }
     res.writeHead(206, { "Content-Range": `bytes ${start}-${end}/${size}`, "Content-Length": end - start + 1 });
     if (req.method === "HEAD") return res.end();
-    return fs.createReadStream(file, { start, end }).pipe(res);
+    return pipeline(fs.createReadStream(file, { start, end }), res, () => {});
   }
   res.writeHead(200, { "Content-Length": size });
   if (req.method === "HEAD") return res.end();
-  return fs.createReadStream(file).pipe(res);
+  return pipeline(fs.createReadStream(file), res, () => {});
 }
 
 /**
@@ -49,7 +50,10 @@ function sendFile(req, res, file) {
  */
 export function startAssetServer(files) {
   const allowed = new Map(Object.entries(files));
+  let host = "";
   const server = http.createServer((req, res) => {
+    // Only Chrome on this machine, by address: a page using a rebound DNS name gets nothing.
+    if (req.headers.host !== host) { res.writeHead(403); return res.end(); }
     cors(res);
     if (req.method === "OPTIONS") { res.writeHead(204); return res.end(); }
     if (req.method !== "GET" && req.method !== "HEAD") { res.writeHead(405); return res.end(); }
@@ -63,6 +67,7 @@ export function startAssetServer(files) {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", () => {
       const { port } = server.address();
+      host = `127.0.0.1:${port}`;
       resolve({
         port,
         url: (n) => `http://127.0.0.1:${port}/${encodeURIComponent(n)}`,

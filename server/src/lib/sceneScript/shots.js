@@ -136,15 +136,23 @@ export function planShots(script) {
  * fill, so the clip ordered is that long (4–12 s), slowed in the render when
  * a slot is longer than 12 s.
  */
+const MIN_SPAN_SEC = 1;
+
 export function shotSpans(shots, timeline) {
   const startOf = (shot) => {
     const line = timeline.lines.find((l) => l.id === shot.startLineId);
     return line ? Math.max(0, line.start + (Number(shot.offsetSec) || 0) - 0.25) : null;
   };
   const placed = shots.map((s) => ({ shot: s, at: startOf(s) })).filter((x) => x.at !== null);
+  // Nudged offsets may cross; keep starts in order and every shot at least MIN_SPAN_SEC long.
+  const starts = [];
+  placed.forEach((x, i) => { starts.push(i === 0 ? 0 : Math.max(x.at, starts[i - 1] + MIN_SPAN_SEC)); });
+  for (let i = starts.length - 1; i > 0; i -= 1) {
+    starts[i] = Math.min(starts[i], timeline.total - MIN_SPAN_SEC * (starts.length - i));
+  }
   return placed.map((x, i) => {
-    const from = i === 0 ? 0 : x.at;
-    const to = i === placed.length - 1 ? timeline.total : placed[i + 1].at;
+    const from = Math.max(0, starts[i]);
+    const to = i === placed.length - 1 ? timeline.total : starts[i + 1];
     return { id: x.shot.id, from: +from.toFixed(3), to: +to.toFixed(3), seconds: +(to - from).toFixed(3) };
   });
 }

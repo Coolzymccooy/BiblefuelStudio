@@ -153,9 +153,9 @@ export function searchClips(dataDir, { q = "", aspect = null, limit = 60 } = {})
 }
 
 /** Clips whose prompt is close to this one: offered before ordering a new clip. */
-export function similarClips(dataDir, prompt, { aspect = null, threshold = 0.3, limit = 3 } = {}) {
+export function similarClips(dataDir, prompt, { aspect = null, threshold = 0.3, limit = 3, clips = null } = {}) {
   const want = promptWords(prompt);
-  return readLibrary(dataDir)
+  return (clips || readLibrary(dataDir))
     .filter((c) => c.promptKnown && (!aspect || c.aspect === aspect))
     .map((c) => ({ clip: c, score: similarity(want, promptWords(c.prompt)) }))
     .filter((x) => x.score >= threshold)

@@ -379,7 +379,7 @@ app.use("/api/longform",  requireAuth, withUserScope, requireVerifiedEmail,     
 app.use("/api/timeline",  requireAuth, withUserScope, requireVerifiedEmail,                      timelineRouter);
 // Scene scripts and the visual library spend the shared BytePlus balance: super admins only (Phase 1).
 app.use("/api/scene-script", requireAuth, withUserScope, requireVerifiedEmail, requireSuperAdmin, createSceneScriptRouter());
-app.use("/api/visual-library", requireAuth, withUserScope, requireSuperAdmin, createVisualLibraryRouter());
+app.use("/api/visual-library", requireAuth, withUserScope, requireVerifiedEmail, requireSuperAdmin, createVisualLibraryRouter());
 app.use("/api/pexels",    requireAuth, withUserScope, requireVerifiedEmail,                       pexelsRouter);
 app.use("/api/pixabay",   requireAuth, withUserScope, requireVerifiedEmail,                       pixabayRouter);
 app.use("/api/gumroad",   requireAuth, withUserScope, featureGate("gumroad"),                     gumroadRouter);

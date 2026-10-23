@@ -6,7 +6,7 @@ import { runFfmpeg } from "../motion/render.js";
 import { probeAudioDurationSec } from "../story/storyRender.js";
 import { runExclusive } from "../heavyJobGate.js";
 import { FONT_DIR } from "../videoFilters.js";
-import { getClip, clipFile } from "../visualLibrary/store.js";
+import { getClip, clipFile, readLibrary } from "../visualLibrary/store.js";
 import { readProject, updateProject, projectOutputDir, projectOutputUrl } from "./projectStore.js";
 import { buildRenderData, musicSections } from "./renderData.js";
 import { resolveBed } from "./music.js";
@@ -55,6 +55,7 @@ async function remotionRender({ serveUrl, inputProps, outputLocation, onProgress
   const { cancelSignal, cancel } = makeCancelSignal();
   const onAbort = () => cancel();
   signal?.addEventListener("abort", onAbort, { once: true });
+  if (signal?.aborted) cancel();
   const chromiumOptions = { enableMultiProcessOnLinux: true };
   try {
     const composition = await selectComposition({ serveUrl, id: COMPOSITION_ID, inputProps, chromiumOptions });
@@ -77,14 +78,15 @@ const defaultDeps = Object.freeze({
 });
 
 /** What stops this project from rendering, as sentences for the page. */
-export function renderBlockers(ctx, project) {
+export function renderBlockers(ctx, project, { clips = readLibrary(ctx.dataDir) } = {}) {
   const out = [];
   if (!project.timeline || project.voice?.status !== "done" || project.timeline.missing?.length) {
     out.push("Voice every line first.");
   }
   const missing = project.shots.filter((s) => !(s.clip?.status === "done" && s.clip.libraryId));
   if (missing.length) out.push(`${missing.length} shot(s) have no clip yet.`);
-  const lost = project.shots.filter((s) => s.clip?.libraryId && !getClip(ctx.dataDir, s.clip.libraryId));
+  const ids = new Set(clips.map((c) => c.id));
+  const lost = project.shots.filter((s) => s.clip?.libraryId && !ids.has(s.clip.libraryId));
   if (lost.length) out.push(`${lost.length} shot(s) use a clip that was removed from the library.`);
   const beds = project.music.cues.filter((c) => !resolveBed(ctx.dataDir, c.bed));
   if (beds.length) out.push(`${beds.length} music cue(s) have no playable bed.`);
@@ -157,18 +159,17 @@ async function finish(deps, raw, out, signal) {
 
 const slug = (t) => String(t || "scene-script").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 50) || "scene-script";
 
-async function runRender(ctx, id, deps, signal) {
-  const started = Date.now();
-  const project = readProject(ctx.dataDir, id);
-  const outDir = projectOutputDir(ctx.outputDir, id);
-  const stageDir = path.join(outDir, "stage");
+const stopIfCancelled = (signal) => { if (signal?.aborted) throw new Error("Render cancelled."); };
+
+async function renderRaw(ctx, id, project, { stageDir, raw }, deps, signal) {
   const { files, names } = await stageAssets(ctx, project, stageDir, deps, signal);
+  stopIfCancelled(signal);
   const server = await startAssetServer(files);
-  const raw = path.join(stageDir, "raw.mp4");
   let lastWrite = 0;
   try {
     const inputProps = buildRenderData(project, { url: server.url, names });
     const serveUrl = await deps.serveUrl();
+    stopIfCancelled(signal);
     await deps.render({
       serveUrl, inputProps, outputLocation: raw, signal,
       onProgress: (p) => {
@@ -180,10 +181,27 @@ async function runRender(ctx, id, deps, signal) {
   } finally {
     await server.close();
   }
+  stopIfCancelled(signal);
+}
+
+async function runRender(ctx, id, deps, signal) {
+  const started = Date.now();
+  const project = readProject(ctx.dataDir, id);
+  const outDir = projectOutputDir(ctx.outputDir, id);
+  const stageDir = path.join(outDir, "stage");
+  const raw = path.join(stageDir, "raw.mp4");
   const name = `${slug(project.meta?.title)}-${id.slice(0, 8)}.mp4`;
   const out = path.join(outDir, name);
-  await finish(deps, raw, out, signal);
-  fs.rmSync(stageDir, { recursive: true, force: true });
+  try {
+    await renderRaw(ctx, id, project, { stageDir, raw }, deps, signal);
+    await finish(deps, raw, out, signal);
+  } finally {
+    // The stage holds a raw render of hundreds of MB; never leave it behind.
+    fs.rmSync(stageDir, { recursive: true, force: true });
+  }
+  // A renamed title gives a new file name; the old video goes once the new one is safe.
+  const previous = project.render?.file;
+  if (previous && previous !== name && /^[a-z0-9-]+\.mp4$/.test(previous)) fs.rmSync(path.join(outDir, previous), { force: true });
   const durationSec = Number(await deps.probe(out)) || project.timeline.total;
   return {
     status: "done", file: name, url: projectOutputUrl(id, name), sizeBytes: fs.statSync(out).size,

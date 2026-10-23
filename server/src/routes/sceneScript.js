@@ -4,7 +4,7 @@ import { Router } from "express";
 import { DATA_DIR, OUTPUT_DIR } from "../lib/paths.js";
 import { isSeedanceConfigured } from "../lib/videoGen/providers/seedance.js";
 import { wouldExceedCap, ledgerSummary } from "../lib/videoGen/spend.js";
-import { similarClips } from "../lib/visualLibrary/store.js";
+import { similarClips, readLibrary } from "../lib/visualLibrary/store.js";
 import { projectFromMarkdown, MAX_MARKDOWN_CHARS } from "../lib/sceneScript/model.js";
 import {
   createProject, readProject, updateProject, listProjects, deleteProject, isProjectId,
@@ -37,23 +37,29 @@ function needsVoice(project) {
 }
 
 const busy = (id) => isVoicing(id) || isOrderingShots(id) || isRendering(id);
+const SUGGEST_TIMEOUT_MS = 90_000;
+
+/** The steps that change voices or clips wait for a render, which reads them as it goes. */
+const blockedByRender = (res, id) => isRendering(id)
+  && fail(res, 409, "RENDERING", "Wait for the render to finish, or stop it, first.");
 
 /** The project as the page sees it: stored fields plus what is derived from them. */
 function view(ctx, raw) {
   const project = recoverInterruptedRender(recoverInterruptedVoicing(raw));
   const { source, ...rest } = project;
   const aspect = project.meta?.aspect;
+  const clips = readLibrary(ctx.dataDir);
   return {
     ...rest,
     source: { ignored: source.ignored, warnings: source.warnings, parsedAt: source.parsedAt },
     shots: project.shots.map((s) => ({
       ...s,
       effectivePrompt: shotPrompt(project, s),
-      similar: s.clip?.status === "done" ? [] : similarClips(ctx.dataDir, shotPrompt(project, s), { aspect }).map((x) => ({ id: x.clip.id, url: x.clip.url, posterUrl: x.clip.posterUrl, prompt: x.clip.prompt, score: x.score })),
+      similar: s.clip?.status === "done" ? [] : similarClips(ctx.dataDir, shotPrompt(project, s), { aspect, clips }).map((x) => ({ id: x.clip.id, url: x.clip.url, posterUrl: x.clip.posterUrl, prompt: x.clip.prompt, score: x.score })),
     })),
     needsVoice: needsVoice(project),
     estimate: estimateShots(project),
-    blockers: renderBlockers(ctx, project),
+    blockers: renderBlockers(ctx, project, { clips }),
     running: { voice: isVoicing(project.id), shots: isOrderingShots(project.id), render: isRendering(project.id) },
   };
 }
@@ -72,7 +78,7 @@ function applyLines(project, edits) {
         ...(text ? { text } : {}),
         // A re-take forgets the line's audio so the next voice pass records it again.
         ...(e.retake === true ? { audio: null } : {}),
-        ...(e.speaker !== undefined && project.cast[e.speaker] ? { speaker: e.speaker } : {}),
+        ...(e.speaker !== undefined && Object.hasOwn(project.cast, e.speaker) ? { speaker: e.speaker } : {}),
         ...(e.voice === null ? { voice: undefined } : isVoiceName(e.voice) ? { voice: e.voice } : {}),
         ...(e.rate === null ? { rate: undefined } : typeof e.rate === "string" ? { rate: e.rate } : {}),
         ...(e.pitch === null ? { pitch: undefined } : typeof e.pitch === "string" ? { pitch: e.pitch } : {}),
@@ -204,7 +210,7 @@ export function createSceneScriptRouter({ ledgerDir = DATA_DIR, deps = {} } = {}
 
   router.post("/:id/voice", (req, res) => {
     const project = load(req, res);
-    if (!project) return undefined;
+    if (!project || blockedByRender(res, project.id)) return undefined;
     if (!process.env.AZURE_SPEECH_KEY || !process.env.AZURE_SPEECH_REGION) {
       return fail(res, 503, "NOT_CONFIGURED", "Azure Speech is not set up on this server.");
     }
@@ -215,15 +221,26 @@ export function createSceneScriptRouter({ ledgerDir = DATA_DIR, deps = {} } = {}
 
   router.post("/:id/suggest-shots", async (req, res) => {
     const project = load(req, res);
-    if (!project) return undefined;
+    if (!project || blockedByRender(res, project.id)) return undefined;
     const ids = Array.isArray(req.body?.shotIds) ? req.body.shotIds.filter((x) => typeof x === "string").slice(0, 100) : undefined;
-    const r = await suggestShotPrompts(project, { shotIds: ids, llm: deps.llm });
-    if (!r.ok) return fail(res, 502, "NO_SUGGESTIONS", r.error);
-    const saved = updateProject(req.ctx.dataDir, project.id, (p) => ({
-      ...p,
-      shots: p.shots.map((s) => (r.prompts[s.id] && s.clip?.status !== "done" ? { ...s, prompt: r.prompts[s.id], suggested: true } : s)),
-    }));
-    return res.json({ ok: true, project: view(req.ctx, saved) });
+    let timer;
+    try {
+      const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve({ ok: false, error: "The suggestion took too long. Try again." }), SUGGEST_TIMEOUT_MS); });
+      const r = await Promise.race([suggestShotPrompts(project, { shotIds: ids, llm: deps.llm }), timeout]);
+      if (!r.ok) return fail(res, 502, "NO_SUGGESTIONS", r.error);
+      const saved = updateProject(req.ctx.dataDir, project.id, (p) => ({
+        ...p,
+        shots: p.shots.map((s) => (r.prompts[s.id] && s.clip?.status !== "done" ? { ...s, prompt: r.prompts[s.id], suggested: true } : s)),
+      }));
+      // Deleted while the model was thinking.
+      if (!saved) return fail(res, 404, "NOT_FOUND", "Scene script not found.");
+      return res.json({ ok: true, project: view(req.ctx, saved) });
+    } catch (e) {
+      console.warn(`[scene-script] suggest-shots ${project.id} failed: ${e?.message || e}`);
+      return fail(res, 502, "NO_SUGGESTIONS", "Shot prompts could not be suggested. Try again.");
+    } finally {
+      clearTimeout(timer);
+    }
   });
 
   const onlyOf = (body) => (Array.isArray(body?.only) ? body.only.filter((x) => typeof x === "string").slice(0, 100) : undefined);
@@ -238,9 +255,10 @@ export function createSceneScriptRouter({ ledgerDir = DATA_DIR, deps = {} } = {}
     if (!isSeedanceConfigured()) return fail(res, 503, "NOT_CONFIGURED", "AI video is not set up on this server.");
     const project = load(req, res);
     if (!project) return undefined;
+    if (blockedByRender(res, project.id)) return undefined;
     if (isOrderingShots(project.id)) return fail(res, 409, "RUNNING", "Clips are already being made for this script.");
     const est = estimateShots(project, onlyOf(req.body));
-    if (!est.clips) return fail(res, 400, "NOTHING_TO_ORDER", "Every shot already has a clip.");
+    if (!est.clips && !est.refetch) return fail(res, 400, "NOTHING_TO_ORDER", "Every shot already has a clip.");
     const budget = wouldExceedCap(ledgerDir, est.usd);
     if (budget.exceeded) return fail(res, 409, "BUDGET", budget.error);
     if (est.overBenchmark && req.body?.confirmOverBenchmark !== true) {
@@ -260,7 +278,7 @@ export function createSceneScriptRouter({ ledgerDir = DATA_DIR, deps = {} } = {}
 
   router.post("/:id/shots/:shotId/library", (req, res) => {
     const project = load(req, res);
-    if (!project) return undefined;
+    if (!project || blockedByRender(res, project.id)) return undefined;
     const r = useLibraryClip(req.ctx, project.id, String(req.params.shotId), String(req.body?.clipId || ""));
     if (!r.ok) return fail(res, r.status, "LIBRARY", r.error);
     return res.json({ ok: true, project: view(req.ctx, r.project) });

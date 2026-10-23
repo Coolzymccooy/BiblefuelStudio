@@ -91,7 +91,9 @@ async function voiceChant(deps, dir, line, delivery, key, room) {
     const file = path.join(dir, `${line.id}-${key}-v${i}.wav`);
     if (!fs.existsSync(file)) {
       const { audio } = await synthWithRetry(deps, ssmlFor({ voice: layer.voice, rate: delivery.rate, pitch: layer.pitch, text: speakableText(line) }));
-      fs.writeFileSync(file, audio);
+      // Reused on the next run, so it must never exist half-written.
+      fs.writeFileSync(`${file}.part`, audio);
+      fs.renameSync(`${file}.part`, file);
     }
     layers.push({ file, offsetMs: layer.offsetMs });
   }
@@ -112,13 +114,29 @@ async function voiceLine(ctx, project, line, deps) {
   if (line.audio?.key === key && fs.existsSync(file)) return null;
   fs.mkdirSync(dir, { recursive: true });
   const delivery = deliveryForLine(line, project.cast);
-  const { raw, heard } = delivery.ensemble
-    ? await voiceChant(deps, dir, line, delivery, key, project.cast.Ensemble?.room)
-    : await voiceSingle(deps, dir, line, delivery, key);
-  await ffmpegOrThrow(deps, ["-i", raw, "-af", `loudnorm=I=${loudnessTarget(line)}:TP=-1.5:LRA=11`, "-ar", "48000", "-ac", "2", file]);
-  fs.rmSync(raw, { force: true });
+  const raw = path.join(dir, `${line.id}-${key}.raw.wav`);
+  try {
+    const { heard } = delivery.ensemble
+      ? await voiceChant(deps, dir, line, delivery, key, project.cast.Ensemble?.room)
+      : await voiceSingle(deps, dir, line, delivery, key);
+    await ffmpegOrThrow(deps, ["-i", raw, "-af", `loudnorm=I=${loudnessTarget(line)}:TP=-1.5:LRA=11`, "-ar", "48000", "-ac", "2", file]);
+    return await finishLine(deps, project, line, { key, name, file, heard, dir });
+  } finally {
+    fs.rmSync(raw, { force: true });
+  }
+}
+
+/** Takes from earlier deliveries of this line are no longer used once the new one is saved. */
+function removeOldTakes(dir, lineId, key) {
+  for (const f of fs.readdirSync(dir)) {
+    if (f.startsWith(`${lineId}-`) && !f.startsWith(`${lineId}-${key}`)) fs.rmSync(path.join(dir, f), { force: true });
+  }
+}
+
+async function finishLine(deps, project, line, { key, name, file, heard, dir }) {
   const durationSec = Number(await deps.probe(file)) || 0;
   if (!(durationSec > 0)) throw new Error("The voice file came back empty.");
+  removeOldTakes(dir, line.id, key);
   return {
     key, file: name, url: projectOutputUrl(project.id, "voice", name), durationSec: +durationSec.toFixed(3),
     words: line.kind === "chant" ? [] : alignWords(line.text, heard, durationSec),

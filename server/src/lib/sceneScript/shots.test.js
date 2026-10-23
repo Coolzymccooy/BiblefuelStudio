@@ -86,4 +86,12 @@ describe("shotSpans", () => {
       { id: "z", from: 14.75, to: 20, seconds: 5.25 },
     ]);
   });
+
+  test("keeps shots in order and at least a second long when offsets cross", () => {
+    const timeline = { total: 20, lines: [{ id: "a", start: 1.6 }, { id: "b", start: 8 }, { id: "c", start: 9 }] };
+    const spans = shotSpans([{ id: "x", startLineId: "a" }, { id: "y", startLineId: "b", offsetSec: 10 }, { id: "z", startLineId: "c" }], timeline);
+    for (const s of spans) assert.ok(s.seconds >= 1, `${s.id} is ${s.seconds} s`);
+    assert.ok(spans.every((s, i) => i === 0 || s.from === spans[i - 1].to));
+    assert.equal(spans.at(-1).to, 20);
+  });
 });
