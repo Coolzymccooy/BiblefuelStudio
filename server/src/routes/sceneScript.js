@@ -17,6 +17,8 @@ import {
 import { suggestShotPrompts } from "../lib/sceneScript/shotDirector.js";
 import { startRender, isRendering, cancelRender, renderBlockers, recoverInterruptedRender } from "../lib/sceneScript/renderStage.js";
 import { isBedRef } from "../lib/sceneScript/music.js";
+import { normaliseRefine } from "../lib/sceneScript/refine.js";
+import { shotPlaybacks } from "../lib/sceneScript/renderData.js";
 
 /**
  * Scene scripts: paste an authored cinematic script, voice it word for word,
@@ -49,12 +51,16 @@ function view(ctx, raw) {
   const { source, ...rest } = project;
   const aspect = project.meta?.aspect;
   const clips = readLibrary(ctx.dataDir);
+  // How each clip will play in its place, so the refine panel can say so; known once voiced.
+  const plays = project.timeline ? Object.fromEntries(shotPlaybacks(project).map((p) => [p.id, p])) : {};
   return {
     ...rest,
     source: { ignored: source.ignored, warnings: source.warnings, parsedAt: source.parsedAt },
     shots: project.shots.map((s) => ({
       ...s,
       effectivePrompt: shotPrompt(project, s),
+      refine: s.refine || null,
+      playback: plays[s.id] ? { rate: plays[s.id].rate, from: plays[s.id].trimFrom, to: plays[s.id].trimTo, hold: plays[s.id].hold, placeSec: plays[s.id].len } : null,
       similar: s.clip?.status === "done" ? [] : similarClips(ctx.dataDir, shotPrompt(project, s), { aspect, clips }).map((x) => ({ id: x.clip.id, url: x.clip.url, posterUrl: x.clip.posterUrl, prompt: x.clip.prompt, score: x.score })),
     })),
     needsVoice: needsVoice(project),
@@ -104,6 +110,9 @@ function applyShots(project, edits) {
         ...(prompt !== undefined ? { prompt: prompt || null, suggested: false } : {}),
         ...(e.accept === true ? { suggested: false } : {}),
         ...(Number.isFinite(offset) ? { offsetSec: Math.max(-3, Math.min(10, offset)) } : {}),
+        // null clears the refine; anything that is not an object leaves it as it is.
+        ...(e.refine === null ? { refine: null }
+          : e.refine && typeof e.refine === "object" && !Array.isArray(e.refine) ? { refine: normaliseRefine(e.refine, s.clip?.durationSec) } : {}),
       };
     }),
   };

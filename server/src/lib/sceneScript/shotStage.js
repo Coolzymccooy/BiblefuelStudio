@@ -202,6 +202,8 @@ async function collect(ctx, id, shotId, taskId, { ledgerDir, deps }) {
   patchShot(ctx.dataDir, id, shotId, (s) => (s.clip?.taskId === taskId ? {
     ...s,
     clip: { status: "done", libraryId: clip.id, url: clip.url, posterUrl: clip.posterUrl, durationSec, costUsd, fromLibrary: false, prompt: clip.prompt },
+    // Trim points and framing were set for the old clip.
+    refine: null,
   } : null));
   return undefined;
 }
@@ -289,6 +291,7 @@ export function useLibraryClip(ctx, id, shotId, clipId) {
     shots: p.shots.map((s) => (s.id === shotId ? {
       ...s,
       clip: { status: "done", libraryId: clip.id, url: clip.url, posterUrl: clip.posterUrl, durationSec: clip.durationSec, costUsd: 0, fromLibrary: true, prompt: clip.prompt },
+      refine: null,
     } : s)),
   }));
   return { ok: true, project: written };

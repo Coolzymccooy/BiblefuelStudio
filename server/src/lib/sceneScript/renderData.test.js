@@ -6,6 +6,7 @@ import { fileURLToPath } from "url";
 import { projectFromMarkdown } from "./model.js";
 import { withTimeline } from "./voiceStage.js";
 import { buildRenderData, musicSections } from "./renderData.js";
+import { GRADES } from "./refine.js";
 import { duckAt, dropGate, musicVolume, baseLevel, DUCK } from "./mixCurve.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -86,6 +87,18 @@ describe("buildRenderData on the fixture", () => {
   test("shows the end card from the final chant", () => {
     assert.equal(data.endCard.at, data.lines.at(-1).start);
     assert.equal(data.endCard.reference, "1 CORINTHIANS 15:10");
+  });
+
+  test("plays each shot as refined: its part of the clip, speed, held end and look", () => {
+    const refine = { in: 2, out: 2.6, rate: null, flip: true, zoom: 1.5, x: 0.5, y: 0, grade: "mono" };
+    const refined = { ...project, shots: project.shots.map((s, i) => (i === 1 ? { ...s, refine } : s)) };
+    const d = buildRenderData(refined, assets(refined));
+    const s = d.shots[1];
+    assert.deepEqual([s.trimFrom, s.trimTo, s.rate], [2, 2.6, 0.5]);
+    assert.ok(s.hold > 0, "too little clip for its place holds the last frame");
+    assert.deepEqual(s.look, { filter: GRADES.mono, flip: true, zoom: 1.5, x: 0.5, y: 0 });
+    const plain = d.shots[0];
+    assert.deepEqual([plain.trimFrom, plain.trimTo, plain.hold, plain.look.flip], [0, 8, 0, false]);
   });
 
   test("points every voice line at its staged file", () => {

@@ -1,5 +1,6 @@
 import { shotSpans } from "./shots.js";
 import { baseLevel } from "./mixCurve.js";
+import { XFADE_SEC, refineLook, shotPlayback } from "./refine.js";
 
 /**
  * The props the Remotion composition renders from: every time is in
@@ -52,6 +53,24 @@ export function musicSections(project, timeline) {
 }
 
 /**
+ * Where each shot plays and how its clip fills that place: the part of the
+ * clip, the speed, any held last frame, and the look. A shot after the first
+ * starts XFADE_SEC early to dissolve over the one before.
+ */
+export function shotPlaybacks(project) {
+  return shotSpans(project.shots, project.timeline).map((s, i) => {
+    const shot = project.shots.find((x) => x.id === s.id);
+    const clipDur = Number(shot.clip?.durationSec) || 0;
+    const len = s.to - s.from + (i === 0 ? 0 : XFADE_SEC);
+    const p = shotPlayback({ refine: shot.refine, clipDur, len });
+    return {
+      id: s.id, from: s.from, to: s.to, len: +len.toFixed(3), rate: p.rate, trimFrom: p.from, trimTo: p.to, hold: p.hold,
+      look: refineLook(shot.refine),
+    };
+  });
+}
+
+/**
  * @param {object} project a voiced project whose shots all have clips
  * @param {{ url: (name: string) => string, names: { voice: Record<string,string>, music: Record<string,string>, clips: Record<string,string>, fonts: object, heartbeat?: string, impact?: string } }} assets
  */
@@ -66,11 +85,11 @@ export function buildRenderData(project, assets) {
     label: l.kind === "scripture" ? scriptureLabel(project.lines, i) : "",
     reference: l.reference || "",
   }));
-  const spans = shotSpans(project.shots, tl);
-  const shots = spans.map((s) => {
-    const shot = project.shots.find((x) => x.id === s.id);
-    return { id: s.id, from: s.from, to: s.to, src: assets.url(assets.names.clips[s.id]), clipDur: Number(shot.clip?.durationSec) || s.seconds };
-  });
+  const plays = shotPlaybacks(project);
+  const shots = plays.map((p) => ({
+    id: p.id, from: p.from, to: p.to, src: assets.url(assets.names.clips[p.id]),
+    rate: p.rate, trimFrom: p.trimFrom, trimTo: p.trimTo, hold: p.hold, look: p.look,
+  }));
   const sections = musicSections(project, tl);
   const lastChant = lines.at(-1)?.kind === "chant" ? lines.at(-1) : null;
   const hb = sections.find((s) => s.heartbeat);
