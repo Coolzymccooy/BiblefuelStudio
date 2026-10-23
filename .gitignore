@@ -16,3 +16,6 @@ make-*.png
 
 tok.txt
 tok-admin.txt
+
+# Remotion composition bundle (built in the Docker image)
+server/remotion-bundle/

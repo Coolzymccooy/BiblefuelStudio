@@ -1,12 +1,15 @@
 import { Link } from 'react-router-dom';
-import { Mic, Film, Image, Video, Music, List, ChevronRight, type LucideIcon } from 'lucide-react';
+import { Mic, Film, Image, Video, Music, List, ChevronRight, ScrollText, type LucideIcon } from 'lucide-react';
 import { ScreenHeader } from '../components/ui/ScreenHeader';
+import { useAuth } from '../hooks/useAuth';
 
 interface Tool {
     to: string;
     icon: LucideIcon;
     title: string;
     desc: string;
+    /** Hidden for everyone but super admins; the server enforces the gate too. */
+    superOnly?: boolean;
 }
 
 const tools: Tool[] = [
@@ -15,9 +18,12 @@ const tools: Tool[] = [
     { to: '/app/backgrounds', icon: Image, title: 'Backgrounds', desc: 'Find and save footage.' },
     { to: '/app/render', icon: Video, title: 'Render', desc: 'Export and share your MP4.' },
     { to: '/app/lyric-video', icon: Music, title: 'Lyric video', desc: 'Turn your song into a lyric video.' },
+    { to: '/app/scene-script', icon: ScrollText, title: 'Scene script', desc: 'Film a finished script, every line as written.', superOnly: true },
 ];
 
 export function StudioHubPage() {
+    const { isSuperAdmin } = useAuth();
+    const visibleTools = tools.filter((t) => !t.superOnly || isSuperAdmin);
     return (
         <div className="space-y-6">
             <ScreenHeader
@@ -26,7 +32,7 @@ export function StudioHubPage() {
                 subtitle="Voice, arrange, dress, and render — all in one place."
             />
             <div className="grid grid-cols-2 gap-3">
-                {tools.map(({ to, icon: Icon, title, desc }) => (
+                {visibleTools.map(({ to, icon: Icon, title, desc }) => (
                     <Link
                         key={to}
                         to={to}

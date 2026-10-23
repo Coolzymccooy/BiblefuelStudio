@@ -62,6 +62,8 @@ import { ownershipWarning } from "./src/lib/userPlan.js";
 import { cacheControlForOutput, publicAssetHeaders } from "./src/lib/mediaCache.js";
 import { reconcilePersistedJobs } from "./src/lib/renderJobs.js";
 import { resumeAnimations } from "./src/lib/story/animateStage.js";
+import { createSceneScriptRouter, resumeSceneScriptShots } from "./src/routes/sceneScript.js";
+import { createVisualLibraryRouter } from "./src/routes/visualLibrary.js";
 import { isSeedanceConfigured } from "./src/lib/videoGen/providers/seedance.js";
 import { hasLibass } from "./src/lib/kinetic/capability.js";
 
@@ -375,6 +377,9 @@ app.use("/api/longform",  requireAuth, withUserScope, requireVerifiedEmail,     
 // render, and every later poll 429'd, so the finished video never appeared.
 // The quota belongs on the render POST alone; see routes/timeline.js.
 app.use("/api/timeline",  requireAuth, withUserScope, requireVerifiedEmail,                      timelineRouter);
+// Scene scripts and the visual library spend the shared BytePlus balance: super admins only (Phase 1).
+app.use("/api/scene-script", requireAuth, withUserScope, requireVerifiedEmail, requireSuperAdmin, createSceneScriptRouter());
+app.use("/api/visual-library", requireAuth, withUserScope, requireVerifiedEmail, requireSuperAdmin, createVisualLibraryRouter());
 app.use("/api/pexels",    requireAuth, withUserScope, requireVerifiedEmail,                       pexelsRouter);
 app.use("/api/pixabay",   requireAuth, withUserScope, requireVerifiedEmail,                       pixabayRouter);
 app.use("/api/gumroad",   requireAuth, withUserScope, featureGate("gumroad"),                     gumroadRouter);
@@ -443,6 +448,9 @@ if (isSeedanceConfigured()) {
   resumeAnimations({ dataDir: DATA_DIR, outputDir: OUTPUT_DIR }, { ledgerDir: DATA_DIR })
     .then((n) => { if (n) console.log(`[story] collecting ${n} AI scene clip(s) ordered before the restart`); })
     .catch((e) => console.warn("[story] AI clip resume skipped:", e?.message || e));
+  resumeSceneScriptShots({ ledgerDir: DATA_DIR })
+    .then((n) => { if (n) console.log(`[scene-script] collecting ${n} clip(s) ordered before the restart`); })
+    .catch((e) => console.warn("[scene-script] clip resume skipped:", e?.message || e));
 }
 
 // Vocal-removal requests waiting for the laptop survive a restart.

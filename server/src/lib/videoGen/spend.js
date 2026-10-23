@@ -138,6 +138,11 @@ export function settleSpend(dir, key, { model, resolution, tokens }, now = new D
   return usd;
 }
 
+/** True while key holds a reservation. Settling removes it, so this tells a caller whether a clip is still unpaid. */
+export function isReserved(dir, key, now = new Date()) {
+  return key in readLedger(dir, now).reservations;
+}
+
 export function releaseSpend(dir, key, now = new Date()) {
   const l = readLedger(dir, now);
   if (!(key in l.reservations)) return;

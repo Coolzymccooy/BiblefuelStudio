@@ -26,6 +26,8 @@ const WIDTH_BY_PREFIX: Array<{ prefix: string; width: string }> = [
   // Story Video matches it: scenes beside their settings, the video beside
   // publishing.
   { prefix: '/app/story', width: 'max-w-[1400px]' },
+  // Scene scripts: three production steps side by side and a grid of shots.
+  { prefix: '/app/scene-script', width: 'max-w-[1400px]' },
   // Two-pane layouts: main column plus a side rail.
   { prefix: '/app/voice-audio', width: 'max-w-6xl' },
   { prefix: '/app/backgrounds', width: 'max-w-6xl' },
