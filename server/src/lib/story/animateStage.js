@@ -175,10 +175,14 @@ function keepInLibrary(ctx, deps, input) {
   }
 }
 
-/** The scene's prompt at the time, for finding the clip again later. */
-function scenePrompt(ctx, projectId, sceneId) {
+/**
+ * The prompt this clip was ordered with, for finding it again later. A task
+ * ordered before aiVideoPrompt was saved falls back to the scene's prompt now.
+ */
+function scenePrompt(ctx, projectId, sceneId, taskId) {
   const scene = readProject(ctx.dataDir, projectId)?.scenes?.find((s) => s.id === sceneId);
-  return scene ? animatePrompt(scene) : "";
+  if (!scene) return "";
+  return scene.aiVideoTaskId === taskId && scene.aiVideoPrompt ? scene.aiVideoPrompt : animatePrompt(scene);
 }
 
 /**
@@ -231,7 +235,7 @@ async function finishTask(ctx, projectId, sceneId, taskId, { model, resolution, 
     markError(ctx.dataDir, projectId, sceneId, taskId, clip.error);
     return;
   }
-  const prompt = scenePrompt(ctx, projectId, sceneId);
+  const prompt = scenePrompt(ctx, projectId, sceneId, taskId);
   const aspect = aspectOf(clip.width, clip.height);
   // Kept before the scene is touched: whatever happens to the scene, the
   // paid clip stays findable and reusable.
@@ -281,8 +285,9 @@ async function animateOne(ctx, projectId, sceneId, { model, resolution }, { ledg
     markError(ctx.dataDir, projectId, sceneId, null, reserved.error);
     return;
   }
+  const prompt = animatePrompt(scene);
   const submitted = await deps.submit({
-    prompt: animatePrompt(scene), framePrompt: FRAME_MOTION_PROMPT,
+    prompt, framePrompt: FRAME_MOTION_PROMPT,
     firstFramePath: scene.imagePath, aspect: project.aspect, durationSec, model, resolution,
   });
   if (!submitted.ok) {
@@ -293,7 +298,11 @@ async function animateOne(ctx, projectId, sceneId, { model, resolution }, { ledg
   // Saved before waiting: after a restart the sweep collects this paid-for clip.
   patchScene(ctx.dataDir, projectId, sceneId, (s) => (
     s.aiVideoStatus === "queued"
-      ? { ...s, aiVideoStatus: "generating", aiVideoTaskId: submitted.taskId, aiVideoMode: submitted.mode, aiVideoStartedAt: deps.now() }
+      ? {
+        ...s, aiVideoStatus: "generating", aiVideoTaskId: submitted.taskId, aiVideoMode: submitted.mode, aiVideoStartedAt: deps.now(),
+        // What this clip was ordered with, for its library record; the scene's prompt may be edited meanwhile.
+        aiVideoPrompt: prompt,
+      }
       : null
   ));
   await finishTask(ctx, projectId, sceneId, submitted.taskId, { model, resolution, ledgerDir, deps });

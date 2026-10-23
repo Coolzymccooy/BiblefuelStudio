@@ -237,6 +237,21 @@ describe("startAnimation", () => {
     }
   });
 
+  test("the library keeps the prompt the clip was ordered with, not a later edit", async () => {
+    const p = project([scene(0)]);
+    const { deps } = fakeDeps({
+      wait: async (taskId) => {
+        // PATCH /scenes/:sid edits the prompt while BytePlus is still working.
+        const fresh = readProject(dataDir, p.projectId);
+        writeProject(dataDir, { ...fresh, scenes: fresh.scenes.map((s) => ({ ...s, imagePrompt: "a different scene" })) });
+        return { ok: true, videoUrl: `https://cdn/${taskId}.mp4`, tokens: 108000 };
+      },
+    });
+    startAnimation(ctx(), p.projectId, { ledgerDir, deps });
+    await waitFor(() => !isAnimating(p.projectId));
+    assert.equal(readLibrary(dataDir)[0].prompt, animatePrompt(scene(0)));
+  });
+
   test("a clip still reaches its scene when the library cannot take it", async () => {
     const p = project([scene(0)]);
     const { deps } = fakeDeps({ keep: () => { throw new Error("disk full"); } });
