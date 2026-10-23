@@ -94,6 +94,24 @@ describe("re-roll routes", () => {
     assert.equal((await request(app).post(`/api/visual-library/rerolls/${listed.id}/refetch`)).status, 409);
   });
 
+  test("the job list always includes running and fetchable jobs, however many newer ones there are", async () => {
+    const store = path.join(ctx.dataDir, "visual-library-rerolls.json");
+    const saved = fs.readFileSync(store, "utf8");
+    const base = { fromClipId: clip.id, prompt: "p", aspect: "portrait", seconds: 6, lead: "", tags: [], estimateUsd: 0.5, createdAt: 1 };
+    const newer = Array.from({ length: 25 }, (_, i) => ({ ...base, id: `n${i}`, status: "done" }));
+    const paid = { ...base, id: "paid-old", status: "error", taskId: "t", chargedTaskId: "t", videoUrl: "https://example.com/x.mp4", startedAt: Date.now() };
+    const running = { ...base, id: "running-old", status: "generating", taskId: "t2", startedAt: Date.now() };
+    fs.writeFileSync(store, JSON.stringify({ jobs: [...newer, paid, running] }));
+    try {
+      const ids = (await request(app).get("/api/visual-library/rerolls")).body.jobs.map((j) => j.id);
+      assert.ok(ids.includes("paid-old"));
+      assert.ok(ids.includes("running-old"));
+      assert.equal(ids.length, 22);
+    } finally {
+      fs.writeFileSync(store, saved);
+    }
+  });
+
   test("a price that went up is refused with the new price", async () => {
     const r = await request(app).post(`/api/visual-library/${clip.id}/reroll`).send({ expectUsd: 0.01 });
     assert.equal(r.status, 409);

@@ -267,4 +267,20 @@ describe("re-rolling a library clip", () => {
     assert.equal(job.status, "done");
     assert.equal(readLibrary(ctx.dataDir).find((c) => c.id === job.clipId).durationSec, 9);
   });
+  test("a running or fetchable job survives any number of newer finished ones", async () => {
+    const store = path.join(ctx.dataDir, REROLL_STORE);
+    const old = { fromClipId: original.id, prompt: "old", aspect: "portrait", seconds: 8, lead: "", tags: [], estimateUsd: 0.6, createdAt: 1 };
+    const finished = Array.from({ length: 60 }, (_, i) => ({ ...old, id: `declined-${i}`, status: "error", error: "declined", createdAt: 100 + i }));
+    const running = { ...old, id: "still-running", status: "generating", taskId: "task-long", startedAt: Date.now() };
+    const paid = { ...old, id: "paid-unsaved", status: "error", taskId: "task-paid", chargedTaskId: "task-paid", videoUrl: "https://example.com/p.mp4", startedAt: Date.now() };
+    fs.mkdirSync(ctx.dataDir, { recursive: true });
+    fs.writeFileSync(store, JSON.stringify({ jobs: [...finished, running, paid] }));
+    // Any write prunes the history; a new re-roll is one.
+    reroll(original.id, { prompt: "newest", ledgerDir, deps: fakeDeps({ refuse: true }).deps });
+    await settle(ctx.dataDir);
+    const ids = listRerolls(ctx.dataDir).map((j) => j.id);
+    assert.ok(ids.includes("still-running"), "the running job is kept");
+    assert.ok(ids.includes("paid-unsaved"), "the paid, fetchable job is kept");
+    assert.equal(ids.length, 52, "50 finished plus the two that still matter");
+  });
 });

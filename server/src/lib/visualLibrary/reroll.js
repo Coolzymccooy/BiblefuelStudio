@@ -41,11 +41,20 @@ export function listRerolls(dataDir) {
   }
 }
 
+/** A job that is running, or paid for and still fetchable, is never dropped from history. */
+export const isRecoverable = (job) => IN_FLIGHT.has(job.status) || canRefetch(job);
+
+/** Every recoverable job, plus the newest `limit` others, in their original order. */
+export function recentRerolls(jobs, limit) {
+  let others = 0;
+  return jobs.filter((j) => isRecoverable(j) || (others += 1) <= limit);
+}
+
 function writeJobs(dataDir, jobs) {
   fs.mkdirSync(dataDir, { recursive: true });
   const file = path.join(dataDir, REROLL_STORE);
   const tmp = `${file}.${process.pid}.${crypto.randomBytes(6).toString("hex")}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify({ jobs: jobs.slice(0, KEEP_JOBS) }, null, 2));
+  fs.writeFileSync(tmp, JSON.stringify({ jobs: recentRerolls(jobs, KEEP_JOBS) }, null, 2));
   fs.renameSync(tmp, file);
 }
 

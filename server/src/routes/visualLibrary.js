@@ -5,7 +5,7 @@ import { searchClips, similarClips, updateClip, removeClip, getClip, isClipId, a
 import { backfillStoryClips, makeMissingPosters } from "../lib/visualLibrary/backfill.js";
 import { listProjects, readProject } from "../lib/sceneScript/projectStore.js";
 import { resolveSceneVideo } from "../lib/story/sceneVideo.js";
-import { rerollPrice, startReroll, listRerolls, resumeRerolls, refetchReroll, canRefetch, REROLL_STORE } from "../lib/visualLibrary/reroll.js";
+import { rerollPrice, startReroll, listRerolls, recentRerolls, resumeRerolls, refetchReroll, canRefetch, REROLL_STORE } from "../lib/visualLibrary/reroll.js";
 import { isSeedanceConfigured } from "../lib/videoGen/providers/seedance.js";
 import { ledgerSummary } from "../lib/videoGen/spend.js";
 import { DATA_DIR, OUTPUT_DIR } from "../lib/paths.js";
@@ -85,7 +85,8 @@ export function createVisualLibraryRouter({ ledgerDir = DATA_DIR, deps = {} } = 
   router.get("/leads", (req, res) => res.json({ ok: true, leads: leadsOf(req.ctx.dataDir) }));
 
   router.get("/rerolls", (req, res) => res.json({
-    ok: true, jobs: listRerolls(req.ctx.dataDir).slice(0, 20).map(rerollView), month: ledgerSummary(ledgerDir),
+    // Running and fetchable jobs always, however many newer ones there are.
+    ok: true, jobs: recentRerolls(listRerolls(req.ctx.dataDir), 20).map(rerollView), month: ledgerSummary(ledgerDir),
   }));
 
   router.post("/rerolls/:jobId/refetch", (req, res) => {
