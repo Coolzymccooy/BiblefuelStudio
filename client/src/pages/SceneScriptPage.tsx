@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -10,20 +10,13 @@ import { toastError } from '../lib/errors';
 import { isApiError } from '../lib/apiError';
 import { sceneScriptApi, type ProjectEdit } from '../lib/sceneScriptApi';
 import type { SceneScriptProject, SceneScriptSummary, VoiceOption } from '../lib/sceneScriptTypes';
+import { inProgress, useSceneScriptProject } from '../components/sceneScript/useSceneScriptProject';
 import { ScriptPaste } from '../components/sceneScript/ScriptPaste';
 import { ScriptView } from '../components/sceneScript/ScriptView';
 import { CastPanel } from '../components/sceneScript/CastPanel';
 import { ShotsPanel } from '../components/sceneScript/ShotsPanel';
 import { MusicPanel } from '../components/sceneScript/MusicPanel';
 import { ProductionBar } from '../components/sceneScript/ProductionBar';
-
-const POLL_MS = 3000;
-
-function inProgress(p: SceneScriptProject) {
-  return p.running.voice || p.running.shots || p.running.render
-    || ['queued', 'rendering', 'running'].includes(p.render.status)
-    || p.shots.some((s) => s.clip?.status === 'queued' || s.clip?.status === 'generating');
-}
 
 function ProjectList() {
   const [projects, setProjects] = useState<SceneScriptSummary[] | null>(null);
@@ -45,33 +38,17 @@ function ProjectList() {
 
 function ProjectEditor({ id }: { id: string }) {
   const navigate = useNavigate();
-  const [project, setProject] = useState<SceneScriptProject | null>(null);
-  const [month, setMonth] = useState<{ spentUsd: number; capUsd: number } | null>(null);
-  const [seedance, setSeedance] = useState(true);
+  const { project, month, seedance, load, apply } = useSceneScriptProject(id);
   const [voices, setVoices] = useState<VoiceOption[]>([]);
   const [rooms, setRooms] = useState<string[]>(['hall']);
   const [busy, setBusy] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    const r = await sceneScriptApi.get(id);
-    setProject(r.project);
-    setMonth(r.month);
-    setSeedance(r.seedance);
-  }, [id]);
-
-  useEffect(() => { load().catch(toastError); }, [load]);
   useEffect(() => { sceneScriptApi.voices().then((v) => { setVoices(v.voices); setRooms(v.rooms); }).catch(() => {}); }, []);
-  useEffect(() => {
-    if (!project || !inProgress(project)) return undefined;
-    const t = setTimeout(() => { load().catch(() => {}); }, POLL_MS);
-    return () => clearTimeout(t);
-  }, [project, load]);
-
   const run = async (name: string, fn: () => Promise<SceneScriptProject | void>) => {
     setBusy(name);
     try {
       const next = await fn();
-      if (next) setProject(next);
+      if (next) apply(next);
       else await load();
     } catch (e) {
       toastError(e);

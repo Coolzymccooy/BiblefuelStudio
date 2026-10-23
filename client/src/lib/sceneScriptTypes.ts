@@ -82,6 +82,8 @@ export interface MusicCue {
 
 export interface ShotEstimate {
   clips: number;
+  /** Paid clips that failed to download and can be fetched again for free. */
+  refetch?: number;
   seconds: number;
   usd: number;
   fromLibrary: number;
