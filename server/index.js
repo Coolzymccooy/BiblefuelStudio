@@ -49,6 +49,7 @@ import { createPerUserOutputFinder } from "./src/lib/perUserOutputs.js";
 import { createEmailTransport } from "./services/email/transport.js";
 import { sendEmail as sendEmailViaTransport } from "./services/email/send.js";
 import { withUserScope } from "./src/middleware/userScope.js";
+import { createMcpRouter } from "./src/mcp/transport.js";
 import { featureGate } from "./src/middleware/featureGate.js";
 import { requireVerifiedEmail } from "./src/middleware/requireVerifiedEmail.js";
 import { requireSuperAdmin } from "./src/middleware/requireSuperAdmin.js";
@@ -336,6 +337,8 @@ app.use("/", express.static(publicDir, { setHeaders: publicAssetHeaders }));
 
 app.use("/api/auth", authRouter);
 app.use("/api/jobs", requireAuth, withUserScope, jobsRouter);
+// MCP endpoint for agents: own auth (agent key or app JWT), host check and rate limit.
+app.use("/api/mcp", createMcpRouter());
 
 // Protected API routes — all use withUserScope (resolves req.ctx) and pass
 // dataDir/outputDir down to the stores. featureGate is applied per route where
