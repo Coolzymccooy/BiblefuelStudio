@@ -28,7 +28,7 @@ Good to know:
 
 ## Connect Hermes Agent
 
-Add this to `~/.hermes/config.yaml`. Replace `<your key>` with your key.
+Add this to your Hermes `config.yaml` (run `hermes config path` to find it: `~/.hermes/config.yaml` on macOS and Linux, `%LOCALAPPDATA%\hermes\config.yaml` on Windows). Replace `<your key>` with your key.
 
 ```yaml
 mcp_servers:
