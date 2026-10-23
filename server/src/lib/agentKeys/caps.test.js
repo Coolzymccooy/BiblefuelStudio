@@ -77,6 +77,25 @@ test("charge counts up to the limit then refuses with resetsAt", async () => {
   assert.equal(caps.readKeyUsage("k_1").counts.renders, 2);
 });
 
+test("a refused charge leaves the file on disk unchanged", async () => {
+  const key = keyWith({ renders: 1 });
+  await caps.charge("k_1", key, "renders");
+  const before = fs.readFileSync(usageFile, "utf-8");
+  assert.equal((await caps.charge("k_1", key, "renders")).ok, false);
+  assert.equal(fs.readFileSync(usageFile, "utf-8"), before);
+});
+
+test("charge rejects a non-finite, zero or negative amount and leaves the count alone", async () => {
+  await caps.charge("k_1", null, "images", 2);
+  const before = fs.readFileSync(usageFile, "utf-8");
+  await assert.rejects(() => caps.charge("k_1", null, "images", NaN), /caps: invalid amount NaN/);
+  await assert.rejects(() => caps.charge("k_1", null, "images", -1), /caps: invalid amount -1/);
+  await assert.rejects(() => caps.charge("k_1", null, "images", 0), /caps: invalid amount 0/);
+  await assert.rejects(() => caps.charge("k_1", null, "images", Infinity), /caps: invalid amount/);
+  assert.equal(caps.readKeyUsage("k_1").counts.images, 2);
+  assert.equal(fs.readFileSync(usageFile, "utf-8"), before);
+});
+
 test("fractional aiVideoUsd charges accumulate", async () => {
   const key = keyWith({});
   assert.equal((await caps.charge("k_1", key, "aiVideoUsd", 0.9)).ok, true);
@@ -85,6 +104,16 @@ test("fractional aiVideoUsd charges accumulate", async () => {
   assert.equal(refused.ok, false);
   assert.equal(refused.limit, 2);
   assert.ok(Math.abs(refused.used - 1.8) < 1e-9);
+});
+
+test("twenty charges of 0.1 fit a limit of 2 despite float drift; the next is refused", async () => {
+  process.env.MCP_DAILY_AI_VIDEO_USD = "2";
+  const key = keyWith({});
+  for (let i = 0; i < 20; i += 1) {
+    const result = await caps.charge("k_1", key, "aiVideoUsd", 0.1);
+    assert.equal(result.ok, true, `charge ${i + 1} should succeed`);
+  }
+  assert.equal((await caps.charge("k_1", key, "aiVideoUsd", 0.1)).ok, false);
 });
 
 test("counters roll over at the UTC day boundary", async () => {

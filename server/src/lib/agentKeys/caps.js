@@ -150,6 +150,9 @@ function doCharge(subjectId, key, bucket, amount) {
  */
 export async function charge(subjectId, key, bucket, amount = 1) {
   assertBucket(bucket);
+  if (typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0) {
+    throw new Error(`caps: invalid amount ${amount}`);
+  }
   const run = queue.then(() => doCharge(subjectId, key, bucket, amount));
   queue = run.catch(() => {});
   return run;
