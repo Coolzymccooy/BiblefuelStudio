@@ -30,6 +30,7 @@ const LyricVideoPage = lazy(() => import('./pages/LyricVideoPage').then((m) => (
 const AmbientPage = lazy(() => import('./pages/AmbientPage').then((m) => ({ default: m.AmbientPage })));
 const MomentsPage = lazy(() => import('./pages/MomentsPage').then((m) => ({ default: m.MomentsPage })));
 const CreateHubPage = lazy(() => import('./pages/CreateHubPage').then((m) => ({ default: m.CreateHubPage })));
+const SceneScriptPage = lazy(() => import('./pages/SceneScriptPage').then((m) => ({ default: m.SceneScriptPage })));
 const StudioHubPage = lazy(() => import('./pages/StudioHubPage').then((m) => ({ default: m.StudioHubPage })));
 
 const queryClient = new QueryClient({
@@ -78,6 +79,8 @@ function App() {
                   <Route path="lyric-video/:projectId" element={<LyricVideoPage />} />
                   <Route path="ambient" element={<AmbientPage />} />
                   <Route path="moments" element={<MomentsPage />} />
+                  <Route path="scene-script" element={<SceneScriptPage />} />
+                  <Route path="scene-script/:id" element={<SceneScriptPage />} />
                   <Route path="gumroad" element={<GumroadPage />} />
                   <Route path="series" element={<SeriesPage />} />
                   <Route path="settings" element={<SettingsPage />} />
