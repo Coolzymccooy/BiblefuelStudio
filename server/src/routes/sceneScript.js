@@ -70,6 +70,8 @@ function applyLines(project, edits) {
       return {
         ...l,
         ...(text ? { text } : {}),
+        // A re-take forgets the line's audio so the next voice pass records it again.
+        ...(e.retake === true ? { audio: null } : {}),
         ...(e.speaker !== undefined && project.cast[e.speaker] ? { speaker: e.speaker } : {}),
         ...(e.voice === null ? { voice: undefined } : isVoiceName(e.voice) ? { voice: e.voice } : {}),
         ...(e.rate === null ? { rate: undefined } : typeof e.rate === "string" ? { rate: e.rate } : {}),

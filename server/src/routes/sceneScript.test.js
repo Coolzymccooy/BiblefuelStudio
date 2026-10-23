@@ -117,6 +117,12 @@ describe("/api/scene-script", () => {
     assert.equal(voiced.body.project.needsVoice, false);
     assert.equal(voiced.body.project.lines[1].gapAfter, 1.5);
 
+    const retake = await request(app).patch(`/api/scene-script/${id}`).send({ lines: [{ id: "l1", retake: true }] });
+    assert.equal(retake.body.project.lines[0].audio, null);
+    assert.equal(retake.body.project.needsVoice, true);
+    await request(app).post(`/api/scene-script/${id}/voice`);
+    await until(() => isVoicing(id));
+
     const suggested = await request(app).post(`/api/scene-script/${id}/suggest-shots`).send({});
     assert.equal(suggested.status, 200);
     assert.match(suggested.body.project.shots[0].effectivePrompt, /^A calm river at dawn\./);
