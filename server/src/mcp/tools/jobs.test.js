@@ -1,0 +1,128 @@
+import { test, after, afterEach } from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { startTestApp, mcpClient } from "../../../test/helpers/mcpTestApp.js";
+import { _setWaitForJobForTests } from "./jobs.js";
+
+const USERS = [{ id: "u_user", email: "user@example.com", role: "user", emailVerified: true }];
+
+const testApp = await startTestApp({ users: USERS });
+const { port } = testApp;
+
+const clients = [];
+async function connect(bearer) {
+  const client = await mcpClient(port, bearer);
+  clients.push(client);
+  return client;
+}
+
+afterEach(() => _setWaitForJobForTests(null));
+
+after(async () => {
+  await Promise.all(clients.map((c) => c.close().catch(() => {})));
+  await testApp.close();
+});
+
+test("tools/list includes the four jobs tools", async () => {
+  const client = await connect(testApp.keyFor("u_user"));
+  const { tools } = await client.listTools();
+  const names = tools.map((t) => t.name);
+  for (const name of ["jobs_list", "jobs_get", "jobs_retry", "jobs_wait"]) assert.ok(names.includes(name), name);
+});
+
+test("jobs_list on an empty store returns an empty list", async () => {
+  const client = await connect(testApp.keyFor("u_user"));
+  const result = await client.callTool({ name: "jobs_list", arguments: {} });
+  assert.notEqual(result.isError, true);
+  assert.deepEqual(result.structuredContent, { jobs: [] });
+});
+
+function seedJobs(jobs) {
+  fs.writeFileSync(path.join(testApp.dataDir, "jobs.json"), JSON.stringify({ jobs }, null, 2));
+}
+
+const DONE_JOB = {
+  id: "job_done", type: "render_video", ownerId: "u_user", status: "done", progress: 100,
+  createdAt: "2026-10-23T10:00:00.000Z",
+  result: { outFile: "/srv/outputs/video-9.mp4", file: "/srv/outputs/video-9.mp4", videoUrl: "/outputs/video-9.mp4" },
+};
+const RUNNING_JOB = { id: "job_run", type: "render_video", ownerId: "u_user", status: "running", progress: 5, createdAt: "2026-10-23T11:00:00.000Z" };
+const OTHER_JOB = { id: "job_other", type: "render_video", ownerId: "u_other", status: "done", progress: 100, createdAt: "2026-10-23T09:00:00.000Z" };
+
+test("jobs_list returns this user's jobs as handles, newest first, within the limit", async () => {
+  seedJobs([OTHER_JOB, DONE_JOB, RUNNING_JOB]);
+  const client = await connect(testApp.keyFor("u_user"));
+  const all = await client.callTool({ name: "jobs_list", arguments: {} });
+  assert.deepEqual(all.structuredContent.jobs.map((j) => j.id), ["job_run", "job_done"]);
+  const [running, done] = all.structuredContent.jobs;
+  assert.equal(running.status, "running");
+  assert.equal(running.percent, 5);
+  assert.equal(running.type, "render_video");
+  assert.equal(done.status, "done");
+  assert.match(done.output.url, /^http:\/\/127\.0\.0\.1:\d+\/outputs\/video-9\.mp4$/);
+  const one = await client.callTool({ name: "jobs_list", arguments: { limit: 1 } });
+  assert.deepEqual(one.structuredContent.jobs.map((j) => j.id), ["job_run"]);
+});
+
+test("jobs_get returns the handle and hides other users' jobs", async () => {
+  seedJobs([OTHER_JOB, DONE_JOB]);
+  const client = await connect(testApp.keyFor("u_user"));
+  const mine = await client.callTool({ name: "jobs_get", arguments: { id: "job_done" } });
+  assert.equal(mine.structuredContent.id, "job_done");
+  assert.equal(mine.structuredContent.status, "done");
+  const theirs = await client.callTool({ name: "jobs_get", arguments: { id: "job_other" } });
+  assert.equal(theirs.isError, true);
+});
+
+test("jobs_retry refuses a job that is still running", async () => {
+  seedJobs([RUNNING_JOB]);
+  const client = await connect(testApp.keyFor("u_user"));
+  const result = await client.callTool({ name: "jobs_retry", arguments: { id: "job_run" } });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /already running/i);
+});
+
+test("jobs_list rejects a limit outside 1..100", async () => {
+  const client = await connect(testApp.keyFor("u_user"));
+  const result = await client.callTool({ name: "jobs_list", arguments: { limit: 500 } });
+  assert.equal(result.isError, true);
+});
+
+test("jobs_get on an unknown id is a tool error", async () => {
+  const client = await connect(testApp.keyFor("u_user"));
+  const result = await client.callTool({ name: "jobs_get", arguments: { id: "job_missing" } });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /not found/i);
+});
+
+test("jobs_retry on an unknown id is a tool error", async () => {
+  const client = await connect(testApp.keyFor("u_user"));
+  const result = await client.callTool({ name: "jobs_retry", arguments: { id: "job_missing" } });
+  assert.equal(result.isError, true);
+});
+
+test("jobs_wait with an unknown kind fails with BAD_KIND", async () => {
+  const client = await connect(testApp.keyFor("u_user"));
+  const result = await client.callTool({ name: "jobs_wait", arguments: { kind: "nope", id: "x" } });
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.error, "BAD_KIND");
+  assert.match(result.structuredContent.message, /captioned/);
+});
+
+test("jobs_wait clamps timeoutSec to 90 and defaults to 60", async () => {
+  const seen = [];
+  _setWaitForJobForTests(async (_api, opts) => {
+    seen.push(opts);
+    return { kind: opts.kind, id: opts.id, status: "running", percent: null, phase: null, output: null, error: null };
+  });
+  const client = await connect(testApp.keyFor("u_user"));
+  const big = await client.callTool({ name: "jobs_wait", arguments: { kind: "job", id: "job_1", timeoutSec: 500 } });
+  assert.notEqual(big.isError, true);
+  assert.equal(big.structuredContent.status, "running");
+  await client.callTool({ name: "jobs_wait", arguments: { kind: "job", id: "job_1" } });
+  await client.callTool({ name: "jobs_wait", arguments: { kind: "story", id: "p1", projectId: "p1", timeoutSec: 0 } });
+  assert.deepEqual(seen.map((o) => o.timeoutSec), [90, 60, 1]);
+  assert.equal(seen[2].projectId, "p1");
+  assert.equal(typeof seen[0].outputUrl, "function");
+});
