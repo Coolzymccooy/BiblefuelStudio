@@ -207,6 +207,22 @@ describe("parseSceneScript edge cases", () => {
     assert.deepEqual(script.speakers.map((s) => s.name), ["Narrator", "Scripture", "Ensemble", "Child"]);
   });
 
+  test("a Scripture tag inside a scene picks the Scripture voice", () => {
+    const { script } = parseSceneScript([
+      "**Scripture: 1 Corinthians 15:10**",
+      "### Scene 1 — The Word (0:00–0:10)",
+      "*Visual: An open Bible.*",
+      "**Scripture:**",
+      "\"By the grace of God I am what I am.\"",
+      "Scripture: \"His grace was not in vain.\"",
+    ].join("\n"));
+    assert.equal(script.meta.reference, "1 Corinthians 15:10");
+    assert.deepEqual(script.lines.map((l) => [l.speaker, l.text]), [
+      ["Scripture", "By the grace of God I am what I am."],
+      ["Scripture", "His grace was not in vain."],
+    ]);
+  });
+
   test("returns an empty script with a warning for text with no scenes", () => {
     const { script, warnings } = parseSceneScript("Just a paragraph about grace.");
     assert.equal(script.scenes.length, 0);

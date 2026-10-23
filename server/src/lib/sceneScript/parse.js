@@ -24,9 +24,11 @@ const RULE_RE = /^(?:-{3,}|\*{3,}|_{3,})$/;
 const MAX_LINE_CHARS = 2000;
 const RESERVED_TAGS = new Set([
   "visual", "visuals", "final screen", "end card", "end screen", "music", "sound", "sfx", "title",
-  "note", "notes", "camera", "transition", "on screen", "on-screen text", "text", "caption", "scripture",
+  "note", "notes", "camera", "transition", "on screen", "on-screen text", "text", "caption",
 ]);
-const ROLE_WORDS = /^(narrator|voice|reader|child|children|choir|ensemble|man|woman|boy|girl|paul|jesus|god|pastor|speaker|host)\b/i;
+// Scripture is a cast member inside a scene. The header line "Scripture: <ref>"
+// is read by readHeaderLine before any scene starts, so it never reaches speakerTag.
+const ROLE_WORDS = /^(narrator|voice|reader|child|children|choir|ensemble|man|woman|boy|girl|paul|jesus|god|pastor|speaker|host|scripture)\b/i;
 
 const toSec = (mmss) => {
   const [m, s] = String(mmss).split(":").map(Number);
