@@ -1,12 +1,6 @@
 import { ApiError } from "../api.js";
-import { ok } from "../toolResult.js";
+import { ok, withoutOk } from "../toolResult.js";
 import { capsSummary } from "../../lib/agentKeys/caps.js";
-
-/** A response body without its `ok` flag. */
-function withoutOk(body) {
-  const { ok: _ok, ...rest } = body || {};
-  return rest;
-}
 
 /** Optional sections depend on server env: an API failure becomes null instead of failing the tool. */
 async function optionalSection(ctx, path) {

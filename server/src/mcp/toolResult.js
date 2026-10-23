@@ -23,3 +23,9 @@ export function fail(code, message, extra = {}) {
     structuredContent: { error: code, message, ...extra },
   };
 }
+
+/** A response body as a copy without its `ok` flag; null or undefined gives {}. */
+export function withoutOk(body) {
+  const { ok: _ok, ...rest } = body || {};
+  return rest;
+}

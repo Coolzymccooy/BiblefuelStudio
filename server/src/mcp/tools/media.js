@@ -1,11 +1,5 @@
 import { z } from "zod";
-import { ok } from "../toolResult.js";
-
-/** A route response without its `ok` flag. */
-function withoutOk(body) {
-  const { ok: _ok, ...rest } = body || {};
-  return rest;
-}
+import { ok, withoutOk } from "../toolResult.js";
 
 const LIST_ROUTE = { audio: "/api/media/audio-list", video: "/api/media/video-list" };
 
