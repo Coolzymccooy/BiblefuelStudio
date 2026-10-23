@@ -4,6 +4,7 @@ import { Button } from './ui/Button';
 import { Input } from './ui/Input';
 import { api } from '../lib/api';
 import { webhookAdvice } from '../lib/webhookAdvice';
+import { timeAgo } from '../lib/timeAgo';
 import toast from 'react-hot-toast';
 import { Zap, CheckCircle2, Loader2, Trash2, ExternalLink, X as XIcon, Plug, Send, AlertCircle, ChevronRight } from 'lucide-react';
 
@@ -22,21 +23,6 @@ interface TestResult {
     ok: boolean;
     status?: number;
     error?: string;
-}
-
-/**
- * Human relative-time formatter for delivery history ("2 days ago",
- * "just now"). Keeps the format tight; no library dependency.
- */
-function timeAgo(iso: string): string {
-    if (!iso) return '';
-    const t = Date.parse(iso);
-    if (!Number.isFinite(t)) return '';
-    const diffSec = Math.max(0, Math.round((Date.now() - t) / 1000));
-    if (diffSec < 60) return 'just now';
-    if (diffSec < 3600) return `${Math.floor(diffSec / 60)} min ago`;
-    if (diffSec < 86400) return `${Math.floor(diffSec / 3600)} h ago`;
-    return `${Math.floor(diffSec / 86400)} d ago`;
 }
 
 /**
