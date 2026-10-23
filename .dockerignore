@@ -29,3 +29,6 @@ server/outputs
 *.log
 npm-debug.log*
 server/test_output.txt
+
+# Remotion composition bundle (built in the Docker image)
+server/remotion-bundle

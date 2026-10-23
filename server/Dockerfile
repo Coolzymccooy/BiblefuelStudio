@@ -74,10 +74,15 @@ ENV NODE_OPTIONS=--dns-result-order=ipv4first \
     npm_config_fetch_retry_maxtimeout=120000 \
     npm_config_fetch_timeout=600000
 
-# ffmpeg + ffprobe with codec deps (rendering / waveform / TTS muxing).
+# ffmpeg + ffprobe with codec deps (rendering / waveform / TTS muxing), plus
+# the libraries Chrome Headless Shell needs for Remotion scene-script renders
+# (list from remotion.dev/docs/docker).
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     ca-certificates \
+    libnss3 libdbus-1-3 libatk1.0-0 libgbm-dev libasound2 libxrandr2 \
+    libxkbcommon-dev libxfixes3 libxcomposite1 libxdamage1 libatk-bridge2.0-0 \
+    libpango-1.0-0 libcairo2 libcups2 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
@@ -86,8 +91,16 @@ COPY server/package.json server/package-lock.json* ./
 # Triple-try (see stage 1 note).
 RUN npm ci --omit=dev || npm ci --omit=dev || npm ci --omit=dev
 
+# Chrome Headless Shell for Remotion, baked into the image so the first
+# scene-script render does not download 120 MB.
+RUN node -e "import('@remotion/renderer').then((m) => m.ensureBrowser())"
+
 # Server source.
 COPY server ./
+
+# Prebuilt scene-script composition: renders never run webpack on the server.
+RUN node scripts/bundle-remotion.mjs /app/remotion-bundle
+ENV REMOTION_SERVE_URL=/app/remotion-bundle
 
 # Replace any committed bundle with the freshly built one from stage 1. This
 # is the single source of truth for the served client.
