@@ -223,6 +223,40 @@ describe("parseSceneScript edge cases", () => {
     ]);
   });
 
+  test("a script pasted as plain text keeps its music notes out of the speech", () => {
+    // What a rendered markdown page gives when copied: no #, no ** and no *.
+    const plain = [
+      "TITLE: BE STILL | PSALM 46:10",
+      "Scene 1 — The Peace (0:00–0:06)",
+      "Visual: Golden sunrise over quiet hills.",
+      "Ensemble:",
+      "\"Be still… and know.\"",
+      "Final screen: PSALM 46:10 — BE STILL, AND KNOW THAT I AM GOD.",
+      "Music and sound direction",
+      "0:00–0:12 | Restless",
+      "Soft low piano with a faint pulse underneath.",
+      "0:12–0:25 | Peace",
+      "Warm strings rise gently and settle on a held chord.",
+      "has context menu",
+    ].join("\n");
+    const { script } = parseSceneScript(plain);
+    assert.deepEqual(script.lines.map((l) => [l.speaker, l.text]), [["Ensemble", "Be still… and know."]]);
+    // The second cue starts after the only scene ends, so only the first has a scene to cover.
+    assert.deepEqual(script.music.cues.map((c) => c.mood), ["Restless"]);
+    assert.equal(script.endCard.text, "BE STILL, AND KNOW THAT I AM GOD.");
+  });
+
+  test("the end card closes the scene, so later stray lines are not spoken", () => {
+    const { script } = parseSceneScript([
+      "### Scene 1 — Close (0:00–0:06)",
+      "*Visual: A field.*",
+      "**Narrator:** \"Amen.\"",
+      "*Final screen: AMEN.*",
+      "Thanks for watching, share this with a friend.",
+    ].join("\n"));
+    assert.deepEqual(script.lines.map((l) => l.text), ["Amen."]);
+  });
+
   test("returns an empty script with a warning for text with no scenes", () => {
     const { script, warnings } = parseSceneScript("Just a paragraph about grace.");
     assert.equal(script.scenes.length, 0);
