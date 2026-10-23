@@ -1,7 +1,8 @@
 import fs from "fs";
 import path from "path";
 import { Router } from "express";
-import { searchClips, similarClips, updateClip, removeClip, getClip, isClipId, addClip, aspectOf } from "../lib/visualLibrary/store.js";
+import { searchClips, similarClips, updateClip, removeClip, getClip, isClipId, addClip, aspectOf, leadsOf } from "../lib/visualLibrary/store.js";
+import { backfillStoryClips, makeMissingPosters } from "../lib/visualLibrary/backfill.js";
 import { listProjects, readProject } from "../lib/sceneScript/projectStore.js";
 import { resolveSceneVideo } from "../lib/story/sceneVideo.js";
 
@@ -11,6 +12,8 @@ import { resolveSceneVideo } from "../lib/story/sceneVideo.js";
  */
 
 const ASPECTS = new Set(["portrait", "landscape", "square"]);
+// The library page shows up to this many clips at once; the Scene script picker asks for fewer.
+const MAX_BROWSE = 200;
 
 const MAX_PROMPT = 1500;
 const MAX_COST_USD = 100;
@@ -44,13 +47,47 @@ function usedBy(dataDir, clipId) {
     .map((p) => ({ id: p.id, title: p.meta?.title || "Untitled" }));
 }
 
-export function createVisualLibraryRouter() {
+export function createVisualLibraryRouter({ deps = {} } = {}) {
   const router = Router();
+  // One poster run at a time per user's library.
+  const posterRuns = new Map();
 
   router.get("/", (req, res) => {
     const q = typeof req.query.q === "string" ? req.query.q.slice(0, 200) : "";
     const aspect = ASPECTS.has(req.query.aspect) ? req.query.aspect : null;
-    res.json({ ok: true, clips: searchClips(req.ctx.dataDir, { q, aspect }) });
+    const lead = typeof req.query.lead === "string" ? req.query.lead.slice(0, 600) : "";
+    const tag = typeof req.query.tag === "string" ? req.query.tag.slice(0, 40) : "";
+    const rating = Number(req.query.rating);
+    const minRating = Number.isInteger(rating) && rating >= 1 && rating <= 5 ? rating : 0;
+    const asked = Number(req.query.limit);
+    const limit = Number.isInteger(asked) && asked >= 1 && asked <= MAX_BROWSE ? asked : 60;
+    const all = searchClips(req.ctx.dataDir, { q, aspect, lead, tag, minRating, limit: Infinity });
+    res.json({ ok: true, clips: all.slice(0, limit), total: all.length });
+  });
+
+  router.get("/leads", (req, res) => res.json({ ok: true, leads: leadsOf(req.ctx.dataDir) }));
+
+  router.post("/posters", async (req, res) => {
+    const key = req.ctx.dataDir;
+    if (!posterRuns.has(key)) {
+      posterRuns.set(key, makeMissingPosters(req.ctx, { poster: deps.poster }).finally(() => posterRuns.delete(key)));
+    }
+    try {
+      const r = await posterRuns.get(key);
+      return res.json({ ok: true, ...r });
+    } catch (e) {
+      console.warn(`[visual-library] posters failed: ${e?.message || e}`);
+      return res.status(500).json({ ok: false, error: "Posters could not be made." });
+    }
+  });
+
+  router.post("/backfill-story", (req, res) => {
+    try {
+      return res.json({ ok: true, ...backfillStoryClips(req.ctx) });
+    } catch (e) {
+      console.warn(`[visual-library] Story back-fill failed: ${e?.message || e}`);
+      return res.status(500).json({ ok: false, error: "Older Story clips could not be added." });
+    }
   });
 
   router.get("/similar", (req, res) => {

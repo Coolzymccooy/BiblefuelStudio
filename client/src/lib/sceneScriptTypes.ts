@@ -148,11 +148,22 @@ export interface VoiceOption { id: string; label: string; gender: string; age: s
 export interface LibraryClip {
   id: string;
   prompt: string;
+  /** false when the clip came in without the prompt that made it. */
+  promptKnown?: boolean;
+  lead?: string;
   url: string;
   posterUrl: string | null;
+  /** true when no poster could be made from the clip; it is not tried again. */
+  posterFailed?: boolean;
   durationSec: number | null;
   costUsd: number;
   aspect: string;
   tags: string[];
+  rating?: number | null;
+  source?: { kind: string; projectId?: string } | null;
   createdAt: number;
 }
+
+export interface LibraryLead { lead: string; clips: number }
+
+export interface LibraryFilters { q?: string; aspect?: string; lead?: string; tag?: string; rating?: number; limit?: number }

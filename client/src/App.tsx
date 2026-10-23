@@ -30,6 +30,7 @@ const LyricVideoPage = lazy(() => import('./pages/LyricVideoPage').then((m) => (
 const AmbientPage = lazy(() => import('./pages/AmbientPage').then((m) => ({ default: m.AmbientPage })));
 const MomentsPage = lazy(() => import('./pages/MomentsPage').then((m) => ({ default: m.MomentsPage })));
 const CreateHubPage = lazy(() => import('./pages/CreateHubPage').then((m) => ({ default: m.CreateHubPage })));
+const VisualLibraryPage = lazy(() => import('./pages/VisualLibraryPage').then((m) => ({ default: m.VisualLibraryPage })));
 const SceneScriptPage = lazy(() => import('./pages/SceneScriptPage').then((m) => ({ default: m.SceneScriptPage })));
 const StudioHubPage = lazy(() => import('./pages/StudioHubPage').then((m) => ({ default: m.StudioHubPage })));
 
@@ -81,6 +82,7 @@ function App() {
                   <Route path="moments" element={<MomentsPage />} />
                   <Route path="scene-script" element={<SceneScriptPage />} />
                   <Route path="scene-script/:id" element={<SceneScriptPage />} />
+                  <Route path="library" element={<VisualLibraryPage />} />
                   <Route path="gumroad" element={<GumroadPage />} />
                   <Route path="series" element={<SeriesPage />} />
                   <Route path="settings" element={<SettingsPage />} />
