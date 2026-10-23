@@ -49,7 +49,7 @@ export function AgentKeyRow({ agentKey, onPublishChange, onRevoke }: AgentKeyRow
             <span className="text-sm font-semibold text-bf-cream">{agentKey.name}</span>
             <span className="font-mono text-xs text-bf-muted">{agentKey.prefix}</span>
           </div>
-          <p className="text-meta mt-0.5">
+          <p className="mt-0.5 text-xs tabular-nums text-content-tertiary">
             {created ? `Created ${created}` : 'Created'} · {lastUsed ? `Last used ${lastUsed}` : 'Never used'}
           </p>
         </div>
@@ -74,7 +74,7 @@ export function AgentKeyRow({ agentKey, onPublishChange, onRevoke }: AgentKeyRow
 
       <dl aria-label={`Today's use for ${agentKey.name}`} className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-5">
         {CAP_BUCKETS.map((bucket) => {
-          const usage = agentKey.usage[bucket];
+          const usage = agentKey.usage?.[bucket];
           return (
             <div key={bucket} className="min-w-0">
               <dt className="text-bf-muted">{BUCKET_LABELS[bucket]}</dt>

@@ -27,7 +27,7 @@ export interface AgentKey {
   publishAllowed: boolean;
   caps: Caps;
   /** Today's use against each cap (UTC day). */
-  usage: Record<CapBucket, CapUsage>;
+  usage?: Record<CapBucket, CapUsage>;
 }
 
 export interface ActivityEntry {

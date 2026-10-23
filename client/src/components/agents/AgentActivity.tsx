@@ -101,10 +101,12 @@ export function AgentActivity({ keyNames }: AgentActivityProps) {
             </p>
           )}
           {error && !loading && (
-            <p role="alert" className="text-sm text-bf-danger">
-              {error}{' '}
-              <button type="button" onClick={() => void load()} className="underline">Try again</button>
-            </p>
+            <div role="alert" className="space-y-2">
+              <p className="text-sm text-bf-danger">
+                {error}
+              </p>
+              <Button type="button" variant="secondary" className="h-8 px-3 text-xs" onClick={() => void load()}>Try again</Button>
+            </div>
           )}
           {entries && !loading && !error && entries.length === 0 && (
             <p className="text-help">No agent activity yet. Calls and key changes appear here.</p>
@@ -136,7 +138,7 @@ function ActivityRow({ entry, keyNames }: { entry: ActivityEntry; keyNames: Read
         ) : (
           <span className="text-bf-danger">{entry.error || 'error'}</span>
         )}
-        <span className="text-meta">{timeAgo(entry.ts)}</span>
+        <span className="tabular-nums text-content-tertiary">{timeAgo(entry.ts)}</span>
       </div>
     </li>
   );

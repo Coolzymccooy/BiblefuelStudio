@@ -71,6 +71,7 @@ describe('ConnectedAgentsCard', () => {
     const shown = await within(dialog).findByLabelText('Your new key');
     expect((shown as HTMLInputElement).value).toBe(PLAIN);
     expect((shown as HTMLInputElement).readOnly).toBe(true);
+    expect(document.activeElement).toBe(shown);
     expect(within(dialog).getByText('Copy it now. It will not be shown again.')).toBeTruthy();
 
     await userEvent.click(within(dialog).getByRole('button', { name: 'Done' }));

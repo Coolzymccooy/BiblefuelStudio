@@ -32,7 +32,11 @@ export function CreateKeyModal({ onClose, onCreated }: CreateKeyModalProps) {
   }, []);
 
   useEffect(() => {
-    if (plain) dialogRef.current?.querySelector('input')?.select();
+    const input = dialogRef.current?.querySelector('input');
+    if (plain && input) {
+      input.focus();
+      input.select();
+    }
   }, [plain]);
 
   const trimmed = name.trim();
@@ -57,7 +61,8 @@ export function CreateKeyModal({ onClose, onCreated }: CreateKeyModalProps) {
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Escape') {
       event.stopPropagation();
-      onClose();
+      // Closing mid-request would lose the plain key of a key the server is about to create.
+      if (!busy) onClose();
       return;
     }
     if (event.key !== 'Tab') return;
@@ -118,7 +123,7 @@ export function CreateKeyModal({ onClose, onCreated }: CreateKeyModalProps) {
               <p className="text-help">Pick a name that tells you which agent uses this key.</p>
             </div>
             <div className="flex justify-end gap-2">
-              <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
+              <Button type="button" variant="secondary" disabled={busy} onClick={onClose}>Cancel</Button>
               <Button type="submit" isLoading={busy} disabled={!nameOk}>Create</Button>
             </div>
           </form>
