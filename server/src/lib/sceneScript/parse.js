@@ -17,6 +17,8 @@ export const DEFAULT_SPEAKERS = Object.freeze(["Narrator", "Scripture", "Ensembl
 
 const SCENE_RE = /^scene\s+(\d+)\s*(?:[—–:.-]\s*(.*?))?\s*(?:\((\d{1,2}:\d{2})\s*[–—-]\s*(\d{1,2}:\d{2})\))?\s*$/i;
 const HEADING_RE = /^(#{1,6})\s+(.*)$/;
+// A section title copied from a rendered page has lost its "#": "Music and sound direction".
+const BARE_SECTION_RE = /^(?:(?:music|sound|soundtrack|score|audio)(?:\s+(?:and|&)\s+(?:music|sound|sfx))?(?:\s+(?:direction|design|notes|cues?|plan))?|what would make (?:this|it)\b.*|why (?:this|it) works\b.*|production notes)\s*[:?]?$/i;
 const IMAGE_LINK_RE = /^!?\[[^\]]*\]\([^)]*\)$/;
 const RULE_RE = /^(?:-{3,}|\*{3,}|_{3,})$/;
 // No spoken line or direction is this long; a longer one is set aside so a
@@ -217,7 +219,13 @@ function readSceneLine(st, lineNo, raw) {
       return use(st, lineNo);
     }
     const final = /^(?:final screen|end card|end screen)\s*:\s*(.+)$/i.exec(flat);
-    if (final) { readFinalScreen(st, final[1]); return use(st, lineNo); }
+    if (final) {
+      readFinalScreen(st, final[1]);
+      // The end card is the last thing on screen: what follows is not spoken.
+      st.scene = null;
+      st.section = "other";
+      return use(st, lineNo);
+    }
     if (/^(?:music|sound|sfx)\s*:/i.test(flat)) return ignore(st, lineNo, raw, "music note");
     const tag = speakerTag(raw);
     if (tag) {
@@ -242,6 +250,7 @@ function readLine(st, lineNo, raw) {
   if (heading) return readHeading(st, lineNo, heading[1].length, heading[2]);
   const bareScene = SCENE_RE.exec(stripMarkup(line));
   if (bareScene && !st.inQuote) return startScene(st, lineNo, bareScene);
+  if (!st.inQuote && BARE_SECTION_RE.test(stripMarkup(line))) return readHeading(st, lineNo, 2, line);
   switch (st.section) {
     case "scene": return readSceneLine(st, lineNo, line);
     case "music": st.musicRows.push({ lineNo, text: line }); return undefined;
