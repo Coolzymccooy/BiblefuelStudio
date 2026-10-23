@@ -41,10 +41,20 @@ async function loadCatalogue() {
   const modules = await Promise.all(
     files.sort().map((name) => import(pathToFileURL(path.join(TOOLS_DIR, name)).href)),
   );
-  return modules.flatMap((mod, i) => {
+  const defs = modules.flatMap((mod, i) => {
     if (!Array.isArray(mod.default)) throw new Error(`mcp: tools/${files[i]} must export an array of tools`);
     return mod.default;
   });
+  assertUniqueNames(defs);
+  return defs;
+}
+
+function assertUniqueNames(defs) {
+  const seen = new Set();
+  for (const def of defs) {
+    if (seen.has(def.name)) throw new Error(`mcp: duplicate tool name ${def.name}`);
+    seen.add(def.name);
+  }
 }
 
 const importedCatalogue = await loadCatalogue();
@@ -85,7 +95,10 @@ async function chargeCaps(def, ctx, input, charged) {
 
 async function runTool(def, ctx, input, charged) {
   if (def.publish && ctx.agentKey && !ctx.agentKey.publishAllowed) {
-    return fail("PUBLISH_NOT_ALLOWED", "This agent key may not publish. Allow publishing for it in Settings.");
+    return fail(
+      "PUBLISH_NOT_ALLOWED",
+      "the key's owner has not allowed publishing. Ask them to switch it on in Settings → Connected agents",
+    );
   }
   try {
     const refused = await chargeCaps(def, ctx, input, charged);

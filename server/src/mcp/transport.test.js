@@ -19,7 +19,7 @@ const { ok } = await import("./toolResult.js");
 
 const echoHandler = async (_ctx, input) => ok({ text: input.text });
 
-registry._setCatalogueForTests([
+const CATALOGUE = [
   { name: "echo", title: "Echo", description: "Echoes the text.", inputSchema: { text: z.string() }, handler: echoHandler },
   {
     name: "admin_echo",
@@ -55,7 +55,8 @@ registry._setCatalogueForTests([
       return ok({ plan: body.usage.plan, publicBase: ctx.publicBase, baseUrl: ctx.baseUrl });
     },
   },
-]);
+];
+registry._setCatalogueForTests(CATALOGUE);
 
 const clients = [];
 async function connect(bearer) {
@@ -139,7 +140,10 @@ test("a publish tool refuses without consent and runs with it", async () => {
 
   const refused = await client.callTool({ name: "publish_echo", arguments: { text: "go" } });
   assert.equal(refused.isError, true);
-  assert.match(refused.content[0].text, /^PUBLISH_NOT_ALLOWED: /);
+  assert.equal(
+    refused.content[0].text,
+    "PUBLISH_NOT_ALLOWED: the key's owner has not allowed publishing. Ask them to switch it on in Settings → Connected agents",
+  );
   assert.equal(refused.structuredContent.error, "PUBLISH_NOT_ALLOWED");
 
   store.updateKey("u_user", key.id, { publishAllowed: true });
@@ -214,6 +218,40 @@ test("an unknown Host header is refused", async () => {
     req.end();
   });
   assert.equal(status, 403);
+});
+
+test("a broken catalogue answers the JSON-RPC 500 body and the process keeps serving", async () => {
+  // u_admin: u_user is near the 10-live-keys limit by now.
+  const bearer = testApp.keyFor("u_admin", "Broken");
+  const dup = { name: "dup", title: "Dup", description: "Twice.", inputSchema: {}, handler: async () => ok({}) };
+  registry._setCatalogueForTests([dup, { ...dup }]);
+  const warn = console.warn;
+  console.warn = () => {};
+  let res;
+  try {
+    res = await fetch(mcpUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${bearer}`,
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+    });
+  } finally {
+    console.warn = warn;
+    registry._setCatalogueForTests(CATALOGUE);
+  }
+  assert.equal(res.status, 500);
+  assert.deepEqual(await res.json(), {
+    jsonrpc: "2.0",
+    error: { code: -32603, message: "Internal server error" },
+    id: null,
+  });
+
+  const client = await connect(bearer);
+  const names = (await client.listTools()).tools.map((t) => t.name);
+  assert.ok(names.includes("echo"));
 });
 
 test("rate limit answers 429 after 120 requests in a minute", async () => {

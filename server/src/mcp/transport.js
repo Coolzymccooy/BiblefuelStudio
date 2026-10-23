@@ -13,7 +13,8 @@ import { buildServer } from "./registry.js";
  * This is the only file that touches SDK transport classes.
  */
 
-const DEFAULT_HOSTS = ["localhost", "127.0.0.1"];
+// The SDK compares URL hostnames, which keep the brackets on IPv6 literals.
+const DEFAULT_HOSTS = ["localhost", "127.0.0.1", "[::1]"];
 // Media for the public app is served from its own host (see client/src/lib/api.ts mediaUrl).
 const MEDIA_BASES = { "biblefuel.tiwaton.co.uk": "https://media.tiwaton.co.uk" };
 const METHOD_NOT_ALLOWED = { jsonrpc: "2.0", error: { code: -32000, message: "Method not allowed." }, id: null };
@@ -44,8 +45,8 @@ export function allowedHosts(env = process.env) {
 }
 
 function publicBaseFor(req) {
-  const host = String(req.get("host") || "");
-  return MEDIA_BASES[host.toLowerCase()] || `${req.protocol}://${host}`;
+  const hostname = String(req.hostname || "").toLowerCase();
+  return MEDIA_BASES[hostname] || `${req.protocol}://${req.get("host")}`;
 }
 
 function contextFor(req) {
@@ -63,20 +64,24 @@ function contextFor(req) {
   };
 }
 
+// Express 4 does not catch a rejected handler, so every step, building the
+// server included, stays inside the try: a bad catalogue must answer 500, not
+// take the process down.
 async function handleMcpPost(req, res) {
-  const server = buildServer(contextFor(req));
-  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-  res.on("close", () => {
-    Promise.all([transport.close(), server.close()]).catch((err) => {
-      console.warn("[MCP] close failed:", err?.message || String(err));
-    });
-  });
   try {
+    const server = buildServer(contextFor(req));
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    res.on("close", () => {
+      Promise.all([transport.close(), server.close()]).catch((err) => {
+        console.warn("[MCP] close failed:", err?.message || String(err));
+      });
+    });
     await server.connect(transport);
     await transport.handleRequest(req, res, req.body);
   } catch (err) {
     console.warn("[MCP] request failed:", err?.message || String(err));
     if (!res.headersSent) res.status(500).json(INTERNAL_ERROR);
+    else res.end();
   }
 }
 
