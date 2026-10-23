@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { Pause, Pencil, Play, Star, Trash2 } from 'lucide-react';
+import { Pause, Pencil, Play, RefreshCw, Star, Trash2 } from 'lucide-react';
 import type { LibraryClip } from '../../lib/sceneScriptTypes';
 import { money } from '../sceneScript/format';
 
@@ -10,6 +10,7 @@ interface Props {
   onTags: (tags: string[]) => void;
   onTagFilter: (tag: string) => void;
   onDelete: () => void;
+  onReroll: () => void;
 }
 
 const SOURCE_LABEL: Record<string, string> = { import: 'Imported', story: 'Story', 'scene-script': 'Scene script' };
@@ -19,7 +20,7 @@ const parseTags = (text: string) => [...new Set(text.split(',').map((t) => t.tri
 const sameTags = (a: string[], b: string[]) => a.join('\n') === b.join('\n');
 
 /** One library clip: plays on hover or with its play button; rate, tag, filter by a tag, or delete. */
-export function LibraryClipCard({ clip, activeTag, onRate, onTags, onTagFilter, onDelete }: Props) {
+export function LibraryClipCard({ clip, activeTag, onRate, onTags, onTagFilter, onDelete, onReroll }: Props) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(clip.tags.join(', '));
   const [playing, setPlaying] = useState(false);
@@ -89,6 +90,9 @@ export function LibraryClipCard({ clip, activeTag, onRate, onTags, onTagFilter, 
           </div>
         )}
         <div className="mt-auto flex justify-end gap-1">
+          <button type="button" className={iconBtn} aria-label="Re-roll from this prompt" title="Re-roll from this prompt (paid)" onClick={onReroll}>
+            <RefreshCw size={15} aria-hidden="true" />
+          </button>
           <button type="button" className={iconBtn} aria-label="Edit tags" title="Edit tags" onClick={startEdit}>
             <Pencil size={15} aria-hidden="true" />
           </button>

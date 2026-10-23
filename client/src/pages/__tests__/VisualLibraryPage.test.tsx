@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 vi.mock('../../lib/sceneScriptApi', () => ({
   visualLibraryApi: {
     search: vi.fn(), leads: vi.fn(), update: vi.fn(), remove: vi.fn(), makePosters: vi.fn(), backfillStory: vi.fn(), importClip: vi.fn(),
+    rerollPrice: vi.fn(), reroll: vi.fn(), rerolls: vi.fn(), refetchReroll: vi.fn(),
   },
 }));
 vi.mock('../../lib/errors', () => ({ toastError: vi.fn() }));
@@ -14,9 +15,15 @@ import { visualLibraryApi } from '../../lib/sceneScriptApi';
 import { ApiError } from '../../lib/apiError';
 import { useAuth } from '../../hooks/useAuth';
 import { VisualLibraryPage } from '../VisualLibraryPage';
-import type { LibraryClip } from '../../lib/sceneScriptTypes';
+import type { LibraryClip, RerollJob } from '../../lib/sceneScriptTypes';
+import { REROLL_POLL_MS } from '../../components/visualLibrary/useRerolls';
 
 const api = vi.mocked(visualLibraryApi);
+const month = { month: '2026-10', spentUsd: 1, reservedUsd: 0, capUsd: 30 };
+const job = (over: Partial<RerollJob> = {}): RerollJob => ({
+  id: 'j1', fromClipId: 'c1', prompt: 'A shepherd boy at dawn', status: 'generating', error: null, clipId: null,
+  estimateUsd: 0.64, costUsd: null, createdAt: Date.now(), ...over,
+});
 
 function clip(over: Partial<LibraryClip> = {}): LibraryClip {
   return {
@@ -36,6 +43,8 @@ describe('VisualLibraryPage', () => {
     api.search.mockResolvedValue([clip(), clip({ id: 'c2', prompt: '', promptKnown: false, tags: [], posterUrl: '/c2.jpg', costUsd: 0 })]);
     api.leads.mockResolvedValue([{ lead: 'a shepherd boy', clips: 1 }]);
     api.makePosters.mockResolvedValue({ made: 0, failed: 0, remaining: 0 });
+    api.rerolls.mockResolvedValue({ jobs: [], month });
+    api.rerollPrice.mockResolvedValue({ price: { seconds: 8, usd: 0.64 }, month, seedance: true });
   });
   afterEach(() => useAuth.setState({ isSuperAdmin: false }));
 
@@ -129,6 +138,61 @@ describe('VisualLibraryPage', () => {
     renderPage();
     await waitFor(() => expect(api.makePosters).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(api.search.mock.calls.length).toBeGreaterThanOrEqual(2));
+  });
+
+  it('opens the re-roll panel for a clip, with its price', async () => {
+    renderPage();
+    const card = (await screen.findByText('A shepherd boy calls out at sunset')).closest('li') as HTMLElement;
+    fireEvent.click(within(card).getByRole('button', { name: 'Re-roll from this prompt' }));
+    expect(await screen.findByRole('heading', { name: 'Re-roll from this prompt' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Re-roll for $0.64' })).toBeTruthy();
+    await waitFor(() => expect(api.rerollPrice).toHaveBeenCalledWith('c1'));
+  });
+
+  it('shows a re-roll being made and reloads the library when its clip arrives', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      api.rerolls.mockResolvedValueOnce({ jobs: [job()], month }).mockResolvedValue({ jobs: [job({ status: 'done', clipId: 'c9' })], month });
+      renderPage();
+      expect(await screen.findByText(/Making a new clip: A shepherd boy at dawn/)).toBeTruthy();
+      await waitFor(() => expect(api.search).toHaveBeenCalled());
+      const before = api.search.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(REROLL_POLL_MS + 50);
+      await waitFor(() => expect(api.search.mock.calls.length).toBeGreaterThan(before));
+      await waitFor(() => expect(screen.queryByText(/Making a new clip/)).toBeNull());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('says why a re-roll failed', async () => {
+    api.rerolls.mockResolvedValue({ jobs: [job({ status: 'error', error: 'BytePlus declined this prompt. Reword it and try again.' })], month });
+    renderPage();
+    expect(await screen.findByText(/BytePlus declined this prompt/)).toBeTruthy();
+  });
+
+  it('offers to fetch a paid clip again for free, even after an hour', async () => {
+    const paid = job({ status: 'error', error: 'The clip was made and paid for but could not be saved.', refetchable: true, createdAt: Date.now() - 5 * 60 * 60 * 1000 });
+    api.rerolls.mockResolvedValue({ jobs: [paid], month });
+    api.refetchReroll.mockResolvedValue({ ...paid, status: 'generating', refetchable: false });
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Fetch it again (free)' }));
+    await waitFor(() => expect(api.refetchReroll).toHaveBeenCalledWith('j1'));
+    expect(await screen.findByText(/Making a new clip/)).toBeTruthy();
+  });
+
+  it('keeps a just-started re-roll when an older list arrives late', async () => {
+    let answer: (v: { jobs: RerollJob[]; month: typeof month }) => void = () => {};
+    api.rerolls.mockReturnValueOnce(new Promise((resolve) => { answer = resolve; }));
+    api.reroll.mockResolvedValue(job({ id: 'new', status: 'queued' }));
+    renderPage();
+    const card = (await screen.findByText('A shepherd boy calls out at sunset')).closest('li') as HTMLElement;
+    fireEvent.click(within(card).getByRole('button', { name: 'Re-roll from this prompt' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Re-roll for $0.64' }));
+    expect(await screen.findByText(/Making a new clip/)).toBeTruthy();
+    answer({ jobs: [], month });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.getByText(/Making a new clip/)).toBeTruthy();
   });
 
   it('adds older Story clips and says how many', async () => {

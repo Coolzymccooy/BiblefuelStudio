@@ -31,7 +31,7 @@ export function benchmarkUsd() {
   return Number.isFinite(v) && v > 0 ? v : 10;
 }
 
-const defaultDeps = Object.freeze({
+export const defaultDeps = Object.freeze({
   submit: submitSeedanceTask,
   wait: waitForSeedanceTask,
   download: downloadSeedanceVideo,
@@ -115,7 +115,7 @@ function failShot(dataDir, id, shotId, taskId, message) {
   ));
 }
 
-async function makePoster(deps, clipFile, posterFile) {
+export async function makePoster(deps, clipFile, posterFile) {
   const r = await deps.ffmpeg(["-y", "-v", "error", "-ss", "1", "-i", clipFile, "-frames:v", "1", "-q:v", "3", posterFile]);
   return r.ok && fs.existsSync(posterFile) ? posterFile : null;
 }
@@ -150,7 +150,7 @@ export const canRefetch = (shot, now = Date.now()) => shot.clip?.status === "err
 
 const DOWNLOAD_TRIES = 3;
 
-async function downloadClip(deps, url, file) {
+export async function downloadClip(deps, url, file) {
   for (let i = 1; ; i += 1) {
     try {
       await deps.download(url, file);
