@@ -196,11 +196,17 @@ test("a tool reaches the app through the loopback API", async () => {
   assert.equal(result.structuredContent.publicBase, `http://127.0.0.1:${port}`);
 });
 
-test("the guide resource is served as markdown", async () => {
+test("the guide resource returns the markdown", async () => {
   const client = await connect(testApp.keyFor("u_user"));
   const { contents } = await client.readResource({ uri: "biblefuel://guide" });
   assert.equal(contents[0].mimeType, "text/markdown");
-  assert.match(contents[0].text, /^# Connect an agent to BibleFuel/);
+  const text = contents[0].text;
+  assert.ok(text.startsWith("# Connect an agent"));
+  assert.doesNotMatch(text, /guide is not available/);
+  for (const heading of ["## Get a key", "## How a call works", "## Waiting for jobs", "## Troubleshooting"]) {
+    assert.ok(text.includes(heading), `missing ${heading}`);
+  }
+  assert.match(text, /bearer_token_env_var = "BIBLEFUEL_AGENT_KEY"/);
 });
 
 test("an unknown Host header is refused", async () => {

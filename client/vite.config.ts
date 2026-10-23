@@ -30,6 +30,9 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 5174,
       strictPort: true,
+      // The Help page imports ../docs/mcp.md?raw, which sits above the client root.
+      // Setting fs.allow replaces Vite's default (the client folder), so allow the repo root.
+      fs: { allow: [fileURLToPath(new URL('..', import.meta.url))] },
       // Opt-in LAN exposure for testing on a phone / second laptop:
       //   npm run dev -- --host        (or set VITE_EXPOSE=1)
       // Off by default: binding 0.0.0.0 puts the dev server, and the API it
