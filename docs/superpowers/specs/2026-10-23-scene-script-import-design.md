@@ -114,8 +114,9 @@ New `server/src/lib/sceneScript/parse.js`, `parseSceneScript(markdown) → { scr
   - an ellipsis adds 0.3 s;
   - an emphasis line adds 0.4 s;
   - the last line of a scene adds 0.6 s;
-  - a drop gate adds 1.3 s.
-  These values are what the prototype used. The operator can nudge each gap in the preview.
+  - the gap before a drop gate is 1.3 s in all (it replaces the other gaps, it does not add to them);
+  - a chant line is followed by 1.2 s, and the closing chant by 3 s.
+  These values are what the prototype used, and `timeline.js` holds them. The operator can nudge each gap in the preview.
 
 ### 4.4 Shots
 - Each scene's visual becomes one or more **shots**. A shot runs from a line's start to the next shot's start, with a 0.45 s cross-dissolve.
@@ -233,10 +234,12 @@ Today a Story re-roll deletes the clip it replaces (`finishTask` in `lib/story/a
 - **Refine for free, in the render.** In and out points, playback rate, reframe or crop, flip and grade are stored on the shot, never baked into the clip, so one clip can serve many videos differently.
 - **Refine for money.** "Re-roll from this prompt" opens the clip's prompt for editing and orders a new clip, which joins the library beside the original. Image-to-video from a frame of a clip works only for frames without a realistic face (section 2). Extending a clip, or using it as a reference video, has not been tested; Phase 2 probes it with one paid request before offering it.
 - **Back-fill.** The 16 Grace Made Me clips are imported with their prompts. Existing Story AI clips on prod are imported without prompts, marked "prompt unknown".
+- **As built:** the planner gives Grace Made Me 17 shots (the prototype hand-picked 16). Scene 5 runs about 15 s, so it splits at line starts into three shots near the 7 s target where the prototype used two.
 - **Size.** The prototype's clips are 2.4–6.4 MB each, 59 MB for all 16. The library lives on the same volume as other user outputs. Prod disk headroom must be checked before Phase 1 ships.
 
 ## 5. Phases
 - **Phase 1:** parser and fixture tests, verbatim voice path with cast map, per-line voices and ensemble, timeline, shots through the ledger, visual library store (every clip kept, pick a clip for a shot, Grace back-fill), the $10 benchmark warning, Remotion render, minimal page. Done when the fixture builds end to end on prod.
+- **Built in Phase 1 ahead of plan:** the ensemble builder (add, remove and offset layers) and music bed suggestions by mood. Cast presets are still Phase 2.
 - **Phase 2:** ensemble builder and cast presets, library browser with suggestions and free refine controls, Story re-rolls stop deleting clips and feed the library, the extend-clip probe, music bed suggestions by mood, 16:9 layout, a 3-minute variant with a repeating hook.
 - **Phase 3:**
   - "Write a scene script" assistant from a verse: an LLM writes in this format, and the operator edits before Read script;
