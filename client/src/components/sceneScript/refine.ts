@@ -58,3 +58,16 @@ export function playbackFor(r: ShotRefine | null, clipDur: number, placeSec: num
   const hold = Math.max(0, placeSec - usable / rate);
   return { rate, hold: hold > 1e-9 ? hold : 0, clipSec };
 }
+
+/**
+ * The part of the clip the preview loops: from the in point to where the render
+ * cuts away to the next shot (or runs out of clip), then any held last frame.
+ * Without a known place (not voiced yet) it loops the whole trim.
+ */
+export function previewLoop(r: ShotRefine | null, clipDur: number, placeSec: number) {
+  const from = r?.in ?? 0;
+  const out = r?.out ?? clipDur;
+  if (!placeSec) return { from, end: out, hold: 0 };
+  const { rate, hold } = playbackFor(r, clipDur, placeSec);
+  return { from, end: Math.min(out, from + (placeSec - hold) * rate), hold };
+}

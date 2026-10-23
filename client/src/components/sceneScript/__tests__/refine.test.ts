@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'fs';
 import path from 'path';
-import { GRADES, UNREFINED, isUnrefined, playbackFor, previewStyle } from '../refine';
+import { GRADES, UNREFINED, isUnrefined, playbackFor, previewLoop, previewStyle } from '../refine';
 
 describe('refine helpers', () => {
   it('treats the clip as made as unrefined', () => {
@@ -37,5 +37,15 @@ describe('refine helpers', () => {
     expect(slow.clipSec).toBe(2);
     expect(playbackFor({ ...UNREFINED, rate: 1.5 }, 12, 6).rate).toBe(1.5);
     expect(playbackFor({ ...UNREFINED, rate: 2 }, 8, 6).rate).toBeCloseTo((8 - 0.08) / 6);
+  });
+
+  it('previews only what the shot shows: cut where the render cuts, then any held frame', () => {
+    expect(previewLoop(null, 8, 3)).toEqual({ from: 0, end: 3, hold: 0 });
+    expect(previewLoop({ ...UNREFINED, in: 1, rate: 2 }, 12, 3)).toEqual({ from: 1, end: 7, hold: 0 });
+    const held = previewLoop({ ...UNREFINED, in: 2, out: 4 }, 8, 6);
+    expect(held.from).toBe(2);
+    expect(held.end).toBeCloseTo(3.92);
+    expect(held.hold).toBeCloseTo(6 - 1.92 / 0.5);
+    expect(previewLoop({ ...UNREFINED, in: 1, out: 5 }, 8, 0)).toEqual({ from: 1, end: 5, hold: 0 });
   });
 });

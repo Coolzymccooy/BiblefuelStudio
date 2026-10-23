@@ -4,11 +4,13 @@ import { X } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Select } from '../ui/Select';
 import { checkboxCls, segmentCls, segmentedCls } from '../story/formStyles';
-import type { GradeName, SceneScriptShot, ShotRefine } from '../../lib/sceneScriptTypes';
-import { GRADE_LABELS, RATES, UNREFINED, isUnrefined, playbackFor, previewStyle } from './refine';
+import type { GradeName, SceneScriptProject, SceneScriptShot, ShotRefine } from '../../lib/sceneScriptTypes';
+import { GRADE_LABELS, RATES, UNREFINED, isUnrefined, playbackFor, previewLoop, previewStyle } from './refine';
 
 interface Props {
   shot: SceneScriptShot;
+  /** The project's frame: the preview crops the clip the way the render will. */
+  aspect: SceneScriptProject['meta']['aspect'];
   busy: boolean;
   /** null resets the shot to the clip as made. Resolves false when saving failed, which keeps the dialog open. */
   onSave: (refine: ShotRefine | null) => Promise<boolean | void>;
@@ -18,6 +20,14 @@ interface Props {
 const MIN_PLAY_SEC = 0.5;
 const END_SNAP_SEC = 0.1;
 const secs = (v: number) => `${v.toFixed(1)} s`;
+
+// Each frame has a fixed height: in the scrolling grid a box sized only by its
+// aspect ratio shrinks to nothing and spills over the controls.
+const FRAME_CLS: Record<Props['aspect'], string> = {
+  portrait: 'aspect-[9/16] h-[45dvh] md:h-[min(32rem,70dvh)]',
+  square: 'aspect-square h-[min(40dvh,calc(100vw_-_3rem))] md:h-[min(24rem,60dvh)]',
+  landscape: 'aspect-video h-[min(30dvh,calc((100vw_-_3rem)*9/16))] md:h-[min(20rem,45dvh)]',
+};
 const rateLabel = (r: number | null) => (r === null ? 'Fit the shot' : `${r}×`);
 const round2 = (v: number) => Math.round(v * 100) / 100;
 
@@ -37,7 +47,7 @@ function Slider({ id, label, value, min, max, step, shown, disabled, onChange }:
 }
 
 /** Refine a shot's clip for free: the part that plays, speed, mirror, framing and grade. The clip file is not changed. */
-export function RefineDialog({ shot, busy, onSave, onClose }: Props) {
+export function RefineDialog({ shot, aspect, busy, onSave, onClose }: Props) {
   const clipDur = shot.clip?.durationSec || 0;
   const saved = shot.refine || UNREFINED;
   const [r, setR] = useState<ShotRefine>(saved);
@@ -46,6 +56,8 @@ export function RefineDialog({ shot, busy, onSave, onClose }: Props) {
   const out = r.out ?? clipDur;
   const place = shot.playback?.placeSec || 0;
   const plays = useMemo(() => (place ? playbackFor(r, clipDur, place) : null), [r, clipDur, place]);
+  const loop = useMemo(() => previewLoop(r, clipDur, place), [r, clipDur, place]);
+  const holding = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dirty = JSON.stringify(r) !== JSON.stringify(saved);
   const set = (patch: Partial<ShotRefine>) => setR((prev) => ({ ...prev, ...patch }));
 
@@ -67,17 +79,31 @@ export function RefineDialog({ shot, busy, onSave, onClose }: Props) {
     set({ out: at >= clipDur - END_SNAP_SEC ? null : at });
     seek(Math.max(r.in, at - 0.3));
   };
-  // Loop the trimmed part, as the render plays it.
+  // Loop what the shot shows in the video: from the in point to where the render
+  // cuts away, then the held last frame if the clip runs short.
   const restart = () => {
     const v = video.current;
     if (!v) return;
-    v.currentTime = r.in;
+    v.currentTime = loop.from;
     void v.play().catch(() => {});
+  };
+  const atEnd = () => {
+    const v = video.current;
+    if (!v || holding.current) return;
+    if (loop.hold <= 0) { restart(); return; }
+    v.pause();
+    holding.current = setTimeout(() => { holding.current = null; restart(); }, loop.hold * 1000);
   };
   const onTime = () => {
     const v = video.current;
-    if (v && (v.currentTime < r.in - 0.05 || v.currentTime >= out - 0.05)) restart();
+    if (!v || holding.current) return;
+    if (v.currentTime < loop.from - 0.05) restart();
+    else if (v.currentTime >= loop.end - 0.05) atEnd();
   };
+  // An edit changes the loop: drop a pending hold and play the new one from its start.
+  useEffect(() => () => {
+    if (holding.current) { clearTimeout(holding.current); holding.current = null; }
+  }, [loop]);
 
   const save = async () => {
     setSaving(true);
@@ -102,12 +128,11 @@ export function RefineDialog({ shot, busy, onSave, onClose }: Props) {
             <X size={18} aria-hidden="true" />
           </button>
         </div>
-        <div className="grid gap-4 overflow-y-auto p-4 md:grid-cols-[minmax(0,18rem)_1fr]">
-          {/* A fixed height: in the scrolling grid a box sized only by its aspect ratio shrinks to nothing and spills over the controls. */}
-          <div className="mx-auto aspect-[9/16] h-[45dvh] overflow-hidden rounded-lg bg-editor-stage md:h-[min(32rem,70dvh)]">
+        <div className={`grid gap-4 overflow-y-auto p-4 ${aspect === 'landscape' ? '' : 'md:grid-cols-[auto_1fr]'}`}>
+          <div data-testid="refine-frame" className={`mx-auto overflow-hidden rounded-lg bg-editor-stage ${FRAME_CLS[aspect] || FRAME_CLS.portrait}`}>
             {shot.clip?.url && (
               <video ref={video} src={shot.clip.url} poster={shot.clip.posterUrl || undefined} muted autoPlay playsInline
-                onLoadedMetadata={() => seek(r.in)} onTimeUpdate={onTime} onEnded={restart}
+                onLoadedMetadata={() => seek(r.in)} onTimeUpdate={onTime} onEnded={atEnd}
                 className="h-full w-full object-cover" style={previewStyle(r)} aria-label={`Preview of shot ${shot.id}`} />
             )}
           </div>

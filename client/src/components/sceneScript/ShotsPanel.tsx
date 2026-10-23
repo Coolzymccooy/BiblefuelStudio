@@ -89,6 +89,7 @@ export function ShotsPanel(props: Props) {
         <RefineDialog
           key={refineShot.clip.libraryId}
           shot={refineShot}
+          aspect={props.project.meta.aspect}
           busy={props.busy}
           onClose={() => setRefining(null)}
           onSave={(refine) => props.onEdit({ shots: [{ id: refineShot.id, refine }] })}
