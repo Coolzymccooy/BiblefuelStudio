@@ -24,10 +24,13 @@ export async function startTestApp({ users, superAdminEmail } = {}) {
 
   const { default: express } = await import("express");
   const { requireAuth, signToken } = await import("../../src/auth.js");
+  const { requireVerifiedEmail } = await import("../../src/middleware/requireVerifiedEmail.js");
   const { withUserScope } = await import("../../src/middleware/userScope.js");
   const { default: authRouter } = await import("../../src/routes/auth.js");
   const { default: billingRouter } = await import("../../src/routes/billing.js");
   const { default: jobsRouter } = await import("../../src/routes/jobs.js");
+  const { default: musicRouter } = await import("../../src/routes/music.js");
+  const { default: videogenRouter } = await import("../../src/routes/videogen.js");
   const { default: agentKeysRouter } = await import("../../src/routes/agentKeys.js");
   const { refuseAgentCalls } = await import("../../src/middleware/agentAuth.js");
   const { createMcpRouter } = await import("../../src/mcp/transport.js");
@@ -38,6 +41,18 @@ export async function startTestApp({ users, superAdminEmail } = {}) {
   app.use("/api/auth", authRouter);
   app.use("/api/billing", billingRouter);
   app.use("/api/jobs", requireAuth, withUserScope, jobsRouter);
+  app.use("/api/music", requireAuth, withUserScope, musicRouter);
+  app.use("/api/video-gen", requireAuth, withUserScope, requireVerifiedEmail, videogenRouter);
+  // STUB: index.js's real /api/health shells out to ffmpeg; tools only need its shape.
+  app.get("/api/health", (_req, res) => {
+    res.json({
+      ok: true,
+      ts: new Date().toISOString(),
+      uptimeSec: 1,
+      system: { ffmpeg: "test", platform: process.platform, node: process.version },
+      capabilities: { elevenLabs: false, openai: false },
+    });
+  });
   app.use("/api/mcp", createMcpRouter());
   app.use("/api/agent-keys", requireAuth, withUserScope, refuseAgentCalls, agentKeysRouter);
 
