@@ -51,6 +51,7 @@ import { sendEmail as sendEmailViaTransport } from "./services/email/send.js";
 import { withUserScope } from "./src/middleware/userScope.js";
 import { createMcpRouter } from "./src/mcp/transport.js";
 import agentKeysRouter from "./src/routes/agentKeys.js";
+import { pruneActivity } from "./src/lib/agentKeys/activity.js";
 import { refuseAgentCalls } from "./src/middleware/agentAuth.js";
 import { featureGate } from "./src/middleware/featureGate.js";
 import { requireVerifiedEmail } from "./src/middleware/requireVerifiedEmail.js";
@@ -342,6 +343,19 @@ app.use("/api/jobs", requireAuth, withUserScope, jobsRouter);
 // MCP endpoint for agents: own auth (agent key or app JWT), host check and rate limit.
 app.use("/api/mcp", createMcpRouter());
 app.use("/api/agent-keys", requireAuth, withUserScope, refuseAgentCalls, agentKeysRouter);
+
+// Agent activity is kept 90 days: prune once at start and then daily.
+if (process.env.NODE_ENV !== "test") {
+  const pruneAgentActivity = () => {
+    try {
+      pruneActivity();
+    } catch (e) {
+      console.warn("[agent-activity] prune failed", e?.message || e);
+    }
+  };
+  pruneAgentActivity();
+  setInterval(pruneAgentActivity, 24 * 60 * 60 * 1000).unref();
+}
 
 // Protected API routes — all use withUserScope (resolves req.ctx) and pass
 // dataDir/outputDir down to the stores. featureGate is applied per route where

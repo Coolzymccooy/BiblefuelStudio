@@ -41,6 +41,8 @@ mcp_servers:
 
 The 120 second timeout is longer than the longest wait a tool makes (90 seconds), so a wait never times out on the Hermes side.
 
+`hermes config path` prints where the config file lives. On Windows it is `%LOCALAPPDATA%\hermes\config.yaml`, not `~/.hermes`. You can also add the server from the command line, and Hermes prompts for the header: `hermes mcp add biblefuel --url https://biblefuel.tiwaton.co.uk/api/mcp --auth header`.
+
 ## Connect Codex
 
 Add this to `~/.codex/config.toml`. Put your key in the `BIBLEFUEL_AGENT_KEY` environment variable. Codex reads the variable named by `bearer_token_env_var` and sends it as the bearer token.
@@ -160,25 +162,33 @@ Use `media_import_url`. The server downloads the file into your media, the same 
 
 The result includes `file` (the path to pass on, for example to `transcribe` as `mediaPath`) and `mime`.
 
-The server refuses addresses it should not fetch:
+The server refuses addresses it should not fetch. These errors reach you as tool errors, with the HTTP status in `status`:
 
-| Code | Meaning |
-|---|---|
-| `URL_SCHEME` | Only `http` and `https` are allowed. |
-| `URL_PRIVATE` | The address is private, local or otherwise not public. |
-| `URL_REDIRECTS` | More than 3 redirects. |
-| `URL_TOO_LARGE` | Over the size limit (200 MB by default). |
-| `URL_TIMEOUT` | The download stalled or took too long. |
-| `DOWNLOAD_FAILED` | The remote server refused or the file could not be fetched. |
+| Code | HTTP | Meaning |
+|---|---|---|
+| `INVALID_URL` | 400 | `url` is missing, not a string, or too long. |
+| `INVALID_KIND` | 400 | `kind` is not `audio`, `video` or `image`. |
+| `INVALID_FILENAME` | 400 | `filename` is not a string of 200 characters or fewer. |
+| `URL_SCHEME` | 400 | Only `http` and `https` are allowed. |
+| `URL_PRIVATE` | 400 | The address is private, local or otherwise not public. |
+| `URL_REDIRECTS` | 400 | More than 3 redirects. |
+| `URL_TOO_LARGE` | 413 | Over the size limit (200 MB by default). |
+| `URL_TIMEOUT` | 504 | The download stalled or took too long. |
+| `DOWNLOAD_FAILED` | 502 | The remote server refused or the file could not be fetched. |
+| `IMPORT_FAILED` | 500 | The server hit an unexpected error while importing. Try once more. |
 
 A file you already uploaded in the app is in `media_list`. You do not need to import it again.
 
 ### From your own machine
 
-An agent key works at `/api/mcp` only. To upload a local file directly, use your own sign-in token (a JWT) against the upload route. Send the file as the request body, with its real `Content-Type`, and its name in `?filename=`.
+For most people the way to get a local file in is to host it at a public URL and use `media_import_url` above.
+
+A developer can also upload directly. An agent key works at `/api/mcp` only, so this uses a sign-in token (a JWT) against the upload route. The example below signs in with email and password, which works only for an account that has a local password (a self-hosted or dev account). Accounts that sign in with Google or Firebase have no local password and get `Invalid credentials`; they should use `media_import_url`. The login route is limited to 25 requests per 15 minutes.
+
+Send the file as the request body, with its real `Content-Type`, and its name in `?filename=`.
 
 ```bash
-# 1. Sign in to get a token
+# 1. Sign in to get a token (local-password accounts only)
 TOKEN=$(curl -s -X POST https://biblefuel.tiwaton.co.uk/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"email":"you@example.com","password":"your password"}' | jq -r .token)
@@ -312,13 +322,14 @@ A call that would cross a cap is refused before anything runs, so nothing is spe
 | HTTP 401, `Missing Bearer token` or `Invalid token` | No `Authorization` header, or it is not `Bearer <key>`. | Send the header. Keys in the URL are ignored. |
 | Tool error `AGENT_FORBIDDEN` (`status` 403) | A key reached a route that keys may never use (account, billing, admin). | Do that in the app yourself. |
 | Tool error with `status` 403 from the app | The user's plan or role does not allow it, for example a scene script on a non-admin account. | Use an account that has the right. The tool is normally not listed without it. |
+| HTTP 403 on the connection itself, before any tool runs | The `Host` header is not on the allowed list. This is the usual symptom when you reach the server through a tunnel such as ngrok. | Add the tunnel host name to `MCP_ALLOWED_HOSTS` on the server (comma separated). |
 | HTTP 405 | A `GET` or `DELETE` to `/api/mcp`. | Use `POST`. |
 | HTTP 429, `RATE_LIMITED` | More than 120 requests a minute on one key. | Wait a minute. Use `jobs_wait` rather than polling in a loop. |
 | `PUBLISH_NOT_ALLOWED` | The key's owner has not allowed publishing. | Ask them to switch on **This key may publish** in Settings, Connected agents. |
 | `MCP_CAP_REACHED` | A daily cap is used up. | Read `bucket` and `resetsAt`. Wait for the reset, or ask the owner to raise the server ceiling. |
 | `QUOTA_EXCEEDED` | The account's own plan quota is used up. | Wait for the daily reset or change plan in the app. |
 | `BAD_KIND` | `jobs_wait` got a `kind` it does not know. | Use the `kind` the starting tool returned. |
-| `URL_PRIVATE`, `URL_SCHEME`, `URL_REDIRECTS`, `URL_TOO_LARGE`, `URL_TIMEOUT`, `DOWNLOAD_FAILED` | `media_import_url` could not fetch the file. | See the table under Getting media in. |
+| `INVALID_URL`, `INVALID_KIND`, `INVALID_FILENAME`, `URL_PRIVATE`, `URL_SCHEME`, `URL_REDIRECTS`, `URL_TOO_LARGE`, `URL_TIMEOUT`, `DOWNLOAD_FAILED`, `IMPORT_FAILED` | `media_import_url` could not fetch the file. | See the table under Getting media in. |
 | The tool call times out in the client | The client gave up before `jobs_wait` returned. | Lower `timeoutSec`, or raise the client timeout above 90 seconds (Hermes: `timeout: 120`). The job keeps running; call `jobs_wait` again. |
 | A job is `running` for a long time | Renders are slow and queue behind other work. | Keep calling `jobs_wait`. If `status` becomes `failed`, read `error`, then try `jobs_retry`. |
 | `INTERNAL` | The server hit an unexpected error. | Try once more, then tell the user. |
