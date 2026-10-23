@@ -30,6 +30,7 @@ export async function startTestApp({ users, superAdminEmail } = {}) {
   const { default: billingRouter } = await import("../../src/routes/billing.js");
   const { default: jobsRouter } = await import("../../src/routes/jobs.js");
   const { default: musicRouter } = await import("../../src/routes/music.js");
+  const { default: mediaRouter } = await import("../../src/routes/media.js");
   const { default: videogenRouter } = await import("../../src/routes/videogen.js");
   const { default: agentKeysRouter } = await import("../../src/routes/agentKeys.js");
   const { refuseAgentCalls } = await import("../../src/middleware/agentAuth.js");
@@ -42,6 +43,7 @@ export async function startTestApp({ users, superAdminEmail } = {}) {
   app.use("/api/billing", billingRouter);
   app.use("/api/jobs", requireAuth, withUserScope, jobsRouter);
   app.use("/api/music", requireAuth, withUserScope, musicRouter);
+  app.use("/api/media", requireAuth, withUserScope, mediaRouter);
   app.use("/api/video-gen", requireAuth, withUserScope, requireVerifiedEmail, videogenRouter);
   // STUB: index.js's real /api/health shells out to ffmpeg; tools only need its shape.
   app.get("/api/health", (_req, res) => {
