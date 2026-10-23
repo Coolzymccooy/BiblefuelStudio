@@ -135,7 +135,7 @@ export function SceneScriptPage() {
   return (
     <div className="space-y-6">
       <ScreenHeader
-        eyebrow="Create"
+        eyebrow="Studio"
         title={<>Your script, <em>word for word</em>.</>}
         subtitle="Paste a cinematic script. BibleFuel voices every line as written, films each scene's visual and follows your music cues."
       />
