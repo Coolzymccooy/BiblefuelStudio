@@ -54,6 +54,20 @@ function toTicks(v) {
  * @returns {Promise<{ audio: Buffer, boundaries: Array<{ text: string, audioOffsetTicks: number, durationTicks: number, boundaryType: string }> }>}
  */
 export async function synthesizeWithBoundaries({ text, voice }) {
+  return runSynthesis({ voice, run: (synth, ok, fail) => synth.speakTextAsync(text, ok, fail) });
+}
+
+/**
+ * Speak a whole SSML document. Unlike plain text, the voice, prosody rate and
+ * pitch inside it are honoured. outputFormat names a
+ * SpeechSynthesisOutputFormat key, e.g. "Riff48Khz16BitMonoPcm" for WAV.
+ * @param {{ ssml: string, outputFormat?: string }} args
+ */
+export async function synthesizeSsmlWithBoundaries({ ssml, outputFormat }) {
+  return runSynthesis({ outputFormat, run: (synth, ok, fail) => synth.speakSsmlAsync(ssml, ok, fail) });
+}
+
+async function runSynthesis({ voice, outputFormat, run }) {
   const key = (process.env.AZURE_SPEECH_KEY || "").replace(/['"]/g, "").trim();
   const region = (process.env.AZURE_SPEECH_REGION || "").trim();
   if (!key || !region) {
@@ -70,7 +84,7 @@ export async function synthesizeWithBoundaries({ text, voice }) {
   }
 
   const speechConfig = sdk.SpeechConfig.fromSubscription(key, region);
-  const formatKey = (process.env.AZURE_SPEECH_OUTPUT_FORMAT || "").trim() || DEFAULT_OUTPUT_FORMAT;
+  const formatKey = outputFormat || (process.env.AZURE_SPEECH_OUTPUT_FORMAT || "").trim() || DEFAULT_OUTPUT_FORMAT;
   const format = sdk.SpeechSynthesisOutputFormat[formatKey];
   if (format !== undefined) speechConfig.speechSynthesisOutputFormat = format;
   if (voice) speechConfig.speechSynthesisVoiceName = voice;
@@ -106,8 +120,8 @@ export async function synthesizeWithBoundaries({ text, voice }) {
       getTimeoutMs(),
     );
 
-    synthesizer.speakTextAsync(
-      text,
+    run(
+      synthesizer,
       (result) => {
         if (result.reason === sdk.ResultReason.SynthesizingAudioCompleted) {
           const audio = Buffer.from(result.audioData);
