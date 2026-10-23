@@ -86,8 +86,13 @@ function Ensemble({ entry, voices, rooms, onChange }: { entry: CastEntry; voices
 export function CastPanel({ project, voices, rooms, onEdit }: Props) {
   const [cast, setCast] = useState(project.cast);
   const [look, setLook] = useState(project.look);
-  useEffect(() => { setCast(project.cast); setLook(project.look); }, [project.cast, project.look]);
-  const dirty = JSON.stringify(cast) !== JSON.stringify(project.cast) || JSON.stringify(look) !== JSON.stringify(project.look);
+  // Every poll brings new objects with the same values, so resync the drafts
+  // only when the saved values change; an unsaved edit survives the poll.
+  const savedCast = JSON.stringify(project.cast);
+  const savedLook = JSON.stringify(project.look);
+  useEffect(() => { setCast(JSON.parse(savedCast)); }, [savedCast]);
+  useEffect(() => { setLook(JSON.parse(savedLook)); }, [savedLook]);
+  const dirty = JSON.stringify(cast) !== savedCast || JSON.stringify(look) !== savedLook;
 
   return (
     <div className="space-y-4">
