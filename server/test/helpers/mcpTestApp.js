@@ -28,6 +28,8 @@ export async function startTestApp({ users, superAdminEmail } = {}) {
   const { default: authRouter } = await import("../../src/routes/auth.js");
   const { default: billingRouter } = await import("../../src/routes/billing.js");
   const { default: jobsRouter } = await import("../../src/routes/jobs.js");
+  const { default: agentKeysRouter } = await import("../../src/routes/agentKeys.js");
+  const { refuseAgentCalls } = await import("../../src/middleware/agentAuth.js");
   const { createMcpRouter } = await import("../../src/mcp/transport.js");
   const { createKey } = await import("../../src/lib/agentKeys/store.js");
 
@@ -37,6 +39,7 @@ export async function startTestApp({ users, superAdminEmail } = {}) {
   app.use("/api/billing", billingRouter);
   app.use("/api/jobs", requireAuth, withUserScope, jobsRouter);
   app.use("/api/mcp", createMcpRouter());
+  app.use("/api/agent-keys", requireAuth, withUserScope, refuseAgentCalls, agentKeysRouter);
 
   const server = await new Promise((resolve) => {
     const listening = app.listen(0, "127.0.0.1", () => resolve(listening));

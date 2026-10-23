@@ -7,6 +7,7 @@ import { isFirebaseAdminEnabled, verifyFirebaseIdToken, getFirebaseUserVerificat
 import { writeUserPlan } from "../lib/userPlanStore.js";
 import { dataDirFor, ensureUserDirs } from "../lib/paths.js";
 import { isSuperAdmin as isSuperAdminUser, unverifiedAdminSignIn } from "../lib/userPlan.js";
+import { refuseAgentCalls } from "../middleware/agentAuth.js";
 import { getAccessRequestsStore } from "../lib/accessRequestsStore.js";
 
 const router = Router();
@@ -299,7 +300,7 @@ router.post("/refresh-verify", requireAuth, async (req, res) => {
   }
 });
 
-router.delete("/me", requireAuth, (req, res) => {
+router.delete("/me", requireAuth, refuseAgentCalls, (req, res) => {
   // Account deletion: removes the user record and their per-user data dir.
   // Firebase account itself is NOT deleted from here — the client should
   // separately call firebase.auth().currentUser.delete() so the Firebase

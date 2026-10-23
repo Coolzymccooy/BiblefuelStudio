@@ -50,6 +50,8 @@ import { createEmailTransport } from "./services/email/transport.js";
 import { sendEmail as sendEmailViaTransport } from "./services/email/send.js";
 import { withUserScope } from "./src/middleware/userScope.js";
 import { createMcpRouter } from "./src/mcp/transport.js";
+import agentKeysRouter from "./src/routes/agentKeys.js";
+import { refuseAgentCalls } from "./src/middleware/agentAuth.js";
 import { featureGate } from "./src/middleware/featureGate.js";
 import { requireVerifiedEmail } from "./src/middleware/requireVerifiedEmail.js";
 import { requireSuperAdmin } from "./src/middleware/requireSuperAdmin.js";
@@ -219,7 +221,7 @@ const emailTransport = createEmailTransport({
 });
 const sendEmail = (req) => sendEmailViaTransport(emailTransport, req);
 const accessRequestsStore = getAccessRequestsStore();
-app.use('/api/access-requests', createAccessRequestsRouter({
+app.use('/api/access-requests', refuseAgentCalls, createAccessRequestsRouter({
   store: accessRequestsStore,
   sendEmail,
   notifyTo: process.env.ACCESS_REQUEST_NOTIFY_TO || process.env.MAIL_REPLY_TO || '',
@@ -339,6 +341,7 @@ app.use("/api/auth", authRouter);
 app.use("/api/jobs", requireAuth, withUserScope, jobsRouter);
 // MCP endpoint for agents: own auth (agent key or app JWT), host check and rate limit.
 app.use("/api/mcp", createMcpRouter());
+app.use("/api/agent-keys", requireAuth, withUserScope, refuseAgentCalls, agentKeysRouter);
 
 // Protected API routes — all use withUserScope (resolves req.ctx) and pass
 // dataDir/outputDir down to the stores. featureGate is applied per route where
@@ -418,7 +421,7 @@ const publicSignupUrl = String(
   ''
 ).trim().replace(/\/+$/, '');
 const adminSignupUrl = publicSignupUrl ? `${publicSignupUrl}/app` : 'https://biblefuel.tiwaton.co.uk/app';
-app.use("/api/admin",     requireAuth, withUserScope, requireSuperAdmin,                          createAdminRouter({ accessRequestsStore, sendEmail, signupUrl: adminSignupUrl }));
+app.use("/api/admin",     requireAuth, withUserScope, refuseAgentCalls, requireSuperAdmin,                          createAdminRouter({ accessRequestsStore, sendEmail, signupUrl: adminSignupUrl }));
 
 
 
