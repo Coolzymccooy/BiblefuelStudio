@@ -1,7 +1,7 @@
 # Scene scripts: authored cinematic scripts made into video, word for word
 
 **Date:** 2026-10-23
-**Status:** Draft for the operator's review. Open decisions are recorded as **Rulings** so any of them can be reversed before build.
+**Status:** Direction approved by the operator on 2026-10-23 (rulings in section 7). Not yet built.
 **Proven by:** the "Grace Made Me" prototype of 2026-10-23 (1 Corinthians 15:10, 101 s, 9:16). Video, clips and prototype source are in `Documents\BibleFuel\grace-made-me-prototype-2026-10-23`. The input script is `fixtures/grace-made-me.scene-script.md`.
 **Builds on:** `2026-10-16-ai-scenes-design.md` (Seedance provider, spend ledger, cap), `2026-10-09-kinetic-caption-engine-design.md`, `2026-09-24-soundtrack-builder-design.md`, the long-form pasted-script parser (`lib/longform/scriptParser.js`).
 
@@ -101,6 +101,13 @@ New `server/src/lib/sceneScript/parse.js`, `parseSceneScript(markdown) → { scr
 - **One file per line.** This gives exact line timing, per-line re-takes and per-line voices for free.
 - **Azure path:** today `azureSpeechClient` calls `speakTextAsync` with plain text, so prosody is ignored. Add an SSML call (`speakSsmlAsync`) used by this path, with `rate` per voice. Word boundaries still come back.
 - **Ensemble:** synthesize the chant once per ensemble voice, then mix with offsets, `amix`, low-pass, `aecho` and a limiter (the prototype's `mixChant`). Store it as one file.
+- **Flexibility (operator ruling 2026-10-23: the prototype's voice blend must be available in the app):**
+  - **Speakers come from the script.** Any tag such as `**Scripture voice (female):**`, `**Child:**` or `**Ensemble:**` becomes a speaker in the cast map. A new speaker gets a suggested voice from the tone and gender words in its tag.
+  - **Per-line override.** Any line can take a different voice from its speaker's default, for example one scripture quote read by the narrator.
+  - **Delivery per voice and per line:** rate, pitch and the gap after the line. A speaking style is offered only on voices that support one. Tone notes stay visible beside the line as the author's guidance.
+  - **Ensemble builder.** Choose the voices (adult and child, any accent the provider has), the number of layers, the timing spread and the room size. One play button previews the mix before it is used.
+  - **Preview and re-take.** Each line plays on its own once voiced. A re-take re-synthesizes that line only, and the timeline moves the later lines.
+  - **Cast presets.** A cast can be saved by name ("Testimony: deep narrator, gentle scripture, mixed ensemble") and applied to the next script.
 - **Ruling:** Azure HD voices by default; ElevenLabs as an option when a valid key exists. Recommendation: confirm the prod ElevenLabs key before offering it.
 - **Gaps:**
   - the default gap after a line is 0.35 s;
@@ -123,7 +130,8 @@ New `server/src/lib/sceneScript/parse.js`, `parseSceneScript(markdown) → { scr
   - reserved and settled through the existing spend ledger (`spend.js`), never a side file;
   - concurrency 4;
   - a shot refused for copyright or sensitive content is reported per shot with a "Reword and retry" action. There is no automatic rewording loop.
-- **Re-roll** per shot from the preview, showing the cost of one clip.
+- **Re-roll** per shot from the preview, showing the cost of one clip. The earlier clip is kept in the visual library (4.11), never deleted.
+- **Library first.** Before ordering, each shot can take a clip from the visual library instead, at no cost.
 
 ### 4.5 Music and sound
 - **Cues** come from the script's music section (windows plus mood notes). With no music section, each scene becomes one cue, with its mood taken from the scene title.
@@ -163,7 +171,7 @@ SceneScript {
 - `start` and the shot spans are computed from line durations and gaps. They are never typed in.
 
 ### 4.7 Render
-**Ruling (main decision for the operator): Remotion, as a new render path for scene scripts only.**
+**Ruling (operator, 2026-10-23): Remotion, as a new render path for scene scripts only.**
 
 - **Why:** the prototype's caption treatments, volume automation and per-shot slow-motion were a few hundred lines of React (`GraceMadeMe.tsx`, `Captions.tsx`, `mix.ts`). Doing the same in the ffmpeg filtergraph means hand-built `volume=enable` expressions for every duck, ASS styling for three caption treatments, and more filtergraph length risk on prod's FFmpeg 5.1.
 - **Risks:**
@@ -199,7 +207,9 @@ Taken from the prototype (`Captions.tsx`), all from the line model:
 | `POST /api/scene-script/:id/render` | Render, loudness pass, file under the user's outputs |
 | `GET /api/scene-script/:id` | State, including per-shot and per-line status |
 
-- `estimate` is `{ clips, seconds, tokens, usd }` from `estimateTokens` and the Mini rate.
+- `estimate` is `{ clips, seconds, tokens, usd, fromLibrary }` from `estimateTokens` and the Mini rate. Shots filled from the library count as zero.
+- **Benchmark (operator ruling 2026-10-23): $10 per video.** The estimate is shown against it before any order. Above $10 the order button asks for a second confirmation that names the amount. This is a warning, not a block; a hard per-video cap is deferred. The monthly cap in `spend.js` still applies as today.
+- **Fit to the benchmark:** Grace Made Me cost about $9.20 for 16 shots plus 2 re-rolls at Mini 720p. The same video at 1080p would cost 2.25 times as much (about $21), so 720p clips upscaled in the render stay the default.
 
 ### 4.10 Client
 A new **Scene script** page under Create (super admins in Phase 1), with four steps. Operator UI follows the design quality standard.
@@ -213,9 +223,21 @@ A new **Scene script** page under Create (super admins in Phase 1), with four st
 3. **Voice, then shots:** buttons with the estimate ("16 clips · about $9.20"). Shots then fill with thumbnails, each with a Re-roll action.
 4. **Render:** the result, with Publish options reusing the existing social flows.
 
+### 4.11 Visual library: every paid clip is kept, reused and refined
+Today a Story re-roll deletes the clip it replaces (`finishTask` in `lib/story/animateStage.js`), and a clip keeps no record of the prompt that made it. Paid footage is lost.
+
+- **Store.** Every Seedance clip from any flow (scene scripts, Story Animate, Series, AI music videos) is saved once in a per-user library: `DATA_DIR/visual-library/<id>.json` beside the clip file. A record holds the prompt, lead descriptor, model, resolution, aspect, duration, tokens, cost, task id, source project and shot, date, tags, a poster frame and an optional rating.
+- **Never deleted by a re-roll.** A re-roll adds a new clip next to the old one. Deleting is a separate, explicit action.
+- **Reuse.** A shot can take any library clip instead of ordering a new one, at no cost. The library is searchable by words in the prompt and tags, and filterable by aspect and by "shows the lead character".
+- **Suggest.** When a shot's prompt is close to an existing clip's prompt, the preview offers that clip first. Phase 2 uses plain text similarity.
+- **Refine for free, in the render.** In and out points, playback rate, reframe or crop, flip and grade are stored on the shot, never baked into the clip, so one clip can serve many videos differently.
+- **Refine for money.** "Re-roll from this prompt" opens the clip's prompt for editing and orders a new clip, which joins the library beside the original. Image-to-video from a frame of a clip works only for frames without a realistic face (section 2). Extending a clip, or using it as a reference video, has not been tested; Phase 2 probes it with one paid request before offering it.
+- **Back-fill.** The 16 Grace Made Me clips are imported with their prompts. Existing Story AI clips on prod are imported without prompts, marked "prompt unknown".
+- **Size.** The prototype's clips are 2.4–6.4 MB each, 59 MB for all 16. The library lives on the same volume as other user outputs. Prod disk headroom must be checked before Phase 1 ships.
+
 ## 5. Phases
-- **Phase 1:** parser and fixture tests, verbatim voice path with cast and ensemble, timeline, shots through the ledger, Remotion render, minimal page. Done when the fixture builds end to end on prod.
-- **Phase 2:** per-shot re-roll and prompt editing polish, music bed suggestions by mood, 16:9 layout, a 3-minute variant with a repeating hook.
+- **Phase 1:** parser and fixture tests, verbatim voice path with cast map, per-line voices and ensemble, timeline, shots through the ledger, visual library store (every clip kept, pick a clip for a shot, Grace back-fill), the $10 benchmark warning, Remotion render, minimal page. Done when the fixture builds end to end on prod.
+- **Phase 2:** ensemble builder and cast presets, library browser with suggestions and free refine controls, Story re-rolls stop deleting clips and feed the library, the extend-clip probe, music bed suggestions by mood, 16:9 layout, a 3-minute variant with a repeating hook.
 - **Phase 3:**
   - "Write a scene script" assistant from a verse: an LLM writes in this format, and the operator edits before Read script;
   - scene-script detection in the Story Script tab, Voice page and Long-form paste box;
@@ -237,8 +259,9 @@ A new **Scene script** page under Create (super admins in Phase 1), with four st
 - **Spend:** shots reserve and settle through `spend.js`. A refusal releases the reservation. The cap blocks before any submit.
 - **Render smoke test** (local, not CI): a 10 s two-scene script renders, has an audio stream, measures −14 ± 1 LUFS, and has silence exactly at the drop.
 
-## 7. Open questions for the operator
-1. Remotion render path (4.7): yes, or extend the ffmpeg Story render instead?
-2. Super admins only for Phase 1, given the shared Seedance balance?
-3. Default narrator: Azure Davis HD, or Nigerian English (`en-NG-AbeoNeural`), which is warmer for the brand but less expressive?
-4. Is a per-video spend limit wanted (for example $15) on top of the monthly cap?
+## 7. Operator rulings (2026-10-23)
+1. **Render path: Remotion**, built into BibleFuel as a new render path for scene scripts (4.7). The app ships fixed, data-driven compositions taken from the prototype. No AI writes React code at run time.
+2. **Access: super admins only** for Phase 1 (4.9).
+3. **Voices: full flexibility**, as in the prototype blend (4.3). Default narrator stays Azure Davis HD; Nigerian English voices are offered in the cast pickers and the ensemble.
+4. **Spend: a $10 per-video benchmark** shown before ordering, with a second confirmation above it. A hard per-video cap is deferred (4.9).
+5. **Visuals: every paid clip is kept, reusable and refinable** inside BibleFuel (4.11).
