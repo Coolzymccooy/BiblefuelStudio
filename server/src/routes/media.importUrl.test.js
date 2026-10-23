@@ -5,7 +5,7 @@
  * Run with: node --test server/src/routes/media.importUrl.test.js
  */
 
-import { test, describe, beforeEach, afterEach } from "node:test";
+import { test, describe, beforeEach, afterEach, mock } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -86,6 +86,7 @@ describe("POST /api/media/import-url", () => {
     await post({ url: "https://cdn.example.com/talk.wav" });
     assert.equal(calls[0].url, "https://cdn.example.com/talk.wav");
     assert.equal(calls[0].opts.maxBytes, 200 * 1024 * 1024);
+    assert.equal(calls[0].opts.timeoutMs, 10 * 60_000, "a large file gets minutes, not the lib's 60 s default");
   });
 
   test("audio bytes that ffprobe cannot read are refused and removed", async () => {
@@ -138,6 +139,14 @@ describe("POST /api/media/import-url", () => {
     assert.deepEqual(fs.readdirSync(outDir), []);
   });
 
+  test("URL_TIMEOUT answers 504 with its code", async () => {
+    _setDownloader(failing("URL_TIMEOUT"));
+    const res = await post({ url: "https://cdn.example.com/slow.wav" });
+    assert.equal(res.status, 504);
+    assert.deepEqual(res.body, { ok: false, error: "URL_TIMEOUT", message: "download timed out" });
+    assert.deepEqual(fs.readdirSync(outDir), []);
+  });
+
   test("URL_PRIVATE, URL_SCHEME and URL_REDIRECTS answer 400 with their code", async () => {
     for (const code of ["URL_PRIVATE", "URL_SCHEME", "URL_REDIRECTS"]) {
       _setDownloader(failing(code));
@@ -149,12 +158,40 @@ describe("POST /api/media/import-url", () => {
   });
 
   test("any other download failure answers 502 DOWNLOAD_FAILED", async () => {
-    _setDownloader(failing("HTTP 404"));
-    const res = await post({ url: "https://cdn.example.com/missing.wav" });
-    assert.equal(res.status, 502);
-    assert.equal(res.body.error, "DOWNLOAD_FAILED");
-    assert.match(res.body.message, /HTTP 404/);
-    assert.deepEqual(fs.readdirSync(outDir), []);
+    const warn = mock.method(console, "warn", () => {});
+    try {
+      _setDownloader(failing("connect ECONNREFUSED 10.1.2.3:6379"));
+      const res = await post({ url: "https://cdn.example.com/private/path.wav?token=secret" });
+      assert.equal(res.status, 502);
+      assert.deepEqual(res.body, { ok: false, error: "DOWNLOAD_FAILED", message: "could not download the file" });
+      assert.deepEqual(fs.readdirSync(outDir), []);
+      assert.equal(warn.mock.callCount(), 1);
+      const [label, detail] = warn.mock.calls[0].arguments;
+      assert.equal(label, "[media] import-url failed");
+      assert.equal(detail.host, "cdn.example.com");
+      assert.doesNotMatch(JSON.stringify(detail), /secret|private\/path/, "the full URL is not logged");
+    } finally {
+      warn.mock.restore();
+    }
+  });
+
+  test("an unexpected error answers 500 IMPORT_FAILED instead of escaping the handler", async () => {
+    const blocker = path.join(outDir, "a-regular-file");
+    fs.writeFileSync(blocker, "x");
+    const brokenApp = express();
+    brokenApp.use(express.json());
+    brokenApp.use((req, _res, next) => {
+      req.ctx = { userId: "u1", dataDir: outDir, outputDir: path.join(blocker, "sub") };
+      next();
+    });
+    brokenApp.use("/api/media", mediaRouter);
+    _setDownloader(serving(WAV_BYTES, "audio/wav"));
+    const res = await request(brokenApp).post("/api/media/import-url").send({ url: "https://cdn.example.com/a.wav" });
+    assert.equal(res.status, 500);
+    assert.equal(res.body.ok, false);
+    assert.equal(res.body.error, "IMPORT_FAILED");
+    assert.ok(res.body.message);
+    assert.equal(calls.length, 0, "nothing was downloaded");
   });
 
   test("bad input is rejected before any download", async () => {

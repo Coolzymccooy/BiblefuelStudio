@@ -15,9 +15,10 @@ import fetch from "node-fetch";
  * address (so a second DNS answer cannot redirect the connection); redirects
  * are followed by hand and each hop is vetted again; the body is capped.
  *
- * Failures are Errors whose message is a machine code:
- *   URL_SCHEME, URL_PRIVATE, URL_REDIRECTS, URL_TOO_LARGE.
- * Anything else (HTTP errors, network errors, timeout) carries a plain message.
+ * Failures are Errors whose message is a machine code (URL_TIMEOUT: overall
+ * deadline or a stalled body):
+ *   URL_SCHEME, URL_PRIVATE, URL_REDIRECTS, URL_TOO_LARGE, URL_TIMEOUT.
+ * Anything else (HTTP errors, network errors) carries a plain message.
  */
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
@@ -46,6 +47,10 @@ function isPublicIPv4(octets) {
   if (a === 192 && b === 168) return false;
   if (a === 192 && b === 0 && c === 0) return false; // IETF protocol assignments
   if (a === 198 && (b === 18 || b === 19)) return false; // benchmarking
+  if (a === 192 && b === 88 && c === 99) return false; // 6to4 relay anycast
+  if (a === 192 && b === 0 && c === 2) return false; // TEST-NET-1
+  if (a === 198 && b === 51 && c === 100) return false; // TEST-NET-2
+  if (a === 203 && b === 0 && c === 113) return false; // TEST-NET-3
   if (a >= 224) return false; // multicast, reserved, broadcast
   return true;
 }
@@ -188,7 +193,8 @@ function mediaTypeOf(response) {
  * @param {{
  *   maxBytes: number,
  *   maxRedirects?: number,
- *   timeoutMs?: number,
+ *   timeoutMs?: number, // overall deadline
+ *   idleMs?: number, // abort when no body bytes arrive for this long
  *   lookup?: (host: string) => Promise<{ address: string, family: number }>,
  *   fetchImpl?: typeof fetch,
  *   unvettedHostsForTests?: Iterable<string>,
@@ -201,6 +207,7 @@ export async function downloadPublicUrl(url, destPath, opts) {
     maxBytes,
     maxRedirects = 3,
     timeoutMs = 60_000,
+    idleMs = 30_000,
     lookup = dns.promises.lookup,
     fetchImpl = fetch,
     unvettedHostsForTests = [],
@@ -209,7 +216,14 @@ export async function downloadPublicUrl(url, destPath, opts) {
   const unvettedHosts = new Set(unvettedHostsForTests);
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let timedOut = false;
+  const abortAsTimeout = () => { timedOut = true; controller.abort(); };
+  const timer = setTimeout(abortAsTimeout, timeoutMs);
+  let stallTimer = null;
+  const armStallTimer = () => {
+    clearTimeout(stallTimer);
+    stallTimer = setTimeout(abortAsTimeout, idleMs);
+  };
   const agents = [];
   try {
     let current = parseHttpUrl(url);
@@ -243,10 +257,11 @@ export async function downloadPublicUrl(url, destPath, opts) {
       }
 
       let bytes = 0;
+      armStallTimer();
       try {
         await pipeline(
           response.body,
-          byteCounter(maxBytes, (total) => { bytes = total; }),
+          byteCounter(maxBytes, (total) => { bytes = total; armStallTimer(); }),
           fs.createWriteStream(destPath),
         );
       } catch (err) {
@@ -257,10 +272,11 @@ export async function downloadPublicUrl(url, destPath, opts) {
       return { bytes, contentType: mediaTypeOf(response), finalUrl: current.href };
     }
   } catch (err) {
-    if (err?.name === "AbortError") throw new Error("download timed out");
+    if (timedOut || err?.name === "AbortError") throw codedError("URL_TIMEOUT");
     throw err;
   } finally {
     clearTimeout(timer);
+    clearTimeout(stallTimer);
     for (const agent of agents) agent.destroy();
   }
 }

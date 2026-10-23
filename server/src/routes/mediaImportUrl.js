@@ -15,12 +15,16 @@ const MAX_URL_LENGTH = 2048;
 const MAX_FILENAME_LENGTH = 200;
 const IMAGE_EXT_BY_MIME = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif" };
 
-const GUARD_STATUS = { URL_SCHEME: 400, URL_PRIVATE: 400, URL_REDIRECTS: 400, URL_TOO_LARGE: 413 };
+// Overall deadline for one import; a 200 MB file needs minutes, not the lib's 60 s default.
+const IMPORT_TIMEOUT_MS = Number(process.env.IMPORT_URL_TIMEOUT_MS || 10 * 60_000);
+
+const GUARD_STATUS = { URL_SCHEME: 400, URL_PRIVATE: 400, URL_REDIRECTS: 400, URL_TOO_LARGE: 413, URL_TIMEOUT: 504 };
 const GUARD_MESSAGE = {
   URL_SCHEME: "Only http and https URLs can be imported.",
   URL_PRIVATE: "That address is not a public internet host, so it cannot be imported.",
   URL_REDIRECTS: "That URL redirected too many times.",
   URL_TOO_LARGE: `That file is larger than the ${MAX_INPUT_MB}MB import limit.`,
+  URL_TIMEOUT: "download timed out",
 };
 
 let downloader = downloadPublicUrl;
@@ -55,16 +59,18 @@ function validateInput(body) {
   return { url: url.trim(), kind, extHint: safeExt(baseName(filename)) || urlExtension(url.trim()) };
 }
 
-function sendDownloadError(res, err) {
+function hostOf(url) {
+  try { return new URL(url).hostname; } catch { return ""; }
+}
+
+function sendDownloadError(res, err, url) {
   const code = String(err?.message || "");
   if (GUARD_STATUS[code]) {
     return res.status(GUARD_STATUS[code]).json({ ok: false, error: code, message: GUARD_MESSAGE[code] });
   }
-  return res.status(502).json({
-    ok: false,
-    error: "DOWNLOAD_FAILED",
-    message: `Could not download that URL: ${code || "unknown error"}`,
-  });
+  // The raw network error stays server-side: echoing it would let a caller probe internal ports.
+  console.warn("[media] import-url failed", { host: hostOf(url), code: err?.code || code.slice(0, 80) });
+  return res.status(502).json({ ok: false, error: "DOWNLOAD_FAILED", message: "could not download the file" });
 }
 
 const removeQuietly = (file) => { try { fs.rmSync(file, { force: true }); } catch { /* best effort */ } };
@@ -89,35 +95,35 @@ export function createImportUrlHandler(deps) {
   };
 
   return async function importUrl(req, res) {
-    const input = validateInput(req.body);
-    if (input.error) return res.status(400).json({ ok: false, error: input.error, message: input.message });
-
-    const outDir = req.ctx.outputDir;
-    fs.mkdirSync(outDir, { recursive: true });
-    const partFile = path.join(outDir, `import-url-${uuid()}.part`);
-
-    let download;
+    let partFile = "";
+    let outFile = "";
     try {
-      download = await downloader(input.url, partFile, { maxBytes: MAX_INPUT_MB * 1024 * 1024 });
-    } catch (err) {
-      removeQuietly(partFile);
-      return sendDownloadError(res, err);
-    }
+      const input = validateInput(req.body);
+      if (input.error) return res.status(400).json({ ok: false, error: input.error, message: input.message });
 
-    // The extension depends on the response's content type, which is only
-    // known now, so the file is renamed from its .part name to its final one.
-    const { kind } = input;
-    const ext = extensionFor(kind, download.contentType, input.extHint);
-    const prefix = { audio: "user-audio", video: "source-video", image: "bg-image" }[kind];
-    const outFile = path.join(outDir, `${prefix}-${uuid()}.${ext}`);
-    try {
+      const outDir = req.ctx.outputDir;
+      fs.mkdirSync(outDir, { recursive: true });
+      partFile = path.join(outDir, `import-url-${uuid()}.part`);
+
+      let download;
+      try {
+        download = await downloader(input.url, partFile, {
+          maxBytes: MAX_INPUT_MB * 1024 * 1024,
+          timeoutMs: IMPORT_TIMEOUT_MS,
+        });
+      } catch (err) {
+        removeQuietly(partFile);
+        return sendDownloadError(res, err, input.url);
+      }
+
+      // The extension depends on the response's content type, which is only
+      // known now, so the file is renamed from its .part name to its final one.
+      const { kind } = input;
+      const ext = extensionFor(kind, download.contentType, input.extHint);
+      const prefix = { audio: "user-audio", video: "source-video", image: "bg-image" }[kind];
+      outFile = path.join(outDir, `${prefix}-${uuid()}.${ext}`);
       fs.renameSync(partFile, outFile);
-    } catch (err) {
-      removeQuietly(partFile);
-      return res.status(500).json({ ok: false, error: "IMPORT_FAILED", message: String(err?.message || err) });
-    }
 
-    try {
       if (kind === "audio") {
         const mime = download.contentType.startsWith("audio/") ? download.contentType : `audio/${ext}`;
         return processReceivedAudio(outFile, ext, mime, res);
@@ -134,7 +140,10 @@ export function createImportUrlHandler(deps) {
       }
       return res.json({ ok: true, file: slashed(image.file), mime: image.mime, kind: "image" });
     } catch (err) {
-      removeQuietly(outFile);
+      // Express 4 does not catch a rejected handler promise, so nothing may escape.
+      if (partFile) removeQuietly(partFile);
+      if (outFile) removeQuietly(outFile);
+      if (res.headersSent) return undefined;
       return res.status(500).json({ ok: false, error: "IMPORT_FAILED", message: String(err?.message || err) });
     }
   };

@@ -49,6 +49,13 @@ before(async () => {
     } else if (req.url === "/big-declared") {
       res.writeHead(200, { "content-type": "audio/mpeg", "content-length": "16384" });
       res.end(Buffer.alloc(16384, 1));
+    } else if (req.url.startsWith("/hop/")) {
+      const n = Number(req.url.slice(5));
+      if (n === 0) res.writeHead(200, { "content-type": "audio/mpeg" }).end(BODY);
+      else res.writeHead(302, { location: `/hop/${n - 1}` }).end();
+    } else if (req.url === "/stall") {
+      res.writeHead(200, { "content-type": "audio/mpeg" });
+      res.write(Buffer.alloc(1024, 3)); // one chunk, then silence: never ends
     } else if (req.url === "/missing") {
       res.writeHead(404).end("nope");
     } else {
@@ -60,6 +67,7 @@ before(async () => {
 });
 
 after(async () => {
+  server.closeAllConnections();
   await new Promise((resolve) => server.close(resolve));
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
@@ -78,6 +86,7 @@ describe("isPublicAddress", () => {
     for (const ip of [
       "127.0.0.1", "127.255.255.254", "10.0.0.1", "172.16.0.1", "172.31.255.255",
       "192.168.1.1", "169.254.169.254", "0.0.0.0", "0.1.2.3", "100.64.0.1",
+      "192.0.2.1", "198.51.100.7", "203.0.113.200", "192.88.99.1",
       "::1", "::", "fc00::1", "fd12:3456::1", "fe80::1", "::ffff:10.0.0.1",
       "::ffff:7f00:1", "::ffff:169.254.169.254",
     ]) {
@@ -144,6 +153,30 @@ describe("downloadPublicUrl", () => {
     const result = await downloadPublicUrl(url("/chain"), file, reachable());
     assert.equal(result.finalUrl, url("/ok"));
     assert.equal(result.bytes, BODY.length);
+  });
+
+  test("exactly 3 redirects succeed; a 4th is refused", async () => {
+    const ok = await downloadPublicUrl(url("/hop/3"), dest(), reachable());
+    assert.equal(ok.finalUrl, url("/hop/0"));
+    assert.equal(ok.bytes, BODY.length);
+    const file = dest();
+    await assert.rejects(downloadPublicUrl(url("/hop/4"), file, reachable()), { message: "URL_REDIRECTS" });
+    assert.equal(fs.existsSync(file), false);
+  });
+
+  test("a body that stalls mid-transfer is aborted as URL_TIMEOUT and the file removed", async () => {
+    const file = dest();
+    await assert.rejects(downloadPublicUrl(url("/stall"), file, reachable({ idleMs: 50 })), { message: "URL_TIMEOUT" });
+    assert.equal(fs.existsSync(file), false);
+  });
+
+  test("the overall deadline also reports URL_TIMEOUT", async () => {
+    const file = dest();
+    await assert.rejects(
+      downloadPublicUrl(url("/stall"), file, reachable({ timeoutMs: 80, idleMs: 60_000 })),
+      { message: "URL_TIMEOUT" },
+    );
+    assert.equal(fs.existsSync(file), false);
   });
 
   test("a body over maxBytes is aborted and the file removed", async () => {
