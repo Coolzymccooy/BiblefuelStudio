@@ -480,11 +480,13 @@ it('shows cap usage per bucket', ...)                             // "3 / 10"
 **Files:**
 - Modify: `docs/superpowers/plans/2026-10-23-mcp-agent-access-slice-1.md` (tick the manual checks)
 
-- [ ] **Step 1: Start the dev server from the worktree** on a port other than the main checkout's (`PORT=5061`), create a key in Settings, and connect Claude Code: `claude mcp add --transport http biblefuel-dev http://localhost:5061/api/mcp --header "Authorization: Bearer <key>"` then `claude mcp list` → connected.
-- [ ] **Step 2: From that Claude Code session** run `whoami`, `capabilities`, `media_list`, `jobs_list`; confirm the activity view in Settings shows the four calls.
-- [ ] **Step 3: Connect Hermes Agent** with the `config.yaml` snippet against the same server; run `whoami`; confirm it appears in the activity log with a distinct key.
-- [ ] **Step 4: Flip the publish switch off and on**, confirm the two `key:publish_*` events in the log.
+- [x] **Step 1: Start the dev server from the worktree** on a port other than the main checkout's (`PORT=5061`), create a key in Settings, and connect Claude Code: `claude mcp add --transport http biblefuel-dev http://localhost:5061/api/mcp --header "Authorization: Bearer <key>"` then `claude mcp list` → connected.
+- [x] **Step 2: From that Claude Code session** run `whoami`, `capabilities`, `media_list`, `jobs_list`; confirm the activity view in Settings shows the four calls.
+- [x] **Step 3: Connect Hermes Agent** with the `config.yaml` snippet against the same server; run `whoami`; confirm it appears in the activity log with a distinct key.
+- [x] **Step 4: Flip the publish switch off and on**, confirm the two `key:publish_*` events in the log.
 - [ ] **Step 5: Open the PR** against `master` with `Closes #<issue>` (create the issue first: `gh issue create --title "MCP agent access, slice 1: endpoint, keys, caps, log, guide" --label enhancement`), wait for the Codex review, fix or rule on every finding, reply on the PR. Do not merge without the operator's go-ahead.
+
+**E2E notes (2026-10-24):** ran on `PORT=5071` (5061 is a browser/fetch unsafe port). Claude Code: `claude mcp list` → Connected; the four tools were exercised over MCP with the official SDK client on the same key because the local CLI OAuth token had expired. Hermes: `hermes mcp test` → Connected, 10 tools; `whoami` sent with the Hermes key (its model provider auth is operator-side). Activity log showed both key names and the `key:publish_on` / `key:publish_off` events; the Settings card was checked at desktop and 375px widths.
 
 ---
 
