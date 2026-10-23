@@ -213,3 +213,45 @@ describe("parseSceneScript edge cases", () => {
     assert.ok(warnings.some((w) => w.code === "NO_SCENES"));
   });
 });
+
+describe("parseSceneScript on hostile input", () => {
+  const timed = (md) => {
+    const t0 = performance.now();
+    const out = parseSceneScript(md);
+    return { ...out, ms: performance.now() - t0 };
+  };
+  const spaces = " ".repeat(450);
+  // Just under the line limit: the old tag and heading patterns took seconds on these.
+  const run = " ".repeat(1990);
+
+  for (const [name, line] of [["heading", `###${run}x`], ["bold tag", `**${run}x`], ["plain tag", `A${run}x`]]) {
+    test(`a ${name} with a long run of spaces parses in milliseconds`, () => {
+      const { ms } = timed(`### Scene 1\n${line}`);
+      assert.ok(ms < 500, `took ${ms} ms`);
+    });
+  }
+
+  test("spaces inside a tag still read as the tag", () => {
+    const { script } = parseSceneScript(`###${spaces}Scene${spaces}1\n**Narrator${spaces}(soft)${spaces}:**${spaces}"Grace${spaces}found me."`);
+    assert.deepEqual([script.lines[0].speaker, script.lines[0].tone, script.lines[0].text], ["Narrator", "soft", "Grace found me."]);
+  });
+
+  test("repeated keywords under the line limit stay fast", () => {
+    const md = [
+      "### Scene 1",
+      "*Visual: " + "a ".repeat(990) + "*",
+      "### Notes",
+      "Repeat " + "say ".repeat(480),
+      "### Music",
+      "0:00–0:10 — " + "drop ".repeat(390),
+    ].join("\n");
+    const { ms } = timed(md);
+    assert.ok(ms < 500, `took ${ms} ms`);
+  });
+
+  test("sets aside a line over the limit with a warning", () => {
+    const { script, warnings } = parseSceneScript(`### Scene 1\n**Narrator:** "${"word ".repeat(500)}"\n**Narrator:** "Still here."`);
+    assert.deepEqual(script.lines.map((l) => l.text), ["Still here."]);
+    assert.ok(warnings.some((w) => w.code === "LINE_TOO_LONG"));
+  });
+});

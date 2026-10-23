@@ -19,6 +19,9 @@ const SCENE_RE = /^scene\s+(\d+)\s*(?:[—–:.-]\s*(.*?))?\s*(?:\((\d{1,2}:\d{2
 const HEADING_RE = /^(#{1,6})\s+(.*)$/;
 const IMAGE_LINK_RE = /^!?\[[^\]]*\]\([^)]*\)$/;
 const RULE_RE = /^(?:-{3,}|\*{3,}|_{3,})$/;
+// No spoken line or direction is this long; a longer one is set aside so a
+// pasted blob cannot keep the parser busy.
+const MAX_LINE_CHARS = 2000;
 const RESERVED_TAGS = new Set([
   "visual", "visuals", "final screen", "end card", "end screen", "music", "sound", "sfx", "title",
   "note", "notes", "camera", "transition", "on screen", "on-screen text", "text", "caption", "scripture",
@@ -118,9 +121,21 @@ function startScene(st, lineNo, m) {
   st.inQuote = false;
 }
 
+// A speaker tag is short; only the text after it can be long. The tag
+// regexes see the head alone, so a long run of spaces cannot make them
+// backtrack for seconds.
+const TAG_HEAD_CHARS = 160;
+
 function speakerTag(line) {
-  const bold = /^\*\*\s*([^*:()]{1,40}?)\s*(?:\(([^)]*)\))?\s*:?\s*\*\*\s*:?\s*(.*)$/.exec(line);
-  const plain = /^([A-Z][A-Za-z .'’-]{0,30}?)\s*(?:\(([^)]*)\))?\s*:\s*(.*)$/.exec(line);
+  const close = line.startsWith("**") ? line.indexOf("**", 2) : -1;
+  const headEnd = close >= 0 ? close + 2 : line.indexOf(":") + 1;
+  if (headEnd <= 0 || headEnd > TAG_HEAD_CHARS) return null;
+  const head = line.slice(0, headEnd).replace(/\s+/g, " ");
+  const tail = line.slice(headEnd);
+  const bold = /^\*\* ?([^*:()]{1,40}?) ?(?:\(([^)]*)\))? ?:? ?\*\*$/.exec(head);
+  const plain = /^([A-Z][A-Za-z .'’-]{0,30}?) ?(?:\(([^)]*)\))? ?:$/.exec(head);
+  if (bold) bold[3] = tail.replace(/^\s*:?/, "");
+  if (plain) plain[3] = tail;
   const m = bold && /:/.test(line.slice(0, line.indexOf("**", 2) + 3)) ? bold : plain;
   if (!m) return null;
   const name = m[1].trim();
@@ -262,7 +277,15 @@ function finishWarnings(st) {
  */
 export function parseSceneScript(markdown) {
   const st = newState();
-  String(markdown || "").split(/\r?\n/).forEach((raw, i) => readLine(st, i + 1, raw));
+  String(markdown || "").split(/\r?\n/).forEach((raw, i) => {
+    if (raw.length > MAX_LINE_CHARS) {
+      ignore(st, i + 1, raw.slice(0, 80), "line too long");
+      st.warnings.push({ code: "LINE_TOO_LONG", message: `Line ${i + 1} is over ${MAX_LINE_CHARS} characters and was left out. Split it into shorter lines.` });
+      return;
+    }
+    // One space per run keeps every pattern below linear in practice.
+    readLine(st, i + 1, raw.replace(/[ \t]+/g, " "));
+  });
   const advice = readAdvice(st.adviceRows);
   for (const lineNo of advice.used) use(st, lineNo);
   for (const x of advice.ignored) ignore(st, x.lineNo, x.text, "commentary");
