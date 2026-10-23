@@ -5,6 +5,7 @@ import os from "os";
 import path from "path";
 import { createProject, readProject, writeProject } from "./projectStore.js";
 import { ledgerSummary, reserveSpend } from "../videoGen/spend.js";
+import { readLibrary } from "../visualLibrary/store.js";
 import {
   AI_QUALITY, FRAME_MOTION_PROMPT, sceneClipSec, animatePrompt, animatableScenes, estimateAnimation,
   startAnimation, isAnimating, cancelAnimation, resumeAnimations,
@@ -143,9 +144,9 @@ describe("startAnimation", () => {
     assert.ok(fs.existsSync(old));
     assert.deepEqual(animatableScenes(readProject(dataDir, p.projectId), ["s0"]).map((x) => x.id), ["s0"]);
   });
-  test("a successful re-roll deletes the clip it replaced", async () => {
+  test("a re-roll moves an older clip it replaces into the library", async () => {
     const old = path.join(outputDir, "bg-video-old.mp4");
-    fs.writeFileSync(old, "mp4");
+    fs.writeFileSync(old, "old mp4");
     const p = project([scene(0, { mediaKind: "video", videoPath: old, videoUrl: "/outputs/bg-video-old.mp4", aiVideoStatus: "done", aiVideoClip: true })]);
     const { deps } = fakeDeps();
     startAnimation(ctx(), p.projectId, { sceneIds: ["s0"], ledgerDir, deps });
@@ -154,7 +155,26 @@ describe("startAnimation", () => {
     assert.notEqual(s.videoPath, old);
     assert.equal(s.aiVideoClip, true);
     assert.ok(fs.existsSync(s.videoPath), "the new clip is kept");
-    assert.ok(!fs.existsSync(old), "the replaced clip is gone");
+    assert.ok(!fs.existsSync(old), "the scene no longer holds the replaced clip");
+    const lib = readLibrary(dataDir);
+    assert.equal(lib.length, 2, "the new clip and the replaced one");
+    const kept = lib.find((c) => c.id !== s.aiVideoLibraryId);
+    assert.equal(fs.readFileSync(path.join(outputDir, "visual-library", kept.id, "clip.mp4"), "utf8"), "old mp4");
+    assert.equal(kept.prompt, animatePrompt(scene(0)));
+    assert.deepEqual(kept.source, { kind: "story", projectId: p.projectId, sceneId: "s0" });
+  });
+  test("a re-roll of a clip already in the library does not add it twice", async () => {
+    const p = project([scene(0)]);
+    const { deps } = fakeDeps();
+    startAnimation(ctx(), p.projectId, { ledgerDir, deps });
+    await waitFor(() => !isAnimating(p.projectId));
+    const first = readProject(dataDir, p.projectId).scenes[0];
+    startAnimation(ctx(), p.projectId, { sceneIds: ["s0"], ledgerDir, deps });
+    await waitFor(() => !isAnimating(p.projectId));
+    const second = readProject(dataDir, p.projectId).scenes[0];
+    assert.notEqual(second.aiVideoLibraryId, first.aiVideoLibraryId);
+    assert.deepEqual(readLibrary(dataDir).map((c) => c.id).sort(), [first.aiVideoLibraryId, second.aiVideoLibraryId].sort());
+    assert.ok(!fs.existsSync(first.videoPath), "the scene copy of the replaced clip is removed");
   });
   test("a re-roll that lands mid-render leaves the old clip for the render", async () => {
     const old = path.join(outputDir, "bg-video-old.mp4");
@@ -190,6 +210,41 @@ describe("startAnimation", () => {
     const sum = ledgerSummary(ledgerDir);
     assert.equal(sum.reservedUsd, 0);
     assert.equal(sum.spentUsd.toFixed(5), (2 * MINI_5S_USD).toFixed(5));
+  });
+
+  test("every clip it makes is kept in the visual library as well", async () => {
+    const p = project([scene(0), scene(1)]);
+    const { deps } = fakeDeps();
+    startAnimation(ctx(), p.projectId, { ledgerDir, deps });
+    await waitFor(() => !isAnimating(p.projectId));
+    const scenes = readProject(dataDir, p.projectId).scenes;
+    const lib = readLibrary(dataDir);
+    assert.equal(lib.length, 2);
+    for (const s of scenes) {
+      const clip = lib.find((c) => c.id === s.aiVideoLibraryId);
+      assert.ok(clip, `${s.id} has a library clip`);
+      assert.equal(clip.prompt, animatePrompt(s));
+      assert.equal(clip.promptKnown, true);
+      assert.equal(clip.costUsd.toFixed(5), MINI_5S_USD.toFixed(5));
+      assert.equal(clip.model, AI_QUALITY.standard.model);
+      assert.equal(clip.resolution, "720p");
+      assert.equal(clip.aspect, "portrait");
+      assert.equal(clip.durationSec, 5);
+      assert.match(clip.taskId, /^t-\d$/);
+      assert.deepEqual(clip.source, { kind: "story", projectId: p.projectId, sceneId: s.id });
+      assert.ok(fs.existsSync(path.join(outputDir, "visual-library", clip.id, "clip.mp4")));
+      assert.ok(fs.existsSync(s.videoPath), "the scene keeps its own copy");
+    }
+  });
+
+  test("a clip still reaches its scene when the library cannot take it", async () => {
+    const p = project([scene(0)]);
+    const { deps } = fakeDeps({ keep: () => { throw new Error("disk full"); } });
+    startAnimation(ctx(), p.projectId, { ledgerDir, deps });
+    await waitFor(() => !isAnimating(p.projectId));
+    const s = readProject(dataDir, p.projectId).scenes[0];
+    assert.equal(s.aiVideoStatus, "done");
+    assert.equal(s.aiVideoLibraryId ?? null, null);
   });
 
   test("the task id is saved before waiting on BytePlus", async () => {
@@ -318,7 +373,7 @@ describe("startAnimation", () => {
     assert.equal(calls.submit.length, 1);
   });
 
-  test("a new picture chosen mid-flight is kept; the late clip is paid for but dropped", async () => {
+  test("a new picture chosen mid-flight is kept; the late clip is paid for and goes to the library", async () => {
     const p = project([scene(0)]);
     const newPic = path.join(outputDir, "new.png");
     fs.writeFileSync(newPic, "png");
@@ -338,6 +393,10 @@ describe("startAnimation", () => {
     assert.equal(s.aiVideoStatus, "none");
     assert.equal(ledgerSummary(ledgerDir).spentUsd.toFixed(5), MINI_5S_USD.toFixed(5));
     assert.deepEqual(fs.readdirSync(outputDir).filter((f) => f.startsWith("bg-video-")), []);
+    const lib = readLibrary(dataDir);
+    assert.equal(lib.length, 1);
+    assert.equal(lib[0].taskId, "t-1");
+    assert.ok(fs.existsSync(path.join(outputDir, "visual-library", lib[0].id, "clip.mp4")));
   });
 
   test("Stop orders no more clips; clips already ordered still arrive", async () => {
