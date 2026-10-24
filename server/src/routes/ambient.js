@@ -127,15 +127,6 @@ router.get("/", (req, res) => {
   return res.json({ ok: true, projects: listProjects(req.ctx.dataDir) });
 });
 
-/**
- * When this server process started. Every stage writes its project when it
- * starts and as it goes, so a project still marked busy that was last written
- * before this moment belongs to a process that is gone: a deploy or restart
- * killed the stage, and nothing will ever move it on.
- */
-let serverStartedAt = Date.now();
-export function _setServerStartedAtForTests(ms) { serverStartedAt = Number(ms) > 0 ? Number(ms) : Date.now(); }
-
 const BUSY_STATUSES = new Set([
   AMBIENT_STATUS.VOICING, AMBIENT_STATUS.GENERATING_IMAGES, AMBIENT_STATUS.ASSEMBLING, AMBIENT_STATUS.RENDERING,
 ]);
@@ -148,12 +139,16 @@ function renderJobLive(project) {
   return Boolean(job && (job.status === "queued" || job.status === "running"));
 }
 
+/**
+ * R50: a busy session whose stage is not running in this process, and whose
+ * heartbeat is stale, was stopped by a restart or deploy; nothing will move it
+ * on. Only the heartbeat is a sign of life, never updatedAt: a settings change
+ * written later (in this process) must not hide the stop.
+ */
 function interruptedByRestart(project) {
   if (!BUSY_STATUSES.has(project.status)) return false;
   if (isStageRunning(project.projectId) || renderJobLive(project)) return false;
-  const updatedAt = Number(project.updatedAt) || 0;
-  const lastSign = Math.max(updatedAt, Number(project.heartbeatAt) || 0);
-  return Date.now() - lastSign > STALE_AFTER_MS && updatedAt < serverStartedAt;
+  return Date.now() - (Number(project.heartbeatAt) || 0) > STALE_AFTER_MS;
 }
 
 // GET /:id — the full project, with live render progress folded in, and
@@ -314,7 +309,8 @@ router.post("/:id/voice", (req, res) => {
       if (fresh) writeProject(ctx.dataDir, { ...fresh, status: AMBIENT_STATUS.ERROR, error: String(e?.message || e) });
     } catch { /* already logged */ }
   });
-  const started = writeProject(req.ctx.dataDir, { ...project, status: AMBIENT_STATUS.VOICING, error: null });
+  // From the stored copy: the stage has already written its start (and first heartbeat).
+  const started = writeProject(req.ctx.dataDir, { ...(readProject(req.ctx.dataDir, id) || project), status: AMBIENT_STATUS.VOICING, error: null });
   return res.json({ ok: true, project: started });
 });
 
@@ -401,7 +397,8 @@ router.post("/:id/images", (req, res) => {
       if (fresh) writeProject(ctx.dataDir, { ...fresh, status: AMBIENT_STATUS.ERROR, error: String(e?.message || e) });
     } catch { /* already logged */ }
   });
-  const started = writeProject(req.ctx.dataDir, { ...project, status: AMBIENT_STATUS.GENERATING_IMAGES, error: null });
+  // From the stored copy: the stage has already written its start (and first heartbeat).
+  const started = writeProject(req.ctx.dataDir, { ...(readProject(req.ctx.dataDir, id) || project), status: AMBIENT_STATUS.GENERATING_IMAGES, error: null });
   return res.json({ ok: true, project: started });
 });
 

@@ -17,7 +17,7 @@ import ambientRouter, {
   _setRenderStageImpl, _resetRenderStageImpl,
   _setQuotaImpl, _resetQuotaImpl,
   clearCancelled, isCancelled, markCancelled,
-  _setServerStartedAtForTests, _setHeartbeatMsForTests,
+  _setHeartbeatMsForTests,
   _setLoudnessImpl, _resetLoudnessImpl, _setFfmpegSpawnImpl, _resetFfmpegSpawnImpl,
 } from "./ambient.js";
 import { EventEmitter } from "events";
@@ -138,9 +138,9 @@ describe("GET /api/ambient/:id", () => {
     }
   });
 
-  test("a stage this server is running, and an idle session, are not interrupted", async () => {
+  test("a stage with a fresh heartbeat, and an idle session, are not interrupted", async () => {
     const busy = await createSession();
-    writeProject(dataDir, { ...busy, status: "rendering" });
+    writeProject(dataDir, { ...busy, status: "rendering", heartbeatAt: Date.now() });
     const live = await request(app).get(`/api/ambient/${busy.projectId}`);
     assert.equal(live.body.interrupted, undefined);
     const idle = await createSession();
@@ -150,7 +150,7 @@ describe("GET /api/ambient/:id", () => {
   });
 
   describe("across processes (another server still running the stage)", () => {
-    afterEach(() => { _setServerStartedAtForTests(null); _setHeartbeatMsForTests(null); });
+    afterEach(() => { _setHeartbeatMsForTests(null); });
 
     /** Stored as another process last wrote it, `agoMs` ago, with its heartbeat then. */
     function writtenAgo(project, fields, agoMs) {
@@ -160,7 +160,6 @@ describe("GET /api/ambient/:id", () => {
     }
 
     test("a recent heartbeat from another process is not flagged; a stale one is", async () => {
-      _setServerStartedAtForTests(Date.now() + 1000);
       const live = await createSession();
       writtenAgo(live, { status: "rendering" }, 30_000);
       assert.equal((await request(app).get(`/api/ambient/${live.projectId}`)).body.interrupted, undefined);
@@ -169,8 +168,30 @@ describe("GET /api/ambient/:id", () => {
       assert.equal((await request(app).get(`/api/ambient/${dead.projectId}`)).body.interrupted, true);
     });
 
+    test("R50: a killed render followed by a settings change in this process still reads interrupted", async () => {
+      const p = await createSession();
+      writtenAgo(p, { status: "rendering" }, 3 * 60_000);
+      const patched = await request(app).patch(`/api/ambient/${p.projectId}/captions`).send({ captionPosition: "centre" });
+      assert.equal(patched.status, 200);
+      assert.ok(Number(readProject(dataDir, p.projectId).updatedAt) > Date.now() - 5000, "the change was written just now");
+      assert.equal((await request(app).get(`/api/ambient/${p.projectId}`)).body.interrupted, true);
+    });
+
+    test("a stage stamps its heartbeat as soon as it starts, not one beat later", async () => {
+      let release;
+      const gate = new Promise((resolve) => { release = resolve; });
+      _setImageLibraryImpl({ find: async () => [], register: async () => ({ id: "lib1" }), mark: () => {} });
+      _setImageGenImpl(async ({ partNumber }) => { await gate; return { ok: true, path: `/img/${partNumber}.png` }; });
+      const p = await createSession();
+      const before = Date.now();
+      await request(app).post(`/api/ambient/${p.projectId}/images`).send({});
+      const started = await waitFor(p.projectId, (x) => Number(x.heartbeatAt) >= before, 500);
+      assert.ok(Number(started.heartbeatAt) >= before, "the first beat is written at the start");
+      release();
+      await waitFor(p.projectId, (x) => x.status === AMBIENT_STATUS.READY_TO_RENDER);
+    });
+
     test("a render job live in this process is never flagged", async () => {
-      _setServerStartedAtForTests(Date.now() + 1000);
       const p = await createSession();
       const job = createJob("u1", { durationSec: 60 });
       writtenAgo(p, { status: "rendering", render: { jobId: job.jobId, status: "running", percent: 3, phase: "rendering" } }, 10 * 60_000);
@@ -187,7 +208,6 @@ describe("GET /api/ambient/:id", () => {
       await request(app).post(`/api/ambient/${p.projectId}/images`).send({});
       const beating = await waitFor(p.projectId, (x) => Number(x.heartbeatAt) > 0, 2000);
       assert.ok(Number(beating.heartbeatAt) > 0, "the images stage wrote a heartbeat");
-      _setServerStartedAtForTests(Date.now() + 1000);
       writtenAgo(beating, {}, 10 * 60_000);
       assert.equal((await request(app).get(`/api/ambient/${p.projectId}`)).body.interrupted, undefined);
       release();
@@ -976,13 +996,11 @@ describe("POST /api/ambient/:id/render", () => {
     await request(app).post(`/api/ambient/${p.projectId}/render`).send({});
     const beating = await waitFor(p.projectId, (x) => Number(x.heartbeatAt) > 0, 2000);
     assert.ok(Number(beating.heartbeatAt) > 0);
-    _setServerStartedAtForTests(Date.now() + 1000);
     fs.writeFileSync(path.join(dataDir, "ambient", `${p.projectId}.json`), JSON.stringify({ ...beating, render: {}, updatedAt: 1, heartbeatAt: 1 }));
     try {
       assert.equal((await request(app).get(`/api/ambient/${p.projectId}`)).body.interrupted, undefined);
     } finally {
       release();
-      _setServerStartedAtForTests(null);
       _setHeartbeatMsForTests(null);
     }
   });

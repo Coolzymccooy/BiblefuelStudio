@@ -244,7 +244,11 @@ export async function asRunningStage(ctx, projectId, work) {
   const timer = setInterval(() => beat(ctx.dataDir, id), _heartbeatMs);
   timer.unref?.();
   try {
-    return await work();
+    // The work's synchronous start has written its busy status by now: beat
+    // at once, so a stage never reads stale for its first interval.
+    const settled = work();
+    beat(ctx.dataDir, id);
+    return await settled;
   } finally {
     clearInterval(timer);
     const left = (running.get(id) || 1) - 1;
