@@ -165,6 +165,30 @@ test("lyric_set_song refuses a URL or a path outside the media folder before the
   assert.equal(calls.length, 0);
 });
 
+/** A media folder plus a shared folder holding a voice file and this user's generated image. */
+function mediaWithShared() {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(testApp.dataDir, "lyric-own-")));
+  const shared = fs.realpathSync(fs.mkdtempSync(path.join(testApp.dataDir, "lyric-shared-")));
+  fs.writeFileSync(path.join(shared, "tts-a.mp3"), "x");
+  fs.mkdirSync(path.join(shared, "genImg", "genvis-u_unit-x"), { recursive: true });
+  fs.writeFileSync(path.join(shared, "genImg", "genvis-u_unit-x", "a.png"), "x");
+  _setScopeForTests(async () => ({ outputDir: dir, sharedDir: shared }));
+  return shared;
+}
+
+test("lyric_set_song and lyric_background refuse shared voice files and generated images: the route reads only your own folder", async () => {
+  const shared = mediaWithShared();
+  const { ctx, calls } = ctxWith();
+  const song = await byName.lyric_set_song.handler(ctx, { id: "lv_1", path: path.join(shared, "tts-a.mp3") });
+  assert.equal(song.structuredContent.error, "BAD_INPUT");
+  assert.match(song.structuredContent.message, /media_import_url/);
+  const picture = await byName.lyric_background.handler(ctx, { id: "lv_1", path: path.join(shared, "genImg", "genvis-u_unit-x", "a.png") });
+  assert.equal(picture.structuredContent.error, "BAD_INPUT");
+  assert.equal(calls.length, 0);
+  assert.doesNotMatch(byName.lyric_background.description, /images_generate/);
+  assert.doesNotMatch(byName.lyric_set_song.description, /narration/);
+});
+
 test("lyric_set_lyrics sends the sheet; lyric_line_update patches one line", async () => {
   const { ctx, calls } = ctxWith({
     "PUT /api/lyric-video/lv_1/sheet": { project: SONG() },

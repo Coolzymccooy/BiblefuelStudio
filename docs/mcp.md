@@ -353,7 +353,7 @@ Time. Building the bed takes minutes and the render runs at about real time or s
 A song with its lyrics timed word by word to the singing, drawn as moving captions over a background.
 
 1. `lyric_project { action: "create", title, artist? }`.
-2. `lyric_set_song { id, path }`: an audio file, or a video whose sound is taken out, in your media folder (`media_import_url`, `media_list`, or another tool's output such as a story's narration). At most 15 minutes. URLs and other paths are refused.
+2. `lyric_set_song { id, path }`: an audio file, or a video whose sound is taken out, in your own media folder (`media_import_url` or `media_list`). At most 15 minutes. URLs and other paths are refused, and so are shared voice files and generated images (`BAD_INPUT`): import those with `media_import_url` first. The same rule applies to the `lyric_background` path.
 3. `lyric_set_lyrics { id, sheet }`: one sung line per line, section headings such as `[CHORUS]` or `VERSE 1:` on their own lines.
 4. `lyric_align { id }`, then `jobs_wait { kind: "lyric_align", id }` until `done`. One timing run at a time per account.
 5. Optional: `lyric_project { action: "get", id }` to read the lines; `lyric_line_update { id, lineId, start?, effect? }` moves a line that is off (it is then kept by later timing runs) or changes how it is drawn.
