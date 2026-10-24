@@ -60,14 +60,24 @@ function voiceStep(voice) {
     "Keep the returned path. One daily tts. If no provider lists that voice, tell the user and leave voiceId out.";
 }
 
+// The stock-background route for a key with fewer than the 4 images autoBackground reserves (agent runs:
+// a key with 1 image left stopped at whoami, or failed at render_short, though a saved clip would do).
+const BACKGROUND_STEP =
+  "Only if whoami shows fewer than 4 images remaining: `library_items` with { action: \"list\" } and use a saved clip, or `backgrounds_search` with " +
+  "{ source: \"pexels\", query: <a calm scene that fits the verse> } and then `library_items` with { action: \"download\", source: \"pexels\", sourceId: <a result's id> } " +
+  "(one daily imports). Keep the item's id, a library id, for the render step.";
+
 function shortCore({ reference, voice, publish }) {
   return [
-    `\`whoami\`: check that caps and accountCaps have at least 1 renders, 1 tts and 4 images remaining, that quota.render is not used up${publish ? PUBLISH_CHECK : ""}.`,
+    `\`whoami\`: check that caps and accountCaps have at least 1 renders and 1 tts remaining, that quota.render is not used up${publish ? PUBLISH_CHECK : ""}. ` +
+      "Four images remaining lets the render pick backgrounds itself; with fewer than 4 images, use a stock background instead (the background step).",
     publish ? PUBLISH_STATUS_STEP : NO_PUBLISH_STATUS_STEP,
     `\`bible_lookup\` with { mode: "verse", reference: ${JSON.stringify(reference)} }. Keep the verse text and its reference. Free.`,
     voiceStep(voice),
+    BACKGROUND_STEP,
     "`render_short` with { lines: <the verse as caption lines of at most 280 characters each, at most 12 lines, the last one the reference>, " +
-      "autoBackground: true, audioPath: <the path from the voice step> }. One daily render and four daily images, plus one plan render quota. It returns a handle of kind \"job\".",
+      "autoBackground: true, audioPath: <the path from the voice step> }, or with backgrounds: [<the library id from the background step>] in place of autoBackground. " +
+      "One daily render (and four daily images with autoBackground), plus one plan render quota. The video is as long as the voice. It returns a handle of kind \"job\".",
     "`jobs_wait` with { kind: \"job\", id: <the handle's id> } until status is done (usually one to three minutes). output.path is the video; output.url plays it.",
   ];
 }
@@ -83,6 +93,22 @@ const NO_PUBLISH_NOTE =
   "the render posts the finished video by itself and also costs one daily publish (its result says autoPublish: \"on\"). " +
   "If key.publishAllowed is true, call `social_status` before rendering and, when renderAutoPublish.enabled is true, ask the user first.";
 
+// A chapter:verse, or a bare chapter or verse number: never a voice name.
+const VERSE_PART = /^\d+(?::\d+(?:-\d+)?)?$/;
+const unquote = (text) => (typeof text === "string" ? text.replace(/^["']+|["']+$/g, "").trim() : text);
+
+/**
+ * Claude Code passes slash-command prompt arguments split on spaces, quotes or not, so
+ * "/mcp__biblefuel__make_short_from_verse Romans 8:28" arrives as reference "Romans", voice "8:28".
+ * A voice that is a verse number belongs to the reference.
+ */
+export function joinSplitReference({ reference, voice, publish }) {
+  const ref = unquote(reference);
+  const second = unquote(voice);
+  if (second && VERSE_PART.test(second)) return { reference: `${ref} ${second}`, voice: undefined, publish };
+  return { reference: ref, voice: second || undefined, publish };
+}
+
 const makeShortFromVerse = {
   name: "make_short_from_verse",
   title: "Make a short video from a Bible verse",
@@ -94,7 +120,8 @@ const makeShortFromVerse = {
     voice: z.string().trim().min(1).max(100).optional().describe("A voice name from voice_list. Default: the server's default voice."),
     publish: z.enum(["true", "false"]).optional().describe("\"true\" to upload the video to YouTube afterwards (needs publish consent). Default false."),
   },
-  render({ reference, voice, publish }) {
+  render(args) {
+    const { reference, voice, publish } = joinSplitReference(args);
     const publishing = publish === "true";
     const task = `Make a short captioned video of the Bible verse ${reference}${publishing ? " and upload it to YouTube" : ""}.`;
     const steps = [...shortCore({ reference, voice, publish: publishing }), ...(publishing ? PUBLISH_STEPS : [])];

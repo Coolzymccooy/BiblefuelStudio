@@ -178,3 +178,22 @@ test("make_ambient_session asks whoami for 1 render as well as the tts and image
   const whoamiLine = text.split("\n").find((line) => line.includes("`whoami`"));
   assert.match(whoamiLine, /at least 1 renders, 12 tts and 12 images remaining/);
 });
+
+test("make_short_from_verse joins a reference a client split on its space (Claude Code: /prompt Romans 8:28)", async () => {
+  for (const args of [{ reference: "Romans", voice: "8:28" }, { reference: "\"Romans", voice: "8:28\"" }, { reference: "1 John", voice: "4:8" }]) {
+    const text = await getText("make_short_from_verse", args);
+    const expected = `${args.reference.replace(/"/g, "")} ${args.voice.replace(/"/g, "")}`;
+    assert.match(text, new RegExp(`reference: "${expected}"`), `${JSON.stringify(args)} reads as ${expected}`);
+    assert.ok(!/voiceId: "/.test(text), "the verse number is not taken as a voice");
+  }
+  const voiced = await getText("make_short_from_verse", { reference: "John 3:16", voice: "en-US-GuyNeural" });
+  assert.match(voiced, /voiceId: "en-US-GuyNeural"/, "a real voice is kept");
+});
+
+test("make_short_from_verse offers stock backgrounds when fewer than 4 images are left", async () => {
+  const text = await getText("make_short_from_verse", { reference: "John 3:16" });
+  assert.match(text, /fewer than 4 images/);
+  assertOrder(text, ["whoami", "library_items", "render_short"]);
+  assert.match(text, /`backgrounds_search`/);
+  assert.match(text, /backgrounds: \[/);
+});
