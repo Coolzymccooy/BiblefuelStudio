@@ -8,6 +8,7 @@ import { OUTPUT_DIR } from '../paths.js';
 import { localiseInput } from '../remoteInputs.js';
 import { urlGuardMessage } from '../safeDownload.js';
 import { isUrlLike } from '../inputUrl.js';
+import { localInput } from '../videoInputGuard.js';
 import { get as getVoiceProvider } from '../voice/index.js';
 import {
   escapeDrawText, escapeFontPath, fontFileFor, resolveTypographyPreset,
@@ -322,7 +323,7 @@ export function buildProofRenderCommand(plan, opts = {}) {
   const height = plan.aspect === '9:16' ? 1280 : plan.aspect === '1:1' ? 720 : 720;
   const duration = Math.max(1, Math.min(300, Number(plan.durationSec || main.durationSec || 8)));
 
-  const args = ['-y', '-hide_banner', '-loglevel', 'warning', '-i', mainPath];
+  const args = ['-y', '-hide_banner', '-loglevel', 'warning', ...localInput(mainPath)];
   for (const clip of broll) {
     // A still image decodes to ONE frame at t=0 and carries no timeline, so
     // `enable='between(t,...)'` on the overlay never matched and the image
@@ -336,11 +337,11 @@ export function buildProofRenderCommand(plan, opts = {}) {
       // never appeared. The enable expression alone decides when it shows.
       args.push('-loop', '1', '-t', String(duration));
     }
-    args.push('-i', clip.resolvedPath);
+    args.push(...localInput(clip.resolvedPath));
   }
-  for (const clip of voiceovers) args.push('-i', clip.resolvedPath);
+  for (const clip of voiceovers) args.push(...localInput(clip.resolvedPath));
   // Loop the bed so a short track still covers a long recap.
-  if (music) args.push('-stream_loop', '-1', '-i', music.resolvedPath);
+  if (music) args.push('-stream_loop', '-1', ...localInput(music.resolvedPath));
 
   const videoParts = [];
   videoParts.push(

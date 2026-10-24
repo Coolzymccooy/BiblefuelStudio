@@ -9,6 +9,7 @@ import { resolveTenantTrack } from "../lib/musicLibraryStore.js";
 import { brandLogoFor, logoOverlay } from "../lib/branding.js";
 import { localiseInput, remoteInputFailure } from "../lib/remoteInputs.js";
 import { isRemoteUrl } from "../lib/downloadInput.js";
+import { LOCAL_PROTOCOL_GUARD, localInput } from "../lib/videoInputGuard.js";
 
 const router = Router();
 
@@ -20,7 +21,7 @@ function frameSizeOf(file, { timeoutMs = 20_000 } = {}) {
   return new Promise((resolve) => {
     const ffprobe = process.env.FFPROBE_PATH?.trim() || "ffprobe";
     const proc = spawn(ffprobe, ["-v", "error", "-select_streams", "v:0",
-      "-show_entries", "stream=width,height", "-of", "csv=p=0", file]);
+      "-show_entries", "stream=width,height", "-of", "csv=p=0", ...LOCAL_PROTOCOL_GUARD, file]);
     let out = "";
     const timer = setTimeout(() => { try { proc.kill("SIGKILL"); } catch { /* gone */ } }, timeoutMs);
     if (timer.unref) timer.unref();
@@ -178,7 +179,8 @@ router.post("/merge", async (req, res) => {
       filters.push(`loudnorm=I=${Number(lufs)}:TP=-1.5:LRA=11`);
     }
 
-    const args = ["-y", "-f", "concat", "-safe", "0", "-i", listFile];
+    // The whitelist is inherited by every file the concat list names.
+    const args = ["-y", "-f", "concat", "-safe", "0", ...localInput(listFile)];
     if (filters.length) args.push("-af", filters.join(","));
     args.push("-vn", "-c:a", "libmp3lame", "-b:a", "192k", outFile);
 
@@ -225,7 +227,7 @@ router.post("/timeline", async (req, res) => {
     const outFile = path.join(outDir, `audio-timeline-${uuid()}.mp3`);
 
     const args = ["-y"];
-    cleaned.forEach(c => { args.push("-i", c.path); });
+    cleaned.forEach(c => { args.push(...localInput(c.path)); });
 
     const parts = [];
     cleaned.forEach((c, idx) => {
@@ -352,8 +354,8 @@ router.post("/timeline-preview", async (req, res) => {
     const ffmpeg = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
     const outFile = path.join(outDir, `timeline-preview-${uuid()}.mp4`);
 
-    const args = ["-y", "-stream_loop", "-1", "-i", bg];
-    cleaned.forEach(c => args.push("-i", c.path));
+    const args = ["-y", "-stream_loop", "-1", ...localInput(bg)];
+    cleaned.forEach(c => args.push(...localInput(c.path)));
 
     const parts = [];
     cleaned.forEach((c, idx) => {

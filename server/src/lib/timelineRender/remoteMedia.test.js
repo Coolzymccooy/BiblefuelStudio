@@ -15,6 +15,7 @@ import path from 'path';
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'timeline-remote-'));
 process.env.OUTPUT_DIR = dir;
 const { renderTimelineProof, resolveTimelineAssetPath } = await import('./proofRenderer.js');
+const { unguardedInputs } = await import('../../../test/helpers/ffreport.js');
 
 const REMOTE_BROLL = 'https://cdn.example.com/rays.mp4';
 const REMOTE_ASSET = 'https://cdn.example.com/still.jpg';
@@ -71,6 +72,7 @@ describe('renderTimelineProof remote media', () => {
     assert.ok(inputs.includes(localCopies[REMOTE_BROLL]), inputs.join(' | '));
     assert.ok(inputs.includes(localCopies[REMOTE_ASSET]), inputs.join(' | '));
     assert.equal(args.some((a) => /^https?:\/\//.test(a)), false);
+    assert.deepEqual(unguardedInputs(args), [], 'every input is held to local files');
   });
 
   test('a still keeps its image handling after localising (extension preserved)', async () => {
@@ -80,7 +82,7 @@ describe('renderTimelineProof remote media', () => {
     await renderTimelineProof(plan(), opts({ localise, runner }));
     const at = args.indexOf(localCopies[REMOTE_ASSET]);
     assert.ok(at > 0, 'the localised still is an ffmpeg input');
-    assert.ok(args.slice(Math.max(0, at - 6), at).includes('-loop'), args.join(' '));
+    assert.ok(args.slice(Math.max(0, at - 8), at).includes('-loop'), args.join(' '));
   });
 
   test('a private URL fails the render with URL_PRIVATE before ffmpeg runs', async () => {

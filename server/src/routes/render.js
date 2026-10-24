@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { backgroundTooLargeMessage } from '../lib/backgroundLimits.js';
 import { localiseInput, remoteInputFailure, backgroundFetchFailure } from "../lib/remoteInputs.js";
+import { LOCAL_PROTOCOL_GUARD, localInput } from "../lib/videoInputGuard.js";
 import fs from "fs";
 import path from "path";
 import { v4 as uuid } from "uuid";
@@ -231,9 +232,9 @@ router.post("/video", async (req, res) => {
       return `drawtext=text='${escaped}':x=(w-text_w)/2:y=${y}:fontsize=${fontSize}:fontcolor=white:box=1:boxcolor=black@0.35:boxborderw=18`;
     }).join(",");
 
-    const args = ["-y", "-stream_loop", "-1", "-i", backgroundPath];
-    if (audioPath) args.push("-i", audioPath);
-    if (musicPath) args.push("-i", musicPath);
+    const args = ["-y", "-stream_loop", "-1", ...localInput(backgroundPath)];
+    if (audioPath) args.push(...localInput(audioPath));
+    if (musicPath) args.push(...localInput(musicPath));
 
     // scale/crop to 9:16
     const vf = `scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},${filters}`;
@@ -447,11 +448,11 @@ router.post("/waveform", async (req, res) => {
 
     const args = ["-y"];
     if (backgroundPath) {
-      args.push("-stream_loop", "-1", "-i", backgroundPath, "-i", audioPath);
+      args.push("-stream_loop", "-1", ...localInput(backgroundPath), ...localInput(audioPath));
     } else {
-      args.push("-i", audioPath);
+      args.push(...localInput(audioPath));
     }
-    if (musicPath) args.push("-i", musicPath);
+    if (musicPath) args.push(...localInput(musicPath));
 
     const preset = process.env.FFMPEG_PRESET || "fast";
     const hwaccel = process.env.FFMPEG_HWACCEL;
@@ -505,6 +506,7 @@ function probeMediaInfo(filePath) {
       "-select_streams", "v:0",
       "-show_entries", "stream=width,height:format=duration",
       "-of", "default=noprint_wrappers=1",
+      ...LOCAL_PROTOCOL_GUARD,
       filePath,
     ]);
     let out = "";
@@ -535,6 +537,7 @@ function probeAudioDuration(filePath) {
       "-v", "error",
       "-show_entries", "format=duration",
       "-of", "default=noprint_wrappers=1:nokey=1",
+      ...LOCAL_PROTOCOL_GUARD,
       filePath,
     ]);
     let out = "";
@@ -559,7 +562,7 @@ function concatAudioTracks(paths, destPath) {
   return new Promise((resolve, reject) => {
     const ffmpeg = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
     const inputs = [];
-    for (const p of paths) inputs.push("-i", p);
+    for (const p of paths) inputs.push(...localInput(p));
     const norm = paths
       .map((_, i) => `[${i}:a]aformat=sample_rates=44100:channel_layouts=stereo[a${i}]`)
       .join(";");
@@ -1027,11 +1030,11 @@ router.post("/captioned-video", async (req, res) => {
       // Input-level seek so the trimmed sermon video starts at trimStart,
       // rebased to t=0 (captions were shifted to match above).
       if (trimStart > 0) args.push("-ss", trimStart.toFixed(3));
-      args.push("-i", videoPath);
+      args.push(...localInput(videoPath));
       // -stream_loop -1 so a music bed SHORTER than the clip loops to fill it
       // instead of dropping to silence partway through. The output `-t` caps it,
       // and the ending afade fades the looped bed out together with the video.
-      if (musicPath) args.push("-stream_loop", "-1", "-i", musicPath);
+      if (musicPath) args.push("-stream_loop", "-1", ...localInput(musicPath));
       voiceIdx = 0;
       musicIdx = musicPath ? 1 : -1;
       preDrawChain = needsScale
@@ -1068,18 +1071,18 @@ router.post("/captioned-video", async (req, res) => {
         // (variable) slot plus the crossfade tail; otherwise the equal slot.
         const imgDur = useSyncBackgrounds ? syncInputDurations[i] : perSlotSec;
         if (isImage) {
-          args.push("-loop", "1", "-framerate", "30", "-t", imgDur.toFixed(3), "-i", bg);
+          args.push("-loop", "1", "-framerate", "30", "-t", imgDur.toFixed(3), ...localInput(bg));
         } else {
-          args.push("-stream_loop", "-1", "-i", bg);
+          args.push("-stream_loop", "-1", ...localInput(bg));
         }
       });
       // Input-level seek so the trimmed sermon audio starts at trimStart,
       // rebased to t=0 (captions were shifted to match above). Backgrounds are
       // not seeked — they just fill the trimmed duration.
       if (trimStart > 0) args.push("-ss", trimStart.toFixed(3));
-      args.push("-i", audioPath);
+      args.push(...localInput(audioPath));
       // Loop a short music bed to fill the whole clip (see note in video mode).
-      if (musicPath) args.push("-stream_loop", "-1", "-i", musicPath);
+      if (musicPath) args.push("-stream_loop", "-1", ...localInput(musicPath));
       voiceIdx = N;
       musicIdx = musicPath ? N + 1 : -1;
 

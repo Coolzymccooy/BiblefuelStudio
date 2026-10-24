@@ -28,6 +28,7 @@ import { pickScriptType } from "../lib/highPerformerProfile.js";
 import { ensureLocalPath } from "../lib/remoteCache.js";
 import { localiseInput, remoteInputFailure } from "../lib/remoteInputs.js";
 import { isRemoteUrl } from "../lib/downloadInput.js";
+import { LOCAL_PROTOCOL_GUARD, localInput } from "../lib/videoInputGuard.js";
 import { resolveAutoBackgrounds } from "../lib/autoBackground.js";
 import { generateBibleImage } from "../lib/imageGen/index.js";
 import { resolveLibraryTrack, defaultTrackRef } from "../lib/musicLibrary.js";
@@ -64,7 +65,7 @@ function probeAudioMaxVolume(filePath) {
     // We do silence the banner/stats lines to keep stderr small.
     const proc = spawn(ffmpeg, [
       "-hide_banner", "-nostats",
-      "-i", filePath,
+      ...localInput(filePath),
       "-af", "volumedetect",
       "-vn", "-f", "null", "-",
     ]);
@@ -87,6 +88,7 @@ function probeAudioDuration(filePath) {
       "-v", "error",
       "-show_entries", "format=duration",
       "-of", "default=noprint_wrappers=1:nokey=1",
+      ...LOCAL_PROTOCOL_GUARD,
       filePath,
     ]);
     let out = "";
@@ -649,11 +651,11 @@ async function executeJob(job) {
 
     const args = ["-y"];
     if (resolvedBackground) {
-      args.push("-stream_loop", "-1", "-i", resolvedBackground, "-i", resolvedAudio);
+      args.push("-stream_loop", "-1", ...localInput(resolvedBackground), ...localInput(resolvedAudio));
     } else {
-      args.push("-i", resolvedAudio);
+      args.push(...localInput(resolvedAudio));
     }
-    if (resolvedMusic) args.push("-i", resolvedMusic);
+    if (resolvedMusic) args.push(...localInput(resolvedMusic));
     const t = clampDuration(durationSec || 20);
     const preset = process.env.FFMPEG_PRESET || "fast";
     const hwaccel = process.env.FFMPEG_HWACCEL; // e.g., 'nvenc' or 'qsv'
@@ -863,9 +865,9 @@ async function renderVideoCore(payload, jobId) {
     : buildLineDrawtext({ lines: safeLines, w, h, preset: typographyPreset, duration: t });
   if (!filters) throw new Error("lines[] required");
 
-  const args = ["-y", "-stream_loop", "-1", "-i", resolvedBackground];
-  if (resolvedAudio) args.push("-i", resolvedAudio);
-  if (resolvedMusic) args.push("-i", resolvedMusic);
+  const args = ["-y", "-stream_loop", "-1", ...localInput(resolvedBackground)];
+  if (resolvedAudio) args.push(...localInput(resolvedAudio));
+  if (resolvedMusic) args.push(...localInput(resolvedMusic));
 
   const vf = `scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},${filters}`;
   const preset = process.env.FFMPEG_PRESET || "fast";
@@ -1195,36 +1197,29 @@ async function renderAdvancedVideo(payload, jobId) {
 
   const sceneCount = resolvedScenes.length;
   const args = ["-y"];
-  // Remote URLs (Pexels CDN, generated artwork hosts) drop intermittently —
-  // the default ffmpeg HTTP demuxer just dies with WSAECONNRESET (-10054 on
-  // Windows). Push reconnect flags BEFORE each remote `-i` so ffmpeg
-  // re-establishes the connection and resumes at the last byte offset.
-  // `-reconnect_streamed 1` is needed for non-seekable streams; the delay
-  // cap prevents hammering when the source is genuinely down.
-  const httpReconnect = (p) => (String(p || "").startsWith("http")
-    ? ["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5"]
-    : []);
+  // Every input is a local file by now (remote ones were localised above, and
+  // voice/music in renderVideoCore), so ffmpeg is held to local files: the
+  // old http reconnect flags are gone with the URLs they served.
   for (const s of resolvedScenes) {
-    args.push(...httpReconnect(s.backgroundPath));
     // `-loop 1` is image-only (ffmpeg loops a still demuxer); `-stream_loop -1`
     // is the video equivalent. Mixing them up errors out (`-loop` on a video
     // ignores; `-stream_loop` on an image errors). Sniff via the `kind`
     // populated above.
     if (s.kind === "image") {
-      args.push("-loop", "1", "-i", s.backgroundPath);
+      args.push("-loop", "1", ...localInput(s.backgroundPath));
     } else {
-      args.push("-stream_loop", "-1", "-i", s.backgroundPath);
+      args.push("-stream_loop", "-1", ...localInput(s.backgroundPath));
     }
   }
   let audioInputIdx = null;
   let musicInputIdx = null;
   if (resolvedAudio) {
     audioInputIdx = sceneCount + 0;
-    args.push(...httpReconnect(resolvedAudio), "-i", resolvedAudio);
+    args.push(...localInput(resolvedAudio));
   }
   if (resolvedMusic) {
     musicInputIdx = (resolvedAudio ? sceneCount + 1 : sceneCount);
-    args.push(...httpReconnect(resolvedMusic), "-i", resolvedMusic);
+    args.push(...localInput(resolvedMusic));
   }
 
   const musicVol = Math.min(1, Math.max(0, Number(musicVolume ?? 0.3)));
