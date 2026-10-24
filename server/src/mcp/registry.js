@@ -82,7 +82,8 @@ export function _setCatalogueForTests(defs) {
   catalogueOverride = Array.isArray(defs) ? defs : null;
 }
 
-function catalogue() {
+/** Every tool def the server can list (before per-user filtering). */
+export function catalogue() {
   return catalogueOverride || importedCatalogue;
 }
 
