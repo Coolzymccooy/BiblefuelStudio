@@ -40,3 +40,13 @@ test("planQuotaRefusal checks the named plan bucket (tts, imageGen) the same way
   assert.equal(await planQuotaRefusal(ctx, "imageGen"), null);
   assert.equal(await renderQuotaRefusal(ctx), null);
 });
+
+test("a call that needs several renders is refused when fewer are left, and says how many it needs", async () => {
+  const { ctx } = fakeMcpCtx({ "GET /api/billing/usage": usage({ used: 3, limit: 5, unlimited: false, remaining: 2 }) });
+  const refusal = await renderQuotaRefusal(ctx, 3);
+  assert.equal(refusal.structuredContent.error, "QUOTA_EXCEEDED");
+  assert.equal(refusal.structuredContent.needed, 3);
+  assert.match(refusal.content[0].text, /needs 3/);
+  assert.equal(await renderQuotaRefusal(ctx, 2), null);
+  assert.equal(await planQuotaRefusal(ctx, "render", 2), null);
+});
