@@ -69,3 +69,79 @@ test("capabilities says it describes the server, not what this key may use", asy
   assert.match(description, /not what this key may use/);
   assert.match(description, /whoami/);
 });
+
+// ---- capabilities: the server-wide health section is cached for 60 s (#121) ----
+
+const { default: systemTools, _setCapabilitiesClockForTests } = await import("./system.js");
+const { fakeMcpCtx } = await import("../../../test/helpers/fakeMcpCtx.js");
+const capabilitiesTool = systemTools.find((t) => t.name === "capabilities");
+
+const HEALTH = { ok: true, system: { ffmpeg: "ffmpeg version 5.1.9", platform: "linux", node: "v22" }, capabilities: { elevenlabs: false, libass: true } };
+function capabilitiesCtx() {
+  return fakeMcpCtx({
+    "GET /api/health": HEALTH,
+    "GET /api/music/capabilities": { ok: true, vocalRemoval: true, laptopOnline: false },
+    "GET /api/video-gen/status": { ok: true, enabled: false },
+  });
+}
+const healthReads = (calls) => calls.filter((c) => c.path === "/api/health").length;
+
+test("capabilities reads /api/health once a minute and answers the same from the cache", async () => {
+  let clock = 1_000_000;
+  _setCapabilitiesClockForTests(() => clock);
+  try {
+    const first = capabilitiesCtx();
+    const fresh = await capabilitiesTool.handler(first.ctx, {});
+    const second = capabilitiesCtx();
+    clock += 59_000;
+    const cached = await capabilitiesTool.handler(second.ctx, {});
+    assert.deepEqual(cached.structuredContent, fresh.structuredContent);
+    assert.equal(healthReads(first.calls), 1);
+    assert.equal(healthReads(second.calls), 0, "within 60 s the health section comes from the cache");
+    assert.equal(second.calls.length, 2, "music and AI video are still read on every call");
+    const third = capabilitiesCtx();
+    clock += 2_000;
+    await capabilitiesTool.handler(third.ctx, {});
+    assert.equal(healthReads(third.calls), 1, "after 60 s it is read again");
+  } finally {
+    _setCapabilitiesClockForTests(null);
+  }
+});
+
+test("capabilities starts its three reads together rather than one after another", async () => {
+  _setCapabilitiesClockForTests(() => 5_000_000);
+  try {
+    const { ctx } = capabilitiesCtx();
+    const read = ctx.api.call;
+    let inFlight = 0;
+    let most = 0;
+    ctx.api.call = async (method, p, opts) => {
+      inFlight += 1;
+      most = Math.max(most, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      inFlight -= 1;
+      return read(method, p, opts);
+    };
+    const result = await capabilitiesTool.handler(ctx, {});
+    assert.equal(most, 3);
+    assert.deepEqual(result.structuredContent.server, HEALTH.system);
+    assert.deepEqual(result.structuredContent.features, HEALTH.capabilities);
+    assert.equal(result.structuredContent.music.vocalRemoval, true);
+    assert.equal(result.structuredContent.aiVideo.enabled, false);
+  } finally {
+    _setCapabilitiesClockForTests(null);
+  }
+});
+
+test("a failed health read is not cached", async () => {
+  _setCapabilitiesClockForTests(() => 9_000_000);
+  try {
+    const failing = fakeMcpCtx({ "GET /api/health": new Error("down"), "GET /api/music/capabilities": {}, "GET /api/video-gen/status": {} });
+    await assert.rejects(capabilitiesTool.handler(failing.ctx, {}), /down/);
+    const next = capabilitiesCtx();
+    await capabilitiesTool.handler(next.ctx, {});
+    assert.equal(healthReads(next.calls), 1);
+  } finally {
+    _setCapabilitiesClockForTests(null);
+  }
+});

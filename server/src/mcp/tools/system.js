@@ -12,6 +12,33 @@ async function optionalSection(ctx, path) {
   }
 }
 
+/*
+ * capabilities took about 4.5 s (#121). Profiled on the dev box: /api/health runs `ffmpeg -version`
+ * on every call (about 1 s there) and its first call also probes libass (1 s); the first music read
+ * probes the separator (2 s) and AMF (1 s), and then caches both itself. So the three reads run
+ * together, and the health section, which is the same for every user and changes only with the
+ * server's env or binaries, is kept for 60 s. Music (laptopOnline changes) and AI video (it depends
+ * on who asks) are read on every call.
+ */
+const HEALTH_TTL_MS = 60_000;
+let healthCache = null;
+let now = Date.now;
+
+/** Test seam: replace the clock (null restores Date.now); the health cache is emptied either way. */
+export function _setCapabilitiesClockForTests(fn) {
+  now = typeof fn === "function" ? fn : Date.now;
+  healthCache = null;
+}
+
+/** The server and feature sections of /api/health, from a cache at most 60 s old. A failed read is not kept. */
+async function serverHealth(ctx) {
+  if (healthCache && now() - healthCache.at < HEALTH_TTL_MS) return healthCache.value;
+  const health = await ctx.api.call("GET", "/api/health");
+  const value = { server: health.system, features: health.capabilities };
+  healthCache = { at: now(), value };
+  return value;
+}
+
 const whoami = {
   name: "whoami",
   title: "Who am I",
@@ -53,12 +80,13 @@ const capabilities = {
   inputSchema: {},
   routes: ["/api/health", "/api/music", "/api/video-gen"],
   async handler(ctx) {
-    const health = await ctx.api.call("GET", "/api/health");
-    const [music, aiVideo] = await Promise.all([
+    // Together, not one after another (#121): each can shell out on a cold start.
+    const [health, music, aiVideo] = await Promise.all([
+      serverHealth(ctx),
       optionalSection(ctx, "/api/music/capabilities"),
       optionalSection(ctx, "/api/video-gen/status"),
     ]);
-    return ok({ server: health.system, features: health.capabilities, music, aiVideo });
+    return ok({ ...health, music, aiVideo });
   },
 };
 
