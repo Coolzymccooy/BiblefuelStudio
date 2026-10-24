@@ -66,7 +66,11 @@ test("R43: a free user at the limit can still create, edit, import without start
   assert.equal(cast.status, 200, JSON.stringify(cast.body));
   const music = await request(app).patch(`/api/story/${id}/music`).send({ path: null });
   assert.equal(music.status, 200, JSON.stringify(music.body));
-  const imported = await request(app).post("/api/story/import-script").send({ script: "The Lord is my shepherd", audioPath: "/x/voice.mp3", durationMs: 8000 });
+  // The narration must be the caller's own file: /import-script confines audioPath (#112).
+  const voice = path.join(ctx.outputDir, "voice.mp3");
+  fs.mkdirSync(ctx.outputDir, { recursive: true });
+  fs.writeFileSync(voice, "x");
+  const imported = await request(app).post("/api/story/import-script").send({ script: "The Lord is my shepherd", audioPath: voice, durationMs: 8000 });
   assert.equal(imported.status, 200, JSON.stringify(imported.body));
   const gone = await request(app).delete(`/api/story/${id}`);
   assert.equal(gone.status, 200, JSON.stringify(gone.body));

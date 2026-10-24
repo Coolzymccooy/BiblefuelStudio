@@ -13,7 +13,13 @@ const client = await mcpClient(testApp.port, testApp.keyFor(USER.id));
 // Imported after the app: server modules read env at import time.
 const { _setLlmImpl, _resetLlmImpl } = await import("../../lib/story/sceneSegmenter.js");
 
-const mediaDir = fs.mkdtempSync(path.join(testApp.dataDir, "story-life-media-"));
+const { resolveScopeDirs } = await import("../../lib/paths.js");
+
+// The narration lives in the key owner's own media folder: /import-script
+// confines audioPath to the caller's folders (#112), whatever autoStart says.
+const ownOutputs = resolveScopeDirs({ sub: USER.id, email: USER.email, role: USER.role }).outputDir;
+fs.mkdirSync(ownOutputs, { recursive: true });
+const mediaDir = fs.mkdtempSync(path.join(ownOutputs, "story-life-media-"));
 fs.writeFileSync(path.join(mediaDir, "narration.mp3"), "x");
 _setScopeForTests(async () => ({ outputDir: mediaDir, sharedDir: path.join(mediaDir, "none") }));
 // No LLM in tests: the segmenter falls back to even windows over the words.

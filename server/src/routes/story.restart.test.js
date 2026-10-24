@@ -151,8 +151,12 @@ describe("GET /api/story/:id interrupted", () => {
     _setStoryHeartbeatMsForTests(15);
     const gate = gated();
     _setRenderImpl(async (args) => { await gate; return { ok: true, outputPath: args.outPath }; });
-    const id = storedAgo({ status: "ready_to_render", scenes: [scene(1)], source: { audioPath: path.join(dataDir, "none.mp3") } }, 10 * 60_000);
-    await request(app).post(`/api/story/${id}/render`).send({});
+    // Render re-checks the narration is the caller's own existing file, so it must exist.
+    const narration = path.join(dataDir, "narration.mp3");
+    fs.writeFileSync(narration, "x");
+    const id = storedAgo({ status: "ready_to_render", scenes: [scene(1)], source: { audioPath: narration } }, 10 * 60_000);
+    const started = await request(app).post(`/api/story/${id}/render`).send({});
+    assert.equal(started.status, 200, JSON.stringify(started.body));
     const beating = await waitFor(id, (p) => Number(p.heartbeatAt) > 0, 3000);
     assert.ok(Number(beating.heartbeatAt) > 0);
     assert.equal(await interrupted(id), undefined);
