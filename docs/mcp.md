@@ -140,6 +140,12 @@ Every call passes the same checks, in this order:
 | `story_render` | `{ id }`. Render the video once every scene has a picture. Handle of kind `story`. One daily render and one plan `render` quota. Never posts. |
 | `story_animate` | `{ id, sceneIds?, quality?, estimateOnly? }`. Paid AI motion clips for scenes. Super-admin keys only; the estimate's dollars are charged to the daily `aiVideoUsd` cap first. |
 | `story_cancel` | `{ id, what?: "render" or "animate" }`. Stop the pictures or render, or stop ordering AI clips. Free. |
+| `ambient_project` | `{ action: "list" or "get" or "create" or "delete" or "mark_published", ... }`. Ambient sessions (long music-first scripture videos); `get` shows the verses, pictures, bed and an ambient job handle; `mark_published` records a YouTube upload (posts nothing). Free. |
+| `ambient_plan` | `{ id, count? }`. Suggest verse references for the theme, spaced across the length. Replaces every verse. One plan `scripts` quota. |
+| `ambient_step` | `{ id, step: "voice" or "images", force?, movementId? }`. Speak the verses (one daily `tts` per verse) or make the pictures (one daily `images` per picture), charged up front, in the background. Handle of kind `ambient`. |
+| `ambient_update` | `{ id, section: "drops" or "bed" or "motion" or "words" or "captions", patch }`. Change the verse list, the music bed (`music_library` refs or media files), the motion, music-only, or the captions. Free. |
+| `ambient_render` | `{ id }`. Build the bed and render the video. Handle of kind `ambient`; an hour or more for long sessions, and a deploy stops it. One daily render and one plan `render` quota. Never posts. |
+| `ambient_cancel` | `{ id }`. Stop the pictures or the render; also clears a session a restart left busy. Free. |
 | `social_status` | Where you can publish: YouTube, playlists, auto-publish destinations, Buffer profiles, saved webhooks and schedules. No secrets. Free. |
 | `publish_youtube` | `{ videoPath, title, ... }`. Upload to the connected channel. Handle of kind `publish`. Needs publish consent; one daily publish. |
 | `publish_post` | `{ destination: "webhook" or "buffer", videoPath, caption, ... }`. Post to a saved webhook (and TikTok when connected) or Buffer. Needs publish consent; one daily publish. |
@@ -169,7 +175,8 @@ Anything slow returns a **job handle** immediately and keeps working in the back
 - `percent` is 0 to 100, or `null` when the job does not report progress.
 - `output` is `{ url, path }` when there is a file. `url` is public and playable. `path` is the server-side value you pass to other tools.
 - `error` is a short message when `status` is `failed`.
-- `kind` says which status route to read. The kinds are `job`, `captioned`, `story`, `timeline`, `instrumental` and `publish`. Every tool that starts work tells you the `kind` to use. For `story`, pass the project id as `id`. A story is `done` with `phase: "ready_to_render"` when its pictures are all made (no video yet; `output` is null), and `done` with `output` after `story_render`. While AI motion clips are being made it is `running` with `phase: "animating"`, and its handle carries `animation: { queued, generating, done, failed }`.
+- `kind` says which status route to read. The kinds are `job`, `captioned`, `story`, `ambient`, `timeline`, `instrumental` and `publish`. Every tool that starts work tells you the `kind` to use. For `story` and `ambient`, pass the project id as `id`. A story is `done` with `phase: "ready_to_render"` when its pictures are all made (no video yet; `output` is null), and `done` with `output` after `story_render`. While AI motion clips are being made it is `running` with `phase: "animating"`, and its handle carries `animation: { queued, generating, done, failed }`.
+- An `ambient` session is `done` with `phase: "ready_to_render"` (or `"draft"`) when a voice or images step is over, `failed` when verses or pictures are still missing (the error says how many), and `done` with `output` after `ambient_render`. When a server restart stopped its work it is `failed` with an error that says so: call `ambient_cancel`, then run the step or `ambient_render` again.
 
 Call `jobs_wait`:
 
@@ -308,9 +315,21 @@ Costs. Each picture is one daily `images`. Picture-making tools charge up front:
 
 AI motion (super-admin keys only): `story_animate { id, estimateOnly: true }` prices it, then `story_animate { id }` charges the dollars to the daily `aiVideoUsd` cap and orders the clips. `jobs_wait { kind: "story" }` shows `phase: "animating"` and `animation` counts until they are in; then `story_render`. `story_cancel { what: "animate" }` stops further orders. A project set up in the app to animate itself refuses the picture tools with `AI_MOTION_PROJECT`.
 
-### Ambient session (coming)
+### Ambient session (available now)
 
-`ambient_project`, `ambient_plan`, `ambient_step` (voice, images), `ambient_update`, `ambient_render`, `jobs_wait`, `ambient_published`.
+A long, music-first video (up to 10 hours): a music bed plays throughout, Bible verses are spoken over it at intervals, and each verse has its own picture (a movement).
+
+1. `ambient_project { action: "create", title, theme, targetSec?, aspect?, translation? }`. Default two hours, landscape, `kjv`.
+2. `ambient_plan { id, count? }` suggests verse references for the theme, by default one every fifteen minutes. It replaces the verse list. Change it with `ambient_update { section: "drops", patch: { drops: [...] } }` (always the whole list). Or set `ambient_update { section: "words", patch: { words: "none" } }` for music only.
+3. `ambient_update { id, section: "bed", patch: { trackRefs: [...] } }` chooses the music: `ref`s from `music_library` (`library:...`, `mylib:...`) or audio files in your media folder; URLs and other paths are refused. The user's own tracks need a recorded licence (`UNCLEARED_TRACKS`); send `allowUncleared: true` only when the user confirms they hold the rights.
+4. `ambient_step { id, step: "voice" }`, then `jobs_wait { kind: "ambient", id }`. Each verse is looked up word for word and spoken.
+5. `ambient_step { id, step: "images" }`, then `jobs_wait { kind: "ambient", id }` until `done` with `phase: "ready_to_render"`. `failed` says how many pictures are missing; run the step again (it makes only those). `movementId` remakes one picture, `force: true` all of them.
+6. Optional: `ambient_update` sections `motion` (`still` or `drift`) and `captions`.
+7. `ambient_render { id }`, then `jobs_wait { kind: "ambient", id }`, again and again, until `done`. `output.path` is the video for `publish_youtube`; afterwards `ambient_project { action: "mark_published", id, videoId }` records the upload in the app. A render never posts by itself.
+
+Costs. `ambient_step voice` is one daily `tts` per verse it speaks and `images` one daily `images` per picture it makes, both charged up front (a picture reused from your image library is not given back); each also counts one unit of the plan's `tts` or `imageGen` quota, checked first. `ambient_plan` is one unit of the plan's `scripts` quota. `ambient_render` is one daily render and one plan `render` quota. Everything else is free. A ten-hour session at the default cadence has about 40 verses, more than the default daily `tts` and `images` caps (30): ask `ambient_plan` for fewer verses, or make pictures over several days with `movementId`.
+
+Time. Building the bed takes minutes and the render runs at about real time or slower, so a two-hour session can take an hour or more. A server deploy or restart stops whatever a session is doing; `jobs_wait` then reports `failed` and says so. Call `ambient_cancel`, then the step or `ambient_render` again (a bed already built is reused). Edits to the verses or the bed are refused while a step runs (`SESSION_BUSY`).
 
 ### Lyric video (coming)
 
