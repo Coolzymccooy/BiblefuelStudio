@@ -8,6 +8,7 @@ import {
   disconnectIntegration,
   postVideo,
 } from "../lib/postizClient.js";
+import { refuseAgentCalls } from "../middleware/agentAuth.js";
 
 /**
  * Postiz routes — Phase 4.
@@ -19,6 +20,10 @@ import {
  *
  * Per-user state lives in social.json under `postiz`:
  *   { postizUserId, lastSync, integrations: [{ id, platform, displayName, ... }] }
+ *
+ * Connecting, disconnecting and switching auto-publish are account changes: agent
+ * keys and MCP tokens are refused there (refuseAgentCalls). GET /auto-publish
+ * stays open because MCP tools read it.
  *
  * Mount with: app.use("/api/postiz", requireAuth, withUserScope, requireVerifiedEmail, postizRouter)
  *
@@ -82,7 +87,7 @@ router.get("/status", async (req, res) => {
   }
 });
 
-router.post("/connect/:platform", async (req, res) => {
+router.post("/connect/:platform", refuseAgentCalls, async (req, res) => {
   if (!isPostizConfigured()) {
     return res.status(503).json({ ok: false, error: "POSTIZ_NOT_CONFIGURED" });
   }
@@ -111,7 +116,7 @@ router.post("/connect/:platform", async (req, res) => {
   }
 });
 
-router.delete("/disconnect/:integrationId", async (req, res) => {
+router.delete("/disconnect/:integrationId", refuseAgentCalls, async (req, res) => {
   if (!isPostizConfigured()) {
     return res.status(503).json({ ok: false, error: "POSTIZ_NOT_CONFIGURED" });
   }
@@ -142,7 +147,7 @@ router.get("/auto-publish", async (req, res) => {
   });
 });
 
-router.put("/auto-publish", async (req, res) => {
+router.put("/auto-publish", refuseAgentCalls, async (req, res) => {
   const enabled = Boolean(req.body?.enabled);
   const rawPlatforms = Array.isArray(req.body?.platforms) ? req.body.platforms : [];
   const platforms = rawPlatforms.map((p) => String(p || "").toLowerCase()).filter(Boolean);
