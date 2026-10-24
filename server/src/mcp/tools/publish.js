@@ -41,7 +41,7 @@ async function videoLink(ctx, videoPath, { absolute = false } = {}) {
  * WEBHOOK_NOT_FOUND unless `webhookId` names one of the user's saved webhooks that is enabled.
  * The route also fails a post to a disabled or removed id (R40); checking first refuses it before any charge.
  */
-async function webhookRefusal(ctx, webhookId) {
+export async function webhookRefusal(ctx, webhookId) {
   if (webhookId === undefined) return null;
   const config = await ctx.api.call("GET", "/api/social/config");
   const hooks = Array.isArray(config?.webhooks) ? config.webhooks : [];

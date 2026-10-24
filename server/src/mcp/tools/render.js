@@ -10,7 +10,7 @@ import { DEFAULT_XFADE_SECONDS } from "../../lib/videoFilters.js";
 // A library item id (pexels_123, agent_<uuid>): no dots, slashes or colons, so
 // it can never also name a file next to the server. It must be in the user's
 // own library, checked before the route resolves it.
-const LIBRARY_ID = /^[A-Za-z0-9][\w-]{0,119}$/;
+export const LIBRARY_ID = /^[A-Za-z0-9][\w-]{0,119}$/;
 const IMAGE_FILE = /\.(png|jpe?g|webp)$/i;
 const STYLE_WORD = /^[\w-]{1,40}$/;
 const ASPECTS = ["portrait", "landscape", "square"];

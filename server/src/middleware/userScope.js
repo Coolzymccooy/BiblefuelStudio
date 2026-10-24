@@ -2,6 +2,17 @@ import { resolveScopeDirs, isSingleTenant } from "../lib/paths.js";
 import { getPlanForUser } from "../lib/userPlan.js";
 
 /**
+ * The plan a user's requests run under: single-tenant grants the operator's own
+ * tier; otherwise the user's stored plan. The MCP context reads it the same way.
+ *
+ * @param {object} user the JWT payload
+ * @param {string} [dataDir] the user's data folder (resolved when omitted)
+ */
+export function planForUser(user, dataDir = resolveScopeDirs(user).dataDir) {
+  return isSingleTenant() ? "super_admin" : getPlanForUser(user, dataDir);
+}
+
+/**
  * Express middleware. Must be mounted AFTER requireAuth (i.e. req.user exists).
  *
  * Attaches:
@@ -36,8 +47,7 @@ export function withUserScope(req, res, next) {
     userId: user.sub,
     email: user.email || "",
     role: admin ? "super_admin" : "user",
-    // Single-tenant grants the operator's own tier; otherwise read the plan.
-    plan: isSingleTenant() ? "super_admin" : getPlanForUser(user, dataDir),
+    plan: planForUser(user, dataDir),
     dataDir,
     outputDir,
     isSuperAdmin: admin,

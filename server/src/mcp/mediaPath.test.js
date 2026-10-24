@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { resolveMediaInput, resolveMediaOutput, _setScopeForTests } from "./mediaPath.js";
+import { resolveMediaInput, resolveMediaOutput, resolveOwnMediaInput, _setScopeForTests } from "./mediaPath.js";
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "media-path-"));
 const mine = path.join(root, "mine");
@@ -208,4 +208,14 @@ test("a link in the shared genImg folder that points out is refused (directory j
   fs.writeFileSync(path.join(elsewhere, "pic.png"), "x");
   const out = await resolveMediaInput(ctx, path.join(series, "pic.png"));
   assert.equal(out.refusal.structuredContent.error, "PATH_OUTSIDE_MEDIA");
+});
+
+test("resolveOwnMediaInput takes only files in the caller's own media folder: a shared voice file is BAD_INPUT", async () => {
+  const own = await resolveOwnMediaInput(ctx, path.join(mine, "voice.mp3"));
+  assert.equal(own.path, fs.realpathSync(path.join(mine, "voice.mp3")));
+  const sharedVoice = await resolveOwnMediaInput(ctx, path.join(shared, "tts-abc.mp3"));
+  assert.equal(sharedVoice.refusal.structuredContent.error, "BAD_INPUT");
+  assert.doesNotMatch(sharedVoice.refusal.structuredContent.message, /media_import_url/);
+  const outside = await resolveOwnMediaInput(ctx, path.join(elsewhere, "secret.mp3"));
+  assert.equal(outside.refusal.structuredContent.error, "PATH_OUTSIDE_MEDIA");
 });

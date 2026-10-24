@@ -7,6 +7,7 @@ import { logActivity } from "../lib/agentKeys/activity.js";
 import { ApiError } from "./api.js";
 import { fail, PUBLISH_NOT_ALLOWED_MESSAGE } from "./toolResult.js";
 import { lacksPublishConsent } from "./autoPublish.js";
+import { planAllows } from "../middleware/featureGate.js";
 
 export { PUBLISH_NOT_ALLOWED_MESSAGE };
 
@@ -27,12 +28,12 @@ export { PUBLISH_NOT_ALLOWED_MESSAGE };
  * upload that joined one already running) calls `ctx.refundCap(...)`, which gives back at most what this
  * call charged.
  *
- * @typedef {{ user: object, agentKey: object, subjectId: string, isSuperAdmin: boolean,
+ * @typedef {{ user: object, agentKey: object, subjectId: string, isSuperAdmin: boolean, plan?: string,
  *   baseUrl: string, publicBase: string, api: { call: Function },
  *   chargeCap?: (bucketOrAmounts: string | Record<string, number>, amount?: number) => Promise<object | null>,
  *   refundCap?: (bucketOrAmounts: string | Record<string, number>, amount?: number) => Promise<void> }} McpCtx
  * @typedef {{ name: string, title: string, description: string, inputSchema: object,
- *   requires?: "super_admin", publish?: boolean,
+ *   requires?: "super_admin" | `feature:${string}`, publish?: boolean,
  *   caps?: Record<string, number | ((input: object) => number)>,
  *   handler: (ctx: McpCtx, input: object) => Promise<object> }} ToolDef
  */
@@ -81,13 +82,23 @@ export function _setCatalogueForTests(defs) {
   catalogueOverride = Array.isArray(defs) ? defs : null;
 }
 
-function catalogue() {
+/** Every tool def the server can list (before per-user filtering). */
+export function catalogue() {
   return catalogueOverride || importedCatalogue;
 }
 
+const FEATURE_REQUIREMENT = /^feature:(.+)$/;
+
+/**
+ * Whether the key's user may see the tool: `requires: "super_admin"` for super-admin routes,
+ * `requires: "feature:<capability>"` for routes behind featureGate(<capability>) (the same plan check).
+ * Any other value hides the tool.
+ */
 function allowed(def, ctx) {
   if (def.requires === undefined) return true;
-  return def.requires === "super_admin" && ctx.isSuperAdmin;
+  if (def.requires === "super_admin") return Boolean(ctx.isSuperAdmin);
+  const feature = FEATURE_REQUIREMENT.exec(String(def.requires));
+  return Boolean(feature) && planAllows(ctx.plan, feature[1]);
 }
 
 /**

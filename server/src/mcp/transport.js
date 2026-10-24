@@ -4,6 +4,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { hostHeaderValidation } from "@modelcontextprotocol/sdk/server/middleware/hostHeaderValidation.js";
 import { requireAgentKey } from "../middleware/agentAuth.js";
 import { isSuperAdmin } from "../lib/userPlan.js";
+import { planForUser } from "../middleware/userScope.js";
 import { createApi } from "./api.js";
 import { buildServer } from "./registry.js";
 
@@ -80,6 +81,8 @@ function contextFor(req) {
     agentKey,
     subjectId: agentKey.id,
     isSuperAdmin: isSuperAdmin(user),
+    // The plan the routes will see (withUserScope), for feature-gated tools.
+    plan: planForUser(user),
     baseUrl,
     publicBase: publicBaseFor(req),
     api: createApi({ user, baseUrl }),
