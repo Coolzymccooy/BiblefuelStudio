@@ -47,14 +47,25 @@ const NO_PUBLISH_STATUS_STEP =
   "Only if whoami shows key.publishAllowed true: `social_status`. When renderAutoPublish.enabled is true the render will post the finished video " +
   "by itself and spend one daily publish, though this run is not meant to publish: ask the user before rendering.";
 
+/**
+ * The voice step. A voice id only works with its own provider (L5): with a chosen voice, find the provider whose
+ * voice_list holds it and pass both; without one, provider auto picks the plan's default voice.
+ */
+function voiceStep(voice) {
+  if (!voice) {
+    return "`voice_synthesize` with { text: <the verse text> }. Keep the returned path. One daily tts. The default voice is used; `voice_list` lists others.";
+  }
+  return `\`voice_list\` (provider "edge" by default; "elevenlabs" on premium plans) to find the provider that lists ${JSON.stringify(voice)}. Free. ` +
+    `Then \`voice_synthesize\` with { text: <the verse text>, voiceId: ${JSON.stringify(voice)}, provider: <the provider that listed it, for example "edge"> }. ` +
+    "Keep the returned path. One daily tts. If no provider lists that voice, tell the user and leave voiceId out.";
+}
+
 function shortCore({ reference, voice, publish }) {
-  const voiceArg = voice ? `, voiceId: ${JSON.stringify(voice)}` : "";
   return [
     `\`whoami\`: check that caps and accountCaps have at least 1 renders, 1 tts and 4 images remaining, that quota.render is not used up${publish ? PUBLISH_CHECK : ""}.`,
     publish ? PUBLISH_STATUS_STEP : NO_PUBLISH_STATUS_STEP,
     `\`bible_lookup\` with { mode: "verse", reference: ${JSON.stringify(reference)} }. Keep the verse text and its reference. Free.`,
-    `\`voice_synthesize\` with { text: <the verse text>${voiceArg} }. Keep the returned path. One daily tts. ` +
-      (voice ? "If that voice is refused, call `voice_list` for the voice names." : "The default voice is used; `voice_list` lists others."),
+    voiceStep(voice),
     "`render_short` with { lines: <the verse as caption lines of at most 280 characters each, at most 12 lines, the last one the reference>, " +
       "autoBackground: true, audioPath: <the path from the voice step> }. One daily render and four daily images, plus one plan render quota. It returns a handle of kind \"job\".",
     "`jobs_wait` with { kind: \"job\", id: <the handle's id> } until status is done (usually one to three minutes). output.path is the video; output.url plays it.",
