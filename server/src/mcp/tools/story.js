@@ -90,16 +90,26 @@ const wordSchema = z.object({
   endMs: z.number().min(0),
 });
 
+/** The narration's length for the estimate: durationMs, or the last timed word if that runs later. */
+function importLengthMs({ durationMs, words }) {
+  const lastWord = Array.isArray(words) && words.length ? Number(words[words.length - 1]?.endMs) || 0 : 0;
+  return Math.max(Number(durationMs) || 0, lastWord);
+}
+
 async function importScript(ctx, input) {
   const audio = await resolveMediaInput(ctx, input.audioPath);
   if (audio.refusal) return audio.refusal;
-  const images = input.autoStart ? estimateSceneCount(input.durationMs) : 0;
+  const images = input.autoStart ? estimateSceneCount(importLengthMs(input)) : 0;
   if (input.autoStart) {
     const refused = await chargePictures(ctx, images);
     if (refused) return refused;
   }
   const { script, durationMs, words, title, style, cast, aspect, captions, autoStart } = input;
-  const body = defined({ script, audioPath: audio.path, durationMs, words, title, style, cast, aspect, captions, autoStart: autoStart ? true : undefined });
+  const body = defined({
+    script, audioPath: audio.path, durationMs, words, title, style, cast, aspect, captions,
+    // R44: the project's scene limit is the picture count charged, so the segmenter cuts no more.
+    ...(autoStart ? { autoStart: true, scene: { maxScenes: images } } : {}),
+  });
   const response = await ctx.api.call("POST", "/api/story/import-script", { body });
   const project = projectView(response?.project || {}, ctx.publicBase);
   if (!input.autoStart) return ok({ project });
@@ -113,7 +123,7 @@ const storyImportScript = {
     "Make a story project from words you already have and their narration: script (the text), audioPath (the narration file, for example the path voice_synthesize returned, or a file in your media folder; URLs and other paths are refused) and durationMs (its length). " +
     "words ({ text, startMs, endMs }) are the narration's timings if you have them; without them the words are spread evenly over the audio. Nothing is transcribed and the script is used as written. " +
     "Without autoStart the project waits: call story_step segment, then story_step images. With autoStart: true the server segments and makes the pictures itself; it returns a handle of kind story (call jobs_wait with kind story and the project id; done with phase ready_to_render means every scene has a picture). " +
-    "autoStart costs daily images for the pictures it will make, charged up front from durationMs: about one per 8 seconds of narration, at most 60 (QUOTA_EXCEEDED first when the plan's render quota is used up). " +
+    "autoStart costs daily images for the pictures it will make, charged up front from the narration's length (durationMs, or the last timed word if later): about one per 8 seconds, at most 60, and the project is cut into no more scenes than were charged (QUOTA_EXCEEDED first when the plan's render quota is used up). " +
     PLAN_QUOTA_NOTE + " Next: story_settings for captions and music, then story_render.",
   inputSchema: {
     script: z.string().trim().min(3).max(20000).describe("The narration text, used as written."),

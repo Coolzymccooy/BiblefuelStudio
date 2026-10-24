@@ -73,7 +73,7 @@ test("descriptions name the job kind, the costs and the resegment warning", () =
   assert.match(byName.story_render.description, /every scene needs a picture/i);
   assert.match(byName.story_render.description, /never posts/i);
   assert.match(byName.story_process.description, /images/);
-  for (const name of ["story_process", "story_step"]) {
+  for (const name of ["story_import_script", "story_process", "story_step"]) {
     assert.match(byName[name].description, /no more scenes than were charged/i, name);
   }
 });
@@ -162,10 +162,29 @@ test("story_import_script with autoStart checks the plan quota, charges the esti
   assert.deepEqual(routesCalled(calls), ["GET /api/billing/usage", "POST /api/story/import-script"]);
   assert.equal(calls[1].opts.body.autoStart, true);
   assert.equal(calls[1].opts.body.aiMotion, undefined);
+  assert.deepEqual(calls[1].opts.body.scene, { maxScenes: 10 });
   assert.deepEqual(chargeCalls, [{ images: 10 }]);
   assert.equal(result.structuredContent.kind, "story");
   assert.equal(result.structuredContent.id, "p1");
   assert.equal(result.structuredContent.imagesCharged, 10);
+});
+
+test("story_import_script estimates from the timed words when they run past durationMs, and caps the scenes there", async () => {
+  const dir = mediaWith("voice.mp3");
+  const { ctx, calls, chargeCalls } = ctxWith({ "POST /api/story/import-script": { ok: true, project: PROJECT() } });
+  const words = [{ text: "The", startMs: 0, endMs: 1000 }, { text: "Lord", startMs: 95_000, endMs: 96_000 }];
+  await byName.story_import_script.handler(ctx, {
+    script: "The Lord is my shepherd", audioPath: path.join(dir, "voice.mp3"), durationMs: 80_000, words, autoStart: true,
+  });
+  assert.deepEqual(chargeCalls, [{ images: 12 }]);
+  assert.deepEqual(calls[1].opts.body.scene, { maxScenes: 12 });
+});
+
+test("story_import_script without autoStart sends no scene limit", async () => {
+  const dir = mediaWith("voice.mp3");
+  const { ctx, calls } = ctxWith({ "POST /api/story/import-script": { ok: true, project: PROJECT() } });
+  await byName.story_import_script.handler(ctx, { script: "The Lord is my shepherd", audioPath: path.join(dir, "voice.mp3"), durationMs: 80_000 });
+  assert.equal(calls[0].opts.body.scene, undefined);
 });
 
 test("story_import_script with autoStart and no render quota left is refused before any charge", async () => {
