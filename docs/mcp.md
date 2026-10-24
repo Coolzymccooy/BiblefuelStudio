@@ -145,7 +145,7 @@ Every call passes the same checks, in this order:
 | `ambient_step` | `{ id, step: "voice" or "images", force?, movementId? }`. Speak the verses (one daily `tts` per verse) or make the pictures (one daily `images` per picture), charged up front, in the background. Handle of kind `ambient`. |
 | `ambient_update` | `{ id, section: "drops" or "bed" or "motion" or "words" or "captions", patch }`. Change the verse list, the music bed (`music_library` refs or media files), the motion, music-only, or the captions. Free. |
 | `ambient_render` | `{ id }`. Build the bed and render the video. Handle of kind `ambient`; an hour or more for long sessions, and a deploy stops it. One daily render and one plan `render` quota. Never posts. |
-| `ambient_cancel` | `{ id }`. Stop the pictures or the render; also clears a session a restart left busy. `NOTHING_RUNNING` when nothing is running. Free. |
+| `ambient_cancel` | `{ id }`. Stop the pictures or the render; also clears a session a restart left busy. Voicing cannot be stopped (`VOICING_CANNOT_CANCEL`: wait for it). `NOTHING_RUNNING` when nothing is running. Free. |
 | `social_status` | Where you can publish: YouTube, playlists, auto-publish destinations, Buffer profiles, saved webhooks and schedules. No secrets. Free. |
 | `publish_youtube` | `{ videoPath, title, ... }`. Upload to the connected channel. Handle of kind `publish`. Needs publish consent; one daily publish. |
 | `publish_post` | `{ destination: "webhook" or "buffer", videoPath, caption, ... }`. Post to a saved webhook (and TikTok when connected) or Buffer. Needs publish consent; one daily publish. |

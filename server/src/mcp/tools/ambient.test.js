@@ -517,3 +517,18 @@ test("a real bed naming an unlicensed upload by its path, or as the one file, is
     assert.equal(result.structuredContent.error, "UNCLEARED_TRACKS", JSON.stringify(patch));
   }
 });
+
+test("ambient_cancel refuses while verses are being voiced (voicing cannot be stopped), unless a restart stopped it", async () => {
+  const live = ctxWith({}, { session: SESSION({ status: "voicing" }) });
+  const refused = await byName.ambient_cancel.handler(live.ctx, { id: "a1" });
+  assert.equal(refused.structuredContent.error, "VOICING_CANNOT_CANCEL");
+  assert.match(refused.content[0].text, /finishes on its own/);
+  assert.deepEqual(routesCalled(live.calls), ["GET /api/ambient/a1"]);
+  const stopped = ctxWith({
+    "GET /api/ambient/a1": { ok: true, project: SESSION({ status: "voicing" }), interrupted: true },
+    "POST /api/ambient/a1/cancel": { ok: true, project: SESSION({ status: "error", error: "Cancelled." }) },
+  });
+  const cleared = await byName.ambient_cancel.handler(stopped.ctx, { id: "a1" });
+  assert.deepEqual(cleared.structuredContent, { kind: "ambient", id: "a1", cancelled: true });
+  assert.match(byName.ambient_cancel.description, /VOICING_CANNOT_CANCEL/);
+});

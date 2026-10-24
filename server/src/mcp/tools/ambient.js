@@ -353,15 +353,20 @@ const ambientCancel = {
   name: "ambient_cancel",
   title: "Stop an ambient session",
   description:
-    "Stop whatever the session is doing (pictures being made or a render; verses being voiced finish first). The session then reads cancelled (status error, \"Cancelled.\"); run the step or ambient_render again to carry on. " +
-    "Also clears a session a server restart left marked as busy. NOTHING_RUNNING when nothing is running; a finished session is left as it is. Instant. " + FREE_NOTE,
+    "Stop the pictures being made or a render. The session then reads cancelled (status error, \"Cancelled.\"); run the step or ambient_render again to carry on. " +
+    "Voicing cannot be stopped: while verses are being voiced this answers VOICING_CANNOT_CANCEL; it finishes on its own in a few seconds per verse, so wait for it with jobs_wait. " +
+    "Also clears a session a server restart left marked as busy (voicing included). NOTHING_RUNNING when nothing is running; a finished session is left as it is. Instant. " + FREE_NOTE,
   inputSchema: { id: AMBIENT_ID.describe("The session id.") },
   routes: ["/api/ambient"],
   async handler(ctx, { id }) {
-    const { project } = await readSession(ctx, id);
+    const { project, body } = await readSession(ctx, id);
     // Cancelling marks the session failed, so an idle or finished one is left alone.
     if (!AMBIENT_BUSY.includes(project.status)) {
       return fail("NOTHING_RUNNING", "Nothing is running on this session (no voicing, pictures or render).");
+    }
+    // The voicing stage does not stop for a cancel: it would write its verses back over it, after spending the tts.
+    if (project.status === "voicing" && !body.interrupted) {
+      return fail("VOICING_CANNOT_CANCEL", "Voicing cannot be stopped; it finishes on its own in a few seconds per verse. Wait for it with jobs_wait (kind ambient).");
     }
     await ctx.api.call("POST", `${projectPath(id)}/cancel`);
     return ok({ kind: "ambient", id, cancelled: true });
