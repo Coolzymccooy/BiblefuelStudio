@@ -8,7 +8,7 @@ BibleFuel runs a Model Context Protocol (MCP) server. An agent connects to one U
 
 - Endpoint: `https://biblefuel.tiwaton.co.uk/api/mcp`
 - Transport: Streamable HTTP. Send `POST` requests only. `GET` and `DELETE` answer 405.
-- Authentication: `Authorization: Bearer bfk_...` header. Keys in a query string are never accepted.
+- Authentication: `Authorization: Bearer bfk_...` header, with an agent key only. Keys in a query string are never accepted, and an app sign-in token (a JWT) is refused with `AGENT_KEY_REQUIRED`.
 - Identity: the agent acts as you. It gets your plan, your quotas and your files, and nothing more.
 - Rate limit: 120 requests per minute per key. Past that you get HTTP 429 with `RATE_LIMITED`.
 - Guide: this document is also the MCP resource `biblefuel://guide`, so an agent can read it before its first call.
@@ -319,7 +319,8 @@ A call that would cross a cap is refused before anything runs, so nothing is spe
 | You see | Cause | Fix |
 |---|---|---|
 | HTTP 401, `AGENT_KEY_INVALID` | The key is wrong, revoked, or its owner no longer exists. All three look the same on purpose. | Check you copied the whole key. Create a new one in Settings. |
-| HTTP 401, `Missing Bearer token` or `Invalid token` | No `Authorization` header, or it is not `Bearer <key>`. | Send the header. Keys in the URL are ignored. |
+| HTTP 401, `Missing Bearer token` | No `Authorization` header, or it is not `Bearer <key>`. | Send the header. Keys in the URL are ignored. |
+| HTTP 401, `AGENT_KEY_REQUIRED` | The bearer is not an agent key, for example the app's own sign-in token (a JWT). `/api/mcp` takes agent keys only. | Create a key in **Settings**, **Connected agents** and send that. |
 | Tool error `AGENT_FORBIDDEN` (`status` 403) | A key reached a route that keys may never use (account, billing, admin). | Do that in the app yourself. |
 | Tool error with `status` 403 from the app | The user's plan or role does not allow it, for example a scene script on a non-admin account. | Use an account that has the right. The tool is normally not listed without it. |
 | HTTP 403 on the connection itself, before any tool runs | The `Host` header is not on the allowed list. This is the usual symptom when you reach the server through a tunnel such as ngrok. | Add the tunnel host name to `MCP_ALLOWED_HOSTS` on the server (comma separated). |

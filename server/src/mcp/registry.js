@@ -19,7 +19,7 @@ export { PUBLISH_NOT_ALLOWED_MESSAGE };
  * daily cap buckets mid-handler (for tools whose cost depends on what they find) and returns
  * null on success, or the MCP_CAP_REACHED tool error to hand straight back.
  *
- * @typedef {{ user: object, agentKey: object | null, subjectId: string, isSuperAdmin: boolean,
+ * @typedef {{ user: object, agentKey: object, subjectId: string, isSuperAdmin: boolean,
  *   baseUrl: string, publicBase: string, api: { call: Function },
  *   chargeCap?: (bucket: string, amount: number) => Promise<object | null> }} McpCtx
  * @typedef {{ name: string, title: string, description: string, inputSchema: object,
@@ -108,7 +108,7 @@ async function chargeCaps(def, ctx, input, charged) {
 }
 
 async function runTool(def, ctx, input, charged) {
-  if (def.publish && ctx.agentKey && !ctx.agentKey.publishAllowed) {
+  if (def.publish && !ctx.agentKey?.publishAllowed) {
     return fail("PUBLISH_NOT_ALLOWED", PUBLISH_NOT_ALLOWED_MESSAGE);
   }
   try {
@@ -131,7 +131,7 @@ function jobOf(result) {
 
 function record(def, ctx, input, result, ms, charged) {
   const isError = Boolean(result?.isError);
-  const keyLabel = (ctx.agentKey?.id || "jwt").slice(0, 8);
+  const keyLabel = String(ctx.agentKey?.id || "").slice(0, 8);
   console.info(`[MCP] key=${keyLabel} tool=${def.name} ms=${ms} ${isError ? "error" : "ok"}`);
   try {
     logActivity({

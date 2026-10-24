@@ -44,14 +44,6 @@ test("whoami reports the user, plan, quota, caps and the key", async () => {
   assert.equal(typeof data.key.id, "string");
 });
 
-test("whoami with a JWT session has no key", async () => {
-  const client = await connect(testApp.jwtFor("u_user"));
-  const result = await client.callTool({ name: "whoami", arguments: {} });
-  assert.notEqual(result.isError, true);
-  assert.equal(result.structuredContent.key, null);
-  assert.equal(result.structuredContent.user.email, "user@example.com");
-});
-
 test("capabilities reports the server, boolean features, music and AI video", async () => {
   const client = await connect(testApp.keyFor("u_user"));
   const result = await client.callTool({ name: "capabilities", arguments: {} });

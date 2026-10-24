@@ -2,7 +2,7 @@ import express from "express";
 import rateLimit from "express-rate-limit";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { hostHeaderValidation } from "@modelcontextprotocol/sdk/server/middleware/hostHeaderValidation.js";
-import { requireAgentKeyOrJwt } from "../middleware/agentAuth.js";
+import { requireAgentKey } from "../middleware/agentAuth.js";
 import { isSuperAdmin } from "../lib/userPlan.js";
 import { createApi } from "./api.js";
 import { buildServer } from "./registry.js";
@@ -54,12 +54,12 @@ function publicBaseFor(req) {
 
 function contextFor(req) {
   const user = req.user;
-  const agentKey = req.agentKey || null;
+  const agentKey = req.agentKey;
   const baseUrl = `http://127.0.0.1:${req.socket.localPort}`;
   return {
     user,
     agentKey,
-    subjectId: agentKey?.id || `jwt:${user.sub}`,
+    subjectId: agentKey.id,
     isSuperAdmin: isSuperAdmin(user),
     baseUrl,
     publicBase: publicBaseFor(req),
@@ -93,13 +93,13 @@ export function createMcpRouter() {
   const router = express.Router();
   router.use(hostHeaderValidation(allowedHosts()));
   router.use(
-    requireAgentKeyOrJwt,
+    requireAgentKey,
     rateLimit({
       windowMs: 60_000,
       limit: 120,
       standardHeaders: "draft-7",
       legacyHeaders: false,
-      keyGenerator: (req) => req.agentKey?.id || `jwt:${req.user.sub}`,
+      keyGenerator: (req) => req.agentKey.id,
       handler: (_req, res) => res.status(429).json({ ok: false, error: "RATE_LIMITED" }),
     }),
   );

@@ -8,7 +8,7 @@ import { DATA_DIR } from "../paths.js";
  *
  * File: DATA_DIR/agent-keys-usage.json
  * Shape: { subjects: { [subjectId]: { day: "YYYY-MM-DD", counts: Caps } } }
- * subjectId is the agent key id, or `jwt:<userId>` for JWT sessions.
+ * subjectId is the agent key id.
  *
  * Counters reset at midnight UTC, lazily: a stored day that is not today reads
  * as all zeros. Writes are serialised through one in-process promise chain.

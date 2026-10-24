@@ -8,6 +8,7 @@ process.env.MCP_DAILY_RENDERS = "1";
 const USERS = [
   { id: "u_user", email: "user@example.com", role: "user", emailVerified: true },
   { id: "u_admin", email: "admin@example.com", role: "user", emailVerified: true },
+  { id: "u_other", email: "other@example.com", role: "user", emailVerified: true },
 ];
 
 const testApp = await startTestApp({ users: USERS, superAdminEmail: "admin@example.com" });
@@ -187,8 +188,26 @@ test("every call is logged", async () => {
   assert.match(byTool.publish_echo.error, /^PUBLISH_NOT_ALLOWED/);
 });
 
+test("a valid app JWT is refused at the endpoint with AGENT_KEY_REQUIRED", async () => {
+  const res = await fetch(mcpUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+      Authorization: `Bearer ${testApp.jwtFor("u_user")}`,
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+  });
+  assert.equal(res.status, 401);
+  assert.deepEqual(await res.json(), {
+    ok: false,
+    error: "AGENT_KEY_REQUIRED",
+    message: "Connect with an agent key from Settings → Connected agents.",
+  });
+});
+
 test("a tool reaches the app through the loopback API", async () => {
-  const client = await connect(testApp.jwtFor("u_user"));
+  const client = await connect(testApp.keyFor("u_other", "Loopback"));
   const result = await client.callTool({ name: "my_usage", arguments: {} });
   assert.notEqual(result.isError, true, result.content?.[0]?.text);
   assert.equal(result.structuredContent.plan, "free");
