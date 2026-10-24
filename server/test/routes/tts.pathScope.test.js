@@ -205,6 +205,56 @@ describe("Chatterbox voice ids", () => {
     for (const c of sent) assert.equal(c.body.audio_prompt_path, undefined, JSON.stringify(c.body));
   });
 
+  // Ruling R36: the owner runs the bridge on their own machine and may name a
+  // reference file on it. Every other account, other super-admins included,
+  // is held to saved clones.
+  test("the owner may send a free-text reference path on /chatterbox and /synthesize-category", async () => {
+    const direct = await request(appFor(ownerCtx)).post("/api/tts/chatterbox")
+      .send({ text: "Hello there friend", voiceId: "C:/voices/pastor.wav" });
+    assert.equal(direct.status, 200, JSON.stringify(direct.body));
+    const category = await request(appFor(ownerCtx)).post("/api/tts/synthesize-category").send({
+      text: "Hello there friend", category: "devotional", preferredProvider: "chatterbox",
+      overrides: { voiceIds: { chatterbox: "/home/me/voices/pastor.wav" } },
+    });
+    assert.equal(category.status, 200, JSON.stringify(category.body));
+    assert.deepEqual(ttsCalls().map((c) => c.body.audio_prompt_path), ["C:/voices/pastor.wav", "/home/me/voices/pastor.wav"]);
+  });
+
+  test("the owner's saved clones still resolve", async () => {
+    const ownerVoice = await addChatterboxVoice(process.env.DATA_DIR, { name: "Owner", refPath: "/bridge/refs/owner.wav" });
+    const res = await request(appFor(ownerCtx)).post("/api/tts/chatterbox").send({ text: "Hello there friend", voiceId: ownerVoice.id });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(ttsCalls()[0].body.audio_prompt_path, "/bridge/refs/owner.wav");
+  });
+
+  test("another super-admin may not send a free-text reference path", async () => {
+    const admin = { ...ctx, plan: "super_admin", isSuperAdmin: true, isOwner: false };
+    const direct = await request(appFor(admin)).post("/api/tts/chatterbox").send({ text: "Hello there friend", voiceId: "/etc/passwd" });
+    assert.equal(direct.status, 400, JSON.stringify(direct.body));
+    assert.equal(direct.body.error, "INVALID_VOICE_ID");
+    const category = await request(appFor(admin)).post("/api/tts/synthesize-category").send({
+      text: "Hello there friend", category: "devotional", preferredProvider: "chatterbox",
+      overrides: { voiceIds: { chatterbox: "/etc/passwd" } },
+    });
+    assert.equal(category.status, 400, JSON.stringify(category.body));
+    assert.deepEqual(calls, []);
+  });
+
+  test("/compare: the owner's free-text path passes, another account's is refused", async (t) => {
+    const seen = [];
+    _setCompareSynthImpl(async ({ preferredProvider, voiceIds }) => {
+      seen.push(voiceIds);
+      return { ok: true, file: "x.mp3", provider: preferredProvider, voice: voiceIds?.[preferredProvider], words: [] };
+    });
+    t.after(() => _setCompareSynthImpl(null));
+    const body = { text: "Hello there friend", candidates: [{ provider: "chatterbox", voiceId: "C:/voices/pastor.wav" }] };
+    const owner = await request(appFor(ownerCtx)).post("/api/tts/compare").send(body);
+    assert.equal(owner.body.results[0].status, "ok", JSON.stringify(owner.body));
+    const other = await request(appFor({ ...ctx, plan: "super_admin", isSuperAdmin: true, isOwner: false })).post("/api/tts/compare").send(body);
+    assert.equal(other.body.results[0].status, "error", JSON.stringify(other.body));
+    assert.deepEqual(seen, [{ chatterbox: "C:/voices/pastor.wav" }]);
+  });
+
   test("/compare refuses a Chatterbox candidate that is not a saved clone, and resolves one that is", async (t) => {
     const seen = [];
     _setCompareSynthImpl(async ({ preferredProvider, voiceIds }) => {

@@ -27,6 +27,7 @@ import {
   removeChatterboxVoice,
 } from "../lib/chatterboxVoicesStore.js";
 import { confineUserPath, isSharedTtsFile, sendUserPathError, UserPathError } from "../lib/userPathScope.js";
+import { isOwnerCtx } from "../lib/paths.js";
 
 const CHATTERBOX_CLONE_ID = /^cb:[\w-]+$/;
 const INVALID_CHATTERBOX_VOICE =
@@ -38,11 +39,16 @@ const INVALID_CHATTERBOX_VOICE =
  * the reference path the bridge stored at /upload time. Anything else is
  * refused: the bridge opens the value as a file on its own host (#112).
  *
+ * Ruling R36: the owner runs the bridge on their own machine, so the owner
+ * alone may still name a reference file on it as free text. Other
+ * super-admins are held to saved clones like everyone else.
+ *
  * @returns {{ ok: true, voiceId: string } | { ok: false, status: number, error: string, message?: string }}
  */
 function resolveChatterboxVoiceId(req, voiceId) {
   const raw = String(voiceId || "").trim();
   if (!raw) return { ok: true, voiceId: "" };
+  if (!raw.startsWith("cb:") && isOwnerCtx(req?.ctx)) return { ok: true, voiceId: raw };
   if (!CHATTERBOX_CLONE_ID.test(raw)) {
     return { ok: false, status: 400, error: "INVALID_VOICE_ID", message: INVALID_CHATTERBOX_VOICE };
   }
