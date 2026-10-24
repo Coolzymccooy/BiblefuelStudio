@@ -82,13 +82,13 @@ test("timeline_project list summarises the projects; get returns one", async () 
   assert.equal((await byName.timeline_project.handler(ctx, { action: "get" })).structuredContent.error, "BAD_INPUT");
 });
 
-test("timeline_project save confines every asset path and saves the project as given", async () => {
+test("timeline_project save confines every asset path and stores the real path it names", async () => {
   const dir = mediaWith("clip.mp4");
-  const project = videoProject(path.join(dir, "clip.mp4"));
+  const project = videoProject("/outputs/clip.mp4");
   const { ctx, calls } = ctxWith({ "PUT /api/timeline/projects/tl_1": { ok: true, project: { ...project, updatedAt: 1 } } });
   const result = await byName.timeline_project.handler(ctx, { action: "save", project });
   assert.ok(!result.isError, JSON.stringify(result.structuredContent));
-  assert.deepEqual(calls[0].opts.body, { project });
+  assert.deepEqual(calls[0].opts.body, { project: videoProject(path.join(dir, "clip.mp4")) });
   assert.equal((await byName.timeline_project.handler(ctx, { action: "save" })).structuredContent.error, "BAD_INPUT");
 });
 

@@ -22,10 +22,10 @@ async function readProject(ctx, id) {
 
 async function saveProject(ctx, project) {
   if (!project) return fail("BAD_INPUT", "timeline_project save needs project.");
-  // Checked, not rewritten: the saved project keeps the paths as given so the app shows them as before.
+  // Stored with the real path each asset names, so a later render reads exactly the file that was checked.
   const checked = await confineAssets(ctx, project);
   if (checked.refusal) return checked.refusal;
-  const body = await ctx.api.call("PUT", projectPath(project.id), { body: { project } });
+  const body = await ctx.api.call("PUT", projectPath(project.id), { body: { project: checked.project } });
   return ok({ project: body?.project ?? null });
 }
 
