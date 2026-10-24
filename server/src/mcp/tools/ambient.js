@@ -157,7 +157,8 @@ const ambientStep = {
     "Run one step of an ambient session in the background; both return a handle of kind ambient: call jobs_wait with kind ambient and the session id. " +
     "voice: look up every verse not yet voiced, word for word, and speak it. Costs one daily tts per verse it speaks (charged up front) and one unit of the plan's daily tts quota. It speaks every unvoiced verse at once, so more verses than the daily tts cap has left are refused (MCP_CAP_REACHED): add verses with ambient_update section drops and voice them over several days. Refused for music-only sessions. " +
     "images: make one picture per movement (one per verse, or one for a music-only session) for every movement without one; force: true remakes them all, movementId remakes just that one. A picture may be reused from your image library instead of generated. " +
-    "Costs one daily images per picture it will make (charged up front; reused ones are not given back) and one unit of the plan's daily image quota. " +
+    "Costs one daily images per picture it will make (charged up front; reused ones are not given back) and one unit of the plan's daily image quota per call: every movementId call also counts one unit of the plan's daily image quota. " +
+    "More pictures than the daily images cap has left are refused (MCP_CAP_REACHED): make them over several days, a movement at a time with movementId. " +
     "Each takes seconds per verse or picture. jobs_wait: done with phase ready_to_render when the session has what it needs; failed says how many verses or pictures are missing (often a provider or quota limit: run the step again later). " +
     "A step that has nothing to do starts nothing and costs nothing. Refused while the session is busy. Next: ambient_render.",
   inputSchema: {

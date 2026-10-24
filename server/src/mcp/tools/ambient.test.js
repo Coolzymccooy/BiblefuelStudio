@@ -583,3 +583,8 @@ test("descriptions say renders wait their turn and how to voice more verses than
   assert.match(byName.ambient_step.description, /several days/);
   assert.match(byName.ambient_plan.description, /several days/);
 });
+
+test("ambient_step says each movementId call counts a plan image unit and pictures past the daily cap take more days", () => {
+  assert.match(byName.ambient_step.description, /movementId call[^.]*one unit of the plan's daily image quota/);
+  assert.match(byName.ambient_step.description, /More pictures than the daily images cap has left[^.]*several days/);
+});
