@@ -60,7 +60,6 @@ export async function startTestApp({ users, superAdminEmail } = {}) {
   const { default: longformRouter } = await import("../../src/routes/longform.js");
   const { default: gumroadRouter } = await import("../../src/routes/gumroad.js");
   const { default: queueRouter } = await import("../../src/routes/queue.js");
-  const { featureGate } = await import("../../src/middleware/featureGate.js");
   const { requireSuperAdmin } = await import("../../src/middleware/requireSuperAdmin.js");
   const { refuseAgentCalls } = await import("../../src/middleware/agentAuth.js");
   const { createMcpRouter } = await import("../../src/mcp/transport.js");
