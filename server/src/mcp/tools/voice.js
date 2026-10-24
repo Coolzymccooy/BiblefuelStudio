@@ -130,7 +130,7 @@ const voiceSynthesize = {
     "the other values force one provider: elevenlabs and fish need a premium plan (FEATURE_LOCKED otherwise), chatterbox needs its bridge, piper needs PIPER_URL, azure needs a key. " +
     "A forced provider can still fall back; check fallbackProvider in the result. " +
     "voiceId comes from voice_list. Options, each read only by its own provider and ignored with auto: rate, pitch, volume for edge; exaggeration and cfgWeight for chatterbox; speed for fish; withTimestamps for azure, fish and piper; modelId for elevenlabs and fish. " +
-    "Each call spends one of the agent's daily tts calls and one of the plan's daily tts quota (a failed call gives the plan's tts quota back), and takes a few seconds.",
+    "Each call spends one of the agent's daily tts calls and one of the plan's daily tts quota (a failed call gives both back), and takes a few seconds.",
   inputSchema: {
     text: z.string().min(3).max(5000).describe("What to say, 3 to 5000 characters. Plain text; markup and emoji are stripped."),
     voiceId: z.string().max(100).regex(VOICE_ID_PATTERN, "voiceId must be a voice name or a cb:... cloned voice id, never a file path").optional().describe("A voice id from voice_list (voice_id; a cb:... cloned voice only with provider chatterbox). Never a file path. Omit for the provider's default."),
@@ -150,7 +150,15 @@ const voiceSynthesize = {
     const provider = input.provider || "auto";
     const problem = voiceIdProblem(provider, input.voiceId);
     if (problem) return fail("BAD_INPUT", problem);
-    const body = await ctx.api.call("POST", `/api/tts/${provider}`, { body: defined(SYNTH_BODY[provider](input)) });
+    let body;
+    try {
+      body = await ctx.api.call("POST", `/api/tts/${provider}`, { body: defined(SYNTH_BODY[provider](input)) });
+    } catch (err) {
+      // A 5xx here means no audio was made (the route gives the plan's quota back too).
+      // The registry refunds a 4xx itself, so only the 5xx is given back here.
+      if (err?.name === "ApiError" && err.status >= 500) await ctx.refundCap({ tts: 1 });
+      throw err;
+    }
     const { file, ...rest } = withoutOk(body);
     if (!file) return fail("NO_AUDIO", "The voice provider answered without an audio file. Try again or choose another provider.");
     return ok({ ...rest, path: file, url: outputUrl(file, ctx.publicBase) });
