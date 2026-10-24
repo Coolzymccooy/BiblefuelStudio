@@ -52,6 +52,9 @@ RUN npm ci --prefix client || npm ci --prefix client || npm ci --prefix client
 
 # Build. vite.config outDir is ../server/public, so output lands at
 # /build/server/public (emptyOutDir wipes stale assets first).
+# The Help page renders docs/mcp.md (import "../../../docs/mcp.md?raw"), so the docs
+# folder must sit beside client/ in the build stage.
+COPY docs ./docs
 COPY client ./client
 RUN npm run build --prefix client
 
@@ -97,6 +100,9 @@ RUN node -e "import('@remotion/renderer').then((m) => m.ensureBrowser())"
 
 # Server source.
 COPY server ./
+
+# The MCP resource biblefuel://guide reads ../docs/mcp.md relative to the server root (/app).
+COPY docs /docs
 
 # Prebuilt scene-script composition: renders never run webpack on the server.
 RUN node scripts/bundle-remotion.mjs /app/remotion-bundle

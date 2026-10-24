@@ -1,25 +1,10 @@
 import { Router } from "express";
 import fs from "fs";
-import crypto from "crypto";
 import { cleanSpeakableText } from "../lib/speakableScript.js";
 import { synthesize } from "../lib/voice/index.js";
+import { sameSecret } from "../lib/secrets.js";
 
 const router = Router();
-
-/**
- * Constant-time secret comparison. A plain !== returns as soon as two bytes
- * differ, which leaks the secret a character at a time to anyone who can time
- * the response.
- */
-function timingSafeEquals(a, b) {
-  const bufA = Buffer.from(String(a || ''), 'utf8');
-  const bufB = Buffer.from(String(b || ''), 'utf8');
-  // timingSafeEqual throws on a length mismatch, so compare a fixed-size
-  // digest instead - equal length, and still constant time.
-  const digestA = crypto.createHash('sha256').update(bufA).digest();
-  const digestB = crypto.createHash('sha256').update(bufB).digest();
-  return bufA.length > 0 && crypto.timingSafeEqual(digestA, digestB);
-}
 
 function abiProviderOrder() {
   return String(process.env.ABI_TTS_PROVIDER_CHAIN || "azure,edge,piper,fish,elevenlabs")
@@ -48,7 +33,7 @@ router.post("/tts", async (req, res) => {
   }
   const headerSecret = String(req.get('x-abi-secret') || '').trim();
   const bearer = String(req.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
-  if (!timingSafeEquals(headerSecret, sharedSecret) && !timingSafeEquals(bearer, sharedSecret)) {
+  if (!sameSecret(headerSecret, sharedSecret) && !sameSecret(bearer, sharedSecret)) {
     return res.status(401).json({ ok: false, error: 'ABI_UNAUTHORIZED' });
   }
   const text = cleanSpeakableText(req.body?.text);

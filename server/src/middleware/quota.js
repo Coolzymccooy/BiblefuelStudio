@@ -13,31 +13,37 @@ export const QUOTAS = Object.freeze({
 });
 
 /**
- * Middleware factory. Mount AFTER withUserScope. Increments the counter
- * BEFORE the handler runs so over-quota requests are rejected before we
+ * Checks and counts one unit against a bucket for a request context. Shared by
+ * the quota middleware and by routes that spend quota conditionally (the job
+ * retry route, which only counts render-type jobs).
+ *
+ * Increments BEFORE the work runs so over-quota requests are rejected before we
  * burn the operator's API budget; the cost of false-positive increments
  * (e.g. handler 500s after the bump) is one ghost-tick per error.
  *
+ * @param {{ dataDir?: string, plan?: string } | null | undefined} ctx req.ctx from withUserScope
  * @param {'scripts'|'tts'|'render'|'imageGen'} bucket
+ * @returns {{ ok: true } | { ok: false, status: number, body: object }}
  */
-export function quota(bucket) {
-  return function quotaCheck(req, res, next) {
-    const ctx = req?.ctx;
-    if (!ctx) {
-      return res.status(401).json({ ok: false, error: "Missing user context" });
-    }
-    const plan = ctx.plan;
-    const limits = QUOTAS[plan] || QUOTAS.free;
-    const limit = limits[bucket];
+export function consumeQuota(ctx, bucket) {
+  if (!ctx) {
+    return { ok: false, status: 401, body: { ok: false, error: "Missing user context" } };
+  }
+  const plan = ctx.plan;
+  const limits = QUOTAS[plan] || QUOTAS.free;
+  const limit = limits[bucket];
 
-    // Unlimited tier — skip counting (no value to tracking; super-admin is
-    // also the operator and never gates herself).
-    if (limit === -1) return next();
+  // Unlimited tier — skip counting (no value to tracking; super-admin is
+  // also the operator and never gates herself).
+  if (limit === -1) return { ok: true };
 
-    const { counts } = readUsage(ctx.dataDir);
-    const used = Number(counts[bucket] || 0);
-    if (used >= limit) {
-      return res.status(429).json({
+  const { counts } = readUsage(ctx.dataDir);
+  const used = Number(counts[bucket] || 0);
+  if (used >= limit) {
+    return {
+      ok: false,
+      status: 429,
+      body: {
         ok: false,
         error: "QUOTA_EXCEEDED",
         bucket,
@@ -45,10 +51,28 @@ export function quota(bucket) {
         limit,
         plan,
         hint: "Upgrade to Premium for unlimited generation, or come back tomorrow — quota resets at midnight UTC.",
-      });
-    }
+      },
+    };
+  }
 
-    incrementUsage(ctx.dataDir, bucket);
+  incrementUsage(ctx.dataDir, bucket);
+  return { ok: true };
+}
+
+/**
+ * Middleware factory. Mount AFTER withUserScope; see consumeQuota for the
+ * counting rules.
+ *
+ * @param {'scripts'|'tts'|'render'|'imageGen'} bucket
+ */
+export function quota(bucket) {
+  return function quotaCheck(req, res, next) {
+    // Reads never spend budget: every GET on the quota-mounted routers is a
+    // status/list read, and charging them let a polling client (e.g. the MCP
+    // jobs_wait tool) drain the bucket and 429 its own render.
+    if (req.method === "GET" || req.method === "HEAD") return next();
+    const outcome = consumeQuota(req?.ctx, bucket);
+    if (!outcome.ok) return res.status(outcome.status).json(outcome.body);
     next();
   };
 }

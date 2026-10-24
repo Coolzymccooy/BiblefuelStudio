@@ -1,6 +1,7 @@
 import { Router } from "express";
 import express from "express";
 import { requireAuth } from "../auth.js";
+import { refuseAgentCalls } from "../middleware/agentAuth.js";
 import { withUserScope } from "../middleware/userScope.js";
 import { readUserPlan, writeUserPlan } from "../lib/userPlanStore.js";
 import { dataDirFor } from "../lib/paths.js";
@@ -52,7 +53,7 @@ async function getStripe() {
   }
 }
 
-router.get("/plan", requireAuth, withUserScope, (req, res) => {
+router.get("/plan", requireAuth, refuseAgentCalls, withUserScope, (req, res) => {
   const planRecord = readUserPlan(req.ctx.dataDir);
   res.json({
     ok: true,
@@ -68,7 +69,7 @@ router.get("/usage", requireAuth, withUserScope, (req, res) => {
   res.json({ ok: true, usage: describeUsage(req) });
 });
 
-router.post("/checkout", requireAuth, withUserScope, async (req, res) => {
+router.post("/checkout", requireAuth, refuseAgentCalls, withUserScope, async (req, res) => {
   if (!stripeConfigured()) {
     return res.status(503).json({
       ok: false,
@@ -115,7 +116,7 @@ router.post("/checkout", requireAuth, withUserScope, async (req, res) => {
   }
 });
 
-router.post("/portal", requireAuth, withUserScope, async (req, res) => {
+router.post("/portal", requireAuth, refuseAgentCalls, withUserScope, async (req, res) => {
   if (!stripeConfigured()) {
     return res.status(503).json({ ok: false, error: "PAYMENTS_NOT_CONFIGURED" });
   }

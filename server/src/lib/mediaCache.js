@@ -38,3 +38,15 @@ export function publicAssetHeaders(res, filePath) {
   res.setHeader("Accept-Ranges", "bytes");
   res.setHeader("Cache-Control", cacheControlForOutput(filePath));
 }
+
+/**
+ * Headers every /outputs response carries. The files there include ones pulled
+ * from outside URLs, so a browser must never sniff one into HTML, and if a
+ * document is ever opened top-level it runs sandboxed (no script, unique
+ * origin). A CSP on a media response does not affect <video>/<audio>/<img>
+ * embedding, nor the browser's own viewer when a file is opened in a tab.
+ */
+export function setOutputSafetyHeaders(res) {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Content-Security-Policy", "sandbox");
+}

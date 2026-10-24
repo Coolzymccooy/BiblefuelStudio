@@ -143,6 +143,24 @@ export function signToken(user) {
   return jwt.sign(claims, secret, { expiresIn });
 }
 
+/**
+ * A 60-second token the MCP layer uses for loopback calls into the app's own
+ * routes on behalf of one user. `via: "mcp"` lets refuseAgentCalls keep it off
+ * account routes.
+ * @param {{ sub: string, email: string, role: string, emailVerified?: boolean }} user
+ */
+export function signInternalToken(user) {
+  const secret = process.env.JWT_SECRET || "dev_secret_change_me";
+  const claims = {
+    sub: user.sub,
+    email: user.email,
+    role: user.role,
+    emailVerified: Boolean(user.emailVerified),
+    via: "mcp",
+  };
+  return jwt.sign(claims, secret, { expiresIn: "60s" });
+}
+
 const OAUTH_STATE_AUDIENCE = "biblefuel-oauth-state";
 
 // OAuth states travel through Google's and Zernio's redirects, so they land in

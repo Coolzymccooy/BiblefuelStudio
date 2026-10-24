@@ -21,6 +21,7 @@ import { AutoPublishCard } from '../components/AutoPublishCard';
 import { YouTubeConnectCard } from '../components/YouTubeConnectCard';
 import { TikTokConnectCard } from '../components/TikTokConnectCard';
 import { WebhookConnectCard } from '../components/WebhookConnectCard';
+import { ConnectedAgentsCard } from '../components/ConnectedAgentsCard';
 import { BrandingCard } from '../components/BrandingCard';
 
 
@@ -300,6 +301,7 @@ export function SettingsPage() {
             </Card>
 
             <PlanAndUsageCard />
+            <ConnectedAgentsCard />
             <BrandingCard />
             <YouTubeConnectCard />
             <TikTokConnectCard />

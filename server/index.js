@@ -49,6 +49,10 @@ import { createPerUserOutputFinder } from "./src/lib/perUserOutputs.js";
 import { createEmailTransport } from "./services/email/transport.js";
 import { sendEmail as sendEmailViaTransport } from "./services/email/send.js";
 import { withUserScope } from "./src/middleware/userScope.js";
+import { createMcpRouter } from "./src/mcp/transport.js";
+import agentKeysRouter from "./src/routes/agentKeys.js";
+import { pruneActivity } from "./src/lib/agentKeys/activity.js";
+import { refuseAgentCalls } from "./src/middleware/agentAuth.js";
 import { featureGate } from "./src/middleware/featureGate.js";
 import { requireVerifiedEmail } from "./src/middleware/requireVerifiedEmail.js";
 import { requireSuperAdmin } from "./src/middleware/requireSuperAdmin.js";
@@ -59,7 +63,7 @@ import { createAdminRouter } from "./src/routes/admin.js";
 import issuesRouter from "./src/routes/issues.js";
 import { DATA_DIR, OUTPUT_DIR } from "./src/lib/paths.js";
 import { ownershipWarning } from "./src/lib/userPlan.js";
-import { cacheControlForOutput, publicAssetHeaders } from "./src/lib/mediaCache.js";
+import { cacheControlForOutput, publicAssetHeaders, setOutputSafetyHeaders } from "./src/lib/mediaCache.js";
 import { reconcilePersistedJobs } from "./src/lib/renderJobs.js";
 import { resumeAnimations } from "./src/lib/story/animateStage.js";
 import { createSceneScriptRouter, resumeSceneScriptShots } from "./src/routes/sceneScript.js";
@@ -153,6 +157,7 @@ if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 // to make "Download" actually save to Files/Photos on iOS. safeDownloadName
 // sanitises the value to a single safe segment to prevent header injection.
 app.use("/outputs", (req, res, next) => {
+  setOutputSafetyHeaders(res);
   res.setHeader("Accept-Ranges", "bytes");
   res.setHeader("Cache-Control", cacheControlForOutput(req.path));
   if (req.query && req.query.dl !== undefined) {
@@ -201,6 +206,7 @@ app.use("/outputs", (req, res, next) => {
     // gzipping the response and breaking iOS Range requests.
     res.setHeader("Cache-Control", cacheControlForOutput(rel));
     res.setHeader("Accept-Ranges", "bytes");
+    setOutputSafetyHeaders(res);
     return res.sendFile(hit);
   }
   // Genuine miss: return a real 404 instead of letting the SPA catch-all
@@ -218,7 +224,9 @@ const emailTransport = createEmailTransport({
 });
 const sendEmail = (req) => sendEmailViaTransport(emailTransport, req);
 const accessRequestsStore = getAccessRequestsStore();
-app.use('/api/access-requests', createAccessRequestsRouter({
+// refuseAgentCalls here is belt-and-braces: the router is a public POST with no
+// requireAuth, so req.user is normally unset and it passes everyone through.
+app.use('/api/access-requests', refuseAgentCalls, createAccessRequestsRouter({
   store: accessRequestsStore,
   sendEmail,
   notifyTo: process.env.ACCESS_REQUEST_NOTIFY_TO || process.env.MAIL_REPLY_TO || '',
@@ -336,6 +344,22 @@ app.use("/", express.static(publicDir, { setHeaders: publicAssetHeaders }));
 
 app.use("/api/auth", authRouter);
 app.use("/api/jobs", requireAuth, withUserScope, jobsRouter);
+// MCP endpoint for agents: own auth (agent key or app JWT), host check and rate limit.
+app.use("/api/mcp", createMcpRouter());
+app.use("/api/agent-keys", requireAuth, withUserScope, refuseAgentCalls, agentKeysRouter);
+
+// Agent activity is kept 90 days: prune once at start and then daily.
+if (process.env.NODE_ENV !== "test") {
+  const pruneAgentActivity = () => {
+    try {
+      pruneActivity();
+    } catch (e) {
+      console.warn("[agent-activity] prune failed", e?.message || e);
+    }
+  };
+  pruneAgentActivity();
+  setInterval(pruneAgentActivity, 24 * 60 * 60 * 1000).unref();
+}
 
 // Protected API routes — all use withUserScope (resolves req.ctx) and pass
 // dataDir/outputDir down to the stores. featureGate is applied per route where
@@ -415,7 +439,7 @@ const publicSignupUrl = String(
   ''
 ).trim().replace(/\/+$/, '');
 const adminSignupUrl = publicSignupUrl ? `${publicSignupUrl}/app` : 'https://biblefuel.tiwaton.co.uk/app';
-app.use("/api/admin",     requireAuth, withUserScope, requireSuperAdmin,                          createAdminRouter({ accessRequestsStore, sendEmail, signupUrl: adminSignupUrl }));
+app.use("/api/admin",     requireAuth, withUserScope, refuseAgentCalls, requireSuperAdmin,                          createAdminRouter({ accessRequestsStore, sendEmail, signupUrl: adminSignupUrl }));
 
 
 

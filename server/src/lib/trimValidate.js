@@ -1,5 +1,5 @@
 import fs from "fs";
-import path from "path";
+import { isInsideDir } from "./pathJail.js";
 
 /**
  * Validate a trim request WITHOUT touching ffmpeg.
@@ -34,9 +34,7 @@ export function validateTrimRequest({ inputPath, startSec, endSec, outputDir }) 
     return { ok: false, error: "input file not found" };
   }
 
-  const rel = path.relative(jail, resolvedPath);
-  const inside = rel === "" ? false : !rel.startsWith("..") && !path.isAbsolute(rel);
-  if (!inside) return { ok: false, error: "invalid path: outside your media folder" };
+  if (!isInsideDir(resolvedPath, jail)) return { ok: false, error: "invalid path: outside your media folder" };
 
   return { ok: true, resolvedPath, startSec: start, endSec: end };
 }

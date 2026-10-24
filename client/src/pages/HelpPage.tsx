@@ -1,4 +1,5 @@
 import { Card } from '../components/ui/Card';
+import { AgentGuide } from '../components/AgentGuide';
 import {
     HelpCircle,
     Zap,
@@ -12,7 +13,8 @@ import {
     FileSpreadsheet,
     PlayCircle,
     Server,
-    Archive
+    Archive,
+    Bot
 } from 'lucide-react';
 
 export function HelpPage() {
@@ -173,6 +175,10 @@ export function HelpPage() {
                         <p className="text-xs text-content-secondary leading-relaxed">Our server features auto-reload. When you save your <code className="text-primary-400">.env</code> keys, the server restarts itself to apply the changes.</p>
                     </div>
                 </div>
+            </Card>
+
+            <Card title="Connect an agent" icon={Bot}>
+                <AgentGuide />
             </Card>
 
             {/* Footer Actions */}

@@ -1,5 +1,4 @@
 import { Router, raw } from "express";
-import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { probeAudioDurationSec } from "../lib/story/storyRender.js";
@@ -8,6 +7,7 @@ import {
 } from "../lib/stems/laptopQueue.js";
 import { updateStemJob } from "../lib/stems/stemJobs.js";
 import { saveInstrumental } from "./music.js";
+import { sameSecret } from "../lib/secrets.js";
 
 /**
  * The laptop's side of vocal removal for the live site
@@ -23,13 +23,6 @@ export const MAX_RESULT_BYTES = 300 * 1024 * 1024;
 let _probe = probeAudioDurationSec;
 export function _setResultProbe(fn) { _probe = fn; }
 export function _resetResultProbe() { _probe = probeAudioDurationSec; }
-
-function sameSecret(a, b) {
-  // Fixed-size digests: equal length for timingSafeEqual, still constant time.
-  const da = crypto.createHash("sha256").update(String(a)).digest();
-  const db = crypto.createHash("sha256").update(String(b)).digest();
-  return crypto.timingSafeEqual(da, db);
-}
 
 router.use((req, res, next) => {
   if (!laptopQueueEnabled()) {

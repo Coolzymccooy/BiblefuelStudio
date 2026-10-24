@@ -4,11 +4,13 @@ import path from "path";
 import { v4 as uuid } from "uuid";
 import { spawn, spawnSync } from "child_process";
 import { readLibrary } from "../lib/library.js";
+import { consumeQuota } from "../middleware/quota.js";
 import { DATA_DIR, OUTPUT_DIR, resolveOutputAlias, isLocalOrRemote } from "../lib/mediaThumb.js";
 import { isOwnerCtx } from "../lib/paths.js";
 import { tiktokAccountFor } from "../lib/social/zernioConnect.js";
 import { generateScripts } from "../lib/generateScripts.js";
 import { synthesizeTts } from "../lib/ttsOrchestrator.js";
+import { MAX_INPUT_MB } from "../lib/backgroundLimits.js";
 import { synthesizeForCategory } from "../lib/voice/categorySynthesis.js";
 import { resolveProfile, listCategories } from "../lib/voice/profiles.js";
 import { dispatchPost } from "./social.js";
@@ -35,7 +37,6 @@ const router = Router();
 let ffmpegChecked = false;
 let ffmpegOk = false;
 const MAX_RENDER_SECONDS = Number(process.env.MAX_RENDER_SECONDS || 30);
-const MAX_INPUT_MB = Number(process.env.MAX_INPUT_MB || 200);
 const JOBS_RETENTION = Math.max(50, Number(process.env.JOBS_RETENTION || 500));
 const JOB_EXEC_TIMEOUT_SEC = Math.max(30, Number(process.env.JOB_EXEC_TIMEOUT_SEC || 600));
 const STALE_RUNNING_JOB_MINUTES = Math.max(1, Number(process.env.STALE_RUNNING_JOB_MINUTES || 45));
@@ -1806,8 +1807,9 @@ function buildAutoPublishCaption(job) {
   return "";
 }
 
-async function maybeAutoPublish(job, result) {
+export async function maybeAutoPublish(job, result) {
   try {
+    if (job?.suppressAutoPublish === true) return;
     if (!isPostizConfigured()) return;
     const outFile = result?.outFile || result?.file;
     if (!outFile) return;
@@ -1958,6 +1960,8 @@ router.post("/enqueue", (req, res) => {
  * Ownership: only the job's owner (or super-admin) can retry. Anything
  * else returns 404 to avoid leaking job existence across tenants.
  */
+const RETRY_COUNTED_TYPES = new Set(["render_video", "render_waveform", "campaign_auto_post"]);
+
 router.post("/:id/retry", (req, res) => {
   store = loadJobs();
   const original = store.jobs.find((j) => j.id === req.params.id);
@@ -1981,6 +1985,13 @@ router.post("/:id/retry", (req, res) => {
   finally { currentJobCtx = prevCtx; }
   if (!validation.ok) return res.status(400).json({ ok: false, error: validation.error });
 
+  // A retry renders again, so it spends the plan's render quota; without this
+  // a free user could keep rendering by retrying (app button and agents alike).
+  if (RETRY_COUNTED_TYPES.has(type)) {
+    const spent = consumeQuota(req.ctx, "render");
+    if (!spent.ok) return res.status(spent.status).json(spent.body);
+  }
+
   const id = `job_${uuid()}`;
   const job = {
     id,
@@ -1993,6 +2004,9 @@ router.post("/:id/retry", (req, res) => {
     // Provenance — links the retry back to its source so we can show
     // "Retried from #abc12345" in the UI later if useful.
     retryOf: original.id,
+    // `{ "autoPublish": false }` in the body keeps this run from posting
+    // through Postiz when it finishes (agents without publish consent).
+    ...(req.body?.autoPublish === false ? { suppressAutoPublish: true } : {}),
   };
   store.jobs.push(job);
   saveJobs(store);
