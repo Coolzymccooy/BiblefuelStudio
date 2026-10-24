@@ -5,7 +5,10 @@ import {
   SEEDANCE_MODELS, clampSeedanceDuration, seedanceRatio,
   submitSeedanceTask, waitForSeedanceTask, downloadSeedanceVideo,
 } from "../videoGen/providers/seedance.js";
-import { estimateTokens, usdForTokens, reserveSpend, settleSpend, releaseSpend, isReserved } from "../videoGen/spend.js";
+import {
+  estimateTokens, usdForTokens, holdSpend, drawSpend, shrinkHold, releaseSpend, releaseReservations,
+} from "../videoGen/spend.js";
+import { chargeTaskOnce } from "../videoGen/chargeOnce.js";
 import { runFfmpeg } from "../motion/render.js";
 import { probeAudioDurationSec } from "../story/storyRender.js";
 import { addClip, getClip } from "../visualLibrary/store.js";
@@ -18,6 +21,13 @@ import { promptForShot, shotSpans, SHOT_TARGET_SEC } from "./shots.js";
  * The task id is saved on the shot before waiting, so after a restart the
  * clip is collected instead of ordered (and paid for) again. A shot can take
  * a library clip instead, which costs nothing.
+ *
+ * A run holds every clip's estimate on the ledger when it starts, checked
+ * against the cap in the same write, and each clip draws its own reservation
+ * from that hold, so a run started at the same moment elsewhere (another
+ * script, a cartoon) cannot leave this one part-made at the cap. What is left
+ * of the hold is released when the run ends, or on resume after a restart
+ * (and at boot). A shot stopped before it drew gives its share back at once.
  */
 
 export const SHOT_CONCURRENCY = 4;
@@ -44,6 +54,15 @@ const cancels = new Set();
 export const isOrderingShots = (id) => runs.has(id);
 export const cancelShots = (id) => cancels.add(id);
 export const ledgerKey = (projectId, shotId) => `ss:${projectId}:${shotId}`;
+/** The ledger key of a run's hold; its own prefix, so no clip key ever matches it. */
+export const SHOTS_HOLD_PREFIX = "ss-run:";
+export const shotsHoldKey = (projectId) => `${SHOTS_HOLD_PREFIX}${projectId}`;
+
+/** What one clip of this length is reserved at: the run's hold and each clip's draw use this same figure. */
+function clipUsd(project, seconds) {
+  const tokens = estimateTokens({ durationSec: seconds, ratio: seedanceRatio(project.meta?.aspect), resolution: SHOT_RESOLUTION });
+  return usdForTokens({ model: SHOT_MODEL, resolution: SHOT_RESOLUTION, tokens });
+}
 
 /** The prompt sent for a shot: the operator's own, else built from the visual. */
 export function shotPrompt(project, shot) {
@@ -120,26 +139,13 @@ export async function makePoster(deps, clipFile, posterFile) {
   return r.ok && fs.existsSync(posterFile) ? posterFile : null;
 }
 
-/**
- * Count a task's cost once. The ledger settles only while the reservation
- * stands (settling removes it in the same write), and the project total moves
- * in the same write that marks the shot charged for this task, so collecting
- * again after a restart never charges twice.
- */
+/** Count a task's cost once (see chargeOnce.js): collecting again after a restart never charges twice. */
 function chargeShot(ctx, id, shotId, taskId, { ledgerDir, tokens }) {
-  const key = ledgerKey(id, shotId);
-  const spend = { model: SHOT_MODEL, resolution: SHOT_RESOLUTION, tokens };
-  const usd = isReserved(ledgerDir, key) ? settleSpend(ledgerDir, key, spend) : usdForTokens(spend);
-  updateProject(ctx.dataDir, id, (p) => {
-    const shot = p.shots.find((s) => s.id === shotId);
-    if (!shot || shot.clip?.chargedTaskId === taskId) return null;
-    return {
-      ...p,
-      spentUsd: (Number(p.spentUsd) || 0) + usd,
-      shots: p.shots.map((s) => (s.id === shotId ? { ...s, clip: { ...s.clip, chargedTaskId: taskId } } : s)),
-    };
+  return chargeTaskOnce({
+    ledgerDir, key: ledgerKey(id, shotId), shotId, taskId,
+    spend: { model: SHOT_MODEL, resolution: SHOT_RESOLUTION, tokens },
+    update: (fn) => updateProject(ctx.dataDir, id, fn),
   });
-  return usd;
 }
 
 /** BytePlus keeps a finished clip's URL for 24 h. A paid clip that failed to download can be fetched again until then. */
@@ -208,17 +214,36 @@ async function collect(ctx, id, shotId, taskId, { ledgerDir, deps }) {
   return undefined;
 }
 
-async function orderOne(ctx, id, shotId, { ledgerDir, deps }) {
+/**
+ * A queued shot is ending before it drew its reservation: give its share of
+ * the run's hold back now, so another order can use it before the run ends.
+ * At most once per shot per run (`opts.shares` records shots drawn or given
+ * back), so the hold never shrinks below what the other shots still need.
+ */
+function giveShareBack(ctx, id, shotId, opts) {
+  if (!opts.shares || opts.shares.has(shotId)) return;
+  opts.shares.add(shotId);
+  const project = readProject(ctx.dataDir, id);
+  const clip = project?.shots.find((s) => s.id === shotId)?.clip;
+  // A free re-fetch was never part of the hold.
+  if (clip?.status === "queued") shrinkHold(opts.ledgerDir, shotsHoldKey(id), clipUsd(project, clip.seconds));
+}
+
+async function orderOne(ctx, id, shotId, opts) {
+  const { ledgerDir, deps } = opts;
   const project = readProject(ctx.dataDir, id);
   const shot = project?.shots.find((s) => s.id === shotId);
   if (shot?.clip?.status === "generating" && shot.clip.taskId) return collect(ctx, id, shotId, shot.clip.taskId, { ledgerDir, deps });
   if (!shot || shot.clip?.status !== "queued") return;
   const seconds = shot.clip.seconds;
-  const ratio = seedanceRatio(project.meta?.aspect);
-  const estimate = usdForTokens({ model: SHOT_MODEL, resolution: SHOT_RESOLUTION, tokens: estimateTokens({ durationSec: seconds, ratio, resolution: SHOT_RESOLUTION }) });
   const key = ledgerKey(id, shotId);
-  const reserved = reserveSpend(ledgerDir, key, estimate);
-  if (!reserved.ok) return failShot(ctx.dataDir, id, shotId, null, reserved.error);
+  // Out of the run's hold: what startShots held for this clip is never refused by the cap.
+  const reserved = drawSpend(ledgerDir, shotsHoldKey(id), key, clipUsd(project, seconds));
+  if (!reserved.ok) {
+    giveShareBack(ctx, id, shotId, opts);
+    return failShot(ctx.dataDir, id, shotId, null, reserved.error);
+  }
+  opts.shares?.add(shotId);
   const submitted = await deps.submit({ prompt: shot.clip.prompt, aspect: project.meta?.aspect, durationSec: seconds, model: SHOT_MODEL, resolution: SHOT_RESOLUTION });
   if (!submitted.ok) {
     releaseSpend(ledgerDir, key);
@@ -230,18 +255,26 @@ async function orderOne(ctx, id, shotId, { ledgerDir, deps }) {
   return collect(ctx, id, shotId, submitted.taskId, { ledgerDir, deps });
 }
 
-async function runShots(ctx, id, ids, opts) {
+async function runShots(ctx, id, ids, runOpts) {
+  const opts = { ...runOpts, shares: new Set() };
   const queue = [...ids];
   const worker = async () => {
     while (queue.length) {
       const shotId = queue.shift();
-      if (cancels.has(id)) { failShot(ctx.dataDir, id, shotId, null, "Stopped before this clip was ordered."); continue; }
+      if (cancels.has(id)) {
+        giveShareBack(ctx, id, shotId, opts);
+        failShot(ctx.dataDir, id, shotId, null, "Stopped before this clip was ordered.");
+        continue;
+      }
       try {
         await orderOne(ctx, id, shotId, opts);
       } catch (e) {
         // Once a task is submitted BytePlus may bill it, so its reservation stays until it is collected.
         const taskId = readProject(ctx.dataDir, id)?.shots.find((s) => s.id === shotId)?.clip?.taskId ?? null;
-        if (!taskId) releaseSpend(opts.ledgerDir, ledgerKey(id, shotId));
+        if (!taskId) {
+          giveShareBack(ctx, id, shotId, opts);
+          releaseSpend(opts.ledgerDir, ledgerKey(id, shotId));
+        }
         console.warn(`[scene-script] shot ${shotId} of ${id} failed: ${e?.message || e}`);
         failShot(ctx.dataDir, id, shotId, taskId, "Something went wrong making this clip. Try again.");
       }
@@ -261,36 +294,66 @@ function recordRunEnd(ctx, id, cancelled) {
 
 /**
  * Queue the chosen shots (all shots with no clip when only is absent) and
- * order them in the background. Returns the project as written, or null when
- * a run is going or nothing needs ordering.
+ * order them in the background. Every paid clip is held on the ledger first,
+ * in the same step as the cap check; free re-fetches hold nothing. Returns the
+ * project as written; null when a run is going or nothing needs ordering; or
+ * `{ ok: false, code: "BUDGET", error }` when the cap refuses, in which case
+ * nothing is held or queued.
  */
 export function startShots(ctx, id, { only, ledgerDir, deps } = {}) {
   if (runs.has(id)) return null;
   const project = readProject(ctx.dataDir, id);
   if (!project) return null;
-  const picked = new Set(pickShots(project, only).map((s) => s.id));
-  if (!picked.size) return null;
+  const pickedShots = pickShots(project, only);
+  if (!pickedShots.length) return null;
+  const picked = new Set(pickedShots.map((s) => s.id));
   const secs = clipSeconds(project);
-  const written = updateProject(ctx.dataDir, id, (p) => ({
-    ...p,
-    // When this run started and ended, and whether it was stopped: the agent job handle reads it.
-    shotsRun: { startedAt: Date.now(), finishedAt: null, cancelled: false },
-    shots: p.shots.map((s) => (picked.has(s.id) && canRefetch(s)
-      ? { ...s, clip: { ...s.clip, status: "generating", error: null } }
-      : picked.has(s.id)
-      ? { ...s, clip: { status: "queued", taskId: null, error: null, seconds: secs[s.id], prompt: shotPrompt(p, s), previous: hasClip(s) ? s.clip : s.clip?.previous || null } }
-      : s)),
-  }));
+  // Decided once, so the hold covers exactly the shots queued as paid orders.
+  const refetch = new Set(pickedShots.filter((s) => canRefetch(s)).map((s) => s.id));
+  const holdUsd = pickedShots.filter((s) => !refetch.has(s.id)).reduce((sum, s) => sum + clipUsd(project, secs[s.id]), 0);
+  if (holdUsd > 0) {
+    const held = holdSpend(ledgerDir, shotsHoldKey(id), holdUsd);
+    if (!held.ok) return { ok: false, code: "BUDGET", error: held.error };
+  }
+  let written = null;
+  try {
+    written = updateProject(ctx.dataDir, id, (p) => ({
+      ...p,
+      // When this run started and ended, and whether it was stopped: the agent job handle reads it.
+      shotsRun: { startedAt: Date.now(), finishedAt: null, cancelled: false },
+      shots: p.shots.map((s) => (refetch.has(s.id)
+        ? { ...s, clip: { ...s.clip, status: "generating", error: null } }
+        : picked.has(s.id)
+        ? { ...s, clip: { status: "queued", taskId: null, error: null, seconds: secs[s.id], prompt: shotPrompt(p, s), previous: hasClip(s) ? s.clip : s.clip?.previous || null } }
+        : s)),
+    }));
+  } finally {
+    if (!written) releaseSpend(ledgerDir, shotsHoldKey(id));
+  }
+  if (!written) return null;
   runs.add(id);
   cancels.delete(id);
   runShots(ctx, id, [...picked], { ledgerDir, deps: { ...defaultDeps, ...deps } })
     .catch((e) => console.warn(`[scene-script] shots ${id} failed: ${e?.message || e}`))
-    .finally(() => {
-      recordRunEnd(ctx, id, cancels.has(id));
-      runs.delete(id);
-      cancels.delete(id);
-    });
+    .finally(() => endRun(ctx, id, ledgerDir));
   return written;
+}
+
+/**
+ * A run is over: record its end for the agent's job handle, release what is
+ * left of its hold, then let the script be ordered or edited again.
+ */
+function endRun(ctx, id, ledgerDir) {
+  recordRunEnd(ctx, id, cancels.has(id));
+  try {
+    releaseSpend(ledgerDir, shotsHoldKey(id));
+  } catch (e) {
+    // Left for the next resume to release; the run must still end.
+    console.warn(`[scene-script] shots ${id} hold not released: ${e?.message || e}`);
+  } finally {
+    runs.delete(id);
+    cancels.delete(id);
+  }
 }
 
 /** Use a clip already in the library for a shot. Costs nothing. */
@@ -316,8 +379,18 @@ export function useLibraryClip(ctx, id, shotId, clipId) {
  * After a restart: collect clips that were ordered and fail shots that were
  * queued but never ordered. Resolves with the number being collected.
  */
+/**
+ * Release every shot-run hold not owned by a run in this process: a hold
+ * stands only for clips not yet ordered, so one left by a run a restart cut
+ * off covers nothing. Returns how many were released.
+ */
+export function releaseOrphanShotHolds(ledgerDir) {
+  return releaseReservations(ledgerDir, SHOTS_HOLD_PREFIX, (key) => runs.has(key.slice(SHOTS_HOLD_PREFIX.length)));
+}
+
 export async function resumeShots(ctx, projects, { ledgerDir, deps } = {}) {
   const d = { ...defaultDeps, ...deps };
+  releaseOrphanShotHolds(ledgerDir);
   let count = 0;
   const pending = [];
   for (const project of projects) {
@@ -330,8 +403,19 @@ export async function resumeShots(ctx, projects, { ledgerDir, deps } = {}) {
         failShot(ctx.dataDir, project.id, s.id, null, "Interrupted by a server restart before the clip was ordered. Order it again.");
         continue;
       }
+      // A collect that throws (say, a full disk) must not leave the shot "generating" with no way back:
+      // count the estimate once, as for a timeout, so the next Retry fetches the paid clip free.
       jobs.push(collect(ctx, project.id, s.id, s.clip.taskId, { ledgerDir, deps: d })
-        .catch((e) => console.warn(`[scene-script] collecting ${s.clip.taskId} failed: ${e?.message || e}`)));
+        .catch((e) => {
+          console.warn(`[scene-script] collecting ${s.clip.taskId} failed: ${e?.message || e}`);
+          const now = readProject(ctx.dataDir, project.id);
+          const clip = now?.shots.find((x) => x.id === s.id)?.clip;
+          if (clip?.taskId === s.clip.taskId && clip.chargedTaskId !== clip.taskId) {
+            const tokens = estimateTokens({ durationSec: clip.seconds || SHOT_TARGET_SEC, ratio: seedanceRatio(now.meta?.aspect), resolution: SHOT_RESOLUTION });
+            chargeShot(ctx, project.id, s.id, clip.taskId, { ledgerDir, tokens });
+          }
+          failShot(ctx.dataDir, project.id, s.id, s.clip.taskId, "Something went wrong making this clip. Try again.");
+        }));
     }
     if (!jobs.length) continue;
     count += jobs.length;

@@ -32,6 +32,7 @@ const MomentsPage = lazy(() => import('./pages/MomentsPage').then((m) => ({ defa
 const CreateHubPage = lazy(() => import('./pages/CreateHubPage').then((m) => ({ default: m.CreateHubPage })));
 const VisualLibraryPage = lazy(() => import('./pages/VisualLibraryPage').then((m) => ({ default: m.VisualLibraryPage })));
 const SceneScriptPage = lazy(() => import('./pages/SceneScriptPage').then((m) => ({ default: m.SceneScriptPage })));
+const CartoonPage = lazy(() => import('./pages/CartoonPage').then((m) => ({ default: m.CartoonPage })));
 const StudioHubPage = lazy(() => import('./pages/StudioHubPage').then((m) => ({ default: m.StudioHubPage })));
 
 const queryClient = new QueryClient({
@@ -81,6 +82,8 @@ function App() {
                   <Route path="ambient" element={<AmbientPage />} />
                   <Route path="moments" element={<MomentsPage />} />
                   <Route path="scene-script" element={<SceneScriptPage />} />
+                  <Route path="scene-script/cartoon/new" element={<CartoonPage />} />
+                  <Route path="scene-script/cartoon/:id" element={<CartoonPage />} />
                   <Route path="scene-script/:id" element={<SceneScriptPage />} />
                   <Route path="library" element={<VisualLibraryPage />} />
                   <Route path="gumroad" element={<GumroadPage />} />

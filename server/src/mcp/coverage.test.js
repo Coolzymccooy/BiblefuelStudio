@@ -8,8 +8,9 @@ import { catalogue } from "./registry.js";
 /**
  * Keeps the agent tools honest: every router the app mounts under /api must be
  * reachable by some MCP tool (its `routes`), or be deliberately excluded.
- * Slices 1-4 mapped every creation router, so nothing is pending any more: a
- * new router needs a tool (or a reason to exclude it) before it ships. The
+ * Slices 1-4 mapped every creation router; only cartoon (shipped ahead of its
+ * tools) is pending. A new router needs a tool, a reason to exclude it, or a
+ * PENDING entry before it ships. The
  * whole catalogue stays at 75 tools or fewer (fold rather than add).
  */
 
@@ -22,6 +23,10 @@ const EXCLUDED = [
   "auth", "agent-keys", "admin", "access-requests", "billing",
   "stems-worker", "firebase", "abi", "postiz", "issues", "mcp",
 ];
+
+// Creation routers no tool covers yet. Cartoon mode ships its router before its
+// agent tools; when a tool maps it, delete it from here (an assertion enforces it).
+const PENDING = ["cartoon"];
 
 // The most tools the catalogue may hold (tool-authoring.md).
 const MAX_TOOLS = 75;
@@ -55,10 +60,17 @@ test("index.js mounts the routers this test expects to find", () => {
   }
 });
 
-test("every mounted /api router is excluded or mapped by a tool", async () => {
+test("every mounted /api router is excluded, mapped by a tool, or listed as pending", async () => {
   const mapped = await mappedPrefixes();
-  const strays = mountedPrefixes().filter((name) => !EXCLUDED.includes(name) && !mapped.has(name));
-  assert.deepEqual(strays, [], `mounted routers with no tool and not excluded: ${strays.join(", ")}`);
+  const strays = mountedPrefixes().filter((name) => !EXCLUDED.includes(name) && !mapped.has(name) && !PENDING.includes(name));
+  assert.deepEqual(strays, [], `mounted routers with no tool and not excluded or pending: ${strays.join(", ")}`);
+});
+
+test("PENDING lists only routers that are still unmapped", async () => {
+  const mapped = await mappedPrefixes();
+  const mounted = mountedPrefixes();
+  const stale = PENDING.filter((name) => mapped.has(name) || EXCLUDED.includes(name) || !mounted.includes(name));
+  assert.deepEqual(stale, [], `remove from PENDING (mapped, excluded or no longer mounted): ${stale.join(", ")}`);
 });
 
 test(`the catalogue holds at most ${MAX_TOOLS} tools`, () => {

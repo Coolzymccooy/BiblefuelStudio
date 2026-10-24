@@ -1,10 +1,13 @@
 import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
-  _setZernioFetch, ensureZernioProfile, tiktokConnectUrl, findTikTokAccount,
+  _setZernioFetch, _failClosedZernioFetch, ensureZernioProfile, tiktokConnectUrl, findTikTokAccount,
   disconnectZernioAccount, tiktokAccountFor, tiktokTargetFor, cleanZernioKey, listOwnTikTokAccounts, ownKeyCanPost,
 } from "./zernioConnect.js";
 import { DATA_DIR } from "../paths.js";
+
+// Fail closed from the first test: a forgotten stub throws instead of reaching zernio.com.
+_failClosedZernioFetch();
 
 const saved = { key: process.env.ZERNIO_API_KEY, account: process.env.ZERNIO_TIKTOK_ACCOUNT_ID };
 let calls;
@@ -24,7 +27,7 @@ function fakeZernio(routes) {
 
 beforeEach(() => { process.env.ZERNIO_API_KEY = "sk_test"; process.env.ZERNIO_TIKTOK_ACCOUNT_ID = "acct_owner"; });
 afterEach(() => {
-  _setZernioFetch(null);
+  _failClosedZernioFetch();
   for (const [k, v] of [["ZERNIO_API_KEY", saved.key], ["ZERNIO_TIKTOK_ACCOUNT_ID", saved.account]]) {
     if (v === undefined) delete process.env[k]; else process.env[k] = v;
   }

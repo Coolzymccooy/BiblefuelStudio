@@ -10,7 +10,8 @@ import { createVisualLibraryRouter } from "./visualLibrary.js";
 import { requireSuperAdmin } from "../middleware/requireSuperAdmin.js";
 import { addClip } from "../lib/visualLibrary/store.js";
 import { isVoicing } from "../lib/sceneScript/voiceStage.js";
-import { isOrderingShots } from "../lib/sceneScript/shotStage.js";
+import { isOrderingShots, shotsHoldKey } from "../lib/sceneScript/shotStage.js";
+import { holdSpend, readLedger } from "../lib/videoGen/spend.js";
 
 const SCRIPT = [
   "TITLE: Be Still | Psalm 46:10",
@@ -185,6 +186,14 @@ describe("/api/scene-script", () => {
     assert.equal(junk.body.project.shots[0].refine.flip, true, "a malformed refine leaves the saved one alone");
     const cleared = await request(app).patch(`/api/scene-script/${id}`).send({ shots: [{ id: "sh1", refine: null }] });
     assert.equal(cleared.body.project.shots[0].refine, null);
+  });
+
+  test("deleting a script releases a hold left on the ledger", async () => {
+    const id = (await request(app).post("/api/scene-script").send({ markdown: SCRIPT })).body.project.id;
+    const ledgerDir = path.join(root, "ledger");
+    holdSpend(ledgerDir, shotsHoldKey(id), 0.5);
+    assert.equal((await request(app).delete(`/api/scene-script/${id}`)).status, 200);
+    assert.equal(readLedger(ledgerDir).reservations[shotsHoldKey(id)], undefined);
   });
 
   test("answers 404 for an id that is not a project id", async () => {

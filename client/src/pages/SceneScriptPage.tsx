@@ -17,22 +17,54 @@ import { CastPanel } from '../components/sceneScript/CastPanel';
 import { ShotsPanel } from '../components/sceneScript/ShotsPanel';
 import { MusicPanel } from '../components/sceneScript/MusicPanel';
 import { ProductionBar } from '../components/sceneScript/ProductionBar';
+import { cartoonApi } from '../lib/cartoonApi';
+import type { CartoonSummary } from '../lib/cartoonTypes';
+import { ModeChoice, type SceneScriptMode } from '../components/cartoon/ModeChoice';
+import { cartoonPath } from '../components/cartoon/steps';
+
+interface ListRow { id: string; title: string; updatedAt: number; renderStatus: string; cartoon: boolean }
+
+/** Both kinds in one list, newest first. Each list is optional: one failing never hides the other. */
+function mergeProjects(human: SceneScriptSummary[], cartoons: CartoonSummary[]): ListRow[] {
+  return [
+    ...human.map((p) => ({ ...p, cartoon: false })),
+    ...cartoons.map((p) => ({ id: p.id, title: p.title, updatedAt: p.updatedAt, renderStatus: p.renderStatus, cartoon: true })),
+  ].sort((a, b) => (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0));
+}
 
 function ProjectList() {
-  const [projects, setProjects] = useState<SceneScriptSummary[] | null>(null);
-  useEffect(() => { sceneScriptApi.list().then(setProjects).catch((e) => { toastError(e); setProjects([]); }); }, []);
+  const [projects, setProjects] = useState<ListRow[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    void Promise.allSettled([sceneScriptApi.list(), cartoonApi.list()]).then(([human, cartoons]) => {
+      if (human.status === 'rejected') toastError(human.reason);
+      if (cartoons.status === 'rejected') toastError(cartoons.reason);
+      if (!live) return;
+      setProjects(mergeProjects(
+        human.status === 'fulfilled' ? human.value : [],
+        cartoons.status === 'fulfilled' ? cartoons.value : [],
+      ));
+    });
+    return () => { live = false; };
+  }, []);
   if (!projects?.length) return null;
   return (
-    <ul className="space-y-2" aria-label="Your scene scripts">
-      {projects.map((p) => (
-        <li key={p.id}>
-          <Link to={`/app/scene-script/${p.id}`} className="flex items-center justify-between gap-3 rounded-lg border border-editor-line bg-bf-card px-4 py-3 hover:border-editor-accent/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-bf-gold">
-            <span className="text-sm font-medium text-bf-cream">{p.title}</span>
-            <span className="text-xs text-bf-muted">{p.renderStatus === 'done' ? 'Rendered' : new Date(p.updatedAt).toLocaleDateString('en-GB')}</span>
-          </Link>
-        </li>
-      ))}
-    </ul>
+    <section aria-labelledby="scene-script-list-heading" className="space-y-3">
+      <h2 id="scene-script-list-heading" className="text-sm font-semibold text-bf-cream">Your projects</h2>
+      <ul className="space-y-2" aria-label="Your scene scripts">
+        {projects.map((p) => (
+          <li key={`${p.cartoon ? 'cartoon' : 'human'}-${p.id}`}>
+            <Link to={p.cartoon ? cartoonPath(p.id) : `/app/scene-script/${p.id}`} className="flex items-center justify-between gap-3 rounded-lg border border-editor-line bg-bf-card px-4 py-3 hover:border-editor-accent/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-bf-gold">
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="truncate text-sm font-medium text-bf-cream">{p.title}</span>
+                {p.cartoon && <span className="shrink-0 rounded-full border border-editor-line px-2 py-0.5 text-xs text-bf-sub">Cartoon</span>}
+              </span>
+              <span className="shrink-0 text-xs tabular-nums text-bf-muted">{p.renderStatus === 'done' ? 'Rendered' : new Date(p.updatedAt).toLocaleDateString('en-GB')}</span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
@@ -131,20 +163,26 @@ export function SceneScriptPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const isSuperAdmin = useAuth((s) => s.isSuperAdmin);
+  const [mode, setMode] = useState<SceneScriptMode | null>(null);
 
   if (!isSuperAdmin) {
     return <p className="text-help">Scene scripts are available to super admins only for now.</p>;
   }
   if (id) return <ProjectEditor id={id} />;
+  const choose = (next: SceneScriptMode) => {
+    if (next === 'cartoon') navigate('/app/scene-script/cartoon/new');
+    else setMode(next);
+  };
   return (
     <div className="space-y-6">
       <ScreenHeader
         eyebrow="Studio"
         title={<>Your script, <em>word for word</em>.</>}
-        subtitle="Paste a cinematic script. BibleFuel voices every line as written, films each scene's visual and follows your music cues."
+        subtitle="Every line is spoken exactly as you wrote it. Choose how it is filmed."
       />
+      <ModeChoice selected={mode} onChoose={choose} />
+      {mode === 'human' && <ScriptPaste onCreated={(newId) => navigate(`/app/scene-script/${newId}`)} />}
       <ProjectList />
-      <ScriptPaste onCreated={(newId) => navigate(`/app/scene-script/${newId}`)} />
     </div>
   );
 }

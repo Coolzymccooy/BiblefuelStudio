@@ -223,6 +223,145 @@ describe("submitSeedanceTask", () => {
   });
 });
 
+const PERSON_ERR = { error: { code: "InputImageSensitiveContentDetected.PrivacyInformation", message: "may contain real person" } };
+const PERSON_REFUSED_TEXT = "BytePlus thinks this picture shows a real person. Make a new picture for this shot.";
+
+describe("submitSeedanceTask cartoon options", () => {
+  test("default body is unchanged", async () => {
+    const fetchImpl = fakeFetch([jsonRes(200, { id: "cgt-d" })]);
+    await submitSeedanceTask({ prompt: "x", fetchImpl });
+    const body = fetchImpl.calls[0].body;
+    assert.equal(body.generate_audio, false);
+    assert.equal("seed" in body, false);
+    assert.equal(body.content.length, 1);
+  });
+
+  test("generateAudio sends generate_audio true", async () => {
+    const fetchImpl = fakeFetch([jsonRes(200, { id: "cgt-a" })]);
+    await submitSeedanceTask({ prompt: "x", generateAudio: true, fetchImpl });
+    assert.equal(fetchImpl.calls[0].body.generate_audio, true);
+  });
+
+  test("allowTextFallback false returns PERSON_REFUSED and posts once", async () => {
+    const pic = path.join(tmp, "face.png");
+    fs.writeFileSync(pic, PNG);
+    const fetchImpl = fakeFetch([jsonRes(400, PERSON_ERR), jsonRes(200, { id: "never" })]);
+    const r = await submitSeedanceTask({ prompt: "x", firstFramePath: pic, allowTextFallback: false, fetchImpl });
+    assert.deepEqual(r, { ok: false, code: "PERSON_REFUSED", error: PERSON_REFUSED_TEXT });
+    assert.equal(fetchImpl.calls.length, 1);
+  });
+
+  test("reference pictures go as reference_image items after the text, and seed is sent", async () => {
+    const a = path.join(tmp, "a.png");
+    const b = path.join(tmp, "b.jpg");
+    fs.writeFileSync(a, PNG);
+    fs.writeFileSync(b, PNG);
+    const fetchImpl = fakeFetch([jsonRes(200, { id: "cgt-r" })]);
+    const r = await submitSeedanceTask({ prompt: "A market.", referenceImagePaths: [a, b], seed: 1234, fetchImpl });
+    assert.deepEqual(r, { ok: true, taskId: "cgt-r", mode: "image" });
+    const body = fetchImpl.calls[0].body;
+    assert.equal(body.seed, 1234);
+    assert.equal(body.content.length, 3);
+    assert.equal(body.content[0].type, "text");
+    assert.deepEqual(body.content.slice(1).map((i) => i.role), ["reference_image", "reference_image"]);
+    assert.ok(body.content[1].image_url.url.startsWith("data:image/png;base64,"));
+    assert.ok(body.content[2].image_url.url.startsWith("data:image/jpeg;base64,"));
+  });
+
+  test("a first frame goes before the reference pictures", async () => {
+    const frame = path.join(tmp, "f.png");
+    const ref = path.join(tmp, "r.png");
+    fs.writeFileSync(frame, PNG);
+    fs.writeFileSync(ref, PNG);
+    const fetchImpl = fakeFetch([jsonRes(200, { id: "cgt-fr" })]);
+    await submitSeedanceTask({ prompt: "x", firstFramePath: frame, referenceImagePaths: [ref], fetchImpl });
+    assert.deepEqual(fetchImpl.calls[0].body.content.map((i) => i.role), [undefined, "first_frame", "reference_image"]);
+  });
+
+  test("at most four reference pictures are sent", async () => {
+    const files = [1, 2, 3, 4, 5, 6].map((n) => {
+      const f = path.join(tmp, `r${n}.png`);
+      fs.writeFileSync(f, PNG);
+      return f;
+    });
+    const fetchImpl = fakeFetch([jsonRes(200, { id: "cgt-4r" })]);
+    await submitSeedanceTask({ prompt: "x", referenceImagePaths: files, fetchImpl });
+    assert.equal(fetchImpl.calls[0].body.content.length, 5);
+  });
+
+  test("a seed that is not an integer from 1 to 2147483647 is ignored", async () => {
+    for (const seed of [0, -5, 1.5, 2147483648, "12", NaN, null, undefined]) {
+      const fetchImpl = fakeFetch([jsonRes(200, { id: "cgt-s" })]);
+      await submitSeedanceTask({ prompt: "x", seed, fetchImpl });
+      assert.equal("seed" in fetchImpl.calls[0].body, false, `seed ${String(seed)}`);
+    }
+    for (const seed of [1, 2147483647]) {
+      const fetchImpl = fakeFetch([jsonRes(200, { id: "cgt-s" })]);
+      await submitSeedanceTask({ prompt: "x", seed, fetchImpl });
+      assert.equal(fetchImpl.calls[0].body.seed, seed);
+    }
+  });
+
+  test("a reference picture that cannot be read is BAD_REFERENCE and nothing is posted", async () => {
+    const good = path.join(tmp, "ok.png");
+    fs.writeFileSync(good, PNG);
+    const gif = path.join(tmp, "x.gif");
+    fs.writeFileSync(gif, PNG);
+    for (const bad of [path.join(tmp, "missing.png"), gif]) {
+      const fetchImpl = fakeFetch([jsonRes(200, { id: "never" })]);
+      const r = await submitSeedanceTask({ prompt: "x", referenceImagePaths: [good, bad], fetchImpl });
+      assert.deepEqual(r, { ok: false, code: "BAD_REFERENCE", error: "A character picture could not be read. Make the portrait again." });
+      assert.equal(fetchImpl.calls.length, 0);
+    }
+  });
+
+  test("an unreadable first frame is BAD_FIRST_FRAME with no POST when the fallback is off", async () => {
+    const gif = path.join(tmp, "start.gif");
+    fs.writeFileSync(gif, PNG);
+    for (const bad of [path.join(tmp, "missing.png"), gif]) {
+      const fetchImpl = fakeFetch([jsonRes(200, { id: "never" })]);
+      const r = await submitSeedanceTask({ prompt: "x", firstFramePath: bad, allowTextFallback: false, fetchImpl });
+      assert.deepEqual(r, {
+        ok: false, code: "BAD_FIRST_FRAME",
+        error: "The starting picture for this shot could not be read. Make the shot before it again.",
+      });
+      assert.equal(fetchImpl.calls.length, 0);
+    }
+  });
+
+  test("an unreadable first frame is still sent text-only when the fallback is on", async () => {
+    const fetchImpl = fakeFetch([jsonRes(200, { id: "cgt-bf" })]);
+    const r = await submitSeedanceTask({ prompt: "x", firstFramePath: path.join(tmp, "missing.png"), fetchImpl });
+    assert.deepEqual(r, { ok: true, taskId: "cgt-bf", mode: "text" });
+    assert.equal(fetchImpl.calls[0].body.content.length, 1);
+  });
+
+  test("no first frame at all is fine with the fallback off", async () => {
+    const fetchImpl = fakeFetch([jsonRes(200, { id: "cgt-nf" })]);
+    const r = await submitSeedanceTask({ prompt: "x", allowTextFallback: false, fetchImpl });
+    assert.deepEqual(r, { ok: true, taskId: "cgt-nf", mode: "text" });
+  });
+
+  test("a reference picture refused as a real person returns PERSON_REFUSED when the fallback is off", async () => {
+    const ref = path.join(tmp, "r.png");
+    fs.writeFileSync(ref, PNG);
+    const fetchImpl = fakeFetch([jsonRes(400, PERSON_ERR), jsonRes(200, { id: "never" })]);
+    const r = await submitSeedanceTask({ prompt: "x", referenceImagePaths: [ref], allowTextFallback: false, fetchImpl });
+    assert.deepEqual(r, { ok: false, code: "PERSON_REFUSED", error: PERSON_REFUSED_TEXT });
+    assert.equal(fetchImpl.calls.length, 1);
+  });
+
+  test("with the fallback on, a refused reference request is made from words alone", async () => {
+    const ref = path.join(tmp, "r.png");
+    fs.writeFileSync(ref, PNG);
+    const fetchImpl = fakeFetch([jsonRes(400, PERSON_ERR), jsonRes(200, { id: "cgt-fb" })]);
+    const r = await submitSeedanceTask({ prompt: "x", referenceImagePaths: [ref], seed: 9, fetchImpl });
+    assert.deepEqual(r, { ok: true, taskId: "cgt-fb", mode: "text" });
+    assert.equal(fetchImpl.calls[1].body.content.length, 1);
+    assert.equal(fetchImpl.calls[1].body.seed, 9);
+  });
+});
+
 describe("getSeedanceTask", () => {
   test("an error response never carries the key", async () => {
     const fetchImpl = fakeFetch([jsonRes(500, { error: { code: "Bad", message: `key ${KEY} rejected` } })]);

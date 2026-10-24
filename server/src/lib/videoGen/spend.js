@@ -124,6 +124,81 @@ export function reserveSpend(dir, key, usd, now = new Date()) {
   return { ok: true };
 }
 
+const validUsd = (usd) => typeof usd === "number" && Number.isFinite(usd) && usd >= 0;
+const withoutKeys = (reservations, keys) => Object.fromEntries(Object.entries(reservations).filter(([k]) => !keys.includes(k)));
+
+/**
+ * Hold money for a batch of clips (a whole film) before any of them is
+ * ordered. The cap check and the hold are one synchronous write, so a batch
+ * started a moment later already counts this one and cannot also pass.
+ * `checkUsd` (never less than `usd`) is what must fit under the cap; only
+ * `usd` is held. Holding the same key again replaces it.
+ */
+export function holdSpend(dir, key, usd, { checkUsd = usd, now = new Date() } = {}) {
+  if (!validUsd(usd) || !validUsd(checkUsd)) return { ok: false, error: "Invalid cost estimate." };
+  const l = readLedger(dir, now);
+  const others = reservedTotal(l) - (Number(l.reservations[key]) || 0);
+  const projected = l.settledUsd + others + Math.max(usd, checkUsd);
+  if (projected > monthlyCapUsd() + 1e-9) return { ok: false, error: capMessage(projected, now) };
+  writeLedger(dir, { ...l, reservations: { ...l.reservations, [key]: usd } });
+  return { ok: true };
+}
+
+/**
+ * Reserve one clip's estimate out of a hold, in one write: the hold shrinks by
+ * what the clip takes, so the hold plus the clips never count more than was
+ * held. What the hold covers was checked when it was made and is never refused
+ * here, even if the cap has fallen since; only an amount beyond what is left of
+ * the hold is checked against the cap. With no hold this is reserveSpend.
+ */
+export function drawSpend(dir, holdKey, key, usd, now = new Date()) {
+  if (!validUsd(usd)) return { ok: false, error: "Invalid cost estimate." };
+  const l = readLedger(dir, now);
+  const held = Number(l.reservations[holdKey]) || 0;
+  const taken = Math.min(held, usd);
+  const left = held - taken;
+  if (usd - taken > 1e-9) {
+    const others = reservedTotal(l) - held - (Number(l.reservations[key]) || 0);
+    const projected = l.settledUsd + others + left + usd;
+    if (projected > monthlyCapUsd() + 1e-9) return { ok: false, error: capMessage(projected, now) };
+  }
+  const rest = withoutKeys(l.reservations, [holdKey, key]);
+  const reservations = left > 1e-9 ? { ...rest, [holdKey]: left, [key]: usd } : { ...rest, [key]: usd };
+  writeLedger(dir, { ...l, reservations });
+  return { ok: true };
+}
+
+/**
+ * Give back part of a hold that no clip will draw (a shot stopped or refused
+ * before it was ordered), so other orders can use it at once rather than when
+ * the run ends. Never takes more than is held; an emptied hold is dropped.
+ * Returns the amount given back.
+ */
+export function shrinkHold(dir, holdKey, usd, now = new Date()) {
+  if (!validUsd(usd)) return 0;
+  const l = readLedger(dir, now);
+  const held = Number(l.reservations[holdKey]) || 0;
+  if (held <= 0) return 0;
+  const left = held - Math.min(held, usd);
+  const rest = withoutKeys(l.reservations, [holdKey]);
+  writeLedger(dir, { ...l, reservations: left > 1e-9 ? { ...rest, [holdKey]: left } : rest });
+  return held - left;
+}
+
+/**
+ * Drop every reservation whose key starts with `prefix`, except those `keep`
+ * names, charging nothing. Only for holds: a hold stands for clips not yet
+ * ordered, so one left by a run a restart cut off covers no order at all.
+ * Returns how many were dropped.
+ */
+export function releaseReservations(dir, prefix, keep = () => false, now = new Date()) {
+  const l = readLedger(dir, now);
+  const gone = Object.keys(l.reservations).filter((k) => k.startsWith(prefix) && !keep(k));
+  if (!gone.length) return 0;
+  writeLedger(dir, { ...l, reservations: withoutKeys(l.reservations, gone) });
+  return gone.length;
+}
+
 export function settleSpend(dir, key, { model, resolution, tokens }, now = new Date()) {
   const l = readLedger(dir, now);
   const usd = usdForTokens({ model, resolution, tokens });

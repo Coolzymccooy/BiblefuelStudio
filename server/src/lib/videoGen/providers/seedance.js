@@ -33,6 +33,17 @@ const FAILED_STATES = new Set(["failed", "cancelled", "expired"]);
 // Errors that will not clear by waiting (bad key, forbidden, malformed request).
 const PERMANENT_HTTP = new Set([400, 401, 403]);
 const MAX_FIRST_FRAME_BYTES = 10 * 1024 * 1024;
+const MAX_REFERENCES = 4;
+const MAX_SEED = 2147483647;
+const BAD_REFERENCE = Object.freeze({
+  ok: false, code: "BAD_REFERENCE", error: "A character picture could not be read. Make the portrait again.",
+});
+const BAD_FIRST_FRAME = Object.freeze({
+  ok: false, code: "BAD_FIRST_FRAME", error: "The starting picture for this shot could not be read. Make the shot before it again.",
+});
+const PERSON_REFUSED = Object.freeze({
+  ok: false, code: "PERSON_REFUSED", error: "BytePlus thinks this picture shows a real person. Make a new picture for this shot.",
+});
 
 function apiKey() {
   return String(process.env.BYTEPLUS_ARK_API_KEY || "").trim();
@@ -71,18 +82,39 @@ export function withNoText(prompt) {
   return p.includes(NO_TEXT_LINE) ? p : `${p} ${NO_TEXT_LINE}`.trim();
 }
 
-/** The scene's picture as a first-frame item, or null when it can't be sent. */
-function firstFrameItem(file) {
+/** A picture as an image item with the given role, or null when it can't be sent. */
+function imageItem(file, role) {
   if (!file) return null;
   const mime = IMAGE_MIME[path.extname(file).toLowerCase()];
   if (!mime) return null;
   try {
     if (fs.statSync(file).size > MAX_FIRST_FRAME_BYTES) return null;
     const bytes = fs.readFileSync(file);
-    return { type: "image_url", image_url: { url: `data:${mime};base64,${bytes.toString("base64")}` }, role: "first_frame" };
+    return { type: "image_url", image_url: { url: `data:${mime};base64,${bytes.toString("base64")}` }, role };
   } catch {
     return null;
   }
+}
+
+/** The scene's picture as a first-frame item, or null when it can't be sent. */
+function firstFrameItem(file) {
+  return imageItem(file, "first_frame");
+}
+
+/** Every reference picture as an item, or null when any one can't be sent (never drop a face quietly). */
+function referenceItems(files) {
+  const items = [];
+  for (const file of (Array.isArray(files) ? files : []).slice(0, MAX_REFERENCES)) {
+    const item = imageItem(file, "reference_image");
+    if (!item) return null;
+    items.push(item);
+  }
+  return items;
+}
+
+/** A seed BytePlus will take, or null so the key is left out. */
+function validSeed(seed) {
+  return Number.isInteger(seed) && seed >= 1 && seed <= MAX_SEED ? seed : null;
 }
 
 /** BytePlus sends errors as { error: { code, message } } or flat { code, message }. */
@@ -109,10 +141,24 @@ async function postTask(body, fetcher) {
  * prompt. Describing a picture again makes Seedance "correct" it to match the
  * words (hands clasped behind a man's back, drawn through his body), so the
  * picture gets motion-only words. prompt still drives the text-only fallback.
+ *
+ * Cartoon options, each sent only when used so every other caller's request
+ * body stays as it was:
+ *   generateAudio        the clip speaks the quoted lines
+ *   referenceImagePaths  up to 4 character pictures sent as reference_image
+ *                        items (after the first frame, if any); one that
+ *                        can't be read is BAD_REFERENCE, never dropped
+ *   seed                 an integer 1..2147483647, else ignored
+ *   allowTextFallback    false: a "real person" refusal of the first frame or
+ *                        the references is PERSON_REFUSED after one POST,
+ *                        instead of a text-only clip with a different face;
+ *                        an unreadable firstFramePath is then BAD_FIRST_FRAME
+ *                        (no POST) rather than a quiet text-only request
  */
 export async function submitSeedanceTask({
   prompt, framePrompt = null, firstFramePath = null, aspect = "portrait", durationSec = 5,
   model = SEEDANCE_MODELS.mini, resolution = "720p", fetchImpl,
+  generateAudio = false, allowTextFallback = true, referenceImagePaths = [], seed = null,
 } = {}) {
   if (!isSeedanceConfigured()) {
     return { ok: false, code: "NOT_CONFIGURED", error: "AI video is not set up on this server (BYTEPLUS_ARK_API_KEY)." };
@@ -123,15 +169,22 @@ export async function submitSeedanceTask({
   const fetcher = fetchImpl || fetch;
   const base = {
     model, ratio: seedanceRatio(aspect), resolution, duration: clampSeedanceDuration(durationSec),
-    generate_audio: false, watermark: false,
+    generate_audio: generateAudio === true, watermark: false,
+    ...(validSeed(seed) === null ? {} : { seed: validSeed(seed) }),
   };
   try {
+    const refs = referenceItems(referenceImagePaths);
+    if (refs === null) return { ...BAD_REFERENCE };
     const frame = firstFrameItem(firstFramePath);
-    if (frame) {
-      const first = await postTask({ ...base, content: [{ type: "text", text: frameText }, frame] }, fetcher);
+    if (!frame && firstFramePath && !allowTextFallback) return { ...BAD_FIRST_FRAME };
+    const pictures = [...(frame ? [frame] : []), ...refs];
+    if (pictures.length > 0) {
+      const withPictures = [{ type: "text", text: frame ? frameText : text }, ...pictures];
+      const first = await postTask({ ...base, content: withPictures }, fetcher);
       if (first.ok) return { ok: true, taskId: first.json.id, mode: "image" };
       const err = errorOf(first.json, first.status);
       if (!PERSON_REFUSAL.test(err.code)) return refusal(err);
+      if (!allowTextFallback) return { ...PERSON_REFUSED };
     }
     const plain = await postTask({ ...base, content: [{ type: "text", text }] }, fetcher);
     if (plain.ok) return { ok: true, taskId: plain.json.id, mode: "text" };

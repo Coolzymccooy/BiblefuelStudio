@@ -30,6 +30,7 @@ import transcriptsRouter from "./src/routes/transcripts.js";
 import imagegenRouter from "./src/routes/imagegen.js";
 import videogenRouter, { VEO_LEDGER_PREFIX } from "./src/routes/videogen.js";
 import { settleStaleReservations } from "./src/lib/videoGen/spend.js";
+import { releaseOrphanHolds } from "./src/lib/videoGen/orphanHolds.js";
 import storyRouter, { isQuotaFreeStoryRequest } from "./src/routes/story.js";
 import lyricVideoRouter from "./src/routes/lyricVideo.js";
 import { FONT_DIR } from "./src/lib/videoFilters.js";
@@ -68,6 +69,7 @@ import { cacheControlForOutput, publicAssetHeaders, setOutputSafetyHeaders } fro
 import { reconcileAllPersistedJobs } from "./src/lib/renderJobs.js";
 import { resumeAnimations } from "./src/lib/story/animateStage.js";
 import { createSceneScriptRouter, resumeSceneScriptShots } from "./src/routes/sceneScript.js";
+import { createCartoonRouter, resumeCartoonFilms } from "./src/routes/cartoon.js";
 import { createVisualLibraryRouter, resumeLibraryRerolls } from "./src/routes/visualLibrary.js";
 import { isSeedanceConfigured } from "./src/lib/videoGen/providers/seedance.js";
 import { hasLibass } from "./src/lib/kinetic/capability.js";
@@ -468,6 +470,7 @@ app.use("/api/longform",  requireAuth, withUserScope, requireVerifiedEmail,     
 app.use("/api/timeline",  requireAuth, withUserScope, requireVerifiedEmail,                      timelineRouter);
 // Scene scripts and the visual library spend the shared BytePlus balance: super admins only (Phase 1).
 app.use("/api/scene-script", requireAuth, withUserScope, requireVerifiedEmail, requireSuperAdmin, createSceneScriptRouter());
+app.use("/api/cartoon", requireAuth, withUserScope, requireVerifiedEmail, requireSuperAdmin, createCartoonRouter());
 app.use("/api/visual-library", requireAuth, withUserScope, requireVerifiedEmail, requireSuperAdmin, createVisualLibraryRouter());
 app.use("/api/pexels",    requireAuth, withUserScope, requireVerifiedEmail,                       pexelsRouter);
 app.use("/api/pixabay",   requireAuth, withUserScope, requireVerifiedEmail,                       pixabayRouter);
@@ -543,6 +546,16 @@ try {
   console.warn("[video-gen] stale Veo reservations not settled:", e?.message || e);
 }
 
+// A film or shot-run hold left by a run the restart cut off stands for clips
+// never ordered: release it now, whether or not AI video is set up, so it can
+// never shrink this month's cap (or the next) for every other feature.
+try {
+  const holds = releaseOrphanHolds(DATA_DIR);
+  if (holds) console.warn(`[video-gen] released ${holds} hold(s) left by runs the restart cut off`);
+} catch (e) {
+  console.warn("[video-gen] orphan holds not released:", e?.message || e);
+}
+
 // AI scene clips ordered before a restart are collected, not bought again.
 if (isSeedanceConfigured()) {
   resumeAnimations({ dataDir: DATA_DIR, outputDir: OUTPUT_DIR }, { ledgerDir: DATA_DIR })
@@ -551,6 +564,9 @@ if (isSeedanceConfigured()) {
   resumeSceneScriptShots({ ledgerDir: DATA_DIR })
     .then((n) => { if (n) console.log(`[scene-script] collecting ${n} clip(s) ordered before the restart`); })
     .catch((e) => console.warn("[scene-script] clip resume skipped:", e?.message || e));
+  resumeCartoonFilms({ ledgerDir: DATA_DIR })
+    .then((n) => { if (n) console.log(`[cartoon] collecting ${n} clip(s) ordered before the restart`); })
+    .catch((e) => console.warn("[cartoon] clip resume skipped:", e?.message || e));
   resumeLibraryRerolls({ ledgerDir: DATA_DIR })
     .then((n) => { if (n) console.log(`[visual-library] collecting ${n} re-roll(s) ordered before the restart`); })
     .catch((e) => console.warn("[visual-library] re-roll resume skipped:", e?.message || e));
