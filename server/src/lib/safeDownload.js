@@ -199,11 +199,15 @@ async function resolveAll(host, lookup) {
  * that can download instead should use downloadPublicUrl.
  *
  * @param {string} url
- * @param {{ lookup?: (host: string, opts: { all: true }) => Promise<any> }} [opts]
+ * @param {{
+ *   lookup?: (host: string, opts: { all: true }) => Promise<any>,
+ *   unvettedHostsForTests?: Iterable<string>,
+ * }} [opts] `unvettedHostsForTests` is a test seam, as for downloadPublicUrl.
  * @returns {Promise<URL>}
  */
-export async function assertPublicHttpUrl(url, { lookup = dns.promises.lookup } = {}) {
+export async function assertPublicHttpUrl(url, { lookup = dns.promises.lookup, unvettedHostsForTests = [] } = {}) {
   const parsed = parseHttpUrl(String(url ?? ""));
+  if (new Set(unvettedHostsForTests).has(parsed.hostname)) return parsed;
   const host = parsed.hostname.replace(/^\[|\]$/g, "");
   if (isIP(host)) {
     if (!isPublicAddress(host)) throw codedError("URL_PRIVATE");

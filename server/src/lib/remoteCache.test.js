@@ -13,6 +13,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import crypto from "node:crypto";
 
 const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "bf-remotecache-"));
 process.env.OUTPUT_DIR = outDir;
@@ -32,6 +33,10 @@ before(async () => {
       res.writeHead(200, { "content-type": "video/mp4", "content-length": String(CLIP.length) }).end(CLIP);
     } else if (req.url === "/small.mp3") {
       res.writeHead(200, { "content-type": "audio/mpeg", "content-length": String(SMALL.length) }).end(SMALL);
+    } else if (req.url === "/slow-clip.mp4") {
+      res.writeHead(200, { "content-type": "video/mp4", "content-length": String(CLIP.length) });
+      res.write(CLIP.subarray(0, 1024));
+      setTimeout(() => res.end(CLIP.subarray(1024)), 150);
     } else if (req.url === "/to-metadata") {
       res.writeHead(302, { location: "http://169.254.169.254/latest/meta-data/" }).end();
     } else {
@@ -117,5 +122,51 @@ describe("ensureLocalPath", () => {
     await assert.rejects(ensureLocalPath(url("/small.mp3"), reachable()), /too small/);
     const local = await ensureLocalPath(url("/small.mp3"), reachable({ minBytes: 1024 }));
     assert.equal(fs.statSync(local).size, SMALL.length);
+  });
+
+  test("a cached copy is not served for a URL whose host is now private", async () => {
+    // Cached while the name answered with a vetted address...
+    const first = await ensureLocalPath(url("/clip-cached.mp4"), reachable());
+    assert.ok(fs.existsSync(first));
+    // ...then the same name answers 127.0.0.1 with no test bypass.
+    await assert.rejects(
+      ensureLocalPath(url("/clip-cached.mp4"), { lookup: async () => ({ address: "127.0.0.1", family: 4 }) }),
+      (err) => err.code === "URL_PRIVATE",
+    );
+  });
+
+  test("a DNS outage does not refuse a copy that was cached after vetting", async () => {
+    const first = await ensureLocalPath(url("/clip-offline.mp4"), reachable());
+    const again = await ensureLocalPath(url("/clip-offline.mp4"), {
+      lookup: async () => { throw Object.assign(new Error("getaddrinfo ENOTFOUND"), { code: "ENOTFOUND" }); },
+    });
+    assert.equal(again, first);
+  });
+
+  test("a cache file planted for a metadata URL is never handed out", async () => {
+    const bad = "http://169.254.169.254/latest/meta-data/x.mp4";
+    const hash = crypto.createHash("sha1").update(bad).digest("hex").slice(0, 16);
+    const planted = path.join(outDir, "cache", "remote-bg", `${hash}.mp4`);
+    fs.mkdirSync(path.dirname(planted), { recursive: true });
+    fs.writeFileSync(planted, CLIP);
+    await assert.rejects(ensureLocalPath(bad), (err) => err.code === "URL_PRIVATE");
+  });
+
+  test("concurrent downloads of one URL each write their own temp file and both succeed", async (t) => {
+    const parts = [];
+    const real = fs.createWriteStream;
+    t.mock.method(fs, "createWriteStream", (file, ...rest) => {
+      if (String(file).includes(".part")) parts.push(String(file));
+      return real(file, ...rest);
+    });
+    const [a, b] = await Promise.all([
+      ensureLocalPath(url("/slow-clip.mp4"), reachable()),
+      ensureLocalPath(url("/slow-clip.mp4"), reachable()),
+    ]);
+    assert.equal(a, b);
+    assert.deepEqual(fs.readFileSync(a), CLIP);
+    assert.equal(parts.length, 2, parts.join(" | "));
+    assert.notEqual(parts[0], parts[1], "each download needs its own .part file");
+    assert.equal(cacheFiles().some((f) => f.includes(".part")), false);
   });
 });

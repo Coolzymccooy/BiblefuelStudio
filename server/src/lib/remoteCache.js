@@ -22,7 +22,7 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import { OUTPUT_DIR } from "./paths.js";
-import { downloadPublicUrl, isUrlGuardError } from "./safeDownload.js";
+import { downloadPublicUrl, assertPublicHttpUrl, isUrlGuardError } from "./safeDownload.js";
 import { MAX_INPUT_MB } from "./backgroundLimits.js";
 import { isUrlLike } from "./inputUrl.js";
 
@@ -78,6 +78,21 @@ async function downloadOnce(url, tmpFile, downloadOpts, minBytes) {
   }
 }
 
+async function vetBeforeCacheUse(value, opts) {
+  try {
+    await assertPublicHttpUrl(value, vetOptionsFrom(opts));
+  } catch (err) {
+    if (isUrlGuardError(err)) throw err;
+  }
+}
+
+function vetOptionsFrom(opts) {
+  return {
+    ...(opts.lookup ? { lookup: opts.lookup } : {}),
+    ...(opts.unvettedHostsForTests ? { unvettedHostsForTests: opts.unvettedHostsForTests } : {}),
+  };
+}
+
 function downloadOptionsFrom(opts) {
   return {
     maxBytes: opts.maxBytes ?? MAX_INPUT_MB * 1024 * 1024,
@@ -119,11 +134,18 @@ export async function ensureLocalPath(pathOrUrl, opts = {}) {
   ensureCacheDir();
   const hash = crypto.createHash("sha1").update(value).digest("hex").slice(0, 16);
   const outFile = path.join(CACHE_DIR, `${hash}.${urlExtension(value)}`);
+  // A cache hit is still vetted: the cache is keyed by the URL alone, so a
+  // file cached (or planted) for a name that now resolves privately must not
+  // be handed out as if it had been fetched safely. A lookup that merely
+  // fails (DNS outage) is not a refusal: the copy was vetted when cached.
+  await vetBeforeCacheUse(value, opts);
   const cached = reusableCacheFile(outFile, minBytes);
   if (cached) return cached;
 
   const downloadOpts = downloadOptionsFrom(opts);
-  const tmpFile = `${outFile}.part`;
+  // Unique per download: two renders of one URL at once must not unlink or
+  // truncate each other's temp file.
+  const tmpFile = `${outFile}.${crypto.randomBytes(6).toString("hex")}.part`;
   let lastErr = null;
   for (let attempt = 0; attempt < MAX_DOWNLOAD_ATTEMPTS; attempt++) {
     try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
