@@ -12,6 +12,7 @@ import { buildRenderData, musicSections } from "./renderData.js";
 import { resolveBed } from "./music.js";
 import { heartbeatArgs, impactArgs, bedSectionArgs } from "./sfx.js";
 import { startAssetServer } from "./assetServer.js";
+import { reportRenderFailure } from "../ops/renderFailures.js";
 
 /**
  * Render a voiced, fully shot scene-script project with Remotion:
@@ -229,6 +230,7 @@ export function startRender(ctx, id, { deps } = {}) {
     .catch((e) => {
       const cancelled = controller.signal.aborted || /cancel/i.test(String(e?.message));
       console.warn(`[scene-script] render ${id} ${cancelled ? "cancelled" : "failed"}: ${e?.message || e}`);
+      if (!cancelled) reportRenderFailure("scene-script", { projectId: id, error: e?.message || e });
       updateProject(ctx.dataDir, id, (p) => ({
         ...p,
         render: { status: cancelled ? "cancelled" : "error", error: cancelled ? null : String(e?.message || e).slice(0, 400), progress: 0 },

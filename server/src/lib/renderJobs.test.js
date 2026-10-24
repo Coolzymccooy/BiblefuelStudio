@@ -8,6 +8,7 @@ import {
   persistJob, reconcilePersistedJobs, reconcileAllPersistedJobs, readPersistedJob,
   attachProc, cancelJob, gcJobs,
 } from "./renderJobs.js";
+import { onRenderFailure } from "./ops/renderFailures.js";
 
 let baseDir;
 beforeEach(() => {
@@ -116,5 +117,27 @@ describe("gcJobs", () => {
     assert.equal(getJob(failed.jobId), null, "an error record 2 h old is removed");
     assert.equal(getJob(running.jobId), null, "a running record 13 h old is removed");
     assert.ok(getJob(fresh.jobId));
+  });
+});
+
+describe("failure reports", () => {
+  afterEach(() => onRenderFailure(null));
+
+  test("a failed render is reported once; a cancelled one never", () => {
+    const reports = [];
+    onRenderFailure((r) => reports.push(r));
+    const failed = createJob("user-9", { durationSec: 5 });
+    markError(failed.jobId, "ffmpeg exited 1");
+    markError(failed.jobId, "ffmpeg exited 1 again");
+    const cancelled = createJob("user-9", { durationSec: 5 });
+    cancelJob(cancelled.jobId);
+    markError(cancelled.jobId, "killed");
+    assert.deepEqual(reports, [{ kind: "render", jobId: failed.jobId, userId: "user-9", projectId: null, error: "ffmpeg exited 1" }]);
+  });
+
+  test("a reporter that throws does not break the render", () => {
+    onRenderFailure(() => { throw new Error("mail down"); });
+    const job = createJob("u", { durationSec: 1 });
+    assert.equal(markError(job.jobId, "x").status, "error");
   });
 });
