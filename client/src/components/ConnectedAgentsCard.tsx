@@ -7,7 +7,8 @@ import { AgentKeyRow } from './agents/AgentKeyRow';
 import { AgentActivity } from './agents/AgentActivity';
 import { ConnectSnippets } from './agents/ConnectSnippets';
 import { CreateKeyModal } from './agents/CreateKeyModal';
-import { listAgentKeys, revokeAgentKey, updateAgentKey, type AgentKey } from '../lib/agentKeysApi';
+import { effectiveLimits, withLimits } from './agents/capLimits';
+import { listAgentKeys, revokeAgentKey, updateAgentKey, type AgentKey, type Caps } from '../lib/agentKeysApi';
 
 /**
  * Settings card for MCP agent access: create and revoke the keys an agent
@@ -17,6 +18,7 @@ import { listAgentKeys, revokeAgentKey, updateAgentKey, type AgentKey } from '..
 export function ConnectedAgentsCard() {
   const [keys, setKeys] = useState<readonly AgentKey[]>([]);
   const [endpoint, setEndpoint] = useState('');
+  const [ceilings, setCeilings] = useState<Caps | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -33,6 +35,7 @@ export function ConnectedAgentsCard() {
       if (!mounted.current) return;
       setKeys(list.keys);
       setEndpoint(list.endpoint);
+      setCeilings(list.ceilings ?? null);
     } catch (err) {
       if (!mounted.current) return;
       const message = (err as Error).message || 'Could not load your agent keys';
@@ -62,6 +65,14 @@ export function ConnectedAgentsCard() {
       patchKey(key.id, { publishAllowed: key.publishAllowed });
       toast.error((err as Error).message || 'Could not save the change');
     }
+  };
+
+  // The server clamps to its ceilings and answers the key it kept; show that,
+  // with today's use re-read against the new limits. Errors reach the editor.
+  const saveCaps = async (key: AgentKey, caps: Partial<Caps>) => {
+    const saved = await updateAgentKey(key.id, { caps });
+    const usage = ceilings ? withLimits(key.usage, effectiveLimits(saved.caps, ceilings)) : key.usage;
+    patchKey(key.id, { ...saved, usage });
   };
 
   const revoke = async (key: AgentKey) => {
@@ -114,7 +125,14 @@ export function ConnectedAgentsCard() {
         ) : (
           <ul className="divide-y divide-editor-line">
             {keys.map((key) => (
-              <AgentKeyRow key={key.id} agentKey={key} onPublishChange={changePublish} onRevoke={revoke} />
+              <AgentKeyRow
+                key={key.id}
+                agentKey={key}
+                ceilings={ceilings}
+                onPublishChange={changePublish}
+                onCapsSave={saveCaps}
+                onRevoke={revoke}
+              />
             ))}
           </ul>
         )}

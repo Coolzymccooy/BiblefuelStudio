@@ -232,4 +232,89 @@ describe('ConnectedAgentsCard', () => {
     await waitFor(() => expect(url).toHaveBeenCalled());
     await waitFor(() => expect(saved).toHaveBeenCalled());
   });
+
+  describe('daily limits', () => {
+    async function openLimits() {
+      await userEvent.click(await screen.findByRole('button', { name: 'Daily limits' }));
+      return screen.getByRole('form', { name: 'Daily limits for Hermes laptop' });
+    }
+
+    it('prefills each bucket with the effective limit, bounded by the ceiling', async () => {
+      serve([makeKey({ caps: { renders: 4, images: 99 } })]);
+      render(<ConnectedAgentsCard />);
+      const form = await openLimits();
+
+      const renders = within(form).getByLabelText('Renders') as HTMLInputElement;
+      expect(renders.value).toBe('4');
+      expect(renders.min).toBe('0');
+      expect(renders.max).toBe('10');
+      expect(renders.step).toBe('1');
+      expect((within(form).getByLabelText('Images') as HTMLInputElement).value).toBe('30');
+      const usd = within(form).getByLabelText('AI video ($)') as HTMLInputElement;
+      expect(usd.value).toBe('2');
+      expect(usd.step).toBe('0.01');
+      expect(usd.max).toBe('2');
+      expect(within(form).getByLabelText('Voice (TTS)')).toBeTruthy();
+      expect(within(form).getByLabelText('Publishes')).toBeTruthy();
+    });
+
+    it('saves only the changed bucket and shows what the server kept', async () => {
+      serve([makeKey()]);
+      api.updateAgentKey.mockResolvedValue(makeKey({ caps: { renders: 5 }, usage: undefined }));
+      render(<ConnectedAgentsCard />);
+      const form = await openLimits();
+
+      const renders = within(form).getByLabelText('Renders') as HTMLInputElement;
+      await userEvent.clear(renders);
+      await userEvent.type(renders, '5');
+      await userEvent.click(within(form).getByRole('button', { name: 'Save limits' }));
+
+      expect(api.updateAgentKey).toHaveBeenCalledWith('key_1', { caps: { renders: 5 } });
+      expect(await within(form).findByText('Limits saved.')).toBeTruthy();
+      expect(renders.value).toBe('5');
+      // Today's use is re-read against the new limit without a reload.
+      expect(screen.getByText('3 / 5')).toBeTruthy();
+    });
+
+    it('never sends a value above the ceiling', async () => {
+      serve([makeKey({ caps: { renders: 4 } })]);
+      api.updateAgentKey.mockResolvedValue(makeKey({ caps: { renders: 10 } }));
+      render(<ConnectedAgentsCard />);
+      const form = await openLimits();
+
+      const renders = within(form).getByLabelText('Renders') as HTMLInputElement;
+      await userEvent.clear(renders);
+      await userEvent.type(renders, '50');
+      await userEvent.click(within(form).getByRole('button', { name: 'Save limits' }));
+
+      expect(api.updateAgentKey).toHaveBeenCalledWith('key_1', { caps: { renders: 10 } });
+      await waitFor(() => expect(renders.value).toBe('10'));
+    });
+
+    it('refuses a blank or negative value without calling the server', async () => {
+      serve([makeKey()]);
+      render(<ConnectedAgentsCard />);
+      const form = await openLimits();
+
+      await userEvent.clear(within(form).getByLabelText('Images'));
+      await userEvent.click(within(form).getByRole('button', { name: 'Save limits' }));
+
+      expect(within(form).getByRole('alert').textContent).toBe('Images: enter a number of 0 or more.');
+      expect(api.updateAgentKey).not.toHaveBeenCalled();
+    });
+
+    it('says why when the save fails', async () => {
+      serve([makeKey()]);
+      api.updateAgentKey.mockRejectedValue(new Error('Caps must be numbers of 0 or more.'));
+      render(<ConnectedAgentsCard />);
+      const form = await openLimits();
+
+      const tts = within(form).getByLabelText('Voice (TTS)');
+      await userEvent.clear(tts);
+      await userEvent.type(tts, '7');
+      await userEvent.click(within(form).getByRole('button', { name: 'Save limits' }));
+
+      expect((await within(form).findByRole('alert')).textContent).toBe('Caps must be numbers of 0 or more.');
+    });
+  });
 });

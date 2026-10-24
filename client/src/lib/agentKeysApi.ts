@@ -25,7 +25,8 @@ export interface AgentKey {
   createdAt: string;
   lastUsedAt: string | null;
   publishAllowed: boolean;
-  caps: Caps;
+  /** The key's own lower limits; a bucket left out uses the server ceiling. */
+  caps: Partial<Caps>;
   /** Today's use against each cap (UTC day). */
   usage?: Record<CapBucket, CapUsage>;
 }

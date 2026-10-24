@@ -2,31 +2,22 @@ import { useState } from 'react';
 import { Trash2 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { PublishSwitch } from './PublishSwitch';
-import { CAP_BUCKETS, type AgentKey, type CapBucket } from '../../lib/agentKeysApi';
+import { KeyLimitsEditor } from './KeyLimitsEditor';
+import { BUCKET_LABELS, formatAmount } from './capLimits';
+import { CAP_BUCKETS, type AgentKey, type Caps } from '../../lib/agentKeysApi';
 import { timeAgo } from '../../lib/timeAgo';
-
-const BUCKET_LABELS: Record<CapBucket, string> = {
-  renders: 'Renders',
-  aiVideoUsd: 'AI video ($)',
-  images: 'Images',
-  tts: 'Voice (TTS)',
-  publishes: 'Publishes',
-};
-
-/** Whole counts as they are; the dollar bucket always shows cents. */
-function formatAmount(bucket: CapBucket, value: number): string {
-  if (bucket === 'aiVideoUsd') return value.toFixed(2);
-  return Number.isInteger(value) ? String(value) : value.toFixed(1);
-}
 
 interface AgentKeyRowProps {
   agentKey: AgentKey;
+  /** Server ceilings per bucket; the limits editor is hidden until they are known. */
+  ceilings: Caps | null;
   onPublishChange: (key: AgentKey, next: boolean) => Promise<void>;
+  onCapsSave: (key: AgentKey, caps: Partial<Caps>) => Promise<void>;
   onRevoke: (key: AgentKey) => void;
 }
 
-/** One key as a list row: who it is, whether it may publish, and today's use against its caps. */
-export function AgentKeyRow({ agentKey, onPublishChange, onRevoke }: AgentKeyRowProps) {
+/** One key as a list row: who it is, whether it may publish, today's use and its daily limits. */
+export function AgentKeyRow({ agentKey, ceilings, onPublishChange, onCapsSave, onRevoke }: AgentKeyRowProps) {
   const [saving, setSaving] = useState(false);
 
   const changePublish = async (next: boolean) => {
@@ -85,6 +76,8 @@ export function AgentKeyRow({ agentKey, onPublishChange, onRevoke }: AgentKeyRow
           );
         })}
       </dl>
+
+      {ceilings && <KeyLimitsEditor agentKey={agentKey} ceilings={ceilings} onSave={onCapsSave} />}
     </li>
   );
 }

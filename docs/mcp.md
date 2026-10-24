@@ -23,7 +23,7 @@ Good to know:
 
 - You can hold 10 live keys. Revoke a key on the same card; it stops working at once.
 - **This key may publish** is off for a new key. Turn it on only for an agent you trust to post to your connected accounts as you.
-- Each key can have lower daily caps than the server default. You can lower them. You cannot raise them.
+- Each key can have lower daily caps than the server default. Open **Daily limits** under the key, change a number and choose **Save limits**. Each number can go from 0 up to the server's ceiling, shown under it; a higher number is saved as the ceiling. You cannot raise a key above it.
 - Never paste a key into a chat, a repository or a shared config. Use an environment variable.
 
 ## Connect Hermes Agent
@@ -303,7 +303,7 @@ Two limits apply, and the lower one wins.
 
 A call that would cross a cap is refused before anything runs, so nothing is spent. The error is `MCP_CAP_REACHED` with `bucket`, `used`, `limit` and `resetsAt` (an ISO time, the next midnight UTC). Stop, tell the user, and retry after `resetsAt`.
 
-`whoami` returns `caps` with `used`, `limit` and `remaining` for each bucket. Read it before starting a long plan. The server operator sets the ceilings with `MCP_DAILY_RENDERS`, `MCP_DAILY_AI_VIDEO_USD`, `MCP_DAILY_IMAGES`, `MCP_DAILY_TTS` and `MCP_DAILY_PUBLISHES`. The key owner can set lower numbers for one key.
+`whoami` returns `caps` with `used`, `limit` and `remaining` for each bucket. Read it before starting a long plan. The server operator sets the ceilings with `MCP_DAILY_RENDERS`, `MCP_DAILY_AI_VIDEO_USD`, `MCP_DAILY_IMAGES`, `MCP_DAILY_TTS` and `MCP_DAILY_PUBLISHES`. The key owner can set lower numbers for one key under **Daily limits** on **Settings, Connected agents**.
 
 ## What a key can never do
 
