@@ -1,7 +1,7 @@
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
-  estimateSceneCount, missingImageCount, knownDurationMs, aiMotionRefusal, projectView, startedHandle, STORY_STYLES,
+  estimateSceneCount, missingImageCount, knownDurationMs, aiMotionRefusal, projectView, startedHandle, runningWork, STORY_STYLES,
 } from "./storyView.js";
 import { STYLE_ANCHORS } from "../lib/story/styleAnchors.js";
 
@@ -90,4 +90,19 @@ test("startedHandle is a running story handle for the project", () => {
   assert.deepEqual(startedHandle("p1", "rendering"), {
     kind: "story", id: "p1", status: "running", percent: null, phase: "rendering", output: null, error: null,
   });
+});
+
+test("projectView passes the route's preparing flag through to the handle", () => {
+  const project = { projectId: "p1", status: "generating_images", scenes: [{ id: "scene-001", imageStatus: "pending" }] };
+  assert.equal(projectView(project, BASE).job.status, "done");
+  assert.equal(projectView(project, BASE, { preparing: true }).job.status, "running");
+});
+
+test("runningWork: generating_images counts only while a scene is being made or the pictures are about to start", () => {
+  const pending = { status: "generating_images", scenes: [{ imageStatus: "pending" }] };
+  assert.equal(runningWork(pending).steps, false);
+  assert.equal(runningWork(pending, { preparing: true }).steps, true);
+  assert.equal(runningWork({ status: "generating_images", scenes: [{ imageStatus: "generating" }] }).steps, true);
+  for (const status of ["transcribing", "segmenting", "rendering", "narrating"]) assert.equal(runningWork({ status }).steps, true, status);
+  for (const status of ["draft", "draft_script", "ready_to_render", "done", "error"]) assert.equal(runningWork({ status }).steps, false, status);
 });

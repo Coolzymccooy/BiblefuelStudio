@@ -103,16 +103,43 @@ test("captioned: error maps to failed and a cancel maps to cancelled", () => {
   assert.equal(interrupted.status, "failed");
 });
 
+const scene = (id, fields) => ({ id, imageStatus: "done", imagePath: `/srv/genImg/p1/${id}.png`, ...fields });
+
 test("story: pre-render statuses are running with the status as phase", () => {
-  for (const status of ["transcribing", "segmenting", "generating_images"]) {
-    const handle = NORMALISERS.story.normalise({ ok: true, project: { projectId: "p1", status, error: null } }, { outputUrl: toUrl });
+  const making = [scene("s1", { imageStatus: "generating" })];
+  for (const [status, scenes] of [["transcribing", []], ["segmenting", []], ["generating_images", making]]) {
+    const handle = NORMALISERS.story.normalise({ ok: true, project: { projectId: "p1", status, error: null, scenes } }, { outputUrl: toUrl });
     assert.equal(handle.status, "running", status);
     assert.equal(handle.phase, status);
     assert.equal(handle.percent, null);
   }
 });
 
-const scene = (id, fields) => ({ id, imageStatus: "done", imagePath: `/srv/genImg/p1/${id}.png`, ...fields });
+test("story: an idle draft reads done, not running", () => {
+  for (const status of ["draft", "draft_script"]) {
+    const handle = NORMALISERS.story.normalise({ project: { projectId: "p1", status, error: null } }, { outputUrl: toUrl });
+    assert.equal(handle.status, "done", status);
+    assert.equal(handle.phase, status);
+    assert.equal(handle.output, null);
+  }
+});
+
+test("story: generating_images with no scene being made reads done, with the phase the scenes say", () => {
+  const read = (scenes) => NORMALISERS.story.normalise({ project: { projectId: "p1", status: "generating_images", scenes } }, { outputUrl: toUrl });
+  const segmented = read([scene("s1", { imageStatus: "pending", imagePath: null }), scene("s2", { imageStatus: "pending", imagePath: null })]);
+  assert.equal(segmented.status, "done");
+  assert.equal(segmented.phase, "needs_images");
+  assert.equal(read([scene("s1"), scene("s2", { imageStatus: "pending", imagePath: null })]).phase, "needs_images");
+  assert.equal(read([scene("s1"), scene("s2")]).phase, "ready_to_render");
+  assert.equal(read([]).phase, "no_scenes");
+});
+
+test("story: pictures about to start by themselves (preparing) keep running", () => {
+  const payload = { project: { projectId: "p1", status: "generating_images", scenes: [scene("s1", { imageStatus: "pending" })] }, preparing: true };
+  const handle = NORMALISERS.story.normalise(payload, { outputUrl: toUrl });
+  assert.equal(handle.status, "running");
+  assert.equal(handle.phase, "preparing");
+});
 
 test("story: ready_to_render is done (the pictures step finished) with no video yet", () => {
   const payload = { project: { projectId: "p1", status: "ready_to_render", error: null, scenes: [scene("s1"), scene("s2")] } };
@@ -134,11 +161,13 @@ test("story: images that stopped with failed scenes are failed, with the first r
   assert.equal(handle.error, "2 of 3 scenes have no picture: Daily free image quota used up.");
 });
 
-test("story: images still being made, or not started, keep running", () => {
+test("story: images still being made keep running; failed scenes beside pending ones read failed", () => {
   const making = { project: { projectId: "p1", status: "generating_images", scenes: [scene("s1"), scene("s2", { imageStatus: "generating" })] } };
   assert.equal(NORMALISERS.story.normalise(making, { outputUrl: toUrl }).status, "running");
-  const waiting = { project: { projectId: "p1", status: "generating_images", scenes: [scene("s1", { imageStatus: "pending" })] } };
-  assert.equal(NORMALISERS.story.normalise(waiting, { outputUrl: toUrl }).status, "running");
+  const stopped = { project: { projectId: "p1", status: "generating_images", scenes: [scene("s1", { imageStatus: "pending" }), scene("s2", { imageStatus: "error", imageError: "quota" })] } };
+  const handle = NORMALISERS.story.normalise(stopped, { outputUrl: toUrl });
+  assert.equal(handle.status, "failed");
+  assert.equal(handle.error, "1 of 2 scenes have no picture: quota");
 });
 
 test("story: AI motion in flight keeps a ready project running as animating, with counts", () => {

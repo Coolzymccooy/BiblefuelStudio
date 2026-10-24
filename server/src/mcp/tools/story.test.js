@@ -372,9 +372,33 @@ test("story_cancel stops the render or the AI motion orders, for free", async ()
   assert.equal(chargeCalls.length, 0);
 });
 
+test("story_cancel leaves an idle project alone: segmented, or stopped by the image quota", async () => {
+  const idle = [
+    PROJECT({ status: "draft" }),
+    PROJECT({ status: "generating_images", scenes: [scene("s1", { imageStatus: "pending", imagePath: null })] }),
+    PROJECT({ status: "generating_images", scenes: [scene("s1"), scene("s2", { imageStatus: "error" })] }),
+  ];
+  for (const project of idle) {
+    const { ctx, calls } = ctxWith({ "GET /api/story/p1": { ok: true, project } });
+    const result = await byName.story_cancel.handler(ctx, { id: "p1" });
+    assert.equal(result.structuredContent.error, "NOTHING_RUNNING", JSON.stringify(project.scenes));
+    assert.deepEqual(routesCalled(calls), ["GET /api/story/p1"], "nothing is changed");
+  }
+});
+
+test("story_cancel stops pictures that are about to start by themselves", async () => {
+  const { ctx, calls } = ctxWith({
+    "GET /api/story/p1": { ok: true, project: PROJECT({ status: "generating_images", scenes: [scene("s1", { imageStatus: "pending" })] }), preparing: true },
+    "POST /api/story/p1/cancel": { ok: true, project: PROJECT({ status: "error", error: "Cancelled." }) },
+  });
+  const result = await byName.story_cancel.handler(ctx, { id: "p1" });
+  assert.equal(result.isError, undefined);
+  assert.deepEqual(routesCalled(calls), ["GET /api/story/p1", "POST /api/story/p1/cancel"]);
+});
+
 test("story_cancel stops the pictures being made too", async () => {
   const { ctx, calls } = ctxWith({
-    "GET /api/story/p1": { ok: true, project: PROJECT({ status: "generating_images" }) },
+    "GET /api/story/p1": { ok: true, project: PROJECT({ status: "generating_images", scenes: [scene("s1"), scene("s2", { imageStatus: "generating" })] }) },
     "POST /api/story/p1/cancel": { ok: true, project: PROJECT({ status: "error", error: "Cancelled." }) },
   });
   const result = await byName.story_cancel.handler(ctx, { id: "p1" });

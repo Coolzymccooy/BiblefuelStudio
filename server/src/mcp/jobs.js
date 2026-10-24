@@ -120,9 +120,10 @@ function storyUrl(projectId, outputPath) {
 }
 
 const AI_IN_FLIGHT = ["queued", "generating"];
-const IMAGE_IN_FLIGHT = new Set(["generating", "pending"]);
 // Steps the project itself is still running; AI clips in flight do not replace them as the phase.
 const STORY_BUSY = new Set(["transcribing", "segmenting", "generating_images", "rendering", "narrating", "error"]);
+// Nothing runs on these: a project made but not started, or a long-form outline not yet narrated.
+const STORY_IDLE = new Set(["draft", "draft_script"]);
 
 /** How many scenes' AI motion clips are queued, generating, done or failed; null when none was ever ordered. */
 function animationCounts(scenes) {
@@ -138,28 +139,42 @@ function animationCounts(scenes) {
 }
 
 /**
- * The images step ended with scenes that have no picture (the daily image quota, a provider
- * refusal): the project stays at generating_images with nothing running, so it reads failed.
+ * generating_images with no scene being made and nothing about to start: the images step is over
+ * (segmenting leaves the project here, and so does a run the daily image quota stopped).
  */
-function imagesStoppedError(status, scenes) {
-  if (status !== "generating_images" || scenes.length === 0) return null;
-  if (scenes.some((s) => !s?.imageStatus || IMAGE_IN_FLIGHT.has(s.imageStatus))) return null;
+function imagesIdle(status, scenes, payload) {
+  return status === "generating_images" && !payload?.preparing && !scenes.some((s) => s?.imageStatus === "generating");
+}
+
+/** Why an idle images step left scenes without a picture (the daily image quota, a provider refusal), or null. */
+function imagesStoppedError(scenes) {
   const failed = scenes.filter((s) => s?.imageStatus === "error");
   if (failed.length === 0) return null;
   return `${failed.length} of ${scenes.length} scenes have no picture: ${text(failed[0].imageError) || "image generation failed"}`;
 }
 
+/** What an idle images step's scenes say is next. */
+function scenesPhase(scenes) {
+  if (scenes.length === 0) return "no_scenes";
+  return scenes.every((s) => s?.imageStatus === "done") ? "ready_to_render" : "needs_images";
+}
+
 /** The status, phase and error a story handle shows, from the project's own status, its scenes and their AI clips. */
-function storyState(project) {
+function storyState(project, payload) {
   const status = String(project.status || "");
   const scenes = Array.isArray(project.scenes) ? project.scenes : [];
   const animation = animationCounts(scenes);
-  const imagesError = imagesStoppedError(status, scenes);
+  const idleImages = imagesIdle(status, scenes, payload);
+  const imagesError = idleImages ? imagesStoppedError(scenes) : null;
   if (imagesError) return { rawStatus: "failed", phase: status, error: imagesError, animation };
-  const animating = animation && AI_IN_FLIGHT.some((key) => animation[key] > 0) && !STORY_BUSY.has(status);
+  const stepRunning = STORY_BUSY.has(status) && !idleImages;
+  const animating = animation && AI_IN_FLIGHT.some((key) => animation[key] > 0) && !stepRunning;
   if (animating) return { rawStatus: "running", phase: "animating", animation, keepOutput: true };
+  if (idleImages) return { rawStatus: "done", phase: scenesPhase(scenes), animation };
+  if (status === "generating_images" && payload?.preparing) return { rawStatus: "running", phase: "preparing", animation };
   // The pictures are all in: the step an agent waited for is over, and no new video exists yet.
   if (status === "ready_to_render") return { rawStatus: "done", phase: status, animation };
+  if (STORY_IDLE.has(status)) return { rawStatus: "done", phase: status, animation };
   const phase = status === "rendering" ? text(project.render?.phase) || "rendering" : null;
   return { rawStatus: status, phase, error: project.error, animation, keepOutput: true };
 }
@@ -167,7 +182,7 @@ function storyState(project) {
 function fromStory(payload, ctx) {
   const project = payload?.project || {};
   const render = project.render || {};
-  const state = storyState(project);
+  const state = storyState(project, payload);
   const handle = toHandle(
     {
       kind: "story",

@@ -34,8 +34,10 @@ describe('POST /api/story/import-script', () => {
     }).expect(200);
 
     assert.equal(res.body.ok, true);
-    assert.equal(res.body.project.status, 'segmenting',
-      'must arrive at segmentation — transcription is skipped');
+    // Nothing runs without autoStart, so it does not claim to be segmenting
+    // (which read as running forever); /:id/segment or /:id/process starts it.
+    assert.equal(res.body.project.status, 'draft',
+      'an import that starts nothing is an idle draft');
     assert.ok(res.body.project.transcript.words.length > 0,
       'transcript must be pre-filled so transcribeStage short-circuits');
     assert.equal(res.body.project.source.audioPath, path.resolve(audio));

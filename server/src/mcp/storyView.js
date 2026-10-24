@@ -99,9 +99,11 @@ function sceneView(scene, publicBase) {
 
 /**
  * A project as an agent sees it: the settings, each scene (with its picture as url and path)
- * and a story job handle, without the word-by-word transcript.
+ * and a story job handle, without the word-by-word transcript. `payload` is the rest of
+ * GET /api/story/:id's answer: whether the pictures are about to start (preparing) or a restart
+ * stopped the project (interrupted).
  */
-export function projectView(project, publicBase) {
+export function projectView(project, publicBase, payload = {}) {
   const scenes = Array.isArray(project?.scenes) ? project.scenes : [];
   return {
     id: project.projectId,
@@ -119,19 +121,30 @@ export function projectView(project, publicBase) {
     sceneCount: scenes.length,
     scenesWithImage: scenes.filter(hasPicture).length,
     scenes: scenes.map((s) => sceneView(s, publicBase)),
-    job: NORMALISERS.story.normalise({ project }, { outputUrl: (p) => outputUrl(p, publicBase) }),
+    job: NORMALISERS.story.normalise(
+      { project, preparing: payload.preparing, interrupted: payload.interrupted },
+      { outputUrl: (p) => outputUrl(p, publicBase) },
+    ),
   };
 }
 
 // Project statuses with a step of the project's own under way (routes/story.js POST /:id/cancel stops them).
-const STEP_RUNNING = new Set(["transcribing", "segmenting", "generating_images", "rendering", "narrating"]);
+// generating_images counts only while a scene is being made, or the pictures are about to start:
+// segmenting leaves a project there, and so does a run the daily image quota stopped (the job handle's rule).
+const STEP_RUNNING = new Set(["transcribing", "segmenting", "rendering", "narrating"]);
 const CLIP_IN_FLIGHT = new Set(["queued", "generating"]);
 
-/** What story_cancel can stop: `steps` (pictures, segmenting, a render) and `animating` (AI clips in flight). */
-export function runningWork(project) {
+/**
+ * What story_cancel can stop: `steps` (pictures, segmenting, a render) and `animating` (AI clips in flight).
+ * `payload` is the rest of GET /api/story/:id's answer (its preparing flag).
+ */
+export function runningWork(project, payload = {}) {
   const scenes = Array.isArray(project?.scenes) ? project.scenes : [];
+  const status = String(project?.status || "");
+  const imagesRunning = status === "generating_images"
+    && (payload.preparing === true || scenes.some((s) => s?.imageStatus === "generating"));
   return {
-    steps: STEP_RUNNING.has(String(project?.status || "")),
+    steps: STEP_RUNNING.has(status) || imagesRunning,
     animating: scenes.some((s) => CLIP_IN_FLIGHT.has(s?.aiVideoStatus)),
   };
 }

@@ -758,7 +758,10 @@ router.get("/:id", (req, res) => {
     const progress = project.longform?.progress || { done: 0, total: 0 };
     out = { ...out, longform: { ...out.longform, progress: { ...progress, alive: isNarrationActive(project.projectId) } } };
   }
-  return res.json({ ok: true, project: out });
+  // Wire-only: the pictures are about to start by themselves (an AI music
+  // video's song copy or prompts), though no scene is being made yet.
+  const preparing = preparingProjects.has(project.projectId) ? { preparing: true } : {};
+  return res.json({ ok: true, project: out, ...preparing });
 });
 
 router.delete("/:id", (req, res) => {
@@ -838,9 +841,10 @@ router.post("/script-to-audio", async (req, res) => {
 // no lossy speech-recognition round trip over words we already have.
 //
 // Body: { script, audioPath, durationMs, words?, title?, style?, aiMotion?, autoStart? }
-// Returns a project already at SEGMENTING. With autoStart: true the pipeline
-// (segment -> images) runs detached on the server; otherwise the client calls
-// /:id/segment and /:id/images exactly as the media path does. aiMotion
+// With autoStart: true it returns a project already at SEGMENTING and the
+// pipeline (segment -> images) runs detached on the server; otherwise the
+// project is a DRAFT and the client calls /:id/segment and /:id/images
+// exactly as the media path does. aiMotion
 // (true or { quality }) is kept only for a super admin, and makes the images
 // stage animate the scenes when the pictures are done (lib/story/autoAnimate.js).
 // PATCH /:id/cast — set which figures appear in this story.
@@ -960,10 +964,12 @@ router.post("/import-script", (req, res) => {
       aiMotion,
     });
 
+    // Without autoStart nothing runs, so it is an idle draft: "segmenting" read
+    // as a step running forever. /:id/segment and /:id/process work from either.
     const ready = writeProject(req.ctx.dataDir, {
       ...project,
       ...patch,
-      status: STORY_STATUS.SEGMENTING,
+      status: autoStart ? STORY_STATUS.SEGMENTING : STORY_STATUS.DRAFT,
     });
 
     // Build it now (the transcript is already there, so transcription is

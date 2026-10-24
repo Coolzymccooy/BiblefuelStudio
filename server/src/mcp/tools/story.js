@@ -29,9 +29,14 @@ export function _setDurationProbeForTests(fn) {
   probeDurationSec = typeof fn === "function" ? fn : realProbe;
 }
 
-async function readProject(ctx, id) {
+/** GET /api/story/:id: the stored project and the route's whole answer (preparing, interrupted). */
+async function readStory(ctx, id) {
   const body = await ctx.api.call("GET", projectPath(id));
-  return body?.project || {};
+  return { project: body?.project || {}, body: body || {} };
+}
+
+async function readProject(ctx, id) {
+  return (await readStory(ctx, id)).project;
 }
 
 /** Charges the pictures a step will make, after the plan quota pre-check; null or the tool error to return. */
@@ -55,7 +60,10 @@ async function projectAction(ctx, input) {
     return ok({ project: projectView(body?.project || {}, ctx.publicBase) });
   }
   if (!id) return fail("BAD_INPUT", `story_project ${action} needs id.`);
-  if (action === "get") return ok({ project: projectView(await readProject(ctx, id), ctx.publicBase) });
+  if (action === "get") {
+    const { project, body } = await readStory(ctx, id);
+    return ok({ project: projectView(project, ctx.publicBase, body) });
+  }
   await ctx.api.call("DELETE", projectPath(id));
   return ok({ id, deleted: true });
 }
@@ -122,7 +130,7 @@ const storyImportScript = {
   description:
     "Make a story project from words you already have and their narration: script (the text), audioPath (the narration file, for example the path voice_synthesize returned, or a file in your media folder; URLs and other paths are refused) and durationMs (its length). " +
     "words ({ text, startMs, endMs }) are the narration's timings if you have them; without them the words are spread evenly over the audio. Nothing is transcribed and the script is used as written. " +
-    "Without autoStart the project waits: call story_step segment, then story_step images. With autoStart: true the server segments and makes the pictures itself; it returns a handle of kind story (call jobs_wait with kind story and the project id; done with phase ready_to_render means every scene has a picture). " +
+    "Without autoStart nothing starts: the project is a draft (its handle reads done) until you call story_step segment, then story_step images. With autoStart: true the server segments and makes the pictures itself; it returns a handle of kind story (call jobs_wait with kind story and the project id; done with phase ready_to_render means every scene has a picture). " +
     "autoStart costs daily images for the pictures it will make, charged up front from the narration's length (durationMs, or the last timed word if later): about one per 8 seconds, at most 60, and the project is cut into no more scenes than were charged (QUOTA_EXCEEDED first when the plan's render quota is used up). " +
     PLAN_QUOTA_NOTE + " Next: story_settings for captions and music, then story_render.",
   inputSchema: {
@@ -237,7 +245,7 @@ const storyStep = {
   name: "story_step",
   title: "Run one story step",
   description:
-    "Run one step of a story project. segment: cut the transcript into scenes, each with a picture prompt (waits for the answer, up to about half a minute; free of daily caps). Then edit prompts with story_scene_update if you like. " +
+    "Run one step of a story project. segment: cut the transcript into scenes, each with a picture prompt (waits for the answer, up to about half a minute; free of daily caps). Its job handle then reads done with phase needs_images until the pictures are made. Then edit prompts with story_scene_update if you like. " +
     "images: make the picture of every scene that has none (force: true remakes them all), in the background; returns a handle of kind story for jobs_wait (done with phase ready_to_render when every scene has one). Costs one daily images per picture it makes, charged up front. " +
     "resegment discards the scenes and EVERY existing picture (they are deleted and cost image quota to make again), cuts the transcript again and makes new pictures; returns a handle of kind story. Costs daily images for every new scene, about one per 8 seconds of narration, at most 60, charged up front; it cuts no more scenes than were charged. " +
     "images and resegment each count one unit of the plan's render quota and check it first (QUOTA_EXCEEDED); segment is free. " + PLAN_QUOTA_NOTE,
@@ -290,7 +298,8 @@ const storyCancel = {
   },
   routes: ["/api/story"],
   async handler(ctx, { id, what = "render" }) {
-    const running = runningWork(await readProject(ctx, id));
+    const { project, body } = await readStory(ctx, id);
+    const running = runningWork(project, body);
     if (what === "animate" ? !running.animating : !running.steps) {
       // Cancelling marks the project failed, so a finished or idle one is left alone.
       return fail("NOTHING_RUNNING", what === "animate"
