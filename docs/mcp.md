@@ -159,6 +159,17 @@ Every call passes the same checks, in this order:
 | `moments_cancel` | `{ id }`. Stop a running Moment render. `NOTHING_RUNNING` when none runs. Free. |
 | `timeline_project` | `{ action: "list" or "get" or "save", id?, project? }`. Multi-lane Timeline projects; `save` stores a whole project. Asset paths must be your media files or music refs. Free. |
 | `timeline_render` | `{ projectId or project, quality?, caption options... }`. Render a timeline. Handle of kind `timeline`. One daily render and one plan `render` quota, plus one daily `tts` per voiceover clip it speaks. Never posts. |
+| `scene_script_project` | `{ action: "list" or "get" or "create" or "update" or "delete" or "parse" or "voices", ... }`. Scene scripts written in markdown; `parse` previews one and prices its clips without saving; `get` shows lines, shots, music cues, blockers and a scene job handle. Super-admin keys only. Free. |
+| `scene_script_step` | `{ id, step: "voice" or "suggest_shots", shotIds? }`. Voice the lines (one daily `tts`; handle of kind `scene`) or have AI suggest shot prompts (free, waits up to about 90 seconds). Super-admin keys only. |
+| `scene_script_shots` | `{ id, only?, estimateOnly?, confirmOverBenchmark? }`. Paid AI clips for the shots; the estimate's dollars are charged to the daily `aiVideoUsd` cap first. Handle of kind `scene`. Super-admin keys only. |
+| `scene_script_render` | `{ id }`. Render once every line is voiced and every shot has a clip. Handle of kind `scene`. One daily render. Never posts. Super-admin keys only. |
+| `scene_script_cancel` | `{ id, what: "shots" or "render" }`. Stop ordering clips, or stop the render. Super-admin keys only. Free. |
+| `series_project` | `{ action: "list" or "preview", ... }`. Your series, or the plan for one Bible passage (how many parts, which verses). Free. |
+| `series_generate` | `{ reference, versesPerPart?, durationSec?, destination?, ... }`. Make and post one short per part, each a job of kind `job`. Needs publish consent; per part one daily render, one daily publish and one plan `render` quota. |
+| `longform_project` | `{ action: "templates" or "draft" or "sections" or "reopen", ... }`. 30 and 60 minute sleep sessions: draft an outline from your script, an idea or a voice note (one plan `render` quota), edit it, reopen a failed one. |
+| `longform_narrate` | `{ id, voiceId? }`. Voice the outline, then cut scenes and make pictures. Handle of kind `longform`. One daily `tts` per section, daily `images` for the pictures, one plan `render` quota. |
+| `gumroad` | `{ action: "generate" or "history", freeTitle?, paidTitle?, limit? }`. The free ebook and paid devotional as markdown, plus a sign-in zip link. Listed only when your plan has the Gumroad feature. Free. |
+| `queue_items` | `{ action: "list" or "add" or "remove" or "clear", item?, id? }`. Your content queue of post ideas. `clear` deletes every item. Free. |
 | `social_status` | Where you can publish: YouTube, playlists, auto-publish destinations, Buffer profiles, saved webhooks and schedules. No secrets. Free. |
 | `publish_youtube` | `{ videoPath, title, ... }`. Upload to the connected channel. Handle of kind `publish`. Needs publish consent; one daily publish. |
 | `publish_post` | `{ destination: "webhook" or "buffer", videoPath, caption, ... }`. Post to a saved webhook (and TikTok when connected) or Buffer. Needs publish consent; one daily publish. |
@@ -188,11 +199,13 @@ Anything slow returns a **job handle** immediately and keeps working in the back
 - `percent` is 0 to 100, or `null` when the job does not report progress.
 - `output` is `{ url, path }` when there is a file. `url` is public and playable. `path` is the server-side value you pass to other tools.
 - `error` is a short message when `status` is `failed`.
-- `kind` says which status route to read. The kinds are `job`, `captioned`, `story`, `ambient`, `lyric_align`, `lyric_render`, `moments`, `timeline`, `instrumental` and `publish`. Every tool that starts work tells you the `kind` to use. For `story`, `ambient`, `lyric_align` and `moments`, pass the project id as `id`. For `lyric_render`, pass the render's job id as `id` and the song's id as `projectId` (both are on the handle `lyric_render` returns); without `projectId` the wait is refused with `BAD_INPUT`.
+- `kind` says which status route to read. The kinds are `job`, `captioned`, `story`, `ambient`, `lyric_align`, `lyric_render`, `moments`, `scene`, `longform`, `timeline`, `instrumental` and `publish`. Every tool that starts work tells you the `kind` to use. For `story`, `ambient`, `lyric_align`, `moments`, `scene` and `longform`, pass the project id as `id`. For `lyric_render`, pass the render's job id as `id` and the song's id as `projectId` (both are on the handle `lyric_render` returns); without `projectId` the wait is refused with `BAD_INPUT`.
 - A story is `done` with `phase: "ready_to_render"` when its pictures are all made (no video yet; `output` is null), and `done` with `output` after `story_render`. While AI motion clips are being made it is `running` with `phase: "animating"`, and its handle carries `animation: { queued, generating, done, failed }`.
 - A `lyric_align` handle is `done` with `lines: { total, timed, flagged }` when the timing is in; flagged lines could not be heard and were squeezed in. A `warning` means a re-run failed and the earlier timing was kept. It is `failed` with an error when timing has not run on the current lyrics (a new song or changed lyrics clear it).
 - A `moments` handle is `failed` when no render was started, or when a server restart stopped one (the error says to call `moments_render` again).
 - An `ambient` session is `done` with `phase: "ready_to_render"` (or `"draft"`) when a voice or images step is over, `failed` when verses or pictures are still missing (the error says how many), and `done` with `output` after `ambient_render`. When a server restart stopped its work it is `failed` with an error that says so: call `ambient_cancel`, then run the step or `ambient_render` again.
+- A `scene` (scene script) handle is `running` with `phase` `voicing`, `making_shots` or `rendering` while a stage runs. Once nothing runs it is `failed` if any stage left a problem (the error names each: `Voicing:`, `Shots:`, `Render:`), `cancelled` after a stopped render, `done` with `phase: "rendered"` and `output` after `scene_script_render`, and otherwise `done` with `phase: "ready_to_render"` or `"not_ready"` plus `blockers`. It always carries `stages` (lines voiced, shots with clips, render state).
+- A `longform` handle is `running` with `phase: "narrating"` and a percent while the outline is voiced, then reads like a story (scenes, pictures); `done` with `phase: "ready_to_render"` means `story_settings` and `story_render` come next. A draft that was never narrated is `done` with `phase: "draft_script"`. When a server restart stopped the narration it is `failed` and says so: call `longform_narrate` again.
 
 Call `jobs_wait`:
 
@@ -376,9 +389,9 @@ A 15, 30 or 60 second photo video for a birthday, wedding, sermon or church even
 
 Costs. `moments_step statements` is one unit of the plan's `scripts` quota. `voiceover` is one daily `tts` and one plan `tts` quota. `moments_render` is one daily render and one plan `render` quota; it is refused at no cost with fewer than 3 photos (`NEEDS_PHOTOS`) or while a render runs (`MOMENT_BUSY`). Everything else is free. A render takes a minute or two and may wait for another video to finish first.
 
-### Gumroad (coming)
+### Gumroad (available now)
 
-`gumroad_generate`, `gumroad_history`. Needs the Gumroad feature on your plan.
+`gumroad { action: "generate", freeTitle?, paidTitle? }` writes two products from built-in templates, instantly and with no AI: a free lead-magnet ebook and a paid 30-day devotional. The answer carries both as markdown (save them yourself) and `zip.url`, a zip of the last pack made, which only opens for the user signed in to the app. `gumroad { action: "history" }` lists packs made before. The tool is listed only when your plan has the Gumroad feature (super admins today). Free.
 
 ### Timeline (available now)
 
@@ -390,21 +403,43 @@ A multi-lane edit: video, B-roll, voiceover, music, captions and effects lanes o
 
 Costs. `timeline_render` is one daily render and one plan `render` quota, plus one daily `tts` for each voiceover clip it must speak, charged together up front. A project the app refuses (no renderable clips, for example) gives the caps back. Saving and reading are free.
 
-### Scene script (coming)
+### Scene script (available now, super-admin keys only)
 
-`scene_script_parse`, `scene_script_project`, `scene_script_step` (voice, suggest shots), `scene_script_shots`, `scene_script_render`, `jobs_wait`. Super-admin accounts only.
+A cinematic script you wrote in markdown (a `TITLE:` line, `### Scene` headings with times, `*Visual:*` lines and `**Speaker:**` lines), voiced word for word, each shot an AI video clip, rendered into one video. Other keys do not see these tools.
 
-### Series (coming)
+1. `scene_script_project { action: "parse", markdown }` shows what the script becomes (scenes, lines, shots, warnings) and what its clips would cost, without saving. Then `{ action: "create", markdown }`.
+2. Optional: `scene_script_project { action: "voices" }` and `{ action: "update", id, cast }` to choose voices; `update` also edits lines, shots and music cues by id (a cue bed is a `music_library` ref).
+3. `scene_script_step { id, step: "voice" }`, then `jobs_wait { kind: "scene", id }` until it ends. One daily `tts` per call; a project already voiced starts nothing.
+4. Optional: `scene_script_step { id, step: "suggest_shots" }` writes a video prompt for every shot without a clip (free, waits up to about 90 seconds). Read and edit them with `get` and `update` `shots`.
+5. `scene_script_shots { id, estimateOnly: true }` prices the clips, then `scene_script_shots { id }` charges the dollars to the daily `aiVideoUsd` cap and orders them. Over the video's benchmark it is refused (`OVER_BENCHMARK`, nothing spent) unless the user agrees and you pass `confirmOverBenchmark: true`. `jobs_wait { kind: "scene", id }` shows `making_shots`, a few minutes per clip.
+6. `scene_script_render { id }` once every line is voiced and every shot has a clip (`NOT_READY` with the `blockers` otherwise, nothing spent). One daily render. `jobs_wait { kind: "scene", id }` until `done`; `output.path` is the video for `publish_youtube` or `publish_post`. It never posts by itself.
 
-`series_preview`, `series_generate`, `series_list`.
+`scene_script_cancel { id, what: "shots" or "render" }` stops clip orders (clips already ordered still arrive and are paid for) or the render. Voicing finishes by itself. Scene scripts spend no plan quota.
 
-### Long-form (coming)
+### Series (available now)
 
-`longform_templates`, `longform_draft`, `longform_sections`, `longform_narrate`, `longform_reopen`.
+One Bible passage cut into numbered short videos (Part 1/5, 2/5, ...), each with the verses read aloud, captions and a YouVersion link, each posted when it is made.
 
-### Queue (coming)
+1. `series_project { action: "preview", reference, versesPerPart?, durationSec?, translation? }` shows the plan: how many parts and which verses each. Free.
+2. `series_generate { reference, ..., destination?, webhookId? or profileIds?, privacyStatus? }` needs publish consent. It queues one `campaign_auto_post` job per part and returns one handle of kind `job` for each; `jobs_wait { kind: "job", id }` on each. The parts run one after another, a few minutes each, and each is posted to `destination` (a saved webhook by default, Buffer or YouTube). A webhook is chosen by its saved id from `social_status`, never a URL.
 
-`queue_items` with `action` of `list`, `add`, `remove` or `clear`.
+Costs, per part, charged together before anything starts: one daily render, one daily publish and one unit of the plan's `render` quota (`QUOTA_EXCEEDED`, nothing spent, when fewer renders are left than parts). `useGenImage: true` adds one daily `images` per part. The default daily `publishes` cap is 3, so a longer series needs fewer parts (`versesPerPart`) or a higher cap. `series_project { action: "list" }` shows the series made, with their job ids.
+
+### Long-form (available now)
+
+30 and 60 minute scripture sessions (sleep sessions: slow narration, long pauses, about a dozen pictures, no captions). A long-form project is a story project with an outline and a narration stage first.
+
+1. `longform_project { action: "templates" }` lists the formats.
+2. `longform_project { action: "draft", script | idea | audioPath, templateId?, title? }` makes the outline: `script` is your own words, kept as written (references are filled in word for word); `idea` gets an outline written by AI; `audioPath` is a voice note in your media folder, transcribed into the idea. It waits for the outline (up to a minute or two) and spends one unit of the plan's `render` quota.
+3. Optional: `longform_project { action: "sections", id, sections }` replaces the outline while it is a draft.
+4. `longform_narrate { id, voiceId? }` voices it, then cuts scenes and makes the pictures, in the background. `jobs_wait { kind: "longform", id }` reads `narrating` with a percent (several minutes for 30 minutes of speech), then the story steps, until `done` with `phase: "ready_to_render"`.
+5. `story_settings { id, music? }`, then `story_render { id }` and `jobs_wait { kind: "story", id }`.
+
+Costs. `longform_narrate` charges up front, together: one daily `tts` per section and daily `images` for the pictures (the template's scene limit, 12 for the sleep sessions; scenes that already have a picture are not charged), plus one unit of the plan's `render` quota (`QUOTA_EXCEEDED` first). Templates, sections and reopen are free. A narration a server restart stopped reads `failed`; call `longform_narrate` again (chunks already voiced are reused, and it is charged again). If a narration fails, `longform_project { action: "reopen", id }` puts it back to a draft so you can edit the outline or pick another voice. `story_cancel` stops it.
+
+### Queue (available now)
+
+`queue_items { action: "list" }` shows the content queue (post ideas saved for later; the app's Queue page exports them as CSV). `add { item: { title, hook, verse, reference?, reflection, cta, hashtags?, notes? } }` saves one, for example from `scripts_generate`. `remove { id }` deletes one; `clear` deletes every item, so use it only when the user asks. Nothing here renders or posts. Free.
 
 ### Music (available now)
 
@@ -419,7 +454,7 @@ Costs. `timeline_render` is one daily render and one plan `render` quota, plus o
 
 ### Publishing (available now)
 
-Publishing posts to the user's own accounts, as them, so it needs **consent**: the key owner switches on **This key may publish** for this key in **Settings, Connected agents**. Without it, `publish_youtube`, `publish_post`, `youtube_thumbnail`, `autopublish_run` and `schedules` `create`/`remove` fail with `PUBLISH_NOT_ALLOWED` and nothing is uploaded, posted or scheduled. `social_status` and `schedules` `list` work on any key. `whoami` shows the switch as `key.publishAllowed`.
+Publishing posts to the user's own accounts, as them, so it needs **consent**: the key owner switches on **This key may publish** for this key in **Settings, Connected agents**. Without it, `publish_youtube`, `publish_post`, `youtube_thumbnail`, `autopublish_run`, `series_generate` and `schedules` `create`/`remove` fail with `PUBLISH_NOT_ALLOWED` and nothing is uploaded, posted or scheduled. `social_status` and `schedules` `list` work on any key. `whoami` shows the switch as `key.publishAllowed`.
 
 1. `social_status` first: is YouTube connected (and its playlists), which auto-publish destinations exist, the Buffer profile ids, the saved webhooks (`id`, `name`, `enabled`) and the schedules. Tokens, secrets and webhook addresses are never returned. Accounts and webhooks are connected in the app's Settings; a key cannot change them.
 2. A finished video from your media folder, usually `output.path` from `jobs_wait` after `render_short` or `render_captioned`. Every publish tool takes a `videoPath` in your media folder, never a URL.
