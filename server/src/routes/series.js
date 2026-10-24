@@ -23,6 +23,19 @@ import { appendSeries, listSeriesForUser } from "../lib/series/seriesStore.js";
 import { generateBibleImage, isImageGenEnabled } from "../lib/imageGen/index.js";
 import { consumeQuota, refundQuota } from "../middleware/quota.js";
 
+/**
+ * A refusal for a series the plan renders left cannot cover says so in `hint`
+ * (what the app shows under "Daily render limit reached"), since a free user
+ * with renders to spare would otherwise not see that the series is too long.
+ * @param {object} body consumeQuota's refusal body
+ * @param {number} parts
+ */
+function partsQuotaBody(body, parts) {
+  if (body?.error !== "QUOTA_EXCEEDED" || parts < 2) return body;
+  const left = Math.max(0, Number(body.limit) - Number(body.used));
+  return { ...body, hint: `${parts} parts need ${parts} plan renders; ${left} are left today. Make fewer parts or try tomorrow.` };
+}
+
 const router = Router();
 
 // Test seam: the verse lookup (network), the campaign precondition (the Library) and the job queue (starts the worker).
@@ -163,7 +176,7 @@ router.post("/generate", async (req, res) => {
     // all or nothing: a series with more parts than the renders left starts nothing.
     // (This router is mounted without quota("render"), so a preview spends none.)
     const spent = consumeQuota(req.ctx, "render", plan.segments.length);
-    if (!spent.ok) return res.status(spent.status).json(spent.body);
+    if (!spent.ok) return res.status(spent.status).json(partsQuotaBody(spent.body, plan.segments.length));
     spentUnits = plan.segments.length;
 
     // Image gen runs synchronously here (before enqueue) so a provider

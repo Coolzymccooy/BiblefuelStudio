@@ -131,3 +131,21 @@ test("L1: maxParts caps what generate may start; a plan with more parts is refus
   assert.equal(fits.status, 200, JSON.stringify(fits.body));
   assert.equal(fits.body.jobIds.length, 3);
 });
+
+test("M3: a free user's series that the renders left cannot cover says how many it needs and how many are left", async () => {
+  const six = [1, 2, 3, 4, 5, 6].map((verse) => ({ book: "Psalms", chapter: 23, verse, text: `Verse ${verse} of the psalm, read slowly and with care.` }));
+  _setSeriesDepsForTests({ ...STUBS, fetchVerses: async () => six });
+  try {
+    const ctx = freeUser("u_six_parts");
+    enqueued.length = 0;
+    const res = await request(appFor(ctx)).post("/api/series/generate").send({ ...BODY, reference: "Psalm 23:1-6" });
+    assert.equal(res.status, 429, JSON.stringify(res.body));
+    assert.equal(res.body.error, "QUOTA_EXCEEDED");
+    assert.equal(res.body.needed, 6);
+    assert.equal(res.body.hint, `6 parts need 6 plan renders; ${LIMIT} are left today. Make fewer parts or try tomorrow.`);
+    assert.equal(enqueued.length, 0);
+    assert.equal(readUsage(ctx.dataDir).counts.render || 0, 0);
+  } finally {
+    _setSeriesDepsForTests(STUBS);
+  }
+});
