@@ -5,6 +5,9 @@ import { v4 as uuid } from "uuid";
 import { readLibrary, addToLibrary, removeFromLibrary, writeLibrary } from "../lib/library.js";
 import { deriveOutputJpgPathFromVideo, generateVideoThumbnail, normalizePathSlashes, resolveOutputAlias, toOutputPublicPath } from "../lib/mediaThumb.js";
 import { CATEGORIES, classifySearchQuery, normalizeCategories } from "../lib/categorize.js";
+import { isOwnerCtx } from "../lib/paths.js";
+import { isInsideDir } from "../lib/pathJail.js";
+import { confineUserPath, UserPathError } from "../lib/userPathScope.js";
 
 const router = Router();
 
@@ -135,16 +138,62 @@ router.post("/auto-tag", (req, res) => {
     res.json({ ok: true, tagged, total: (lib.items || []).length });
 });
 
+/**
+ * Import-local reads a folder on the server, so only the owner may use it
+ * (#112), and only from a folder inside their own outputs folder: anything
+ * else would let a request copy any video the server can read into a
+ * library. A missing folder and one outside get the same answer.
+ */
+const FOLDER_NOT_AVAILABLE = {
+    ok: false,
+    error: "FOLDER_NOT_AVAILABLE",
+    message: "That folder is not available. Use a folder inside your outputs folder.",
+};
+const LOCAL_VIDEO_EXTS = new Set([".mp4", ".mov", ".webm", ".m4v"]);
+
+/** The folder's real path when it is a directory inside the owner's outputs folder, else null. */
+function confineImportFolder(folderPath, ctx) {
+    try {
+        const real = confineUserPath(folderPath, ctx);
+        return fs.statSync(real).isDirectory() ? real : null;
+    } catch (err) {
+        if (err instanceof UserPathError && err.status < 500) return null;
+        throw err;
+    }
+}
+
+/** Videos directly in `folder` whose real path is still inside it (a link inside cannot lead out). */
+function listImportableVideos(folder) {
+    const files = [];
+    for (const entry of fs.readdirSync(folder, { withFileTypes: true })) {
+        if (!LOCAL_VIDEO_EXTS.has(path.extname(entry.name).toLowerCase())) continue;
+        let real;
+        try {
+            real = fs.realpathSync(path.join(folder, entry.name));
+        } catch {
+            continue;
+        }
+        if (!isInsideDir(real, folder) || !fs.statSync(real).isFile()) continue;
+        files.push(real);
+    }
+    return files;
+}
+
+router.get("/import-local", (req, res) => {
+    res.json({ ok: true, allowed: isOwnerCtx(req.ctx) });
+});
+
 router.post("/import-local", (req, res) => {
     try {
+        if (!isOwnerCtx(req.ctx)) {
+            return res.status(403).json({ ok: false, error: "OWNER_ONLY", message: "Only the studio owner can import a server folder." });
+        }
         const folderPath = String(req.body?.folderPath || "").trim();
         if (!folderPath) return res.status(400).json({ ok: false, error: "folderPath required" });
-        if (!fs.existsSync(folderPath)) return res.status(400).json({ ok: false, error: "folderPath not found" });
+        const folder = confineImportFolder(folderPath, req.ctx);
+        if (!folder) return res.status(400).json(FOLDER_NOT_AVAILABLE);
 
-        const exts = [".mp4", ".mov", ".webm", ".m4v"];
-        const files = fs.readdirSync(folderPath)
-            .filter(f => exts.includes(path.extname(f).toLowerCase()))
-            .map(f => path.join(folderPath, f));
+        const files = listImportableVideos(folder);
 
         const outDir = req.ctx.outputDir;
         if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
@@ -173,7 +222,8 @@ router.post("/import-local", (req, res) => {
 
         res.json({ ok: true, imported });
     } catch (e) {
-        res.status(400).json({ ok: false, error: String(e?.message || e) });
+        console.error("[library] import-local failed:", e?.message || e);
+        res.status(500).json({ ok: false, error: "IMPORT_FAILED", message: "The folder could not be imported." });
     }
 });
 
