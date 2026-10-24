@@ -4,15 +4,19 @@ import { randomUUID } from "crypto";
 import {
   SEEDANCE_MODELS, seedanceRatio, submitSeedanceTask, waitForSeedanceTask, downloadSeedanceVideo,
 } from "../videoGen/providers/seedance.js";
-import { estimateTokens, usdForTokens, reserveSpend, settleSpend, releaseSpend, isReserved } from "../videoGen/spend.js";
+import { estimateTokens, usdForTokens, reserveSpend, releaseSpend } from "../videoGen/spend.js";
+import { chargeTaskOnce } from "../videoGen/chargeOnce.js";
 import { runFfmpeg } from "../motion/render.js";
 import { probeAudioDurationSec } from "../story/storyRender.js";
-import { addClip, getClip, clipFile } from "../visualLibrary/store.js";
-import { downloadClip, makePoster } from "../sceneScript/shotStage.js";
+import { addClip } from "../visualLibrary/store.js";
+import { downloadClip, makePoster, canRefetch } from "../sceneScript/shotStage.js";
 import { clipPrompt, referencedCast } from "./prompts.js";
 import { transcribeClip, speechScore, speechWindows, SPEECH_OK } from "./speech.js";
 import { readProject, updateProject, projectOutputDir } from "./store.js";
 import { runInOrder } from "./chain.js";
+import { picturesFor, isChained, asOrdered, waitingFor } from "./shotPictures.js";
+
+export { lastFrameOf } from "./shotPictures.js";
 
 /**
  * The film stage of cartoon mode (spec section 7.6): one talking Seedance clip
@@ -24,7 +28,8 @@ import { runInOrder } from "./chain.js";
  * What is different for cartoons:
  *  - a fresh shot sends the approved character portraits as reference
  *    pictures; a chained shot starts from the last frame of the shot before
- *    it, so it waits for that shot (chain.js decides when each shot runs);
+ *    it, so it waits for that shot (shotPictures.js picks the pictures,
+ *    chain.js decides when each shot runs);
  *  - audio is generated and a picture refusal never falls back to text, which
  *    would drop the approved face; a refusal marks the shot "refused";
  *  - after download the clip's speech windows are found and a line's speech is
@@ -38,20 +43,14 @@ export const FILM_MODEL = SEEDANCE_MODELS.mini;
 export const FILM_RESOLUTION = "720p";
 const IN_FLIGHT = new Set(["queued", "generating"]);
 const NOT_CHARGED = new Set(["FAILED", "NOT_FOUND", "REFUSED"]);
-/** BytePlus keeps a finished clip's URL for 24 h, so a paid clip that failed to download can be fetched again. */
-const REFETCH_MS = 23 * 60 * 60 * 1000;
 
 const STOPPED = "Stopped before this clip was ordered.";
-const NO_FRAME = "The starting picture for this shot could not be made. Make the shot before it again.";
-const BAD_PICTURE = "A character picture could not be read. Make the portrait again.";
 const INTERRUPTED = "Interrupted by a server restart before the clip was ordered. Order it again.";
 const GENERIC = "Something went wrong making this clip. Try again.";
 const DECLINED = "BytePlus declined this shot. Change its note or action and try again.";
 const PERSON_FRESH = "BytePlus thinks a character picture shows a real person. Make that portrait again.";
 const PERSON_CHAINED = "BytePlus thinks this shot's starting picture shows a real person. Make the shot before it again.";
 const NOT_FETCHED = "The clip was made and paid for but could not be downloaded. Order this shot again within a day to fetch it at no cost.";
-const waitingFor = (n) => `Waiting for shot ${n}`;
-const approveFirst = (name) => `Approve ${name}'s portrait first.`;
 
 export const defaultDeps = Object.freeze({
   submit: submitSeedanceTask,
@@ -75,24 +74,9 @@ export function cancelFilm(id) {
   return true;
 }
 
-const isChained = (shot, index) => shot?.firstFrame === "chain" && index > 0;
-/** The shot as it is ordered: the first shot has no shot before it, so it is always fresh. */
-const asOrdered = (shot, index) => (isChained(shot, index) ? shot : { ...shot, firstFrame: "fresh" });
-
-const canRefetch = (shot, now = Date.now()) => shot.clip?.status === "error"
-  && Boolean(shot.clip.taskId) && shot.clip.chargedTaskId === shot.clip.taskId
-  && now - (Number(shot.clip.startedAt) || 0) < REFETCH_MS;
-
 function pickShots(project, only) {
   const wanted = Array.isArray(only) && only.length ? new Set(only) : null;
   return project.shots.filter((s) => (wanted ? wanted.has(s.id) : s.clip?.status !== "done") && !IN_FLIGHT.has(s.clip?.status));
-}
-
-/** Who a fresh shot would show if every portrait were approved: the speaker first, then the scene. */
-function wantedCast(project, shot) {
-  const cast = Object.fromEntries(Object.entries(project.cast || {})
-    .map(([name, member]) => [name, { ...member, approved: true, portrait: member?.portrait || {} }]));
-  return referencedCast({ ...project, cast }, { ...shot, firstFrame: "fresh" });
 }
 
 /** A new queued clip. The reference names are fixed now, so the prompt's "reference picture N" and the files agree. */
@@ -129,50 +113,6 @@ function endShot(dataDir, id, shotId, taskId, patch) {
   ));
 }
 
-/** The last frame of a clip as a PNG, or null when ffmpeg made none (missing or empty). Never throws. */
-export async function lastFrameOf(deps, clipFilePath, out) {
-  try {
-    fs.mkdirSync(path.dirname(out), { recursive: true });
-    fs.rmSync(out, { force: true });
-    const made = await deps.ffmpeg(["-y", "-v", "error", "-sseof", "-0.1", "-i", clipFilePath, "-frames:v", "1", out]);
-    return made?.ok && fs.existsSync(out) && fs.statSync(out).size > 0 ? out : null;
-  } catch {
-    return null;
-  }
-}
-
-/** A chained shot's first frame: the last frame of the shot before it, which must be done. */
-async function startingFrame(ctx, project, index, deps) {
-  const shot = project.shots[index];
-  const parent = project.shots[index - 1];
-  if (parent.clip?.status !== "done" || !parent.clip.libraryId) return { ok: false, status: "waiting", error: waitingFor(index) };
-  const clip = getClip(ctx.dataDir, parent.clip.libraryId);
-  const source = clip ? clipFile(ctx, clip) : null;
-  const name = `${String(shot.id).replace(/[^A-Za-z0-9_-]/g, "") || "shot"}-last.png`;
-  const frame = source ? await lastFrameOf(deps, source, path.join(projectOutputDir(ctx.outputDir, project.id), "frames", name)) : null;
-  return frame ? { ok: true, input: { firstFramePath: frame } } : { ok: false, error: NO_FRAME };
-}
-
-/** A fresh shot's reference pictures: the approved portraits named when it was queued, inside the project folder. */
-function referencePictures(ctx, project, shot) {
-  const names = Array.isArray(shot.clip.references) ? shot.clip.references : [];
-  if (!names.length) {
-    const wanted = wantedCast(project, shot);
-    return wanted.length ? { ok: false, error: approveFirst(wanted[0]) } : { ok: true, input: { referenceImagePaths: [] } };
-  }
-  const base = projectOutputDir(ctx.outputDir, project.id);
-  const paths = [];
-  for (const name of names) {
-    const member = Object.hasOwn(project.cast || {}, name) ? project.cast[name] : null;
-    if (!member?.approved || !member.portrait?.file) return { ok: false, error: approveFirst(name) };
-    const full = path.resolve(base, member.portrait.file);
-    const rel = path.relative(base, full);
-    if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) return { ok: false, error: BAD_PICTURE };
-    paths.push(full);
-  }
-  return { ok: true, input: { referenceImagePaths: paths } };
-}
-
 /** Why a submit failed, as the shot's end state. Nothing was created, so nothing is charged. */
 function submitFailure(submitted, chained) {
   if (submitted.code === "PERSON_REFUSED") return { status: "refused", error: chained ? PERSON_CHAINED : PERSON_FRESH };
@@ -180,25 +120,18 @@ function submitFailure(submitted, chained) {
   return { status: "error", error: submitted.error || GENERIC };
 }
 
-/**
- * Count a task's cost once. The ledger settles only while the reservation
- * stands, and the project total moves in the same write that marks the shot
- * charged for this task, so collecting again after a restart never charges twice.
- */
+/** Count a task's cost once (see chargeOnce.js): collecting again after a restart never charges twice. */
 function chargeShot(ctx, id, shotId, taskId, { ledgerDir, tokens }) {
-  const key = filmLedgerKey(id, shotId);
-  const spend = { model: FILM_MODEL, resolution: FILM_RESOLUTION, tokens };
-  const usd = isReserved(ledgerDir, key) ? settleSpend(ledgerDir, key, spend) : usdForTokens(spend);
-  updateProject(ctx.dataDir, id, (p) => {
-    const shot = p.shots.find((s) => s.id === shotId);
-    if (!shot || shot.clip?.chargedTaskId === taskId) return null;
-    return {
-      ...p,
-      spentUsd: (Number(p.spentUsd) || 0) + usd,
-      shots: p.shots.map((s) => (s.id === shotId ? { ...s, clip: { ...s.clip, chargedTaskId: taskId } } : s)),
-    };
+  return chargeTaskOnce({
+    ledgerDir, key: filmLedgerKey(id, shotId), shotId, taskId,
+    spend: { model: FILM_MODEL, resolution: FILM_RESOLUTION, tokens },
+    update: (fn) => updateProject(ctx.dataDir, id, fn),
   });
-  return usd;
+}
+
+/** What a clip of this length is expected to cost in tokens, for a task whose real count is unknown. */
+function estimatedTokens(project, seconds) {
+  return estimateTokens({ durationSec: seconds, ratio: seedanceRatio(project?.meta?.aspect), resolution: FILM_RESOLUTION });
 }
 
 /** Speech windows for every clip and, for a line, the speech check. Never throws and never blocks the clip. */
@@ -243,42 +176,53 @@ async function collect(ctx, id, shotId, taskId, { ledgerDir, deps }) {
   const project = readProject(ctx.dataDir, id);
   const shot = project?.shots.find((s) => s.id === shotId);
   const secs = shot?.clip?.seconds || shot?.seconds || 4;
-  const estimated = () => estimateTokens({ durationSec: secs, ratio: seedanceRatio(project?.meta?.aspect), resolution: FILM_RESOLUTION });
   if (!done.ok) {
-    if (NOT_CHARGED.has(done.code)) releaseSpend(ledgerDir, filmLedgerKey(id, shotId));
+    const free = NOT_CHARGED.has(done.code);
+    if (free) releaseSpend(ledgerDir, filmLedgerKey(id, shotId));
     // Unknown outcome (timeout, auth): BytePlus may still bill it, so the estimate is counted.
-    else chargeShot(ctx, id, shotId, taskId, { ledgerDir, tokens: estimated() });
-    const refused = done.code === "REFUSED" || /sensitive|copyright|declined/i.test(done.error || "");
+    else chargeShot(ctx, id, shotId, taskId, { ledgerDir, tokens: estimatedTokens(project, secs) });
+    // Only a free failure is a refusal; a charged one is an error, whatever its text says.
+    const refused = free && (done.code === "REFUSED" || /sensitive|copyright|declined/i.test(done.error || ""));
     return endShot(ctx.dataDir, id, shotId, taskId, refused
       ? { status: "refused", error: DECLINED }
       : { status: "error", error: `BytePlus did not return this clip (${done.error}).` });
   }
-  const tokens = Number(done.tokens) > 0 ? done.tokens : estimated();
+  const tokens = Number(done.tokens) > 0 ? done.tokens : estimatedTokens(project, secs);
   const costUsd = chargeShot(ctx, id, shotId, taskId, { ledgerDir, tokens });
   const tmpDir = path.join(projectOutputDir(ctx.outputDir, id), "tmp");
   fs.mkdirSync(tmpDir, { recursive: true });
   const file = path.join(tmpDir, `${randomUUID()}.mp4`);
-  const downloadError = await downloadClip(deps, done.videoUrl, file);
-  if (downloadError) {
-    console.warn(`[cartoon] clip ${taskId} paid but not downloaded: ${downloadError}`);
-    return endShot(ctx.dataDir, id, shotId, taskId, { status: "error", error: NOT_FETCHED });
+  try {
+    const downloadError = await downloadClip(deps, done.videoUrl, file);
+    if (downloadError) {
+      console.warn(`[cartoon] clip ${taskId} paid but not downloaded: ${downloadError}`);
+      return endShot(ctx.dataDir, id, shotId, taskId, { status: "error", error: NOT_FETCHED });
+    }
+    const poster = await makePoster(deps, file, `${file}.jpg`);
+    const durationSec = Number(await deps.probe(file)) || secs;
+    const checks = await checkClip(deps, file, shot?.line);
+    const speaker = shot?.speaker || "";
+    const clip = addClip(ctx, {
+      file, posterFile: poster, prompt: shot?.clip?.prompt || "",
+      lead: (speaker && project?.cast?.[speaker]?.look) || "",
+      model: FILM_MODEL, resolution: FILM_RESOLUTION, aspect: project?.meta?.aspect || "portrait",
+      durationSec, tokens, costUsd, taskId, source: { kind: "cartoon", projectId: id, shotId },
+      tags: [project?.meta?.title, speaker].filter(Boolean),
+    });
+    markDone(ctx.dataDir, id, shotId, taskId, {
+      status: "done", libraryId: clip.id, url: clip.url, posterUrl: clip.posterUrl, durationSec, costUsd,
+      seconds: secs, prompt: clip.prompt, speech: checks.speech, windows: checks.windows,
+    });
+    return undefined;
+  } finally {
+    // The library keeps its own copies; nothing of this clip is left in tmp/.
+    removeQuietly(file);
+    removeQuietly(`${file}.jpg`);
   }
-  const poster = await makePoster(deps, file, `${file}.jpg`);
-  const durationSec = Number(await deps.probe(file)) || secs;
-  const checks = await checkClip(deps, file, shot?.line);
-  const speaker = shot?.speaker || "";
-  const clip = addClip(ctx, {
-    file, posterFile: poster, prompt: shot?.clip?.prompt || "",
-    lead: (speaker && project?.cast?.[speaker]?.look) || "",
-    model: FILM_MODEL, resolution: FILM_RESOLUTION, aspect: project?.meta?.aspect || "portrait",
-    durationSec, tokens, costUsd, taskId, source: { kind: "cartoon", projectId: id, shotId },
-    tags: [project?.meta?.title, speaker].filter(Boolean),
-  });
-  markDone(ctx.dataDir, id, shotId, taskId, {
-    status: "done", libraryId: clip.id, url: clip.url, posterUrl: clip.posterUrl, durationSec, costUsd,
-    seconds: secs, prompt: clip.prompt, speech: checks.speech, windows: checks.windows,
-  });
-  return undefined;
+}
+
+function removeQuietly(file) {
+  try { fs.rmSync(file, { force: true }); } catch { /* best effort */ }
 }
 
 async function orderOne(ctx, id, shotId, { ledgerDir, deps }) {
@@ -289,11 +233,11 @@ async function orderOne(ctx, id, shotId, { ledgerDir, deps }) {
   if (!shot || shot.clip?.status !== "queued") return undefined;
   if (cancels.has(id)) return endShot(ctx.dataDir, id, shotId, null, { status: "error", error: STOPPED });
   const chained = isChained(shot, index);
-  const pictures = chained ? await startingFrame(ctx, project, index, deps) : referencePictures(ctx, project, shot);
+  const pictures = await picturesFor(ctx, project, index, deps);
   if (!pictures.ok) return endShot(ctx.dataDir, id, shotId, null, { status: pictures.status || "error", error: pictures.error });
   if (cancels.has(id)) return endShot(ctx.dataDir, id, shotId, null, { status: "error", error: STOPPED });
   const seconds = shot.clip.seconds;
-  const tokens = estimateTokens({ durationSec: seconds, ratio: seedanceRatio(project.meta?.aspect), resolution: FILM_RESOLUTION });
+  const tokens = estimatedTokens(project, seconds);
   const key = filmLedgerKey(id, shotId);
   const reserved = reserveSpend(ledgerDir, key, usdForTokens({ model: FILM_MODEL, resolution: FILM_RESOLUTION, tokens }));
   if (!reserved.ok) return endShot(ctx.dataDir, id, shotId, null, { status: "error", error: reserved.error });
@@ -314,9 +258,15 @@ async function orderSafely(ctx, id, shotId, opts) {
   try {
     await orderOne(ctx, id, shotId, opts);
   } catch (e) {
-    // Once a task is submitted BytePlus may bill it, so its reservation stays until it is collected.
-    const taskId = readProject(ctx.dataDir, id)?.shots.find((s) => s.id === shotId)?.clip?.taskId ?? null;
-    if (!taskId) releaseSpend(opts.ledgerDir, filmLedgerKey(id, shotId));
+    const project = readProject(ctx.dataDir, id);
+    const clip = project?.shots.find((s) => s.id === shotId)?.clip;
+    const taskId = clip?.taskId ?? null;
+    if (!taskId) {
+      releaseSpend(opts.ledgerDir, filmLedgerKey(id, shotId));
+    } else if (clip.chargedTaskId !== taskId) {
+      // A submitted task may be billed: settle the estimate (as for a timeout) rather than leave the reservation stuck.
+      chargeShot(ctx, id, shotId, taskId, { ledgerDir: opts.ledgerDir, tokens: estimatedTokens(project, clip.seconds || 4) });
+    }
     console.warn(`[cartoon] shot ${shotId} of ${id} failed: ${e?.message || e}`);
     endShot(ctx.dataDir, id, shotId, taskId, { status: "error", error: GENERIC });
   }
@@ -355,7 +305,9 @@ export function startFilm(ctx, id, { only, ledgerDir, deps } = {}) {
   runs.add(id);
   cancels.delete(id);
   const ids = written.shots.filter((s) => picked.has(s.id)).map((s) => s.id);
-  runFilm(ctx, id, ids, { ledgerDir, deps: { ...defaultDeps, ...deps } })
+  // Started on the next tick so even a synchronous throw lands in catch and the run is always cleared.
+  Promise.resolve()
+    .then(() => runFilm(ctx, id, ids, { ledgerDir, deps: { ...defaultDeps, ...deps } }))
     .catch((e) => console.warn(`[cartoon] film ${id} failed: ${e?.message || e}`))
     .finally(() => { runs.delete(id); cancels.delete(id); });
   return written;

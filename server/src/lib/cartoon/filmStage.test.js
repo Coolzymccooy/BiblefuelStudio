@@ -7,7 +7,7 @@ import { createProject, readProject, updateProject, projectOutputDir } from "./s
 import { cartoonFromScript } from "./model.js";
 import { startFilm, isFilming, cancelFilm, resumeFilm, filmLedgerKey, lastFrameOf } from "./filmStage.js";
 import { readLibrary } from "../visualLibrary/store.js";
-import { readLedger, reserveSpend } from "../videoGen/spend.js";
+import { readLedger, reserveSpend, estimateTokens, usdForTokens } from "../videoGen/spend.js";
 import { SEEDANCE_MODELS } from "../videoGen/providers/seedance.js";
 
 const SCRIPT = `# The Lost Lamb
@@ -223,7 +223,8 @@ describe("cartoon film stage", () => {
     assert.deepEqual(ledger.reservations, {});
   });
 
-  test("charges each task once, even when collected again after a restart", async () => {
+  test("charges each task once, even when collected again after a restart", async (t) => {
+    const warn = t.mock.method(console, "warn", () => {});
     const project = newProject();
     const stuck = updateProject(ctx.dataDir, project.id, (p) => ({
       ...p,
@@ -231,8 +232,9 @@ describe("cartoon film stage", () => {
     }));
     reserveSpend(ledgerDir, filmLedgerKey(project.id, "sh1"), 0.5);
     const { deps } = fakeDeps();
-    const crashAfterCharge = { ...deps, download: async () => { throw new Error("restart"); } };
-    assert.equal(await resumeFilm(ctx, [stuck], { ledgerDir, deps: crashAfterCharge }), 1);
+    const downloadFails = { ...deps, download: async () => { throw new Error("socket hang up"); } };
+    assert.equal(await resumeFilm(ctx, [stuck], { ledgerDir, deps: downloadFails }), 1);
+    assert.match(warn.mock.calls[0].arguments[0], /paid but not downloaded/);
     const once = readProject(ctx.dataDir, project.id);
     assert.equal(once.shots[0].clip.status, "error");
     assert.ok(once.spentUsd > 0);
@@ -391,6 +393,111 @@ describe("cartoon film stage", () => {
     assert.equal(calls.submit.length, 0);
     assert.deepEqual(readLedger(ledgerDir).reservations, {});
     assert.equal(cancelFilm(project.id), false, "nothing to stop once the run is over");
+  });
+
+  test("a timeout or auth error after submit charges the estimate and is an error, not a refusal", async () => {
+    const project = newProject();
+    approve(project.id, ["Eli", "Pip"]);
+    const { deps } = fakeDeps({
+      wait: async (taskId) => ({
+        "task-1": { ok: false, code: "TIMEOUT", error: "BytePlus took too long (last error: sensitive content check)" },
+        "task-2": { ok: false, code: "HTTP_401", error: "BytePlus refused the request (HTTP 401)." },
+      }[taskId] || null),
+    });
+    startFilm(ctx, project.id, { only: ["sh1", "sh3"], ledgerDir, deps });
+    await settle(project.id);
+    const done = readProject(ctx.dataDir, project.id);
+    for (const index of [0, 2]) {
+      assert.equal(done.shots[index].clip.status, "error");
+      assert.equal(done.shots[index].clip.chargedTaskId, done.shots[index].clip.taskId);
+    }
+    const estimate = usdForTokens({ model: SEEDANCE_MODELS.mini, resolution: "720p", tokens: estimateTokens({ durationSec: 4, ratio: "9:16", resolution: "720p" }) });
+    const ledger = readLedger(ledgerDir);
+    assert.equal(ledger.clips, 2);
+    assert.deepEqual(ledger.reservations, {});
+    assert.ok(Math.abs(ledger.settledUsd - 2 * estimate) < 1e-9);
+    assert.ok(Math.abs(done.spentUsd - 2 * estimate) < 1e-9);
+  });
+
+  test("a refusal at wait marks the shot refused and releases the reservation", async () => {
+    const project = newProject();
+    approve(project.id, ["Eli", "Pip"]);
+    const { deps } = fakeDeps({
+      wait: async (taskId) => ({
+        "task-1": { ok: false, code: "REFUSED", error: "declined" },
+        "task-2": { ok: false, code: "FAILED", error: "OutputVideoSensitiveContentDetected" },
+      }[taskId] || null),
+    });
+    startFilm(ctx, project.id, { only: ["sh1", "sh3"], ledgerDir, deps });
+    await settle(project.id);
+    const done = readProject(ctx.dataDir, project.id);
+    assert.equal(done.shots[0].clip.status, "refused");
+    assert.equal(done.shots[2].clip.status, "refused");
+    assert.match(done.shots[0].clip.error, /declined this shot/);
+    const ledger = readLedger(ledgerDir);
+    assert.equal(ledger.settledUsd, 0);
+    assert.deepEqual(ledger.reservations, {});
+    assert.equal(done.spentUsd, 0);
+  });
+
+  test("a crash while waiting on a submitted task settles its estimate instead of leaving the reservation stuck", async (t) => {
+    t.mock.method(console, "warn", () => {});
+    const project = newProject();
+    approve(project.id, ["Eli", "Pip"]);
+    const { deps } = fakeDeps({ wait: async () => { throw new Error("poller crashed"); } });
+    startFilm(ctx, project.id, { only: ["sh1"], ledgerDir, deps });
+    await settle(project.id);
+    const clip = readProject(ctx.dataDir, project.id).shots[0].clip;
+    assert.equal(clip.status, "error");
+    assert.equal(clip.error, "Something went wrong making this clip. Try again.");
+    assert.equal(clip.chargedTaskId, "task-1");
+    const ledger = readLedger(ledgerDir);
+    assert.deepEqual(ledger.reservations, {});
+    assert.equal(ledger.clips, 1);
+  });
+
+  test("cancel during a run still collects the shots already submitted", async () => {
+    const project = newProject();
+    approve(project.id, ["Eli", "Pip"]);
+    const { deps, calls } = fakeDeps({ submit: async () => { cancelFilm(project.id); return null; } });
+    startFilm(ctx, project.id, { ledgerDir, deps });
+    await settle(project.id);
+    const done = readProject(ctx.dataDir, project.id);
+    assert.ok(calls.submit.length >= 1);
+    const submitted = new Set(calls.submit.map((args) => shotOf(done, args)));
+    assert.ok(submitted.has("sh1"));
+    for (const shot of done.shots) {
+      if (submitted.has(shot.id)) assert.equal(shot.clip.status, "done", `${shot.id} was collected`);
+      else assert.equal(shot.clip.error, "Stopped before this clip was ordered.");
+    }
+    assert.equal(done.shots[1].clip.error, "Stopped before this clip was ordered.", "a chained shot is not ordered after a stop");
+    assert.deepEqual(readLedger(ledgerDir).reservations, {});
+  });
+
+  test("a chained shot named alone, whose parent is already done, starts at once", async () => {
+    const project = newProject();
+    approve(project.id, ["Eli", "Pip"]);
+    startFilm(ctx, project.id, { ledgerDir, deps: fakeDeps().deps });
+    await settle(project.id);
+    const log = [];
+    const { deps, calls } = fakeDeps({
+      submit: async () => { log.push("submit"); return null; },
+      wait: async () => { await new Promise((r) => setTimeout(r, 20)); log.push("resolved"); return null; },
+    });
+    startFilm(ctx, project.id, { only: ["sh2", "sh3"], ledgerDir, deps });
+    await settle(project.id);
+    const done = readProject(ctx.dataDir, project.id);
+    assert.deepEqual(log.slice(0, 2), ["submit", "submit"], "both shots were ordered before either finished");
+    assert.equal(done.shots[1].clip.status, "done");
+    assert.match(calls.submit.find((args) => shotOf(done, args) === "sh2").firstFramePath, /sh2-last\.png$/);
+  });
+
+  test("leaves nothing in the project's tmp folder", async () => {
+    const project = newProject();
+    approve(project.id, ["Eli", "Pip"]);
+    startFilm(ctx, project.id, { ledgerDir, deps: fakeDeps().deps });
+    await settle(project.id);
+    assert.deepEqual(fs.readdirSync(path.join(projectOutputDir(ctx.outputDir, project.id), "tmp")), []);
   });
 
   test("lastFrameOf returns null when ffmpeg leaves no picture", async () => {

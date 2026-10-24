@@ -5,7 +5,8 @@ import {
   SEEDANCE_MODELS, clampSeedanceDuration, seedanceRatio,
   submitSeedanceTask, waitForSeedanceTask, downloadSeedanceVideo,
 } from "../videoGen/providers/seedance.js";
-import { estimateTokens, usdForTokens, reserveSpend, settleSpend, releaseSpend, isReserved } from "../videoGen/spend.js";
+import { estimateTokens, usdForTokens, reserveSpend, releaseSpend } from "../videoGen/spend.js";
+import { chargeTaskOnce } from "../videoGen/chargeOnce.js";
 import { runFfmpeg } from "../motion/render.js";
 import { probeAudioDurationSec } from "../story/storyRender.js";
 import { addClip, getClip } from "../visualLibrary/store.js";
@@ -120,26 +121,13 @@ export async function makePoster(deps, clipFile, posterFile) {
   return r.ok && fs.existsSync(posterFile) ? posterFile : null;
 }
 
-/**
- * Count a task's cost once. The ledger settles only while the reservation
- * stands (settling removes it in the same write), and the project total moves
- * in the same write that marks the shot charged for this task, so collecting
- * again after a restart never charges twice.
- */
+/** Count a task's cost once (see chargeOnce.js): collecting again after a restart never charges twice. */
 function chargeShot(ctx, id, shotId, taskId, { ledgerDir, tokens }) {
-  const key = ledgerKey(id, shotId);
-  const spend = { model: SHOT_MODEL, resolution: SHOT_RESOLUTION, tokens };
-  const usd = isReserved(ledgerDir, key) ? settleSpend(ledgerDir, key, spend) : usdForTokens(spend);
-  updateProject(ctx.dataDir, id, (p) => {
-    const shot = p.shots.find((s) => s.id === shotId);
-    if (!shot || shot.clip?.chargedTaskId === taskId) return null;
-    return {
-      ...p,
-      spentUsd: (Number(p.spentUsd) || 0) + usd,
-      shots: p.shots.map((s) => (s.id === shotId ? { ...s, clip: { ...s.clip, chargedTaskId: taskId } } : s)),
-    };
+  return chargeTaskOnce({
+    ledgerDir, key: ledgerKey(id, shotId), shotId, taskId,
+    spend: { model: SHOT_MODEL, resolution: SHOT_RESOLUTION, tokens },
+    update: (fn) => updateProject(ctx.dataDir, id, fn),
   });
-  return usd;
 }
 
 /** BytePlus keeps a finished clip's URL for 24 h. A paid clip that failed to download can be fetched again until then. */
