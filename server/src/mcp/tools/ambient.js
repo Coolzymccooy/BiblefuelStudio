@@ -4,6 +4,7 @@ import { resolveMediaInput } from "../mediaPath.js";
 import { planQuotaRefusal, renderQuotaRefusal } from "../planQuota.js";
 import {
   AMBIENT_ID, AMBIENT_ASPECTS, AMBIENT_TRANSLATIONS, AMBIENT_BUSY, unvoicedCount, picturesToMake, projectView, startedHandle,
+  verseSpan, REFERENCE_RULE,
 } from "../ambientView.js";
 
 const MAX_TARGET_SEC = 10 * 3600;
@@ -177,7 +178,9 @@ const ambientStep = {
 const dropSchema = z.object({
   id: z.string().trim().regex(/^[\w-]{1,80}$/).optional().describe("The verse's id from ambient_project get; keep it to keep its voicing."),
   atMs: z.number().int().min(0).max(MAX_TARGET_SEC * 1000).describe("When the verse is spoken, in ms from the start."),
-  reference: z.string().trim().min(3).max(100).describe("A Bible reference, for example Psalms 23:1-3."),
+  reference: z.string().trim().min(3).max(100)
+    .refine((ref) => verseSpan(ref) !== null, { message: `A reference must be ${REFERENCE_RULE}` })
+    .describe("A Bible reference: one verse or up to 10 in one chapter, for example Psalms 23:1-3."),
   translation: z.enum(AMBIENT_TRANSLATIONS).optional().describe("The translation (default: the session's)."),
 }).strict();
 

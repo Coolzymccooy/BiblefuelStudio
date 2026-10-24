@@ -532,3 +532,19 @@ test("ambient_cancel refuses while verses are being voiced (voicing cannot be st
   assert.deepEqual(cleared.structuredContent, { kind: "ambient", id: "a1", cancelled: true });
   assert.match(byName.ambient_cancel.description, /VOICING_CANNOT_CANCEL/);
 });
+
+test("ambient_update drops refuses a reference spanning a whole chapter or more than ten verses", async () => {
+  for (const reference of ["Psalms 119", "John 3:16-4:2", "Psalms 119:1-11", "Psalms 23:5-3", "Psalms"]) {
+    const { ctx, calls } = ctxWith();
+    const result = await byName.ambient_update.handler(ctx, { id: "a1", section: "drops", patch: { drops: [{ atMs: 1000, reference }] } });
+    assert.equal(result.structuredContent.error, "BAD_INPUT", reference);
+    assert.match(result.content[0].text, /at most 10 verses/, reference);
+    assert.equal(calls.filter((c) => c.method === "PATCH").length, 0);
+  }
+  const answer = { ok: true, project: SESSION() };
+  const { ctx, calls } = ctxWith({ "PATCH /api/ambient/a1/drops": answer });
+  const drops = [{ atMs: 1, reference: "Psalms 119:1-10" }, { atMs: 2, reference: "1 John 4:8" }, { atMs: 3, reference: "Song of Solomon 2:10-13" }];
+  const accepted = await byName.ambient_update.handler(ctx, { id: "a1", section: "drops", patch: { drops } });
+  assert.ok(!accepted.isError, JSON.stringify(accepted.structuredContent));
+  assert.equal(calls.filter((c) => c.method === "PATCH").length, 1);
+});

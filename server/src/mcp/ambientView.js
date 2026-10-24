@@ -16,6 +16,24 @@ export const AMBIENT_TRANSLATIONS = ["kjv", "web", "asv", "bbe", "ylt", "niv", "
 /** Statuses whose stage rewrites the verses or the bed from its own copy: an edit made meanwhile is lost. */
 export const AMBIENT_BUSY = ["voicing", "generating_images", "assembling", "rendering"];
 
+const MAX_DROP_VERSES = 10;
+// The forms ambient_plan suggests (lib/ambient/versePlan.js): "Book Chapter:Verse" or "Book Chapter:Verse-Verse".
+const VERSE_REFERENCE = /^(.+?)\s+(\d+):(\d+)(?:\s*[-–]\s*(\d+))?$/;
+
+/** What a drop reference must be, for the refusal message. */
+export const REFERENCE_RULE =
+  `one verse, or a range of at most ${MAX_DROP_VERSES} verses in one chapter, written Book Chapter:Verse or Book Chapter:Verse-Verse (for example Psalms 23:1-3); a whole chapter is far too long to speak as one verse`;
+
+/** How many verses one drop reference speaks, or null when it is not a short range in one chapter. */
+export function verseSpan(reference) {
+  const match = VERSE_REFERENCE.exec(String(reference || "").trim());
+  if (!match) return null;
+  const first = Number(match[3]);
+  const last = match[4] === undefined ? first : Number(match[4]);
+  const count = last - first + 1;
+  return first >= 1 && count >= 1 && count <= MAX_DROP_VERSES ? count : null;
+}
+
 /** A voice run speaks every verse without finished audio (lib/ambient/drops.js voiceDrops). */
 const voiced = (drop) => drop?.status === "done" && Boolean(drop.audioPath);
 /** An images run keeps a movement only when it is done AND has a file (lib/ambient/stages.js imagesStage). */

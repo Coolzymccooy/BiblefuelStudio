@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AMBIENT_ID, unvoicedCount, picturesToMake, projectView, startedHandle } from "./ambientView.js";
+import { AMBIENT_ID, unvoicedCount, picturesToMake, projectView, startedHandle, verseSpan } from "./ambientView.js";
 
 const BASE = "http://host.test";
 
@@ -76,4 +76,11 @@ test("projectView passes a restart-stopped flag through to the handle", () => {
 
 test("startedHandle is a running ambient handle", () => {
   assert.deepEqual(startedHandle("a1", "voicing"), { kind: "ambient", id: "a1", status: "running", percent: null, phase: "voicing", output: null, error: null });
+});
+
+test("verseSpan counts a verse or a short range in one chapter, and nothing longer", () => {
+  assert.equal(verseSpan("John 14:27"), 1);
+  assert.equal(verseSpan("Psalms 23:1-3"), 3);
+  assert.equal(verseSpan("1 Corinthians 13:4-13"), 10);
+  for (const bad of ["Psalms 119", "Psalms 119:1-176", "John 3:16-4:2", "Psalms 23:0", ""]) assert.equal(verseSpan(bad), null, bad);
 });
