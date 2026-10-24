@@ -109,10 +109,11 @@ Every call passes the same checks, in this order:
 | `media_import_url` | `{ url, kind?, filename? }`. Download a public file into your media. `kind` is `audio` (default), `video` or `image`. One daily `imports`, spent even when the download fails. |
 | `media_trim` | `{ inputPath, startSec, endSec }`. Cut a file into a new file. The original stays. |
 | `transcribe` | `{ mediaPath }`. Words with `startMs` and `endMs`, plus `durationMs`. Counts against your daily render quota. |
-| `jobs_list` | `{ limit? }`. Your recent queued render jobs, newest first. |
+| `jobs_list` | `{ limit? }`. Your recent queued render jobs only (kind `job`: `render_short`, `autopublish_run`, `series_generate` parts), newest first. Other features' jobs are on their own project tools. |
 | `jobs_get` | `{ id }`. One queued job as a job handle. |
 | `jobs_retry` | `{ id }`. Re-queue a finished or failed job. Returns a new job. One daily render. A render (`render_video`, `render_waveform`) or posting job (`campaign_auto_post`) also spends one plan `render` quota (`QUOTA_EXCEEDED` before any cap is spent). A posting job needs publish consent and also costs one daily publish; a render that the user's auto-publish would post costs one daily publish with consent, and without consent is queued so it never posts. |
 | `jobs_wait` | `{ kind, id, projectId?, timeoutSec? }`. Wait for any background job. See the next section. |
+| `jobs_cancel` | `{ kind, id, projectId? }`. Stop a queued or running job of kind `job`, `captioned`, `story`, `longform`, `ambient`, `moments`, `scene` or `lyric_render`. `NOTHING_RUNNING` when it is not running. Free. |
 | `scripts_generate` | Short Bible video scripts (hook, verse, reflection, call to action, hashtags). Every field optional. Counts against the plan's `scripts` quota. |
 | `bible_lookup` | `{ mode: "verse" or "parse" or "translations", reference?, translation? }`. Verse text, reference parsing, or the translation list. Free. |
 | `voice_list` | `{ provider?, locale? }`. Voices of one provider (`edge` by default, or `elevenlabs`), every provider's status, the voice profiles and your cloned voices. Pass `locale` (`en`, `en-GB`): the whole edge list is over 300 voices. |
@@ -131,7 +132,6 @@ Every call passes the same checks, in this order:
 | `branding` | `{ action: "get" or "set", enabled?, position?, size?, opacity? }`. The logo drawn on your rendered videos. |
 | `render_short` | `{ lines, backgrounds? or autoBackground?, audioPath?, musicPath?, ... }`. A short captioned video. Job handle of kind `job`. One daily render (plus four `images` with `autoBackground`). |
 | `render_captioned` | `{ videoPath }` or `{ audioPath, backgrounds }`, plus `words` from `transcribe`. Word-by-word captions. Handle of kind `captioned`. One daily render and one plan `render` quota. |
-| `render_cancel` | `{ id }`. Stop a running `render_captioned` job. |
 | `story_project` | `{ action: "list" or "get" or "create" or "delete" or "characters", ... }`. Story video projects; `get` shows the scenes with their pictures and a story job handle; `characters` lists the cast keys. |
 | `story_import_script` | `{ script, audioPath, durationMs, words?, autoStart?, ... }`. A story from a written script and its narration. With `autoStart` the pictures are made at once (daily `images`, estimated up front); handle of kind `story`. |
 | `story_process` | `{ id, mediaPath }`. Transcribe a recording, cut it into scenes and make the pictures, in the background. Handle of kind `story`. Daily `images` for the pictures, estimated up front. |
