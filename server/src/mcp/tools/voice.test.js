@@ -86,11 +86,11 @@ test("voice_list refuses a locale that is not a language tag", () => {
   assert.equal(schema.safeParse({ locale: "english please" }).success, false);
 });
 
-test("the voice descriptions warn about the long catalogue and the free plan's missing fallback", () => {
+test("the voice descriptions warn about the long catalogue and the free plan's Azure-only fallback", () => {
   assert.match(byName.voice_list.description, /locale/);
   assert.match(byName.voice_list.description, /300 voices/);
-  assert.match(byName.voice_synthesize.description, /free plan/i);
-  assert.match(byName.voice_synthesize.description, /no fallback/i);
+  assert.match(byName.voice_synthesize.description, /free plan auto is Edge-TTS, falling back to Azure only/i);
+  assert.match(byName.voice_synthesize.description, /failed call gives both back/i);
   assert.match(byName.voice_synthesize.description, /ignored with auto/i);
 });
 
@@ -223,6 +223,17 @@ test("voice_synthesize without a file in the answer is NO_AUDIO", async () => {
   assert.equal(result.structuredContent.error, "NO_AUDIO");
 });
 
+test("voice_synthesize gives the agent's tts back when synthesis fails on the server (5xx), and rethrows", async () => {
+  const down = Object.assign(new Error("Edge-TTS failed"), { name: "ApiError", status: 502, code: "HTTP_502" });
+  const { ctx, refunds } = fakeMcpCtx({ "POST /api/tts/edge": down });
+  await assert.rejects(() => byName.voice_synthesize.handler(ctx, { text: "Hello there", provider: "edge" }), (err) => err.status === 502);
+  assert.deepEqual(refunds, [{ bucket: "tts", amount: 1 }]);
+  const refused = Object.assign(new Error("Daily limit"), { name: "ApiError", status: 429, code: "QUOTA_EXCEEDED" });
+  const other = fakeMcpCtx({ "POST /api/tts/edge": refused });
+  await assert.rejects(() => byName.voice_synthesize.handler(other.ctx, { text: "Hello there", provider: "edge" }), (err) => err.status === 429);
+  assert.deepEqual(other.refunds, [], "a 4xx is refunded by the registry, not here");
+});
+
 test("voice_synthesize and voice_clone are capped at one tts per call", () => {
   assert.deepEqual(byName.voice_synthesize.caps, { tts: 1 });
   assert.deepEqual(byName.voice_clone.caps, { tts: 1 });
@@ -325,11 +336,12 @@ test("voice_synthesize with Piper not configured is a tool error, and the route'
   assert.match(result.content[0].text, /No TTS provider|piper/i);
 });
 
-test("voice_synthesize counts against the agent's daily tts cap, even when the provider fails", async () => {
+test("voice_synthesize spends none of the agent's daily tts cap when the provider fails", async () => {
   const before = await client.callTool({ name: "whoami", arguments: {} });
-  await client.callTool({ name: "voice_synthesize", arguments: { text: "Peace be with you", provider: "piper" } });
+  const failed = await client.callTool({ name: "voice_synthesize", arguments: { text: "Peace be with you", provider: "piper" } });
+  assert.equal(failed.isError, true);
   const after2 = await client.callTool({ name: "whoami", arguments: {} });
-  assert.equal(after2.structuredContent.caps.tts.used, before.structuredContent.caps.tts.used + 1);
+  assert.equal(after2.structuredContent.caps.tts.used, before.structuredContent.caps.tts.used);
 });
 
 test("voice_clone rejects a sample outside the media folder for real", async () => {

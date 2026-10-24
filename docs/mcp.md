@@ -69,7 +69,7 @@ Each pipeline is an ordered list of tools. Costs are in daily agent caps (`rende
 ### Short video from a Bible verse
 
 1. `bible_lookup { mode: "verse", reference }` for the text (or `scripts_generate` for a whole script; one plan `scripts` quota).
-2. `voice_synthesize { text, provider? }` speaks it; keep the returned `path`. One daily `tts` and one plan `tts` quota. On a free plan `provider` `auto` is Edge-TTS alone with no fallback: when it fails, force a provider `voice_list` shows as available, such as `azure`. `voice_list { locale: "en" }` keeps the voice list short.
+2. `voice_synthesize { text, provider? }` speaks it; keep the returned `path`. One daily `tts` and one plan `tts` quota; a failed call gives both back. On a free plan `provider` `auto` is Edge-TTS, falling back to Azure when Azure is configured: when that fails too, force a provider `voice_list` shows as available. `voice_list { locale: "en" }` keeps the voice list short.
 3. `backgrounds_search { source, query }`, then `library_items { action: "download", source, sourceId }` for each clip (one daily `imports` each); keep each item's `id`, a library id. Or skip this and pass `autoBackground: true` next (four daily `images`, for pictures it may generate).
 4. `render_short { lines, backgrounds, audioPath }`: the captions in order (1 to 12) over the backgrounds, one after another. `musicPath` takes a `ref` from `music_library`. One daily render and one plan `render` quota. With a voice the video is as long as the voice (one verse is about 6 seconds), and `durationSec` only sets the length of a video without one; for a longer short, speak more lines. Videos are capped at 30 seconds by default.
 5. `jobs_wait { kind: "job", id }` until `done`. `output.path` is the video and `durationSec` its real length.
@@ -196,7 +196,7 @@ Two limits apply, and the lower one wins.
 | `publishes` | Publishing calls, a schedule created, and a render the user's auto-publish will post | 3 |
 | `imports` | Files stored on the server from a URL: `media_import_url` and `library_items` `download` | 20 |
 
-A call that would cross a cap is refused before anything runs, with `MCP_CAP_REACHED` and `bucket`, `scope` (`key`: this key's cap; `user`: the account's, across all its agents), `used`, `limit`, `needed` and `resetsAt`. A call can be refused with some of the cap left when it needs more than that (`autoBackground` needs four `images`). When the app itself refuses a charged call (an HTTP 4xx), its caps are given back, except `imports`; a 5xx or a dropped connection keeps the charge. Read `whoami` before a long plan; on a cap, stop, tell the user and retry after `resetsAt`.
+A call that would cross a cap is refused before anything runs, with `MCP_CAP_REACHED` and `bucket`, `scope` (`key`: this key's cap; `user`: the account's, across all its agents), `used`, `limit`, `needed` and `resetsAt`. A call can be refused with some of the cap left when it needs more than that (`autoBackground` needs four `images`). When the app itself refuses a charged call (an HTTP 4xx), its caps are given back, except `imports`; a 5xx or a dropped connection keeps the charge (except `voice_synthesize`, which gives its `tts` back on a 5xx). Read `whoami` before a long plan; on a cap, stop, tell the user and retry after `resetsAt`.
 
 ## What a key can never do
 
