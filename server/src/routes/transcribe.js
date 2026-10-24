@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import { spawn } from "child_process";
 import { extractAudioToMp3 } from "../lib/transcode.js";
+import { isInsideDir } from "../lib/pathJail.js";
 import {
   transcribeAudio,
 } from "../lib/stt/index.js";
@@ -25,6 +26,23 @@ const MAX_INPUT_MB = Number(process.env.MAX_INPUT_MB || 200);
 
 function isFileTooLarge(p) {
   try { return fs.statSync(p).size > MAX_INPUT_MB * 1024 * 1024; } catch { return false; }
+}
+
+function sendOutsideMedia(res) {
+  return res.status(400).json({
+    ok: false,
+    error: "PATH_OUTSIDE_MEDIA",
+    message: "mediaPath must be a file in your media folder",
+  });
+}
+
+/** The same jail as lib/trimValidate.js: realpath both sides so a symlink cannot escape. */
+function realpathInside(file, dir) {
+  try {
+    return isInsideDir(fs.realpathSync(file), fs.realpathSync(dir));
+  } catch {
+    return false;
+  }
 }
 
 function probeDurationMs(filePath) {
@@ -50,7 +68,15 @@ router.post("/", async (req, res) => {
   try {
     const mediaPath = String(req.body?.mediaPath || "").trim();
     if (!mediaPath) return res.status(400).json({ ok: false, error: "mediaPath is required" });
+    // Agents (MCP) may only read their own media folder. Checked lexically
+    // BEFORE the existence check, so the answer never says whether a file
+    // outside the folder exists; the realpath check after it stops symlinks.
+    const fromAgent = req.user?.via === "mcp";
+    if (fromAgent && !isInsideDir(path.resolve(mediaPath), path.resolve(req.ctx.outputDir))) {
+      return sendOutsideMedia(res);
+    }
     if (!fs.existsSync(mediaPath)) return res.status(400).json({ ok: false, error: "mediaPath not found" });
+    if (fromAgent && !realpathInside(mediaPath, req.ctx.outputDir)) return sendOutsideMedia(res);
     if (isFileTooLarge(mediaPath)) return res.status(400).json({ ok: false, error: `mediaPath too large (>${MAX_INPUT_MB}MB)` });
 
     const outDir = req.ctx.outputDir;

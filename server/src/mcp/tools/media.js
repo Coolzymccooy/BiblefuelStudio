@@ -60,10 +60,11 @@ const transcribe = {
   name: "transcribe",
   title: "Transcribe audio or video",
   description:
-    "Transcribe an audio or video file already on the server (a path from media_list, media_import_url or a job's output.path). " +
+    "Transcribe an audio or video file in your media folder on the server (a path from media_list, media_import_url or a job's output.path); " +
+    "paths outside your media folder are refused with PATH_OUTSIDE_MEDIA. " +
     "Returns words (each with text, startMs and endMs), durationMs, audioPath and which speech-to-text provider ran. " +
     "It can take a while for long files, and it counts against your daily render quota.",
-  inputSchema: { mediaPath: z.string().min(1).describe("Server-local path of the audio or video file to transcribe.") },
+  inputSchema: { mediaPath: z.string().min(1).describe("Server-local path of the audio or video file to transcribe; it must be in your media folder.") },
   routes: ["/api/transcribe"],
   async handler(ctx, { mediaPath }) {
     const body = await ctx.api.call("POST", "/api/transcribe", { body: { mediaPath } });
