@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { STYLES } from "./styles.js";
 import { NO_TEXT_LINE } from "../videoGen/providers/seedance.js";
 import { portraitPrompt, clipPrompt, referencedCast } from "./prompts.js";
+import { EXAMPLES } from "./examples.js";
+import { cartoonFromScript } from "./model.js";
 
 function member(name, look, extra = {}) {
   return { name, look, voice: "", portrait: `${name}.png`, approved: true, shelfId: null, ...extra };
@@ -179,7 +181,22 @@ test("no prompt or style label ever contains Pixar", () => {
   }
 });
 
-// Enabled in Task 5, once the examples exist to build every prompt from.
-test("no prompt, style label or example ever contains Pixar (every example)", { todo: "enable when Task 5 examples exist" }, () => {
-  assert.fail("not wired to the examples yet");
+test("no prompt, style label or example ever contains Pixar (every example)", () => {
+  assert.ok(EXAMPLES.length > 0);
+  for (const example of EXAMPLES) {
+    assert.ok(!/pixar/i.test(`${example.title} ${example.blurb} ${example.verse} ${example.markdown}`), example.id);
+    const base = cartoonFromScript(example.markdown);
+    assert.ok(base.shots.length > 0, example.id);
+    for (const style of Object.values(STYLES)) {
+      const p = { ...base, meta: { ...base.meta, style: style.id } };
+      for (const member of Object.values(p.cast)) {
+        assert.ok(!/pixar/i.test(portraitPrompt(member, style.id)), `${example.id} ${style.id} ${member.name}`);
+      }
+      for (const shot of p.shots) {
+        const text = clipPrompt(p, shot);
+        assert.ok(text.startsWith(style.prompt), `${example.id} ${style.id} ${shot.id}`);
+        assert.ok(!/pixar/i.test(text), `${example.id} ${style.id} ${shot.id}`);
+      }
+    }
+  }
 });
