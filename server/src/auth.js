@@ -30,7 +30,7 @@ export function assertJwtSecret(env = process.env) {
   }
 }
 
-const jwtSecret = () => process.env.JWT_SECRET || DEV_JWT_SECRET;
+export const jwtSecret = () => process.env.JWT_SECRET || DEV_JWT_SECRET;
 
 const getDataPaths = () => {
   const dataDir = DATA_DIR;
@@ -177,7 +177,7 @@ export function signToken(user) {
  * @param {{ sub: string, email: string, role: string, emailVerified?: boolean }} user
  */
 export function signInternalToken(user) {
-  const secret = process.env.JWT_SECRET || "dev_secret_change_me";
+  const secret = jwtSecret();
   const claims = {
     sub: user.sub,
     email: user.email,
