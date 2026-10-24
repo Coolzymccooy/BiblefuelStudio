@@ -130,8 +130,11 @@ describe("render routes draw the account logo", { skip }, () => {
   test("an account with branding off gets no logo", async () => {
     const plain = fs.mkdtempSync(path.join(os.tmpdir(), "brand-off-"));
     try {
+      // Its own copy: render inputs must be the caller's own files (#112).
+      const bg = path.join(plain, path.basename(media.bg));
+      fs.copyFileSync(media.bg, bg);
       const res = await request(app({ dataDir: plain, outputDir: plain, userId: "plain" })).post("/api/render/video")
-        .send({ backgroundPath: media.bg, lines: ["Peace"], durationSec: 1, aspect: "landscape" });
+        .send({ backgroundPath: bg, lines: ["Peace"], durationSec: 1, aspect: "landscape" });
       assert.equal(res.status, 200, JSON.stringify(res.body));
       assertLogo(res.body.file, { present: false });
     } finally {
