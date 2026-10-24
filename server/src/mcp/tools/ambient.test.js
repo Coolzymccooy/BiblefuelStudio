@@ -377,6 +377,12 @@ test("a file-mode bed keeps the choice for a change that plays the same file", a
   assert.equal(await bedChoiceSent(session, { volume: 1.1 }), true);
 });
 
+test("a file-mode bed drops the kept choice when a change adds an unlicensed track to its list (the route's gate counts it)", async () => {
+  const session = bedOf({ mode: "file", filePath: "mylib:old", trackRefs: [] });
+  assert.equal(await bedChoiceSent(session, { trackRefs: ["mylib:unknown"] }), undefined);
+  assert.equal(await bedChoiceSent(session, { trackRefs: ["mylib:cleared", "library:prayer-piano"] }), true, "licensed or bundled tracks keep it");
+});
+
 test("a bed the user never cleared sends no licence choice", async () => {
   const { ctx, calls } = ctxWith({ "PATCH /api/ambient/a1/bed": { ok: true, project: SESSION() } });
   await byName.ambient_update.handler(ctx, { id: "a1", section: "bed", patch: { volume: 1 } });

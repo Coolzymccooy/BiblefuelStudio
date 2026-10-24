@@ -255,6 +255,15 @@ function tracksInUse(bed) {
   return Array.isArray(bed?.trackRefs) ? bed.trackRefs : [];
 }
 
+/**
+ * The tracks the route's licence gate checks on the bed it will store: the
+ * track list in either mode, plus the one file in file mode.
+ */
+function tracksGated(bed) {
+  const refs = Array.isArray(bed?.trackRefs) ? bed.trackRefs : [];
+  return bed?.mode === "file" && bed.filePath ? [...refs, bed.filePath] : refs;
+}
+
 /** The bed as the route will store it: the patch over the stored bed (filePath null clears it). */
 function mergedBed(stored, body) {
   return {
@@ -269,13 +278,15 @@ function mergedBed(stored, body) {
  * the app (bed.allowUncleared) covered the tracks the stored bed plays; it is
  * sent again only when the bed after the change plays no track outside those
  * that might lack a licence, so a volume change on such a bed still works.
- * A mode switch puts the other list in use, so it counts as adding it.
+ * A mode switch puts the other list in use, so it counts as adding it, and
+ * the after side counts what the route's gate counts (the track list in file
+ * mode too).
  * The route resets the choice on every change it is not sent with.
  */
 async function keptLicenceChoice(ctx, stored, body) {
   if (stored?.allowUncleared !== true) return {};
   const before = new Set(tracksInUse(stored));
-  const after = tracksInUse(mergedBed(stored, body));
+  const after = tracksGated(mergedBed(stored, body));
   const added = [...new Set(after)].filter((ref) => !before.has(ref) && !ref.startsWith("library:"));
   if (added.some((ref) => !ref.startsWith("mylib:"))) return {};
   if (added.length > 0 && !(await licensedRefs(ctx, added))) return {};
