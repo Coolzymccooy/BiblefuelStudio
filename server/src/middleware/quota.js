@@ -23,9 +23,10 @@ export const QUOTAS = Object.freeze({
  *
  * @param {{ dataDir?: string, plan?: string } | null | undefined} ctx req.ctx from withUserScope
  * @param {'scripts'|'tts'|'render'|'imageGen'} bucket
+ * @param {number} [amount=1] units to spend at once (a series spends one render per part): all or nothing
  * @returns {{ ok: true } | { ok: false, status: number, body: object }}
  */
-export function consumeQuota(ctx, bucket) {
+export function consumeQuota(ctx, bucket, amount = 1) {
   if (!ctx) {
     return { ok: false, status: 401, body: { ok: false, error: "Missing user context" } };
   }
@@ -39,7 +40,8 @@ export function consumeQuota(ctx, bucket) {
 
   const { counts } = readUsage(ctx.dataDir);
   const used = Number(counts[bucket] || 0);
-  if (used >= limit) {
+  const units = Math.max(1, Math.floor(Number(amount) || 1));
+  if (used + units > limit) {
     return {
       ok: false,
       status: 429,
@@ -50,12 +52,13 @@ export function consumeQuota(ctx, bucket) {
         used,
         limit,
         plan,
+        ...(units > 1 ? { needed: units } : {}),
         hint: "Upgrade to Premium for unlimited generation, or come back tomorrow — quota resets at midnight UTC.",
       },
     };
   }
 
-  incrementUsage(ctx.dataDir, bucket);
+  incrementUsage(ctx.dataDir, bucket, units);
   return { ok: true };
 }
 

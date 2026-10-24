@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import express from "express";
 import request from "supertest";
-import { quota, QUOTAS } from "./quota.js";
+import { quota, QUOTAS, consumeQuota } from "./quota.js";
 import { readUsage } from "../lib/usageStore.js";
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "quota-mw-"));
@@ -56,4 +56,29 @@ test("a POST still increments and 429s at the limit", async () => {
   // GETs keep working once the bucket is spent (jobs_wait polls must not 429).
   const poll = await request(app).get("/x");
   assert.equal(poll.status, 200);
+});
+
+test("consumeQuota can spend several units at once, all or nothing", () => {
+  const dir = freshDir("several");
+  const ctx = { dataDir: dir, plan: "free" };
+  const limit = QUOTAS.free.render;
+  assert.deepEqual(consumeQuota(ctx, "render", limit - 1), { ok: true });
+  assert.equal(readUsage(dir).counts.render, limit - 1);
+  const refused = consumeQuota(ctx, "render", 2);
+  assert.equal(refused.ok, false);
+  assert.equal(refused.status, 429);
+  assert.equal(refused.body.error, "QUOTA_EXCEEDED");
+  assert.equal(refused.body.needed, 2);
+  assert.equal(readUsage(dir).counts.render, limit - 1);
+  assert.deepEqual(consumeQuota(ctx, "render", 1), { ok: true });
+  assert.equal(readUsage(dir).counts.render, limit);
+});
+
+test("a single unit refusal keeps its old body (no needed field)", () => {
+  const dir = freshDir("single");
+  const ctx = { dataDir: dir, plan: "free" };
+  consumeQuota(ctx, "render", QUOTAS.free.render);
+  const refused = consumeQuota(ctx, "render");
+  assert.equal(refused.ok, false);
+  assert.equal(refused.body.needed, undefined);
 });

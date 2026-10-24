@@ -21,8 +21,16 @@ import { lookupVerses, isKnownTranslation } from "../lib/bible/scriptureApi.js";
 import { enqueueCampaignAutoPost } from "./jobs.js";
 import { appendSeries, listSeriesForUser } from "../lib/series/seriesStore.js";
 import { generateBibleImage, isImageGenEnabled } from "../lib/imageGen/index.js";
+import { consumeQuota } from "../middleware/quota.js";
 
 const router = Router();
+
+// Test seam: the verse lookup (network) and the job queue (starts the worker).
+const REAL_DEPS = { fetchVerses: null, enqueue: enqueueCampaignAutoPost };
+let deps = REAL_DEPS;
+export function _setSeriesDepsForTests(overrides) {
+  deps = overrides ? { ...REAL_DEPS, ...overrides } : REAL_DEPS;
+}
 
 // The longest video the renderer makes (jobs.js clamps every render to it).
 // The plan never makes a part longer than this, so every verse in a part is
@@ -40,7 +48,7 @@ function planFor(input) {
     durationSec: input.durationSec,
     maxRenderSeconds: maxRenderSeconds(),
     translation: input.translation,
-    fetchVerses: makeVerseFetcher(input.translation),
+    fetchVerses: deps.fetchVerses || makeVerseFetcher(input.translation),
   });
 }
 
@@ -122,6 +130,12 @@ router.post("/generate", async (req, res) => {
 
     const plan = await planFor(input);
 
+    // Every part is one campaign_auto_post job, so one plan render. Spent before any image or job,
+    // all or nothing: a series with more parts than the renders left starts nothing.
+    // (This router is mounted without quota("render"), so a preview spends none.)
+    const spent = consumeQuota(req.ctx, "render", plan.segments.length);
+    if (!spent.ok) return res.status(spent.status).json(spent.body);
+
     // Image gen runs synchronously here (before enqueue) so a provider
     // failure surfaces to the user as a 400 rather than a half-broken series
     // of jobs. We only block on it when the user opted in AND we have at
@@ -161,7 +175,7 @@ router.post("/generate", async (req, res) => {
       const img = imagesBySegment[i];
       const generatedImage = img && img.ok && img.publicUrl ? img.publicUrl : null;
 
-      const job = await enqueueCampaignAutoPost({
+      const job = await deps.enqueue({
         destination: input.destination,
         webhookId: input.webhookId,
         webhookUrl: input.webhookUrl,
