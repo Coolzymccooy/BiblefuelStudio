@@ -432,6 +432,23 @@ describe("POST /api/longform/draft — inspiration", () => {
     assert.equal(planned, "when I cannot sleep");
     assert.equal(res.body.project.longform.idea, "when I cannot sleep");
   });
+  test("rejects a voice note reached through a junction out of the output dir, unread (#112)", async () => {
+    const other = fs.mkdtempSync(path.join(os.tmpdir(), "lf-other-"));
+    fs.writeFileSync(path.join(other, "private.m4a"), "aud");
+    const door = path.join(outputDir, "door");
+    fs.symlinkSync(other, door, "junction");
+    let read = false;
+    _setTranscribeImpl(async () => { read = true; return { words: [{ text: "x", startMs: 0, endMs: 1 }] }; });
+    try {
+      const res = await request(app).post("/api/longform/draft").send({ audioPath: path.join(door, "private.m4a"), templateId: "sleep-30" });
+      assert.equal(res.status, 400, JSON.stringify(res.body));
+      assert.match(res.body.error, /audioPath/i);
+      assert.equal(read, false);
+    } finally {
+      fs.rmdirSync(door);
+      fs.rmSync(other, { recursive: true, force: true });
+    }
+  });
   test("rejects a voice note outside the user's output dir", async () => {
     const res = await request(app).post("/api/longform/draft").send({ audioPath: "/etc/passwd", templateId: "sleep-30" });
     assert.equal(res.status, 400);

@@ -22,7 +22,9 @@ import { prepareThumbnail } from "../lib/social/youtubeThumbnail.js";
 import { startPublishJob, getPublishJob, _resetPublishJobs as resetPublishJobs } from "../lib/social/youtubePublishJobs.js";
 import { readProject, writeProject, publishedEntry, withPublished } from "../lib/ambient/projectStore.js";
 import os from "os";
-import { confineToDir } from "../lib/confinePath.js";
+import { isUrlLike } from "../lib/inputUrl.js";
+import { isSharedGeneratedImage } from "../lib/mediaInputScope.js";
+import { confineUserPath, UserPathError } from "../lib/userPathScope.js";
 import { downloadPublicUrl, assertPublicHttpUrl, fetchPublic, isUrlGuardError, urlGuardMessage } from "../lib/safeDownload.js";
 import { MAX_INPUT_MB } from "../lib/backgroundLimits.js";
 // DATA_DIR is used ONLY by the boot-time cron rehydrator below, which operates
@@ -119,32 +121,39 @@ function toAbsolutePublicUrl(req, value) {
   return `${base}${pathOnly}`;
 }
 
-function resolveOutputAlias(value, outputDir = OUTPUT_DIR) {
+const OUTPUT_ALIAS_PREFIXES = ["/outputs/", "outputs/", "./outputs/", "server/outputs/"];
+const VIDEO_OUTSIDE_ERROR = "videoUrl must point inside your outputs folder";
+
+/**
+ * The file a local videoUrl names, spelled for confineUserPath: an /outputs/
+ * alias in any of its spellings, an absolute path, or a bare (or relative)
+ * name looked up by file name in the caller's outputs. Null for a web link,
+ * which the remote branch handles. Nothing here touches the disk.
+ */
+function localVideoRef(value) {
   const raw = String(value || "").trim();
-  if (!raw) return null;
-  if (fs.existsSync(raw)) return path.resolve(raw);
-
+  if (!raw || isUrlLike(raw)) return null;
   const normalized = raw.replace(/\\/g, "/");
-  if (normalized.startsWith("/outputs/")) return path.join(outputDir, normalized.slice("/outputs/".length));
-  if (normalized.startsWith("outputs/")) return path.join(outputDir, normalized.slice("outputs/".length));
-  if (normalized.startsWith("./outputs/")) return path.join(outputDir, normalized.slice("./outputs/".length));
-  if (normalized.startsWith("server/outputs/")) return path.join(outputDir, normalized.slice("server/outputs/".length));
-
-  const byName = path.join(outputDir, path.basename(normalized));
-  if (fs.existsSync(byName)) return byName;
-  return null;
+  const prefix = OUTPUT_ALIAS_PREFIXES.find((p) => normalized.startsWith(p));
+  if (prefix) return `/outputs/${normalized.slice(prefix.length)}`;
+  if (path.isAbsolute(raw)) return raw;
+  return `/outputs/${path.posix.basename(normalized)}`;
 }
 
-// A resolved local candidate must live inside the caller's own outputs.
-// resolveOutputAlias happily returns any existing absolute path, so without
-// this a videoUrl of "/etc/passwd" (or another tenant's file) would be
-// uploaded. Null (no local candidate) passes through untouched so the
+// A local candidate must be the caller's own file, checked by name and then
+// by real path (#112), so neither "/etc/passwd", another tenant's file nor a
+// link inside the caller's outputs that leads out is uploaded. A file that is
+// merely missing from the caller's outputs comes back null, so the
 // remote-fetch branch still runs.
-function confineLocalVideo(candidate, outputDir) {
-  if (candidate === null || candidate === undefined) return null;
-  const confined = confineToDir(outputDir, candidate);
-  if (!confined) throw new Error("videoUrl must point inside your outputs folder");
-  return confined;
+function confineLocalVideo(ref, outputDir) {
+  if (!ref) return null;
+  try {
+    return confineUserPath(ref, { outputDir });
+  } catch (err) {
+    if (!(err instanceof UserPathError)) throw err;
+    if (err.code === "FILE_NOT_FOUND") return null;
+    throw new Error(VIDEO_OUTSIDE_ERROR);
+  }
 }
 
 async function resolveVideoInputForUpload(videoUrl, req) {
@@ -155,18 +164,18 @@ async function resolveVideoInputForUpload(videoUrl, req) {
   // outputDir (req.ctx.outputDir), not the global OUTPUT_DIR.
   const outputDir = req?.ctx?.outputDir || OUTPUT_DIR;
 
-  const local = confineLocalVideo(resolveOutputAlias(raw, outputDir), outputDir);
+  const local = confineLocalVideo(localVideoRef(raw), outputDir);
   if (local && fs.existsSync(local)) {
     return { filePath: local, cleanup: async () => {} };
   }
 
   if (/^https?:\/\//i.test(raw)) {
-    let localFromPath = null;
+    // A link to this server's own /outputs/ is read from disk, not fetched.
+    let pathname = "";
     try {
-      const u = new URL(raw);
-      localFromPath = resolveOutputAlias(u.pathname, outputDir);
-    } catch { localFromPath = null; }
-    const confined = confineLocalVideo(localFromPath, outputDir);
+      pathname = new URL(raw).pathname;
+    } catch { pathname = ""; }
+    const confined = pathname.startsWith("/outputs/") ? confineLocalVideo(pathname, outputDir) : null;
     if (confined && fs.existsSync(confined)) {
       return { filePath: confined, cleanup: async () => {} };
     }
@@ -521,9 +530,20 @@ function youtubeCredentials(store) {
 function thumbnailSource(thumbnailPath, req) {
   // No ctx is the owner's own job (only the owner's jobs predate the ctx stamp).
   const caller = { userId: req?.ctx?.userId || "", isOwner: !req?.ctx || isOwnerCtx(req.ctx) };
-  const thumb = resolveThumbnail(String(thumbnailPath), req?.ctx?.outputDir || OUTPUT_DIR, OUTPUT_DIR, caller);
+  const outputDir = req?.ctx?.outputDir || OUTPUT_DIR;
+  const thumb = resolveThumbnail(String(thumbnailPath), outputDir, OUTPUT_DIR, caller);
   if (!thumb.ok) throw new Error(thumb.error);
-  return thumb.path;
+  // resolveThumbnail checks the name only: re-check the real path, so a link
+  // inside the caller's outputs cannot lead out (#112). A missing file is
+  // reported later as "thumbnail not found".
+  const shared = caller.isOwner ? undefined : (abs) => isSharedGeneratedImage(abs, caller.userId);
+  try {
+    return confineUserPath(thumb.path, { outputDir }, { allowShared: shared });
+  } catch (err) {
+    if (!(err instanceof UserPathError)) throw err;
+    if (err.code === "FILE_NOT_FOUND") return thumb.path;
+    throw new Error("thumbnailPath must point inside your outputs folder");
+  }
 }
 
 /** Title and tagline are drawn only when the operator asked for the title. */

@@ -186,6 +186,26 @@ describe("POST /api/social/post destination=youtube", () => {
     assert.equal(fake.calls.insert.length, 0);
   });
 
+  test("a junction inside the caller's outputs cannot lead the video or thumbnail out (#112)", async (t) => {
+    const { a, outputDir, dataDir } = app();
+    fs.writeFileSync(path.join(outputDir, "clip.mp4"), "vid");
+    const other = path.join(dataDir, "not-outputs");
+    fs.mkdirSync(other, { recursive: true });
+    fs.writeFileSync(path.join(other, "private.mp4"), "vid");
+    fs.writeFileSync(path.join(other, "pic.png"), "img");
+    const door = path.join(outputDir, "door");
+    fs.symlinkSync(other, door, "junction");
+    t.after(() => { try { fs.rmdirSync(door); } catch {} });
+    const video = await request(a).post("/api/social/post").send({ destination: "youtube", videoUrl: "/outputs/door/private.mp4", title: "T" });
+    assert.equal(video.status, 400, JSON.stringify(video.body));
+    assert.match(video.body.error, /videoUrl must point inside your outputs folder/);
+    const thumb = await request(a).post("/api/social/post").send({ destination: "youtube", videoUrl: "/outputs/clip.mp4", title: "T", thumbnailPath: "/outputs/door/pic.png" });
+    assert.equal(thumb.status, 400, JSON.stringify(thumb.body));
+    assert.match(thumb.body.error, /thumbnailPath/);
+    assert.equal(fake.calls.insert.length, 0);
+    assert.equal(fake.calls.set.length, 0);
+  });
+
   test("rejects a videoUrl that resolves outside the caller's outputs by name", async () => {
     const { a, dataDir } = app();
     const elsewhere = path.join(dataDir, "not-outputs", "clip.mp4");
