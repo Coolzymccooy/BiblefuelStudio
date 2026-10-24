@@ -34,7 +34,7 @@ const storySceneUpdate = {
   description:
     "Change one scene of a story project (scene ids from story_project get). prompt replaces the picture prompt (the style is still added at generation); text replaces the scene's caption text. " +
     "regenerate: true makes a new picture from the (new) prompt now and waits for it, about 10 to 60 seconds; costs one daily images, given back when the provider makes none (sceneOk false, sceneError says why). " +
-    "Each change counts one unit of the plan's render quota; regenerate checks it first (QUOTA_EXCEEDED). Wait until a running images step has finished before regenerating.",
+    "Changing the prompt or text is free; regenerate counts one unit of the plan's render quota and checks it before changing anything (QUOTA_EXCEEDED). Wait until a running images step has finished before regenerating.",
   inputSchema: {
     id: STORY_ID.describe("The project id."),
     sceneId: SCENE_ID.describe("The scene id, for example scene-001."),
@@ -134,7 +134,7 @@ const storySettings = {
     "Change a story project's settings; only the sections you give change. captions: mode (kinetic, static or none) and the caption look (preset, motion, layout, depth, stagger, highlight, energy, seed, title). " +
     "music: the music bed, a ref from music_library or a file in your media folder (other paths and URLs are refused), with volume and autoDuck; path null removes it. " +
     "cast: character keys from story_project characters (unknown ones come back in rejectedCast); pictures already made keep the old cast until regenerated. " +
-    "Settings apply at the next story_render. Each section changed counts one unit of the plan's render quota. No daily cap is spent.",
+    "Settings apply at the next story_render. Free: no plan quota and no daily cap.",
   inputSchema: {
     id: STORY_ID.describe("The project id."),
     captions: captionsSchema.optional().describe("Caption mode and look."),

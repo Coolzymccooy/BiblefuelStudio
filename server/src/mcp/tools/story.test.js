@@ -73,6 +73,9 @@ test("descriptions name the job kind, the costs and the resegment warning", () =
   assert.match(byName.story_render.description, /every scene needs a picture/i);
   assert.match(byName.story_render.description, /never posts/i);
   assert.match(byName.story_process.description, /images/);
+  // R43: only work-starting calls count plan quota.
+  assert.match(byName.story_project.description, /Only work-starting calls count/);
+  assert.doesNotMatch(byName.story_project.description, /Every change to a story/);
   for (const name of ["story_import_script", "story_process", "story_step"]) {
     assert.match(byName[name].description, /no more scenes than were charged/i, name);
   }

@@ -54,22 +54,56 @@ test("stopping AI motion spends no render quota either", async () => {
   assert.equal(readUsage(ctx.dataDir).counts.render, LIMIT);
 });
 
-test("a story POST that does work is still refused at the limit", async () => {
-  const ctx = freeUserAtLimit("u_render");
-  const res = await request(appFor(ctx)).post("/api/story/some-id/render").send({});
-  assert.equal(res.status, 429);
-  assert.equal(res.body.error, "QUOTA_EXCEEDED");
+test("R43: a free user at the limit can still create, edit, import without starting, and delete", async () => {
+  const ctx = freeUserAtLimit("u_edit");
+  const app = appFor(ctx);
+  const made = await request(app).post("/api/story").send({ title: "Free edits" });
+  assert.equal(made.status, 200, JSON.stringify(made.body));
+  const id = made.body.project.projectId;
+  const captions = await request(app).patch(`/api/story/${id}/captions`).send({ captions: "static" });
+  assert.equal(captions.status, 200, JSON.stringify(captions.body));
+  const cast = await request(app).patch(`/api/story/${id}/cast`).send({ cast: ["moses"] });
+  assert.equal(cast.status, 200, JSON.stringify(cast.body));
+  const music = await request(app).patch(`/api/story/${id}/music`).send({ path: null });
+  assert.equal(music.status, 200, JSON.stringify(music.body));
+  const imported = await request(app).post("/api/story/import-script").send({ script: "The Lord is my shepherd", audioPath: "/x/voice.mp3", durationMs: 8000 });
+  assert.equal(imported.status, 200, JSON.stringify(imported.body));
+  const gone = await request(app).delete(`/api/story/${id}`);
+  assert.equal(gone.status, 200, JSON.stringify(gone.body));
+  assert.equal(readUsage(ctx.dataDir).counts.render, LIMIT);
 });
 
-test("only the two cancel POSTs are quota-free", () => {
-  const req = (method, p) => ({ method, path: p });
-  assert.equal(isQuotaFreeStoryRequest(req("POST", "/abc/cancel")), true);
-  assert.equal(isQuotaFreeStoryRequest(req("POST", "/abc/animate/cancel")), true);
-  assert.equal(isQuotaFreeStoryRequest(req("POST", "/abc/render")), false);
-  assert.equal(isQuotaFreeStoryRequest(req("POST", "/abc/animate")), false);
-  assert.equal(isQuotaFreeStoryRequest(req("POST", "/abc/process")), false);
-  assert.equal(isQuotaFreeStoryRequest(req("POST", "/a/b/cancel")), false);
-  assert.equal(isQuotaFreeStoryRequest(req("PATCH", "/abc/cancel")), false);
+test("R43: work-starting story POSTs are still refused at the limit", async () => {
+  const ctx = freeUserAtLimit("u_work");
+  const app = appFor(ctx);
+  const project = createProject(ctx.dataDir, { title: "Work" });
+  for (const route of ["render", "process", "images", "resegment"]) {
+    const res = await request(app).post(`/api/story/${project.projectId}/${route}`).send({});
+    assert.equal(res.status, 429, route);
+    assert.equal(res.body.error, "QUOTA_EXCEEDED", route);
+  }
+  const started = await request(app).post("/api/story/import-script").send({ script: "abc def", audioPath: "/x/v.mp3", durationMs: 8000, autoStart: true });
+  assert.equal(started.status, 429);
+});
+
+test("only work-starting story requests count plan quota (R43)", () => {
+  const req = (method, p, body) => ({ method, path: p, body });
+  const free = (method, p, body) => assert.equal(isQuotaFreeStoryRequest(req(method, p, body)), true, `${method} ${p}`);
+  const counted = (method, p, body) => assert.equal(isQuotaFreeStoryRequest(req(method, p, body)), false, `${method} ${p}`);
+  for (const p of ["/abc/process", "/abc/render", "/abc/images", "/abc/resegment", "/abc/transcribe", "/abc/animate",
+    "/abc/scenes/scene-001/regenerate", "/abc/scenes/scene-001/animate", "/script-to-audio"]) counted("POST", p);
+  counted("POST", "/import-script", { autoStart: true });
+  free("POST", "/import-script", {});
+  free("POST", "/import-script", { autoStart: "true" });
+  free("POST", "/import-script");
+  for (const p of ["/", "/abc/cancel", "/abc/animate/cancel", "/abc/animate/estimate", "/abc/segment"]) free("POST", p);
+  for (const p of ["/abc/captions", "/abc/music", "/abc/cast", "/abc/aspect", "/abc/scenes/scene-001"]) free("PATCH", p);
+  free("PUT", "/abc/scenes/scene-001/image");
+  free("DELETE", "/abc");
+  // Express routing ignores case and a trailing slash, so the check must too.
+  counted("POST", "/abc/scenes/scene-001/regenerate/");
+  counted("POST", "/abc/Render");
+  counted("POST", "/Import-Script/", { autoStart: true });
 });
 
 test("index.js mounts /api/story with the cancel skip", () => {

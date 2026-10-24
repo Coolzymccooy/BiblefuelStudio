@@ -8,7 +8,7 @@ import {
 } from "../storyView.js";
 
 const PROBE_TIMEOUT_MS = 10_000;
-const PLAN_QUOTA_NOTE = "Every change to a story (create, import, delete, each step, each setting, a render) counts one unit of the plan's render quota; reads and cancels are free.";
+const PLAN_QUOTA_NOTE = "Only work-starting calls count one unit of the plan's render quota: story_process, story_step images and resegment, an import with autoStart, a scene regenerate, story_animate and story_render. Creating, importing without autoStart, segmenting, editing, settings, deleting, reads and cancels are free.";
 
 const projectPath = (id) => `/api/story/${encodeURIComponent(id)}`;
 
@@ -68,7 +68,7 @@ const storyProject = {
     "action list: your projects (id, title, status), newest first. get { id }: one project with its scenes (text, picture prompt, picture url and path, AI clip status), settings and a story job handle; the word timings are left out. " +
     "create { title?, style?, cast?, aspect?, captions? }: an empty project; then give it narration with story_process (a recording) or start from story_import_script instead. " +
     "delete { id }: removes the project and its pictures and video. characters: the cast keys story_settings and create accept. " +
-    PLAN_QUOTA_NOTE + " No daily cap is spent.",
+    "None of these actions counts plan quota or a daily cap. " + PLAN_QUOTA_NOTE,
   inputSchema: {
     action: z.enum(PROJECT_ACTIONS).describe("list, get, create, delete or characters."),
     id: STORY_ID.optional().describe("The project id (get, delete)."),
@@ -240,7 +240,7 @@ const storyStep = {
     "Run one step of a story project. segment: cut the transcript into scenes, each with a picture prompt (waits for the answer, up to about half a minute; free of daily caps). Then edit prompts with story_scene_update if you like. " +
     "images: make the picture of every scene that has none (force: true remakes them all), in the background; returns a handle of kind story for jobs_wait (done with phase ready_to_render when every scene has one). Costs one daily images per picture it makes, charged up front. " +
     "resegment discards the scenes and EVERY existing picture (they are deleted and cost image quota to make again), cuts the transcript again and makes new pictures; returns a handle of kind story. Costs daily images for every new scene, about one per 8 seconds of narration, at most 60, charged up front; it cuts no more scenes than were charged. " +
-    "images and resegment check the plan's render quota first (QUOTA_EXCEEDED). " + PLAN_QUOTA_NOTE,
+    "images and resegment each count one unit of the plan's render quota and check it first (QUOTA_EXCEEDED); segment is free. " + PLAN_QUOTA_NOTE,
   inputSchema: {
     id: STORY_ID.describe("The project id."),
     step: z.enum(STEPS).describe("segment, resegment or images."),

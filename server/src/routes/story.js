@@ -671,12 +671,22 @@ export function patchScenePrompts(ctx, projectId, prompts) {
   return writeProject(ctx.dataDir, { ...fresh, scenes });
 }
 
-// POSTs on this router that start no work: stopping a pipeline or render, and
-// stopping AI motion orders. index.js passes this to the router's
-// quota("render") mount, so a user out of renders can still cancel.
-const CANCEL_PATH = /^\/[^/]+\/(?:animate\/)?cancel$/;
+// R43: only requests that start paid or heavy work count the plan's render
+// quota: transcribing, making pictures or clips, rendering, narrating a script,
+// and an import that starts its pipeline. Creating, editing, deleting, reading
+// and cancelling are free. index.js passes this as the skip of the router's
+// quota("render") mount. Express matches routes ignoring case and a trailing
+// slash, so this does too.
+const WORK_PATHS = [
+  /^\/[^/]+\/(?:process|render|images|resegment|transcribe|animate)$/,
+  /^\/[^/]+\/scenes\/[^/]+\/(?:regenerate|animate)$/,
+  /^\/script-to-audio$/,
+];
 export function isQuotaFreeStoryRequest(req) {
-  return req?.method === "POST" && CANCEL_PATH.test(String(req?.path || ""));
+  if (req?.method !== "POST") return true;
+  const route = String(req?.path || "").toLowerCase().replace(/\/+$/, "");
+  if (route === "/import-script") return req?.body?.autoStart !== true;
+  return !WORK_PATHS.some((pattern) => pattern.test(route));
 }
 
 // The most scenes one /process or /resegment run may cut (R44): agents pass the

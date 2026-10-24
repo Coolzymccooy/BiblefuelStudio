@@ -49,6 +49,8 @@ test("the scenes file declares three story tools; story_animate is super-admin o
   assert.match(byName.story_animate.description, /dollars|\$/);
   assert.match(byName.story_animate.description, /kind story/);
   assert.match(byName.story_animate.description, /real cost can differ/i);
+  assert.match(byName.story_settings.description, /Free: no plan quota/);
+  assert.match(byName.story_scene_update.description, /prompt or text is free/);
 });
 
 // ---- story_scene_update ----
