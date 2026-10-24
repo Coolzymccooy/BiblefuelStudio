@@ -111,16 +111,30 @@ const lyricSetLyrics = {
 
 // ---- lyric_align / lyric_line_update -----------------------------------------
 
+/** Refuses a song the align route would refuse (R47), so a refused timing run spends nothing. */
+function alignRefusal(project) {
+  if (!project.song?.file) return fail("NO_SONG", "This song has no audio yet. Call lyric_set_song first.");
+  if (!Array.isArray(project.lines) || project.lines.length === 0) return fail("NO_LYRICS", "This song has no lyrics yet. Call lyric_set_lyrics first.");
+  if (project.timing?.status === "running") return fail("ALREADY_RUNNING", "Timing is already running for this song. Wait for it with jobs_wait (kind lyric_align).");
+  return null;
+}
+
 const lyricAlign = {
   name: "lyric_align",
   title: "Time the lyrics to the song",
   description:
     "Listen to the song and time every lyric line and word to the singing, in the background. Needs the song (lyric_set_song) and the lyrics (lyric_set_lyrics). One timing run at a time per account. " +
     "Returns a handle of kind lyric_align: call jobs_wait with kind lyric_align and the song's id. It takes about a minute per few minutes of song. done has lines { total, timed, flagged } (flagged lines could not be heard and were squeezed in: move them with lyric_line_update); a warning means a re-run failed and the earlier timing was kept. " +
-    "Counts one unit of the plan's render quota (QUOTA_EXCEEDED when it is used up); no daily cap. Next: lyric_background, then lyric_render.",
+    "Costs one daily render and one unit of the plan's render quota (QUOTA_EXCEEDED first when it is used up); refused at no cost without a song (NO_SONG), without lyrics (NO_LYRICS) or while timing already runs (ALREADY_RUNNING), and given back if the app refuses it. Next: lyric_background, then lyric_render.",
   inputSchema: { id: LYRIC_ID.describe("The song's project id.") },
   routes: ROUTES,
   async handler(ctx, { id }) {
+    const refused = alignRefusal(await readProject(ctx, id));
+    if (refused) return refused;
+    const outOfQuota = await renderQuotaRefusal(ctx);
+    if (outOfQuota) return outOfQuota;
+    const capped = await ctx.chargeCap({ renders: 1 });
+    if (capped) return capped;
     const body = await ctx.api.call("POST", `${projectPath(id)}/align`);
     return ok(NORMALISERS.lyric_align.normalise({ project: body?.project || {} }, { outputUrl: (p) => outputUrl(p, ctx.publicBase) }));
   },

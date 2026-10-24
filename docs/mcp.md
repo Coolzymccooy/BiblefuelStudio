@@ -149,7 +149,7 @@ Every call passes the same checks, in this order:
 | `lyric_project` | `{ action: "list" or "get" or "create" or "delete" or "renders" or "publish_draft" or "cancel_render", ... }`. Lyric videos (song mode); `get` shows the song, lines with their times, the timing state and a `lyric_align` handle; `renders` lists every video made; `publish_draft` gives a YouTube title and description. Free. |
 | `lyric_set_song` | `{ id, path }`. The song: an audio file, or a video whose sound is taken out, in your media folder. Clears the old timing. Free. |
 | `lyric_set_lyrics` | `{ id, sheet }`. The lyrics as one sheet, section headings on their own lines. Free. |
-| `lyric_align` | `{ id }`. Time the lyrics to the singing, in the background. Handle of kind `lyric_align`. One plan `render` quota, no daily cap. |
+| `lyric_align` | `{ id }`. Time the lyrics to the singing, in the background. Handle of kind `lyric_align`. One daily render and one plan `render` quota; refused at no cost without a song or lyrics or while timing runs. |
 | `lyric_line_update` | `{ id, lineId, start?, effect? }`. Move one timed line (it is then kept by later timing runs) or change how it is drawn. Free. |
 | `lyric_background` | `{ id, path?, fit?, look?, branding? }`. The background picture or video, the caption look and the logo, intro and end card switches. Free. |
 | `lyric_render` | `{ id, aspect?, quality?, shortsTrim? }`. Render the video. Handle of kind `lyric_render` with the job id as `id` and the song as `projectId`. One daily render and one plan `render` quota. Never posts. |
@@ -360,7 +360,7 @@ A song with its lyrics timed word by word to the singing, drawn as moving captio
 6. Optional: `lyric_background { id, path?, fit?, look?, branding? }`: a background picture or video in your media folder (without one, the song's cover picture or a dark colour is used), the caption look, and the logo, intro and end card switches.
 7. `lyric_render { id, aspect?, quality?, shortsTrim? }`, then `jobs_wait { kind: "lyric_render", id: <the handle's id>, projectId: <the song's id> }` until `done`. `output.path` is the video for `publish_youtube`; `lyric_project { action: "publish_draft", id }` gives a title, description and tags. A render never posts by itself. `lyric_project { action: "cancel_render", id, jobId }` stops it.
 
-Costs. `lyric_align` counts one unit of the plan's `render` quota and no daily cap. `lyric_render` is one daily render and one plan `render` quota (`QUOTA_EXCEEDED` first); it is refused at no cost when the song has no audio (`NO_SONG`), no timing (`NOT_TIMED`) or is busy (`SONG_BUSY`). Everything else is free. One render per account at a time; a server deploy stops it.
+Costs. `lyric_align` is one daily render and one plan `render` quota (`QUOTA_EXCEEDED` first); it is refused at no cost without a song (`NO_SONG`), without lyrics (`NO_LYRICS`) or while timing runs (`ALREADY_RUNNING`), and given back when the app refuses it. `lyric_render` is one daily render and one plan `render` quota (`QUOTA_EXCEEDED` first); it is refused at no cost when the song has no audio (`NO_SONG`), no timing (`NOT_TIMED`) or is busy (`SONG_BUSY`). Everything else is free. One render per account at a time; a server deploy stops it.
 
 ### Moments (available now)
 
@@ -441,7 +441,7 @@ Two limits apply, and the lower one wins.
 
 | Bucket | What counts | Default per key per day |
 |---|---|---|
-| `renders` | Tools that start a render | 10 |
+| `renders` | Tools that start a render, and `lyric_align` timing runs | 10 |
 | `aiVideoUsd` | AI video: the estimated cost in US dollars | 2 |
 | `images` | Image generation | 30 |
 | `tts` | Voice synthesis calls | 30 |

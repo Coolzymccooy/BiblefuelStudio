@@ -179,15 +179,31 @@ test("lyric_set_lyrics sends the sheet; lyric_line_update patches one line", asy
   assert.equal(calls.length, 2);
 });
 
-test("lyric_align starts timing and returns a lyric_align handle, charging no daily cap", async () => {
+test("lyric_align charges one daily render after the plan check and returns a lyric_align handle (R47)", async () => {
   const running = SONG({ timing: { status: "running", progress: { step: "preparing" } } });
   const { ctx, calls, chargeCalls } = ctxWith({ "POST /api/lyric-video/lv_1/align": { project: running } });
   const result = await byName.lyric_align.handler(ctx, { id: "lv_1" });
   assert.deepEqual(result.structuredContent, {
     kind: "lyric_align", id: "lv_1", status: "running", percent: null, phase: "preparing", output: null, error: null,
   });
-  assert.deepEqual(routesCalled(calls), ["POST /api/lyric-video/lv_1/align"]);
-  assert.deepEqual(chargeCalls, []);
+  assert.deepEqual(routesCalled(calls), ["GET /api/lyric-video/lv_1", "GET /api/billing/usage", "POST /api/lyric-video/lv_1/align"]);
+  assert.deepEqual(chargeCalls, [{ renders: 1 }]);
+});
+
+test("lyric_align is refused without a song, without lyrics, while timing runs or without plan quota, before any charge (R47)", async () => {
+  const cases = [
+    [{ song: SONG({ song: null }) }, "NO_SONG"],
+    [{ song: SONG({ lines: [] }) }, "NO_LYRICS"],
+    [{ song: SONG({ timing: { status: "running", progress: { step: "listening" } } }) }, "ALREADY_RUNNING"],
+    [{ usageBody: usage(SPENT) }, "QUOTA_EXCEEDED"],
+  ];
+  for (const [options, code] of cases) {
+    const { ctx, calls, chargeCalls } = ctxWith({}, options);
+    const result = await byName.lyric_align.handler(ctx, { id: "lv_1" });
+    assert.equal(result.structuredContent.error, code);
+    assert.ok(!routesCalled(calls).includes("POST /api/lyric-video/lv_1/align"));
+    assert.deepEqual(chargeCalls, []);
+  }
 });
 
 // ---- lyric_background --------------------------------------------------------
@@ -282,9 +298,10 @@ test("a real song is created, given lyrics, read, refused where it is not ready,
   const lineId = lyrics.structuredContent.project.lines[0].id;
   const effect = await client.callTool({ name: "lyric_line_update", arguments: { id, lineId, effect: "slam" } });
   assert.equal(effect.structuredContent.project.lines[0].effect, "slam");
+  const rendersBefore = (await client.callTool({ name: "whoami", arguments: {} })).structuredContent.caps.renders;
   const align = await client.callTool({ name: "lyric_align", arguments: { id } });
-  assert.equal(align.isError, true);
-  assert.match(align.content[0].text, /Upload the song first/);
+  assert.equal(align.structuredContent.error, "NO_SONG");
+  assert.deepEqual((await client.callTool({ name: "whoami", arguments: {} })).structuredContent.caps.renders, rendersBefore);
   const waited = await client.callTool({ name: "jobs_wait", arguments: { kind: "lyric_align", id, timeoutSec: 1 } });
   assert.equal(waited.structuredContent.status, "failed");
   assert.match(waited.structuredContent.error, /lyric_align/);
