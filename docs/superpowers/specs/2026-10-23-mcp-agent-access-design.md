@@ -99,7 +99,9 @@ agent ──Streamable HTTP──▶ /api/mcp ──auth: agent key or JWT──
   `{ id, hash (SHA-256 of the key), userId, name, createdAt, lastUsedAt, revokedAt }`. Lookup is
   by hash, compared in constant time (same helper the stems worker uses).
 - **A key works at `/api/mcp` and nowhere else.** The app's `requireAuth` never accepts a
-  `bfk_` key; a dedicated `requireAgentKeyOrJwt` middleware guards only the MCP endpoint, reads
+  `bfk_` key; a dedicated `requireAgentKey` middleware (`middleware/agentAuth.js`) guards only the
+  MCP endpoint and accepts agent keys only: an app JWT gets `AGENT_KEY_REQUIRED` (ruling R25, slice 2;
+  slice 1 shipped as `requireAgentKeyOrJwt`, which also took a JWT). It reads
   the `Authorization` header only (no `?token=` query fallback there), and builds `req.user` with
   the same claims a JWT carries (`sub`, `email`, `role`, `emailVerified` read live from
   `users.json`) plus `via: "agent-key"`. From there `withUserScope`, quotas, and the

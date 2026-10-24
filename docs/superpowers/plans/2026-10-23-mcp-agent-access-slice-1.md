@@ -1,5 +1,9 @@
 # MCP agent access, slice 1 (foundation) — implementation plan
 
+> **Historical (shipped in PR #108).** Later slices changed some names used below: `requireAgentKeyOrJwt` became
+> `requireAgentKey` in `middleware/agentAuth.js`, which accepts agent keys only (an app JWT gets `AGENT_KEY_REQUIRED`,
+> ruling R25), and caps count per key and per account (R26). The spec and `docs/mcp.md` describe the current behaviour.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Put a Streamable HTTP MCP endpoint on the BibleFuel server, with per-user agent keys, daily caps, publish consent, an activity log, the first tools (account, jobs, media), a Settings card, and the end-to-end guide.
