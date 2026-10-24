@@ -125,12 +125,12 @@ const voiceSynthesize = {
   description:
     "Speak text and save it as an audio file in the server's output folder. Returns path (pass it to audio_process, transcribe or a render tool) and url (playable), " +
     "plus provider and voice for what really ran, and words (start and end times) when withTimestamps was set on azure, fish or piper. " +
-    "provider auto (default) uses ElevenLabs on premium plans, falling back to Edge-TTS if it fails. On a free plan auto is Edge-TTS alone, with no fallback: " +
-    "if it fails (HTTP_502), force another provider that voice_list shows as available, such as azure (not elevenlabs or fish, which a free plan cannot use even when available). " +
+    "provider auto (default) uses ElevenLabs on premium plans, falling back to Edge-TTS if it fails. On a free plan auto is Edge-TTS, falling back to Azure only, when Azure is configured: " +
+    "if that fails too (HTTP_502), force another provider that voice_list shows as available (not elevenlabs or fish, which a free plan cannot use even when available). " +
     "the other values force one provider: elevenlabs and fish need a premium plan (FEATURE_LOCKED otherwise), chatterbox needs its bridge, piper needs PIPER_URL, azure needs a key. " +
     "A forced provider can still fall back; check fallbackProvider in the result. " +
     "voiceId comes from voice_list. Options, each read only by its own provider and ignored with auto: rate, pitch, volume for edge; exaggeration and cfgWeight for chatterbox; speed for fish; withTimestamps for azure, fish and piper; modelId for elevenlabs and fish. " +
-    "Each call spends one of the agent's daily tts calls and one of the plan's daily tts quota, and takes a few seconds.",
+    "Each call spends one of the agent's daily tts calls and one of the plan's daily tts quota (a failed call gives the plan's tts quota back), and takes a few seconds.",
   inputSchema: {
     text: z.string().min(3).max(5000).describe("What to say, 3 to 5000 characters. Plain text; markup and emoji are stripped."),
     voiceId: z.string().max(100).regex(VOICE_ID_PATTERN, "voiceId must be a voice name or a cb:... cloned voice id, never a file path").optional().describe("A voice id from voice_list (voice_id; a cb:... cloned voice only with provider chatterbox). Never a file path. Omit for the provider's default."),

@@ -15,6 +15,7 @@ import {
   synthesizeForCategory,
   describeProviders,
   describeProvidersAsync,
+  get as getVoiceProvider,
 } from "../lib/voice/index.js";
 import { listCaptionMotions, listKineticAnimations } from "../lib/videoFilters.js";
 import { cleanSpeakableText } from "../lib/speakableScript.js";
@@ -495,23 +496,46 @@ router.post("/elevenlabs", async (req, res) => {
   }
 });
 
+const INPUT_ERROR = /required|invalid|missing|min 3 chars/i;
+
+/**
+ * A free plan's auto voice: Edge-TTS, and Azure when Edge fails and Azure is
+ * configured (#120). Never ElevenLabs or Fish, which a free plan cannot use.
+ * Azure gets the same voice name (Edge voices are Azure neural voices).
+ */
+async function synthesizeFreeAuto({ text, voiceId }) {
+  try {
+    return await _edgeTts({ text, voiceId });
+  } catch (edgeErr) {
+    const edgeMessage = String(edgeErr?.message || edgeErr);
+    const azure = getVoiceProvider("azure");
+    if (INPUT_ERROR.test(edgeMessage) || !azure?.isAvailable()) throw edgeErr;
+    console.warn(`[TTS] free auto: Edge-TTS failed (${edgeMessage}), falling back to Azure`);
+    try {
+      const result = await azure.synthesize({ text, voiceId: voiceId || defaultEdgeVoice() });
+      return { ...result, fallbackProvider: "azure", primaryProvider: "edge", primaryError: edgeMessage };
+    } catch (azureErr) {
+      throw new Error(`Edge-TTS failed: ${edgeMessage}. Azure fallback failed: ${String(azureErr?.message || azureErr)}`);
+    }
+  }
+}
+
 // Convenience route: ElevenLabs first, Edge-TTS automatic fallback.
 // Free users hit /auto and get Edge-TTS directly (orchestrator's ElevenLabs
-// branch is bypassed via the plan check).
+// branch is bypassed via the plan check), with Azure behind it when configured.
 router.post("/auto", async (req, res) => {
   const { voiceId } = req.body || {};
   const text = cleanSpeakableText(req.body?.text);
   try {
     if (!elevenLabsAllowed(req)) {
-      // Free plan: skip ElevenLabs entirely, go straight to Edge-TTS.
-      const result = await _edgeTts({ text, voiceId });
-      return res.json(result);
+      return res.json(await synthesizeFreeAuto({ text, voiceId }));
     }
     const result = await synthesizeTts({ text, voiceId });
     res.json(result);
   } catch (e) {
     console.error(`[TTS] auto route error:`, e);
-    res.status(502).json({ ok: false, error: String(e?.message || e) });
+    const message = String(e?.message || e);
+    res.status(INPUT_ERROR.test(message) ? 400 : 502).json({ ok: false, error: message });
   }
 });
 

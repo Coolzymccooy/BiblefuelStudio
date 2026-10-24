@@ -86,11 +86,11 @@ test("voice_list refuses a locale that is not a language tag", () => {
   assert.equal(schema.safeParse({ locale: "english please" }).success, false);
 });
 
-test("the voice descriptions warn about the long catalogue and the free plan's missing fallback", () => {
+test("the voice descriptions warn about the long catalogue and the free plan's Azure-only fallback", () => {
   assert.match(byName.voice_list.description, /locale/);
   assert.match(byName.voice_list.description, /300 voices/);
-  assert.match(byName.voice_synthesize.description, /free plan/i);
-  assert.match(byName.voice_synthesize.description, /no fallback/i);
+  assert.match(byName.voice_synthesize.description, /free plan auto is Edge-TTS, falling back to Azure only/i);
+  assert.match(byName.voice_synthesize.description, /failed call gives the plan's tts quota back/i);
   assert.match(byName.voice_synthesize.description, /ignored with auto/i);
 });
 
