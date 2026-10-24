@@ -75,3 +75,42 @@ test("after story_step segment the project reads done with phase needs_images, a
   assert.equal(later.status, "generating_images", "the cancel did not mark it failed");
   assert.equal(later.error, null);
 });
+
+/** The project's file on disk, wherever the key owner's data folder is. */
+function projectFile(id) {
+  const stack = [testApp.dataDir];
+  while (stack.length) {
+    const dir = stack.pop();
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) stack.push(full);
+      else if (entry.name === `${id}.json` && path.basename(dir) === "story-projects") return full;
+    }
+  }
+  throw new Error(`no project file for ${id}`);
+}
+
+test("a second story_render while one runs is refused with SESSION_BUSY and charges nothing", async () => {
+  const { _setRenderImpl, _resetRenderImpl } = await import("../../routes/story.js");
+  let open;
+  const gate = new Promise((resolve) => { open = resolve; });
+  _setRenderImpl(async (args) => { await gate; return { ok: true, outputPath: args.outPath }; });
+  try {
+    const project = await importedProject();
+    await call("story_step", { id: project.id, step: "segment" });
+    const file = projectFile(project.id);
+    const stored = JSON.parse(fs.readFileSync(file, "utf8"));
+    const pictured = stored.scenes.map((s, i) => ({ ...s, imageStatus: "done", imagePath: path.join(mediaDir, `p${i}.png`) }));
+    fs.writeFileSync(file, JSON.stringify({ ...stored, scenes: pictured, status: "ready_to_render" }));
+
+    const first = await call("story_render", { id: project.id });
+    assert.equal(first.status, "running", JSON.stringify(first));
+    const before = (await call("whoami", {})).caps.renders;
+    const second = await call("story_render", { id: project.id });
+    assert.equal(second.error, "SESSION_BUSY");
+    assert.deepEqual((await call("whoami", {})).caps.renders, before, "the refused call charged nothing");
+  } finally {
+    open();
+    _resetRenderImpl();
+  }
+});

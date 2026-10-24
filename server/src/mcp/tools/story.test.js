@@ -76,6 +76,7 @@ test("descriptions name the job kind, the costs and the resegment warning", () =
   assert.match(byName.story_render.description, /server restarted/);
   assert.match(byName.story_render.description, /interrupted: true/);
   assert.match(byName.story_render.description, /story_cancel, then story_render/);
+  assert.match(byName.story_render.description, /SESSION_BUSY/);
   assert.match(byName.story_process.description, /images/);
   // R43: only work-starting calls count plan quota.
   assert.match(byName.story_project.description, /Only work-starting calls count/);
@@ -339,10 +340,12 @@ test("story_step images refuses an AI-motion project before charging", async () 
 
 // ---- story_render ----
 
+const READY = { ok: true, project: PROJECT({ status: "ready_to_render", scenes: [scene("s1")] }) };
+
 test("story_render checks the plan quota, charges one render and returns a story handle", async () => {
-  const { ctx, calls, chargeCalls } = ctxWith({ "POST /api/story/p1/render": { ok: true, jobId: "rj1", project: PROJECT({ status: "rendering" }) } });
+  const { ctx, calls, chargeCalls } = ctxWith({ "GET /api/story/p1": READY, "POST /api/story/p1/render": { ok: true, jobId: "rj1", project: PROJECT({ status: "rendering" }) } });
   const result = await byName.story_render.handler(ctx, { id: "p1" });
-  assert.deepEqual(routesCalled(calls), ["GET /api/billing/usage", "POST /api/story/p1/render"]);
+  assert.deepEqual(routesCalled(calls), ["GET /api/story/p1", "GET /api/billing/usage", "POST /api/story/p1/render"]);
   assert.deepEqual(chargeCalls, [{ renders: 1 }]);
   assert.deepEqual(result.structuredContent, {
     kind: "story", id: "p1", status: "running", percent: null, phase: "rendering", output: null, error: null, jobId: "rj1",
@@ -350,11 +353,30 @@ test("story_render checks the plan quota, charges one render and returns a story
 });
 
 test("story_render without plan quota is refused before any charge", async () => {
-  const { ctx, calls, chargeCalls } = ctxWith({}, { usage: SPENT_USAGE });
+  const { ctx, calls, chargeCalls } = ctxWith({ "GET /api/story/p1": READY }, { usage: SPENT_USAGE });
   const result = await byName.story_render.handler(ctx, { id: "p1" });
   assert.equal(result.structuredContent.error, "QUOTA_EXCEEDED");
-  assert.deepEqual(routesCalled(calls), ["GET /api/billing/usage"]);
+  assert.deepEqual(routesCalled(calls), ["GET /api/story/p1", "GET /api/billing/usage"]);
   assert.equal(chargeCalls.length, 0);
+});
+
+test("a second story_render while one runs is refused with SESSION_BUSY before any check or charge", async () => {
+  const rendering = { ok: true, project: PROJECT({ status: "rendering", render: { jobId: "rj1", status: "running" }, scenes: [scene("s1")] }) };
+  const { ctx, calls, chargeCalls } = ctxWith({ "GET /api/story/p1": rendering });
+  const result = await byName.story_render.handler(ctx, { id: "p1" });
+  assert.equal(result.structuredContent.error, "SESSION_BUSY");
+  assert.match(result.content[0].text, /jobs_wait/);
+  assert.deepEqual(routesCalled(calls), ["GET /api/story/p1"]);
+  assert.equal(chargeCalls.length, 0);
+});
+
+test("a render a restart stopped stays renderable", async () => {
+  const stopped = { ok: true, project: PROJECT({ status: "rendering", render: { jobId: "rj1", status: "running" }, scenes: [scene("s1")] }), interrupted: true };
+  const { ctx, calls, chargeCalls } = ctxWith({ "GET /api/story/p1": stopped, "POST /api/story/p1/render": { ok: true, jobId: "rj2" } });
+  const result = await byName.story_render.handler(ctx, { id: "p1" });
+  assert.equal(result.isError, undefined, JSON.stringify(result.structuredContent));
+  assert.deepEqual(routesCalled(calls), ["GET /api/story/p1", "GET /api/billing/usage", "POST /api/story/p1/render"]);
+  assert.deepEqual(chargeCalls, [{ renders: 1 }]);
 });
 
 // ---- story_cancel ----
