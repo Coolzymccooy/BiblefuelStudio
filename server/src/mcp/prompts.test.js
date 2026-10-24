@@ -89,7 +89,10 @@ test("make_short_from_verse with publish adds the YouTube steps and says consent
   assert.match(text, /twice/);
   assert.match(text, /youtube\.connected/);
   const publishStep = text.split("\n").find((line) => line.includes("`publish_youtube` with"));
-  assert.match(publishStep, /^\d+\. Only if auto-publish is off/, "the upload step is skipped when the render posts by itself");
+  assert.match(publishStep, /^\d+\. Only if the render did not already post to YouTube/, "the upload step is skipped when the render posts to YouTube by itself");
+  // Auto-publish to other platforms only still needs the YouTube upload, and budgets for both posts.
+  assert.match(text, /platforms include "youtube"/);
+  assert.match(text, /other platforms only, this run spends 2 publishes/);
   assert.match(text, /kind: "publish"/);
   // With auto-publish on there is no publish id to wait for, so the wait is conditional too.
   const waitStep = text.split("\n").find((line) => line.includes('kind: "publish"'));

@@ -40,8 +40,9 @@ const PUBLISH_CHECK =
 // H1: read the user's auto-publish before anything is spent. A render it posts must not be uploaded a second time.
 const PUBLISH_STATUS_STEP =
   "`social_status`, before anything is spent. If renderAutoPublish.enabled is true, the render will post the finished video by itself " +
-  "to renderAutoPublish.platforms and spend the one daily publish: tell the user so, and do NOT call `publish_youtube` afterwards, " +
-  "or the video is posted twice. Otherwise check youtube.connected is true; if it is not, stop and ask the user to connect YouTube in the app's Settings.";
+  "to renderAutoPublish.platforms and spend one daily publish: tell the user so. If those platforms include \"youtube\", do NOT call `publish_youtube` afterwards, " +
+  "or the video is posted twice. Otherwise (auto-publish off, or on for other platforms only) check youtube.connected is true; if it is not, stop and ask the user " +
+  "to connect YouTube in the app's Settings. With auto-publish on for other platforms only, this run spends 2 publishes: whoami must show at least 2 remaining.";
 
 const NO_PUBLISH_STATUS_STEP =
   "Only if whoami shows key.publishAllowed true: `social_status`. When renderAutoPublish.enabled is true the render will post the finished video " +
@@ -83,7 +84,7 @@ function shortCore({ reference, voice, publish }) {
 }
 
 const PUBLISH_STEPS = [
-  "Only if auto-publish is off (render_short's result said autoPublish \"off\"): `publish_youtube` with { videoPath: <output.path from the render>, title: <up to 100 characters, naming the reference> }. It needs the key's publish consent " +
+  "Only if the render did not already post to YouTube (render_short's result said autoPublish \"off\", or auto-publish's platforms do not include \"youtube\"): `publish_youtube` with { videoPath: <output.path from the render>, title: <up to 100 characters, naming the reference> }. It needs the key's publish consent " +
     "(PUBLISH_NOT_ALLOWED otherwise) and costs one daily publish. privacyStatus defaults to private: tell the user, or ask them before passing \"public\".",
   "Only if you called `publish_youtube` in the step before: `jobs_wait` with { kind: \"publish\", id: <the id publish_youtube returned> } until done. " +
     "The finished handle carries the video link. If auto-publish posted the video, skip this step and tell the user where it was posted.",
