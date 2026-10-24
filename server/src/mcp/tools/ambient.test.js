@@ -349,6 +349,34 @@ test("the kept choice is dropped when the change adds an unlicensed track or a b
   }
 });
 
+// R46: the choice covered the tracks the STORED mode plays; a mode switch puts the other list in use.
+const bedOf = (fields) => SESSION({ bed: { ...SESSION().bed, allowUncleared: true, ...fields } });
+
+async function bedChoiceSent(session, patch) {
+  const { ctx, calls } = ctxWith({ "GET /api/music/library": LIBRARY, "PATCH /api/ambient/a1/bed": { ok: true, project: session } }, { session });
+  await byName.ambient_update.handler(ctx, { id: "a1", section: "bed", patch });
+  return bedSent(calls).allowUncleared;
+}
+
+test("assemble to file: a stored but unused file with no licence drops the kept choice", async () => {
+  const session = bedOf({ mode: "assemble", trackRefs: ["mylib:old"], filePath: "mylib:unknown" });
+  assert.equal(await bedChoiceSent(session, { mode: "file" }), undefined);
+  const licensed = bedOf({ mode: "assemble", trackRefs: ["mylib:old"], filePath: "mylib:cleared" });
+  assert.equal(await bedChoiceSent(licensed, { mode: "file" }), true, "a file with a recorded licence keeps it");
+});
+
+test("file to assemble: stored but unused tracks with no licence drop the kept choice", async () => {
+  const session = bedOf({ mode: "file", filePath: "mylib:old", trackRefs: ["mylib:unknown"] });
+  assert.equal(await bedChoiceSent(session, { mode: "assemble" }), undefined);
+  const licensed = bedOf({ mode: "file", filePath: "mylib:old", trackRefs: ["mylib:cleared", "library:prayer-piano"] });
+  assert.equal(await bedChoiceSent(licensed, { mode: "assemble" }), true);
+});
+
+test("a file-mode bed keeps the choice for a change that plays the same file", async () => {
+  const session = bedOf({ mode: "file", filePath: "mylib:old", trackRefs: [] });
+  assert.equal(await bedChoiceSent(session, { volume: 1.1 }), true);
+});
+
 test("a bed the user never cleared sends no licence choice", async () => {
   const { ctx, calls } = ctxWith({ "PATCH /api/ambient/a1/bed": { ok: true, project: SESSION() } });
   await byName.ambient_update.handler(ctx, { id: "a1", section: "bed", patch: { volume: 1 } });

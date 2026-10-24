@@ -248,16 +248,33 @@ async function licensedRefs(ctx, refs) {
   return refs.every((ref) => recorded.has(ref));
 }
 
+/** The tracks a bed plays: its one file in file mode, else its track list. */
+function tracksInUse(bed) {
+  if (bed?.mode === "file") return bed.filePath ? [bed.filePath] : [];
+  return Array.isArray(bed?.trackRefs) ? bed.trackRefs : [];
+}
+
+/** The bed as the route will store it: the patch over the stored bed (filePath null clears it). */
+function mergedBed(stored, body) {
+  return {
+    mode: body.mode ?? stored?.mode,
+    trackRefs: Array.isArray(body.trackRefs) ? body.trackRefs : stored?.trackRefs,
+    filePath: body.filePath !== undefined ? body.filePath : stored?.filePath,
+  };
+}
+
 /**
  * R46: an agent never makes the licence choice. One the user already made in
- * the app (bed.allowUncleared) is sent again only when the change adds no
- * track that might lack a licence, so a volume change on such a bed still
- * works. The route resets the choice on every change it is not sent with.
+ * the app (bed.allowUncleared) covered the tracks the stored bed plays; it is
+ * sent again only when the bed after the change plays no track outside those
+ * that might lack a licence, so a volume change on such a bed still works.
+ * A mode switch puts the other list in use, so it counts as adding it.
+ * The route resets the choice on every change it is not sent with.
  */
 async function keptLicenceChoice(ctx, stored, body) {
   if (stored?.allowUncleared !== true) return {};
-  const before = new Set([...(stored.trackRefs || []), ...(stored.filePath ? [stored.filePath] : [])]);
-  const after = [...(body.trackRefs || []), ...(typeof body.filePath === "string" ? [body.filePath] : [])];
+  const before = new Set(tracksInUse(stored));
+  const after = tracksInUse(mergedBed(stored, body));
   const added = [...new Set(after)].filter((ref) => !before.has(ref) && !ref.startsWith("library:"));
   if (added.some((ref) => !ref.startsWith("mylib:"))) return {};
   if (added.length > 0 && !(await licensedRefs(ctx, added))) return {};
