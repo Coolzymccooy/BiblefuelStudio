@@ -102,7 +102,10 @@ function speechSentences(project, shot) {
   const voice = typeof member?.voice === "string" ? member.voice.trim() : "";
   const sentences = [];
   if (look) sentences.push(`${look}.`);
-  sentences.push(`${speaker} speaks${voice ? ` in ${voice}` : ""}, saying: "${shot.line}"`);
+  sentences.push(`${speaker} speaks, saying: "${shot.line}"`);
+  // A separate sentence, so a voice note reads right whether it is "bright and eager" or "a deep voice".
+  const voiceNote = voice.replace(/[.\s]+$/, "");
+  if (voiceNote) sentences.push(`${speaker}'s voice: ${voiceNote}.`);
   sentences.push(`Only ${speaker} speaks; everyone else stays silent with their mouth closed.`);
   return sentences;
 }

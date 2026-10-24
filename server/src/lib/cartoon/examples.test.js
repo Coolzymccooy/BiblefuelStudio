@@ -14,7 +14,7 @@ const EXPECTED = {
   "lost-lamb": { verse: "Luke 15:4", style: "family3d" },
   "david-giant": { verse: "1 Samuel 17:45", style: "family3d" },
   jonah: { verse: "Jonah 2:10", style: "clay" },
-  "loaves-fishes": { verse: "John 6:9", style: "family3d" },
+  "loaves-fishes": { verse: "John 6:9-10", style: "family3d" },
   ruth: { verse: "Ruth 1:16", style: "storybook" },
 };
 
@@ -71,20 +71,32 @@ test("every example parses with no ignored lines and fits 40 s", () => {
   }
 });
 
-test("every example has 2-3 cast with a look and a voice, and 4-7 short lines", () => {
+test("every example has 2-3 cast with a full look, a voice for each speaker, and 4-7 short lines", () => {
   for (const example of EXAMPLES) {
     const { parsed } = measure(example);
     assert.ok(parsed.cast.length >= 2 && parsed.cast.length <= 3, example.id);
+    const lines = spokenLines(parsed);
+    const speakers = new Set(lines.map((line) => line.speaker));
     for (const member of parsed.cast) {
       assert.ok(member.look.length >= 60, `${example.id}: ${member.name} has a full look`);
-      assert.ok(member.voice.length > 0, `${example.id}: ${member.name} has a voice`);
+      if (speakers.has(member.name)) assert.ok(member.voice.length > 0, `${example.id}: ${member.name} has a voice`);
     }
-    const lines = spokenLines(parsed);
     assert.ok(lines.length >= 4 && lines.length <= 7, `${example.id}: ${lines.length} lines`);
     for (const line of lines) assert.ok(words(line.text) <= 18, `${example.id}: "${line.text}"`);
-    const speakers = new Set(lines.map((line) => line.speaker));
-    assert.deepEqual([...speakers].sort(), parsed.cast.map((m) => m.name).sort(), `${example.id}: every cast member speaks`);
+    assert.ok(speakers.size >= 2, `${example.id}: at least two people speak`);
     assert.ok(parsed.scenes.length >= 2, `${example.id} changes scene at least once`);
+  }
+});
+
+test("the fish in Jonah acts but never speaks", () => {
+  const { parsed } = measure(EXAMPLES.find((e) => e.id === "jonah"));
+  assert.ok(parsed.cast.some((m) => m.name === "Fish"));
+  assert.ok(!spokenLines(parsed).some((line) => line.speaker === "Fish"));
+});
+
+test("no example names a notable biblical figure as an invented extra", () => {
+  for (const example of EXAMPLES) {
+    assert.ok(!/\bAbner\b/.test(example.markdown), example.id);
   }
 });
 

@@ -30,7 +30,7 @@ test("names the one speaker and quotes the line exactly", () => {
   const p = project();
   const text = clipPrompt(p, p.shots[0]);
   assert.ok(text.includes('saying: "I\'ve got you."'));
-  assert.ok(text.includes("Eli speaks in a bright young voice"));
+  assert.ok(text.includes(`Eli speaks, saying: "I've got you." Eli's voice: a bright young voice.`));
   assert.ok(text.includes("a young shepherd girl with braids and a blue headscarf."));
   assert.ok(text.includes("Only Eli speaks; everyone else stays silent with their mouth closed."));
 });
@@ -47,7 +47,25 @@ test("a silent shot says no one speaks", () => {
   const shot = { ...p.shots[0], speaker: null, line: null, action: "Pip trots over the hill." };
   const text = clipPrompt(p, shot);
   assert.ok(text.includes("No one speaks. Pip trots over the hill."));
-  assert.ok(!/speaks in/.test(text));
+  assert.ok(!/speaks,|voice:/.test(text));
+});
+
+test("an adjective-only voice note reads as its own sentence after the line", () => {
+  const p = project();
+  const withVoice = (voice) => ({ ...p, cast: { ...p.cast, Eli: { ...p.cast.Eli, voice } } });
+  const plain = clipPrompt(withVoice("bright and eager"), p.shots[0]);
+  assert.ok(plain.includes(`Eli speaks, saying: "I've got you." Eli's voice: bright and eager. Only Eli speaks;`));
+  const stopped = clipPrompt(withVoice("  bright and eager.  "), p.shots[0]);
+  assert.ok(stopped.includes("Eli's voice: bright and eager. Only Eli speaks;"));
+});
+
+test("an empty voice note leaves out the voice sentence", () => {
+  const p = project();
+  for (const voice of ["", "   ", undefined]) {
+    const text = clipPrompt({ ...p, cast: { ...p.cast, Eli: { ...p.cast.Eli, voice } } }, p.shots[0]);
+    assert.ok(text.includes(`Eli speaks, saying: "I've got you." Only Eli speaks;`), String(voice));
+    assert.ok(!/voice:/.test(text), String(voice));
+  }
 });
 
 test("a line with an action puts the speaker sentence first, then the action", () => {
