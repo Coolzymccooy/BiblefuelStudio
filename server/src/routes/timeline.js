@@ -175,6 +175,8 @@ async function runTimelineJob(job) {
     const proofResult = await _renderTimelineProof(job.plan, {
       serverRoot: SERVER_ROOT,
       outputDir,
+      // The shared files #112 let /render through, read from the global folder (R48).
+      allowShared: timelineFileScope({ userId: job.userId }).allowShared,
       outputPath: timelineOutputPath(outputDir, job.jobId),
       typographyPreset: job.typographyPreset || undefined,
       captionEnergy: job.captionEnergy || undefined,

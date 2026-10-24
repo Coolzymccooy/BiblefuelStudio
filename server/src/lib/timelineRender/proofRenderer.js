@@ -75,21 +75,46 @@ export function resolveTimelineAssetPath(rawPath, opts = {}) {
   // Any other URL form (`tcp:`, `http:/host` ...) is not a file here.
   if (isUrlLike(value)) return null;
 
+  const shared = sharedGlobalFile(outputDir, opts.allowShared);
+
   let resolved;
-  if (value.startsWith('/outputs/')) {
-    resolved = path.resolve(outputDir, value.slice('/outputs/'.length));
-    return isSubPath(resolved, outputDir) ? resolved : null;
-  }
-  if (value.startsWith('outputs/')) {
-    resolved = path.resolve(outputDir, value.slice('outputs/'.length));
+  const alias = value.startsWith('/outputs/') ? '/outputs/' : value.startsWith('outputs/') ? 'outputs/' : null;
+  if (alias) {
+    const rel = value.slice(alias.length);
+    resolved = path.resolve(outputDir, rel);
+    // Like confineUserPath: the caller's own file first, then a shared one in the global folder.
+    const global = path.resolve(OUTPUT_DIR, rel);
+    if (!fs.existsSync(resolved) && shared(global)) return global;
     return isSubPath(resolved, outputDir) ? resolved : null;
   }
   if (path.isAbsolute(rawPath)) {
     resolved = path.resolve(rawPath);
-    return (isSubPath(resolved, serverRoot) || isSubPath(resolved, outputDir)) ? resolved : null;
+    if (isSubPath(resolved, outputDir)) return resolved;
+    if (shared.applies(resolved)) return shared(resolved) ? resolved : null;
+    return isSubPath(resolved, serverRoot) ? resolved : null;
   }
   resolved = path.resolve(serverRoot, value);
+  if (shared.applies(resolved) && !shared(resolved)) return null;
   return isSubPath(resolved, serverRoot) ? resolved : null;
+}
+
+/**
+ * Which files in the global OUTPUT_DIR a render may read (R48). The owner's
+ * outputs ARE the global folder, so nothing extra applies. Anyone else's render
+ * is rooted in their own outputs and may read a global file only when
+ * `allowShared` accepts it: the shared voice, stock and own generated-image
+ * files #112 lets the route through. Any other global file is refused, even
+ * when the global folder sits inside the server root.
+ *
+ * @param {string} outputDir the render's own output folder
+ * @param {((absPath: string) => boolean)|undefined} allowShared
+ */
+function sharedGlobalFile(outputDir, allowShared) {
+  const globalDir = path.resolve(OUTPUT_DIR);
+  const applies = (abs) => outputDir !== globalDir && isSubPath(abs, globalDir);
+  const accept = (abs) => applies(abs) && typeof allowShared === 'function' && Boolean(allowShared(abs));
+  accept.applies = applies;
+  return accept;
 }
 
 // Media lives on the ASSET; clips reference it by assetId. These used to read

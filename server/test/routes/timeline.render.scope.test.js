@@ -23,6 +23,7 @@ const { default: request } = await import("supertest");
 const timelineModule = await import("../../src/routes/timeline.js");
 const timelineRouter = timelineModule.default;
 const { _resetTimelineRenderJobsForTest, _setTimelineRendererForTest } = timelineModule;
+const { buildProofRenderCommand } = await import("../../src/lib/timelineRender/proofRenderer.js");
 
 const userDir = path.join(process.env.DATA_DIR, "users", "me");
 const mine = path.join(userDir, "outputs");
@@ -185,6 +186,39 @@ describe("/api/timeline/render asset scope", () => {
     const other = await render(ctx, f.genOther);
     assert.equal(other.status, 403, JSON.stringify(other.body));
     assert.equal(other.body.error, "PATH_OUTSIDE_MEDIA");
+  });
+
+  test("a non-owner's shared voice file and own generated image reach the renderer's command from the global folder (R48)", async () => {
+    // The real command builder with the options the job hands the renderer: the caller's own
+    // outputDir as its root, and the global OUTPUT_DIR (outside the server root here) for shared files.
+    let built = null;
+    _setTimelineRendererForTest(async (plan, opts) => {
+      built = buildProofRenderCommand(plan, opts);
+      renders.push(plan);
+      return { ok: true, outputPath: path.join(root, "x.mp4"), publicUrl: "/outputs/timeline/x.mp4", ignoredPlaceholders: 0, generatedVoiceovers: [] };
+    });
+    const body = project(f.own);
+    body.assets.vo = { id: "vo", kind: "voiceover", source: "upload", label: "Voice", path: "/outputs/tts-edge-abc.mp3", durationSec: 5 };
+    body.assets.img = { id: "img", kind: "broll", source: "upload", label: "Picture", path: f.genMine, durationSec: 5 };
+    body.tracks.push(
+      { id: "tvo", kind: "voiceover", label: "Voice", clips: [{ id: "cvo", assetId: "vo", startSec: 0, durationSec: 5 }] },
+      { id: "tb", kind: "broll", label: "Pictures", clips: [{ id: "cb", assetId: "img", startSec: 1, durationSec: 3 }] },
+    );
+    const res = await request(appFor(ctx)).post("/api/timeline/render").send({ project: body });
+    assert.equal(res.status, 202, JSON.stringify(res.body));
+    await settle();
+    assert.ok(built?.ok, JSON.stringify(built));
+    const inputs = built.args.filter((_, i) => built.args[i - 1] === "-i").map((p) => path.resolve(p));
+    assert.ok(inputs.includes(path.resolve(fs.realpathSync(f.tts))), `voice missing from ${inputs}`);
+    assert.ok(inputs.includes(path.resolve(fs.realpathSync(f.genMine))), `picture missing from ${inputs}`);
+    assert.ok(inputs.includes(path.resolve(fs.realpathSync(f.own))), `main missing from ${inputs}`);
+    // Another user's picture is still refused before anything is queued.
+    const other = project(f.own);
+    other.assets.img = { ...body.assets.img, path: f.genOther };
+    other.tracks.push(body.tracks[2]);
+    const refused = await request(appFor(ctx)).post("/api/timeline/render").send({ project: other });
+    assert.equal(refused.status, 403, JSON.stringify(refused.body));
+    assert.equal(refused.body.error, "PATH_OUTSIDE_MEDIA");
   });
 
   test("the owner still renders files in the global output folder", async () => {
