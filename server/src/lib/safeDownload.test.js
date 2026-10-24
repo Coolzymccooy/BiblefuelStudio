@@ -97,6 +97,21 @@ describe("isPublicAddress", () => {
     }
   });
 
+  test("IPv6 forms that embed or tunnel to IPv4 are refused unless the IPv4 is public", () => {
+    for (const ip of [
+      "::ffff:0:7f00:1", "::ffff:0:a9fe:a9fe", "::ffff:0:808:808", // IPv4-translated (SIIT): never public
+      "2002:7f00:1::", "2002:a9fe:a9fe::1", "2002:a00:1::", "2002:c0a8:101::", // 6to4 around a private IPv4
+      "2001:0:4136:e378:8000:63bf:3fff:fdd2", "2001::1", // Teredo
+      "64:ff9b:1::a9fe:a9fe", "64:ff9b:1:abcd::1", // local-use NAT64
+      "2001:db8::1", // documentation
+    ]) {
+      assert.equal(isPublicAddress(ip), false, ip);
+    }
+    for (const ip of ["2002:808:808::1", "2001:4860:4860::8888", "64:ff9b::808:808", "2001:db9::1"]) {
+      assert.equal(isPublicAddress(ip), true, ip);
+    }
+  });
+
   test("non-IP input is not public", () => {
     for (const bad of ["", "localhost", "example.com", "999.1.1.1", "1.2.3", null, undefined]) {
       assert.equal(isPublicAddress(bad), false, String(bad));

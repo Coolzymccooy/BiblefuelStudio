@@ -109,13 +109,28 @@ function isPublicIPv6(groups) {
   if ((g0 & 0xffc0) === 0xfe80) return false; // fe80::/10 link-local
   if ((g0 & 0xffc0) === 0xfec0) return false; // fec0::/10 site-local (deprecated)
   if ((g0 & 0xff00) === 0xff00) return false; // multicast
+  if (isIPv4TunnelOrLocalUse(groups)) return false;
   const embedded = [g6 >> 8, g6 & 0xff, g7 >> 8, g7 & 0xff];
   // ::ffff:a.b.c.d (mapped), ::a.b.c.d (compatible), 64:ff9b::a.b.c.d (NAT64)
   if (lowZero && (g5 === 0xffff || g5 === 0)) return isPublicIPv4(embedded);
   if (g0 === 0x64 && g1 === 0xff9b && g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0) {
     return isPublicIPv4(embedded);
   }
+  // 2002::/16 6to4: the IPv4 gateway sits in groups 1-2.
+  if (g0 === 0x2002) return isPublicIPv4([g1 >> 8, g1 & 0xff, g2 >> 8, g2 & 0xff]);
   return true;
+}
+
+/**
+ * Ranges that never name a public host directly: ::ffff:0:a.b.c.d
+ * (IPv4-translated, SIIT), 2001:0::/32 (Teredo), 64:ff9b:1::/48 (local-use
+ * NAT64) and 2001:db8::/32 (documentation).
+ */
+function isIPv4TunnelOrLocalUse([g0, g1, g2, g3, g4, g5]) {
+  if (g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0xffff && g5 === 0) return true;
+  if (g0 === 0x2001 && g1 === 0) return true;
+  if (g0 === 0x2001 && g1 === 0xdb8) return true;
+  return g0 === 0x64 && g1 === 0xff9b && g2 === 1;
 }
 
 /**
