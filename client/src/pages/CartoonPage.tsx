@@ -4,7 +4,7 @@
  * it are satisfied (see `reachableSteps`), and a saved cartoon opens at the
  * furthest step it has reached.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { ScreenHeader } from '../components/ui/ScreenHeader';
@@ -12,6 +12,9 @@ import { useAuth } from '../hooks/useAuth';
 import type { CartoonProject } from '../lib/cartoonTypes';
 import { CARTOON_STEPS, furthestStep, reachableSteps, type CartoonStepId } from '../components/cartoon/steps';
 import { ScriptStep } from '../components/cartoon/ScriptStep';
+import { CastStep } from '../components/cartoon/CastStep';
+import { StyleStep } from '../components/cartoon/StyleStep';
+import { ShotListStep } from '../components/cartoon/ShotListStep';
 import { useCartoonProject } from '../components/cartoon/useCartoonProject';
 
 function StepNav({ open, active, onSelect }: { open: CartoonStepId[]; active: CartoonStepId; onSelect: (id: CartoonStepId) => void }) {
@@ -46,7 +49,17 @@ function StepNav({ open, active, onSelect }: { open: CartoonStepId[]; active: Ca
   );
 }
 
-function StepPanel({ step, project, onSaved }: { step: CartoonStepId; project: CartoonProject | null; onSaved: (p: CartoonProject) => void }) {
+interface PanelProps {
+  step: CartoonStepId;
+  project: CartoonProject | null;
+  /** Applies a project an action returned. */
+  onSaved: (p: CartoonProject) => void;
+  /** The Script step's Next: apply, then open Cast once it can be reached. */
+  onScriptSaved: (p: CartoonProject) => void;
+  onGo: (step: CartoonStepId) => void;
+}
+
+function StepPanel({ step, project, onSaved, onScriptSaved, onGo }: PanelProps) {
   const info = CARTOON_STEPS.find((s) => s.id === step) ?? CARTOON_STEPS[0];
   return (
     <section aria-labelledby="cartoon-step-heading" className="space-y-4">
@@ -54,9 +67,13 @@ function StepPanel({ step, project, onSaved }: { step: CartoonStepId; project: C
         <h2 id="cartoon-step-heading" className="text-lg font-semibold text-bf-cream">{info.label}</h2>
         <p className="text-help">{info.summary}</p>
       </div>
-      {step === 'script' && <ScriptStep project={project} onSaved={onSaved} />}
-      {/* TODO(Task 16): the Cast and Style steps render here. */}
-      {/* TODO(Task 17): the Shots, Film and Finish steps render here. */}
+      {step === 'script' && <ScriptStep project={project} onSaved={onScriptSaved} />}
+      {step === 'cast' && project && <CastStep project={project} onSaved={onSaved} onNext={() => onGo('style')} />}
+      {step === 'style' && project && <StyleStep project={project} onSaved={onSaved} onNext={() => onGo('shots')} />}
+      {step === 'shots' && project && (
+        <ShotListStep project={project} onSaved={onSaved} onNext={() => onGo('film')} onGoCast={() => onGo('cast')} />
+      )}
+      {/* TODO(Task 17): the Film and Finish steps render here. */}
     </section>
   );
 }
@@ -64,12 +81,17 @@ function StepPanel({ step, project, onSaved }: { step: CartoonStepId; project: C
 function Shell({ project, onSaved }: { project: CartoonProject | null; onSaved?: (p: CartoonProject) => void }) {
   const [chosen, setChosen] = useState<CartoonStepId>(() => furthestStep(project));
   const open = reachableSteps(project);
-  // A poll can close a step (a portrait made again needs approving again): fall back to the furthest open one.
+  // An edit or a poll can close a step (a new style needs the portraits approved again):
+  // fall back to the furthest open one, and stay there rather than jump back once it reopens.
   const active = open.includes(chosen) ? chosen : open[open.length - 1];
-  const saved = (p: CartoonProject) => {
+  useEffect(() => { if (active !== chosen) setChosen(active); }, [active, chosen]);
+  const saved = (p: CartoonProject) => { onSaved?.(p); };
+  const scriptSaved = (p: CartoonProject) => {
     onSaved?.(p);
     if (reachableSteps(p).includes('cast')) setChosen('cast');
   };
+  // Next is only offered once the next step's condition holds, so the target is open by then.
+  const go = (step: CartoonStepId) => setChosen(step);
   return (
     <div className="space-y-6">
       <div>
@@ -84,7 +106,7 @@ function Shell({ project, onSaved }: { project: CartoonProject | null; onSaved?:
         />
       </div>
       <StepNav open={open} active={active} onSelect={setChosen} />
-      <StepPanel step={active} project={project} onSaved={saved} />
+      <StepPanel step={active} project={project} onSaved={saved} onScriptSaved={scriptSaved} onGo={go} />
     </div>
   );
 }
