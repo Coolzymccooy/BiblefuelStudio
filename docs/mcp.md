@@ -360,10 +360,11 @@ Two limits apply, and the lower one wins.
 | `images` | Image generation | 30 |
 | `tts` | Voice synthesis calls | 30 |
 | `publishes` | Publishing calls, a schedule created, and a render that the user's auto-publish will post | 3 |
+| `imports` | Files stored on the server from a URL: `media_import_url` and `library_items` `download` | 20 |
 
 A call that would cross a cap is refused before anything runs, so nothing is spent. The error is `MCP_CAP_REACHED` with `bucket`, `scope`, `used`, `limit` and `resetsAt` (an ISO time, the next midnight UTC). `scope` is `key` when this key's own cap is reached, and `user` when your account's shared cap is reached across all your agents. Stop, tell the user, and retry after `resetsAt`.
 
-`whoami` returns `caps` (this key) and `accountCaps` (all your keys together), each with `used`, `limit` and `remaining` for each bucket. Read it before starting a long plan. The server operator sets the ceilings with `MCP_DAILY_RENDERS`, `MCP_DAILY_AI_VIDEO_USD`, `MCP_DAILY_IMAGES`, `MCP_DAILY_TTS` and `MCP_DAILY_PUBLISHES`. The key owner can set lower numbers for one key under **Daily limits** on **Settings, Connected agents**.
+`whoami` returns `caps` (this key) and `accountCaps` (all your keys together), each with `used`, `limit` and `remaining` for each bucket. Read it before starting a long plan. The server operator sets the ceilings with `MCP_DAILY_RENDERS`, `MCP_DAILY_AI_VIDEO_USD`, `MCP_DAILY_IMAGES`, `MCP_DAILY_TTS`, `MCP_DAILY_PUBLISHES` and `MCP_DAILY_IMPORTS`. The key owner can set lower numbers for one key under **Daily limits** on **Settings, Connected agents**.
 
 ## What a key can never do
 

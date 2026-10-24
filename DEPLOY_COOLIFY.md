@@ -38,8 +38,9 @@ Settings (see `docs/mcp.md`). All of these are optional; defaults in brackets.
   host in `CORS_ORIGIN`. When set it replaces that list entirely.
 - Daily ceilings per agent key, reset at midnight UTC, for every plan:
   `MCP_DAILY_RENDERS` (10), `MCP_DAILY_AI_VIDEO_USD` (2), `MCP_DAILY_IMAGES`
-  (30), `MCP_DAILY_TTS` (30), `MCP_DAILY_PUBLISHES` (3). A user can lower a
-  key's limits in Settings but never raise them above these.
+  (30), `MCP_DAILY_TTS` (30), `MCP_DAILY_PUBLISHES` (3), `MCP_DAILY_IMPORTS`
+  (20; files stored from a URL). A user can lower a key's limits in Settings
+  but never raise them above these.
 - `IMPORT_URL_TIMEOUT_MS` (600000): overall deadline for one URL import.
 - `MAX_INPUT_MB` (200): the largest render input, and also the cap on a URL
   import's download.

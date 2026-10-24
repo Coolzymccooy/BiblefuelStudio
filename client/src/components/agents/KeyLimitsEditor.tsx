@@ -102,7 +102,7 @@ export function KeyLimitsEditor({ agentKey, ceilings, onSave }: KeyLimitsEditorP
         // rather than the browser blocking the form with its own message.
         <form id={panelId} noValidate onSubmit={submit} aria-label={`Daily limits for ${agentKey.name}`} className="mt-3 space-y-3">
           <p className="text-help">Lower a limit for this key. The most each can be is the server's ceiling.</p>
-          <div className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-5">
+          <div className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
             {CAP_BUCKETS.map((bucket) => {
               const inputId = `${panelId}-${bucket}`;
               const hintId = `${inputId}-max`;

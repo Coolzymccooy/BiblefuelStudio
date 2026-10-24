@@ -15,7 +15,7 @@ import { DATA_DIR } from "../paths.js";
  * as all zeros. Writes are serialised through one in-process promise chain.
  */
 
-export const CAP_BUCKETS = ["renders", "aiVideoUsd", "images", "tts", "publishes"];
+export const CAP_BUCKETS = ["renders", "aiVideoUsd", "images", "tts", "publishes", "imports"];
 
 const DEFAULT_CEILINGS = {
   renders: 10,
@@ -23,6 +23,7 @@ const DEFAULT_CEILINGS = {
   images: 30,
   tts: 30,
   publishes: 3,
+  imports: 20,
 };
 
 const ENV_NAMES = {
@@ -31,6 +32,7 @@ const ENV_NAMES = {
   images: "MCP_DAILY_IMAGES",
   tts: "MCP_DAILY_TTS",
   publishes: "MCP_DAILY_PUBLISHES",
+  imports: "MCP_DAILY_IMPORTS",
 };
 
 // Absorbs float drift when fractional amounts (aiVideoUsd) accumulate.
@@ -66,7 +68,7 @@ function assertBucket(bucket) {
   if (!CAP_BUCKETS.includes(bucket)) throw new Error(`caps: unknown bucket ${bucket}`);
 }
 
-/** @returns {{renders:number, aiVideoUsd:number, images:number, tts:number, publishes:number}} */
+/** @returns {{renders:number, aiVideoUsd:number, images:number, tts:number, publishes:number, imports:number}} */
 export function ceilings() {
   return Object.fromEntries(
     CAP_BUCKETS.map((bucket) => [bucket, readEnvNumber(ENV_NAMES[bucket], DEFAULT_CEILINGS[bucket])]),

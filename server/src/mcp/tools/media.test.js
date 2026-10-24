@@ -26,6 +26,19 @@ function seed(name) {
   return file.replace(/\\/g, "/");
 }
 
+test("media_import_url is capped at one import and says the file is stored and counted", () => {
+  const def = mediaTools.find((t) => t.name === "media_import_url");
+  assert.deepEqual(def.caps, { imports: 1 });
+  assert.match(def.description, /stored on the server/);
+  assert.match(def.description, /daily imports cap/);
+});
+
+test("whoami lists the imports bucket", async () => {
+  const me = await client.callTool({ name: "whoami", arguments: {} });
+  assert.equal(me.structuredContent.caps.imports.limit, 20);
+  assert.equal(me.structuredContent.accountCaps.imports.limit, 20);
+});
+
 test("tools/list includes the four media tools", async () => {
   const { tools } = await client.listTools();
   const names = tools.map((t) => t.name);

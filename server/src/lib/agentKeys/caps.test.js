@@ -16,6 +16,7 @@ const ENV_NAMES = [
   "MCP_DAILY_IMAGES",
   "MCP_DAILY_TTS",
   "MCP_DAILY_PUBLISHES",
+  "MCP_DAILY_IMPORTS",
 ];
 
 function clearEnv() {
@@ -45,7 +46,11 @@ test("ceilings read env with the spec defaults", () => {
     images: 30,
     tts: 30,
     publishes: 3,
+    imports: 20,
   });
+  process.env.MCP_DAILY_IMPORTS = "7";
+  assert.equal(caps.ceilings().imports, 7);
+  delete process.env.MCP_DAILY_IMPORTS;
   process.env.MCP_DAILY_RENDERS = "4";
   process.env.MCP_DAILY_AI_VIDEO_USD = "0.5";
   assert.equal(caps.ceilings().renders, 4);
