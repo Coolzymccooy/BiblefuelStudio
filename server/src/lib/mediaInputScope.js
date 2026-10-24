@@ -68,6 +68,25 @@ export function isSharedGeneratedImage(absPath, userId) {
   return SERIES_DIR.test(dir);
 }
 
+/**
+ * A local link a saved library item may carry (url, previewUrl, image,
+ * files[].link): the caller's own file, or a generated image made for them
+ * (#112). Returns its real path, or null for a missing file inside the
+ * caller's folder. Throws PATH_OUTSIDE_MEDIA for anything else, a URL
+ * included: callers let http(s) stock links through before asking.
+ *
+ * @param {string} value
+ * @param {{ userId?: string, outputDir?: string }} ctx
+ */
+export function confineLibraryLink(value, ctx) {
+  try {
+    return confineUserPath(value, ctx, { allowShared: (abs) => isSharedGeneratedImage(abs, ctx?.userId) });
+  } catch (err) {
+    if (err instanceof UserPathError && err.code === "FILE_NOT_FOUND") return null;
+    throw err;
+  }
+}
+
 function scopeFor(ctx) {
   return { allowShared: (abs) => isSharedTtsFile(abs) || isSharedGeneratedImage(abs, ctx?.userId) };
 }
