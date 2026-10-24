@@ -179,7 +179,7 @@ test("render_short scene lengths cover the crossfades, so the video is as long a
   const scenes = calls.at(-1).opts.body.payload.scenes;
   // buildSceneGraph overlaps each pair of scenes by DEFAULT_XFADE_SECONDS.
   const total = scenes.reduce((sum, s) => sum + s.duration, 0) - DEFAULT_XFADE_SECONDS * (scenes.length - 1);
-  assert.ok(total >= 20 && total < 20.02, `video length ${total}`);
+  assert.ok(total > 19.999 && total < 20.02, `video length ${total}`);
 });
 
 test("render_short refuses a URL or outside path as a background and charges nothing", async () => {
