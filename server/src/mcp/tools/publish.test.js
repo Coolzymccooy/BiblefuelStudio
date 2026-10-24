@@ -229,12 +229,27 @@ test("publish_youtube sends the confined video as its /outputs/ link and returns
   assert.deepEqual(result.structuredContent, { kind: "publish", id: "pub_1", status: "running", joined: false });
 });
 
-test("publish_youtube passes a generated-image thumbnail link through and refuses other outside pictures", async () => {
-  const dir = mediaWith("clip.mp4");
-  const ok = ctxWith({ "POST /api/social/youtube/publish": { ok: true, jobId: "pub_2" } }, CONSENT);
-  await byName.publish_youtube.handler(ok.ctx, { videoPath: path.join(dir, "clip.mp4"), title: "T", thumbnailPath: "/outputs/genImg/auto-u1/part-1.png" });
-  assert.equal(ok.calls[0].opts.body.thumbnailPath, "/outputs/genImg/auto-u1/part-1.png");
-  for (const bad of ["/outputs/genImg/../../users.json", "https://evil.test/t.png", "C:/Windows/t.png"]) {
+test("publish_youtube takes the caller's own generated image as a thumbnail and refuses another user's", async () => {
+  const dir = fs.mkdtempSync(path.join(testApp.dataDir, "publish-genimg-"));
+  const sharedDir = fs.mkdtempSync(path.join(testApp.dataDir, "publish-shared-"));
+  fs.writeFileSync(path.join(dir, "clip.mp4"), "x");
+  for (const series of ["genvis-u_unit-ab12", "genvis-u_other-ab12", "auto-u_unit"]) {
+    fs.mkdirSync(path.join(sharedDir, "genImg", series), { recursive: true });
+    fs.writeFileSync(path.join(sharedDir, "genImg", series, "part-1.png"), "x");
+  }
+  _setScopeForTests(async () => ({ outputDir: dir, sharedDir }));
+  const mine = ctxWith({ "POST /api/social/youtube/publish": { ok: true, jobId: "pub_2" } }, CONSENT);
+  const accepted = await byName.publish_youtube.handler(mine.ctx, { videoPath: path.join(dir, "clip.mp4"), title: "T", thumbnailPath: "/outputs/genImg/genvis-u_unit-ab12/part-1.png" });
+  assert.notEqual(accepted.isError, true, accepted.content?.[0]?.text);
+  assert.equal(mine.calls[0].opts.body.thumbnailPath, "/outputs/genImg/genvis-u_unit-ab12/part-1.png");
+  for (const bad of [
+    "/outputs/genImg/genvis-u_other-ab12/part-1.png",
+    "/outputs/genImg/auto-u_unit/part-1.png",
+    "/outputs/genImg/genvis-u_unit-ab12/../genvis-u_other-ab12/part-1.png",
+    "/outputs/genImg/../../users.json",
+    "https://evil.test/t.png",
+    "C:/Windows/t.png",
+  ]) {
     const refused = ctxWith({}, CONSENT);
     const result = await byName.publish_youtube.handler(refused.ctx, { videoPath: path.join(dir, "clip.mp4"), title: "T", thumbnailPath: bad });
     assert.equal(result.isError, true, bad);

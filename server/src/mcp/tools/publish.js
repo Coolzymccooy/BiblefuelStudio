@@ -21,9 +21,6 @@ const ASPECTS = ["portrait", "landscape", "square"];
 const SAVED_ID = /^[\w-]{1,100}$/;
 const YOUTUBE_VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
 const STYLE_WORD = /^[\w-]{1,40}$/;
-// Images that image generation wrote to the shared genImg folder: the route
-// confines these to genImg itself; no dots in a segment, so no traversal.
-const GENERATED_IMAGE = /^\/outputs\/genImg\/(?:[\w-]+\/){0,3}[\w-]+\.(?:png|jpe?g|webp)$/i;
 // At most once an hour: five fields, the minute one a single number.
 const HOURLY_AT_MOST = /^\d{1,2}$/;
 
@@ -55,7 +52,6 @@ async function webhookRefusal(ctx, webhookId) {
 
 async function thumbnailLink(ctx, thumbnailPath) {
   if (thumbnailPath === undefined) return { link: undefined };
-  if (GENERATED_IMAGE.test(thumbnailPath)) return { link: thumbnailPath };
   return videoLink(ctx, thumbnailPath);
 }
 
@@ -129,7 +125,7 @@ const publishYoutube = {
   description:
     "Upload a finished video from your media folder (for example the output path jobs_wait gave for render_short) to the user's connected YouTube channel. " +
     "Needs the key's publish switch and a connected channel (see social_status). title is required (up to 100 characters). privacyStatus defaults to private; publishAt (ISO time) schedules it and keeps it private until then. " +
-    "Optional: a thumbnail (a picture in your media folder or an images_generate path; thumbnailTitle draws the title on it), a playlist (playlistId from social_status, or newPlaylistTitle). " +
+    "Optional: a thumbnail (a picture in your media folder or a path images_generate returned; thumbnailTitle draws the title on it), a playlist (playlistId from social_status, or newPlaylistTitle). " +
     "Returns a handle of kind publish: call jobs_wait with kind publish and the id; the finished handle carries the video link. Costs one daily publish. An upload takes from seconds to several minutes; two may run at once.",
   inputSchema: {
     videoPath: z.string().min(1).max(1000).describe("The video in your media folder (a path or /outputs/ link from a render). URLs are refused."),
@@ -143,7 +139,7 @@ const publishYoutube = {
     playlistId: z.string().regex(SAVED_ID).optional().describe("A playlist id from social_status."),
     newPlaylistTitle: z.string().trim().min(1).max(150).optional().describe("Add to the playlist with this name, made if the channel has none."),
     syntheticMedia: z.boolean().optional().describe("YouTube's question: is the content altered or synthetic (AI)? Answer for the user if you know."),
-    thumbnailPath: z.string().max(1000).optional().describe("A picture in your media folder, or an /outputs/genImg/... path from images_generate."),
+    thumbnailPath: z.string().max(1000).optional().describe("A picture in your media folder, or a path images_generate returned to you."),
     thumbnailTitle: z.boolean().optional().describe("Draw the title on the thumbnail."),
     thumbnailTagline: z.string().max(60).optional().describe("A short line under the drawn title."),
   },
@@ -208,11 +204,11 @@ const youtubeThumbnail = {
   title: "Set a YouTube thumbnail",
   description:
     "Replace the thumbnail of a video already on the user's connected channel. videoId is the 11-character YouTube id (from a finished publish_youtube handle). " +
-    "thumbnailPath is a picture in your media folder or an images_generate /outputs/genImg/... path; thumbnailTitle draws title on it. " +
+    "thumbnailPath is a picture in your media folder or a path images_generate returned to you; thumbnailTitle draws title on it. " +
     "Needs the key's publish switch; costs no daily publish (it changes an existing upload). The channel needs phone verification for custom thumbnails. Takes a few seconds.",
   inputSchema: {
     videoId: z.string().regex(YOUTUBE_VIDEO_ID, "videoId must be an 11-character YouTube video id").describe("The YouTube video id."),
-    thumbnailPath: z.string().min(1).max(1000).describe("A picture in your media folder, or an /outputs/genImg/... path."),
+    thumbnailPath: z.string().min(1).max(1000).describe("A picture in your media folder, or a path images_generate returned to you."),
     thumbnailTitle: z.boolean().optional().describe("Draw the title on the picture."),
     title: z.string().trim().max(100).optional().describe("The text to draw when thumbnailTitle is true."),
     thumbnailTagline: z.string().max(60).optional().describe("A short line under the drawn title."),
