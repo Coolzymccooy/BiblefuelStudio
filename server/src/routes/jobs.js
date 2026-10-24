@@ -7,7 +7,7 @@ import { readLibrary } from "../lib/library.js";
 import { consumeQuota } from "../middleware/quota.js";
 import { DATA_DIR, OUTPUT_DIR, resolveOutputAlias, isLocalOrRemote } from "../lib/mediaThumb.js";
 import { isOwnerCtx } from "../lib/paths.js";
-import { assertPayloadPathsInScope, resolveOutputAliasForCtx } from "../lib/mediaInputScope.js";
+import { assertPayloadPathsInScope, resolveOutputAliasForCtx, scopeMediaInput } from "../lib/mediaInputScope.js";
 import { sendUserPathError, UserPathError } from "../lib/userPathScope.js";
 import { tiktokAccountFor } from "../lib/social/zernioConnect.js";
 import { generateScripts } from "../lib/generateScripts.js";
@@ -389,6 +389,17 @@ export function resolveAssetPath(pathOrId, dataDir) {
   const lib = readLibrary(dataDir || currentDataDir());
   const item = lib.items.find(x => String(x.id) === normalized);
   if (item) {
+    // A saved item's local links must be the caller's own (#112). Ids are
+    // also picked at RUN time (auto backgrounds, campaign scenes), past the
+    // payload check, so this is where they are confined.
+    if (!unconfined) {
+      try {
+        scopeMediaInput(normalized, currentJobCtx);
+      } catch (err) {
+        if (err instanceof UserPathError) throw new Error(`${err.code}: ${err.message}`);
+        throw err;
+      }
+    }
     if (Array.isArray(item.files) && item.files.length > 0) {
       const sorted = item.files.slice().sort((a, b) => (b.width || 0) - (a.width || 0));
       const hd = sorted.find(f => f.quality === 'hd') || sorted[0];

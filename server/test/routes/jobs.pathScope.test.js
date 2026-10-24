@@ -188,6 +188,63 @@ describe("retry and run time re-check the stored payload", () => {
   });
 });
 
+// Review finding (HIGH): library ids picked at RUN time (auto backgrounds,
+// campaign scenes) never pass the payload check, and the resolver handed back
+// a saved item's local link unchecked.
+describe("library item links resolved at run time are confined", () => {
+  const planted = () => fs.writeFileSync(path.join(userDir, "library.json"), JSON.stringify({ items: [
+    { id: "evil", files: [{ link: f.theirs, quality: "hd", width: 1 }] },
+  ] }));
+  const restore = () => fs.writeFileSync(path.join(userDir, "library.json"), JSON.stringify({ items: [
+    { id: "801", url: "https://videos.example.com/stock.mp4" },
+    { id: "802", url: f.theirs, previewUrl: f.theirs },
+  ] }));
+
+  test("resolveAssetPath refuses a saved item whose link is another tenant's file", () => {
+    jobs._setJobCtxForTest(ctx);
+    try {
+      for (const id of ["evil", "802"]) {
+        if (id === "evil") planted(); else restore();
+        assert.throws(() => jobs.resolveAssetPath(id), /PATH_OUTSIDE_MEDIA/, id);
+      }
+      restore();
+      assert.equal(jobs.resolveAssetPath("801"), "https://videos.example.com/stock.mp4");
+    } finally {
+      restore();
+      jobs._resetJobCtxForTest();
+    }
+  });
+
+  test("the owner's library links resolve as before", () => {
+    planted();
+    jobs._setJobCtxForTest({ ...ownerCtx, dataDir: userDir });
+    try {
+      assert.equal(jobs.resolveAssetPath("evil"), f.theirs);
+    } finally {
+      restore();
+      jobs._resetJobCtxForTest();
+    }
+  });
+
+  test("an auto-background render picking the planted item fails with PATH_OUTSIDE_MEDIA and never reads it", async () => {
+    planted();
+    const cap = captureFfmpegReports(path.join(root, "reports-auto"));
+    jobs._setJobCtxForTest(ctx);
+    try {
+      await assert.rejects(
+        () => jobs._executeJobForTest({ id: "job_auto", type: "render_video", payload: { autoBackground: true, lines: ["Peace be with you"], durationSec: 2 } }),
+        /PATH_OUTSIDE_MEDIA/,
+      );
+    } finally {
+      jobs._resetJobCtxForTest();
+      cap.stop();
+      restore();
+    }
+    const readSecret = cap.commands().filter((c) => c.tokens.some((t) => path.resolve(t) === path.resolve(f.theirs)));
+    assert.deepEqual(readSecret, []);
+  });
+});
+
 describe("jobs.resolveAssetPath follows the job's ctx", () => {
   test("a non-owner's /outputs/ alias resolves into their own folder, never the global one", () => {
     jobs._setJobCtxForTest(ctx);
