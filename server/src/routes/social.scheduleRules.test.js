@@ -61,3 +61,39 @@ describe("R39: schedules run at most once an hour", () => {
     await request(a).post("/api/social/config").send({ schedules: [{ ...LEGACY, enabled: false }] }).expect(200);
   });
 });
+
+describe("R35: at most 5 agent-made schedules, enforced where the schedule is written", () => {
+  const agentMade = (n) => Array.from({ length: n }, (_, i) => ({ ...auto(), id: `sch_a${i}`, createdByAgentKeyId: `ak_${i}` }));
+
+  test("a sixth agent schedule is refused with SCHEDULE_LIMIT and not written", async () => {
+    const { a, dataDir } = app({ schedules: [...agentMade(5), { ...auto(), id: "sch_web" }] });
+    const res = await request(a).post("/api/social/schedules").send({ schedule: auto({ createdByAgentKeyId: "ak_new" }) });
+    assert.equal(res.status, 409);
+    assert.equal(res.body.error, "SCHEDULE_LIMIT");
+    assert.match(res.body.hint, /5/);
+    assert.equal(res.body.limit, 5);
+    assert.equal(stored(dataDir).length, 6);
+  });
+
+  test("below the limit an agent schedule is written; schedules made in the app do not count", async () => {
+    const { a, dataDir } = app({ schedules: [...agentMade(4), { ...auto(), id: "w1" }, { ...auto(), id: "w2" }] });
+    await request(a).post("/api/social/schedules").send({ schedule: auto({ createdByAgentKeyId: "ak_new" }) }).expect(200);
+    assert.equal(stored(dataDir).filter((s) => s.createdByAgentKeyId).length, 5);
+  });
+
+  test("the app can still add schedules, and re-save an agent schedule, at the limit", async () => {
+    const { a } = app({ schedules: agentMade(5) });
+    await request(a).post("/api/social/schedules").send({ schedule: auto() }).expect(200);
+    await request(a).post("/api/social/schedules").send({ schedule: { ...agentMade(5)[0], enabled: false } }).expect(200);
+  });
+
+  test("two agent creates at once cannot both pass the limit", async () => {
+    const { a, dataDir } = app({ schedules: agentMade(4) });
+    const results = await Promise.all([
+      request(a).post("/api/social/schedules").send({ schedule: auto({ createdByAgentKeyId: "ak_x" }) }),
+      request(a).post("/api/social/schedules").send({ schedule: auto({ createdByAgentKeyId: "ak_y" }) }),
+    ]);
+    assert.deepEqual(results.map((r) => r.status).sort(), [200, 409]);
+    assert.equal(stored(dataDir).filter((s) => s.createdByAgentKeyId).length, 5);
+  });
+});

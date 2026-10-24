@@ -17,7 +17,7 @@ import { readSocialStore, writeSocialStore } from "../lib/socialStore.js";
 import { publicDirectConfig, mergeDirectSecrets } from "../lib/social/directSecrets.js";
 import { scheduleOwnerCtx, listScheduleSources } from "../lib/social/scheduleSources.js";
 import { spendScheduleRender } from "../lib/social/scheduleQuota.js";
-import { changedCronProblem } from "../lib/social/scheduleRules.js";
+import { changedCronProblem, agentScheduleCount, MAX_AGENT_SCHEDULES } from "../lib/social/scheduleRules.js";
 import { validateYoutubeMetadata, buildYoutubeDescription } from "../lib/social/youtubeMetadata.js";
 import { uploadToYoutube, setYoutubeThumbnail, listYoutubePlaylists } from "../lib/social/youtubeUpload.js";
 import { resolveThumbnail } from "../lib/social/thumbnailPath.js";
@@ -1235,6 +1235,19 @@ router.post("/schedules", (req, res) => {
       ? incoming.createdByAgentKeyId
       : (index >= 0 ? list[index]?.createdByAgentKeyId : undefined);
     if (agentKeyId) schedule.createdByAgentKeyId = agentKeyId;
+    // R35, checked here in the same synchronous read-and-write as the save, so two
+    // agent calls at once cannot both pass it. The app's own schedules never count.
+    const addsAgentSchedule = Boolean(agentKeyId) && !(index >= 0 && list[index]?.createdByAgentKeyId);
+    const agentMade = agentScheduleCount(list, schedule.id);
+    if (addsAgentSchedule && agentMade >= MAX_AGENT_SCHEDULES) {
+      return res.status(409).json({
+        ok: false,
+        error: "SCHEDULE_LIMIT",
+        hint: `Agents have already created ${agentMade} schedules for this account (the limit is ${MAX_AGENT_SCHEDULES}). Remove one first.`,
+        limit: MAX_AGENT_SCHEDULES,
+        used: agentMade,
+      });
+    }
     if (index >= 0) list[index] = schedule;
     else list.unshift(schedule);
 
