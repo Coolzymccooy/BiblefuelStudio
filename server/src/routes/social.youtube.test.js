@@ -199,13 +199,12 @@ describe("POST /api/social/post destination=youtube", () => {
     assert.equal(fake.calls.insert.length, 0);
   });
 
-  test("a non-admin tenant can use a genImg scene image from the global outputs dir as the thumbnail", async (t) => {
+  test("a non-admin tenant can use their own generated picture from the global genImg dir as the thumbnail", async (t) => {
     const { a, outputDir } = app();
     fs.writeFileSync(path.join(outputDir, "clip.mp4"), "vid");
-    const genImgDir = path.join(OUTPUT_DIR, "genImg", `yt-test-${process.pid}`);
+    const genImgDir = path.join(OUTPUT_DIR, "genImg", `genvis-u1-yt${process.pid}`);
     fs.mkdirSync(genImgDir, { recursive: true });
-    const scene = path.join(genImgDir, "part-1.png");
-    fs.writeFileSync(scene, "img");
+    fs.writeFileSync(path.join(genImgDir, "part-1.png"), "img");
     t.after(() => { try { fs.rmSync(genImgDir, { recursive: true, force: true }); } catch {} });
     const res = await request(a).post("/api/social/post").send({
       destination: "youtube", videoUrl: "/outputs/clip.mp4", title: "T",
@@ -213,6 +212,24 @@ describe("POST /api/social/post destination=youtube", () => {
     });
     assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.equal(fake.calls.set.length, 1);
+  });
+
+  test("a non-admin tenant cannot use another account's picture from the global genImg dir (#112)", async (t) => {
+    const { a, outputDir } = app();
+    fs.writeFileSync(path.join(outputDir, "clip.mp4"), "vid");
+    const genImgDir = path.join(OUTPUT_DIR, "genImg", `yt-test-${process.pid}`);
+    fs.mkdirSync(genImgDir, { recursive: true });
+    fs.writeFileSync(path.join(genImgDir, "part-1.png"), "img");
+    t.after(() => { try { fs.rmSync(genImgDir, { recursive: true, force: true }); } catch {} });
+    const res = await request(a).post("/api/social/post").send({
+      destination: "youtube", videoUrl: "/outputs/clip.mp4", title: "T",
+      thumbnailPath: `/outputs/genImg/${path.basename(genImgDir)}/part-1.png`,
+    });
+    // The value names the caller's own genImg folder, where no such picture is:
+    // the video goes up and the thumbnail is reported, never read from theirs.
+    assert.equal(fake.calls.set.length, 0);
+    assert.match(String(res.body.thumbnailError), /not found/);
+    assert.ok(!String(res.body.thumbnailError).includes(path.resolve(OUTPUT_DIR, "genImg")), res.body.thumbnailError);
   });
 
   test("streams a remote videoUrl to disk instead of buffering it", async () => {

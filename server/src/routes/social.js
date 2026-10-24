@@ -519,7 +519,9 @@ function youtubeCredentials(store) {
 
 /** A picture the caller may use as a thumbnail, confined to their outputs (or genImg). */
 function thumbnailSource(thumbnailPath, req) {
-  const thumb = resolveThumbnail(String(thumbnailPath), req?.ctx?.outputDir || OUTPUT_DIR, OUTPUT_DIR);
+  // No ctx is the owner's own job (only the owner's jobs predate the ctx stamp).
+  const caller = { userId: req?.ctx?.userId || "", isOwner: !req?.ctx || isOwnerCtx(req.ctx) };
+  const thumb = resolveThumbnail(String(thumbnailPath), req?.ctx?.outputDir || OUTPUT_DIR, OUTPUT_DIR, caller);
   if (!thumb.ok) throw new Error(thumb.error);
   return thumb.path;
 }

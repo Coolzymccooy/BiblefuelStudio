@@ -62,7 +62,17 @@ function generatedImageDir(absPath) {
 export function isSharedGeneratedImage(absPath, userId) {
   if (!GENERATED_IMAGE.test(absPath)) return false;
   const dir = generatedImageDir(absPath);
-  if (!dir) return false;
+  return Boolean(dir) && isSharedGeneratedImageDir(dir, userId);
+}
+
+/**
+ * The folder-name half of isSharedGeneratedImage: may this user read the
+ * global OUTPUT_DIR/genImg/<dir>/ folder?
+ *
+ * @param {string} dir
+ * @param {string} userId
+ */
+export function isSharedGeneratedImageDir(dir, userId) {
   const seg = safeSegment(userId);
   if (seg && (dir === `auto-${seg}` || dir.startsWith(`genvis-${seg}-`))) return true;
   return SERIES_DIR.test(dir);
