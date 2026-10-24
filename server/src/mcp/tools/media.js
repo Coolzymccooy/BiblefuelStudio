@@ -23,6 +23,7 @@ const mediaImportUrl = {
   title: "Import a file from a URL",
   description:
     "Download a file from a public http or https URL into your media folder so other tools can use it. " +
+    "The file is stored on the server and counts against the daily imports cap (one per call, even if the download is refused). " +
     "Returns the same fields as an upload, including file (the server-local path to pass to other tools) and mime. " +
     "Private, local or non-http addresses are refused (URL_PRIVATE, URL_SCHEME); oversized files fail with URL_TOO_LARGE.",
   inputSchema: {
@@ -31,6 +32,7 @@ const mediaImportUrl = {
     filename: z.string().max(200).optional().describe("Optional file name; only its extension is used as a hint."),
   },
   routes: ["/api/media"],
+  caps: { imports: 1 },
   async handler(ctx, { url, kind, filename }) {
     const body = await ctx.api.call("POST", "/api/media/import-url", { body: { url, kind, filename } });
     return ok(withoutOk(body));

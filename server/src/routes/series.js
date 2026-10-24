@@ -16,13 +16,34 @@
 
 import { Router } from "express";
 import { z } from "zod";
-import { buildSeriesPlan, buildPartScript, charBudgetFor } from "../lib/series/seriesBuilder.js";
+import { buildSeriesPlan, buildPartScript, charBudgetFor, MAX_PARTS } from "../lib/series/seriesBuilder.js";
 import { lookupVerses, isKnownTranslation } from "../lib/bible/scriptureApi.js";
-import { enqueueCampaignAutoPost } from "./jobs.js";
+import { enqueueCampaignAutoPost, campaignPreconditionError } from "./jobs.js";
 import { appendSeries, listSeriesForUser } from "../lib/series/seriesStore.js";
 import { generateBibleImage, isImageGenEnabled } from "../lib/imageGen/index.js";
+import { consumeQuota, refundQuota } from "../middleware/quota.js";
+
+/**
+ * A refusal for a series the plan renders left cannot cover says so in `hint`
+ * (what the app shows under "Daily render limit reached"), since a free user
+ * with renders to spare would otherwise not see that the series is too long.
+ * @param {object} body consumeQuota's refusal body
+ * @param {number} parts
+ */
+function partsQuotaBody(body, parts) {
+  if (body?.error !== "QUOTA_EXCEEDED" || parts < 2) return body;
+  const left = Math.max(0, Number(body.limit) - Number(body.used));
+  return { ...body, hint: `${parts} parts need ${parts} plan renders; ${left} are left today. Make fewer parts or try tomorrow.` };
+}
 
 const router = Router();
+
+// Test seam: the verse lookup (network), the campaign precondition (the Library) and the job queue (starts the worker).
+const REAL_DEPS = { fetchVerses: null, precondition: campaignPreconditionError, enqueue: enqueueCampaignAutoPost };
+let deps = REAL_DEPS;
+export function _setSeriesDepsForTests(overrides) {
+  deps = overrides ? { ...REAL_DEPS, ...overrides } : REAL_DEPS;
+}
 
 // The longest video the renderer makes (jobs.js clamps every render to it).
 // The plan never makes a part longer than this, so every verse in a part is
@@ -40,7 +61,7 @@ function planFor(input) {
     durationSec: input.durationSec,
     maxRenderSeconds: maxRenderSeconds(),
     translation: input.translation,
-    fetchVerses: makeVerseFetcher(input.translation),
+    fetchVerses: deps.fetchVerses || makeVerseFetcher(input.translation),
   });
 }
 
@@ -82,6 +103,9 @@ export const GenerateSchema = PreviewSchema.extend({
   kineticCaptions: z.boolean().optional(),
   typographyPreset: z.string().optional(),
   captionEnergy: z.enum(["calm", "lively", "wild"]).optional(),
+  // The most parts this request may start (an agent sends the count it was charged for, from a
+  // preview). Unset for the web: the plan decides.
+  maxParts: z.number().int().min(1).max(MAX_PARTS).optional(),
 });
 
 /**
@@ -113,7 +137,20 @@ router.post("/preview", async (req, res) => {
   }
 });
 
+/** The scope every series job is stamped with: owned by, and rendered for, the caller. */
+const jobScope = (ctx) => ({
+  dataDir: ctx.dataDir,
+  outputDir: ctx.outputDir,
+  userId: ctx.userId,
+  isSuperAdmin: Boolean(ctx.isSuperAdmin),
+  isOwner: Boolean(ctx.isOwner),
+});
+
 router.post("/generate", async (req, res) => {
+  /** @type {string[]} */
+  const jobIds = [];
+  // Plan renders spent up front; given back if the request fails before any part is queued.
+  let spentUnits = 0;
   try {
     const input = GenerateSchema.parse(req.body || {});
     if (!isKnownTranslation(input.translation)) {
@@ -121,6 +158,26 @@ router.post("/generate", async (req, res) => {
     }
 
     const plan = await planFor(input);
+    if (input.maxParts && plan.segments.length > input.maxParts) {
+      return res.status(409).json({
+        ok: false,
+        error: "TOO_MANY_PARTS",
+        hint: `This passage now makes ${plan.segments.length} parts, more than the ${input.maxParts} asked for. Preview it again.`,
+        parts: plan.segments.length,
+        maxParts: input.maxParts,
+      });
+    }
+
+    // What enqueue would refuse for every part (an empty Library) is refused here, before anything is spent.
+    const blocked = deps.precondition(jobScope(req.ctx));
+    if (blocked) return res.status(400).json({ ok: false, error: blocked });
+
+    // Every part is one campaign_auto_post job, so one plan render. Spent before any image or job,
+    // all or nothing: a series with more parts than the renders left starts nothing.
+    // (This router is mounted without quota("render"), so a preview spends none.)
+    const spent = consumeQuota(req.ctx, "render", plan.segments.length);
+    if (!spent.ok) return res.status(spent.status).json(partsQuotaBody(spent.body, plan.segments.length));
+    spentUnits = plan.segments.length;
 
     // Image gen runs synchronously here (before enqueue) so a provider
     // failure surfaces to the user as a 400 rather than a half-broken series
@@ -145,8 +202,6 @@ router.post("/generate", async (req, res) => {
       }
     }
 
-    /** @type {string[]} */
-    const jobIds = [];
     for (let i = 0; i < plan.segments.length; i += 1) {
       const segment = plan.segments[i];
       // Every verse in the part is read: the plan already split the passage
@@ -161,7 +216,7 @@ router.post("/generate", async (req, res) => {
       const img = imagesBySegment[i];
       const generatedImage = img && img.ok && img.publicUrl ? img.publicUrl : null;
 
-      const job = await enqueueCampaignAutoPost({
+      const job = await deps.enqueue({
         destination: input.destination,
         webhookId: input.webhookId,
         webhookUrl: input.webhookUrl,
@@ -199,18 +254,13 @@ router.post("/generate", async (req, res) => {
           reference: segment.reference,
           chapterReference: plan.chapterReference,
         },
-      }, {
-        // Tenant isolation: stamp every series job with the caller's scope so
-        // it (a) is owned by — and visible only to — its creator (+ super-admin)
-        // and (b) renders into the creator's per-user data/output dirs. Omitting
-        // this made series jobs global/null-owner: they surfaced under the
-        // operator's Jobs list and rendered into the operator's directories.
-        dataDir: req.ctx.dataDir,
-        outputDir: req.ctx.outputDir,
-        userId: req.ctx.userId,
-        isSuperAdmin: Boolean(req.ctx.isSuperAdmin),
-        isOwner: Boolean(req.ctx.isOwner),
-      });
+      },
+      // Tenant isolation: stamp every series job with the caller's scope so
+      // it (a) is owned by — and visible only to — its creator (+ super-admin)
+      // and (b) renders into the creator's per-user data/output dirs. Omitting
+      // this made series jobs global/null-owner: they surfaced under the
+      // operator's Jobs list and rendered into the operator's directories.
+      jobScope(req.ctx));
       jobIds.push(job.id);
     }
 
@@ -244,6 +294,8 @@ router.post("/generate", async (req, res) => {
         : { requested: false },
     });
   } catch (err) {
+    // Nothing was queued (a picture or the first enqueue failed): the renders spent for it come back.
+    if (spentUnits > 0 && jobIds.length === 0) refundQuota(req.ctx, "render", spentUnits);
     res.status(400).json({ ok: false, error: String(err?.message || err) });
   }
 });

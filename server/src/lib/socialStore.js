@@ -94,6 +94,8 @@ function normalizeSchedule(raw = {}) {
     kineticCaptions: String(raw.type || "").trim() === "auto_generate"
       ? (raw.kineticCaptions === undefined ? true : Boolean(raw.kineticCaptions))
       : undefined,
+    // The agent key that created the schedule through MCP, if any (R35 counts these).
+    createdByAgentKeyId: optionalString(raw.createdByAgentKeyId),
   };
 }
 

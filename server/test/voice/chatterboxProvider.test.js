@@ -140,6 +140,31 @@ test("synthesize() uses voiceIds.chatterbox as audio_prompt_path when present", 
   assert.equal(lastRequest.body.audio_prompt_path, "/voices/cinematic-pastor.wav");
 });
 
+// #112: the generic voiceId is whatever voice the caller picked for ANY
+// provider (an Edge name, an ElevenLabs id, or a path a user typed). When the
+// chain falls through to Chatterbox it must not become a file the bridge
+// opens on its host.
+test("synthesize() never sends the generic voiceId as audio_prompt_path", async () => {
+  await startServer(async () => ({ body: Buffer.from([0x01]) }));
+  process.env.CHATTERBOX_URL = baseUrl;
+
+  const result = await chatterboxProvider.synthesize({ text: "Test text", voiceId: "/etc/passwd" });
+  fs.unlinkSync(result.file);
+
+  assert.equal(lastRequest.body.audio_prompt_path, undefined);
+});
+
+test("synthesize() falls back to CHATTERBOX_AUDIO_PROMPT, not the generic voiceId", async () => {
+  await startServer(async () => ({ body: Buffer.from([0x01]) }));
+  process.env.CHATTERBOX_URL = baseUrl;
+  process.env.CHATTERBOX_AUDIO_PROMPT = "/voices/default.wav";
+
+  const result = await chatterboxProvider.synthesize({ text: "Test text", voiceId: "en-US-AriaNeural" });
+  fs.unlinkSync(result.file);
+
+  assert.equal(lastRequest.body.audio_prompt_path, "/voices/default.wav");
+});
+
 test("synthesize() accepts JSON response with audio_base64", async () => {
   const audio = Buffer.from([0xff, 0xfb, 0x90, 0x00, 0x11, 0x22]);
   await startServer(async () => ({

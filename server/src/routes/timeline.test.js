@@ -7,11 +7,20 @@ import os from 'os';
 import path from 'path';
 import timelineRouter, { _resetTimelineRenderJobsForTest, _setTimelineRendererForTest } from './timeline.js';
 
+// The caller's own output folder, holding the footage the test project
+// uses: /render reads only the caller's own files (#112).
+const OUTPUT = fs.mkdtempSync(path.join(os.tmpdir(), 'timeline-route-out-'));
+fs.writeFileSync(path.join(OUTPUT, 'main.mp4'), 'x');
+
 function app(ctx = {}) {
   const a = express();
   a.use(express.json());
   a.use((req, _res, next) => {
-    req.ctx = { userId: 'test-user', dataDir: ctx.dataDir || fs.mkdtempSync(path.join(os.tmpdir(), 'timeline-route-data-')) };
+    req.ctx = {
+      userId: ctx.userId || 'test-user',
+      dataDir: ctx.dataDir || fs.mkdtempSync(path.join(os.tmpdir(), 'timeline-route-data-')),
+      outputDir: ctx.outputDir || OUTPUT,
+    };
     next();
   });
   a.use('/api/timeline', timelineRouter);
@@ -26,7 +35,7 @@ function projectWithClip() {
     aspect: '16:9',
     targetDurationSec: 270,
     assets: {
-      'asset-video': { id: 'asset-video', kind: 'video', source: 'upload', label: 'Main footage', path: 'uploads/main.mp4', durationSec: 30 },
+      'asset-video': { id: 'asset-video', kind: 'video', source: 'upload', label: 'Main footage', path: '/outputs/main.mp4', durationSec: 30 },
     },
     scenes: [],
     tracks: [
@@ -171,5 +180,26 @@ describe('timeline route', () => {
     const loaded = await request(app({ dataDir })).get(`/api/timeline/projects/${project.id}`).expect(200);
     assert.equal(loaded.body.project.title, project.title);
     assert.equal(loaded.body.project.tracks[0].clips[0].assetId, 'asset-video');
+  });
+
+  test("POST /render renders into the caller's own outputDir, in a folder named by the job (R48)", async () => {
+    const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'timeline-user-out-'));
+    fs.writeFileSync(path.join(outputDir, 'main.mp4'), 'x');
+    let seen;
+    _setTimelineRendererForTest(async (_plan, opts) => { seen = opts; return { ok: true, outputPath: opts.outputPath, publicUrl: '/outputs/x.mp4' }; });
+    const queued = await request(app({ outputDir })).post('/api/timeline/render').send({ project: projectWithClip() }).expect(202);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.equal(seen.outputDir, outputDir);
+    assert.equal(seen.outputPath, path.join(outputDir, 'timeline', queued.body.jobId, 'video.mp4'));
+  });
+
+  test('GET /render/:jobId answers 404 to another user for a job in memory (R49)', async () => {
+    _setTimelineRendererForTest(async () => new Promise(() => {}));
+    const mine = { userId: 'owner-a', dataDir: fs.mkdtempSync(path.join(os.tmpdir(), 'timeline-a-')) };
+    const theirs = { userId: 'other-b', dataDir: fs.mkdtempSync(path.join(os.tmpdir(), 'timeline-b-')) };
+    const queued = await request(app(mine)).post('/api/timeline/render').send({ project: projectWithClip() }).expect(202);
+    await request(app(mine)).get(`/api/timeline/render/${queued.body.jobId}`).expect(200);
+    const refused = await request(app(theirs)).get(`/api/timeline/render/${queued.body.jobId}`).expect(404);
+    assert.equal(refused.body.error, 'NOT_FOUND');
   });
 });

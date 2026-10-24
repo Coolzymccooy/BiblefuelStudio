@@ -144,7 +144,11 @@ export const chatterboxProvider = {
     const text = String(req?.text || "").trim();
     if (text.length < 3) throw new Error("text required (min 3 chars)");
 
-    const voiceFromReq = req.voiceIds?.chatterbox ?? req.voiceId;
+    // Only a voice addressed to Chatterbox (a saved clone's reference, which
+    // the routes resolve from the caller's own store). The generic voiceId
+    // is meant for whichever provider runs (an Edge name, a typed path): sent
+    // here it became a file the bridge opened on its own host (#112).
+    const voiceFromReq = req.voiceIds?.chatterbox;
     const audioPromptPath = voiceFromReq || getAudioPromptPath();
 
     const settings = req.voiceSettings || {};

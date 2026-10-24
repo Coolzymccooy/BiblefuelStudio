@@ -41,16 +41,23 @@ test("a mylib ref from another tenant does not resolve", () => {
     const resolved = resolveAssetPath(`mylib:${t.id}`);
     // The real contract: a ref that doesn't resolve for THIS tenant must
     // never come back as another tenant's filesystem path. Asserting
-    // notEqual(resolved, file) alone passes even when resolveAssetPath
-    // returns the raw ref string unresolved — which is exactly what
-    // happens here, so pin that down explicitly too.
+    // notEqual(resolved, file) alone would also pass for a raw ref string,
+    // so pin the exact answer: an unresolved library ref is a missing track
+    // (null), so callers say "not found" instead of treating the
+    // scheme-like ref as a URL.
     assert.notEqual(resolved, file, "must never return another tenant's file");
-    assert.equal(
-      resolved,
-      `mylib:${t.id}`,
-      "an unresolved ref falls through as the raw ref string, not a foreign tenant's path",
-    );
-    assert.equal(fs.existsSync(resolved), false, "the raw ref must not happen to exist as a real file either");
+    assert.equal(resolved, null, "an unresolved ref resolves to null, not a foreign tenant's path");
+  } finally {
+    _resetJobCtxForTest();
+  }
+});
+
+test("an unknown library: or mylib: ref resolves to null, not a URL-like string", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bf-refs-d-"));
+  _setJobCtxForTest({ dataDir: dir });
+  try {
+    assert.equal(resolveAssetPath("mylib:does-not-exist"), null);
+    assert.equal(resolveAssetPath("library:does-not-exist"), null);
   } finally {
     _resetJobCtxForTest();
   }

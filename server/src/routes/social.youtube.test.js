@@ -6,7 +6,8 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { spawnSync } from "child_process";
-import socialRouter, { _setFetchImpl, _resetFetchImpl, _holdPreviewSlot, _releasePreviewSlot } from "./social.js";
+import { Readable } from "node:stream";
+import socialRouter, { _setFetchImpl, _resetFetchImpl, _setLookupImpl, _resetLookupImpl, _holdPreviewSlot, _releasePreviewSlot } from "./social.js";
 import { _setGoogleImpl, _resetGoogleImpl } from "../lib/social/youtubeUpload.js";
 import { writeSocialStore } from "../lib/socialStore.js";
 import { OUTPUT_DIR } from "../lib/paths.js";
@@ -70,7 +71,7 @@ function fakeGoogle() {
 describe("POST /api/social/post destination=youtube", () => {
   let fake;
   beforeEach(() => { fake = fakeGoogle(); _setGoogleImpl(fake.google); });
-  afterEach(() => { _resetGoogleImpl(); _resetFetchImpl(); });
+  afterEach(() => { _resetGoogleImpl(); _resetFetchImpl(); _resetLookupImpl(); });
 
   test("uploads a local output with full metadata and a thumbnail", async () => {
     const { a, outputDir } = app();
@@ -185,6 +186,26 @@ describe("POST /api/social/post destination=youtube", () => {
     assert.equal(fake.calls.insert.length, 0);
   });
 
+  test("a junction inside the caller's outputs cannot lead the video or thumbnail out (#112)", async (t) => {
+    const { a, outputDir, dataDir } = app();
+    fs.writeFileSync(path.join(outputDir, "clip.mp4"), "vid");
+    const other = path.join(dataDir, "not-outputs");
+    fs.mkdirSync(other, { recursive: true });
+    fs.writeFileSync(path.join(other, "private.mp4"), "vid");
+    fs.writeFileSync(path.join(other, "pic.png"), "img");
+    const door = path.join(outputDir, "door");
+    fs.symlinkSync(other, door, "junction");
+    t.after(() => { try { fs.unlinkSync(door); } catch {} });
+    const video = await request(a).post("/api/social/post").send({ destination: "youtube", videoUrl: "/outputs/door/private.mp4", title: "T" });
+    assert.equal(video.status, 400, JSON.stringify(video.body));
+    assert.match(video.body.error, /videoUrl must point inside your outputs folder/);
+    const thumb = await request(a).post("/api/social/post").send({ destination: "youtube", videoUrl: "/outputs/clip.mp4", title: "T", thumbnailPath: "/outputs/door/pic.png" });
+    assert.equal(thumb.status, 400, JSON.stringify(thumb.body));
+    assert.match(thumb.body.error, /thumbnailPath/);
+    assert.equal(fake.calls.insert.length, 0);
+    assert.equal(fake.calls.set.length, 0);
+  });
+
   test("rejects a videoUrl that resolves outside the caller's outputs by name", async () => {
     const { a, dataDir } = app();
     const elsewhere = path.join(dataDir, "not-outputs", "clip.mp4");
@@ -198,13 +219,12 @@ describe("POST /api/social/post destination=youtube", () => {
     assert.equal(fake.calls.insert.length, 0);
   });
 
-  test("a non-admin tenant can use a genImg scene image from the global outputs dir as the thumbnail", async (t) => {
+  test("a non-admin tenant can use their own generated picture from the global genImg dir as the thumbnail", async (t) => {
     const { a, outputDir } = app();
     fs.writeFileSync(path.join(outputDir, "clip.mp4"), "vid");
-    const genImgDir = path.join(OUTPUT_DIR, "genImg", `yt-test-${process.pid}`);
+    const genImgDir = path.join(OUTPUT_DIR, "genImg", `genvis-u1-yt${process.pid}`);
     fs.mkdirSync(genImgDir, { recursive: true });
-    const scene = path.join(genImgDir, "part-1.png");
-    fs.writeFileSync(scene, "img");
+    fs.writeFileSync(path.join(genImgDir, "part-1.png"), "img");
     t.after(() => { try { fs.rmSync(genImgDir, { recursive: true, force: true }); } catch {} });
     const res = await request(a).post("/api/social/post").send({
       destination: "youtube", videoUrl: "/outputs/clip.mp4", title: "T",
@@ -214,13 +234,34 @@ describe("POST /api/social/post destination=youtube", () => {
     assert.equal(fake.calls.set.length, 1);
   });
 
+  test("a non-admin tenant cannot use another account's picture from the global genImg dir (#112)", async (t) => {
+    const { a, outputDir } = app();
+    fs.writeFileSync(path.join(outputDir, "clip.mp4"), "vid");
+    const genImgDir = path.join(OUTPUT_DIR, "genImg", `yt-test-${process.pid}`);
+    fs.mkdirSync(genImgDir, { recursive: true });
+    fs.writeFileSync(path.join(genImgDir, "part-1.png"), "img");
+    t.after(() => { try { fs.rmSync(genImgDir, { recursive: true, force: true }); } catch {} });
+    const res = await request(a).post("/api/social/post").send({
+      destination: "youtube", videoUrl: "/outputs/clip.mp4", title: "T",
+      thumbnailPath: `/outputs/genImg/${path.basename(genImgDir)}/part-1.png`,
+    });
+    // The value names the caller's own genImg folder, where no such picture is:
+    // the video goes up and the thumbnail is reported, never read from theirs.
+    assert.equal(fake.calls.set.length, 0);
+    assert.match(String(res.body.thumbnailError), /not found/);
+    assert.ok(!String(res.body.thumbnailError).includes(path.resolve(OUTPUT_DIR, "genImg")), res.body.thumbnailError);
+  });
+
   test("streams a remote videoUrl to disk instead of buffering it", async () => {
     const { a } = app();
     const { Readable } = await import("node:stream");
     let streamed = false;
+    // The download is SSRF-vetted: resolve the CDN name to a public address.
+    _setLookupImpl(async () => ({ address: "93.184.216.34", family: 4 }));
     _setFetchImpl(async () => ({
       ok: true,
       status: 200,
+      headers: { get: () => null },
       body: Readable.from([Buffer.from("part1"), Buffer.from("part2")]).once("end", () => { streamed = true; }),
     }));
     const res = await request(a).post("/api/social/post").send({
@@ -229,6 +270,58 @@ describe("POST /api/social/post destination=youtube", () => {
     assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.equal(streamed, true);
     assert.equal(fake.calls.insert.length, 1);
+  });
+
+  test("a remote videoUrl on a private or metadata address is refused and never fetched", async () => {
+    const { a } = app();
+    let fetched = 0;
+    _setFetchImpl(async () => { fetched += 1; throw new Error("must not connect"); });
+    for (const videoUrl of ["http://169.254.169.254/latest/meta-data/v.mp4", "http://10.0.0.8/v.mp4", "http://[::1]/v.mp4"]) {
+      const res = await request(a).post("/api/social/post").send({ destination: "youtube", videoUrl, title: "T" });
+      assert.equal(res.status, 400, videoUrl);
+      assert.match(res.body.error, /^URL_PRIVATE: /, videoUrl);
+    }
+    assert.equal(fetched, 0);
+    assert.equal(fake.calls.insert.length, 0);
+  });
+
+  test("a name that resolves to a private address is refused", async () => {
+    const { a } = app();
+    let fetched = 0;
+    _setLookupImpl(async () => ({ address: "192.168.1.20", family: 4 }));
+    _setFetchImpl(async () => { fetched += 1; throw new Error("must not connect"); });
+    const res = await request(a).post("/api/social/post").send({ destination: "youtube", videoUrl: "https://nas.example/v.mp4", title: "T" });
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /^URL_PRIVATE: /);
+    assert.equal(fetched, 0);
+  });
+
+  test("a relative videoUrl that is not a local output is refused, not fetched from this server", async () => {
+    // toAbsolutePublicUrl turns it into this server's own (here loopback) URL.
+    const { a } = app();
+    let fetched = 0;
+    _setFetchImpl(async () => { fetched += 1; throw new Error("must not connect"); });
+    const res = await request(a).post("/api/social/post").send({ destination: "youtube", videoUrl: "/outputs/missing.mp4", title: "T" });
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /^URL_PRIVATE: /);
+    assert.equal(fetched, 0);
+  });
+
+  test("a remote video over the size limit is refused from its declared length", async () => {
+    const { a, outputDir } = app();
+    _setLookupImpl(async () => ({ address: "93.184.216.34", family: 4 }));
+    let destroyed = false;
+    _setFetchImpl(async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: (k) => (String(k).toLowerCase() === "content-length" ? String(10 * 1024 * 1024 * 1024) : null) },
+      body: Readable.from([Buffer.from("x")]).once("close", () => { destroyed = true; }),
+    }));
+    const res = await request(a).post("/api/social/post").send({ destination: "youtube", videoUrl: "https://cdn.example.com/huge.mp4", title: "T" });
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /^URL_TOO_LARGE: /);
+    assert.equal(destroyed, true);
+    assert.deepEqual(fs.readdirSync(outputDir).filter((f) => f.startsWith("youtube-upload-")), []);
   });
 });
 

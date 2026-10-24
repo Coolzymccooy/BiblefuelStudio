@@ -15,7 +15,7 @@ import { libraryImageView, resolveMovementImage } from "../lib/ambient/movementI
 import {
   AMBIENT_STATUS, voicingStage, imagesStage, renderStage,
   markCancelled, clearCancelled, writeWithMovements, unclearedTracks, resolveTrackFile, currentImageLib,
-  outDirFor,
+  outDirFor, isStageRunning, asRunningStage,
 } from "../lib/ambient/stages.js";
 import {
   createJob, persistJob, markError, cancelJob as cancelRenderJob, getJob as getRenderJob,
@@ -28,7 +28,7 @@ import { runExclusive } from "../lib/heavyJobGate.js";
 // live, so a seam set through this module still reaches the stage that runs.
 export {
   AMBIENT_STATUS, unclearedTracks, voicingStage, imagesStage, assembleBed, renderStage,
-  markCancelled, isCancelled, clearCancelled,
+  markCancelled, isCancelled, clearCancelled, _setHeartbeatMsForTests,
   _setLookupImpl, _resetLookupImpl, _setSynthImpl, _resetSynthImpl,
   _setProbeImpl, _resetProbeImpl, _setImageGenImpl, _resetImageGenImpl,
   _setImageLibraryImpl, _resetImageLibraryImpl,
@@ -127,20 +127,47 @@ router.get("/", (req, res) => {
   return res.json({ ok: true, projects: listProjects(req.ctx.dataDir) });
 });
 
-// GET /:id — the full project, with live render progress folded in.
+const BUSY_STATUSES = new Set([
+  AMBIENT_STATUS.VOICING, AMBIENT_STATUS.GENERATING_IMAGES, AMBIENT_STATUS.ASSEMBLING, AMBIENT_STATUS.RENDERING,
+]);
+// Four missed heartbeats (stages beat every 30 s): long enough that a busy
+// box, or another process still finishing during a deploy, is not flagged.
+const STALE_AFTER_MS = 2 * 60_000;
+
+function renderJobLive(project) {
+  const job = project.render?.jobId ? getRenderJob(project.render.jobId) : null;
+  return Boolean(job && (job.status === "queued" || job.status === "running"));
+}
+
+/**
+ * R50: a busy session whose stage is not running in this process, and whose
+ * heartbeat is stale, was stopped by a restart or deploy; nothing will move it
+ * on. Only the heartbeat is a sign of life, never updatedAt: a settings change
+ * written later (in this process) must not hide the stop.
+ */
+function interruptedByRestart(project) {
+  if (!BUSY_STATUSES.has(project.status)) return false;
+  if (isStageRunning(project.projectId) || renderJobLive(project)) return false;
+  return Date.now() - (Number(project.heartbeatAt) || 0) > STALE_AFTER_MS;
+}
+
+// GET /:id — the full project, with live render progress folded in, and
+// `interrupted: true` when a restart killed the stage it shows as running
+// (the project is left as stored; Cancel resets it).
 router.get("/:id", (req, res) => {
   const project = loadOr404(req, res);
   if (!project) return undefined;
+  const interrupted = interruptedByRestart(project) ? { interrupted: true } : {};
   // The in-memory job knows the current percent; the project file may be up to
   // one throttle window behind it.
   const jobId = project.render?.jobId;
   if (jobId) {
     const job = getRenderJob(jobId);
     if (job && typeof job.percent === "number") {
-      return res.json({ ok: true, project: { ...project, render: { ...project.render, percent: job.percent } } });
+      return res.json({ ok: true, project: { ...project, render: { ...project.render, percent: job.percent } }, ...interrupted });
     }
   }
-  return res.json({ ok: true, project });
+  return res.json({ ok: true, project, ...interrupted });
 });
 
 // DELETE /:id
@@ -282,7 +309,8 @@ router.post("/:id/voice", (req, res) => {
       if (fresh) writeProject(ctx.dataDir, { ...fresh, status: AMBIENT_STATUS.ERROR, error: String(e?.message || e) });
     } catch { /* already logged */ }
   });
-  const started = writeProject(req.ctx.dataDir, { ...project, status: AMBIENT_STATUS.VOICING, error: null });
+  // From the stored copy: the stage has already written its start (and first heartbeat).
+  const started = writeProject(req.ctx.dataDir, { ...(readProject(req.ctx.dataDir, id) || project), status: AMBIENT_STATUS.VOICING, error: null });
   return res.json({ ok: true, project: started });
 });
 
@@ -322,7 +350,9 @@ router.patch("/:id/bed", (req, res) => {
 
     const allowUncleared = body.allowUncleared === true;
     if (!allowUncleared) {
-      const uncleared = unclearedTracks(req.ctx.dataDir, bed.trackRefs);
+      // A file-mode bed plays its one file: that file needs a licence too.
+      const inUse = [...(bed.trackRefs || []), ...(bed.mode === "file" && bed.filePath ? [bed.filePath] : [])];
+      const uncleared = unclearedTracks(req.ctx.dataDir, inUse);
       if (uncleared.length > 0) {
         return res.status(409).json({
           ok: false,
@@ -367,7 +397,8 @@ router.post("/:id/images", (req, res) => {
       if (fresh) writeProject(ctx.dataDir, { ...fresh, status: AMBIENT_STATUS.ERROR, error: String(e?.message || e) });
     } catch { /* already logged */ }
   });
-  const started = writeProject(req.ctx.dataDir, { ...project, status: AMBIENT_STATUS.GENERATING_IMAGES, error: null });
+  // From the stored copy: the stage has already written its start (and first heartbeat).
+  const started = writeProject(req.ctx.dataDir, { ...(readProject(req.ctx.dataDir, id) || project), status: AMBIENT_STATUS.GENERATING_IMAGES, error: null });
   return res.json({ ok: true, project: started });
 });
 
@@ -539,7 +570,8 @@ router.post("/:id/render", notAlreadyRendering, (req, res) => {
 
     const ctx = { dataDir: req.ctx.dataDir, outputDir: req.ctx.outputDir };
     const stage = _renderStageFn || renderStage;
-    runExclusive(() => stage(ctx, id, job.jobId, { encoder }), {
+    // Listed as running (with a heartbeat) while it waits for the heavy job gate too.
+    asRunningStage(ctx, id, () => runExclusive(() => stage(ctx, id, job.jobId, { encoder }), {
       onQueued: () => {
         const live = readProject(ctx.dataDir, id);
         if (live) writeProject(ctx.dataDir, {
@@ -548,7 +580,7 @@ router.post("/:id/render", notAlreadyRendering, (req, res) => {
           render: { jobId: job.jobId, outputPath: null, status: "running", percent: 0, phase: "waiting for another job to finish" },
         });
       },
-    }).catch((err) => {
+    })).catch((err) => {
       // A rejected fire-and-forget is an UNHANDLED rejection; under Node's
       // default policy that kills the server. Record it on the project.
       const message = String(err?.message || err || "render failed");

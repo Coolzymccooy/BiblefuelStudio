@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { backgroundTooLargeMessage, remoteContentLength } from './backgroundLimits.js';
+import * as limits from './backgroundLimits.js';
+
+const { backgroundTooLargeMessage } = limits;
 
 test('names the background using the SAME numbering as the UI badge', () => {
   // The panel labels backgrounds 1..N; the array index is zero-based. The old
@@ -34,17 +36,8 @@ test('falls back to a positional name when the path is empty', () => {
   assert.match(msg, /background 3|Background 3/);
 });
 
-test('remoteContentLength reads Content-Length from a HEAD', async () => {
-  const fake = async () => ({ headers: { get: () => '1048576' } });
-  assert.equal(await remoteContentLength('http://x/a.mp4', fake), 1048576);
-});
-
-test('remoteContentLength returns 0 when the host does not say', async () => {
-  const fake = async () => ({ headers: { get: () => null } });
-  assert.equal(await remoteContentLength('http://x/a.mp4', fake), 0);
-});
-
-test('remoteContentLength swallows network failure rather than throwing', async () => {
-  const fake = async () => { throw new Error('ECONNRESET'); };
-  assert.equal(await remoteContentLength('http://x/a.mp4', fake), 0);
+test('no unvetted HEAD helper: remote sizes come from the SSRF-guarded download', () => {
+  // remoteContentLength sent a HEAD to any user-supplied URL (including
+  // 169.254.169.254) before the vetted download ran. It must not come back.
+  assert.equal('remoteContentLength' in limits, false);
 });

@@ -1,5 +1,7 @@
 import { Router } from "express";
-import { backgroundTooLargeMessage, remoteContentLength } from '../lib/backgroundLimits.js';
+import { backgroundTooLargeMessage } from '../lib/backgroundLimits.js';
+import { localiseInput, remoteInputFailure, backgroundFetchFailure } from "../lib/remoteInputs.js";
+import { LOCAL_PROTOCOL_GUARD, localInput } from "../lib/videoInputGuard.js";
 import fs from "fs";
 import path from "path";
 import { v4 as uuid } from "uuid";
@@ -22,6 +24,9 @@ import { appendRender, listRenders } from "../lib/renderHistory.js";
 import { friendlyRenderError } from "../lib/renderErrors.js";
 import { resolveLibraryTrack } from "../lib/musicLibrary.js";
 import { resolveTenantTrack } from "../lib/musicLibraryStore.js";
+import { scopeMediaInput, resolveOutputAliasForCtx } from "../lib/mediaInputScope.js";
+import { sendUserPathError, UserPathError } from "../lib/userPathScope.js";
+import { isOwnerCtx } from "../lib/paths.js";
 import { signUrlToken } from "../auth.js";
 
 const router = Router();
@@ -60,7 +65,7 @@ function tooManyCaptionWordsMessage(count, max, { studio = false } = {}) {
 }
 
 function isFileTooLarge(p) {
-  if (!p || p.startsWith('http')) return false;
+  if (!p || isRemoteUrl(p)) return false;
   try {
     const stat = fs.statSync(p);
     return stat.size > MAX_INPUT_MB * 1024 * 1024;
@@ -69,24 +74,71 @@ function isFileTooLarge(p) {
   }
 }
 
+/**
+ * Local copies of a simple render's remote inputs (ffmpeg would otherwise
+ * fetch the URLs itself, unvetted). Answers the request and resolves null when
+ * one cannot be fetched; local paths and empty values pass through.
+ * @param {import("express").Response} res
+ * @param {Record<string, string|null>} inputs
+ */
+async function localiseRenderInputs(res, inputs) {
+  const out = {};
+  for (const [name, value] of Object.entries(inputs)) {
+    try {
+      out[name] = await localiseInput(value);
+    } catch (err) {
+      const failure = remoteInputFailure(err, name);
+      res.status(failure.status).json({ ok: false, error: failure.error });
+      return null;
+    }
+  }
+  return out;
+}
+
+function sendFailure(res, failure) {
+  return res.status(failure.status).json({ ok: false, error: failure.error });
+}
+
 function logMemory(tag) {
   const m = process.memoryUsage();
   console.log(`[MEM] ${tag} rss=${Math.round(m.rss / 1024 / 1024)}MB heap=${Math.round(m.heapUsed / 1024 / 1024)}MB`);
 }
 
-function resolveAssetPath(dataDir, pathOrId) {
+/**
+ * One render input: bundled (`library:`) or saved (`mylib:`) music, a saved
+ * library id, a URL (fetched later through the SSRF guard), or a file path.
+ * For anyone but the owner a local path must be in their scope (#112):
+ * scopeMediaInput throws a UserPathError (403) for anything outside, and the
+ * `/outputs/` alias follows the caller's own folder. Null when nothing by
+ * that name exists.
+ */
+function resolveAssetPath(ctx, pathOrId) {
   if (pathOrId == null) return null;
   const normalized = String(pathOrId).trim();
   if (!normalized) return null;
+  const dataDir = ctx?.dataDir;
   const libTrack = resolveLibraryTrack(normalized);
   if (libTrack) return libTrack;
   // A track the operator saved to their own library. Needs dataDir, which is
   // why it is spelled mylib: rather than library:.
   const saved = resolveTenantTrack(dataDir, normalized);
   if (saved) return saved;
-  const direct = resolveOutputAlias(normalized);
-  if (String(direct).startsWith("http")) return direct;
-  if (fs.existsSync(direct)) return direct;
+  // An unresolved library ref is a missing track, not a URL: answer null so
+  // callers report "not found" instead of a scheme refusal.
+  if (/^(library|mylib):/i.test(normalized)) return null;
+  let scoped;
+  try {
+    scoped = scopeMediaInput(normalized, ctx);
+  } catch (err) {
+    if (err instanceof UserPathError && err.code === "FILE_NOT_FOUND") return null;
+    throw err;
+  }
+  // A non-owner's bare name never resolves against the server's folder.
+  const unconfined = !ctx || isOwnerCtx(ctx);
+  const usable = (p) => Boolean(p) && (unconfined || path.isAbsolute(p)) && fs.existsSync(p);
+  const direct = resolveOutputAliasForCtx(scoped, ctx);
+  if (isRemoteUrl(direct)) return direct;
+  if (usable(direct)) return direct;
 
   const lib = readLibrary(dataDir);
   const item = lib.items.find(x => String(x.id) === normalized);
@@ -96,16 +148,31 @@ function resolveAssetPath(dataDir, pathOrId) {
       const hd = sorted.find(f => f.quality === 'hd') || sorted[0];
       if (hd?.link) return hd.link;
     }
-    const localUrl = resolveOutputAlias(item.url);
-    if (localUrl && !String(localUrl).startsWith("http") && fs.existsSync(localUrl)) return localUrl;
-    const preview = resolveOutputAlias(item.previewUrl);
+    const localUrl = resolveOutputAliasForCtx(item.url, ctx);
+    if (localUrl && !String(localUrl).startsWith("http") && usable(localUrl)) return localUrl;
+    const preview = resolveOutputAliasForCtx(item.previewUrl, ctx);
     if (preview && String(preview).startsWith("http")) return preview;
-    if (preview && fs.existsSync(preview)) return preview;
-    if (localUrl) return localUrl;
-    if (preview) return preview;
+    if (usable(preview)) return preview;
+    if (isRemoteUrl(localUrl)) return localUrl;
+    if (unconfined && localUrl) return localUrl;
+    if (unconfined && preview) return preview;
   }
 
-  return direct;
+  return unconfined ? direct : null;
+}
+
+/** Check a request's raw inputs before anything is fetched or run (#112). Throws a UserPathError. */
+function assertRequestInputsInScope(ctx, values) {
+  for (const value of values) {
+    if (value == null || !String(value).trim()) continue;
+    try {
+      scopeMediaInput(value, ctx);
+    } catch (err) {
+      // A missing input is reported by the route with its own message.
+      if (err instanceof UserPathError && err.code === "FILE_NOT_FOUND") continue;
+      throw err;
+    }
+  }
 }
 
 function getDims(aspect) {
@@ -155,9 +222,10 @@ router.post("/video", async (req, res) => {
     const rawAudioPath = req.body?.audioPath;
     const rawMusicPath = req.body?.musicPath;
     let { backgroundPath, audioPath, lines, aspect, captionWidthPct, musicPath, musicVolume, autoDuck } = req.body || {};
-    backgroundPath = resolveAssetPath(req.ctx.dataDir, rawBackgroundPath);
-    audioPath = resolveAssetPath(req.ctx.dataDir, rawAudioPath);
-    musicPath = resolveAssetPath(req.ctx.dataDir, rawMusicPath);
+    assertRequestInputsInScope(req.ctx, [rawBackgroundPath, rawAudioPath, rawMusicPath]);
+    backgroundPath = resolveAssetPath(req.ctx, rawBackgroundPath);
+    audioPath = resolveAssetPath(req.ctx, rawAudioPath);
+    musicPath = resolveAssetPath(req.ctx, rawMusicPath);
 
     if (!backgroundPath || !isLocalOrRemote(backgroundPath)) {
       return res.status(400).json({ ok: false, error: `backgroundPath missing or not found: ${rawBackgroundPath || "<empty>"}` });
@@ -177,6 +245,9 @@ router.post("/video", async (req, res) => {
     if (musicPath && isFileTooLarge(musicPath)) {
       return res.status(400).json({ ok: false, error: `musicPath too large (>${MAX_INPUT_MB}MB)` });
     }
+    const local = await localiseRenderInputs(res, { backgroundPath, audioPath, musicPath });
+    if (!local) return;
+    ({ backgroundPath, audioPath, musicPath } = local);
     logMemory("render/video:start");
     const rawLines = Array.isArray(lines) ? lines.map(s => String(s).slice(0, 140)) : [];
     const { w, h } = getDims(aspect);
@@ -203,9 +274,9 @@ router.post("/video", async (req, res) => {
       return `drawtext=text='${escaped}':x=(w-text_w)/2:y=${y}:fontsize=${fontSize}:fontcolor=white:box=1:boxcolor=black@0.35:boxborderw=18`;
     }).join(",");
 
-    const args = ["-y", "-stream_loop", "-1", "-i", backgroundPath];
-    if (audioPath) args.push("-i", audioPath);
-    if (musicPath) args.push("-i", musicPath);
+    const args = ["-y", "-stream_loop", "-1", ...localInput(backgroundPath)];
+    if (audioPath) args.push(...localInput(audioPath));
+    if (musicPath) args.push(...localInput(musicPath));
 
     // scale/crop to 9:16
     const vf = `scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},${filters}`;
@@ -290,6 +361,7 @@ router.post("/video", async (req, res) => {
       res.json({ ok: true, file: outFile.replace(/\\/g, '/') });
     });
   } catch (e) {
+    if (sendUserPathError(res, e)) return;
     res.status(400).json({ ok: false, error: String(e?.message || e) });
   }
 });
@@ -310,9 +382,10 @@ router.post("/waveform", async (req, res) => {
     const rawAudioPath = req.body?.audioPath;
     const rawMusicPath = req.body?.musicPath;
     let { backgroundPath, audioPath, lines, aspect, captionWidthPct, musicPath, musicVolume, autoDuck } = req.body || {};
-    backgroundPath = resolveAssetPath(req.ctx.dataDir, rawBackgroundPath);
-    audioPath = resolveAssetPath(req.ctx.dataDir, rawAudioPath);
-    musicPath = resolveAssetPath(req.ctx.dataDir, rawMusicPath);
+    assertRequestInputsInScope(req.ctx, [rawBackgroundPath, rawAudioPath, rawMusicPath]);
+    backgroundPath = resolveAssetPath(req.ctx, rawBackgroundPath);
+    audioPath = resolveAssetPath(req.ctx, rawAudioPath);
+    musicPath = resolveAssetPath(req.ctx, rawMusicPath);
 
     if (!audioPath || !isLocalOrRemote(audioPath)) {
       return res.status(400).json({ ok: false, error: `audioPath missing or not found: ${rawAudioPath || "<empty>"}` });
@@ -332,6 +405,9 @@ router.post("/waveform", async (req, res) => {
     if (musicPath && isFileTooLarge(musicPath)) {
       return res.status(400).json({ ok: false, error: `musicPath too large (>${MAX_INPUT_MB}MB)` });
     }
+    const local = await localiseRenderInputs(res, { backgroundPath, audioPath, musicPath });
+    if (!local) return;
+    ({ backgroundPath, audioPath, musicPath } = local);
     logMemory("render/waveform:start");
 
     const rawLines = Array.isArray(lines) ? lines.map(s => String(s).slice(0, 140)) : [];
@@ -416,11 +492,11 @@ router.post("/waveform", async (req, res) => {
 
     const args = ["-y"];
     if (backgroundPath) {
-      args.push("-stream_loop", "-1", "-i", backgroundPath, "-i", audioPath);
+      args.push("-stream_loop", "-1", ...localInput(backgroundPath), ...localInput(audioPath));
     } else {
-      args.push("-i", audioPath);
+      args.push(...localInput(audioPath));
     }
-    if (musicPath) args.push("-i", musicPath);
+    if (musicPath) args.push(...localInput(musicPath));
 
     const preset = process.env.FFMPEG_PRESET || "fast";
     const hwaccel = process.env.FFMPEG_HWACCEL;
@@ -457,6 +533,7 @@ router.post("/waveform", async (req, res) => {
       res.json({ ok: true, file: outFile.replace(/\\/g, '/') });
     });
   } catch (e) {
+    if (sendUserPathError(res, e)) return;
     res.status(400).json({ ok: false, error: String(e?.message || e) });
   }
 });
@@ -474,6 +551,7 @@ function probeMediaInfo(filePath) {
       "-select_streams", "v:0",
       "-show_entries", "stream=width,height:format=duration",
       "-of", "default=noprint_wrappers=1",
+      ...LOCAL_PROTOCOL_GUARD,
       filePath,
     ]);
     let out = "";
@@ -504,6 +582,7 @@ function probeAudioDuration(filePath) {
       "-v", "error",
       "-show_entries", "format=duration",
       "-of", "default=noprint_wrappers=1:nokey=1",
+      ...LOCAL_PROTOCOL_GUARD,
       filePath,
     ]);
     let out = "";
@@ -528,7 +607,7 @@ function concatAudioTracks(paths, destPath) {
   return new Promise((resolve, reject) => {
     const ffmpeg = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
     const inputs = [];
-    for (const p of paths) inputs.push("-i", p);
+    for (const p of paths) inputs.push(...localInput(p));
     const norm = paths
       .map((_, i) => `[${i}:a]aformat=sample_rates=44100:channel_layouts=stereo[a${i}]`)
       .join(";");
@@ -592,6 +671,8 @@ router.post("/captioned-video", async (req, res) => {
     const rawMusicPaths = (Array.isArray(req.body?.musicPaths) ? req.body.musicPaths : (rawMusicPath ? [rawMusicPath] : []))
       .map((p) => (p == null ? "" : String(p).trim()))
       .filter(Boolean);
+    // Every path the request names, before anything is fetched or probed.
+    assertRequestInputsInScope(req.ctx, [rawVideoPath, rawAudioPath, ...rawBackgroundPaths, ...rawMusicPaths]);
     const words = Array.isArray(req.body?.words) ? req.body.words : [];
     const typographyPreset = String(req.body?.typographyPreset || "default");
     const layout = String(req.body?.layout || "center");
@@ -741,13 +822,13 @@ router.post("/captioned-video", async (req, res) => {
     let durationSec = 0;
 
     if (hasVideoMode) {
-      videoPath = resolveAssetPath(req.ctx.dataDir, rawVideoPath);
+      videoPath = resolveAssetPath(req.ctx, rawVideoPath);
       if (!videoPath || !isLocalOrRemote(videoPath)) {
         return res.status(400).json({ ok: false, error: `videoPath not found: ${rawVideoPath}` });
       }
       if (isRemoteUrl(videoPath)) {
         try { videoPath = await localizeRemote(videoPath, "video"); }
-        catch (e) { return res.status(502).json({ ok: false, error: `Failed to fetch video: ${e?.message || e}` }); }
+        catch (e) { cleanupTempInputs(); return sendFailure(res, remoteInputFailure(e, "video")); }
       }
       if (isFileTooLarge(videoPath)) {
         return res.status(400).json({ ok: false, error: `videoPath too large (>${MAX_INPUT_MB}MB)` });
@@ -760,9 +841,15 @@ router.post("/captioned-video", async (req, res) => {
       canvasHeight = info.height;
       durationSec = info.durationSec;
     } else {
-      audioPath = resolveAssetPath(req.ctx.dataDir, rawAudioPath);
+      audioPath = resolveAssetPath(req.ctx, rawAudioPath);
       if (!audioPath || !isLocalOrRemote(audioPath)) {
         return res.status(400).json({ ok: false, error: `audioPath not found: ${rawAudioPath}` });
+      }
+      // A remote voice track would otherwise reach ffprobe/ffmpeg as a URL,
+      // which they fetch with no SSRF check.
+      if (isRemoteUrl(audioPath)) {
+        try { audioPath = await localizeRemote(audioPath, "audio"); }
+        catch (e) { cleanupTempInputs(); return sendFailure(res, remoteInputFailure(e, "audio")); }
       }
       if (isFileTooLarge(audioPath)) {
         return res.status(400).json({ ok: false, error: `audioPath too large (>${MAX_INPUT_MB}MB)` });
@@ -773,7 +860,7 @@ router.post("/captioned-video", async (req, res) => {
       // surface the failing index in the error so a user with 4 backgrounds
       // can tell which one is busted.
       for (let i = 0; i < rawBackgroundPaths.length; i++) {
-        const resolved = resolveAssetPath(req.ctx.dataDir, rawBackgroundPaths[i]);
+        const resolved = resolveAssetPath(req.ctx, rawBackgroundPaths[i]);
         if (!resolved || !isLocalOrRemote(resolved)) {
           return res.status(400).json({
             ok: false,
@@ -785,19 +872,13 @@ router.post("/captioned-video", async (req, res) => {
         // whole render.
         let local = resolved;
         if (isRemoteUrl(resolved)) {
-          // Ask for the SIZE first. Downloading a 4K stock clip in full only to
-          // reject it wastes bandwidth and minutes of the operator's time; a
-          // HEAD is cheap and fails fast.
-          const remoteBytes = await remoteContentLength(resolved);
-          if (remoteBytes && remoteBytes > MAX_INPUT_MB * 1024 * 1024) {
-            return res.status(400).json({
-              ok: false,
-              error: backgroundTooLargeMessage(i, rawBackgroundPaths[i], remoteBytes, MAX_INPUT_MB),
-            });
-          }
+          // The vetted download refuses an oversized clip from its declared
+          // Content-Length before reading the body, so no separate (unvetted)
+          // HEAD request is needed to fail fast.
           try { local = await localizeRemote(resolved, `bg${i}`); }
           catch (e) {
-            return res.status(502).json({ ok: false, error: `Failed to fetch background ${i + 1}: ${e?.message || e}` });
+            cleanupTempInputs();
+            return sendFailure(res, backgroundFetchFailure(e, i, rawBackgroundPaths[i], MAX_INPUT_MB));
           }
         }
         if (isFileTooLarge(local)) {
@@ -833,13 +914,13 @@ router.post("/captioned-video", async (req, res) => {
     {
       const resolvedMusic = [];
       for (let i = 0; i < rawMusicPaths.length; i += 1) {
-        let m = resolveAssetPath(req.ctx.dataDir, rawMusicPaths[i]);
+        let m = resolveAssetPath(req.ctx, rawMusicPaths[i]);
         if (!m || !isLocalOrRemote(m)) {
           return res.status(400).json({ ok: false, error: `music track ${i + 1} not found: ${rawMusicPaths[i]}` });
         }
         if (isRemoteUrl(m)) {
           try { m = await localizeRemote(m, `music${i}`); }
-          catch (e) { return res.status(502).json({ ok: false, error: `Failed to fetch music track ${i + 1}: ${e?.message || e}` }); }
+          catch (e) { cleanupTempInputs(); return sendFailure(res, remoteInputFailure(e, `music track ${i + 1}`)); }
         }
         if (isFileTooLarge(m)) {
           return res.status(400).json({ ok: false, error: `music track ${i + 1} too large (>${MAX_INPUT_MB}MB)` });
@@ -996,11 +1077,11 @@ router.post("/captioned-video", async (req, res) => {
       // Input-level seek so the trimmed sermon video starts at trimStart,
       // rebased to t=0 (captions were shifted to match above).
       if (trimStart > 0) args.push("-ss", trimStart.toFixed(3));
-      args.push("-i", videoPath);
+      args.push(...localInput(videoPath));
       // -stream_loop -1 so a music bed SHORTER than the clip loops to fill it
       // instead of dropping to silence partway through. The output `-t` caps it,
       // and the ending afade fades the looped bed out together with the video.
-      if (musicPath) args.push("-stream_loop", "-1", "-i", musicPath);
+      if (musicPath) args.push("-stream_loop", "-1", ...localInput(musicPath));
       voiceIdx = 0;
       musicIdx = musicPath ? 1 : -1;
       preDrawChain = needsScale
@@ -1037,18 +1118,18 @@ router.post("/captioned-video", async (req, res) => {
         // (variable) slot plus the crossfade tail; otherwise the equal slot.
         const imgDur = useSyncBackgrounds ? syncInputDurations[i] : perSlotSec;
         if (isImage) {
-          args.push("-loop", "1", "-framerate", "30", "-t", imgDur.toFixed(3), "-i", bg);
+          args.push("-loop", "1", "-framerate", "30", "-t", imgDur.toFixed(3), ...localInput(bg));
         } else {
-          args.push("-stream_loop", "-1", "-i", bg);
+          args.push("-stream_loop", "-1", ...localInput(bg));
         }
       });
       // Input-level seek so the trimmed sermon audio starts at trimStart,
       // rebased to t=0 (captions were shifted to match above). Backgrounds are
       // not seeked — they just fill the trimmed duration.
       if (trimStart > 0) args.push("-ss", trimStart.toFixed(3));
-      args.push("-i", audioPath);
+      args.push(...localInput(audioPath));
       // Loop a short music bed to fill the whole clip (see note in video mode).
-      if (musicPath) args.push("-stream_loop", "-1", "-i", musicPath);
+      if (musicPath) args.push("-stream_loop", "-1", ...localInput(musicPath));
       voiceIdx = N;
       musicIdx = musicPath ? N + 1 : -1;
 
@@ -1292,6 +1373,7 @@ router.post("/captioned-video", async (req, res) => {
       backgroundIds: hasVideoMode ? [] : rawBackgroundPaths,
     });
   } catch (e) {
+    if (sendUserPathError(res, e)) return;
     res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
@@ -1371,6 +1453,13 @@ router.get("/captioned-video-status/:jobId", (req, res) => {
   }
   return res.json({ ok: true, ...summarizeJob(job) });
 });
+
+// POSTs on this router that start no render. index.js passes this to the
+// router's quota("render") mount, so a user out of renders can still cancel.
+const CANCEL_PATH = /^\/captioned-video\/[^/]+\/cancel$/;
+export function isQuotaFreeRenderRequest(req) {
+  return req?.method === "POST" && CANCEL_PATH.test(String(req?.path || ""));
+}
 
 /**
  * Cancel a running render: SIGKILL its ffmpeg and mark the job cancelled. The

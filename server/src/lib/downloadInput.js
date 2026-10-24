@@ -1,10 +1,14 @@
-import fetch from "node-fetch";
 import fs from "fs";
-import { pipeline } from "stream/promises";
+import { downloadPublicUrl, isUrlGuardError } from "./safeDownload.js";
+import { MAX_INPUT_MB } from "./backgroundLimits.js";
+import { isUrlLike } from "./inputUrl.js";
 
-/** True for an http(s) URL (vs a local filesystem path). */
+/**
+ * True for a URL in ANY form ffmpeg would open as one (`http:/x`, `tcp:`, ...),
+ * false for a local filesystem path. See inputUrl.js.
+ */
 export function isRemoteUrl(p) {
-  return /^https?:\/\//i.test(String(p || ""));
+  return isUrlLike(p);
 }
 
 const DEFAULT_RETRIES = 2;
@@ -16,40 +20,51 @@ const MIN_VALID_BYTES = 1024;
  * (the Pexels TLS resets — error -10054 / ECONNRESET — that used to kill a
  * whole render when a background URL was streamed straight into ffmpeg).
  *
+ * Each attempt goes through downloadPublicUrl, so the host is vetted (no
+ * loopback, private or metadata addresses), every redirect is re-vetted and the
+ * body is capped at `maxBytes`. A refusal (URL_SCHEME, URL_PRIVATE,
+ * URL_REDIRECTS, URL_TOO_LARGE) is rethrown at once with its `.code` (and
+ * `.declaredBytes`): retrying cannot change the answer.
+ *
  * Returns `destPath` on success; throws after exhausting retries. A partial /
  * too-small file is deleted between attempts so a retry starts clean.
  *
  * @param {string} url
  * @param {string} destPath
- * @param {{ retries?: number, timeoutMs?: number, fetchImpl?: typeof fetch }} [opts]
+ * @param {{
+ *   retries?: number,
+ *   timeoutMs?: number,
+ *   maxBytes?: number,
+ *   fetchImpl?: Function,
+ *   lookup?: Function,
+ *   unvettedHostsForTests?: Iterable<string>,
+ * }} [opts] `fetchImpl`, `lookup` and `unvettedHostsForTests` are test seams.
  */
 export async function downloadToFile(url, destPath, opts = {}) {
   const retries = opts.retries ?? DEFAULT_RETRIES;
-  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const doFetch = opts.fetchImpl || fetch;
+  const downloadOpts = {
+    maxBytes: opts.maxBytes ?? MAX_INPUT_MB * 1024 * 1024,
+    timeoutMs: opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+    ...(opts.lookup ? { lookup: opts.lookup } : {}),
+    ...(opts.unvettedHostsForTests ? { unvettedHostsForTests: opts.unvettedHostsForTests } : {}),
+  };
 
   let lastErr;
   for (let attempt = 0; attempt <= retries; attempt += 1) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const resp = await doFetch(url, { signal: controller.signal, redirect: "follow" });
-      if (!resp.ok || !resp.body) throw new Error(`HTTP ${resp.status}`);
-      // node-fetch v3 exposes a Node Readable as `body`, so we can pipe it
-      // straight to disk — constant memory, no full-buffer in RAM.
-      await pipeline(resp.body, fs.createWriteStream(destPath));
+      await downloadPublicUrl(url, destPath, downloadOpts);
       const size = fs.statSync(destPath).size;
       if (size < MIN_VALID_BYTES) throw new Error(`downloaded file too small (${size} bytes)`);
       return destPath;
     } catch (err) {
       lastErr = err;
       try { fs.unlinkSync(destPath); } catch {}
+      if (isUrlGuardError(err)) throw err;
       if (attempt < retries) {
         // Linear backoff: 400ms, 800ms, …
         await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
       }
-    } finally {
-      clearTimeout(timer);
     }
   }
   throw new Error(`download failed for ${url}: ${lastErr?.message || lastErr}`);

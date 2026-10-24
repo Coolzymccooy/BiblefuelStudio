@@ -233,7 +233,10 @@ export function startRender(ctx, id, { deps } = {}) {
       if (!cancelled) reportRenderFailure("scene-script", { projectId: id, error: e?.message || e });
       updateProject(ctx.dataDir, id, (p) => ({
         ...p,
-        render: { status: cancelled ? "cancelled" : "error", error: cancelled ? null : String(e?.message || e).slice(0, 400), progress: 0 },
+        render: {
+          status: cancelled ? "cancelled" : "error", error: cancelled ? null : String(e?.message || e).slice(0, 400), progress: 0,
+          startedAt: p.render?.startedAt ?? null, finishedAt: Date.now(),
+        },
       }));
     })
     .finally(() => runs.delete(id));
@@ -243,5 +246,5 @@ export function startRender(ctx, id, { deps } = {}) {
 /** After a restart a queued or running render has no worker: mark it stopped. */
 export function recoverInterruptedRender(project) {
   if (!["queued", "rendering"].includes(project?.render?.status) || runs.has(project.id)) return project;
-  return { ...project, render: { status: "error", error: "Interrupted by a server restart. Render again; clips and voices are kept.", progress: 0 } };
+  return { ...project, render: { status: "error", error: "Interrupted by a server restart. Render again; clips and voices are kept.", progress: 0, startedAt: project.render.startedAt ?? null } };
 }

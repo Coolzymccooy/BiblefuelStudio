@@ -1,6 +1,6 @@
 import { ApiError } from "../api.js";
 import { ok, withoutOk } from "../toolResult.js";
-import { capsSummary } from "../../lib/agentKeys/caps.js";
+import { accountCapsSummary, capsSummary } from "../../lib/agentKeys/caps.js";
 
 /** Optional sections depend on server env: an API failure becomes null instead of failing the tool. */
 async function optionalSection(ctx, path) {
@@ -16,7 +16,7 @@ const whoami = {
   name: "whoami",
   title: "Who am I",
   description:
-    "Who you are acting as: the user, their plan, today's remaining quota and daily key caps, and this key's name and publish permission. Call it first.",
+    "Who you are acting as: the user, their plan, today's remaining quota, this key's daily caps (caps) and your account's daily caps shared by all your agents (accountCaps), and this key's name and publish permission. Call it first.",
   inputSchema: {},
   routes: ["/api/auth", "/api/billing"],
   async handler(ctx) {
@@ -35,6 +35,7 @@ const whoami = {
       plan: usage.plan,
       quota: usage.buckets,
       caps: capsSummary(ctx.subjectId, ctx.agentKey),
+      accountCaps: accountCapsSummary(ctx.agentKey?.userId ?? user.sub),
       key: ctx.agentKey
         ? { id: ctx.agentKey.id, name: ctx.agentKey.name, publishAllowed: Boolean(ctx.agentKey.publishAllowed) }
         : null,
@@ -46,7 +47,9 @@ const capabilities = {
   name: "capabilities",
   title: "Server capabilities",
   description:
-    "What this BibleFuel server can do right now: ffmpeg and runtime, which providers are configured (booleans only), vocal removal availability, and AI video status.",
+    "What this BibleFuel server can do right now: ffmpeg and runtime, which providers are configured (booleans only), vocal removal availability, and AI video status. " +
+    "These describe the server, not what this key may use: a free plan cannot use ElevenLabs even when elevenlabs is true, and AI video tools are listed only to super-admin keys. " +
+    "whoami (plan, quotas, caps) and tools/list say what this key can do. Free; can take a few seconds.",
   inputSchema: {},
   routes: ["/api/health", "/api/music", "/api/video-gen"],
   async handler(ctx) {

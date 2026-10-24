@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
 import { readProject, writeProject, listProjects, STORY_STATUS } from "./projectStore.js";
+import { asRunningStoryStep } from "./storyLiveness.js";
 import { resolveSceneVideo } from "./sceneVideo.js";
 import {
   SEEDANCE_MODELS, clampSeedanceDuration, seedanceRatio,
@@ -348,7 +349,8 @@ export function startAnimation(ctx, projectId, { sceneIds, quality = "standard",
   const written = writeProject(ctx.dataDir, { ...project, scenes, updatedAt: Date.now() });
   runs.add(projectId);
   cancels.delete(projectId);
-  runAnimation(ctx, projectId, [...ids], q, { ledgerDir, deps: { ...defaultDeps, ...deps } })
+  // A step of the project (beating) while its clips are made, so GET /:id can tell it from one a restart killed.
+  asRunningStoryStep(ctx, projectId, () => runAnimation(ctx, projectId, [...ids], q, { ledgerDir, deps: { ...defaultDeps, ...deps } }))
     .catch((e) => console.warn(`[story] animate ${projectId} failed: ${e?.message || e}`))
     .finally(() => { runs.delete(projectId); cancels.delete(projectId); });
   return written;
@@ -387,7 +389,7 @@ export async function resumeAnimations(ctx, { ledgerDir, deps } = {}) {
     const projectId = project.projectId;
     runs.add(projectId);
     count += pending.length;
-    projectRuns.push(Promise.allSettled(pending).finally(() => { runs.delete(projectId); }));
+    projectRuns.push(asRunningStoryStep(ctx, projectId, () => Promise.allSettled(pending)).finally(() => { runs.delete(projectId); }));
   }
   await Promise.all(projectRuns);
   return count;

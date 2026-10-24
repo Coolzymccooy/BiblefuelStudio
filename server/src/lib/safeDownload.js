@@ -19,14 +19,37 @@ import fetch from "node-fetch";
  * deadline or a stalled body):
  *   URL_SCHEME, URL_PRIVATE, URL_REDIRECTS, URL_TOO_LARGE, URL_TIMEOUT.
  * Anything else (HTTP errors, network errors) carries a plain message.
+ * URL_TOO_LARGE caused by a declared Content-Length carries `declaredBytes`.
  */
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
-function codedError(code) {
-  const err = new Error(code);
-  err.code = code;
-  return err;
+function codedError(code, extra = {}) {
+  return Object.assign(new Error(code), { code }, extra);
+}
+
+/** Codes that mean "this URL is refused", as opposed to a network failure. */
+const GUARD_CODES = new Set(["URL_SCHEME", "URL_PRIVATE", "URL_REDIRECTS", "URL_TOO_LARGE"]);
+
+const GUARD_SENTENCES = {
+  URL_SCHEME: "Only http and https links can be used.",
+  URL_PRIVATE: "That link points to a private or internal address, which is not allowed.",
+  URL_REDIRECTS: "That link redirected too many times.",
+  URL_TOO_LARGE: "That file is larger than the size limit.",
+};
+
+/**
+ * True when `err` is a refusal (bad scheme, private address, redirect loop,
+ * oversized file). Refusals must not be retried: the answer will not change.
+ * URL_TIMEOUT is deliberately NOT a refusal.
+ */
+export function isUrlGuardError(err) {
+  return Boolean(err && GUARD_CODES.has(err.code));
+}
+
+/** "<code>: <plain sentence>" for a refusal, else null. */
+export function urlGuardMessage(err) {
+  return isUrlGuardError(err) ? `${err.code}: ${GUARD_SENTENCES[err.code]}` : null;
 }
 
 // ---------------------------------------------------------------- addresses
@@ -86,13 +109,28 @@ function isPublicIPv6(groups) {
   if ((g0 & 0xffc0) === 0xfe80) return false; // fe80::/10 link-local
   if ((g0 & 0xffc0) === 0xfec0) return false; // fec0::/10 site-local (deprecated)
   if ((g0 & 0xff00) === 0xff00) return false; // multicast
+  if (isIPv4TunnelOrLocalUse(groups)) return false;
   const embedded = [g6 >> 8, g6 & 0xff, g7 >> 8, g7 & 0xff];
   // ::ffff:a.b.c.d (mapped), ::a.b.c.d (compatible), 64:ff9b::a.b.c.d (NAT64)
   if (lowZero && (g5 === 0xffff || g5 === 0)) return isPublicIPv4(embedded);
   if (g0 === 0x64 && g1 === 0xff9b && g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0) {
     return isPublicIPv4(embedded);
   }
+  // 2002::/16 6to4: the IPv4 gateway sits in groups 1-2.
+  if (g0 === 0x2002) return isPublicIPv4([g1 >> 8, g1 & 0xff, g2 >> 8, g2 & 0xff]);
   return true;
+}
+
+/**
+ * Ranges that never name a public host directly: ::ffff:0:a.b.c.d
+ * (IPv4-translated, SIIT), 2001:0::/32 (Teredo), 64:ff9b:1::/48 (local-use
+ * NAT64) and 2001:db8::/32 (documentation).
+ */
+function isIPv4TunnelOrLocalUse([g0, g1, g2, g3, g4, g5]) {
+  if (g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0xffff && g5 === 0) return true;
+  if (g0 === 0x2001 && g1 === 0) return true;
+  if (g0 === 0x2001 && g1 === 0xdb8) return true;
+  return g0 === 0x64 && g1 === 0xff9b && g2 === 1;
 }
 
 /**
@@ -159,6 +197,84 @@ async function resolveVettedAddress(parsed, lookup, unvettedHosts) {
   return { address, family };
 }
 
+/** Every address `lookup` gives for `host`, whatever shape it answers in. */
+async function resolveAll(host, lookup) {
+  const answer = await lookup(host, { all: true });
+  const list = Array.isArray(answer) ? answer : [answer];
+  return list.map((entry) => String(entry?.address ?? "")).filter(Boolean);
+}
+
+/**
+ * Vet a URL that is handed onward (to ffmpeg, a webhook POST) rather than
+ * downloaded here. http(s) only (URL_SCHEME); the host must resolve, and EVERY
+ * address it resolves to must be public (URL_PRIVATE). Returns the parsed URL.
+ *
+ * Unlike downloadPublicUrl this cannot pin the later connection, so a host
+ * whose DNS changes between this check and the request is not covered; callers
+ * that can download instead should use downloadPublicUrl.
+ *
+ * @param {string} url
+ * @param {{
+ *   lookup?: (host: string, opts: { all: true }) => Promise<any>,
+ *   unvettedHostsForTests?: Iterable<string>,
+ * }} [opts] `unvettedHostsForTests` is a test seam, as for downloadPublicUrl.
+ * @returns {Promise<URL>}
+ */
+export async function assertPublicHttpUrl(url, { lookup = dns.promises.lookup, unvettedHostsForTests = [] } = {}) {
+  const parsed = parseHttpUrl(String(url ?? ""));
+  if (new Set(unvettedHostsForTests).has(parsed.hostname)) return parsed;
+  const host = parsed.hostname.replace(/^\[|\]$/g, "");
+  if (isIP(host)) {
+    if (!isPublicAddress(host)) throw codedError("URL_PRIVATE");
+    return parsed;
+  }
+  const addresses = await resolveAll(host, lookup);
+  if (addresses.length === 0 || !addresses.every(isPublicAddress)) throw codedError("URL_PRIVATE");
+  return parsed;
+}
+
+/**
+ * One request (a webhook POST, say) to a user-supplied URL, with the same
+ * guards as downloadPublicUrl minus the body handling: http(s) only, the host
+ * resolved and vetted by us, the socket PINNED to that vetted address (so a
+ * DNS answer that changes after the check cannot redirect the connection),
+ * redirects returned rather than followed, and an overall deadline.
+ *
+ * Refusals throw coded errors (URL_SCHEME, URL_PRIVATE). The deadline aborts
+ * the request (an AbortError), including a body still being read.
+ *
+ * @param {string} url
+ * @param {object} [init] fetch init (method, headers, body, signal); `redirect`
+ *   and `agent` are always overridden.
+ * @param {{
+ *   lookup?: (host: string) => Promise<{ address: string, family: number }>,
+ *   fetchImpl?: typeof fetch,
+ *   timeoutMs?: number,
+ *   unvettedHostsForTests?: Iterable<string>,
+ * }} [opts] `unvettedHostsForTests` is a test seam; production must never set it.
+ * @returns {Promise<Response>}
+ */
+export async function fetchPublic(url, init = {}, opts = {}) {
+  const {
+    lookup = dns.promises.lookup,
+    fetchImpl = fetch,
+    timeoutMs = 15_000,
+    unvettedHostsForTests = [],
+  } = opts;
+  const parsed = parseHttpUrl(String(url ?? ""));
+  const { address, family } = await resolveVettedAddress(parsed, lookup, new Set(unvettedHostsForTests));
+  const agent = pinnedAgentFor(address, family, parsed.protocol);
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  if (timer.unref) timer.unref();
+  if (init.signal) {
+    if (init.signal.aborted) controller.abort();
+    else init.signal.addEventListener("abort", () => controller.abort(), { once: true });
+  }
+  return fetchImpl(parsed.href, { ...init, redirect: "manual", signal: controller.signal, agent: () => agent });
+}
+
 function byteCounter(maxBytes, onCount) {
   let total = 0;
   return new Transform({
@@ -200,7 +316,8 @@ function mediaTypeOf(response) {
  *   unvettedHostsForTests?: Iterable<string>,
  * }} opts `unvettedHostsForTests` exists only so tests can reach a loopback
  *   fixture through a fake hostname; production code must never set it.
- * @returns {Promise<{ bytes: number, contentType: string, finalUrl: string }>}
+ * @returns {Promise<{ bytes: number, contentType: string, finalUrl: string, declaredBytes: number }>}
+ *   `declaredBytes` is the host's Content-Length, 0 when it did not send one.
  */
 export async function downloadPublicUrl(url, destPath, opts) {
   const {
@@ -251,9 +368,10 @@ export async function downloadPublicUrl(url, destPath, opts) {
         throw new Error(`HTTP ${response.status}`);
       }
       const declared = Number(response.headers.get("content-length"));
-      if (Number.isFinite(declared) && declared > maxBytes) {
+      const declaredBytes = Number.isFinite(declared) && declared > 0 ? declared : 0;
+      if (declaredBytes > maxBytes) {
         response.body.destroy();
-        throw codedError("URL_TOO_LARGE");
+        throw codedError("URL_TOO_LARGE", { declaredBytes });
       }
 
       let bytes = 0;
@@ -269,7 +387,7 @@ export async function downloadPublicUrl(url, destPath, opts) {
         await removeQuietly(destPath);
         throw err;
       }
-      return { bytes, contentType: mediaTypeOf(response), finalUrl: current.href };
+      return { bytes, contentType: mediaTypeOf(response), finalUrl: current.href, declaredBytes };
     }
   } catch (err) {
     if (timedOut || err?.name === "AbortError") throw codedError("URL_TIMEOUT");

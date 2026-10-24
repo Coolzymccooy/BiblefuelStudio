@@ -144,6 +144,16 @@ export function buildUserUploadPath(userId, filename) {
   return `${UPLOAD_PREFIX}/${uid}/${uuid()}-${safeUploadName(filename)}`;
 }
 
+/**
+ * The bucket folder a user's published outputs go to: inside their own
+ * uploads/<userId>/ folder. Derived on the server; a client never names it.
+ */
+export function buildUserOutputPrefix(userId) {
+  const uid = safeUserSegment(userId);
+  if (!uid) throw new Error("Missing user id for output prefix");
+  return `${UPLOAD_PREFIX}/${uid}/outputs`;
+}
+
 /** True only when objectPath is inside THIS user's own upload prefix. */
 export function isOwnUploadPath(objectPath, userId) {
   const p = String(objectPath || "");

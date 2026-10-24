@@ -33,7 +33,34 @@ export async function startTestApp({ users, superAdminEmail } = {}) {
   const { default: mediaRouter } = await import("../../src/routes/media.js");
   const { default: videogenRouter } = await import("../../src/routes/videogen.js");
   const { default: postizRouter } = await import("../../src/routes/postiz.js");
+  const { default: renderRouter, isQuotaFreeRenderRequest } = await import("../../src/routes/render.js");
+  const { default: socialRouter } = await import("../../src/routes/social.js");
+  const { default: storyRouter, isQuotaFreeStoryRequest } = await import("../../src/routes/story.js");
+  const { default: ambientRouter } = await import("../../src/routes/ambient.js");
+  const { default: lyricVideoRouter } = await import("../../src/routes/lyricVideo.js");
+  const { default: momentsRouter } = await import("../../src/routes/moments.js");
+  const { default: timelineRouter } = await import("../../src/routes/timeline.js");
+  const { featureGate } = await import("../../src/middleware/featureGate.js");
   const { default: agentKeysRouter } = await import("../../src/routes/agentKeys.js");
+  const { quota } = await import("../../src/middleware/quota.js");
+  const { default: scriptsRouter } = await import("../../src/routes/scripts.js");
+  const { default: bibleRouter } = await import("../../src/routes/bible.js");
+  const { default: ttsRouter } = await import("../../src/routes/tts.js");
+  const { default: transcriptsRouter } = await import("../../src/routes/transcripts.js");
+  const { default: audioRouter } = await import("../../src/routes/audio.js");
+  const { default: audioAdvancedRouter } = await import("../../src/routes/audio_advanced.js");
+  const { default: libraryRouter } = await import("../../src/routes/library.js");
+  const { default: imagegenRouter } = await import("../../src/routes/imagegen.js");
+  const { default: brandingRouter } = await import("../../src/routes/branding.js");
+  const { default: pexelsRouter } = await import("../../src/routes/pexels.js");
+  const { default: pixabayRouter } = await import("../../src/routes/pixabay.js");
+  const { createVisualLibraryRouter } = await import("../../src/routes/visualLibrary.js");
+  const { createSceneScriptRouter } = await import("../../src/routes/sceneScript.js");
+  const { default: seriesRouter } = await import("../../src/routes/series.js");
+  const { default: longformRouter } = await import("../../src/routes/longform.js");
+  const { default: gumroadRouter } = await import("../../src/routes/gumroad.js");
+  const { default: queueRouter } = await import("../../src/routes/queue.js");
+  const { requireSuperAdmin } = await import("../../src/middleware/requireSuperAdmin.js");
   const { refuseAgentCalls } = await import("../../src/middleware/agentAuth.js");
   const { createMcpRouter } = await import("../../src/mcp/transport.js");
   const { createKey } = await import("../../src/lib/agentKeys/store.js");
@@ -47,6 +74,32 @@ export async function startTestApp({ users, superAdminEmail } = {}) {
   app.use("/api/media", requireAuth, withUserScope, mediaRouter);
   app.use("/api/video-gen", requireAuth, withUserScope, requireVerifiedEmail, videogenRouter);
   app.use("/api/postiz", requireAuth, withUserScope, requireVerifiedEmail, postizRouter);
+  app.use("/api/render", requireAuth, withUserScope, requireVerifiedEmail, quota("render", { skip: isQuotaFreeRenderRequest }), renderRouter);
+  app.use("/api/social", requireAuth, withUserScope, requireVerifiedEmail, socialRouter);
+  app.use("/api/story", requireAuth, withUserScope, requireVerifiedEmail, quota("render", { skip: isQuotaFreeStoryRequest }), storyRouter);
+  // Like index.js: no blanket quota; the route charges its own plan buckets on the expensive POSTs.
+  app.use("/api/ambient", requireAuth, withUserScope, requireVerifiedEmail, ambientRouter);
+  app.use("/api/lyric-video", requireAuth, withUserScope, requireVerifiedEmail, featureGate("lyric.video"), lyricVideoRouter);
+  app.use("/api/moments", requireAuth, withUserScope, requireVerifiedEmail, momentsRouter);
+  app.use("/api/timeline", requireAuth, withUserScope, requireVerifiedEmail, timelineRouter);
+  app.use("/api/scripts", requireAuth, withUserScope, requireVerifiedEmail, quota("scripts"), scriptsRouter);
+  app.use("/api/bible", requireAuth, withUserScope, bibleRouter);
+  app.use("/api/tts", requireAuth, withUserScope, requireVerifiedEmail, quota("tts"), ttsRouter);
+  app.use("/api/transcripts", requireAuth, withUserScope, transcriptsRouter);
+  app.use("/api/audio", requireAuth, withUserScope, requireVerifiedEmail, audioRouter);
+  app.use("/api/audio-adv", requireAuth, withUserScope, requireVerifiedEmail, audioAdvancedRouter);
+  app.use("/api/library", requireAuth, withUserScope, libraryRouter);
+  app.use("/api/imagegen", requireAuth, withUserScope, requireVerifiedEmail, imagegenRouter);
+  app.use("/api/branding", requireAuth, withUserScope, brandingRouter);
+  app.use("/api/pexels", requireAuth, withUserScope, requireVerifiedEmail, pexelsRouter);
+  app.use("/api/pixabay", requireAuth, withUserScope, requireVerifiedEmail, pixabayRouter);
+  app.use("/api/visual-library", requireAuth, withUserScope, requireVerifiedEmail, requireSuperAdmin, createVisualLibraryRouter());
+  app.use("/api/scene-script", requireAuth, withUserScope, requireVerifiedEmail, requireSuperAdmin, createSceneScriptRouter());
+  // Like index.js: no router-level quota; generate spends one plan render per part.
+  app.use("/api/series", requireAuth, withUserScope, requireVerifiedEmail, seriesRouter);
+  app.use("/api/longform", requireAuth, withUserScope, requireVerifiedEmail, longformRouter);
+  app.use("/api/gumroad", requireAuth, withUserScope, featureGate("gumroad"), gumroadRouter);
+  app.use("/api/queue", requireAuth, withUserScope, queueRouter);
   // STUB: index.js's real /api/health shells out to ffmpeg; tools only need its shape.
   app.get("/api/health", (_req, res) => {
     res.json({
