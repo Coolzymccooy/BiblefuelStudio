@@ -172,6 +172,22 @@ test("moments_project update refuses photos outside the media folder, wrong phot
   assert.equal(calls.length, 0);
 });
 
+test("moments_project update refuses a shared voice file as the song: the render reads songs only from your own folder", async () => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(testApp.dataDir, "moments-own-")));
+  const shared = fs.realpathSync(fs.mkdtempSync(path.join(testApp.dataDir, "moments-shared-")));
+  fs.writeFileSync(path.join(shared, "tts-edge-abc.mp3"), "x");
+  fs.writeFileSync(path.join(dir, "song.mp3"), "x");
+  _setScopeForTests(async () => ({ outputDir: dir, sharedDir: shared }));
+  const { ctx, calls } = ctxWith({ "PUT /api/moments/m-1": { ok: true, project: MOMENT() } });
+  const refused = await byName.moments_project.handler(ctx, { action: "update", id: "m-1", song: { path: path.join(shared, "tts-edge-abc.mp3") } });
+  assert.equal(refused.structuredContent.error, "BAD_INPUT");
+  assert.equal(refused.structuredContent.message, "A Moment's song takes only files in your own media folder (your uploads, imports and renders, see media_list).");
+  assert.equal(calls.length, 0);
+  // The caller's own file still goes through.
+  await byName.moments_project.handler(ctx, { action: "update", id: "m-1", song: { path: path.join(dir, "song.mp3") } });
+  assert.deepEqual(calls[0].opts.body, { sound: { song: { ref: path.join(dir, "song.mp3") } } });
+});
+
 test("moments_project actions that name a Moment need its id, and create an occasion", async () => {
   const { ctx, calls } = ctxWith();
   for (const action of ["get", "update", "delete"]) {

@@ -1,7 +1,7 @@
 import path from "node:path";
 import { z } from "zod";
 import { ok, fail, withoutOk } from "../toolResult.js";
-import { resolveMediaInput } from "../mediaPath.js";
+import { resolveMediaInput, resolveOwnMediaInput } from "../mediaPath.js";
 import { planQuotaRefusal, renderQuotaRefusal } from "../planQuota.js";
 import {
   MOMENT_ID, MOMENT_OCCASIONS, MOMENT_STYLES, MOMENT_LENGTHS, MOMENT_DETAIL_FIELDS, MIN_PHOTOS, MAX_PHOTOS, SCRIPT_MAX,
@@ -11,6 +11,8 @@ import {
 const ROUTES = ["/api/moments"];
 const FREE_NOTE = "Free: no daily cap or plan quota is spent.";
 const MUSIC_REF = /^(?:library|mylib):[\w.-]+$/;
+// The render reads a song file only from the caller's own outputs (resolveTrackFile), so a shared voice file is refused here.
+const SONG_OWN_FOLDER = { message: "A Moment's song takes only files in your own media folder (your uploads, imports and renders, see media_list)." };
 const BUSY_MESSAGE = "This Moment is rendering. Wait for it with jobs_wait (kind moments), or stop it with moments_cancel.";
 
 const projectPath = (id) => `/api/moments/${encodeURIComponent(id)}`;
@@ -51,14 +53,14 @@ async function photoRefs(ctx, photos) {
   return { refs };
 }
 
-/** The song as the route's ref: a library:/mylib: ref as given, or an audio file confined to the media folder; null clears it. */
+/** The song as the route's ref: a library:/mylib: ref as given, or an audio file in the caller's own media folder; null clears it. */
 async function songRef(ctx, song) {
   if (song === null) return { song: null };
   const hasPath = typeof song.path === "string";
   if (hasPath === Boolean(song.ref)) return { refusal: fail("BAD_INPUT", "song: give either ref (from music_library) or path.") };
   let ref = song.ref;
   if (hasPath) {
-    const media = await resolveMediaInput(ctx, song.path);
+    const media = await resolveOwnMediaInput(ctx, song.path, SONG_OWN_FOLDER);
     if (media.refusal) return { refusal: media.refusal };
     ref = media.path;
   } else if (!MUSIC_REF.test(ref)) {
@@ -143,7 +145,7 @@ const momentsProject = {
     "Moments: short photo videos (15, 30 or 60 seconds) for birthdays, weddings, sermons and church events, with moving titles and lines over the photos, set to a song and an optional voiceover. " +
     "action meta: the occasions (each with its detail fields), styles, lengths, limits and your image library (libraryImages, usable as photos). list: your Moments, newest first. get { id }: one Moment with its words, photos, song, voiceover, past videos and (after a render) a moments job handle. " +
     "create { occasion }: a new Moment with that occasion's style, energy and song. delete { id }. " +
-    `update { id, ... }: change any of occasion, title, details { name, milestone, eventTitle, date, venue, verse }, statements (the lines shown, at most 8), photos (the WHOLE list, ${MIN_PHOTOS} to ${MAX_PHOTOS}: each { path } of an image imported with media_import_url kind image, or { libraryId }), heroIndex, style, energy (0 to 1), lengthSec, seed, song ({ ref } from music_library or { path }, null for none) and removeVoiceover. Paths outside your media folder and URLs are refused. Refused while rendering. ` +
+    `update { id, ... }: change any of occasion, title, details { name, milestone, eventTitle, date, venue, verse }, statements (the lines shown, at most 8), photos (the WHOLE list, ${MIN_PHOTOS} to ${MAX_PHOTOS}: each { path } of an image imported with media_import_url kind image, or { libraryId }), heroIndex, style, energy (0 to 1), lengthSec, seed, song ({ ref } from music_library, or { path } of an audio file in your own media folder: your uploads, imports and renders; null for none) and removeVoiceover. Paths outside your media folder and URLs are refused. Refused while rendering. ` +
     "Pipeline: create, update (photos, details), moments_step statements (then update with the lines you like), optionally moments_step voiceover, moments_render, jobs_wait (kind moments). " + FREE_NOTE,
   inputSchema: {
     action: z.enum(["list", "get", "create", "update", "delete", "meta"]).describe("list, get, create, update, delete or meta."),
