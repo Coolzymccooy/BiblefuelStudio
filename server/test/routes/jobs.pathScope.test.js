@@ -367,3 +367,29 @@ describe("a remote input the job downloaded itself", () => {
     }
   });
 });
+
+describe("a job's own downloads are its own", () => {
+  test("another account's ctx cannot resolve a copy a finished job downloaded", { skip: !spawnFfmpegOk() && "ffmpeg not installed" }, async () => {
+    const url = "https://stock.invalid/a-private.mp3";
+    const cacheDir = path.join(OUT, "cache", "remote-bg");
+    fs.mkdirSync(cacheDir, { recursive: true });
+    const cached = path.join(cacheDir, `${crypto.createHash("sha1").update(url).digest("hex").slice(0, 16)}.mp3`);
+    spawnSync(FF_BIN, ["-y", "-v", "error", "-f", "lavfi", "-i", "sine=f=440:d=1", cached]);
+    const otherDir = path.join(process.env.DATA_DIR, "users", "other");
+    const other = { userId: "other", plan: "premium", dataDir: otherDir, outputDir: path.join(otherDir, "outputs"), isSuperAdmin: false, isOwner: false };
+    fs.mkdirSync(other.outputDir, { recursive: true });
+    // User A's job localises the URL, then fails on a missing background.
+    jobs._setJobCtxForTest({ ...ctx });
+    try {
+      await jobs._executeJobForTest({ id: "job_a", type: "render_waveform", payload: { audioPath: url, lines: ["x"], backgroundPath: "/outputs/missing.mp4" } });
+    } catch { /* expected to fail */ } finally {
+      jobs._resetJobCtxForTest();
+    }
+    jobs._setJobCtxForTest(other);
+    try {
+      assert.throws(() => jobs.resolveAssetPath(cached), /PATH_OUTSIDE_MEDIA/);
+    } finally {
+      jobs._resetJobCtxForTest();
+    }
+  });
+});

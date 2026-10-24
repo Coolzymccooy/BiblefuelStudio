@@ -353,12 +353,19 @@ function safeUpdateJob(id, patch) {
  * different tenant's item that happens to share an id.
  */
 /**
- * Local copies this job downloaded through the SSRF guard (localiseJobInputs).
- * They sit in the shared remote cache, outside every account's folder, and are
- * resolved again later in the same run. Cleared when a job starts; the worker
- * runs one job at a time.
+ * The job now running: its ctx and the local copies it downloaded through the
+ * SSRF guard (localiseJobInputs). Those copies sit in the shared remote cache,
+ * outside every account's folder, and are resolved again later in the same
+ * run. They count as the server's own only for that run's ctx object: a
+ * request handler (or another job) builds a fresh ctx, so it never matches.
+ * Set when a job starts, cleared when the worker finishes it.
  */
-const serverMadeInputs = new Set();
+let currentJobRun = null;
+
+/** Did the running job, under this very ctx, download `file` itself? */
+function isOwnJobDownload(file) {
+  return Boolean(currentJobRun && currentJobRun.ctx === currentJobCtx && currentJobRun.made.has(path.resolve(file)));
+}
 
 /** A non-owner's local input, held to their scope (#112); a refusal fails the job. */
 function confineJobInput(value) {
@@ -418,7 +425,7 @@ export function resolveAssetPath(pathOrId, dataDir) {
     // A path a non-owner names (a payload field or a picked id that looks
     // like one) is theirs or shared, or refused (#112). A copy this job just
     // downloaded through the SSRF guard is the server's own, not a request.
-    if (unconfined || serverMadeInputs.has(path.resolve(direct))) return direct;
+    if (unconfined || isOwnJobDownload(direct)) return direct;
     return confineJobInput(direct);
   }
 
@@ -624,7 +631,7 @@ async function localiseJobInputs(payload, { background = false } = {}) {
     } catch (err) {
       throw new Error(remoteInputFailure(err, what).error);
     }
-    serverMadeInputs.add(path.resolve(local));
+    currentJobRun?.made.add(path.resolve(local));
     next = { ...next, [field]: local };
   }
   return next;
@@ -646,7 +653,7 @@ function assertJobPathsInScope(payload, ctx) {
 }
 
 async function executeJob(job) {
-  serverMadeInputs.clear();
+  currentJobRun = { ctx: currentJobCtx, made: new Set() };
   assertJobPathsInScope(job?.payload, currentJobCtx);
   if (!ensureFfmpegAvailable()) {
     throw new Error("FFmpeg not available on server");
@@ -1981,6 +1988,7 @@ async function workerTick() {
     volatileProgressByJob.delete(next.id);
     running = false;
     currentJobCtx = null;
+    currentJobRun = null;
   }
 }
 
