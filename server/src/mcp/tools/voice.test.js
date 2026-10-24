@@ -1,5 +1,6 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
+import { z } from "zod";
 import fs from "node:fs";
 import path from "node:path";
 import { startTestApp, mcpClient } from "../../../test/helpers/mcpTestApp.js";
@@ -44,6 +45,53 @@ test("voice_list merges voices, providers, profiles and saved clones", async () 
   assert.deepEqual(data.clonedVoices, [{ id: "cb:1", name: "Me" }]);
   assert.equal("ok" in data, false);
   assert.deepEqual(calls.find((c) => c.path === "/api/tts/voices").opts.query, { provider: "edge" });
+});
+
+const MIXED_VOICES = [
+  { voice_id: "af-ZA-AdriNeural", locale: "af-ZA" },
+  { voice_id: "en-GB-SoniaNeural", locale: "en-GB" },
+  { voice_id: "en-US-GuyNeural", locale: "en-US" },
+  { voice_id: "yo-NG-AdeNeural", locale: "yo-NG" },
+  { voice_id: "elevenlabs-voice" },
+];
+
+function mixedVoicesCtx() {
+  return fakeMcpCtx({
+    "GET /api/tts/voices": { ok: true, provider: "edge", voices: MIXED_VOICES },
+    "GET /api/tts/providers": { ok: true, providers: {} },
+    "GET /api/tts/profiles": { ok: true, profiles: [] },
+    "GET /api/tts/chatterbox-voices": { ok: true, voices: [] },
+  }).ctx;
+}
+
+test("voice_list with a locale keeps only that language's voices and says how many there are in all", async () => {
+  const english = (await byName.voice_list.handler(mixedVoicesCtx(), { locale: "EN" })).structuredContent;
+  assert.deepEqual(english.voices.map((v) => v.voice_id), ["en-GB-SoniaNeural", "en-US-GuyNeural", "elevenlabs-voice"]);
+  assert.equal(english.totalVoices, 5);
+  assert.equal(english.locale, "EN");
+
+  const british = (await byName.voice_list.handler(mixedVoicesCtx(), { locale: "en-GB" })).structuredContent;
+  assert.deepEqual(british.voices.map((v) => v.voice_id), ["en-GB-SoniaNeural", "elevenlabs-voice"]);
+
+  const everything = (await byName.voice_list.handler(mixedVoicesCtx(), {})).structuredContent;
+  assert.equal(everything.voices.length, 5);
+  assert.equal(everything.totalVoices, 5);
+});
+
+test("voice_list refuses a locale that is not a language tag", () => {
+  const schema = z.object(byName.voice_list.inputSchema);
+  assert.equal(schema.safeParse({ locale: "en" }).success, true);
+  assert.equal(schema.safeParse({ locale: "en-GB" }).success, true);
+  assert.equal(schema.safeParse({ locale: "../en" }).success, false);
+  assert.equal(schema.safeParse({ locale: "english please" }).success, false);
+});
+
+test("the voice descriptions warn about the long catalogue and the free plan's missing fallback", () => {
+  assert.match(byName.voice_list.description, /locale/);
+  assert.match(byName.voice_list.description, /300 voices/);
+  assert.match(byName.voice_synthesize.description, /free plan/i);
+  assert.match(byName.voice_synthesize.description, /no fallback/i);
+  assert.match(byName.voice_synthesize.description, /ignored with auto/i);
 });
 
 test("voice_list defaults to edge voices and keeps going when the voice list fails", async () => {

@@ -49,6 +49,23 @@ async function voicesFor(ctx, provider) {
 
 const withoutRefPath = ({ refPath: _refPath, ...voice }) => voice;
 
+// A language tag such as en or en-GB: letters, then dash-separated parts.
+const LOCALE_TAG = /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/;
+
+/**
+ * The voices of one language. A voice without a locale (ElevenLabs lists none) is kept,
+ * since its language cannot be told. Prefix match on whole tag parts: en keeps en-GB, not eno.
+ */
+function voicesOfLocale(voices, locale) {
+  if (!locale) return voices;
+  const wanted = locale.toLowerCase();
+  return voices.filter((voice) => {
+    if (typeof voice?.locale !== "string" || !voice.locale) return true;
+    const tag = voice.locale.toLowerCase();
+    return tag === wanted || tag.startsWith(`${wanted}-`);
+  });
+}
+
 const voiceList = {
   name: "voice_list",
   title: "List voices, providers and voice profiles",
@@ -57,13 +74,16 @@ const voiceList = {
     "profiles (the app's voice categories, such as devotional, and the provider each prefers) and clonedVoices (voices you cloned on Chatterbox; use their id as voiceId with provider chatterbox). " +
     "provider picks which catalogue to list: edge (free, default) or elevenlabs (premium plans only). " +
     "If that catalogue is unavailable the rest still comes back, with voicesError saying why. Free and instant. " +
+    "Pass locale (for example en or en-GB) to list only that language's voices: without it the edge catalogue is over 300 voices (about 100 KB), which many clients cut off. totalVoices counts the whole catalogue. " +
+    "providers says which speech providers work here: when one fails, pick another whose available is true. " +
     "Next: voice_synthesize with a voice's voice_id.",
   inputSchema: {
     provider: z.enum(LIST_PROVIDERS).optional().describe("Whose voices to list: edge (default) or elevenlabs (needs a premium plan)."),
+    locale: z.string().max(20).regex(LOCALE_TAG, "locale must be a language tag such as en or en-GB").optional().describe("Only voices of this language, for example en (every English voice) or en-GB. Recommended: the full edge list is over 300 voices."),
     probe: z.boolean().optional().describe("Also check that self-hosted providers (Chatterbox) are reachable right now. Adds up to 5 seconds. Default false."),
   },
   routes: ["/api/tts"],
-  async handler(ctx, { provider = "edge", probe }) {
+  async handler(ctx, { provider = "edge", probe, locale }) {
     const [catalogue, providers, profiles, cloned] = await Promise.all([
       voicesFor(ctx, provider),
       ctx.api.call("GET", "/api/tts/providers", probe ? { query: { probe: 1 } } : {}),
@@ -75,7 +95,10 @@ const voiceList = {
     ]);
     return ok({
       provider,
+      ...(locale ? { locale } : {}),
       ...catalogue,
+      voices: voicesOfLocale(catalogue.voices, locale),
+      totalVoices: catalogue.voices.length,
       providers: providers?.providers && typeof providers.providers === "object" ? providers.providers : {},
       profiles: Array.isArray(profiles?.profiles) ? profiles.profiles : [],
       clonedVoices: (Array.isArray(cloned?.voices) ? cloned.voices : []).map(withoutRefPath),
@@ -102,16 +125,17 @@ const voiceSynthesize = {
   description:
     "Speak text and save it as an audio file in the server's output folder. Returns path (pass it to audio_process, transcribe or a render tool) and url (playable), " +
     "plus provider and voice for what really ran, and words (start and end times) when withTimestamps was set on azure, fish or piper. " +
-    "provider auto (default) uses ElevenLabs on premium plans and Edge-TTS otherwise, and falls back if one fails; " +
+    "provider auto (default) uses ElevenLabs on premium plans, falling back to Edge-TTS if it fails. On a free plan auto is Edge-TTS alone, with no fallback: " +
+    "if it fails (HTTP_502), force another provider that voice_list shows as available, such as azure. " +
     "the other values force one provider: elevenlabs and fish need a premium plan (FEATURE_LOCKED otherwise), chatterbox needs its bridge, piper needs PIPER_URL, azure needs a key. " +
     "A forced provider can still fall back; check fallbackProvider in the result. " +
-    "voiceId comes from voice_list. Options: rate, pitch, volume for edge; exaggeration and cfgWeight for chatterbox; speed for fish; withTimestamps for azure, fish and piper; modelId for elevenlabs and fish. " +
+    "voiceId comes from voice_list. Options, each read only by its own provider and ignored with auto: rate, pitch, volume for edge; exaggeration and cfgWeight for chatterbox; speed for fish; withTimestamps for azure, fish and piper; modelId for elevenlabs and fish. " +
     "Each call spends one of the agent's daily tts calls and one of the plan's daily tts quota, and takes a few seconds.",
   inputSchema: {
     text: z.string().min(3).max(5000).describe("What to say, 3 to 5000 characters. Plain text; markup and emoji are stripped."),
     voiceId: z.string().max(100).regex(VOICE_ID_PATTERN, "voiceId must be a voice name or a cb:... cloned voice id, never a file path").optional().describe("A voice id from voice_list (voice_id; a cb:... cloned voice only with provider chatterbox). Never a file path. Omit for the provider's default."),
     provider: z.enum(SYNTH_PROVIDERS).optional().describe("auto (default), elevenlabs, edge, azure, chatterbox, fish or piper."),
-    rate: z.string().max(20).optional().describe("Edge only: speaking rate, for example +10% or -20%."),
+    rate: z.string().max(20).optional().describe("Edge only (provider edge; ignored with auto): speaking rate, for example +10% or -20%."),
     pitch: z.string().max(20).optional().describe("Edge only: pitch, for example +2Hz or -5Hz."),
     volume: z.string().max(20).optional().describe("Edge only: volume, for example +10%."),
     exaggeration: z.number().min(0).max(2).optional().describe("Chatterbox only: how expressive the delivery is."),
