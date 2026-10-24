@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import express from "express";
 import request from "supertest";
-import { quota, QUOTAS, consumeQuota } from "./quota.js";
+import { quota, QUOTAS, consumeQuota, refundQuota } from "./quota.js";
 import { readUsage } from "../lib/usageStore.js";
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "quota-mw-"));
@@ -81,4 +81,17 @@ test("a single unit refusal keeps its old body (no needed field)", () => {
   const refused = consumeQuota(ctx, "render");
   assert.equal(refused.ok, false);
   assert.equal(refused.body.needed, undefined);
+});
+
+test("refundQuota gives back what was spent, never below zero, and nothing on unlimited plans", () => {
+  const dir = freshDir("refund");
+  const ctx = { dataDir: dir, plan: "free" };
+  consumeQuota(ctx, "render", 3);
+  refundQuota(ctx, "render", 2);
+  assert.equal(readUsage(dir).counts.render, 1);
+  refundQuota(ctx, "render", 5);
+  assert.equal(readUsage(dir).counts.render, 0);
+  const premiumDir = freshDir("refund-premium");
+  refundQuota({ dataDir: premiumDir, plan: "premium" }, "render", 2);
+  assert.equal(readUsage(premiumDir).counts.render, 0);
 });

@@ -18,15 +18,15 @@ import { Router } from "express";
 import { z } from "zod";
 import { buildSeriesPlan, buildPartScript, charBudgetFor } from "../lib/series/seriesBuilder.js";
 import { lookupVerses, isKnownTranslation } from "../lib/bible/scriptureApi.js";
-import { enqueueCampaignAutoPost } from "./jobs.js";
+import { enqueueCampaignAutoPost, campaignPreconditionError } from "./jobs.js";
 import { appendSeries, listSeriesForUser } from "../lib/series/seriesStore.js";
 import { generateBibleImage, isImageGenEnabled } from "../lib/imageGen/index.js";
-import { consumeQuota } from "../middleware/quota.js";
+import { consumeQuota, refundQuota } from "../middleware/quota.js";
 
 const router = Router();
 
-// Test seam: the verse lookup (network) and the job queue (starts the worker).
-const REAL_DEPS = { fetchVerses: null, enqueue: enqueueCampaignAutoPost };
+// Test seam: the verse lookup (network), the campaign precondition (the Library) and the job queue (starts the worker).
+const REAL_DEPS = { fetchVerses: null, precondition: campaignPreconditionError, enqueue: enqueueCampaignAutoPost };
 let deps = REAL_DEPS;
 export function _setSeriesDepsForTests(overrides) {
   deps = overrides ? { ...REAL_DEPS, ...overrides } : REAL_DEPS;
@@ -121,7 +121,20 @@ router.post("/preview", async (req, res) => {
   }
 });
 
+/** The scope every series job is stamped with: owned by, and rendered for, the caller. */
+const jobScope = (ctx) => ({
+  dataDir: ctx.dataDir,
+  outputDir: ctx.outputDir,
+  userId: ctx.userId,
+  isSuperAdmin: Boolean(ctx.isSuperAdmin),
+  isOwner: Boolean(ctx.isOwner),
+});
+
 router.post("/generate", async (req, res) => {
+  /** @type {string[]} */
+  const jobIds = [];
+  // Plan renders spent up front; given back if the request fails before any part is queued.
+  let spentUnits = 0;
   try {
     const input = GenerateSchema.parse(req.body || {});
     if (!isKnownTranslation(input.translation)) {
@@ -130,11 +143,16 @@ router.post("/generate", async (req, res) => {
 
     const plan = await planFor(input);
 
+    // What enqueue would refuse for every part (an empty Library) is refused here, before anything is spent.
+    const blocked = deps.precondition(jobScope(req.ctx));
+    if (blocked) return res.status(400).json({ ok: false, error: blocked });
+
     // Every part is one campaign_auto_post job, so one plan render. Spent before any image or job,
     // all or nothing: a series with more parts than the renders left starts nothing.
     // (This router is mounted without quota("render"), so a preview spends none.)
     const spent = consumeQuota(req.ctx, "render", plan.segments.length);
     if (!spent.ok) return res.status(spent.status).json(spent.body);
+    spentUnits = plan.segments.length;
 
     // Image gen runs synchronously here (before enqueue) so a provider
     // failure surfaces to the user as a 400 rather than a half-broken series
@@ -159,8 +177,6 @@ router.post("/generate", async (req, res) => {
       }
     }
 
-    /** @type {string[]} */
-    const jobIds = [];
     for (let i = 0; i < plan.segments.length; i += 1) {
       const segment = plan.segments[i];
       // Every verse in the part is read: the plan already split the passage
@@ -213,18 +229,13 @@ router.post("/generate", async (req, res) => {
           reference: segment.reference,
           chapterReference: plan.chapterReference,
         },
-      }, {
-        // Tenant isolation: stamp every series job with the caller's scope so
-        // it (a) is owned by — and visible only to — its creator (+ super-admin)
-        // and (b) renders into the creator's per-user data/output dirs. Omitting
-        // this made series jobs global/null-owner: they surfaced under the
-        // operator's Jobs list and rendered into the operator's directories.
-        dataDir: req.ctx.dataDir,
-        outputDir: req.ctx.outputDir,
-        userId: req.ctx.userId,
-        isSuperAdmin: Boolean(req.ctx.isSuperAdmin),
-        isOwner: Boolean(req.ctx.isOwner),
-      });
+      },
+      // Tenant isolation: stamp every series job with the caller's scope so
+      // it (a) is owned by — and visible only to — its creator (+ super-admin)
+      // and (b) renders into the creator's per-user data/output dirs. Omitting
+      // this made series jobs global/null-owner: they surfaced under the
+      // operator's Jobs list and rendered into the operator's directories.
+      jobScope(req.ctx));
       jobIds.push(job.id);
     }
 
@@ -258,6 +269,8 @@ router.post("/generate", async (req, res) => {
         : { requested: false },
     });
   } catch (err) {
+    // Nothing was queued (a picture or the first enqueue failed): the renders spent for it come back.
+    if (spentUnits > 0 && jobIds.length === 0) refundQuota(req.ctx, "render", spentUnits);
     res.status(400).json({ ok: false, error: String(err?.message || err) });
   }
 });

@@ -63,6 +63,24 @@ export function consumeQuota(ctx, bucket, amount = 1) {
 }
 
 /**
+ * Gives back up to `amount` units consumeQuota spent today (never below zero), for a
+ * request that spent quota up front and then started nothing. Unlimited plans spend
+ * nothing, so they get nothing back.
+ *
+ * @param {{ dataDir?: string, plan?: string } | null | undefined} ctx
+ * @param {'scripts'|'tts'|'render'|'imageGen'} bucket
+ * @param {number} [amount=1]
+ */
+export function refundQuota(ctx, bucket, amount = 1) {
+  if (!ctx?.dataDir) return;
+  const limit = (QUOTAS[ctx.plan] || QUOTAS.free)[bucket];
+  if (limit === -1) return;
+  const used = Number(readUsage(ctx.dataDir).counts[bucket] || 0);
+  const back = Math.min(used, Math.max(0, Math.floor(Number(amount) || 0)));
+  if (back > 0) incrementUsage(ctx.dataDir, bucket, -back);
+}
+
+/**
  * Middleware factory. Mount AFTER withUserScope; see consumeQuota for the
  * counting rules.
  *

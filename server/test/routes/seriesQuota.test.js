@@ -21,13 +21,16 @@ const { readUsage, incrementUsage } = await import("../../src/lib/usageStore.js"
 
 const enqueued = [];
 const VERSES = [1, 2, 3].map((verse) => ({ book: "Psalms", chapter: 23, verse, text: `Verse ${verse} of the psalm, read slowly and with care.` }));
-_setSeriesDepsForTests({
+const STUBS = {
   fetchVerses: async () => VERSES,
+  // Every test user may start a campaign unless a test says otherwise.
+  precondition: () => null,
   enqueue: async (payload) => {
     enqueued.push(payload);
     return { id: `job_${enqueued.length}` };
   },
-});
+};
+_setSeriesDepsForTests(STUBS);
 
 after(() => {
   _setSeriesDepsForTests(null);
@@ -87,4 +90,29 @@ test("index.js mounts /api/series without a router-level render quota (the route
   const mount = source.split(/\r?\n/).find((line) => line.startsWith('app.use("/api/series"'));
   assert.ok(mount, "/api/series is mounted");
   assert.doesNotMatch(mount, /quota\(/);
+});
+
+test("H1: with the real enqueue, a free user with an empty Library is refused 400 and spends no render", async () => {
+  _setSeriesDepsForTests({ fetchVerses: STUBS.fetchVerses });
+  try {
+    const ctx = freeUser("u_empty_library");
+    const res = await request(appFor(ctx)).post("/api/series/generate").send(BODY);
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /at least one background in the Library/);
+    assert.equal(readUsage(ctx.dataDir).counts.render, 0);
+  } finally {
+    _setSeriesDepsForTests(STUBS);
+  }
+});
+
+test("H1: a failure before the first part is queued gives the series' renders back", async () => {
+  _setSeriesDepsForTests({ ...STUBS, enqueue: async () => { throw new Error("queue unavailable"); } });
+  try {
+    const ctx = freeUser("u_enqueue_fails", 1);
+    const res = await request(appFor(ctx)).post("/api/series/generate").send(BODY);
+    assert.equal(res.status, 400);
+    assert.equal(readUsage(ctx.dataDir).counts.render, 1);
+  } finally {
+    _setSeriesDepsForTests(STUBS);
+  }
 });
