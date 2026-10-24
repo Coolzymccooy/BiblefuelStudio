@@ -1,5 +1,6 @@
 import { Router } from "express";
-import { backgroundTooLargeMessage, remoteContentLength } from '../lib/backgroundLimits.js';
+import { backgroundTooLargeMessage } from '../lib/backgroundLimits.js';
+import { localiseInput, remoteInputFailure, backgroundFetchFailure } from "../lib/remoteInputs.js";
 import fs from "fs";
 import path from "path";
 import { v4 as uuid } from "uuid";
@@ -66,6 +67,31 @@ function isFileTooLarge(p) {
   } catch {
     return false;
   }
+}
+
+/**
+ * Local copies of a simple render's remote inputs (ffmpeg would otherwise
+ * fetch the URLs itself, unvetted). Answers the request and resolves null when
+ * one cannot be fetched; local paths and empty values pass through.
+ * @param {import("express").Response} res
+ * @param {Record<string, string|null>} inputs
+ */
+async function localiseRenderInputs(res, inputs) {
+  const out = {};
+  for (const [name, value] of Object.entries(inputs)) {
+    try {
+      out[name] = await localiseInput(value);
+    } catch (err) {
+      const failure = remoteInputFailure(err, name);
+      res.status(failure.status).json({ ok: false, error: failure.error });
+      return null;
+    }
+  }
+  return out;
+}
+
+function sendFailure(res, failure) {
+  return res.status(failure.status).json({ ok: false, error: failure.error });
 }
 
 function logMemory(tag) {
@@ -176,6 +202,9 @@ router.post("/video", async (req, res) => {
     if (musicPath && isFileTooLarge(musicPath)) {
       return res.status(400).json({ ok: false, error: `musicPath too large (>${MAX_INPUT_MB}MB)` });
     }
+    const local = await localiseRenderInputs(res, { backgroundPath, audioPath, musicPath });
+    if (!local) return;
+    ({ backgroundPath, audioPath, musicPath } = local);
     logMemory("render/video:start");
     const rawLines = Array.isArray(lines) ? lines.map(s => String(s).slice(0, 140)) : [];
     const { w, h } = getDims(aspect);
@@ -331,6 +360,9 @@ router.post("/waveform", async (req, res) => {
     if (musicPath && isFileTooLarge(musicPath)) {
       return res.status(400).json({ ok: false, error: `musicPath too large (>${MAX_INPUT_MB}MB)` });
     }
+    const local = await localiseRenderInputs(res, { backgroundPath, audioPath, musicPath });
+    if (!local) return;
+    ({ backgroundPath, audioPath, musicPath } = local);
     logMemory("render/waveform:start");
 
     const rawLines = Array.isArray(lines) ? lines.map(s => String(s).slice(0, 140)) : [];
@@ -746,7 +778,7 @@ router.post("/captioned-video", async (req, res) => {
       }
       if (isRemoteUrl(videoPath)) {
         try { videoPath = await localizeRemote(videoPath, "video"); }
-        catch (e) { return res.status(502).json({ ok: false, error: `Failed to fetch video: ${e?.message || e}` }); }
+        catch (e) { return sendFailure(res, remoteInputFailure(e, "video")); }
       }
       if (isFileTooLarge(videoPath)) {
         return res.status(400).json({ ok: false, error: `videoPath too large (>${MAX_INPUT_MB}MB)` });
@@ -762,6 +794,12 @@ router.post("/captioned-video", async (req, res) => {
       audioPath = resolveAssetPath(req.ctx.dataDir, rawAudioPath);
       if (!audioPath || !isLocalOrRemote(audioPath)) {
         return res.status(400).json({ ok: false, error: `audioPath not found: ${rawAudioPath}` });
+      }
+      // A remote voice track would otherwise reach ffprobe/ffmpeg as a URL,
+      // which they fetch with no SSRF check.
+      if (isRemoteUrl(audioPath)) {
+        try { audioPath = await localizeRemote(audioPath, "audio"); }
+        catch (e) { return sendFailure(res, remoteInputFailure(e, "audio")); }
       }
       if (isFileTooLarge(audioPath)) {
         return res.status(400).json({ ok: false, error: `audioPath too large (>${MAX_INPUT_MB}MB)` });
@@ -784,19 +822,12 @@ router.post("/captioned-video", async (req, res) => {
         // whole render.
         let local = resolved;
         if (isRemoteUrl(resolved)) {
-          // Ask for the SIZE first. Downloading a 4K stock clip in full only to
-          // reject it wastes bandwidth and minutes of the operator's time; a
-          // HEAD is cheap and fails fast.
-          const remoteBytes = await remoteContentLength(resolved);
-          if (remoteBytes && remoteBytes > MAX_INPUT_MB * 1024 * 1024) {
-            return res.status(400).json({
-              ok: false,
-              error: backgroundTooLargeMessage(i, rawBackgroundPaths[i], remoteBytes, MAX_INPUT_MB),
-            });
-          }
+          // The vetted download refuses an oversized clip from its declared
+          // Content-Length before reading the body, so no separate (unvetted)
+          // HEAD request is needed to fail fast.
           try { local = await localizeRemote(resolved, `bg${i}`); }
           catch (e) {
-            return res.status(502).json({ ok: false, error: `Failed to fetch background ${i + 1}: ${e?.message || e}` });
+            return sendFailure(res, backgroundFetchFailure(e, i, rawBackgroundPaths[i], MAX_INPUT_MB));
           }
         }
         if (isFileTooLarge(local)) {
@@ -838,7 +869,7 @@ router.post("/captioned-video", async (req, res) => {
         }
         if (isRemoteUrl(m)) {
           try { m = await localizeRemote(m, `music${i}`); }
-          catch (e) { return res.status(502).json({ ok: false, error: `Failed to fetch music track ${i + 1}: ${e?.message || e}` }); }
+          catch (e) { return sendFailure(res, remoteInputFailure(e, `music track ${i + 1}`)); }
         }
         if (isFileTooLarge(m)) {
           return res.status(400).json({ ok: false, error: `music track ${i + 1} too large (>${MAX_INPUT_MB}MB)` });

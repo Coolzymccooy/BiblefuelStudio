@@ -24,22 +24,5 @@ export function backgroundTooLargeMessage(index, rawPath, bytes, maxMb) {
     + `Remove it in the Background panel, or pick a smaller clip.`;
 }
 
-/**
- * Content-Length via HEAD, so an oversized remote is rejected BEFORE it is
- * downloaded in full. Returns 0 when the host declines to say, in which case
- * the caller must fall back to checking the file on disk.
- * @param {string} url
- * @param {typeof globalThis.fetch} [fetchImpl] Injectable for tests.
- */
-export async function remoteContentLength(url, fetchImpl = globalThis.fetch) {
-  try {
-    const r = await fetchImpl(url, { method: 'HEAD' });
-    const len = Number(r.headers.get('content-length'));
-    return Number.isFinite(len) && len > 0 ? len : 0;
-  } catch {
-    return 0;
-  }
-}
-
 /** Largest input file (MB) accepted for renders and URL imports; MAX_INPUT_MB overrides. */
 export const MAX_INPUT_MB = Number(process.env.MAX_INPUT_MB || 200);
