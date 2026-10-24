@@ -45,7 +45,6 @@ let ffmpegOk = false;
 const MAX_RENDER_SECONDS = Number(process.env.MAX_RENDER_SECONDS || 30);
 const JOBS_RETENTION = Math.max(50, Number(process.env.JOBS_RETENTION || 500));
 const JOB_EXEC_TIMEOUT_SEC = Math.max(30, Number(process.env.JOB_EXEC_TIMEOUT_SEC || 600));
-const STALE_RUNNING_JOB_MINUTES = Math.max(1, Number(process.env.STALE_RUNNING_JOB_MINUTES || 45));
 
 function ensureFfmpegAvailable() {
   if (ffmpegChecked) return ffmpegOk;
@@ -533,6 +532,8 @@ function wrapTextLines(lines, maxChars, maxLines) {
 }
 
 let running = false;
+// The id of the job this process's worker is running now, or null.
+let activeJobId = null;
 const lastProgressByJob = new Map();
 const volatileProgressByJob = new Map();
 
@@ -1917,30 +1918,45 @@ export function validatePayloadForEnqueue(type, payload) {
   return { ok: false, error: `unsupported job type: ${type}` };
 }
 
-function recoverStaleRunningJobs() {
-  const now = Date.now();
-  const staleAfterMs = STALE_RUNNING_JOB_MINUTES * 60 * 1000;
+export const RESTART_INTERRUPTED_ERROR = "Interrupted by a server restart. Retry it.";
+// Statuses where nothing is running: waiting for the worker, or finished.
+const NOT_IN_FLIGHT = new Set(["queued", "done", "failed", "cancelled"]);
+
+/**
+ * Restart recovery (#118). Every job left running (or in any status between
+ * queued and finished) that this process is not running is marked failed and
+ * `interrupted`, whatever its age, so a retry is allowed at once.
+ *
+ * This is safe without a heartbeat because the server runs as ONE process
+ * (`node index.js`, one worker loop): no other live process can own a job in
+ * this store, so a running job this process did not start was stopped by a
+ * restart or deploy. If the server ever runs several processes against one
+ * store, this needs a per-job heartbeat instead.
+ *
+ * Queued jobs are left queued: the worker runs them as before.
+ * The store is one file for every user, so every user's jobs are covered.
+ */
+function recoverInterruptedJobs() {
   store = loadJobs();
   let changed = false;
 
   for (const job of store.jobs) {
-    if (job?.status !== "running") continue;
-    const refIso = job.startedAt || job.createdAt;
-    const refTs = new Date(refIso || 0).getTime();
-    if (!Number.isFinite(refTs)) continue;
-    if (now - refTs < staleAfterMs) continue;
+    if (!job || NOT_IN_FLIGHT.has(job.status)) continue;
+    if (job.id === activeJobId) continue;
 
-    const lastPct = Number.isFinite(job.progress) ? job.progress : 0;
     job.status = "failed";
+    job.interrupted = true;
     job.finishedAt = new Date().toISOString();
-    job.progress = lastPct;
-    job.error = `Recovered stale running job after ${STALE_RUNNING_JOB_MINUTES}m (worker restart or timeout).`;
+    job.progress = Number.isFinite(job.progress) ? job.progress : 0;
+    job.error = RESTART_INTERRUPTED_ERROR;
     changed = true;
-    console.warn(`[JOBS] Recovered stale running job ${job.id}`);
+    console.warn(`[JOBS] Marked job ${job.id} failed: interrupted by a server restart`);
   }
 
   if (changed) saveJobs(store);
 }
+
+export function _recoverInterruptedJobsForTest() { recoverInterruptedJobs(); }
 
 function publicVideoUrlFromOutFile(outFile) {
   if (!outFile) return "";
@@ -2006,6 +2022,7 @@ async function workerTick() {
   const next = store.jobs.find(j => j.status === "queued");
   if (!next) return;
   running = true;
+  activeJobId = next.id;
   volatileProgressByJob.set(next.id, 0);
   safeUpdateJob(next.id, { status: "running", startedAt: new Date().toISOString(), progress: 0 });
   currentJobCtx = next.ctx || null;
@@ -2029,6 +2046,7 @@ async function workerTick() {
     lastProgressByJob.delete(next.id);
     volatileProgressByJob.delete(next.id);
     running = false;
+    activeJobId = null;
     currentJobCtx = null;
     currentJobRun = null;
   }
@@ -2042,7 +2060,7 @@ function withVolatileProgress(job) {
 }
 
 // poll worker every 1s
-recoverStaleRunningJobs();
+recoverInterruptedJobs();
 const _t = setInterval(workerTick, 1000);
 _t.unref();
 

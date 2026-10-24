@@ -87,6 +87,21 @@ test("job: failed carries the error and non-numeric progress is null", () => {
   assert.equal(handle.output, null);
 });
 
+test("job: a job a restart stopped (#118) reads failed with the retry message, not cancelled", () => {
+  const payload = {
+    ok: true,
+    job: {
+      id: "job_6", type: "render_video", status: "failed", interrupted: true, progress: 37,
+      error: "Interrupted by a server restart. Retry it.",
+    },
+  };
+  const handle = NORMALISERS.job.normalise(payload, { outputUrl: toUrl });
+  assert.equal(handle.status, "failed");
+  assert.equal(handle.error, "Interrupted by a server restart. Retry it.");
+  assert.equal(handle.percent, 37);
+  assert.equal(handle.output, null);
+});
+
 test("job: an object progress with a percent is read", () => {
   const payload = { ok: true, job: { id: "job_5", status: "running", progress: { percent: 30 } } };
   assert.equal(NORMALISERS.job.normalise(payload, { outputUrl: toUrl }).percent, 30);

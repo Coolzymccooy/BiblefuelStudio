@@ -14,7 +14,6 @@
     - `OUTPUT_DIR` (e.g. `/var/outputs`)
   - Recommended for queue reliability:
     - `JOB_EXEC_TIMEOUT_SEC` (default `600`)
-    - `STALE_RUNNING_JOB_MINUTES` (default `45`)
 
 ### Optional Firebase (Auth + Storage)
 
@@ -145,7 +144,7 @@ docker run -p 5051:5051 --env-file server/.env biblefuel-studio
    - Recommended: `DATA_DIR=/var/data` and `OUTPUT_DIR=/var/outputs`
    - Optional: `FFMPEG_PATH`, `FFPROBE_PATH` if custom paths needed
    - Optional YouTube direct fallback variables: `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`, `YOUTUBE_REFRESH_TOKEN`
-   - Optional queue reliability tuning: `JOB_EXEC_TIMEOUT_SEC`, `STALE_RUNNING_JOB_MINUTES`
+   - Optional queue reliability tuning: `JOB_EXEC_TIMEOUT_SEC`
    - Optional Firebase variables (see section above)
 
 ## Features
