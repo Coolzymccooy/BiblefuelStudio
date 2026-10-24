@@ -29,6 +29,13 @@ import {
 import { confineUserPath, isSharedTtsFile, sendUserPathError, UserPathError } from "../lib/userPathScope.js";
 import { isOwnerCtx } from "../lib/paths.js";
 
+// Edge synthesis behind a seam so route tests run without the network.
+let _edgeTts = synthesizeEdgeTts;
+/** Test-only. Pass null to restore the real Edge client. */
+export function _setEdgeTtsImpl(fn) {
+  _edgeTts = typeof fn === "function" ? fn : synthesizeEdgeTts;
+}
+
 const CHATTERBOX_CLONE_ID = /^cb:[\w-]+$/;
 const INVALID_CHATTERBOX_VOICE =
   "A Chatterbox voice must be one of your saved clones (cb:<id>), or left empty for the default voice.";
@@ -465,7 +472,7 @@ router.post("/elevenlabs", async (req, res) => {
     if (/quota_exceeded|quota exceeded/i.test(message)) {
       console.warn("[TTS] ElevenLabs quota exceeded — falling back to Edge-TTS");
       try {
-        const fallback = await synthesizeEdgeTts({ text, voiceId });
+        const fallback = await _edgeTts({ text, voiceId });
         return res.json({
           ...fallback,
           fallbackProvider: "edge",
@@ -497,7 +504,7 @@ router.post("/auto", async (req, res) => {
   try {
     if (!elevenLabsAllowed(req)) {
       // Free plan: skip ElevenLabs entirely, go straight to Edge-TTS.
-      const result = await synthesizeEdgeTts({ text, voiceId });
+      const result = await _edgeTts({ text, voiceId });
       return res.json(result);
     }
     const result = await synthesizeTts({ text, voiceId });
@@ -634,7 +641,7 @@ router.post("/edge", async (req, res) => {
   const { voiceId, rate, pitch, volume } = req.body || {};
   const text = cleanSpeakableText(req.body?.text);
   try {
-    const result = await synthesizeEdgeTts({ text, voiceId, rate, pitch, volume });
+    const result = await _edgeTts({ text, voiceId, rate, pitch, volume });
     res.json(result);
   } catch (e) {
     console.error("[TTS] Edge route error:", e);
@@ -691,7 +698,7 @@ router.post("/chatterbox", async (req, res) => {
     }
 
     try {
-      const fallback = await synthesizeEdgeTts({ text });
+      const fallback = await _edgeTts({ text });
       return res.json({
         ...fallback,
         fallbackProvider: "edge",
@@ -894,6 +901,8 @@ router.post("/compare", async (req, res) => {
   });
 
   const results = await Promise.all(tasks);
+  // Nothing was synthesized, so the tts unit this call spent comes back (#120).
+  if (results.every((r) => r.status !== "ok")) res.locals.refundQuota?.();
   return res.json({ ok: true, results });
 });
 

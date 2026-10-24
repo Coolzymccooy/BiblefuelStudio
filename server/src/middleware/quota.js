@@ -81,14 +81,38 @@ export function refundQuota(ctx, bucket, amount = 1) {
 }
 
 /**
+ * Arranges for the unit this request just spent to come back if it answers with an
+ * error status (>= 400): it produced nothing. Also exposes `res.locals.refundQuota()`
+ * for a handler that answers 200 yet produced nothing (a compare where every
+ * candidate failed). Either way the unit comes back at most once.
+ */
+function refundOnFailure(req, res, bucket) {
+  let refunded = false;
+  const refund = () => {
+    if (refunded) return;
+    refunded = true;
+    refundQuota(req.ctx, bucket);
+  };
+  res.locals.refundQuota = refund;
+  // Every response goes through writeHead (res.json and res.end call it implicitly).
+  const writeHead = res.writeHead;
+  res.writeHead = function writeHeadRefundingFailures(statusCode, ...rest) {
+    if (Number(statusCode) >= 400) refund();
+    return writeHead.call(this, statusCode, ...rest);
+  };
+}
+
+/**
  * Middleware factory. Mount AFTER withUserScope; see consumeQuota for the
  * counting rules.
  *
  * @param {'scripts'|'tts'|'render'|'imageGen'} bucket
- * @param {{ skip?: (req: object) => boolean }} [options] `skip`: requests on the
- *   router that do no billable work (a cancel), so they never spend or need quota
+ * @param {{ skip?: (req: object) => boolean, refundOnFailure?: boolean }} [options]
+ *   `skip`: requests on the router that do no billable work (a cancel), so they never
+ *   spend or need quota. `refundOnFailure`: give the unit back when the request fails
+ *   (see refundOnFailure()), for routers whose failures cost nothing, like TTS (#120).
  */
-export function quota(bucket, { skip } = {}) {
+export function quota(bucket, { skip, refundOnFailure: refundsFailures = false } = {}) {
   return function quotaCheck(req, res, next) {
     // Reads never spend budget: every GET on the quota-mounted routers is a
     // status/list read, and charging them let a polling client (e.g. the MCP
@@ -97,6 +121,7 @@ export function quota(bucket, { skip } = {}) {
     if (typeof skip === "function" && skip(req)) return next();
     const outcome = consumeQuota(req?.ctx, bucket);
     if (!outcome.ok) return res.status(outcome.status).json(outcome.body);
+    if (refundsFailures) refundOnFailure(req, res, bucket);
     next();
   };
 }
