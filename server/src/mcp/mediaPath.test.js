@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { resolveMediaInput, _setScopeForTests } from "./mediaPath.js";
+import { resolveMediaInput, resolveMediaOutput, _setScopeForTests } from "./mediaPath.js";
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "media-path-"));
 const mine = path.join(root, "mine");
@@ -145,4 +145,28 @@ test("a media-folder file wins over a shared file of the same /outputs/ name", a
   fs.writeFileSync(path.join(shared, "tts-own.mp3"), "x");
   const out = await resolveMediaInput(ctx, "/outputs/tts-own.mp3");
   assert.equal(out.path, fs.realpathSync(path.join(mine, "tts-own.mp3")));
+});
+
+// ---- resolveMediaOutput: the same check, answered as the file's /outputs/ link ----
+
+test("resolveMediaOutput gives a media-folder file as its /outputs/ path, sub-folders kept", async () => {
+  const flat = await resolveMediaOutput(ctx, path.join(mine, "voice.mp3"));
+  assert.equal(flat.outputsPath, "/outputs/voice.mp3");
+  assert.equal(flat.path, fs.realpathSync(path.join(mine, "voice.mp3")));
+  const deep = await resolveMediaOutput(ctx, "/outputs/sub/deep.mp3");
+  assert.equal(deep.outputsPath, "/outputs/sub/deep.mp3");
+});
+
+test("resolveMediaOutput gives a shared voice file its flat /outputs/ name", async () => {
+  const out = await resolveMediaOutput(ctx, path.join(shared, "tts-abc.mp3"));
+  assert.equal(out.outputsPath, "/outputs/tts-abc.mp3");
+});
+
+test("resolveMediaOutput refuses what resolveMediaInput refuses, and library refs", async () => {
+  const outside = await resolveMediaOutput(ctx, path.join(elsewhere, "secret.mp3"));
+  assert.equal(outside.refusal.structuredContent.error, "PATH_OUTSIDE_MEDIA");
+  const url = await resolveMediaOutput(ctx, "https://example.com/a.mp4");
+  assert.equal(url.refusal.structuredContent.error, "PATH_OUTSIDE_MEDIA");
+  const ref = await resolveMediaOutput(ctx, "library:peaceful");
+  assert.equal(ref.refusal.structuredContent.error, "PATH_OUTSIDE_MEDIA");
 });

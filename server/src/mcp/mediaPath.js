@@ -106,3 +106,30 @@ export async function resolveMediaInput(ctx, value, { allowRefs = false } = {}) 
   }
   return refuse("FILE_NOT_FOUND", `File not found: ${raw}`);
 }
+
+/** The /outputs/ link of a real path already confirmed in scope, or null. */
+function outputsLinkFor(real, outputDir, sharedDir) {
+  const mine = realpathOrNull(outputDir);
+  if (mine && isInsideDir(real, mine)) return `/outputs/${path.relative(mine, real).split(path.sep).join("/")}`;
+  const shared = realpathOrNull(sharedDir);
+  if (shared && isSharedVoiceFile(real, shared)) return `/outputs/${path.basename(real)}`;
+  return null;
+}
+
+/**
+ * The same rule as resolveMediaInput (no library refs), answered as both the
+ * real path and the file's `/outputs/...` link. Routes that confine or
+ * publish by their own outputs alias (publishing, webhooks) take the link.
+ *
+ * @param {{ user: object }} ctx
+ * @param {unknown} value
+ * @returns {Promise<{ path: string, outputsPath: string } | { refusal: object }>}
+ */
+export async function resolveMediaOutput(ctx, value) {
+  const checked = await resolveMediaInput(ctx, value);
+  if (checked.refusal) return checked;
+  const { outputDir, sharedDir } = await scopeOf(ctx.user);
+  const outputsPath = outputsLinkFor(checked.path, outputDir, sharedDir);
+  if (!outputsPath) return refuse("PATH_OUTSIDE_MEDIA", OUTSIDE_MESSAGE);
+  return { path: checked.path, outputsPath };
+}
