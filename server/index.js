@@ -63,7 +63,7 @@ import { createAdminRouter } from "./src/routes/admin.js";
 import issuesRouter from "./src/routes/issues.js";
 import { DATA_DIR, OUTPUT_DIR } from "./src/lib/paths.js";
 import { ownershipWarning } from "./src/lib/userPlan.js";
-import { cacheControlForOutput, publicAssetHeaders } from "./src/lib/mediaCache.js";
+import { cacheControlForOutput, publicAssetHeaders, setOutputSafetyHeaders } from "./src/lib/mediaCache.js";
 import { reconcilePersistedJobs } from "./src/lib/renderJobs.js";
 import { resumeAnimations } from "./src/lib/story/animateStage.js";
 import { createSceneScriptRouter, resumeSceneScriptShots } from "./src/routes/sceneScript.js";
@@ -157,6 +157,7 @@ if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 // to make "Download" actually save to Files/Photos on iOS. safeDownloadName
 // sanitises the value to a single safe segment to prevent header injection.
 app.use("/outputs", (req, res, next) => {
+  setOutputSafetyHeaders(res);
   res.setHeader("Accept-Ranges", "bytes");
   res.setHeader("Cache-Control", cacheControlForOutput(req.path));
   if (req.query && req.query.dl !== undefined) {
@@ -205,6 +206,7 @@ app.use("/outputs", (req, res, next) => {
     // gzipping the response and breaking iOS Range requests.
     res.setHeader("Cache-Control", cacheControlForOutput(rel));
     res.setHeader("Accept-Ranges", "bytes");
+    setOutputSafetyHeaders(res);
     return res.sendFile(hit);
   }
   // Genuine miss: return a real 404 instead of letting the SPA catch-all
