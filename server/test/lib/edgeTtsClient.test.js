@@ -129,6 +129,16 @@ test("edgeSynthesize rejects when the socket closes before turn.end", async () =
   );
 });
 
+test("the close code and reason reach the error (an unknown voice closes with 1007)", async () => {
+  const createSocket = fakeSocketFactory((socket) => {
+    socket.emit("close", 1007, Buffer.from("Unsupported voice xx-XX-NopeNeural."));
+  });
+  await assert.rejects(
+    edgeSynthesize({ text: "Hello there.", voice: "xx-XX-NopeNeural", createSocket }),
+    /\(1007 Unsupported voice xx-XX-NopeNeural\.\)/,
+  );
+});
+
 test("edgeSynthesize rejects when turn.end arrives with no audio", async () => {
   const createSocket = fakeSocketFactory((socket, sent) => {
     socket.emit("message", Buffer.from(`X-RequestId:${requestIdOf(sent)}\r\nPath:turn.end\r\n\r\n{}`), false);

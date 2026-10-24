@@ -161,7 +161,11 @@ function synthesizeOnce({ ssml, createSocket, timeoutMs, nowMs }) {
       finish(error);
     });
     socket.on("error", (err) => finish(new Error(`Edge TTS socket error: ${err?.message || err}`)));
-    socket.on("close", () => finish(new Error("Edge TTS connection closed before the audio finished")));
+    socket.on("close", (code, reason) => {
+      // An unknown voice, for one, closes the socket with a code and a reason.
+      const why = [code, String(reason || "").trim()].filter(Boolean).join(" ");
+      finish(new Error(`Edge TTS connection closed before the audio finished${why ? ` (${why})` : ""}`));
+    });
     socket.on("open", () => {
       socket.send(speechConfigMessage());
       socket.send(ssmlMessage(requestId, ssml));
