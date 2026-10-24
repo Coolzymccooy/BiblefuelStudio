@@ -24,6 +24,8 @@ import { cleanCaptionLine, cleanSpeakableText } from "../lib/speakableScript.js"
 import { buildImportedTranscript, normalizeWordTimings } from "../lib/story/scriptImport.js";
 import { CHARACTER_ANCHORS, composeScenePrompt, sceneMatchText } from "../lib/story/styleAnchors.js";
 import { confineToDir } from "../lib/confinePath.js";
+import { isRemoteUrl } from "../lib/downloadInput.js";
+import { localiseInput, remoteInputFailure } from "../lib/remoteInputs.js";
 import { OUTPUT_DIR } from "../lib/paths.js";
 import { isNarrationActive } from "../lib/longform/narrationRegistry.js";
 import { expandScenesToBeats } from "../lib/story/visualBeats.js";
@@ -79,6 +81,22 @@ export function resolveMusicPathForRender(dataDir, rawMusicPath) {
   const resolved = resolveLibraryTrack(raw) || resolveTenantTrack(dataDir, raw);
   if (resolved) return resolved;
   return MUSIC_REF_PREFIX.test(raw) ? null : raw;
+}
+
+const REMOTE_AUDIO_REFUSAL = "audioPath must be a file on this server, not a web link.";
+
+/**
+ * The project's music bed as a local path (or null). ffmpeg would fetch a URL
+ * bed itself with no SSRF check, so a remote one is downloaded through the
+ * guard; a refusal or failed download is reported, not rendered.
+ */
+async function localiseStoryMusic(dataDir, rawMusicPath) {
+  const resolved = resolveMusicPathForRender(dataDir, rawMusicPath);
+  try {
+    return { ok: true, path: await localiseInput(resolved) };
+  } catch (err) {
+    return { ok: false, ...remoteInputFailure(err, "the music track") };
+  }
 }
 
 // Mockable seams (mirror routes/transcribe.js).
@@ -835,6 +853,9 @@ router.post("/import-script", (req, res) => {
 
     const audioPath = String(req.body?.audioPath || "").trim();
     if (!audioPath) return res.status(400).json({ ok: false, error: "audioPath is required" });
+    // The stored path later reaches ffprobe/ffmpeg, which would fetch a URL
+    // with no SSRF check. Narration is always a file on this server.
+    if (isRemoteUrl(audioPath)) return res.status(400).json({ ok: false, error: REMOTE_AUDIO_REFUSAL });
 
     const durationMs = Number(req.body?.durationMs);
     if (!Number.isFinite(durationMs) || durationMs <= 0) {
@@ -1266,6 +1287,12 @@ router.post("/:id/render", async (req, res) => {
     if (!scenes.length || scenes.some((s) => s.imageStatus !== "done")) {
       return res.status(400).json({ ok: false, error: "every scene needs a generated image before render" });
     }
+    // Both checked BEFORE a job exists, so a refusal leaves the project as it was.
+    if (isRemoteUrl(project.source?.audioPath)) {
+      return res.status(400).json({ ok: false, error: REMOTE_AUDIO_REFUSAL });
+    }
+    const music = await localiseStoryMusic(req.ctx.dataDir, project.music?.path);
+    if (!music.ok) return res.status(music.status).json({ ok: false, error: music.error });
     const out = storyOutDir(req.ctx.outputDir, project.projectId);
     if (!fs.existsSync(out)) fs.mkdirSync(out, { recursive: true });
     const outPath = path.join(out, "video.mp4");
@@ -1318,7 +1345,7 @@ router.post("/:id/render", async (req, res) => {
       // just the music. A bare absolute path (pre-library back-compat, see
       // MusicPicker's REF_PREFIX comment) is still passed through as-is —
       // only the two known ref prefixes are treated as "must resolve or die".
-      musicPath: resolveMusicPathForRender(req.ctx.dataDir, project.music?.path),
+      musicPath: music.path,
       musicVolume: project.music?.volume ?? 0.3,
       autoDuck: project.music?.autoDuck ?? true,
       onProgress: persistRenderPct,

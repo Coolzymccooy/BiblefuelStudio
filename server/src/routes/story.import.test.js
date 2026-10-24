@@ -260,6 +260,20 @@ describe('POST /api/story/import-script: AI motion and auto-start', () => {
     assert.equal(pipelineCalls.length, 0);
   });
 
+  test('a URL audioPath is refused, with or without autoStart, and makes no project', async () => {
+    // A stored URL would later reach ffprobe/ffmpeg, which fetch it with no SSRF check.
+    for (const autoStart of [false, true]) {
+      const { a, dir } = await adminApp();
+      for (const audioPath of ['http://169.254.169.254/latest/meta-data/a.mp3', 'https://cdn.example.com/a.mp3']) {
+        const res = await request(a).post('/api/story/import-script').send(body({ audioPath, autoStart })).expect(400);
+        assert.equal(res.body.ok, false);
+        assert.match(res.body.error, /audioPath/);
+      }
+      assert.equal(pipelineCalls.length, 0);
+      assert.equal(fs.existsSync(path.join(dir, 'story-projects')), false);
+    }
+  });
+
   test('a pipeline that fails lands the project in error with its message', async () => {
     const { a, dir } = await adminApp();
     story._setPipelineImpl(async () => { throw new Error('segmenter offline'); });

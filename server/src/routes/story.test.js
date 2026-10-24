@@ -815,6 +815,59 @@ describe("story routes", () => {
     assert.equal(calls.length, 1);
     assert.equal(calls[0].musicPath, null, "an unresolved mylib ref must not reach the renderer as a raw string");
   });
+
+  // ffmpeg fetches a URL input itself with no SSRF check, so a music path the
+  // user stored as a URL must be localised through the guard, and a private
+  // or metadata address refused before any job starts.
+  function remoteProject({ music, audioPath }) {
+    const img = path.join(outputDir, "img.png"); fs.writeFileSync(img, "png");
+    const audio = path.join(outputDir, "voice.mp3"); fs.writeFileSync(audio, "mp3");
+    const scenes = [{ id: "s1", text: "t", imagePrompt: "", imagePath: img, imageUrl: "/x.png", imageStatus: "done", startMs: 0, endMs: 8000, promptEditedByUser: false }];
+    const project = createProject(dataDir, { title: "remote" });
+    writeProject(dataDir, {
+      ...project,
+      status: "ready_to_render",
+      scenes,
+      source: { audioPath: audioPath ?? audio, durationMs: 8000 },
+      ...(music ? { music: { path: music, volume: 0.3, autoDuck: true } } : {}),
+    });
+    return project;
+  }
+
+  test("render refuses a private music URL with 400 before any job starts", async () => {
+    const calls = [];
+    _setRenderImpl(async (args) => { calls.push(args); return { ok: true, outputPath: args.outPath }; });
+    const project = remoteProject({ music: "http://169.254.169.254/latest/meta-data/bed.mp3" });
+    const { req, res } = mockReqRes({ params: { id: project.projectId }, dataDir, outputDir });
+    await handlerFor("post", "/:id/render")(req, res);
+    assert.equal(res.statusCode, 400, JSON.stringify(res.payload));
+    assert.ok(String(res.payload.error).startsWith("URL_PRIVATE: "), res.payload.error);
+    assert.equal(calls.length, 0);
+    assert.equal(readProject(dataDir, project.projectId).status, "ready_to_render");
+  });
+
+  test("render refuses a project whose source audio is a URL", async () => {
+    const calls = [];
+    _setRenderImpl(async (args) => { calls.push(args); return { ok: true, outputPath: args.outPath }; });
+    const project = remoteProject({ audioPath: "http://127.0.0.1:1/voice.mp3" });
+    const { req, res } = mockReqRes({ params: { id: project.projectId }, dataDir, outputDir });
+    await handlerFor("post", "/:id/render")(req, res);
+    assert.equal(res.statusCode, 400, JSON.stringify(res.payload));
+    assert.match(res.payload.error, /audio/i);
+    assert.equal(calls.length, 0);
+    assert.equal(readProject(dataDir, project.projectId).status, "ready_to_render");
+  });
+
+  test("a local music path still reaches the renderer unchanged", async () => {
+    const calls = [];
+    _setRenderImpl(async (args) => { calls.push(args); return { ok: true, outputPath: args.outPath }; });
+    const bed = path.join(outputDir, "bed.mp3"); fs.writeFileSync(bed, "mp3");
+    const project = remoteProject({ music: bed });
+    const { req, res } = mockReqRes({ params: { id: project.projectId }, dataDir, outputDir });
+    await handlerFor("post", "/:id/render")(req, res);
+    assert.equal(res.statusCode, 200, JSON.stringify(res.payload));
+    assert.equal(calls[0].musicPath, bed);
+  });
 });
 
 describe("output frame", () => {
