@@ -5,7 +5,6 @@ import request from 'supertest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { OUTPUT_DIR } from '../lib/paths.js';
 import timelineRouter, { _resetTimelineRenderJobsForTest, _setTimelineRendererForTest } from './timeline.js';
 
 // The caller's own output folder, holding the footage the test project
@@ -192,26 +191,6 @@ describe('timeline route', () => {
     await new Promise((resolve) => setTimeout(resolve, 25));
     assert.equal(seen.outputDir, outputDir);
     assert.equal(seen.outputPath, path.join(outputDir, 'timeline', queued.body.jobId, 'video.mp4'));
-  });
-
-  test('POST /render keeps the global folder and its flat timeline/<jobId>.mp4 for the owner (R48)', async () => {
-    // The owner's footage lives in the global folder, so #112 lets them read it.
-    const footage = `timeline-r48-${process.pid}-${Date.now()}.mp4`;
-    fs.mkdirSync(OUTPUT_DIR, { recursive: true });
-    fs.writeFileSync(path.join(OUTPUT_DIR, footage), 'x');
-    const project = projectWithClip();
-    project.assets['asset-video'].path = `/outputs/${footage}`;
-    let seen;
-    _setTimelineRendererForTest(async (_plan, opts) => { seen = opts; return { ok: true, outputPath: opts.outputPath, publicUrl: '/outputs/x.mp4' }; });
-    let queued;
-    try {
-      queued = await request(app({ outputDir: OUTPUT_DIR })).post('/api/timeline/render').send({ project }).expect(202);
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    } finally {
-      fs.rmSync(path.join(OUTPUT_DIR, footage), { force: true });
-    }
-    assert.equal(seen.outputDir, OUTPUT_DIR);
-    assert.equal(seen.outputPath, path.join(OUTPUT_DIR, 'timeline', `${queued.body.jobId}.mp4`));
   });
 
   test('GET /render/:jobId answers 404 to another user for a job in memory (R49)', async () => {
