@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { isFirebaseAdminEnabled, uploadLocalFileToFirebase } from "../lib/firebaseAdmin.js";
+import { buildUserOutputPrefix, isFirebaseAdminEnabled, uploadLocalFileToFirebase } from "../lib/firebaseAdmin.js";
 import { confineUserPath, sendUserPathError } from "../lib/userPathScope.js";
 
 const router = Router();
@@ -35,7 +35,9 @@ router.post("/upload-output", async (req, res) => {
       throw err;
     }
 
-    const prefix = String(req.body?.prefix || "outputs").trim() || "outputs";
+    // The bucket folder is the caller's own, derived here: a client-sent
+    // prefix could have written into another account's uploads/<id>/ folder.
+    const prefix = buildUserOutputPrefix(req.ctx?.userId);
     const uploaded = await firebase.upload(localPath, { prefix });
     res.json({ ok: true, uploaded });
   } catch (e) {

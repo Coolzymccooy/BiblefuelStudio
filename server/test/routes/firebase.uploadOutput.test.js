@@ -111,6 +111,15 @@ describe("/api/firebase/upload-output path scope", () => {
     assert.deepEqual(uploads, []);
   });
 
+  test("the bucket folder is the caller's own, whatever prefix the client sends", async () => {
+    for (const prefix of [undefined, "outputs", "uploads/them", "uploads/them/../me", "../../x", "/", "uploads/me/outputs"]) {
+      uploads = [];
+      const res = await upload(ctx, { path: f.own, ...(prefix === undefined ? {} : { prefix }) });
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+      assert.equal(uploads[0].options.prefix, "uploads/me/outputs", String(prefix));
+    }
+  });
+
   test("the owner still uploads from the global output folder", async () => {
     const res = await upload(ownerCtx, { path: "/outputs/owner.mp4" });
     assert.equal(res.status, 200, JSON.stringify(res.body));
