@@ -13,6 +13,7 @@ import { ScreenHeader } from '../components/ui/ScreenHeader';
 import { Button } from '../components/ui/Button';
 import { useAuth } from '../hooks/useAuth';
 import { cartoonApi } from '../lib/cartoonApi';
+import { isApiError } from '../lib/apiError';
 import { toastError } from '../lib/errors';
 import type { CartoonMonth, CartoonProject } from '../lib/cartoonTypes';
 import { CARTOON_STEPS, furthestStep, reachableSteps, type CartoonStepId } from '../components/cartoon/steps';
@@ -92,25 +93,32 @@ function StepPanel({ step, project, month, seedance, onSaved, onScriptSaved, onG
   );
 }
 
-/** Delete the cartoon, after a confirm. Off while a step runs; the server's BUSY answer is shown if one starts meanwhile. */
+/**
+ * Delete the cartoon, after a confirm. Off while a step runs; the server's BUSY answer is shown if one starts meanwhile.
+ * A PAID_NOT_SAVED refusal (a paid clip not yet downloaded) stays beside the button, since it tells the user what to do first.
+ */
 function DeleteCartoon({ project }: { project: CartoonProject }) {
   const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
+  const [refused, setRefused] = useState<string | null>(null);
   const running = Object.values(project.running ?? {}).some(Boolean);
   const remove = async () => {
     if (!window.confirm('Delete this cartoon? Its clips stay in your visual library.')) return;
     setBusy(true);
+    setRefused(null);
     try {
       await cartoonApi.remove(project.id);
       navigate('/app/scene-script');
     } catch (e) {
-      toastError(e);
+      if (isApiError(e) && e.code === 'PAID_NOT_SAVED') setRefused(e.message);
+      else toastError(e);
       setBusy(false);
     }
   };
   return (
     <div className="flex flex-wrap items-center justify-end gap-3 border-t border-editor-line pt-5">
       {running && <p id="cartoon-delete-why" className="text-help">Stop the running step before deleting this cartoon.</p>}
+      {refused && !running && <p role="alert" className="text-sm text-bf-danger">{refused}</p>}
       <Button
         variant="danger"
         onClick={() => { void remove(); }}

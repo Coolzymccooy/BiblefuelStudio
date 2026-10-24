@@ -95,6 +95,18 @@ describe('CartoonPage', () => {
     expect(screen.queryByText('All scene scripts list')).not.toBeInTheDocument();
   });
 
+  it('Delete refused for a paid clip still downloading shows why, beside the button', async () => {
+    const sentence = "A clip you paid for hasn't finished downloading. Open Film and press Re-make to fetch it free, then delete.";
+    vi.mocked(cartoonApi.remove).mockRejectedValue(new ApiError(sentence, 'PAID_NOT_SAVED', {}, 409));
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete cartoon' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(sentence);
+    expect(toastError).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Delete cartoon' })).toBeEnabled();
+    expect(screen.queryByText('All scene scripts list')).not.toBeInTheDocument();
+  });
+
   it('moving to another step scrolls to the top of that step', async () => {
     renderPage();
     await screen.findByRole('button', { name: 'Delete cartoon' });

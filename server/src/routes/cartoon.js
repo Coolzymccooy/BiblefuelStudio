@@ -8,7 +8,7 @@ import { lookupVerses } from "../lib/bible/scriptureApi.js";
 import {
   createProject, readProject, updateProject, listProjects, deleteProject, isProjectId,
 } from "../lib/cartoon/store.js";
-import { estimateFilm, reservedSpeakers } from "../lib/cartoon/model.js";
+import { estimateFilm, fetchesAgain, reservedSpeakers } from "../lib/cartoon/model.js";
 import { MAX_SCRIPT_CHARS } from "../lib/cartoon/parse.js";
 import { STYLES, DEFAULT_STYLE, isStyleName } from "../lib/cartoon/styles.js";
 import { EXAMPLES, PLACEHOLDER } from "../lib/cartoon/examples.js";
@@ -345,6 +345,10 @@ export function createCartoonRouter({ ledgerDir = DATA_DIR, deps = {}, writeTime
     if (!project) return undefined;
     if (isFilming(project.id) || portraitRuns.has(project.id) || isRendering(project.id)) {
       return fail(res, 409, "BUSY", "Stop the running step before deleting this cartoon.");
+    }
+    // A paid clip not yet downloaded lives only on this project; deleting it now loses a clip the user paid for.
+    if (project.shots.some((shot) => fetchesAgain(shot))) {
+      return fail(res, 409, "PAID_NOT_SAVED", "A clip you paid for hasn't finished downloading. Open Film and press Re-make to fetch it free, then delete.");
     }
     // The visual library keeps its own copies of the clips.
     deleteProject(req.ctx.dataDir, req.ctx.outputDir, project.id);
