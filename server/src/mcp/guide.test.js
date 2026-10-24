@@ -27,6 +27,8 @@ const NOT_TOOLS = new Set([
   "auto_generate", "bearer_token_env_var", "campaign_auto_post", "clean_voice", "making_shots", "mark_published",
   "pexels_123", "publish_draft", "render_video", "render_waveform", "timeline_preview", "cancel_render",
   "ready_to_render", "draft_script",
+  // library_items actions, written as `add { ... }` and `remove { id }`.
+  "add", "remove",
 ]);
 
 /** The text of one `## ` or `### ` section, up to the next heading of the same or a higher level. */
@@ -52,11 +54,33 @@ test("the tool table lists every registered tool exactly once, and nothing else"
   assert.deepEqual([...rows].sort(), [...toolNames()].sort());
 });
 
-test("every tool-shaped name in the guide is a registered tool, a prompt, or a known value", () => {
+/** Names that are neither a registered tool, a prompt nor a listed value, each once. */
+function unknownNames(spans) {
   const names = new Set([...toolNames(), ...PROMPTS.map((prompt) => prompt.name)]);
+  return [...new Set(spans.filter((name) => !names.has(name) && !NOT_TOOLS.has(name)))];
+}
+
+const unknownMessage = (unknown, where) =>
+  `${where}: ${unknown.map((name) => `"${name}"`).join(", ")} is not a tool, a prompt or a known value. ` +
+  "Add it to NOT_TOOLS in guide.test.js if it is not a tool.";
+
+test("every snake_case name in the guide is a registered tool, a prompt, or a known value", () => {
   const spans = [...GUIDE.matchAll(/`([a-z][a-z0-9]*(?:_[a-z0-9]+)+)`/g)].map((m) => m[1]);
-  const unknown = [...new Set(spans.filter((name) => !names.has(name) && !NOT_TOOLS.has(name)))];
-  assert.deepEqual(unknown, [], "the guide names tools that do not exist");
+  const unknown = unknownNames(spans);
+  assert.deepEqual(unknown, [], unknownMessage(unknown, "snake_case code span"));
+});
+
+// One-word tools (whoami, transcribe, branding...) have no underscore to spot them by, so check every name in a
+// tool's place: the first span of a numbered step, and a span written as a call (`name { ... }` or `name` with { ... }).
+test("every name the guide writes as a call or a step is a registered tool, a prompt, or a known value", () => {
+  const spans = [
+    ...[...GUIDE.matchAll(/^\s*\d+\. `([a-z][a-z0-9_]*)`/gm)].map((m) => m[1]),
+    ...[...GUIDE.matchAll(/`([a-z][a-z0-9_]*) \{[^`]*`/g)].map((m) => m[1]),
+    ...[...GUIDE.matchAll(/`([a-z][a-z0-9_]*)` with \{/g)].map((m) => m[1]),
+  ];
+  assert.ok(spans.includes("transcribe") && spans.includes("branding"), "one-word tools are found");
+  const unknown = unknownNames(spans);
+  assert.deepEqual(unknown, [], unknownMessage(unknown, "tool-position code span"));
 });
 
 test("the guide no longer promises tools in later slices", () => {
@@ -71,11 +95,12 @@ test("Resources covers the guide and the job template", () => {
   assert.match(text, /jobs_get|jobs_wait/);
 });
 
-test("Prompts names the three prompts with their arguments", () => {
-  const text = section("## Prompts");
+test("Prompts has a row per prompt naming each of its own arguments as a code span", () => {
+  const rows = section("## Prompts").split("\n");
   for (const prompt of PROMPTS) {
-    assert.match(text, new RegExp(`\`${prompt.name}\``), `${prompt.name} is described`);
-    for (const arg of Object.keys(prompt.argsSchema)) assert.match(text, new RegExp(`\\b${arg}\\b`), `${prompt.name} ${arg}`);
+    const row = rows.find((line) => line.startsWith(`| \`${prompt.name}\` |`));
+    assert.ok(row, `${prompt.name} has its own row`);
+    for (const arg of Object.keys(prompt.argsSchema)) assert.ok(row.includes(`\`${arg}\``), `${prompt.name}'s row names \`${arg}\``);
   }
 });
 
@@ -83,7 +108,7 @@ test("Troubleshooting covers the errors agents meet, by their real codes", () =>
   const text = section("## Troubleshooting");
   for (const needle of [
     /HTTP 401/, /scene script/i, /403/, /`MCP_CAP_REACHED`/, /`QUOTA_EXCEEDED`/, /`PATH_OUTSIDE_MEDIA`/,
-    /`PUBLISH_NOT_ALLOWED`/, /times out/, /deploy/i, /`failed`/,
+    /`PUBLISH_NOT_ALLOWED`/, /time[sd]? out/, /deploy/i, /`failed`/,
   ]) {
     assert.match(text, needle);
   }
