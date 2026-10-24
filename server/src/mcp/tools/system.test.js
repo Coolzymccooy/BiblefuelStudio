@@ -61,3 +61,11 @@ test("capabilities reports the server, boolean features, music and AI video", as
   assert.equal(typeof data.aiVideo.enabled, "boolean");
   assert.equal("ok" in data.aiVideo, false);
 });
+
+test("capabilities says it describes the server, not what this key may use", async () => {
+  const client = await connect(testApp.keyFor("u_user", "Capabilities description"));
+  const { tools } = await client.listTools();
+  const description = tools.find((t) => t.name === "capabilities").description;
+  assert.match(description, /not what this key may use/);
+  assert.match(description, /whoami/);
+});

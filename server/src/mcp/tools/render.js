@@ -118,7 +118,8 @@ const renderShort = {
     "Needs lines and EITHER backgrounds (library ids from library_items, or video/picture files in your media folder; several play one after another) OR autoBackground: true (the server picks clips from your library by mood and AI-generates any it cannot find). " +
     "audioPath is a voice file (from voice_synthesize or your media folder); musicPath is a music_library ref or a media file. URLs and paths outside your media folder are refused. " +
     "Returns a job handle of kind job: call jobs_wait with kind job and the id; the finished video's path is what publish_youtube and publish_post take. " +
-    "Costs one daily render (plus four daily images with autoBackground, for possible AI pictures), charged together, and one unit of the plan's render quota (QUOTA_EXCEEDED when it is used up, before any cap is spent). Videos are capped at the server's maximum length (30 seconds by default). Takes about one to three minutes. " +
+    "Costs one daily render (plus four daily images with autoBackground, for possible AI pictures), charged together, and one unit of the plan's render quota (QUOTA_EXCEEDED when it is used up, before any cap is spent). Videos are capped at the server's maximum length (30 seconds by default). " +
+    "With a voice track (audioPath, or kineticCaptions speaking the lines) the video is as long as the voice and durationSec is ignored: a one-verse voice is about 6 seconds, so for a longer short write more lines to speak. Takes about one to three minutes. " +
     "If the user has turned on auto-publish in Settings, a finished render is posted automatically only when this key may publish and auto-publish is on when you call this; then it also costs one daily publish. Otherwise the render is queued with auto-publish off and never posts. " +
     "autoPublish in the result says which: suppressed (no publish consent), off (auto-publish is off) or on.",
   inputSchema: {
@@ -129,7 +130,7 @@ const renderShort = {
     musicPath: z.string().max(1000).optional().describe("A music bed: a ref from music_library (library:... or mylib:...) or a file in your media folder."),
     musicVolume: z.number().min(0).max(1).optional().describe("Music volume, 0 to 1."),
     autoDuck: z.boolean().optional().describe("Lower the music under the voice."),
-    durationSec: z.number().min(1).max(600).optional().describe("Video length in seconds (default 20); the server caps it at its maximum."),
+    durationSec: z.number().min(1).max(600).optional().describe("Video length in seconds (default 20) when there is no voice; ignored when there is a voice track, which sets the length. The server caps it at its maximum."),
     aspect: z.enum(ASPECTS).optional().describe("portrait (default, 1080x1920), landscape or square."),
     typographyPreset: z.string().regex(STYLE_WORD).optional().describe("A caption style name, for example default."),
     kenBurns: z.boolean().optional().describe("Slow zoom on still pictures."),

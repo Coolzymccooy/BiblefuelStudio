@@ -360,3 +360,24 @@ test("jobs_retry for a free user at the render limit spends no daily render (pre
   const used = await capsUsed(client);
   assert.equal(used.renders, 0);
 });
+
+// M1: an id or projectId of "", "." or ".." would move the loopback route; it is refused before any call.
+for (const [label, name, input] of [
+  ["jobs_get id ..", "jobs_get", { id: ".." }],
+  ["jobs_get id .", "jobs_get", { id: "." }],
+  ["jobs_retry id ..", "jobs_retry", { id: ".." }],
+  ["jobs_wait id ..", "jobs_wait", { kind: "story", id: ".." }],
+  ["jobs_wait projectId ..", "jobs_wait", { kind: "lyric_render", id: "r_1", projectId: ".." }],
+  ["jobs_wait projectId empty", "jobs_wait", { kind: "lyric_render", id: "r_1", projectId: "" }],
+]) {
+  test(`${label} is BAD_INPUT and makes no loopback call`, async () => {
+    const { ctx, calls, charges } = fakeMcpCtx({});
+    const def = jobsTools.find((t) => t.name === name);
+    const result = await def.handler(ctx, input);
+    assert.equal(result.isError, true);
+    assert.equal(result.structuredContent.error, "BAD_INPUT");
+    assert.match(result.structuredContent.message, /not a valid id/);
+    assert.equal(calls.length, 0);
+    assert.equal(charges.length, 0);
+  });
+}

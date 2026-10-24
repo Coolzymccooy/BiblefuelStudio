@@ -389,3 +389,9 @@ test("a real jobs_wait on a lyric_render without its projectId is refused", asyn
   assert.equal(result.isError, true);
   assert.equal(result.structuredContent.error, "BAD_INPUT");
 });
+
+test("lyric_set_lyrics says the lyrics come from the user, not from transcribe", () => {
+  const { description } = byName.lyric_set_lyrics;
+  assert.match(description, /Ask the user for the lyrics/);
+  assert.match(description, /transcribe/);
+});
