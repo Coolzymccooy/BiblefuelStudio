@@ -5,6 +5,7 @@ import { resolveMediaInput } from "../mediaPath.js";
 import { renderPublishPlan } from "../autoPublish.js";
 import { renderQuotaRefusal } from "../planQuota.js";
 import { VOICE_ID_PATTERN } from "./voice.js";
+import { DEFAULT_XFADE_SECONDS } from "../../lib/videoFilters.js";
 
 // A library item id (pexels_123, agent_<uuid>): no dots, slashes or colons, so
 // it can never also name a file next to the server. It must be in the user's
@@ -71,7 +72,11 @@ async function optionalMedia(ctx, value, options) {
 
 function sceneFields(backgrounds, durationSec) {
   if (backgrounds.length === 1) return { backgroundPath: backgrounds[0].ref };
-  const duration = Math.max(MIN_SCENE_SEC, (durationSec ?? DEFAULT_SHORT_SEC) / backgrounds.length);
+  // Each crossfade overlaps two scenes, so the scenes together run that much
+  // longer than the video (rounded up to the millisecond so it never falls short).
+  const overlaps = DEFAULT_XFADE_SECONDS * (backgrounds.length - 1);
+  const even = ((durationSec ?? DEFAULT_SHORT_SEC) + overlaps) / backgrounds.length;
+  const duration = Math.max(MIN_SCENE_SEC, Math.ceil(even * 1000) / 1000);
   return { scenes: backgrounds.map((b) => ({ backgroundPath: b.ref, duration, kind: b.kind })) };
 }
 

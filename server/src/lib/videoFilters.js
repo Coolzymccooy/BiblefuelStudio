@@ -64,7 +64,7 @@ function fontArg(style) {
   return f ? `:fontfile='${escapeFontPath(f)}'` : "";
 }
 
-const DEFAULT_XFADE_SECONDS = 0.5;
+export const DEFAULT_XFADE_SECONDS = 0.5;
 const EMPHASIS_COLOR = "#F59E0B";
 const BASE_TEXT_COLOR = "white";
 

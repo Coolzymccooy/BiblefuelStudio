@@ -7,6 +7,7 @@ import { startTestApp, mcpClient } from "../../../test/helpers/mcpTestApp.js";
 import { fakeMcpCtx } from "../../../test/helpers/fakeMcpCtx.js";
 import { _setScopeForTests } from "../mediaPath.js";
 import renderTools from "./render.js";
+import { DEFAULT_XFADE_SECONDS } from "../../lib/videoFilters.js";
 
 const USER = { id: "u_render", email: "render@example.com", role: "user", emailVerified: true };
 const testApp = await startTestApp({ users: [USER] });
@@ -163,10 +164,22 @@ test("render_short sends media paths as real paths, several backgrounds as scene
   assert.equal(payload.aspect, "square");
   assert.equal(Object.hasOwn(payload, "backgroundPath"), false);
   assert.deepEqual(payload.scenes, [
-    { backgroundPath: fs.realpathSync(path.join(dir, "a.mp4")), duration: 10, kind: "video" },
-    { backgroundPath: "pexels_123", duration: 10, kind: "video" },
-    { backgroundPath: fs.realpathSync(path.join(dir, "b.png")), duration: 10, kind: "image" },
+    { backgroundPath: fs.realpathSync(path.join(dir, "a.mp4")), duration: 10.334, kind: "video" },
+    { backgroundPath: "pexels_123", duration: 10.334, kind: "video" },
+    { backgroundPath: fs.realpathSync(path.join(dir, "b.png")), duration: 10.334, kind: "image" },
   ]);
+});
+
+test("render_short scene lengths cover the crossfades, so the video is as long as asked", async () => {
+  const dir = mediaWith("a.mp4");
+  const { ctx, calls } = ctxWith({ "GET /api/library": LIBRARY, "POST /api/jobs/enqueue": (_m, _p, opts) => QUEUED(opts.body) });
+  const backgrounds = Array.from({ length: 10 }, () => path.join(dir, "a.mp4"));
+  const result = await byName.render_short.handler(ctx, { lines: ["x"], backgrounds, durationSec: 20 });
+  assert.notEqual(result.isError, true, result.content?.[0]?.text);
+  const scenes = calls.at(-1).opts.body.payload.scenes;
+  // buildSceneGraph overlaps each pair of scenes by DEFAULT_XFADE_SECONDS.
+  const total = scenes.reduce((sum, s) => sum + s.duration, 0) - DEFAULT_XFADE_SECONDS * (scenes.length - 1);
+  assert.ok(total >= 20 && total < 20.02, `video length ${total}`);
 });
 
 test("render_short refuses a URL or outside path as a background and charges nothing", async () => {
