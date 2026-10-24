@@ -334,22 +334,30 @@ async function orderOne(ctx, id, shotId, opts) {
   return collect(ctx, id, shotId, submitted.taskId, { ledgerDir, deps });
 }
 
+/**
+ * End a shot that threw. An ordered task keeps its id and is charged once, so
+ * the next Retry fetches it free; an unordered one gives its money back.
+ */
+function failShot(ctx, id, shotId, opts, e) {
+  const project = readProject(ctx.dataDir, id);
+  const clip = project?.shots.find((s) => s.id === shotId)?.clip;
+  const taskId = clip?.taskId ?? null;
+  if (!taskId) {
+    giveShareBack(ctx, id, shotId, opts);
+    releaseSpend(opts.ledgerDir, filmLedgerKey(id, shotId));
+  } else if (clip.chargedTaskId !== taskId) {
+    // A submitted task may be billed: settle the estimate (as for a timeout) rather than leave the reservation stuck.
+    chargeShot(ctx, id, shotId, taskId, { ledgerDir: opts.ledgerDir, tokens: estimatedTokens(project, clip.seconds || 4) });
+  }
+  console.warn(`[cartoon] shot ${shotId} of ${id} failed: ${e?.message || e}`);
+  endShot(ctx.dataDir, id, shotId, taskId, { status: "error", error: GENERIC });
+}
+
 async function orderSafely(ctx, id, shotId, opts) {
   try {
     await orderOne(ctx, id, shotId, opts);
   } catch (e) {
-    const project = readProject(ctx.dataDir, id);
-    const clip = project?.shots.find((s) => s.id === shotId)?.clip;
-    const taskId = clip?.taskId ?? null;
-    if (!taskId) {
-      giveShareBack(ctx, id, shotId, opts);
-      releaseSpend(opts.ledgerDir, filmLedgerKey(id, shotId));
-    } else if (clip.chargedTaskId !== taskId) {
-      // A submitted task may be billed: settle the estimate (as for a timeout) rather than leave the reservation stuck.
-      chargeShot(ctx, id, shotId, taskId, { ledgerDir: opts.ledgerDir, tokens: estimatedTokens(project, clip.seconds || 4) });
-    }
-    console.warn(`[cartoon] shot ${shotId} of ${id} failed: ${e?.message || e}`);
-    endShot(ctx.dataDir, id, shotId, taskId, { status: "error", error: GENERIC });
+    failShot(ctx, id, shotId, opts, e);
   }
 }
 
@@ -470,8 +478,9 @@ export async function resumeFilm(ctx, projects, { ledgerDir, deps } = {}) {
     project.shots.forEach((s, i) => {
       if (!IN_FLIGHT.has(s.clip?.status)) return;
       if (s.clip.taskId) {
+        // A collect that throws (say, a full disk) must not leave the shot "generating" with no way back.
         jobs.push(collect(ctx, project.id, s.id, s.clip.taskId, { ledgerDir, deps: d })
-          .catch((e) => console.warn(`[cartoon] collecting ${s.clip.taskId} failed: ${e?.message || e}`)));
+          .catch((e) => failShot(ctx, project.id, s.id, { ledgerDir }, e)));
         return;
       }
       releaseSpend(ledgerDir, filmLedgerKey(project.id, s.id));

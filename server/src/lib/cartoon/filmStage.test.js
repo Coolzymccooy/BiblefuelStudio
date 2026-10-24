@@ -250,6 +250,25 @@ describe("cartoon film stage", () => {
     assert.equal(readLedger(ledgerDir).clips, 1);
   });
 
+  test("a collect that throws after a restart ends the shot so Retry can fetch it free", async (t) => {
+    t.mock.method(console, "warn", () => {});
+    const project = newProject();
+    const stuck = updateProject(ctx.dataDir, project.id, (p) => ({
+      ...p,
+      shots: p.shots.map((s, i) => (i === 0 ? { ...s, clip: { status: "generating", taskId: "task-7", seconds: 4, prompt: "p" } } : s)),
+    }));
+    reserveSpend(ledgerDir, filmLedgerKey(project.id, "sh1"), 0.5);
+    const { deps } = fakeDeps();
+    const diskFull = { ...deps, wait: async () => { throw new Error("ENOSPC: no space left on device"); } };
+    await resumeFilm(ctx, [stuck], { ledgerDir, deps: diskFull });
+    const ended = readProject(ctx.dataDir, project.id).shots[0].clip;
+    assert.equal(ended.status, "error", "no longer stuck generating");
+    assert.equal(ended.taskId, "task-7", "the paid task is kept");
+    assert.equal(ended.chargedTaskId, "task-7", "charged once, so the next fetch is free");
+    assert.deepEqual(readLedger(ledgerDir).reservations, {});
+    assert.equal(isFilming(project.id), false);
+  });
+
   test("resume collects ordered shots and fails never-ordered ones", async () => {
     const project = newProject();
     const stuck = updateProject(ctx.dataDir, project.id, (p) => ({

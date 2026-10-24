@@ -403,8 +403,19 @@ export async function resumeShots(ctx, projects, { ledgerDir, deps } = {}) {
         failShot(ctx.dataDir, project.id, s.id, null, "Interrupted by a server restart before the clip was ordered. Order it again.");
         continue;
       }
+      // A collect that throws (say, a full disk) must not leave the shot "generating" with no way back:
+      // count the estimate once, as for a timeout, so the next Retry fetches the paid clip free.
       jobs.push(collect(ctx, project.id, s.id, s.clip.taskId, { ledgerDir, deps: d })
-        .catch((e) => console.warn(`[scene-script] collecting ${s.clip.taskId} failed: ${e?.message || e}`)));
+        .catch((e) => {
+          console.warn(`[scene-script] collecting ${s.clip.taskId} failed: ${e?.message || e}`);
+          const now = readProject(ctx.dataDir, project.id);
+          const clip = now?.shots.find((x) => x.id === s.id)?.clip;
+          if (clip?.taskId === s.clip.taskId && clip.chargedTaskId !== clip.taskId) {
+            const tokens = estimateTokens({ durationSec: clip.seconds || SHOT_TARGET_SEC, ratio: seedanceRatio(now.meta?.aspect), resolution: SHOT_RESOLUTION });
+            chargeShot(ctx, project.id, s.id, clip.taskId, { ledgerDir, tokens });
+          }
+          failShot(ctx.dataDir, project.id, s.id, s.clip.taskId, "Something went wrong making this clip. Try again.");
+        }));
     }
     if (!jobs.length) continue;
     count += jobs.length;

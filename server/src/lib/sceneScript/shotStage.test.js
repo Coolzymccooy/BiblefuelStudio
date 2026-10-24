@@ -5,7 +5,7 @@ import os from "os";
 import path from "path";
 import { createProject, readProject, updateProject } from "./projectStore.js";
 import { projectFromMarkdown } from "./model.js";
-import { startShots, isOrderingShots, cancelShots, estimateShots, useLibraryClip, resumeShots, shotPrompt, ledgerKey, shotsHoldKey } from "./shotStage.js";
+import { startShots, isOrderingShots, cancelShots, estimateShots, useLibraryClip, resumeShots, shotPrompt, ledgerKey, shotsHoldKey, canRefetch } from "./shotStage.js";
 import { readLibrary, addClip } from "../visualLibrary/store.js";
 import { readLedger, reserveSpend, holdSpend } from "../videoGen/spend.js";
 
@@ -303,5 +303,24 @@ describe("shot stage", () => {
     assert.equal(done.shots[0].clip.status, "done");
     assert.equal(done.spentUsd, once);
     assert.equal(readLedger(ledgerDir).clips, 1);
+  });
+
+  test("a collect that throws after a restart ends the shot so Retry can fetch it free", async (t) => {
+    t.mock.method(console, "warn", () => {});
+    const project = createProject(ctx.dataDir, projectFromMarkdown(SCRIPT));
+    const stuck = updateProject(ctx.dataDir, project.id, (p) => ({
+      ...p,
+      shots: [{ ...p.shots[0], clip: { status: "generating", taskId: "task-7", seconds: 6, prompt: "p", startedAt: Date.now() } }, p.shots[1]],
+    }));
+    reserveSpend(ledgerDir, ledgerKey(project.id, "sh1"), 0.5);
+    const { deps } = fakeDeps();
+    const diskFull = { ...deps, wait: async () => { throw new Error("ENOSPC: no space left on device"); } };
+    await resumeShots(ctx, [stuck], { ledgerDir, deps: diskFull });
+    const ended = readProject(ctx.dataDir, project.id).shots[0];
+    assert.equal(ended.clip.status, "error", "no longer stuck generating");
+    assert.equal(ended.clip.taskId, "task-7", "the paid task is kept");
+    assert.equal(canRefetch(ended), true, "the next Retry fetches it free");
+    assert.deepEqual(readLedger(ledgerDir).reservations, {});
+    assert.equal(isOrderingShots(project.id), false);
   });
 });
