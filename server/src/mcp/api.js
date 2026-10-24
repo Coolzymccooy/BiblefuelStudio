@@ -47,7 +47,9 @@ function toApiError(status, statusText, body) {
   const error = typeof body?.error === "string" ? body.error : null;
   const hint = typeof body?.hint === "string" ? body.hint : null;
   const isCode = Boolean(error && ERROR_CODE.test(error));
-  const code = isCode ? error : `HTTP_${status}`;
+  // Some routes send the code in its own field and a sentence in error.
+  const ownCode = typeof body?.code === "string" && ERROR_CODE.test(body.code) ? body.code : null;
+  const code = isCode ? error : ownCode || `HTTP_${status}`;
   // A code is not a sentence: prefer the route's hint as the readable message.
   const readable = isCode ? hint || error : error || hint;
   return new ApiError({ status, code, message: readable || statusText || `HTTP ${status}`, hint });
