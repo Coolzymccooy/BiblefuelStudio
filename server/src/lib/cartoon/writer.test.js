@@ -195,3 +195,27 @@ test("an empty reply or a throwing writer fails after one retry", async () => {
   const second = await writeCartoonScript({ verse: "Luke 15:4" }, { llm: boom, lookup: lookupOk() });
   assert.equal(second.code, "WRITE_FAILED");
 });
+
+test("a failed write returns a fixed message and keeps the model's text in reasons only", async () => {
+  const invented = SHORT_FILM(`Jesus: "I will always carry you home."`);
+  const result = await writeCartoonScript({ verse: "Luke 15:4" }, { llm: llmReplies(invented, invented), lookup: lookupOk() });
+  assert.equal(result.code, "WRITE_FAILED");
+  assert.equal(result.error, "BibleFuel couldn't write a script that fits. Try a shorter theme or another verse.");
+  assert.ok(!result.error.includes("carry you home"));
+  assert.ok(Array.isArray(result.reasons) && result.reasons.some((reason) => reason.includes("carry you home")));
+});
+
+test("a divine speaker other than Jesus is held to the verse too", async () => {
+  const invented = SHORT_FILM(`The Lord: "I will always carry you home."`);
+  const result = await writeCartoonScript({ verse: "Luke 15:4" }, { llm: llmReplies(invented, invented), lookup: lookupOk() });
+  assert.equal(result.code, "WRITE_FAILED");
+});
+
+test("replacement patterns in a reference are written literally", async () => {
+  const result = await writeCartoonScript(
+    { verse: "Luke 15:4" },
+    { llm: llmReplies(SHORT_FILM()), lookup: lookupOk("Luke 15:4 $& $1") },
+  );
+  assert.equal(result.ok, true);
+  assert.ok(result.markdown.includes("Verse: Luke 15:4 $& $1\n"));
+});

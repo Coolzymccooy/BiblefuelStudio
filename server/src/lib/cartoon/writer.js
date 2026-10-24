@@ -31,6 +31,9 @@ const VERSE_LINE_RE = /^[ \t]*verse[ \t]*:.*$/im;
 const STYLE_LINE_RE = /^[ \t]*style[ \t]*:.*$/im;
 const TITLE_LINE_RE = /^#[ \t]+.*$/m;
 
+// Fixed on purpose: the model's own words never reach the user-facing error. The reasons ride along for logs.
+const WRITE_FAILED_MESSAGE = "BibleFuel couldn't write a script that fits. Try a shorter theme or another verse.";
+
 function failure(code, error) {
   return { ok: false, code, error };
 }
@@ -75,7 +78,7 @@ function buildPrompt({ theme, cast, styleLabel, verseInfo, problems, previous })
   ];
   if (verseInfo) {
     lines.push(
-      "- Jesus may appear with reverence, and may speak only words copied exactly from the verse text below. Never invent words for Jesus.",
+      "- Jesus may appear with reverence. Jesus, the Lord and God may speak only words copied exactly from the verse text below. Never invent words for them.",
       `- The Verse: line must be "Verse: ${verseInfo.canonical}".`,
       "",
       `Verse (${verseInfo.canonical}):`,
@@ -83,7 +86,7 @@ function buildPrompt({ theme, cast, styleLabel, verseInfo, problems, previous })
     );
   } else {
     lines.push(
-      "- Jesus must not speak and must have no lines, because no verse text is available to quote. He may be shown in a bracketed action only if essential.",
+      "- Jesus, the Lord and God must not speak and must have no lines, because no verse text is available to quote. Jesus may be shown in a bracketed action only if essential.",
       "- Choose a Bible passage that fits the theme and put its reference on the Verse: line (for example \"Verse: Luke 15:4\"). The story must be true to that passage.",
     );
   }
@@ -134,13 +137,13 @@ function filmProblems(parsed) {
 
 function jesusProblems(parsed, verseText) {
   return unquotedJesusLines(parsed, verseText).map(
-    (item) => `Jesus says "${item.text}", which is not quoted exactly from the verse. Remove it or replace it with words copied exactly from the verse text; Jesus never gets invented words.`,
+    (item) => `Jesus (or the Lord or God) says "${item.text}", which is not quoted exactly from the verse. Remove it or replace it with words copied exactly from the verse text; Jesus and God never get invented words.`,
   );
 }
 
 /** Replaces the first `pattern` line with `line`, or inserts it after the title (or at the top). */
 function setHeaderLine(markdown, pattern, line) {
-  if (pattern.test(markdown)) return markdown.replace(pattern, line);
+  if (pattern.test(markdown)) return markdown.replace(pattern, () => line);
   const title = TITLE_LINE_RE.exec(markdown);
   if (!title) return `${line}\n${markdown}`;
   const end = title.index + title[0].length;
@@ -208,5 +211,5 @@ export async function writeCartoonScript(request, { llm = defaultLlmComplete, lo
     problems = judged.problems;
     previous = judged.draft;
   }
-  return failure("WRITE_FAILED", `Could not write a script that fits: ${problems.join(" ")}`);
+  return { ...failure("WRITE_FAILED", WRITE_FAILED_MESSAGE), reasons: problems };
 }
