@@ -14,7 +14,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { isPublicAddress, downloadPublicUrl } from "./safeDownload.js";
+import { isPublicAddress, downloadPublicUrl, assertPublicHttpUrl, isUrlGuardError, urlGuardMessage, fetchPublic } from "./safeDownload.js";
 
 const FAKE_HOST = "public.test";
 const loopbackLookup = async () => ({ address: "127.0.0.1", family: 4 });
@@ -93,6 +93,21 @@ describe("isPublicAddress", () => {
       assert.equal(isPublicAddress(ip), false, ip);
     }
     for (const ip of ["8.8.8.8", "1.1.1.1", "172.15.0.1", "172.32.0.1", "2606:4700:4700::1111", "::ffff:8.8.8.8"]) {
+      assert.equal(isPublicAddress(ip), true, ip);
+    }
+  });
+
+  test("IPv6 forms that embed or tunnel to IPv4 are refused unless the IPv4 is public", () => {
+    for (const ip of [
+      "::ffff:0:7f00:1", "::ffff:0:a9fe:a9fe", "::ffff:0:808:808", // IPv4-translated (SIIT): never public
+      "2002:7f00:1::", "2002:a9fe:a9fe::1", "2002:a00:1::", "2002:c0a8:101::", // 6to4 around a private IPv4
+      "2001:0:4136:e378:8000:63bf:3fff:fdd2", "2001::1", // Teredo
+      "64:ff9b:1::a9fe:a9fe", "64:ff9b:1:abcd::1", // local-use NAT64
+      "2001:db8::1", // documentation
+    ]) {
+      assert.equal(isPublicAddress(ip), false, ip);
+    }
+    for (const ip of ["2002:808:808::1", "2001:4860:4860::8888", "64:ff9b::808:808", "2001:db9::1"]) {
       assert.equal(isPublicAddress(ip), true, ip);
     }
   });
@@ -191,18 +206,159 @@ describe("downloadPublicUrl", () => {
     assert.equal(fs.existsSync(file), false);
   });
 
+  test("a refusal from a declared Content-Length carries the declared size", async () => {
+    await assert.rejects(
+      downloadPublicUrl(url("/big-declared"), dest(), reachable({ maxBytes: 5000 })),
+      (err) => err.code === "URL_TOO_LARGE" && err.declaredBytes === 16384,
+    );
+  });
+
+  test("a body that only turns out too large has no declared size to report", async () => {
+    await assert.rejects(
+      downloadPublicUrl(url("/big-chunked"), dest(), reachable({ maxBytes: 10_000 })),
+      (err) => err.code === "URL_TOO_LARGE" && err.declaredBytes === undefined,
+    );
+  });
+
+  test("a good download reports the Content-Length the host declared", async () => {
+    const result = await downloadPublicUrl(url("/big-declared"), dest(), reachable());
+    assert.equal(result.declaredBytes, 16384);
+    assert.equal(result.bytes, 16384);
+  });
+
   test("a good download reports bytes and content type, via the pinned address", async () => {
     lookupCalls = [];
     const file = dest();
     // "public.test" does not resolve in real DNS: the request only succeeds
     // because the socket is pinned to the address our lookup returned.
     const result = await downloadPublicUrl(url("/ok"), file, reachable());
-    assert.deepEqual(result, { bytes: BODY.length, contentType: "audio/mpeg", finalUrl: url("/ok") });
+    assert.deepEqual(result, { bytes: BODY.length, contentType: "audio/mpeg", finalUrl: url("/ok"), declaredBytes: 0 });
     assert.deepEqual(fs.readFileSync(file), BODY);
     assert.deepEqual(lookupCalls, [FAKE_HOST]);
   });
 
   test("an HTTP error status is a plain failure, not a guard code", async () => {
     await assert.rejects(downloadPublicUrl(url("/missing"), dest(), reachable()), { message: "HTTP 404" });
+  });
+});
+
+describe("assertPublicHttpUrl", () => {
+  const publicLookup = async () => [{ address: "93.184.216.34", family: 4 }];
+
+  test("a public host is accepted and the parsed URL returned", async () => {
+    const parsed = await assertPublicHttpUrl("https://hook.example.com/a?b=1", { lookup: publicLookup });
+    assert.ok(parsed instanceof URL);
+    assert.equal(parsed.href, "https://hook.example.com/a?b=1");
+  });
+
+  test("a public IP literal is accepted without a lookup", async () => {
+    const lookup = async () => { throw new Error("should not resolve an IP literal"); };
+    assert.equal((await assertPublicHttpUrl("http://8.8.8.8/x", { lookup })).hostname, "8.8.8.8");
+  });
+
+  test("private, loopback and metadata IP literals are refused", async () => {
+    for (const bad of [
+      "http://127.0.0.1/x", "http://169.254.169.254/latest/meta-data", "http://10.1.2.3/",
+      "http://[::1]/", "http://[::ffff:169.254.169.254]/", "http://2130706433/", "http://0x7f.1/",
+    ]) {
+      await assert.rejects(assertPublicHttpUrl(bad), { code: "URL_PRIVATE", message: "URL_PRIVATE" }, bad);
+    }
+  });
+
+  test("a name that resolves to a private address is refused", async () => {
+    const lookup = async () => [{ address: "10.0.0.7", family: 4 }];
+    await assert.rejects(assertPublicHttpUrl("https://internal.example/x", { lookup }), { code: "URL_PRIVATE" });
+  });
+
+  test("a name is refused when ANY of its addresses is private", async () => {
+    const lookup = async () => [{ address: "93.184.216.34", family: 4 }, { address: "127.0.0.1", family: 4 }];
+    await assert.rejects(assertPublicHttpUrl("https://mixed.example/x", { lookup }), { code: "URL_PRIVATE" });
+  });
+
+  test("every address is asked for, not just the first", async () => {
+    let options;
+    const lookup = async (_host, opts) => { options = opts; return [{ address: "93.184.216.34", family: 4 }]; };
+    await assertPublicHttpUrl("https://hook.example.com/", { lookup });
+    assert.equal(options?.all, true);
+  });
+
+  test("a lookup that answers with a single address object still works", async () => {
+    const lookup = async () => ({ address: "192.168.0.2", family: 4 });
+    await assert.rejects(assertPublicHttpUrl("https://single.example/", { lookup }), { code: "URL_PRIVATE" });
+  });
+
+  test("a name with no addresses is refused", async () => {
+    const lookup = async () => [];
+    await assert.rejects(assertPublicHttpUrl("https://empty.example/", { lookup }), { code: "URL_PRIVATE" });
+  });
+
+  test("non-http schemes and junk are refused", async () => {
+    for (const bad of ["ftp://example.com/a", "file:///etc/passwd", "javascript:alert(1)", "not a url", "", null, undefined]) {
+      await assert.rejects(assertPublicHttpUrl(bad, { lookup: publicLookup }), { code: "URL_SCHEME" }, String(bad));
+    }
+  });
+});
+
+describe("guard error helpers", () => {
+  test("isUrlGuardError is true only for the refusal codes", () => {
+    for (const code of ["URL_SCHEME", "URL_PRIVATE", "URL_REDIRECTS", "URL_TOO_LARGE"]) {
+      assert.equal(isUrlGuardError(Object.assign(new Error(code), { code })), true, code);
+    }
+    assert.equal(isUrlGuardError(Object.assign(new Error("URL_TIMEOUT"), { code: "URL_TIMEOUT" })), false);
+    assert.equal(isUrlGuardError(new Error("HTTP 404")), false);
+    assert.equal(isUrlGuardError(null), false);
+  });
+
+  test("urlGuardMessage starts with the code and adds a plain sentence", () => {
+    const msg = urlGuardMessage(Object.assign(new Error("URL_PRIVATE"), { code: "URL_PRIVATE" }));
+    assert.match(msg, /^URL_PRIVATE: [A-Z].+\.$/);
+    assert.equal(urlGuardMessage(new Error("HTTP 500")), null);
+  });
+});
+
+describe("fetchPublic (pinned request for a URL that is only POSTed to)", () => {
+  test("the socket goes to the address that was vetted, whatever DNS says later", async () => {
+    let seen = null;
+    const fetchImpl = async (href, init) => { seen = { href, init }; return { status: 200, ok: true }; };
+    const res = await fetchPublic("https://hook.example.com/x", { method: "POST", body: "{}" }, {
+      lookup: async () => ({ address: "93.184.216.34", family: 4 }),
+      fetchImpl,
+    });
+    assert.equal(res.status, 200);
+    assert.equal(seen.href, "https://hook.example.com/x");
+    assert.equal(seen.init.method, "POST");
+    assert.equal(seen.init.redirect, "manual");
+    // The agent's own lookup answers with the vetted address for ANY name, so a
+    // second (rebinding) DNS answer is never consulted for the connection.
+    const agent = typeof seen.init.agent === "function" ? seen.init.agent(new URL(seen.href)) : seen.init.agent;
+    const answer = await new Promise((resolve) => agent.options.lookup("hook.example.com", {}, (_e, address, family) => resolve({ address, family })));
+    assert.deepEqual(answer, { address: "93.184.216.34", family: 4 });
+    const all = await new Promise((resolve) => agent.options.lookup("hook.example.com", { all: true }, (_e, list) => resolve(list)));
+    assert.deepEqual(all, [{ address: "93.184.216.34", family: 4 }]);
+  });
+
+  test("a real request is pinned: an unresolvable name still reaches the vetted address", async () => {
+    const res = await fetchPublic(url("/ok"), { method: "POST", body: "{}" }, reachable());
+    assert.equal(res.status, 200);
+  });
+
+  test("a redirect is returned, not followed", async () => {
+    lookupCalls = [];
+    const res = await fetchPublic(url("/chain"), { method: "POST" }, reachable());
+    assert.equal(res.status, 302);
+    assert.deepEqual(lookupCalls, [FAKE_HOST]);
+  });
+
+  test("private hosts and other schemes are refused before connecting", async () => {
+    let fetched = false;
+    const fetchImpl = async () => { fetched = true; return { status: 200 }; };
+    await assert.rejects(fetchPublic(`http://127.0.0.1:${port}/ok`, {}, { fetchImpl }), { code: "URL_PRIVATE" });
+    await assert.rejects(fetchPublic("http://hook.internal/x", {}, { fetchImpl, lookup: async () => ({ address: "10.0.0.9", family: 4 }) }), { code: "URL_PRIVATE" });
+    await assert.rejects(fetchPublic("ftp://hook.example.com/x", {}, { fetchImpl }), { code: "URL_SCHEME" });
+    assert.equal(fetched, false);
+  });
+
+  test("a hook that never answers is aborted after timeoutMs", async () => {
+    await assert.rejects(fetchPublic(url("/stall"), { method: "POST" }, reachable({ timeoutMs: 80 })).then((r) => r.text()), (err) => err?.name === "AbortError" || /abort/i.test(String(err?.message)));
   });
 });

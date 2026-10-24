@@ -5,6 +5,10 @@ import path from 'path';
 import { spawn } from 'child_process';
 import { setTimeout as delay } from 'timers/promises';
 import { OUTPUT_DIR } from '../paths.js';
+import { localiseInput } from '../remoteInputs.js';
+import { urlGuardMessage } from '../safeDownload.js';
+import { isUrlLike } from '../inputUrl.js';
+import { localInput } from '../videoInputGuard.js';
 import { get as getVoiceProvider } from '../voice/index.js';
 import {
   escapeDrawText, escapeFontPath, fontFileFor, resolveTypographyPreset,
@@ -68,6 +72,8 @@ export function resolveTimelineAssetPath(rawPath, opts = {}) {
   const value = String(rawPath).replace(/\\/g, '/');
 
   if (/^https?:\/\//i.test(value)) return value;
+  // Any other URL form (`tcp:`, `http:/host` ...) is not a file here.
+  if (isUrlLike(value)) return null;
 
   let resolved;
   if (value.startsWith('/outputs/')) {
@@ -317,7 +323,7 @@ export function buildProofRenderCommand(plan, opts = {}) {
   const height = plan.aspect === '9:16' ? 1280 : plan.aspect === '1:1' ? 720 : 720;
   const duration = Math.max(1, Math.min(300, Number(plan.durationSec || main.durationSec || 8)));
 
-  const args = ['-y', '-hide_banner', '-loglevel', 'warning', '-i', mainPath];
+  const args = ['-y', '-hide_banner', '-loglevel', 'warning', ...localInput(mainPath)];
   for (const clip of broll) {
     // A still image decodes to ONE frame at t=0 and carries no timeline, so
     // `enable='between(t,...)'` on the overlay never matched and the image
@@ -331,11 +337,11 @@ export function buildProofRenderCommand(plan, opts = {}) {
       // never appeared. The enable expression alone decides when it shows.
       args.push('-loop', '1', '-t', String(duration));
     }
-    args.push('-i', clip.resolvedPath);
+    args.push(...localInput(clip.resolvedPath));
   }
-  for (const clip of voiceovers) args.push('-i', clip.resolvedPath);
+  for (const clip of voiceovers) args.push(...localInput(clip.resolvedPath));
   // Loop the bed so a short track still covers a long recap.
-  if (music) args.push('-stream_loop', '-1', '-i', music.resolvedPath);
+  if (music) args.push('-stream_loop', '-1', ...localInput(music.resolvedPath));
 
   const videoParts = [];
   videoParts.push(
@@ -587,9 +593,41 @@ export function runFfmpeg(args, opts = {}) {
   });
 }
 
+/**
+ * A copy of `plan` in which every clip whose media is a remote URL (on the
+ * clip or on its asset) carries a local copy as `clip.path`, which
+ * clipMediaPath prefers. ffmpeg would otherwise fetch the URL itself with no
+ * SSRF check. Only media a clip actually references is downloaded.
+ * @param {object} plan
+ * @param {(value: string) => Promise<string>} [localise]
+ */
+export async function localiseRemoteMedia(plan, localise = localiseInput) {
+  const tracks = [];
+  for (const track of plan?.tracks || []) {
+    const clips = [];
+    for (const clip of track.clips || []) {
+      const media = clipMediaPath(clip, plan);
+      clips.push(isUrlLike(media) ? { ...clip, path: await localise(media) } : clip);
+    }
+    tracks.push({ ...track, clips });
+  }
+  return { ...plan, tracks };
+}
+
+async function localisePlanOrFail(plan, localise) {
+  try {
+    return { ok: true, plan: await localiseRemoteMedia(plan, localise) };
+  } catch (err) {
+    return { ok: false, error: urlGuardMessage(err) || `Could not fetch timeline media: ${err?.message || err}` };
+  }
+}
+
 export async function renderTimelineProof(plan, opts = {}) {
-  const prepared = await prepareVoiceoverAssets(plan, opts);
-  if (!prepared.ok) return prepared;
+  const voiced = await prepareVoiceoverAssets(plan, opts);
+  if (!voiced.ok) return voiced;
+  const localised = await localisePlanOrFail(voiced.plan, opts.localise);
+  if (!localised.ok) return { ...localised, generatedVoiceovers: voiced.generatedVoiceovers };
+  const prepared = { ...voiced, plan: localised.plan };
   let command = buildProofRenderCommand(prepared.plan, opts);
   if (!command.ok) return command;
   fs.mkdirSync(path.dirname(command.outputPath), { recursive: true });

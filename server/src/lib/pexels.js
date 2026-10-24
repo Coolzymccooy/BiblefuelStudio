@@ -34,7 +34,12 @@ export async function pexelsSearchVideos(query, perPage = 24) {
   return videos;
 }
 
+// The id names the output file (pexels-<id>.mp4) and the API path, so only a
+// real (numeric) Pexels id may get that far: "../x" would write elsewhere.
+const PEXELS_ID = /^\d+$/;
+
 export async function pexelsDownloadVideoById(id) {
+  if (!PEXELS_ID.test(String(id ?? ""))) throw new Error("Pexels video id must be a number");
   const rawKey = (process.env.PEXELS_API_KEY || "");
   const key = rawKey.replace(/['"]/g, '').trim();
   if (!key) throw new Error("PEXELS_API_KEY missing");

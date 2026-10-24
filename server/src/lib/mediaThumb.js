@@ -3,6 +3,7 @@ import path from "path";
 import { spawnSync } from "child_process";
 import { DATA_DIR, OUTPUT_DIR } from "./paths.js";
 import { VIDEO_INPUT_GUARD } from "./videoInputGuard.js";
+import { isUrlLike } from "./inputUrl.js";
 
 export { DATA_DIR, OUTPUT_DIR };
 
@@ -23,7 +24,7 @@ export function ensureDir(dirPath) {
 export function resolveOutputAlias(value) {
   const raw = normalizePathSlashes(String(value || "").trim());
   if (!raw) return "";
-  if (raw.startsWith("http://") || raw.startsWith("https://")) return raw;
+  if (isUrlLike(raw)) return raw;
   if (raw.startsWith("/outputs/")) return path.join(OUTPUT_DIR, raw.slice("/outputs/".length));
   if (raw.startsWith("outputs/")) return path.join(OUTPUT_DIR, raw.slice("outputs/".length));
   if (raw.startsWith("./outputs/")) return path.join(OUTPUT_DIR, raw.slice("./outputs/".length));
@@ -33,7 +34,7 @@ export function resolveOutputAlias(value) {
 export function toOutputPublicPath(value) {
   const resolved = resolveOutputAlias(value);
   if (!resolved) return "";
-  if (resolved.startsWith("http://") || resolved.startsWith("https://")) return resolved;
+  if (isUrlLike(resolved)) return resolved;
   const name = path.basename(resolved);
   if (!name) return "";
   return `/outputs/${name}`;
@@ -42,7 +43,7 @@ export function toOutputPublicPath(value) {
 export function deriveOutputJpgPathFromVideo(value) {
   const resolved = resolveOutputAlias(value);
   if (!resolved) return "";
-  if (resolved.startsWith("http://") || resolved.startsWith("https://")) return "";
+  if (isUrlLike(resolved)) return "";
   const stem = path.basename(resolved).replace(/\.[^.]+$/, "");
   if (!stem) return "";
   return `/outputs/${stem}.jpg`;
@@ -51,7 +52,9 @@ export function deriveOutputJpgPathFromVideo(value) {
 export function isLocalOrRemote(value) {
   const resolved = resolveOutputAlias(value);
   if (!resolved) return false;
-  if (resolved.startsWith("http://") || resolved.startsWith("https://")) return true;
+  // Any URL form counts as remote, so callers localise (or refuse) it rather
+  // than handing `http:/host` or `tcp:` to ffmpeg as if it were a file.
+  if (isUrlLike(resolved)) return true;
   return fs.existsSync(resolved);
 }
 
@@ -70,7 +73,7 @@ function canUseFfmpeg() {
 
 export function generateVideoThumbnail(inputPath, options = {}) {
   const resolved = resolveOutputAlias(inputPath);
-  if (!resolved || resolved.startsWith("http://") || resolved.startsWith("https://")) return "";
+  if (!resolved || isUrlLike(resolved)) return "";
   if (!fs.existsSync(resolved)) return "";
 
   const outputBaseName = String(options.outputBaseName || "").trim() || path.basename(resolved).replace(/\.[^.]+$/, "");

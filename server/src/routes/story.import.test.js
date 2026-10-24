@@ -16,15 +16,19 @@ function app() {
     next();
   });
   a.use('/api/story', storyRouter);
-  return { a, dir };
+  // import-script confines audioPath to the caller's folders, so it must be a
+  // real file there.
+  const audio = path.join(dir, 'narration.mp3');
+  fs.writeFileSync(audio, 'ID3');
+  return { a, dir, audio };
 }
 
 describe('POST /api/story/import-script', () => {
   test('creates a project ready to segment, skipping transcription', async () => {
-    const { a } = app();
+    const { a, audio } = app();
     const res = await request(a).post('/api/story/import-script').send({
       script: 'The Lord is my shepherd I shall not want',
-      audioPath: '/outputs/narration.mp3',
+      audioPath: audio,
       durationMs: 6000,
       title: 'Psalm 23 Day 1',
     }).expect(200);
@@ -34,14 +38,14 @@ describe('POST /api/story/import-script', () => {
       'must arrive at segmentation — transcription is skipped');
     assert.ok(res.body.project.transcript.words.length > 0,
       'transcript must be pre-filled so transcribeStage short-circuits');
-    assert.equal(res.body.project.source.audioPath, '/outputs/narration.mp3');
+    assert.equal(res.body.project.source.audioPath, path.resolve(audio));
   });
 
   test('uses provider word timings when supplied', async () => {
-    const { a } = app();
+    const { a, audio } = app();
     const res = await request(a).post('/api/story/import-script').send({
       script: 'be still',
-      audioPath: '/outputs/n.mp3',
+      audioPath: audio,
       durationMs: 2000,
       words: [
         { text: 'be', startMs: 0, endMs: 600 },
@@ -55,10 +59,10 @@ describe('POST /api/story/import-script', () => {
   });
 
   test('does not rewrite the caller supplied script', async () => {
-    const { a } = app();
+    const { a, audio } = app();
     const script = 'Cast all your anxiety on Him because He cares for you';
     const res = await request(a).post('/api/story/import-script').send({
-      script, audioPath: '/outputs/n.mp3', durationMs: 5000,
+      script, audioPath: audio, durationMs: 5000,
     }).expect(200);
 
     const joined = res.body.project.transcript.words.map((x) => x.text).join(' ');
@@ -66,30 +70,30 @@ describe('POST /api/story/import-script', () => {
   });
 
   test('rejects a missing script', async () => {
-    const { a } = app();
+    const { a, audio } = app();
     const res = await request(a).post('/api/story/import-script')
-      .send({ audioPath: '/x.mp3', durationMs: 1000 }).expect(400);
+      .send({ audioPath: audio, durationMs: 1000 }).expect(400);
     assert.match(res.body.error, /script/i);
   });
 
   test('rejects a missing audioPath', async () => {
-    const { a } = app();
+    const { a, audio } = app();
     const res = await request(a).post('/api/story/import-script')
       .send({ script: 'hello there', durationMs: 1000 }).expect(400);
     assert.match(res.body.error, /audioPath/i);
   });
 
   test('rejects a non-positive duration', async () => {
-    const { a } = app();
+    const { a, audio } = app();
     const res = await request(a).post('/api/story/import-script')
-      .send({ script: 'hello there', audioPath: '/x.mp3', durationMs: 0 }).expect(400);
+      .send({ script: 'hello there', audioPath: audio, durationMs: 0 }).expect(400);
     assert.match(res.body.error, /durationMs/i);
   });
 
   test('the created project is retrievable by id', async () => {
-    const { a } = app();
+    const { a, audio } = app();
     const created = await request(a).post('/api/story/import-script')
-      .send({ script: 'a psalm of David', audioPath: '/x.mp3', durationMs: 3000 }).expect(200);
+      .send({ script: 'a psalm of David', audioPath: audio, durationMs: 3000 }).expect(200);
     const id = created.body.project.projectId;
     const got = await request(a).get(`/api/story/${id}`).expect(200);
     assert.equal(got.body.project.projectId, id);
@@ -98,7 +102,7 @@ describe('POST /api/story/import-script', () => {
 
 describe('cast management', () => {
   test('GET /characters lists the available figures', async () => {
-    const { a } = app();
+    const { a, audio } = app();
     const res = await request(a).get('/api/story/characters').expect(200);
     const keys = res.body.characters.map((c) => c.key);
     assert.ok(keys.includes('jesus'));
@@ -107,9 +111,9 @@ describe('cast management', () => {
   });
 
   test('PATCH /:id/cast stores the cast on the project', async () => {
-    const { a } = app();
+    const { a, audio } = app();
     const created = await request(a).post('/api/story/import-script')
-      .send({ script: 'David faced the giant', audioPath: '/x.mp3', durationMs: 3000 }).expect(200);
+      .send({ script: 'David faced the giant', audioPath: audio, durationMs: 3000 }).expect(200);
     const id = created.body.project.projectId;
 
     const res = await request(a).patch(`/api/story/${id}/cast`)
@@ -118,9 +122,9 @@ describe('cast management', () => {
   });
 
   test('rejects unknown character keys but keeps the valid ones', async () => {
-    const { a } = app();
+    const { a, audio } = app();
     const created = await request(a).post('/api/story/import-script')
-      .send({ script: 'a story', audioPath: '/x.mp3', durationMs: 3000 }).expect(200);
+      .send({ script: 'a story', audioPath: audio, durationMs: 3000 }).expect(200);
     const id = created.body.project.projectId;
 
     const res = await request(a).patch(`/api/story/${id}/cast`)
@@ -130,9 +134,9 @@ describe('cast management', () => {
   });
 
   test('deduplicates and lowercases incoming keys', async () => {
-    const { a } = app();
+    const { a, audio } = app();
     const created = await request(a).post('/api/story/import-script')
-      .send({ script: 'a story', audioPath: '/x.mp3', durationMs: 3000 }).expect(200);
+      .send({ script: 'a story', audioPath: audio, durationMs: 3000 }).expect(200);
     const id = created.body.project.projectId;
     const res = await request(a).patch(`/api/story/${id}/cast`)
       .send({ cast: ['JESUS', 'jesus', ' Jesus '] }).expect(200);
@@ -140,23 +144,23 @@ describe('cast management', () => {
   });
 
   test('requires an array', async () => {
-    const { a } = app();
+    const { a, audio } = app();
     const created = await request(a).post('/api/story/import-script')
-      .send({ script: 'a story', audioPath: '/x.mp3', durationMs: 3000 }).expect(200);
+      .send({ script: 'a story', audioPath: audio, durationMs: 3000 }).expect(200);
     const res = await request(a).patch(`/api/story/${created.body.project.projectId}/cast`)
       .send({ cast: 'jesus' }).expect(400);
     assert.match(res.body.error, /array/i);
   });
 
   test('404s for an unknown project', async () => {
-    const { a } = app();
+    const { a, audio } = app();
     await request(a).patch('/api/story/nope/cast').send({ cast: [] }).expect(404);
   });
 
   test('import-script accepts a cast up front', async () => {
-    const { a } = app();
+    const { a, audio } = app();
     const res = await request(a).post('/api/story/import-script').send({
-      script: 'David faced the giant', audioPath: '/x.mp3', durationMs: 3000,
+      script: 'David faced the giant', audioPath: audio, durationMs: 3000,
       cast: ['david_young'],
     }).expect(200);
     assert.deepEqual(res.body.project.cast, ['david_young']);
@@ -180,10 +184,13 @@ describe('POST /api/story/import-script: AI motion and auto-start', () => {
       next();
     });
     a.use('/api/story', storyRouter);
+    narration = path.join(dir, 'n.mp3');
+    fs.writeFileSync(narration, 'ID3');
     return { a, dir };
   }
 
-  const body = (over = {}) => ({ script: 'For God so loved the world', audioPath: '/outputs/n.mp3', durationMs: 4000, ...over });
+  let narration;
+  const body = (over = {}) => ({ script: 'For God so loved the world', audioPath: narration, durationMs: 4000, ...over });
 
   beforeEach(() => {
     savedKey = process.env.BYTEPLUS_ARK_API_KEY;
@@ -253,11 +260,39 @@ describe('POST /api/story/import-script: AI motion and auto-start', () => {
     assert.equal(pipelineCalls.length, 0);
   });
 
-  test('without autoStart nothing runs and any path is still accepted, as before', async () => {
+  test('without autoStart nothing runs, and the confined path is what is stored', async () => {
     const { a } = await adminApp();
-    const res = await request(a).post('/api/story/import-script').send(body({ audioPath: '/somewhere/else.mp3' })).expect(200);
-    assert.equal(res.body.project.source.audioPath, '/somewhere/else.mp3');
+    const res = await request(a).post('/api/story/import-script').send(body()).expect(200);
+    assert.equal(res.body.project.source.audioPath, path.resolve(narration));
     assert.equal(pipelineCalls.length, 0);
+  });
+
+  test('without autoStart the audio is still confined: another account\'s file is refused, and no project is made', async () => {
+    const { a, dir } = await adminApp();
+    const other = fs.mkdtempSync(path.join(os.tmpdir(), 'story-import-other-'));
+    const theirs = path.join(other, 'their-voice.mp3');
+    fs.writeFileSync(theirs, 'ID3');
+    for (const audioPath of [theirs, '/somewhere/else.mp3']) {
+      const res = await request(a).post('/api/story/import-script').send(body({ audioPath })).expect(400);
+      assert.equal(res.body.ok, false, audioPath);
+    }
+    assert.equal(pipelineCalls.length, 0);
+    assert.equal(fs.existsSync(path.join(dir, 'story-projects')), false);
+    fs.rmSync(other, { recursive: true, force: true });
+  });
+
+  test('a URL audioPath is refused, with or without autoStart, and makes no project', async () => {
+    // A stored URL would later reach ffprobe/ffmpeg, which fetch it with no SSRF check.
+    for (const autoStart of [false, true]) {
+      const { a, dir } = await adminApp();
+      for (const audioPath of ['http://169.254.169.254/latest/meta-data/a.mp3', 'https://cdn.example.com/a.mp3', 'http:/127.0.0.1:1/a.mp3', 'tcp://127.0.0.1:1']) {
+        const res = await request(a).post('/api/story/import-script').send(body({ audioPath, autoStart })).expect(400);
+        assert.equal(res.body.ok, false);
+        assert.match(res.body.error, /audioPath/);
+      }
+      assert.equal(pipelineCalls.length, 0);
+      assert.equal(fs.existsSync(path.join(dir, 'story-projects')), false);
+    }
   });
 
   test('a pipeline that fails lands the project in error with its message', async () => {

@@ -88,7 +88,7 @@ describe("storyRender arg building", () => {
     // A 3-minute track under a 30-minute narration must loop, not go silent
     // after its first play. amix=duration=first still ends at the voice.
     const mi = args.indexOf(musicPath);
-    assert.deepEqual(args.slice(mi - 3, mi), ["-stream_loop", "-1", "-i"], "music input is looped indefinitely");
+    assert.deepEqual(args.slice(mi - 5, mi), ["-stream_loop", "-1", "-protocol_whitelist", "file,pipe", "-i"], "music input is looped indefinitely, local files only");
     // The voice input must NOT be looped.
     const vi = args.indexOf("/tmp/voice.mp3");
     assert.equal(args[vi - 1], "-i");
@@ -395,7 +395,7 @@ describe("a scene with a video clip of your own", () => {
       "-format_whitelist", "mov,mp4,m4a,3gp,3g2,mj2,matroska,webm", "-protocol_whitelist", "file",
     ]);
     const si = args.indexOf(path.join(dir, "still.png"));
-    assert.deepEqual(args.slice(si - 3, si), ["-loop", "1", "-i"]);
+    assert.deepEqual(args.slice(si - 5, si), ["-loop", "1", "-protocol_whitelist", "file,pipe", "-i"]);
     assert.equal(args.includes(path.join(dir, "poster.jpg")), false, "the poster is not an input when the clip exists");
   });
 
@@ -420,7 +420,7 @@ describe("a scene with a video clip of your own", () => {
     fs.rmSync(clip);
     const { args } = build(twoScenes());
     const pi = args.indexOf(path.join(dir, "poster.jpg"));
-    assert.deepEqual(args.slice(pi - 3, pi), ["-loop", "1", "-i"]);
+    assert.deepEqual(args.slice(pi - 5, pi), ["-loop", "1", "-protocol_whitelist", "file,pipe", "-i"]);
     assert.equal(args.includes("-stream_loop"), false);
     assert.equal((graph(args).match(/trim=end_frame=1/g) || []).length, 2);
   });
@@ -640,4 +640,48 @@ describe("a scene whose picture is not the frame's shape", () => {
       const top = rgbAt(180, 30);
       assert.ok(top.some((c) => c > 40), `the band above the picture should be the blurred fill, got ${top}`);
     });
+});
+
+describe("story ffmpeg inputs are held to local files (#104)", () => {
+  test("every image, audio and music input carries the protocol whitelist", async () => {
+    const { unguardedInputs } = await import("../../../test/helpers/ffreport.js");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "story-guard-"));
+    const musicPath = path.join(dir, "music.mp3");
+    fs.writeFileSync(musicPath, "audio");
+    const { args } = buildStoryFfmpegArgs({
+      scenes: SCENES, words: WORDS, audioPath: "/tmp/voice.mp3", musicPath,
+      width: 1080, height: 1920, outPath: "/tmp/out.mp4",
+    });
+    assert.deepEqual(unguardedInputs(args), []);
+    assert.ok(args.includes(musicPath));
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("a music bed given as a URL is never wired in as an input", () => {
+    for (const musicPath of ["https://cdn.example.com/bed.mp3", "http:/127.0.0.1:1/bed.mp3", "tcp://127.0.0.1:1"]) {
+      const { args } = buildStoryFfmpegArgs({
+        scenes: SCENES, words: WORDS, audioPath: "/tmp/voice.mp3", musicPath,
+        width: 1080, height: 1920, outPath: "/tmp/out.mp4",
+      });
+      assert.equal(args.includes(musicPath), false, musicPath);
+    }
+  });
+});
+
+describe("probeAudioDurationSec (#104)", () => {
+  test("ffprobe is held to local files", { skip: spawnSync(process.env.FFPROBE_PATH?.trim() || "ffprobe", ["-version"]).status !== 0 && "ffprobe not installed" }, async () => {
+    const { captureFfmpegReports, ffprobeGuarded } = await import("../../../test/helpers/ffreport.js");
+    const { probeAudioDurationSec } = await import("./storyRender.js");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "story-probe-"));
+    const cap = captureFfmpegReports(path.join(dir, "reports"));
+    try {
+      await probeAudioDurationSec(path.join(dir, "voice.mp3"));
+      const probes = cap.commands().filter((c) => c.program === "ffprobe");
+      assert.equal(probes.length, 1);
+      assert.ok(ffprobeGuarded(probes[0].tokens), probes[0].tokens.join(" "));
+    } finally {
+      cap.stop();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

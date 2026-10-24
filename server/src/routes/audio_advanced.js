@@ -7,6 +7,9 @@ import { readLibrary } from "../lib/library.js";
 import { resolveLibraryTrack } from "../lib/musicLibrary.js";
 import { resolveTenantTrack } from "../lib/musicLibraryStore.js";
 import { brandLogoFor, logoOverlay } from "../lib/branding.js";
+import { localiseInput, remoteInputFailure } from "../lib/remoteInputs.js";
+import { isRemoteUrl } from "../lib/downloadInput.js";
+import { LOCAL_PROTOCOL_GUARD, localInput } from "../lib/videoInputGuard.js";
 
 const router = Router();
 
@@ -18,7 +21,7 @@ function frameSizeOf(file, { timeoutMs = 20_000 } = {}) {
   return new Promise((resolve) => {
     const ffprobe = process.env.FFPROBE_PATH?.trim() || "ffprobe";
     const proc = spawn(ffprobe, ["-v", "error", "-select_streams", "v:0",
-      "-show_entries", "stream=width,height", "-of", "csv=p=0", file]);
+      "-show_entries", "stream=width,height", "-of", "csv=p=0", ...LOCAL_PROTOCOL_GUARD, file]);
     let out = "";
     const timer = setTimeout(() => { try { proc.kill("SIGKILL"); } catch { /* gone */ } }, timeoutMs);
     if (timer.unref) timer.unref();
@@ -42,7 +45,12 @@ function resolveAssetPath(dataDir, pathOrId) {
   // why it is spelled mylib: rather than library:.
   const saved = resolveTenantTrack(dataDir, normalized);
   if (saved) return saved;
-  if (normalized.startsWith('http')) return normalized;
+  // An unresolved library ref is a missing track, not a URL: answer null so
+  // callers report "not found" instead of a scheme refusal.
+  if (/^(library|mylib):/i.test(normalized)) return null;
+  // Any URL form (`http:/host`, `tcp:` ...), not just "http...": all are
+  // localised or refused before ffmpeg sees them.
+  if (isRemoteUrl(normalized)) return normalized;
   if (fs.existsSync(normalized)) return normalized;
 
   const lib = readLibrary(dataDir);
@@ -62,8 +70,30 @@ function resolveAssetPath(dataDir, pathOrId) {
 
 function isLocalOrRemote(p) {
   if (!p) return false;
-  if (p.startsWith('http')) return true;
+  if (isRemoteUrl(p)) return true;
   return fs.existsSync(p);
+}
+
+/**
+ * Local copies of every input, in order. ffmpeg fetches URL inputs (and URLs
+ * in a concat list) itself with no SSRF check, so remote ones are downloaded
+ * through the guard first. Answers the request and resolves null on failure.
+ * @param {import("express").Response} res
+ * @param {string[]} paths
+ * @param {string} what names the input in a network-failure message
+ */
+async function localiseAllOrFail(res, paths, what) {
+  const out = [];
+  for (const p of paths) {
+    try {
+      out.push(await localiseInput(p));
+    } catch (err) {
+      const failure = remoteInputFailure(err, what);
+      res.status(failure.status).json({ ok: false, error: failure.error });
+      return null;
+    }
+  }
+  return out;
 }
 
 function run(ffmpeg, args) {
@@ -120,11 +150,13 @@ router.post("/merge", async (req, res) => {
       if (!isLocalOrRemote(p)) return res.status(400).json({ ok: false, error: `file not found: ${p}` });
     }
 
+    const localInputs = await localiseAllOrFail(res, resolvedInputs, "merge input");
+    if (!localInputs) return;
+
     const outDir = req.ctx.outputDir;
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
     const listFile = path.join(outDir, `concat-${uuid()}.txt`);
-    fs.writeFileSync(listFile, resolvedInputs.map(p => {
-      if (p.startsWith('http')) return `file '${p}'`;
+    fs.writeFileSync(listFile, localInputs.map(p => {
       const abs = path.resolve(p);
       return `file '${abs.replace(/'/g, "'\\''")}'`;
     }).join("\n"));
@@ -150,7 +182,8 @@ router.post("/merge", async (req, res) => {
       filters.push(`loudnorm=I=${Number(lufs)}:TP=-1.5:LRA=11`);
     }
 
-    const args = ["-y", "-f", "concat", "-safe", "0", "-i", listFile];
+    // The whitelist is inherited by every file the concat list names.
+    const args = ["-y", "-f", "concat", "-safe", "0", ...localInput(listFile)];
     if (filters.length) args.push("-af", filters.join(","));
     args.push("-vn", "-c:a", "libmp3lame", "-b:a", "192k", outFile);
 
@@ -177,7 +210,7 @@ router.post("/timeline", async (req, res) => {
     const clips = Array.isArray(req.body?.clips) ? req.body.clips : [];
     if (clips.length < 1) return res.status(400).json({ ok: false, error: "clips[] required" });
 
-    const cleaned = clips.map((c) => ({
+    let cleaned = clips.map((c) => ({
       path: resolveAssetPath(req.ctx.dataDir, String(c?.path || "").trim()),
       startSec: c?.startSec != null ? Number(c.startSec) : null,
       durationSec: c?.durationSec != null ? Number(c.durationSec) : null,
@@ -187,6 +220,9 @@ router.post("/timeline", async (req, res) => {
     for (const c of cleaned) {
       if (!isLocalOrRemote(c.path)) return res.status(400).json({ ok: false, error: `file not found: ${c.path}` });
     }
+    const localClipPaths = await localiseAllOrFail(res, cleaned.map((c) => c.path), "timeline clip");
+    if (!localClipPaths) return;
+    cleaned = cleaned.map((c, i) => ({ ...c, path: localClipPaths[i] }));
 
     const outDir = req.ctx.outputDir;
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
@@ -194,7 +230,7 @@ router.post("/timeline", async (req, res) => {
     const outFile = path.join(outDir, `audio-timeline-${uuid()}.mp3`);
 
     const args = ["-y"];
-    cleaned.forEach(c => { args.push("-i", c.path); });
+    cleaned.forEach(c => { args.push(...localInput(c.path)); });
 
     const parts = [];
     cleaned.forEach((c, idx) => {
@@ -300,10 +336,10 @@ router.post("/timeline-preview", async (req, res) => {
     const clips = Array.isArray(req.body?.clips) ? req.body.clips : [];
     if (clips.length < 1) return res.status(400).json({ ok: false, error: "clips[] required" });
 
-    const bg = resolveAssetPath(req.ctx.dataDir, String(req.body?.backgroundPath || "").trim());
-    if (!bg || !isLocalOrRemote(bg)) return res.status(400).json({ ok: false, error: "backgroundPath missing or invalid" });
+    const resolvedBg = resolveAssetPath(req.ctx.dataDir, String(req.body?.backgroundPath || "").trim());
+    if (!resolvedBg || !isLocalOrRemote(resolvedBg)) return res.status(400).json({ ok: false, error: "backgroundPath missing or invalid" });
 
-    const cleaned = clips.map((c) => ({
+    let cleaned = clips.map((c) => ({
       path: resolveAssetPath(req.ctx.dataDir, String(c?.path || "").trim()),
       startSec: c?.startSec != null ? Number(c.startSec) : null,
       durationSec: c?.durationSec != null ? Number(c.durationSec) : null,
@@ -312,13 +348,17 @@ router.post("/timeline-preview", async (req, res) => {
     for (const c of cleaned) {
       if (!isLocalOrRemote(c.path)) return res.status(400).json({ ok: false, error: `file not found: ${c.path}` });
     }
+    const localPaths = await localiseAllOrFail(res, [resolvedBg, ...cleaned.map((c) => c.path)], "timeline input");
+    if (!localPaths) return;
+    const [bg, ...localClipPaths] = localPaths;
+    cleaned = cleaned.map((c, i) => ({ ...c, path: localClipPaths[i] }));
 
     const outDir = req.ctx.outputDir;
     const ffmpeg = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
     const outFile = path.join(outDir, `timeline-preview-${uuid()}.mp4`);
 
-    const args = ["-y", "-stream_loop", "-1", "-i", bg];
-    cleaned.forEach(c => args.push("-i", c.path));
+    const args = ["-y", "-stream_loop", "-1", ...localInput(bg)];
+    cleaned.forEach(c => args.push(...localInput(c.path)));
 
     const parts = [];
     cleaned.forEach((c, idx) => {
