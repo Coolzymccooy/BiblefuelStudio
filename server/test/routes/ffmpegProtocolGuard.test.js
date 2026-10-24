@@ -148,6 +148,21 @@ describe("audio-adv routes guard every ffmpeg input", { skip }, () => {
       .send({ backgroundPath: media.clip, clips: [{ path: media.tone }] }));
     assertGuarded(commands, [media.clip, media.tone]);
   });
+
+  test("/waveform.png", async () => {
+    const commands = await recorded(() => request(app()).get(`/api/audio-adv/waveform.png?inputPath=${encodeURIComponent(media.tone)}`));
+    assertGuarded(commands, [media.tone]);
+  });
+
+  test("/info (ffprobe)", async () => {
+    const commands = await recorded(async () => {
+      const res = await request(app()).get(`/api/audio-adv/info?inputPath=${encodeURIComponent(media.tone)}`);
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+    });
+    const probes = commands.filter((c) => c.program === "ffprobe");
+    assert.equal(probes.length, 1);
+    assert.ok(ffprobeGuarded(probes[0].tokens), probes[0].tokens.join(" "));
+  });
 });
 
 describe("queued renders guard every ffmpeg/ffprobe input", { skip }, () => {

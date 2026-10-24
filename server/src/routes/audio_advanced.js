@@ -10,6 +10,7 @@ import { brandLogoFor, logoOverlay } from "../lib/branding.js";
 import { localiseInput, remoteInputFailure } from "../lib/remoteInputs.js";
 import { isRemoteUrl } from "../lib/downloadInput.js";
 import { LOCAL_PROTOCOL_GUARD, localInput } from "../lib/videoInputGuard.js";
+import { confineUserPath, isSharedTtsFile, sendUserPathError, UserPathError } from "../lib/userPathScope.js";
 
 const router = Router();
 
@@ -35,7 +36,41 @@ function frameSizeOf(file, { timeoutMs = 20_000 } = {}) {
   });
 }
 
-function resolveAssetPath(dataDir, pathOrId) {
+// The files a user may name here: their own, or a voice file a TTS provider
+// wrote to the shared output folder (#112).
+const USER_FILE_SCOPE = { allowShared: isSharedTtsFile };
+
+/** A file the request names, held to the caller's media folder. Throws a UserPathError. */
+function userFile(ctx, raw) {
+  return confineUserPath(raw, ctx, USER_FILE_SCOPE);
+}
+
+/** Does the value name a path or URL rather than a saved library item id? */
+function looksLikePath(value) {
+  return path.isAbsolute(value) || value.includes("/") || value.includes("\\") || value.includes("\0") || isRemoteUrl(value);
+}
+
+/** The media a saved library item points at: a stock URL (fetched through the SSRF guard), or a file that must be the caller's own. */
+function libraryItemSource(ctx, item) {
+  let link = null;
+  if (Array.isArray(item.files) && item.files.length > 0) {
+    const sorted = item.files.slice().sort((a, b) => (b.width || 0) - (a.width || 0));
+    const hd = sorted.find(f => f.quality === 'hd') || sorted[0];
+    link = hd?.link || null;
+  }
+  link = String(link || item.previewUrl || item.url || "").trim();
+  if (!link) return null;
+  return isRemoteUrl(link) ? link : userFile(ctx, link);
+}
+
+/**
+ * Resolve one input: bundled (`library:`) or saved (`mylib:`) music, a saved
+ * library item id, or a file path the caller owns. A request URL is refused
+ * like any path outside the folder: only a saved library item may name one.
+ * Answers null when nothing by that name exists; throws a UserPathError for a
+ * path outside the caller's scope.
+ */
+function resolveAssetPath(ctx, pathOrId) {
   if (pathOrId == null) return null;
   const normalized = String(pathOrId).trim();
   if (!normalized) return null;
@@ -43,29 +78,20 @@ function resolveAssetPath(dataDir, pathOrId) {
   if (libTrack) return libTrack;
   // A track the operator saved to their own library. Needs dataDir, which is
   // why it is spelled mylib: rather than library:.
-  const saved = resolveTenantTrack(dataDir, normalized);
+  const saved = resolveTenantTrack(ctx.dataDir, normalized);
   if (saved) return saved;
   // An unresolved library ref is a missing track, not a URL: answer null so
   // callers report "not found" instead of a scheme refusal.
   if (/^(library|mylib):/i.test(normalized)) return null;
-  // Any URL form (`http:/host`, `tcp:` ...), not just "http...": all are
-  // localised or refused before ffmpeg sees them.
-  if (isRemoteUrl(normalized)) return normalized;
-  if (fs.existsSync(normalized)) return normalized;
+  if (looksLikePath(normalized)) return userFile(ctx, normalized);
 
-  const lib = readLibrary(dataDir);
+  const lib = readLibrary(ctx.dataDir);
   const item = lib.items.find(x => String(x.id) === normalized);
-  if (item) {
-    if (Array.isArray(item.files) && item.files.length > 0) {
-      const sorted = item.files.slice().sort((a, b) => (b.width || 0) - (a.width || 0));
-      const hd = sorted.find(f => f.quality === 'hd') || sorted[0];
-      if (hd?.link) return hd.link;
-    }
-    if (item.previewUrl) return item.previewUrl;
-    if (item.url) return item.url;
-  }
-
-  return normalized;
+  const source = item ? libraryItemSource(ctx, item) : null;
+  // Never fall back to the raw value: a bare name would resolve against the
+  // server's working directory.
+  if (!source) throw new UserPathError("FILE_NOT_FOUND", 400, `File not found: ${normalized}`);
+  return source;
 }
 
 function isLocalOrRemote(p) {
@@ -96,6 +122,12 @@ async function localiseAllOrFail(res, paths, what) {
   return out;
 }
 
+/** A refused path keeps its own status and code; anything else is a 400 as before. */
+function failRoute(res, e) {
+  if (sendUserPathError(res, e)) return;
+  res.status(400).json({ ok: false, error: String(e?.message || e) });
+}
+
 function run(ffmpeg, args) {
   return new Promise((resolve, reject) => {
     const proc = spawn(ffmpeg, args);
@@ -114,10 +146,7 @@ function run(ffmpeg, args) {
  */
 router.get("/waveform.png", async (req, res) => {
   try {
-    const inputPath = String(req.query?.inputPath || "").trim();
-    if (!inputPath || !fs.existsSync(inputPath)) {
-      return res.status(400).json({ ok: false, error: "inputPath missing or not found" });
-    }
+    const inputPath = userFile(req.ctx, req.query?.inputPath);
     const w = Math.min(2000, Math.max(400, Number(req.query?.w || 1200)));
     const h = Math.min(800, Math.max(200, Number(req.query?.h || 300)));
 
@@ -127,13 +156,13 @@ router.get("/waveform.png", async (req, res) => {
     const outFile = path.join(outDir, `waveform-${uuid()}.png`);
     const ffmpeg = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
 
-    const args = ["-y", "-i", inputPath, "-filter_complex", `showwavespic=s=${w}x${h}:colors=White`, "-frames:v", "1", outFile];
+    const args = ["-y", ...localInput(inputPath), "-filter_complex", `showwavespic=s=${w}x${h}:colors=White`, "-frames:v", "1", outFile];
     await run(ffmpeg, args);
 
     res.setHeader("Content-Type", "image/png");
     fs.createReadStream(outFile).pipe(res);
   } catch (e) {
-    res.status(400).json({ ok: false, error: String(e?.message || e) });
+    failRoute(res, e);
   }
 });
 
@@ -145,9 +174,9 @@ router.post("/merge", async (req, res) => {
   try {
     const inputs = Array.isArray(req.body?.inputs) ? req.body.inputs.map(String).map(s => s.trim()).filter(Boolean) : [];
     if (inputs.length < 2) return res.status(400).json({ ok: false, error: "inputs[] needs at least 2 paths" });
-    const resolvedInputs = inputs.map((p) => resolveAssetPath(req.ctx.dataDir, p));
-    for (const p of resolvedInputs) {
-      if (!isLocalOrRemote(p)) return res.status(400).json({ ok: false, error: `file not found: ${p}` });
+    const resolvedInputs = inputs.map((p) => resolveAssetPath(req.ctx, p));
+    for (const [i, p] of resolvedInputs.entries()) {
+      if (!isLocalOrRemote(p)) return res.status(400).json({ ok: false, error: `file not found: ${inputs[i]}` });
     }
 
     const localInputs = await localiseAllOrFail(res, resolvedInputs, "merge input");
@@ -191,7 +220,7 @@ router.post("/merge", async (req, res) => {
     try { fs.unlinkSync(listFile); } catch { }
     res.json({ ok: true, file: outFile, inputs, filters });
   } catch (e) {
-    res.status(400).json({ ok: false, error: String(e?.message || e) });
+    failRoute(res, e);
   }
 });
 
@@ -211,7 +240,7 @@ router.post("/timeline", async (req, res) => {
     if (clips.length < 1) return res.status(400).json({ ok: false, error: "clips[] required" });
 
     let cleaned = clips.map((c) => ({
-      path: resolveAssetPath(req.ctx.dataDir, String(c?.path || "").trim()),
+      path: resolveAssetPath(req.ctx, String(c?.path || "").trim()),
       startSec: c?.startSec != null ? Number(c.startSec) : null,
       durationSec: c?.durationSec != null ? Number(c.durationSec) : null,
     })).filter(c => c.path);
@@ -295,7 +324,7 @@ router.post("/timeline", async (req, res) => {
       }
     });
   } catch (e) {
-    res.status(400).json({ ok: false, error: String(e?.message || e) });
+    failRoute(res, e);
   }
 });
 
@@ -305,12 +334,9 @@ router.post("/timeline", async (req, res) => {
  */
 router.get("/info", async (req, res) => {
   try {
-    const inputPath = String(req.query?.inputPath || "").trim();
-    if (!inputPath || !fs.existsSync(inputPath)) {
-      return res.status(400).json({ ok: false, error: "inputPath missing or not found" });
-    }
+    const inputPath = userFile(req.ctx, req.query?.inputPath);
     const ffprobe = process.env.FFPROBE_PATH?.trim() || "ffprobe";
-    const args = ["-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", inputPath];
+    const args = ["-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", ...LOCAL_PROTOCOL_GUARD, inputPath];
     const proc = spawn(ffprobe, args);
     let out = "";
     let err = "";
@@ -324,7 +350,7 @@ router.get("/info", async (req, res) => {
       res.json({ ok: true, durationSec: Number.isFinite(durationSec) ? durationSec : null });
     });
   } catch (e) {
-    res.status(400).json({ ok: false, error: String(e?.message || e) });
+    failRoute(res, e);
   }
 });
 
@@ -336,11 +362,11 @@ router.post("/timeline-preview", async (req, res) => {
     const clips = Array.isArray(req.body?.clips) ? req.body.clips : [];
     if (clips.length < 1) return res.status(400).json({ ok: false, error: "clips[] required" });
 
-    const resolvedBg = resolveAssetPath(req.ctx.dataDir, String(req.body?.backgroundPath || "").trim());
+    const resolvedBg = resolveAssetPath(req.ctx, String(req.body?.backgroundPath || "").trim());
     if (!resolvedBg || !isLocalOrRemote(resolvedBg)) return res.status(400).json({ ok: false, error: "backgroundPath missing or invalid" });
 
     let cleaned = clips.map((c) => ({
-      path: resolveAssetPath(req.ctx.dataDir, String(c?.path || "").trim()),
+      path: resolveAssetPath(req.ctx, String(c?.path || "").trim()),
       startSec: c?.startSec != null ? Number(c.startSec) : null,
       durationSec: c?.durationSec != null ? Number(c.durationSec) : null,
     })).filter(c => c.path);
@@ -400,7 +426,7 @@ router.post("/timeline-preview", async (req, res) => {
     await run(ffmpeg, args);
     res.json({ ok: true, file: outFile });
   } catch (e) {
-    res.status(400).json({ ok: false, error: String(e?.message || e) });
+    failRoute(res, e);
   }
 });
 
