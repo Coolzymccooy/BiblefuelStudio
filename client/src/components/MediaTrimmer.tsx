@@ -9,6 +9,35 @@ import toast from 'react-hot-toast';
 
 const MIN_GAP = 0.5; // seconds — smallest allowed selection
 
+/**
+ * The waveform picture needs sign-in, and an <img> can't send a header, so it
+ * is fetched with one and shown from a blob URL. Null until it arrives or if
+ * it fails (the strip then stays empty, as before).
+ */
+function useWaveform(url: string | null): string | null {
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!url) return undefined;
+    let cancelled = false;
+    let made: string | null = null;
+    const token = api.getToken();
+    fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      .then((r) => (r.ok ? r.blob() : null))
+      .then((blob) => {
+        if (cancelled || !blob) return;
+        made = URL.createObjectURL(blob);
+        setBlobUrl(made);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+      if (made) URL.revokeObjectURL(made);
+      setBlobUrl(null);
+    };
+  }, [url]);
+  return blobUrl;
+}
+
 interface MediaTrimmerProps {
   /** Absolute server path of the uploaded file (e.g. .../outputs/user-audio-x.mp3). */
   serverPath: string;
@@ -27,8 +56,7 @@ function fmt(t: number): string {
 export function MediaTrimmer({ serverPath, kind, onApply, onCancel }: MediaTrimmerProps) {
   const basename = serverPath.split(/[\\/]/).pop() || '';
   const previewUrl = api.mediaUrl(basename);
-  const token = api.getToken();
-  const waveformUrl = `${api.baseUrl}/api/audio-adv/waveform.png?inputPath=${encodeURIComponent(serverPath)}&w=1200&h=240${token ? `&token=${encodeURIComponent(token)}` : ''}`;
+  const waveformUrl = useWaveform(kind === 'audio' ? `${api.baseUrl}/api/audio-adv/waveform.png?inputPath=${encodeURIComponent(serverPath)}&w=1200&h=240` : null);
 
   const [duration, setDuration] = useState<number | null>(null);
   const [sel, setSel] = useState<Selection>({ start: 0, end: 0 });
@@ -180,12 +208,16 @@ export function MediaTrimmer({ serverPath, kind, onApply, onCancel }: MediaTrimm
             />
           ) : (
             <>
-              <img
-                src={waveformUrl}
-                alt="Audio waveform"
-                className="w-full h-28 object-cover rounded-lg bg-black/40"
-                onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = 'hidden'; }}
-              />
+              {waveformUrl ? (
+                <img
+                  src={waveformUrl}
+                  alt="Audio waveform"
+                  className="w-full h-28 object-cover rounded-lg bg-black/40"
+                  onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = 'hidden'; }}
+                />
+              ) : (
+                <div className="w-full h-28 rounded-lg bg-black/40" aria-hidden="true" />
+              )}
               <audio
                 ref={mediaRef as React.RefObject<HTMLAudioElement>}
                 src={previewUrl}

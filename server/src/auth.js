@@ -4,6 +4,33 @@ import path from "path";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import { DATA_DIR } from "./lib/paths.js";
+import { writeJsonAtomic } from "./lib/atomicFile.js";
+
+const DEV_JWT_SECRET = "dev_secret_change_me";
+
+/**
+ * Why this JWT_SECRET must not be used in production, or null when it is fine.
+ * With the default, anyone who has read this file can sign a login.
+ */
+export function jwtSecretProblem(env = process.env) {
+  if (env.NODE_ENV !== "production") return null;
+  const secret = String(env.JWT_SECRET || "").trim();
+  if (!secret) return "JWT_SECRET is not set. Set a long random value (32+ characters) before starting in production.";
+  if (secret === DEV_JWT_SECRET) return "JWT_SECRET is the default development value. Set a long random value (32+ characters).";
+  return null;
+}
+
+/** Called at start-up: a production server refuses to run with a guessable secret. */
+export function assertJwtSecret(env = process.env) {
+  const problem = jwtSecretProblem(env);
+  if (problem) throw new Error(problem);
+  const secret = String(env.JWT_SECRET || "").trim();
+  if (env.NODE_ENV === "production" && secret.length < 32) {
+    console.warn("⚠️  JWT_SECRET is shorter than 32 characters. Replace it with a longer random value (everyone signs in again).");
+  }
+}
+
+const jwtSecret = () => process.env.JWT_SECRET || DEV_JWT_SECRET;
 
 const getDataPaths = () => {
   const dataDir = DATA_DIR;
@@ -14,7 +41,7 @@ const getDataPaths = () => {
 function ensureDataDir() {
   const { dataDir, usersFile } = getDataPaths();
   if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-  if (!fs.existsSync(usersFile)) fs.writeFileSync(usersFile, JSON.stringify({ users: [] }, null, 2));
+  if (!fs.existsSync(usersFile)) writeJsonAtomic(usersFile, { users: [] });
 }
 
 export function getUsersStore() {
@@ -26,7 +53,7 @@ export function getUsersStore() {
 export function saveUsersStore(store) {
   ensureDataDir();
   const { usersFile } = getDataPaths();
-  fs.writeFileSync(usersFile, JSON.stringify(store, null, 2));
+  writeJsonAtomic(usersFile, store);
 }
 
 export function hasAnyUser() {
@@ -130,7 +157,7 @@ export async function verifyUser(email, password) {
 }
 
 export function signToken(user) {
-  const secret = process.env.JWT_SECRET || "dev_secret_change_me";
+  const secret = jwtSecret();
   const expiresIn = process.env.JWT_EXPIRES_IN || "7d";
   const claims = {
     sub: user.id,
@@ -168,8 +195,7 @@ const OAUTH_STATE_AUDIENCE = "biblefuel-oauth-state";
 // JWT_SECRET, never JWT_SECRET itself, means a leaked state cannot be used as
 // a login token.
 function oauthStateSecret() {
-  const base = process.env.JWT_SECRET || "dev_secret_change_me";
-  return crypto.createHmac("sha256", base).update(OAUTH_STATE_AUDIENCE).digest("hex");
+  return crypto.createHmac("sha256", jwtSecret()).update(OAUTH_STATE_AUDIENCE).digest("hex");
 }
 
 /**
@@ -191,20 +217,44 @@ export function verifyOAuthState(token, purpose) {
   }
 }
 
+const URL_TOKEN_AUDIENCE = "biblefuel-url";
+const urlTokenSecret = () => crypto.createHmac("sha256", jwtSecret()).update(URL_TOKEN_AUDIENCE).digest("hex");
+
+/**
+ * A token for one URL, for the few requests that cannot send a header (an
+ * EventSource, say). It opens only `urlPath`, is signed with its own key so it
+ * is never a login, and expires. A login token is never accepted in a URL:
+ * URLs end up in proxy logs and browser history.
+ * @param {string|number} expiresIn e.g. "6h", or seconds
+ */
+export function signUrlToken(user, urlPath, expiresIn = "15m") {
+  const claims = { sub: user.id ?? user.sub, email: user.email, role: user.role, path: String(urlPath) };
+  if (user.emailVerified !== undefined) claims.emailVerified = Boolean(user.emailVerified);
+  return jwt.sign(claims, urlTokenSecret(), { expiresIn, audience: URL_TOKEN_AUDIENCE });
+}
+
+function userFromUrlToken(token, requestPath) {
+  const decoded = jwt.verify(token, urlTokenSecret(), { audience: URL_TOKEN_AUDIENCE });
+  if (!decoded || decoded.path !== requestPath) return null;
+  const { path: _path, aud: _aud, ...user } = decoded;
+  return user;
+}
+
 export function requireAuth(req, res, next) {
   try {
     const header = req.headers["authorization"] || "";
-    let token = header.startsWith("Bearer ") ? header.slice(7) : null;
+    const token = header.startsWith("Bearer ") ? header.slice(7) : null;
 
-    // Fallback to query parameter (useful for direct browser downloads/exports)
     if (!token && req.query.token) {
-      token = String(req.query.token);
+      const user = userFromUrlToken(String(req.query.token), req.baseUrl + req.path);
+      if (!user) return res.status(401).json({ ok: false, error: "Invalid token" });
+      req.user = user;
+      return next();
     }
 
     if (!token) return res.status(401).json({ ok: false, error: "Missing Bearer token" });
 
-    const secret = process.env.JWT_SECRET || "dev_secret_change_me";
-    const decoded = jwt.verify(token, secret);
+    const decoded = jwt.verify(token, jwtSecret());
     // A token made for one job (an OAuth state, say) is never a login. OAuth
     // states are also signed with their own key (signOAuthState); this check
     // covers any older single-purpose token signed with JWT_SECRET.

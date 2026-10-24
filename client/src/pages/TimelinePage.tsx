@@ -863,7 +863,7 @@ export function TimelinePage() {
             // POST returns immediately with a jobId; the heavy lifting runs in
             // the background. We track real ffmpeg progress via SSE on the
             // returned jobId so the inline card shows a determinate bar.
-            const response = await api.post<{ jobId: string; durationSec: number }>(
+            const response = await api.post<{ jobId: string; durationSec: number; progressToken?: string }>(
                 '/api/render/captioned-video',
                 {
                     ...payload,
@@ -897,12 +897,11 @@ export function TimelinePage() {
                 return;
             }
 
-            // Open SSE. Token goes on the query string because EventSource
-            // can't set Authorization headers — server's requireAuth accepts
-            // ?token= as a documented fallback.
+            // Open SSE. EventSource can't set an Authorization header, so the
+            // server hands back a token that opens only this job's feed.
             setRenderJobId(response.data.jobId);
-            const token = api.getToken();
-            const sseUrl = `${api.baseUrl}/api/render/captioned-video-progress/${response.data.jobId}${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+            const progressToken = response.data.progressToken;
+            const sseUrl = `${api.baseUrl}/api/render/captioned-video-progress/${response.data.jobId}${progressToken ? `?token=${encodeURIComponent(progressToken)}` : ''}`;
             const sse = new EventSource(sseUrl);
             renderSseRef.current = sse;
 
