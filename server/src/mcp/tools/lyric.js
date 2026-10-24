@@ -104,6 +104,7 @@ const lyricSetLyrics = {
   name: "lyric_set_lyrics",
   title: "Set a lyric video's lyrics",
   description:
+    "Ask the user for the lyrics and never invent them: transcribe rarely recovers sung words over music, and it spends one plan render quota. " +
     "Paste the lyrics as one sheet: one sung line per line, section headings like [CHORUS] or VERSE 1: on their own line, crowd responses in brackets. Words are kept exactly as typed. " +
     `At most ${SHEET_MAX_CHARS} characters and ${SHEET_MAX_LINES} lines. Lines that did not change keep their timing; any change to the words clears it, so run lyric_align again. Refused while timing runs. Returns the song. ` + FREE_NOTE,
   inputSchema: {

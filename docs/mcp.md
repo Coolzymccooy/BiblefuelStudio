@@ -104,7 +104,7 @@ Every call passes the same checks, in this order:
 | Tool | What it does |
 |---|---|
 | `whoami` | Who you act as, your plan, remaining plan `quota`, this key's daily `caps`, your account's `accountCaps` (all your keys together) and the publish permission. Call it first. |
-| `capabilities` | What this server can do right now: ffmpeg, which providers are configured, vocal removal, AI video. |
+| `capabilities` | What this server can do right now: ffmpeg, which providers are configured, vocal removal, AI video. It describes the server, not this key: a free plan cannot use ElevenLabs even when it is configured. |
 | `media_list` | `{ kind: "audio" or "video" }`. Your files, newest first, each with `name`, `path`, `size`, `mtime`. |
 | `media_import_url` | `{ url, kind?, filename? }`. Download a public file into your media. `kind` is `audio` (default), `video` or `image`. One daily `imports`, spent even when the download fails. |
 | `media_trim` | `{ inputPath, startSec, endSec }`. Cut a file into a new file. The original stays. |
@@ -293,7 +293,7 @@ Stuck or finished jobs: `jobs_list`, `jobs_get`, `jobs_retry`, then `jobs_wait`.
 
 ### Short video from a Bible verse (available now)
 
-1. `bible_lookup { mode: "verse", reference }` for the text, or `scripts_generate` for a whole script (hook, verse, reflection, call to action).
+1. `bible_lookup { mode: "verse", reference }` for the text, or `scripts_generate` for a whole script (hook, verse, reflection, call to action). With a voice track the video is as long as the voice (one verse is about 6 seconds); `durationSec` only sets the length of a video without one, so for a 15-second short speak more lines.
 2. `voice_synthesize { text }` speaks it. Keep the returned `path`. One daily `tts` call.
 3. `backgrounds_search { source, query }`, then `library_items { action: "download", source, sourceId }` for each clip you want. Keep each item's `id` (a library id). Or skip this and use `autoBackground: true` in the next step.
 4. `render_short { lines, backgrounds: [library ids], audioPath }`. `lines` are the captions in order (1 to 12). Several backgrounds play one after another; pictures from your media folder work too. `musicPath` takes a `ref` from `music_library`. Returns `{ kind: "job", id, autoPublish }`. One daily render, plus four daily `images` with `autoBackground` (it may AI-generate pictures), and one unit of the plan's `render` quota (`QUOTA_EXCEEDED` before any cap is spent when it is used up). Videos are capped at the server's maximum length (30 seconds by default).
@@ -371,7 +371,7 @@ A song with its lyrics timed word by word to the singing, drawn as moving captio
 
 1. `lyric_project { action: "create", title, artist? }`.
 2. `lyric_set_song { id, path }`: an audio file, or a video whose sound is taken out, in your own media folder (`media_import_url` or `media_list`). At most 15 minutes. URLs and other paths are refused, and so are shared voice files and generated images (`BAD_INPUT`: the lyric video takes only your own uploads, imports and renders, see `media_list`). The same rule applies to the `lyric_background` path.
-3. `lyric_set_lyrics { id, sheet }`: one sung line per line, section headings such as `[CHORUS]` or `VERSE 1:` on their own lines.
+3. `lyric_set_lyrics { id, sheet }`: one sung line per line, section headings such as `[CHORUS]` or `VERSE 1:` on their own lines. Ask the user for the lyrics: `transcribe` rarely recovers sung words over music and spends a plan `render` quota.
 4. `lyric_align { id }`, then `jobs_wait { kind: "lyric_align", id }` until `done`. One timing run at a time per account.
 5. Optional: `lyric_project { action: "get", id }` to read the lines; `lyric_line_update { id, lineId, start?, effect? }` moves a line that is off (it is then kept by later timing runs) or changes how it is drawn.
 6. Optional: `lyric_background { id, path?, fit?, look?, branding? }`: a background picture or video in your media folder (without one, the song's cover picture or a dark colour is used), the caption look, and the logo, intro and end card switches.
@@ -489,11 +489,13 @@ Three prompts (`prompts/get`) hand an agent a ready-made, ordered step list for 
 
 | Prompt | Arguments | Use it when |
 |---|---|---|
-| `make_short_from_verse` | `reference` (required, for example `John 3:16`), `voice` (a voice name from `voice_list`), `publish` (`"true"` or `"false"`, default false) | The user wants a short captioned video of one verse: `bible_lookup`, `voice_synthesize`, `render_short`, `jobs_wait`. With `publish` `"true"` it reads `social_status` before anything is spent: when the user's auto-publish is on, the render posts itself and the prompt stops there (an upload as well would post the video twice); otherwise it adds `publish_youtube` and a second `jobs_wait`. Publishing needs publish consent (`PUBLISH_NOT_ALLOWED` otherwise). One daily render, one `tts` and four `images`, plus one publish when publishing. |
+| `make_short_from_verse` | `reference` (required, for example `John 3:16`), `voice` (a voice name from `voice_list`), `publish` (`"true"` or `"false"`, default false) | The user wants a short captioned video of one verse: `bible_lookup`, `voice_synthesize`, `render_short`, `jobs_wait`. With fewer than four daily `images` left it uses a saved or stock background (`library_items`, `backgrounds_search`) instead of `autoBackground`. With `publish` `"true"` it reads `social_status` before anything is spent: when the user's auto-publish is on, the render posts itself and the prompt stops there (an upload as well would post the video twice); otherwise it adds `publish_youtube` and a second `jobs_wait`. Publishing needs publish consent (`PUBLISH_NOT_ALLOWED` otherwise). One daily render, one `tts` and four `images`, plus one publish when publishing. |
 | `make_ambient_session` | `theme`, `hours` (more than 0, at most 10; default 2) | The user wants a long, music-first scripture video: `ambient_project`, `ambient_plan`, `music_library`, `ambient_update`, `ambient_step` (voice, then images), `ambient_render`. Each verse (one per fifteen minutes) costs one daily `tts` and one daily `images`, so a long session can need more than one day of caps; `whoami` must also show one render left. Never posts. |
 | `make_lyric_video` | `songPath` (required: a file in your media folder, or a public URL to import first) | The user has a song and its lyrics: `lyric_project`, `lyric_set_song`, `lyric_set_lyrics`, `lyric_align`, `lyric_render`. Two daily renders in all, plus one daily `imports` when `songPath` is a URL; `whoami` must show them before the first paid step. The agent asks the user for the lyrics and never invents them. Never posts. |
 
 A missing required argument, or a bad one (`hours` `"11"`, `publish` `"maybe"`), is refused with JSON-RPC code -32602. The prompts are a starting point: the Pipelines section has every option.
+
+Claude Code offers the prompts as slash commands (`/mcp__biblefuel__make_short_from_verse`) and splits the arguments on spaces, quotes or not. `make_short_from_verse` puts a reference split that way back together (`Romans 8:28` arriving as `Romans` and `8:28`), but a reference of three words or more (`1 John 4:8`) fills the `publish` argument and is refused. Ask in plain words instead, for example "make a short of 1 John 4:8". Codex has no prompts: ask in plain words, and the agent can follow the step list in this guide.
 
 ## Quotas and daily caps
 
