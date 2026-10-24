@@ -59,8 +59,9 @@ test("the publish file declares the six publishing tools with their consent and 
   assert.deepEqual(publishFlag, {
     social_status: false, publish_youtube: true, publish_post: true, youtube_thumbnail: true, schedules: false, autopublish_run: true,
   });
-  assert.deepEqual(byName.publish_youtube.caps, { publishes: 1 });
-  assert.deepEqual(byName.publish_post.caps, { publishes: 1 });
+  // Publish tools charge their publish in the handler, after inputs are checked, so refused input costs nothing.
+  assert.equal(byName.publish_youtube.caps, undefined);
+  assert.equal(byName.publish_post.caps, undefined);
   assert.equal(byName.youtube_thumbnail.caps, undefined);
   assert.equal(byName.schedules.caps, undefined);
   // autopublish_run pre-checks the plan quota (R34), then charges a render and a publish together in its handler.
@@ -413,3 +414,32 @@ test("autopublish_run charges render and publish in one atomic call", async () =
   await byName.autopublish_run.handler({ ...fake.ctx, ...CONSENT }, {});
   assert.deepEqual(seen, [{ renders: 1, publishes: 1 }]);
 });
+
+// ---- a publish is charged only after the input is accepted, just before the route ----
+
+for (const [name, args, route] of [
+  ["publish_youtube", (dir) => ({ videoPath: path.join(dir, "clip.mp4"), title: "T" }), "POST /api/social/youtube/publish"],
+  ["publish_post", (dir) => ({ destination: "buffer", videoPath: path.join(dir, "clip.mp4"), caption: "c" }), "POST /api/social/post"],
+]) {
+  test(`${name} charges nothing for a refused path and one publish before an accepted call`, async () => {
+    const dir = mediaWith("clip.mp4");
+    const refused = ctxWith({}, CONSENT);
+    const bad = await byName[name].handler(refused.ctx, { ...args(dir), videoPath: "https://evil.test/v.mp4" });
+    assert.equal(bad.structuredContent.error, "PATH_OUTSIDE_MEDIA");
+    assert.deepEqual(refused.charges, []);
+    const order = [];
+    const fake = fakeMcpCtx({ [route]: () => { order.push("route"); return { ok: true, jobId: "j" }; } }, {
+      chargeCap: async (amounts) => { order.push(amounts); return null; },
+    });
+    await byName[name].handler({ ...fake.ctx, ...CONSENT }, args(dir));
+    assert.deepEqual(order, [{ publishes: 1 }, "route"]);
+  });
+
+  test(`${name} refused by the publishes cap never calls its route`, async () => {
+    const dir = mediaWith("clip.mp4");
+    const fake = fakeMcpCtx({}, { chargeCap: async () => ({ isError: true, structuredContent: { error: "MCP_CAP_REACHED" } }) });
+    const result = await byName[name].handler({ ...fake.ctx, ...CONSENT }, args(dir));
+    assert.equal(result.structuredContent.error, "MCP_CAP_REACHED");
+    assert.deepEqual(fake.calls, []);
+  });
+}

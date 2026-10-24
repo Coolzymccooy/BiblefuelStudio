@@ -137,7 +137,6 @@ const publishYoutube = {
   },
   routes: ["/api/social"],
   publish: true,
-  caps: { publishes: 1 },
   async handler(ctx, input) {
     const video = await videoLink(ctx, input.videoPath);
     if (video.refusal) return video.refusal;
@@ -148,6 +147,8 @@ const publishYoutube = {
       videoUrl: video.link, title, description, tags, hashtags, categoryId, privacyStatus, publishAt, playlistId, newPlaylistTitle,
       syntheticMedia, thumbnailPath: thumbnail.link, thumbnailTitle, thumbnailTagline,
     });
+    const refused = await ctx.chargeCap({ publishes: 1 });
+    if (refused) return refused;
     const response = await ctx.api.call("POST", "/api/social/youtube/publish", { body });
     return ok({ kind: "publish", id: String(response?.jobId ?? ""), status: "running", joined: Boolean(response?.joined) });
   },
@@ -172,12 +173,13 @@ const publishPost = {
   },
   routes: ["/api/social"],
   publish: true,
-  caps: { publishes: 1 },
   async handler(ctx, { destination, videoPath, caption, title, webhookId, profileIds }) {
     const video = await videoLink(ctx, videoPath, { absolute: true });
     if (video.refusal) return video.refusal;
     const fields = destination === "webhook" ? { title, webhookId } : { profileIds };
     const body = defined({ destination, videoUrl: video.link, caption, ...fields });
+    const refused = await ctx.chargeCap({ publishes: 1 });
+    if (refused) return refused;
     // The route answers 200 with ok false when no destination accepted it; only its per-destination summary is returned.
     const response = await ctx.api.call("POST", "/api/social/post", { body });
     const results = (Array.isArray(response?.results) ? response.results : []).map((r) => pick(r, ["destination", "ok", "error", "draft"]));
