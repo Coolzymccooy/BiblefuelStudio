@@ -18,7 +18,7 @@ import { normalizeReference, getChapterVerseCount } from "../bible/bibleReferenc
 import { buildYouVersionUrl } from "../bible/youversion.js";
 import { extractSpeakableVerseText } from "./speakable.js";
 
-const MAX_PARTS = 12;
+export const MAX_PARTS = 12;
 // A narrator reads about 12.75 characters a second: 22 seconds is the 280
 // characters a short has always spoken.
 const SPOKEN_CHARS_PER_SECOND = 12.75;

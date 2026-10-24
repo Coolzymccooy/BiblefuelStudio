@@ -2183,6 +2183,31 @@ export function buildCampaignJob(id, payload, ctx) {
   };
 }
 
+/**
+ * validatePayloadForEnqueue("campaign_auto_post", payload) under the caller's scope (their Library).
+ * Throws first when a payload path is outside the caller's scope (#112).
+ */
+function validateCampaignFor(payload, ctx) {
+  const normalizedCtx = ctx
+    ? { ...ctx, isSuperAdmin: Boolean(ctx.isSuperAdmin), isOwner: isOwnerCtx(ctx) }
+    : null;
+  const prevCtx = currentJobCtx;
+  currentJobCtx = normalizedCtx;
+  try {
+    assertJobPathsInScope(payload, normalizedCtx);
+    return validatePayloadForEnqueue("campaign_auto_post", payload || {});
+  } finally { currentJobCtx = prevCtx; }
+}
+
+/**
+ * Why enqueueCampaignAutoPost would refuse every campaign for this caller (an empty Library), or null.
+ * Lets a caller that enqueues several (a series) refuse before it spends anything.
+ */
+export function campaignPreconditionError(ctx) {
+  const validation = validateCampaignFor({}, ctx);
+  return validation.ok ? null : validation.error;
+}
+
 // Programmatic enqueue helper for in-process callers (e.g. cron-driven
 // schedules in social.js). Skips HTTP/auth, performs the same validation.
 export async function enqueueCampaignAutoPost(payload, ctx) {
@@ -2190,16 +2215,7 @@ export async function enqueueCampaignAutoPost(payload, ctx) {
   //   { dataDir, outputDir, userId, isSuperAdmin }
   // Callers that don't pass ctx (legacy cron in social.js pre-refactor) get
   // the global super-admin paths, matching pre-multi-tenant behaviour.
-  const normalizedCtx = ctx
-    ? { ...ctx, isSuperAdmin: Boolean(ctx.isSuperAdmin), isOwner: isOwnerCtx(ctx) }
-    : null;
-  const prevCtx = currentJobCtx;
-  currentJobCtx = normalizedCtx;
-  let validation;
-  try {
-    assertJobPathsInScope(payload, normalizedCtx);
-    validation = validatePayloadForEnqueue("campaign_auto_post", payload || {});
-  } finally { currentJobCtx = prevCtx; }
+  const validation = validateCampaignFor(payload, ctx);
   if (!validation.ok) throw new Error(validation.error);
   const job = buildCampaignJob(`job_${uuid()}`, payload, ctx);
   store = loadJobs();

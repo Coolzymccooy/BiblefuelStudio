@@ -504,3 +504,25 @@ test("story: without the route's interrupted flag the same project keeps running
   const handle = NORMALISERS.story.normalise({ project: { projectId: "p1", status: "transcribing" } }, { outputUrl: toUrl });
   assert.equal(handle.status, "running");
 });
+
+// M1: "." and ".." survive encodeURIComponent and would move the loopback route up a level.
+test("every kind's route refuses an empty, . or .. id or projectId as BAD_INPUT", () => {
+  for (const [kind, entry] of Object.entries(NORMALISERS)) {
+    for (const bad of ["", ".", ".."]) {
+      assert.throws(() => entry.route(bad, "p_1"), (err) => err.code === "BAD_INPUT", `${kind} id ${JSON.stringify(bad)}`);
+    }
+  }
+  for (const bad of ["", ".", ".."]) {
+    assert.throws(() => NORMALISERS.lyric_render.route("r_1", bad), (err) => err.code === "BAD_INPUT", `projectId ${JSON.stringify(bad)}`);
+  }
+  assert.equal(NORMALISERS.job.route("job_1"), "/api/jobs/job_1");
+  assert.equal(NORMALISERS.lyric_render.route("r 1", "p/1"), "/api/lyric-video/p%2F1/render/r%201");
+  assert.equal(NORMALISERS.story.route("..x"), "/api/story/..x");
+});
+
+test("waitForJob refuses a .. projectId before any call", async () => {
+  const calls = [];
+  const api = { call: async (...args) => { calls.push(args); return {}; } };
+  await assert.rejects(waitForJob(api, { kind: "lyric_render", id: "r_1", projectId: ".." }), (err) => err.code === "BAD_INPUT");
+  assert.equal(calls.length, 0);
+});

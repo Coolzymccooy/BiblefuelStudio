@@ -430,7 +430,8 @@ app.get("/api/social/tiktok/callback", tiktokConnectCallback);
 app.use("/api/social",    requireAuth, withUserScope, requireVerifiedEmail,                       socialRouter);
 app.use("/api/firebase",  requireAuth, withUserScope,                                              firebaseRouter);
 app.use("/api/bible",     requireAuth, withUserScope,                                              bibleRouter);
-app.use("/api/series",    requireAuth, withUserScope, requireVerifiedEmail, quota("render"),     seriesRouter);
+// No router-level quota: generate spends one plan render per part itself, and a preview is free.
+app.use("/api/series",    requireAuth, withUserScope, requireVerifiedEmail,                      seriesRouter);
 app.use("/api/postiz",    requireAuth, withUserScope, requireVerifiedEmail,                       postizRouter);
 app.use("/api/issues",    requireAuth, withUserScope,                                              issuesRouter);
 const publicSignupUrl = String(

@@ -47,7 +47,9 @@ const capabilities = {
   name: "capabilities",
   title: "Server capabilities",
   description:
-    "What this BibleFuel server can do right now: ffmpeg and runtime, which providers are configured (booleans only), vocal removal availability, and AI video status.",
+    "What this BibleFuel server can do right now: ffmpeg and runtime, which providers are configured (booleans only), vocal removal availability, and AI video status. " +
+    "These describe the server, not what this key may use: a free plan cannot use ElevenLabs even when elevenlabs is true, and AI video tools are listed only to super-admin keys. " +
+    "whoami (plan, quotas, caps) and tools/list say what this key can do. Free; can take a few seconds.",
   inputSchema: {},
   routes: ["/api/health", "/api/music", "/api/video-gen"],
   async handler(ctx) {

@@ -8,6 +8,10 @@
  *   phase: string|null, output: { url: string, path: string|null }|null, error: string|null }} JobHandle
  */
 
+import { toHandle, toPercent, text, routeSegment, jobAddressProblem } from "./jobHandle.js";
+import { SONG_NORMALISERS } from "./songJobs.js";
+import { sceneState } from "./sceneJob.js";
+
 const POLL_MS = 3000;
 const MIN_TIMEOUT_SEC = 1;
 const MAX_TIMEOUT_SEC = 90;
@@ -30,56 +34,6 @@ export function clampTimeoutSec(value) {
   const n = Math.floor(Number(value));
   if (value === undefined || value === null || value === "" || !Number.isFinite(n)) return DEFAULT_TIMEOUT_SEC;
   return Math.min(MAX_TIMEOUT_SEC, Math.max(MIN_TIMEOUT_SEC, n));
-}
-
-const STATUS_WORDS = {
-  queued: "queued",
-  running: "running",
-  done: "done",
-  complete: "done",
-  completed: "done",
-  failed: "failed",
-  error: "failed",
-  interrupted: "failed",
-  cancelled: "cancelled",
-  canceled: "cancelled",
-};
-
-const CANCEL_MESSAGE = /^(render |job )?cancell?ed\.?$/i;
-
-/** A percent (clamped to 0..100) from a number, or from `{ percent }` / `{ pct }`; anything else is null. */
-function toPercent(value) {
-  if (typeof value === "number") return Number.isFinite(value) ? Math.min(100, Math.max(0, value)) : null;
-  if (value && typeof value === "object") return toPercent(value.percent ?? value.pct);
-  return null;
-}
-
-function text(value) {
-  const s = typeof value === "string" ? value.trim() : "";
-  return s || null;
-}
-
-/**
- * Builds a handle from one route's already-picked fields. An unrecognised
- * status is still running work, with the raw word kept as the phase.
- */
-function toHandle(fields, { outputUrl: toUrl }) {
-  const { kind, id, rawStatus, percent = null, phase = null, file = null, url = null, error = null } = fields;
-  const known = STATUS_WORDS[String(rawStatus || "").toLowerCase()];
-  let status = known || "running";
-  const errorText = text(error);
-  if (status === "failed" && errorText && CANCEL_MESSAGE.test(errorText)) status = "cancelled";
-  const rawPhase = known ? phase : phase || text(rawStatus);
-  const where = text(url) || text(file);
-  return {
-    kind,
-    id: String(id ?? ""),
-    status,
-    percent: status === "done" ? (percent ?? 100) : percent,
-    phase: rawPhase || null,
-    output: where ? { url: toUrl(where), path: text(file) } : null,
-    error: errorText,
-  };
 }
 
 // Prefers result.videoUrl (a /outputs/... path kept intact); only a bare file falls back to its basename, which flattens subfolders.
@@ -284,6 +238,36 @@ function fromAmbient(payload, ctx) {
   );
 }
 
+// ---- scene scripts and long-form ---------------------------------------------
+
+function fromScene(payload, ctx) {
+  const project = payload?.project || {};
+  const { rawStatus, percent, phase, error, file, stages, blockers } = sceneState(project);
+  const handle = toHandle({ kind: "scene", id: project.id, rawStatus, percent: toPercent(percent), phase, file, url: file, error }, ctx);
+  return { ...handle, stages, ...(blockers ? { blockers } : {}) };
+}
+
+const NARRATION_RESTARTED =
+  "The server restarted while the script was being narrated. Call longform_narrate again (chunks already narrated are reused).";
+
+/** A long-form project is a story project with a narration stage before the story pipeline. */
+function fromLongform(payload, ctx) {
+  const project = payload?.project || {};
+  const status = String(project.status || "");
+  const progress = project.longform?.progress || {};
+  if (status === "narrating") {
+    const total = Number(progress.total) || 0;
+    const percent = total > 0 ? Math.round(((Number(progress.done) || 0) / total) * 100) : null;
+    const stopped = progress.alive === false;
+    return toHandle({
+      kind: "longform", id: project.projectId, rawStatus: stopped ? "failed" : "running", percent: toPercent(percent),
+      phase: "narrating", error: stopped ? NARRATION_RESTARTED : null,
+    }, ctx);
+  }
+  if (status === "draft_script") return toHandle({ kind: "longform", id: project.projectId, rawStatus: "done", phase: status }, ctx);
+  return { ...fromStory(payload, ctx), kind: "longform" };
+}
+
 function fromTimeline(payload, ctx) {
   const p = payload || {};
   return toHandle(
@@ -308,14 +292,17 @@ function fromPublish(payload, ctx) {
   );
 }
 
-const routeFor = (prefix) => (id) => `${prefix}${encodeURIComponent(String(id))}`;
+const routeFor = (prefix) => (id) => `${prefix}${routeSegment(id)}`;
 
-/** @type {Record<string, { route: (id: string, projectId?: string) => string, normalise: (payload: object, ctx: { outputUrl: (p: string) => string }) => JobHandle }>} */
+/** @type {Record<string, { route: (id: string, projectId?: string) => string, normalise: (payload: object, ctx: { outputUrl: (p: string) => string }) => JobHandle, needsProjectId?: boolean }>} */
 export const NORMALISERS = {
   job: { route: routeFor("/api/jobs/"), normalise: fromJobsRoute },
   captioned: { route: routeFor("/api/render/captioned-video-status/"), normalise: fromCaptioned },
   story: { route: routeFor("/api/story/"), normalise: fromStory },
   ambient: { route: routeFor("/api/ambient/"), normalise: fromAmbient },
+  ...SONG_NORMALISERS,
+  scene: { route: routeFor("/api/scene-script/"), normalise: fromScene },
+  longform: { route: routeFor("/api/story/"), normalise: fromLongform },
   timeline: { route: routeFor("/api/timeline/render/"), normalise: fromTimeline },
   instrumental: { route: routeFor("/api/music/instrumental/"), normalise: fromInstrumental },
   publish: { route: routeFor("/api/social/youtube/publish/"), normalise: fromPublish },
@@ -339,6 +326,9 @@ export async function waitForJob(api, options) {
   const { kind, id, projectId, timeoutSec, outputUrl: toUrl = (p) => outputUrl(p, ""), sleep = realSleep, now = Date.now } = options;
   const entry = Object.hasOwn(NORMALISERS, kind) ? NORMALISERS[kind] : null;
   if (!entry) throw Object.assign(new Error(`Unknown job kind "${kind}". Use one of: ${JOB_KINDS.join(", ")}.`), { code: "BAD_KIND" });
+  if (entry.needsProjectId && !projectId) throw Object.assign(new Error(`A ${kind} job needs its projectId.`), { code: "NEEDS_PROJECT_ID" });
+  const badId = jobAddressProblem({ id, projectId });
+  if (badId) throw Object.assign(new Error(badId), { code: "BAD_INPUT" });
   const deadline = now() + clampTimeoutSec(timeoutSec) * 1000;
   for (;;) {
     const payload = await api.call("GET", entry.route(id, projectId));

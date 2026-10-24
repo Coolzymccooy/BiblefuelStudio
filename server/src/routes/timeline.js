@@ -151,6 +151,18 @@ function serializeJob(job) {
   };
 }
 
+/**
+ * Where a render writes its video (R48). The owner (whose outputs ARE the
+ * global folder) keeps the flat timeline/<jobId>.mp4 that express.static
+ * serves. Anyone else renders into their own outputs, in a folder named by the
+ * unguessable job id: the per-user /outputs fallback serves a nested path only
+ * when one of its folders is such an id (lib/perUserOutputs.js).
+ */
+function timelineOutputPath(outputDir, jobId) {
+  if (path.resolve(outputDir) === path.resolve(OUTPUT_DIR)) return path.join(OUTPUT_DIR, 'timeline', `${jobId}.mp4`);
+  return path.join(outputDir, 'timeline', jobId, 'video.mp4');
+}
+
 async function runTimelineJob(job) {
   job.status = 'running';
   job.phase = 'rendering';
@@ -159,10 +171,13 @@ async function runTimelineJob(job) {
   persistTimelineJob(job);
 
   try {
+    const outputDir = job.outputDir || OUTPUT_DIR;
     const proofResult = await _renderTimelineProof(job.plan, {
       serverRoot: SERVER_ROOT,
-      outputDir: OUTPUT_DIR,
-      outputPath: path.join(OUTPUT_DIR, 'timeline', `${job.jobId}.mp4`),
+      outputDir,
+      // The shared files #112 let /render through, read from the global folder (R48).
+      allowShared: timelineFileScope({ userId: job.userId }).allowShared,
+      outputPath: timelineOutputPath(outputDir, job.jobId),
       typographyPreset: job.typographyPreset || undefined,
       captionEnergy: job.captionEnergy || undefined,
       captionSeed: job.captionSeed ?? undefined,
@@ -413,6 +428,8 @@ router.post('/render', quota('render'), (req, res) => {
       jobId,
       userId: req.ctx?.userId || 'anon',
       dataDir: req.ctx?.dataDir,
+      // The caller's own outputs (R48): the renderer accepts their files and writes the video there.
+      outputDir: req.ctx?.outputDir || OUTPUT_DIR,
       status: 'queued',
       phase: 'queued',
       progress: 0,
@@ -463,6 +480,8 @@ router.post('/render', quota('render'), (req, res) => {
 
 router.get('/render/:jobId', (req, res) => {
   const job = jobs.get(req.params.jobId);
+  // R49: another user's job reads exactly like an unknown one.
+  if (job && job.userId !== (req.ctx?.userId || 'anon')) return res.status(404).json({ ok: false, error: 'NOT_FOUND' });
   if (job) return res.json(serializeJob(job));
   const persisted = readPersistedTimelineJob(req.ctx?.dataDir, req.params.jobId);
   if (!persisted) return res.status(404).json({ ok: false, error: 'NOT_FOUND' });

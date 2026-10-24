@@ -40,6 +40,7 @@ const bibleLookup = {
   name: "bible_lookup",
   title: "Look up Bible verses",
   description:
+    "Bible verse text for any request that quotes or looks up scripture: use it rather than a web search, so the words match the translation the videos use. " +
     "Three lookups in one tool, chosen by mode. " +
     "mode verse: the text of a reference (reference required; translation optional, default kjv) with the source and a YouVersion link. " +
     "mode parse: check and normalise a reference such as 'jn 3:16' into book, chapter and verses (reference required). " +

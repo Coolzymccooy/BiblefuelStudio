@@ -18,3 +18,10 @@ test("an unknown energy is rejected", () => {
 test("energy is optional", () => {
   assert.equal(GenerateSchema.parse(base).captionEnergy, undefined);
 });
+
+test("maxParts is optional and must be 1 to 12", () => {
+  assert.equal(GenerateSchema.parse(base).maxParts, undefined);
+  assert.equal(GenerateSchema.parse({ ...base, maxParts: 12 }).maxParts, 12);
+  assert.equal(GenerateSchema.safeParse({ ...base, maxParts: 0 }).success, false);
+  assert.equal(GenerateSchema.safeParse({ ...base, maxParts: 13 }).success, false);
+});

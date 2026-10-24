@@ -368,3 +368,9 @@ test("render_short refuses with QUOTA_EXCEEDED before charging any daily cap whe
   assert.equal(routesCalled(calls).includes("POST /api/jobs/enqueue"), false);
   assert.equal(routesCalled(calls).includes("GET /api/postiz/auto-publish"), false);
 });
+
+test("render_short says a voice track sets the length, so durationSec alone does not make a 15-second video", () => {
+  const { description, inputSchema } = byName.render_short;
+  assert.match(description, /as long as the voice/);
+  assert.match(inputSchema.durationSec.description, /ignored when there is a voice/i);
+});

@@ -23,6 +23,19 @@ export const PLAN_CAPABILITIES = Object.freeze({
 });
 
 /**
+ * True when `plan` includes `capability` ("*" grants every one). Shared by the
+ * route gate below and the MCP registry, which hides `requires: "feature:<capability>"`
+ * tools from keys whose user's plan would be refused by the route.
+ *
+ * @param {string | undefined} plan
+ * @param {string} capability
+ */
+export function planAllows(plan, capability) {
+  const caps = PLAN_CAPABILITIES[plan] || new Set();
+  return caps.has("*") || caps.has(capability);
+}
+
+/**
  * Express middleware factory. Returns a handler that 403s with FEATURE_LOCKED
  * if the current plan does not include the named capability.
  *
@@ -36,8 +49,7 @@ export function featureGate(capability) {
     if (!plan) {
       return res.status(401).json({ ok: false, error: "Missing user context" });
     }
-    const caps = PLAN_CAPABILITIES[plan] || new Set();
-    if (caps.has("*") || caps.has(capability)) return next();
+    if (planAllows(plan, capability)) return next();
     return res.status(403).json({
       ok: false,
       error: "FEATURE_LOCKED",
