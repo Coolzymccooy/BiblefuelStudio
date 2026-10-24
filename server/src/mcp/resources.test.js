@@ -190,3 +190,16 @@ test("a 4xx answer from the route stays InvalidParams (-32602)", async () => {
   const { ctx } = fakeMcpCtx({ "GET /api/story/s_1": apiError });
   await assert.rejects(readJobHandle(ctx, { kind: "story", id: "s_1" }), (err) => err.code === -32602);
 });
+
+// L2: a payload the normaliser cannot read is the server's failure: INTERNAL, never the raw exception text.
+test("a normaliser that throws answers INTERNAL with a fixed message", async () => {
+  const odd = { get job() { throw new TypeError("Cannot read properties of undefined (reading 'secret')"); } };
+  const { ctx } = fakeMcpCtx({ "GET /api/jobs/job_1": odd });
+  await assert.rejects(readJobHandle(ctx, { kind: "job", id: "job_1" }), (err) => {
+    assert.equal(err.code, -32603);
+    assert.match(err.message, /INTERNAL: Something went wrong/);
+    assert.doesNotMatch(err.message, /secret|Cannot read/);
+    assert.deepEqual(err.data, { error: "INTERNAL", message: "Something went wrong" });
+    return true;
+  });
+});

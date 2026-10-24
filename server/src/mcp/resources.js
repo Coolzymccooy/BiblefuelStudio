@@ -78,16 +78,16 @@ export async function readJobHandle(ctx, address) {
   if (refused) throw refused;
   const { kind, id, projectId } = address;
   const entry = NORMALISERS[kind];
-  let payload;
   try {
-    payload = await ctx.api.call("GET", entry.route(id, projectId));
+    const payload = await ctx.api.call("GET", entry.route(id, projectId));
+    // Inside the try: a payload the normaliser cannot read is the server's failure, answered as INTERNAL.
+    const handle = entry.normalise(payload, { outputUrl: (p) => outputUrl(p, ctx.publicBase) });
+    return withJobRow(kind, { ...handle, id, ...(projectId ? { projectId } : {}) }, payload);
   } catch (err) {
     if (err?.name === "ApiError") throw fromApiError(err);
     console.warn("[MCP] job resource read failed:", err?.message || String(err));
     throw new McpError(ErrorCode.InternalError, "INTERNAL: Something went wrong", { error: "INTERNAL", message: "Something went wrong" });
   }
-  const handle = entry.normalise(payload, { outputUrl: (p) => outputUrl(p, ctx.publicBase) });
-  return withJobRow(kind, { ...handle, id, ...(projectId ? { projectId } : {}) }, payload);
 }
 
 /** Registers biblefuel://jobs/{kind}/{id} on one McpServer built for `ctx`. */
