@@ -476,13 +476,27 @@ test("story: a step a restart stopped (interrupted) reads failed, saying what to
     [{ status: "transcribing" }, "transcribing"],
     [{ status: "segmenting" }, "segmenting"],
     [{ status: "generating_images", scenes: [scene("s1", { imageStatus: "generating" })] }, "generating_images"],
-    [{ status: "ready_to_render", scenes: [scene("s1", { aiVideoStatus: "generating" })] }, "animating"],
   ];
   for (const [fields, phase] of busy) {
     const handle = NORMALISERS.story.normalise({ project: { projectId: "p1", ...fields }, interrupted: true }, { outputUrl: toUrl });
     assert.equal(handle.status, "failed", phase);
     assert.equal(handle.phase, phase);
     assert.equal(handle.error, STORY_RESTART);
+  }
+});
+
+const STORY_ANIMATE_RESTART = 'This stopped when the server restarted. Call story_cancel with what: "animate", then story_animate again.';
+
+test("story: AI clips a restart stopped read failed, saying to cancel the clips and order them again", () => {
+  const stopped = [
+    { status: "ready_to_render", scenes: [scene("s1", { aiVideoStatus: "generating" })] },
+    { status: "done", scenes: [scene("s1", { aiVideoStatus: "queued" }), scene("s2", { aiVideoStatus: "done" })] },
+  ];
+  for (const fields of stopped) {
+    const handle = NORMALISERS.story.normalise({ project: { projectId: "p1", ...fields }, interrupted: true }, { outputUrl: toUrl });
+    assert.equal(handle.status, "failed", fields.status);
+    assert.equal(handle.phase, "animating");
+    assert.equal(handle.error, STORY_ANIMATE_RESTART);
   }
 });
 

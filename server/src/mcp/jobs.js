@@ -126,6 +126,8 @@ const STORY_BUSY = new Set(["transcribing", "segmenting", "generating_images", "
 const STORY_IDLE = new Set(["draft", "draft_script"]);
 // GET /api/story/:id says `interrupted` when a restart or deploy killed the step the project shows (R50).
 const STORY_RESTART_MESSAGE = "This stopped when the server restarted. Call story_cancel, then story_process or story_render again.";
+// The stopped work was AI motion clips on a project whose own steps are over: cancel and order the clips again.
+const STORY_ANIMATE_RESTART_MESSAGE = 'This stopped when the server restarted. Call story_cancel with what: "animate", then story_animate again.';
 
 /** How many scenes' AI motion clips are queued, generating, done or failed; null when none was ever ordered. */
 function animationCounts(scenes) {
@@ -172,7 +174,8 @@ function storyState(project, payload) {
   const stepRunning = STORY_BUSY.has(status) && !idleImages;
   const animating = animation && AI_IN_FLIGHT.some((key) => animation[key] > 0) && !stepRunning;
   if (payload?.interrupted) {
-    return { rawStatus: "failed", phase: animating ? "animating" : status, error: STORY_RESTART_MESSAGE, animation };
+    if (animating) return { rawStatus: "failed", phase: "animating", error: STORY_ANIMATE_RESTART_MESSAGE, animation };
+    return { rawStatus: "failed", phase: status, error: STORY_RESTART_MESSAGE, animation };
   }
   if (animating) return { rawStatus: "running", phase: "animating", animation, keepOutput: true };
   if (idleImages) return { rawStatus: "done", phase: scenesPhase(scenes), animation };
