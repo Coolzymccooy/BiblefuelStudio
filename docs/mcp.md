@@ -177,7 +177,7 @@ Every call passes the same checks, in this order:
 | `schedules` | `{ action: "list" or "create" or "remove", ... }`. Recurring posts, at most hourly. `create` and `remove` need publish consent; `create` is one daily publish (at most 5 agent-made schedules per account); `remove` only removes a schedule an agent created. |
 | `autopublish_run` | One-click Auto-Publish: script, voice, render and post in one job (kind `job`). Needs publish consent; one daily render and one daily publish. |
 
-More tools arrive in later slices. The Pipelines section shows where each fits.
+That is the whole catalogue. The Pipelines section shows where each tool fits, and the Prompts section has ready-made step lists for three common jobs.
 
 ## Waiting for jobs
 
@@ -218,6 +218,8 @@ Call `jobs_wait`:
 If the handle still says `queued` or `running`, call `jobs_wait` again with the same arguments. A render can take many minutes, so a long job needs several calls. That is normal.
 
 An unknown `kind` returns `BAD_KIND` and lists the valid ones.
+
+A client that prefers resources to polling can read the same handle, once and without waiting, from `biblefuel://jobs/{kind}/{id}` (see Resources).
 
 ## Getting media in
 
@@ -277,7 +279,7 @@ The public host sits behind a proxy that rejects bodies over 100 MB. For a large
 
 ## Pipelines
 
-Each pipeline is an ordered list of tools. A tool that is not in `tools/list` does not exist for your key, so do not call it. Call `whoami` and `capabilities` before any pipeline.
+Each pipeline is an ordered list of tools. A tool that is not in your `tools/list` is not available to your key (some are for super-admin keys only), so do not call it. Call `whoami` and `capabilities` before any pipeline.
 
 ### Media: import, transcribe, trim (available now)
 
@@ -467,6 +469,31 @@ Publishing posts to the user's own accounts, as them, so it needs **consent**: t
 
 The daily `publishes` cap is 3 per key by default.
 
+## Resources
+
+Besides tools, the server offers two resources (`resources/read`):
+
+| URI | What it holds |
+|---|---|
+| `biblefuel://guide` | This guide, as Markdown. Read it before the first call if your client gives the agent no instructions. |
+| `biblefuel://jobs/{kind}/{id}` | One job handle, as JSON (`application/json`). |
+
+The job resource is the handle `jobs_wait` returns, read once without waiting; for kind `job` it is exactly what `jobs_get` returns. `kind` and `id` are the ones on the handle the starting tool returned, for example `biblefuel://jobs/job/job_ab12cd` or `biblefuel://jobs/story/<project id>`. A `lyric_render` also needs the song: `biblefuel://jobs/lyric_render/<job id>?projectId=<song id>`.
+
+A read is free and charges no cap. It is checked like the tools: an unknown kind fails with `BAD_KIND`, a `lyric_render` without `projectId` with `BAD_INPUT`, and a job that is not yours reads exactly like one that does not exist. A refused read is an MCP error (JSON-RPC code -32602) whose message reads `CODE: message`, with `error`, `message`, `hint` and `status` in its `data`. `resources/list` shows only the guide: the template does not list your jobs (use `jobs_list`, or a feature's project tool with `action: "list"`).
+
+## Prompts
+
+Three prompts (`prompts/get`) hand an agent a ready-made, ordered step list for a common job: the exact tools to call, what to pass from one step to the next (job handles go to `jobs_wait`), and where a cap or missing consent stops the run. Every key sees all three, and they use only tools every key has. Prompt arguments are strings.
+
+| Prompt | Arguments | Use it when |
+|---|---|---|
+| `make_short_from_verse` | `reference` (required, for example `John 3:16`), `voice` (a voice name from `voice_list`), `publish` (`"true"` or `"false"`, default false) | The user wants a short captioned video of one verse: `bible_lookup`, `voice_synthesize`, `render_short`, `jobs_wait`. With `publish` `"true"` it adds `social_status`, `publish_youtube` and a second `jobs_wait`, and the key needs publish consent (`PUBLISH_NOT_ALLOWED` otherwise). One daily render, one `tts` and four `images`, plus one publish when publishing. |
+| `make_ambient_session` | `theme`, `hours` (more than 0, at most 10; default 2) | The user wants a long, music-first scripture video: `ambient_project`, `ambient_plan`, `music_library`, `ambient_update`, `ambient_step` (voice, then images), `ambient_render`. Each verse (one per fifteen minutes) costs one daily `tts` and one daily `images`, so a long session can need more than one day of caps. Never posts. |
+| `make_lyric_video` | `songPath` (required: a file in your media folder, or a public URL to import first) | The user has a song and its lyrics: `lyric_project`, `lyric_set_song`, `lyric_set_lyrics`, `lyric_align`, `lyric_render`. Two daily renders in all. The agent asks the user for the lyrics and never invents them. Never posts. |
+
+A missing required argument, or a bad one (`hours` `"11"`, `publish` `"maybe"`), is refused with JSON-RPC code -32602. The prompts are a starting point: the Pipelines section has every option.
+
 ## Quotas and daily caps
 
 Two limits apply, and the lower one wins.
@@ -506,6 +533,7 @@ A call that would cross a cap is refused before anything runs, so nothing is spe
 | HTTP 401, `AGENT_KEY_REQUIRED` | The bearer is not an agent key, for example the app's own sign-in token (a JWT). `/api/mcp` takes agent keys only. | Create a key in **Settings**, **Connected agents** and send that. |
 | Tool error `AGENT_FORBIDDEN` (`status` 403) | A key reached a route that keys may never use (account, billing, admin). | Do that in the app yourself. |
 | Tool error with `status` 403 from the app | The user's plan or role does not allow it, for example a scene script on a non-admin account. | Use an account that has the right. The tool is normally not listed without it. |
+| The scene script tools (`scene_script_project` and the rest), `story_animate` or `visual_library` are missing, or one answers `FORBIDDEN` with `status` 403 | They are for super-admin keys only. Other keys do not see them in `tools/list` (calling one anyway answers `Tool ... not found`), and their routes answer 403. | Nothing to fix on your side: use the other pipelines. |
 | HTTP 403 on the connection itself, before any tool runs | The `Host` header is not on the allowed list. This is the usual symptom when you reach the server through a tunnel such as ngrok. | Add the tunnel host name to `MCP_ALLOWED_HOSTS` on the server (comma separated). |
 | HTTP 405 | A `GET` or `DELETE` to `/api/mcp`. | Use `POST`. |
 | HTTP 429, `RATE_LIMITED` | More than 120 requests a minute on one key. | Wait a minute. Use `jobs_wait` rather than polling in a loop. |
@@ -513,9 +541,12 @@ A call that would cross a cap is refused before anything runs, so nothing is spe
 | `MCP_CAP_REACHED` | A daily cap is used up: this key's (`scope` `key`) or your account's across all agents (`scope` `user`). | Read `bucket`, `scope` and `resetsAt`. Wait for the reset, or ask the owner to raise the server ceiling. |
 | `QUOTA_EXCEEDED` | The account's own plan quota is used up. | Wait for the daily reset or change plan in the app. |
 | `BAD_KIND` | `jobs_wait` got a `kind` it does not know. | Use the `kind` the starting tool returned. |
-| `PATH_OUTSIDE_MEDIA` | An audio or voice-clone tool was given a file that is not in your media folder, or a URL. | Use a path from `media_list` or `media_import_url`. |
+| `PATH_OUTSIDE_MEDIA` | A tool was given a file that is not in your media folder, or a URL. | Use a path from `media_list` or `media_import_url`. |
 | `FEATURE_LOCKED` (`status` 403) | The tool needs a premium plan, for example ElevenLabs or Fish voices, or `voice_clone`. | Use `provider: "edge"` or `auto`, or upgrade in the app. |
 | `INVALID_URL`, `INVALID_KIND`, `INVALID_FILENAME`, `URL_PRIVATE`, `URL_SCHEME`, `URL_REDIRECTS`, `URL_TOO_LARGE`, `URL_TIMEOUT`, `DOWNLOAD_FAILED`, `IMPORT_FAILED` | `media_import_url` could not fetch the file. | See the table under Getting media in. |
 | The tool call times out in the client | The client gave up before `jobs_wait` returned. | Lower `timeoutSec`, or raise the client timeout above 90 seconds (Hermes: `timeout: 120`). The job keeps running; call `jobs_wait` again. |
 | A job is `running` for a long time | Renders are slow and queue behind other work. | Keep calling `jobs_wait`. If `status` becomes `failed`, read `error`, then try `jobs_retry`. |
+| A job reads `failed` after a server deploy or restart | A deploy restarts the server and stops the work in progress. Story, ambient, moments, long-form, lyric and timeline handles then read `failed` with an error that says the server restarted or the render was interrupted. | Do what the error says: usually the feature's cancel tool, then the step or render again (`story_cancel` then `story_render`, `ambient_cancel` then `ambient_render`, or `moments_render`, `longform_narrate`, `lyric_render`, `timeline_render` again). Starting again costs again. Warn the user before a long render if a deploy is likely. |
+| A `job` handle stays `running` with `percent` not moving after a deploy | The queue marks a job a deploy stopped as `failed` only when the server starts and the job had been running for 45 minutes or more (`STALE_RUNNING_JOB_MINUTES`); a younger one keeps reading `running`. | Tell the user. `jobs_retry` refuses a running job, so start a new render instead (`render_short` again). |
+| Reading `biblefuel://jobs/...` fails with `BAD_KIND`, `BAD_INPUT` or `HTTP_404` | An unknown kind, a `lyric_render` without `?projectId=`, or a job that is not yours or does not exist. | Use the `kind`, `id` and `projectId` from the handle the starting tool returned. |
 | `INTERNAL` | The server hit an unexpected error. | Try once more, then tell the user. |
