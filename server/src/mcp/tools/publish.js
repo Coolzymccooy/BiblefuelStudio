@@ -41,6 +41,18 @@ async function videoLink(ctx, videoPath, { absolute = false } = {}) {
   return { link: absolute ? outputUrl(checked.outputsPath, ctx.publicBase) : checked.outputsPath };
 }
 
+/**
+ * WEBHOOK_NOT_FOUND unless `webhookId` names one of the user's saved webhooks that is enabled.
+ * The route falls back to the first enabled hook for an unknown id, so an id is checked first.
+ */
+async function webhookRefusal(ctx, webhookId) {
+  if (webhookId === undefined) return null;
+  const config = await ctx.api.call("GET", "/api/social/config");
+  const hooks = Array.isArray(config?.webhooks) ? config.webhooks : [];
+  if (hooks.some((hook) => String(hook?.id) === webhookId && hook?.enabled === true)) return null;
+  return fail("WEBHOOK_NOT_FOUND", `No enabled webhook with id "${webhookId}". Use an enabled webhook id from social_status, or leave webhookId out.`);
+}
+
 async function thumbnailLink(ctx, thumbnailPath) {
   if (thumbnailPath === undefined) return { link: undefined };
   if (GENERATED_IMAGE.test(thumbnailPath)) return { link: thumbnailPath };
@@ -160,7 +172,7 @@ const publishPost = {
   name: "publish_post",
   title: "Post a video",
   description:
-    "Post a finished video from your media folder with a caption. destination webhook sends it to a Make or Zapier webhook the user saved (webhookId from social_status; default: their first enabled one), " +
+    "Post a finished video from your media folder with a caption. destination webhook sends it to a Make or Zapier webhook the user saved (webhookId of an enabled one from social_status, WEBHOOK_NOT_FOUND otherwise; leave it out for their first enabled one), " +
     "and to TikTok too when TikTok is connected; buffer queues it on Buffer profiles (profileIds from social_status). For YouTube use publish_youtube. " +
     "Needs the key's publish switch. Costs one daily publish. Waits for the destination to accept the post: up to about half a minute.",
   inputSchema: {
@@ -176,6 +188,8 @@ const publishPost = {
   async handler(ctx, { destination, videoPath, caption, title, webhookId, profileIds }) {
     const video = await videoLink(ctx, videoPath, { absolute: true });
     if (video.refusal) return video.refusal;
+    const badHook = destination === "webhook" ? await webhookRefusal(ctx, webhookId) : null;
+    if (badHook) return badHook;
     const fields = destination === "webhook" ? { title, webhookId } : { profileIds };
     const body = defined({ destination, videoUrl: video.link, caption, ...fields });
     const refused = await ctx.chargeCap({ publishes: 1 });
@@ -233,9 +247,16 @@ function scheduleProblem(input) {
   return null;
 }
 
-async function createSchedule(ctx, input) {
+/** Everything that refuses a new schedule before anything is charged, or null. */
+async function scheduleRefusal(ctx, input) {
   const problem = scheduleProblem(input);
   if (problem) return fail("BAD_INPUT", problem);
+  return input.destination === "webhook" ? webhookRefusal(ctx, input.webhookId) : null;
+}
+
+async function createSchedule(ctx, input) {
+  const refusal = await scheduleRefusal(ctx, input);
+  if (refusal) return refusal;
   let videoUrl;
   if (input.videoPath !== undefined) {
     const video = await videoLink(ctx, input.videoPath, { absolute: true });
@@ -335,6 +356,8 @@ const autopublishRun = {
   publish: true,
   async handler(ctx, input) {
     const payload = pick(input, CAMPAIGN_FIELDS);
+    const badHook = (input.destination ?? "webhook") === "webhook" ? await webhookRefusal(ctx, input.webhookId) : null;
+    if (badHook) return badHook;
     // R34: the route spends the plan's render quota; read it first so a refused run spends no daily caps.
     const outOfQuota = await renderQuotaRefusal(ctx);
     if (outOfQuota) return outOfQuota;

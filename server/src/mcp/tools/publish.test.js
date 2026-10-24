@@ -131,6 +131,7 @@ test("schedules create through MCP without consent leaves the store without sche
 
 const SECRET = "sk-very-secret-123";
 const HOOK_URL = "https://hook.make.com/abc-secret-path";
+const WH1_CONFIG = { ok: true, webhooks: [{ id: "wh_1", name: "Make", url: HOOK_URL, enabled: true }] };
 
 test("social_status returns only allowlisted fields and tolerates a failing playlists call", async () => {
   const { ctx } = ctxWith({
@@ -256,6 +257,7 @@ test("publish_youtube refuses a URL or outside video", async () => {
 test("publish_post to a webhook sends an absolute public video link and the webhook id, never a URL", async () => {
   const dir = mediaWith("clip.mp4");
   const { ctx, calls } = ctxWith({
+    "GET /api/social/config": WH1_CONFIG,
     "POST /api/social/post": {
       ok: true, partial: false, videoUrl: "x", make: { ok: true }, zernio: { ok: true, raw: { apiKey: SECRET } },
       results: [{ destination: "webhook", ok: true, error: "" }, { destination: "tiktok", ok: true, error: "", draft: false, apiKey: SECRET }],
@@ -265,7 +267,7 @@ test("publish_post to a webhook sends an absolute public video link and the webh
     destination: "webhook", videoPath: path.join(dir, "clip.mp4"), caption: "Be still", title: "Psalm 46", webhookId: "wh_1", webhookUrl: HOOK_URL,
   });
   assert.notEqual(result.isError, true, result.content?.[0]?.text);
-  assert.deepEqual(calls[0].opts.body, {
+  assert.deepEqual(calls.at(-1).opts.body, {
     destination: "webhook", videoUrl: "http://host.test/outputs/clip.mp4", caption: "Be still", title: "Psalm 46", webhookId: "wh_1",
   });
   assert.deepEqual(result.structuredContent, {
@@ -324,14 +326,14 @@ test("schedules list returns only id, title, time, destination and enabled", asy
 
 test("schedules create with consent charges one publish and posts a new schedule (never an id)", async () => {
   const dir = mediaWith("clip.mp4");
-  const { ctx, calls, charges } = ctxWith({ "POST /api/social/schedules": (_m, _p, opts) => ({ ok: true, schedule: { ...opts.body.schedule, id: "sch_new" } }) }, CONSENT);
+  const { ctx, calls, charges } = ctxWith({ "GET /api/social/config": WH1_CONFIG, "POST /api/social/schedules": (_m, _p, opts) => ({ ok: true, schedule: { ...opts.body.schedule, id: "sch_new" } }) }, CONSENT);
   const result = await byName.schedules.handler(ctx, {
     action: "create", id: "sch_existing", type: "replay", title: "Replay", cron: "30 8 * * 1", timezone: "UTC",
     destination: "webhook", webhookId: "wh_1", caption: "Again", videoPath: path.join(dir, "clip.mp4"),
   });
   assert.notEqual(result.isError, true, result.content?.[0]?.text);
   assert.deepEqual(charges, [{ bucket: "publishes", amount: 1 }]);
-  assert.deepEqual(calls[0].opts.body, {
+  assert.deepEqual(calls.at(-1).opts.body, {
     schedule: {
       name: "Replay", type: "replay", cron: "30 8 * * 1", timezone: "UTC", destination: "webhook", enabled: true,
       webhookId: "wh_1", caption: "Again", videoUrl: "http://host.test/outputs/clip.mp4",
@@ -441,5 +443,45 @@ for (const [name, args, route] of [
     const result = await byName[name].handler({ ...fake.ctx, ...CONSENT }, args(dir));
     assert.equal(result.structuredContent.error, "MCP_CAP_REACHED");
     assert.deepEqual(fake.calls, []);
+  });
+}
+
+// ---- a named webhook must be one of the user's own, enabled ----
+
+const CONFIG_HOOKS = { ok: true, buffer: {}, schedules: [], webhooks: [{ id: "wh_on", name: "On", url: HOOK_URL, enabled: true }, { id: "wh_off", name: "Off", url: HOOK_URL, enabled: false }] };
+
+for (const [name, args] of [
+  ["publish_post", (dir, webhookId) => ({ destination: "webhook", videoPath: path.join(dir, "clip.mp4"), caption: "c", webhookId })],
+  ["schedules", (_dir, webhookId) => ({ action: "create", type: "auto_generate", cron: "0 9 * * *", destination: "webhook", webhookId })],
+  ["autopublish_run", (_dir, webhookId) => ({ destination: "webhook", webhookId })],
+]) {
+  test(`${name} refuses an unknown or disabled webhookId with WEBHOOK_NOT_FOUND before charging`, async () => {
+    const dir = mediaWith("clip.mp4");
+    for (const webhookId of ["wh_missing", "wh_off"]) {
+      const { ctx, calls, charges } = ctxWith({
+        "GET /api/social/config": CONFIG_HOOKS,
+        "GET /api/social/schedules": { ok: true, schedules: [] },
+        "GET /api/billing/usage": { ok: true, usage: { buckets: { render: { unlimited: true } } } },
+      }, CONSENT);
+      const result = await byName[name].handler(ctx, args(dir, webhookId));
+      assert.equal(result.structuredContent.error, "WEBHOOK_NOT_FOUND", `${name} ${webhookId}`);
+      assert.deepEqual(charges, []);
+      assert.equal(calls.some((c) => c.method !== "GET"), false);
+    }
+  });
+
+  test(`${name} accepts an enabled webhookId of the user's`, async () => {
+    const dir = mediaWith("clip.mp4");
+    const { ctx, calls } = ctxWith({
+      "GET /api/social/config": CONFIG_HOOKS,
+      "GET /api/social/schedules": { ok: true, schedules: [] },
+      "GET /api/billing/usage": { ok: true, usage: { buckets: { render: { unlimited: true } } } },
+      "POST /api/social/post": { ok: true, results: [] },
+      "POST /api/social/schedules": { ok: true, schedule: { id: "s" } },
+      "POST /api/jobs/enqueue": { ok: true, job: { id: "j", status: "queued" } },
+    }, CONSENT);
+    const result = await byName[name].handler(ctx, args(dir, "wh_on"));
+    assert.notEqual(result.isError, true, result.content?.[0]?.text);
+    assert.ok(calls.some((c) => c.method === "POST"));
   });
 }
