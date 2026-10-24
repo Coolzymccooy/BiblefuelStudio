@@ -6,6 +6,7 @@ import path from "path";
 import {
   estimateTokens, usdForTokens, usdPerSecond, priceMultiplier, monthlyCapUsd, monthKey, capMessage,
   readLedger, ledgerSummary, wouldExceedCap, reserveSpend, settleSpend, releaseSpend,
+  settleSpendUsd, settleStaleReservations,
 } from "./spend.js";
 
 const MINI = "dreamina-seedance-2-0-mini-260615";
@@ -122,5 +123,31 @@ describe("ledger", () => {
   test("a corrupt ledger file reads as empty instead of throwing", () => {
     fs.writeFileSync(path.join(dir, "videogen-spend.json"), "{not json");
     assert.equal(ledgerSummary(dir, OCT).spentUsd, 0);
+  });
+
+  test("settleSpendUsd charges a known amount and drops the reservation", () => {
+    reserveSpend(dir, "veo:a", 6, OCT);
+    assert.equal(settleSpendUsd(dir, "veo:a", 6, OCT), 6);
+    const l = readLedger(dir, OCT);
+    assert.equal(l.settledUsd, 6);
+    assert.equal(l.clips, 1);
+    assert.deepEqual(l.reservations, {});
+  });
+
+  test("settleSpendUsd refuses a cost that is not a number", () => {
+    reserveSpend(dir, "veo:a", 6, OCT);
+    assert.throws(() => settleSpendUsd(dir, "veo:a", Number.NaN, OCT), /cost/);
+    assert.equal(readLedger(dir, OCT).settledUsd, 0);
+  });
+
+  test("settleStaleReservations charges only the keys with the prefix", () => {
+    reserveSpend(dir, "veo:a", 6, OCT);
+    reserveSpend(dir, "veo:b", 3, OCT);
+    reserveSpend(dir, "story:x", 1, OCT);
+    assert.deepEqual(settleStaleReservations(dir, "veo:", OCT), { count: 2, usd: 9 });
+    const l = readLedger(dir, OCT);
+    assert.equal(l.settledUsd, 9);
+    assert.deepEqual(Object.keys(l.reservations), ["story:x"], "other kinds still resume their own way");
+    assert.deepEqual(settleStaleReservations(dir, "veo:", OCT), { count: 0, usd: 0 });
   });
 });

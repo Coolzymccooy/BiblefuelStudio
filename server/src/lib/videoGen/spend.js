@@ -138,6 +138,33 @@ export function settleSpend(dir, key, { model, resolution, tokens }, now = new D
   return usd;
 }
 
+/**
+ * Settle a reservation at a known cost, for providers that report no token
+ * count (Veo). The estimate the caller reserved is the usual amount.
+ */
+export function settleSpendUsd(dir, key, usd, now = new Date()) {
+  if (typeof usd !== "number" || !Number.isFinite(usd) || usd < 0) throw new Error("Invalid cost to settle.");
+  const l = readLedger(dir, now);
+  const { [key]: _settled, ...rest } = l.reservations;
+  writeLedger(dir, { ...l, reservations: rest, settledUsd: l.settledUsd + usd, clips: l.clips + 1 });
+  return usd;
+}
+
+/**
+ * At start-up, charge every reservation whose key starts with `prefix` at its
+ * estimate. They belong to requests a restart cut off, and the order may have
+ * been placed, so they are counted as spent rather than left reserved for ever.
+ */
+export function settleStaleReservations(dir, prefix, now = new Date()) {
+  const l = readLedger(dir, now);
+  const stale = Object.entries(l.reservations).filter(([k]) => k.startsWith(prefix));
+  if (!stale.length) return { count: 0, usd: 0 };
+  const usd = stale.reduce((a, [, v]) => a + (Number(v) || 0), 0);
+  const reservations = Object.fromEntries(Object.entries(l.reservations).filter(([k]) => !k.startsWith(prefix)));
+  writeLedger(dir, { ...l, reservations, settledUsd: l.settledUsd + usd, clips: l.clips + stale.length });
+  return { count: stale.length, usd };
+}
+
 /** True while key holds a reservation. Settling removes it, so this tells a caller whether a clip is still unpaid. */
 export function isReserved(dir, key, now = new Date()) {
   return key in readLedger(dir, now).reservations;
