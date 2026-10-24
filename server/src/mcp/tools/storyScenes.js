@@ -173,6 +173,7 @@ const storyAnimate = {
     "sceneIds picks scenes (default: every scene with a picture that is not animated yet; naming a scene re-rolls it); quality standard (default) or high costs more. " +
     "estimateOnly: true returns the estimate (clips, seconds, usd, the month's spend and cap) and orders nothing; call it first. " +
     "Otherwise the estimate's dollars, rounded up to the cent, are charged to the daily aiVideoUsd cap before any clip is ordered (refused with MCP_CAP_REACHED if it does not fit; BUDGET when the month's cap is reached). " +
+    "The cap is charged from that estimate: the real cost, settled against the provider's own count, can differ a little, and the difference is not charged or given back. " +
     "Returns a handle of kind story: jobs_wait with kind story shows phase animating and animation counts until every clip is in, a few minutes per clip. Pictures stay where a clip fails. story_cancel with what animate stops further orders. Render afterwards with story_render.",
   inputSchema: {
     id: STORY_ID.describe("The project id."),
