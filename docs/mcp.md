@@ -146,6 +146,19 @@ Every call passes the same checks, in this order:
 | `ambient_update` | `{ id, section: "drops" or "bed" or "motion" or "words" or "captions", patch }`. Change the verse list, the music bed (`music_library` refs or media files), the motion, music-only, or the captions. Free. |
 | `ambient_render` | `{ id }`. Build the bed and render the video. Handle of kind `ambient`; an hour or more for long sessions, and a deploy stops it. One daily render and one plan `render` quota. Never posts. |
 | `ambient_cancel` | `{ id }`. Stop the pictures or the render; also clears a session a restart left busy. Voicing cannot be stopped (`VOICING_CANNOT_CANCEL`: wait for it). `NOTHING_RUNNING` when nothing is running. Free. |
+| `lyric_project` | `{ action: "list" or "get" or "create" or "delete" or "renders" or "publish_draft" or "cancel_render", ... }`. Lyric videos (song mode); `get` shows the song, lines with their times, the timing state and a `lyric_align` handle; `renders` lists every video made; `publish_draft` gives a YouTube title and description. Free. |
+| `lyric_set_song` | `{ id, path }`. The song: an audio file, or a video whose sound is taken out, in your media folder. Clears the old timing. Free. |
+| `lyric_set_lyrics` | `{ id, sheet }`. The lyrics as one sheet, section headings on their own lines. Free. |
+| `lyric_align` | `{ id }`. Time the lyrics to the singing, in the background. Handle of kind `lyric_align`. One plan `render` quota, no daily cap. |
+| `lyric_line_update` | `{ id, lineId, start?, effect? }`. Move one timed line (it is then kept by later timing runs) or change how it is drawn. Free. |
+| `lyric_background` | `{ id, path?, fit?, look?, branding? }`. The background picture or video, the caption look and the logo, intro and end card switches. Free. |
+| `lyric_render` | `{ id, aspect?, quality?, shortsTrim? }`. Render the video. Handle of kind `lyric_render` with the job id as `id` and the song as `projectId`. One daily render and one plan `render` quota. Never posts. |
+| `moments_project` | `{ action: "list" or "get" or "create" or "update" or "delete" or "meta", ... }`. Short photo videos for occasions; `update` sets the words, photos (imported images or image library ids), song and length; `meta` lists the choices and your image library. Free. |
+| `moments_step` | `{ id, step: "statements" or "voiceover", script?, idea?, voiceId? }`. Suggest the title and lines (one plan `scripts` quota), or speak a voiceover (one daily `tts`). |
+| `moments_render` | `{ id, seed? }`. Render the Moment (at least 3 photos). Handle of kind `moments`. One daily render and one plan `render` quota. Never posts. |
+| `moments_cancel` | `{ id }`. Stop a running Moment render. `NOTHING_RUNNING` when none runs. Free. |
+| `timeline_project` | `{ action: "list" or "get" or "save", id?, project? }`. Multi-lane Timeline projects; `save` stores a whole project. Asset paths must be your media files or music refs. Free. |
+| `timeline_render` | `{ projectId or project, quality?, caption options... }`. Render a timeline. Handle of kind `timeline`. One daily render and one plan `render` quota, plus one daily `tts` per voiceover clip it speaks. Never posts. |
 | `social_status` | Where you can publish: YouTube, playlists, auto-publish destinations, Buffer profiles, saved webhooks and schedules. No secrets. Free. |
 | `publish_youtube` | `{ videoPath, title, ... }`. Upload to the connected channel. Handle of kind `publish`. Needs publish consent; one daily publish. |
 | `publish_post` | `{ destination: "webhook" or "buffer", videoPath, caption, ... }`. Post to a saved webhook (and TikTok when connected) or Buffer. Needs publish consent; one daily publish. |
@@ -175,7 +188,9 @@ Anything slow returns a **job handle** immediately and keeps working in the back
 - `percent` is 0 to 100, or `null` when the job does not report progress.
 - `output` is `{ url, path }` when there is a file. `url` is public and playable. `path` is the server-side value you pass to other tools.
 - `error` is a short message when `status` is `failed`.
-- `kind` says which status route to read. The kinds are `job`, `captioned`, `story`, `ambient`, `timeline`, `instrumental` and `publish`. Every tool that starts work tells you the `kind` to use. For `story` and `ambient`, pass the project id as `id`. A story is `done` with `phase: "ready_to_render"` when its pictures are all made (no video yet; `output` is null), and `done` with `output` after `story_render`. While AI motion clips are being made it is `running` with `phase: "animating"`, and its handle carries `animation: { queued, generating, done, failed }`.
+- `kind` says which status route to read. The kinds are `job`, `captioned`, `story`, `ambient`, `lyric_align`, `lyric_render`, `moments`, `timeline`, `instrumental` and `publish`. Every tool that starts work tells you the `kind` to use. For `story`, `ambient`, `lyric_align` and `moments`, pass the project id as `id`. For `lyric_render`, pass the render's job id as `id` and the song's id as `projectId` (both are on the handle `lyric_render` returns); without `projectId` the wait is refused with `BAD_INPUT`.
+- A `lyric_align` handle is `done` with `lines: { total, timed, flagged }` when the timing is in; flagged lines could not be heard and were squeezed in. A `warning` means a re-run failed and the earlier timing was kept. It is `failed` with an error when timing has not run on the current lyrics (a new song or changed lyrics clear it).
+- A `moments` handle is `failed` when no render was started, or when a server restart stopped one (the error says to call `moments_render` again). A story is `done` with `phase: "ready_to_render"` when its pictures are all made (no video yet; `output` is null), and `done` with `output` after `story_render`. While AI motion clips are being made it is `running` with `phase: "animating"`, and its handle carries `animation: { queued, generating, done, failed }`.
 - An `ambient` session is `done` with `phase: "ready_to_render"` (or `"draft"`) when a voice or images step is over, `failed` when verses or pictures are still missing (the error says how many), and `done` with `output` after `ambient_render`. When a server restart stopped its work it is `failed` with an error that says so: call `ambient_cancel`, then run the step or `ambient_render` again.
 
 Call `jobs_wait`:
@@ -333,21 +348,46 @@ Costs. `ambient_step voice` is one daily `tts` per verse it speaks and `images` 
 
 Time. Building the bed takes minutes and the render runs at about real time or slower, so a two-hour session can take an hour or more. Heavy jobs run one at a time on the server, so a render behind another render or a vocal removal waits first (`phase: "waiting for another job to finish"`). A server deploy or restart stops whatever a session is doing; `jobs_wait` then reports `failed` and says so. Call `ambient_cancel`, then the step or `ambient_render` again (a bed already built is reused). Edits to the verses or the bed are refused while a step runs (`SESSION_BUSY`).
 
-### Lyric video (coming)
+### Lyric video (available now)
 
-`lyric_project`, `lyric_set_song` (a path from `media_import_url`), `lyric_set_lyrics`, `lyric_align`, `lyric_line_update`, `lyric_background`, `lyric_render`, `jobs_wait`.
+A song with its lyrics timed word by word to the singing, drawn as moving captions over a background.
 
-### Moments (coming)
+1. `lyric_project { action: "create", title, artist? }`.
+2. `lyric_set_song { id, path }`: an audio file, or a video whose sound is taken out, in your media folder (`media_import_url`, `media_list`, or another tool's output such as a story's narration). At most 15 minutes. URLs and other paths are refused.
+3. `lyric_set_lyrics { id, sheet }`: one sung line per line, section headings such as `[CHORUS]` or `VERSE 1:` on their own lines.
+4. `lyric_align { id }`, then `jobs_wait { kind: "lyric_align", id }` until `done`. One timing run at a time per account.
+5. Optional: `lyric_project { action: "get", id }` to read the lines; `lyric_line_update { id, lineId, start?, effect? }` moves a line that is off (it is then kept by later timing runs) or changes how it is drawn.
+6. Optional: `lyric_background { id, path?, fit?, look?, branding? }`: a background picture or video in your media folder (without one, the song's cover picture or a dark colour is used), the caption look, and the logo, intro and end card switches.
+7. `lyric_render { id, aspect?, quality?, shortsTrim? }`, then `jobs_wait { kind: "lyric_render", id: <the handle's id>, projectId: <the song's id> }` until `done`. `output.path` is the video for `publish_youtube`; `lyric_project { action: "publish_draft", id }` gives a title, description and tags. A render never posts by itself. `lyric_project { action: "cancel_render", id, jobId }` stops it.
 
-`moments_meta`, `moments_project`, `moments_statements`, `moments_voiceover`, `moments_render`, `jobs_wait`.
+Costs. `lyric_align` counts one unit of the plan's `render` quota and no daily cap. `lyric_render` is one daily render and one plan `render` quota (`QUOTA_EXCEEDED` first); it is refused at no cost when the song has no audio (`NO_SONG`), no timing (`NOT_TIMED`) or is busy (`SONG_BUSY`). Everything else is free. One render per account at a time; a server deploy stops it.
+
+### Moments (available now)
+
+A 15, 30 or 60 second photo video for a birthday, wedding, sermon or church event: moving titles and lines over the photos, cut to a song, with an optional voiceover.
+
+1. `moments_project { action: "meta" }` lists the occasions (each with its detail fields), styles, lengths, limits and your image library (`libraryImages`).
+2. `moments_project { action: "create", occasion }`. The occasion picks the style, energy and song.
+3. `moments_project { action: "update", id, details?, photos, lengthSec?, ... }`. `photos` is the whole list, 3 to 20: each `{ path }` of an image imported with `media_import_url` `kind: "image"`, or `{ libraryId }` from `libraryImages`. `song` is `{ ref }` from `music_library` or `{ path }` of an audio file in your media folder, or `null` for none. Paths outside your media folder and URLs are refused.
+4. Optional: `moments_step { id, step: "statements" }` suggests a title and lines; it changes nothing, so put the ones you like in with `update` (`title`, `statements`).
+5. Optional: `moments_step { id, step: "voiceover", script? or idea?, voiceId? }` speaks a voiceover (an edge voice from `voice_list`).
+6. `moments_render { id, seed? }`, then `jobs_wait { kind: "moments", id }` until `done`. `output.path` is the video for `publish_youtube` or `publish_post`. A render never posts by itself. `moments_cancel { id }` stops it.
+
+Costs. `moments_step statements` is one unit of the plan's `scripts` quota. `voiceover` is one daily `tts` and one plan `tts` quota. `moments_render` is one daily render and one plan `render` quota; it is refused at no cost with fewer than 3 photos (`NEEDS_PHOTOS`) or while a render runs (`MOMENT_BUSY`). Everything else is free. A render takes a minute or two and may wait for another video to finish first.
 
 ### Gumroad (coming)
 
 `gumroad_generate`, `gumroad_history`. Needs the Gumroad feature on your plan.
 
-### Timeline (coming)
+### Timeline (available now)
 
-`timeline_project`, `timeline_render`, `jobs_wait` with `kind: "timeline"`.
+A multi-lane edit: video, B-roll, voiceover, music, captions and effects lanes of clips, each clip pointing at an asset.
+
+1. `timeline_project { action: "list" }` or `{ action: "get", id }` to start from a project made in the app, or build one: `{ id, title, aspect, assets: { <assetId>: { kind, source, label, path? or prompt? } }, tracks: [{ id, kind, label, clips: [{ id, assetId, startSec, durationSec, text? }] }] }`.
+2. `timeline_project { action: "save", project }` stores the whole project (the app's Timeline page opens it too). Every asset `path` must be a file in your media folder or a `library:`/`mylib:` music ref; URLs and library item ids are refused, so bring stock footage in with `media_import_url` or `library_items` `download` first. A voiceover asset with `source` `chatterbox` or `fish`, a `prompt` and no `path` is spoken at render time.
+3. `timeline_render { projectId }` (or `{ project }` to render without saving), with `quality` and caption options, then `jobs_wait { kind: "timeline", id }` until `done`. `output.url` plays the video. A render never posts by itself.
+
+Costs. `timeline_render` is one daily render and one plan `render` quota, plus one daily `tts` for each voiceover clip it must speak, charged together up front. A project the app refuses (no renderable clips, for example) gives the caps back. Saving and reading are free.
 
 ### Scene script (coming)
 
