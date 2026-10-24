@@ -110,6 +110,12 @@ describe("assertPayloadPathsInScope", () => {
     refused(() => assertPayloadPathsInScope({ scenes: [{ backgroundPath: f.own }, { backgroundPath: f.global }] }, ctx));
   });
 
+  test("ignoreMissing skips a missing input but still checks the rest", () => {
+    refused(() => assertPayloadPathsInScope({ scenes: [{ backgroundPath: "999999" }] }, ctx), "FILE_NOT_FOUND");
+    assertPayloadPathsInScope({ scenes: [{ backgroundPath: "999999" }] }, ctx, { ignoreMissing: true });
+    refused(() => assertPayloadPathsInScope({ scenes: [{ backgroundPath: path.join(mine, "nope.mp4") }, { backgroundPath: f.theirs }] }, ctx, { ignoreMissing: true }));
+  });
+
   test("passes a payload of own and shared media, and anything for the owner", () => {
     assertPayloadPathsInScope({
       audioPath: f.tts, musicPath: "library:peaceful-worship", backgroundPath: "601",

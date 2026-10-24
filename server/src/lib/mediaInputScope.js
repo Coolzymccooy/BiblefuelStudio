@@ -111,19 +111,27 @@ export function scopeMediaInput(value, ctx) {
 
 /**
  * Check every path field of a render job payload (scenes included). Throws a
- * UserPathError for the first one out of scope.
+ * UserPathError for the first one out of scope. With `ignoreMissing`, an
+ * input that is merely not found (FILE_NOT_FOUND) is skipped so the job's own
+ * "not found" message reports it, and the remaining fields are still checked.
  *
  * @param {Record<string, any>|null|undefined} payload
  * @param {object|null|undefined} ctx the job's ctx
+ * @param {{ ignoreMissing?: boolean }} [options]
  */
-export function assertPayloadPathsInScope(payload, ctx) {
+export function assertPayloadPathsInScope(payload, ctx, { ignoreMissing = false } = {}) {
   if (!payload || typeof payload !== "object" || isUnconfined(ctx)) return;
-  for (const field of PATH_FIELDS) {
-    if (payload[field] != null && String(payload[field]).trim()) scopeMediaInput(payload[field], ctx);
-  }
+  const values = PATH_FIELDS.map((field) => payload[field]);
   const scenes = Array.isArray(payload.scenes) ? payload.scenes : [];
-  for (const scene of scenes) {
-    if (scene?.backgroundPath != null && String(scene.backgroundPath).trim()) scopeMediaInput(scene.backgroundPath, ctx);
+  for (const scene of scenes) values.push(scene?.backgroundPath);
+  for (const value of values) {
+    if (value == null || !String(value).trim()) continue;
+    try {
+      scopeMediaInput(value, ctx);
+    } catch (err) {
+      if (ignoreMissing && err instanceof UserPathError && err.code === "FILE_NOT_FOUND") continue;
+      throw err;
+    }
   }
 }
 
