@@ -64,13 +64,16 @@ export function consumeQuota(ctx, bucket) {
  * counting rules.
  *
  * @param {'scripts'|'tts'|'render'|'imageGen'} bucket
+ * @param {{ skip?: (req: object) => boolean }} [options] `skip`: requests on the
+ *   router that do no billable work (a cancel), so they never spend or need quota
  */
-export function quota(bucket) {
+export function quota(bucket, { skip } = {}) {
   return function quotaCheck(req, res, next) {
     // Reads never spend budget: every GET on the quota-mounted routers is a
     // status/list read, and charging them let a polling client (e.g. the MCP
     // jobs_wait tool) drain the bucket and 429 its own render.
     if (req.method === "GET" || req.method === "HEAD") return next();
+    if (typeof skip === "function" && skip(req)) return next();
     const outcome = consumeQuota(req?.ctx, bucket);
     if (!outcome.ok) return res.status(outcome.status).json(outcome.body);
     next();

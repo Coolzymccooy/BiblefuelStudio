@@ -33,7 +33,7 @@ export async function startTestApp({ users, superAdminEmail } = {}) {
   const { default: mediaRouter } = await import("../../src/routes/media.js");
   const { default: videogenRouter } = await import("../../src/routes/videogen.js");
   const { default: postizRouter } = await import("../../src/routes/postiz.js");
-  const { default: renderRouter } = await import("../../src/routes/render.js");
+  const { default: renderRouter, isQuotaFreeRenderRequest } = await import("../../src/routes/render.js");
   const { default: socialRouter } = await import("../../src/routes/social.js");
   const { default: agentKeysRouter } = await import("../../src/routes/agentKeys.js");
   const { quota } = await import("../../src/middleware/quota.js");
@@ -63,7 +63,7 @@ export async function startTestApp({ users, superAdminEmail } = {}) {
   app.use("/api/media", requireAuth, withUserScope, mediaRouter);
   app.use("/api/video-gen", requireAuth, withUserScope, requireVerifiedEmail, videogenRouter);
   app.use("/api/postiz", requireAuth, withUserScope, requireVerifiedEmail, postizRouter);
-  app.use("/api/render", requireAuth, withUserScope, requireVerifiedEmail, quota("render"), renderRouter);
+  app.use("/api/render", requireAuth, withUserScope, requireVerifiedEmail, quota("render", { skip: isQuotaFreeRenderRequest }), renderRouter);
   app.use("/api/social", requireAuth, withUserScope, requireVerifiedEmail, socialRouter);
   app.use("/api/scripts", requireAuth, withUserScope, requireVerifiedEmail, quota("scripts"), scriptsRouter);
   app.use("/api/bible", requireAuth, withUserScope, bibleRouter);
