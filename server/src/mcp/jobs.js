@@ -119,20 +119,166 @@ function storyUrl(projectId, outputPath) {
   return name && safeId ? `/outputs/story/${safeId}/${name}` : null;
 }
 
+const AI_IN_FLIGHT = ["queued", "generating"];
+// Steps the project itself is still running; AI clips in flight do not replace them as the phase.
+const STORY_BUSY = new Set(["transcribing", "segmenting", "generating_images", "rendering", "narrating", "error"]);
+// Nothing runs on these: a project made but not started, or a long-form outline not yet narrated.
+const STORY_IDLE = new Set(["draft", "draft_script"]);
+// GET /api/story/:id says `interrupted` when a restart or deploy killed the step the project shows (R50).
+const STORY_RESTART_MESSAGE = "This stopped when the server restarted. Call story_cancel, then story_process or story_render again.";
+// The stopped work was AI motion clips on a project whose own steps are over: cancel and order the clips again.
+const STORY_ANIMATE_RESTART_MESSAGE = 'This stopped when the server restarted. Call story_cancel with what: "animate", then story_animate again.';
+
+/** How many scenes' AI motion clips are queued, generating, done or failed; null when none was ever ordered. */
+function animationCounts(scenes) {
+  const counts = { queued: 0, generating: 0, done: 0, failed: 0 };
+  let ordered = false;
+  for (const scene of scenes) {
+    const key = scene?.aiVideoStatus === "error" ? "failed" : scene?.aiVideoStatus;
+    if (!Object.hasOwn(counts, key)) continue;
+    counts[key] += 1;
+    ordered = true;
+  }
+  return ordered ? counts : null;
+}
+
+/**
+ * generating_images with no scene being made and nothing about to start: the images step is over
+ * (segmenting leaves the project here, and so does a run the daily image quota stopped).
+ */
+function imagesIdle(status, scenes, payload) {
+  return status === "generating_images" && !payload?.preparing && !scenes.some((s) => s?.imageStatus === "generating");
+}
+
+/** Why an idle images step left scenes without a picture (the daily image quota, a provider refusal), or null. */
+function imagesStoppedError(scenes) {
+  const failed = scenes.filter((s) => s?.imageStatus === "error");
+  if (failed.length === 0) return null;
+  return `${failed.length} of ${scenes.length} scenes have no picture: ${text(failed[0].imageError) || "image generation failed"}`;
+}
+
+/** What an idle images step's scenes say is next. */
+function scenesPhase(scenes) {
+  if (scenes.length === 0) return "no_scenes";
+  return scenes.every((s) => s?.imageStatus === "done") ? "ready_to_render" : "needs_images";
+}
+
+/** The status, phase and error a story handle shows, from the project's own status, its scenes and their AI clips. */
+function storyState(project, payload) {
+  const status = String(project.status || "");
+  const scenes = Array.isArray(project.scenes) ? project.scenes : [];
+  const animation = animationCounts(scenes);
+  const idleImages = imagesIdle(status, scenes, payload);
+  const imagesError = idleImages ? imagesStoppedError(scenes) : null;
+  if (imagesError) return { rawStatus: "failed", phase: status, error: imagesError, animation };
+  const stepRunning = STORY_BUSY.has(status) && !idleImages;
+  const animating = animation && AI_IN_FLIGHT.some((key) => animation[key] > 0) && !stepRunning;
+  if (payload?.interrupted) {
+    if (animating) return { rawStatus: "failed", phase: "animating", error: STORY_ANIMATE_RESTART_MESSAGE, animation };
+    return { rawStatus: "failed", phase: status, error: STORY_RESTART_MESSAGE, animation };
+  }
+  if (animating) return { rawStatus: "running", phase: "animating", animation, keepOutput: true };
+  if (idleImages) return { rawStatus: "done", phase: scenesPhase(scenes), animation };
+  if (status === "generating_images" && payload?.preparing) return { rawStatus: "running", phase: "preparing", animation };
+  // The pictures are all in: the step an agent waited for is over, and no new video exists yet.
+  if (status === "ready_to_render") return { rawStatus: "done", phase: status, animation };
+  if (STORY_IDLE.has(status)) return { rawStatus: "done", phase: status, animation };
+  const phase = status === "rendering" ? text(project.render?.phase) || "rendering" : null;
+  return { rawStatus: status, phase, error: project.error, animation, keepOutput: true };
+}
+
 function fromStory(payload, ctx) {
   const project = payload?.project || {};
   const render = project.render || {};
-  const status = String(project.status || "");
-  return toHandle(
+  const state = storyState(project, payload);
+  const handle = toHandle(
     {
       kind: "story",
       id: project.projectId,
-      rawStatus: status,
-      percent: toPercent(render.percent),
-      phase: status === "rendering" ? text(render.phase) || "rendering" : null,
-      file: render.outputPath,
-      url: storyUrl(project.projectId, render.outputPath),
-      error: project.error,
+      rawStatus: state.rawStatus,
+      percent: state.keepOutput ? toPercent(render.percent) : null,
+      phase: state.phase,
+      file: state.keepOutput ? render.outputPath : null,
+      url: state.keepOutput ? storyUrl(project.projectId, render.outputPath) : null,
+      error: state.error ?? null,
+    },
+    ctx,
+  );
+  return state.animation ? { ...handle, animation: state.animation } : handle;
+}
+
+// ---- ambient -----------------------------------------------------------------
+
+const AMBIENT_ENCODING = new Set(["assembling", "rendering"]);
+const AMBIENT_RESTART_STEP = {
+  voicing: "its verses were being voiced. Call ambient_cancel, then ambient_step voice (verses already voiced are kept)",
+  generating_images: "its pictures were being made. Call ambient_cancel, then ambient_step images (pictures already made are kept)",
+  assembling: "it was rendering. Call ambient_cancel, then ambient_render to start the render again from the beginning",
+  rendering: "it was rendering. Call ambient_cancel, then ambient_render to start the render again from the beginning",
+};
+
+/** The share of pictures an images run has finished (made or failed), as a percent; null without movements. */
+function picturesPercent(movements) {
+  if (movements.length === 0) return null;
+  const settled = movements.filter((m) => m?.imageStatus === "done" || m?.imageStatus === "error").length;
+  return Math.round((settled / movements.length) * 100);
+}
+
+/** "2 of 3 verses could not be voiced: <first reason>", or null when nothing failed. */
+function failedShare(items, isFailed, noun, reasonOf) {
+  const failed = items.filter(isFailed);
+  if (failed.length === 0) return null;
+  return `${failed.length} of ${items.length} ${noun}: ${text(reasonOf(failed[0])) || "unknown error"}`;
+}
+
+/** A draft whose last step left verses unvoiced or pictures missing: the step failed, and says why. */
+function ambientDraftError(project, drops, movements) {
+  const voiced = project.words === "none" ? null
+    : failedShare(drops, (d) => d?.status === "error", "verses could not be voiced", (d) => d.error);
+  return voiced || failedShare(movements, (m) => m?.imageStatus === "error", "pictures could not be made", (m) => m.imageError);
+}
+
+/** The status, percent, phase and error an ambient handle shows. */
+function ambientState(payload, project) {
+  const status = String(project.status || "");
+  const render = project.render || {};
+  const movements = Array.isArray(project.movements) ? project.movements : [];
+  const drops = Array.isArray(project.drops) ? project.drops : [];
+  const encoding = AMBIENT_ENCODING.has(status);
+  const percent = encoding ? toPercent(render.percent) : status === "generating_images" ? picturesPercent(movements) : null;
+  const phase = encoding ? text(render.phase) || status : status || null;
+  if (payload?.interrupted && AMBIENT_RESTART_STEP[status]) {
+    return { rawStatus: "failed", percent, phase, error: `The server restarted while ${AMBIENT_RESTART_STEP[status]}.` };
+  }
+  if (status === "draft") {
+    const error = ambientDraftError(project, drops, movements);
+    return { rawStatus: error ? "failed" : "done", percent: null, phase, error };
+  }
+  if (status === "ready_to_render") return { rawStatus: "done", percent: null, phase, error: null };
+  if (status === "done") return { rawStatus: "done", percent, phase: null, error: null, file: render.outputPath };
+  return { rawStatus: status, percent, phase: status === "error" ? null : phase, error: project.error };
+}
+
+/** The ambient render writes <outputDir>/ambient/<projectId>/video.mp4, served at the same path under /outputs. */
+function ambientUrl(projectId, outputPath) {
+  const name = text(outputPath)?.split(/[\\/]/).pop();
+  const safeId = text(projectId);
+  return name && safeId ? `/outputs/ambient/${safeId}/${name}` : null;
+}
+
+function fromAmbient(payload, ctx) {
+  const project = payload?.project || {};
+  const state = ambientState(payload, project);
+  return toHandle(
+    {
+      kind: "ambient",
+      id: project.projectId,
+      rawStatus: state.rawStatus,
+      percent: state.percent,
+      phase: state.phase,
+      file: state.file ?? null,
+      url: state.file ? ambientUrl(project.projectId, state.file) : null,
+      error: state.error ?? null,
     },
     ctx,
   );
@@ -169,6 +315,7 @@ export const NORMALISERS = {
   job: { route: routeFor("/api/jobs/"), normalise: fromJobsRoute },
   captioned: { route: routeFor("/api/render/captioned-video-status/"), normalise: fromCaptioned },
   story: { route: routeFor("/api/story/"), normalise: fromStory },
+  ambient: { route: routeFor("/api/ambient/"), normalise: fromAmbient },
   timeline: { route: routeFor("/api/timeline/render/"), normalise: fromTimeline },
   instrumental: { route: routeFor("/api/music/instrumental/"), normalise: fromInstrumental },
   publish: { route: routeFor("/api/social/youtube/publish/"), normalise: fromPublish },

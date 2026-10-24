@@ -109,14 +109,14 @@ const jobsWait = {
   description:
     `Wait up to timeoutSec seconds (1 to 90, default 60) for a job to finish, then return its handle. ` +
     `If it is still running the handle says so: call again to keep waiting. Kinds: ${JOB_KINDS.join(", ")}. ` +
-    `For a story pass the project id as id.`,
+    `For a story or an ambient session pass the project id as id.`,
   inputSchema: {
     kind: z.string().describe(`What kind of job: ${JOB_KINDS.join(", ")}.`),
-    id: z.string().min(1).describe("The job id (the project id for story)."),
+    id: z.string().min(1).describe("The job id (the project id for story and ambient)."),
     projectId: z.string().optional().describe("The project the job belongs to, if any; echoed back on the handle."),
     timeoutSec: z.number().optional().describe("Seconds to wait, clamped to 1..90. Default 60."),
   },
-  routes: ["/api/jobs", "/api/render", "/api/story", "/api/timeline", "/api/music", "/api/social"],
+  routes: ["/api/jobs", "/api/render", "/api/story", "/api/ambient", "/api/timeline", "/api/music", "/api/social"],
   async handler(ctx, { kind, id, projectId, timeoutSec }) {
     if (!Object.hasOwn(NORMALISERS, kind)) {
       return fail("BAD_KIND", `Unknown job kind "${kind}". Use one of: ${JOB_KINDS.join(", ")}.`);

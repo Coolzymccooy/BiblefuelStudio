@@ -4,6 +4,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { createProject, readProject, writeProject } from "./projectStore.js";
+import { _setStoryHeartbeatMsForTests } from "./storyLiveness.js";
 import { ledgerSummary, reserveSpend } from "../videoGen/spend.js";
 import { readLibrary } from "../visualLibrary/store.js";
 import {
@@ -540,5 +541,22 @@ describe("resumeAnimations (after a restart)", () => {
     const sum = ledgerSummary(ledgerDir);
     assert.equal(sum.reservedUsd, 0);
     assert.ok(Math.abs(sum.spentUsd - MINI_5S_USD) < 1e-9, `spent ${sum.spentUsd}`);
+  });
+});
+
+describe("heartbeat (R50: a restart-killed run is told apart from a live one)", () => {
+  afterEach(() => _setStoryHeartbeatMsForTests(null));
+
+  test("an Animate run stamps the project's heartbeat while its clips are made", async () => {
+    _setStoryHeartbeatMsForTests(15);
+    let open;
+    const gate = new Promise((resolve) => { open = resolve; });
+    const { deps } = fakeDeps({ wait: async (taskId) => { await gate; return { ok: true, videoUrl: `https://cdn/${taskId}.mp4`, tokens: 108000 }; } });
+    const p = project([scene(1)]);
+    const started = Date.now();
+    startAnimation(ctx(), p.projectId, { ledgerDir, deps });
+    await waitFor(() => Number(readProject(dataDir, p.projectId).heartbeatAt) >= started);
+    open();
+    await waitFor(() => !isAnimating(p.projectId));
   });
 });

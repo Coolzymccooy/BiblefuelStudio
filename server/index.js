@@ -29,7 +29,7 @@ import transcribeRouter from "./src/routes/transcribe.js";
 import transcriptsRouter from "./src/routes/transcripts.js";
 import imagegenRouter from "./src/routes/imagegen.js";
 import videogenRouter from "./src/routes/videogen.js";
-import storyRouter from "./src/routes/story.js";
+import storyRouter, { isQuotaFreeStoryRequest } from "./src/routes/story.js";
 import lyricVideoRouter from "./src/routes/lyricVideo.js";
 import { FONT_DIR } from "./src/lib/videoFilters.js";
 import ambientRouter from "./src/routes/ambient.js";
@@ -377,7 +377,7 @@ app.use("/api/queue",     requireAuth, withUserScope,                           
 app.use("/api/tts",       requireAuth, withUserScope, requireVerifiedEmail, quota("tts"),        ttsRouter);
 app.use("/api/abi",       abiRouter);
 app.use("/api/render",    requireAuth, withUserScope, requireVerifiedEmail, quota("render", { skip: isQuotaFreeRenderRequest }), renderRouter);
-app.use("/api/story",     requireAuth, withUserScope, requireVerifiedEmail, quota("render"),     storyRouter);
+app.use("/api/story",     requireAuth, withUserScope, requireVerifiedEmail, quota("render", { skip: isQuotaFreeStoryRequest }), storyRouter);
 // Lyric video carries NO blanket quota (the page polls the project and the render job);
 // quota("render") is charged inside routes/lyricVideo.js on POST /:id/align and /:id/render only.
 app.use("/api/lyric-video", requireAuth, withUserScope, requireVerifiedEmail, featureGate("lyric.video"), lyricVideoRouter);

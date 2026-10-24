@@ -10,11 +10,17 @@ import { fail } from "./toolResult.js";
 
 const HINT = "Upgrade to Premium for unlimited generation, or come back tomorrow — quota resets at midnight UTC.";
 
+// What each plan bucket meters, for the refusal message.
+const BUCKET_WORDS = { render: "render", tts: "voice (tts)", imageGen: "image generation", scripts: "script writing" };
+
 /**
- * QUOTA_EXCEEDED when the plan's render quota has nothing left, else null.
+ * QUOTA_EXCEEDED when the plan's `bucket` quota has nothing left, else null.
  * Unlimited plans pass. If usage cannot be read, pass: the route still enforces it.
+ *
+ * @param {object} ctx
+ * @param {"render"|"tts"|"imageGen"|"scripts"} bucket
  */
-export async function renderQuotaRefusal(ctx) {
+export async function planQuotaRefusal(ctx, bucket) {
   let body;
   try {
     body = await ctx.api.call("GET", "/api/billing/usage");
@@ -23,12 +29,18 @@ export async function renderQuotaRefusal(ctx) {
     if (err?.name === "ApiError") return null;
     throw err;
   }
-  const render = body?.usage?.buckets?.render;
-  if (!render || render.unlimited || !(Number(render.remaining) <= 0)) return null;
-  return fail("QUOTA_EXCEEDED", `Your plan's daily render quota is used up (${render.used} of ${render.limit}).`, {
-    bucket: "render",
-    used: render.used,
-    limit: render.limit,
+  const usage = body?.usage?.buckets?.[bucket];
+  if (!usage || usage.unlimited || !(Number(usage.remaining) <= 0)) return null;
+  const words = BUCKET_WORDS[bucket] || bucket;
+  return fail("QUOTA_EXCEEDED", `Your plan's daily ${words} quota is used up (${usage.used} of ${usage.limit}).`, {
+    bucket,
+    used: usage.used,
+    limit: usage.limit,
     hint: HINT,
   });
+}
+
+/** QUOTA_EXCEEDED when the plan's render quota has nothing left, else null. */
+export function renderQuotaRefusal(ctx) {
+  return planQuotaRefusal(ctx, "render");
 }

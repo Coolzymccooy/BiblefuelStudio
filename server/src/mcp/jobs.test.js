@@ -103,13 +103,120 @@ test("captioned: error maps to failed and a cancel maps to cancelled", () => {
   assert.equal(interrupted.status, "failed");
 });
 
+const scene = (id, fields) => ({ id, imageStatus: "done", imagePath: `/srv/genImg/p1/${id}.png`, ...fields });
+
 test("story: pre-render statuses are running with the status as phase", () => {
-  for (const status of ["transcribing", "segmenting", "generating_images", "ready_to_render"]) {
-    const handle = NORMALISERS.story.normalise({ ok: true, project: { projectId: "p1", status, error: null } }, { outputUrl: toUrl });
+  const making = [scene("s1", { imageStatus: "generating" })];
+  for (const [status, scenes] of [["transcribing", []], ["segmenting", []], ["generating_images", making]]) {
+    const handle = NORMALISERS.story.normalise({ ok: true, project: { projectId: "p1", status, error: null, scenes } }, { outputUrl: toUrl });
     assert.equal(handle.status, "running", status);
     assert.equal(handle.phase, status);
     assert.equal(handle.percent, null);
   }
+});
+
+test("story: an idle draft reads done, not running", () => {
+  for (const status of ["draft", "draft_script"]) {
+    const handle = NORMALISERS.story.normalise({ project: { projectId: "p1", status, error: null } }, { outputUrl: toUrl });
+    assert.equal(handle.status, "done", status);
+    assert.equal(handle.phase, status);
+    assert.equal(handle.output, null);
+  }
+});
+
+test("story: generating_images with no scene being made reads done, with the phase the scenes say", () => {
+  const read = (scenes) => NORMALISERS.story.normalise({ project: { projectId: "p1", status: "generating_images", scenes } }, { outputUrl: toUrl });
+  const segmented = read([scene("s1", { imageStatus: "pending", imagePath: null }), scene("s2", { imageStatus: "pending", imagePath: null })]);
+  assert.equal(segmented.status, "done");
+  assert.equal(segmented.phase, "needs_images");
+  assert.equal(read([scene("s1"), scene("s2", { imageStatus: "pending", imagePath: null })]).phase, "needs_images");
+  assert.equal(read([scene("s1"), scene("s2")]).phase, "ready_to_render");
+  assert.equal(read([]).phase, "no_scenes");
+});
+
+test("story: pictures about to start by themselves (preparing) keep running", () => {
+  const payload = { project: { projectId: "p1", status: "generating_images", scenes: [scene("s1", { imageStatus: "pending" })] }, preparing: true };
+  const handle = NORMALISERS.story.normalise(payload, { outputUrl: toUrl });
+  assert.equal(handle.status, "running");
+  assert.equal(handle.phase, "preparing");
+});
+
+test("story: ready_to_render is done (the pictures step finished) with no video yet", () => {
+  const payload = { project: { projectId: "p1", status: "ready_to_render", error: null, scenes: [scene("s1"), scene("s2")] } };
+  const handle = NORMALISERS.story.normalise(payload, { outputUrl: toUrl });
+  assert.deepEqual(handle, { kind: "story", id: "p1", status: "done", percent: 100, phase: "ready_to_render", output: null, error: null });
+});
+
+test("story: images that stopped with failed scenes are failed, with the first reason", () => {
+  const payload = {
+    project: {
+      projectId: "p1",
+      status: "generating_images",
+      scenes: [scene("s1"), scene("s2", { imageStatus: "error", imageError: "Daily free image quota used up." }), scene("s3", { imageStatus: "error", imageError: "x" })],
+    },
+  };
+  const handle = NORMALISERS.story.normalise(payload, { outputUrl: toUrl });
+  assert.equal(handle.status, "failed");
+  assert.equal(handle.phase, "generating_images");
+  assert.equal(handle.error, "2 of 3 scenes have no picture: Daily free image quota used up.");
+});
+
+test("story: images still being made keep running; failed scenes beside pending ones read failed", () => {
+  const making = { project: { projectId: "p1", status: "generating_images", scenes: [scene("s1"), scene("s2", { imageStatus: "generating" })] } };
+  assert.equal(NORMALISERS.story.normalise(making, { outputUrl: toUrl }).status, "running");
+  const stopped = { project: { projectId: "p1", status: "generating_images", scenes: [scene("s1", { imageStatus: "pending" }), scene("s2", { imageStatus: "error", imageError: "quota" })] } };
+  const handle = NORMALISERS.story.normalise(stopped, { outputUrl: toUrl });
+  assert.equal(handle.status, "failed");
+  assert.equal(handle.error, "1 of 2 scenes have no picture: quota");
+});
+
+test("story: AI motion in flight keeps a ready project running as animating, with counts", () => {
+  const payload = {
+    project: {
+      projectId: "p1",
+      status: "ready_to_render",
+      scenes: [
+        scene("s1", { aiVideoStatus: "done" }),
+        scene("s2", { aiVideoStatus: "generating" }),
+        scene("s3", { aiVideoStatus: "queued" }),
+        scene("s4", { aiVideoStatus: "error", aiVideoError: "provider said no" }),
+        scene("s5"),
+      ],
+    },
+  };
+  const handle = NORMALISERS.story.normalise(payload, { outputUrl: toUrl });
+  assert.equal(handle.status, "running");
+  assert.equal(handle.phase, "animating");
+  assert.deepEqual(handle.animation, { queued: 1, generating: 1, done: 1, failed: 1 });
+});
+
+test("story: finished AI motion reports its counts and the project's own status", () => {
+  const payload = {
+    project: {
+      projectId: "p1",
+      status: "done",
+      render: { outputPath: "/srv/outputs/story/p1/video.mp4" },
+      scenes: [scene("s1", { aiVideoStatus: "done" }), scene("s2", { aiVideoStatus: "none" })],
+    },
+  };
+  const handle = NORMALISERS.story.normalise(payload, { outputUrl: toUrl });
+  assert.equal(handle.status, "done");
+  assert.deepEqual(handle.animation, { queued: 0, generating: 0, done: 1, failed: 0 });
+});
+
+test("story: a render in progress stays the render even while clips are in flight", () => {
+  const payload = {
+    project: { projectId: "p1", status: "rendering", render: { percent: 30 }, scenes: [scene("s1", { aiVideoStatus: "generating" })] },
+  };
+  const handle = NORMALISERS.story.normalise(payload, { outputUrl: toUrl });
+  assert.equal(handle.status, "running");
+  assert.equal(handle.phase, "rendering");
+  assert.equal(handle.percent, 30);
+});
+
+test("story: a cancelled project reads cancelled", () => {
+  const handle = NORMALISERS.story.normalise({ project: { projectId: "p1", status: "error", error: "Cancelled." } }, { outputUrl: toUrl });
+  assert.equal(handle.status, "cancelled");
 });
 
 test("story: rendering reads render.percent", () => {
@@ -206,6 +313,87 @@ test("publish: running, done with the YouTube url, and error", () => {
   assert.equal(failed.error, "quota exceeded");
 });
 
+// ---- ambient ----
+
+const amb = (fields = {}, extra = {}) => ({ ok: true, project: { projectId: "a1", status: "draft", error: null, drops: [], movements: [], render: { jobId: null, outputPath: null, status: "idle", percent: 0, phase: "" }, ...fields }, ...extra });
+const ambient = (payload) => NORMALISERS.ambient.normalise(payload, { outputUrl: toUrl });
+
+test("ambient: the status route is the project", () => {
+  assert.equal(NORMALISERS.ambient.route("a1"), "/api/ambient/a1");
+});
+
+test("ambient: voicing and images are running with the stage as phase; images report the share of pictures in", () => {
+  const voicing = ambient(amb({ status: "voicing" }));
+  assert.deepEqual(voicing, { kind: "ambient", id: "a1", status: "running", percent: null, phase: "voicing", output: null, error: null });
+  const movements = [{ imageStatus: "done" }, { imageStatus: "generating" }, { imageStatus: "generating" }, { imageStatus: "error" }];
+  const images = ambient(amb({ status: "generating_images", movements }));
+  assert.equal(images.status, "running");
+  assert.equal(images.phase, "generating_images");
+  assert.equal(images.percent, 50);
+});
+
+test("ambient: assembling and rendering read the render's percent and phase", () => {
+  const assembling = ambient(amb({ status: "assembling", render: { jobId: "j", status: "running", percent: 0, phase: "waiting for another job to finish" } }));
+  assert.deepEqual(assembling, { kind: "ambient", id: "a1", status: "running", percent: 0, phase: "waiting for another job to finish", output: null, error: null });
+  const rendering = ambient(amb({ status: "rendering", render: { jobId: "j", status: "running", percent: 37, phase: "rendering" } }));
+  assert.equal(rendering.status, "running");
+  assert.equal(rendering.percent, 37);
+  assert.equal(rendering.phase, "rendering");
+});
+
+test("ambient: ready_to_render and a quiet draft are done (the step is over) with no video", () => {
+  const ready = ambient(amb({ status: "ready_to_render", render: { outputPath: "/srv/u/outputs/ambient/a1/video.mp4", status: "done" } }));
+  assert.deepEqual(ready, { kind: "ambient", id: "a1", status: "done", percent: 100, phase: "ready_to_render", output: null, error: null });
+  const draft = ambient(amb({ status: "draft", drops: [{ status: "pending" }] }));
+  assert.equal(draft.status, "done");
+  assert.equal(draft.phase, "draft");
+  assert.equal(draft.output, null);
+});
+
+test("ambient: a draft left with unvoiced verses or missing pictures is failed, with the first reason", () => {
+  const drops = [{ status: "done" }, { status: "error", error: "no verse text returned for \"Psalm 151\"" }, { status: "error", error: "x" }];
+  const voice = ambient(amb({ status: "draft", drops }));
+  assert.equal(voice.status, "failed");
+  assert.equal(voice.phase, "draft");
+  assert.equal(voice.error, "2 of 3 verses could not be voiced: no verse text returned for \"Psalm 151\"");
+  const movements = [{ imageStatus: "done" }, { imageStatus: "error", imageError: "quota" }];
+  const images = ambient(amb({ status: "draft", movements }));
+  assert.equal(images.status, "failed");
+  assert.equal(images.error, "1 of 2 pictures could not be made: quota");
+});
+
+test("ambient: a music-only session ignores its stored verses", () => {
+  const handle = ambient(amb({ status: "draft", words: "none", drops: [{ status: "error", error: "x" }] }));
+  assert.equal(handle.status, "done");
+});
+
+test("ambient: done carries the video under the session's own folder", () => {
+  const handle = ambient(amb({ status: "done", render: { jobId: "j", outputPath: "/srv/u/outputs/ambient/a1/video.mp4", status: "done", percent: 100, phase: "" } }));
+  assert.equal(handle.status, "done");
+  assert.equal(handle.percent, 100);
+  assert.deepEqual(handle.output, { url: `${BASE}/outputs/ambient/a1/video.mp4`, path: "/srv/u/outputs/ambient/a1/video.mp4" });
+});
+
+test("ambient: a cancel reads cancelled and an error reads failed", () => {
+  assert.equal(ambient(amb({ status: "error", error: "Cancelled." })).status, "cancelled");
+  const failed = ambient(amb({ status: "error", error: "ffmpeg exited 1: boom" }));
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.error, "ffmpeg exited 1: boom");
+});
+
+test("ambient: work a server restart stopped reads failed, with how to start it again", () => {
+  const handle = ambient(amb({ status: "rendering", render: { jobId: "j", status: "running", percent: 42, phase: "rendering" } }, { interrupted: true }));
+  assert.equal(handle.status, "failed");
+  assert.equal(handle.phase, "rendering");
+  assert.equal(handle.percent, 42);
+  assert.match(handle.error, /server restarted/);
+  assert.match(handle.error, /ambient_cancel/);
+  assert.match(handle.error, /ambient_render/);
+  const images = ambient(amb({ status: "generating_images", movements: [{ imageStatus: "generating" }] }, { interrupted: true }));
+  assert.equal(images.status, "failed");
+  assert.match(images.error, /ambient_step/);
+});
+
 test("normalisers do not mutate the payload", () => {
   const payload = Object.freeze({ ok: true, job: Object.freeze({ id: "job_1", status: "done", result: Object.freeze({ outFile: "a.mp4" }) }) });
   assert.doesNotThrow(() => NORMALISERS.job.normalise(payload, { outputUrl: toUrl }));
@@ -278,4 +466,41 @@ test("waitForJob stamps the id and projectId onto the handle", async () => {
 test("waitForJob rejects an unknown kind", async () => {
   const h = harness([{}]);
   await assert.rejects(waitForJob(h.api, { kind: "nope", id: "x", ...h.opts }), (err) => err.code === "BAD_KIND");
+});
+
+const STORY_RESTART = "This stopped when the server restarted. Call story_cancel, then story_process or story_render again.";
+
+test("story: a step a restart stopped (interrupted) reads failed, saying what to do", () => {
+  const busy = [
+    [{ status: "rendering", render: { jobId: "j", status: "running", percent: 40 } }, "rendering"],
+    [{ status: "transcribing" }, "transcribing"],
+    [{ status: "segmenting" }, "segmenting"],
+    [{ status: "generating_images", scenes: [scene("s1", { imageStatus: "generating" })] }, "generating_images"],
+  ];
+  for (const [fields, phase] of busy) {
+    const handle = NORMALISERS.story.normalise({ project: { projectId: "p1", ...fields }, interrupted: true }, { outputUrl: toUrl });
+    assert.equal(handle.status, "failed", phase);
+    assert.equal(handle.phase, phase);
+    assert.equal(handle.error, STORY_RESTART);
+  }
+});
+
+const STORY_ANIMATE_RESTART = 'This stopped when the server restarted. Call story_cancel with what: "animate", then story_animate again.';
+
+test("story: AI clips a restart stopped read failed, saying to cancel the clips and order them again", () => {
+  const stopped = [
+    { status: "ready_to_render", scenes: [scene("s1", { aiVideoStatus: "generating" })] },
+    { status: "done", scenes: [scene("s1", { aiVideoStatus: "queued" }), scene("s2", { aiVideoStatus: "done" })] },
+  ];
+  for (const fields of stopped) {
+    const handle = NORMALISERS.story.normalise({ project: { projectId: "p1", ...fields }, interrupted: true }, { outputUrl: toUrl });
+    assert.equal(handle.status, "failed", fields.status);
+    assert.equal(handle.phase, "animating");
+    assert.equal(handle.error, STORY_ANIMATE_RESTART);
+  }
+});
+
+test("story: without the route's interrupted flag the same project keeps running", () => {
+  const handle = NORMALISERS.story.normalise({ project: { projectId: "p1", status: "transcribing" } }, { outputUrl: toUrl });
+  assert.equal(handle.status, "running");
 });
