@@ -10,7 +10,8 @@ import { VOICE_ID_PATTERN } from "./voice.js";
 // story project holding an outline of sections; longform_narrate voices it and
 // then runs the story pipeline (scenes and pictures), after which the story
 // tools render it. The draft and narrate routes each spend one unit of the
-// plan's render quota; templates, sections and reopen are free.
+// plan's render quota, and draft costs one daily render (R56); templates,
+// sections and reopen are free.
 
 const SCRIPT_MAX_CHARS = 60_000;
 // The longest narration a scene estimate is taken over: the charge is then the template's scene limit.
@@ -63,6 +64,12 @@ async function draft(ctx, input) {
     if (note.refusal) return note.refusal;
     notePath = note.path;
   }
+  // R56: a draft runs paid work (an AI outline, or transcribing the voice note), so it costs one daily
+  // render like lyric_align (R47), after the plan pre-check (the route spends one plan render).
+  const outOfQuota = await renderQuotaRefusal(ctx);
+  if (outOfQuota) return outOfQuota;
+  const refused = await ctx.chargeCap({ renders: 1 });
+  if (refused) return refused;
   const body = defined({ script, idea, audioPath: notePath, templateId, title, style, translation, targetSec });
   const response = await ctx.api.call("POST", "/api/longform/draft", { body });
   return ok(defined({ project: viewOf(ctx, response), suggestion: response?.suggestion }));
@@ -88,7 +95,7 @@ const longformProject = {
     "Long-form sessions: 30 or 60 minute scripture videos (sleep sessions: slow narration, long pauses, a dozen pictures, no captions). " +
     "action templates: the formats (id, label, length). draft { script | idea | audioPath, templateId?, title?, style?, translation?, targetSec? }: a new project holding an outline of sections. " +
     "script is your own words, split into sections as written (scripture references are filled in word for word); idea gets an outline written by AI; audioPath is a voice note in your media folder that is transcribed into the idea (URLs and other paths are refused). " +
-    "Without templateId one is chosen for you (the answer says which). draft waits for the outline, up to a minute or two, and spends one unit of the plan's render quota (QUOTA_EXCEEDED when it is used up); no daily cap. " +
+    "Without templateId one is chosen for you (the answer says which). draft waits for the outline, up to a minute or two, and costs one daily render and one unit of the plan's render quota (QUOTA_EXCEEDED first, uncharged, when it is used up). " +
     "sections { id, sections }: replace the outline (every section needs text) while it is a draft. reopen { id }: put a project whose narration failed back to a draft. templates, sections and reopen are free. " +
     "Read a project with story_project get. Next: longform_narrate.",
   inputSchema: {

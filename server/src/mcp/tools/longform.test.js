@@ -66,6 +66,7 @@ test("the longform file declares longform_project and longform_narrate on /api/l
   assert.match(byName.longform_narrate.description, /tts/);
   assert.match(byName.longform_narrate.description, /images/);
   assert.match(byName.longform_project.description, /render quota/);
+  assert.match(byName.longform_project.description, /one daily render/);
 });
 
 // ---- longform_project ----
@@ -80,14 +81,15 @@ test("templates lists the formats", async () => {
 test("draft from a pasted script or an idea returns the outline as a longform project", async () => {
   const { ctx, calls, chargeCalls } = ctxWith({ "POST /api/longform/draft": { ok: true, project: PROJECT(), suggestion: { templateId: "sleep-30" } } });
   const result = await byName.longform_project.handler(ctx, { action: "draft", idea: "cannot sleep", templateId: "sleep-30", title: "Rest" });
-  assert.deepEqual(calls[0].opts.body, { idea: "cannot sleep", templateId: "sleep-30", title: "Rest" });
+  assert.deepEqual(calls[1].opts.body, { idea: "cannot sleep", templateId: "sleep-30", title: "Rest" });
   const { project, suggestion } = result.structuredContent;
   assert.equal(project.id, "p1");
   assert.equal(project.status, "draft_script");
   assert.deepEqual(project.longform.sections, SECTIONS);
   assert.equal(project.job.kind, "longform");
   assert.deepEqual(suggestion, { templateId: "sleep-30" });
-  assert.equal(chargeCalls.length, 0);
+  assert.deepEqual(chargeCalls, [{ renders: 1 }]);
+  assert.deepEqual(routesCalled(calls), ["GET /api/billing/usage", "POST /api/longform/draft"]);
 });
 
 test("draft needs a script, an idea or a voice note", async () => {
@@ -101,13 +103,21 @@ test("a voice note must be in the user's media folder; it is sent as its real pa
   const dir = mediaWith("note.m4a");
   const { ctx, calls } = ctxWith({ "POST /api/longform/draft": { ok: true, project: PROJECT() } });
   await byName.longform_project.handler(ctx, { action: "draft", audioPath: path.join(dir, "note.m4a") });
-  assert.equal(calls[0].opts.body.audioPath, path.join(dir, "note.m4a"));
+  assert.equal(calls[1].opts.body.audioPath, path.join(dir, "note.m4a"));
   const outside = ctxWith({});
   const refused = await byName.longform_project.handler(outside.ctx, { action: "draft", audioPath: path.join(testApp.dataDir, "users.json") });
   assert.equal(refused.structuredContent.error, "PATH_OUTSIDE_MEDIA");
   const url = await byName.longform_project.handler(outside.ctx, { action: "draft", audioPath: "https://example.com/a.mp3" });
   assert.equal(url.structuredContent.error, "PATH_OUTSIDE_MEDIA");
   assert.equal(outside.calls.length, 0);
+});
+
+test("R56: a draft is refused before any charge when the plan's render quota is used up", async () => {
+  const { ctx, calls, chargeCalls } = ctxWith({}, { usage: SPENT });
+  const result = await byName.longform_project.handler(ctx, { action: "draft", idea: "rest" });
+  assert.equal(result.structuredContent.error, "QUOTA_EXCEEDED");
+  assert.equal(chargeCalls.length, 0);
+  assert.deepEqual(routesCalled(calls), ["GET /api/billing/usage"]);
 });
 
 test("sections and reopen need an id and go to their routes", async () => {
